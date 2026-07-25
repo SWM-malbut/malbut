@@ -1,0 +1,25 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # 建议提高到100Hz以获得更好的控制性能
+    
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+      publish_rate: 50  # 添加发布频率
+
+    # 根据你的机器人类型添加运动控制器
+    # 示例1: 差速驱动控制器（如果你的机器人是差速驱动）
+    diff_drive_controller:
+      type: diff_drive_controller/DiffDriveController
+      ros__parameters:
+        left_wheel_names: ["left_wheel_joint"]
+        right_wheel_names: ["right_wheel_joint"]
+        wheel_separation: 0.5  # 根据实际调整
+        wheels_per_side: 1     # 每侧轮子数量
+        wheel_radius: 0.1      # 根据实际调整
+        odom_frame_id: odom
+        base_frame_id: base_footprint
+        pose_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.03]
+        twist_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.03]
+        publish_limited_velocity: true
+        use_stamped_vel: false
+        publish_rate: 50.0

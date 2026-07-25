@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="robot" xmlns:xacro="http://ros.org/wiki/xacro">
+    <xacro:arg name="sim_ign" default="true"/>
+
+    <!-- robot_description -->
+    <xacro:include filename="$(find malbut_description)/urdf/rosorin.xacro"/>
+
+    <xacro:if value="$(arg sim_ign)">
+        <xacro:include filename="$(find malbut_gazebo)/urdf/wheel.xacro"/>
+    </xacro:if>
+    
+    <!-- lidar -->
+    <xacro:include filename="$(find malbut_gazebo)/urdf/lidar.gazebo.xacro"/>
+    <!-- camera -->
+    <xacro:include filename="$(find malbut_gazebo)/urdf/camera.gazebo.xacro"/>
+    <xacro:if value="${camera_type == 'AsCamera' or camera_type == 'aurora'}">
+        <xacro:gazebo_camera reference="camera_link0"/>
+    </xacro:if>
+    <xacro:if value="${camera_type == 'Dabai'}">
+        <xacro:gazebo_camera reference="depth_cam_link"/>
+    </xacro:if>
+    <!-- imu -->
+    <xacro:include filename="$(find malbut_gazebo)/urdf/imu.gazebo.xacro"/>
+
+    <gazebo>
+        <!-- Joint state publisher -->
+        <plugin filename="libignition-gazebo-joint-state-publisher-system.so" name="ignition::gazebo::systems::JointStatePublisher">
+            <topic>joint_states</topic>
+        </plugin>
+
+        <!-- sensor-liar -->
+        <plugin filename="ignition-gazebo-sensors-system" name="ignition::gazebo::systems::Sensors">
+            <render_engine>ogre2</render_engine>
+        </plugin>
+
+        <!-- imu -->
+        <plugin filename="ignition-gazebo-imu-system" name="ignition::gazebo::systems::Imu"></plugin>
+
+        <!-- odom -->
+        <plugin
+            filename="ignition-gazebo-odometry-publisher-system"
+            name="ignition::gazebo::systems::OdometryPublisher">
+            <odom_publish_frequency>50</odom_publish_frequency>
+            <odom_topic>/odom</odom_topic>
+            <odom_frame>odom</odom_frame>
+            <robot_base_frame>base_footprint</robot_base_frame>
+            <tf_topic>/odom/tf</tf_topic>
+        </plugin>
+
+        <xacro:if value="$(arg sim_ign)">
+            <plugin filename="ignition-gazebo-mecanum-drive-system" name="ignition::gazebo::systems::MecanumDrive">
+                <front_left_joint>front_left_joint</front_left_joint>
+                <front_right_joint>front_right_joint</front_right_joint>
+                <back_left_joint>rear_left_joint</back_left_joint>
+                <back_right_joint>rear_right_joint</back_right_joint>
+                <wheel_separation>0.34</wheel_separation>
+                <wheelbase>0.3</wheelbase>
+                <wheel_radius>0.05</wheel_radius>
+                <topic>/controller/cmd_vel</topic>
+                <odom_topic>/odom</odom_topic>
+                <frame_id>odom</frame_id>
+                <child_frame_id>base_link</child_frame_id>
+            </plugin>
+        </xacro:if>
+    </gazebo>   
+
+
+
+</robot>
