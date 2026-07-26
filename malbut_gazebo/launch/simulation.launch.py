@@ -109,6 +109,20 @@ def _as_positive_number(value, name):
     return number
 
 
+def _as_positive_integer(value, name):
+    try:
+        number = int(value)
+    except ValueError as error:
+        raise RuntimeError(
+            f"{name} must be a positive integer, got: {value}"
+        ) from error
+    if str(number) != value.strip() or number <= 0:
+        raise RuntimeError(
+            f"{name} must be a positive integer, got: {value}"
+        )
+    return str(number)
+
+
 def _shutdown_on_spawn_failure(event, _context):
     if event.returncode == 0:
         return []
@@ -126,9 +140,6 @@ def _launch_setup(context):
         / GAZEBO_PACKAGE
         / "spawn_when_ready"
     )
-    if not spawn_helper.is_file():
-        raise RuntimeError(f"Spawn helper is not installed: {spawn_helper}")
-
     variant_file = resolve_variant_config(
         LaunchConfiguration("variant_config").perform(context),
         description_share,
@@ -163,6 +174,14 @@ def _launch_setup(context):
     use_sim_time = _as_bool(
         LaunchConfiguration("use_sim_time").perform(context), "use_sim_time"
     )
+    spawn_robot = _as_bool(
+        LaunchConfiguration("spawn_robot").perform(context), "spawn_robot"
+    )
+    bridge_enabled = _as_bool(
+        LaunchConfiguration("bridge").perform(context), "bridge"
+    )
+    if spawn_robot and not spawn_helper.is_file():
+        raise RuntimeError(f"Spawn helper is not installed: {spawn_helper}")
     entity_name = _validate_transport_name(
         LaunchConfiguration("entity_name").perform(context),
         "entity_name",
@@ -182,6 +201,7 @@ def _launch_setup(context):
     verbosity = _as_verbosity(
         LaunchConfiguration("verbosity").perform(context)
     )
+    iterations = LaunchConfiguration("iterations").perform(context).strip()
 
     sim_xacro = gazebo_share / "urdf" / "robot.gazebo.xacro"
     mappings = {
@@ -205,6 +225,10 @@ def _launch_setup(context):
         gz_options.extend(["-s", "--headless-rendering"])
     elif not gui:
         gz_options.append("-s")
+    if iterations:
+        gz_options.extend(
+            ["--iterations", _as_positive_integer(iterations, "iterations")]
+        )
     gz_options.extend(
         [
             "-v",
@@ -289,29 +313,37 @@ def _launch_setup(context):
         package_models = world_file.parent.parent / "models"
         if package_models.is_dir():
             resource_candidates.append(package_models)
+            nested_models = package_models / "aws_small_house"
+            if nested_models.is_dir():
+                resource_candidates.append(nested_models)
     resource_candidates.extend([gazebo_share, description_share])
     resource_paths = os.pathsep.join(
         str(path)
         for path in dict.fromkeys(resource_candidates)
     )
-    return [
+    actions = [
         AppendEnvironmentVariable(
             "IGN_GAZEBO_RESOURCE_PATH", resource_paths
         ),
         AppendEnvironmentVariable("GZ_SIM_RESOURCE_PATH", resource_paths),
         AppendEnvironmentVariable("SDF_PATH", resource_paths),
-        RegisterEventHandler(
-            OnProcessExit(
-                target_action=spawn,
-                on_exit=_shutdown_on_spawn_failure,
-            )
-        ),
-        gazebo,
-        state_publisher,
-        spawn,
-        bridge,
-        rviz,
     ]
+    if spawn_robot:
+        actions.append(
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=spawn,
+                    on_exit=_shutdown_on_spawn_failure,
+                )
+            )
+        )
+    actions.append(gazebo)
+    if spawn_robot:
+        actions.extend([state_publisher, spawn])
+    if bridge_enabled:
+        actions.append(bridge)
+    actions.append(rviz)
+    return actions
 
 
 def generate_launch_description():
@@ -351,6 +383,16 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("imu_enabled", default_value="true"),
             DeclareLaunchArgument("verbosity", default_value="2"),
+            DeclareLaunchArgument("spawn_robot", default_value="true"),
+            DeclareLaunchArgument("bridge", default_value="true"),
+            DeclareLaunchArgument(
+                "iterations",
+                default_value="",
+                description=(
+                    "Stop after this many Gazebo iterations; empty runs "
+                    "until shutdown."
+                ),
+            ),
             OpaqueFunction(function=_launch_setup),
         ]
     )

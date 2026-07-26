@@ -107,12 +107,59 @@ def test_bridge_has_one_canonical_mapping_per_ros_topic():
     )
 
 
-def test_world_guis_load_the_builtin_teleop_on_cmd_vel():
-    """Bundled GUI worlds publish in-window controls to the robot topic."""
-    for filename in ('empty.sdf', 'robocup_home.sdf'):
+def test_world_guis_load_scene_controls_and_teleop():
+    """Bundled GUI worlds render entities and expose in-window controls."""
+    required_plugins = {
+        'MinimalScene',
+        'EntityContextMenuPlugin',
+        'GzSceneManager',
+        'InteractiveViewControl',
+        'CameraTracking',
+        'SelectEntities',
+        'VisualizationCapabilities',
+        'TransformControl',
+        'WorldControl',
+        'Teleop',
+        'EntityTree',
+        'ComponentInspector',
+    }
+    for filename in ('empty.sdf', 'test_arena.sdf', 'small_house.sdf'):
         root = ElementTree.parse(
             GAZEBO_ROOT / 'worlds' / filename
         ).getroot()
+        gui_elements = root.findall('.//gui')
+        assert len(gui_elements) == 1
+        plugin_elements = gui_elements[0].findall('plugin')
+        plugin_filenames = [
+            plugin.get('filename') for plugin in plugin_elements
+        ]
+        assert all(plugin_filenames)
+        assert len(plugin_filenames) == len(set(plugin_filenames))
+        plugins = dict(zip(plugin_filenames, plugin_elements))
+        assert required_plugins <= plugins.keys()
+        assert plugin_filenames.index(
+            'MinimalScene'
+        ) < plugin_filenames.index(
+            'GzSceneManager'
+        ) < plugin_filenames.index(
+            'InteractiveViewControl'
+        )
         teleop = root.find(".//gui/plugin[@filename='Teleop']")
         assert teleop is not None
         assert teleop.findtext('topic') == '/cmd_vel'
+
+
+def test_standalone_spawn_default_matches_the_empty_world_name():
+    """The compatibility spawn entry point targets the bundled empty world."""
+    world = ElementTree.parse(
+        GAZEBO_ROOT / 'worlds' / 'empty.sdf'
+    ).getroot().find('world')
+    assert world is not None
+    launch_text = (
+        GAZEBO_ROOT / 'launch' / 'spawn_model.launch.py'
+    ).read_text(encoding='utf-8')
+    expected = (
+        "DeclareLaunchArgument('world_name', "
+        f"default_value='{world.get('name')}')"
+    )
+    assert expected in launch_text

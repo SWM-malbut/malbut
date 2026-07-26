@@ -33,7 +33,11 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
-        ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name, [
+            'package.xml',
+            'README.md',
+            'THIRD_PARTY_NOTICES.md',
+        ]),
     ] + collect_data_files(
         'launch',
         'urdf',
@@ -41,14 +45,16 @@ setup(
         'worlds',
         'rviz',
         'maps',
-        'meshes',
         'models',
     ),
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='ubuntu',
     maintainer_email='ubuntu@todo.todo',
-    description='Gazebo Fortress integration for the Malbut ROSOrin model',
+    description=(
+        'Gazebo Fortress robot integration and household environments for '
+        'Malbut'
+    ),
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
