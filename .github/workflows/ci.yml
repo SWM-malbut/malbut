@@ -50,6 +50,10 @@ jobs:
       - name: Install package dependencies
         run: |
           sudo apt-get update
+          if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then
+            sudo rosdep init
+          fi
+          rosdep update
           rosdep install --from-paths . --ignore-src --rosdistro humble -r -y
 
       - name: Build ROS packages
