@@ -1,78 +1,97 @@
-import os
+from pathlib import Path
 
-from ament_index_python.packages import get_package_share_directory
-from launch import LaunchDescription, LaunchService
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
-from launch.substitutions import Command, LaunchConfiguration
+import xacro
+from ament_index_python.packages import (
+    get_package_prefix,
+    get_package_share_directory,
+)
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from malbut_description.variant_config import (
+    load_variant_arguments,
+    resolve_variant_config,
+    xacro_value,
+)
 
 
-def launch_setup(context):
-    use_sim_time = LaunchConfiguration(
-        'use_sim_time', default='true').perform(context)
-    world_name = LaunchConfiguration(
-        'world_name', default='robocup_home').perform(context)
-    moveit_unite = LaunchConfiguration(
-        'moveit_unite', default='false').perform(context)
+DEFAULT_VARIANT = 'ultimate_orin_nx_super_mecanum.yaml'
 
-    sim_ign = 'false' if moveit_unite == 'true' else 'true'
 
-    world_name_arg = DeclareLaunchArgument(
-        'world_name', default_value=world_name)
-    use_sim_time_arg = DeclareLaunchArgument(
-        'use_sim_time', default_value=use_sim_time)
+def _launch_setup(context):
+    description_share = Path(
+        get_package_share_directory('malbut_description')
+    )
+    gazebo_share = Path(get_package_share_directory('malbut_gazebo'))
+    variant_file = resolve_variant_config(
+        LaunchConfiguration('variant_config').perform(context),
+        description_share,
+    )
+    arguments = load_variant_arguments(variant_file)
+    mappings = {
+        key: xacro_value(value) for key, value in arguments.items()
+    }
+    robot_description = xacro.process_file(
+        str(gazebo_share / 'urdf' / 'robot.gazebo.xacro'),
+        mappings=mappings,
+    ).toxml()
+    helper = (
+        Path(get_package_prefix('malbut_gazebo'))
+        / 'lib'
+        / 'malbut_gazebo'
+        / 'spawn_when_ready'
+    )
 
-    use_sim_time = use_sim_time == 'true'
-
-    malbut_gazebo_path = get_package_share_directory('malbut_gazebo')
-    xacro_file = os.path.join(
-        malbut_gazebo_path, 'urdf', 'robot.gazebo.xacro')
-    robot_description_content = Command([
-        'xacro ', xacro_file,
-        ' sim_ign:=', sim_ign,
-    ])
-
-    robot_state_publisher_node = Node(
+    state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
-        output='screen',
-        parameters=[{
-            'robot_description': robot_description_content,
-            'use_sim_time': use_sim_time,
-        }],
-    )
-
-    spawn_entity = Node(
-        package='ros_gz_sim',
-        executable='create',
-        output='screen',
-        arguments=[
-            '-topic', 'robot_description',
-            '-name', 'robot',
-            '-allow_renaming', 'true',
-            '-x', '0',
-            '-y', '0',
-            '-z', '0.0',
+        parameters=[
+            {
+                'robot_description': robot_description,
+                'use_sim_time': True,
+            }
         ],
-        parameters=[{'use_sim_time': True}],
+        output='screen',
     )
-
-    return [
-        use_sim_time_arg,
-        world_name_arg,
-        robot_state_publisher_node,
-        spawn_entity,
-    ]
+    spawn = ExecuteProcess(
+        cmd=[
+            str(helper),
+            '--world',
+            LaunchConfiguration('world_name'),
+            '--entity-name',
+            LaunchConfiguration('entity_name'),
+            '--topic',
+            '/robot_description',
+            '--x',
+            LaunchConfiguration('x'),
+            '--y',
+            LaunchConfiguration('y'),
+            '--z',
+            LaunchConfiguration('z'),
+            '--yaw',
+            LaunchConfiguration('yaw'),
+            '--timeout',
+            LaunchConfiguration('spawn_timeout'),
+        ],
+        output='screen',
+    )
+    return [state_publisher, spawn]
 
 
 def generate_launch_description():
-    return LaunchDescription([
-        OpaqueFunction(function=launch_setup),
-    ])
-
-
-if __name__ == '__main__':
-    ld = generate_launch_description()
-    ls = LaunchService()
-    ls.include_launch_description(ld)
-    ls.run()
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument(
+                'variant_config', default_value=DEFAULT_VARIANT
+            ),
+            DeclareLaunchArgument('world_name', default_value='robot_world'),
+            DeclareLaunchArgument('entity_name', default_value='malbut'),
+            DeclareLaunchArgument('spawn_timeout', default_value='60'),
+            DeclareLaunchArgument('x', default_value='0.0'),
+            DeclareLaunchArgument('y', default_value='0.0'),
+            DeclareLaunchArgument('z', default_value='0.002'),
+            DeclareLaunchArgument('yaw', default_value='0.0'),
+            OpaqueFunction(function=_launch_setup),
+        ]
+    )

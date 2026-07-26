@@ -1,89 +1,77 @@
-import os
-from ament_index_python.packages import get_package_share_directory
+from pathlib import Path
 
+import xacro
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch.conditions import IfCondition, UnlessCondition
-from launch import LaunchDescription, LaunchService
-from launch.substitutions import Command, LaunchConfiguration
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.launch_description_sources import PythonLaunchDescriptionSource
+from malbut_description.variant_config import (
+    load_variant_arguments,
+    resolve_variant_config,
+    xacro_value,
+)
+
+
+DESCRIPTION_PACKAGE = 'malbut_description'
+DEFAULT_VARIANT = 'ultimate_orin_nx_super_mecanum.yaml'
+
+
+def _as_bool(value, name):
+    normalized = value.strip().lower()
+    if normalized in {'1', 'true', 'yes', 'on'}:
+        return True
+    if normalized in {'0', 'false', 'no', 'off'}:
+        return False
+    raise RuntimeError(f'{name} must be true or false, got: {value}')
+
+
+def _launch_setup(context):
+    package_share = Path(
+        get_package_share_directory(DESCRIPTION_PACKAGE)
+    )
+    config_file = resolve_variant_config(
+        LaunchConfiguration('variant_config').perform(context),
+        package_share,
+    )
+    arguments = load_variant_arguments(config_file)
+    mappings = {
+        key: xacro_value(value) for key, value in arguments.items()
+    }
+    description = xacro.process_file(
+        str(package_share / 'urdf' / 'rosorin.xacro'),
+        mappings=mappings,
+    ).toxml()
+    use_sim_time = _as_bool(
+        LaunchConfiguration('use_sim_time').perform(context),
+        'use_sim_time',
+    )
+
+    return [
+        Node(
+            package='robot_state_publisher',
+            executable='robot_state_publisher',
+            name='robot_state_publisher',
+            parameters=[
+                {
+                    'robot_description': description,
+                    'use_sim_time': use_sim_time,
+                }
+            ],
+            output='screen',
+        )
+    ]
+
 
 def generate_launch_description():
-    use_gui = LaunchConfiguration('use_gui', default='true')
-    use_rviz = LaunchConfiguration('use_rviz', default='true')
-    namespace = LaunchConfiguration('namespace', default='')
-    use_namespace = LaunchConfiguration('use_namespace', default='false')
-    frame_prefix = LaunchConfiguration('frame_prefix', default='')
-    use_sim_time = LaunchConfiguration('use_sim_time', default='true')
-
-    use_gui_arg = DeclareLaunchArgument('use_gui', default_value=use_gui)
-    use_rviz_arg = DeclareLaunchArgument('use_rviz', default_value=use_rviz)
-    frame_prefix_arg = DeclareLaunchArgument('frame_prefix', default_value=frame_prefix)
-    use_sim_time_arg = DeclareLaunchArgument('use_sim_time', default_value=use_sim_time)
-    namespace_arg = DeclareLaunchArgument('namespace', default_value=namespace)
-    use_namespace_arg = DeclareLaunchArgument('use_namespace', default_value=use_namespace)
-
-    malbut_description_package_path = get_package_share_directory('malbut_description')
-    urdf_path = os.path.join(malbut_description_package_path, 'urdf/rosorin.xacro')
-    rviz_config_file = os.path.join(malbut_description_package_path, 'rviz/view.rviz')
-
-    robot_description = Command(['xacro ', urdf_path])
-    
-    # 动态TF转换(dynamic TF conversion)
-    joint_state_publisher_node = Node(
-        package='joint_state_publisher',
-        executable='joint_state_publisher',
-        name='joint_state_publisher',
-        output='screen',
-        condition=UnlessCondition(use_gui),
-        parameters=[{'rate': 20.0}]
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument(
+                'variant_config',
+                default_value=DEFAULT_VARIANT,
+                description='Variant YAML basename or absolute path.',
+            ),
+            DeclareLaunchArgument('use_sim_time', default_value='false'),
+            OpaqueFunction(function=_launch_setup),
+        ]
     )
-    
-    joint_state_publisher_gui_node = Node(
-        package='joint_state_publisher_gui',
-        executable='joint_state_publisher_gui',
-        name='joint_state_publisher_gui',
-        output='screen',
-        condition=IfCondition(use_gui),
-    )
-    
-    # 静态TF(static TF)
-    robot_state_publisher_node = Node(
-        package='robot_state_publisher',
-        executable='robot_state_publisher',
-        output='screen',
-        name='robot_state_publisher',
-        parameters=[{'robot_description': robot_description, 'frame_prefix': frame_prefix, 'use_sim_time': use_sim_time}],
-        arguments=[urdf_path],
-        remappings=[('/tf', 'tf'),
-                  ('/tf_static', 'tf_static')]
-    )
-
-    rviz_launch = IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(malbut_description_package_path, 'launch', 'rviz.launch.py')),
-            condition=IfCondition(use_rviz),
-            launch_arguments={
-                              'namespace': namespace,
-                              'use_namespace': use_namespace,
-                              'rviz_config': rviz_config_file}.items())
-
-    return LaunchDescription([
-        use_gui_arg,
-        use_rviz_arg,
-        frame_prefix_arg,
-        use_sim_time_arg,
-        namespace_arg,
-        use_namespace_arg,
-        joint_state_publisher_node,
-        robot_state_publisher_node,
-        joint_state_publisher_gui_node,
-        rviz_launch,
-    ])
-
-if __name__ == '__main__':
-    # 创建一个LaunchDescription对象(create a LaunchDescription object)
-    ld = generate_launch_description()
-
-    ls = LaunchService()
-    ls.include_launch_description(ld)
-    ls.run()

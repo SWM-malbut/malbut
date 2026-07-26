@@ -1,123 +1,92 @@
 #!/usr/bin/env python3
-# encoding: utf-8
-import math
+"""Small keyboard teleop for the ROSOrin Mecanum command interface."""
+
+import select
+import sys
+import termios
+import tty
+
+from geometry_msgs.msg import Twist
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
-
-import sys, select, os
-if os.name == 'nt':
-  import msvcrt, time
-else:
-  import tty, termios
-
-if os.name != 'nt':
-    settings = termios.tcgetattr(sys.stdin)
 
 
-LIN_VEL = 1.0
-ANG_VEL = 1.5
-
-
-msg = """
-Control Your Robot!
----------------------------
-Moving around:
-        w
-   a    s    d
-CTRL-C to quit
+HELP = """
+Malbut Mecanum teleop
+---------------------
+  w / s : forward / backward
+  a / d : strafe left / right
+  q / e : rotate left / right
+  space : stop
+  Ctrl-C: quit
 """
 
-def getKey(settings):
-    if os.name == 'nt':
-        timeout = 0.1
-        startTime = rospy.get_time()
-        while True:
-            if msvcrt.kbhit():
-                if sys.version_info[0] >= 3:
-                    return msvcrt.getch().decode()
-                else:
-                    return msvcrt.getch()
-            elif time.time() - startTime > timeout:
-                return ''
 
+def _read_key(settings, timeout=0.1):
     tty.setraw(sys.stdin.fileno())
-    rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
-    if rlist:
-        key = sys.stdin.read(1)
-    else:
-        key = ''
+    try:
+        ready, _, _ = select.select([sys.stdin], [], [], timeout)
+        return sys.stdin.read(1) if ready else ''
+    finally:
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
 
-    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
-    return key
 
 class TeleopControl(Node):
-    def __init__(self, name):
-        rclpy.init()
-        super().__init__(name)
+    """Publish geometry_msgs/Twist commands on the canonical /cmd_vel topic."""
 
-        self.cmd_vel = self.create_publisher(Twist,"controller/cmd_vel", 1)
+    def __init__(self):
+        super().__init__('malbut_mecanum_teleop')
+        self.declare_parameter('linear_speed', 0.3)
+        self.declare_parameter('angular_speed', 0.8)
+        self.declare_parameter('cmd_vel_topic', '/cmd_vel')
+        topic = self.get_parameter('cmd_vel_topic').value
+        self.linear_speed = float(
+            self.get_parameter('linear_speed').value
+        )
+        self.angular_speed = float(
+            self.get_parameter('angular_speed').value
+        )
+        self.publisher = self.create_publisher(Twist, topic, 10)
 
-        control_linear_vel = 0.0
-        control_angular_vel = 0.0
-        last_x = 0
-        last_z = 0
-        count = 0
+    def command_for(self, key):
+        """Return the Mecanum command associated with one keyboard key."""
+        command = Twist()
+        if key == 'w':
+            command.linear.x = self.linear_speed
+        elif key == 's':
+            command.linear.x = -self.linear_speed
+        elif key == 'a':
+            command.linear.y = self.linear_speed
+        elif key == 'd':
+            command.linear.y = -self.linear_speed
+        elif key == 'q':
+            command.angular.z = self.angular_speed
+        elif key == 'e':
+            command.angular.z = -self.angular_speed
+        return command
 
-        try:
-            print(msg)
-            while rclpy.ok():
-                key = getKey(settings)
-                if key == 'w':
-                    control_linear_vel = LIN_VEL
-                elif key == 'a':
-                    control_angular_vel = ANG_VEL
-                    control_linear_vel = 0.0
-                elif key == 'd':
-                    control_angular_vel = -ANG_VEL
-                    control_linear_vel = 0.0
-                elif key == 's':
-                    control_linear_vel = -LIN_VEL
-                elif key == '':
-                    control_linear_vel = 0.0
-                    control_angular_vel = 0.0
-                else:
-                    if (key == '\x03'):
-                        break
-                twist = Twist()
 
-                twist.linear.x = control_linear_vel
-                twist.linear.y = 0.0
-                twist.linear.z = 0.0
+def main(args=None):
+    if not sys.stdin.isatty():
+        raise RuntimeError('teleop_key_control requires an interactive terminal')
 
-                twist.angular.x = 0.0
-                twist.angular.y = 0.0
-                twist.angular.z = control_angular_vel
+    rclpy.init(args=args)
+    node = TeleopControl()
+    settings = termios.tcgetattr(sys.stdin)
+    try:
+        print(HELP)
+        while rclpy.ok():
+            key = _read_key(settings)
+            if key == '\x03':
+                break
+            node.publisher.publish(node.command_for(key))
+            rclpy.spin_once(node, timeout_sec=0.0)
+    finally:
+        node.publisher.publish(Twist())
+        node.destroy_node()
+        rclpy.shutdown()
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
 
-                if last_x != control_linear_vel or last_z != control_angular_vel or control_angular_vel != 0:
-                    self.cmd_vel.publish(twist)
-                
-                last_x = control_linear_vel
-                last_z = control_angular_vel
-        except BaseException as e:
-            print(e)
 
-        finally:
-            twist = Twist()
-            twist.linear.x = 0.0
-            twist.linear.y = 0.0
-            twist.linear.z = 0.0
-            twist.angular.x = 0.0
-            twist.angular.y = 0.0
-            twist.angular.z = 0.0
-            self.cmd_vel.publish(twist)
-
-        if os.name != 'nt':
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
-
-def main():
-    node = TeleopControl('teleop_control')
-    rclpy.spin(node)  # 循环等待ROS2退出
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

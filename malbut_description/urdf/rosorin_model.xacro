@@ -1,0 +1,182 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:include filename="$(find malbut_description)/urdf/materials.xacro"/>
+  <xacro:include filename="$(find malbut_description)/urdf/components/inertial.xacro"/>
+  <xacro:include filename="$(find malbut_description)/urdf/components/mecanum_base.xacro"/>
+  <xacro:include filename="$(find malbut_description)/urdf/components/sensors.xacro"/>
+
+  <xacro:arg name="overall_length" default="0.277"/>
+  <xacro:arg name="overall_width" default="0.212"/>
+  <xacro:arg name="overall_height" default="0.166"/>
+  <xacro:arg name="total_mass" default="2.66"/>
+
+  <xacro:arg name="wheelbase" default="0.171647"/>
+  <xacro:arg name="wheel_separation" default="0.17364"/>
+  <xacro:arg name="wheel_radius" default="0.040"/>
+  <xacro:arg name="wheel_width" default="0.03808"/>
+  <xacro:arg name="wheel_joint_damping" default="0.02"/>
+  <xacro:arg name="wheel_joint_friction" default="0.0"/>
+  <xacro:arg name="wheel_surface_mu1" default="1.0"/>
+  <xacro:arg name="wheel_surface_mu2" default="0.0"/>
+  <xacro:arg name="drive_min_acceleration" default="-2.0"/>
+  <xacro:arg name="drive_max_acceleration" default="2.0"/>
+  <xacro:arg name="drive_min_velocity" default="-1.5"/>
+  <xacro:arg name="drive_max_velocity" default="1.5"/>
+  <xacro:arg name="odom_publish_frequency" default="50.0"/>
+
+  <xacro:arg name="base_mass" default="1.35"/>
+  <xacro:arg name="base_length" default="0.274"/>
+  <xacro:arg name="base_width" default="0.164"/>
+  <xacro:arg name="base_height" default="0.050"/>
+  <xacro:arg name="base_center_z" default="0.0"/>
+  <xacro:arg name="upper_body_mass" default="0.813"/>
+  <xacro:arg name="upper_body_length" default="0.170"/>
+  <xacro:arg name="upper_body_width" default="0.135"/>
+  <xacro:arg name="upper_body_height" default="0.085"/>
+  <xacro:arg name="upper_body_x" default="-0.012"/>
+  <xacro:arg name="upper_body_z" default="0.0825"/>
+  <xacro:arg name="wheel_mass" default="0.10"/>
+
+  <xacro:arg name="camera_x" default="0.057373"/>
+  <xacro:arg name="camera_y" default="0.000079"/>
+  <xacro:arg name="camera_z" default="0.079864"/>
+  <xacro:arg name="camera_roll" default="0.0"/>
+  <xacro:arg name="camera_pitch" default="0.0"/>
+  <xacro:arg name="camera_yaw" default="0.0"/>
+  <xacro:arg name="camera_width" default="640"/>
+  <xacro:arg name="camera_height" default="400"/>
+  <xacro:arg name="camera_rate" default="12.0"/>
+  <xacro:arg name="camera_hfov" default="1.291543646"/>
+  <xacro:arg name="camera_near" default="0.15"/>
+  <xacro:arg name="camera_far" default="3.0"/>
+  <xacro:arg name="camera_mass" default="0.030"/>
+  <xacro:arg name="camera_size_x" default="0.0207"/>
+  <xacro:arg name="camera_size_y" default="0.0765"/>
+  <xacro:arg name="camera_size_z" default="0.0218"/>
+
+  <xacro:arg name="lidar_x" default="0.011476"/>
+  <xacro:arg name="lidar_y" default="0.000074"/>
+  <xacro:arg name="lidar_z" default="0.1086"/>
+  <xacro:arg name="lidar_roll" default="0.0"/>
+  <xacro:arg name="lidar_pitch" default="0.0"/>
+  <xacro:arg name="lidar_yaw" default="0.0"/>
+  <xacro:arg name="lidar_samples" default="500"/>
+  <xacro:arg name="lidar_rate" default="10.0"/>
+  <xacro:arg name="lidar_min_range" default="0.03"/>
+  <xacro:arg name="lidar_max_range" default="8.0"/>
+  <xacro:arg name="lidar_range_resolution" default="0.01"/>
+  <xacro:arg name="lidar_noise_stddev" default="0.015"/>
+  <xacro:arg name="lidar_mass" default="0.042"/>
+  <xacro:arg name="lidar_diameter" default="0.03859"/>
+  <xacro:arg name="lidar_height" default="0.0348"/>
+
+  <xacro:arg name="imu_x" default="0.04"/>
+  <xacro:arg name="imu_y" default="-0.015"/>
+  <xacro:arg name="imu_z" default="0.050"/>
+  <xacro:arg name="imu_roll" default="0.0"/>
+  <xacro:arg name="imu_pitch" default="0.0"/>
+  <xacro:arg name="imu_yaw" default="1.570796327"/>
+  <xacro:arg name="imu_rate" default="50.0"/>
+  <xacro:arg name="imu_mass" default="0.005"/>
+  <xacro:arg name="imu_size_x" default="0.025"/>
+  <xacro:arg name="imu_size_y" default="0.020"/>
+  <xacro:arg name="imu_size_z" default="0.005"/>
+
+  <xacro:arg name="microphone_x" default="-0.069"/>
+  <xacro:arg name="microphone_y" default="0.0"/>
+  <xacro:arg name="microphone_z" default="0.109"/>
+  <xacro:arg name="microphone_mass" default="0.020"/>
+  <xacro:arg name="microphone_diameter" default="0.104"/>
+  <xacro:arg name="microphone_height" default="0.003"/>
+
+  <xacro:property name="overall_length" value="$(arg overall_length)"/>
+  <xacro:property name="overall_width" value="$(arg overall_width)"/>
+  <xacro:property name="overall_height" value="$(arg overall_height)"/>
+  <xacro:property name="total_mass" value="$(arg total_mass)"/>
+
+  <xacro:property name="wheelbase" value="$(arg wheelbase)"/>
+  <xacro:property name="wheel_separation" value="$(arg wheel_separation)"/>
+  <xacro:property name="wheel_radius" value="$(arg wheel_radius)"/>
+  <xacro:property name="wheel_width" value="$(arg wheel_width)"/>
+  <xacro:property name="wheel_joint_damping" value="$(arg wheel_joint_damping)"/>
+  <xacro:property name="wheel_joint_friction" value="$(arg wheel_joint_friction)"/>
+  <xacro:property name="wheel_surface_mu1" value="$(arg wheel_surface_mu1)"/>
+  <xacro:property name="wheel_surface_mu2" value="$(arg wheel_surface_mu2)"/>
+  <xacro:property name="drive_min_acceleration" value="$(arg drive_min_acceleration)"/>
+  <xacro:property name="drive_max_acceleration" value="$(arg drive_max_acceleration)"/>
+  <xacro:property name="drive_min_velocity" value="$(arg drive_min_velocity)"/>
+  <xacro:property name="drive_max_velocity" value="$(arg drive_max_velocity)"/>
+  <xacro:property name="odom_publish_frequency" value="$(arg odom_publish_frequency)"/>
+
+  <!-- Component masses are validated against total_mass by the main launch. -->
+  <xacro:property name="base_mass" value="$(arg base_mass)"/>
+  <xacro:property name="upper_body_mass" value="$(arg upper_body_mass)"/>
+  <xacro:property name="wheel_mass" value="$(arg wheel_mass)"/>
+  <xacro:property name="camera_mass" value="$(arg camera_mass)"/>
+  <xacro:property name="lidar_mass" value="$(arg lidar_mass)"/>
+  <xacro:property name="imu_mass" value="$(arg imu_mass)"/>
+  <xacro:property name="microphone_mass" value="$(arg microphone_mass)"/>
+
+  <xacro:property name="base_length" value="$(arg base_length)"/>
+  <xacro:property name="base_width" value="$(arg base_width)"/>
+  <xacro:property name="base_height" value="$(arg base_height)"/>
+  <xacro:property name="base_center_z" value="$(arg base_center_z)"/>
+  <xacro:property name="upper_body_length" value="$(arg upper_body_length)"/>
+  <xacro:property name="upper_body_width" value="$(arg upper_body_width)"/>
+  <xacro:property name="upper_body_height" value="$(arg upper_body_height)"/>
+  <xacro:property name="upper_body_x" value="$(arg upper_body_x)"/>
+  <xacro:property name="upper_body_z" value="$(arg upper_body_z)"/>
+
+  <xacro:property name="camera_x" value="$(arg camera_x)"/>
+  <xacro:property name="camera_y" value="$(arg camera_y)"/>
+  <xacro:property name="camera_z" value="$(arg camera_z)"/>
+  <xacro:property name="camera_roll" value="$(arg camera_roll)"/>
+  <xacro:property name="camera_pitch" value="$(arg camera_pitch)"/>
+  <xacro:property name="camera_yaw" value="$(arg camera_yaw)"/>
+  <xacro:property name="camera_width_px" value="$(arg camera_width)"/>
+  <xacro:property name="camera_height_px" value="$(arg camera_height)"/>
+  <xacro:property name="camera_rate" value="$(arg camera_rate)"/>
+  <xacro:property name="camera_hfov" value="$(arg camera_hfov)"/>
+  <xacro:property name="camera_near" value="$(arg camera_near)"/>
+  <xacro:property name="camera_far" value="$(arg camera_far)"/>
+  <xacro:property name="camera_width_m" value="$(arg camera_size_y)"/>
+  <xacro:property name="camera_depth" value="$(arg camera_size_x)"/>
+  <xacro:property name="camera_height_m" value="$(arg camera_size_z)"/>
+
+  <xacro:property name="lidar_x" value="$(arg lidar_x)"/>
+  <xacro:property name="lidar_y" value="$(arg lidar_y)"/>
+  <xacro:property name="lidar_z" value="$(arg lidar_z)"/>
+  <xacro:property name="lidar_roll" value="$(arg lidar_roll)"/>
+  <xacro:property name="lidar_pitch" value="$(arg lidar_pitch)"/>
+  <xacro:property name="lidar_yaw" value="$(arg lidar_yaw)"/>
+  <xacro:property name="lidar_samples" value="$(arg lidar_samples)"/>
+  <xacro:property name="lidar_rate" value="$(arg lidar_rate)"/>
+  <xacro:property name="lidar_min_range" value="$(arg lidar_min_range)"/>
+  <xacro:property name="lidar_max_range" value="$(arg lidar_max_range)"/>
+  <xacro:property name="lidar_range_resolution" value="$(arg lidar_range_resolution)"/>
+  <xacro:property name="lidar_noise_stddev" value="$(arg lidar_noise_stddev)"/>
+  <xacro:property name="lidar_radius" value="${float('$(arg lidar_diameter)') / 2.0}"/>
+  <xacro:property name="lidar_height" value="$(arg lidar_height)"/>
+
+  <xacro:property name="imu_x" value="$(arg imu_x)"/>
+  <xacro:property name="imu_y" value="$(arg imu_y)"/>
+  <xacro:property name="imu_z" value="$(arg imu_z)"/>
+  <xacro:property name="imu_roll" value="$(arg imu_roll)"/>
+  <xacro:property name="imu_pitch" value="$(arg imu_pitch)"/>
+  <xacro:property name="imu_yaw" value="$(arg imu_yaw)"/>
+  <xacro:property name="imu_rate" value="$(arg imu_rate)"/>
+  <xacro:property name="imu_length" value="$(arg imu_size_x)"/>
+  <xacro:property name="imu_width" value="$(arg imu_size_y)"/>
+  <xacro:property name="imu_height" value="$(arg imu_size_z)"/>
+
+  <xacro:property name="microphone_x" value="$(arg microphone_x)"/>
+  <xacro:property name="microphone_y" value="$(arg microphone_y)"/>
+  <xacro:property name="microphone_z" value="$(arg microphone_z)"/>
+  <xacro:property name="microphone_radius" value="${float('$(arg microphone_diameter)') / 2.0}"/>
+  <xacro:property name="microphone_height" value="$(arg microphone_height)"/>
+
+  <xacro:macro name="rosorin_model">
+    <xacro:rosorin_mecanum_base/>
+    <xacro:rosorin_sensors/>
+  </xacro:macro>
+</robot>

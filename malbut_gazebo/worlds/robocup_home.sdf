@@ -111,7 +111,7 @@
 
           <!-- Teleop -->
           <plugin filename="Teleop" name="ignition::gui::plugins::Teleop">
-            <topic>/controller/cmd_vel</topic>
+            <topic>/cmd_vel</topic>
             <ignition-gui>
               <property type="bool" key="showTitleBar">true</property>
               <property type="string" key="state">docked</property>
