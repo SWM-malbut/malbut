@@ -1,0 +1,49 @@
+name: PR Guard
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+env:
+  JIRA_PROJECT_KEY: SWM25
+
+jobs:
+  jira-key:
+    name: Jira key check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate branch name
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          PATTERN="^(feat|feature|fix|refactor|docs|test|chore|perf|ci)/${JIRA_PROJECT_KEY}-[0-9]+-[A-Za-z0-9._-]+$"
+          if ! printf '%s' "$BRANCH" | grep -Eq "$PATTERN"; then
+            echo "::error::branch name does not match <type>/${JIRA_PROJECT_KEY}-<number>-<description>"
+            exit 1
+          fi
+      - name: Validate PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          TYPES="feat|feature|fix|refactor|docs|test|chore|perf|ci"
+          CONVENTIONAL="^(${TYPES})\(${JIRA_PROJECT_KEY}-[0-9]+\): .+"
+          BRACKET="^\[${JIRA_PROJECT_KEY}-[0-9]+\] .+"
+          if ! printf '%s' "$TITLE" | grep -Eq "${CONVENTIONAL}|${BRACKET}"; then
+            echo "::error::PR title must contain a ${JIRA_PROJECT_KEY} issue key"
+            exit 1
+          fi
+
+      - name: Match branch and PR issue keys
+        env:
+          BRANCH: ${{ github.head_ref }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          BRANCH_ISSUE=$(printf '%s' "$BRANCH" | grep -oE "${JIRA_PROJECT_KEY}-[0-9]+" | head -1)
+          TITLE_ISSUE=$(printf '%s' "$TITLE" | grep -oE "${JIRA_PROJECT_KEY}-[0-9]+" | head -1)
+          if [ "$BRANCH_ISSUE" != "$TITLE_ISSUE" ]; then
+            echo "::error::branch and PR title reference different Jira issues"
+            exit 1
+          fi
