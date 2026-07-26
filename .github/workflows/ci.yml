@@ -62,7 +62,10 @@ jobs:
           fi
           rosdep update
           rosdep install --from-paths . --ignore-src --rosdistro humble \
-            --dependency-types build,buildtool,build_export -r -y
+            --dependency-types build \
+            --dependency-types buildtool \
+            --dependency-types build_export \
+            -r -y
 
       - name: Build ROS packages
         shell: bash
