@@ -38,6 +38,33 @@ default is the upstream test location
 `room_worlds.launch.py` remains as a compatibility entry point and now opens
 `small_house` by default.
 
+## SLAM mapping
+
+Start the household world, robot, ROS-Gazebo bridge, SLAM Toolbox, and the
+project RViz mapping view with one command:
+
+```bash
+ros2 launch malbut_gazebo slam.launch.py
+```
+
+Use the controlled test arena instead:
+
+```bash
+ros2 launch malbut_gazebo slam.launch.py world_name:=test_arena
+```
+
+For a headless mapping run without either GUI:
+
+```bash
+ros2 launch malbut_gazebo slam.launch.py \
+  gui:=false headless:=true rviz:=false
+```
+
+Drive the robot from Gazebo's Teleop panel to extend the map. RViz shows the
+occupancy map on `/map` and the current LiDAR measurements on `/scan`.
+`slam_params_file:=...` and `rviz_config:=...` can override the checked-in
+defaults when later tuning is required.
+
 ## AWS Small House
 
 The detailed home is adapted from
