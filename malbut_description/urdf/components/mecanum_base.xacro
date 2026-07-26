@@ -1,0 +1,102 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="mecanum_wheel" params="name x y mass">
+    <link name="${name}_wheel_link">
+      <xacro:wheel_y_inertial mass="${mass}" radius="${wheel_radius}" width="${wheel_width}"/>
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2.0} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="rosorin_dark"/>
+      </visual>
+      <!--
+        Fortress' MecanumDrive reference uses a sphere contact proxy so the
+        wheel can develop the commanded lateral velocity. The cylinder above
+        remains the published visual envelope; roller geometry is a tuning task.
+      -->
+      <collision>
+        <geometry>
+          <sphere radius="${wheel_radius}"/>
+        </geometry>
+      </collision>
+    </link>
+    <joint name="${name}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${name}_wheel_link"/>
+      <origin xyz="${x} ${y} 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <dynamics
+        damping="${wheel_joint_damping}"
+        friction="${wheel_joint_friction}"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="rosorin_mecanum_base">
+    <link name="base_footprint"/>
+
+    <link name="base_link">
+      <xacro:box_inertial mass="${base_mass}" x="${base_length}" y="${base_width}" z="${base_height}"/>
+      <visual>
+        <origin xyz="0 0 ${base_center_z}" rpy="0 0 0"/>
+        <geometry>
+          <box size="${base_length} ${base_width} ${base_height}"/>
+        </geometry>
+        <material name="rosorin_orange"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${base_center_z}" rpy="0 0 0"/>
+        <geometry>
+          <box size="${base_length} ${base_width} ${base_height}"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="base_footprint_joint" type="fixed">
+      <parent link="base_footprint"/>
+      <child link="base_link"/>
+      <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+    </joint>
+
+    <link name="upper_body_link">
+      <xacro:box_inertial mass="${upper_body_mass}" x="${upper_body_length}" y="${upper_body_width}" z="${upper_body_height}"/>
+      <visual>
+        <geometry>
+          <box size="${upper_body_length} ${upper_body_width} ${upper_body_height}"/>
+        </geometry>
+        <material name="rosorin_aluminum"/>
+      </visual>
+      <collision>
+        <geometry>
+          <box size="${upper_body_length} ${upper_body_width} ${upper_body_height}"/>
+        </geometry>
+      </collision>
+    </link>
+    <joint name="upper_body_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="upper_body_link"/>
+      <origin xyz="${upper_body_x} 0 ${upper_body_z}" rpy="0 0 0"/>
+    </joint>
+
+    <xacro:mecanum_wheel
+      name="front_left"
+      x="${wheelbase/2.0}"
+      y="${wheel_separation/2.0}"
+      mass="${wheel_mass}"/>
+    <xacro:mecanum_wheel
+      name="front_right"
+      x="${wheelbase/2.0}"
+      y="${-wheel_separation/2.0}"
+      mass="${wheel_mass}"/>
+    <xacro:mecanum_wheel
+      name="rear_left"
+      x="${-wheelbase/2.0}"
+      y="${wheel_separation/2.0}"
+      mass="${wheel_mass}"/>
+    <xacro:mecanum_wheel
+      name="rear_right"
+      x="${-wheelbase/2.0}"
+      y="${-wheel_separation/2.0}"
+      mass="${wheel_mass}"/>
+  </xacro:macro>
+</robot>

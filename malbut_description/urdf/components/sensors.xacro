@@ -1,0 +1,92 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="rosorin_sensors">
+    <!-- Aurora930 Pro enclosure: width x depth x height = 76.5 x 20.7 x 21.8 mm. -->
+    <link name="camera_link">
+      <xacro:box_inertial mass="${camera_mass}" x="${camera_depth}" y="${camera_width_m}" z="${camera_height_m}"/>
+      <visual>
+        <geometry>
+          <box size="${camera_depth} ${camera_width_m} ${camera_height_m}"/>
+        </geometry>
+        <material name="rosorin_sensor"/>
+      </visual>
+      <collision>
+        <geometry>
+          <box size="${camera_depth} ${camera_width_m} ${camera_height_m}"/>
+        </geometry>
+      </collision>
+    </link>
+    <joint name="camera_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="camera_link"/>
+      <origin
+        xyz="${camera_x} ${camera_y} ${camera_z}"
+        rpy="${camera_roll} ${camera_pitch} ${camera_yaw}"/>
+    </joint>
+
+    <link name="camera_depth_optical_frame"/>
+    <joint name="camera_depth_optical_joint" type="fixed">
+      <parent link="camera_link"/>
+      <child link="camera_depth_optical_frame"/>
+      <origin xyz="0 0 0" rpy="${-pi/2.0} 0 ${-pi/2.0}"/>
+    </joint>
+
+    <!-- STL-19P D500 envelope: 38.59 x 38.59 x 34.8 mm, 42 g. -->
+    <link name="laser_frame">
+      <xacro:cylinder_z_inertial mass="${lidar_mass}" radius="${lidar_radius}" length="${lidar_height}"/>
+      <visual>
+        <geometry>
+          <cylinder radius="${lidar_radius}" length="${lidar_height}"/>
+        </geometry>
+        <material name="rosorin_sensor"/>
+      </visual>
+      <collision>
+        <geometry>
+          <cylinder radius="${lidar_radius}" length="${lidar_height}"/>
+        </geometry>
+      </collision>
+    </link>
+    <joint name="laser_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="laser_frame"/>
+      <origin
+        xyz="${lidar_x} ${lidar_y} ${lidar_z}"
+        rpy="${lidar_roll} ${lidar_pitch} ${lidar_yaw}"/>
+    </joint>
+
+    <link name="imu_link">
+      <xacro:box_inertial mass="${imu_mass}" x="${imu_length}" y="${imu_width}" z="${imu_height}"/>
+      <visual>
+        <geometry>
+          <box size="${imu_length} ${imu_width} ${imu_height}"/>
+        </geometry>
+        <material name="rosorin_sensor"/>
+      </visual>
+    </link>
+    <joint name="imu_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="imu_link"/>
+      <origin
+        xyz="${imu_x} ${imu_y} ${imu_z}"
+        rpy="${imu_roll} ${imu_pitch} ${imu_yaw}"/>
+    </joint>
+
+    <!-- Structural frame only. Acoustic / beam-forming simulation is out of scope. -->
+    <link name="microphone_link">
+      <xacro:cylinder_z_inertial mass="${microphone_mass}" radius="${microphone_radius}" length="${microphone_height}"/>
+      <visual>
+        <geometry>
+          <cylinder radius="${microphone_radius}" length="${microphone_height}"/>
+        </geometry>
+        <material name="rosorin_dark"/>
+      </visual>
+    </link>
+    <joint name="microphone_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="microphone_link"/>
+      <origin
+        xyz="${microphone_x} ${microphone_y} ${microphone_z}"
+        rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+</robot>

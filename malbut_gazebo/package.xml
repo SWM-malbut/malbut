@@ -3,7 +3,9 @@
 <package format="3">
   <name>malbut_gazebo</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>
+    Gazebo Fortress simulation and ROS bridges for the Malbut ROSOrin model.
+  </description>
   <maintainer email="ubuntu@todo.todo">ubuntu</maintainer>
   <license>TODO: License declaration</license>
 
@@ -27,10 +29,15 @@
   <exec_depend>nav2_velocity_smoother</exec_depend>
   <exec_depend>nav2_waypoint_follower</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <exec_depend>rclcpp_components</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>ros_gz_interfaces</exec_depend>
   <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros2cli</exec_depend>
+  <exec_depend>ros2run</exec_depend>
+  <exec_depend>ros2topic</exec_depend>
   <exec_depend>rosgraph_msgs</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>

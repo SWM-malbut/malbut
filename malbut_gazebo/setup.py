@@ -48,11 +48,12 @@ setup(
     zip_safe=True,
     maintainer='ubuntu',
     maintainer_email='ubuntu@todo.todo',
-    description='TODO: Package description',
+    description='Gazebo Fortress integration for the Malbut ROSOrin model',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'spawn_when_ready = malbut_gazebo.spawn_when_ready:main',
             'teleop_key_control = malbut_gazebo.teleop_key_control:main',
         ],
     },
