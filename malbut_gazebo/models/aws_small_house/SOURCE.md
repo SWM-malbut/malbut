@@ -1,0 +1,46 @@
+# AWS Small House import record
+
+- Upstream repository:
+  <https://github.com/aws-robotics/aws-robomaker-small-house-world>
+- Upstream commit: `ff9631ca6d1db9c1ba656498151464b5ab74aafe`
+- Commit date: 2021-08-20
+- Imported on: 2026-07-26
+- Upstream world: `worlds/small_house.world`
+- License: the adjacent `LICENSE` file is copied verbatim from the commit
+
+## Selected content
+
+The adapted `small_house.sdf` references 67 static instances from 43 unique
+upstream model directories. Only those 43 directories were copied.
+
+The import intentionally excludes:
+
+- all 20 `Portrait` and `DeskPortrait` model variants;
+- the upstream `photos/` directory;
+- five model directories not used by the adapted world;
+- four unused Collada source exports containing broken Windows-local texture
+  paths.
+
+No AWS launch file, ROS package manifest, map, route, or Gazebo Classic
+dependency was imported.
+
+## Local adaptations
+
+- Added Gazebo Fortress Physics, UserCommands, SceneBroadcaster, Sensors, and
+  Imu systems.
+- Renamed the SDF world from `default` to `small_house`.
+- Removed all portrait model instances.
+- Replaced 67 nested `<model><include>` wrappers with top-level `<include>`
+  instances. This preserves each model name and pose while avoiding invalid
+  nested visual-parent relationships in Gazebo Fortress.
+- Removed empty legacy pose frame attributes and changed the physics engine
+  selector to Fortress's engine-neutral `type="ignored"`.
+- Corrected the ShoeRack inertia typo from a duplicate `ixx` element to
+  `izz`; this is required for libsdformat validation.
+- Replaced the Dumbbell's invalid zero axial inertia with a small positive
+  value; the object remains static in this world.
+- Added package-relative Fortress resource paths in `worlds.launch.py`.
+
+The upstream package manifest says `Apache 2.0`, but the upstream `LICENSE`
+file contains MIT-style permission terms. Both facts are recorded here; the
+license text itself has not been rewritten.

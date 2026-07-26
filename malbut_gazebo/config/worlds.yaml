@@ -1,0 +1,32 @@
+schema_version: 1
+
+worlds:
+  empty:
+    file: empty.sdf
+    purpose: Robot physics baseline on a flat floor
+    release_status: ready
+    spawn:
+      x: 0.0
+      y: 0.0
+      z: 0.002
+      yaw: 0.0
+
+  test_arena:
+    file: test_arena.sdf
+    purpose: Controlled collision, LiDAR, camera, and ramp checks
+    release_status: ready
+    spawn:
+      x: 0.0
+      y: 0.0
+      z: 0.002
+      yaw: 0.0
+
+  small_house:
+    file: small_house.sdf
+    purpose: Detailed multi-room home scenario
+    release_status: ready_with_third_party_notice
+    spawn:
+      x: -3.665503
+      y: -0.4874
+      z: 0.002
+      yaw: 0.0

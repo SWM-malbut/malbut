@@ -85,7 +85,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 'variant_config', default_value=DEFAULT_VARIANT
             ),
-            DeclareLaunchArgument('world_name', default_value='robot_world'),
+            DeclareLaunchArgument('world_name', default_value='empty'),
             DeclareLaunchArgument('entity_name', default_value='malbut'),
             DeclareLaunchArgument('spawn_timeout', default_value='60'),
             DeclareLaunchArgument('x', default_value='0.0'),

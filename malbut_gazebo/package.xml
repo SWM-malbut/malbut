@@ -4,7 +4,7 @@
   <name>malbut_gazebo</name>
   <version>0.0.0</version>
   <description>
-    Gazebo Fortress simulation and ROS bridges for the Malbut ROSOrin model.
+    Gazebo Fortress robot integration and household environments for Malbut.
   </description>
   <maintainer email="ubuntu@todo.todo">ubuntu</maintainer>
   <license>TODO: License declaration</license>
