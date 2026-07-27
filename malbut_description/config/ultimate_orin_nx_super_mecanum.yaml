@@ -65,7 +65,9 @@ xacro:
     camera_rate: 12.0
     camera_hfov: 1.291543646
     camera_near: 0.15
-    camera_far: 3.0
+    camera_far: 30.0
+    depth_camera_near: 0.3
+    depth_camera_far: 3.0
     camera_mass: 0.030
     camera_size_x: 0.0207
     camera_size_y: 0.0765
@@ -116,8 +118,8 @@ verification:
     - camera_height
     - camera_rate
     - camera_hfov
-    - camera_near
-    - camera_far
+    - depth_camera_near
+    - depth_camera_far
     - camera_size_x
     - camera_size_y
     - camera_size_z
@@ -163,6 +165,8 @@ verification:
     - camera_roll
     - camera_pitch
     - camera_yaw
+    - camera_near
+    - camera_far
     - lidar_x
     - lidar_y
     - lidar_z

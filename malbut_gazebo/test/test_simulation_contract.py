@@ -73,7 +73,16 @@ def test_sensor_plugins_match_selected_hardware_baseline():
     assert lidar.findtext('topic') == '/scan'
     assert float(lidar.findtext('.//min_angle')) < -3.14
     assert float(lidar.findtext('.//max_angle')) > 3.14
-    assert sensors['aurora930_pro'].get('type') == 'rgbd_camera'
+    camera = sensors['aurora930_pro']
+    assert camera.get('type') == 'rgbd_camera'
+    assert float(camera.findtext('./camera/clip/near')) == 0.15
+    assert float(camera.findtext('./camera/clip/far')) == 30.0
+    assert float(
+        camera.findtext('./camera/depth_camera/clip/near')
+    ) == 0.3
+    assert float(
+        camera.findtext('./camera/depth_camera/clip/far')
+    ) == 3.0
     assert sensors['controller_imu'].findtext('topic') == '/imu'
 
 
