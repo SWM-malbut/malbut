@@ -48,7 +48,9 @@
   <xacro:arg name="camera_rate" default="12.0"/>
   <xacro:arg name="camera_hfov" default="1.291543646"/>
   <xacro:arg name="camera_near" default="0.15"/>
-  <xacro:arg name="camera_far" default="3.0"/>
+  <xacro:arg name="camera_far" default="30.0"/>
+  <xacro:arg name="depth_camera_near" default="0.3"/>
+  <xacro:arg name="depth_camera_far" default="3.0"/>
   <xacro:arg name="camera_mass" default="0.030"/>
   <xacro:arg name="camera_size_x" default="0.0207"/>
   <xacro:arg name="camera_size_y" default="0.0765"/>
@@ -139,6 +141,8 @@
   <xacro:property name="camera_hfov" value="$(arg camera_hfov)"/>
   <xacro:property name="camera_near" value="$(arg camera_near)"/>
   <xacro:property name="camera_far" value="$(arg camera_far)"/>
+  <xacro:property name="depth_camera_near" value="$(arg depth_camera_near)"/>
+  <xacro:property name="depth_camera_far" value="$(arg depth_camera_far)"/>
   <xacro:property name="camera_width_m" value="$(arg camera_size_y)"/>
   <xacro:property name="camera_depth" value="$(arg camera_size_x)"/>
   <xacro:property name="camera_height_m" value="$(arg camera_size_z)"/>

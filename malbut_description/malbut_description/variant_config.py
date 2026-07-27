@@ -54,6 +54,8 @@ EXPECTED_ARGUMENTS = frozenset(
         "camera_hfov",
         "camera_near",
         "camera_far",
+        "depth_camera_near",
+        "depth_camera_far",
         "camera_mass",
         "camera_size_x",
         "camera_size_y",
@@ -120,6 +122,8 @@ POSITIVE_ARGUMENTS = frozenset(
         "camera_hfov",
         "camera_near",
         "camera_far",
+        "depth_camera_near",
+        "depth_camera_far",
         "camera_mass",
         "camera_size_x",
         "camera_size_y",
@@ -367,6 +371,10 @@ def load_variant_arguments(source: Path) -> dict[str, int | float]:
         require(
             values["camera_near"] < values["camera_far"],
             "camera_near must be below camera_far",
+        )
+        require(
+            values["depth_camera_near"] < values["depth_camera_far"],
+            "depth_camera_near must be below depth_camera_far",
         )
         require(
             values["lidar_min_range"] < values["lidar_max_range"],
