@@ -5,6 +5,7 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 저장소: [SWM-malbut/malbut](https://github.com/SWM-malbut/malbut)
 - 로봇 모델 패키지: `malbut_description`
 - 시뮬레이션 패키지: `malbut_gazebo`
+- 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
 
 ## 1. 기준 환경
 
@@ -196,7 +197,46 @@ export DEPTH_CAMERA_TYPE=Dabai
 unset DEPTH_CAMERA_TYPE
 ```
 
-## 7. 수정 후 다시 빌드
+## 7. 홈캠 영상 스트리밍
+
+기존 ROS 2/Gazebo 기반 환경을 설치한 팀원은 기반 환경을 다시 설치하지
+않습니다. 저장소를 업데이트한 뒤 홈캠 전용 의존성을 설치하고 현재
+시뮬레이션·홈캠 패키지를 빌드합니다.
+
+```bash
+cd ~/ros2_ws/src/malbut
+git pull
+
+./homecam_agent/scripts/setup_portable_sim.sh
+./homecam_agent/scripts/run_gazebo_homecam.sh --check-only
+```
+
+`--check-only`는 장치 자격 증명 없이 `small_house`를 실행하고 RGB,
+CameraInfo 및 실제 카메라 프레임 수신을 확인한 뒤 종료합니다.
+
+원격 스트리밍을 처음 실행할 때만 관리자가 PC별로 발급한 장치 ID와 token을
+등록합니다. token은 명령행이나 Git에 저장하지 않고 숨김 입력으로
+`~/.config/homecam`에 권한 `600`으로 보관합니다.
+
+```bash
+./homecam_agent/scripts/configure_sim_device.sh \
+  --device-id REGISTERED_DEVICE_ID \
+  --backend-url https://YOUR_BACKEND
+
+./homecam_agent/scripts/run_gazebo_homecam.sh
+```
+
+이미 다른 터미널에서 Gazebo가 실행 중이면 해당 카메라 토픽을 그대로
+재사용합니다.
+
+```bash
+./homecam_agent/scripts/run_gazebo_homecam.sh --reuse-gazebo
+```
+
+자세한 설정과 장애 대응은
+[`homecam_agent/README.md`](homecam_agent/README.md)를 확인합니다.
+
+## 8. 수정 후 다시 빌드
 
 ```bash
 cd ~/ros2_ws
@@ -211,7 +251,7 @@ cbp malbut_description
 cbp malbut_gazebo
 ```
 
-## 8. 기본 점검
+## 9. 기본 점검
 
 ```bash
 ros2 topic list
