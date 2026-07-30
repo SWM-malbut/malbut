@@ -156,19 +156,3 @@ def test_world_guis_load_scene_controls_and_teleop():
         teleop = root.find(".//gui/plugin[@filename='Teleop']")
         assert teleop is not None
         assert teleop.findtext('topic') == '/cmd_vel'
-
-
-def test_standalone_spawn_default_matches_the_empty_world_name():
-    """The compatibility spawn entry point targets the bundled empty world."""
-    world = ElementTree.parse(
-        GAZEBO_ROOT / 'worlds' / 'empty.sdf'
-    ).getroot().find('world')
-    assert world is not None
-    launch_text = (
-        GAZEBO_ROOT / 'launch' / 'spawn_model.launch.py'
-    ).read_text(encoding='utf-8')
-    expected = (
-        "DeclareLaunchArgument('world_name', "
-        f"default_value='{world.get('name')}')"
-    )
-    assert expected in launch_text

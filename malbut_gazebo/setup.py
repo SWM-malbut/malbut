@@ -35,6 +35,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, [
             'package.xml',
+            'LICENSE',
             'README.md',
             'THIRD_PARTY_NOTICES.md',
         ]),
@@ -49,13 +50,15 @@ setup(
     ),
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='ubuntu',
-    maintainer_email='ubuntu@todo.todo',
+    maintainer='SANGGEUN JI',
+    maintainer_email='sanggeunji0117@gmail.com',
     description=(
         'Gazebo Fortress robot integration and household environments for '
         'Malbut'
     ),
-    license='TODO: License declaration',
+    license=(
+        'Apache-2.0 AND MIT AND LicenseRef-Hiwonder-ROSOrin'
+    ),
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [

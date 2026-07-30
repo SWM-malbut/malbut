@@ -19,7 +19,9 @@ The import intentionally excludes:
 - the upstream `photos/` directory;
 - five model directories not used by the adapted world;
 - four unused Collada source exports containing broken Windows-local texture
-  paths.
+  paths;
+- the unused `aws_Bed_01.png` texture, which is not referenced by the selected
+  Bed model's Collada files.
 
 No AWS launch file, ROS package manifest, map, route, or Gazebo Classic
 dependency was imported.

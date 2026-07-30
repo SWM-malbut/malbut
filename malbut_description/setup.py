@@ -32,17 +32,17 @@ setup(
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
-        ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name, [
+            'package.xml',
+            'LICENSE',
+            'THIRD_PARTY_NOTICES.md',
+        ]),
     ] + collect_data_files('config', 'launch', 'urdf', 'rviz'),
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='ubuntu',
-    maintainer_email='1270161395@qq.com',
+    maintainer='SANGGEUN JI',
+    maintainer_email='sanggeunji0117@gmail.com',
     description='Parameterized ROSOrin Ultimate Mecanum robot description',
-    license='TODO: License declaration',
+    license='Apache-2.0 AND LicenseRef-Hiwonder-ROSOrin',
     tests_require=['pytest'],
-    entry_points={
-        'console_scripts': [
-        ],
-    },
 )
