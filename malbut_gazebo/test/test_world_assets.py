@@ -68,7 +68,7 @@ def test_small_house_references_exactly_the_vendored_subset():
     assert not any('Portrait' in name for name in references)
 
 
-def test_vendored_model_files_and_mesh_references_exist():
+def test_vendored_model_files_and_asset_references_are_exact():
     for model_directory in sorted(
         path for path in AWS_MODELS.iterdir() if path.is_dir()
     ):
@@ -82,6 +82,21 @@ def test_vendored_model_files_and_mesh_references_exist():
             assert uri.text.startswith(prefix)
             relative_path = uri.text.removeprefix(prefix)
             assert (model_directory / relative_path).is_file()
+
+        referenced_textures = set()
+        for mesh_file in (model_directory / 'meshes').glob('*.DAE'):
+            mesh_root = ElementTree.parse(mesh_file).getroot()
+            for source in mesh_root.findall('.//{*}init_from'):
+                if source.text and source.text.lower().endswith('.png'):
+                    texture = (mesh_file.parent / source.text).resolve()
+                    assert texture.is_relative_to(model_directory.resolve())
+                    assert texture.is_file()
+                    referenced_textures.add(texture)
+
+        bundled_textures = set(
+            (model_directory / 'materials' / 'textures').glob('*.png')
+        )
+        assert referenced_textures == bundled_textures
 
 
 def test_aws_import_has_license_source_record_and_no_people_photos():

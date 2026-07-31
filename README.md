@@ -163,7 +163,7 @@ ros2 launch malbut_gazebo worlds.launch.py world_name:=empty
 ### 실내 테스트 월드
 
 ```bash
-ros2 launch malbut_gazebo room_worlds.launch.py
+ros2 launch malbut_gazebo worlds.launch.py world_name:=small_house
 ```
 
 ### 로봇 모델만 확인
@@ -180,23 +180,56 @@ ros2 launch malbut_description display.launch.py
 ros2 run malbut_gazebo teleop_key_control
 ```
 
-조작 키는 `w`, `a`, `s`, `d`이며 종료는 `Ctrl+C`입니다.
+조작 키는 `w`/`s`(전진/후진), `a`/`d`(좌우 횡이동),
+`q`/`e`(좌우 회전), `Space`(정지)이며 종료는 `Ctrl+C`입니다.
 
-## 6. 센서 모델 선택
+### 저장된 지도 기반 내비게이션
 
-기본 카메라는 `aurora`입니다. Dabai 모델을 사용할 때는 실행 전에 다음 값을 설정합니다.
-
-```bash
-export DEPTH_CAMERA_TYPE=Dabai
-```
-
-기본값으로 돌아가려면 다음을 실행합니다.
+시뮬레이션과 브리지가 실행 중인 상태에서 새 터미널을 열고 Nav2를
+실행합니다.
 
 ```bash
-unset DEPTH_CAMERA_TYPE
+source /opt/ros/humble/setup.bash
+source ~/ros2_ws/install/local_setup.bash
+ros2 launch malbut_gazebo navigation.launch.py
 ```
+
+기본 지도는 패키지의 `maps/map_01.yaml`입니다. 다른 지도를 사용하려면
+절대 경로를 전달합니다.
+
+```bash
+ros2 launch malbut_gazebo navigation.launch.py \
+  map:=/absolute/path/to/map.yaml
+```
+
+기본값은 개별 Nav2 프로세스를 실행합니다. composition 경로를 검증하거나
+사용하려면 `use_composition:=True`를 전달합니다. RViz가 열린 뒤
+`2D Pose Estimate`로 초기 위치를 지정하고 `Nav2 Goal`로 목표를 보냅니다.
+
+## 6. 센서 모델
+
+현재 제공되는 로봇 프로필은 `Aurora930 Pro` RGB-D 카메라를 사용합니다.
+센서 형상과 시뮬레이션 파라미터는
+`malbut_description/config/ultimate_orin_nx_super_mecanum.yaml`에서 관리합니다.
+다른 카메라 프로필은 아직 제공하지 않습니다.
 
 ## 7. 수정 후 다시 빌드
+
+launch나 config 파일이 삭제된 변경을 받은 뒤에는 이전 `--symlink-install`
+링크가 `build`와 `install`에 남을 수 있습니다. 이 경우 Malbut 패키지의
+생성물만 정리한 뒤 다시 빌드합니다.
+
+```bash
+cd ~/ros2_ws
+rm -rf \
+  build/malbut_description build/malbut_gazebo \
+  install/malbut_description install/malbut_gazebo
+colcon build --symlink-install \
+  --packages-select malbut_description malbut_gazebo
+source ~/ros2_ws/install/local_setup.bash
+```
+
+일반적인 소스 수정에는 생성물을 지울 필요가 없습니다.
 
 ```bash
 cd ~/ros2_ws
@@ -229,3 +262,20 @@ source ~/ros2_ws/install/local_setup.bash
 rosdep check --from-paths ~/ros2_ws/src --ignore-src --rosdistro humble
 colcon build --symlink-install
 ```
+
+## 9. 라이선스
+
+Malbut Contributors가 작성한 프로젝트 코드는 Apache License 2.0으로
+배포합니다. 이 라이선스는 저장소에 포함된 모든 제3자 자료에 일괄
+적용되지 않습니다.
+
+- AWS RoboMaker Small House 에셋에는 번들된 MIT 형식의 라이선스가
+  적용됩니다.
+- Hiwonder ROSOrin에서 유래하거나 이를 바탕으로 수정된 로봇 자료는
+  `LicenseRef-Hiwonder-ROSOrin`으로 구분하며, Apache-2.0 적용 대상에서
+  제외합니다.
+- Intel 및 Open Source Robotics Foundation의 기존 Apache-2.0 고지는
+  해당 파일에 유지합니다.
+
+전체 범위와 출처는 [LICENSE](LICENSE) 및
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 확인하십시오.
