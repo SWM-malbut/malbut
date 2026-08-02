@@ -15,6 +15,7 @@ REPOSITORY_ROOT = Path(__file__).parents[2]
 DESCRIPTION_ROOT = REPOSITORY_ROOT / 'malbut_description'
 GAZEBO_ROOT = REPOSITORY_ROOT / 'malbut_gazebo'
 NAV2_PARAMS = GAZEBO_ROOT / 'config' / 'nav2_params.yaml'
+SMALL_HOUSE_MAP = GAZEBO_ROOT / 'maps' / 'small_house.yaml'
 ROBOT_PROFILE = (
     DESCRIPTION_ROOT
     / 'config'
@@ -97,6 +98,9 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
         if isinstance(entity, DeclareLaunchArgument)
     }
     assert 'use_composition' in declared_arguments
+    launch_text = launch_file.read_text(encoding='utf-8')
+    assert "'maps', 'small_house.yaml'" in launch_text
+    assert "'maps', 'map_01.yaml'" not in launch_text
 
     includes = [
         entity
@@ -120,6 +124,24 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     assert perform_substitutions(
         context, composition_argument.variable_name
     ) == 'use_composition'
+
+
+def test_small_house_map_covers_the_full_aws_world():
+    """The default saved map must be the full-size Small House grid."""
+    config = yaml.safe_load(SMALL_HOUSE_MAP.read_text(encoding='utf-8'))
+    image = SMALL_HOUSE_MAP.parent / config['image']
+
+    assert image.name == 'small_house.pgm'
+    assert image.is_file()
+    assert config['resolution'] == 0.05
+    assert config['origin'] == [-12.5, -12.5, 0.0]
+    with image.open('rb') as stream:
+        assert stream.readline().strip() == b'P5'
+        while True:
+            dimensions = stream.readline()
+            if not dimensions.startswith(b'#'):
+                break
+    assert dimensions.split() == [b'500', b'500']
 
 
 def test_readme_documents_real_navigation_and_teleop_interfaces():

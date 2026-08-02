@@ -62,6 +62,18 @@ occupancy map on `/map` and the current LiDAR measurements on `/scan`.
 `slam_params_file:=...` and `rviz_config:=...` can override the checked-in
 defaults when later tuning is required.
 
+## Saved-map navigation
+
+`navigation.launch.py` uses `maps/small_house.yaml` by default. This map
+covers the full AWS Small House layout at 5 cm/pixel. The legacy
+`map_01.yaml` map does not match this world and is retained only for source
+compatibility.
+
+```bash
+ros2 launch malbut_gazebo worlds.launch.py world_name:=small_house
+ros2 launch malbut_gazebo navigation.launch.py
+```
+
 ## AWS Small House
 
 The detailed home is adapted from

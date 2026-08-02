@@ -33,6 +33,18 @@ The upstream `LICENSE` file contains MIT-style permission terms, while its
 actual upstream license text and records the discrepancy instead of silently
 changing it.
 
+## TurtleBot Maze Small House navigation map
+
+- Source: <https://github.com/pantelis/turtlebot-maze>
+- Imported commit: `d306a5c94a359b595c76800e7b8766fa9e2503b0`
+- Imported file: `tb_worlds/maps/house_world_map.pgm`
+- Local file and import details: `maps/small_house.pgm`, `maps/SOURCE.md`
+- License: MIT
+
+The imported occupancy grid is used with the matching AWS RoboMaker Small
+House model layout. The legacy `map_01.*` files are not used by the Small
+House navigation default.
+
 ## Intel Corporation and Open Source Robotics Foundation
 
 The Nav2 launch adaptation and ament lint test templates retain their original

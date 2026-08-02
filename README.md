@@ -5,6 +5,7 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 저장소: [SWM-malbut/malbut](https://github.com/SWM-malbut/malbut)
 - 로봇 모델 패키지: `malbut_description`
 - 시뮬레이션 패키지: `malbut_gazebo`
+- 예약 순찰 패키지: `malbut_patrol`
 
 ## 1. 기준 환경
 
@@ -63,9 +64,10 @@ source ~/ros2_ws/install/local_setup.bash
 colcon list
 ros2 pkg prefix malbut_description
 ros2 pkg prefix malbut_gazebo
+ros2 pkg prefix malbut_patrol
 ```
 
-두 패키지의 설치 경로가 출력되면 정상입니다.
+세 패키지의 설치 경로가 출력되면 정상입니다.
 
 ## 4. 셸 환경과 약어 설정
 
@@ -194,7 +196,9 @@ source ~/ros2_ws/install/local_setup.bash
 ros2 launch malbut_gazebo navigation.launch.py
 ```
 
-기본 지도는 패키지의 `maps/map_01.yaml`입니다. 다른 지도를 사용하려면
+기본 지도는 AWS Small House와 정합된 `maps/small_house.yaml`입니다.
+`maps/map_01.yaml`은 이전 호환용으로만 남아 있으며 Small House에서는
+사용하지 않습니다. 다른 지도를 사용하려면
 절대 경로를 전달합니다.
 
 ```bash
@@ -205,6 +209,19 @@ ros2 launch malbut_gazebo navigation.launch.py \
 기본값은 개별 Nav2 프로세스를 실행합니다. composition 경로를 검증하거나
 사용하려면 `use_composition:=True`를 전달합니다. RViz가 열린 뒤
 `2D Pose Estimate`로 초기 위치를 지정하고 `Nav2 Goal`로 목표를 보냅니다.
+
+### 예약 순찰
+
+저장 지도 기반의 Nav2 위치 추정과 자율주행을 먼저 실행한 뒤 순찰
+관리기를 실행합니다.
+
+```bash
+ros2 launch malbut_patrol patrol.launch.py use_sim_time:=true
+ros2 service call /patrol/start std_srvs/srv/Trigger "{}"
+```
+
+경로 설정과 일시정지·재개·중지 방법은
+`malbut_patrol/README.md`를 참고합니다.
 
 ## 6. 센서 모델
 
@@ -242,6 +259,7 @@ source ~/ros2_ws/install/local_setup.bash
 ```bash
 cbp malbut_description
 cbp malbut_gazebo
+cbp malbut_patrol
 ```
 
 ## 8. 기본 점검
