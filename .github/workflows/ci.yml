@@ -142,6 +142,21 @@ jobs:
           path: .deps/amazon-kinesis-video-streams-webrtc-sdk-c-v1.19.1
           key: kvs-webrtc-${{ runner.os }}-${{ hashFiles('src/malbut/homecam_agent/scripts/build_kvs_webrtc_sdk.sh') }}
 
+      - name: Unblock libunwind-dev
+        shell: bash
+        run: |
+          echo "installed libunwind packages before:"
+          dpkg -l | grep -E '^ii +libunwind' || echo "  (none)"
+          mapfile -t blockers < <(dpkg -l | awk '/^ii +libunwind-[0-9]+-dev/{print $2}')
+          if [ "${#blockers[@]}" -gt 0 ]; then
+            echo "removing conflicting: ${blockers[*]}"
+            sudo apt-get remove -y "${blockers[@]}"
+          else
+            echo "no versioned libunwind -dev package conflicts with libunwind-dev"
+          fi
+          echo "installed libunwind packages after:"
+          dpkg -l | grep -E '^ii +libunwind' || echo "  (none)"
+
       - name: Configure ROS apt source
         env:
           ROS_APT_SOURCE_VERSION: "1.2.0"
