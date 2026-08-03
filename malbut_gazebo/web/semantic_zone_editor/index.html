@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Malbut 공간 설정</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="brand-mark">M</span>
+        <div><strong>Malbut</strong><small>공간 설정</small></div>
+      </div>
+      <div class="map-meta">
+        <span id="mapName">지도를 불러와 주세요</span>
+        <span id="saveState">저장되지 않음</span>
+      </div>
+      <div class="header-actions">
+        <label class="button secondary" for="mapFile">User Map 열기</label>
+        <input id="mapFile" type="file" accept=".geojson,.json">
+        <button id="exportMap" class="button secondary" disabled>User Map 내보내기</button>
+      </div>
+    </header>
+
+    <main>
+      <aside class="sidebar">
+        <section class="room-section">
+          <div class="section-heading">
+            <div><span class="eyebrow">ROOMS</span><h1>방 구성</h1></div>
+            <span id="roomCount" class="count-badge">0</span>
+          </div>
+          <p class="help">자동 생성된 방을 나누고 합친 뒤 이름과 유형을 지정하세요.</p>
+          <div id="roomList" class="room-list">
+            <div class="empty-list">지도를 불러오면 방 후보가 표시됩니다.</div>
+          </div>
+          <div id="roomSummary" class="room-summary hidden">
+            <span id="roomSummaryColor" class="room-summary-color"></span>
+            <div>
+              <strong id="roomSummaryName"></strong>
+              <small id="roomSummaryDetail"></small>
+            </div>
+            <span id="roomSummaryBadge" class="generated-badge">자동 생성</span>
+          </div>
+          <div id="roomForm" class="zone-form room-form hidden">
+            <label>방 이름<input id="roomName" maxlength="40" placeholder="예: 거실"></label>
+            <label>방 유형
+              <select id="roomCategory">
+                <option value="unassigned">미지정</option>
+                <option value="living_room">거실</option>
+                <option value="bedroom">침실</option>
+                <option value="kitchen">주방</option>
+                <option value="dining_room">식당</option>
+                <option value="bathroom">욕실</option>
+                <option value="entrance">현관</option>
+                <option value="hallway">복도</option>
+                <option value="workspace">작업 공간</option>
+                <option value="storage">수납 공간</option>
+                <option value="utility">다용도실</option>
+                <option value="custom">기타</option>
+              </select>
+            </label>
+          </div>
+          <div class="room-actions">
+            <button id="splitRoom" class="button secondary" disabled>방 나누기</button>
+            <button id="mergeRoom" class="button secondary" disabled>방 합치기</button>
+            <button id="resetRooms" class="button secondary" disabled>방 편집 초기화</button>
+          </div>
+        </section>
+
+        <div class="sidebar-divider"></div>
+
+        <section>
+          <div class="section-heading">
+            <div><span class="eyebrow">SEMANTIC ZONES</span><h1>공간 목록</h1></div>
+            <button id="newZone" class="icon-button" disabled title="새 영역">＋</button>
+          </div>
+          <p class="help">Room 안에 Zone을 그린 뒤 용도와 로봇 동작을 지정하세요.</p>
+          <div id="zoneList" class="zone-list">
+            <div class="empty-list">아직 지정한 공간이 없습니다.</div>
+          </div>
+        </section>
+
+        <section id="zoneForm" class="zone-form hidden">
+          <div class="divider"></div>
+          <div class="zone-metrics">
+            <span><small>소속 방</small><strong id="zoneRoom">-</strong></span>
+            <span><small>면적</small><strong id="zoneArea">-</strong></span>
+          </div>
+          <label>공간 이름<input id="zoneName" maxlength="40" placeholder="예: 거실"></label>
+          <label>공간 유형
+            <select id="zoneCategory">
+              <option value="living_room">거실</option>
+              <option value="bedroom">침실</option>
+              <option value="kitchen">주방</option>
+              <option value="bathroom">욕실</option>
+              <option value="entrance">현관</option>
+              <option value="workspace">작업 공간</option>
+              <option value="custom">기타</option>
+            </select>
+          </label>
+          <label>로봇 동작
+            <select id="zoneBehavior">
+              <option value="allow">진입 허용</option>
+              <option value="avoid">가급적 회피</option>
+              <option value="restricted">진입 금지</option>
+            </select>
+          </label>
+          <label>표시 색상<input id="zoneColor" type="color" value="#5c6cf2"></label>
+          <div class="form-actions">
+            <button id="setGoal" class="button secondary">대표 위치 지정</button>
+            <button id="deleteZone" class="button danger">영역 삭제</button>
+          </div>
+        </section>
+
+        <section class="import-section">
+          <span class="eyebrow">ZONE FILE</span>
+          <div class="zone-file-actions">
+            <label class="button secondary" for="zoneFile">기존 영역 불러오기</label>
+            <button id="exportZones" class="button secondary" disabled>영역 내보내기</button>
+          </div>
+          <input id="zoneFile" type="file" accept=".geojson,.json">
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <div id="emptyState" class="empty-state">
+          <div class="home-icon">⌂</div>
+          <h2>우리 집 지도를 불러오세요</h2>
+          <p>주행 관측에서 생성된 <code>user_map.geojson</code>을 선택하면<br>집 구조에 맞춰 편집 화면이 자동으로 구성됩니다.</p>
+          <label class="button primary large" for="mapFile">User Map 선택</label>
+        </div>
+        <svg id="mapCanvas" class="hidden" aria-label="사용자 지도와 의미 영역">
+          <g id="floorLayer"></g>
+          <g id="roomLayer"></g>
+          <g id="wallLayer"></g>
+          <g id="zoneLayer"></g>
+          <g id="draftLayer"></g>
+          <g id="handleLayer"></g>
+        </svg>
+        <div id="modeBanner" class="mode-banner hidden"></div>
+        <div class="canvas-tools">
+          <button id="zoomIn" title="확대">＋</button>
+          <button id="zoomOut" title="축소">−</button>
+          <button id="fitMap" title="지도 맞춤">⌂</button>
+        </div>
+        <div class="legend">
+          <span><i class="room-swatch"></i>자동 생성 공간</span>
+          <span><i class="zone-swatch"></i>사용자 지정 영역</span>
+        </div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
