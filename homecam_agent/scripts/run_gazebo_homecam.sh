@@ -213,7 +213,7 @@ if homecam_is_true "$HOMECAM_START_GAZEBO"; then
     exit 1
   fi
   gazebo_command=(
-    ros2 launch malbut_gazebo room_worlds.launch.py
+    ros2 launch malbut_gazebo worlds.launch.py
     "world_name:=$HOMECAM_WORLD"
     "gui:=$HOMECAM_GAZEBO_GUI"
     "headless:=$HOMECAM_GAZEBO_HEADLESS"

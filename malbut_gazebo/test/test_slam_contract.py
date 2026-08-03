@@ -1,7 +1,15 @@
 """Contract tests for the reproducible SLAM entry point."""
 
+import importlib.util
 from pathlib import Path
 
+from launch import LaunchContext
+from launch.actions import (
+    DeclareLaunchArgument,
+    GroupAction,
+    IncludeLaunchDescription,
+)
+from launch_ros.actions import Node
 import yaml
 
 from malbut_description.variant_config import load_variant_arguments
@@ -74,3 +82,41 @@ def test_slam_launch_uses_the_canonical_simulator_and_async_mapper():
     assert '"lidar_enabled": "true"' in launch_text
     assert '"spawn_robot": "true"' in launch_text
     assert '"bridge": "true"' in launch_text
+
+
+def test_simulator_arguments_cannot_disable_the_slam_rviz_node():
+    """The child simulator's rviz=false must remain in a scoped context."""
+    launch_file = GAZEBO_ROOT / "launch" / "slam.launch.py"
+    spec = importlib.util.spec_from_file_location(
+        "malbut_slam_launch", launch_file
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    description = module.generate_launch_description()
+
+    rviz_argument = next(
+        entity
+        for entity in description.entities
+        if isinstance(entity, DeclareLaunchArgument)
+        and entity.name == "rviz"
+    )
+    assert rviz_argument.default_value[0].text == "true"
+    assert any(isinstance(entity, Node) for entity in description.entities)
+
+    simulation_group = next(
+        entity
+        for entity in description.entities
+        if isinstance(entity, GroupAction)
+    )
+    scoped_actions = simulation_group.execute(LaunchContext())
+    assert type(scoped_actions[0]).__name__ == "PushLaunchConfigurations"
+    assert type(scoped_actions[-1]).__name__ == "PopLaunchConfigurations"
+
+    simulation = next(
+        entity
+        for entity in scoped_actions
+        if isinstance(entity, IncludeLaunchDescription)
+    )
+    assert dict(simulation.launch_arguments)["rviz"] == "false"

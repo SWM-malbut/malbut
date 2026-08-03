@@ -4,7 +4,11 @@ from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    GroupAction,
+    IncludeLaunchDescription,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -50,11 +54,15 @@ def generate_launch_description():
         }
     )
 
-    simulation = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            str(gazebo_share / "launch" / "worlds.launch.py")
-        ),
-        launch_arguments=simulation_arguments.items(),
+    simulation = GroupAction(
+        actions=[
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    str(gazebo_share / "launch" / "worlds.launch.py")
+                ),
+                launch_arguments=simulation_arguments.items(),
+            )
+        ],
     )
     slam_toolbox = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(

@@ -161,7 +161,7 @@ fi
 
 required_malbut_files=(
   "$malbut_source/malbut_gazebo/package.xml"
-  "$malbut_source/malbut_gazebo/launch/room_worlds.launch.py"
+  "$malbut_source/malbut_gazebo/launch/worlds.launch.py"
   "$malbut_source/malbut_gazebo/worlds/small_house.sdf"
 )
 for required_malbut_file in "${required_malbut_files[@]}"; do

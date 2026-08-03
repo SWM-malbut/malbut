@@ -35,9 +35,6 @@ line values such as `x:=1.0 y:=2.0 yaw:=1.57` override them. The Small House
 default is the upstream test location
 `x=-3.665503, y=-0.4874, z=0.002, yaw=0`.
 
-`room_worlds.launch.py` remains as a compatibility entry point and now opens
-`small_house` by default.
-
 ## SLAM mapping
 
 Start the household world, robot, ROS-Gazebo bridge, SLAM Toolbox, and the

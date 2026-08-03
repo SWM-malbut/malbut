@@ -164,7 +164,7 @@ ros2 launch malbut_gazebo worlds.launch.py world_name:=empty
 ### 실내 테스트 월드
 
 ```bash
-ros2 launch malbut_gazebo room_worlds.launch.py
+ros2 launch malbut_gazebo worlds.launch.py world_name:=small_house
 ```
 
 ### 로봇 모델만 확인
@@ -181,23 +181,120 @@ ros2 launch malbut_description display.launch.py
 ros2 run malbut_gazebo teleop_key_control
 ```
 
-조작 키는 `w`, `a`, `s`, `d`이며 종료는 `Ctrl+C`입니다.
+조작 키는 `w`/`s`(전진/후진), `a`/`d`(좌우 횡이동),
+`q`/`e`(좌우 회전), `Space`(정지)이며 종료는 `Ctrl+C`입니다.
 
-## 6. 센서 모델 선택
+### 저장된 지도 기반 내비게이션
 
-기본 카메라는 `aurora`입니다. Dabai 모델을 사용할 때는 실행 전에 다음 값을 설정합니다.
-
-```bash
-export DEPTH_CAMERA_TYPE=Dabai
-```
-
-기본값으로 돌아가려면 다음을 실행합니다.
+시뮬레이션과 브리지가 실행 중인 상태에서 새 터미널을 열고 Nav2를
+실행합니다.
 
 ```bash
-unset DEPTH_CAMERA_TYPE
+source /opt/ros/humble/setup.bash
+source ~/ros2_ws/install/local_setup.bash
+ros2 launch malbut_gazebo navigation.launch.py
 ```
 
-## 7. 홈캠 영상 스트리밍
+기본 지도는 패키지의 `maps/map_01.yaml`입니다. 다른 지도를 사용하려면
+절대 경로를 전달합니다.
+
+```bash
+ros2 launch malbut_gazebo navigation.launch.py \
+  map:=/absolute/path/to/map.yaml
+```
+
+기본값은 개별 Nav2 프로세스를 실행합니다. composition 경로를 검증하거나
+사용하려면 `use_composition:=True`를 전달합니다. RViz가 열린 뒤
+`2D Pose Estimate`로 초기 위치를 지정하고 `Nav2 Goal`로 목표를 보냅니다.
+
+## 6. 사용자 지도와 공간 영역 만들기
+
+사용자 지도는 로봇이 집을 탐색한 뒤 SLAM Toolbox로 저장한 지도
+`.yaml + .pgm`을 공간 좌표의 기준으로 사용합니다. 흑백 OccupancyGrid를
+그대로 노출하지 않고 노이즈 제거, 벽 방향 정렬, 폴리곤 단순화를 거쳐
+사용자용 벡터 지도로 변환합니다. Nav2 지도와 User Map은 같은 `map`
+좌표계를 유지하므로 사용자가 지정한 영역을 로봇 동작에 다시 적용할 수
+있습니다. 현재 변환기는 ROS map YAML의 기본 `trinary` 모드만 지원하며,
+점유도 의미가 다른 `scale`·`raw` 모드는 잘못 해석하지 않도록 명시적으로
+거부합니다. `negate`와 점유 임계값을 생략하면 map_server 기본값을 사용합니다.
+
+SLAM 탐색과 지도 저장을 마친 뒤 저장된 YAML을 변환합니다.
+`preview.png`는 결과 확인용이고, 영역 편집의 기준 데이터는 GeoJSON입니다.
+
+```bash
+mkdir -p ~/malbut_maps/my_home
+ros2 run malbut_gazebo build_user_map \
+  ~/malbut_maps/my_home/map.yaml \
+  -o ~/malbut_maps/my_home/user_map.geojson \
+  --preview ~/malbut_maps/my_home/preview.png \
+  --map-id my-home
+```
+
+공간 편집기를 실행하고 출력된 주소를 브라우저에서 엽니다.
+
+```bash
+ros2 run malbut_gazebo user_map_editor \
+  --map ~/malbut_maps/my_home/user_map.geojson
+# http://127.0.0.1:8765/?map=user-map.geojson
+```
+
+편집기에서 자동 생성된 방 후보를 선택하고 `방 나누기`를 누른 뒤
+방 안의 두 지점을 지정하면, 두 점을 지나는 직선으로 방을 나눌 수 있습니다.
+너무 작은 방이 생기거나 정확히 두 공간으로 나뉘지 않는 선은 적용하지
+않습니다. 나뉜 방을 다시 합치려면 첫 번째 방을 선택하고 `방 합치기`를
+누른 다음 지도나 방 목록에서 맞닿은 두 번째 방을 선택합니다. 서로 떨어진
+방은 하나로 합칠 수 없습니다. 편집 결과는 브라우저에 자동 저장되며
+`User Map 내보내기`로 수정된 방 경계가 포함된 GeoJSON을 내려받습니다.
+
+Room을 선택하면 이름과 유형(거실·침실·주방·복도 등)을 지정할 수 있습니다.
+분할된 Room은 변하지 않는 기본 이름을 공유합니다. 다시 합치면 목록에는
+`거실 (거실 A + 거실 B)`처럼 표시하지만 내부 기본 이름은 `거실`로 유지해,
+분할과 병합을 반복해도 이름이 계속 이어 붙지 않습니다. 같은 분할에서 나온
+두 Room을 합칠 때는 분할 전 경계를 그대로 복원하므로 반복 편집으로 Room
+색칠 영역이 줄어들지 않습니다.
+
+그다음 거실·침실·진입 금지 구역처럼 원하는 Zone 폴리곤을 직접 그릴 수
+있습니다. Zone은 현재 지도의 `map_id`와 함께 별도 GeoJSON으로 내보내므로,
+다른 집의 지도에 잘못 적용되지 않습니다.
+
+Zone은 하나의 Room 안에만 만들 수 있으며 자기 교차 경계와 `0.1m²` 미만
+영역은 거부합니다. 각 Zone에는 소속 Room, 면적, 중심점, 공간 유형, 로봇
+동작(`진입 허용`·`가급적 회피`·`진입 금지`)이 저장됩니다. Room을 나눈 뒤
+Zone이 새 경계를 가로지르면 `소속 방 확인 필요`로 표시되고, 경계를 고치거나
+Zone을 삭제하기 전에는 영역 파일을 내보낼 수 없습니다.
+
+| 단계 | 입력 | 출력 |
+| --- | --- | --- |
+| SLAM 탐색·저장 | `/scan`, TF | `map.yaml`, `map.pgm` |
+| 사용자 지도 생성 | 저장된 SLAM 지도 | `user_map.geojson` |
+| 방 경계 편집 | User Map + 사용자 분할선 | `*-user-map.geojson` |
+| Zone 편집 | User Map + 사용자 입력 | `*-zones.geojson` |
+
+현재 버전은 OccupancyGrid의 기하 구조와 출입구 폭을 이용해 방 후보를
+분할합니다. 이후 RGB-D 문 검출을 같은 User Map에 추가하면 개방형 공간의
+경계 근거를 보강할 수 있습니다.
+
+User Map 생성기는 좁은 출입구를 기준으로 방 후보도 자동 생성합니다. 기본
+출입구 폭은 `0.8m`, 최소 방 면적은 `1.5m²`입니다. 집 구조에 맞게 조정할 수
+있지만, 넓게 연결된 오픈형 공간은 근거 없이 나누지 않고 하나의 방 후보로
+유지합니다.
+
+```bash
+ros2 run malbut_gazebo build_user_map ~/malbut_maps/my_home/map.yaml \
+  -o ~/malbut_maps/my_home/user_map.geojson \
+  --preview ~/malbut_maps/my_home/rooms.png \
+  --doorway-width 0.8 \
+  --minimum-room-area 1.5
+```
+
+## 7. 센서 모델
+
+현재 제공되는 로봇 프로필은 `Aurora930 Pro` RGB-D 카메라를 사용합니다.
+센서 형상과 시뮬레이션 파라미터는
+`malbut_description/config/ultimate_orin_nx_super_mecanum.yaml`에서 관리합니다.
+다른 카메라 프로필은 아직 제공하지 않습니다.
+
+## 8. 홈캠 영상 스트리밍
 
 기존 ROS 2/Gazebo 기반 환경을 설치한 팀원은 기반 환경을 다시 설치하지
 않습니다. 저장소를 업데이트한 뒤 홈캠 전용 의존성을 설치하고 현재
@@ -236,7 +333,23 @@ CameraInfo 및 실제 카메라 프레임 수신을 확인한 뒤 종료합니�
 자세한 설정과 장애 대응은
 [`homecam_agent/README.md`](homecam_agent/README.md)를 확인합니다.
 
-## 8. 수정 후 다시 빌드
+## 9. 수정 후 다시 빌드
+
+launch나 config 파일이 삭제된 변경을 받은 뒤에는 이전 `--symlink-install`
+링크가 `build`와 `install`에 남을 수 있습니다. 이 경우 Malbut 패키지의
+생성물만 정리한 뒤 다시 빌드합니다.
+
+```bash
+cd ~/ros2_ws
+rm -rf \
+  build/malbut_description build/malbut_gazebo \
+  install/malbut_description install/malbut_gazebo
+colcon build --symlink-install \
+  --packages-select malbut_description malbut_gazebo
+source ~/ros2_ws/install/local_setup.bash
+```
+
+일반적인 소스 수정에는 생성물을 지울 필요가 없습니다.
 
 ```bash
 cd ~/ros2_ws
@@ -251,7 +364,7 @@ cbp malbut_description
 cbp malbut_gazebo
 ```
 
-## 9. 기본 점검
+## 10. 기본 점검
 
 ```bash
 ros2 topic list
@@ -269,3 +382,20 @@ source ~/ros2_ws/install/local_setup.bash
 rosdep check --from-paths ~/ros2_ws/src --ignore-src --rosdistro humble
 colcon build --symlink-install
 ```
+
+## 11. 라이선스
+
+Malbut Contributors가 작성한 프로젝트 코드는 Apache License 2.0으로
+배포합니다. 이 라이선스는 저장소에 포함된 모든 제3자 자료에 일괄
+적용되지 않습니다.
+
+- AWS RoboMaker Small House 에셋에는 번들된 MIT 형식의 라이선스가
+  적용됩니다.
+- Hiwonder ROSOrin에서 유래하거나 이를 바탕으로 수정된 로봇 자료는
+  `LicenseRef-Hiwonder-ROSOrin`으로 구분하며, Apache-2.0 적용 대상에서
+  제외합니다.
+- Intel 및 Open Source Robotics Foundation의 기존 Apache-2.0 고지는
+  해당 파일에 유지합니다.
+
+전체 범위와 출처는 [LICENSE](LICENSE) 및
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 확인하십시오.

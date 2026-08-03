@@ -43,6 +43,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ubuntu-22.04 runners ship an LLVM toolchain, and libunwind-15-dev
+      # declares "Conflicts: libunwind-dev". That makes libgoogle-glog-dev
+      # uninstallable, which in turn breaks libceres-dev, ros-humble-slam-toolbox
+      # and ros-humble-nav2-bringup during rosdep install. Drop the versioned
+      # LLVM copies so apt can resolve the plain libunwind-dev again.
+      - name: Unblock libunwind-dev
+        shell: bash
+        run: |
+          echo "installed libunwind packages before:"
+          dpkg -l | grep -E '^ii +libunwind' || echo "  (none)"
+          mapfile -t blockers < <(dpkg -l | awk '/^ii +libunwind-[0-9]+-dev/{print $2}')
+          if [ "${#blockers[@]}" -gt 0 ]; then
+            echo "removing conflicting: ${blockers[*]}"
+            sudo apt-get remove -y "${blockers[@]}"
+          else
+            echo "no versioned libunwind -dev package conflicts with libunwind-dev"
+          fi
+          echo "installed libunwind packages after:"
+          dpkg -l | grep -E '^ii +libunwind' || echo "  (none)"
+          # Informational: surface a still-blocked chain here instead of letting
+          # it surface as an opaque rosdep failure hundreds of lines later.
+          if apt-get install -s libgoogle-glog-dev >/dev/null 2>&1; then
+            echo "libgoogle-glog-dev resolves; the ceres/slam_toolbox chain is clear"
+          else
+            echo "WARNING: libgoogle-glog-dev is still unresolvable" >&2
+            apt-get install -s libgoogle-glog-dev 2>&1 | tail -20 >&2 || true
+          fi
+
       - name: Install ROS and package dependencies
         env:
           ROS_APT_SOURCE_VERSION: "1.2.0"
@@ -65,6 +93,8 @@ jobs:
             --dependency-types build \
             --dependency-types buildtool \
             --dependency-types build_export \
+            --dependency-types exec \
+            --dependency-types test \
             -r -y
 
       - name: Build ROS packages
@@ -73,6 +103,15 @@ jobs:
           source /opt/ros/humble/setup.bash
           colcon build --symlink-install --packages-select malbut_description malbut_gazebo
 
+      - name: Run ROS package tests
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          colcon test --event-handlers console_direct+ \
+            --packages-select malbut_description malbut_gazebo
+          colcon test-result --verbose
+
       - name: Validate robot Xacro
         shell: bash
         run: |
@@ -80,6 +119,13 @@ jobs:
           source install/setup.bash
           xacro install/malbut_gazebo/share/malbut_gazebo/urdf/robot.gazebo.xacro > /tmp/malbut.urdf
           test -s /tmp/malbut.urdf
+
+      - name: Validate navigation launch
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          ros2 launch malbut_gazebo navigation.launch.py --show-args
 
   homecam:
     name: Homecam build and test
