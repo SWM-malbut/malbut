@@ -176,7 +176,7 @@ jobs:
           fi
           rosdep update
 
-      - name: Install Malbut build dependencies
+      - name: Install Malbut dependencies
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
@@ -187,6 +187,8 @@ jobs:
             --dependency-types build \
             --dependency-types buildtool \
             --dependency-types build_export \
+            --dependency-types exec \
+            --dependency-types test \
             -r -y
 
       - name: Build and test homecam
