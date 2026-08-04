@@ -88,6 +88,12 @@
     <xacro:if value="$(arg lidar_enabled)">
       <gazebo reference="laser_frame">
         <sensor name="stl19p_d500" type="gpu_lidar">
+          <!--
+            The profile locates laser_frame at the D500 enclosure center.
+            Emit rays from the top scan plane so they do not intersect the
+            upper-body collision geometry directly below the sensor.
+          -->
+          <pose>0 0 ${lidar_height / 2.0} 0 0 0</pose>
           <always_on>true</always_on>
           <update_rate>${lidar_rate}</update_rate>
           <visualize>false</visualize>

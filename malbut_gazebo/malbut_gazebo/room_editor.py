@@ -1,4 +1,4 @@
-"""Geometry operations for editing automatically generated Room features."""
+"""Geometry operations for editing User Map Room features."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ SPLIT_COLORS = (
     "#f3eabf",
     "#dfe4eb",
 )
+WALL_SNAP_DISTANCE_METERS = 0.25
 
 
 class LocalTransform:
@@ -137,6 +138,10 @@ def _rasterize_geometries(
                     dtype=np.int32,
                 )
                 cv2.fillPoly(mask, [hole_pixels], 0)
+                # OpenCV includes the contour pixels in fillPoly(). Restore
+                # the shared wall boundary so a vector -> mask -> vector
+                # round trip does not enlarge every hole by one grid cell.
+                cv2.polylines(mask, [hole_pixels], True, 255, 1)
         masks.append(mask)
     return masks, transform
 
@@ -144,38 +149,96 @@ def _rasterize_geometries(
 def _cut_room(
     room_mask: np.ndarray,
     transform: LocalTransform,
-    line: list[list[float]],
+    line: list,
     minimum_room_area: float,
 ) -> np.ndarray:
-    if len(line) != 2 or any(len(point) != 2 for point in line):
-        raise ValueError("split line must contain exactly two [x, y] points")
-    first = transform.pixel(line[0])
-    second = transform.pixel(line[1])
+    def valid_point(point: object) -> bool:
+        return (
+            isinstance(point, (list, tuple))
+            and len(point) == 2
+            and all(isinstance(value, (int, float)) for value in point)
+            and all(math.isfinite(value) for value in point)
+        )
+
+    if not isinstance(line, list) or not line:
+        raise ValueError("at least one split divider is required")
+    dividers = [line] if valid_point(line[0]) else line
+    if any(
+        not isinstance(divider, list)
+        or len(divider) < 2
+        or any(not valid_point(point) for point in divider)
+        for divider in dividers
+    ):
+        raise ValueError(
+            "each split divider must contain at least two finite points"
+        )
     height, width = room_mask.shape
-    for x, y in (first, second):
-        if not (0 <= x < width and 0 <= y < height):
-            raise ValueError("split line points must be inside the Room")
-        if room_mask[y, x] == 0:
-            raise ValueError("split line points must be inside the Room")
-    dx = second[0] - first[0]
-    dy = second[1] - first[1]
-    length = math.hypot(dx, dy)
-    if length < 2.0:
-        raise ValueError("split line is too short")
-    extent = math.hypot(room_mask.shape[0], room_mask.shape[1]) * 2.0
-    unit_x = dx / length
-    unit_y = dy / length
-    start = (
-        round(first[0] - unit_x * extent),
-        round(first[1] - unit_y * extent),
-    )
-    end = (
-        round(first[0] + unit_x * extent),
-        round(first[1] + unit_y * extent),
+    eroded = cv2.erode(room_mask, np.ones((3, 3), dtype=np.uint8))
+    boundary = (room_mask > 0) & (eroded == 0)
+    tolerance = max(
+        2,
+        math.ceil(WALL_SNAP_DISTANCE_METERS / transform.resolution),
     )
     cut_mask = room_mask.copy()
     thickness = max(2, round(0.08 / transform.resolution))
-    cv2.line(cut_mask, start, end, 0, thickness)
+    for source_divider in dividers:
+        points = [transform.pixel(point) for point in source_divider]
+        if any(
+            not (0 <= x < width and 0 <= y < height)
+            for x, y in points
+        ):
+            raise ValueError("split divider points must be near a Room wall")
+        divider_points = []
+        for index, (x, y) in enumerate(points):
+            minimum_x = max(0, x - tolerance)
+            maximum_x = min(width, x + tolerance + 1)
+            minimum_y = max(0, y - tolerance)
+            maximum_y = min(height, y + tolerance + 1)
+            candidates = np.argwhere(
+                boundary[minimum_y:maximum_y, minimum_x:maximum_x]
+            )
+            endpoint = index in (0, len(points) - 1)
+            if endpoint or room_mask[y, x] == 0:
+                if not len(candidates):
+                    message = (
+                        "split divider endpoints must be near a Room wall"
+                        if endpoint
+                        else "split divider control points must stay in the Room"
+                    )
+                    raise ValueError(message)
+                distances = (
+                    (candidates[:, 1] + minimum_x - x) ** 2
+                    + (candidates[:, 0] + minimum_y - y) ** 2
+                )
+                nearest_y, nearest_x = candidates[int(np.argmin(distances))]
+                divider_points.append((
+                    int(nearest_x + minimum_x),
+                    int(nearest_y + minimum_y),
+                ))
+            else:
+                divider_points.append((x, y))
+        segments = [
+            (second[0] - first[0], second[1] - first[1])
+            for first, second in zip(divider_points, divider_points[1:])
+        ]
+        lengths = [math.hypot(dx, dy) for dx, dy in segments]
+        if any(length < 2.0 for length in lengths):
+            raise ValueError("split divider segments are too short")
+        extension = thickness + 1
+        first_dx, first_dy = segments[0]
+        last_dx, last_dy = segments[-1]
+        start = (
+            round(divider_points[0][0] - first_dx / lengths[0] * extension),
+            round(divider_points[0][1] - first_dy / lengths[0] * extension),
+        )
+        end = (
+            round(divider_points[-1][0] + last_dx / lengths[-1] * extension),
+            round(divider_points[-1][1] + last_dy / lengths[-1] * extension),
+        )
+        divider = np.array(
+            [start, *divider_points, end], dtype=np.int32
+        )
+        cv2.polylines(cut_mask, [divider], False, 0, thickness)
     count, labels, stats, _ = cv2.connectedComponentsWithStats(
         cut_mask, connectivity=8
     )
@@ -348,7 +411,7 @@ def split_room_feature(
     minimum_room_area: float = 1.0,
     simplify_meters: float = 0.0,
 ) -> list[dict]:
-    """Split one Room Feature with an infinite divider through two points."""
+    """Split one Room with independent editable wall-to-wall lines."""
     if room.get("properties", {}).get("role") != "room":
         raise ValueError("selected feature is not a Room")
     if resolution <= 0.0:
@@ -362,6 +425,19 @@ def split_room_feature(
     parts = []
     for label in (1, 2):
         mask = np.where(labels == label, 255, 0).astype(np.uint8)
+        if label == 1:
+            # Adjacent raster regions meet between pixel centers. Extending
+            # one side to the neighboring center gives both vector polygons
+            # the same shared boundary instead of leaving a visible cell-wide
+            # seam. Restricting it to the source Room preserves walls/holes.
+            mask = np.where(
+                (cv2.dilate(
+                    mask, np.ones((3, 3), dtype=np.uint8)
+                ) > 0)
+                & (room_mask > 0),
+                255,
+                0,
+            ).astype(np.uint8)
         geometry = _mask_geometry(mask, transform, simplify_meters)
         ys, xs = np.where(labels == label)
         centroid = transform.world(

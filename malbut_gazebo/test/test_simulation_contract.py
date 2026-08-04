@@ -86,6 +86,24 @@ def test_sensor_plugins_match_selected_hardware_baseline():
     assert sensors['controller_imu'].findtext('topic') == '/imu'
 
 
+def test_lidar_scan_plane_clears_the_upper_body_collision():
+    """The simulated LiDAR must not map the robot body as an obstacle."""
+    _, robot = _render_simulation_robot()
+    arguments = load_variant_arguments(PROFILE)
+    lidar = next(
+        sensor
+        for sensor in robot.findall('.//sensor')
+        if sensor.get('name') == 'stl19p_d500'
+    )
+    sensor_pose = [float(value) for value in lidar.findtext('pose').split()]
+    scan_plane_z = arguments['lidar_z'] + sensor_pose[2]
+    upper_body_top = (
+        arguments['upper_body_z'] + arguments['upper_body_height'] / 2.0
+    )
+
+    assert scan_plane_z > upper_body_top
+
+
 def test_bridge_has_one_canonical_mapping_per_ros_topic():
     """The bridge publishes the documented ROS-facing topic contract."""
     bridge = yaml.safe_load(
