@@ -80,9 +80,9 @@ def test_humanoid_route_is_continuous_and_indoor_speed():
         distance = math.hypot(end[0] - start[0], end[1] - start[1])
         route_length += distance
         translation_speeds.append(distance / (end_time - start_time))
-    assert 35.0 <= route_length <= 36.0
+    assert 26.0 <= route_length <= 26.5
     assert max(translation_speeds) <= 0.35 + 1e-3
-    assert 120.0 <= times[-1] <= 130.0
+    assert 93.0 <= times[-1] <= 95.0
     assert actor.findtext('script/loop') == 'true'
     assert actor.findtext('script/auto_start') == 'true'
 
@@ -102,7 +102,7 @@ def test_default_route_stays_in_mapped_small_house_free_space():
     width, height, pixels = _read_pgm(PACKAGE_ROOT / 'maps' / 'map_01.pgm')
     resolution = 0.05
     origin_x, origin_y = -5.04, -4.07
-    clearance_pixels = round(0.30 / resolution)
+    clearance_pixels = round(0.35 / resolution)
     poses = [
         _pose_values(waypoint)
         for waypoint in _actor().findall('script/trajectory/waypoint')
