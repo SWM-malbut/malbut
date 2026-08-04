@@ -7,7 +7,7 @@ from malbut_agent_server.config import Settings
 from malbut_agent_server.factory import build_orchestrator
 
 
-def test_live_provider_is_rejected_in_swm25_70() -> None:
+def test_live_provider_is_rejected_until_swm25_72() -> None:
     """This stacked branch must remain network independent."""
     with pytest.raises(ValueError, match='offline mock'):
         Settings.from_env({'MALBUT_AGENT_PROVIDER': 'openai'})
@@ -37,6 +37,25 @@ def test_conversation_limits_are_bounded() -> None:
         Settings.from_env(
             {'MALBUT_AGENT_CONVERSATION_TTL_SECONDS': '59'}
         )
+    with pytest.raises(ValueError):
+        Settings.from_env(
+            {'MALBUT_AGENT_CONVERSATION_SUMMARY_MAX_CHARS': '255'}
+        )
+    with pytest.raises(ValueError):
+        Settings.from_env(
+            {'MALBUT_AGENT_MAX_MODEL_INPUT_CHARS': '4095'}
+        )
+
+    settings = Settings.from_env(
+        {
+            'MALBUT_AGENT_MEMORY_LIMIT': '7',
+            'MALBUT_AGENT_CONVERSATION_SUMMARY_MAX_CHARS': '2048',
+            'MALBUT_AGENT_MAX_MODEL_INPUT_CHARS': '8192',
+        }
+    )
+    assert settings.memory_limit == 7
+    assert settings.conversation_summary_max_chars == 2048
+    assert settings.max_model_input_chars == 8192
 
 
 def test_factory_builds_only_mock_runtime() -> None:

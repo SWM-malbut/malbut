@@ -354,6 +354,13 @@ SWM25-70 브랜치부터는 외부 API를 호출하지 않는 Mock으로 세션 
 초기화·종료·삭제, 최근 10턴, 재전송 중복 방지와 단일 프로세스 동시 요청
 순서를 검증할 수 있습니다.
 
+SWM25-71에서는 최근 N턴 원문, 그 이전 대화의 rolling summary, 사용자별
+장기 기억을 서로 분리해 제한된 모델 입력으로 구성합니다. 저장된 문맥은
+신뢰되지 않은 JSON 데이터로만 전달되며, 응답에는 원문이 아닌 영역별 크기
+메트릭만 노출합니다. 상세 설계와 검증 근거는
+[`SWM25-71_USER_CONTEXT_INTEGRATION.md`](malbut_agent_server/docs/jira/SWM25-71_USER_CONTEXT_INTEGRATION.md)를
+확인하십시오.
+
 ```bash
 PYTHONPATH=. python3 -m malbut_agent_server.cli \
   --provider mock \

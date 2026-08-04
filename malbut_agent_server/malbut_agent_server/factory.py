@@ -1,4 +1,4 @@
-"""Construct the offline multi-turn MVP runtime."""
+"""Construct the offline bounded-context runtime."""
 
 from malbut_agent_server.config import Settings
 from malbut_agent_server.conversation import SQLiteConversationStore
@@ -11,7 +11,7 @@ from malbut_agent_server.safety import SafetyPolicy
 def build_orchestrator(settings: Settings) -> AgentOrchestrator:
     """Build one Mock-only runtime without network dependencies."""
     if settings.provider != 'mock':
-        raise ValueError('SWM25-70 supports only the mock provider')
+        raise ValueError('SWM25-71 supports only the mock provider')
     memory_store = SQLiteMemoryStore(settings.database_path)
     conversation_store = None
     try:
