@@ -6,6 +6,7 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 로봇 모델 패키지: `malbut_description`
 - 시뮬레이션 패키지: `malbut_gazebo`
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
+- 대화·에이전트 계약 패키지: `malbut_agent_server`
 
 ## 1. 기준 환경
 
@@ -333,7 +334,23 @@ CameraInfo 및 실제 카메라 프레임 수신을 확인한 뒤 종료합니�
 자세한 설정과 장애 대응은
 [`homecam_agent/README.md`](homecam_agent/README.md)를 확인합니다.
 
-## 9. 수정 후 다시 빌드
+## 9. 대화·에이전트 안전 계약
+
+`malbut_agent_server`는 LLM과 로봇 실행 계층 사이의 요청·응답 스키마,
+고수준 Tool allowlist와 결정론적 안전 게이트를 정의합니다. LLM은
+`/cmd_vel`, 모터 PWM, 비상 정지 해제 같은 저수준 제어를 직접 수행하지
+않습니다.
+
+상세 계약과 미승인 연관 인터페이스는
+[`SWM25-69_CONVERSATION_AGENT_CONTRACT.md`](malbut_agent_server/docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md)를
+확인하십시오.
+
+```bash
+cd ~/ros2_ws/src/malbut/malbut_agent_server
+PYTHONPATH=. python3 -m pytest -q test
+```
+
+## 10. 수정 후 다시 빌드
 
 launch나 config 파일이 삭제된 변경을 받은 뒤에는 이전 `--symlink-install`
 링크가 `build`와 `install`에 남을 수 있습니다. 이 경우 Malbut 패키지의
@@ -364,7 +381,7 @@ cbp malbut_description
 cbp malbut_gazebo
 ```
 
-## 10. 기본 점검
+## 11. 기본 점검
 
 ```bash
 ros2 topic list
@@ -383,7 +400,7 @@ rosdep check --from-paths ~/ros2_ws/src --ignore-src --rosdistro humble
 colcon build --symlink-install
 ```
 
-## 11. 라이선스
+## 12. 라이선스
 
 Malbut Contributors가 작성한 프로젝트 코드는 Apache License 2.0으로
 배포합니다. 이 라이선스는 저장소에 포함된 모든 제3자 자료에 일괄
