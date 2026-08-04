@@ -58,7 +58,8 @@ setup(
         'Malbut'
     ),
     license=(
-        'Apache-2.0 AND MIT AND LicenseRef-Hiwonder-ROSOrin'
+        'Apache-2.0 AND MIT AND LicenseRef-Hiwonder-ROSOrin AND '
+        'LicenseRef-Gazebo-Fuel-Actor'
     ),
     tests_require=['pytest'],
     entry_points={

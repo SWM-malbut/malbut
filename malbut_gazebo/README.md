@@ -35,6 +35,28 @@ line values such as `x:=1.0 y:=2.0 yaw:=1.57` override them. The Small House
 default is the upstream test location
 `x=-3.665503, y=-0.4874, z=0.002, yaw=0`.
 
+## Humanoid perception target
+
+Start the controlled arena with the robot and a looping animated pedestrian:
+
+```bash
+ros2 launch malbut_gazebo humanoid_demo.launch.py
+```
+
+The actor walks laterally 1.5 m in front of the default robot spawn, making it
+visible to the Aurora930 Pro RGB-D camera. Select another existing environment
+or move the full local route with launch arguments:
+
+```bash
+ros2 launch malbut_gazebo humanoid_demo.launch.py \
+  world_name:=small_house actor_x:=-2.0 actor_y:=1.0 actor_yaw:=1.57
+```
+
+No Gazebo ground-truth pose is bridged to ROS; later perception code must
+locate the target from `/camera/color/image_raw` and
+`/camera/depth/image_raw`. The humanoid is a kinematic camera target, not a
+physics obstacle.
+
 ## SLAM mapping
 
 Start the household world, robot, ROS-Gazebo bridge, SLAM Toolbox, and the

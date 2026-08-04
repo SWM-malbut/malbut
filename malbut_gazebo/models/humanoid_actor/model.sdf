@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<sdf version="1.8">
+  <actor name="humanoid_target">
+    <!-- The skeleton origin is at the hips, one metre above the floor. -->
+    <skin>
+      <filename>model://humanoid_actor/meshes/walk.dae</filename>
+      <scale>1.0</scale>
+    </skin>
+
+    <animation name="walking">
+      <filename>model://humanoid_actor/meshes/walk.dae</filename>
+      <scale>1.0</scale>
+      <interpolate_x>true</interpolate_x>
+    </animation>
+
+    <!--
+      A deterministic 0.3 m/s indoor route. The first and last poses match so
+      looping has no teleport discontinuity. Spawn pose offsets the full route.
+    -->
+    <script>
+      <loop>true</loop>
+      <delay_start>1.0</delay_start>
+      <auto_start>true</auto_start>
+      <trajectory id="0" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.0</time>
+          <pose>0.0 0.0 1.0 0 0 1.570796327</pose>
+        </waypoint>
+        <waypoint>
+          <time>4.0</time>
+          <pose>0.0 1.2 1.0 0 0 1.570796327</pose>
+        </waypoint>
+        <waypoint>
+          <time>5.0</time>
+          <pose>0.0 1.2 1.0 0 0 -1.570796327</pose>
+        </waypoint>
+        <waypoint>
+          <time>9.0</time>
+          <pose>0.0 0.0 1.0 0 0 -1.570796327</pose>
+        </waypoint>
+        <waypoint>
+          <time>10.0</time>
+          <pose>0.0 0.0 1.0 0 0 1.570796327</pose>
+        </waypoint>
+      </trajectory>
+    </script>
+  </actor>
+</sdf>
