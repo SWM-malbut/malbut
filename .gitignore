@@ -5,3 +5,16 @@ __pycache__/
 /install/
 /log/
 /.runtime/
+.env
+.env.*
+!.env.example
+.pytest_cache/
+*.egg-info/
+.coverage
+htmlcov/
+*.sqlite
+*.sqlite3
+*.db
+*.log
+kvsFileFilterLogIndex
+kvsFileLogFilter.*
