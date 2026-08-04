@@ -350,6 +350,17 @@ cd ~/ros2_ws/src/malbut/malbut_agent_server
 PYTHONPATH=. python3 -m pytest -q test
 ```
 
+SWM25-70 브랜치부터는 외부 API를 호출하지 않는 Mock으로 세션 생성·조회·
+초기화·종료·삭제, 최근 10턴, 재전송 중복 방지와 단일 프로세스 동시 요청
+순서를 검증할 수 있습니다.
+
+```bash
+PYTHONPATH=. python3 -m malbut_agent_server.cli \
+  --provider mock \
+  --database /tmp/malbut-agent-demo.sqlite3 \
+  --check
+```
+
 ## 10. 수정 후 다시 빌드
 
 launch나 config 파일이 삭제된 변경을 받은 뒤에는 이전 `--symlink-install`

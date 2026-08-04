@@ -15,11 +15,14 @@ setup(
         ),
         (
             'share/' + package_name,
-            ['package.xml', 'README.md'],
+            ['package.xml', 'README.md', '.env.example'],
         ),
         (
             'share/' + package_name + '/docs/jira',
-            ['docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md'],
+            [
+                'docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md',
+                'docs/jira/SWM25-70_MULTITURN_CONVERSATION_SESSION.md',
+            ],
         ),
     ],
     install_requires=['setuptools'],
@@ -32,4 +35,12 @@ setup(
     ),
     license='Apache-2.0',
     tests_require=['pytest'],
+    entry_points={
+        'console_scripts': [
+            (
+                'malbut-agent-server = '
+                'malbut_agent_server.cli:server_main'
+            ),
+        ],
+    },
 )
