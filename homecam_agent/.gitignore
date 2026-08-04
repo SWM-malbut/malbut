@@ -1,0 +1,14 @@
+build/
+install/
+log/
+.colcon/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.onnx
+*.engine
+*.plan
+.env
+config/*.env
+config/*.token
+compile_commands.json
