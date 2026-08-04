@@ -22,6 +22,7 @@ setup(
             [
                 'docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md',
                 'docs/jira/SWM25-70_MULTITURN_CONVERSATION_SESSION.md',
+                'docs/jira/SWM25-71_USER_CONTEXT_INTEGRATION.md',
             ],
         ),
     ],

@@ -244,3 +244,42 @@ def test_conversation_lifecycle_and_follow_up_round_trip() -> None:
         )
         assert status == 404
         assert error['error']['code'] == 'conversation_not_found'
+
+
+def test_http_context_metrics_do_not_expose_conversation_content() -> None:
+    """Public context telemetry contains sizes, never source text."""
+    marker = 'HTTP_PRIVATE_CONTEXT_MARKER_42'
+    with running_server() as base_url:
+        identity = {
+            'user_id': 'http-user',
+            'conversation_id': 'context-metrics',
+        }
+        status, _ = post(
+            f'{base_url}/v1/conversations',
+            identity,
+        )
+        assert status == 201
+
+        status, response = post(
+            f'{base_url}/v1/agent/respond',
+            {
+                **identity,
+                'request_id': 'context-metrics-request',
+                'turn_id': 'context-metrics-turn',
+                'utterance': marker,
+                'robot_state': {},
+                'available_tools': [],
+            },
+        )
+
+        assert status == 200
+        context = response['provider']['context']
+        assert context['current_utterance']['source_chars'] == len(marker)
+        assert context['current_utterance']['included_chars'] == len(marker)
+        assert context['model_input']['chars'] <= context[
+            'model_input'
+        ]['max_chars']
+        assert marker not in json.dumps(
+            context,
+            ensure_ascii=False,
+        )

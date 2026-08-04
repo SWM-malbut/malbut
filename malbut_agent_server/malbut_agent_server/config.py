@@ -1,4 +1,4 @@
-"""Mock-only runtime settings for the local multi-turn MVP."""
+"""Mock-only runtime settings for bounded conversation context."""
 
 import os
 from dataclasses import dataclass
@@ -107,7 +107,7 @@ class Settings:
         cls,
         environ: Optional[Mapping[str, str]] = None,
     ) -> 'Settings':
-        """Build settings while rejecting live providers in SWM25-70."""
+        """Build settings while rejecting live providers until SWM25-72."""
         source = environ if environ is not None else os.environ
         provider = source.get(
             'MALBUT_AGENT_PROVIDER',
@@ -115,7 +115,7 @@ class Settings:
         ).strip().lower()
         if provider != 'mock':
             raise ValueError(
-                'SWM25-70 supports only the offline mock provider'
+                'SWM25-71 supports only the offline mock provider'
             )
         default_database = str(
             Path.home()

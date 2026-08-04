@@ -23,7 +23,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--provider',
         choices=('mock',),
-        help='SWM25-70 intentionally supports only the offline Mock.',
+        help='Live providers are deferred to SWM25-72; use Mock here.',
     )
     parser.add_argument('--host')
     parser.add_argument('--port', type=int)
