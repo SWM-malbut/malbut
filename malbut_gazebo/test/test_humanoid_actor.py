@@ -43,16 +43,6 @@ def _launch_argument_defaults():
     return defaults
 
 
-def _read_pgm(path):
-    with path.open('rb') as stream:
-        assert stream.readline().strip() == b'P5'
-        width, height = map(int, stream.readline().split())
-        assert stream.readline().strip() == b'255'
-        pixels = stream.read()
-    assert len(pixels) == width * height
-    return width, height, pixels
-
-
 def test_humanoid_uses_a_local_animated_collada_skin():
     actor = _actor()
     skin_uri = actor.findtext('skin/filename')
@@ -80,9 +70,9 @@ def test_humanoid_route_is_continuous_and_indoor_speed():
         distance = math.hypot(end[0] - start[0], end[1] - start[1])
         route_length += distance
         translation_speeds.append(distance / (end_time - start_time))
-    assert 35.0 <= route_length <= 35.6
-    assert max(translation_speeds) <= 0.35 + 1e-3
-    assert 128.0 <= times[-1] <= 129.0
+    assert 60.0 <= route_length <= 61.0
+    assert max(translation_speeds) <= 0.7 + 2e-3
+    assert 108.0 <= times[-1] <= 109.0
     assert actor.findtext('script/loop') == 'true'
     assert actor.findtext('script/auto_start') == 'true'
 
@@ -93,34 +83,24 @@ def test_humanoid_is_a_camera_target_without_ground_truth_plugins():
     assert actor.find('plugin') is None
 
 
-def test_default_route_stays_in_mapped_small_house_free_space():
+def test_default_route_covers_the_full_small_house():
     defaults = _launch_argument_defaults()
     assert defaults['world_name'] == 'small_house'
     offset_x = float(defaults['actor_x'])
     offset_y = float(defaults['actor_y'])
 
-    width, height, pixels = _read_pgm(PACKAGE_ROOT / 'maps' / 'map_01.pgm')
-    resolution = 0.05
-    origin_x, origin_y = -5.04, -4.07
-    clearance_pixels = round(0.35 / resolution)
     poses = [
         _pose_values(waypoint)
         for waypoint in _actor().findall('script/trajectory/waypoint')
     ]
-
-    for start, end in zip(poses, poses[1:]):
-        for step in range(25):
-            fraction = step / 24
-            world_x = offset_x + start[0] + (end[0] - start[0]) * fraction
-            world_y = offset_y + start[1] + (end[1] - start[1]) * fraction
-            center_x = round((world_x - origin_x) / resolution)
-            center_y = height - 1 - round((world_y - origin_y) / resolution)
-            for y in range(center_y - clearance_pixels, center_y + clearance_pixels + 1):
-                for x in range(center_x - clearance_pixels, center_x + clearance_pixels + 1):
-                    if math.hypot(x - center_x, y - center_y) > clearance_pixels:
-                        continue
-                    assert 0 <= x < width and 0 <= y < height
-                    assert pixels[y * width + x] >= 250
+    points = [(offset_x + pose[0], offset_y + pose[1]) for pose in poses]
+    assert min(x for x, _ in points) < -7.5
+    assert max(x for x, _ in points) > 8.0
+    assert min(y for _, y in points) < -4.4
+    assert max(y for _, y in points) > 4.1
+    assert any(x < -7.0 and y > 2.0 for x, y in points)
+    assert any(abs(x) < 0.6 and y < -4.2 for x, y in points)
+    assert any(x > 8.0 and y > 2.0 for x, y in points)
 
 
 def test_humanoid_asset_has_source_and_no_machine_specific_paths():

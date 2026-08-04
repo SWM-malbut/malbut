@@ -38,7 +38,7 @@ default is the upstream test location
 ## Humanoid perception target
 
 Start the Small House with the robot and a looping animated pedestrian. The
-default 35 m circuit follows the outer connected rooms and corridors, then
+default 61 m circuit enters the outer rooms and follows their open spaces, then
 returns to its starting point without passing through walls or furniture:
 
 ```bash
@@ -46,9 +46,8 @@ ros2 launch malbut_gazebo humanoid_demo.launch.py
 ```
 
 The actor starts about 1.5 m in front of the robot and completes one circuit in
-about 129 seconds at 0.35 m/s, including turns. The route is validated against
-the bundled Small House map and the actual 3D wall, door, and furniture
-collision geometry.
+about 108 seconds at 0.70 m/s, including turns. The route is validated against
+the complete Small House 3D wall, door, and furniture collision geometry.
 Its full path can be translated or rotated with launch arguments, but changed
 offsets must be revalidated:
 

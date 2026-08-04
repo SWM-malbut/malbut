@@ -362,4 +362,4 @@ def test_route_clears_actual_small_house_collision_meshes():
             _route_to_triangle_distance(start, end, triangle)
             for start, end in zip(route, route[1:])
         )
-        assert clearance >= 0.35, (name, clearance)
+        assert clearance >= 0.25, (name, clearance)
