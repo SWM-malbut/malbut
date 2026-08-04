@@ -37,19 +37,21 @@ default is the upstream test location
 
 ## Humanoid perception target
 
-Start the controlled arena with the robot and a looping animated pedestrian:
+Start the Small House with the robot and a looping animated pedestrian. The
+default route crosses a mapped open area in front of the robot without passing
+through walls or furniture:
 
 ```bash
 ros2 launch malbut_gazebo humanoid_demo.launch.py
 ```
 
-The actor walks laterally 1.5 m in front of the default robot spawn, making it
-visible to the Aurora930 Pro RGB-D camera. Select another existing environment
-or move the full local route with launch arguments:
+The actor walks laterally about 1.5 m in front of the default robot spawn,
+making it visible to the Aurora930 Pro RGB-D camera. Select another existing
+environment or move the full local route with launch arguments:
 
 ```bash
 ros2 launch malbut_gazebo humanoid_demo.launch.py \
-  world_name:=small_house actor_x:=-2.0 actor_y:=1.0 actor_yaw:=1.57
+  world_name:=test_arena actor_x:=1.5 actor_y:=-0.6 actor_yaw:=0.0
 ```
 
 No Gazebo ground-truth pose is bridged to ROS; later perception code must

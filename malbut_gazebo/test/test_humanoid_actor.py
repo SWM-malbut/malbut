@@ -1,5 +1,6 @@
 """Contract tests for the RGB-D perception humanoid actor."""
 
+import ast
 import math
 from pathlib import Path
 from xml.etree import ElementTree
@@ -7,6 +8,7 @@ from xml.etree import ElementTree
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 ACTOR_ROOT = PACKAGE_ROOT / 'models' / 'humanoid_actor'
+DEMO_LAUNCH = PACKAGE_ROOT / 'launch' / 'humanoid_demo.launch.py'
 
 
 def _actor():
@@ -18,6 +20,37 @@ def _actor():
 
 def _pose_values(waypoint):
     return [float(value) for value in waypoint.findtext('pose').split()]
+
+
+def _launch_argument_defaults():
+    tree = ast.parse(DEMO_LAUNCH.read_text(encoding='utf-8'))
+    defaults = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != 'DeclareLaunchArgument' or not node.args:
+            continue
+        if not isinstance(node.args[0], ast.Constant):
+            continue
+        for keyword in node.keywords:
+            if (
+                keyword.arg == 'default_value'
+                and isinstance(keyword.value, ast.Constant)
+            ):
+                defaults[node.args[0].value] = keyword.value.value
+    return defaults
+
+
+def _read_pgm(path):
+    with path.open('rb') as stream:
+        assert stream.readline().strip() == b'P5'
+        width, height = map(int, stream.readline().split())
+        assert stream.readline().strip() == b'255'
+        pixels = stream.read()
+    assert len(pixels) == width * height
+    return width, height, pixels
 
 
 def test_humanoid_uses_a_local_animated_collada_skin():
@@ -54,6 +87,36 @@ def test_humanoid_is_a_camera_target_without_ground_truth_plugins():
     actor = _actor()
     assert actor.find('link') is None
     assert actor.find('plugin') is None
+
+
+def test_default_route_stays_in_mapped_small_house_free_space():
+    defaults = _launch_argument_defaults()
+    assert defaults['world_name'] == 'small_house'
+    offset_x = float(defaults['actor_x'])
+    offset_y = float(defaults['actor_y'])
+
+    width, height, pixels = _read_pgm(PACKAGE_ROOT / 'maps' / 'map_01.pgm')
+    resolution = 0.05
+    origin_x, origin_y = -5.04, -4.07
+    clearance_pixels = round(0.30 / resolution)
+    poses = [
+        _pose_values(waypoint)
+        for waypoint in _actor().findall('script/trajectory/waypoint')
+    ]
+
+    for start, end in zip(poses, poses[1:]):
+        for step in range(25):
+            fraction = step / 24
+            world_x = offset_x + start[0] + (end[0] - start[0]) * fraction
+            world_y = offset_y + start[1] + (end[1] - start[1]) * fraction
+            center_x = round((world_x - origin_x) / resolution)
+            center_y = height - 1 - round((world_y - origin_y) / resolution)
+            for y in range(center_y - clearance_pixels, center_y + clearance_pixels + 1):
+                for x in range(center_x - clearance_pixels, center_x + clearance_pixels + 1):
+                    if math.hypot(x - center_x, y - center_y) > clearance_pixels:
+                        continue
+                    assert 0 <= x < width and 0 <= y < height
+                    assert pixels[y * width + x] >= 250
 
 
 def test_humanoid_asset_has_source_and_no_machine_specific_paths():

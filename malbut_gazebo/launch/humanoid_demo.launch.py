@@ -96,7 +96,7 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            DeclareLaunchArgument("world_name", default_value="test_arena"),
+            DeclareLaunchArgument("world_name", default_value="small_house"),
             DeclareLaunchArgument(
                 "variant_config",
                 default_value="ultimate_orin_nx_super_mecanum.yaml",
@@ -124,8 +124,10 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "actor_name", default_value="humanoid_target"
             ),
-            DeclareLaunchArgument("actor_x", default_value="1.5"),
-            DeclareLaunchArgument("actor_y", default_value="-0.6"),
+            # A mapped free-space corridor 1.48 m in front of the robot's
+            # Small House spawn. The local trajectory crosses y=-1.17..0.03.
+            DeclareLaunchArgument("actor_x", default_value="-2.19"),
+            DeclareLaunchArgument("actor_y", default_value="-1.17"),
             DeclareLaunchArgument("actor_z", default_value="0.0"),
             DeclareLaunchArgument("actor_yaw", default_value="0.0"),
             simulation,
