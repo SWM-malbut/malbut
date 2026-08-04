@@ -7,6 +7,7 @@ from launch import LaunchContext
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.substitutions import LaunchConfiguration
 from launch.utilities import perform_substitutions
+from launch_ros.actions import Node
 import pytest
 import yaml
 
@@ -27,7 +28,7 @@ def _parameters(config, node_name):
 
 
 def test_nav2_uses_omnidirectional_motion_limits():
-    """AMCL, DWB, and the smoother must all permit Mecanum strafing."""
+    """AMCL, MPPI, and the smoother must all permit Mecanum strafing."""
     config = yaml.safe_load(NAV2_PARAMS.read_text(encoding='utf-8'))
     amcl = _parameters(config, 'amcl')
     controller = _parameters(config, 'controller_server')
@@ -35,10 +36,8 @@ def test_nav2_uses_omnidirectional_motion_limits():
     smoother = _parameters(config, 'velocity_smoother')
 
     assert amcl['robot_model_type'] == 'nav2_amcl::OmniMotionModel'
-    assert controller['min_y_velocity_threshold'] < follow_path['max_vel_y']
-    assert follow_path['min_vel_y'] < 0 < follow_path['max_vel_y']
-    assert follow_path['acc_lim_y'] > 0
-    assert follow_path['decel_lim_y'] < 0
+    assert controller['min_y_velocity_threshold'] < follow_path['vy_max']
+    assert follow_path['vy_max'] > 0
     assert smoother['min_velocity'][1] < 0 < smoother['max_velocity'][1]
     assert smoother['max_accel'][1] > 0
     assert smoother['max_decel'][1] < 0
@@ -97,6 +96,9 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
         if isinstance(entity, DeclareLaunchArgument)
     }
     assert 'use_composition' in declared_arguments
+    assert 'zone_mask' in declared_arguments
+    assert 'localization_source' in declared_arguments
+    assert 'localization_state' in declared_arguments
 
     includes = [
         entity
@@ -120,6 +122,189 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     assert perform_substitutions(
         context, composition_argument.variable_name
     ) == 'use_composition'
+    assert any(
+        include.launch_description_source.location.endswith(
+            '/nav2_bringup/launch/navigation_launch.py'
+        )
+        for include in includes
+    )
+
+
+def test_zone_mask_enables_both_costmap_filters_and_support_nodes():
+    """One optional mask must constrain planning and local control."""
+    config = yaml.safe_load(NAV2_PARAMS.read_text(encoding='utf-8'))
+    for costmap_name in ('local_costmap', 'global_costmap'):
+        costmap = config[costmap_name][costmap_name]['ros__parameters']
+        assert costmap['filters'] == ['keepout_filter']
+        assert costmap['keepout_filter'] == {
+            'plugin': 'nav2_costmap_2d::KeepoutFilter',
+            'enabled': False,
+            'filter_info_topic': '/keepout_costmap_filter_info',
+        }
+        assert 'keepout_inflation' not in costmap
+
+    launch_file = GAZEBO_ROOT / 'launch' / 'navigation.launch.py'
+    spec = importlib.util.spec_from_file_location(
+        'malbut_navigation_zone_launch', launch_file
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    description = module.generate_launch_description()
+
+    node_names = {
+        entity._Node__node_name
+        for entity in description.entities
+        if isinstance(entity, Node)
+    }
+    assert {
+        'zone_filter_mask_server',
+        'zone_filter_info_server',
+        'zone_filter_lifecycle_manager',
+        'localization_state_restorer',
+    } <= node_names
+
+
+def test_navigation_prefers_clearance_and_keeps_close_obstacles_visible():
+    """Planning and control must preserve a safety margin around obstacles."""
+    config = yaml.safe_load(NAV2_PARAMS.read_text(encoding='utf-8'))
+    controller = config['controller_server']['ros__parameters']
+    progress = controller['progress_checker']
+    assert progress['required_movement_radius'] <= 0.15
+    assert progress['movement_time_allowance'] >= 30.0
+    follow_path = controller['FollowPath']
+    assert follow_path['plugin'] == 'nav2_mppi_controller::MPPIController'
+    assert follow_path['motion_model'] == 'Omni'
+    assert follow_path['model_dt'] == 1.0 / controller['controller_frequency']
+    assert follow_path['time_steps'] * follow_path['model_dt'] >= 2.5
+    assert follow_path['batch_size'] >= 1000
+    assert follow_path['vx_max'] > 0.0
+    assert abs(follow_path['vy_max']) <= 0.1
+    assert follow_path['wz_max'] <= 0.4
+    assert follow_path['CostCritic']['consider_footprint'] is True
+    assert follow_path['PathAngleCritic']['forward_preference'] is True
+    assert follow_path['PreferForwardCritic']['enabled'] is True
+    assert follow_path['TwirlingCritic']['enabled'] is True
+    assert controller['general_goal_checker']['yaw_goal_tolerance'] >= 3.14
+
+    smoother = config['velocity_smoother']['ros__parameters']
+    assert smoother['feedback'] == 'CLOSED_LOOP'
+    assert smoother['max_velocity'] == [0.4, 0.1, 0.4]
+
+    planner = config['planner_server']['ros__parameters']['GridBased']
+    assert planner['plugin'] == 'nav2_smac_planner/SmacPlanner2D'
+    assert planner['cost_travel_multiplier'] >= 4.0
+    assert planner['downsample_costmap'] is False
+    assert planner['allow_unknown'] is False
+
+    sensor_layers = {
+        'local_costmap': 'voxel_layer',
+        'global_costmap': 'obstacle_layer',
+    }
+    for costmap_name, sensor_layer in sensor_layers.items():
+        costmap = config[costmap_name][costmap_name]['ros__parameters']
+        assert 0.04 <= costmap['footprint_padding'] <= 0.06
+        inflation = costmap['inflation_layer']
+        assert inflation['inflation_radius'] >= 0.55
+        assert inflation['cost_scaling_factor'] <= 3.0
+
+        scan = costmap[sensor_layer]['scan']
+        assert 0.19 <= scan['obstacle_min_range'] <= 0.21
+        assert scan['raytrace_min_range'] == 0.0
+
+
+def test_zone_filter_is_disabled_without_a_mask_and_enabled_with_one():
+    """Existing navigation must remain unchanged until a mask is passed."""
+    launch_file = GAZEBO_ROOT / 'launch' / 'navigation.launch.py'
+    spec = importlib.util.spec_from_file_location(
+        'malbut_navigation_zone_params', launch_file
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    description = module.generate_launch_description()
+    location_context = LaunchContext()
+    includes = [
+        entity
+        for entity in description.entities
+        if isinstance(entity, IncludeLaunchDescription)
+    ]
+    for include in includes:
+        include.launch_description_source.get_launch_description(
+            location_context
+        )
+    bringup = next(
+        entity
+        for entity in includes
+        if entity.launch_description_source.location.endswith(
+            '/nav2_bringup/launch/bringup_launch.py'
+        )
+    )
+    configured_params = dict(bringup.launch_arguments)['params_file']
+
+    for zone_mask, expected in (
+        ('', False),
+        ('/tmp/zones.yaml', True),
+    ):
+        context = LaunchContext()
+        context.launch_configurations['namespace'] = ''
+        context.launch_configurations['params_file'] = str(NAV2_PARAMS)
+        context.launch_configurations['zone_mask'] = zone_mask
+        rewritten_path = perform_substitutions(
+            context, [configured_params]
+        )
+        rewritten = yaml.safe_load(Path(rewritten_path).read_text())
+        for costmap_name in ('local_costmap', 'global_costmap'):
+            costmap = rewritten[costmap_name][costmap_name][
+                'ros__parameters'
+            ]
+            assert costmap['keepout_filter']['enabled'] is expected
+            assert 'keepout_inflation' not in costmap
+            assert costmap['keepout_filter']['filter_info_topic'] == (
+                '/keepout_costmap_filter_info'
+            )
+
+
+def test_zone_filter_topics_follow_the_navigation_namespace():
+    """Filter servers and costmaps must resolve one absolute topic."""
+    launch_file = GAZEBO_ROOT / 'launch' / 'navigation.launch.py'
+    spec = importlib.util.spec_from_file_location(
+        'malbut_navigation_zone_namespace', launch_file
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    description = module.generate_launch_description()
+    includes = [
+        entity
+        for entity in description.entities
+        if isinstance(entity, IncludeLaunchDescription)
+    ]
+    location_context = LaunchContext()
+    for include in includes:
+        include.launch_description_source.get_launch_description(
+            location_context
+        )
+    bringup = next(
+        entity
+        for entity in includes
+        if entity.launch_description_source.location.endswith(
+            '/nav2_bringup/launch/bringup_launch.py'
+        )
+    )
+    configured_params = dict(bringup.launch_arguments)['params_file']
+    context = LaunchContext()
+    context.launch_configurations.update({
+        'namespace': 'robot_1',
+        'params_file': str(NAV2_PARAMS),
+        'zone_mask': '/tmp/zones.yaml',
+    })
+    rewritten_path = perform_substitutions(context, [configured_params])
+    rewritten = yaml.safe_load(Path(rewritten_path).read_text())
+    for costmap_name in ('local_costmap', 'global_costmap'):
+        costmap = rewritten[costmap_name][costmap_name][
+            'ros__parameters'
+        ]
+        assert costmap['keepout_filter']['filter_info_topic'] == (
+            '/robot_1/keepout_costmap_filter_info'
+        )
 
 
 def test_readme_documents_real_navigation_and_teleop_interfaces():
