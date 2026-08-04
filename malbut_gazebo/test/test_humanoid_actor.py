@@ -80,9 +80,9 @@ def test_humanoid_route_is_continuous_and_indoor_speed():
         distance = math.hypot(end[0] - start[0], end[1] - start[1])
         route_length += distance
         translation_speeds.append(distance / (end_time - start_time))
-    assert 26.0 <= route_length <= 26.5
+    assert 35.0 <= route_length <= 35.6
     assert max(translation_speeds) <= 0.35 + 1e-3
-    assert 93.0 <= times[-1] <= 95.0
+    assert 128.0 <= times[-1] <= 129.0
     assert actor.findtext('script/loop') == 'true'
     assert actor.findtext('script/auto_start') == 'true'
 

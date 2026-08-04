@@ -34,195 +34,291 @@
           <pose>-0.850 -0.300 1.0 0 0 -2.802300</pose>
         </waypoint>
         <waypoint>
-          <time>2.975</time>
-          <pose>-0.850 -0.300 1.0 0 0 -2.582993</pose>
+          <time>2.989</time>
+          <pose>-0.850 -0.300 1.0 0 0 -2.305391</pose>
         </waypoint>
         <waypoint>
-          <time>5.671</time>
-          <pose>-1.650 -0.800 1.0 0 0 -2.582993</pose>
+          <time>8.957</time>
+          <pose>-2.250 -1.850 1.0 0 0 -2.305391</pose>
         </waypoint>
         <waypoint>
-          <time>6.071</time>
-          <pose>-1.650 -0.800 1.0 0 0 -2.819842</pose>
+          <time>11.474</time>
+          <pose>-2.250 -1.850 1.0 0 0 0.957589</pose>
         </waypoint>
         <waypoint>
-          <time>6.523</time>
-          <pose>-1.800 -0.850 1.0 0 0 -2.819842</pose>
+          <time>16.190</time>
+          <pose>-1.300 -0.500 1.0 0 0 0.957589</pose>
         </waypoint>
         <waypoint>
-          <time>9.071</time>
-          <pose>-1.800 -0.850 1.0 0 0 0.404892</pose>
+          <time>16.701</time>
+          <pose>-1.300 -0.500 1.0 0 0 1.570796</pose>
         </waypoint>
         <waypoint>
-          <time>10.159</time>
-          <pose>-1.450 -0.700 1.0 0 0 0.404892</pose>
+          <time>20.273</time>
+          <pose>-1.300 0.750 1.0 0 0 1.570796</pose>
         </waypoint>
         <waypoint>
-          <time>10.559</time>
-          <pose>-1.450 -0.700 1.0 0 0 0.576375</pose>
+          <time>20.809</time>
+          <pose>-1.300 0.750 1.0 0 0 2.214297</pose>
         </waypoint>
         <waypoint>
-          <time>20.782</time>
-          <pose>1.550 1.250 1.0 0 0 0.576375</pose>
+          <time>21.523</time>
+          <pose>-1.450 0.950 1.0 0 0 2.214297</pose>
         </waypoint>
         <waypoint>
-          <time>21.182</time>
-          <pose>1.550 1.250 1.0 0 0 0.927295</pose>
+          <time>22.010</time>
+          <pose>-1.450 0.950 1.0 0 0 2.798569</pose>
         </waypoint>
         <waypoint>
-          <time>21.897</time>
-          <pose>1.700 1.450 1.0 0 0 0.927295</pose>
+          <time>24.134</time>
+          <pose>-2.150 1.200 1.0 0 0 2.798569</pose>
         </waypoint>
         <waypoint>
-          <time>22.433</time>
+          <time>26.484</time>
+          <pose>-2.150 1.200 1.0 0 0 -0.021273</pose>
+        </waypoint>
+        <waypoint>
+          <time>33.200</time>
+          <pose>0.200 1.150 1.0 0 0 -0.021273</pose>
+        </waypoint>
+        <waypoint>
+          <time>33.600</time>
+          <pose>0.200 1.150 1.0 0 0 0.000000</pose>
+        </waypoint>
+        <waypoint>
+          <time>37.028</time>
+          <pose>1.400 1.150 1.0 0 0 0.000000</pose>
+        </waypoint>
+        <waypoint>
+          <time>37.564</time>
+          <pose>1.400 1.150 1.0 0 0 0.643501</pose>
+        </waypoint>
+        <waypoint>
+          <time>38.279</time>
+          <pose>1.600 1.300 1.0 0 0 0.643501</pose>
+        </waypoint>
+        <waypoint>
+          <time>38.679</time>
+          <pose>1.600 1.300 1.0 0 0 0.982794</pose>
+        </waypoint>
+        <waypoint>
+          <time>39.194</time>
+          <pose>1.700 1.450 1.0 0 0 0.982794</pose>
+        </waypoint>
+        <waypoint>
+          <time>39.684</time>
           <pose>1.700 1.450 1.0 0 0 1.570796</pose>
         </waypoint>
         <waypoint>
-          <time>24.576</time>
+          <time>41.827</time>
           <pose>1.700 2.200 1.0 0 0 1.570796</pose>
         </waypoint>
         <waypoint>
-          <time>25.112</time>
+          <time>42.363</time>
           <pose>1.700 2.200 1.0 0 0 2.214297</pose>
         </waypoint>
         <waypoint>
-          <time>25.826</time>
+          <time>43.077</time>
           <pose>1.550 2.400 1.0 0 0 2.214297</pose>
         </waypoint>
         <waypoint>
-          <time>26.226</time>
-          <pose>1.550 2.400 1.0 0 0 2.545394</pose>
+          <time>43.477</time>
+          <pose>1.550 2.400 1.0 0 0 2.536048</pose>
         </waypoint>
         <waypoint>
-          <time>31.060</time>
-          <pose>0.150 3.350 1.0 0 0 2.545394</pose>
+          <time>45.736</time>
+          <pose>0.900 2.850 1.0 0 0 2.536048</pose>
         </waypoint>
         <waypoint>
-          <time>33.671</time>
-          <pose>0.150 3.350 1.0 0 0 -0.588003</pose>
+          <time>46.136</time>
+          <pose>0.900 2.850 1.0 0 0 2.289626</pose>
         </waypoint>
         <waypoint>
-          <time>36.762</time>
-          <pose>1.050 2.750 1.0 0 0 -0.588003</pose>
+          <time>49.173</time>
+          <pose>0.200 3.650 1.0 0 0 2.289626</pose>
         </waypoint>
         <waypoint>
-          <time>37.252</time>
-          <pose>1.050 2.750 1.0 0 0 0.000000</pose>
+          <time>51.788</time>
+          <pose>0.200 3.650 1.0 0 0 -0.847817</pose>
         </waypoint>
         <waypoint>
-          <time>38.395</time>
+          <time>55.027</time>
+          <pose>0.950 2.800 1.0 0 0 -0.847817</pose>
+        </waypoint>
+        <waypoint>
+          <time>55.465</time>
+          <pose>0.950 2.800 1.0 0 0 -0.321751</pose>
+        </waypoint>
+        <waypoint>
+          <time>55.917</time>
+          <pose>1.100 2.750 1.0 0 0 -0.321751</pose>
+        </waypoint>
+        <waypoint>
+          <time>56.317</time>
+          <pose>1.100 2.750 1.0 0 0 0.000000</pose>
+        </waypoint>
+        <waypoint>
+          <time>57.317</time>
           <pose>1.450 2.750 1.0 0 0 0.000000</pose>
         </waypoint>
         <waypoint>
-          <time>38.931</time>
+          <time>57.853</time>
           <pose>1.450 2.750 1.0 0 0 0.643501</pose>
         </waypoint>
         <waypoint>
-          <time>39.645</time>
+          <time>58.567</time>
           <pose>1.650 2.900 1.0 0 0 0.643501</pose>
         </waypoint>
         <waypoint>
-          <time>40.045</time>
-          <pose>1.650 2.900 1.0 0 0 0.938047</pose>
+          <time>58.995</time>
+          <pose>1.650 2.900 1.0 0 0 1.156289</pose>
         </waypoint>
         <waypoint>
-          <time>42.703</time>
-          <pose>2.200 3.650 1.0 0 0 0.938047</pose>
+          <time>62.896</time>
+          <pose>2.200 4.150 1.0 0 0 1.156289</pose>
         </waypoint>
         <waypoint>
-          <time>44.500</time>
-          <pose>2.200 3.650 1.0 0 0 -1.219352</pose>
+          <time>63.726</time>
+          <pose>2.200 4.150 1.0 0 0 0.160763</pose>
         </waypoint>
         <waypoint>
-          <time>49.065</time>
-          <pose>2.750 2.150 1.0 0 0 -1.219352</pose>
+          <time>69.081</time>
+          <pose>4.050 4.450 1.0 0 0 0.160763</pose>
         </waypoint>
         <waypoint>
-          <time>49.530</time>
-          <pose>2.750 2.150 1.0 0 0 -0.661043</pose>
+          <time>69.601</time>
+          <pose>4.050 4.450 1.0 0 0 0.785398</pose>
         </waypoint>
         <waypoint>
-          <time>51.159</time>
-          <pose>3.200 1.800 1.0 0 0 -0.661043</pose>
+          <time>70.207</time>
+          <pose>4.200 4.600 1.0 0 0 0.785398</pose>
         </waypoint>
         <waypoint>
-          <time>51.559</time>
-          <pose>3.200 1.800 1.0 0 0 -0.321751</pose>
+          <time>70.862</time>
+          <pose>4.200 4.600 1.0 0 0 1.570796</pose>
         </waypoint>
         <waypoint>
-          <time>52.011</time>
-          <pose>3.350 1.750 1.0 0 0 -0.321751</pose>
+          <time>71.005</time>
+          <pose>4.200 4.650 1.0 0 0 1.570796</pose>
         </waypoint>
         <waypoint>
-          <time>52.411</time>
-          <pose>3.350 1.750 1.0 0 0 0.000000</pose>
+          <time>73.623</time>
+          <pose>4.200 4.650 1.0 0 0 -1.570796</pose>
         </waypoint>
         <waypoint>
-          <time>57.839</time>
+          <time>73.766</time>
+          <pose>4.200 4.600 1.0 0 0 -1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>74.512</time>
+          <pose>4.200 4.600 1.0 0 0 -2.466852</pose>
+        </waypoint>
+        <waypoint>
+          <time>76.342</time>
+          <pose>3.700 4.200 1.0 0 0 -2.466852</pose>
+        </waypoint>
+        <waypoint>
+          <time>76.742</time>
+          <pose>3.700 4.200 1.0 0 0 -2.843094</pose>
+        </waypoint>
+        <waypoint>
+          <time>78.685</time>
+          <pose>3.050 4.000 1.0 0 0 -2.843094</pose>
+        </waypoint>
+        <waypoint>
+          <time>79.091</time>
+          <pose>3.050 4.000 1.0 0 0 -2.356194</pose>
+        </waypoint>
+        <waypoint>
+          <time>80.303</time>
+          <pose>2.750 3.700 1.0 0 0 -2.356194</pose>
+        </waypoint>
+        <waypoint>
+          <time>80.703</time>
+          <pose>2.750 3.700 1.0 0 0 -1.892547</pose>
+        </waypoint>
+        <waypoint>
+          <time>81.154</time>
+          <pose>2.700 3.550 1.0 0 0 -1.892547</pose>
+        </waypoint>
+        <waypoint>
+          <time>81.554</time>
+          <pose>2.700 3.550 1.0 0 0 -1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>85.269</time>
+          <pose>2.700 2.250 1.0 0 0 -1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>85.805</time>
+          <pose>2.700 2.250 1.0 0 0 -0.927295</pose>
+        </waypoint>
+        <waypoint>
+          <time>86.519</time>
+          <pose>2.850 2.050 1.0 0 0 -0.927295</pose>
+        </waypoint>
+        <waypoint>
+          <time>86.919</time>
+          <pose>2.850 2.050 1.0 0 0 -0.588003</pose>
+        </waypoint>
+        <waypoint>
+          <time>88.465</time>
+          <pose>3.300 1.750 1.0 0 0 -0.588003</pose>
+        </waypoint>
+        <waypoint>
+          <time>88.955</time>
+          <pose>3.300 1.750 1.0 0 0 0.000000</pose>
+        </waypoint>
+        <waypoint>
+          <time>94.526</time>
           <pose>5.250 1.750 1.0 0 0 0.000000</pose>
         </waypoint>
         <waypoint>
-          <time>58.376</time>
-          <pose>5.250 1.750 1.0 0 0 0.643501</pose>
+          <time>94.989</time>
+          <pose>5.250 1.750 1.0 0 0 0.555494</pose>
         </waypoint>
         <waypoint>
-          <time>60.519</time>
-          <pose>5.850 2.200 1.0 0 0 0.643501</pose>
+          <time>99.865</time>
+          <pose>6.700 2.650 1.0 0 0 0.555494</pose>
         </waypoint>
         <waypoint>
-          <time>60.954</time>
-          <pose>5.850 2.200 1.0 0 0 1.165905</pose>
+          <time>101.637</time>
+          <pose>6.700 2.650 1.0 0 0 -1.570796</pose>
         </waypoint>
         <waypoint>
-          <time>64.218</time>
-          <pose>6.300 3.250 1.0 0 0 1.165905</pose>
+          <time>105.923</time>
+          <pose>6.700 1.150 1.0 0 0 -1.570796</pose>
         </waypoint>
         <waypoint>
-          <time>66.538</time>
-          <pose>6.300 3.250 1.0 0 0 -1.618379</pose>
+          <time>107.232</time>
+          <pose>6.700 1.150 1.0 0 0 3.141593</pose>
         </waypoint>
         <waypoint>
-          <time>72.545</time>
-          <pose>6.200 1.150 1.0 0 0 -1.618379</pose>
+          <time>114.374</time>
+          <pose>4.200 1.150 1.0 0 0 3.141593</pose>
         </waypoint>
         <waypoint>
-          <time>73.814</time>
-          <pose>6.200 1.150 1.0 0 0 3.141593</pose>
+          <time>120.089</time>
+          <pose>2.200 1.150 1.0 0 0 3.141593</pose>
         </waypoint>
         <waypoint>
-          <time>78.671</time>
-          <pose>4.500 1.150 1.0 0 0 3.141593</pose>
+          <time>120.489</time>
+          <pose>2.200 1.150 1.0 0 0 -2.779048</pose>
         </waypoint>
         <waypoint>
-          <time>84.386</time>
-          <pose>2.500 1.150 1.0 0 0 3.141593</pose>
+          <time>124.920</time>
+          <pose>0.750 0.600 1.0 0 0 -2.779048</pose>
         </waypoint>
         <waypoint>
-          <time>84.786</time>
-          <pose>2.500 1.150 1.0 0 0 -2.875341</pose>
+          <time>125.320</time>
+          <pose>0.750 0.600 1.0 0 0 -2.466852</pose>
         </waypoint>
         <waypoint>
-          <time>88.043</time>
-          <pose>1.400 0.850 1.0 0 0 -2.875341</pose>
+          <time>128.064</time>
+          <pose>0.000 0.000 1.0 0 0 -2.466852</pose>
         </waypoint>
         <waypoint>
-          <time>88.443</time>
-          <pose>1.400 0.850 1.0 0 0 -2.761086</pose>
-        </waypoint>
-        <waypoint>
-          <time>89.213</time>
-          <pose>1.150 0.750 1.0 0 0 -2.761086</pose>
-        </waypoint>
-        <waypoint>
-          <time>89.613</time>
-          <pose>1.150 0.750 1.0 0 0 -2.563691</pose>
-        </waypoint>
-        <waypoint>
-          <time>93.535</time>
-          <pose>0.000 0.000 1.0 0 0 -2.563691</pose>
-        </waypoint>
-        <waypoint>
-          <time>93.935</time>
+          <time>128.464</time>
           <pose>0.000 0.000 1.0 0 0 -2.802300</pose>
         </waypoint>
       </trajectory>
