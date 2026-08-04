@@ -4,3 +4,16 @@ __pycache__/
 /build/
 /install/
 /log/
+.env
+.env.*
+!.env.example
+.pytest_cache/
+*.egg-info/
+.coverage
+htmlcov/
+*.sqlite
+*.sqlite3
+*.db
+*.log
+kvsFileFilterLogIndex
+kvsFileLogFilter.*
