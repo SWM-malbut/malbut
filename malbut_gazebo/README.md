@@ -38,20 +38,21 @@ default is the upstream test location
 ## Humanoid perception target
 
 Start the Small House with the robot and a looping animated pedestrian. The
-default route crosses a mapped open area in front of the robot without passing
-through walls or furniture:
+default 35 m circuit visits the mapped rooms and corridors, then returns to its
+starting point without passing through walls or furniture:
 
 ```bash
 ros2 launch malbut_gazebo humanoid_demo.launch.py
 ```
 
-The actor walks laterally about 1.5 m in front of the default robot spawn,
-making it visible to the Aurora930 Pro RGB-D camera. Select another existing
-environment or move the full local route with launch arguments:
+The actor starts about 1.5 m in front of the robot and completes one circuit in
+about two minutes at 0.35 m/s, including turns. The route is specifically
+validated against the bundled Small House map. Its full path can be translated
+or rotated with launch arguments, but changed offsets must be revalidated:
 
 ```bash
 ros2 launch malbut_gazebo humanoid_demo.launch.py \
-  world_name:=test_arena actor_x:=1.5 actor_y:=-0.6 actor_yaw:=0.0
+  actor_x:=-2.19 actor_y:=-1.17 actor_yaw:=0.0
 ```
 
 No Gazebo ground-truth pose is bridged to ROS; later perception code must

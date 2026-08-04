@@ -124,8 +124,8 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "actor_name", default_value="humanoid_target"
             ),
-            # A mapped free-space corridor 1.48 m in front of the robot's
-            # Small House spawn. The local trajectory crosses y=-1.17..0.03.
+            # The mapped Small House circuit starts 1.48 m in front of the
+            # robot and returns here after visiting the connected rooms.
             DeclareLaunchArgument("actor_x", default_value="-2.19"),
             DeclareLaunchArgument("actor_y", default_value="-1.17"),
             DeclareLaunchArgument("actor_z", default_value="0.0"),
