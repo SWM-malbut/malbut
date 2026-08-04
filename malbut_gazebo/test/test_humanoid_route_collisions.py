@@ -1,4 +1,4 @@
-"""Validate the humanoid route against the Small House collision meshes."""
+"""Validate the humanoid route against all Small House scene geometry."""
 
 import ast
 import math
@@ -163,7 +163,11 @@ def _dae_triangles(path):
                         source_id = vertex_sources.get(source_id, '')
                     positions = sources.get(source_id)
                     indices_element = primitive.find('c:p', namespace)
-                    if positions is None or indices_element is None:
+                    if (
+                        positions is None
+                        or indices_element is None
+                        or not indices_element.text
+                    ):
                         continue
                     index_stride = max(
                         int(element.get('offset', '0'))
@@ -208,7 +212,7 @@ def _cross(origin, first, second):
     )
 
 
-def _collision_triangles():
+def _scene_triangles():
     world = ElementTree.parse(WORLD_FILE).getroot().find('world')
     triangles = []
     for include in world.findall('include'):
@@ -228,8 +232,11 @@ def _collision_triangles():
         cosine = math.cos(include_pose[5])
         sine = math.sin(include_pose[5])
         model = ElementTree.parse(model_file).getroot().find('model')
-        for collision in model.findall('.//collision'):
-            mesh = collision.find('geometry/mesh')
+        geometry_elements = model.findall('.//collision') + model.findall(
+            './/visual'
+        )
+        for geometry_element in geometry_elements:
+            mesh = geometry_element.find('geometry/mesh')
             if mesh is None:
                 continue
             mesh_path = (
@@ -263,6 +270,53 @@ def _collision_triangles():
                     (name, [(point[0], point[1]) for point in world_triangle])
                 )
     return triangles
+
+
+def _scene_spheres():
+    world = ElementTree.parse(WORLD_FILE).getroot().find('world')
+    spheres = []
+    for include in world.findall('include'):
+        name = include.findtext('name', '')
+        uri = include.findtext('uri', '')
+        if not uri.startswith('model://aws_'):
+            continue
+        model_directory = AWS_MODELS / uri.removeprefix('model://')
+        model_file = model_directory / 'model.sdf'
+        if not model_file.is_file():
+            continue
+        include_pose = [
+            float(value) for value in include.findtext('pose').split()
+        ]
+        cosine = math.cos(include_pose[5])
+        sine = math.sin(include_pose[5])
+        model = ElementTree.parse(model_file).getroot().find('model')
+        geometry_elements = model.findall('.//collision') + model.findall(
+            './/visual'
+        )
+        for geometry_element in geometry_elements:
+            sphere = geometry_element.find('geometry/sphere')
+            if sphere is None:
+                continue
+            local_pose = [
+                float(value)
+                for value in geometry_element.findtext(
+                    'pose', '0 0 0 0 0 0'
+                ).split()
+            ]
+            radius = float(sphere.findtext('radius'))
+            center = (
+                include_pose[0]
+                + cosine * local_pose[0]
+                - sine * local_pose[1],
+                include_pose[1]
+                + sine * local_pose[0]
+                + cosine * local_pose[1],
+            )
+            center_z = include_pose[2] + local_pose[2]
+            if center_z + radius < 0.10 or center_z - radius > 1.90:
+                continue
+            spheres.append((name, center, radius))
+    return spheres
 
 
 def _point_segment_distance(point, start, end):
@@ -350,16 +404,27 @@ def _route_to_triangle_distance(start, end, triangle):
     )
 
 
-def test_route_clears_actual_small_house_collision_meshes():
+def test_route_clears_actual_small_house_scene_geometry():
     route = _route_points()
-    triangles = _collision_triangles()
+    triangles = _scene_triangles()
+    spheres = _scene_spheres()
     names = {name for name, _ in triangles}
     assert len(triangles) >= 1000
     assert any('HouseWall' in name for name in names)
     assert any('Door' in name for name in names)
+    assert any('BalconyTable' in name for name in names)
+    assert any('FitnessEquipment' in name for name in names)
     for name, triangle in triangles:
         clearance = min(
             _route_to_triangle_distance(start, end, triangle)
+            for start, end in zip(route, route[1:])
+        )
+        assert clearance >= 0.25, (name, clearance)
+    sphere_names = {name for name, _, _ in spheres}
+    assert any('Ball' in name for name in sphere_names)
+    for name, center, radius in spheres:
+        clearance = min(
+            _point_segment_distance(center, start, end) - radius
             for start, end in zip(route, route[1:])
         )
         assert clearance >= 0.25, (name, clearance)

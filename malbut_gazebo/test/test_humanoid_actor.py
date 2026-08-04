@@ -70,9 +70,9 @@ def test_humanoid_route_is_continuous_and_indoor_speed():
         distance = math.hypot(end[0] - start[0], end[1] - start[1])
         route_length += distance
         translation_speeds.append(distance / (end_time - start_time))
-    assert 60.0 <= route_length <= 61.0
-    assert max(translation_speeds) <= 0.7 + 2e-3
-    assert 108.0 <= times[-1] <= 109.0
+    assert 53.5 <= route_length <= 54.5
+    assert max(translation_speeds) <= 0.45 + 2e-3
+    assert 140.0 <= times[-1] <= 142.0
     assert actor.findtext('script/loop') == 'true'
     assert actor.findtext('script/auto_start') == 'true'
 
@@ -100,7 +100,7 @@ def test_default_route_covers_the_full_small_house():
     assert max(y for _, y in points) > 4.1
     assert any(x < -7.0 and y > 2.0 for x, y in points)
     assert any(abs(x) < 0.6 and y < -4.2 for x, y in points)
-    assert any(x > 8.0 and y > 2.0 for x, y in points)
+    assert any(x > 7.8 and y > 0.8 for x, y in points)
 
 
 def test_humanoid_asset_has_source_and_no_machine_specific_paths():
