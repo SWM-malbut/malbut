@@ -1,0 +1,37 @@
+# The Aurora RGB image topic is intentionally not stored here. Discover it with
+# `ros2 topic list -t` after starting the Deptrum driver, then pass
+# `image_topic:=/the/discovered/topic` to homecam_aurora.launch.py.
+homecam_media_agent:
+  ros__parameters:
+    camera_info_topic: ""
+    odom_topic: /odom
+    audio_source: default
+    audio_sink: default
+    encoder: nvv4l2h264enc
+    device_id: jetson-homecam
+    backend_url: ""
+    source_profile: aurora
+    fps: 15
+    bitrate_kbps: 700
+    heartbeat_interval_ms: 2000
+    frame_timeout_ms: 2000
+    monitoring_enabled: false
+    camera_enabled: true
+    microphone_enabled: true
+
+homecam_detector:
+  ros__parameters:
+    odom_topic: /odom
+    model_path: ""
+    device_id: jetson-homecam
+    backend_url: ""
+    confidence_threshold: 0.45
+    consecutive_frames: 3
+    event_cooldown_sec: 30.0
+    max_frame_gap_sec: 1.0
+    stationary_after_sec: 1.0
+    odom_timeout_sec: 2.0
+    linear_motion_threshold: 0.03
+    angular_motion_threshold: 0.05
+    motion_area_ratio: 0.02
+    monitoring_enabled: false
