@@ -163,6 +163,17 @@ def test_navigation_requires_current_turn_destination_intent() -> None:
     assert result.code == 'current_turn_intent_missing'
 
 
+def test_navigation_typo_requires_clarification_instead_of_execution() -> None:
+    """An ambiguous destination typo must fail closed at the local gate."""
+    result = SafetyPolicy().evaluate(
+        request('거시롤 가 줘'),
+        decision(),
+        state_trusted=True,
+    )
+    assert result.allowed is False
+    assert result.code == 'current_turn_intent_missing'
+
+
 def test_explicit_navigation_request_can_pass_policy_only() -> None:
     """Passing the gate authorizes a proposal, not direct motor control."""
     result = SafetyPolicy().evaluate(
