@@ -5,13 +5,18 @@ import threading
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Dict, Iterator, Optional
 
 from malbut_agent_server.conversation import SQLiteConversationStore
 from malbut_agent_server.http_server import make_server
 from malbut_agent_server.memory import SQLiteMemoryStore
 from malbut_agent_server.orchestrator import AgentOrchestrator
+from malbut_agent_server.providers.base import AgentProvider
 from malbut_agent_server.providers.mock import MockProvider
+from malbut_agent_server.providers.openai_responses import (
+    OpenAIResponsesProvider,
+)
+from malbut_agent_server.providers.reliable import ReliableProvider
 from malbut_agent_server.safety import SafetyPolicy
 
 
@@ -19,12 +24,13 @@ from malbut_agent_server.safety import SafetyPolicy
 def running_server(
     auth_token: str = '',
     requests_per_minute: int = 60,
+    provider: Optional[AgentProvider] = None,
 ) -> Iterator[str]:
     """Run one loopback-only ephemeral server."""
     memory_store = SQLiteMemoryStore(':memory:')
     conversation_store = SQLiteConversationStore(':memory:')
     orchestrator = AgentOrchestrator(
-        provider=MockProvider(),
+        provider=provider or MockProvider(),
         memory_store=memory_store,
         conversation_store=conversation_store,
         safety_policy=SafetyPolicy(),
@@ -283,3 +289,71 @@ def test_http_context_metrics_do_not_expose_conversation_content() -> None:
             context,
             ensure_ascii=False,
         )
+
+
+def test_provider_outage_returns_safe_refusal_and_server_survives() -> None:
+    """A remote outage remains a non-action, not a server outage."""
+    secret = 'sk-test-must-not-escape'
+
+    def unavailable_transport(
+        url: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        timeout: int,
+    ) -> Dict[str, Any]:
+        del url, headers, payload, timeout
+        raise TimeoutError(secret)
+
+    remote = OpenAIResponsesProvider(
+        api_key='test-key',
+        model='offline-model',
+        transport=unavailable_transport,
+    )
+    reliable = ReliableProvider(
+        [remote],
+        max_retries=0,
+        base_delay_seconds=0,
+        max_delay_seconds=0,
+    )
+    with running_server(provider=reliable) as base_url:
+        identity = {
+            'user_id': 'http-user',
+            'conversation_id': 'outage-conversation',
+        }
+        status, _created = post(
+            f'{base_url}/v1/conversations',
+            identity,
+        )
+        assert status == 201
+
+        for index in (1, 2):
+            status, result = post(
+                f'{base_url}/v1/agent/respond',
+                {
+                    **identity,
+                    'request_id': f'outage-request-{index}',
+                    'turn_id': f'turn-{index}',
+                    'utterance': '안녕',
+                    'robot_state': {},
+                    'available_tools': [],
+                },
+            )
+            assert status == 200
+            assert result['decision']['type'] == 'refusal'
+            assert (
+                result['decision']['reason']
+                == 'provider_unavailable'
+            )
+            assert (
+                result['provider']['provider']
+                == 'reliable-fallback'
+            )
+            assert result['execution']['authorized'] is False
+            assert secret not in json.dumps(result)
+
+        with urllib.request.urlopen(
+            f'{base_url}/healthz',
+            timeout=2,
+        ) as response:
+            health = json.loads(response.read())
+        assert health['status'] == 'ok'

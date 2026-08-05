@@ -303,6 +303,12 @@ class AgentOrchestrator:
                 conversation_summary
             ),
         )
+        try:
+            provider_result.validate()
+        except (ValidationError, TypeError) as error:
+            raise ProviderError(
+                'provider returned invalid metadata'
+            ) from error
         provider_decision = provider_result.decision
         raw_decision = AgentDecision(
             type=provider_decision.type,

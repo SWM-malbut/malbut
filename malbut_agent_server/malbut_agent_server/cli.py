@@ -1,4 +1,4 @@
-"""Command-line entry point for the Mock multi-turn service."""
+"""Command line entry point for the Malbut agent service."""
 
 import argparse
 import os
@@ -13,7 +13,7 @@ from malbut_agent_server.http_server import make_server
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description='Run the Malbut Mock multi-turn HTTP service.',
+        description='Run the Malbut Mock or OpenAI agent service.',
     )
     parser.add_argument(
         '--env-file',
@@ -22,8 +22,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         '--provider',
-        choices=('mock',),
-        help='Live providers are deferred to SWM25-72; use Mock here.',
+        choices=('mock', 'openai'),
+        help='Select the offline Mock or official OpenAI Responses API.',
+    )
+    parser.add_argument(
+        '--model',
+        help='Override OPENAI_MODEL without accepting credentials on CLI.',
+    )
+    parser.add_argument(
+        '--fallback-model',
+        help='Optionally override OPENAI_FALLBACK_MODEL.',
     )
     parser.add_argument('--host')
     parser.add_argument('--port', type=int)
@@ -31,7 +39,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--check',
         action='store_true',
-        help='Validate configuration and exit without listening.',
+        help='Validate configuration and exit without an API request.',
     )
     return parser
 
@@ -44,6 +52,10 @@ def server_main(argv: Optional[List[str]] = None) -> int:
     overrides = {}
     if args.provider is not None:
         overrides['provider'] = args.provider
+    if args.model is not None:
+        overrides['openai_model'] = args.model
+    if args.fallback_model is not None:
+        overrides['openai_fallback_model'] = args.fallback_model
     if args.host is not None:
         overrides['host'] = args.host
     if args.port is not None:
@@ -72,7 +84,8 @@ def server_main(argv: Optional[List[str]] = None) -> int:
     )
     print(
         'Malbut agent server listening on '
-        f'http://{settings.host}:{settings.port} (provider=mock)'
+        f'http://{settings.host}:{settings.port} '
+        f'(provider={settings.provider})'
     )
     try:
         server.serve_forever()
