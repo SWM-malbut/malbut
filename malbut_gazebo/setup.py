@@ -67,7 +67,13 @@ setup(
             'spawn_when_ready = malbut_gazebo.spawn_when_ready:main',
             'teleop_key_control = malbut_gazebo.teleop_key_control:main',
             'build_user_map = malbut_gazebo.user_map_builder:main',
+            'build_zone_filter_mask = '
+            'malbut_gazebo.zone_filter_mask:main',
             'user_map_editor = malbut_gazebo.user_map_editor:main',
+            'record_localization_state = '
+            'malbut_gazebo.localization_handoff:record_main',
+            'restore_localization_state = '
+            'malbut_gazebo.localization_handoff:restore_main',
         ],
     },
 )

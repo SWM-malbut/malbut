@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -18,6 +17,7 @@ import yaml
 
 
 FORMAT_VERSION = "malbut-user-map-v1"
+TRINARY_UNKNOWN_VALUE = 205
 ROOM_COLORS = (
     "#dce8ff",
     "#f9e1c7",
@@ -190,9 +190,13 @@ def _occupancy(slam_map: SlamMap) -> np.ndarray:
 
 def _free_mask(slam_map: SlamMap) -> np.ndarray:
     occupancy = _occupancy(slam_map)
-    return np.where(
-        occupancy <= slam_map.free_threshold, 255, 0
-    ).astype(np.uint8)
+    free = occupancy <= slam_map.free_threshold
+    # ROS map_saver writes unknown trinary cells as gray 205. Its ROS 2
+    # default free threshold (0.25) would otherwise classify that encoded
+    # value as free space even though the robot never observed it.
+    if slam_map.mode == "trinary":
+        free &= slam_map.image != TRINARY_UNKNOWN_VALUE
+    return np.where(free, 255, 0).astype(np.uint8)
 
 
 def _occupied_mask(slam_map: SlamMap) -> np.ndarray:
@@ -204,7 +208,7 @@ def _occupied_mask(slam_map: SlamMap) -> np.ndarray:
 
 def clean_free_space(
     slam_map: SlamMap,
-    smoothing_meters: float = 0.12,
+    smoothing_meters: float = 0.0,
     minimum_area: float = 0.4,
 ) -> np.ndarray:
     """Remove scan noise while preserving meaningful rooms and passages."""
@@ -213,34 +217,45 @@ def clean_free_space(
     if minimum_area < 0.0:
         raise ValueError("minimum_area cannot be negative")
     free = _free_mask(slam_map)
-    radius = max(1, round(smoothing_meters / slam_map.transform.resolution))
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE,
-        (radius * 2 + 1, radius * 2 + 1),
-    )
-    free = cv2.morphologyEx(free, cv2.MORPH_CLOSE, kernel)
-    open_radius = max(1, round(radius / 2))
-    open_kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE,
-        (open_radius * 2 + 1, open_radius * 2 + 1),
-    )
-    free = cv2.morphologyEx(free, cv2.MORPH_OPEN, open_kernel)
-    # Smoothing may close scan pinholes, but must never turn a confirmed wall
-    # into traversable floor. Thin residential partitions are often only a
-    # few occupancy-grid pixels wide.
-    free[_occupied_mask(slam_map) > 0] = 0
+    if smoothing_meters > 0.0:
+        radius = max(
+            1,
+            round(smoothing_meters / slam_map.transform.resolution),
+        )
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (radius * 2 + 1, radius * 2 + 1),
+        )
+        free = cv2.morphologyEx(free, cv2.MORPH_CLOSE, kernel)
+        open_radius = max(1, round(radius / 2))
+        open_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (open_radius * 2 + 1, open_radius * 2 + 1),
+        )
+        free = cv2.morphologyEx(free, cv2.MORPH_OPEN, open_kernel)
+        # Smoothing may close scan pinholes, but must never turn a confirmed
+        # wall into traversable floor. Thin residential partitions are often
+        # only a few occupancy-grid pixels wide.
+        free[_occupied_mask(slam_map) > 0] = 0
 
     count, labels, stats, _ = cv2.connectedComponentsWithStats(
         free, connectivity=8
     )
-    cleaned = np.zeros_like(free)
     minimum_pixels = minimum_area / slam_map.transform.resolution ** 2
-    for label in range(1, count):
-        if stats[label, cv2.CC_STAT_AREA] >= minimum_pixels:
-            cleaned[labels == label] = 255
-    if not np.any(cleaned):
+    usable_labels = [
+        label for label in range(1, count)
+        if stats[label, cv2.CC_STAT_AREA] >= minimum_pixels
+    ]
+    if not usable_labels:
         raise ValueError("SLAM map contains no usable explored free space")
-    return cleaned
+    # A Room must be one connected, physically reachable floor region. Scan
+    # rays can reveal isolated free patches behind walls; retaining those in
+    # the initial Room creates a MultiPolygon that cannot be split reliably.
+    primary_label = max(
+        usable_labels,
+        key=lambda label: stats[label, cv2.CC_STAT_AREA],
+    )
+    return np.where(labels == primary_label, 255, 0).astype(np.uint8)
 
 
 def _dominant_wall_angle(mask: np.ndarray) -> float:
@@ -328,13 +343,14 @@ def _ring_from_contour(
     simplify_meters: float,
     dominant_angle: float,
 ) -> list[list[float]]:
-    epsilon = max(0.5, simplify_meters / transform.resolution)
+    epsilon = simplify_meters / transform.resolution
     simplified = cv2.approxPolyDP(contour, epsilon, True)
     pixel_points = [
         (float(point[0][0]), float(point[0][1]))
         for point in simplified
     ]
-    pixel_points = _snap_ring(pixel_points, dominant_angle)
+    if simplify_meters > 0.0:
+        pixel_points = _snap_ring(pixel_points, dominant_angle)
     ring = [transform.world(x, y) for x, y in pixel_points]
     if len(ring) < 3:
         return []
@@ -346,9 +362,9 @@ def _ring_from_contour(
 def mask_to_geometry(
     mask: np.ndarray,
     transform: MapTransform,
-    simplify_meters: float = 0.08,
+    simplify_meters: float = 0.0,
     minimum_floor_area: float = 0.4,
-    minimum_hole_area: float = 0.20,
+    minimum_hole_area: float = 0.02,
 ) -> tuple[dict, list[list[list[float]]]]:
     """Convert cleaned free space to a simplified vector floor plan."""
     contours, hierarchy = cv2.findContours(
@@ -420,183 +436,29 @@ def _geometry_area(geometry: dict) -> float:
     )
 
 
-def _ensure_seed_per_free_component(
+def initial_room_feature(
     free: np.ndarray,
-    seeds: np.ndarray,
-    next_label: int,
-) -> int:
-    component_count, components = cv2.connectedComponents(
-        free, connectivity=8
-    )
+    floor_geometry: dict,
+    transform: MapTransform,
+) -> dict:
+    """Create one unassigned Room covering all explored walkable space."""
     distance = cv2.distanceTransform(free, cv2.DIST_L2, 5)
-    for component in range(1, component_count):
-        component_mask = components == component
-        if np.any(seeds[component_mask] > 0):
-            continue
-        candidates = np.where(component_mask, distance, -1.0)
-        y, x = np.unravel_index(
-            int(np.argmax(candidates)), candidates.shape
-        )
-        seeds[y, x] = next_label
-        next_label += 1
-    return next_label
-
-
-def _propagate_room_seeds(
-    free: np.ndarray,
-    seeds: np.ndarray,
-) -> np.ndarray:
-    labels = seeds.copy()
-    queue = deque(
-        (int(y), int(x))
-        for y, x in np.argwhere(labels > 0)
-    )
-    neighbors = (
-        (-1, 0), (1, 0), (0, -1), (0, 1),
-        (-1, -1), (-1, 1), (1, -1), (1, 1),
-    )
-    height, width = free.shape
-    while queue:
-        y, x = queue.popleft()
-        label = labels[y, x]
-        for dy, dx in neighbors:
-            next_y = y + dy
-            next_x = x + dx
-            if not (
-                0 <= next_y < height
-                and 0 <= next_x < width
-                and free[next_y, next_x] > 0
-                and labels[next_y, next_x] == 0
-            ):
-                continue
-            labels[next_y, next_x] = label
-            queue.append((next_y, next_x))
-    return labels
-
-
-def _merge_small_rooms(
-    labels: np.ndarray,
-    minimum_pixels: int,
-) -> np.ndarray:
-    labels = labels.copy()
-    while True:
-        room_labels, counts = np.unique(
-            labels[labels > 0], return_counts=True
-        )
-        small_rooms = [
-            int(label)
-            for label, count in zip(room_labels, counts)
-            if count < minimum_pixels
-        ]
-        if not small_rooms:
-            break
-        merged = False
-        for label in small_rooms:
-            room = np.where(labels == label, 255, 0).astype(np.uint8)
-            border = cv2.dilate(room, np.ones((3, 3), np.uint8)) > 0
-            adjacent = labels[border & (labels != label) & (labels > 0)]
-            if adjacent.size == 0:
-                continue
-            neighbors, contacts = np.unique(adjacent, return_counts=True)
-            destination = int(neighbors[int(np.argmax(contacts))])
-            labels[labels == label] = destination
-            merged = True
-        if not merged:
-            break
-    return labels
-
-
-def segment_rooms(
-    free: np.ndarray,
-    transform: MapTransform,
-    doorway_width: float = 0.80,
-    minimum_room_area: float = 1.5,
-) -> np.ndarray:
-    """Partition free space using doorway-width erosion and propagation."""
-    if doorway_width <= 0.0:
-        raise ValueError("doorway_width must be positive")
-    if minimum_room_area <= 0.0:
-        raise ValueError("minimum_room_area must be positive")
-    radius = max(1, round(
-        doorway_width / (2.0 * transform.resolution)
-    ))
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE,
-        (radius * 2 + 1, radius * 2 + 1),
-    )
-    room_cores = cv2.erode(free, kernel)
-    component_count, components, stats, _ = (
-        cv2.connectedComponentsWithStats(room_cores, connectivity=8)
-    )
-    seeds = np.zeros_like(components, dtype=np.int32)
-    minimum_core_pixels = max(
-        1,
-        round(0.15 / transform.resolution ** 2),
-    )
-    next_label = 1
-    for component in range(1, component_count):
-        if stats[component, cv2.CC_STAT_AREA] < minimum_core_pixels:
-            continue
-        seeds[components == component] = next_label
-        next_label += 1
-    _ensure_seed_per_free_component(free, seeds, next_label)
-    labels = _propagate_room_seeds(free, seeds)
-    minimum_pixels = round(
-        minimum_room_area / transform.resolution ** 2
-    )
-    labels = _merge_small_rooms(labels, minimum_pixels)
-
-    ordered = []
-    for label in np.unique(labels[labels > 0]):
-        ys, xs = np.where(labels == label)
-        ordered.append((float(xs.mean()), float(ys.mean()), int(label)))
-    relabeled = np.zeros_like(labels)
-    for new_label, (_, _, old_label) in enumerate(
-        sorted(ordered, key=lambda value: (value[1], value[0])),
-        start=1,
-    ):
-        relabeled[labels == old_label] = new_label
-    return relabeled
-
-
-def room_features(
-    room_labels: np.ndarray,
-    transform: MapTransform,
-    simplify_meters: float,
-) -> list[dict]:
-    """Convert raster room labels into stable GeoJSON room features."""
-    features = []
-    for room_number in np.unique(room_labels[room_labels > 0]):
-        room_mask = np.where(
-            room_labels == room_number, 255, 0
-        ).astype(np.uint8)
-        geometry, _ = mask_to_geometry(
-            room_mask,
-            transform,
-            simplify_meters=simplify_meters,
-            minimum_floor_area=0.05,
-            minimum_hole_area=0.20,
-        )
-        ys, xs = np.where(room_labels == room_number)
-        centroid = transform.world(float(xs.mean()), float(ys.mean()))
-        features.append({
-            "type": "Feature",
-            "id": f"room-{room_number}",
-            "properties": {
-                "role": "room",
-                "room_id": f"room-{room_number}",
-                "name": f"공간 {room_number}",
-                "category": "unassigned",
-                "color": ROOM_COLORS[
-                    (int(room_number) - 1) % len(ROOM_COLORS)
-                ],
-                "area_m2": round(_geometry_area(geometry), 2),
-                "centroid": centroid,
-                "generated": True,
-            },
-            "geometry": geometry,
-        })
-    return features
+    _, _, _, center = cv2.minMaxLoc(distance)
+    return {
+        "type": "Feature",
+        "id": "room-1",
+        "properties": {
+            "role": "room",
+            "room_id": "room-1",
+            "name": "공간 1",
+            "category": "unassigned",
+            "color": ROOM_COLORS[0],
+            "area_m2": round(_geometry_area(floor_geometry), 2),
+            "centroid": transform.world(*center),
+            "generated": True,
+        },
+        "geometry": floor_geometry,
+    }
 
 
 def render_preview(
@@ -678,10 +540,8 @@ def render_preview(
 
 def build_user_map(
     slam_map: SlamMap,
-    smoothing_meters: float = 0.12,
-    simplify_meters: float = 0.08,
-    doorway_width: float = 0.80,
-    minimum_room_area: float = 1.5,
+    smoothing_meters: float = 0.0,
+    simplify_meters: float = 0.0,
 ) -> tuple[dict, np.ndarray]:
     """Build User Map GeoJSON and a styled preview from saved SLAM data."""
     free = clean_free_space(slam_map, smoothing_meters)
@@ -690,13 +550,9 @@ def build_user_map(
         slam_map.transform,
         simplify_meters=simplify_meters,
     )
-    labels = segment_rooms(
-        free,
-        slam_map.transform,
-        doorway_width=doorway_width,
-        minimum_room_area=minimum_room_area,
-    )
-    rooms = room_features(labels, slam_map.transform, simplify_meters)
+    rooms = [initial_room_feature(
+        free, floor_geometry, slam_map.transform
+    )]
     user_map = {
         "type": "FeatureCollection",
         "format": FORMAT_VERSION,
@@ -713,10 +569,8 @@ def build_user_map(
             "height": int(slam_map.image.shape[0]),
         },
         "room_segmentation": {
-            "method": "doorway_erosion_geodesic_propagation",
-            "doorway_width": doorway_width,
-            "minimum_room_area": minimum_room_area,
-            "room_count": len(rooms),
+            "method": "single_initial_room",
+            "room_count": 1,
         },
         "features": [
             {
@@ -752,10 +606,8 @@ def _parse_arguments() -> argparse.Namespace:
     parser.add_argument("-o", "--output", type=Path, required=True)
     parser.add_argument("--preview", type=Path)
     parser.add_argument("--map-id", default="")
-    parser.add_argument("--smoothing", type=float, default=0.12)
-    parser.add_argument("--simplify", type=float, default=0.08)
-    parser.add_argument("--doorway-width", type=float, default=0.80)
-    parser.add_argument("--minimum-room-area", type=float, default=1.5)
+    parser.add_argument("--smoothing", type=float, default=0.0)
+    parser.add_argument("--simplify", type=float, default=0.0)
     return parser.parse_args()
 
 
@@ -768,8 +620,6 @@ def main() -> int:
             slam_map,
             smoothing_meters=arguments.smoothing,
             simplify_meters=arguments.simplify,
-            doorway_width=arguments.doorway_width,
-            minimum_room_area=arguments.minimum_room_area,
         )
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(

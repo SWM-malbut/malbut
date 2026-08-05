@@ -9,20 +9,19 @@ const state = {
   zones: [],
   selectedRoomId: null,
   selectedId: null,
-  draft: [],
-  draftRoomId: null,
-  splitPoints: [],
+  splitLines: [],
+  pendingSplitPoint: null,
+  splitValidation: "idle",
+  splitValidationMessage: "",
+  splitValidationTimer: null,
+  splitValidationRevision: 0,
+  zoneApplyEnabled: false,
   mode: "idle",
   roomActionPending: false,
   dragging: null,
   viewBox: null,
 };
 
-const CATEGORY_LABELS = {
-  living_room: "거실", bedroom: "침실", kitchen: "주방",
-  bathroom: "욕실", entrance: "현관", workspace: "작업 공간",
-  custom: "기타",
-};
 const ROOM_CATEGORY_LABELS = {
   unassigned: "미지정", living_room: "거실", bedroom: "침실",
   kitchen: "주방", dining_room: "식당", bathroom: "욕실",
@@ -30,8 +29,40 @@ const ROOM_CATEGORY_LABELS = {
   storage: "수납 공간", utility: "다용도실", custom: "기타",
 };
 const BEHAVIOR_LABELS = {
-  allow: "진입 허용", avoid: "가급적 회피", restricted: "진입 금지",
+  allow: "통행 허용", avoid: "우회 권장", restricted: "진입 금지",
 };
+
+function roomStorageKey(mapId) {
+  return `malbut-rooms:v2:${mapId}`;
+}
+
+function splitErrorMessage(message = "") {
+  const translations = {
+    "at least one split divider is required": "분할선을 하나 이상 만드세요.",
+    "each split divider must contain at least two finite points":
+      "각 분할선의 양 끝점을 지정하세요.",
+    "split divider points must be near a Room wall":
+      "분할선의 점을 방 벽 근처에 놓으세요.",
+    "split divider endpoints must be near a Room wall":
+      "분할선의 두 끝점을 방 벽 근처에 놓으세요.",
+    "split divider control points must stay in the Room":
+      "분할선의 꺽임점은 방 안에 놓으세요.",
+    "split divider segments are too short": "분할선이 너무 짧습니다.",
+    "the divider must cut the selected Room into exactly two meaningful areas":
+      "분할선을 이어서 선택한 방을 정확히 두 공간으로 나누세요.",
+  };
+  return translations[message] || message || "분할선을 확인할 수 없습니다.";
+}
+
+function clearSplitDraft() {
+  if (state.splitValidationTimer) clearTimeout(state.splitValidationTimer);
+  state.splitLines = [];
+  state.pendingSplitPoint = null;
+  state.splitValidation = "idle";
+  state.splitValidationMessage = "";
+  state.splitValidationTimer = null;
+  state.splitValidationRevision += 1;
+}
 
 function svgElement(name, attributes = {}) {
   const element = document.createElementNS("http://www.w3.org/2000/svg", name);
@@ -54,6 +85,48 @@ function allGeometryPoints(geometry) {
   if (geometry.type === "MultiPolygon") return geometry.coordinates.flat(2);
   if (geometry.type === "MultiLineString") return geometry.coordinates.flat();
   return [];
+}
+
+function geometryRings(geometry) {
+  if (geometry.type === "Polygon") return geometry.coordinates;
+  if (geometry.type === "MultiPolygon") return geometry.coordinates.flat();
+  return [];
+}
+
+function pointSegmentDistance(point, first, second) {
+  const dx = second[0] - first[0], dy = second[1] - first[1];
+  const lengthSquared = dx * dx + dy * dy;
+  if (!lengthSquared) return Math.hypot(point[0] - first[0], point[1] - first[1]);
+  const amount = Math.max(0, Math.min(1,
+    ((point[0] - first[0]) * dx + (point[1] - first[1]) * dy) / lengthSquared));
+  return Math.hypot(
+    point[0] - (first[0] + amount * dx),
+    point[1] - (first[1] + amount * dy),
+  );
+}
+
+function pointNearRoomWall(point, geometry, tolerance = .25) {
+  return geometryRings(geometry).some((ring) => ring.slice(1).some(
+    (second, index) => pointSegmentDistance(point, ring[index], second) <= tolerance
+  ));
+}
+
+function orthogonalCorner(point, previous, next, geometry = null) {
+  const candidates = [
+    [previous[0], next[1]],
+    [next[0], previous[1]],
+  ];
+  const usable = geometry
+    ? candidates.filter((candidate) =>
+      pointInGeometry(candidate, geometry) || pointNearRoomWall(candidate, geometry)
+    )
+    : candidates;
+  const choices = usable.length ? usable : candidates;
+  return choices.reduce((closest, candidate) =>
+    Math.hypot(point[0] - candidate[0], point[1] - candidate[1]) <
+      Math.hypot(point[0] - closest[0], point[1] - closest[1])
+      ? candidate : closest
+  );
 }
 
 function walkableFeature() {
@@ -85,10 +158,6 @@ function pointInGeometry(point, geometry) {
 
 function roomById(id) {
   return state.rooms.find((room) => room.id === id);
-}
-
-function roomContainingPoint(point) {
-  return state.rooms.find((room) => pointInGeometry(point, room.geometry));
 }
 
 function segmentInsideGeometry(first, second, geometry) {
@@ -166,16 +235,75 @@ function ringMetrics(ring) {
   };
 }
 
-function validateZoneRing(ring, room) {
-  if (!room) return "Zone이 속할 Room을 찾을 수 없습니다.";
+function validateZoneRing(ring, boundary) {
+  if (!boundary) return "지도의 주행 가능 영역을 찾을 수 없습니다.";
   if (ring.length < 4) return "Zone은 세 점 이상으로 그려야 합니다.";
   if (ringSelfIntersects(ring)) return "Zone 경계가 서로 교차할 수 없습니다.";
   const metrics = ringMetrics(ring);
   if (metrics.area < .1) return "Zone 면적은 0.1 m² 이상이어야 합니다.";
   for (let index = 0; index < ring.length - 1; index += 1) {
     if (!segmentInsideGeometry(
-      ring[index], ring[index + 1], room.geometry
-    )) return "Zone 경계 전체가 하나의 Room 안에 있어야 합니다.";
+      ring[index], ring[index + 1], boundary.geometry
+    )) return "Zone 경계 전체가 지도의 주행 가능 영역 안에 있어야 합니다.";
+  }
+  return null;
+}
+
+function rectangleRing(firstX, firstY, secondX, secondY) {
+  const minX = Math.min(firstX, secondX), maxX = Math.max(firstX, secondX);
+  const minY = Math.min(firstY, secondY), maxY = Math.max(firstY, secondY);
+  return [
+    [minX, minY], [maxX, minY], [maxX, maxY], [minX, maxY], [minX, minY],
+  ];
+}
+
+function rectangleBounds(ring) {
+  const points = ring.slice(0, -1);
+  return {
+    minX: Math.min(...points.map((point) => point[0])),
+    maxX: Math.max(...points.map((point) => point[0])),
+    minY: Math.min(...points.map((point) => point[1])),
+    maxY: Math.max(...points.map((point) => point[1])),
+  };
+}
+
+function isRectangleRing(ring) {
+  if (!Array.isArray(ring) || ring.length !== 5 ||
+      ring[0][0] !== ring[4][0] || ring[0][1] !== ring[4][1]) return false;
+  const bounds = rectangleBounds(ring);
+  const corners = new Set(ring.slice(0, -1).map((point) => `${point[0]},${point[1]}`));
+  const expected = new Set([
+    `${bounds.minX},${bounds.minY}`, `${bounds.maxX},${bounds.minY}`,
+    `${bounds.maxX},${bounds.maxY}`, `${bounds.minX},${bounds.maxY}`,
+  ]);
+  return corners.size === 4 && [...corners].every((corner) => expected.has(corner));
+}
+
+function defaultZoneRing() {
+  const floor = walkableFeature();
+  if (!floor) return null;
+  const points = allGeometryPoints(floor.geometry);
+  const xs = points.map((point) => point[0]), ys = points.map((point) => point[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const centers = [[(minX + maxX) / 2, (minY + maxY) / 2]];
+  for (let row = 1; row < 10; row += 1) {
+    for (let column = 1; column < 10; column += 1) {
+      centers.push([
+        minX + (maxX - minX) * column / 10,
+        minY + (maxY - minY) * row / 10,
+      ]);
+    }
+  }
+  const span = Math.min(maxX - minX, maxY - minY);
+  const sizes = [...new Set([Math.min(1.2, span * .15), .8, .5, .4]
+    .map((size) => Number(size.toFixed(3))))].filter((size) => size >= .4);
+  for (const size of sizes) {
+    const valid = centers.map((center) => rectangleRing(
+      center[0] - size / 2, center[1] - size / 2,
+      center[0] + size / 2, center[1] + size / 2,
+    )).filter((ring) => !validateZoneRing(ring, floor));
+    if (valid.length) return valid[state.zones.length % valid.length];
   }
   return null;
 }
@@ -279,7 +407,7 @@ function renderRoomList() {
   if (!state.rooms.length) {
     const empty = document.createElement("div");
     empty.className = "empty-list";
-    empty.textContent = "자동 생성된 방 후보가 없습니다.";
+    empty.textContent = "편집할 방이 없습니다.";
     list.append(empty);
     return;
   }
@@ -300,7 +428,7 @@ function selectRoom(id) {
   state.selectedRoomId = id;
   state.selectedId = null;
   state.mode = "idle";
-  state.splitPoints = [];
+  clearSplitDraft();
   $("#zoneForm").classList.add("hidden");
   const room = selectedRoom();
   $("#roomSummary").classList.toggle("hidden", !room);
@@ -310,7 +438,7 @@ function selectRoom(id) {
     $("#roomSummaryColor").style.background = room.properties.color;
     $("#roomSummaryName").textContent = roomDisplayName(room);
     $("#roomSummaryDetail").textContent = `${room.properties.area_m2.toFixed(2)} m² · ${ROOM_CATEGORY_LABELS[category] || "기타"}`;
-    $("#roomSummaryBadge").textContent = room.properties.edited ? "편집됨" : "자동 생성";
+    $("#roomSummaryBadge").textContent = room.properties.edited ? "편집됨" : "초기 공간";
     $("#roomName").value = room.properties.name;
     $("#roomCategory").value = ROOM_CATEGORY_LABELS[category] ? category : "custom";
   }
@@ -332,23 +460,15 @@ function updateZoneGeometryMetadata(zone) {
   )) delete zone.properties.preferred_goal;
 }
 
-function reconcileZoneRooms(zones = state.zones) {
+function normalizeZones(zones = state.zones) {
   for (const zone of zones) {
-    if (zone.geometry?.type !== "Polygon") {
-      zone.properties.room_id = null;
-      zone.properties.room_name = null;
-      zone.properties.needs_review = true;
-      continue;
+    if (!zone.properties) continue;
+    delete zone.properties.room_id;
+    delete zone.properties.room_name;
+    delete zone.properties.needs_review;
+    if (zone.geometry?.type === "Polygon" && zone.geometry.coordinates?.[0]) {
+      updateZoneGeometryMetadata(zone);
     }
-    const ring = zone.geometry.coordinates[0];
-    const previous = roomById(zone.properties.room_id);
-    const room = previous && !validateZoneRing(ring, previous)
-      ? previous
-      : state.rooms.find((candidate) => !validateZoneRing(ring, candidate));
-    zone.properties.room_id = room?.id || null;
-    zone.properties.room_name = room ? room.properties.name : null;
-    zone.properties.needs_review = !room;
-    updateZoneGeometryMetadata(zone);
   }
 }
 
@@ -359,12 +479,23 @@ function renderZones() {
     const color = zone.properties.color;
     const path = svgElement("path", {
       d: zonePath(zone),
-      class: `zone-shape${zone.id === state.selectedId ? " selected" : ""}${zone.properties.needs_review ? " needs-review" : ""}`,
+      class: `zone-shape${zone.id === state.selectedId ? " selected" : ""}`,
       fill: `${color}42`, stroke: color, "data-zone-id": zone.id,
     });
     path.addEventListener("click", (event) => {
       if (["splitting", "merging"].includes(state.mode)) return;
       event.stopPropagation(); selectZone(zone.id);
+    });
+    path.addEventListener("pointerdown", (event) => {
+      if (state.mode !== "idle") return;
+      event.stopPropagation();
+      if (state.selectedId !== zone.id) selectZone(zone.id);
+      state.dragging = {
+        type: "zone-move", zoneId: zone.id,
+        origin: worldPoint(event),
+        ring: zone.geometry.coordinates[0].map((point) => [...point]),
+      };
+      svg.setPointerCapture(event.pointerId);
     });
     layer.append(path);
   }
@@ -378,15 +509,44 @@ function renderHandles() {
   const zone = selectedZone();
   if (!zone || state.mode !== "idle") return;
   const ring = zone.geometry.coordinates[0].slice(0, -1);
-  ring.forEach((point, index) => {
-    const handle = svgElement("circle", {cx: point[0], cy: -point[1], r: .11, class: "vertex"});
+  const rectangular = isRectangleRing(zone.geometry.coordinates[0]);
+  if (rectangular) ring.forEach((point, index) => {
+    const handle = svgElement("circle", {
+      cx: point[0], cy: -point[1], r: .11,
+      class: "zone-corner",
+    });
     handle.addEventListener("pointerdown", (event) => {
       event.stopPropagation();
-      state.dragging = {type: "vertex", index};
-      handle.setPointerCapture(event.pointerId);
+      state.dragging = {
+        type: "zone-corner", zoneId: zone.id, opposite: ring[(index + 2) % 4],
+      };
+      svg.setPointerCapture(event.pointerId);
     });
     layer.append(handle);
   });
+  if (rectangular) {
+    const bounds = rectangleBounds(zone.geometry.coordinates[0]);
+    const edges = [
+      {side: "minY", point: [(bounds.minX + bounds.maxX) / 2, bounds.minY]},
+      {side: "maxX", point: [bounds.maxX, (bounds.minY + bounds.maxY) / 2]},
+      {side: "maxY", point: [(bounds.minX + bounds.maxX) / 2, bounds.maxY]},
+      {side: "minX", point: [bounds.minX, (bounds.minY + bounds.maxY) / 2]},
+    ];
+    for (const edge of edges) {
+      const handle = svgElement("rect", {
+        x: edge.point[0] - .09, y: -edge.point[1] - .09,
+        width: .18, height: .18, class: "zone-edge",
+      });
+      handle.addEventListener("pointerdown", (event) => {
+        event.stopPropagation();
+        state.dragging = {
+          type: "zone-edge", zoneId: zone.id, side: edge.side, bounds,
+        };
+        svg.setPointerCapture(event.pointerId);
+      });
+      layer.append(handle);
+    }
+  }
   const goal = zone.properties.preferred_goal;
   if (goal) {
     layer.append(svgElement("circle", {cx: goal[0], cy: -goal[1], r: .13, class: "goal"}));
@@ -396,23 +556,51 @@ function renderHandles() {
 function renderDraft() {
   const layer = $("#draftLayer");
   layer.replaceChildren();
-  if (state.draft.length) {
-    const points = state.draft.map((point) => `${point[0]},${-point[1]}`).join(" ");
-    layer.append(svgElement("polygon", {points, class: "draft-line"}));
-    for (const point of state.draft) {
-      layer.append(svgElement("circle", {cx: point[0], cy: -point[1], r: .09, class: "vertex"}));
+  state.splitLines.forEach((line, lineIndex) => {
+    if (line.length >= 2) {
+      const points = line.map((point) => `${point[0]},${-point[1]}`).join(" ");
+      const divider = svgElement("polyline", {
+        points, class: `split-line ${state.splitValidation}`,
+      });
+      divider.addEventListener("click", (event) => event.stopPropagation());
+      layer.append(divider);
     }
-  }
-  if (state.splitPoints.length) {
-    if (state.splitPoints.length === 2) {
-      const [first, second] = state.splitPoints;
-      layer.append(svgElement("line", {
-        x1: first[0], y1: -first[1], x2: second[0], y2: -second[1], class: "split-line",
-      }));
+    line.forEach((point, index) => {
+      const handle = svgElement("circle", {
+        cx: point[0], cy: -point[1], r: .12, class: "split-point",
+      });
+      handle.addEventListener("click", (event) => event.stopPropagation());
+      handle.addEventListener("pointerdown", (event) => {
+        event.stopPropagation();
+        state.dragging = {type: "split", lineIndex, index};
+        svg.setPointerCapture(event.pointerId);
+      });
+      layer.append(handle);
+    });
+    if (line.length === 2) {
+      const center = [
+        (line[0][0] + line[1][0]) / 2,
+        (line[0][1] + line[1][1]) / 2,
+      ];
+      const bendHandle = svgElement("circle", {
+        cx: center[0], cy: -center[1], r: .1,
+        class: "split-bend-point",
+      });
+      bendHandle.addEventListener("pointerdown", (event) => {
+        event.stopPropagation();
+        line.splice(1, 0, center);
+        state.dragging = {type: "split", lineIndex, index: 1};
+        svg.setPointerCapture(event.pointerId);
+        scheduleSplitValidation();
+      });
+      layer.append(bendHandle);
     }
-    for (const point of state.splitPoints) {
-      layer.append(svgElement("circle", {cx: point[0], cy: -point[1], r: .12, class: "split-point"}));
-    }
+  });
+  if (state.pendingSplitPoint) {
+    layer.append(svgElement("circle", {
+      cx: state.pendingSplitPoint[0], cy: -state.pendingSplitPoint[1],
+      r: .12, class: "split-point pending",
+    }));
   }
 }
 
@@ -428,12 +616,12 @@ function renderZoneList() {
   }
   for (const zone of state.zones) {
     const item = document.createElement("button");
-    item.className = `zone-item${zone.id === state.selectedId ? " selected" : ""}${zone.properties.needs_review ? " needs-review" : ""}`;
+    item.className = `zone-item${zone.id === state.selectedId ? " selected" : ""}`;
     item.innerHTML = `<i class="zone-dot"></i><span><strong></strong><small></small></span><em>›</em>`;
     item.querySelector("i").style.background = zone.properties.color;
     item.querySelector("strong").textContent = zone.properties.name;
-    const roomName = zone.properties.room_name || "소속 방 확인 필요";
-    item.querySelector("small").textContent = `${CATEGORY_LABELS[zone.properties.category] ?? "기타"} · ${BEHAVIOR_LABELS[zone.properties.behavior] ?? "진입 허용"} · ${roomName}`;
+    item.querySelector("small").textContent =
+      BEHAVIOR_LABELS[zone.properties.behavior] ?? "통행 허용";
     item.addEventListener("click", () => selectZone(zone.id));
     list.append(item);
   }
@@ -443,15 +631,13 @@ function selectZone(id) {
   state.selectedRoomId = null;
   state.selectedId = id;
   state.mode = "idle";
-  state.splitPoints = [];
+  clearSplitDraft();
   const zone = selectedZone();
   $("#zoneForm").classList.toggle("hidden", !zone);
   if (zone) {
     $("#zoneName").value = zone.properties.name;
-    $("#zoneCategory").value = zone.properties.category;
     $("#zoneBehavior").value = zone.properties.behavior;
     $("#zoneColor").value = zone.properties.color;
-    $("#zoneRoom").textContent = zone.properties.room_name || "확인 필요";
     $("#zoneArea").textContent = `${(zone.properties.area_m2 || 0).toFixed(2)} m²`;
   }
   setModeBanner();
@@ -463,18 +649,23 @@ function selectZone(id) {
 
 function setModeBanner() {
   const banner = $("#modeBanner");
-  const draftRoom = roomById(state.draftRoomId);
+  const splitStatus = {
+    idle: "",
+    checking: " · 확인 중",
+    valid: " · 분할 가능",
+    invalid: ` · 분할 불가${state.splitValidationMessage
+      ? `: ${state.splitValidationMessage}` : ""}`,
+  }[state.splitValidation];
   const messages = {
-    drawing: `${draftRoom ? `${draftRoom.properties.name} 안에서 ` : ""}Zone 꼭짓점을 순서대로 누르세요. 마지막에는 ‘그리기 완료’를 누르세요.`,
     goal: "선택한 영역 안에서 로봇의 대표 도착 위치를 누르세요.",
-    splitting: "선택한 방을 가로지르도록 두 지점을 누르세요. 두 점을 지나는 직선으로 방이 나뉩니다.",
+    splitting: `벽 두 곳을 누르면 직선이 생깁니다. 선 중앙의 작은 점을 끌면 ㄱ자 직각선으로 바뀝니다. (${state.splitLines.length}개 선${state.pendingSplitPoint ? " · 끝점 선택 중" : splitStatus})`,
     merging: "현재 방과 합칠 다른 방을 지도나 방 목록에서 선택하세요.",
   };
   banner.textContent = messages[state.mode] ?? "";
   banner.classList.toggle("hidden", !messages[state.mode]);
-  $("#newZone").textContent = state.mode === "drawing" ? "✓" : "＋";
-  $("#newZone").title = state.mode === "drawing" ? "그리기 완료" : "새 영역";
-  $("#splitRoom").textContent = state.mode === "splitting" ? "나누기 취소" : "방 나누기";
+  $("#newZone").textContent = "＋";
+  $("#newZone").title = "새 사각형 Zone";
+  $("#splitRoom").textContent = state.mode === "splitting" ? "분할 적용" : "방 나누기";
   $("#mergeRoom").textContent = state.mode === "merging" ? "합치기 취소" : "방 합치기";
   updateRoomActionButtons();
 }
@@ -486,7 +677,7 @@ function updateRoomActionButtons() {
     $("#splitRoom").disabled = true;
     $("#mergeRoom").disabled = true;
   } else if (state.mode === "splitting") {
-    $("#splitRoom").disabled = false;
+    $("#splitRoom").disabled = state.splitValidation !== "valid";
     $("#mergeRoom").disabled = true;
   } else if (state.mode === "merging") {
     $("#splitRoom").disabled = true;
@@ -513,9 +704,7 @@ function persistRooms() {
     state.userMap.room_segmentation.room_count = state.rooms.length;
     state.userMap.room_segmentation.edited = true;
   }
-  reconcileZoneRooms();
-  localStorage.setItem(`malbut-rooms:${state.userMap.map_id}`, JSON.stringify(state.rooms));
-  localStorage.setItem(`malbut-zones:${state.userMap.map_id}`, JSON.stringify(state.zones));
+  localStorage.setItem(roomStorageKey(state.userMap.map_id), JSON.stringify(state.rooms));
   $("#saveState").textContent = "방 편집 내용이 이 브라우저에 저장됨";
 }
 
@@ -546,16 +735,10 @@ function updateSelectedRoomProperty(name, value) {
   renderRooms();
 }
 
-function finishDraft() {
-  if (state.draft.length < 3) {
-    alert("영역은 세 점 이상으로 그려야 합니다.");
-    return;
-  }
-  const room = roomById(state.draftRoomId);
-  const ring = [...state.draft, state.draft[0]];
-  const error = validateZoneRing(ring, room);
-  if (error) {
-    alert(error);
+function createDefaultZone() {
+  const ring = defaultZoneRing();
+  if (!ring) {
+    alert("사각형 Zone을 배치할 수 있는 주행 가능 공간이 없습니다.");
     return;
   }
   const id = crypto.randomUUID ? crypto.randomUUID() : `zone-${Date.now()}`;
@@ -566,19 +749,13 @@ function finishDraft() {
       role: "semantic_zone",
       zone_id: id,
       name: `Zone ${state.zones.length + 1}`,
-      category: "custom",
       behavior: "allow",
       color: "#5c6cf2",
-      room_id: room.id,
-      room_name: room.properties.name,
       area_m2: Number(metrics.area.toFixed(2)),
       centroid: metrics.centroid.map((value) => Number(value.toFixed(3))),
-      needs_review: false,
     },
     geometry: {type: "Polygon", coordinates: [ring]},
   });
-  state.draft = [];
-  state.draftRoomId = null;
   state.mode = "idle";
   persist();
   selectZone(id);
@@ -591,10 +768,14 @@ function loadUserMap(value, filename) {
     throw new Error("Malbut User Map 형식이 아닙니다.");
   }
   state.userMap = value;
-  const generatedRooms = value.features.filter((feature) => feature.properties?.role === "room");
-  state.sourceRooms = JSON.parse(JSON.stringify(generatedRooms));
-  state.rooms = readStoredArray(
-    `malbut-rooms:${value.map_id}`, generatedRooms, "방"
+  const importedRooms = value.features.filter((feature) => feature.properties?.role === "room");
+  if (!importedRooms.length) throw new Error("Room이 없는 User Map입니다.");
+  state.sourceRooms = JSON.parse(JSON.stringify(importedRooms));
+  state.rooms = refreshGeneratedInitialRoom(readStoredArray(
+    roomStorageKey(value.map_id), importedRooms, "방"
+  ), importedRooms);
+  localStorage.setItem(
+    roomStorageKey(value.map_id), JSON.stringify(state.rooms)
   );
   state.userMap.features = [
     ...value.features.filter((feature) => feature.properties?.role !== "room"),
@@ -603,20 +784,20 @@ function loadUserMap(value, filename) {
   state.zones = readStoredArray(
     `malbut-zones:${value.map_id}`, [], "Zone"
   );
-  reconcileZoneRooms();
+  normalizeZones();
   state.selectedRoomId = null;
   state.selectedId = null;
-  state.draftRoomId = null;
-  state.splitPoints = [];
+  clearSplitDraft();
   state.mode = "idle";
   state.roomActionPending = false;
   $("#mapName").textContent = floor.properties.name || filename;
-  $("#saveState").textContent = `방 후보 ${state.rooms.length}개 · 지도 ID ${value.map_id}`;
+  $("#saveState").textContent = `방 ${state.rooms.length}개 · 지도 ID ${value.map_id}`;
   $("#emptyState").classList.add("hidden");
   svg.classList.remove("hidden");
   $("#newZone").disabled = false;
   $("#exportMap").disabled = false;
   $("#exportZones").disabled = false;
+  $("#applyZones").disabled = !state.zoneApplyEnabled;
   $("#zoneForm").classList.add("hidden");
   $("#roomSummary").classList.add("hidden");
   $("#roomForm").classList.add("hidden");
@@ -640,6 +821,20 @@ function readStoredArray(key, fallback, label) {
     alert(`${label} 자동 저장 데이터가 손상되어 초기 상태로 복구했습니다.`);
     return fallback;
   }
+}
+
+function refreshGeneratedInitialRoom(storedRooms, importedRooms) {
+  if (
+    storedRooms.length !== 1 || importedRooms.length !== 1
+    || storedRooms[0].id !== importedRooms[0].id
+    || storedRooms[0].properties?.generated !== true
+  ) return storedRooms;
+  const imported = importedRooms[0];
+  const refreshed = JSON.parse(JSON.stringify(storedRooms[0]));
+  refreshed.geometry = JSON.parse(JSON.stringify(imported.geometry));
+  refreshed.properties.area_m2 = imported.properties.area_m2;
+  refreshed.properties.centroid = imported.properties.centroid;
+  return [refreshed];
 }
 
 $("#mapFile").addEventListener("change", async (event) => {
@@ -671,10 +866,12 @@ $("#zoneFile").addEventListener("change", async (event) => {
     });
     if (invalidZone) throw new Error("올바르지 않은 Polygon Zone이 포함되어 있습니다.");
     const candidateZones = JSON.parse(JSON.stringify(zones));
-    reconcileZoneRooms(candidateZones);
-    if (candidateZones.some((zone) => zone.properties.needs_review)) {
-      throw new Error("현재 Room 경계 안에 들어오지 않는 Zone이 있습니다.");
+    const floor = walkableFeature();
+    for (const zone of candidateZones) {
+      const error = validateZoneRing(zone.geometry.coordinates[0], floor);
+      if (error) throw new Error(error);
     }
+    normalizeZones(candidateZones);
     state.zones = candidateZones;
     state.selectedId = null; persist(); renderZones();
   } catch (error) { alert(`영역을 열 수 없습니다: ${error.message}`); }
@@ -682,25 +879,37 @@ $("#zoneFile").addEventListener("change", async (event) => {
 });
 
 $("#newZone").addEventListener("click", () => {
-  if (state.mode === "drawing") { finishDraft(); return; }
-  state.draftRoomId = state.selectedRoomId;
-  state.selectedRoomId = null; state.selectedId = null; state.draft = []; state.mode = "drawing";
-  $("#zoneForm").classList.add("hidden");
+  if (!state.userMap) return;
+  state.selectedRoomId = null;
   $("#roomSummary").classList.add("hidden");
   $("#roomForm").classList.add("hidden");
-  setModeBanner(); renderRooms(); renderZones(); renderDraft();
+  createDefaultZone();
 });
 
 $("#splitRoom").addEventListener("click", () => {
   if (state.mode === "splitting") {
-    state.mode = "idle";
-    state.splitPoints = [];
-    setModeBanner(); renderDraft();
+    if (state.pendingSplitPoint) {
+      alert("선택 중인 시작점과 연결할 두 번째 벽을 지정하세요.");
+      return;
+    }
+    if (!state.splitLines.length) {
+      alert("벽 두 곳을 눌러 분할선을 하나 이상 만드세요.");
+      return;
+    }
+    const room = selectedRoom();
+    if (state.splitLines.some((line) =>
+      !pointNearRoomWall(line[0], room.geometry) ||
+      !pointNearRoomWall(line[line.length - 1], room.geometry)
+    )) {
+      alert("분할선의 시작점과 끝점은 벽에서 0.25m 이내에 두세요.");
+      return;
+    }
+    splitSelectedRoom();
     return;
   }
   if (!selectedRoom()) return;
   state.mode = "splitting";
-  state.splitPoints = [];
+  clearSplitDraft();
   $("#zoneForm").classList.add("hidden");
   setModeBanner(); renderZones(); renderDraft();
 });
@@ -713,7 +922,7 @@ $("#mergeRoom").addEventListener("click", () => {
   }
   if (!selectedRoom() || state.rooms.length < 2) return;
   state.mode = "merging";
-  state.splitPoints = [];
+  clearSplitDraft();
   setModeBanner(); renderRooms(); renderZones(); renderDraft();
 });
 
@@ -722,16 +931,15 @@ $("#resetRooms").addEventListener("click", () => {
   state.rooms = JSON.parse(JSON.stringify(state.sourceRooms));
   state.selectedRoomId = null;
   state.mode = "idle";
-  state.draftRoomId = null;
-  state.splitPoints = [];
+  clearSplitDraft();
   persistRooms();
-  localStorage.removeItem(`malbut-rooms:${state.userMap.map_id}`);
+  localStorage.removeItem(roomStorageKey(state.userMap.map_id));
   if (state.userMap.room_segmentation) {
     state.userMap.room_segmentation.edited = false;
   }
   $("#roomSummary").classList.add("hidden");
   $("#roomForm").classList.add("hidden");
-  $("#saveState").textContent = "자동 생성 방 구성으로 초기화됨";
+  $("#saveState").textContent = "초기 공간 1개로 되돌림";
   setModeBanner(); renderRooms(); renderZones(); renderDraft();
 });
 
@@ -776,9 +984,49 @@ async function mergeSelectedRoomWith(targetId) {
   }
 }
 
+function scheduleSplitValidation() {
+  if (state.splitValidationTimer) clearTimeout(state.splitValidationTimer);
+  const revision = ++state.splitValidationRevision;
+  if (!state.splitLines.length || state.pendingSplitPoint || !selectedRoom()) {
+    state.splitValidation = "idle";
+    state.splitValidationMessage = "";
+    state.splitValidationTimer = null;
+    setModeBanner(); renderDraft();
+    return;
+  }
+  state.splitValidation = "checking";
+  state.splitValidationMessage = "";
+  setModeBanner(); renderDraft();
+  state.splitValidationTimer = setTimeout(async () => {
+    try {
+      const response = await fetch("/api/split-room", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          room: selectedRoom(),
+          lines: state.splitLines,
+          resolution: state.userMap.source?.resolution || .05,
+          minimum_room_area: 1.0,
+        }),
+      });
+      const value = await response.json();
+      if (revision !== state.splitValidationRevision) return;
+      state.splitValidation = response.ok ? "valid" : "invalid";
+      state.splitValidationMessage = response.ok
+        ? "" : splitErrorMessage(value.error || `HTTP ${response.status}`);
+    } catch (error) {
+      if (revision !== state.splitValidationRevision) return;
+      state.splitValidation = "invalid";
+      state.splitValidationMessage = splitErrorMessage(error.message);
+    }
+    state.splitValidationTimer = null;
+    setModeBanner(); renderDraft();
+  }, 180);
+}
+
 async function splitSelectedRoom() {
   const room = selectedRoom();
-  if (!room || state.splitPoints.length !== 2) return;
+  if (!room || !state.splitLines.length || state.pendingSplitPoint) return;
   state.roomActionPending = true;
   updateRoomActionButtons();
   try {
@@ -787,26 +1035,26 @@ async function splitSelectedRoom() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         room,
-        line: state.splitPoints,
+        lines: state.splitLines,
         resolution: state.userMap.source?.resolution || .05,
         minimum_room_area: 1.0,
       }),
     });
     const value = await response.json();
-    if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new Error(splitErrorMessage(value.error || `HTTP ${response.status}`));
+    }
     const index = state.rooms.findIndex((candidate) => candidate.id === room.id);
     if (index < 0 || !Array.isArray(value.rooms) || value.rooms.length !== 2) {
       throw new Error("분할 결과 형식이 올바르지 않습니다.");
     }
     state.rooms.splice(index, 1, ...value.rooms);
-    state.splitPoints = [];
+    clearSplitDraft();
     state.mode = "idle";
     persistRooms();
     selectRoom(value.rooms[0].id);
     renderDraft();
   } catch (error) {
-    state.splitPoints = [];
-    state.mode = "idle";
     setModeBanner(); renderDraft();
     alert(`방을 나눌 수 없습니다: ${error.message}`);
   } finally {
@@ -818,29 +1066,20 @@ async function splitSelectedRoom() {
 svg.addEventListener("click", (event) => {
   if (!state.userMap) return;
   const point = worldPoint(event);
-  if (state.mode === "drawing") {
-    const room = roomById(state.draftRoomId) || roomContainingPoint(point);
-    if (!room || !pointInGeometry(point, room.geometry)) {
-      alert("Zone 꼭짓점은 하나의 Room 안에 지정하세요.");
-      return;
-    }
-    if (state.draft.length && !segmentInsideGeometry(
-      state.draft[state.draft.length - 1], point, room.geometry
-    )) {
-      alert("Zone 경계가 Room 밖으로 나갈 수 없습니다.");
-      return;
-    }
-    state.draftRoomId = room.id;
-    state.draft.push(point); setModeBanner(); renderDraft();
-  } else if (state.mode === "splitting") {
+  if (state.mode === "splitting") {
     const room = selectedRoom();
-    if (!room || !pointInGeometry(point, room.geometry)) {
-      alert("분할 지점은 선택한 방 안에 지정하세요.");
+    const nearWall = room && pointNearRoomWall(point, room.geometry);
+    if (!nearWall) {
+      alert("분할선의 두 끝점은 벽에서 0.25m 이내에 지정하세요.");
       return;
     }
-    state.splitPoints.push(point);
-    renderDraft();
-    if (state.splitPoints.length === 2) splitSelectedRoom();
+    if (state.pendingSplitPoint) {
+      state.splitLines.push([state.pendingSplitPoint, point]);
+      state.pendingSplitPoint = null;
+    } else {
+      state.pendingSplitPoint = point;
+    }
+    scheduleSplitValidation();
   } else if (state.mode === "merging") {
     alert("합칠 다른 방을 지도나 방 목록에서 선택하세요.");
   } else if (state.mode === "goal") {
@@ -850,8 +1089,7 @@ svg.addEventListener("click", (event) => {
   } else {
     state.selectedRoomId = null;
     state.selectedId = null;
-    state.draftRoomId = null;
-    state.splitPoints = [];
+    clearSplitDraft();
     $("#zoneForm").classList.add("hidden");
     $("#roomSummary").classList.add("hidden");
     $("#roomForm").classList.add("hidden");
@@ -863,33 +1101,62 @@ svg.addEventListener("click", (event) => {
 
 svg.addEventListener("pointermove", (event) => {
   if (!state.dragging) return;
-  const point = worldPoint(event);
-  const zone = selectedZone();
-  if (!zone) return;
-  const ring = zone.geometry.coordinates[0].map((vertex) => [...vertex]);
-  ring[state.dragging.index] = point;
-  if (state.dragging.index === 0) ring[ring.length - 1] = point;
-  let room = roomById(zone.properties.room_id);
-  if (zone.properties.needs_review || !room) {
-    const floor = {geometry: walkableFeature().geometry};
-    if (validateZoneRing(ring, floor)) return;
-    room = state.rooms.find((candidate) => !validateZoneRing(ring, candidate));
-  } else if (validateZoneRing(ring, room)) {
+  let point = worldPoint(event);
+  if (state.dragging.type === "split") {
+    const room = selectedRoom();
+    const line = state.splitLines[state.dragging.lineIndex];
+    const index = state.dragging.index;
+    const endpoint = index === 0 || index === line.length - 1;
+    if (!endpoint) {
+      point = orthogonalCorner(
+        point, line[index - 1], line[index + 1], room.geometry
+      );
+    }
+    const valid = endpoint
+      ? pointNearRoomWall(point, room.geometry)
+      : pointInGeometry(point, room.geometry) || pointNearRoomWall(point, room.geometry);
+    if (!valid) return;
+    line[index] = point;
+    scheduleSplitValidation();
     return;
   }
+  const zone = selectedZone();
+  if (!zone) return;
+  const floor = walkableFeature();
+  let ring;
+  if (state.dragging.type === "zone-move") {
+    const deltaX = point[0] - state.dragging.origin[0];
+    const deltaY = point[1] - state.dragging.origin[1];
+    ring = state.dragging.ring.map((vertex) => [
+      vertex[0] + deltaX, vertex[1] + deltaY,
+    ]);
+  } else if (state.dragging.type === "zone-corner") {
+    ring = rectangleRing(
+      point[0], point[1],
+      state.dragging.opposite[0], state.dragging.opposite[1],
+    );
+  } else if (state.dragging.type === "zone-edge") {
+    const bounds = {...state.dragging.bounds};
+    bounds[state.dragging.side] = state.dragging.side.endsWith("X")
+      ? point[0] : point[1];
+    if (bounds.minX >= bounds.maxX || bounds.minY >= bounds.maxY) return;
+    ring = rectangleRing(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
+  } else return;
+  if (validateZoneRing(ring, floor)) return;
   zone.geometry.coordinates[0] = ring;
-  zone.properties.room_id = room?.id || null;
-  zone.properties.room_name = room?.properties.name || null;
-  zone.properties.needs_review = !room;
   updateZoneGeometryMetadata(zone);
-  $("#zoneRoom").textContent = zone.properties.room_name || "확인 필요";
   $("#zoneArea").textContent = `${zone.properties.area_m2.toFixed(2)} m²`;
   renderZones();
 });
-window.addEventListener("pointerup", () => { if (state.dragging) { state.dragging = null; persist(); renderZones(); } });
+window.addEventListener("pointerup", () => {
+  if (!state.dragging) return;
+  const splitDrag = state.dragging.type === "split";
+  state.dragging = null;
+  if (splitDrag) renderDraft();
+  else { persist(); renderZones(); }
+});
 
 $("#zoneName").addEventListener("input", (event) => updateSelectedProperty("name", event.target.value || "이름 없는 공간"));
-$("#zoneCategory").addEventListener("change", (event) => updateSelectedProperty("category", event.target.value));
 $("#zoneBehavior").addEventListener("change", (event) => updateSelectedProperty("behavior", event.target.value));
 $("#zoneColor").addEventListener("input", (event) => updateSelectedProperty("color", event.target.value));
 $("#roomName").addEventListener("input", (event) => updateSelectedRoomProperty("name", event.target.value || "이름 없는 방"));
@@ -908,28 +1175,62 @@ function downloadJson(value, filename) {
   URL.revokeObjectURL(link.href);
 }
 
+function zoneCollection() {
+  normalizeZones();
+  return {
+    type: "FeatureCollection",
+    format: "malbut-semantic-zones-v1",
+    map_id: state.userMap.map_id,
+    frame_id: state.userMap.frame_id,
+    features: state.zones,
+  };
+}
+
 $("#exportMap").addEventListener("click", () => {
   persistRooms();
   downloadJson(state.userMap, `${state.userMap.map_id}-user-map.geojson`);
 });
 
 $("#exportZones").addEventListener("click", () => {
-  reconcileZoneRooms();
-  if (state.zones.some((zone) => zone.properties.needs_review)) {
-    alert("소속 방을 확인해야 하는 Zone을 수정하거나 삭제한 뒤 내보내세요.");
-    renderZones();
-    return;
+  downloadJson(zoneCollection(), `${state.userMap.map_id}-zones.geojson`);
+});
+
+$("#applyZones").addEventListener("click", async () => {
+  if (!state.userMap || !state.zoneApplyEnabled) return;
+  const button = $("#applyZones");
+  button.disabled = true;
+  button.textContent = "적용 중…";
+  try {
+    const response = await fetch("/api/apply-zones", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(zoneCollection()),
+    });
+    const value = await response.json();
+    if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`);
+    persist();
+    $("#saveState").textContent = value.nav2_reloaded
+      ? "Zone이 실행 중인 Nav2에 적용됨"
+      : "Zone 주행 설정 저장됨 · 다음 Nav2 실행부터 적용";
+  } catch (error) {
+    alert(`Zone을 주행에 적용할 수 없습니다: ${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = "주행에 적용";
   }
-  const value = {type: "FeatureCollection", format: "malbut-semantic-zones-v1", map_id: state.userMap.map_id, frame_id: state.userMap.frame_id, features: state.zones};
-  downloadJson(value, `${state.userMap.map_id}-zones.geojson`);
 });
 
 window.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || !["drawing", "goal", "splitting", "merging"].includes(state.mode)) return;
+  if (state.mode === "splitting" && event.key === "Backspace") {
+    event.preventDefault();
+    if (state.pendingSplitPoint) state.pendingSplitPoint = null;
+    else state.splitLines.pop();
+    scheduleSplitValidation();
+    return;
+  }
+  if (event.key !== "Escape" || !["goal", "splitting", "merging"].includes(state.mode)) return;
   state.mode = "idle";
-  state.draft = [];
-  state.draftRoomId = null;
-  state.splitPoints = [];
+  clearSplitDraft();
   setModeBanner(); renderDraft(); renderRooms(); renderZones();
 });
 
@@ -955,4 +1256,17 @@ async function loadMapFromUrl() {
   }
 }
 
+async function loadEditorConfig() {
+  try {
+    const response = await fetch("/api/editor-config");
+    if (!response.ok) return;
+    const value = await response.json();
+    state.zoneApplyEnabled = Boolean(value.zone_apply_enabled);
+    $("#applyZones").disabled = !state.userMap || !state.zoneApplyEnabled;
+  } catch (_error) {
+    state.zoneApplyEnabled = false;
+  }
+}
+
+loadEditorConfig();
 loadMapFromUrl();

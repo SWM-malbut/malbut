@@ -126,7 +126,7 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 controller_server:
   ros__parameters:
     use_sim_time: True
-    controller_frequency: 10.0
+    controller_frequency: 20.0
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
@@ -139,54 +139,98 @@ controller_server:
     # Progress checker parameters
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.5
-      movement_time_allowance: 10.0
+      # A mecanum base may need to rotate and align slowly in a narrow room.
+      # Do not turn that deliberate safety behavior into a recovery loop.
+      required_movement_radius: 0.15
+      movement_time_allowance: 30.0
 
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 0.25
-    # DWB parameters
+      # A semantic Room/Zone target is a destination, not a docking pose.
+      # The predictive controller owns the travel heading; arriving at the
+      # requested position must not trigger an unrelated final camera turn.
+      yaw_goal_tolerance: 3.14
+    # Predictive omnidirectional controller
     FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
-      debug_trajectory_details: True
-      min_vel_x: 0.0
-      min_vel_y: -0.4
-      max_vel_x: 0.4
-      max_vel_y: 0.4
-      max_vel_theta: 1.0
-      min_speed_xy: 0.0
-      max_speed_xy: 0.4
-      min_speed_theta: 0.0
-      acc_lim_x: 2.5
-      acc_lim_y: 2.5
-      acc_lim_theta: 3.2
-      decel_lim_x: -2.5
-      decel_lim_y: -2.5
-      decel_lim_theta: -3.2
-      vx_samples: 20
-      vy_samples: 5
-      vtheta_samples: 20
-      sim_time: 1.7
-      linear_granularity: 0.05
-      angular_granularity: 0.025
+      # MPPI optimizes body translation and camera heading over a complete
+      # prediction horizon. This avoids DWB's stop/rotate hand-off loop while
+      # retaining mecanum motion for constrained-space avoidance.
+      plugin: "nav2_mppi_controller::MPPIController"
+      motion_model: "Omni"
+      time_steps: 56
+      model_dt: 0.05
+      batch_size: 2000
+      iteration_count: 1
+      vx_std: 0.20
+      vy_std: 0.08
+      wz_std: 0.20
+      vx_max: 0.40
+      vx_min: -0.10
+      # Forward travel is the normal product behavior. Limited lateral
+      # velocity remains available for a mecanum escape or fine alignment.
+      vy_max: 0.10
+      wz_max: 0.40
+      prune_distance: 1.5
       transform_tolerance: 0.2
-      xy_goal_tolerance: 0.25
-      trans_stopped_velocity: 0.25
-      short_circuit_trajectory_evaluation: True
-      stateful: True
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02
-      PathAlign.scale: 32.0
-      PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 24.0
-      GoalAlign.forward_point_distance: 0.1
-      PathDist.scale: 32.0
-      GoalDist.scale: 24.0
-      RotateToGoal.scale: 32.0
-      RotateToGoal.slowing_factor: 5.0
-      RotateToGoal.lookahead_time: -1.0
+      temperature: 0.3
+      gamma: 0.015
+      visualize: false
+      retry_attempt_limit: 2
+      regenerate_noises: false
+      critics: ["ConstraintCritic", "CostCritic", "GoalCritic", "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic", "TwirlingCritic"]
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+      CostCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.81
+        critical_cost: 300.0
+        consider_footprint: true
+        collision_cost: 1000000.0
+        near_goal_distance: 0.5
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 1.4
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 10.0
+        max_path_occupancy_ratio: 0.07
+        trajectory_point_step: 4
+        threshold_to_consider: 0.5
+        offset_from_furthest: 20
+        use_path_orientations: false
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        offset_from_furthest: 6
+        threshold_to_consider: 1.4
+      # These two critics make the forward camera follow the direction of
+      # travel without forcing a separate stop-and-spin state.
+      PathAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.5
+        max_angle_to_furthest: 1.0
+        forward_preference: true
+      PreferForwardCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 8.0
+        threshold_to_consider: 0.5
+      TwirlingCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 8.0
 controller_server_rclcpp_node:
   ros__parameters:
     use_sim_time: True
@@ -198,6 +242,9 @@ local_costmap:
       publish_frequency: 2.0
       global_frame: odom
       robot_base_frame: base_footprint
+      # Absolute collision margin. Wider preferred clearance remains a soft
+      # cost in the generated filter mask, so narrow passages stay usable.
+      footprint_padding: 0.05
       use_sim_time: True
       rolling_window: true
       width: 4
@@ -210,10 +257,17 @@ local_costmap:
         "voxel_layer",
          "inflation_layer"
          ]
+      filters: ["keepout_filter"]
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: False
+        filter_info_topic: "/keepout_costmap_filter_info"
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 5.0
-        inflation_radius: 0.3
+        # Preserve a broad obstacle-cost gradient so local control prefers
+        # clearance over tightly following the shortest global path.
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.55
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
@@ -233,7 +287,9 @@ local_costmap:
           raytrace_max_range: 3.0
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
-          obstacle_min_range: 0.0
+          # The laser sits inside the roughly 0.19 m circumscribed footprint.
+          # Ignore self returns so they cannot leave inflated ghost obstacles.
+          obstacle_min_range: 0.20
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
@@ -247,6 +303,7 @@ global_costmap:
       publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_footprint
+      footprint_padding: 0.05
       use_sim_time: True
       # Covers the published body envelope and the wheel collision proxies.
       footprint: "[[0.1385, 0.127], [0.1385, -0.127], [-0.1385, -0.127], [-0.1385, 0.127]]"
@@ -257,6 +314,11 @@ global_costmap:
         "obstacle_layer",
          "inflation_layer"
          ]
+      filters: ["keepout_filter"]
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: False
+        filter_info_topic: "/keepout_costmap_filter_info"
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -270,14 +332,16 @@ global_costmap:
           raytrace_max_range: 3.0
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
-          obstacle_min_range: 0.0
+          obstacle_min_range: 0.20
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 10.0
-        inflation_radius: 0.3
+        # Match the local safety margin so the global planner selects routes
+        # with clearance instead of merely minimizing geometric distance.
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.55
       always_send_full_costmap: True
 
 
@@ -287,10 +351,18 @@ planner_server:
     use_sim_time: True
     planner_plugins: ["GridBased"]
     GridBased:
-      plugin: "nav2_navfn_planner/NavfnPlanner"
+      # Smac 2D exposes an explicit traversal-cost weight. Prefer a wider,
+      # safer detour over a shorter route through wall-inflation gradients.
+      plugin: "nav2_smac_planner/SmacPlanner2D"
       tolerance: 0.5
-      use_astar: false
-      allow_unknown: true
+      allow_unknown: false
+      downsample_costmap: false
+      downsampling_factor: 1
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 2.0
+      cost_travel_multiplier: 4.0
+      smooth_path: true
 
 smoother_server:
   ros__parameters:
@@ -347,9 +419,9 @@ velocity_smoother:
     use_sim_time: True
     smoothing_frequency: 20.0
     scale_velocities: False
-    feedback: "OPEN_LOOP"
-    max_velocity: [0.4, 0.4, 1.0]
-    min_velocity: [-0.4, -0.4, -1.0]
+    feedback: "CLOSED_LOOP"
+    max_velocity: [0.4, 0.1, 0.4]
+    min_velocity: [-0.1, -0.1, -0.4]
     max_accel: [2.5, 2.5, 3.2]
     max_decel: [-2.5, -2.5, -3.2]
     odom_topic: "odom"

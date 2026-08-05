@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+readonly script_dir="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
+  pwd -P
+)"
+readonly repo_root="$(
+  cd -- "$script_dir/.." >/dev/null 2>&1
+  pwd -P
+)"
+# shellcheck source=scripts/lib/portable_runtime.sh
+source "$script_dir/lib/portable_runtime.sh"
+
+config_path="$(homecam_default_config_path)"
+reuse_gazebo=false
+check_only=false
+gazebo_pid=""
+homecam_pid=""
+
+usage() {
+  cat <<'EOF'
+Usage:
+  run_gazebo_homecam.sh [options]
+
+Options:
+  --config PATH     Device configuration file
+  --reuse-gazebo    Use an already-running Gazebo/ROS camera
+  --check-only      Validate dependencies and camera frames, then exit
+  -h, --help        Show this help
+
+By default the script starts the small_house world, discovers its RGB and
+CameraInfo topics, verifies that a frame arrives, and starts the KVS homecam
+agent. Ctrl+C stops only the processes started by this script.
+EOF
+}
+
+while (($# > 0)); do
+  case "$1" in
+    --config)
+      (($# >= 2)) || { usage >&2; exit 2; }
+      config_path="$2"
+      shift 2
+      ;;
+    --reuse-gazebo)
+      reuse_gazebo=true
+      shift
+      ;;
+    --check-only)
+      check_only=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'Unknown option: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+config_path="$(realpath -m -- "$config_path")"
+if [[ -f "$config_path" ]]; then
+  homecam_load_config "$config_path"
+elif ! "$check_only"; then
+  homecam_die \
+    "device configuration is missing: $config_path (run configure_sim_device.sh)"
+  exit 1
+fi
+
+: "${HOMECAM_WORLD:=small_house}"
+: "${HOMECAM_START_GAZEBO:=true}"
+: "${HOMECAM_GAZEBO_GUI:=true}"
+: "${HOMECAM_GAZEBO_HEADLESS:=false}"
+: "${HOMECAM_IMAGE_TOPIC:=}"
+: "${HOMECAM_CAMERA_INFO_TOPIC:=}"
+: "${HOMECAM_ODOM_TOPIC:=/odom}"
+: "${HOMECAM_AUDIO_SOURCE:=default}"
+: "${HOMECAM_AUDIO_SINK:=default}"
+: "${HOMECAM_MICROPHONE_ENABLED:=false}"
+: "${HOMECAM_MODEL_PATH:=}"
+: "${HOMECAM_MONITORING_ENABLED:=false}"
+: "${HOMECAM_TOPIC_TIMEOUT_SECONDS:=90}"
+
+if ! "$check_only"; then
+  homecam_validate_device_config "$config_path"
+fi
+homecam_validate_boolean HOMECAM_START_GAZEBO "$HOMECAM_START_GAZEBO"
+homecam_validate_boolean HOMECAM_GAZEBO_GUI "$HOMECAM_GAZEBO_GUI"
+homecam_validate_boolean HOMECAM_GAZEBO_HEADLESS "$HOMECAM_GAZEBO_HEADLESS"
+homecam_validate_boolean \
+  HOMECAM_MONITORING_ENABLED "$HOMECAM_MONITORING_ENABLED"
+homecam_validate_boolean \
+  HOMECAM_MICROPHONE_ENABLED "$HOMECAM_MICROPHONE_ENABLED"
+[[ "$HOMECAM_TOPIC_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] &&
+  ((10#$HOMECAM_TOPIC_TIMEOUT_SECONDS >= 5)) || {
+  homecam_die "HOMECAM_TOPIC_TIMEOUT_SECONDS must be an integer >= 5"
+  exit 1
+}
+HOMECAM_TOPIC_TIMEOUT_SECONDS=$((10#$HOMECAM_TOPIC_TIMEOUT_SECONDS))
+if homecam_is_true "$HOMECAM_GAZEBO_HEADLESS"; then
+  HOMECAM_GAZEBO_GUI=false
+fi
+if "$reuse_gazebo"; then
+  HOMECAM_START_GAZEBO=false
+fi
+
+homecam_source_runtime "$repo_root"
+homecam_prepare_media_runtime "$HOMECAM_WORKSPACE"
+command -v setsid >/dev/null 2>&1 || {
+  homecam_die "setsid is required to manage the Gazebo and homecam process groups"
+  exit 1
+}
+
+if ! "$check_only"; then
+  command -v flock >/dev/null 2>&1 || {
+    homecam_die "flock is required to prevent duplicate homecam sessions"
+    exit 1
+  }
+  runtime_base="${XDG_RUNTIME_DIR:-/tmp/homecam-runtime-$EUID}"
+  if [[ ! -d "$runtime_base" ]]; then
+    mkdir -p -- "$runtime_base"
+    chmod 700 -- "$runtime_base"
+  fi
+  runtime_owner="$(stat -c '%u' -- "$runtime_base")"
+  runtime_mode="$(stat -c '%a' -- "$runtime_base")"
+  if [[ "$runtime_owner" != "$EUID" ]] ||
+    (((8#$runtime_mode) & 077))
+  then
+    homecam_die "runtime lock directory is not private: $runtime_base"
+    exit 1
+  fi
+  exec {homecam_lock_fd}> \
+    "$runtime_base/sim-${ROS_DOMAIN_ID:-0}.lock"
+  if ! flock -n "$homecam_lock_fd"; then
+    homecam_die \
+      "another Gazebo homecam launcher is already active in ROS domain ${ROS_DOMAIN_ID:-0}"
+    exit 1
+  fi
+fi
+
+cleanup_process_group() {
+  local child_pid="$1"
+  local signal_name="$2"
+  [[ -n "$child_pid" ]] || return 0
+  if kill -0 -- "-$child_pid" >/dev/null 2>&1; then
+    kill "-$signal_name" -- "-$child_pid" >/dev/null 2>&1 || true
+  fi
+}
+
+process_group_alive() {
+  local child_pid="$1"
+  [[ -n "$child_pid" ]] &&
+    kill -0 -- "-$child_pid" >/dev/null 2>&1
+}
+
+cleanup() {
+  local exit_status=$?
+  trap - EXIT INT TERM
+  cleanup_process_group "$homecam_pid" INT
+  cleanup_process_group "$gazebo_pid" INT
+  local deadline=$((SECONDS + 8))
+  while ((SECONDS < deadline)); do
+    local alive=false
+    if process_group_alive "$homecam_pid"; then
+      alive=true
+    fi
+    if process_group_alive "$gazebo_pid"; then
+      alive=true
+    fi
+    "$alive" || break
+    sleep 0.2
+  done
+  cleanup_process_group "$homecam_pid" TERM
+  cleanup_process_group "$gazebo_pid" TERM
+  deadline=$((SECONDS + 3))
+  while ((SECONDS < deadline)); do
+    if ! process_group_alive "$homecam_pid" &&
+      ! process_group_alive "$gazebo_pid"
+    then
+      break
+    fi
+    sleep 0.2
+  done
+  cleanup_process_group "$homecam_pid" KILL
+  cleanup_process_group "$gazebo_pid" KILL
+  [[ -z "$homecam_pid" ]] || wait "$homecam_pid" 2>/dev/null || true
+  [[ -z "$gazebo_pid" ]] || wait "$gazebo_pid" 2>/dev/null || true
+  exit "$exit_status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if ! "$check_only" &&
+  ros2 node list 2>/dev/null | grep -Fxq '/homecam_media_agent'
+then
+  homecam_die "a homecam media agent is already running"
+  exit 1
+fi
+
+if homecam_is_true "$HOMECAM_START_GAZEBO"; then
+  existing_topics="$(ros2 topic list -t 2>/dev/null || true)"
+  if homecam_discover_image_topic \
+    "$existing_topics" "$HOMECAM_IMAGE_TOPIC" >/dev/null 2>&1
+  then
+    homecam_die \
+      "a ROS camera is already running; use --reuse-gazebo or stop it first"
+    exit 1
+  fi
+  gazebo_command=(
+    ros2 launch malbut_gazebo worlds.launch.py
+    "world_name:=$HOMECAM_WORLD"
+    "gui:=$HOMECAM_GAZEBO_GUI"
+    "headless:=$HOMECAM_GAZEBO_HEADLESS"
+    "spawn_robot:=true"
+    "bridge:=true"
+  )
+  homecam_log "starting Gazebo world: $HOMECAM_WORLD"
+  setsid "${gazebo_command[@]}" &
+  gazebo_pid=$!
+else
+  homecam_log "using the already-running Gazebo/ROS graph"
+fi
+
+deadline=$((SECONDS + HOMECAM_TOPIC_TIMEOUT_SECONDS))
+topic_snapshot=""
+image_topic=""
+while ((SECONDS < deadline)); do
+  if [[ -n "$gazebo_pid" ]] && ! kill -0 "$gazebo_pid" 2>/dev/null; then
+    wait "$gazebo_pid" || true
+    homecam_die "Gazebo exited before publishing an RGB image"
+    exit 1
+  fi
+  topic_snapshot="$(ros2 topic list -t 2>/dev/null || true)"
+  image_topic="$(
+    homecam_discover_image_topic \
+      "$topic_snapshot" "$HOMECAM_IMAGE_TOPIC" 2>/dev/null || true
+  )"
+  [[ -z "$image_topic" ]] || break
+  sleep 1
+done
+if [[ -z "$image_topic" ]]; then
+  if [[ -n "$HOMECAM_IMAGE_TOPIC" ]]; then
+    homecam_die \
+      "configured image topic was not published: $HOMECAM_IMAGE_TOPIC"
+  else
+    homecam_die "no sensor_msgs/msg/Image RGB topic was discovered"
+  fi
+  exit 1
+fi
+
+camera_info_topic="$(
+  homecam_discover_camera_info_topic \
+    "$topic_snapshot" "$image_topic" "$HOMECAM_CAMERA_INFO_TOPIC" \
+    2>/dev/null || true
+)"
+if [[ -n "$HOMECAM_CAMERA_INFO_TOPIC" && -z "$camera_info_topic" ]]; then
+  homecam_die \
+    "configured CameraInfo topic was not published: $HOMECAM_CAMERA_INFO_TOPIC"
+  exit 1
+fi
+if [[ -z "$camera_info_topic" ]]; then
+  homecam_warn "CameraInfo was not found; streaming will continue without it"
+fi
+
+homecam_log "RGB topic: $image_topic"
+homecam_log "CameraInfo topic: ${camera_info_topic:-none}"
+homecam_log "odometry topic: ${HOMECAM_ODOM_TOPIC:-disabled}"
+homecam_log "waiting for one RGB frame"
+encoding_output="$(
+  timeout 12 ros2 topic echo --once "$image_topic" --field encoding \
+    2>/dev/null || true
+)"
+image_encoding="$(
+  printf '%s\n' "$encoding_output" |
+    awk 'NF > 0 && $1 != "---" {print $1; exit}'
+)"
+image_encoding="${image_encoding#\"}"
+image_encoding="${image_encoding%\"}"
+case "$image_encoding" in
+  rgb8|bgr8|rgba8|bgra8) ;;
+  "")
+  homecam_die "topic exists but no RGB frame arrived within 12 seconds"
+  exit 1
+    ;;
+  *)
+    homecam_die \
+      "unsupported ROS image encoding on $image_topic: $image_encoding"
+    exit 1
+    ;;
+esac
+homecam_log "RGB encoding: $image_encoding"
+
+if "$check_only"; then
+  homecam_log "portable simulation check passed"
+  exit 0
+fi
+
+homecam_command=(
+  ros2 launch homecam_media_agent homecam_sim.launch.py
+  "backend_url:=$HOMECAM_BACKEND_URL"
+  "device_id:=$HOMECAM_DEVICE_ID"
+  "monitoring_enabled:=$HOMECAM_MONITORING_ENABLED"
+  "image_topic:=$image_topic"
+  "odom_topic:=$HOMECAM_ODOM_TOPIC"
+  "audio_source:=$HOMECAM_AUDIO_SOURCE"
+  "audio_sink:=$HOMECAM_AUDIO_SINK"
+  "microphone_enabled:=$HOMECAM_MICROPHONE_ENABLED"
+)
+if [[ -n "$camera_info_topic" ]]; then
+  homecam_command+=("camera_info_topic:=$camera_info_topic")
+fi
+if [[ -n "$HOMECAM_MODEL_PATH" ]]; then
+  homecam_command+=("model_path:=$HOMECAM_MODEL_PATH")
+fi
+homecam_log \
+  "starting stream for device $HOMECAM_DEVICE_ID (token is not printed)"
+setsid "${homecam_command[@]}" &
+homecam_pid=$!
+
+if [[ -n "$gazebo_pid" ]]; then
+  set +e
+  wait -n "$homecam_pid" "$gazebo_pid"
+  child_status=$?
+  set -e
+  if kill -0 "$homecam_pid" 2>/dev/null; then
+    homecam_warn "Gazebo stopped; shutting down the homecam agent"
+  else
+    homecam_warn "homecam agent stopped; shutting down Gazebo"
+  fi
+  if ((child_status == 0)); then
+    child_status=1
+  fi
+  exit "$child_status"
+fi
+
+wait "$homecam_pid"

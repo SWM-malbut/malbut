@@ -35,6 +35,16 @@ def _rectangular_room(room_id="room-1", minimum_x=0.0):
     }
 
 
+def _room_with_two_passages():
+    room = _rectangular_room()
+    room["geometry"]["coordinates"].append([
+        [2.0, 2.5], [8.0, 2.5], [8.0, 3.5],
+        [2.0, 3.5], [2.0, 2.5],
+    ])
+    room["properties"]["area_m2"] = 54.0
+    return room
+
+
 def _ring_area(ring):
     return abs(sum(
         first[0] * second[1] - second[0] * first[1]
@@ -59,7 +69,7 @@ def test_divider_line_splits_one_room_and_reports_geometry_area():
     """A valid divider must report each exported polygon's actual area."""
     parts = split_room_feature(
         _rectangular_room(),
-        [[5.0, 1.0], [5.0, 5.0]],
+        [[5.0, 0.0], [5.0, 6.0]],
     )
 
     assert [part["id"] for part in parts] == ["room-1-a", "room-1-b"]
@@ -84,13 +94,61 @@ def test_divider_line_splits_one_room_and_reports_geometry_area():
     )
 
 
-def test_divider_points_must_be_inside_the_selected_room():
-    """The API must reject a divider that was not drawn on its Room."""
-    with pytest.raises(ValueError, match="inside the Room"):
+def test_divider_points_must_be_near_the_selected_room_walls():
+    """The API must reject a divider far from its Room walls."""
+    with pytest.raises(ValueError, match="near a Room wall"):
         split_room_feature(
             _rectangular_room(),
             [[-1.0, -1.0], [-0.5, -0.5]],
         )
+
+
+def test_control_points_bend_one_wall_to_wall_divider():
+    """Connected control points may form an editable right-angle path."""
+    parts = split_room_feature(
+        _rectangular_room(),
+        [[3.0, 0.0], [3.0, 3.0], [7.0, 3.0], [7.0, 6.0]],
+    )
+
+    assert len(parts) == 2
+    assert sum(
+        part["properties"]["area_m2"] for part in parts
+    ) == pytest.approx(60.0, abs=0.7)
+
+
+def test_independent_dividers_do_not_connect_to_each_other():
+    """Two point pairs close two passages without a cross-connection."""
+    parts = split_room_feature(
+        _room_with_two_passages(),
+        [
+            [[0.0, 3.0], [2.0, 3.0]],
+            [[8.0, 3.0], [10.0, 3.0]],
+        ],
+    )
+
+    assert len(parts) == 2
+    assert sum(
+        _geometry_area(part["geometry"]) for part in parts
+    ) == pytest.approx(
+        _geometry_area(_room_with_two_passages()["geometry"]),
+        abs=0.01,
+    )
+
+
+def test_divider_requires_at_least_two_points():
+    """A single wall point cannot define a Room divider."""
+    with pytest.raises(ValueError, match="at least two finite"):
+        split_room_feature(_rectangular_room(), [[5.0, 3.0]])
+
+
+def test_near_wall_points_snap_to_the_room_boundary():
+    """A user does not need pixel-perfect wall clicks."""
+    parts = split_room_feature(
+        _rectangular_room(),
+        [[5.0, 0.18], [5.0, 5.82]],
+    )
+
+    assert len(parts) == 2
 
 
 def test_divider_rejects_a_tiny_accidental_fragment():
@@ -98,7 +156,7 @@ def test_divider_rejects_a_tiny_accidental_fragment():
     with pytest.raises(ValueError, match="exactly two meaningful areas"):
         split_room_feature(
             _rectangular_room(),
-            [[0.2, 1.0], [0.2, 5.0]],
+            [[0.2, 0.0], [0.2, 6.0]],
             minimum_room_area=2.0,
         )
 
@@ -110,7 +168,7 @@ def test_split_rooms_can_be_merged_back_without_losing_area():
     original["properties"]["category"] = "living_room"
     parts = split_room_feature(
         original,
-        [[5.0, 1.0], [5.0, 5.0]],
+        [[5.0, 0.0], [5.0, 6.0]],
     )
 
     merged = merge_room_features(parts)
@@ -145,7 +203,7 @@ def test_repeated_split_merge_cycles_do_not_erode_room_geometry():
     for _ in range(5):
         parts = split_room_feature(
             room,
-            [[5.0, 1.0], [5.0, 5.0]],
+            [[5.0, 0.0], [5.0, 6.0]],
         )
         room = merge_room_features(parts)
         assert room["geometry"] == original_geometry
@@ -156,7 +214,7 @@ def test_merge_of_different_room_types_becomes_unassigned():
     """A merge must not silently keep one of two conflicting meanings."""
     parts = split_room_feature(
         _rectangular_room(),
-        [[5.0, 1.0], [5.0, 5.0]],
+        [[5.0, 0.0], [5.0, 6.0]],
     )
     parts[0]["properties"]["category"] = "living_room"
     parts[1]["properties"]["category"] = "kitchen"
@@ -197,11 +255,11 @@ def test_nested_splits_have_unique_names_and_restore_their_lineage():
     original["properties"]["name"] = "거실"
     outer_parts = split_room_feature(
         original,
-        [[5.0, 1.0], [5.0, 5.0]],
+        [[5.0, 0.0], [5.0, 6.0]],
     )
     inner_parts = split_room_feature(
         outer_parts[0],
-        [[2.5, 1.0], [2.5, 5.0]],
+        [[2.5, 0.0], [2.5, 6.0]],
     )
 
     names = {
@@ -222,21 +280,28 @@ def test_nested_splits_have_unique_names_and_restore_their_lineage():
 
 
 def test_deeply_split_rooms_keep_area_equal_to_their_geometry():
-    """Repeated vectorization must not make displayed area drift."""
-    room = _rectangular_room()
+    """Repeated vectorization must not lose floor between child Rooms."""
+    original = _rectangular_room()
+    leaves = [original]
 
     for _ in range(5):
+        room = leaves.pop(0)
         points = room["geometry"]["coordinates"][0]
         minimum_x = min(point[0] for point in points)
         maximum_x = max(point[0] for point in points)
         divider_x = (minimum_x + maximum_x) / 2.0
         parts = split_room_feature(
             room,
-            [[divider_x, 1.0], [divider_x, 5.0]],
+            [[divider_x, 0.0], [divider_x, 6.0]],
             minimum_room_area=0.1,
         )
         for part in parts:
             assert part["properties"]["area_m2"] == pytest.approx(
                 _geometry_area(part["geometry"]), abs=0.01
             )
-        room = parts[0]
+        leaves = [parts[0], *leaves, parts[1]]
+        assert sum(
+            _geometry_area(part["geometry"]) for part in leaves
+        ) == pytest.approx(
+            _geometry_area(original["geometry"]), abs=0.01
+        )

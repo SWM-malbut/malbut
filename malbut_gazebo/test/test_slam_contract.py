@@ -120,3 +120,27 @@ def test_simulator_arguments_cannot_disable_the_slam_rviz_node():
         if isinstance(entity, IncludeLaunchDescription)
     )
     assert dict(simulation.launch_arguments)["rviz"] == "false"
+
+
+def test_slam_records_localization_for_navigation_handoff():
+    """Mapping must retain map-to-odom before its publisher is stopped."""
+    launch_file = GAZEBO_ROOT / "launch" / "slam.launch.py"
+    spec = importlib.util.spec_from_file_location(
+        "malbut_slam_handoff_launch", launch_file
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    description = module.generate_launch_description()
+    nodes = [
+        entity
+        for entity in description.entities
+        if isinstance(entity, Node)
+    ]
+    executables = {node._Node__node_executable for node in nodes}
+    assert "record_localization_state" in executables
+    arguments = {
+        entity.name
+        for entity in description.entities
+        if isinstance(entity, DeclareLaunchArgument)
+    }
+    assert "localization_state" in arguments
