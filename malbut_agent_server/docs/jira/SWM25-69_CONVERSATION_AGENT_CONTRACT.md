@@ -4,17 +4,22 @@
 
 | 항목 | 값 |
 | --- | --- |
-| Jira 스토리 | SWM25-69 대화&에이전트 계약 정의 |
-| 계약 버전 | 0.3-draft |
+| Jira 스토리 | SWM25-69 대화·에이전트 계약 정의 |
+| 계약 버전 | 0.4-review-candidate |
+| 검토 기준일 | 2026-08-06 |
 | 대상 시스템 | Malbut 반려로봇, ROS 2 Humble, Jetson Orin NX 8GB |
 | 계약 소유 | SWM25-69 |
-| 상태 | 연관 스토리 담당자 검토 대기 |
+| 상태 | 문서 검토 준비 완료, 연관 스토리 담당자 승인 0/6 |
 | 최종 승인 조건 | SWM25-27·34·36·38·40·41 인터페이스 담당자 승인 |
 
 이 문서는 SWM25-69가 소유하는 대화·추론·오케스트레이션 경계와 다른
 로봇 스토리가 소유하는 감지·실행 경계를 정의한다. 문서에 `제안`으로
 표시된 인터페이스는 현재 저장소에 구현되어 있지 않으며, 담당자 합의 없이
 확정 계약으로 취급하지 않는다.
+
+승인으로 인정할 수 있는 증거와 담당자별 검토 항목은
+[`SWM25-69 인터페이스 승인 가이드`](SWM25-69_INTERFACE_APPROVAL_GUIDE.md)에
+정리한다. 구두 동의나 체크 표시만으로 승인 처리하지 않는다.
 
 ## 1. 목표
 
@@ -124,7 +129,7 @@ SWM25-69는 다음을 소유하지 않는다.
 - 같은 세션의 동시 턴은 직렬화한다. 추론 중 reset·close·delete·만료가
   발생하면 늦게 도착한 답변을 폐기한다.
 
-SWM25-70에서 구현·검증할 목표 HTTP 세션 경계:
+SWM25-70이 구현·검증하는 HTTP 세션 경계:
 
 | 메서드 | 경로 | 결과 |
 | --- | --- | --- |
@@ -135,9 +140,10 @@ SWM25-70에서 구현·검증할 목표 HTTP 세션 경계:
 | `POST` | `/v1/conversations/delete` | 세션과 턴 삭제 |
 
 목표 기본 유휴 만료는 1,800초이며 단순 조회는 활동 시간을 연장하지 않고,
-완료된 새 턴만 만료 시각을 갱신한다. 이 절의 저장·동시성 동작은
-SWM25-70 브랜치의 구현과 테스트를 통과하기 전까지 제공 기능으로 간주하지
-않는다.
+완료된 새 턴만 만료 시각을 갱신한다. 이 절의 저장·동시성 구현과 인수
+검증은 SWM25-70이 소유한다. 이 문서는
+구현 배포 여부가 아니라 스토리 사이의 계약을 정의하며, 실제 반영 상태는
+SWM25-70의 PR과 CI를 기준으로 판단한다.
 
 ### 2.7 장기 대화 컨텍스트 윈도우 — SWM25-71 후속 계약
 
@@ -200,9 +206,10 @@ token 사용량은 provider usage로 별도 측정한다. 환경 변수
 reset은 generation을 바꾸고 기존 요약을 제거한다. delete와 유휴 만료도
 요약을 제거하며, 읽을 때는 현재 `session_instance_id`와 generation에
 정확히 일치하는 문맥만 사용한다. 따라서 삭제·만료된 대화나 삭제 후 같은
-ID로 재생성한 과거 세션의 대화가 다시 모델 입력에 포함되지 않는다. 이
-절은 SWM25-71의 목표 계약이며 해당 브랜치의 구현과 테스트를 통과하기
-전까지 현재 제공 기능으로 간주하지 않는다.
+ID로 재생성한 과거 세션의 대화가 다시 모델 입력에 포함되지 않는다.
+이 절의 컨텍스트 구현과 인수 검증은 SWM25-71이 소유한다. 이 문서는 구현
+배포 여부가 아니라 모델 입력 경계를 정의하며, 실제 반영 상태는 SWM25-71의
+PR과 CI를 기준으로 판단한다.
 
 ## 3. 책임 경계
 
@@ -218,6 +225,27 @@ ID로 재생성한 과거 세션의 대화가 다시 모델 입력에 포함되�
 SWM25-31의 소리 감지와 SWM25-32의 사람 구분 감지는 각각 음성 세션과
 `person_id`의 상위 입력 의존성이다. SWM25-69는 이 감지 결과를 직접
 생성하지 않는다.
+
+### 3.1 후속 에이전트 스토리 매핑
+
+SWM25-73~77은 이 계약을 바꾸는 새 소유자가 아니라, 기존 도메인 스토리와
+대화 서버 사이를 연결하는 구현 스토리다. 동일 기능의 계약이 둘로 갈라지지
+않도록 다음 매핑을 사용한다.
+
+| 기존 도메인 계약 | 후속 구현 스토리 | SWM25-69에서 고정할 경계 |
+| --- | --- | --- |
+| SWM25-27 긴급 호출 | 별도 로컬 경로 | LLM이 긴급 판정·연락·취소를 소유하지 않음 |
+| SWM25-34 음성 명령 | SWM25-76 음성 대화 파이프라인 | 최종 transcript와 신뢰된 사용자·세션만 입력, 출력은 취소 가능한 TTS 요청 |
+| SWM25-36 사람별 장기 기억 | SWM25-75 장기 기억 연동 | `person_id` 격리, 명시적 확인이 있는 변경, 기억은 신뢰되지 않은 문맥 |
+| SWM25-38 리마인더 | SWM25-73·74 Gateway와 확인·feedback | 정규화한 시간·내용을 확인한 뒤 idempotent 실행기로 전달 |
+| SWM25-40 감정 표현 | SWM25-77 감정 표현 연동 | 제한된 enum·시간만 제안, 표현 adapter는 이동 베이스를 제어하지 않음 |
+| SWM25-41 사람 따라다니기 | SWM25-73·74 Gateway와 확인·feedback | 대상·최신 안전 상태 확인, 실행·중단·feedback은 Action 서버가 소유 |
+
+SWM25-73은 Tool allowlist, capability와 ROS adapter 경계를 구현하고,
+SWM25-74는 부작용이 있는 행동의 확인, 1회 소비, 실행 상태, timeout, 취소와
+결과 feedback을 구현한다. SWM25-74가 준비되기 전 SWM25-73은 조회 또는
+시뮬레이션 실행만 허용하며 물리 이동·외부 전송·영구 변경을 활성화하지
+않는다.
 
 ## 4. 공통 대화 결정 계약
 
@@ -235,7 +263,7 @@ SWM25-31의 소리 감지와 SWM25-32의 사람 구분 감지는 각각 음성 �
 ```json
 {
   "type": "tool_call",
-  "message": "거실로 이동할게.",
+  "message": "거실 이동을 제안했어. 실행 전에 확인해 줘.",
   "tool_name": "navigate",
   "arguments": {
     "location": "거실"
@@ -292,6 +320,13 @@ SWM25-31의 소리 감지와 SWM25-32의 사람 구분 감지는 각각 음성 �
 
 실행기는 `tool_call_id`를 원자적으로 한 번만 소비해야 한다. 같은 ID의
 재전송은 새 행동을 시작하지 않고 기존 상태를 반환해야 한다.
+
+에이전트의 `decision_id`는 실행 전의 불변 제안을 식별한다. SWM25-73
+Gateway는 유효한 제안과 SWM25-74의 확인 증거·최신 안전 상태를 모두 검증한
+뒤에만 별도의 `tool_call_id`를 발급한다. `decision_id` 하나는 최대 하나의
+`tool_call_id`에만 연결되고, 확인되지 않았거나 만료된 제안에는
+`tool_call_id`를 만들지 않는다. 이 매핑과 1회 소비 상태는 재시작 뒤에도
+유지해야 한다.
 
 ## 6. Tool 목록
 
@@ -702,7 +737,8 @@ SWM25-69는 카메라 좌표나 속도를 생성하지 않는다. SWM25-41이 �
 
 | 구간 | 기준 |
 | --- | --- |
-| LLM provider 전체 응답 | 기본 30초 |
+| LLM provider 개별 시도 | 기본 5초 |
+| primary·fallback 스케줄링 예산 | 기본 11초; hard wall-clock deadline은 후속 구현 |
 | 행동 결정 승인 TTL | 기본 5초, 최대 10초 |
 | Tool 접수 | 1~5초, Tool별 계약 적용 |
 | Nav2 이동 | 기본 120초 |
@@ -714,7 +750,10 @@ timeout이 발생하면 실행 상태를 `timed_out`으로 확정하고, 늦게 
 
 ### 9.3 HTTP·안전·Tool 오류 구분
 
-- 요청 형식, 인증, rate limit, 모델 provider 장애는 HTTP 오류로 반환한다.
+- 요청 형식, 인증과 rate limit 오류는 HTTP 계층에서 처리한다.
+- 일시적인 provider 장애와 모든 모델 소진은 Tool 없는 로컬
+  `provider_unavailable` refusal로 변환한다. reliability 경계 밖의 잘못된
+  provider 응답·계약 오류만 정규화한 HTTP 오류로 반환한다.
 - 모델이 제안한 행동이 로컬 정책에 막힌 경우에는 정상 HTTP 응답 안에
   `decision.type=refusal`과 `safety.code`를 반환한다.
 - Tool 실행기가 작업을 접수한 뒤 발생한 실패는 공통 Tool 실행 결과의
@@ -722,12 +761,16 @@ timeout이 발생하면 실행 상태를 `timed_out`으로 확정하고, 늦게 
 - 사용자에게는 내부 예외나 비밀값을 노출하지 않고 복구 가능한 다음 행동만
   설명한다.
 
-### 9.4 현재 구현과 목표 계약의 차이
+### 9.4 에이전트 기능 스택과 목표 계약의 차이
+
+아래 상태는 SWM25-70~72 구현 스택을 포함한 2026-08-06 기준이다. 해당
+스택의 최종 `main` 통합 여부는 각 PR에서 별도로 확인한다.
 
 | 항목 | 현재 구현 | 목표 계약 |
 | --- | --- | --- |
 | Tool 실행 | 실제 실행기 없음 | ROS adapter가 공통 상태·결과·취소 제공 |
-| HTTP 행동 승인 | 안전 정책이 외부 상태를 기본 불신하며, 이 PR에는 HTTP endpoint 없음 | ROS-owned 상태 공급자만 승인 계산에 사용 |
+| Tool 제안 | 엄격한 Tool schema, 결정 ID·TTL, 로컬 safety 검증 구현 | Gateway가 검증된 제안만 접수 |
+| HTTP 행동 승인 | 외부 robot state를 기본 불신하며 물리 실행 endpoint 없음 | ROS-owned 상태 공급자와 확인 증거로만 승인 계산 |
 | 상태 freshness | `observed_at`, sequence, source 없음 | 생성 시각·순번·출처와 최대 age 검증 |
 | capability 목록 | HTTP 요청의 `available_tools` 사용 | ROS-owned capability registry가 제공 |
 | 사용자 확인 | 확인 토큰·endpoint 없음 | 사용자·세션·Tool·인자·만료에 묶인 1회성 확인 |
@@ -735,7 +778,9 @@ timeout이 발생하면 실행 상태를 `timed_out`으로 확정하고, 늦게 
 | 실행 timeout·취소 | 없음 | Tool별 timeout, 취소와 terminal status 제공 |
 | 읽기 전용 상태 조회 | 전역 신뢰 상태·e-stop 검사에 함께 차단 | L0 조회·중단은 안전한 범위에서 허용 |
 | 사람별 사용자 | 요청의 `user_id` 형식만 검증, 인증·바인딩은 미구현 | 신뢰된 `person_id` 기반 격리 |
-| 단기 대화 세션 | SWM25-70·71 목표 계약만 정의, 이 PR에는 저장소·HTTP 구현 없음 | SQLite lifecycle·TTL·retry와 음성 `speaker_id` 결합 |
+| 단기 대화·컨텍스트 | SQLite lifecycle, 최근 10턴, 요약과 기억 검색 구현 | 음성 `speaker_id`와 신뢰된 사용자 identity 결합 |
+| 장기 기억 | 사용자 격리 SQLite 저장·검색·만료 제외 구현, 공개 변경 API 없음 | 동의 기반 CRUD, `person_id` 결속과 보존·삭제 정책 |
+| LLM provider | OpenAI primary 후보·same-vendor fallback·safe refusal 구현 | hard deadline, 실제 fallback 실측과 운영 관측성 |
 
 목표 계약을 코드에 반영하기 전에는 공개 HTTP 경로에서 물리 행동을
 승인하지 않는다.
@@ -823,8 +868,8 @@ Service, 비동기 감지 결과는 Topic으로 구분한다.
 | SWM25-34 | `/malbut/speech/transcript` Topic | utterance_id, conversation_id, speaker_id, text, confidence, is_final, stamp | 최종 transcript만 실행 문맥으로 사용 |
 | SWM25-34 | `/malbut/speech/speak` Action | request_id, text, voice, style, interruptible | goal 0.5초, 재생 시작 1.5초, 취소 0.3초 |
 | SWM25-36 | `/malbut/memory/query` Service | request_id, person_id, query, limit | 로컬 검색 0.3초 |
-| SWM25-36 | `/malbut/memory/commit·update·delete` Services | request_id, person_id, memory_id, content, evidence_turn_id, user_confirmed | 변경 0.5초 |
-| SWM25-38 | `/malbut/reminders/create·list·update·cancel` Services | request_id, owner_person_id, message, trigger_at, timezone, user_confirmed | CRUD 1초 |
+| SWM25-36 | `/malbut/memory/commit`, `/malbut/memory/update`, `/malbut/memory/delete` Services | request_id, person_id, memory_id, content, evidence_turn_id, user_confirmed | 변경 0.5초 |
+| SWM25-38 | `/malbut/reminders/create`, `/malbut/reminders/list`, `/malbut/reminders/update`, `/malbut/reminders/cancel` Services | request_id, owner_person_id, message, trigger_at, timezone, user_confirmed | CRUD 1초 |
 | SWM25-38 | `/malbut/reminders/events` Topic | reminder_id, owner_person_id, state, fired_at | 영속 scheduler 이벤트 |
 | SWM25-40 | `/malbut/expression/play` Action | request_id, emotion, intensity, duration_ms | goal 0.3초 |
 | SWM25-41 | `/malbut/perception/tracked_people` Topic | person_id, identity_confidence, tracking_confidence, pose, last_seen | freshness 기준 합의 필요 |
@@ -922,13 +967,52 @@ Service, 비동기 감지 결과는 Topic으로 구분한다.
 - [ ] SWM25-40 담당자가 감정 표현 인터페이스를 승인했다.
 - [ ] SWM25-41 담당자가 따라다니기 인터페이스를 승인했다.
 
+### 13.2 승인 요청 준비도
+
+- [x] 기존 도메인 스토리와 SWM25-73~77 구현 스토리의 매핑을 정의했다.
+- [x] 승인으로 인정하는 증거 기준을 정의했다.
+- [x] 여섯 담당자별 검토 체크리스트와 Jira 댓글 양식을 준비했다.
+- [x] 승인 전에는 부작용이 있는 Tool 실행을 활성화하지 않도록 명시했다.
+
+담당자 검토는
+[`SWM25-69 인터페이스 승인 가이드`](SWM25-69_INTERFACE_APPROVAL_GUIDE.md)를
+사용한다. 승인 댓글에는 계약 버전 `0.4-review-candidate`, 결정, 담당자와
+검토일을 포함해야 한다.
+
+### 13.3 자동화·통합 근거와 사람 승인 구분
+
+2026-08-06 작업 시작 시점의 저장소 상태는 다음과 같다.
+
+| 기준 | 포함 범위 | 의미 |
+| --- | --- | --- |
+| `origin/main@813334e` | SWM25-69 | 배포 기준 브랜치에는 계약·안전 경계만 반영 |
+| `feat/SWM25-70-multiturn-conversation@f8f8849` | SWM25-70·71·72 | 테스트된 통합 후보지만 당시 `main` 미반영 |
+
+- [PR #10](https://github.com/SWM-malbut/malbut/pull/10)은 SWM25-69 코드·문서와
+  CI 통과 근거다.
+- [PR #11](https://github.com/SWM-malbut/malbut/pull/11),
+  [PR #12](https://github.com/SWM-malbut/malbut/pull/12),
+  [PR #14](https://github.com/SWM-malbut/malbut/pull/14)는 SWM25-70~72 구현과
+  자동화 검증 근거다.
+
+PR 병합, CI 통과와 모델 평가는 구현 근거이지 연관 담당자의 인터페이스
+승인이 아니다. 아래 표에는 버전이 명시된 Jira 댓글 또는 GitHub review
+링크가 있을 때만 `승인`을 기록한다.
+
 ## 14. 승인 기록
 
-| 스토리 | 담당자 | 결정 | 날짜 | 비고 |
-| --- | --- | --- | --- | --- |
-| SWM25-27 |  | 대기 |  |  |
-| SWM25-34 |  | 대기 |  |  |
-| SWM25-36 |  | 대기 |  |  |
-| SWM25-38 |  | 대기 |  |  |
-| SWM25-40 |  | 대기 |  |  |
-| SWM25-41 |  | 대기 |  |  |
+| 스토리 | 담당자 | 검토 버전 | 결정 | 날짜 | 증거 링크·비고 |
+| --- | --- | --- | --- | --- | --- |
+| SWM25-27 |  | 0.4-review-candidate | 대기 |  |  |
+| SWM25-34 |  | 0.4-review-candidate | 대기 |  |  |
+| SWM25-36 |  | 0.4-review-candidate | 대기 |  |  |
+| SWM25-38 |  | 0.4-review-candidate | 대기 |  |  |
+| SWM25-40 |  | 0.4-review-candidate | 대기 |  |  |
+| SWM25-41 |  | 0.4-review-candidate | 대기 |  |  |
+
+## 15. 변경 기록
+
+| 버전 | 날짜 | 변경 |
+| --- | --- | --- |
+| 0.3-draft | 2026-07-31 | 최초 책임 경계, Tool·확인·안전 계약 초안 |
+| 0.4-review-candidate | 2026-08-06 | SWM25-73~77 매핑, 현행 timeout·구현 차이, 승인 증거와 요청 절차 정리 |

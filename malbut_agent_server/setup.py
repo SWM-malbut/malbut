@@ -19,7 +19,10 @@ setup(
         ),
         (
             'share/' + package_name + '/docs/jira',
-            ['docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md'],
+            [
+                'docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md',
+                'docs/jira/SWM25-69_INTERFACE_APPROVAL_GUIDE.md',
+            ],
         ),
     ],
     install_requires=['setuptools'],
