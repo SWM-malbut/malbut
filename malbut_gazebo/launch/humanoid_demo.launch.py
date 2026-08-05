@@ -63,6 +63,12 @@ def generate_launch_description():
     default_model = (
         Path.home() / ".cache" / "malbut_perception" / "yolov5n.onnx"
     )
+    default_reid_model = (
+        Path.home()
+        / ".cache"
+        / "malbut_perception"
+        / "osnet_x0_25_msmt17.onnx"
+    )
     spawn_helper = (
         Path(get_package_prefix(GAZEBO_PACKAGE))
         / "lib"
@@ -114,6 +120,8 @@ def generate_launch_description():
                 "detector_backend": LaunchConfiguration("detector_backend"),
                 "model_path": LaunchConfiguration("model_path"),
                 "dnn_target": LaunchConfiguration("dnn_target"),
+                "reid_backend": LaunchConfiguration("reid_backend"),
+                "reid_model_path": LaunchConfiguration("reid_model_path"),
                 "output_frame": LaunchConfiguration("output_frame"),
                 "publish_debug_image": LaunchConfiguration(
                     "publish_debug_image"
@@ -163,7 +171,11 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "model_path", default_value=str(default_model)
             ),
-            DeclareLaunchArgument("dnn_target", default_value="cpu"),
+            DeclareLaunchArgument("dnn_target", default_value="auto"),
+            DeclareLaunchArgument("reid_backend", default_value="auto"),
+            DeclareLaunchArgument(
+                "reid_model_path", default_value=str(default_reid_model)
+            ),
             DeclareLaunchArgument("output_frame", default_value=""),
             DeclareLaunchArgument(
                 "publish_debug_image", default_value="true"

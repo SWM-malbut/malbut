@@ -1,5 +1,7 @@
 """Tests for two-stage person track association."""
 
+import numpy as np
+
 from malbut_perception.detector.base import BoundingBox, ImageDetection
 from malbut_perception.tracker.bytetrack_tracker import ByteTrackTracker
 
@@ -51,3 +53,54 @@ def test_expired_track_is_not_reused():
     tracker.update([])
     tracker.update([])
     assert tracker.update([_detection(10.0, 0.9)])[0].track_id == 2
+
+
+def test_reidentification_restores_id_after_track_expires():
+    tracker = ByteTrackTracker(
+        max_missed_frames=1,
+        min_confirmed_hits=1,
+        reid_threshold=0.2,
+    )
+    feature = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    first = tracker.update([_detection(10.0, 0.9)], [feature])
+    tracker.update([])
+    tracker.update([])
+    restored = tracker.update([_detection(300.0, 0.9)], [feature])
+    assert first[0].track_id == 1
+    assert restored[0].track_id == 1
+
+
+def test_reidentification_rejects_different_appearance():
+    tracker = ByteTrackTracker(
+        max_missed_frames=0,
+        min_confirmed_hits=1,
+        reid_threshold=0.2,
+    )
+    tracker.update(
+        [_detection(10.0, 0.9)],
+        [np.array([1.0, 0.0], dtype=np.float32)],
+    )
+    tracker.update([])
+    different = tracker.update(
+        [_detection(300.0, 0.9)],
+        [np.array([0.0, 1.0], dtype=np.float32)],
+    )
+    assert different[0].track_id == 2
+
+
+def test_appearance_association_handles_large_image_displacement():
+    tracker = ByteTrackTracker(min_confirmed_hits=1)
+    feature = np.array([0.5, 0.5], dtype=np.float32)
+    first = tracker.update([_detection(10.0, 0.9)], [feature])
+    moved = tracker.update([_detection(300.0, 0.9)], [feature])
+    assert first[0].track_id == moved[0].track_id
+
+
+def test_appearance_count_must_match_detections():
+    tracker = ByteTrackTracker()
+    try:
+        tracker.update([_detection(10.0, 0.9)], [])
+    except ValueError as error:
+        assert 'count must match' in str(error)
+    else:
+        raise AssertionError('mismatched appearance features were accepted')

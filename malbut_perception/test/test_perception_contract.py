@@ -20,6 +20,8 @@ def test_config_uses_only_rgbd_inputs_and_standard_outputs():
     assert config['camera_info_topic'] == '/camera/color/camera_info'
     assert config['detections_2d_topic'].endswith('/detections_2d')
     assert config['detections_3d_topic'].endswith('/detections_3d')
+    assert config['dnn_target'] == 'auto'
+    assert config['reid_backend'] == 'auto'
 
 
 def test_node_contains_no_simulator_ground_truth_subscription():
@@ -55,3 +57,11 @@ def test_model_preparation_is_pinned_and_machine_independent():
     assert "'onnx==1.16.2'" in source
     assert '/home/' not in source
     assert '/Users/' not in source
+
+    reid_script = PACKAGE_ROOT / 'scripts' / 'prepare_osnet_model.sh'
+    reid_source = reid_script.read_text(encoding='utf-8')
+    assert reid_script.stat().st_mode & 0o111
+    assert 'f8cd150fdf77e8d9e1ed143b7f308c2c609ded50' in reid_source
+    assert 'cf55163d78fc44c62c82f85ab62d39f10438679b5abe8c698ae08cfa84aa6e18' in reid_source
+    assert '/home/' not in reid_source
+    assert '/Users/' not in reid_source

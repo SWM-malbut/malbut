@@ -73,7 +73,9 @@ verification, pass an OpenCV-compatible COCO YOLO ONNX model:
 ```bash
 ros2 launch malbut_gazebo humanoid_demo.launch.py \
   perception:=true detector_backend:=yolo \
-  model_path:=$HOME/.cache/malbut_perception/yolov5n.onnx
+  model_path:=$HOME/.cache/malbut_perception/yolov5n.onnx \
+  reid_backend:=osnet \
+  reid_model_path:=$HOME/.cache/malbut_perception/osnet_x0_25_msmt17.onnx
 ```
 
 The perception node sees only the bridged RGB, depth, and CameraInfo topics.

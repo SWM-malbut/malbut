@@ -22,7 +22,8 @@ person_localizer:
     confidence_threshold: 0.20
     nms_threshold: 0.45
     yolo_input_size: 640
-    dnn_target: cpu
+    # auto selects OpenCV CUDA when this installation exposes it, else CPU.
+    dnn_target: auto
     hog_hit_threshold: 0.0
 
     tracker_high_threshold: 0.45
@@ -30,6 +31,18 @@ person_localizer:
     tracker_iou_threshold: 0.30
     tracker_max_missed_frames: 15
     tracker_min_confirmed_hits: 2
+    tracker_appearance_threshold: 0.30
+    tracker_appearance_weight: 0.65
+
+    # Long-term ID restoration uses only cropped RGB pixels. The lightweight
+    # HSV encoder is a fallback when the OSNet model has not been prepared.
+    reid_backend: auto
+    reid_model_path: ''
+    reid_cosine_threshold: 0.25
+    reid_max_inactive_frames: 300
+    reid_feature_budget: 30
+    reid_minimum_crop_width: 16
+    reid_minimum_crop_height: 32
 
     depth_roi_scale: 0.45
     minimum_depth_m: 0.30
@@ -38,7 +51,8 @@ person_localizer:
     fallback_depth_scale: 1.0
     person_thickness_m: 0.35
 
-    sync_queue_size: 10
+    # Keep synchronization shallow so slow CPU inference drops stale frames.
+    sync_queue_size: 3
     sync_slop_sec: 0.08
     max_inference_rate_hz: 5.0
     publish_debug_image: true

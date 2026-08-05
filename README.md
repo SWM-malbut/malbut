@@ -178,12 +178,13 @@ ros2 launch malbut_description display.launch.py
 
 ### RGB-D 사람 인식
 
-최초 한 번 호환 YOLO 모델을 준비한 뒤 휴머노이드와 센서 기반 사람 인식을
-함께 실행합니다.
+최초 한 번 호환 YOLO와 OSNet 모델을 준비한 뒤 휴머노이드와 센서 기반
+사람 인식·재식별을 함께 실행합니다.
 
 ```bash
 cd ~/ros2_ws/src/malbut
 ./malbut_perception/scripts/prepare_yolov5_model.sh
+./malbut_perception/scripts/prepare_osnet_model.sh
 
 cd ~/ros2_ws
 source install/local_setup.bash

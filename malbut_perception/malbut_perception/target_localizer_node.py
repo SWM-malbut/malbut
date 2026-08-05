@@ -35,6 +35,11 @@ from .depth.projector import (
 from .depth.roi_depth import estimate_roi_depth
 from .detector import HogPersonDetector, YoloPersonDetector
 from .detector.base import BoundingBox, PersonDetector
+from .reid import (
+    HistogramPersonEncoder,
+    OsNetPersonEncoder,
+    PersonAppearanceEncoder,
+)
 from .tracker import ByteTrackTracker, TrackedDetection
 
 
@@ -88,6 +93,7 @@ class PersonLocalizerNode(Node):
         self._validate_parameters()
         self._bridge = CvBridge()
         self._detector = self._create_detector()
+        self._reidentifier = self._create_reidentifier()
         self._tracker = ByteTrackTracker(
             high_threshold=float(
                 self.get_parameter('tracker_high_threshold').value
@@ -103,6 +109,21 @@ class PersonLocalizerNode(Node):
             ),
             min_confirmed_hits=int(
                 self.get_parameter('tracker_min_confirmed_hits').value
+            ),
+            appearance_threshold=float(
+                self.get_parameter('tracker_appearance_threshold').value
+            ),
+            appearance_weight=float(
+                self.get_parameter('tracker_appearance_weight').value
+            ),
+            reid_threshold=float(
+                self.get_parameter('reid_cosine_threshold').value
+            ),
+            reid_max_inactive_frames=int(
+                self.get_parameter('reid_max_inactive_frames').value
+            ),
+            feature_budget=int(
+                self.get_parameter('reid_feature_budget').value
             ),
         )
         self._camera_info: Optional[CameraInfo] = None
@@ -159,10 +180,12 @@ class PersonLocalizerNode(Node):
         )
         self._synchronizer.registerCallback(self._on_rgb_depth)
 
-        backend = self._detector.__class__.__name__
+        detector_backend = self._detector.__class__.__name__
+        reid_backend = self._reidentifier.__class__.__name__
         self.get_logger().info(
-            f'Person perception ready with {backend}; RGB and depth messages '
-            'are the only target observations.'
+            f'Person perception ready with {detector_backend} and '
+            f'{reid_backend}; RGB and depth messages are the only target '
+            'observations.'
         )
 
     def _declare_parameters(self) -> None:
@@ -187,13 +210,22 @@ class PersonLocalizerNode(Node):
         self.declare_parameter('confidence_threshold', 0.20)
         self.declare_parameter('nms_threshold', 0.45)
         self.declare_parameter('yolo_input_size', 640)
-        self.declare_parameter('dnn_target', 'cpu')
+        self.declare_parameter('dnn_target', 'auto')
         self.declare_parameter('hog_hit_threshold', 0.0)
         self.declare_parameter('tracker_high_threshold', 0.45)
         self.declare_parameter('tracker_low_threshold', 0.15)
         self.declare_parameter('tracker_iou_threshold', 0.30)
         self.declare_parameter('tracker_max_missed_frames', 15)
         self.declare_parameter('tracker_min_confirmed_hits', 2)
+        self.declare_parameter('tracker_appearance_threshold', 0.30)
+        self.declare_parameter('tracker_appearance_weight', 0.65)
+        self.declare_parameter('reid_backend', 'auto')
+        self.declare_parameter('reid_model_path', '')
+        self.declare_parameter('reid_cosine_threshold', 0.25)
+        self.declare_parameter('reid_max_inactive_frames', 300)
+        self.declare_parameter('reid_feature_budget', 30)
+        self.declare_parameter('reid_minimum_crop_width', 16)
+        self.declare_parameter('reid_minimum_crop_height', 32)
         self.declare_parameter('depth_roi_scale', 0.45)
         self.declare_parameter('minimum_depth_m', 0.30)
         self.declare_parameter('maximum_depth_m', 3.0)
@@ -221,6 +253,11 @@ class PersonLocalizerNode(Node):
         backend = str(self.get_parameter('detector_backend').value)
         if backend not in {'auto', 'yolo', 'hog'}:
             raise ValueError('detector_backend must be auto, yolo, or hog')
+        reid_backend = str(self.get_parameter('reid_backend').value)
+        if reid_backend not in {'auto', 'osnet', 'histogram'}:
+            raise ValueError(
+                'reid_backend must be auto, osnet, or histogram'
+            )
         minimum = float(self.get_parameter('minimum_depth_m').value)
         maximum = float(self.get_parameter('maximum_depth_m').value)
         if minimum < 0.0 or maximum <= minimum:
@@ -254,7 +291,8 @@ class PersonLocalizerNode(Node):
                 )
                 self.get_logger().info(
                     'Loaded YOLO person model: '
-                    f'{Path(model_path).expanduser()}'
+                    f'{Path(model_path).expanduser()} '
+                    f'(target={detector.resolved_target})'
                 )
                 return detector
             except (FileNotFoundError, RuntimeError, ValueError) as error:
@@ -272,6 +310,49 @@ class PersonLocalizerNode(Node):
         return HogPersonDetector(
             hit_threshold=float(self.get_parameter('hog_hit_threshold').value),
             nms_threshold=float(self.get_parameter('nms_threshold').value),
+        )
+
+    def _create_reidentifier(self) -> PersonAppearanceEncoder:
+        backend = str(self.get_parameter('reid_backend').value)
+        model_path = str(self.get_parameter('reid_model_path').value).strip()
+        model_exists = (
+            bool(model_path) and Path(model_path).expanduser().is_file()
+        )
+        minimum_width = int(
+            self.get_parameter('reid_minimum_crop_width').value
+        )
+        minimum_height = int(
+            self.get_parameter('reid_minimum_crop_height').value
+        )
+        if backend == 'osnet' or (backend == 'auto' and model_exists):
+            try:
+                encoder = OsNetPersonEncoder(
+                    model_path=model_path,
+                    dnn_target=str(self.get_parameter('dnn_target').value),
+                    minimum_width=minimum_width,
+                    minimum_height=minimum_height,
+                )
+                self.get_logger().info(
+                    'Loaded OSNet person Re-ID model: '
+                    f'{Path(model_path).expanduser()} '
+                    f'(target={encoder.resolved_target})'
+                )
+                return encoder
+            except (FileNotFoundError, RuntimeError, ValueError) as error:
+                if backend == 'osnet':
+                    raise
+                self.get_logger().warning(
+                    f'OSNet unavailable ({error}); using HSV appearance '
+                    'fallback'
+                )
+        elif backend == 'auto':
+            self.get_logger().warning(
+                'No OSNet reid_model_path found; using HSV appearance '
+                'fallback. Prepare OSNet for reliable long-term IDs.'
+            )
+        return HistogramPersonEncoder(
+            minimum_width=minimum_width,
+            minimum_height=minimum_height,
         )
 
     def _on_camera_info(self, message: CameraInfo) -> None:
@@ -327,7 +408,12 @@ class PersonLocalizerNode(Node):
                 desired_encoding='passthrough',
             )
             detections = self._detector.detect(bgr_image)
-            tracks = self._tracker.update(detections)
+            appearance_features = self._reidentifier.encode(
+                bgr_image, detections
+            )
+            tracks = self._tracker.update(
+                detections, appearance_features
+            )
             self._publish_detections(
                 rgb_message,
                 depth_message,

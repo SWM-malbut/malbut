@@ -7,6 +7,8 @@ from typing import List, Optional
 import cv2
 import numpy as np
 
+from malbut_perception.dnn import configure_network_target
+
 from .base import BoundingBox, ImageDetection, PersonDetector
 from .hog_detector import _nms
 
@@ -122,7 +124,7 @@ class YoloPersonDetector(PersonDetector):
         confidence_threshold: float = 0.20,
         nms_threshold: float = 0.45,
         input_size: int = 640,
-        dnn_target: str = 'cpu',
+        dnn_target: str = 'auto',
         network: Optional[object] = None,
     ) -> None:
         """Load the ONNX network and configure inference thresholds."""
@@ -148,30 +150,14 @@ class YoloPersonDetector(PersonDetector):
         self._confidence_threshold = confidence_threshold
         self._nms_threshold = nms_threshold
         self._input_size = input_size
-        self._configure_target(dnn_target)
+        self._resolved_target = configure_network_target(
+            self._net, dnn_target
+        )
 
-    def _configure_target(self, target: str) -> None:
-        targets = {
-            'cpu': (
-                cv2.dnn.DNN_BACKEND_OPENCV,
-                cv2.dnn.DNN_TARGET_CPU,
-            ),
-            'cuda': (
-                cv2.dnn.DNN_BACKEND_CUDA,
-                cv2.dnn.DNN_TARGET_CUDA,
-            ),
-            'cuda_fp16': (
-                cv2.dnn.DNN_BACKEND_CUDA,
-                cv2.dnn.DNN_TARGET_CUDA_FP16,
-            ),
-        }
-        if target not in targets:
-            raise ValueError(
-                "dnn_target must be one of 'cpu', 'cuda', or 'cuda_fp16'"
-            )
-        backend, device = targets[target]
-        self._net.setPreferableBackend(backend)
-        self._net.setPreferableTarget(device)
+    @property
+    def resolved_target(self) -> str:
+        """Return the actual OpenCV execution target."""
+        return self._resolved_target
 
     def detect(self, bgr_image: np.ndarray) -> List[ImageDetection]:
         """Return COCO person detections from a BGR camera frame."""
