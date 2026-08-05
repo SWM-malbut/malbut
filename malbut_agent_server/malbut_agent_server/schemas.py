@@ -336,8 +336,38 @@ class ProviderUsage:
     output_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
 
+    def validate(self) -> None:
+        """Reject negative, boolean, or inconsistent token counters."""
+        for field_name in (
+            'input_tokens',
+            'output_tokens',
+            'total_tokens',
+        ):
+            value = getattr(self, field_name)
+            if value is None:
+                continue
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValidationError(
+                    f'{field_name} must be a non-negative integer or null'
+                )
+        if (
+            self.total_tokens is not None
+            and self.input_tokens is not None
+            and self.output_tokens is not None
+            and self.total_tokens
+            < self.input_tokens + self.output_tokens
+        ):
+            raise ValidationError(
+                'total_tokens is smaller than input plus output tokens'
+            )
+
     def to_dict(self) -> Dict[str, Optional[int]]:
         """Return JSON-safe token counters."""
+        self.validate()
         return {
             'input_tokens': self.input_tokens,
             'output_tokens': self.output_tokens,
@@ -552,8 +582,59 @@ class ProviderResult:
     input_chars: Optional[int] = None
     context_metrics: Optional[ContextMetrics] = None
 
+    def validate(self) -> None:
+        """Validate content-free provider metadata and its decision."""
+        self.decision.validate()
+        for field_name in ('provider', 'model'):
+            value = getattr(self, field_name)
+            if (
+                not isinstance(value, str)
+                or not value
+                or len(value) > 128
+                or any(
+                    ord(character) < 32 or ord(character) == 127
+                    for character in value
+                )
+            ):
+                raise ValidationError(
+                    f'provider result {field_name} is invalid'
+                )
+        if (
+            isinstance(self.latency_ms, bool)
+            or not isinstance(self.latency_ms, (int, float))
+            or not math.isfinite(float(self.latency_ms))
+            or self.latency_ms < 0
+        ):
+            raise ValidationError(
+                'provider result latency_ms is invalid'
+            )
+        self.usage.validate()
+        if self.response_id is not None:
+            if (
+                not isinstance(self.response_id, str)
+                or not self.response_id
+                or len(self.response_id) > 256
+                or any(
+                    ord(character) < 32 or ord(character) == 127
+                    for character in self.response_id
+                )
+            ):
+                raise ValidationError(
+                    'provider result response_id is invalid'
+                )
+        if self.input_chars is not None:
+            if (
+                isinstance(self.input_chars, bool)
+                or not isinstance(self.input_chars, int)
+                or self.input_chars < 0
+            ):
+                raise ValidationError(
+                    'provider result input_chars is invalid'
+                )
+
     def to_dict(self) -> Dict[str, Any]:
         """Return provider metadata without credentials or raw prompts."""
+        self.validate()
         return {
             'provider': self.provider,
             'model': self.model,

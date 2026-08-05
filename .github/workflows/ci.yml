@@ -101,7 +101,11 @@ jobs:
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
-          colcon build --symlink-install --packages-select malbut_description malbut_gazebo
+          colcon build --symlink-install \
+            --packages-select \
+              malbut_description \
+              malbut_gazebo \
+              malbut_agent_server
 
       - name: Run ROS package tests
         shell: bash
@@ -109,7 +113,10 @@ jobs:
           source /opt/ros/humble/setup.bash
           source install/setup.bash
           colcon test --event-handlers console_direct+ \
-            --packages-select malbut_description malbut_gazebo
+            --packages-select \
+              malbut_description \
+              malbut_gazebo \
+              malbut_agent_server
           colcon test-result --verbose
 
       - name: Validate robot Xacro

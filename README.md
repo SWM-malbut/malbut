@@ -408,13 +408,31 @@ CameraInfo 및 실제 카메라 프레임 수신을 확인한 뒤 종료합니�
 `/cmd_vel`, 모터 PWM, 비상 정지 해제 같은 저수준 제어를 직접 수행하지
 않습니다.
 
-상세 계약과 미승인 연관 인터페이스는
+승인된 책임 경계와 아직 구현·검증이 필요한 세부 연관 인터페이스는
 [`SWM25-69_CONVERSATION_AGENT_CONTRACT.md`](malbut_agent_server/docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md)를
 확인하십시오.
 
 ```bash
 cd ~/ros2_ws/src/malbut/malbut_agent_server
 PYTHONPATH=. python3 -m pytest -q test
+```
+
+SWM25-70 구현부터는 외부 API를 호출하지 않는 Mock으로 세션 생성·조회·
+초기화·종료·삭제, 최근 10턴, 재전송 중복 방지와 단일 프로세스 동시 요청
+순서를 검증할 수 있습니다.
+
+SWM25-71에서는 최근 N턴 원문, 그 이전 대화의 rolling summary, 사용자별
+장기 기억을 서로 분리해 제한된 모델 입력으로 구성합니다. 저장된 문맥은
+신뢰되지 않은 JSON 데이터로만 전달되며, 응답에는 원문이 아닌 영역별 크기
+메트릭만 노출합니다. 상세 설계와 검증 근거는
+[`SWM25-71_USER_CONTEXT_INTEGRATION.md`](malbut_agent_server/docs/jira/SWM25-71_USER_CONTEXT_INTEGRATION.md)를
+확인하십시오.
+
+```bash
+PYTHONPATH=. python3 -m malbut_agent_server.cli \
+  --provider mock \
+  --database /tmp/malbut-agent-demo.sqlite3 \
+  --check
 ```
 
 ## 10. 수정 후 다시 빌드
