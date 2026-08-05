@@ -14,10 +14,12 @@ from launch.actions import (
     IncludeLaunchDescription,
     RegisterEventHandler,
 )
+from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 
 
 GAZEBO_PACKAGE = "malbut_gazebo"
@@ -55,6 +57,12 @@ def _shutdown_on_actor_spawn_failure(event, _context):
 def generate_launch_description():
     """Start a selected world, robot, and local humanoid actor model."""
     gazebo_share = Path(get_package_share_directory(GAZEBO_PACKAGE))
+    perception_share = Path(
+        get_package_share_directory("malbut_perception")
+    )
+    default_model = (
+        Path.home() / ".cache" / "malbut_perception" / "yolov5n.onnx"
+    )
     spawn_helper = (
         Path(get_package_prefix(GAZEBO_PACKAGE))
         / "lib"
@@ -93,6 +101,26 @@ def generate_launch_description():
         ],
         output="screen",
     )
+    perception = Node(
+        package="malbut_perception",
+        executable="person_localizer",
+        name="person_localizer",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("perception")),
+        parameters=[
+            LaunchConfiguration("perception_config"),
+            {
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
+                "detector_backend": LaunchConfiguration("detector_backend"),
+                "model_path": LaunchConfiguration("model_path"),
+                "dnn_target": LaunchConfiguration("dnn_target"),
+                "output_frame": LaunchConfiguration("output_frame"),
+                "publish_debug_image": LaunchConfiguration(
+                    "publish_debug_image"
+                ),
+            },
+        ],
+    )
 
     return LaunchDescription(
         [
@@ -124,6 +152,22 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "actor_name", default_value="humanoid_target"
             ),
+            DeclareLaunchArgument("perception", default_value="false"),
+            DeclareLaunchArgument(
+                "perception_config",
+                default_value=str(
+                    perception_share / "config" / "person_detection.yaml"
+                ),
+            ),
+            DeclareLaunchArgument("detector_backend", default_value="auto"),
+            DeclareLaunchArgument(
+                "model_path", default_value=str(default_model)
+            ),
+            DeclareLaunchArgument("dnn_target", default_value="cpu"),
+            DeclareLaunchArgument("output_frame", default_value=""),
+            DeclareLaunchArgument(
+                "publish_debug_image", default_value="true"
+            ),
             # The mapped Small House circuit starts 1.48 m in front of the
             # robot and returns here after visiting the connected rooms.
             DeclareLaunchArgument("actor_x", default_value="-2.19"),
@@ -138,5 +182,6 @@ def generate_launch_description():
                 )
             ),
             actor_spawn,
+            perception,
         ]
     )

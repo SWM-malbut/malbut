@@ -61,6 +61,26 @@ locate the target from `/camera/color/image_raw` and
 `/camera/depth/image_raw`. The humanoid is a kinematic camera target, not a
 physics obstacle.
 
+Run the same scene with the sensor-only person perception node:
+
+```bash
+ros2 launch malbut_gazebo humanoid_demo.launch.py perception:=true
+```
+
+This uses the OpenCV HOG fallback when no model is provided. For normal
+verification, pass an OpenCV-compatible COCO YOLO ONNX model:
+
+```bash
+ros2 launch malbut_gazebo humanoid_demo.launch.py \
+  perception:=true detector_backend:=yolo \
+  model_path:=$HOME/.cache/malbut_perception/yolov5n.onnx
+```
+
+The perception node sees only the bridged RGB, depth, and CameraInfo topics.
+Inspect `/perception/person/debug_image` and
+`/perception/person/detections_3d`; the actor pose and route are never exposed
+to it.
+
 ## SLAM mapping
 
 Start the household world, robot, ROS-Gazebo bridge, SLAM Toolbox, and the
