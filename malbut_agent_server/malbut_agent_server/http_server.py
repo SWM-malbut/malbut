@@ -552,6 +552,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             payload,
             ensure_ascii=False,
             separators=(',', ':'),
+            allow_nan=False,
         ).encode('utf-8')
         self.send_response(int(status))
         self.send_header(
