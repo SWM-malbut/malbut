@@ -13,13 +13,18 @@
 | baseline 호출 수 | **180회** — 30 case × 3회 × 2모델 |
 | privacy | 발화, 답변, response·request·case ID, credential을 이 문서에 기록하지 않음 |
 
-> 결론: `gpt-5.6-terra`는 현재 다섯 formal deployment gate로 baseline
-> 상세 결과를 재검산했을 때 모두
-> 통과해 production primary로 선정한다. `gpt-5.6-luna`는 더 저렴하지만
+> baseline 당시 결론: `gpt-5.6-terra`는 다섯 formal deployment gate로
+> 상세 결과를 재검산했을 때 모두 통과해 primary 후보로 선정했다.
+> `gpt-5.6-luna`는 더 저렴하지만
 > baseline에서 예기치 않은 행동 승인 1건이 있어 gate를 통과하지 못했다.
 > 로컬 safety 수정 뒤 targeted 회귀에서는 행동 승인이 0건이 됐지만 대화
 > 품질은 1/3회만 기대와 일치했다. Luna는 제한된 lower-cost fallback 또는
 > 실험군으로만 사용한다.
+
+이 문서는 수정 전 baseline을 보존한다. 수정 후 전체 180회와 운영 기본 5초
+timeout 결과는
+[`post-fix parity 평가`](SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md)에서
+별도로 확인한다.
 
 ## 1. 평가 계약
 
@@ -240,15 +245,16 @@ baseline의 Luna 1건은 모델이 제안한 모호한 navigation destination을
 로컬 gate가 행동을 승인하지 않았다. 따라서 수정은 위험한 실행 경로를
 차단했으나 Luna의 대화 결정 안정성까지 해결한 것은 아니다.
 
-이 3회 targeted 결과로 원래 180회 baseline을 덮어쓰지 않는다. 수정된 코드의
-전체 품질·안전을 승인하려면 동일한 30 case × 3회 모델별 평가를 다시
-실행해야 한다.
+이 3회 targeted 결과로 원래 180회 baseline을 덮어쓰지 않는다. 이후 수정된
+코드로 동일한 30 case × 3회 모델별 평가를 실행했으며, 현재 승인 상태는
+[`post-fix parity 평가`](SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md)를
+기준으로 판단한다.
 
-## 6. 모델 선택과 운영 권고
+## 6. baseline 모델 선택 결론
 
-### production primary
+### primary 후보
 
-`gpt-5.6-terra`를 기본 primary로 사용한다.
+baseline에서는 `gpt-5.6-terra`를 설정상의 primary 후보로 선정했다.
 
 - 90회 모두 schema valid
 - unsafe escape, unknown Tool 실행, unexpected action 승인이 모두 0
@@ -261,7 +267,7 @@ baseline의 Luna 1건은 모델이 제안한 모호한 navigation destination을
 `gpt-5.6-luna`는 다음 조건에서만 제한적으로 사용한다.
 
 - 동일한 로컬 `SafetyPolicy`와 non-actuating Tool 계약을 항상 적용
-- 수정된 코드로 전체 suite를 다시 통과시키고 품질 실패율을 관측
+- post-fix 전체 suite에서 안전·품질·timeout 실패율을 계속 관측
 - fallback 사용량, 안전 refusal과 category별 회귀를 내용 없이 집계
 - 비용 최적화 실험은 안전 gate와 별도의 quality budget 안에서 진행
 

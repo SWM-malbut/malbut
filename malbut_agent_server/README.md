@@ -138,6 +138,8 @@ PYTHONPATH=. python3 -m malbut_agent_server.eval_runner \
   --model gpt-5.6-luna \
   --model gpt-5.6-terra \
   --repetitions 3 \
+  --timeout-seconds 5 \
+  --request-delay-seconds 0.1 \
   --env-file .env.local \
   --output /tmp/malbut-agent-openai-eval.json \
   --progress
@@ -180,7 +182,8 @@ PYTHONPATH=. python3 -m malbut_agent_server.eval_runner \
 - [SWM25-70 멀티턴 대화 세션](docs/jira/SWM25-70_MULTITURN_CONVERSATION_SESSION.md)
 - [SWM25-71 사용자 컨텍스트 통합](docs/jira/SWM25-71_USER_CONTEXT_INTEGRATION.md)
 - [SWM25-72 LLM provider 연결](docs/jira/SWM25-72_LLM_PROVIDER_INTEGRATION.md)
-- [SWM25-72 OpenAI 평가](docs/evaluations/SWM25-72_OPENAI_EVALUATION_2026-08-05.md)
+- [SWM25-72 OpenAI baseline 평가](docs/evaluations/SWM25-72_OPENAI_EVALUATION_2026-08-05.md)
+- [SWM25-72 OpenAI post-fix parity 평가](docs/evaluations/SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md)
 
 다중 프로세스 분산 잠금, 주기적 만료 sweeper, 독립 provider 장애
 fallback과 ROS 2 대화 bridge는 이 MVP의 운영 완료 범위가 아니다.

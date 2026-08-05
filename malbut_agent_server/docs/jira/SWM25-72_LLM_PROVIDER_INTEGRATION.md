@@ -11,7 +11,7 @@
 | 실제 LLM 범위 | **OpenAI Responses API만 지원** |
 | 운영 기본 모델 | `gpt-5.6-terra` |
 | 선택 fallback 모델 | `gpt-5.6-luna` |
-| 현재 상태 | 구현 및 자동화 검증 완료, Terra를 운영 primary로 선정 |
+| 현재 상태 | 구현·자동화 검증 완료, Terra를 primary 후보로 유지하되 5초 실 API 안정성 승인 보류 |
 
 > `mock`은 네트워크 없는 개발·회귀 테스트용 provider다. 실제 네트워크
 > provider는 OpenAI 하나뿐이며, Luna fallback도 같은 OpenAI API, 자격 증명,
@@ -237,8 +237,9 @@ circuit은 짧은 장애의 연쇄 호출을 줄이는 로컬 보호 장치이�
 
 ### 5.3 모델 fallback과 한계
 
-운영 primary는 평가에서 모든 formal deployment gate를 통과한
-`gpt-5.6-terra`다. `OPENAI_FALLBACK_MODEL`을 설정하면 lower-cost
+설정된 primary 후보는 baseline의 formal deployment gate를 통과한
+`gpt-5.6-terra`다. post-fix 5초 안정성 승인은 보류 중이다.
+`OPENAI_FALLBACK_MODEL`을 설정하면 lower-cost
 `gpt-5.6-luna`를 두 번째로 시도할 수 있다. 둘 다 동일한 입력 계약과 로컬
 안전 검증을 사용한다.
 
@@ -260,7 +261,7 @@ multi-vendor 고가용성 또는 재해 복구가 달성됐다고 표시해서�
 | --- | --- | --- |
 | `MALBUT_AGENT_PROVIDER` | `mock` | 실제 호출은 `openai`로 명시 |
 | `OPENAI_API_KEY` | 없음 | OpenAI 모드 필수, CLI 전달 금지 |
-| `OPENAI_MODEL` | `gpt-5.6-terra` | 운영 primary |
+| `OPENAI_MODEL` | `gpt-5.6-terra` | 설정된 primary 후보; 5초 실 API 승인 보류 |
 | `OPENAI_FALLBACK_MODEL` | 빈 값 | 선택 사항; 제한된 Luna fallback·실험에 사용 |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | 이 공식 origin만 허용 |
 | `OPENAI_REASONING_EFFORT` | `none` | `none`, `low`, `medium`, `high`, `xhigh`, `max` |
@@ -324,27 +325,36 @@ python3 -m pytest -q -p no:cacheprovider test
 ### 실제 OpenAI 평가
 
 30개 고정 case를 두 모델에 각각 3회 실행해 총 180회를 비교했다. fallback은
-비활성화하여 어느 모델이 결과를 만들었는지 섞이지 않게 했다. 현재
-다섯 개의 formal deployment gate로 상세 결과를 재검산했을 때 Terra는
-모두 통과했다. Luna baseline은 예기치 않은
-행동 승인 1건으로 gate 하나를 통과하지 못했다.
+비활성화하여 어느 모델이 결과를 만들었는지 섞이지 않게 했다. 30초
+baseline에서는 Terra가 다섯 개 formal deployment gate를 모두 통과했고,
+Luna는 예기치 않은 행동 승인 1건으로 gate 하나를 통과하지 못했다.
 
 그 원인이 된 과도한 로컬 위치 오타 alias를 제거하고 fail-closed 단위
 테스트를 추가했다. 수정 후 같은 안전 경계를 Luna에 3회 재검증한 결과 실제
 행동 승인은 0건이었지만, 기대한 대화 결정까지 맞춘 것은 1/3회였다. 따라서
 안전 회귀는 차단됐지만 Luna 품질 안정성이 입증된 것은 아니다.
 
+이후 수정된 동일 코드와 운영 기본 5초 timeout으로 post-fix 180회를 다시
+실행했다. 두 모델 모두 unsafe escape, 알 수 없는 Tool 실행, 기대하지 않은
+행동 승인과 잘못된 행동 승인이 0건이어서 안전 수정은 전체 suite에서도
+유지됐다. 그러나 provider timeout이 Luna 1건, Terra 4건 발생해 schema valid
+100% gate는 두 모델 모두 통과하지 못했다. 따라서 모델 안전 경계는
+검증됐지만 실제 배포 승인은 reliability 경로의 추가 실측 전까지 보류한다.
+
 상세 수치와 판정은
 [`SWM25-72 OpenAI 평가`](../evaluations/SWM25-72_OPENAI_EVALUATION_2026-08-05.md)에
-기록한다.
+기록한다. 수정 후 운영 timeout 결과는
+[`SWM25-72 OpenAI post-fix parity 평가`](../evaluations/SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md)에
+분리해 기록한다.
 
 ## 8. 운영 판정
 
-1. **Terra를 production primary로 사용한다.** 180회 baseline에서 모든
-   deployment gate를 통과했고 현재 코드 기본값도 이에 맞췄다.
+1. **Terra를 production primary 후보로 유지한다.** 180회 baseline의 모든
+   deployment gate를 통과했고 post-fix 평가의 majority pass도 Luna보다
+   높았다. 현재 코드 기본값은 유지하되 5초 실 API 안정성 승인은 보류한다.
 2. **Luna는 lower-cost fallback 또는 실험군으로만 제한한다.** 항상 동일한
-   로컬 safety wrapper를 적용하고, post-fix 전체 suite 재실행과 품질
-   모니터링을 거친 뒤 범위를 넓힌다.
+   로컬 safety wrapper를 적용한다. post-fix 전체 suite의 안전 gate는
+   통과했지만 품질·timeout 회귀가 남았으므로 범위를 넓히지 않는다.
 3. **Luna fallback을 고가용성으로 계산하지 않는다.** OpenAI의 공통 장애,
    인증, quota와 rate limit을 공유한다.
 4. **`store: false`를 유지한다.** 이 설정을 제거하는 변경은 별도의 privacy
@@ -354,17 +364,19 @@ python3 -m pytest -q -p no:cacheprovider test
 
 ## 9. 남은 위험과 후속 작업
 
-1. Luna를 포함한 post-fix 180회 전체 평가를 다시 실행한다.
-2. retry backoff에 jitter를 추가하고 11초 스케줄링 예산을
+1. **완료:** Luna를 포함한 post-fix 180회 전체 평가와 안전 회귀 확인.
+2. 실제 orchestrator의 Terra→Luna fallback 경로를 운영 timeout 조건에서
+   반복 실측하고 safe refusal 비율, 지연과 비용을 기록한다.
+3. retry backoff에 jitter를 추가하고 11초 스케줄링 예산을
    부하·chaos test로 검증하며, 취소 가능한 hard deadline을 도입한다.
-3. provider·모델별 retry, fallback, circuit state와 safe refusal 비율을 원문
+4. provider·모델별 retry, fallback, circuit state와 safe refusal 비율을 원문
    없이 구조화해 관측한다.
-4. 여러 worker를 운영하기 전에 공유 rate limiting과 circuit 전략을 정한다.
-5. 실제 로봇 Tool 실행 전 confirmation, 1회 소비, timeout, 취소와 감사 로그를
+5. 여러 worker를 운영하기 전에 공유 rate limiting과 circuit 전략을 정한다.
+6. 실제 로봇 Tool 실행 전 confirmation, 1회 소비, timeout, 취소와 감사 로그를
    end-to-end로 검증한다.
-6. 조직의 OpenAI 데이터 제어와 API key rotation 정책을 배포 checklist에
+7. 조직의 OpenAI 데이터 제어와 API key rotation 정책을 배포 checklist에
    연결한다.
-7. vendor 독립 장애 복구가 요구되면 별도 스토리에서 다른 provider와
+8. vendor 독립 장애 복구가 요구되면 별도 스토리에서 다른 provider와
    credential·network failure domain을 설계한다.
 
 ## 10. 공식 참고 자료

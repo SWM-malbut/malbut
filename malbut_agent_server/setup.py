@@ -32,6 +32,8 @@ setup(
             [
                 'docs/evaluations/'
                 'SWM25-72_OPENAI_EVALUATION_2026-08-05.md',
+                'docs/evaluations/'
+                'SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md',
             ],
         ),
     ],
