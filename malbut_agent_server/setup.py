@@ -6,7 +6,7 @@ package_name = 'malbut_agent_server'
 
 setup(
     name=package_name,
-    version='0.4.0',
+    version='0.5.0',
     packages=find_packages(exclude=['test']),
     package_data={package_name: ['data/*.jsonl']},
     data_files=[
@@ -26,6 +26,7 @@ setup(
                 'docs/jira/SWM25-70_MULTITURN_CONVERSATION_SESSION.md',
                 'docs/jira/SWM25-71_USER_CONTEXT_INTEGRATION.md',
                 'docs/jira/SWM25-72_LLM_PROVIDER_INTEGRATION.md',
+                'docs/jira/SWM25-73_AGENT_TOOL_GATEWAY.md',
             ],
         ),
         (

@@ -10,13 +10,18 @@ from http.server import (
     BaseHTTPRequestHandler,
     ThreadingHTTPServer,
 )
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from malbut_agent_server.conversation import (
     ConversationChangedError,
     ConversationConflictError,
     ConversationNotFoundError,
     ConversationStateError,
+)
+from malbut_agent_server.gateway import (
+    GatewayConflictError,
+    ToolGateway,
+    ToolQuery,
 )
 from malbut_agent_server.orchestrator import (
     AgentOrchestrator,
@@ -47,8 +52,11 @@ class AgentHTTPServer(ThreadingHTTPServer):
         max_concurrent_requests: int = 8,
         requests_per_minute: int = 60,
         socket_timeout_seconds: int = 10,
+        tool_gateway: Optional[ToolGateway] = None,
     ) -> None:
         """Attach runtime services before binding the HTTP listener."""
+        if address[0] not in {'127.0.0.1', 'localhost', '::1'}:
+            raise ValueError('Agent HTTP server is loopback-only')
         if max_request_bytes < 1:
             raise ValueError('max_request_bytes must be positive')
         if max_concurrent_requests < 1:
@@ -64,6 +72,19 @@ class AgentHTTPServer(ThreadingHTTPServer):
         self.orchestrator = orchestrator
         self.memory_store = orchestrator.memory_store
         self.conversation_store = orchestrator.conversation_store
+        if (
+            tool_gateway is not None
+            and (
+                tool_gateway.registry
+                is not orchestrator.capability_registry
+            )
+        ):
+            raise ValueError(
+                'Tool Gateway and orchestrator must share one registry'
+            )
+        self.tool_gateway = tool_gateway or ToolGateway(
+            orchestrator.capability_registry
+        )
         self.max_request_bytes = max_request_bytes
         self.auth_token = auth_token
         self.allowed_user_id = validate_user_id(allowed_user_id)
@@ -75,6 +96,13 @@ class AgentHTTPServer(ThreadingHTTPServer):
         self._rate_lock = threading.Lock()
         self._request_times = deque()
         super().__init__(address, AgentRequestHandler)
+
+    def server_close(self) -> None:
+        """Close adapter workers together with the HTTP listener."""
+        try:
+            super().server_close()
+        finally:
+            self.tool_gateway.close()
 
     def get_request(self) -> Tuple[Any, Any]:
         """Apply an inbound socket timeout before parsing HTTP."""
@@ -155,20 +183,42 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         del format_string, args
 
     def do_GET(self) -> None:
-        """Serve only the health endpoint."""
-        if self.path != '/healthz':
+        """Serve health publicly and capabilities behind local auth."""
+        if self.path == '/healthz':
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    'status': 'ok',
+                    'service': 'malbut_agent_server',
+                },
+            )
+            return
+        if self.path != '/v1/tools/capabilities':
             self._send_error(
                 HTTPStatus.NOT_FOUND,
                 'not_found',
                 'Endpoint not found.',
             )
             return
+        if not self._authorized():
+            self.close_connection = True
+            self._send_error(
+                HTTPStatus.UNAUTHORIZED,
+                'unauthorized',
+                'Authentication is required.',
+            )
+            return
+        if not self.server.consume_rate_slot():
+            self.close_connection = True
+            self._send_error(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                'rate_limited',
+                'Request rate limit exceeded.',
+            )
+            return
         self._send_json(
             HTTPStatus.OK,
-            {
-                'status': 'ok',
-                'service': 'malbut_agent_server',
-            },
+            self.server.tool_gateway.registry.to_dict(),
         )
 
     def do_POST(self) -> None:
@@ -193,6 +243,8 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             body = self._read_json_body()
             if self.path == '/v1/agent/respond':
                 self._handle_agent(body)
+            elif self.path == '/v1/tools/query':
+                self._handle_tool_query(body)
             elif self.path == '/v1/conversations':
                 self._handle_create_conversation(body)
             elif self.path == '/v1/conversations/get':
@@ -209,6 +261,12 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                     'not_found',
                     'Endpoint not found.',
                 )
+        except GatewayConflictError as error:
+            self._send_error(
+                HTTPStatus.CONFLICT,
+                'request_conflict',
+                str(error),
+            )
         except ConversationNotFoundError as error:
             self._send_error(
                 HTTPStatus.NOT_FOUND,
@@ -352,6 +410,18 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         self._require_allowed_user(request.user_id)
         result = self.server.orchestrator.handle(request)
         self._send_json(HTTPStatus.OK, result.to_dict())
+
+    def _handle_tool_query(self, body: Dict[str, Any]) -> None:
+        """Run only read-only or explicit side-effect-free simulations."""
+        query = ToolQuery.from_dict(body)
+        self._require_allowed_user(query.user_id)
+        result, cached = (
+            self.server.tool_gateway.query_with_cache_state(query)
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            result.to_dict(cached=cached),
+        )
 
     def _handle_create_conversation(
         self,
@@ -592,6 +662,7 @@ def make_server(
     max_concurrent_requests: int = 8,
     requests_per_minute: int = 60,
     socket_timeout_seconds: int = 10,
+    tool_gateway: Optional[ToolGateway] = None,
 ) -> AgentHTTPServer:
     """Build a server without starting its event loop."""
     return AgentHTTPServer(
@@ -603,4 +674,5 @@ def make_server(
         max_concurrent_requests=max_concurrent_requests,
         requests_per_minute=requests_per_minute,
         socket_timeout_seconds=socket_timeout_seconds,
+        tool_gateway=tool_gateway,
     )

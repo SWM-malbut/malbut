@@ -15,6 +15,10 @@ from malbut_agent_server.conversation import (
     ConversationTurn,
     SQLiteConversationStore,
 )
+from malbut_agent_server.gateway import (
+    CapabilityRegistry,
+    production_registry,
+)
 from malbut_agent_server.memory import SQLiteMemoryStore
 from malbut_agent_server.providers.base import (
     AgentProvider,
@@ -29,7 +33,6 @@ from malbut_agent_server.schemas import (
     ProviderUsage,
     ValidationError,
 )
-from malbut_agent_server.tools import select_tool_specs
 
 
 class ExpiredDecisionError(ValidationError):
@@ -67,6 +70,12 @@ class OrchestrationResult:
     ) -> Dict[str, Any]:
         """Return the stable HTTP response contract."""
         decision_is_fresh = time.time() < self.expires_at
+        proposal_authorized = (
+            self.state_trusted
+            and self.safety.allowed
+            and self.decision.type == 'tool_call'
+            and decision_is_fresh
+        )
         result = {
             'request_id': self.request_id,
             'conversation': {
@@ -87,15 +96,14 @@ class OrchestrationResult:
                 'decision_id': self.decision_id,
                 'issued_at': self.issued_at,
                 'expires_at': self.expires_at,
-                'authorized': (
-                    self.state_trusted
-                    and self.safety.allowed
-                    and self.decision.type == 'tool_call'
-                    and decision_is_fresh
-                ),
+                # A policy-approved model proposal is still not an
+                # executable SWM25-74 authorization.
+                'authorized': False,
+                'proposal_authorized': proposal_authorized,
                 'state_trusted': self.state_trusted,
                 'fresh': decision_is_fresh,
-                'consume_once': True,
+                'consume_once': False,
+                'tool_call_id': None,
             },
         }
         if include_raw_decision:
@@ -105,7 +113,7 @@ class OrchestrationResult:
     def to_persisted_dict(self) -> Dict[str, Any]:
         """Persist the final safe response and required metadata."""
         return {
-            'schema_version': 1,
+            'schema_version': 2,
             'public': self.to_dict(include_raw_decision=False),
             'memory_revision': self.memory_revision,
         }
@@ -117,7 +125,7 @@ class OrchestrationResult:
     ) -> 'OrchestrationResult':
         """Reconstruct an idempotent response without another model call."""
         try:
-            if value.get('schema_version') != 1:
+            if value.get('schema_version') not in {1, 2}:
                 raise ValueError('unsupported persisted response schema')
             public = value['public']
             conversation = public['conversation']
@@ -215,6 +223,7 @@ class AgentOrchestrator:
         safety_policy: SafetyPolicy,
         memory_limit: int = 5,
         trusted_robot_state: bool = False,
+        capability_registry: CapabilityRegistry | None = None,
     ) -> None:
         """Initialize provider, memory, session, and safety services."""
         if memory_limit < 1 or memory_limit > 10:
@@ -225,6 +234,9 @@ class AgentOrchestrator:
         self.safety_policy = safety_policy
         self.memory_limit = memory_limit
         self.trusted_robot_state = trusted_robot_state
+        self.capability_registry = (
+            capability_registry or production_registry()
+        )
         self._handle_lock = threading.RLock()
 
     def handle(self, request: AgentRequest) -> OrchestrationResult:
@@ -284,8 +296,14 @@ class AgentOrchestrator:
         token: BeginTurnToken,
     ) -> OrchestrationResult:
         """Call one provider without holding a SQLite transaction."""
-        safety_request = AgentRequest.from_dict(request.to_dict())
-        model_request = AgentRequest.from_dict(request.to_dict())
+        effective_value = request.to_dict()
+        effective_value['available_tools'] = (
+            self.capability_registry.effective_names(
+                request.available_tools
+            )
+        )
+        safety_request = AgentRequest.from_dict(effective_value)
+        model_request = AgentRequest.from_dict(effective_value)
         memories, memory_revision = (
             self.memory_store.search_with_revision(
                 request.user_id,
@@ -293,7 +311,9 @@ class AgentOrchestrator:
                 limit=self.memory_limit,
             )
         )
-        tool_specs = select_tool_specs(request.available_tools)
+        tool_specs = self.capability_registry.select_specs(
+            model_request.available_tools
+        )
         provider_result = self.provider.complete(
             model_request,
             memories,

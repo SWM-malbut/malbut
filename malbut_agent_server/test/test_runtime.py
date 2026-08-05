@@ -4,7 +4,12 @@ import pytest
 
 from malbut_agent_server.cli import server_main
 from malbut_agent_server.config import Settings
-from malbut_agent_server.factory import build_orchestrator, build_provider
+from malbut_agent_server.factory import (
+    build_capability_registry,
+    build_orchestrator,
+    build_provider,
+)
+from malbut_agent_server.http_server import make_server
 from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
 )
@@ -52,6 +57,14 @@ def test_server_is_loopback_only() -> None:
     """Remote access belongs behind a separate authenticated proxy."""
     with pytest.raises(ValueError, match='loopback-only'):
         Settings(host='0.0.0.0').validate_for_server()
+
+    runtime = build_orchestrator(Settings(database_path=':memory:'))
+    try:
+        with pytest.raises(ValueError, match='loopback-only'):
+            make_server('0.0.0.0', 0, runtime)
+    finally:
+        runtime.conversation_store.close()
+        runtime.memory_store.close()
 
 
 def test_credentials_are_redacted() -> None:
@@ -130,6 +143,35 @@ def test_conversation_limits_are_bounded() -> None:
     assert settings.memory_limit == 7
     assert settings.conversation_summary_max_chars == 2048
     assert settings.max_model_input_chars == 8192
+
+
+def test_tool_mode_is_explicit_and_independent_from_provider() -> None:
+    """Mock inference alone never enables simulation adapters."""
+    proposal_settings = Settings(provider='mock', tool_mode='proposal')
+    proposal = build_capability_registry(proposal_settings).to_dict()
+    assert all(
+        item['executable'] is False
+        for item in proposal['capabilities']
+    )
+
+    simulation_settings = Settings(
+        provider='openai',
+        tool_mode='simulation',
+    )
+    simulation = build_capability_registry(
+        simulation_settings
+    ).to_dict()
+    assert simulation['runtime_mode'] == 'simulation'
+    assert all(
+        item['executable'] is True
+        for item in simulation['capabilities']
+    )
+
+    invalid = Settings.from_env(
+        {'MALBUT_AGENT_TOOL_MODE': 'physical'}
+    )
+    with pytest.raises(ValueError, match='TOOL_MODE'):
+        invalid.validate_for_server()
 
 
 def test_factory_builds_mock_runtime_without_wrapper() -> None:
