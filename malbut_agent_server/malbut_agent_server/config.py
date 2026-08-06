@@ -15,6 +15,7 @@ from malbut_agent_server.providers.openai_responses import (
 
 
 SUPPORTED_PROVIDERS = frozenset({'mock', 'openai'})
+SUPPORTED_TOOL_MODES = frozenset({'proposal', 'simulation'})
 DEFAULT_OPENAI_MODEL = 'gpt-5.6-terra'
 DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECONDS = 5
 DEFAULT_PROVIDER_TOTAL_TIMEOUT_SECONDS = 11
@@ -118,6 +119,7 @@ class Settings:
     openai_reasoning_effort: str = 'none'
     openai_max_output_tokens: int = 500
     auth_token: str = ''
+    tool_mode: str = 'proposal'
 
     def __repr__(self) -> str:
         """Return safe diagnostics with every credential redacted."""
@@ -157,6 +159,7 @@ class Settings:
             f'{self.openai_reasoning_effort!r}, '
             'openai_max_output_tokens='
             f'{self.openai_max_output_tokens!r}, '
+            f'tool_mode={self.tool_mode!r}, '
             'auth_token=<redacted>)'
         )
 
@@ -359,12 +362,18 @@ class Settings:
                 'MALBUT_AGENT_AUTH_TOKEN',
                 '',
             ).strip(),
+            tool_mode=source.get(
+                'MALBUT_AGENT_TOOL_MODE',
+                'proposal',
+            ).strip().lower(),
         )
 
     def validate_for_server(self) -> None:
         """Reject unsafe binds and incomplete live-provider settings."""
         if self.provider not in SUPPORTED_PROVIDERS:
             raise ValueError('MALBUT_AGENT_PROVIDER is unsupported')
+        if self.tool_mode not in SUPPORTED_TOOL_MODES:
+            raise ValueError('MALBUT_AGENT_TOOL_MODE is unsupported')
         if self.host not in {'127.0.0.1', 'localhost', '::1'}:
             raise ValueError(
                 'The MVP server is loopback-only; use an authenticated '

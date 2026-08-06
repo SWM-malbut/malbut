@@ -1,7 +1,10 @@
 """High-level robot tools exposed to language models."""
 
+import copy
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
+
+from malbut_agent_server.schemas import ValidationError
 
 
 @dataclass(frozen=True)
@@ -107,3 +110,84 @@ def select_tool_specs(names: Iterable[str]) -> List[ToolSpec]:
         for name in names
         if name in TOOL_SPECS
     ]
+
+
+def validate_tool_arguments(
+    tool_name: str,
+    arguments: Any,
+) -> Dict[str, Any]:
+    """Validate one Tool payload against its strict registered schema."""
+    spec = TOOL_SPECS.get(tool_name)
+    if spec is None:
+        raise ValidationError('unknown tool')
+    _validate_schema_value(
+        spec.parameters,
+        arguments,
+        'arguments',
+        depth=0,
+    )
+    return copy.deepcopy(arguments)
+
+
+def _validate_schema_value(
+    schema: Dict[str, Any],
+    value: Any,
+    field_name: str,
+    *,
+    depth: int,
+) -> None:
+    """Validate the bounded JSON Schema subset used by Tool specs."""
+    if depth > 8:
+        raise ValidationError(f'{field_name} is nested too deeply')
+    expected = schema.get('type')
+    expected_types = (
+        list(expected)
+        if isinstance(expected, list)
+        else [expected]
+    )
+    if value is None and 'null' in expected_types:
+        return
+    non_null_types = [
+        item for item in expected_types if item != 'null'
+    ]
+    if non_null_types == ['object']:
+        if not isinstance(value, dict):
+            raise ValidationError(f'{field_name} must be an object')
+        properties = schema.get('properties', {})
+        required = schema.get('required', [])
+        missing = [name for name in required if name not in value]
+        if missing:
+            names = ', '.join(sorted(missing))
+            raise ValidationError(
+                f'{field_name} is missing required fields: {names}'
+            )
+        if schema.get('additionalProperties') is False:
+            unknown = set(value) - set(properties)
+            if unknown:
+                names = ', '.join(sorted(unknown))
+                raise ValidationError(
+                    f'{field_name} contains unknown fields: {names}'
+                )
+        for name, item in value.items():
+            item_schema = properties.get(name)
+            if item_schema is not None:
+                _validate_schema_value(
+                    item_schema,
+                    item,
+                    f'{field_name}.{name}',
+                    depth=depth + 1,
+                )
+        return
+    if non_null_types == ['string']:
+        if not isinstance(value, str):
+            raise ValidationError(f'{field_name} must be a string')
+        if not value.strip():
+            raise ValidationError(f'{field_name} must not be empty')
+        if len(value) > 2000:
+            raise ValidationError(
+                f'{field_name} must be at most 2000 characters'
+            )
+        return
+    raise RuntimeError(
+        f'unsupported Tool schema type for {field_name}: {expected!r}'
+    )

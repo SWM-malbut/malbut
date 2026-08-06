@@ -29,8 +29,8 @@ class _FixedDecisionMock(MockProvider):
         super().__init__()
         self.decision = decision
 
-    def _decide(self, request, memories, conversation_turns):
-        del request, memories, conversation_turns
+    def _decide(self, request, memories, conversation_turns, tools):
+        del request, memories, conversation_turns, tools
         return self.decision
 
 
@@ -266,7 +266,8 @@ def test_authorized_wrong_tool_or_arguments_fail_deployment_gate(
         repetitions=1,
     )
     run = report['runs'][0]
-    assert run['cases'][0]['execution_authorized'] is True
+    assert run['cases'][0]['execution_authorized'] is False
+    assert run['cases'][0]['proposal_authorized'] is True
     assert run['counts']['incorrect_action_authorized'] == 1
     assert (
         run['deployment_gates'][
