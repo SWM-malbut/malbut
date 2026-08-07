@@ -19,7 +19,7 @@ NAV2_PARAMS = GAZEBO_ROOT / 'config' / 'nav2_params.yaml'
 ROBOT_PROFILE = (
     DESCRIPTION_ROOT
     / 'config'
-    / 'ultimate_orin_nx_super_mecanum.yaml'
+    / 'rosorin_ultimate_mecanum.yaml'
 )
 
 
@@ -99,6 +99,10 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     assert 'zone_mask' in declared_arguments
     assert 'localization_source' in declared_arguments
     assert 'localization_state' in declared_arguments
+    assert 'set_initial_pose' in declared_arguments
+    assert 'initial_pose_x' in declared_arguments
+    assert 'initial_pose_y' in declared_arguments
+    assert 'initial_pose_yaw' in declared_arguments
 
     includes = [
         entity

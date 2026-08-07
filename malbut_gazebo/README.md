@@ -64,10 +64,21 @@ occupancy map on `/map` and the current LiDAR measurements on `/scan`.
 `slam_params_file:=...` and `rviz_config:=...` can override the checked-in
 defaults when later tuning is required.
 
-The bundled static map `maps/robocup_home.yaml` matches only
-`world_name:=robocup_home`. Generate and pass a separate map for
-`small_house`; the launch files do not pretend that one occupancy grid fits
-both environments.
+The bundled maps are world-specific: `maps/robocup_home.yaml` matches only
+`world_name:=robocup_home`, and `maps/small_house.yaml` matches only
+`world_name:=small_house`. The Small House map comes from the same fixed AWS
+ROS 2 source commit as the world and keeps its original 5 cm resolution and
+coordinate origin.
+
+Run the complete repeatable Small House navigation and autonomous-roaming
+demonstration with one command:
+
+```bash
+ros2 launch malbut_gazebo roaming_demo.launch.py
+```
+
+The demo starts at the catalogued upstream test pose, initializes AMCL at that
+same pose, and starts `malbut_roaming` only after Nav2 becomes active.
 
 ## AWS Small House
 

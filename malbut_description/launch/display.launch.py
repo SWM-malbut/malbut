@@ -22,7 +22,7 @@ from malbut_description.variant_config import (
 
 
 DESCRIPTION_PACKAGE = 'malbut_description'
-DEFAULT_VARIANT = 'ultimate_orin_nx_super_mecanum.yaml'
+DEFAULT_VARIANT = 'rosorin_ultimate_mecanum.yaml'
 
 
 def _remove_rendered_urdf(_context, rendered_urdf):
