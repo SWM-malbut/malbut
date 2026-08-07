@@ -14,6 +14,21 @@
     </inertial>
   </xacro:macro>
 
+  <xacro:macro
+    name="box_inertial_at"
+    params="mass x y z origin_x origin_y origin_z">
+    <inertial>
+      <origin xyz="${origin_x} ${origin_y} ${origin_z}" rpy="0 0 0"/>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${mass * (y*y + z*z) / 12.0}"
+        ixy="0" ixz="0"
+        iyy="${mass * (x*x + z*z) / 12.0}"
+        iyz="0"
+        izz="${mass * (x*x + y*y) / 12.0}"/>
+    </inertial>
+  </xacro:macro>
+
   <xacro:macro name="cylinder_z_inertial" params="mass radius length">
     <inertial>
       <mass value="${mass}"/>
