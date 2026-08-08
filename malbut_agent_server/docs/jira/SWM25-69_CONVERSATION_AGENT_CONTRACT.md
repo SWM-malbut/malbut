@@ -371,6 +371,7 @@ Gateway는 유효한 제안과 SWM25-74의 확인 증거·최신 안전 상태�
 ```json
 {
   "observed_at": "2026-07-31T12:00:00+09:00",
+  "source": "robot_state_adapter",
   "battery_percent": 74.0,
   "docked": false,
   "navigation_available": true,
@@ -437,7 +438,9 @@ Gateway는 유효한 제안과 SWM25-74의 확인 증거·최신 안전 상태�
 {
   "detected": true,
   "confidence": 0.91,
-  "observed_at": "2026-07-31T12:00:00+09:00"
+  "observed_at": "2026-07-31T12:00:00+09:00",
+  "source": "pet_detector_adapter",
+  "privacy_checked": true
 }
 ```
 
@@ -447,6 +450,9 @@ Gateway는 유효한 제안과 SWM25-74의 확인 증거·최신 안전 상태�
 | 응답 timeout | 3초 |
 | 주요 오류 | `privacy_mode`, `camera_unavailable`, `stale_frame`, `detector_unavailable`, `timed_out` |
 | 안전 규칙 | 프라이버시 모드에서는 실행하지 않음 |
+
+`source`, `observed_at`, `privacy_checked`는 SWM25-73 Gateway가 신뢰된
+adapter와 최신 privacy 검사를 확인하기 위한 필수 provenance 메타데이터다.
 
 ### 7.4 `capture_photo`
 
@@ -769,15 +775,15 @@ timeout이 발생하면 실행 상태를 `timed_out`으로 확정하고, 늦게 
 
 | 항목 | 현재 구현 | 목표 계약 |
 | --- | --- | --- |
-| Tool 실행 | 실제 실행기 없음 | ROS adapter가 공통 상태·결과·취소 제공 |
-| Tool 제안 | 엄격한 Tool schema, 결정 ID·TTL, 로컬 safety 검증 구현 | Gateway가 검증된 제안만 접수 |
+| Tool 실행 | read-only·명시적 비부작용 Mock query만 구현; 실제 실행기 없음 | ROS adapter가 공통 상태·결과·취소 제공 |
+| Tool 제안 | 엄격한 Tool schema, 결정 ID·TTL, registry 교집합과 로컬 safety 검증 구현 | Gateway가 검증된 제안만 접수 |
 | HTTP 행동 승인 | 외부 robot state를 기본 불신하며 물리 실행 endpoint 없음 | ROS-owned 상태 공급자와 확인 증거로만 승인 계산 |
-| 상태 freshness | `observed_at`, sequence, source 없음 | 생성 시각·순번·출처와 최대 age 검증 |
-| capability 목록 | HTTP 요청의 `available_tools` 사용 | ROS-owned capability registry가 제공 |
+| 상태 freshness | read-only query는 `observed_at`·source·최대 age 검증; 행동 승인용 `RobotState`에는 provenance·sequence 없음 | 행동 실행 직전 생성 시각·순번·출처와 최대 age 검증 |
+| capability 목록 | 서버 소유 정적 registry 구현; HTTP 목록은 부분집합 selector | ROS 노드 상태를 반영한 동적 availability 제공 |
 | 사용자 확인 | 확인 토큰·endpoint 없음 | 사용자·세션·Tool·인자·만료에 묶인 1회성 확인 |
-| 중복 실행 방지 | `consume_once` 선언만 존재 | 실행기가 `tool_call_id`를 영속·원자적으로 소비 |
-| 실행 timeout·취소 | 없음 | Tool별 timeout, 취소와 terminal status 제공 |
-| 읽기 전용 상태 조회 | 전역 신뢰 상태·e-stop 검사에 함께 차단 | L0 조회·중단은 안전한 범위에서 허용 |
+| 중복 실행 방지 | query 프로세스 내 bounded cache; `consume_once=false` | 실행기가 `tool_call_id`를 영속·원자적으로 소비 |
+| 실행 timeout·취소 | 조회·Mock query deadline만 구현; 실제 Action 취소 없음 | Tool별 timeout, 취소와 terminal status 제공 |
+| 읽기 전용 상태 조회 | adapter 주입 경계·freshness 검증 구현; factory의 실제 ROS adapter는 없음 | 신뢰된 ROS 상태 adapter 연결 |
 | 사람별 사용자 | 요청의 `user_id` 형식만 검증, 인증·바인딩은 미구현 | 신뢰된 `person_id` 기반 격리 |
 | 단기 대화·컨텍스트 | SQLite lifecycle, 최근 10턴, 요약과 기억 검색 구현 | 음성 `speaker_id`와 신뢰된 사용자 identity 결합 |
 | 장기 기억 | 사용자 격리 SQLite 저장·검색·만료 제외 구현, 공개 변경 API 없음 | 동의 기반 CRUD, `person_id` 결속과 보존·삭제 정책 |

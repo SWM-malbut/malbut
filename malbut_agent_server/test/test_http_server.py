@@ -8,6 +8,10 @@ from contextlib import contextmanager
 from typing import Any, Dict, Iterator, Optional
 
 from malbut_agent_server.conversation import SQLiteConversationStore
+from malbut_agent_server.gateway import (
+    CapabilityRegistry,
+    simulation_registry,
+)
 from malbut_agent_server.http_server import make_server
 from malbut_agent_server.memory import SQLiteMemoryStore
 from malbut_agent_server.orchestrator import AgentOrchestrator
@@ -25,6 +29,7 @@ def running_server(
     auth_token: str = '',
     requests_per_minute: int = 60,
     provider: Optional[AgentProvider] = None,
+    capability_registry: Optional[CapabilityRegistry] = None,
 ) -> Iterator[str]:
     """Run one loopback-only ephemeral server."""
     memory_store = SQLiteMemoryStore(':memory:')
@@ -34,6 +39,7 @@ def running_server(
         memory_store=memory_store,
         conversation_store=conversation_store,
         safety_policy=SafetyPolicy(),
+        capability_registry=capability_registry,
     )
     server = make_server(
         '127.0.0.1',
@@ -84,6 +90,19 @@ def post(
         return error.code, json.loads(error.read())
 
 
+def get(url: str, token: str = '') -> tuple:
+    """GET JSON and decode success or HTTP error responses."""
+    headers = {}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    request = urllib.request.Request(url, headers=headers, method='GET')
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read())
+
+
 def test_health_endpoint() -> None:
     """The local server exposes a content-free health probe."""
     with running_server() as base_url:
@@ -96,6 +115,82 @@ def test_health_endpoint() -> None:
             'status': 'ok',
             'service': 'malbut_agent_server',
         }
+
+
+def test_capability_discovery_is_authenticated_and_server_owned() -> None:
+    """Discovery cannot bypass auth or expose executable side effects."""
+    with running_server(auth_token='local-token') as base_url:
+        status, error = get(f'{base_url}/v1/tools/capabilities')
+        assert status == 401
+        assert error['error']['code'] == 'unauthorized'
+
+        status, result = get(
+            f'{base_url}/v1/tools/capabilities',
+            token='local-token',
+        )
+        assert status == 200
+        assert result['source'] == 'server_owned_registry'
+        assert all(
+            item['executable'] is False
+            for item in result['capabilities']
+        )
+
+
+def test_tool_query_runs_only_explicit_simulation_and_is_idempotent() -> None:
+    """Query endpoint returns Mock evidence without real Tool effects."""
+    with running_server(
+        capability_registry=simulation_registry()
+    ) as base_url:
+        payload = {
+            'request_id': 'http-tool-query-1',
+            'user_id': 'http-user',
+            'tool_name': 'navigate',
+            'arguments': {'location': '거실'},
+        }
+        status, first = post(
+            f'{base_url}/v1/tools/query',
+            payload,
+        )
+        assert status == 200
+        assert first['status'] == 'succeeded'
+        assert first['result']['simulated'] is True
+        assert first['result']['nav2_goal_published'] is False
+        assert first['cached'] is False
+        assert 'tool_call_id' not in first
+
+        status, retry = post(
+            f'{base_url}/v1/tools/query',
+            payload,
+        )
+        assert status == 200
+        assert retry['result_id'] == first['result_id']
+        assert retry['cached'] is True
+
+
+def test_tool_query_blocks_side_effect_and_fake_confirmation() -> None:
+    """Proposal mode cannot be widened with client confirmation fields."""
+    with running_server() as base_url:
+        payload = {
+            'request_id': 'blocked-navigation-1',
+            'user_id': 'http-user',
+            'tool_name': 'navigate',
+            'arguments': {'location': '거실'},
+        }
+        status, blocked = post(
+            f'{base_url}/v1/tools/query',
+            payload,
+        )
+        assert status == 200
+        assert blocked['status'] == 'rejected'
+        assert blocked['error']['code'] == 'confirmation_required'
+        assert 'tool_call_id' not in blocked
+
+        status, error = post(
+            f'{base_url}/v1/tools/query',
+            {**payload, 'confirmation': True},
+        )
+        assert status == 400
+        assert error['error']['code'] == 'validation_error'
 
 
 def test_auth_token_is_required_when_configured() -> None:

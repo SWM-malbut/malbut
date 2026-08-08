@@ -16,6 +16,7 @@ def _world_files():
 def test_all_world_files_are_portable_fortress_sdf():
     assert {path.name for path in _world_files()} == {
         'empty.sdf',
+        'robocup_home.sdf',
         'small_house.sdf',
         'test_arena.sdf',
     }

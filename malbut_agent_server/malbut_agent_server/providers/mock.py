@@ -50,12 +50,12 @@ class MockProvider(AgentProvider):
         conversation_summary: Optional[ConversationSummary] = None,
     ) -> ProviderResult:
         """Return a predictable response for regression and safety tests."""
-        del tools
         started = time.perf_counter()
         decision = self._decide(
             request,
             memories,
             conversation_turns,
+            tools,
         )
         decision.validate()
         elapsed = (time.perf_counter() - started) * 1000
@@ -81,6 +81,7 @@ class MockProvider(AgentProvider):
         request: AgentRequest,
         memories: List[MemoryRecord],
         conversation_turns: List[ConversationTurn],
+        tools: List[ToolSpec],
     ) -> AgentDecision:
         text = _normalized(request.utterance)
         compact = re.sub(r'\s+', '', text)
@@ -185,12 +186,27 @@ class MockProvider(AgentProvider):
             )
 
         if any(word in compact for word in ('할수있는', '기능')):
+            labels = {
+                'navigate': '이동',
+                'detect_pet': '반려동물 감지',
+                'capture_photo': '사진 촬영',
+                'send_notification': '알림 요청',
+                'get_robot_status': '상태 확인',
+            }
+            available = [
+                labels[tool.name]
+                for tool in tools
+                if tool.name in labels
+            ]
+            message = '현재 사용할 수 있는 로봇 기능이 없어.'
+            if available:
+                message = (
+                    ', '.join(available)
+                    + ' 기능을 도와줄 수 있어.'
+                )
             return AgentDecision(
                 type='message',
-                message=(
-                    '이동, 반려동물 감지, 사진 촬영, 상태 확인과 '
-                    '알림 요청을 도와줄 수 있어.'
-                ),
+                message=message,
                 reason='capability_question',
                 confidence=1.0,
             )

@@ -13,10 +13,15 @@ from malbut_agent_server.conversation import (
     ConversationTurn,
     SQLiteConversationStore,
 )
+from malbut_agent_server.gateway import (
+    CapabilityRegistry,
+    ToolCapability,
+)
 from malbut_agent_server.memory import MemoryRecord, SQLiteMemoryStore
 from malbut_agent_server.orchestrator import (
     AgentOrchestrator,
     MemoryChangedError,
+    OrchestrationResult,
 )
 from malbut_agent_server.providers.base import AgentProvider
 from malbut_agent_server.providers.mock import MockProvider
@@ -65,6 +70,7 @@ def _runtime(
     store: SQLiteMemoryStore,
     safety_policy: SafetyPolicy,
     trusted_robot_state: bool = False,
+    capability_registry: CapabilityRegistry | None = None,
 ) -> tuple[AgentOrchestrator, SQLiteConversationStore]:
     conversation_store = SQLiteConversationStore(':memory:')
     conversation_store.create(
@@ -78,6 +84,7 @@ def _runtime(
             conversation_store=conversation_store,
             safety_policy=safety_policy,
             trusted_robot_state=trusted_robot_state,
+            capability_registry=capability_registry,
         ),
         conversation_store,
     )
@@ -306,6 +313,59 @@ def test_untrusted_http_style_state_never_authorizes_action() -> None:
         store.close()
 
 
+def test_registry_limits_model_capability_claims() -> None:
+    """An HTTP subset cannot add Tools outside server-owned policy."""
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        orchestrator, conversation_store = _runtime(
+            MockProvider(),
+            store,
+            SafetyPolicy(),
+            capability_registry=CapabilityRegistry(
+                [ToolCapability('get_robot_status')]
+            ),
+        )
+        result = orchestrator.handle(
+            _request(
+                '무슨 기능을 할 수 있어?',
+                {},
+                ['navigate', 'unlock_door', 'get_robot_status'],
+            )
+        )
+        assert result.decision.type == 'message'
+        assert '상태 확인' in result.decision.message
+        assert '이동' not in result.decision.message
+        assert '사진' not in result.decision.message
+        assert '알림' not in result.decision.message
+    finally:
+        conversation_store.close()
+        store.close()
+
+
+def test_policy_approval_is_not_gateway_execution_authority() -> None:
+    """A valid proposal stays non-executable until SWM25-74."""
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        orchestrator, conversation_store = _runtime(
+            MockProvider(),
+            store,
+            SafetyPolicy(),
+            True,
+        )
+        result = orchestrator.handle(
+            _request('거실로 가줘', {}, ['navigate'])
+        ).to_dict()
+        assert result['decision']['type'] == 'tool_call'
+        assert result['safety']['allowed'] is True
+        assert result['execution']['proposal_authorized'] is True
+        assert result['execution']['authorized'] is False
+        assert result['execution']['consume_once'] is False
+        assert result['execution']['tool_call_id'] is None
+    finally:
+        conversation_store.close()
+        store.close()
+
+
 def test_request_id_is_idempotent_and_cannot_change_input() -> None:
     """Retries reuse one decision ID while conflicting reuse is rejected."""
     store = SQLiteMemoryStore(':memory:')
@@ -324,6 +384,11 @@ def test_request_id_is_idempotent_and_cannot_change_input() -> None:
         first = orchestrator.handle(first_request)
         second = orchestrator.handle(first_request)
         assert first.decision_id == second.decision_id
+        persisted = first.to_persisted_dict()
+        assert persisted['schema_version'] == 2
+        persisted['schema_version'] = 1
+        legacy = OrchestrationResult.from_persisted_dict(persisted)
+        assert legacy.to_dict()['execution']['authorized'] is False
 
         conflicting = AgentRequest.from_dict(
             {

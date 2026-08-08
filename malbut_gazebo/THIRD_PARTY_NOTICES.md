@@ -6,8 +6,10 @@ terms.
 
 ## Hiwonder ROSOrin
 
-- Project: Hiwonder ROSOrin / ROSOrin Pro
-- Public project page: <https://github.com/Hiwonder/ROSOrin-Pro>
+- Project: Hiwonder ROSOrin
+- Product: <https://www.hiwonder.com/products/rosorin?variant=42123598463063>
+- Simulation guide: <https://docs.hiwonder.com/projects/ROSOrin/en/jetson-orin-nano-version/docs/9_Gazebo_Simulation.html>
+- Import record: `worlds/SOURCE.md` and `maps/README.md`
 - Copyright owner: Hiwonder
 - Repository identifier: `LicenseRef-Hiwonder-ROSOrin`
 
