@@ -4,7 +4,7 @@
   <name>malbut_description</name>
   <version>0.0.0</version>
   <description>
-    Parameterized ROSOrin Ultimate Mecanum robot description and variant data.
+    Hiwonder-mesh-based ROSOrin Ultimate Mecanum description and variant data.
   </description>
   <maintainer email="sanggeunji0117@gmail.com">SANGGEUN JI</maintainer>
   <license>Apache-2.0</license>

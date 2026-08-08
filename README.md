@@ -8,6 +8,13 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
 - 대화·에이전트 계약 패키지: `malbut_agent_server`
 
+`malbut_description`의 차체, 메카넘 휠, 깊이 카메라, LiDAR, 마이크
+외형은 Hiwonder 공식 `simulations.zip`의 STL을 그대로 사용합니다. Gazebo
+Fortress에서는 공식 패키지의 고정 메시 바퀴와 별도 원통 바퀴를 중복 생성하지
+않고, 공식 바퀴 메시 4개를 하나의 동적 4륜 구조에 연결합니다. 원본과 적용
+범위는 [`malbut_description/meshes/SOURCE.md`](malbut_description/meshes/SOURCE.md)에
+기록되어 있습니다.
+
 ## 1. 기준 환경
 
 Ubuntu 설치, GPU 드라이버, 네트워크와 GitHub 계정 설정은 완료되어 있다고 가정합니다.
@@ -168,6 +175,12 @@ ros2 launch malbut_gazebo worlds.launch.py world_name:=empty
 ros2 launch malbut_gazebo worlds.launch.py world_name:=small_house
 ```
 
+### Hiwonder 공식 단순 실내 월드
+
+```bash
+ros2 launch malbut_gazebo worlds.launch.py world_name:=robocup_home
+```
+
 ### 로봇 모델만 확인
 
 ```bash
@@ -196,8 +209,10 @@ source ~/ros2_ws/install/local_setup.bash
 ros2 launch malbut_gazebo navigation.launch.py
 ```
 
-기본 지도는 패키지의 `maps/map_01.yaml`입니다. 다른 지도를 사용하려면
-절대 경로를 전달합니다.
+기본 지도 `maps/robocup_home.yaml`은 `robocup_home` 월드 전용입니다.
+`small_house`나 실제 공간에서는 해당 환경에서 SLAM으로 저장한 지도의 절대
+경로를 전달합니다. 서로 다른 월드와 지도를 섞으면 위치 추정이 정상 동작하지
+않습니다.
 
 ```bash
 ros2 launch malbut_gazebo navigation.launch.py \

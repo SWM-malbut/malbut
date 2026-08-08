@@ -104,7 +104,8 @@ def generate_launch_description():
                 "world_name",
                 default_value="small_house",
                 description=(
-                    "World catalog key: empty, test_arena, or small_house."
+                    "World catalog key: empty, test_arena, robocup_home, "
+                    "or small_house."
                 ),
             ),
             DeclareLaunchArgument(

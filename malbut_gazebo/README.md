@@ -1,19 +1,21 @@
 # Malbut Gazebo environments
 
-This package provides three selectable Gazebo Fortress environments for the
+This package provides four selectable Gazebo Fortress environments for the
 Malbut ROS 2 Humble simulation.
 
 | `world_name` | Purpose | Distribution status |
 | --- | --- | --- |
 | `empty` | Flat-floor robot physics baseline | Project-owned primitives |
 | `test_arena` | Repeatable collision, LiDAR, camera, and ramp checks | Project-owned primitives |
+| `robocup_home` | Simple indoor floor plan paired with the bundled baseline map | Hiwonder feature package; adapted for Fortress |
 | `small_house` | Detailed multi-room household scenario | AWS assets; bundled license applies |
 
-All three environments use the same launch argument:
+All four environments use the same launch argument:
 
 ```bash
 ros2 launch malbut_gazebo worlds.launch.py world_name:=empty
 ros2 launch malbut_gazebo worlds.launch.py world_name:=test_arena
+ros2 launch malbut_gazebo worlds.launch.py world_name:=robocup_home
 ros2 launch malbut_gazebo worlds.launch.py world_name:=small_house
 ```
 
@@ -61,6 +63,11 @@ Drive the robot from Gazebo's Teleop panel to extend the map. RViz shows the
 occupancy map on `/map` and the current LiDAR measurements on `/scan`.
 `slam_params_file:=...` and `rviz_config:=...` can override the checked-in
 defaults when later tuning is required.
+
+The bundled static map `maps/robocup_home.yaml` matches only
+`world_name:=robocup_home`. Generate and pass a separate map for
+`small_house`; the launch files do not pretend that one occupancy grid fits
+both environments.
 
 ## AWS Small House
 
