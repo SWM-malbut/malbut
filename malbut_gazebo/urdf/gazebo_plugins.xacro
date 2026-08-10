@@ -119,7 +119,10 @@
           <update_rate>${camera_rate}</update_rate>
           <visualize>false</visualize>
           <topic>/rgbd_camera</topic>
-          <gz_frame_id>camera_depth_optical_frame</gz_frame_id>
+          <!-- Fortress RGBD point clouds are expressed with +X forward and
+               +Z up.  Label them with the matching REP-103 body frame;
+               using the optical frame here rotates obstacle points twice. -->
+          <gz_frame_id>camera_link</gz_frame_id>
           <camera>
             <horizontal_fov>${camera_hfov}</horizontal_fov>
             <image>

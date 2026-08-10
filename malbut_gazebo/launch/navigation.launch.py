@@ -51,6 +51,9 @@ def generate_launch_description():
     restore_localization = LaunchConfiguration('restore_localization')
     localization_state = LaunchConfiguration('localization_state')
     localization_source = LaunchConfiguration('localization_source')
+    robot_web = LaunchConfiguration('robot_web')
+    robot_web_port = LaunchConfiguration('robot_web_port')
+    user_map = LaunchConfiguration('user_map')
     use_active_slam = EqualsSubstitution(localization_source, 'slam')
     use_static_map = NotEqualsSubstitution(localization_source, 'slam')
     zone_filter_enabled = NotEqualsSubstitution(zone_mask, '')
@@ -193,6 +196,22 @@ def generate_launch_description():
             'state_path': localization_state,
         }],
     )
+    robot_web_server = Node(
+        package='malbut_gazebo',
+        executable='robot_web_server',
+        name='robot_web_server',
+        namespace=namespace,
+        condition=IfCondition(PythonExpression([
+            "'", robot_web, "' == 'true' and '", user_map, "' != ''",
+        ])),
+        output='screen',
+        arguments=[
+            '--port', robot_web_port,
+            '--map', user_map,
+            '--slam-map', map_file,
+        ],
+        parameters=[{'use_sim_time': use_sim_time}],
+    )
 
     return LaunchDescription(
         [
@@ -254,12 +273,34 @@ def generate_launch_description():
                 default_value='true',
                 description='Start RViz with the project Nav2 view.',
             ),
+            DeclareLaunchArgument(
+                'robot_web',
+                default_value='true',
+                description=(
+                    'Start the same-origin robot map web server when a '
+                    'User Map is provided.'
+                ),
+            ),
+            DeclareLaunchArgument(
+                'robot_web_port',
+                default_value='8765',
+                description='TCP port for the robot map web server.',
+            ),
+            DeclareLaunchArgument(
+                'user_map',
+                default_value='',
+                description=(
+                    'User Map GeoJSON used by the robot web server. An empty '
+                    'value disables the web server.'
+                ),
+            ),
             bringup,
             navigation_with_active_slam,
             zone_filter_mask_server,
             zone_filter_info_server,
             zone_filter_lifecycle_manager,
             localization_restorer,
+            robot_web_server,
             rviz,
         ]
     )

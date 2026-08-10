@@ -69,6 +69,7 @@ setup(
             'build_zone_filter_mask = '
             'malbut_gazebo.zone_filter_mask:main',
             'user_map_editor = malbut_gazebo.user_map_editor:main',
+            'robot_web_server = malbut_gazebo.robot_web_server:main',
             'record_localization_state = '
             'malbut_gazebo.localization_handoff:record_main',
             'restore_localization_state = '

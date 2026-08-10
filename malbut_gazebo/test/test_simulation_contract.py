@@ -75,6 +75,7 @@ def test_sensor_plugins_match_selected_hardware_baseline():
     assert float(lidar.findtext('.//max_angle')) > 3.14
     camera = sensors['aurora930_pro']
     assert camera.get('type') == 'rgbd_camera'
+    assert camera.findtext('gz_frame_id') == 'camera_link'
     assert float(camera.findtext('./camera/clip/near')) == 0.15
     assert float(camera.findtext('./camera/clip/far')) == 30.0
     assert float(
