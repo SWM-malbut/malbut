@@ -44,6 +44,7 @@ def test_small_house_map_metadata_matches_the_world_coordinate_system():
     )
     assert config == {
         'image': 'small_house.pgm',
+        'mode': 'trinary',
         'resolution': 0.05,
         'origin': [-12.5, -12.5, 0.0],
         'negate': 0,

@@ -4,6 +4,7 @@ __pycache__/
 /build/
 /install/
 /log/
+/AGENTS.md
 /.runtime/
 .env
 .env.*

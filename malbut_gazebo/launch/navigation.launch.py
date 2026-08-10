@@ -213,7 +213,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 'map',
                 default_value=os.path.join(
-                    gazebo_share, 'maps', 'robocup_home.yaml'
+                    gazebo_share, 'maps', 'small_house.yaml'
                 ),
                 description='Full path to the occupancy grid map YAML.',
             ),
