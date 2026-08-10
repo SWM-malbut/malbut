@@ -236,7 +236,10 @@ def test_editor_apply_persists_zones_and_builds_the_nav2_mask(tmp_path):
         tmp_path / "runtime" / "home-zones.geojson",
     )
 
-    assert json.loads(zone_path.read_text(encoding="utf-8")) == value
+    stored = json.loads(zone_path.read_text(encoding="utf-8"))
+    assert stored["map_id"] == value["map_id"]
+    assert stored["map_revision"].startswith("rev-")
+    assert stored["features"] == value["features"]
     metadata = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     written = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
     assert metadata["mode"] == "raw"
@@ -249,6 +252,42 @@ def test_zone_file_must_match_map_identity(tmp_path):
 
     with pytest.raises(ValueError, match="map_id"):
         load_zones(path, "current-home")
+
+
+def test_zone_file_accepts_legacy_identity_but_rejects_stale_revision(tmp_path):
+    """Storage aliases migrate once, while explicit stale revisions fail."""
+    path = _write_zones(tmp_path, "legacy-home", [])
+
+    assert load_zones(
+        path, "current-home", "rev-current", ("legacy-home",)
+    ) == []
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["map_revision"] = "rev-old"
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="map_revision"):
+        load_zones(
+            path, "current-home", "rev-current", ("legacy-home",)
+        )
+
+
+def test_preferred_goal_must_be_inside_and_safely_traversable(tmp_path):
+    """Persisted representative goals must not point outside drivable space."""
+    slam_map = load_slam_map(_write_map(tmp_path), "home")
+    avoid = _zone("avoid", "avoid", 2.0, 4.0)
+    avoid["properties"]["preferred_goal"] = [3.0, 3.0]
+
+    mask = build_filter_mask(slam_map, [avoid])
+    assert _mask_value(mask, slam_map, [3.0, 3.0]) < 100
+
+    avoid["properties"]["preferred_goal"] = [5.0, 5.0]
+    with pytest.raises(ValueError, match="inside its Zone"):
+        build_filter_mask(slam_map, [avoid])
+
+    restricted = _zone("restricted", "restricted", 2.0, 4.0)
+    restricted["properties"]["preferred_goal"] = [3.0, 3.0]
+    with pytest.raises(ValueError, match="safely traversable"):
+        build_filter_mask(slam_map, [restricted])
 
 
 @pytest.mark.parametrize("behavior", ["unknown", "", None])

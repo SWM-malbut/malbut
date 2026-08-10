@@ -16,6 +16,26 @@ const state = {
   splitValidationTimer: null,
   splitValidationRevision: 0,
   zoneApplyEnabled: false,
+  roomPersistenceEnabled: false,
+  robotStreamEnabled: false,
+  navigationEnabled: false,
+  serverMapId: null,
+  serverMapRevision: "",
+  robotEventSource: null,
+  robot: null,
+  localization: {state: "uninitialized"},
+  navigation: {state: "idle"},
+  navigationPreview: null,
+  navigationPreviewMessage: "",
+  navigationCommandMessage: "",
+  liveNavigationPath: null,
+  livePathRevision: -1,
+  robotTrail: [],
+  robotTrailSession: null,
+  csrfToken: "",
+  roomSaveTimer: null,
+  roomSaveRevision: 0,
+  roomSavePending: false,
   mode: "idle",
   roomActionPending: false,
   dragging: null,
@@ -34,6 +54,24 @@ const BEHAVIOR_LABELS = {
 
 function roomStorageKey(mapId) {
   return `malbut-rooms:v2:${mapId}`;
+}
+
+function migrateStoredValue(targetKey, sourceKeys) {
+  if (localStorage.getItem(targetKey) !== null) return;
+  const sourceKey = sourceKeys.find((key) => localStorage.getItem(key) !== null);
+  if (sourceKey) localStorage.setItem(targetKey, localStorage.getItem(sourceKey));
+}
+
+async function postJson(path, value) {
+  await editorConfigReady;
+  return fetch(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRF-Token": state.csrfToken,
+    },
+    body: JSON.stringify(value),
+  });
 }
 
 function splitErrorMessage(message = "") {
@@ -383,7 +421,7 @@ function renderRooms() {
       "data-room-id": room.id,
     });
     path.addEventListener("click", (event) => {
-      if (state.mode === "splitting") return;
+      if (["splitting", "navigate"].includes(state.mode)) return;
       event.stopPropagation();
       chooseRoom(room.id);
     });
@@ -466,6 +504,9 @@ function normalizeZones(zones = state.zones) {
     delete zone.properties.room_id;
     delete zone.properties.room_name;
     delete zone.properties.needs_review;
+    if (zone.properties.behavior === "restricted") {
+      delete zone.properties.preferred_goal;
+    }
     if (zone.geometry?.type === "Polygon" && zone.geometry.coordinates?.[0]) {
       updateZoneGeometryMetadata(zone);
     }
@@ -483,7 +524,7 @@ function renderZones() {
       fill: `${color}42`, stroke: color, "data-zone-id": zone.id,
     });
     path.addEventListener("click", (event) => {
-      if (["splitting", "merging"].includes(state.mode)) return;
+      if (["splitting", "merging", "navigate", "goal"].includes(state.mode)) return;
       event.stopPropagation(); selectZone(zone.id);
     });
     path.addEventListener("pointerdown", (event) => {
@@ -604,6 +645,173 @@ function renderDraft() {
   }
 }
 
+function renderNavigation() {
+  const layer = $("#navigationLayer");
+  const robotLayer = $("#robotLayer");
+  layer.replaceChildren();
+  robotLayer.replaceChildren();
+  const preview = state.navigationPreview;
+  if (state.robotTrail.length >= 2) {
+    const trail = state.robotTrail.map(([x, y]) => `${x},${-y}`).join(" ");
+    layer.append(svgElement("polyline", {
+      points: trail, class: "navigation-trail",
+    }));
+  }
+  const previewActive = Boolean(preview?.preview_token);
+  const route = previewActive
+    ? preview.path : (state.liveNavigationPath || preview?.path);
+  const goal = previewActive
+    ? preview.resolved : (state.navigation?.goal || preview?.resolved);
+  if (route?.points?.length) {
+    const points = route.points.map(([x, y]) => `${x},${-y}`).join(" ");
+    const routeClass = state.liveNavigationPath && !previewActive
+      ? "navigation-path live" : "navigation-path";
+    layer.append(svgElement("polyline", {points, class: routeClass}));
+  }
+  if (goal) {
+    layer.append(svgElement("circle", {cx: goal.x, cy: -goal.y, r: .2, class: "navigation-goal"}));
+    layer.append(svgElement("circle", {cx: goal.x, cy: -goal.y, r: .07, class: "navigation-goal-core"}));
+  }
+  if (!state.robot || state.localization.state === "lost") return;
+  const marker = svgElement("g", {
+    class: `robot-marker ${state.localization.state}`,
+    transform: `translate(${state.robot.x} ${-state.robot.y}) rotate(${-state.robot.yaw * 180 / Math.PI})`,
+  });
+  marker.append(svgElement("circle", {cx: 0, cy: 0, r: .24}));
+  marker.append(svgElement("path", {d: "M.31,0 L-.08,-.14 L-.08,.14 Z"}));
+  robotLayer.append(marker);
+}
+
+function navigationStateText(nav = state.navigation) {
+  return {
+    idle: "지도에서 이동할 위치를 누르세요.",
+    driving: nav.path_source === "live_global_costmap"
+      ? "최신 global costmap 경로로 이동하고 있습니다."
+      : "목적지로 이동하고 있습니다.",
+    succeeded: "목적지에 도착했습니다.",
+    failed: nav.message || "주행을 완료하지 못했습니다.",
+    canceled: "주행을 취소했습니다.",
+    canceling: "주행을 취소하고 있습니다.",
+  }[nav.state] || "주행 상태를 확인하고 있습니다.";
+}
+
+function updateRobotTrail(pose, navigation) {
+  if (!pose || !navigation?.session_id) return;
+  if (navigation.session_id !== state.robotTrailSession) {
+    state.robotTrailSession = navigation.session_id;
+    state.robotTrail = [];
+  }
+  if (!["driving", "canceling", "succeeded", "canceled", "failed"].includes(
+    navigation.state
+  )) return;
+  const last = state.robotTrail.at(-1);
+  if (!last || Math.hypot(pose.x - last[0], pose.y - last[1]) >= .03) {
+    state.robotTrail.push([pose.x, pose.y]);
+    if (state.robotTrail.length > 1200) state.robotTrail.shift();
+  }
+}
+
+function renderNavigationPanel() {
+  const enabled = state.navigationEnabled && Boolean(state.userMap);
+  $("#navigateMode").classList.toggle("hidden", !state.navigationEnabled);
+  $("#navigateMode").disabled = !enabled;
+  $("#navigationPanel").classList.toggle("hidden", !enabled);
+  if (!enabled) return;
+  const localization = state.localization || {state: "uninitialized"};
+  const badge = $("#localizationBadge");
+  const badgeState = localization.state === "ok" ? "ok"
+    : localization.state === "lost" ? "lost" : "waiting";
+  badge.className = `status-badge ${badgeState}`;
+  badge.textContent = localization.state === "ok" ? "위치 정상"
+    : localization.state === "lost" ? "위치 끊김" : "위치 확인 중";
+  const nav = state.navigation || {state: "idle"};
+  const driving = ["driving", "canceling"].includes(nav.state);
+  const hasPreview = Boolean(state.navigationPreview?.preview_token);
+  $("#navigationTitle").textContent = driving ? "이동 중"
+    : hasPreview ? "목적지 확인" : "목적지를 선택하세요";
+  $("#navigationMessage").textContent = localization.state !== "ok"
+    ? (localization.message || "로봇 위치를 확인하고 있습니다.")
+    : state.navigationCommandMessage
+      || (hasPreview
+        ? (state.navigationPreviewMessage || "선택한 위치로 이동할 수 있습니다.")
+        : navigationStateText(nav));
+  $("#navigationMetrics").classList.toggle("hidden", !hasPreview && !driving);
+  const pathLength = state.navigationPreview?.path?.length_m;
+  $("#navigationDistance").textContent = pathLength == null
+    ? "-" : `${Number(pathLength).toFixed(1)} m`;
+  $("#navigationRemaining").textContent = !driving || nav.distance_remaining_m == null
+    ? "-" : `${Number(nav.distance_remaining_m).toFixed(1)} m`;
+  $("#navigationEta").textContent = !driving || nav.estimated_time_remaining_s == null
+    ? "-" : `${Math.ceil(nav.estimated_time_remaining_s)}초`;
+  $("#startNavigation").disabled = !hasPreview || driving || localization.state !== "ok";
+  $("#cancelNavigation").disabled = !driving || !nav.session_id;
+  $("#navigateMode").textContent = state.mode === "navigate" ? "이동 모드 종료" : "목적지 이동";
+}
+
+async function previewNavigation(point) {
+  if (!state.navigationEnabled || !state.userMap) return;
+  state.navigationCommandMessage = "안전한 경로를 확인하고 있습니다…";
+  renderNavigationPanel();
+  $("#startNavigation").disabled = true;
+  try {
+    const response = await postJson("/api/navigation/preview", {
+      map_id: state.userMap.map_id,
+      map_revision: state.userMap.map_revision || "",
+      x: point[0], y: point[1],
+    });
+    const value = await response.json();
+    if (!response.ok) throw new Error(value.message || value.error || `HTTP ${response.status}`);
+    state.navigationPreview = value;
+    state.liveNavigationPath = null;
+    state.livePathRevision = -1;
+    state.robotTrail = [];
+    state.robotTrailSession = null;
+    state.navigationPreviewMessage = value.snapped
+      ? `선택 지점에서 ${Number(value.snap_distance_m).toFixed(2)} m 떨어진 안전한 위치로 보정했습니다.`
+      : "선택한 위치로 이동할 수 있습니다.";
+    state.navigationCommandMessage = "";
+    state.navigation = {state: "idle"};
+    renderNavigation(); renderNavigationPanel();
+  } catch (error) {
+    state.navigationPreview = null;
+    state.navigationPreviewMessage = "";
+    state.navigationCommandMessage = error.message;
+    renderNavigation(); renderNavigationPanel();
+  }
+}
+
+function connectRobotStream() {
+  state.robotEventSource?.close();
+  if (!state.robotStreamEnabled) return;
+  const stream = new EventSource("/api/robot/stream");
+  state.robotEventSource = stream;
+  stream.addEventListener("robot", (event) => {
+    const value = JSON.parse(event.data);
+    if (state.userMap && value.map_id !== state.userMap.map_id) {
+      state.localization = {state: "lost", message: "로봇과 웹 지도의 ID가 다릅니다."};
+      state.robot = null;
+    } else {
+      state.robot = value.pose;
+      state.localization = value.localization || {state: "uninitialized"};
+      const navigation = value.navigation || {state: "idle"};
+      if (
+        Object.prototype.hasOwnProperty.call(navigation, "path")
+        && navigation.path_revision !== state.livePathRevision
+      ) {
+        state.liveNavigationPath = navigation.path;
+        state.livePathRevision = navigation.path_revision;
+      }
+      updateRobotTrail(value.pose, navigation);
+      state.navigation = navigation;
+    }
+    renderNavigation(); renderNavigationPanel();
+  });
+  stream.onerror = () => {
+    state.localization = {state: "lost", message: "로봇 상태 서버에 다시 연결하고 있습니다."};
+    renderNavigation(); renderNavigationPanel();
+  };
+}
+
 function renderZoneList() {
   const list = $("#zoneList");
   list.replaceChildren();
@@ -660,6 +868,7 @@ function setModeBanner() {
     goal: "선택한 영역 안에서 로봇의 대표 도착 위치를 누르세요.",
     splitting: `벽 두 곳을 누르면 직선이 생깁니다. 선 중앙의 작은 점을 끌면 ㄱ자 직각선으로 바뀝니다. (${state.splitLines.length}개 선${state.pendingSplitPoint ? " · 끝점 선택 중" : splitStatus})`,
     merging: "현재 방과 합칠 다른 방을 지도나 방 목록에서 선택하세요.",
+    navigate: "지도에서 로봇이 이동할 목적지를 누르세요. Zone 편집과는 별도 모드입니다.",
   };
   banner.textContent = messages[state.mode] ?? "";
   banner.classList.toggle("hidden", !messages[state.mode]);
@@ -706,12 +915,55 @@ function persistRooms() {
   }
   localStorage.setItem(roomStorageKey(state.userMap.map_id), JSON.stringify(state.rooms));
   $("#saveState").textContent = "방 편집 내용이 이 브라우저에 저장됨";
+  scheduleRoomSave();
+}
+
+function scheduleRoomSave() {
+  if (!state.userMap || !state.roomPersistenceEnabled) return;
+  if (state.roomSaveTimer) clearTimeout(state.roomSaveTimer);
+  const revision = ++state.roomSaveRevision;
+  state.roomSaveTimer = setTimeout(async () => {
+    if (state.roomSavePending) {
+      state.roomSaveTimer = null;
+      return;
+    }
+    state.roomSavePending = true;
+    try {
+      const response = await postJson("/api/rooms", {
+        map_id: state.userMap.map_id,
+        map_revision: state.userMap.map_revision,
+        resolution: state.userMap.source?.resolution || .05,
+        rooms: state.rooms,
+      });
+      const value = await response.json();
+      if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`);
+      if (revision !== state.roomSaveRevision) return;
+      state.rooms = value.rooms;
+      state.userMap.features = [
+        ...state.userMap.features.filter((feature) => feature.properties?.role !== "room"),
+        ...state.rooms,
+      ];
+      localStorage.setItem(roomStorageKey(state.userMap.map_id), JSON.stringify(state.rooms));
+      $("#saveState").textContent = "방 편집 내용이 지도 파일에 저장됨";
+    } catch (error) {
+      if (revision === state.roomSaveRevision) {
+        $("#saveState").textContent = `방은 브라우저에만 저장됨 · ${error.message}`;
+      }
+    } finally {
+      state.roomSavePending = false;
+      state.roomSaveTimer = null;
+      if (revision !== state.roomSaveRevision) scheduleRoomSave();
+    }
+  }, 180);
 }
 
 function updateSelectedProperty(name, value) {
   const zone = selectedZone();
   if (!zone) return;
   zone.properties[name] = value;
+  if (name === "behavior" && value === "restricted") {
+    delete zone.properties.preferred_goal;
+  }
   persist();
   renderZones();
 }
@@ -767,7 +1019,29 @@ function loadUserMap(value, filename) {
   if (value.type !== "FeatureCollection" || !value.map_id || !floor || !["Polygon", "MultiPolygon"].includes(floor.geometry?.type)) {
     throw new Error("Malbut User Map 형식이 아닙니다.");
   }
+  if (state.serverMapId && value.map_id !== state.serverMapId) {
+    const aliases = Array.isArray(value.legacy_map_ids) ? value.legacy_map_ids : [];
+    if (!aliases.includes(state.serverMapId)) {
+      throw new Error("로봇 서버와 User Map의 지도 ID가 다릅니다.");
+    }
+  }
+  if (!value.map_revision && state.serverMapRevision) {
+    value.map_revision = state.serverMapRevision;
+  }
+  if (state.roomSaveTimer) clearTimeout(state.roomSaveTimer);
+  state.roomSaveTimer = null;
+  state.roomSaveRevision += 1;
   state.userMap = value;
+  const legacyMapIds = Array.isArray(value.legacy_map_ids)
+    ? value.legacy_map_ids.filter((identity) => typeof identity === "string") : [];
+  migrateStoredValue(
+    roomStorageKey(value.map_id),
+    legacyMapIds.map(roomStorageKey),
+  );
+  migrateStoredValue(
+    `malbut-zones:${value.map_id}`,
+    legacyMapIds.map((identity) => `malbut-zones:${identity}`),
+  );
   const importedRooms = value.features.filter((feature) => feature.properties?.role === "room");
   if (!importedRooms.length) throw new Error("Room이 없는 User Map입니다.");
   state.sourceRooms = JSON.parse(JSON.stringify(importedRooms));
@@ -802,7 +1076,7 @@ function loadUserMap(value, filename) {
   $("#roomSummary").classList.add("hidden");
   $("#roomForm").classList.add("hidden");
   updateRoomActionButtons();
-  renderFloor(); renderRooms(); renderZones(); fitMap();
+  renderFloor(); renderRooms(); renderZones(); renderNavigation(); renderNavigationPanel(); fitMap();
 }
 
 async function readJsonFile(file) {
@@ -834,6 +1108,8 @@ function refreshGeneratedInitialRoom(storedRooms, importedRooms) {
   refreshed.geometry = JSON.parse(JSON.stringify(imported.geometry));
   refreshed.properties.area_m2 = imported.properties.area_m2;
   refreshed.properties.centroid = imported.properties.centroid;
+  refreshed.properties.representative_point = imported.properties.representative_point;
+  refreshed.properties.clearance_m = imported.properties.clearance_m;
   return [refreshed];
 }
 
@@ -850,7 +1126,11 @@ $("#zoneFile").addEventListener("change", async (event) => {
     if (value.type !== "FeatureCollection" || value.format !== "malbut-semantic-zones-v1" || !Array.isArray(value.features)) {
       throw new Error("Malbut 영역 파일 형식이 아닙니다.");
     }
-    if (value.map_id !== state.userMap.map_id) throw new Error("현재 집과 다른 map_id입니다.");
+    const acceptedMapIds = new Set([
+      state.userMap.map_id,
+      ...(state.userMap.legacy_map_ids || []),
+    ]);
+    if (!acceptedMapIds.has(value.map_id)) throw new Error("현재 집과 다른 map_id입니다.");
     const zones = value.features.filter((feature) => feature.properties?.role === "semantic_zone");
     if (!zones.length) throw new Error("불러올 Zone이 없습니다.");
     if (zones.length !== value.features.length) {
@@ -954,13 +1234,9 @@ async function mergeSelectedRoomWith(targetId) {
   state.roomActionPending = true;
   updateRoomActionButtons();
   try {
-    const response = await fetch("/api/merge-rooms", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        rooms: [source, target],
-        resolution: state.userMap.source?.resolution || .05,
-      }),
+    const response = await postJson("/api/merge-rooms", {
+      rooms: [source, target],
+      resolution: state.userMap.source?.resolution || .05,
     });
     const value = await response.json();
     if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`);
@@ -999,15 +1275,11 @@ function scheduleSplitValidation() {
   setModeBanner(); renderDraft();
   state.splitValidationTimer = setTimeout(async () => {
     try {
-      const response = await fetch("/api/split-room", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          room: selectedRoom(),
-          lines: state.splitLines,
-          resolution: state.userMap.source?.resolution || .05,
-          minimum_room_area: 1.0,
-        }),
+      const response = await postJson("/api/split-room", {
+        room: selectedRoom(),
+        lines: state.splitLines,
+        resolution: state.userMap.source?.resolution || .05,
+        minimum_room_area: 1.0,
       });
       const value = await response.json();
       if (revision !== state.splitValidationRevision) return;
@@ -1030,15 +1302,11 @@ async function splitSelectedRoom() {
   state.roomActionPending = true;
   updateRoomActionButtons();
   try {
-    const response = await fetch("/api/split-room", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        room,
-        lines: state.splitLines,
-        resolution: state.userMap.source?.resolution || .05,
-        minimum_room_area: 1.0,
-      }),
+    const response = await postJson("/api/split-room", {
+      room,
+      lines: state.splitLines,
+      resolution: state.userMap.source?.resolution || .05,
+      minimum_room_area: 1.0,
     });
     const value = await response.json();
     if (!response.ok) {
@@ -1063,10 +1331,12 @@ async function splitSelectedRoom() {
   }
 }
 
-svg.addEventListener("click", (event) => {
+svg.addEventListener("click", async (event) => {
   if (!state.userMap) return;
   const point = worldPoint(event);
-  if (state.mode === "splitting") {
+  if (state.mode === "navigate") {
+    await previewNavigation(point);
+  } else if (state.mode === "splitting") {
     const room = selectedRoom();
     const nearWall = room && pointNearRoomWall(point, room.geometry);
     if (!nearWall) {
@@ -1162,6 +1432,59 @@ $("#zoneColor").addEventListener("input", (event) => updateSelectedProperty("col
 $("#roomName").addEventListener("input", (event) => updateSelectedRoomProperty("name", event.target.value || "이름 없는 방"));
 $("#roomCategory").addEventListener("change", (event) => updateSelectedRoomProperty("category", event.target.value));
 $("#setGoal").addEventListener("click", () => { state.mode = "goal"; setModeBanner(); });
+$("#navigateMode").addEventListener("click", () => {
+  state.mode = state.mode === "navigate" ? "idle" : "navigate";
+  state.selectedRoomId = null;
+  state.selectedId = null;
+  clearSplitDraft();
+  $("#zoneForm").classList.add("hidden");
+  $("#roomSummary").classList.add("hidden");
+  $("#roomForm").classList.add("hidden");
+  setModeBanner(); renderRooms(); renderZones(); renderNavigationPanel();
+});
+$("#startNavigation").addEventListener("click", async () => {
+  if (!state.navigationPreview?.preview_token) return;
+  state.navigationCommandMessage = "현재 costmap으로 경로를 다시 확인하고 있습니다…";
+  renderNavigationPanel();
+  try {
+    const response = await postJson("/api/navigation/start", {
+      preview_token: state.navigationPreview.preview_token,
+    });
+    const value = await response.json();
+    if (!response.ok) throw new Error(value.message || value.error || `HTTP ${response.status}`);
+    state.navigation = value;
+    state.robotTrailSession = value.session_id;
+    state.robotTrail = state.robot ? [[state.robot.x, state.robot.y]] : [];
+    if (value.path) {
+      state.navigationPreview.path = value.path;
+      state.liveNavigationPath = value.path;
+    }
+    state.navigationPreview.preview_token = null;
+    state.navigationCommandMessage = "";
+    renderNavigation(); renderNavigationPanel();
+  } catch (error) {
+    state.navigationCommandMessage = error.message;
+    renderNavigationPanel();
+  }
+});
+$("#cancelNavigation").addEventListener("click", async () => {
+  if (!state.navigation?.session_id) return;
+  state.navigationCommandMessage = "주행을 취소하고 있습니다…";
+  renderNavigationPanel();
+  try {
+    const response = await postJson("/api/navigation/cancel", {
+      session_id: state.navigation.session_id,
+    });
+    const value = await response.json();
+    if (!response.ok) throw new Error(value.message || value.error || `HTTP ${response.status}`);
+    state.navigation = {...state.navigation, ...value};
+    state.navigationCommandMessage = "";
+    renderNavigationPanel();
+  } catch (error) {
+    state.navigationCommandMessage = error.message;
+    renderNavigationPanel();
+  }
+});
 $("#deleteZone").addEventListener("click", () => {
   if (!selectedZone() || !confirm("이 영역을 삭제할까요?")) return;
   state.zones = state.zones.filter((zone) => zone.id !== state.selectedId);
@@ -1181,6 +1504,7 @@ function zoneCollection() {
     type: "FeatureCollection",
     format: "malbut-semantic-zones-v1",
     map_id: state.userMap.map_id,
+    map_revision: state.userMap.map_revision,
     frame_id: state.userMap.frame_id,
     features: state.zones,
   };
@@ -1201,11 +1525,7 @@ $("#applyZones").addEventListener("click", async () => {
   button.disabled = true;
   button.textContent = "적용 중…";
   try {
-    const response = await fetch("/api/apply-zones", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(zoneCollection()),
-    });
+    const response = await postJson("/api/apply-zones", zoneCollection());
     const value = await response.json();
     if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`);
     persist();
@@ -1228,7 +1548,7 @@ window.addEventListener("keydown", (event) => {
     scheduleSplitValidation();
     return;
   }
-  if (event.key !== "Escape" || !["goal", "splitting", "merging"].includes(state.mode)) return;
+  if (event.key !== "Escape" || !["goal", "splitting", "merging", "navigate"].includes(state.mode)) return;
   state.mode = "idle";
   clearSplitDraft();
   setModeBanner(); renderDraft(); renderRooms(); renderZones();
@@ -1262,11 +1582,25 @@ async function loadEditorConfig() {
     if (!response.ok) return;
     const value = await response.json();
     state.zoneApplyEnabled = Boolean(value.zone_apply_enabled);
+    state.roomPersistenceEnabled = Boolean(value.room_persistence_enabled);
+    state.robotStreamEnabled = Boolean(value.robot_stream_enabled);
+    state.navigationEnabled = Boolean(value.navigation_enabled);
+    state.serverMapId = typeof value.map_id === "string" ? value.map_id : null;
+    state.serverMapRevision = typeof value.map_revision === "string" ? value.map_revision : "";
+    state.csrfToken = typeof value.csrf_token === "string" ? value.csrf_token : "";
     $("#applyZones").disabled = !state.userMap || !state.zoneApplyEnabled;
+    connectRobotStream();
+    renderNavigationPanel();
   } catch (_error) {
     state.zoneApplyEnabled = false;
+    state.roomPersistenceEnabled = false;
+    state.robotStreamEnabled = false;
+    state.navigationEnabled = false;
+    state.serverMapId = null;
+    state.serverMapRevision = "";
+    state.csrfToken = "";
   }
 }
 
-loadEditorConfig();
-loadMapFromUrl();
+const editorConfigReady = loadEditorConfig();
+editorConfigReady.then(loadMapFromUrl);

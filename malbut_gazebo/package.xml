@@ -13,9 +13,12 @@
   <license>LicenseRef-Gazebo-Fuel-Actor</license>
 
   <depend>rclpy</depend>
+  <depend>tf2_ros</depend>
 
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>action_msgs</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>malbut_description</exec_depend>

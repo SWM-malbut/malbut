@@ -84,9 +84,30 @@ class SlamMap:
     negate: bool
     mode: str
     map_id: str
+    map_revision: str
+    legacy_map_ids: tuple[str, ...]
 
 
 def _stable_map_id(
+    image: np.ndarray,
+    resolution: float,
+    origin: list[float],
+) -> str:
+    """Identify one spatial map independently of occupancy tuning."""
+    digest = hashlib.sha256()
+    metadata = {
+        "shape": list(image.shape),
+        "resolution": resolution,
+        "origin": [float(value) for value in origin],
+    }
+    digest.update(json.dumps(
+        metadata, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8"))
+    digest.update(image.tobytes())
+    return f"map-{digest.hexdigest()[:12]}"
+
+
+def _map_revision(
     image: np.ndarray,
     resolution: float,
     origin: list[float],
@@ -95,7 +116,7 @@ def _stable_map_id(
     free_threshold: float,
     mode: str,
 ) -> str:
-    """Identify map content independently of filenames and YAML formatting."""
+    """Identify the exact occupancy interpretation of a spatial map."""
     digest = hashlib.sha256()
     metadata = {
         "shape": list(image.shape),
@@ -110,7 +131,42 @@ def _stable_map_id(
         metadata, sort_keys=True, separators=(",", ":")
     ).encode("utf-8"))
     digest.update(image.tobytes())
-    return f"map-{digest.hexdigest()[:12]}"
+    return f"rev-{digest.hexdigest()[:12]}"
+
+
+def _legacy_map_id(
+    image: np.ndarray,
+    resolution: float,
+    origin: list[float],
+    negate: bool,
+    occupied_threshold: float,
+    free_threshold: float,
+    mode: str,
+) -> str:
+    """Return the pre-revision identity for storage migration."""
+    revision = _map_revision(
+        image,
+        resolution,
+        origin,
+        negate,
+        occupied_threshold,
+        free_threshold,
+        mode,
+    )
+    return f"map-{revision.removeprefix('rev-')}"
+
+
+def _map_id_values(value: object, field: str) -> tuple[str, ...]:
+    """Validate optional Malbut map identity metadata."""
+    if value is None:
+        return ()
+    values = value if isinstance(value, list) else [value]
+    if not all(
+        isinstance(item, str) and item.strip() and len(item.strip()) <= 128
+        for item in values
+    ):
+        raise ValueError(f"{field} must contain non-empty map IDs")
+    return tuple(dict.fromkeys(item.strip() for item in values))
 
 
 def load_slam_map(yaml_path: Path, map_id: str = "") -> SlamMap:
@@ -155,14 +211,29 @@ def load_slam_map(yaml_path: Path, map_id: str = "") -> SlamMap:
     mode = str(metadata.get("mode", "trinary")).strip().lower()
     if mode != "trinary":
         raise ValueError("only ROS map mode 'trinary' is supported")
-    stable_id = _stable_map_id(
-        image,
-        resolution,
-        origin,
-        negate,
-        occupied_threshold,
-        free_threshold,
-        mode,
+    stable_id = _stable_map_id(image, resolution, origin)
+    configured_ids = _map_id_values(
+        metadata.get("malbut_map_id"), "malbut_map_id"
+    )
+    if len(configured_ids) > 1:
+        raise ValueError("malbut_map_id must contain one map ID")
+    legacy_id = _legacy_map_id(
+        image, resolution, origin, negate,
+        occupied_threshold, free_threshold, mode,
+    )
+    selected_id = map_id.strip() or (
+        configured_ids[0] if configured_ids else stable_id
+    )
+    configured_legacy_ids = _map_id_values(
+        metadata.get("malbut_legacy_map_ids"),
+        "malbut_legacy_map_ids",
+    )
+    legacy_ids = tuple(
+        identity
+        for identity in dict.fromkeys((
+            *configured_legacy_ids, legacy_id, stable_id,
+        ))
+        if identity != selected_id
     )
     return SlamMap(
         yaml_path=yaml_path,
@@ -179,7 +250,12 @@ def load_slam_map(yaml_path: Path, map_id: str = "") -> SlamMap:
         free_threshold=free_threshold,
         negate=negate,
         mode=mode,
-        map_id=map_id.strip() or stable_id,
+        map_id=selected_id,
+        map_revision=_map_revision(
+            image, resolution, origin, negate,
+            occupied_threshold, free_threshold, mode,
+        ),
+        legacy_map_ids=legacy_ids,
     )
 
 
@@ -444,6 +520,8 @@ def initial_room_feature(
     """Create one unassigned Room covering all explored walkable space."""
     distance = cv2.distanceTransform(free, cv2.DIST_L2, 5)
     _, _, _, center = cv2.minMaxLoc(distance)
+    representative_point = transform.world(*center)
+    clearance = float(distance[center[1], center[0]]) * transform.resolution
     return {
         "type": "Feature",
         "id": "room-1",
@@ -454,7 +532,9 @@ def initial_room_feature(
             "category": "unassigned",
             "color": ROOM_COLORS[0],
             "area_m2": round(_geometry_area(floor_geometry), 2),
-            "centroid": transform.world(*center),
+            "centroid": representative_point,
+            "representative_point": representative_point,
+            "clearance_m": round(clearance, 3),
             "generated": True,
         },
         "geometry": floor_geometry,
@@ -557,6 +637,8 @@ def build_user_map(
         "type": "FeatureCollection",
         "format": FORMAT_VERSION,
         "map_id": slam_map.map_id,
+        "map_revision": slam_map.map_revision,
+        "legacy_map_ids": list(slam_map.legacy_map_ids),
         "frame_id": "map",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source": {
@@ -565,6 +647,8 @@ def build_user_map(
             "map_image": slam_map.image_path.name,
             "resolution": slam_map.transform.resolution,
             "mode": slam_map.mode,
+            "occupied_thresh": slam_map.occupied_threshold,
+            "free_thresh": slam_map.free_threshold,
             "width": int(slam_map.image.shape[1]),
             "height": int(slam_map.image.shape[0]),
         },

@@ -184,7 +184,7 @@ def test_lidar_camera_and_imu_match_the_selected_profile():
     camera = sensors['aurora930_pro']
     assert camera.get('type') == 'rgbd_camera'
     assert camera.findtext('topic') == '/rgbd_camera'
-    assert camera.findtext('gz_frame_id') == 'camera_depth_optical_frame'
+    assert camera.findtext('gz_frame_id') == 'camera_link'
     assert float(camera.findtext('update_rate')) == pytest.approx(
         arguments['camera_rate']
     )

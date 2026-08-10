@@ -100,10 +100,21 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     assert 'zone_mask' in declared_arguments
     assert 'localization_source' in declared_arguments
     assert 'localization_state' in declared_arguments
+    assert 'robot_web' in declared_arguments
+    assert 'robot_web_port' in declared_arguments
+    assert 'user_map' in declared_arguments
     assert 'set_initial_pose' in declared_arguments
     assert 'initial_pose_x' in declared_arguments
     assert 'initial_pose_y' in declared_arguments
     assert 'initial_pose_yaw' in declared_arguments
+
+    robot_web_nodes = [
+        entity
+        for entity in description.entities
+        if isinstance(entity, Node)
+        and entity.node_executable == 'robot_web_server'
+    ]
+    assert len(robot_web_nodes) == 1
 
     includes = [
         entity
@@ -189,6 +200,7 @@ def test_navigation_prefers_clearance_and_keeps_close_obstacles_visible():
     assert follow_path['PathAngleCritic']['forward_preference'] is True
     assert follow_path['PreferForwardCritic']['enabled'] is True
     assert follow_path['TwirlingCritic']['enabled'] is True
+    assert controller['general_goal_checker']['xy_goal_tolerance'] <= 0.05
     assert controller['general_goal_checker']['yaw_goal_tolerance'] >= 3.14
 
     smoother = config['velocity_smoother']['ros__parameters']
@@ -198,6 +210,9 @@ def test_navigation_prefers_clearance_and_keeps_close_obstacles_visible():
     planner = config['planner_server']['ros__parameters']['GridBased']
     assert planner['plugin'] == 'nav2_smac_planner/SmacPlanner2D'
     assert planner['cost_travel_multiplier'] >= 4.0
+    assert planner['tolerance'] <= controller[
+        'general_goal_checker'
+    ]['xy_goal_tolerance']
     assert planner['downsample_costmap'] is False
     assert planner['allow_unknown'] is False
 
@@ -215,6 +230,20 @@ def test_navigation_prefers_clearance_and_keeps_close_obstacles_visible():
         scan = costmap[sensor_layer]['scan']
         assert 0.19 <= scan['obstacle_min_range'] <= 0.21
         assert scan['raytrace_min_range'] == 0.0
+
+        layer = costmap[sensor_layer]
+        assert set(layer['observation_sources'].split()) == {
+            'scan', 'depth_points'
+        }
+        depth = layer['depth_points']
+        assert depth['topic'] == '/camera/depth/points'
+        assert depth['data_type'] == 'PointCloud2'
+        assert depth['marking'] is True
+        assert depth['clearing'] is True
+        assert 0.03 <= depth['min_obstacle_height'] <= 0.10
+        assert depth['obstacle_min_range'] >= 0.30
+        assert depth['obstacle_max_range'] <= 2.50
+        assert depth['raytrace_max_range'] >= depth['obstacle_max_range']
 
 
 def test_zone_filter_is_disabled_without_a_mask_and_enabled_with_one():

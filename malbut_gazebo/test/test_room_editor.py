@@ -4,6 +4,8 @@ import pytest
 
 from malbut_gazebo.room_editor import (
     merge_room_features,
+    normalize_room_feature,
+    room_representative_point,
     split_room_feature,
 )
 
@@ -65,6 +67,25 @@ def _geometry_area(geometry):
     )
 
 
+def _point_in_ring(point, ring):
+    inside = False
+    previous = ring[-1]
+    for current in ring:
+        crosses = (
+            (current[1] > point[1]) != (previous[1] > point[1])
+            and point[0] < (
+                (previous[0] - current[0])
+                * (point[1] - current[1])
+                / (previous[1] - current[1])
+                + current[0]
+            )
+        )
+        if crosses:
+            inside = not inside
+        previous = current
+    return inside
+
+
 def test_divider_line_splits_one_room_and_reports_geometry_area():
     """A valid divider must report each exported polygon's actual area."""
     parts = split_room_feature(
@@ -92,6 +113,30 @@ def test_divider_line_splits_one_room_and_reports_geometry_area():
         part["properties"]["area_m2"] >= 29.0
         for part in parts
     )
+    assert all(part["properties"]["clearance_m"] > 0 for part in parts)
+
+
+def test_concave_room_gets_an_interior_representative_point():
+    """Navigation metadata must not reuse a centroid outside a concave Room."""
+    room = _rectangular_room()
+    room["geometry"] = {
+        "type": "Polygon",
+        "coordinates": [[
+            [0.0, 0.0], [8.0, 0.0], [8.0, 2.0], [2.0, 2.0],
+            [2.0, 6.0], [8.0, 6.0], [8.0, 8.0], [0.0, 8.0],
+            [0.0, 0.0],
+        ]],
+    }
+    room["properties"]["centroid"] = [4.0, 4.0]
+
+    point, clearance = room_representative_point(room["geometry"])
+    normalized = normalize_room_feature(room)
+
+    assert not _point_in_ring([4.0, 4.0], room["geometry"]["coordinates"][0])
+    assert _point_in_ring(point, room["geometry"]["coordinates"][0])
+    assert normalized["properties"]["representative_point"] == point
+    assert normalized["properties"]["clearance_m"] == clearance
+    assert clearance > 0.5
 
 
 def test_divider_points_must_be_near_the_selected_room_walls():

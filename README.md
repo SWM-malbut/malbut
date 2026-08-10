@@ -290,6 +290,47 @@ ros2 launch malbut_gazebo navigation.launch.py \
 `zone_mask`를 전달합니다. 두 모드 모두 위치가 확정된 뒤 `Nav2 Goal`로 목표를
 보냅니다.
 
+### 웹 지도에서 현재 위치 확인 및 목적지 주행
+
+Nav2 지도와 같은 좌표계로 만든 User Map을 `user_map`에 전달하면 동일한
+launch에서 로봇 웹 서버도 시작됩니다.
+
+```bash
+ros2 launch malbut_gazebo navigation.launch.py \
+  map:=~/malbut_maps/my_home/map.yaml \
+  user_map:=~/malbut_maps/my_home/user_map.geojson \
+  zone_mask:=~/malbut_maps/my_home/zone-filter.yaml
+# http://127.0.0.1:8765/?map=user-map.geojson
+```
+
+웹 지도는 `map→base_footprint` TF를 5 Hz로 받아 메카넘의 현재 위치와
+방향을 표시합니다. `목적지 이동`을 누른 뒤 지도에서 한 지점을 선택하면
+서버가 탐색 영역, 진입 금지 Zone, costmap 비용, 로봇 외곽 여유, 연결성 및
+Nav2 경로를 검증합니다. 필요한 경우 반경 `0.5m` 안의 안전한 지점으로
+보정하고, 경로와 거리를 확인한 뒤 `이동`을 눌렀을 때만 주행합니다.
+주행 중에는 남은 거리와 상태를 표시하고 `취소`할 수 있으며 localization이
+끊기면 서버가 주행을 자동 취소합니다. 출발 전 경로는 주황 점선으로, Nav2가
+global costmap으로 다시 계산해 `/plan`에 발행하는 최신 경로는 주황 실선으로,
+로봇이 실제로 지나간 궤적은 파란 선으로 갱신합니다.
+
+local/global costmap은 2-D LiDAR의 `/scan`과 RGB-D 카메라의
+`/camera/depth/points`를 함께 사용합니다. 카메라는 레이저 스캔 높이보다 낮은
+5 cm 이상의 물체를 표시하고, Nav2는 갱신된 local costmap으로 주행 중 회피하며
+global costmap이 바뀌면 경로를 다시 계산합니다. 센서 시야 밖의 물체나 5 cm보다
+낮은 물체까지 보장하는 물리 안전장치는 아니므로 비상 정지 계층과는 구분해야
+합니다.
+
+Gazebo Fortress의 RGB-D 포인트클라우드는 `+X` 전방, `+Z` 위쪽인
+`camera_link` 좌표로 브리지합니다. optical frame으로 잘못 표기하면 costmap에서
+점군이 한 번 더 회전하므로 시뮬레이션 설정도 이 프레임 계약을 검사합니다.
+
+목적지는 Room이나 Zone의 속성이 아닙니다. Room은 공간 이름, Zone은
+진입 금지·우회 비용을 표현하고, 목적지는 매 주행마다 별도의 이동 모드에서
+선택합니다. 앱도 같은 출처의 `GET /api/robot/stream` SSE와
+`POST /api/navigation/preview`, `/start`, `/cancel` API를 사용하므로 웹과
+동일한 검증 절차를 거칩니다. 브라우저 외 클라이언트는 먼저
+`GET /api/editor-config`에서 세션 쿠키와 CSRF 토큰을 받아야 합니다.
+
 ## 6. 사용자 지도와 공간 영역 만들기
 
 사용자 지도는 로봇이 집을 탐색한 뒤 SLAM Toolbox로 저장한 지도
@@ -300,6 +341,8 @@ ros2 launch malbut_gazebo navigation.launch.py \
 있습니다. 현재 변환기는 ROS map YAML의 기본 `trinary` 모드만 지원하며,
 점유도 의미가 다른 `scale`·`raw` 모드는 잘못 해석하지 않도록 명시적으로
 거부합니다. `negate`와 점유 임계값을 생략하면 map_server 기본값을 사용합니다.
+ROS 2 map_saver가 미탐색 셀에 기록하는 회색값 `205`가 자유 공간으로
+바뀌지 않도록 `free_thresh`는 `0.196` 이하를 사용해야 합니다.
 
 SLAM 탐색과 지도 저장을 마친 뒤 저장된 YAML을 변환합니다.
 `preview.png`는 결과 확인용이고, 영역 편집의 기준 데이터는 GeoJSON입니다.
@@ -339,7 +382,9 @@ ros2 run malbut_gazebo user_map_editor \
 않습니다. 나뉜 방을 다시 합치려면 첫 번째 방을 선택하고 `방 합치기`를
 누른 다음 지도나 방 목록에서 맞닿은 두 번째 방을 선택합니다. 서로 떨어진
 방은 하나로 합칠 수 없습니다. 편집 결과는 브라우저에 자동 저장되며
-`User Map 내보내기`로 수정된 방 경계가 포함된 GeoJSON을 내려받습니다.
+`--map`으로 편집기를 실행한 경우 원본 User Map에도 원자적으로 저장됩니다.
+`User Map 내보내기`로 수정된 방 경계가 포함된 GeoJSON을 별도로 내려받을
+수도 있습니다.
 
 Room을 선택하면 이름과 유형(거실·침실·주방·복도 등)을 지정할 수 있습니다.
 분할된 Room은 변하지 않는 기본 이름을 공유합니다. 다시 합치면 목록에는
@@ -354,6 +399,10 @@ Zone 내부를 끌어 위치를 옮기고 네 모서리나 변의 핸들을 끌�
 독립된 Nav2 주행 규칙이므로 여러 Room을 가로지를 수 있고, Room을 나누거나
 합쳐도 경계와 동작이 바뀌지 않습니다. Zone은 현재 지도의 `map_id`와 함께
 자동 저장되므로 다른 집의 지도에 잘못 적용되지 않습니다.
+`map_id`는 같은 지도 좌표계의 Room·Zone 저장소를 유지하고,
+`map_revision`은 점유 임계값처럼 주행 의미가 달라진 변경을 구분합니다.
+이전 버전에서 생성한 지도 ID는 User Map을 다시 만들 때 자동 저장소
+마이그레이션 대상으로 함께 기록됩니다.
 
 Zone 경계는 지도의 주행 가능 영역 안에 있어야 하며 자기 교차 경계와
 `0.1m²` 미만 영역은 거부합니다. 각 Zone에는 면적, 중심점과 Zone 유형
@@ -363,6 +412,11 @@ Zone 파일과 `zone-filter.yaml/.pgm`이 User Map 옆에 자동 생성됩니다
 필터 서버가 실행 중이면 새 마스크를 즉시 다시 불러오고, 실행 전이면 다음
 Nav2 실행부터 적용됩니다. `영역 내보내기`는 백업·이관용이며 주행 적용에
 필수인 절차가 아닙니다.
+
+편집기의 변경 API는 같은 출처의 JSON 요청과 세션별 CSRF 토큰만 받습니다.
+기본 `127.0.0.1` 이외의 이름으로 접속해야 한다면 서버 바인딩과 함께
+신뢰할 이름을 `--allowed-host`로 명시해야 합니다. 이 보호는 로컬 편집기의
+브라우저 요청 경계를 위한 것이며 사용자 인증을 대신하지 않습니다.
 
 CI나 자동화 환경에서는 동일한 변환을 CLI로 수행할 수도 있습니다. User Map
 생성 시 `--map-id`를 지정했다면 같은 값을 전달해야 합니다.
