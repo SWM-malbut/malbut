@@ -72,9 +72,10 @@ source ~/ros2_ws/install/local_setup.bash
 colcon list
 ros2 pkg prefix malbut_description
 ros2 pkg prefix malbut_gazebo
+ros2 pkg prefix malbut_patrol
 ```
 
-두 패키지의 설치 경로가 출력되면 정상입니다.
+세 패키지의 설치 경로가 출력되면 정상입니다.
 
 ## 4. 셸 환경과 약어 설정
 
@@ -479,6 +480,7 @@ source ~/ros2_ws/install/local_setup.bash
 ```bash
 cbp malbut_description
 cbp malbut_gazebo
+cbp malbut_patrol
 ```
 
 ## 11. 기본 점검
