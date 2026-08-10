@@ -1,5 +1,6 @@
 """Contract tests for the selected ROSOrin hardware profile and URDF."""
 
+import hashlib
 import math
 from pathlib import Path
 from xml.etree import ElementTree
@@ -18,6 +19,26 @@ PROFILE = (
     / 'config'
     / 'ultimate_orin_nx_super_mecanum.yaml'
 )
+OFFICIAL_MESHES = {
+    'base_link.stl',
+    'base_link_collision.stl',
+    'dabai_cam_link.STL',
+    'dabai_cam_link_collision.stl',
+    'depth_camera_link.stl',
+    'depth_camera_link_collision.stl',
+    'left_back_wheel_link.stl',
+    'left_back_wheel_link_collision.stl',
+    'left_front_wheel_link.stl',
+    'left_front_wheel_link_collision.stl',
+    'lidar_link.stl',
+    'lidar_link_collision.stl',
+    'mic_link.stl',
+    'mic_link_collision.stl',
+    'right_back_wheel_link.stl',
+    'right_back_wheel_link_collision.stl',
+    'right_front_wheel_link.stl',
+    'right_front_wheel_link_collision.stl',
+}
 
 
 def _render_robot():
@@ -38,7 +59,6 @@ def test_selected_variant_and_component_mass_contract():
     assert math.isclose(data['total_mass'], 2.66)
     component_mass = (
         data['base_mass']
-        + data['upper_body_mass']
         + 4 * data['wheel_mass']
         + data['camera_mass']
         + data['lidar_mass']
@@ -52,7 +72,7 @@ def test_selected_variant_and_component_mass_contract():
 
 
 def test_urdf_has_one_set_of_four_mecanum_wheels():
-    """The URDF must not recreate the legacy fixed-plus-dynamic eight wheels."""
+    """Official wheel meshes belong to the four dynamic wheel links."""
     _, text, robot = _render_robot()
     expected = {
         'front_left_wheel_joint',
@@ -73,7 +93,68 @@ def test_urdf_has_one_set_of_four_mecanum_wheels():
             if link.get('name', '').endswith('_wheel_link')
         ]
     ) == 4
-    assert '<mesh' not in text
+    referenced = {
+        Path(mesh.get('filename')).name
+        for mesh in robot.findall('.//mesh')
+    }
+    assert {
+        'left_front_wheel_link.stl',
+        'right_front_wheel_link.stl',
+        'left_back_wheel_link.stl',
+        'right_back_wheel_link.stl',
+    } <= referenced
+
+
+def test_official_mesh_set_is_complete_and_used_by_the_robot():
+    """The Hiwonder feature-package meshes are preserved, not recreated."""
+    mesh_root = PACKAGE_ROOT / 'meshes'
+    actual = {
+        path.name
+        for path in mesh_root.iterdir()
+        if path.is_file() and path.suffix.lower() == '.stl'
+    }
+    assert actual == OFFICIAL_MESHES
+    assert (mesh_root / 'SOURCE.md').is_file()
+
+    _, _, robot = _render_robot()
+    referenced = {
+        Path(mesh.get('filename')).name
+        for mesh in robot.findall('.//mesh')
+    }
+    assert {
+        'base_link.stl',
+        'base_link_collision.stl',
+        'depth_camera_link.stl',
+        'depth_camera_link_collision.stl',
+        'lidar_link.stl',
+        'lidar_link_collision.stl',
+        'mic_link.stl',
+        'mic_link_collision.stl',
+    } <= referenced
+
+    xacro_sources = '\n'.join(
+        path.read_text(encoding='utf-8')
+        for path in (PACKAGE_ROOT / 'urdf').rglob('*.xacro')
+    )
+    assert '/home/' not in xacro_sources
+    assert '/Users/' not in xacro_sources
+
+
+def test_official_mesh_checksums_are_unchanged():
+    """Every vendored STL remains byte-identical to the source package."""
+    mesh_root = PACKAGE_ROOT / 'meshes'
+    expected = {}
+    for line in (mesh_root / 'SHA256SUMS').read_text(
+        encoding='utf-8'
+    ).splitlines():
+        digest, filename = line.split(maxsplit=1)
+        expected[filename] = digest
+    assert set(expected) == OFFICIAL_MESHES
+    for filename, digest in expected.items():
+        actual = hashlib.sha256(
+            (mesh_root / filename).read_bytes()
+        ).hexdigest()
+        assert actual == digest
 
 
 def test_sensor_frames_follow_the_published_interface_contract():
@@ -87,4 +168,5 @@ def test_sensor_frames_follow_the_published_interface_contract():
         'imu_link',
         'camera_link',
         'camera_depth_optical_frame',
+        'microphone_link',
     } <= links

@@ -1,19 +1,21 @@
 # Malbut Gazebo environments
 
-This package provides three selectable Gazebo Fortress environments for the
+This package provides four selectable Gazebo Fortress environments for the
 Malbut ROS 2 Humble simulation.
 
 | `world_name` | Purpose | Distribution status |
 | --- | --- | --- |
 | `empty` | Flat-floor robot physics baseline | Project-owned primitives |
 | `test_arena` | Repeatable collision, LiDAR, camera, and ramp checks | Project-owned primitives |
+| `robocup_home` | Simple indoor floor plan paired with the bundled baseline map | Hiwonder feature package; adapted for Fortress |
 | `small_house` | Detailed multi-room household scenario | AWS assets; bundled license applies |
 
-All three environments use the same launch argument:
+All four environments use the same launch argument:
 
 ```bash
 ros2 launch malbut_gazebo worlds.launch.py world_name:=empty
 ros2 launch malbut_gazebo worlds.launch.py world_name:=test_arena
+ros2 launch malbut_gazebo worlds.launch.py world_name:=robocup_home
 ros2 launch malbut_gazebo worlds.launch.py world_name:=small_house
 ```
 
@@ -34,6 +36,32 @@ available option. Robot spawn poses come from `config/worlds.yaml`; command
 line values such as `x:=1.0 y:=2.0 yaw:=1.57` override them. The Small House
 default is the upstream test location
 `x=-3.665503, y=-0.4874, z=0.002, yaw=0`.
+
+## Humanoid perception target
+
+Start the Small House with the robot and a looping animated pedestrian. The
+default 54 m circuit visits a deep point in each main room and behind the sofa,
+then returns to its starting point without passing through walls or furniture:
+
+```bash
+ros2 launch malbut_gazebo humanoid_demo.launch.py
+```
+
+The actor starts about 1.5 m in front of the robot and completes one circuit in
+about 141 seconds at 0.45 m/s, including turns. The route is validated against
+the complete Small House 3D collision, visible mesh, and sphere geometry.
+Its full path can be translated or rotated with launch arguments, but changed
+offsets must be revalidated:
+
+```bash
+ros2 launch malbut_gazebo humanoid_demo.launch.py \
+  actor_x:=-2.19 actor_y:=-1.17 actor_yaw:=0.0
+```
+
+No Gazebo ground-truth pose is bridged to ROS; later perception code must
+locate the target from `/camera/color/image_raw` and
+`/camera/depth/image_raw`. The humanoid is a kinematic camera target, not a
+physics obstacle.
 
 ## SLAM mapping
 
@@ -62,17 +90,10 @@ occupancy map on `/map` and the current LiDAR measurements on `/scan`.
 `slam_params_file:=...` and `rviz_config:=...` can override the checked-in
 defaults when later tuning is required.
 
-## Saved-map navigation
-
-`navigation.launch.py` uses `maps/small_house.yaml` by default. This map
-covers the full AWS Small House layout at 5 cm/pixel. The legacy
-`map_01.yaml` map does not match this world and is retained only for source
-compatibility.
-
-```bash
-ros2 launch malbut_gazebo worlds.launch.py world_name:=small_house
-ros2 launch malbut_gazebo navigation.launch.py
-```
+The bundled static map `maps/robocup_home.yaml` matches only
+`world_name:=robocup_home`. Generate and pass a separate map for
+`small_house`; the launch files do not pretend that one occupancy grid fits
+both environments.
 
 ## AWS Small House
 

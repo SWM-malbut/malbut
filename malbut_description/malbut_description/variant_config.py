@@ -21,6 +21,10 @@ EXPECTED_ARGUMENTS = frozenset(
         "wheel_separation",
         "wheel_radius",
         "wheel_width",
+        "wheel_x_offset",
+        "wheel_y_offset",
+        "front_wheel_z",
+        "rear_wheel_z",
         "wheel_joint_damping",
         "wheel_joint_friction",
         "wheel_surface_mu1",
@@ -34,13 +38,10 @@ EXPECTED_ARGUMENTS = frozenset(
         "base_length",
         "base_width",
         "base_height",
-        "base_center_z",
-        "upper_body_mass",
-        "upper_body_length",
-        "upper_body_width",
-        "upper_body_height",
-        "upper_body_x",
-        "upper_body_z",
+        "base_footprint_z",
+        "base_com_x",
+        "base_com_y",
+        "base_com_z",
         "wheel_mass",
         "camera_x",
         "camera_y",
@@ -105,16 +106,14 @@ POSITIVE_ARGUMENTS = frozenset(
         "wheel_separation",
         "wheel_radius",
         "wheel_width",
+        "front_wheel_z",
+        "rear_wheel_z",
         "odom_publish_frequency",
         "base_mass",
         "base_length",
         "base_width",
         "base_height",
-        "upper_body_mass",
-        "upper_body_length",
-        "upper_body_width",
-        "upper_body_height",
-        "upper_body_z",
+        "base_footprint_z",
         "wheel_mass",
         "camera_width",
         "camera_height",
@@ -387,7 +386,6 @@ def load_variant_arguments(source: Path) -> dict[str, int | float]:
 
         component_mass = (
             values["base_mass"]
-            + values["upper_body_mass"]
             + 4.0 * values["wheel_mass"]
             + values["camera_mass"]
             + values["lidar_mass"]
@@ -404,17 +402,20 @@ def load_variant_arguments(source: Path) -> dict[str, int | float]:
 
         length_half = values["overall_length"] / 2.0
         width_half = values["overall_width"] / 2.0
-        wheel_height = values["wheel_radius"]
         constraints = [
             (
-                values["wheelbase"] + 2.0 * values["wheel_radius"]
-                <= values["overall_length"] + 1e-6,
-                "wheelbase + wheel diameter exceeds overall_length",
+                abs(values["wheel_x_offset"])
+                + values["wheelbase"] / 2.0
+                + values["wheel_radius"]
+                <= length_half + 1e-6,
+                "wheel centres and radius exceed overall_length",
             ),
             (
-                values["wheel_separation"] + values["wheel_width"]
-                <= values["overall_width"] + 1e-6,
-                "wheel separation + visual width exceeds overall_width",
+                abs(values["wheel_y_offset"])
+                + values["wheel_separation"] / 2.0
+                + values["wheel_width"] / 2.0
+                <= width_half + 1e-6,
+                "wheel centres and width exceed overall_width",
             ),
             (
                 values["base_length"] <= values["overall_length"] + 1e-6,
@@ -425,43 +426,11 @@ def load_variant_arguments(source: Path) -> dict[str, int | float]:
                 "base_width exceeds overall_width",
             ),
             (
-                abs(values["upper_body_x"])
-                + values["upper_body_length"] / 2.0
-                <= length_half + 1e-6,
-                "upper body exceeds overall length envelope",
-            ),
-            (
-                values["upper_body_width"] / 2.0
-                <= width_half + 1e-6,
-                "upper body exceeds overall width envelope",
-            ),
-            (
-                wheel_height
-                + values["upper_body_z"]
-                + values["upper_body_height"] / 2.0
-                <= values["overall_height"] + 1e-6,
-                "upper body exceeds overall height",
-            ),
-            (
-                wheel_height
-                + values["lidar_z"]
-                + values["lidar_height"] / 2.0
-                <= values["overall_height"] + 1e-6,
-                "lidar exceeds overall height",
-            ),
-            (
-                wheel_height
+                values["base_footprint_z"]
                 + values["camera_z"]
                 + values["camera_size_z"] / 2.0
                 <= values["overall_height"] + 1e-6,
                 "camera exceeds overall height",
-            ),
-            (
-                wheel_height
-                + values["microphone_z"]
-                + values["microphone_height"] / 2.0
-                <= values["overall_height"] + 1e-6,
-                "microphone exceeds overall height",
             ),
         ]
         for condition, message in constraints:

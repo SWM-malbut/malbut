@@ -87,6 +87,16 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("rviz")),
         output="screen",
     )
+    localization_recorder = Node(
+        package=GAZEBO_PACKAGE,
+        executable="record_localization_state",
+        name="localization_state_recorder",
+        parameters=[{
+            "use_sim_time": LaunchConfiguration("use_sim_time"),
+            "state_path": LaunchConfiguration("localization_state"),
+        }],
+        output="screen",
+    )
 
     return LaunchDescription(
         [
@@ -94,7 +104,8 @@ def generate_launch_description():
                 "world_name",
                 default_value="small_house",
                 description=(
-                    "World catalog key: empty, test_arena, or small_house."
+                    "World catalog key: empty, test_arena, robocup_home, "
+                    "or small_house."
                 ),
             ),
             DeclareLaunchArgument(
@@ -133,8 +144,21 @@ def generate_launch_description():
                 default_value=str(gazebo_share / "rviz" / "slam.rviz"),
                 description="RViz configuration for mapping.",
             ),
+            DeclareLaunchArgument(
+                "localization_state",
+                default_value=str(
+                    Path.home()
+                    / ".ros"
+                    / "malbut"
+                    / "localization_state.yaml"
+                ),
+                description=(
+                    "State file used to hand SLAM localization to Nav2."
+                ),
+            ),
             simulation,
             slam_toolbox,
+            localization_recorder,
             rviz,
         ]
     )

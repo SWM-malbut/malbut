@@ -25,19 +25,6 @@
   </xacro:macro>
 
   <xacro:macro name="rosorin_gazebo">
-    <gazebo reference="base_link">
-      <material>Gazebo/Orange</material>
-    </gazebo>
-    <gazebo reference="upper_body_link">
-      <material>Gazebo/Grey</material>
-    </gazebo>
-    <gazebo reference="camera_link">
-      <material>Gazebo/DarkGrey</material>
-    </gazebo>
-    <gazebo reference="laser_frame">
-      <material>Gazebo/DarkGrey</material>
-    </gazebo>
-
     <!-- Same directional-friction approximation used by Fortress' mecanum demo. -->
     <xacro:mecanum_friction link="front_left_wheel_link" direction="1 -1 0"/>
     <xacro:mecanum_friction link="front_right_wheel_link" direction="1 1 0"/>
@@ -88,6 +75,8 @@
     <xacro:if value="$(arg lidar_enabled)">
       <gazebo reference="laser_frame">
         <sensor name="stl19p_d500" type="gpu_lidar">
+          <!-- Hiwonder defines laser_frame at the physical scan plane. -->
+          <pose>0 0 0 0 0 0</pose>
           <always_on>true</always_on>
           <update_rate>${lidar_rate}</update_rate>
           <visualize>false</visualize>

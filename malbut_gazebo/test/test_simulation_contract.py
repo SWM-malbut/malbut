@@ -86,6 +86,23 @@ def test_sensor_plugins_match_selected_hardware_baseline():
     assert sensors['controller_imu'].findtext('topic') == '/imu'
 
 
+def test_lidar_scan_plane_matches_the_official_frame_and_clears_the_body():
+    """The supplied laser frame is already the scan plane above the body."""
+    _, robot = _render_simulation_robot()
+    arguments = load_variant_arguments(PROFILE)
+    lidar = next(
+        sensor
+        for sensor in robot.findall('.//sensor')
+        if sensor.get('name') == 'stl19p_d500'
+    )
+    sensor_pose = [float(value) for value in lidar.findtext('pose').split()]
+    assert sensor_pose == [0.0] * 6
+    scan_plane_z = arguments['base_footprint_z'] + arguments['lidar_z']
+    body_top = arguments['base_footprint_z'] + arguments['base_height']
+
+    assert scan_plane_z > body_top
+
+
 def test_bridge_has_one_canonical_mapping_per_ros_topic():
     """The bridge publishes the documented ROS-facing topic contract."""
     bridge = yaml.safe_load(
@@ -132,7 +149,12 @@ def test_world_guis_load_scene_controls_and_teleop():
         'EntityTree',
         'ComponentInspector',
     }
-    for filename in ('empty.sdf', 'test_arena.sdf', 'small_house.sdf'):
+    for filename in (
+        'empty.sdf',
+        'test_arena.sdf',
+        'robocup_home.sdf',
+        'small_house.sdf',
+    ):
         root = ElementTree.parse(
             GAZEBO_ROOT / 'worlds' / filename
         ).getroot()

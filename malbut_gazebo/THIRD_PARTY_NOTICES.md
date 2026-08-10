@@ -6,8 +6,10 @@ terms.
 
 ## Hiwonder ROSOrin
 
-- Project: Hiwonder ROSOrin / ROSOrin Pro
-- Public project page: <https://github.com/Hiwonder/ROSOrin-Pro>
+- Project: Hiwonder ROSOrin
+- Product: <https://www.hiwonder.com/products/rosorin?variant=42123598463063>
+- Simulation guide: <https://docs.hiwonder.com/projects/ROSOrin/en/jetson-orin-nano-version/docs/9_Gazebo_Simulation.html>
+- Import record: `worlds/SOURCE.md` and `maps/README.md`
 - Copyright owner: Hiwonder
 - Repository identifier: `LicenseRef-Hiwonder-ROSOrin`
 
@@ -50,3 +52,15 @@ House navigation default.
 The Nav2 launch adaptation and ament lint test templates retain their original
 Apache-2.0 copyright and license notices. Malbut's modification notice is
 preserved in the Nav2 launch file.
+
+## Gazebo Fuel humanoid actor
+
+- Source: `OpenRobotics / actor - relative paths`, version 2
+- URL:
+  <https://fuel.gazebosim.org/1.0/OpenRobotics/models/actor%20-%20relative%20paths>
+- Repository identifier: `LicenseRef-Gazebo-Fuel-Actor`
+- Import details: `models/humanoid_actor/SOURCE.md`
+
+Only the walking COLLADA asset is included. The upstream Fuel metadata does
+not declare a per-model license, so the asset is kept outside the project's
+Apache-2.0 grant and its origin is recorded explicitly.
