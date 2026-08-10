@@ -5,6 +5,7 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 저장소: [SWM-malbut/malbut](https://github.com/SWM-malbut/malbut)
 - 로봇 모델 패키지: `malbut_description`
 - 시뮬레이션 패키지: `malbut_gazebo`
+- RGB-D 사람 인식 패키지: `malbut_perception`
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
 - 대화·에이전트 계약 패키지: `malbut_agent_server`
 
@@ -73,6 +74,7 @@ colcon list
 ros2 pkg prefix malbut_description
 ros2 pkg prefix malbut_gazebo
 ros2 pkg prefix malbut_patrol
+ros2 pkg prefix malbut_perception
 ```
 
 세 패키지의 설치 경로가 출력되면 정상입니다.
@@ -187,6 +189,26 @@ ros2 launch malbut_gazebo worlds.launch.py world_name:=robocup_home
 ```bash
 ros2 launch malbut_description display.launch.py
 ```
+
+### RGB-D 사람 인식
+
+최초 한 번 호환 YOLO와 OSNet 모델을 준비한 뒤 휴머노이드와 센서 기반
+사람 인식·재식별을 함께 실행합니다.
+
+```bash
+cd ~/ros2_ws/src/malbut
+./malbut_perception/scripts/prepare_yolov5_model.sh
+./malbut_perception/scripts/prepare_osnet_model.sh
+
+cd ~/ros2_ws
+source install/local_setup.bash
+ros2 launch malbut_gazebo humanoid_demo.launch.py perception:=true
+```
+
+검출 결과는 `/perception/person/detections_2d`, depth 기반 위치는
+`/perception/person/detections_3d`, 확인용 영상은
+`/perception/person/debug_image`에서 볼 수 있습니다. 인식 코드는 Gazebo의
+휴머노이드 이름이나 실제 좌표를 사용하지 않습니다.
 
 ### 키보드 조작
 
