@@ -1,5 +1,6 @@
 """Tests for the simulation world catalog."""
 
+import hashlib
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -18,13 +19,14 @@ def test_catalog_contains_the_supported_world_set():
     assert set(catalog) == {
         'empty',
         'test_arena',
+        'robocup_home',
         'small_house',
     }
 
 
 @pytest.mark.parametrize(
     'world_name',
-    ['empty', 'test_arena', 'small_house'],
+    ['empty', 'test_arena', 'robocup_home', 'small_house'],
 )
 def test_catalog_world_exists_and_has_matching_sdf_name(world_name):
     world_file, _ = resolve_world(
@@ -47,6 +49,18 @@ def test_small_house_has_a_known_upstream_free_space_spawn():
         'z': 0.002,
         'yaw': 0.0,
     }
+
+
+def test_robocup_home_map_is_named_for_its_matching_world():
+    map_yaml = PACKAGE_ROOT / 'maps' / 'robocup_home.yaml'
+    map_image = PACKAGE_ROOT / 'maps' / 'robocup_home.pgm'
+    assert map_yaml.is_file()
+    assert 'image: robocup_home.pgm' in map_yaml.read_text(encoding='utf-8')
+    assert map_image.is_file()
+    assert hashlib.sha256(map_image.read_bytes()).hexdigest() == (
+        '0f6e74f0c9fd732807b3fd10207309369'
+        'ac272d184bac17932c1be0b52e3593e'
+    )
 
 
 def test_unknown_world_is_rejected():

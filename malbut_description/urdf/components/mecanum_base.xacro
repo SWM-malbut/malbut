@@ -1,19 +1,30 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
-  <xacro:macro name="mecanum_wheel" params="name x y mass">
+  <!--
+    The Hiwonder wheel meshes use the inner wheel face as their local Y=0.
+    Malbut keeps each dynamic wheel frame at the roller envelope centre so the
+    joint inertia, collision proxy, and MecanumDrive dimensions share one
+    unambiguous convention.
+  -->
+  <xacro:macro name="mecanum_wheel" params="name mesh x y z mesh_y">
     <link name="${name}_wheel_link">
-      <xacro:wheel_y_inertial mass="${mass}" radius="${wheel_radius}" width="${wheel_width}"/>
+      <xacro:wheel_y_inertial
+        mass="${wheel_mass}"
+        radius="${wheel_radius}"
+        width="${wheel_width}"/>
       <visual>
-        <origin xyz="0 0 0" rpy="${pi/2.0} 0 0"/>
+        <origin xyz="0 ${mesh_y} 0" rpy="0 0 0"/>
         <geometry>
-          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+          <mesh filename="file://$(find malbut_description)/meshes/${mesh}"/>
         </geometry>
         <material name="rosorin_dark"/>
       </visual>
       <!--
-        Fortress' MecanumDrive reference uses a sphere contact proxy so the
-        wheel can develop the commanded lateral velocity. The cylinder above
-        remains the published visual envelope; roller geometry is a tuning task.
+        Use a spherical contact proxy for Fortress' directional-friction
+        mecanum approximation. The supplied roller-shaped collision meshes are
+        preserved in meshes/, but using them as dynamic triangle contacts makes
+        lateral motion unstable and is not how Hiwonder's Gazebo package drives
+        the robot either.
       -->
       <collision>
         <geometry>
@@ -24,7 +35,7 @@
     <joint name="${name}_wheel_joint" type="continuous">
       <parent link="base_link"/>
       <child link="${name}_wheel_link"/>
-      <origin xyz="${x} ${y} 0" rpy="0 0 0"/>
+      <origin xyz="${x} ${y} ${z}" rpy="0 0 0"/>
       <axis xyz="0 1 0"/>
       <dynamics
         damping="${wheel_joint_damping}"
@@ -36,18 +47,23 @@
     <link name="base_footprint"/>
 
     <link name="base_link">
-      <xacro:box_inertial mass="${base_mass}" x="${base_length}" y="${base_width}" z="${base_height}"/>
+      <xacro:box_inertial_at
+        mass="${base_mass}"
+        x="${base_length}"
+        y="${base_width}"
+        z="${base_height}"
+        origin_x="${base_com_x}"
+        origin_y="${base_com_y}"
+        origin_z="${base_com_z}"/>
       <visual>
-        <origin xyz="0 0 ${base_center_z}" rpy="0 0 0"/>
         <geometry>
-          <box size="${base_length} ${base_width} ${base_height}"/>
+          <mesh filename="file://$(find malbut_description)/meshes/base_link.stl"/>
         </geometry>
-        <material name="rosorin_orange"/>
+        <material name="rosorin_body"/>
       </visual>
       <collision>
-        <origin xyz="0 0 ${base_center_z}" rpy="0 0 0"/>
         <geometry>
-          <box size="${base_length} ${base_width} ${base_height}"/>
+          <mesh filename="file://$(find malbut_description)/meshes/base_link_collision.stl"/>
         </geometry>
       </collision>
     </link>
@@ -55,48 +71,36 @@
     <joint name="base_footprint_joint" type="fixed">
       <parent link="base_footprint"/>
       <child link="base_link"/>
-      <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
-    </joint>
-
-    <link name="upper_body_link">
-      <xacro:box_inertial mass="${upper_body_mass}" x="${upper_body_length}" y="${upper_body_width}" z="${upper_body_height}"/>
-      <visual>
-        <geometry>
-          <box size="${upper_body_length} ${upper_body_width} ${upper_body_height}"/>
-        </geometry>
-        <material name="rosorin_aluminum"/>
-      </visual>
-      <collision>
-        <geometry>
-          <box size="${upper_body_length} ${upper_body_width} ${upper_body_height}"/>
-        </geometry>
-      </collision>
-    </link>
-    <joint name="upper_body_joint" type="fixed">
-      <parent link="base_link"/>
-      <child link="upper_body_link"/>
-      <origin xyz="${upper_body_x} 0 ${upper_body_z}" rpy="0 0 0"/>
+      <origin xyz="0 0 ${base_footprint_z}" rpy="0 0 0"/>
     </joint>
 
     <xacro:mecanum_wheel
       name="front_left"
-      x="${wheelbase/2.0}"
-      y="${wheel_separation/2.0}"
-      mass="${wheel_mass}"/>
+      mesh="left_front_wheel_link.stl"
+      x="${wheel_x_offset + wheelbase / 2.0}"
+      y="${wheel_y_offset + wheel_separation / 2.0}"
+      z="${front_wheel_z}"
+      mesh_y="${-wheel_width / 2.0}"/>
     <xacro:mecanum_wheel
       name="front_right"
-      x="${wheelbase/2.0}"
-      y="${-wheel_separation/2.0}"
-      mass="${wheel_mass}"/>
+      mesh="right_front_wheel_link.stl"
+      x="${wheel_x_offset + wheelbase / 2.0}"
+      y="${wheel_y_offset - wheel_separation / 2.0}"
+      z="${front_wheel_z}"
+      mesh_y="${wheel_width / 2.0}"/>
     <xacro:mecanum_wheel
       name="rear_left"
-      x="${-wheelbase/2.0}"
-      y="${wheel_separation/2.0}"
-      mass="${wheel_mass}"/>
+      mesh="left_back_wheel_link.stl"
+      x="${wheel_x_offset - wheelbase / 2.0}"
+      y="${wheel_y_offset + wheel_separation / 2.0}"
+      z="${rear_wheel_z}"
+      mesh_y="${-wheel_width / 2.0}"/>
     <xacro:mecanum_wheel
       name="rear_right"
-      x="${-wheelbase/2.0}"
-      y="${-wheel_separation/2.0}"
-      mass="${wheel_mass}"/>
+      mesh="right_back_wheel_link.stl"
+      x="${wheel_x_offset - wheelbase / 2.0}"
+      y="${wheel_y_offset - wheel_separation / 2.0}"
+      z="${rear_wheel_z}"
+      mesh_y="${wheel_width / 2.0}"/>
   </xacro:macro>
 </robot>

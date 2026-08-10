@@ -13,8 +13,11 @@ variant:
 
 sources:
   product: "https://www.hiwonder.com/products/rosorin?variant=42123598463063"
-  checked_on: "2026-07-26"
-  geometry: "parameterized primitives based on published specifications and measurements of the supplied model"
+  simulation_guide: "https://docs.hiwonder.com/projects/ROSOrin/en/jetson-orin-nano-version/docs/9_Gazebo_Simulation.html"
+  feature_package: "Hiwonder 3. Feature Package/simulations.zip"
+  feature_package_sha256: "a4d23a901dd24472cfdb4655304fd4409bdb5982a7ebdea13f70ec42aef8dad2"
+  checked_on: "2026-08-07"
+  geometry: "official Hiwonder ROSOrin meshes with a Fortress dynamics adapter"
 
 # Single handoff surface for the robot geometry, dynamics, and sensors.
 # "confirmed" values come from the current Hiwonder product specifications.
@@ -31,6 +34,10 @@ xacro:
     wheel_separation: 0.17364
     wheel_radius: 0.040
     wheel_width: 0.03808
+    wheel_x_offset: 0.0051465
+    wheel_y_offset: 0.000074
+    front_wheel_z: 0.017097
+    rear_wheel_z: 0.016719
     wheel_joint_damping: 0.02
     wheel_joint_friction: 0.0
     wheel_surface_mu1: 1.0
@@ -41,22 +48,21 @@ xacro:
     drive_max_velocity: 1.5
     odom_publish_frequency: 50.0
 
-    base_mass: 1.35
-    base_length: 0.274
-    base_width: 0.164
-    base_height: 0.050
-    base_center_z: 0.0
-    upper_body_mass: 0.813
-    upper_body_length: 0.170
-    upper_body_width: 0.135
-    upper_body_height: 0.085
-    upper_body_x: -0.012
-    upper_body_z: 0.0825
+    # Dynamics remain provisional, but their envelope and centre are derived
+    # from Hiwonder's supplied base mesh rather than a second visible body.
+    base_mass: 2.163
+    base_length: 0.273655
+    base_width: 0.163315
+    base_height: 0.112562
+    base_footprint_z: 0.028
+    base_com_x: -0.0073743
+    base_com_y: 0.00027245
+    base_com_z: 0.033869
     wheel_mass: 0.10
 
     camera_x: 0.057373
     camera_y: 0.000079
-    camera_z: 0.079864
+    camera_z: 0.091864
     camera_roll: 0.0
     camera_pitch: 0.0
     camera_yaw: 0.0
@@ -75,7 +81,7 @@ xacro:
 
     lidar_x: 0.011476
     lidar_y: 0.000074
-    lidar_z: 0.1086
+    lidar_z: 0.13641
     lidar_roll: 0.0
     lidar_pitch: 0.0
     lidar_yaw: 0.0
@@ -101,9 +107,9 @@ xacro:
     imu_size_y: 0.020
     imu_size_z: 0.005
 
-    microphone_x: -0.069
-    microphone_y: 0.0
-    microphone_z: 0.109
+    microphone_x: -0.068965
+    microphone_y: 0.025075
+    microphone_z: 0.10955
     microphone_mass: 0.020
     microphone_diameter: 0.104
     microphone_height: 0.003
@@ -132,6 +138,10 @@ verification:
     - wheel_separation
     - wheel_radius
     - wheel_width
+    - wheel_x_offset
+    - wheel_y_offset
+    - front_wheel_z
+    - rear_wheel_z
     - wheel_joint_damping
     - wheel_joint_friction
     - wheel_surface_mu1
@@ -145,13 +155,10 @@ verification:
     - base_length
     - base_width
     - base_height
-    - base_center_z
-    - upper_body_mass
-    - upper_body_length
-    - upper_body_width
-    - upper_body_height
-    - upper_body_x
-    - upper_body_z
+    - base_footprint_z
+    - base_com_x
+    - base_com_y
+    - base_com_z
     - wheel_mass
     - camera_mass
     - lidar_samples
@@ -192,8 +199,9 @@ verification:
     - microphone_height
 
 notes:
-  - "The active model uses primitive geometry so dimensions, collision shapes, inertia, and the four-wheel layout remain directly tunable."
-  - "Wheel radius, width, wheelbase, and separation were measured from the supplied Hiwonder model and remain provisional until checked on the delivered robot."
+  - "Visual and static collision geometry comes from Hiwonder's official simulations.zip without geometric remodeling."
+  - "Wheel radius, width, wheelbase, offsets, and sensor mounts are derived from the supplied Hiwonder Xacro and meshes and remain provisional until checked on the delivered robot."
+  - "Dynamic wheels use one continuous joint per official wheel mesh and a spherical Fortress contact proxy; the official package's duplicate 10 kg cylinder wheels are intentionally not used."
   - "The D500 publishes 5000 measurements/s and normally runs at 10 Hz, so 500 samples per scan is a derived baseline."
   - "The D500 maximum range uses the conservative black-target value (8 m), not the white-target value (12 m)."
   - "Sensor mounting transforms, component mass split, friction, and controller limits are intentionally exposed for later hardware tuning."

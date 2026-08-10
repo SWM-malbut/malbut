@@ -21,6 +21,16 @@ worlds:
       z: 0.002
       yaw: 0.0
 
+  robocup_home:
+    file: robocup_home.sdf
+    purpose: Hiwonder official simple indoor floor-plan baseline
+    release_status: ready_with_third_party_notice
+    spawn:
+      x: 0.0
+      y: 0.0
+      z: 0.002
+      yaw: 0.0
+
   small_house:
     file: small_house.sdf
     purpose: Detailed multi-room home scenario

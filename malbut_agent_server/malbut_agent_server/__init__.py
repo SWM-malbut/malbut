@@ -1,5 +1,6 @@
 """Provider-neutral agent boundary for the Malbut robot."""
 
+from malbut_agent_server.orchestrator import AgentOrchestrator
 from malbut_agent_server.schemas import (
     AgentDecision,
     AgentRequest,
@@ -7,10 +8,11 @@ from malbut_agent_server.schemas import (
     ValidationError,
 )
 
-__version__ = '0.3.0'
+__version__ = '0.5.0'
 
 __all__ = [
     'AgentDecision',
+    'AgentOrchestrator',
     'AgentRequest',
     'RobotState',
     'ValidationError',
