@@ -10,6 +10,7 @@
   <license>Apache-2.0</license>
   <license>MIT</license>
   <license>LicenseRef-Hiwonder-ROSOrin</license>
+  <license>LicenseRef-Gazebo-Fuel-Actor</license>
 
   <depend>rclpy</depend>
   <depend>tf2_ros</depend>
@@ -21,6 +22,8 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>malbut_description</exec_depend>
+  <exec_depend>malbut_perception</exec_depend>
+  <exec_depend>malbut_roaming</exec_depend>
   <exec_depend>nav2_amcl</exec_depend>
   <exec_depend>nav2_behaviors</exec_depend>
   <exec_depend>nav2_bt_navigator</exec_depend>

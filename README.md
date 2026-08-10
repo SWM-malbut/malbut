@@ -5,6 +5,7 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 저장소: [SWM-malbut/malbut](https://github.com/SWM-malbut/malbut)
 - 로봇 모델 패키지: `malbut_description`
 - 시뮬레이션 패키지: `malbut_gazebo`
+- RGB-D 사람 인식 패키지: `malbut_perception`
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
 - 대화·에이전트 계약 패키지: `malbut_agent_server`
 
@@ -72,9 +73,11 @@ source ~/ros2_ws/install/local_setup.bash
 colcon list
 ros2 pkg prefix malbut_description
 ros2 pkg prefix malbut_gazebo
+ros2 pkg prefix malbut_patrol
+ros2 pkg prefix malbut_perception
 ```
 
-두 패키지의 설치 경로가 출력되면 정상입니다.
+세 패키지의 설치 경로가 출력되면 정상입니다.
 
 ## 4. 셸 환경과 약어 설정
 
@@ -187,6 +190,26 @@ ros2 launch malbut_gazebo worlds.launch.py world_name:=robocup_home
 ros2 launch malbut_description display.launch.py
 ```
 
+### RGB-D 사람 인식
+
+최초 한 번 호환 YOLO와 OSNet 모델을 준비한 뒤 휴머노이드와 센서 기반
+사람 인식·재식별을 함께 실행합니다.
+
+```bash
+cd ~/ros2_ws/src/malbut
+./malbut_perception/scripts/prepare_yolov5_model.sh
+./malbut_perception/scripts/prepare_osnet_model.sh
+
+cd ~/ros2_ws
+source install/local_setup.bash
+ros2 launch malbut_gazebo humanoid_demo.launch.py perception:=true
+```
+
+검출 결과는 `/perception/person/detections_2d`, depth 기반 위치는
+`/perception/person/detections_3d`, 확인용 영상은
+`/perception/person/debug_image`에서 볼 수 있습니다. 인식 코드는 Gazebo의
+휴머노이드 이름이나 실제 좌표를 사용하지 않습니다.
+
 ### 키보드 조작
 
 시뮬레이션을 실행한 상태에서 새 터미널을 열고 실행합니다.
@@ -210,14 +233,40 @@ ros2 launch malbut_gazebo navigation.launch.py
 ```
 
 기본 지도 `maps/robocup_home.yaml`은 `robocup_home` 월드 전용입니다.
-`small_house`나 실제 공간에서는 해당 환경에서 SLAM으로 저장한 지도의 절대
-경로를 전달합니다. 서로 다른 월드와 지도를 섞으면 위치 추정이 정상 동작하지
-않습니다.
+Small House에는 같은 AWS 원본 리비전에 포함된
+`maps/small_house.yaml`이 별도로 제공됩니다. 실제 공간에서는 실제 집에서
+SLAM으로 저장한 지도의 절대 경로를 전달합니다. 서로 다른 월드와 지도를
+섞으면 위치 추정이 정상 동작하지 않습니다.
 
 ```bash
 ros2 launch malbut_gazebo navigation.launch.py \
   map:=/absolute/path/to/map.yaml
 ```
+
+### Small House 자율 순회 시연
+
+Small House, 전용 지도, AMCL, Nav2, RViz와 자율 순회를 한 번에 실행합니다.
+이미 다른 Gazebo가 실행 중이면 먼저 종료합니다.
+
+```bash
+ros2 launch malbut_gazebo roaming_demo.launch.py
+```
+
+순회 모드는 넓은 공간을 주로 선택하면서 안전한 주변부를 가끔 방문하고,
+최근 방문 이력과 Nav2 경로 실패를 기억합니다. 모든 이동은 Nav2에 위임하며
+`cmd_vel`을 직접 만들지 않습니다.
+
+```bash
+ros2 topic echo /roaming/status
+ros2 service call /roaming/pause std_srvs/srv/Trigger '{}'
+ros2 service call /roaming/resume std_srvs/srv/Trigger '{}'
+ros2 service call /roaming/stop std_srvs/srv/Trigger '{}'
+```
+
+LLM 행동 계층은 map 좌표를 `/roaming/goal`로 보내 현재 순회를 선점할 수
+있습니다. 인식 계층은 센서로 위치를 추정한 이동 표적만
+`/roaming/interest_target`으로 전달합니다. 시뮬레이터의 모델 좌표는 사용하지
+않습니다. 전체 파라미터와 인터페이스는 `malbut_roaming/README.md`에 있습니다.
 
 기본값은 개별 Nav2 프로세스를 실행합니다. composition 경로를 검증하거나
 사용하려면 `use_composition:=True`를 전달합니다. `slam.launch.py`는 실행 중
@@ -428,7 +477,7 @@ ros2 run malbut_gazebo build_user_map ~/malbut_maps/my_home/map.yaml \
 
 현재 제공되는 로봇 프로필은 `Aurora930 Pro` RGB-D 카메라를 사용합니다.
 센서 형상과 시뮬레이션 파라미터는
-`malbut_description/config/ultimate_orin_nx_super_mecanum.yaml`에서 관리합니다.
+`malbut_description/config/rosorin_ultimate_mecanum.yaml`에서 관리합니다.
 다른 카메라 프로필은 아직 제공하지 않습니다.
 
 ## 8. 홈캠 영상 스트리밍
@@ -533,6 +582,7 @@ source ~/ros2_ws/install/local_setup.bash
 ```bash
 cbp malbut_description
 cbp malbut_gazebo
+cbp malbut_patrol
 ```
 
 ## 11. 기본 점검

@@ -96,6 +96,10 @@ jobs:
             --dependency-types exec \
             --dependency-types test \
             -r -y
+          rosdep install --from-paths malbut_patrol --ignore-src \
+            --rosdistro humble \
+            --dependency-types test \
+            -r -y
 
       - name: Build ROS packages
         shell: bash
@@ -105,7 +109,18 @@ jobs:
             --packages-select \
               malbut_description \
               malbut_gazebo \
-              malbut_agent_server
+              malbut_roaming \
+              malbut_patrol \
+              malbut_agent_server \
+              malbut_perception
+
+      - name: Test patrol package
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          colcon test --packages-select malbut_patrol
+          colcon test-result --verbose
 
       - name: Run ROS package tests
         shell: bash
@@ -116,7 +131,9 @@ jobs:
             --packages-select \
               malbut_description \
               malbut_gazebo \
-              malbut_agent_server
+              malbut_roaming \
+              malbut_agent_server \
+              malbut_perception
           colcon test-result --verbose
 
       - name: Validate robot Xacro

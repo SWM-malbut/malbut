@@ -37,6 +37,32 @@ line values such as `x:=1.0 y:=2.0 yaw:=1.57` override them. The Small House
 default is the upstream test location
 `x=-3.665503, y=-0.4874, z=0.002, yaw=0`.
 
+## Humanoid perception target
+
+Start the Small House with the robot and a looping animated pedestrian. The
+default 54 m circuit visits a deep point in each main room and behind the sofa,
+then returns to its starting point without passing through walls or furniture:
+
+```bash
+ros2 launch malbut_gazebo humanoid_demo.launch.py
+```
+
+The actor starts about 1.5 m in front of the robot and completes one circuit in
+about 141 seconds at 0.45 m/s, including turns. The route is validated against
+the complete Small House 3D collision, visible mesh, and sphere geometry.
+Its full path can be translated or rotated with launch arguments, but changed
+offsets must be revalidated:
+
+```bash
+ros2 launch malbut_gazebo humanoid_demo.launch.py \
+  actor_x:=-2.19 actor_y:=-1.17 actor_yaw:=0.0
+```
+
+No Gazebo ground-truth pose is bridged to ROS; later perception code must
+locate the target from `/camera/color/image_raw` and
+`/camera/depth/image_raw`. The humanoid is a kinematic camera target, not a
+physics obstacle.
+
 ## SLAM mapping
 
 Start the household world, robot, ROS-Gazebo bridge, SLAM Toolbox, and the
@@ -64,10 +90,21 @@ occupancy map on `/map` and the current LiDAR measurements on `/scan`.
 `slam_params_file:=...` and `rviz_config:=...` can override the checked-in
 defaults when later tuning is required.
 
-The bundled static map `maps/robocup_home.yaml` matches only
-`world_name:=robocup_home`. Generate and pass a separate map for
-`small_house`; the launch files do not pretend that one occupancy grid fits
-both environments.
+The bundled maps are world-specific: `maps/robocup_home.yaml` matches only
+`world_name:=robocup_home`, and `maps/small_house.yaml` matches only
+`world_name:=small_house`. The Small House map comes from the same fixed AWS
+ROS 2 source commit as the world and keeps its original 5 cm resolution and
+coordinate origin.
+
+Run the complete repeatable Small House navigation and autonomous-roaming
+demonstration with one command:
+
+```bash
+ros2 launch malbut_gazebo roaming_demo.launch.py
+```
+
+The demo starts at the catalogued upstream test pose, initializes AMCL at that
+same pose, and starts `malbut_roaming` only after Nav2 becomes active.
 
 ## AWS Small House
 

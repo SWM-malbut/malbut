@@ -49,6 +49,14 @@ def generate_launch_description():
     log_level = LaunchConfiguration('log_level')
     use_rviz = LaunchConfiguration('rviz')
     restore_localization = LaunchConfiguration('restore_localization')
+    set_initial_pose = LaunchConfiguration(
+        'set_initial_pose', default='false'
+    )
+    initial_pose_x = LaunchConfiguration('initial_pose_x', default='0.0')
+    initial_pose_y = LaunchConfiguration('initial_pose_y', default='0.0')
+    initial_pose_yaw = LaunchConfiguration(
+        'initial_pose_yaw', default='0.0'
+    )
     localization_state = LaunchConfiguration('localization_state')
     localization_source = LaunchConfiguration('localization_source')
     robot_web = LaunchConfiguration('robot_web')
@@ -66,6 +74,10 @@ def generate_launch_description():
     configured_params = RewrittenYaml(
         source_file=params_file,
         param_rewrites={
+            'amcl.ros__parameters.set_initial_pose': set_initial_pose,
+            'amcl.ros__parameters.initial_pose.x': initial_pose_x,
+            'amcl.ros__parameters.initial_pose.y': initial_pose_y,
+            'amcl.ros__parameters.initial_pose.yaw': initial_pose_yaw,
             (
                 'local_costmap.local_costmap.ros__parameters.'
                 'keepout_filter.enabled'
@@ -220,7 +232,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 'map',
                 default_value=os.path.join(
-                    gazebo_share, 'maps', 'robocup_home.yaml'
+                    gazebo_share, 'maps', 'small_house.yaml'
                 ),
                 description='Full path to the occupancy grid map YAML.',
             ),
@@ -250,6 +262,17 @@ def generate_launch_description():
                     'Restore the pose recorded by the active SLAM session.'
                 ),
             ),
+            DeclareLaunchArgument(
+                'set_initial_pose',
+                default_value='false',
+                description=(
+                    'Initialize AMCL from the explicit pose arguments. '
+                    'Intended for repeatable simulation starts.'
+                ),
+            ),
+            DeclareLaunchArgument('initial_pose_x', default_value='0.0'),
+            DeclareLaunchArgument('initial_pose_y', default_value='0.0'),
+            DeclareLaunchArgument('initial_pose_yaw', default_value='0.0'),
             DeclareLaunchArgument(
                 'localization_source',
                 default_value='static',
