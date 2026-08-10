@@ -351,7 +351,7 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "variant_config",
-                default_value="ultimate_orin_nx_super_mecanum.yaml",
+                default_value="rosorin_ultimate_mecanum.yaml",
                 description="Variant YAML basename or absolute path.",
             ),
             DeclareLaunchArgument(

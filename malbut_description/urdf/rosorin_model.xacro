@@ -29,7 +29,7 @@
   <xacro:arg name="odom_publish_frequency" default="50.0"/>
 
   <xacro:arg name="base_mass" default="2.163"/>
-  <xacro:arg name="base_length" default="0.274"/>
+  <xacro:arg name="base_length" default="0.273655"/>
   <xacro:arg name="base_width" default="0.163315"/>
   <xacro:arg name="base_height" default="0.112562"/>
   <xacro:arg name="base_footprint_z" default="0.028"/>

@@ -105,12 +105,14 @@ jobs:
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
-          colcon build --symlink-install --packages-select \
-            malbut_description \
-            malbut_gazebo \
-            malbut_patrol \
-            malbut_agent_server \
-            malbut_perception
+          colcon build --symlink-install \
+            --packages-select \
+              malbut_description \
+              malbut_gazebo \
+              malbut_roaming \
+              malbut_patrol \
+              malbut_agent_server \
+              malbut_perception
 
       - name: Test patrol package
         shell: bash
@@ -129,6 +131,7 @@ jobs:
             --packages-select \
               malbut_description \
               malbut_gazebo \
+              malbut_roaming \
               malbut_agent_server \
               malbut_perception
           colcon test-result --verbose
