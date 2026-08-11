@@ -10,6 +10,7 @@ person_localizer:
     detections_2d_topic: /perception/person/detections_2d
     detections_3d_topic: /perception/person/detections_3d
     debug_image_topic: /perception/person/debug_image
+    compressed_debug_image_topic: /perception/person/debug_image/compressed
     health_topic: /perception/person/healthy
 
     # Empty publishes 3D results in the optical frame from the sensor message.
@@ -22,8 +23,10 @@ person_localizer:
     confidence_threshold: 0.20
     nms_threshold: 0.45
     yolo_input_size: 640
-    # auto selects OpenCV CUDA when this installation exposes it, else CPU.
+    # auto selects CUDA, then GPU OpenCL, and finally CPU.
     dnn_target: auto
+    # Four workers performed best without competing heavily with Gazebo.
+    opencv_num_threads: 4
     hog_hit_threshold: 0.0
 
     tracker_high_threshold: 0.45
@@ -54,5 +57,9 @@ person_localizer:
     # Keep synchronization shallow so slow CPU inference drops stale frames.
     sync_queue_size: 3
     sync_slop_sec: 0.08
-    max_inference_rate_hz: 5.0
+    max_inference_rate_hz: 6.0
     publish_debug_image: true
+    # compressed avoids dropping large raw debug frames over ROS middleware.
+    # Select raw or both only when an uncompressed consumer requires it.
+    debug_image_transport: compressed
+    debug_jpeg_quality: 80

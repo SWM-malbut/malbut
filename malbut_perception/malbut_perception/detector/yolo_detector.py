@@ -72,46 +72,71 @@ def decode_yolo_people(
     nms_threshold: float,
 ) -> List[ImageDetection]:
     """Decode common YOLOv5/v8/v11 detect exports and keep COCO person."""
-    candidates: List[ImageDetection] = []
-    for row in _prediction_rows(output):
-        if row.size < 6 or not np.all(np.isfinite(row)):
-            continue
-        if row.size == 6:
-            left, top, right, bottom, score, class_index = row
-            if int(class_index) != 0 or score < confidence_threshold:
-                continue
-            model_box = (left, top, right, bottom)
-        else:
-            if row.size == 84:
-                objectness = 1.0
-                class_scores = row[4:]
-            else:
-                objectness = float(row[4])
-                class_scores = row[5:]
-            class_index = int(np.argmax(class_scores))
-            score = objectness * float(class_scores[class_index])
-            if class_index != 0 or score < confidence_threshold:
-                continue
-            center_x, center_y, width, height = row[:4]
-            model_box = (
-                center_x - width / 2.0,
-                center_y - height / 2.0,
-                center_x + width / 2.0,
-                center_y + height / 2.0,
-            )
+    rows = _prediction_rows(output)
+    if rows.ndim != 2 or rows.shape[1] < 6 or rows.shape[0] == 0:
+        return []
 
-        left = (float(model_box[0]) - transform.pad_x) / transform.scale
-        top = (float(model_box[1]) - transform.pad_y) / transform.scale
-        right = (float(model_box[2]) - transform.pad_x) / transform.scale
-        bottom = (float(model_box[3]) - transform.pad_y) / transform.scale
-        if right <= left or bottom <= top:
-            continue
-        box = BoundingBox(left, top, right, bottom).clipped(
-            transform.source_width,
-            transform.source_height,
+    rows = rows[np.all(np.isfinite(rows), axis=1)]
+    if rows.shape[0] == 0:
+        return []
+
+    if rows.shape[1] == 6:
+        scores = rows[:, 4]
+        class_indices = rows[:, 5].astype(np.int64)
+        model_boxes = rows[:, :4]
+    else:
+        class_offset = 4 if rows.shape[1] == 84 else 5
+        class_scores = rows[:, class_offset:]
+        class_indices = np.argmax(class_scores, axis=1)
+        scores = class_scores[np.arange(rows.shape[0]), class_indices]
+        if class_offset == 5:
+            scores = scores * rows[:, 4]
+        centers = rows[:, :4]
+        half_sizes = centers[:, 2:4] * 0.5
+        model_boxes = np.column_stack(
+            (centers[:, 0:2] - half_sizes, centers[:, 0:2] + half_sizes)
         )
-        if box is not None:
-            candidates.append(ImageDetection(box, min(1.0, float(score))))
+
+    keep = (class_indices == 0) & (scores >= confidence_threshold)
+    if not np.any(keep):
+        return []
+    scores = scores[keep]
+    model_boxes = model_boxes[keep]
+
+    boxes = model_boxes.astype(np.float64, copy=True)
+    boxes[:, (0, 2)] = (
+        boxes[:, (0, 2)] - transform.pad_x
+    ) / transform.scale
+    boxes[:, (1, 3)] = (
+        boxes[:, (1, 3)] - transform.pad_y
+    ) / transform.scale
+    positive = (boxes[:, 2] > boxes[:, 0]) & (
+        boxes[:, 3] > boxes[:, 1]
+    )
+    boxes = boxes[positive]
+    scores = scores[positive]
+    if boxes.shape[0] == 0:
+        return []
+
+    boxes[:, (0, 2)] = np.clip(
+        boxes[:, (0, 2)], 0.0, float(transform.source_width)
+    )
+    boxes[:, (1, 3)] = np.clip(
+        boxes[:, (1, 3)], 0.0, float(transform.source_height)
+    )
+    positive = (boxes[:, 2] > boxes[:, 0]) & (
+        boxes[:, 3] > boxes[:, 1]
+    )
+    boxes = boxes[positive]
+    scores = scores[positive]
+
+    candidates = [
+        ImageDetection(
+            BoundingBox(float(left), float(top), float(right), float(bottom)),
+            min(1.0, float(score)),
+        )
+        for (left, top, right, bottom), score in zip(boxes, scores)
+    ]
     return _nms(candidates, nms_threshold)
 
 

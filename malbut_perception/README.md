@@ -76,9 +76,9 @@ official OSNet x0.25 checkpoint trained on MSMT17, exports a 512-dimensional
 opset 12 descriptor, and validates it with the system OpenCV. The model is only
 0.08 GFLOPs at its 256x128 input size and runs only for detected people.
 
-`dnn_target:=auto` is the default. It selects CUDA only when both a CUDA device
-and OpenCV's CUDA DNN target are available; otherwise it uses CPU. Explicit
-`cuda` and `cuda_fp16` modes fail at startup instead of silently falling back.
+`dnn_target:=auto` is the default. It prefers OpenCV CUDA DNN, then a GPU-backed
+OpenCL DNN target, and finally CPU. Explicit `cuda`, `cuda_fp16`, `opencl`, and
+`opencl_fp16` modes fail at startup instead of silently falling back.
 
 The main tracking and Re-ID controls are:
 
@@ -96,8 +96,13 @@ so a restored ID is a visual association rather than proof of identity.
 ros2 topic hz /camera/color/image_raw
 ros2 topic hz /camera/depth/image_raw
 ros2 topic echo /perception/person/detections_3d --once
-rqt_image_view /perception/person/debug_image
+ros2 run rqt_image_view rqt_image_view \
+  /perception/person/debug_image/compressed
 ```
+
+The standard configuration publishes JPEG-compressed debug frames to avoid
+dropping large raw images in the ROS middleware. Set
+`debug_image_transport:=raw` or `both` only when a raw-image consumer needs it.
 
 The generic launch works with both Gazebo and the physical robot as long as
 the three RGB-D topic arguments are mapped to aligned images and CameraInfo.

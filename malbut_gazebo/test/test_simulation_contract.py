@@ -300,6 +300,7 @@ def test_bridge_defines_the_complete_ros_gazebo_interface():
             mapping.get('qos_profile'),
         )
         assert actual == values
+    assert mappings['/camera/depth/points']['lazy'] is True
 
 
 def test_world_guis_expose_camera_controls_and_mecanum_teleop():

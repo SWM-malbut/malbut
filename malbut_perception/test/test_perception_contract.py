@@ -20,7 +20,12 @@ def test_config_uses_only_rgbd_inputs_and_standard_outputs():
     assert config['camera_info_topic'] == '/camera/color/camera_info'
     assert config['detections_2d_topic'].endswith('/detections_2d')
     assert config['detections_3d_topic'].endswith('/detections_3d')
+    assert config['debug_image_transport'] == 'compressed'
+    assert config['compressed_debug_image_topic'].endswith('/compressed')
+    assert 1 <= config['debug_jpeg_quality'] <= 100
+    assert config['max_inference_rate_hz'] == 6.0
     assert config['dnn_target'] == 'auto'
+    assert config['opencv_num_threads'] == 4
     assert config['reid_backend'] == 'auto'
 
 

@@ -16,7 +16,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
-from sensor_msgs.msg import CameraInfo, Image
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image
 from std_msgs.msg import Bool
 from tf2_ros import Buffer, TransformException, TransformListener
 from vision_msgs.msg import (
@@ -91,6 +91,9 @@ class PersonLocalizerNode(Node):
         super().__init__('person_localizer')
         self._declare_parameters()
         self._validate_parameters()
+        cv2.setNumThreads(
+            int(self.get_parameter('opencv_num_threads').value)
+        )
         self._bridge = CvBridge()
         self._detector = self._create_detector()
         self._reidentifier = self._create_reidentifier()
@@ -144,11 +147,27 @@ class PersonLocalizerNode(Node):
             str(self.get_parameter('detections_3d_topic').value),
             10,
         )
-        self._debug_publisher = self.create_publisher(
-            Image,
-            str(self.get_parameter('debug_image_topic').value),
-            qos_profile_sensor_data,
+        self._debug_publisher = None
+        self._compressed_debug_publisher = None
+        debug_transport = str(
+            self.get_parameter('debug_image_transport').value
         )
+        if debug_transport in {'raw', 'both'}:
+            self._debug_publisher = self.create_publisher(
+                Image,
+                str(self.get_parameter('debug_image_topic').value),
+                qos_profile_sensor_data,
+            )
+        if debug_transport in {'compressed', 'both'}:
+            self._compressed_debug_publisher = self.create_publisher(
+                CompressedImage,
+                str(
+                    self.get_parameter(
+                        'compressed_debug_image_topic'
+                    ).value
+                ),
+                qos_profile_sensor_data,
+            )
         self._health_publisher = self.create_publisher(
             Bool,
             str(self.get_parameter('health_topic').value),
@@ -203,6 +222,10 @@ class PersonLocalizerNode(Node):
         self.declare_parameter(
             'debug_image_topic', '/perception/person/debug_image'
         )
+        self.declare_parameter(
+            'compressed_debug_image_topic',
+            '/perception/person/debug_image/compressed',
+        )
         self.declare_parameter('health_topic', '/perception/person/healthy')
         self.declare_parameter('output_frame', '')
         self.declare_parameter('detector_backend', 'auto')
@@ -211,6 +234,7 @@ class PersonLocalizerNode(Node):
         self.declare_parameter('nms_threshold', 0.45)
         self.declare_parameter('yolo_input_size', 640)
         self.declare_parameter('dnn_target', 'auto')
+        self.declare_parameter('opencv_num_threads', 4)
         self.declare_parameter('hog_hit_threshold', 0.0)
         self.declare_parameter('tracker_high_threshold', 0.45)
         self.declare_parameter('tracker_low_threshold', 0.15)
@@ -234,8 +258,10 @@ class PersonLocalizerNode(Node):
         self.declare_parameter('person_thickness_m', 0.35)
         self.declare_parameter('sync_queue_size', 10)
         self.declare_parameter('sync_slop_sec', 0.08)
-        self.declare_parameter('max_inference_rate_hz', 5.0)
+        self.declare_parameter('max_inference_rate_hz', 6.0)
         self.declare_parameter('publish_debug_image', True)
+        self.declare_parameter('debug_image_transport', 'compressed')
+        self.declare_parameter('debug_jpeg_quality', 80)
 
     def _validate_parameters(self) -> None:
         topic_parameters = (
@@ -245,6 +271,7 @@ class PersonLocalizerNode(Node):
             'detections_2d_topic',
             'detections_3d_topic',
             'debug_image_topic',
+            'compressed_debug_image_topic',
             'health_topic',
         )
         for name in topic_parameters:
@@ -267,6 +294,21 @@ class PersonLocalizerNode(Node):
             raise ValueError(
                 'max_inference_rate_hz must be finite and nonnegative'
             )
+        debug_transport = str(
+            self.get_parameter('debug_image_transport').value
+        )
+        if debug_transport not in {'raw', 'compressed', 'both'}:
+            raise ValueError(
+                'debug_image_transport must be raw, compressed, or both'
+            )
+        jpeg_quality = int(self.get_parameter('debug_jpeg_quality').value)
+        if not 1 <= jpeg_quality <= 100:
+            raise ValueError('debug_jpeg_quality must be in [1, 100]')
+        opencv_threads = int(
+            self.get_parameter('opencv_num_threads').value
+        )
+        if opencv_threads < 1:
+            raise ValueError('opencv_num_threads must be positive')
 
     def _create_detector(self) -> PersonDetector:
         backend = str(self.get_parameter('detector_backend').value)
@@ -461,12 +503,31 @@ class PersonLocalizerNode(Node):
                 depth_message.encoding,
                 tracks,
             )
-            debug_message = self._bridge.cv2_to_imgmsg(
-                debug_image,
-                encoding='bgr8',
-            )
-            debug_message.header = rgb_message.header
-            self._debug_publisher.publish(debug_message)
+            if self._debug_publisher is not None:
+                debug_message = self._bridge.cv2_to_imgmsg(
+                    debug_image,
+                    encoding='bgr8',
+                )
+                debug_message.header = rgb_message.header
+                self._debug_publisher.publish(debug_message)
+            if self._compressed_debug_publisher is not None:
+                quality = int(
+                    self.get_parameter('debug_jpeg_quality').value
+                )
+                success, encoded = cv2.imencode(
+                    '.jpg',
+                    debug_image,
+                    [cv2.IMWRITE_JPEG_QUALITY, quality],
+                )
+                if not success:
+                    raise RuntimeError('debug JPEG encoding failed')
+                compressed_message = CompressedImage()
+                compressed_message.header = rgb_message.header
+                compressed_message.format = 'jpeg'
+                compressed_message.data = encoded.tobytes()
+                self._compressed_debug_publisher.publish(
+                    compressed_message
+                )
 
     @staticmethod
     def _make_detection_2d(

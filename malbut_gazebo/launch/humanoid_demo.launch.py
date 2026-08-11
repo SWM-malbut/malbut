@@ -120,11 +120,20 @@ def generate_launch_description():
                 "detector_backend": LaunchConfiguration("detector_backend"),
                 "model_path": LaunchConfiguration("model_path"),
                 "dnn_target": LaunchConfiguration("dnn_target"),
+                "opencv_num_threads": LaunchConfiguration(
+                    "opencv_num_threads"
+                ),
                 "reid_backend": LaunchConfiguration("reid_backend"),
                 "reid_model_path": LaunchConfiguration("reid_model_path"),
                 "output_frame": LaunchConfiguration("output_frame"),
                 "publish_debug_image": LaunchConfiguration(
                     "publish_debug_image"
+                ),
+                "debug_image_transport": LaunchConfiguration(
+                    "debug_image_transport"
+                ),
+                "debug_jpeg_quality": LaunchConfiguration(
+                    "debug_jpeg_quality"
                 ),
             },
         ],
@@ -172,6 +181,9 @@ def generate_launch_description():
                 "model_path", default_value=str(default_model)
             ),
             DeclareLaunchArgument("dnn_target", default_value="auto"),
+            DeclareLaunchArgument(
+                "opencv_num_threads", default_value="4"
+            ),
             DeclareLaunchArgument("reid_backend", default_value="auto"),
             DeclareLaunchArgument(
                 "reid_model_path", default_value=str(default_reid_model)
@@ -179,6 +191,12 @@ def generate_launch_description():
             DeclareLaunchArgument("output_frame", default_value=""),
             DeclareLaunchArgument(
                 "publish_debug_image", default_value="true"
+            ),
+            DeclareLaunchArgument(
+                "debug_image_transport", default_value="compressed"
+            ),
+            DeclareLaunchArgument(
+                "debug_jpeg_quality", default_value="80"
             ),
             # The mapped Small House circuit starts 1.48 m in front of the
             # robot and returns here after visiting the connected rooms.
