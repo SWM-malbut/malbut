@@ -34,6 +34,7 @@ import {
   authorizedP2pReconnectDelayMs,
   canAutomaticallyReconnectAuthorizedP2p,
 } from "../lib/viewer-reconnect";
+import { logoutNavigationPath } from "../auth/logout/logout-flow";
 
 type Mode = "landing" | "broadcaster" | "viewer";
 type ConnectionState =
@@ -1920,11 +1921,9 @@ function Header() {
         credentials: "same-origin",
         cache: "no-store",
       });
-      const payload = (await response.json().catch(() => ({}))) as {
-        redirectTo?: unknown;
-      };
+      const payload = await response.json().catch(() => ({}));
       if (response.ok) {
-        redirectTo = safeAuthActionPath(payload.redirectTo, "/");
+        redirectTo = logoutNavigationPath(payload, "/");
       }
     } catch {
       redirectTo = "/";

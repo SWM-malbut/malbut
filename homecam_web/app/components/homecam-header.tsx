@@ -8,6 +8,7 @@ import {
   House,
   User,
 } from "@phosphor-icons/react";
+import { logoutNavigationPath } from "../auth/logout/logout-flow";
 
 export type HomecamTab = "live" | "events" | "settings";
 
@@ -77,11 +78,9 @@ export function HomecamHeader({
         credentials: "same-origin",
         cache: "no-store",
       });
-      const payload = (await response.json().catch(() => ({}))) as {
-        redirectTo?: unknown;
-      };
+      const payload = await response.json().catch(() => ({}));
       if (response.ok) {
-        redirectTo = safeSameOriginPath(payload.redirectTo, "/");
+        redirectTo = logoutNavigationPath(payload, "/");
       }
     } catch {
       redirectTo = "/";

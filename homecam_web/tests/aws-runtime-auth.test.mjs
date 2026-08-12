@@ -4,6 +4,13 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 
+const REGION = "ap-northeast-2";
+const KEY_ID = "11111111-2222-4333-8444-555555555555";
+const SIGNER =
+  "arn:aws:elasticloadbalancing:ap-northeast-2:000000000000:loadbalancer/app/homecam/1234567890abcdef";
+const CLIENT_ID = "homecam-client";
+const ISSUER = "https://cognito-idp.ap-northeast-2.amazonaws.com/ap-northeast-2_example";
+
 async function serverAuthHarness(runtime, sessionUser = null) {
   const source = await readFile(new URL("../app/server-auth.ts", import.meta.url), "utf8");
   const javascript = ts.transpileModule(source, {
@@ -11,8 +18,32 @@ async function serverAuthHarness(runtime, sessionUser = null) {
   }).outputText;
   const commonJsModule = { exports: {} };
   let lookedUpToken = null;
+  let publicKeyPem = "";
+  let fetchCount = 0;
   runInNewContext(javascript, {
-    module: commonJsModule, exports: commonJsModule.exports, Headers, URL,
+    module: commonJsModule,
+    exports: commonJsModule.exports,
+    AbortSignal,
+    Buffer,
+    Date,
+    Headers,
+    Map,
+    Request,
+    TextDecoder,
+    TextEncoder,
+    URL,
+    crypto: globalThis.crypto,
+    fetch: async (url) => {
+      fetchCount += 1;
+      assert.equal(
+        String(url),
+        `https://public-keys.auth.elb.${REGION}.amazonaws.com/${KEY_ID}`,
+      );
+      return new Response(publicKeyPem, {
+        status: publicKeyPem ? 200 : 503,
+        headers: { "content-type": "text/plain" },
+      });
+    },
     require(specifier) {
       if (specifier === "./runtime-env") return { getRuntimeEnvironment: () => runtime };
       if (specifier === "../db/web-auth") {
@@ -32,7 +63,73 @@ async function serverAuthHarness(runtime, sessionUser = null) {
       throw new Error(`Unexpected import: ${specifier}`);
     },
   });
-  return { auth: commonJsModule.exports, lookedUpToken: () => lookedUpToken };
+  return {
+    auth: commonJsModule.exports,
+    lookedUpToken: () => lookedUpToken,
+    setPublicKeyPem(value) {
+      publicKeyPem = value;
+    },
+    fetchCount: () => fetchCount,
+  };
+}
+
+async function signingKey() {
+  const pair = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"],
+  );
+  const spki = Buffer.from(await crypto.subtle.exportKey("spki", pair.publicKey));
+  const body = spki.toString("base64").match(/.{1,64}/g)?.join("\n") ?? "";
+  return {
+    privateKey: pair.privateKey,
+    publicKeyPem: `-----BEGIN PUBLIC KEY-----\n${body}\n-----END PUBLIC KEY-----\n`,
+  };
+}
+
+async function albToken(privateKey, overrides = {}) {
+  const header = {
+    alg: "ES256",
+    kid: KEY_ID,
+    signer: SIGNER,
+    client: CLIENT_ID,
+    iss: ISSUER,
+    exp: Math.floor(Date.now() / 1000) + 300,
+    ...(overrides.header ?? {}),
+  };
+  const claims = {
+    sub: "alb-user-123",
+    email: "Legacy@Example.com",
+    name: "Legacy ALB User",
+    ...(overrides.claims ?? {}),
+  };
+  const encodedHeader = encodeJson(header);
+  const encodedClaims = encodeJson(claims);
+  const input = `${encodedHeader}.${encodedClaims}`;
+  const signature = Buffer.from(
+    await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      privateKey,
+      new TextEncoder().encode(input),
+    ),
+  ).toString("base64url");
+  return `${input}.${signature}`;
+}
+
+function encodeJson(value) {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function dualAuthRuntime() {
+  return {
+    AUTH_MODE: "alb_oidc_or_cognito_session",
+    AUTH_SESSION_SECRET: Buffer.alloc(32, 5).toString("base64url"),
+    AUTH_AWS_REGION: REGION,
+    AUTH_ALB_ARN: SIGNER,
+    AUTH_OIDC_CLIENT_ID: CLIENT_ID,
+    AUTH_OIDC_ISSUER: ISSUER,
+    NODE_ENV: "production",
+  };
 }
 
 test("opaque Cognito sessions authenticate from the HttpOnly cookie", async () => {
@@ -53,22 +150,65 @@ test("opaque Cognito sessions authenticate from the HttpOnly cookie", async () =
   assert.equal(harness.lookedUpToken(), "opaque-session-token");
 });
 
-test("missing, failed, and legacy ALB authentication state fails closed", async () => {
+test("dual auth prefers an opaque session over a valid legacy ALB identity", async () => {
+  const harness = await serverAuthHarness(dualAuthRuntime(), {
+    email: "Session@Example.com", fullName: "Session User", subject: "session-subject",
+  });
+  const key = await signingKey();
+  harness.setPublicKeyPem(key.publicKeyPem);
+  const token = await albToken(key.privateKey);
+  const user = await harness.auth.getAuthenticatedUser(new Headers({
+    cookie: "__Host-malbut_session=preferred-session-token",
+    "x-amzn-oidc-data": token,
+    "x-amzn-oidc-identity": "alb-user-123",
+  }));
+
+  assert.deepEqual(JSON.parse(JSON.stringify(user)), {
+    email: "session@example.com", fullName: "Session User", subject: "session-subject",
+  });
+  assert.equal(harness.lookedUpToken(), "preferred-session-token");
+  assert.equal(harness.fetchCount(), 0);
+});
+
+test("dual auth falls back to a valid signed ALB identity after an invalid session", async () => {
+  const harness = await serverAuthHarness(dualAuthRuntime(), null);
+  const key = await signingKey();
+  harness.setPublicKeyPem(key.publicKeyPem);
+  const token = await albToken(key.privateKey);
+  const user = await harness.auth.getAuthenticatedUser(new Headers({
+    cookie: "__Host-malbut_session=invalid-session-token",
+    "x-amzn-oidc-data": token,
+    "x-amzn-oidc-identity": "alb-user-123",
+  }));
+
+  assert.deepEqual(JSON.parse(JSON.stringify(user)), {
+    email: "legacy@example.com", fullName: "Legacy ALB User", subject: "alb-user-123",
+  });
+  assert.equal(harness.lookedUpToken(), "invalid-session-token");
+  assert.equal(harness.fetchCount(), 1);
+});
+
+test("session-only auth rejects ALB identity and database failures fail closed", async () => {
   const runtime = {
     AUTH_MODE: "cognito_session",
     AUTH_SESSION_SECRET: Buffer.alloc(32, 5).toString("base64url"),
     NODE_ENV: "production",
   };
   const noSession = await serverAuthHarness(runtime, null);
-  assert.equal(await noSession.auth.getAuthenticatedUser(new Headers({
-    "x-amzn-oidc-data": "attacker-token", "x-amzn-oidc-identity": "attacker",
-  })), null);
+  const key = await signingKey();
+  noSession.setPublicKeyPem(key.publicKeyPem);
+  const validAlbToken = await albToken(key.privateKey);
+  assert.equal(
+    await noSession.auth.getAuthenticatedUser(new Headers({
+      "x-amzn-oidc-data": validAlbToken,
+      "x-amzn-oidc-identity": "alb-user-123",
+    })),
+    null,
+  );
+  assert.equal(noSession.fetchCount(), 0);
+
   const failed = await serverAuthHarness(runtime, new Error("DATABASE_UNAVAILABLE"));
   assert.equal(await failed.auth.getAuthenticatedUser(new Headers({
-    cookie: "__Host-malbut_session=opaque-session-token",
-  })), null);
-  runtime.AUTH_MODE = "alb_oidc";
-  assert.equal(await noSession.auth.getAuthenticatedUser(new Headers({
     cookie: "__Host-malbut_session=opaque-session-token",
   })), null);
 });

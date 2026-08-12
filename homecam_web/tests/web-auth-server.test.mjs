@@ -167,10 +167,14 @@ test("login and logout routes enforce same-origin JSON and never expose Cognito 
   assert.match(login, /SOFTWARE_TOKEN_MFA/);
   assert.doesNotMatch(login, /NextResponse\.json\([^)]*cognitoSession/s);
   assert.match(logout, /export async function POST/);
-  assert.doesNotMatch(logout, /export async function GET/);
+  assert.match(logout, /export async function GET/);
+  assert.match(logout, /usesHostedUiLogout/);
+  assert.match(logout, /AWSELBAuthSessionCookie/);
   assert.match(migration, /0002_web_auth_sessions/);
   assert.match(serverAuth, /cognito_session/);
-  assert.doesNotMatch(serverAuth, /x-amzn-oidc/);
+  assert.match(serverAuth, /alb_oidc_or_cognito_session/);
+  assert.match(serverAuth, /x-amzn-oidc-data/);
+  assert.match(serverAuth, /crypto\.subtle\.verify/);
 });
 
 test("Cognito server auth uses admin challenge APIs and authoritative AdminGetUser attributes", async () => {
