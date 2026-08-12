@@ -27,6 +27,7 @@ test("creates the isolated homecam network and application platform", () => {
   template.resourceCountIs("AWS::Cognito::UserPool", 1);
   template.resourceCountIs("AWS::Cognito::UserPoolUser", 1);
   template.resourceCountIs("AWS::ECR::Repository", 1);
+  template.resourceCountIs("AWS::CodeBuild::Project", 1);
   template.resourceCountIs("AWS::Events::Rule", 1);
   template.resourceCountIs("AWS::Route53::RecordSet", 1);
 
@@ -71,6 +72,33 @@ test("creates the isolated homecam network and application platform", () => {
       { Name: "email", Value: { Ref: "InitialOwnerEmail" } },
     ]),
   });
+});
+
+test("builds only an exact ARM64 Git commit into the scoped ECR repository", () => {
+  const template = synthesize();
+  template.hasResourceProperties("AWS::CodeBuild::Project", {
+    Source: Match.objectLike({ Type: "NO_SOURCE" }),
+    ConcurrentBuildLimit: 1,
+    Environment: Match.objectLike({
+      Type: "ARM_CONTAINER",
+      ComputeType: "BUILD_GENERAL1_MEDIUM",
+      PrivilegedMode: true,
+      EnvironmentVariables: Match.arrayWith([
+        { Name: "GIT_SHA", Type: "PLAINTEXT", Value: "dev" },
+      ]),
+    }),
+  });
+
+  const project = Object.values(
+    template.findResources("AWS::CodeBuild::Project"),
+  )[0];
+  assert.ok(project);
+  const buildSpec = JSON.stringify(project.Properties?.Source?.BuildSpec);
+  assert.match(buildSpec, /\^\[0-9a-f\]\{40\}\$/);
+  assert.match(buildSpec, /SWM-malbut\/malbut\.git/);
+  assert.match(buildSpec, /--platform linux\/arm64/);
+  assert.match(buildSpec, /Architecture/);
+  assert.doesNotMatch(buildSpec, /GIT_URL|REPOSITORY_URI/);
 });
 
 test("creates one isolated P2P/storage/archive set per device", () => {

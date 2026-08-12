@@ -14,6 +14,7 @@ import {
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cloudwatchActions from "aws-cdk-lib/aws-cloudwatch-actions";
+import * as codebuild from "aws-cdk-lib/aws-codebuild";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
@@ -497,6 +498,58 @@ export class HomecamDevStack extends Stack {
       removalPolicy: RemovalPolicy.DESTROY,
       lifecycleRules: [{ maxImageCount: 20, description: "Keep recent dev images" }],
     });
+    const ecrRegistryHost = Fn.join("", [
+      Aws.ACCOUNT_ID,
+      ".dkr.ecr.",
+      this.region,
+      ".",
+      Aws.URL_SUFFIX,
+    ]);
+    const imageBuilder = new codebuild.Project(this, "HomecamImageBuilder", {
+      projectName: `${prefix}-image-builder`,
+      description: "On-demand ARM64 builder for the MALBUT homecam web image",
+      buildSpec: codebuild.BuildSpec.fromObjectToYaml({
+        version: "0.2",
+        phases: {
+          install: {
+            commands: ["git --version", "docker --version", "aws --version"],
+          },
+          pre_build: {
+            commands: [
+              "printf '%s' \"$GIT_SHA\" | grep -Eq '^[0-9a-f]{40}$'",
+              "git init /tmp/malbut-source",
+              "git -C /tmp/malbut-source remote add origin https://github.com/SWM-malbut/malbut.git",
+              "git -C /tmp/malbut-source fetch --depth=1 origin \"$GIT_SHA\"",
+              "git -C /tmp/malbut-source checkout --detach FETCH_HEAD",
+              "test \"$(git -C /tmp/malbut-source rev-parse HEAD)\" = \"$GIT_SHA\"",
+              `aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "${ecrRegistryHost}"`,
+            ],
+          },
+          build: {
+            commands: [
+              `docker build --pull --platform linux/arm64 -t "${repository.repositoryUri}:$GIT_SHA" /tmp/malbut-source/homecam_web`,
+              `docker image inspect --format '{{.Architecture}}' "${repository.repositoryUri}:$GIT_SHA" | grep -qx arm64`,
+            ],
+          },
+          post_build: {
+            commands: [`docker push "${repository.repositoryUri}:$GIT_SHA"`],
+          },
+        },
+      }),
+      environment: {
+        buildImage: codebuild.LinuxArmBuildImage.AMAZON_LINUX_2023_STANDARD_3_0,
+        computeType: codebuild.ComputeType.MEDIUM,
+        privileged: true,
+        environmentVariables: {
+          GIT_SHA: { value: props.containerImageTag },
+        },
+      },
+      concurrentBuildLimit: 1,
+      timeout: Duration.minutes(30),
+      queuedTimeout: Duration.minutes(15),
+      grantReportGroupPermissions: false,
+    });
+    repository.grantPullPush(imageBuilder);
     const cluster = new ecs.Cluster(this, "HomecamCluster", {
       clusterName: `${prefix}-cluster`,
       vpc,
@@ -784,6 +837,9 @@ export class HomecamDevStack extends Stack {
     });
     new CfnOutput(this, "ContainerRepositoryUri", {
       value: repository.repositoryUri,
+    });
+    new CfnOutput(this, "ImageBuilderProjectName", {
+      value: imageBuilder.projectName,
     });
     new CfnOutput(this, "DatabaseSecretArn", {
       value: databaseCredentialsSecret.secretArn,

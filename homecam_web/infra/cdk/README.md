@@ -38,6 +38,7 @@ Jetson / Gazebo
 - 5분 주기 retention/push-outbox maintenance Lambda와 DLQ
 - ALB·ECS·RDS·Lambda 로그와 CloudWatch 경보, SNS topic
 - 애플리케이션 ECR 저장소와 30일 ALB access log 버킷
+- 정확한 Git commit을 ARM64로 빌드해 ECR에 push하는 온디맨드 CodeBuild
 
 ## 보안 경계
 
@@ -172,3 +173,28 @@ Secrets·KVS·S3 `RETAIN`, private application subnet과 NAT/VPC endpoint,
 
 ECR은 tag immutability를 사용한다. 이미 사용한 tag를 덮어쓰지 말고 배포마다
 Git commit SHA처럼 고유한 `containerImageTag`를 지정한다.
+
+## ARM64 이미지 빌드
+
+로컬 Docker나 AWS 장기 키를 필요로 하지 않는다. 최초 stack을
+`ServiceDesiredCount=0`으로 만든 뒤 output의 CodeBuild project를 한 번
+실행한다. project에 설정된 `GIT_SHA`는 CDK의
+`containerImageTag`과 같은 40자 Git commit SHA이며, 빌드는 해당 commit을
+재검증하고 `linux/arm64` 아키텍처만 push한다.
+
+```bash
+project_name=$(aws cloudformation describe-stacks \
+  --profile malbut-team --region ap-northeast-2 \
+  --stack-name MalbutHomecam-dev \
+  --query 'Stacks[0].Outputs[?OutputKey==`ImageBuilderProjectName`].OutputValue' \
+  --output text)
+build_id=$(aws codebuild start-build \
+  --profile malbut-team --region ap-northeast-2 \
+  --project-name "$project_name" --query 'build.id' --output text)
+aws codebuild batch-get-builds \
+  --profile malbut-team --region ap-northeast-2 \
+  --ids "$build_id" --query 'builds[0].buildStatus' --output text
+```
+
+CodeBuild service role은 이 stack의 ECR repository pull/push만 허용하며,
+소스 URL과 repository URI는 build 시작 요청으로 바꾸지 않는다.
