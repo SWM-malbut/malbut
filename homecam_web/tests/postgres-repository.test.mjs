@@ -266,7 +266,11 @@ function createTypescriptModuleLoader() {
 
     const source = requireFromTest("node:fs").readFileSync(resolved, "utf8");
     const javascript = ts.transpileModule(source, {
-      fileName: resolved,
+      // The test loader executes everything as CommonJS. TypeScript preserves
+      // ESM syntax when the input filename ends in .mjs, so use a virtual .ts
+      // filename for shared ESM helpers while retaining the real path for
+      // dependency resolution and diagnostics.
+      fileName: resolved.endsWith(".mjs") ? `${resolved}.ts` : resolved,
       compilerOptions: {
         esModuleInterop: true,
         module: ts.ModuleKind.CommonJS,

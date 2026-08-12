@@ -27,3 +27,4 @@ yarn-error.log*
 .vercel/
 .DS_Store
 *.pem
+!certs/ap-northeast-2-bundle.pem

@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import pg from "pg";
+import { postgresSsl } from "../db/postgres-ssl.mjs";
 
 const databaseUrl = databaseConnectionUrl(process.env);
 if (!databaseUrl) {
@@ -56,27 +57,6 @@ try {
 } finally {
   client.release();
   await pool.end();
-}
-
-function postgresSsl() {
-  const mode = (process.env.DATABASE_SSL_MODE ?? "disable").toLowerCase();
-  if (mode === "disable") return false;
-  if (mode === "require") return { rejectUnauthorized: false };
-  if (mode !== "verify-full") {
-    throw new Error(
-      "DATABASE_SSL_MODE must be one of disable, require, or verify-full.",
-    );
-  }
-  const encodedCa = process.env.DATABASE_SSL_CA_BASE64?.trim();
-  if (!encodedCa) {
-    throw new Error(
-      "DATABASE_SSL_CA_BASE64 is required when DATABASE_SSL_MODE=verify-full.",
-    );
-  }
-  return {
-    rejectUnauthorized: true,
-    ca: Buffer.from(encodedCa, "base64").toString("utf8"),
-  };
 }
 
 function databaseConnectionUrl(runtime) {

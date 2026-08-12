@@ -103,7 +103,7 @@ test("uses HTTPS, no-echo bootstrap inputs, and server-side secrets", () => {
     Protocol: "HTTPS",
   });
   template.hasResourceProperties("AWS::Lambda::Url", { AuthType: "NONE" });
-  template.resourceCountIs("AWS::SecretsManager::Secret", 9);
+  template.resourceCountIs("AWS::SecretsManager::Secret", 8);
 
   const rendered = template.toJSON() as {
     Parameters: Record<string, { NoEcho?: boolean }>;
@@ -187,12 +187,20 @@ test("injects the AWS authentication and PostgreSQL runtime contract", () => {
     "DEVICE_PROVISIONING_MANIFEST_SHA256",
     "DEVICE_PROVISIONING_EXPIRES_AT",
     "DATABASE_SSL_MODE",
+    "DATABASE_SSL_CA_FILE",
     "DATABASE_POOL_MAX",
   ]) {
     assert.equal(environmentNames.has(name), true, `missing ${name}`);
   }
   assert.equal(secretNames.has("DATABASE_URL"), true);
-  assert.equal(secretNames.has("DATABASE_SSL_CA_BASE64"), true);
+  assert.equal(secretNames.has("DATABASE_SSL_CA_BASE64"), false);
   assert.equal(secretNames.has("DEVICE_PROVISIONING_SECRET"), true);
+  assert.equal(
+    container.Environment.find(
+      (entry: { Name: string; Value: string }) =>
+        entry.Name === "DATABASE_SSL_CA_FILE",
+    )?.Value,
+    "/app/certs/ap-northeast-2-bundle.pem",
+  );
   assert.doesNotMatch(JSON.stringify(task), /PENDING_ALB_ARN/);
 });

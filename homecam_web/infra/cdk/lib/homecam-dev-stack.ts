@@ -191,13 +191,6 @@ export class HomecamDevStack extends Stack {
     });
     databaseUrlSecret.applyRemovalPolicy(RemovalPolicy.DESTROY);
     databaseUrlSecret.node.addDependency(database);
-    const databaseCaSecret = new secretsmanager.Secret(this, "DatabaseCa", {
-      secretName: `${prefix}/database-ca-base64`,
-      description: "Base64 encoded Amazon RDS CA bundle used for verify-full TLS",
-      secretStringValue: SecretValue.cfnParameter(parameters.databaseSslCaBase64),
-    });
-    databaseCaSecret.applyRemovalPolicy(RemovalPolicy.DESTROY);
-
     const userPool = new cognito.UserPool(this, "HomecamUsers", {
       userPoolName: `${prefix}-users`,
       selfSignUpEnabled: false,
@@ -550,6 +543,7 @@ export class HomecamDevStack extends Stack {
         DATABASE_PORT: database.dbInstanceEndpointPort,
         DATABASE_NAME: "homecam",
         DATABASE_SSL_MODE: "verify-full",
+        DATABASE_SSL_CA_FILE: "/app/certs/ap-northeast-2-bundle.pem",
         DATABASE_POOL_MAX: "10",
         DATABASE_IDLE_TIMEOUT_MS: "30000",
         DATABASE_CONNECT_TIMEOUT_MS: "10000",
@@ -588,8 +582,6 @@ export class HomecamDevStack extends Stack {
       },
       secrets: {
         DATABASE_URL: ecs.Secret.fromSecretsManager(databaseUrlSecret),
-        DATABASE_SSL_CA_BASE64:
-          ecs.Secret.fromSecretsManager(databaseCaSecret),
         PETCAM_SHARE_SECRET: ecs.Secret.fromSecretsManager(appShareSecret),
         KVS_BROKER_SECRET: ecs.Secret.fromSecretsManager(kvsBrokerSecret),
         PUSH_BROKER_SECRET: ecs.Secret.fromSecretsManager(pushBrokerSecret),
@@ -883,12 +875,6 @@ function deploymentParameters(stack: Stack) {
       description: "Base64url VAPID private key",
       noEcho: true,
       minLength: 20,
-    }),
-    databaseSslCaBase64: new CfnParameter(stack, "DatabaseSslCaBase64", {
-      type: "String",
-      description: "Base64 encoded Amazon RDS CA bundle for PostgreSQL verify-full TLS",
-      noEcho: true,
-      minLength: 100,
     }),
     serviceDesiredCount: new CfnParameter(stack, "ServiceDesiredCount", {
       type: "Number",

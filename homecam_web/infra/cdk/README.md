@@ -54,6 +54,9 @@ Jetson / Gazebo
   런타임 조회·캐시하고 rotation을 따르도록 전환한다.
 - RDS는 isolated subnet에 있고 Fargate security group에서만 5432 연결을
   허용한다.
+- PostgreSQL TLS는 앱 이미지에 고정된 AWS 서울 리전 공개 루트 CA 번들을
+  `DATABASE_SSL_CA_FILE`로 읽고 `verify-full` 검증을 수행한다. CA는 비밀이
+  아니므로 CloudFormation parameter나 Secrets Manager에 복제하지 않는다.
 - ECS task는 private subnet에 있고 ALB만 container port 3000에 접근한다.
 - 녹화 HLS는 같은 origin의 애플리케이션 proxy를 통해 제공해야 한다.
 - ALB는 `/api/health`, `/auth/logout/complete`와 현재 구현된 장치 API 3개,
@@ -85,7 +88,6 @@ CloudFormation 배포 시 다음 parameter가 반드시 필요하다. 값은 저
 | `VapidSubject` | `mailto:` 또는 HTTPS 연락처 |
 | `VapidPublicKey` | Web Push VAPID public key |
 | `VapidPrivateKey` | Web Push VAPID private key |
-| `DatabaseSslCaBase64` | Amazon RDS CA bundle을 base64로 인코딩한 값 |
 | `ServiceDesiredCount` | 최초 배포 `0`, 이미지 push 후 업데이트 배포 `1` |
 
 추가 선행 조건:

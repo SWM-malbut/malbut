@@ -41,6 +41,8 @@ npm audit --audit-level=high
 - 앱은 ALB가 서명한 `x-amzn-oidc-data`를 signer, client, issuer, 만료 시각,
   서명 공개키와 subject까지 검증
 - RDS PostgreSQL에는 ECS Task Role과 Secrets Manager로만 접속 정보 주입
+- 서울 리전 RDS 공개 루트 CA 번들은 검증된 이미지 자산으로 고정하고
+  `verify-full`로 서버 인증서와 호스트 이름 검증
 - 장치는 장기 AWS 키 없이 backend가 발급한 제한된 STS 자격 증명 사용
 - P2P와 Storage KVS 채널은 장치마다 분리하고 archive stream은 168시간 보존
 
@@ -49,7 +51,7 @@ npm audit --audit-level=high
 ```text
 DATABASE_URL
 DATABASE_SSL_MODE=verify-full
-DATABASE_SSL_CA_BASE64
+DATABASE_SSL_CA_FILE=/app/certs/ap-northeast-2-bundle.pem
 AUTH_MODE=alb_oidc
 AUTH_AWS_REGION
 AUTH_ALB_ARN
@@ -72,9 +74,10 @@ MAINTENANCE_SECRET
 `DEVICE_PROVISIONING_SECRET`, `DEVICE_PROVISIONING_MANIFEST_SHA256`,
 `DEVICE_PROVISIONING_EXPIRES_AT`도 필요합니다.
 
-실제 값은 Git, 이미지, Jetson 설정 파일에 넣지 않습니다. AWS Secrets Manager
-또는 ECS secret injection을 사용합니다. `.env.example`의 ARN과 주소는 동작하지
-않는 예시입니다.
+실제 비밀 값은 Git, 이미지, Jetson 설정 파일에 넣지 않습니다. AWS Secrets
+Manager 또는 ECS secret injection을 사용합니다. 공개 신뢰 앵커인 RDS CA
+번들은 예외로 `certs/`에 출처와 SHA-256을 기록해 이미지에 고정합니다.
+`.env.example`의 ARN과 주소는 동작하지 않는 예시입니다.
 
 ## 배포
 

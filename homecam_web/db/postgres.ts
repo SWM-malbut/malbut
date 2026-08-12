@@ -6,6 +6,7 @@ import {
   type PoolClient,
   type QueryResultRow,
 } from "pg";
+import { postgresSsl } from "./postgres-ssl.mjs";
 import { postgresPlaceholders } from "./sql-compat";
 
 const GLOBAL_POOL = Symbol.for("malbut.homecam.postgres.pool");
@@ -105,28 +106,6 @@ export async function queryRows<T extends QueryResultRow>(
   } catch (error) {
     throw normalizePostgresError(error);
   }
-}
-
-function postgresSsl(): false | { rejectUnauthorized: boolean; ca?: string } {
-  const mode = (process.env.DATABASE_SSL_MODE ?? "disable").toLowerCase();
-  if (mode === "disable") return false;
-  if (mode === "require") return { rejectUnauthorized: false };
-  if (mode !== "verify-full") {
-    throw new Error(
-      "DATABASE_SSL_MODE must be one of disable, require, or verify-full.",
-    );
-  }
-
-  const encodedCa = process.env.DATABASE_SSL_CA_BASE64?.trim();
-  if (!encodedCa) {
-    throw new Error(
-      "DATABASE_SSL_CA_BASE64 is required when DATABASE_SSL_MODE=verify-full.",
-    );
-  }
-  return {
-    rejectUnauthorized: true,
-    ca: Buffer.from(encodedCa, "base64").toString("utf8"),
-  };
 }
 
 function positiveInteger(value: string | undefined, fallback: number) {
