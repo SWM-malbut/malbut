@@ -111,6 +111,8 @@ Node.js 22에서 실행한다.
 ```bash
 cd homecam_web/infra/cdk
 npm ci
+npm --prefix ../aws/kvs-broker ci
+npm --prefix ../aws/push-broker ci
 npm run build
 npm test
 npm run synth -- --no-lookups --quiet
