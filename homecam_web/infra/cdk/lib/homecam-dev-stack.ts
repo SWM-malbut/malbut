@@ -139,7 +139,7 @@ export class HomecamDevStack extends Stack {
     const database = new rds.DatabaseInstance(this, "HomecamDatabase", {
       databaseName: "homecam",
       engine: rds.DatabaseInstanceEngine.postgres({
-        version: rds.PostgresEngineVersion.VER_16_4,
+        version: rds.PostgresEngineVersion.VER_16_13,
       }),
       credentials: rds.Credentials.fromSecret(
         databaseCredentialsSecret,

@@ -33,6 +33,7 @@ test("creates the isolated homecam network and application platform", () => {
 
   template.hasResourceProperties("AWS::RDS::DBInstance", {
     Engine: "postgres",
+    EngineVersion: "16.13",
     PubliclyAccessible: false,
     StorageEncrypted: true,
   });
