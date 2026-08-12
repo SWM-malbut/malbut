@@ -687,33 +687,54 @@ export class HomecamDevStack extends Stack {
       "AUTH_ALB_ARN",
       service.loadBalancer.loadBalancerArn,
     );
-    for (const [ruleId, priority, pathPattern] of [
-      ["PublicHealth", 1, "/api/health"],
-      ["PublicLogoutLanding", 2, "/auth/logout/complete"],
-      ["DeviceSessionApi", 3, "/api/device/v1/session"],
-      ["DeviceHeartbeatApi", 4, "/api/device/v1/heartbeat"],
-      ["DeviceEventsApi", 5, "/api/device/v1/events"],
-      ["MaintenanceApi", 6, "/api/internal/maintenance"],
-      ["DeviceProvisioningApi", 7, "/api/internal/device-provisioning"],
+    for (const [ruleId, priority, pathPatterns] of [
+      ["PublicHealth", 1, ["/api/health"]],
+      ["PublicLogout", 2, ["/auth/logout", "/auth/logout/complete"]],
+      ["DeviceSessionApi", 3, ["/api/device/v1/session"]],
+      ["DeviceHeartbeatApi", 4, ["/api/device/v1/heartbeat"]],
+      ["DeviceEventsApi", 5, ["/api/device/v1/events"]],
+      ["MaintenanceApi", 6, ["/api/internal/maintenance"]],
+      ["DeviceProvisioningApi", 7, ["/api/internal/device-provisioning"]],
+      [
+        "PublicPwaRuntime",
+        8,
+        ["/_next/static/*", "/sw.js", "/manifest.webmanifest"],
+      ],
+      [
+        "PublicPwaIcons",
+        9,
+        ["/favicon.ico", "/favicon.svg", "/homecam-icon.svg"],
+      ],
+      ["PublicMediaAssets", 10, ["/og.png", "/vendor/kvs-webrtc.min.js"]],
     ] as const) {
       service.listener.addAction(ruleId, {
         priority,
-        conditions: [elbv2.ListenerCondition.pathPatterns([pathPattern])],
+        conditions: [elbv2.ListenerCondition.pathPatterns([...pathPatterns])],
         action: elbv2.ListenerAction.forward([service.targetGroup]),
       });
     }
-    service.listener.addAction("CognitoAuthentication", {
-      priority: 20,
-      conditions: [elbv2.ListenerCondition.pathPatterns(["/*"])],
-      action: new elbv2Actions.AuthenticateCognitoAction({
+    const authenticatedAction = (
+      onUnauthenticatedRequest: elbv2.UnauthenticatedAction,
+    ) =>
+      new elbv2Actions.AuthenticateCognitoAction({
         userPool,
         userPoolClient,
         userPoolDomain,
         scope: "openid email profile",
+        sessionCookieName: "AWSELBAuthSessionCookie",
         sessionTimeout: Duration.hours(12),
-        onUnauthenticatedRequest: elbv2.UnauthenticatedAction.AUTHENTICATE,
+        onUnauthenticatedRequest,
         next: elbv2.ListenerAction.forward([service.targetGroup]),
-      }),
+      });
+    service.listener.addAction("CognitoApiAuthentication", {
+      priority: 15,
+      conditions: [elbv2.ListenerCondition.pathPatterns(["/api/*"])],
+      action: authenticatedAction(elbv2.UnauthenticatedAction.DENY),
+    });
+    service.listener.addAction("CognitoAuthentication", {
+      priority: 20,
+      conditions: [elbv2.ListenerCondition.pathPatterns(["/*"])],
+      action: authenticatedAction(elbv2.UnauthenticatedAction.AUTHENTICATE),
     });
     new route53.ARecord(this, "HomecamDnsRecord", {
       zone: hostedZone,

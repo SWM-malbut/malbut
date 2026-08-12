@@ -192,7 +192,7 @@ test("uses the imported child hosted zone apex as the homecam domain", () => {
   });
 });
 
-test("bypasses Cognito only for machine and public utility paths", () => {
+test("keeps public assets nonce-free and denies unauthenticated background APIs", () => {
   const template = synthesize();
   const rules = Object.values(
     template.findResources("AWS::ElasticLoadBalancingV2::ListenerRule"),
@@ -205,28 +205,83 @@ test("bypasses Cognito only for machine and public utility paths", () => {
       ),
     );
 
-  for (const path of [
+  const publicPaths = [
     "/api/health",
+    "/auth/logout",
     "/auth/logout/complete",
     "/api/device/v1/session",
     "/api/device/v1/heartbeat",
     "/api/device/v1/events",
     "/api/internal/maintenance",
     "/api/internal/device-provisioning",
-  ]) {
+    "/sw.js",
+    "/manifest.webmanifest",
+    "/favicon.ico",
+    "/favicon.svg",
+    "/homecam-icon.svg",
+    "/_next/static/*",
+    "/vendor/kvs-webrtc.min.js",
+    "/og.png",
+  ];
+  for (const path of publicPaths) {
     assert.deepEqual(
       ruleFor(path)?.Properties?.Actions?.map((action: { Type: string }) => action.Type),
       ["forward"],
     );
+    assert.ok(ruleFor(path)?.Properties?.Priority < 15);
   }
+  const apiRule = ruleFor("/api/*");
+  const apiActions = apiRule?.Properties?.Actions;
+  assert.equal(apiRule?.Properties?.Priority, 15);
   assert.deepEqual(
-    ruleFor("/*")?.Properties?.Actions?.map(
-      (action: { Type: string }) => action.Type,
-    ),
+    apiActions?.map((action: { Type: string }) => action.Type),
     ["authenticate-cognito", "forward"],
+  );
+  assert.equal(
+    apiActions?.[0]?.AuthenticateCognitoConfig?.OnUnauthenticatedRequest,
+    "deny",
+  );
+  assert.equal(
+    apiActions?.[0]?.AuthenticateCognitoConfig?.SessionCookieName,
+    "AWSELBAuthSessionCookie",
+  );
+
+  const documentRule = ruleFor("/*");
+  const documentActions = documentRule?.Properties?.Actions;
+  assert.equal(documentRule?.Properties?.Priority, 20);
+  assert.deepEqual(
+    documentActions?.map((action: { Type: string }) => action.Type),
+    ["authenticate-cognito", "forward"],
+  );
+  assert.equal(
+    documentActions?.[0]?.AuthenticateCognitoConfig?.OnUnauthenticatedRequest,
+    "authenticate",
+  );
+  assert.equal(
+    documentActions?.[0]?.AuthenticateCognitoConfig?.SessionCookieName,
+    "AWSELBAuthSessionCookie",
+  );
+  const apiConfig = apiActions?.[0]?.AuthenticateCognitoConfig;
+  const documentConfig = documentActions?.[0]?.AuthenticateCognitoConfig;
+  assert.equal(apiConfig?.Scope, "openid email profile");
+  assert.equal(apiConfig?.SessionTimeout, 43_200);
+  assert.deepEqual(
+    { ...apiConfig, OnUnauthenticatedRequest: "authenticate" },
+    documentConfig,
   );
   assert.equal(ruleFor("/api/device/v1/*"), undefined);
   assert.equal(ruleFor("/api/internal/*"), undefined);
+  assert.equal(ruleFor("/_next/*"), undefined);
+  assert.equal(ruleFor("/vendor/*"), undefined);
+  assert.ok(
+    rules.every((rule) =>
+      rule.Properties?.Conditions?.every(
+        (condition: { PathPatternConfig?: { Values?: string[] } }) =>
+          (condition.PathPatternConfig?.Values?.length ?? 0) <= 3,
+      ),
+    ),
+    "each ALB path condition must stay within the three-value comparison limit",
+  );
 
   const userPoolClient = Object.values(
     template.findResources("AWS::Cognito::UserPoolClient"),

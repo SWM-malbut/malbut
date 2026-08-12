@@ -63,11 +63,15 @@ Jetson / Gazebo
   security group은 ALB만 container port 3000에 접근하도록 한다. 인터넷에서
   task로의 직접 inbound 접근은 허용하지 않는다.
 - 녹화 HLS는 같은 origin의 애플리케이션 proxy를 통해 제공해야 한다.
-- ALB는 `/api/health`, `/auth/logout/complete`와 현재 구현된 장치 API 3개,
-  내부 API 2개만 정확한 경로 규칙으로 Cognito 없이 전달한다. 장치·내부 API는
-  앱의 bearer/HMAC 검증이 최종 인증 경계다. 미래의 `/api/device/v1/*` 또는
+- ALB는 `/api/health`, 로그아웃 경로, PWA 정적 자산과 현재 구현된 장치 API
+  3개, 내부 API 2개만 Cognito 없이 전달한다. 장치·내부 API는 앱의
+  bearer/HMAC 검증이 최종 인증 경계다. 미래의 `/api/device/v1/*` 또는
   `/api/internal/*` 경로가 실수로 공개되지 않도록 wildcard 예외는 사용하지
-  않으며, 나머지 `/*`는 Cognito 인증 후에만 ECS로 전달한다.
+  않는다.
+- 사용자 `/api/*` 요청은 Cognito 세션을 검증하되 미인증 상태에서는 로그인
+  redirect 대신 401을 반환한다. 서비스 워커나 주기적 API 요청이 여러 인증
+  redirect를 동시에 시작해 `AWSALBAuthNonce`를 덮어쓰지 않도록 하고, 실제
+  페이지 탐색인 나머지 `/*`만 Cognito 로그인 화면으로 redirect한다.
 - Cognito client의 `logout_uri` 허용 목록과 앱의 로그아웃 완료 경로는 모두
   `https://<homecam-domain>/auth/logout/complete`로 고정한다.
 - ECS는 ALB 서명의 signer ARN·Cognito client·issuer를 모두 검증하도록
