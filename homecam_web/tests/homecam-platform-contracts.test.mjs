@@ -83,3 +83,17 @@ test("the Node runtime resolves the maintenance scheduler secret server-side", a
   assert.match(maintenanceRoute, /MAINTENANCE_SECRET/);
   assert.doesNotMatch(`${runtimeAdapter}\n${maintenanceRoute}`, /cloudflare:workers/);
 });
+
+test("the container binds Next to loopback-safe all interfaces on Fargate", async () => {
+  const entrypoint = await readFile(
+    new URL("../docker-entrypoint.sh", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(entrypoint, /exec env HOSTNAME=0\.0\.0\.0 node \.\/server\.js/);
+  assert.ok(
+    entrypoint.indexOf("node ./scripts/migrate.mjs") <
+      entrypoint.indexOf("exec env HOSTNAME=0.0.0.0 node ./server.js"),
+    "database migrations must finish before the web server starts",
+  );
+});

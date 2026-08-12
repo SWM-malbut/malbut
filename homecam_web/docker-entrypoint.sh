@@ -18,4 +18,8 @@ while ! node ./scripts/migrate.mjs; do
   attempt=$((attempt + 1))
 done
 
-exec node ./server.js
+# ECS/Fargate replaces the image-level HOSTNAME with the task hostname. Next's
+# standalone server would then bind only to the task address, so the container
+# health check on 127.0.0.1 could never reach it. Reset the bind address for the
+# server process while leaving the container environment itself unchanged.
+exec env HOSTNAME=0.0.0.0 node ./server.js
