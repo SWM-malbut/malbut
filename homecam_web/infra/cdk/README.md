@@ -13,6 +13,7 @@ Internet
 Route 53 + ACM ── ALB ── ECS Fargate (public subnet, public IP)
                               │
                               ├── RDS PostgreSQL (isolated subnet)
+                              ├── Cognito User Pool (server-side auth API)
                               ├── KVS broker Lambda Function URL
                               └── Push broker Lambda Function URL
 
@@ -30,7 +31,7 @@ Jetson / Gazebo
 - 2개 AZ의 public/database subnet. PoC 비용을 줄이기 위해 NAT Gateway는 사용하지 않음
 - HTTPS ALB, public subnet Fargate 서비스, ARM64 task, 1~4개 자동 확장
 - 암호화된 PostgreSQL 16 RDS와 Secrets Manager 관리 자격 증명
-- Cognito User Pool, OAuth code flow 웹 client, Hosted UI domain
+- 기존 사용자를 유지하는 Cognito User Pool과 서버 전용 admin password auth client
 - 장치마다 분리된 P2P·Storage signaling channel과 archive stream
 - Storage channel과 archive stream을 연결하는 custom resource. 신규 P2P channel은
   AWS 기본값인 Media Storage `DISABLED`를 유지
@@ -63,19 +64,22 @@ Jetson / Gazebo
   security group은 ALB만 container port 3000에 접근하도록 한다. 인터넷에서
   task로의 직접 inbound 접근은 허용하지 않는다.
 - 녹화 HLS는 같은 origin의 애플리케이션 proxy를 통해 제공해야 한다.
-- ALB는 `/api/health`, 로그아웃 경로, PWA 정적 자산과 현재 구현된 장치 API
-  3개, 내부 API 2개만 Cognito 없이 전달한다. 장치·내부 API는 앱의
-  bearer/HMAC 검증이 최종 인증 경계다. 미래의 `/api/device/v1/*` 또는
-  `/api/internal/*` 경로가 실수로 공개되지 않도록 wildcard 예외는 사용하지
-  않는다.
-- 사용자 `/api/*` 요청은 Cognito 세션을 검증하되 미인증 상태에서는 로그인
-  redirect 대신 401을 반환한다. 서비스 워커나 주기적 API 요청이 여러 인증
-  redirect를 동시에 시작해 `AWSALBAuthNonce`를 덮어쓰지 않도록 하고, 실제
-  페이지 탐색인 나머지 `/*`만 Cognito 로그인 화면으로 redirect한다.
-- Cognito client의 `logout_uri` 허용 목록과 앱의 로그아웃 완료 경로는 모두
-  `https://<homecam-domain>/auth/logout/complete`로 고정한다.
-- ECS는 ALB 서명의 signer ARN·Cognito client·issuer를 모두 검증하도록
-  `AUTH_MODE=alb_oidc`와 관련 환경 변수를 주입받는다.
+- ALB는 인증 상태를 판단하거나 Cognito로 redirect하지 않고 모든 HTTPS
+  요청을 ECS target으로 전달한다. 로그인 화면과 사용자 API의 인증 경계는
+  같은 origin의 애플리케이션이다. 장치·내부 API는 기존 bearer/HMAC 검증을
+  계속 사용한다.
+- Cognito Hosted UI와 User Pool domain은 생성하지 않는다. 서버만
+  `ADMIN_USER_PASSWORD_AUTH`를 시작하고 임시 비밀번호·TOTP challenge에
+  응답할 수 있다. 브라우저는 Cognito token이나 AWS 자격 증명을 받지 않는다.
+- ECS task role의 Cognito 권한은 이 stack의 User Pool ARN에 대한
+  `AdminInitiateAuth`, `AdminRespondToAuthChallenge`, `AdminGetUser`로 제한한다.
+  app client는 secret과 OAuth flow를 사용하지 않는다.
+- 브라우저 세션은 Secrets Manager가 만든 32-byte base64url
+  `AUTH_SESSION_SECRET`으로 서버에서 보호하며, ECS에는 secret value로만
+  주입한다. 저장소·CloudFormation output·브라우저 번들에 값을 넣지 않는다.
+- ECS는 `AUTH_MODE=cognito_session`, Cognito pool/client ID, AWS region과
+  public origin을 주입받는다. 앱이 미인증 페이지에는 같은 사이트의 로그인
+  화면을 렌더링하고, 보호된 API는 자체 세션을 검증해 401을 반환한다.
 - WebRTC 송신 계약은 H.264 영상과 Opus 오디오다. KVS Storage Session이
   Opus를 받아 저장 스트림에는 AAC로 변환하므로 archive stream의 정확한
   media type은 `video/h264,audio/aac`다.
@@ -105,7 +109,8 @@ CloudFormation 배포 시 다음 parameter가 반드시 필요하다. 값은 저
 - 최초 stack은 `ServiceDesiredCount=0`으로 생성해 ECR부터 준비
 - `InitialOwnerEmail`로 Cognito 임시 사용자 초대 이메일을 받을 수 있어야 함
 - 생성된 PostgreSQL에 AWS용 migration 적용
-- 애플리케이션이 Cognito JWT와 PostgreSQL 환경 변수를 사용하도록 포팅 완료
+- 애플리케이션이 Cognito admin auth·서버 세션과 PostgreSQL 환경 변수를
+  사용하도록 포팅 완료
 - 관리자의 SNS alarm 구독 추가
 - 조직 SCP가 CloudFormation, IAM, VPC, ECS, RDS, KVS, Lambda, Route 53,
   ACM, Secrets Manager 리소스 생성을 허용
@@ -149,8 +154,13 @@ npm run synth -- \
 - Fargate `AssignPublicIp=ENABLED`와 ALB security group에서만 3000 ingress
 - NAT Gateway가 없고 RDS는 isolated subnet을 사용하는지
 - HTTPS listener와 ACM DNS validation
+- HTTPS listener default action이 단일 target group forward이며
+  `authenticate-cognito` listener rule이 없는지
 - `malbut.hyenje29.click` child Hosted Zone apex의 ALB alias A record
 - VAPID parameter의 `NoEcho=true`
+- Cognito client에 `ALLOW_ADMIN_USER_PASSWORD_AUTH`와 token refresh만
+  활성화되고 OAuth, client secret, Hosted UI domain이 없는지
+- ECS task role의 Cognito admin auth 권한이 User Pool ARN 하나로 제한되는지
 
 ## 배포 인계
 

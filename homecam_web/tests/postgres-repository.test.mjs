@@ -24,7 +24,8 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         version TEXT PRIMARY KEY,
         applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
-      INSERT INTO homecam_schema_migrations (version) VALUES ('0001_initial');
+      INSERT INTO homecam_schema_migrations (version)
+      VALUES ('0001_initial'), ('0002_web_auth_sessions');
     `);
     await seedDevice(database);
 

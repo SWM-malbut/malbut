@@ -1,82 +1,54 @@
 import { NextResponse } from "next/server";
-import { getRuntimeValue } from "../../../runtime-env";
-
-const ALB_AUTH_COOKIE_PREFIX = "AWSELBAuthSessionCookie";
+import {
+  readCookie,
+  revokeWebSession,
+  webAuthCookieOptions,
+  WEB_CHALLENGE_COOKIE,
+  WEB_SESSION_COOKIE,
+} from "../../../../db/web-auth";
+import { getRuntimeEnvironment } from "../../../runtime-env";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
-  const requestUrl = new URL(request.url);
-  const returnTo = safeReturnPath(requestUrl.searchParams.get("return_to"));
-  const publicOrigin = safeHttpsOrigin(getRuntimeValue("AUTH_PUBLIC_ORIGIN"));
-  const cognitoDomain = safeHttpsOrigin(getRuntimeValue("AUTH_COGNITO_DOMAIN"));
-  const clientId = getRuntimeValue("AUTH_COGNITO_CLIENT_ID");
-
-  const completionUrl = new URL("/auth/logout/complete", publicOrigin ?? requestUrl.origin);
-  const usesCognito = Boolean(cognitoDomain && clientId);
-  if (!usesCognito) completionUrl.searchParams.set("return_to", returnTo);
-  const redirectUrl = usesCognito
-    ? cognitoLogoutUrl(cognitoDomain!, clientId!, completionUrl)
-    : completionUrl;
-  const response = NextResponse.redirect(redirectUrl, 303);
-  expireAlbCookies(response);
+export async function POST(request: Request) {
+  if (!sameOriginJsonRequest(request)) {
+    return NextResponse.json({ ok: false, message: "요청을 확인해 주세요." }, {
+      status: 403, headers: { "cache-control": "no-store" },
+    });
+  }
+  const secret = getRuntimeEnvironment().AUTH_SESSION_SECRET?.trim();
+  if (secret) {
+    await revokeWebSession(
+      readCookie(request.headers.get("cookie"), WEB_SESSION_COOKIE),
+      secret,
+    ).catch(() => undefined);
+  }
+  const response = NextResponse.json({ ok: true, redirectTo: "/" }, {
+    headers: { "cache-control": "no-store" },
+  });
+  expire(response, WEB_SESSION_COOKIE);
+  expire(response, WEB_CHALLENGE_COOKIE);
   return response;
 }
 
-function cognitoLogoutUrl(
-  cognitoDomain: string,
-  clientId: string,
-  completionUrl: URL,
-) {
-  const logoutUrl = new URL("/logout", cognitoDomain);
-  logoutUrl.searchParams.set("client_id", clientId);
-  logoutUrl.searchParams.set("logout_uri", completionUrl.toString());
-  return logoutUrl;
+function sameOriginJsonRequest(request: Request) {
+  if (request.headers.get("sec-fetch-site")?.toLowerCase() === "cross-site") return false;
+  if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return false;
+  const configured = getRuntimeEnvironment().AUTH_PUBLIC_ORIGIN?.trim();
+  let expected = new URL(request.url).origin;
+  if (configured) {
+    try {
+      const url = new URL(configured);
+      if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash) return false;
+      expected = url.origin;
+    } catch { return false; }
+  }
+  return request.headers.get("origin") === expected;
 }
 
-function expireAlbCookies(response: NextResponse) {
-  for (const name of [
-    ALB_AUTH_COOKIE_PREFIX,
-    ...Array.from(
-      { length: 4 },
-      (_, shard) => `${ALB_AUTH_COOKIE_PREFIX}-${shard}`,
-    ),
-  ]) {
-    response.cookies.set({
-      name,
-      value: "",
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      path: "/",
-      maxAge: -1,
-      expires: new Date(0),
-    });
-  }
-}
-
-function safeReturnPath(value: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/";
-  try {
-    const url = new URL(value, "https://app.local");
-    if (url.origin !== "https://app.local" || url.pathname.startsWith("/auth/")) {
-      return "/";
-    }
-    return `${url.pathname}${url.search}${url.hash}`;
-  } catch {
-    return "/";
-  }
-}
-
-function safeHttpsOrigin(value: string | undefined) {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash) {
-      return null;
-    }
-    return url.origin;
-  } catch {
-    return null;
-  }
+function expire(response: NextResponse, name: string) {
+  response.cookies.set(name, "", {
+    ...webAuthCookieOptions(0),
+    expires: new Date(0),
+  });
 }
