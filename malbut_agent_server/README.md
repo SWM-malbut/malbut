@@ -28,9 +28,13 @@ SWM25-72에서 오프라인 `mock`과 OpenAI Responses API를 같은
 - 인증된 capability 조회와 비부작용 Tool query API
 - Tool 입력 schema, timeout, 결과 크기·상태 freshness 검증
 - 프로세스 내 Tool query 중복 억제와 오류 원문 비공개
+- 확인 근거·CAS·영속 멱등성·내용 없는 audit를 갖춘 장기 기억 core
+- final transcript만 받는 비실행 음성 대화 경계와 TTS 취소 계약
+- 최종 안전 응답을 제한된 visual cue로 바꾸는 비실행 감정 표현 정책
 
-공개 장기 기억 CRUD API와 실제 ROS 부작용 Tool 실행기는 후속 스토리에서
-연결한다. 모델이 추론한 내용을 자동 저장하는 경로는 없다. 현재 서버는
+장기 기억 변경 core는 구현했지만 신뢰된 person identity와 확인 token이 필요한
+공개 HTTP/ROS CRUD adapter는 열지 않았다. 실제 ROS 부작용 Tool 실행기도 후속
+스토리에서 연결한다. 모델이 추론한 내용을 자동 저장하는 경로는 없다. 현재 서버는
 `trusted_robot_state=False`, `MALBUT_AGENT_TOOL_MODE=proposal`이 기본이라
 OpenAI 또는 Mock이 반환한 Tool 제안을 물리 실행하지 않는다.
 
@@ -155,6 +159,31 @@ deadline이 지나도 이미 시작된 Python thread를 강제로 중단하지 �
 제안이라는 뜻일 뿐이다. `execution.authorized`와 `consume_once`는
 SWM25-74 전까지 항상 `false`이고 `tool_call_id`는 `null`이다.
 
+## SWM25-75~77 오프라인 계약
+
+세 후속 스토리는 외부 장치나 유료 API를 호출하지 않는 범위에서 구현했다.
+
+- SWM25-75: 확인된 장기 기억 create/update/delete, record CAS, 사용자별 영속
+  revision, 재시작 후 멱등 replay와 내용 없는 audit
+- SWM25-76: 원시 오디오를 받지 않는 final transcript 계약, 신뢰된
+  사용자·세션 binding, self-echo 차단과 TTS barge-in/cancel 상태기계
+- SWM25-77: 최종 Safety 응답의 결정적 visual cue, 긴급·privacy 우선 억제,
+  TTL·빈도 제한·bounded process-local idempotency와 neutral fallback
+
+각 기능의 대표 검사를 300회씩 반복하는 명령은 다음과 같다.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. \
+python3 scripts/run_swm25_75_77_stress.py \
+  --iterations 300 \
+  --output \
+  docs/evaluations/artifacts/SWM25-75_77_300X_OFFLINE_2026-08-13.json
+```
+
+이 검증은 실제 사람 인식, STT/TTS, ROS, frontend renderer 또는 운영 성능
+시험을 대신하지 않는다. 현재 완료 범위와 blocker는 각 스토리 문서와
+300회 반복 보고서에 분리해 두었다.
+
 ## OpenAI 서버 실행
 
 `.env.example`을 Git에서 제외되는 로컬 파일로 복사한 뒤 권한을 제한한다.
@@ -216,6 +245,21 @@ PYTHONPATH=. python3 -m malbut_agent_server.eval_runner \
   --progress
 ```
 
+## 합성 대화 흐름 기록
+
+일반 평가 JSON은 개인정보 보호를 위해 발화·응답·원문 prompt를 저장하지
+않는다. 요청부터 컨텍스트 선택, Mock 원결정, SafetyPolicy, 최종 응답과
+DB 저장까지 사람이 읽어야 할 때는 합성 데이터 전용 trace를 실행한다.
+
+```bash
+PYTHONPATH=. python3 scripts/run_synthetic_conversation_trace.py
+```
+
+이 명령은 인메모리 SQLite와 결정론적 MockProvider만 사용하며 OpenAI,
+ROS, 카메라, 파일 생성 Tool, 알림 전송을 호출하지 않는다. 전체 JSON은
+`0600`으로, 사람이 읽기 쉬운 Markdown은 `0644`로 기록한다. 실제 사용자
+대화나 운영 자격 증명을 이 trace에 넣으면 안 된다.
+
 ## 사용자 컨텍스트
 
 모델 입력은 다음 영역을 서로 다른 데이터로 구성한다.
@@ -256,8 +300,15 @@ PYTHONPATH=. python3 -m malbut_agent_server.eval_runner \
 - [SWM25-71 사용자 컨텍스트 통합](docs/jira/SWM25-71_USER_CONTEXT_INTEGRATION.md)
 - [SWM25-72 LLM provider 연결](docs/jira/SWM25-72_LLM_PROVIDER_INTEGRATION.md)
 - [SWM25-73 Agent Tool Gateway](docs/jira/SWM25-73_AGENT_TOOL_GATEWAY.md)
+- [SWM25-75 장기 기억 오프라인 core](docs/jira/SWM25-75_LONG_TERM_MEMORY_INTEGRATION.md)
+- [SWM25-76 음성 대화 오프라인 계약](docs/jira/SWM25-76_VOICE_CONVERSATION_PIPELINE.md)
+- [SWM25-77 감정 표현 오프라인 계약](docs/jira/SWM25-77_EMOTION_EXPRESSION_INTEGRATION.md)
 - [SWM25-72 OpenAI baseline 평가](docs/evaluations/SWM25-72_OPENAI_EVALUATION_2026-08-05.md)
 - [SWM25-72 OpenAI post-fix parity 평가](docs/evaluations/SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md)
+- [SWM25-69~74 구현 재검증·300회 반복 보고서](docs/evaluations/SWM25-69_74_REVALIDATION_2026-08-12.html)
+- [SWM25-75~77 기능별 300회 반복 보고서](docs/evaluations/SWM25-75_77_300X_OFFLINE_2026-08-13.md)
+- [합성 대화·컨텍스트 전체 흐름 기록](docs/evaluations/SYNTHETIC_CONVERSATION_TRACE_2026-08-13.md)
+- [Malbut LLM Agent 구현·출시 승인 기준](docs/LLM_AGENT_IMPLEMENTATION_ACCEPTANCE_CRITERIA.md)
 
 다중 프로세스 분산 잠금, Tool query cache의 재시작 후 보존, 주기적 만료
 sweeper, 독립 provider 장애 fallback과 ROS 2 대화 bridge는 이 MVP의 운영

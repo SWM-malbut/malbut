@@ -27,7 +27,14 @@ setup(
                 'docs/jira/SWM25-71_USER_CONTEXT_INTEGRATION.md',
                 'docs/jira/SWM25-72_LLM_PROVIDER_INTEGRATION.md',
                 'docs/jira/SWM25-73_AGENT_TOOL_GATEWAY.md',
+                'docs/jira/SWM25-75_LONG_TERM_MEMORY_INTEGRATION.md',
+                'docs/jira/SWM25-76_VOICE_CONVERSATION_PIPELINE.md',
+                'docs/jira/SWM25-77_EMOTION_EXPRESSION_INTEGRATION.md',
             ],
+        ),
+        (
+            'share/' + package_name + '/docs',
+            ['docs/LLM_AGENT_IMPLEMENTATION_ACCEPTANCE_CRITERIA.md'],
         ),
         (
             'share/' + package_name + '/docs/evaluations',
@@ -36,7 +43,36 @@ setup(
                 'SWM25-72_OPENAI_EVALUATION_2026-08-05.md',
                 'docs/evaluations/'
                 'SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md',
+                'docs/evaluations/'
+                'SWM25-69_74_REVALIDATION_2026-08-12.md',
+                'docs/evaluations/'
+                'SWM25-69_74_REVALIDATION_2026-08-12.html',
+                'docs/evaluations/'
+                'SYNTHETIC_CONVERSATION_TRACE_2026-08-13.md',
+                'docs/evaluations/'
+                'SWM25-75_77_300X_OFFLINE_2026-08-13.md',
             ],
+        ),
+        (
+            'share/' + package_name + '/docs/evaluations/artifacts',
+            [
+                'docs/evaluations/artifacts/'
+                'SWM25-69_74_300X_OFFLINE_2026-08-12.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-69_74_REVALIDATION_2026-08-12.artifact.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-69_74_REVALIDATION_2026-08-12.delivery.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-69_74_REVALIDATION_2026-08-12.sql',
+                'docs/evaluations/artifacts/'
+                'SYNTHETIC_CONVERSATION_TRACE_2026-08-13.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-75_77_300X_OFFLINE_2026-08-13.json',
+            ],
+        ),
+        (
+            'share/' + package_name + '/docs/worklogs',
+            ['docs/worklogs/OVERNIGHT_2026-08-13.md'],
         ),
     ],
     install_requires=['setuptools'],

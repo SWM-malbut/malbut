@@ -305,18 +305,19 @@ class AgentOrchestrator:
         safety_request = AgentRequest.from_dict(effective_value)
         model_request = AgentRequest.from_dict(effective_value)
         memories, memory_revision = (
-            self.memory_store.search_with_revision(
+            self.memory_store.search_with_owner_revision(
                 request.user_id,
                 request.utterance,
                 limit=self.memory_limit,
             )
         )
+        memory_snapshot = copy.deepcopy(memories)
         tool_specs = self.capability_registry.select_specs(
             model_request.available_tools
         )
         provider_result = self.provider.complete(
             model_request,
-            memories,
+            copy.deepcopy(memory_snapshot),
             copy.deepcopy(list(conversation_turns)),
             tool_specs,
             conversation_summary=copy.deepcopy(
@@ -340,7 +341,11 @@ class AgentOrchestrator:
             expires_in_ms=provider_decision.expires_in_ms,
         )
         provider_result.decision = raw_decision
-        if self.memory_store.revision != memory_revision:
+        if not self.memory_store.owner_snapshot_is_current(
+            request.user_id,
+            memory_revision,
+            memory_snapshot,
+        ):
             raise MemoryChangedError(
                 'memory changed during model inference; retry the request'
             )
@@ -370,7 +375,7 @@ class AgentOrchestrator:
         )
         memory_expirations = [
             memory.expires_at
-            for memory in memories
+            for memory in memory_snapshot
             if memory.expires_at is not None
         ]
         if memory_expirations:
@@ -389,7 +394,7 @@ class AgentOrchestrator:
             decision=decision,
             safety=safety,
             provider_result=provider_result,
-            memory_ids=[memory.id for memory in memories],
+            memory_ids=[memory.id for memory in memory_snapshot],
             decision_id=str(uuid.uuid4()),
             issued_at=issued_at,
             expires_at=expires_at,

@@ -544,6 +544,170 @@ def test_memory_change_during_inference_discards_result() -> None:
         store.close()
 
 
+def test_other_user_memory_change_does_not_discard_result() -> None:
+    """Another owner's mutation must not invalidate this user's context."""
+    store = SQLiteMemoryStore(':memory:')
+    store.add('test-user', '반려견 이름은 초코')
+
+    class OtherUserWritingProvider(AgentProvider):
+        def complete(
+            self,
+            request: AgentRequest,
+            memories: List[MemoryRecord],
+            conversation_turns: List[ConversationTurn],
+            tools: List[ToolSpec],
+            conversation_summary: Optional[
+                ConversationSummary
+            ] = None,
+        ) -> ProviderResult:
+            del (
+                request,
+                memories,
+                conversation_turns,
+                tools,
+                conversation_summary,
+            )
+            store.add('other-user', '다른 사용자의 독립 기억')
+            return ProviderResult(
+                decision=AgentDecision(
+                    type='message',
+                    message='이름은 초코야.',
+                ),
+                provider='fixture',
+                model='fixture',
+                latency_ms=0,
+            )
+
+    try:
+        orchestrator, conversation_store = _runtime(
+            OtherUserWritingProvider(),
+            store,
+            SafetyPolicy(),
+        )
+        result = orchestrator.handle(
+            _request('강아지 이름이 뭐였지?', {}, [])
+        )
+        assert result.decision.message == '이름은 초코야.'
+    finally:
+        conversation_store.close()
+        store.close()
+
+
+def test_memory_expiring_during_inference_discards_result() -> None:
+    """Time expiry must invalidate a response even without a DB mutation."""
+    current_time = [100.0]
+    store = SQLiteMemoryStore(
+        ':memory:',
+        clock=lambda: current_time[0],
+    )
+    store.add(
+        'test-user',
+        '반려견 이름은 초코',
+        expires_at=101.0,
+        created_at=99.0,
+    )
+
+    class ExpiringProvider(AgentProvider):
+        def complete(
+            self,
+            request: AgentRequest,
+            memories: List[MemoryRecord],
+            conversation_turns: List[ConversationTurn],
+            tools: List[ToolSpec],
+            conversation_summary: Optional[
+                ConversationSummary
+            ] = None,
+        ) -> ProviderResult:
+            del (
+                request,
+                conversation_turns,
+                tools,
+                conversation_summary,
+            )
+            assert len(memories) == 1
+            current_time[0] = 101.0
+            return ProviderResult(
+                decision=AgentDecision(
+                    type='message',
+                    message='이름은 초코야.',
+                ),
+                provider='fixture',
+                model='fixture',
+                latency_ms=0,
+            )
+
+    try:
+        orchestrator, conversation_store = _runtime(
+            ExpiringProvider(),
+            store,
+            SafetyPolicy(),
+        )
+        with pytest.raises(MemoryChangedError):
+            orchestrator.handle(
+                _request('강아지 이름이 뭐였지?', {}, [])
+            )
+    finally:
+        conversation_store.close()
+        store.close()
+
+
+def test_provider_cannot_mutate_memory_snapshot_to_bypass_fence() -> None:
+    """Post-provider checks use an immutable server-owned memory snapshot."""
+    current_time = [100.0]
+    store = SQLiteMemoryStore(
+        ':memory:',
+        clock=lambda: current_time[0],
+    )
+    record = store.add(
+        'test-user',
+        '반려견 이름은 초코',
+        expires_at=101.0,
+        created_at=99.0,
+        metadata={'owner': 'server'},
+    )
+
+    class MutatingMemoryListProvider(AgentProvider):
+        def complete(
+            self,
+            request: AgentRequest,
+            memories: List[MemoryRecord],
+            conversation_turns: List[ConversationTurn],
+            tools: List[ToolSpec],
+            conversation_summary: Optional[
+                ConversationSummary
+            ] = None,
+        ) -> ProviderResult:
+            del request, conversation_turns, tools, conversation_summary
+            assert memories[0].id == record.id
+            memories[0].metadata['owner'] = 'provider'
+            memories.clear()
+            current_time[0] = 101.0
+            return ProviderResult(
+                decision=AgentDecision(
+                    type='message',
+                    message='이름은 초코야.',
+                ),
+                provider='fixture',
+                model='fixture',
+                latency_ms=0,
+            )
+
+    try:
+        orchestrator, conversation_store = _runtime(
+            MutatingMemoryListProvider(),
+            store,
+            SafetyPolicy(),
+        )
+        with pytest.raises(MemoryChangedError):
+            orchestrator.handle(
+                _request('강아지 이름이 뭐였지?', {}, [])
+            )
+        assert record.metadata == {'owner': 'server'}
+    finally:
+        conversation_store.close()
+        store.close()
+
+
 def test_retrieved_memory_expiry_bounds_decision_ttl() -> None:
     """A decision must not outlive the memory used to produce it."""
     store = SQLiteMemoryStore(':memory:')
