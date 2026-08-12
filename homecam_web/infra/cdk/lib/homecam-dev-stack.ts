@@ -689,7 +689,7 @@ export class HomecamDevStack extends Stack {
     );
     for (const [ruleId, priority, pathPatterns] of [
       ["PublicHealth", 1, ["/api/health"]],
-      ["PublicLogout", 2, ["/auth/logout", "/auth/logout/complete"]],
+      ["PublicLogoutLanding", 2, ["/auth/logout", "/auth/logout/complete"]],
       ["DeviceSessionApi", 3, ["/api/device/v1/session"]],
       ["DeviceHeartbeatApi", 4, ["/api/device/v1/heartbeat"]],
       ["DeviceEventsApi", 5, ["/api/device/v1/events"]],
