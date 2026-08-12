@@ -74,8 +74,8 @@ fi
 
 : "${HOMECAM_WORLD:=small_house}"
 : "${HOMECAM_START_GAZEBO:=true}"
-: "${HOMECAM_GAZEBO_GUI:=true}"
-: "${HOMECAM_GAZEBO_HEADLESS:=false}"
+: "${HOMECAM_GAZEBO_GUI:=false}"
+: "${HOMECAM_GAZEBO_HEADLESS:=true}"
 : "${HOMECAM_IMAGE_TOPIC:=}"
 : "${HOMECAM_CAMERA_INFO_TOPIC:=}"
 : "${HOMECAM_ODOM_TOPIC:=/odom}"

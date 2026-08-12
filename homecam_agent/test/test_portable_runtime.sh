@@ -62,6 +62,18 @@ homecam_validate_backend_url HTTPS://example.com
 
 [[ $((10#08)) -eq 8 ]]
 
+source_token="$temporary_dir/source.token"
+printf 'hc1.123e4567-e89b-42d3-a456-426614174000.%064d' 0 > "$source_token"
+chmod 600 "$source_token"
+generated_config="$temporary_dir/generated/sim.env"
+"$repo_root/scripts/configure_sim_device.sh" \
+  --config "$generated_config" \
+  --device-id gazebo-test \
+  --backend-url https://example.com \
+  --token-file "$source_token" >/dev/null
+grep -Fqx 'HOMECAM_GAZEBO_GUI=false' "$generated_config"
+grep -Fqx 'HOMECAM_GAZEBO_HEADLESS=true' "$generated_config"
+
 standalone_workspace="$temporary_dir/standalone_workspace"
 mkdir -p "$standalone_workspace/src/homecam_agent"
 [[ "$(

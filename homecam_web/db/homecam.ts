@@ -472,21 +472,25 @@ export async function updateDeviceHeartbeat(input: {
   // master waits for a viewer or the storage service's offer. Session
   // lifecycle is therefore controlled by the authenticated session endpoint
   // (DELETE), settings changes, and expiry—not inferred from one heartbeat.
+  let activeSessionExpiresAt = activeSession?.expiresAt ?? null;
   if (
     activeSession &&
     input.streamMode === activeSession.mode &&
     input.mediaHealthy === true
   ) {
-    await getD1()
+    const nextExpiresAt = new Date(
+      Date.now() + MEDIA_SESSION_TTL_MS,
+    ).toISOString();
+    const result = await getD1()
       .prepare(
         `UPDATE stream_sessions SET expires_at = ?
          WHERE id = ? AND status = 'active'`,
       )
-      .bind(
-        new Date(Date.now() + MEDIA_SESSION_TTL_MS).toISOString(),
-        activeSession.id,
-      )
+      .bind(nextExpiresAt, activeSession.id)
       .run();
+    if (result.meta.changes > 0) {
+      activeSessionExpiresAt = nextExpiresAt;
+    }
   }
   const refreshed = await getDeviceSettings(input.deviceId);
   const activeSessionId = activeSession?.id ?? null;
@@ -556,7 +560,21 @@ export async function updateDeviceHeartbeat(input: {
       .bind(nowIso, activeSession.id, input.deviceId, activeSession.id)
       .run();
   }
-  return getDeviceSettings(input.deviceId);
+  const state = await getDeviceSettings(input.deviceId);
+  return {
+    ...state,
+    // Reuse the session snapshot already read for the heartbeat. This avoids
+    // another global expiry sweep and SELECT in the 2-second polling route,
+    // while rejecting a stale snapshot after a concurrent stop/replacement.
+    activeSession:
+      activeSession &&
+      activeSessionExpiresAt &&
+      state.activeSessionId === activeSession.id &&
+      state.streamMode === activeSession.mode &&
+      Date.parse(activeSessionExpiresAt) > Date.now()
+      ? { ...activeSession, expiresAt: activeSessionExpiresAt }
+      : null,
+  };
 }
 
 export async function prepareDeviceMediaSession(input: {

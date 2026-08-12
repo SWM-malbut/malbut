@@ -107,11 +107,16 @@ PR 배포의 기본 절차는 아니다.
 `${XDG_CONFIG_HOME:-$HOME/.config}/homecam/device.token`에 권한 `600`으로
 보관한다. 설정과 token은 Git에 커밋하지 않는다.
 
-실행 스크립트는 `small_house`와 로봇을 시작하고
+실행 스크립트는 `small_house`와 로봇을 headless 모드로 시작하고
 `sensor_msgs/msg/Image` 및 `CameraInfo` 토픽을 자동 탐색한다. RGB 프레임
 수신, 필수 GStreamer plugin, KVS 활성 빌드, SDK CA 파일을 확인한 뒤에만
 원격 세션을 시작한다. Ctrl+C를 누르면 이 스크립트가 시작한 Gazebo와 homecam
 프로세스만 종료한다.
+
+로컬 Gazebo 화면도 함께 확인해야 할 때만 보호된 `sim.env`에서
+`HOMECAM_GAZEBO_GUI=true`, `HOMECAM_GAZEBO_HEADLESS=false`로 바꾼다.
+브라우저 스트리밍 시연은 Qt/QML GUI 종료가 전체 시뮬레이션을 중단하지 않도록
+headless 설정을 유지하는 것을 권장한다.
 
 마이크 없는 PC에서는 기본적으로 무음 Opus track을 사용한다. 실제 마이크를
 사용할 때는 보호된 `sim.env`의 `HOMECAM_MICROPHONE_ENABLED=true`와

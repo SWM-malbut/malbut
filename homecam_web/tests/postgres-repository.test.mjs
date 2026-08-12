@@ -75,6 +75,13 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       assert.equal(heartbeat.streamMode, "storage");
       assert.equal(heartbeat.mediaHealthy, true);
       assert.equal(heartbeat.detectorHealthy, true);
+      assert.equal(heartbeat.activeSessionId, session.id);
+      assert.equal(heartbeat.activeSession?.id, session.id);
+      assert.equal(heartbeat.activeSession?.mode, "storage");
+      assert.ok(
+        Date.parse(heartbeat.activeSession?.expiresAt) >=
+          Date.parse(session.expiresAt),
+      );
 
       const activeSession = await homecam.getActiveMediaSession("living-room");
       assert.equal(activeSession?.id, session.id);
