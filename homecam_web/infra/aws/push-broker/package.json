@@ -1,0 +1,9 @@
+{
+  "name": "homecam-push-broker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "web-push": "3.6.7"
+  }
+}

@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# Test and build outputs
+coverage/
+.next/
+.vinext/
+dist/
+out/
+.wrangler/
+*.tsbuildinfo
+
+# Local runtime data
+.local/
+.env
+.env.*
+!.env.example
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Hosting and editor metadata
+.vercel/
+.DS_Store
+*.pem
