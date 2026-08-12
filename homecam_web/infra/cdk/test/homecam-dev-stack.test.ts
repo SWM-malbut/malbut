@@ -107,7 +107,7 @@ test("creates one isolated P2P/storage/archive set per device", () => {
 
   template.resourceCountIs("AWS::KinesisVideo::SignalingChannel", 4);
   template.resourceCountIs("AWS::KinesisVideo::Stream", 2);
-  template.resourceCountIs("Custom::AWS", 4);
+  template.resourceCountIs("Custom::AWS", 2);
   template.hasResourceProperties("AWS::KinesisVideo::Stream", {
     DataRetentionInHours: 168,
     MediaType: "video/h264,audio/aac",

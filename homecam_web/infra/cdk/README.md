@@ -32,7 +32,8 @@ Jetson / Gazebo
 - 암호화된 PostgreSQL 16 RDS와 Secrets Manager 관리 자격 증명
 - Cognito User Pool, OAuth code flow 웹 client, Hosted UI domain
 - 장치마다 분리된 P2P·Storage signaling channel과 archive stream
-- Storage channel 연결 및 P2P 저장 비활성화를 적용하는 custom resource
+- Storage channel과 archive stream을 연결하는 custom resource. 신규 P2P channel은
+  AWS 기본값인 Media Storage `DISABLED`를 유지
 - 장치 한정 15분 STS 자격 정보를 발급하는 KVS broker Lambda
 - VAPID Web Push broker Lambda
 - 5분 주기 retention/push-outbox maintenance Lambda와 DLQ
@@ -138,7 +139,7 @@ npm run synth -- \
 `cdk synth` 결과의 다음 내용을 배포 리뷰에서 확인한다.
 
 - 각 장치의 channel 두 개와 168시간 stream 하나
-- P2P `DISABLED`, Storage `ENABLED` custom resource
+- P2P channel에 Media Storage 연결이 없고 Storage channel만 `ENABLED`인지
 - IAM policy에 wildcard KVS resource가 없는지
 - RDS `PubliclyAccessible=false`
 - Fargate `AssignPublicIp=ENABLED`와 ALB security group에서만 3000 ingress

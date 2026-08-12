@@ -987,31 +987,6 @@ function createDeviceKvsResources(
   storageChannel.applyRemovalPolicy(RemovalPolicy.DESTROY);
   archiveStream.applyRemovalPolicy(RemovalPolicy.DESTROY);
 
-  const disableP2pStorage = new cr.AwsCustomResource(
-    scope,
-    `${constructId}DisableP2pStorage`,
-    {
-      installLatestAwsSdk: false,
-      onCreate: mediaStorageCall(
-        p2pChannel.attrArn,
-        "DISABLED",
-        `${prefix}-${safeName}-p2p-disabled`,
-      ),
-      onUpdate: mediaStorageCall(
-        p2pChannel.attrArn,
-        "DISABLED",
-        `${prefix}-${safeName}-p2p-disabled`,
-      ),
-      policy: cr.AwsCustomResourcePolicy.fromStatements([
-        new iam.PolicyStatement({
-          actions: ["kinesisvideo:UpdateMediaStorageConfiguration"],
-          resources: [p2pChannel.attrArn],
-        }),
-      ]),
-    },
-  );
-  disableP2pStorage.node.addDependency(p2pChannel);
-
   const enableStorage = new cr.AwsCustomResource(
     scope,
     `${constructId}EnableStorage`,
