@@ -257,9 +257,13 @@ project_name=$(aws cloudformation describe-stacks \
   --stack-name MalbutHomecam-dev \
   --query 'Stacks[0].Outputs[?OutputKey==`ImageBuilderProjectName`].OutputValue' \
   --output text)
+image_git_sha=$(git rev-parse HEAD)
 build_id=$(aws codebuild start-build \
   --profile malbut-team --region ap-northeast-2 \
-  --project-name "$project_name" --query 'build.id' --output text)
+  --project-name "$project_name" \
+  --environment-variables-override \
+    "name=GIT_SHA,value=$image_git_sha,type=PLAINTEXT" \
+  --query 'build.id' --output text)
 aws codebuild batch-get-builds \
   --profile malbut-team --region ap-northeast-2 \
   --ids "$build_id" --query 'builds[0].buildStatus' --output text
@@ -267,3 +271,5 @@ aws codebuild batch-get-builds \
 
 CodeBuild service role은 이 stack의 ECR repository pull/push만 허용하며,
 소스 URL과 repository URI는 build 시작 요청으로 바꾸지 않는다.
+호출자가 덮어쓰는 값은 공개 저장소에 push된 40자 `GIT_SHA` 하나뿐이며,
+`dual`·`cutover` 배포의 `containerImageTag`에도 같은 값을 사용한다.
