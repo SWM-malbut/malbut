@@ -80,10 +80,7 @@ export class HomecamDevStack extends Stack {
     Tags.of(this).add("ManagedBy", "aws-cdk");
 
     const parameters = deploymentParameters(this);
-    const homecamDomainName = Fn.join(".", [
-      parameters.recordName.valueAsString,
-      parameters.hostedZoneName.valueAsString,
-    ]);
+    const homecamDomainName = parameters.hostedZoneName.valueAsString;
     const hostedZone = route53.HostedZone.fromHostedZoneAttributes(
       this,
       "HomecamHostedZone",
@@ -105,16 +102,11 @@ export class HomecamDevStack extends Stack {
     const vpc = new ec2.Vpc(this, "HomecamVpc", {
       ipAddresses: ec2.IpAddresses.cidr("10.42.0.0/16"),
       maxAzs: 2,
-      natGateways: 1,
+      natGateways: 0,
       subnetConfiguration: [
         {
           name: "public",
           subnetType: ec2.SubnetType.PUBLIC,
-          cidrMask: 24,
-        },
-        {
-          name: "application",
-          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
           cidrMask: 24,
         },
         {
@@ -508,7 +500,7 @@ export class HomecamDevStack extends Stack {
     const cluster = new ecs.Cluster(this, "HomecamCluster", {
       clusterName: `${prefix}-cluster`,
       vpc,
-      containerInsightsV2: ecs.ContainerInsights.ENABLED,
+      containerInsightsV2: ecs.ContainerInsights.DISABLED,
     });
     const taskDefinition = new ecs.FargateTaskDefinition(this, "HomecamTask", {
       family: `${prefix}-web`,
@@ -624,8 +616,8 @@ export class HomecamDevStack extends Stack {
         cluster,
         taskDefinition,
         desiredCount: parameters.serviceDesiredCount.valueAsNumber,
-        assignPublicIp: false,
-        taskSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        assignPublicIp: true,
+        taskSubnets: { subnetType: ec2.SubnetType.PUBLIC },
         publicLoadBalancer: true,
         circuitBreaker: { rollback: true },
         minHealthyPercent: 100,
@@ -672,7 +664,6 @@ export class HomecamDevStack extends Stack {
     });
     new route53.ARecord(this, "HomecamDnsRecord", {
       zone: hostedZone,
-      recordName: parameters.recordName.valueAsString,
       target: route53.RecordTarget.fromAlias(
         new route53Targets.LoadBalancerTarget(service.loadBalancer),
       ),
@@ -816,19 +807,15 @@ export class HomecamDevStack extends Stack {
 
 function deploymentParameters(stack: Stack) {
   return {
-    recordName: new CfnParameter(stack, "HomecamRecordName", {
-      type: "String",
-      description: "Route 53 record label inside the hosted zone, for example homecam-dev",
-      allowedPattern: "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$",
-    }),
     hostedZoneId: new CfnParameter(stack, "HomecamHostedZoneId", {
       type: "String",
-      description: "Existing Route 53 public hosted zone ID",
+      description: "Existing Route 53 public child hosted zone ID",
       allowedPattern: "^Z[A-Z0-9]{1,31}$",
     }),
     hostedZoneName: new CfnParameter(stack, "HomecamHostedZoneName", {
       type: "String",
-      description: "Existing Route 53 zone name, for example example.com",
+      description:
+        "Existing Route 53 child zone name used as the homecam apex, for example malbut.hyenje29.click",
     }),
     initialOwnerEmail: new CfnParameter(stack, "InitialOwnerEmail", {
       type: "String",

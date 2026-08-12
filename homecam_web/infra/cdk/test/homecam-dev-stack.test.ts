@@ -19,7 +19,7 @@ test("creates the isolated homecam network and application platform", () => {
   const template = synthesize();
 
   template.resourceCountIs("AWS::EC2::VPC", 1);
-  template.resourceCountIs("AWS::EC2::NatGateway", 1);
+  template.resourceCountIs("AWS::EC2::NatGateway", 0);
   template.resourceCountIs("AWS::ECS::Cluster", 1);
   template.resourceCountIs("AWS::ECS::Service", 1);
   template.resourceCountIs("AWS::ElasticLoadBalancingV2::LoadBalancer", 1);
@@ -42,8 +42,27 @@ test("creates the isolated homecam network and application platform", () => {
       MinimumHealthyPercent: 100,
     }),
     NetworkConfiguration: {
-      AwsvpcConfiguration: Match.objectLike({ AssignPublicIp: "DISABLED" }),
+      AwsvpcConfiguration: Match.objectLike({ AssignPublicIp: "ENABLED" }),
     },
+  });
+  const [service] = Object.values(template.findResources("AWS::ECS::Service"));
+  assert.ok(service);
+  const taskSubnets = service.Properties?.NetworkConfiguration?.AwsvpcConfiguration
+    ?.Subnets as Array<{ Ref?: string }>;
+  assert.ok(taskSubnets.length > 0);
+  assert.ok(taskSubnets.every((subnet) => subnet.Ref?.includes("publicSubnet")));
+
+  const ingressRules = Object.values(
+    template.findResources("AWS::EC2::SecurityGroupIngress"),
+  );
+  const appIngress = ingressRules.find(
+    (rule) => rule.Properties?.FromPort === 3000 && rule.Properties?.ToPort === 3000,
+  );
+  assert.ok(appIngress?.Properties?.SourceSecurityGroupId);
+  assert.equal(appIngress?.Properties?.CidrIp, undefined);
+  assert.equal(appIngress?.Properties?.CidrIpv6, undefined);
+  template.hasResourceProperties("AWS::ECS::Cluster", {
+    ClusterSettings: [{ Name: "containerInsights", Value: "disabled" }],
   });
   template.hasResourceProperties("AWS::Cognito::UserPoolUser", {
     DesiredDeliveryMediums: ["EMAIL"],
@@ -115,6 +134,33 @@ test("uses HTTPS, no-echo bootstrap inputs, and server-side secrets", () => {
     true,
   );
   assert.equal(rendered.Parameters.DeviceProvisioningExpiresAt?.NoEcho, true);
+});
+
+test("uses the imported child hosted zone apex as the homecam domain", () => {
+  const template = synthesize();
+  const rendered = template.toJSON() as {
+    Parameters: Record<string, unknown>;
+  };
+
+  assert.equal(rendered.Parameters.HomecamRecordName, undefined);
+  template.hasResourceProperties("AWS::CertificateManager::Certificate", {
+    DomainName: { Ref: "HomecamHostedZoneName" },
+    ValidationMethod: "DNS",
+  });
+  template.hasResourceProperties("AWS::Route53::RecordSet", {
+    HostedZoneId: { Ref: "HomecamHostedZoneId" },
+    Name: {
+      "Fn::Join": [
+        "",
+        [{ Ref: "HomecamHostedZoneName" }, "."],
+      ],
+    },
+    Type: "A",
+    AliasTarget: Match.objectLike({
+      DNSName: Match.anyValue(),
+      HostedZoneId: Match.anyValue(),
+    }),
+  });
 });
 
 test("bypasses Cognito only for machine and public utility paths", () => {

@@ -10,7 +10,7 @@
 Internet
   │ HTTPS
   ▼
-Route 53 + ACM ── ALB ── ECS Fargate (private subnet)
+Route 53 + ACM ── ALB ── ECS Fargate (public subnet, public IP)
                               │
                               ├── RDS PostgreSQL (isolated subnet)
                               ├── KVS broker Lambda Function URL
@@ -27,8 +27,8 @@ Jetson / Gazebo
 
 주요 리소스:
 
-- 2개 AZ의 public/application/database subnet과 NAT Gateway 1개
-- HTTPS ALB, private Fargate 서비스, ARM64 task, 1~4개 자동 확장
+- 2개 AZ의 public/database subnet. PoC 비용을 줄이기 위해 NAT Gateway는 사용하지 않음
+- HTTPS ALB, public subnet Fargate 서비스, ARM64 task, 1~4개 자동 확장
 - 암호화된 PostgreSQL 16 RDS와 Secrets Manager 관리 자격 증명
 - Cognito User Pool, OAuth code flow 웹 client, Hosted UI domain
 - 장치마다 분리된 P2P·Storage signaling channel과 archive stream
@@ -57,7 +57,9 @@ Jetson / Gazebo
 - PostgreSQL TLS는 앱 이미지에 고정된 AWS 서울 리전 공개 루트 CA 번들을
   `DATABASE_SSL_CA_FILE`로 읽고 `verify-full` 검증을 수행한다. CA는 비밀이
   아니므로 CloudFormation parameter나 Secrets Manager에 복제하지 않는다.
-- ECS task는 private subnet에 있고 ALB만 container port 3000에 접근한다.
+- ECS task는 아웃바운드 통신을 위해 public subnet과 public IP를 사용하지만,
+  security group은 ALB만 container port 3000에 접근하도록 한다. 인터넷에서
+  task로의 직접 inbound 접근은 허용하지 않는다.
 - 녹화 HLS는 같은 origin의 애플리케이션 proxy를 통해 제공해야 한다.
 - ALB는 `/api/health`, `/auth/logout/complete`와 현재 구현된 장치 API 3개,
   내부 API 2개만 정확한 경로 규칙으로 Cognito 없이 전달한다. 장치·내부 API는
@@ -79,9 +81,8 @@ CloudFormation 배포 시 다음 parameter가 반드시 필요하다. 값은 저
 
 | Parameter | 내용 |
 |---|---|
-| `HomecamRecordName` | Hosted Zone 내부 record label. 예: `homecam-dev` |
-| `HomecamHostedZoneId` | 기존 public Route 53 Hosted Zone ID |
-| `HomecamHostedZoneName` | zone 이름. 예: `example.com` |
+| `HomecamHostedZoneId` | 기존 public child Hosted Zone의 ID. `hyenje29.click` parent zone ID가 아니라 `malbut.hyenje29.click` zone ID |
+| `HomecamHostedZoneName` | 홈캠 주소로 사용할 child zone apex. 현재 값은 `malbut.hyenje29.click` |
 | `InitialOwnerEmail` | 최초 owner/broadcaster 이메일 |
 | `DeviceProvisioningManifestSha256` | helper가 생성한 one-time provisioning manifest의 소문자 SHA-256 |
 | `DeviceProvisioningExpiresAt` | provisioning 만료 UTC ISO 시각. 예: `2026-08-13T00:00:00.000Z` |
@@ -92,6 +93,8 @@ CloudFormation 배포 시 다음 parameter가 반드시 필요하다. 값은 저
 
 추가 선행 조건:
 
+- `malbut.hyenje29.click` public Hosted Zone을 만들고 그 NS record를 parent
+  `hyenje29.click` Hosted Zone에 위임한 상태
 - `ap-northeast-2`에 CDK bootstrap 완료
 - 최초 stack은 `ServiceDesiredCount=0`으로 생성해 ECR부터 준비
 - `InitialOwnerEmail`로 Cognito 임시 사용자 초대 이메일을 받을 수 있어야 함
@@ -137,14 +140,16 @@ npm run synth -- \
 - P2P `DISABLED`, Storage `ENABLED` custom resource
 - IAM policy에 wildcard KVS resource가 없는지
 - RDS `PubliclyAccessible=false`
-- Fargate `AssignPublicIp=DISABLED`
+- Fargate `AssignPublicIp=ENABLED`와 ALB security group에서만 3000 ingress
+- NAT Gateway가 없고 RDS는 isolated subnet을 사용하는지
 - HTTPS listener와 ACM DNS validation
+- `malbut.hyenje29.click` child Hosted Zone apex의 ALB alias A record
 - VAPID parameter의 `NoEcho=true`
 
 ## 배포 인계
 
 이 구현에서는 `cdk deploy`를 실행하지 않았다. 실제 배포 전 AWS 관리자가
-`cdk diff`와 예상 비용을 검토해야 한다. 특히 NAT Gateway, ALB, RDS 및 KVS
+`cdk diff`와 예상 비용을 검토해야 한다. 특히 ALB, RDS 및 KVS
 녹화는 실행 시간과 트래픽에 따라 지속 비용이 발생한다.
 
 배포 순서는 다음과 같다.
@@ -162,7 +167,8 @@ npm run synth -- \
 
 dev stack은 반복 실험을 위해 RDS·KVS·Secrets 등에 `DESTROY` 정책을 쓴다.
 운영 stack을 만들 때는 RDS Multi-AZ, deletion protection, backup 보존,
-Secrets·KVS·S3 `RETAIN`, NAT 고가용성 및 WAF를 별도 적용해야 한다.
+Secrets·KVS·S3 `RETAIN`, private application subnet과 NAT/VPC endpoint,
+아웃바운드 제어, WAF를 별도 적용해야 한다.
 
 ECR은 tag immutability를 사용한다. 이미 사용한 tag를 덮어쓰지 말고 배포마다
 Git commit SHA처럼 고유한 `containerImageTag`를 지정한다.
