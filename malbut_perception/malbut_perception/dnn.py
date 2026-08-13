@@ -54,7 +54,7 @@ def available_opencl_targets() -> List[int]:
 
 
 def resolve_dnn_target(requested: str) -> str:
-    """Resolve auto to CUDA, GPU OpenCL, or CPU in priority order."""
+    """Resolve auto to a verified CUDA target or the stable CPU target."""
     if requested not in SUPPORTED_DNN_TARGETS:
         choices = ', '.join(SUPPORTED_DNN_TARGETS)
         raise ValueError(f'dnn_target must be one of {choices}')
@@ -63,9 +63,6 @@ def resolve_dnn_target(requested: str) -> str:
     targets = available_cuda_targets()
     if cv2.dnn.DNN_TARGET_CUDA in targets:
         return 'cuda'
-    targets = available_opencl_targets()
-    if cv2.dnn.DNN_TARGET_OPENCL in targets:
-        return 'opencl'
     return 'cpu'
 
 

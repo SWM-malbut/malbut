@@ -27,6 +27,8 @@ def test_config_uses_only_rgbd_inputs_and_standard_outputs():
     assert config['dnn_target'] == 'auto'
     assert config['opencv_num_threads'] == 4
     assert config['reid_backend'] == 'auto'
+    assert config['projection_frame'] == ''
+    assert config['use_sim_time'] is False
 
 
 def test_node_contains_no_simulator_ground_truth_subscription():

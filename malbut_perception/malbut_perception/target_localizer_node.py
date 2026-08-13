@@ -227,6 +227,7 @@ class PersonLocalizerNode(Node):
             '/perception/person/debug_image/compressed',
         )
         self.declare_parameter('health_topic', '/perception/person/healthy')
+        self.declare_parameter('projection_frame', '')
         self.declare_parameter('output_frame', '')
         self.declare_parameter('detector_backend', 'auto')
         self.declare_parameter('model_path', '')
@@ -255,6 +256,11 @@ class PersonLocalizerNode(Node):
         self.declare_parameter('maximum_depth_m', 3.0)
         self.declare_parameter('minimum_depth_samples', 20)
         self.declare_parameter('fallback_depth_scale', 1.0)
+        # When RGB still sees a person beyond the depth camera's measurable
+        # range, publish a deliberately uncertain point on the same image ray.
+        # This is a lower-bound pursuit cue, not a fabricated metric distance.
+        self.declare_parameter('enable_bearing_only_fallback', True)
+        self.declare_parameter('bearing_only_uncertainty_m', 2.0)
         self.declare_parameter('person_thickness_m', 0.35)
         self.declare_parameter('sync_queue_size', 10)
         self.declare_parameter('sync_slop_sec', 0.08)
@@ -289,6 +295,10 @@ class PersonLocalizerNode(Node):
         maximum = float(self.get_parameter('maximum_depth_m').value)
         if minimum < 0.0 or maximum <= minimum:
             raise ValueError('depth range is invalid')
+        if float(
+            self.get_parameter('bearing_only_uncertainty_m').value
+        ) <= 0.0:
+            raise ValueError('bearing_only_uncertainty_m must be positive')
         rate = float(self.get_parameter('max_inference_rate_hz').value)
         if rate < 0.0 or not math.isfinite(rate):
             raise ValueError(
@@ -560,10 +570,17 @@ class PersonLocalizerNode(Node):
     ) -> Detection3DArray:
         output = Detection3DArray()
         output.header.stamp = rgb_message.header.stamp
-        source_frame = (
+        message_frame = (
             depth_message.header.frame_id
             or rgb_message.header.frame_id
             or self._camera_info.header.frame_id
+        )
+        # Pixel projection always produces REP-103 optical coordinates even
+        # when a simulator labels all RGB-D products with its body frame for
+        # PointCloud compatibility.
+        source_frame = (
+            str(self.get_parameter('projection_frame').value).strip()
+            or message_frame
         )
         target_frame = self._output_frame or source_frame
         output.header.frame_id = target_frame
@@ -628,14 +645,31 @@ class PersonLocalizerNode(Node):
                     self.get_parameter('fallback_depth_scale').value
                 ),
             )
-            if estimate is None:
+            bearing_only = estimate is None
+            if bearing_only and not bool(
+                self.get_parameter('enable_bearing_only_fallback').value
+            ):
                 continue
+            if bearing_only:
+                # A missing ROI depth while RGB still detects the person is
+                # represented at the sensor's far limit. The large covariance
+                # tells downstream users that only its bearing and a minimum
+                # range are trustworthy.
+                distance_m = float(
+                    self.get_parameter('maximum_depth_m').value
+                )
+                depth_dispersion_m = float(
+                    self.get_parameter('bearing_only_uncertainty_m').value
+                )
+            else:
+                distance_m = estimate.distance_m
+                depth_dispersion_m = estimate.dispersion_m
             center_x, center_y = box.center
             point = project_pixel(
                 intrinsics,
                 center_x,
                 center_y,
-                estimate.distance_m,
+                distance_m,
             )
             orientation = Quaternion()
             orientation.w = 1.0
@@ -645,7 +679,7 @@ class PersonLocalizerNode(Node):
             size = projected_box_size(
                 intrinsics,
                 box,
-                estimate.distance_m,
+                distance_m,
                 thickness_m=float(
                     self.get_parameter('person_thickness_m').value
                 ),
@@ -656,7 +690,7 @@ class PersonLocalizerNode(Node):
                     rgb_message,
                     point,
                     size,
-                    estimate.dispersion_m,
+                    depth_dispersion_m,
                     orientation,
                     target_frame,
                 )
@@ -739,6 +773,11 @@ class PersonLocalizerNode(Node):
             label = f'person #{track.track_id} {track.detection.score:.2f}'
             if estimate is not None:
                 label += f' {estimate.distance_m:.2f}m'
+            else:
+                maximum_depth = float(
+                    self.get_parameter('maximum_depth_m').value
+                )
+                label += f' >{maximum_depth:.1f}m RGB-bearing'
             cv2.rectangle(output, (left, top), (right, bottom), (0, 220, 0), 2)
             cv2.putText(
                 output,
