@@ -109,10 +109,12 @@ jobs:
             --packages-select \
               malbut_description \
               malbut_gazebo \
+              malbut_interfaces \
               malbut_roaming \
               malbut_patrol \
               malbut_agent_server \
-              malbut_perception
+              malbut_perception \
+              malbut_tracking
 
       - name: Test patrol package
         shell: bash
@@ -133,7 +135,8 @@ jobs:
               malbut_gazebo \
               malbut_roaming \
               malbut_agent_server \
-              malbut_perception
+              malbut_perception \
+              malbut_tracking
           colcon test-result --verbose
 
       - name: Validate robot Xacro

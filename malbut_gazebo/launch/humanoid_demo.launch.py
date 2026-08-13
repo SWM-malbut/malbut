@@ -13,6 +13,7 @@ from launch.actions import (
     ExecuteProcess,
     IncludeLaunchDescription,
     RegisterEventHandler,
+    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
@@ -126,6 +127,9 @@ def generate_launch_description():
                 "reid_backend": LaunchConfiguration("reid_backend"),
                 "reid_model_path": LaunchConfiguration("reid_model_path"),
                 "output_frame": LaunchConfiguration("output_frame"),
+                "projection_frame": LaunchConfiguration(
+                    "projection_frame"
+                ),
                 "publish_debug_image": LaunchConfiguration(
                     "publish_debug_image"
                 ),
@@ -144,7 +148,7 @@ def generate_launch_description():
             DeclareLaunchArgument("world_name", default_value="small_house"),
             DeclareLaunchArgument(
                 "variant_config",
-                default_value="ultimate_orin_nx_super_mecanum.yaml",
+                default_value="rosorin_ultimate_mecanum.yaml",
             ),
             DeclareLaunchArgument("entity_name", default_value="malbut"),
             DeclareLaunchArgument("spawn_timeout", default_value="60"),
@@ -169,6 +173,13 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "actor_name", default_value="humanoid_target"
             ),
+            DeclareLaunchArgument(
+                "actor_spawn_delay",
+                default_value="0.0",
+                description=(
+                    "Delay actor creation so the robot camera can be ready."
+                ),
+            ),
             DeclareLaunchArgument("perception", default_value="false"),
             DeclareLaunchArgument(
                 "perception_config",
@@ -189,6 +200,13 @@ def generate_launch_description():
                 "reid_model_path", default_value=str(default_reid_model)
             ),
             DeclareLaunchArgument("output_frame", default_value=""),
+            DeclareLaunchArgument(
+                "projection_frame",
+                default_value="camera_depth_optical_frame",
+                description=(
+                    "REP-103 frame used by RGB-D pixel projection."
+                ),
+            ),
             DeclareLaunchArgument(
                 "publish_debug_image", default_value="true"
             ),
@@ -211,7 +229,10 @@ def generate_launch_description():
                     on_exit=_shutdown_on_actor_spawn_failure,
                 )
             ),
-            actor_spawn,
+            TimerAction(
+                period=LaunchConfiguration("actor_spawn_delay"),
+                actions=[actor_spawn],
+            ),
             perception,
         ]
     )

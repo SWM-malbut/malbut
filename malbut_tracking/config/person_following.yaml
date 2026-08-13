@@ -1,0 +1,127 @@
+person_follower:
+  ros__parameters:
+    # Physical robots use wall time. The Gazebo demo overrides this to true.
+    use_sim_time: false
+
+    action_name: follow_person
+    detections_topic: /perception/person/detections_3d
+    global_costmap_topic: /global_costmap/costmap_raw
+    static_map_topic: /map
+    status_topic: /tracking/person/status
+    target_pose_topic: /tracking/person/estimated_target_pose
+    track_markers_topic: /tracking/person/costmap_tracks
+
+    # Standard Nav2 endpoints. The follower never publishes /cmd_vel.
+    follow_path_action: follow_path
+    compute_path_action: compute_path_to_pose
+    planner_id: GridBased
+    tracking_controller_id: FollowPerson
+    goal_checker_id: general_goal_checker
+    spin_action: spin
+    navigation_retry_delay_s: 0.75
+    speed_limit_topic: speed_limit
+    global_frame: map
+    robot_frame: base_footprint
+
+    minimum_confidence: 0.20
+    # RGB-D supplies the long-range map position and target identity.
+    association_max_distance_m: 1.50
+    camera_position_alpha: 0.55
+    camera_velocity_alpha: 0.35
+    maximum_person_speed_mps: 2.0
+    # Nav2 lethal obstacle cost. Inflation costs are deliberately excluded.
+    obstacle_cost_threshold: 254
+    # Merge sparse LiDAR returns belonging to the same physical obstacle.
+    cluster_radius_m: 0.25
+    minimum_cluster_cells: 1
+    maximum_cluster_cells: 120
+    maximum_cluster_extent_m: 1.00
+    static_occupied_threshold: 65
+    # Suppress saved walls and furniture plus one small localization margin.
+    static_exclusion_radius_m: 0.10
+
+    # Constant-velocity Kalman filter and global nearest-neighbor assignment.
+    # 9.21 is the 99 percent chi-square gate for a 2-D measurement.
+    tracker_process_variance: 1.0
+    tracker_measurement_variance: 0.04
+    mahalanobis_gate: 9.21
+    track_confirmation_hits: 3
+    maximum_missed_updates: 4
+    maximum_coast_time_s: 3.0
+    camera_label_gate_m: 0.75
+    # A newly observed costmap cluster refines the camera position only while
+    # the same person is still visible; stale obstacles cannot drive motion.
+    costmap_refinement_max_camera_age_s: 1.0
+    desired_distance_m: 1.20
+    minimum_distance_m: 0.65
+    distance_tolerance_m: 0.15
+    # Hiwonder's physical ROSOrin course demonstrates 0.30 m/s chassis
+    # motion. Translation, including reverse, remains collision checked by
+    # Nav2 ComputePathToPose and the configured holonomic controller.
+    maximum_linear_speed_mps: 0.30
+    retreat_maximum_travel_m: 0.25
+    target_yaw_rate_alpha: 0.35
+    maximum_target_yaw_rate_rps: 1.50
+
+    # These are lookahead distances sampled along Nav2's global path, not
+    # straight robot-person segments.
+    goal_update_distance_m: 0.25
+    goal_update_period_s: 0.75
+    precise_maximum_travel_m: 0.50
+    # Camera-only targets outside the costmap remain followable through
+    # longer coarse segments. Large changes preempt immediately and the
+    # period forces refresh even while displacement remains small.
+    coarse_goal_update_distance_m: 0.50
+    coarse_goal_update_period_s: 0.75
+    coarse_maximum_travel_m: 0.80
+    # Past the 3 m depth limit, RGB supplies direction and a minimum range.
+    # Repeated 1.2 m segments close that distance until metric depth returns.
+    bearing_goal_update_distance_m: 0.20
+    bearing_goal_update_period_s: 0.50
+    bearing_only_variance_threshold_m2: 1.0
+    bearing_maximum_travel_m: 1.20
+
+    # Accept destinations only beyond the global inflation gradient. With the
+    # current Nav2 inflation radius this preserves roughly the configured
+    # 0.55 m wall margin, while the search chooses the room side of a corner.
+    goal_maximum_cost: 80
+    goal_safe_search_radius_m: 1.00
+    goal_openness_radius_m: 0.60
+    goal_openness_preference_m: 0.30
+    heading_probe_distance_m: 0.90
+    minimum_heading_clearance_m: 0.45
+    require_global_costmap_for_goal: true
+
+    # Visibility loss is measured from RGB-D rather than costmap update rate.
+    # Transient detector gaps do not cancel an already selected movement.
+    temporary_lost_timeout_s: 0.40
+    search_start_timeout_s: 0.60
+    target_lost_timeout_s: 8.0
+    # Predict the last absolute camera bearing briefly, look there first, then
+    # expand the bounded scan toward the side on which the person was moving.
+    search_prediction_horizon_s: 1.00
+    search_direction_rate_threshold_rps: 0.05
+    search_angle_rad: 0.80
+    maximum_search_angle_rad: 3.14
+    maximum_search_steps: 9
+    spin_allowance_s: 8.0
+
+    # Bounded prediction supports identity association and display only.
+    prediction_horizon_s: 0.60
+    transform_timeout_s: 0.10
+
+tracking_twist_mixer:
+  ros__parameters:
+    # The tracking demo remaps Nav2's smoothed output here. Translation is
+    # preserved exactly; only angular.z is replaced while a person is visible.
+    nav_input_topic: /cmd_vel
+    tracking_status_topic: /tracking/person/status
+    output_topic: /cmd_vel_tracking_raw
+    output_frequency_hz: 20.0
+    nav_command_timeout_s: 0.25
+    tracking_status_timeout_s: 0.30
+    heading_proportional_gain: 1.25
+    heading_rate_feedforward_gain: 0.15
+    heading_deadband_rad: 0.04
+    maximum_angular_speed_rps: 0.40
+    maximum_angular_acceleration_rps2: 1.20

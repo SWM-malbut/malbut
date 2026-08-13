@@ -24,6 +24,7 @@
   <exec_depend>malbut_description</exec_depend>
   <exec_depend>malbut_perception</exec_depend>
   <exec_depend>malbut_roaming</exec_depend>
+  <exec_depend>malbut_tracking</exec_depend>
   <exec_depend>nav2_amcl</exec_depend>
   <exec_depend>nav2_behaviors</exec_depend>
   <exec_depend>nav2_bt_navigator</exec_depend>
@@ -52,7 +53,9 @@
   <exec_depend>ros2topic</exec_depend>
   <exec_depend>rosgraph_msgs</exec_depend>
   <exec_depend>rviz2</exec_depend>
+  <exec_depend>rqt_image_view</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>spatio_temporal_voxel_layer</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>
   <exec_depend>tf2_msgs</exec_depend>
   <exec_depend>xacro</exec_depend>

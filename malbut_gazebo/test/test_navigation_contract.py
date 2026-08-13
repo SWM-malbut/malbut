@@ -1,6 +1,7 @@
 """Static contracts for the Malbut Nav2 integration."""
 
 import importlib.util
+import math
 from pathlib import Path
 
 from launch import LaunchContext
@@ -200,6 +201,17 @@ def test_navigation_prefers_clearance_and_keeps_close_obstacles_visible():
     assert follow_path['PathAngleCritic']['forward_preference'] is True
     assert follow_path['PreferForwardCritic']['enabled'] is True
     assert follow_path['TwirlingCritic']['enabled'] is True
+    person_controller = controller['FollowPerson']
+    assert person_controller['plugin'] == (
+        'nav2_mppi_controller::MPPIController'
+    )
+    assert person_controller['motion_model'] == 'Omni'
+    assert person_controller['vx_min'] == follow_path['vx_min']
+    assert person_controller['wz_max'] <= 0.001
+    assert person_controller['wz_std'] <= 0.001
+    assert 'GoalAngleCritic' not in person_controller['critics']
+    assert 'PreferForwardCritic' not in person_controller['critics']
+    assert 'TwirlingCritic' not in person_controller['critics']
     assert controller['general_goal_checker']['xy_goal_tolerance'] <= 0.05
     assert controller['general_goal_checker']['yaw_goal_tolerance'] >= 3.14
 
@@ -216,34 +228,67 @@ def test_navigation_prefers_clearance_and_keeps_close_obstacles_visible():
     assert planner['downsample_costmap'] is False
     assert planner['allow_unknown'] is False
 
-    sensor_layers = {
-        'local_costmap': 'voxel_layer',
-        'global_costmap': 'obstacle_layer',
-    }
-    for costmap_name, sensor_layer in sensor_layers.items():
+    profile = yaml.safe_load(ROBOT_PROFILE.read_text(encoding='utf-8'))
+    camera = profile['xacro']['arguments']
+    expected_vertical_fov = 2.0 * math.atan(
+        math.tan(camera['camera_hfov'] / 2.0)
+        * camera['camera_height']
+        / camera['camera_width']
+    )
+
+    for costmap_name in ('local_costmap', 'global_costmap'):
         costmap = config[costmap_name][costmap_name]['ros__parameters']
         assert 0.04 <= costmap['footprint_padding'] <= 0.06
         inflation = costmap['inflation_layer']
         assert inflation['inflation_radius'] >= 0.55
         assert inflation['cost_scaling_factor'] <= 3.0
 
-        scan = costmap[sensor_layer]['scan']
+        scan_layer = costmap['obstacle_layer']
+        assert scan_layer['plugin'] == 'nav2_costmap_2d::ObstacleLayer'
+        assert scan_layer['observation_sources'] == 'scan'
+        scan = scan_layer['scan']
         assert 0.19 <= scan['obstacle_min_range'] <= 0.21
         assert scan['raytrace_min_range'] == 0.0
 
-        layer = costmap[sensor_layer]
-        assert set(layer['observation_sources'].split()) == {
-            'scan', 'depth_points'
+        depth_layer = costmap['depth_voxel_layer']
+        assert depth_layer['plugin'] == (
+            'spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer'
+        )
+        assert 0.0 < depth_layer['voxel_decay'] <= 3.0
+        assert depth_layer['decay_model'] == 0
+        assert depth_layer['mapping_mode'] is False
+        assert set(depth_layer['observation_sources'].split()) == {
+            'depth_mark', 'depth_clear'
         }
-        depth = layer['depth_points']
-        assert depth['topic'] == '/camera/depth/points'
-        assert depth['data_type'] == 'PointCloud2'
-        assert depth['marking'] is True
-        assert depth['clearing'] is True
-        assert 0.03 <= depth['min_obstacle_height'] <= 0.10
-        assert depth['obstacle_min_range'] >= 0.30
-        assert depth['obstacle_max_range'] <= 2.50
-        assert depth['raytrace_max_range'] >= depth['obstacle_max_range']
+
+        depth_mark = depth_layer['depth_mark']
+        assert depth_mark['topic'] == '/camera/depth/points'
+        assert depth_mark['data_type'] == 'PointCloud2'
+        assert depth_mark['marking'] is True
+        assert depth_mark['clearing'] is False
+        assert 0.03 <= depth_mark['min_obstacle_height'] <= 0.10
+        assert depth_mark['obstacle_range'] <= 2.50
+        assert depth_mark['observation_persistence'] == 0.0
+        assert depth_mark['clear_after_reading'] is True
+
+        depth_clear = depth_layer['depth_clear']
+        assert depth_clear['topic'] == '/camera/depth/points'
+        assert depth_clear['data_type'] == 'PointCloud2'
+        assert depth_clear['marking'] is False
+        assert depth_clear['clearing'] is True
+        assert depth_clear['model_type'] == 0
+        assert depth_clear['sensor_frame'] == (
+            'camera_depth_optical_frame'
+        )
+        assert depth_clear['min_z'] == camera['depth_camera_near']
+        assert depth_clear['max_z'] == camera['depth_camera_far']
+        assert depth_clear['vertical_fov_angle'] == pytest.approx(
+            expected_vertical_fov
+        )
+        assert depth_clear['horizontal_fov_angle'] == pytest.approx(
+            camera['camera_hfov']
+        )
+        assert depth_clear['decay_acceleration'] > 0.0
 
 
 def test_zone_filter_is_disabled_without_a_mask_and_enabled_with_one():

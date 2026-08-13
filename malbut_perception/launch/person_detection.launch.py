@@ -25,7 +25,7 @@ def generate_launch_description():
 
     arguments = [
         DeclareLaunchArgument('config', default_value=str(default_config)),
-        DeclareLaunchArgument('use_sim_time', default_value='true'),
+        DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument(
             'rgb_topic', default_value='/camera/color/image_raw'
         ),
@@ -45,6 +45,7 @@ def generate_launch_description():
             'reid_model_path', default_value=str(default_reid_model)
         ),
         DeclareLaunchArgument('output_frame', default_value=''),
+        DeclareLaunchArgument('projection_frame', default_value=''),
         DeclareLaunchArgument('publish_debug_image', default_value='true'),
         DeclareLaunchArgument(
             'debug_image_transport', default_value='compressed'
@@ -72,6 +73,7 @@ def generate_launch_description():
                 'reid_backend': LaunchConfiguration('reid_backend'),
                 'reid_model_path': LaunchConfiguration('reid_model_path'),
                 'output_frame': LaunchConfiguration('output_frame'),
+                'projection_frame': LaunchConfiguration('projection_frame'),
                 'publish_debug_image': LaunchConfiguration(
                     'publish_debug_image'
                 ),

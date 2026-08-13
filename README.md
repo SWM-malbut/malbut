@@ -6,6 +6,8 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 로봇 모델 패키지: `malbut_description`
 - 시뮬레이션 패키지: `malbut_gazebo`
 - RGB-D 사람 인식 패키지: `malbut_perception`
+- 공통 ROS 인터페이스 패키지: `malbut_interfaces`
+- 사람 목표 추적 패키지: `malbut_tracking`
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
 - 대화·에이전트 계약 패키지: `malbut_agent_server`
 
@@ -75,9 +77,11 @@ ros2 pkg prefix malbut_description
 ros2 pkg prefix malbut_gazebo
 ros2 pkg prefix malbut_patrol
 ros2 pkg prefix malbut_perception
+ros2 pkg prefix malbut_interfaces
+ros2 pkg prefix malbut_tracking
 ```
 
-세 패키지의 설치 경로가 출력되면 정상입니다.
+각 패키지의 설치 경로가 출력되면 정상입니다.
 
 ## 4. 셸 환경과 약어 설정
 
@@ -210,6 +214,31 @@ ros2 launch malbut_gazebo humanoid_demo.launch.py perception:=true
 `/perception/person/debug_image`에서 볼 수 있습니다. 인식 코드는 Gazebo의
 휴머노이드 이름이나 실제 좌표를 사용하지 않습니다.
 
+### RGB-D 사람 목표 추적
+
+Small House, 휴머노이드, 사람 인식, Nav2, RViz와 목표 추적 서버를 한 번에
+실행합니다. 액션을 보내면 처음 관측된 사람을 자동 선택하고 global costmap의
+가까운 동적 장애물에 사람 ID를 연결합니다. `/map`에 원래 있던 벽과 가구는
+후보에서 제외하며, 이후 같은 라벨의 costmap 장애물을
+추적해 Nav2 목표를 갱신합니다.
+
+```bash
+ros2 launch malbut_gazebo target_tracking_demo.launch.py
+```
+
+다른 터미널에서 자동 사람 추적을 시작합니다.
+
+```bash
+ros2 action send_goal \
+  /follow_person malbut_interfaces/action/FollowPerson \
+  "{desired_distance_m: 1.2, minimum_distance_m: 0.65, maximum_linear_speed_mps: 0.30, target_lost_timeout: {sec: 8, nanosec: 0}}" \
+  --feedback
+```
+
+목표 추적은 RGB-D 인식 결과, TF, 저장 지도와 global costmap만 사용하며,
+이동·장애물 회피·소실 시 회전 탐색은 Nav2에 맡깁니다. `Ctrl-C`로 액션을
+취소하면 진행 중인 Nav2 목표도 취소되고 정지합니다.
+
 ### 키보드 조작
 
 시뮬레이션을 실행한 상태에서 새 터미널을 열고 실행합니다.
@@ -314,15 +343,20 @@ global costmap으로 다시 계산해 `/plan`에 발행하는 최신 경로는 �
 로봇이 실제로 지나간 궤적은 파란 선으로 갱신합니다.
 
 local/global costmap은 2-D LiDAR의 `/scan`과 RGB-D 카메라의
-`/camera/depth/points`를 함께 사용합니다. 카메라는 레이저 스캔 높이보다 낮은
-5 cm 이상의 물체를 표시하고, Nav2는 갱신된 local costmap으로 주행 중 회피하며
-global costmap이 바뀌면 경로를 다시 계산합니다. 센서 시야 밖의 물체나 5 cm보다
-낮은 물체까지 보장하는 물리 안전장치는 아니므로 비상 정지 계층과는 구분해야
-합니다.
+`/camera/depth/points`를 함께 사용합니다. LiDAR는 일반 장애물 계층에,
+RGB-D는 시간에 따라 관측값이 사라지는 voxel 계층에 분리해 반영합니다.
+따라서 카메라가 감지한 5 cm 이상의 가까운 물체를 회피하면서도 움직이는
+사람의 과거 위치가 전역 경로를 계속 막지 않도록 합니다. 센서 시야 밖의
+물체나 5 cm보다 낮은 물체까지 보장하는 물리 안전장치는 아니므로 비상 정지
+계층과는 구분해야 합니다.
 
 Gazebo Fortress의 RGB-D 포인트클라우드는 `+X` 전방, `+Z` 위쪽인
 `camera_link` 좌표로 브리지합니다. optical frame으로 잘못 표기하면 costmap에서
-점군이 한 번 더 회전하므로 시뮬레이션 설정도 이 프레임 계약을 검사합니다.
+점군이 한 번 더 회전하므로 marking에는 이 프레임을 그대로 사용합니다. STVL의
+depth-camera clearing 시야만 `+Z` 전방을 요구하므로, 동일한 센서 원점의
+`camera_depth_optical_frame`을 clearing 전용 `sensor_frame`으로 지정합니다.
+STVL은 `malbut_gazebo/package.xml`에 선언되어 `rosdep` 설치 대상이며,
+실제 로봇에서 재사용하는 `malbut_tracking` 자체의 필수 의존성은 아닙니다.
 
 목적지는 Room이나 Zone의 속성이 아닙니다. Room은 공간 이름, Zone은
 진입 금지·우회 비용을 표현하고, 목적지는 매 주행마다 별도의 이동 모드에서

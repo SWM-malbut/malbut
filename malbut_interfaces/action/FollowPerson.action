@@ -1,0 +1,16 @@
+# The first observed person is selected automatically. A value of zero for an
+# optional numeric setting uses the server default.
+float32 desired_distance_m
+float32 minimum_distance_m
+float32 maximum_linear_speed_mps
+builtin_interfaces/Duration target_lost_timeout
+---
+bool success
+string final_state
+string message
+---
+string state
+bool target_visible
+string observed_track_id
+float32 current_distance_m
+geometry_msgs/PoseStamped estimated_target_pose
