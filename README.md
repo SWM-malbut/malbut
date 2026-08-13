@@ -9,6 +9,7 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 공통 ROS 인터페이스 패키지: `malbut_interfaces`
 - 사람 목표 추적 패키지: `malbut_tracking`
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
+- 홈캠 웹·백엔드: `homecam_web`
 - 대화·에이전트 계약 패키지: `malbut_agent_server`
 
 `malbut_description`의 차체, 메카넘 휠, 깊이 카메라, LiDAR, 마이크
@@ -553,7 +554,33 @@ CameraInfo 및 실제 카메라 프레임 수신을 확인한 뒤 종료합니�
 자세한 설정과 장애 대응은
 [`homecam_agent/README.md`](homecam_agent/README.md)를 확인합니다.
 
-## 9. 대화·에이전트 안전 계약
+## 9. 홈캠 웹·백엔드
+
+`homecam_web`에는 모바일 PWA, 장치 API, 이벤트·녹화 데이터 모델과 AWS KVS·
+Web Push broker 참조 구현이 함께 있습니다. ROS 장치 측 `homecam_agent`는
+배포된 백엔드의 HTTPS 주소와 관리자가 발급한 장치 token을 사용해 heartbeat,
+세션 발급과 이벤트 API를 호출합니다.
+
+이 디렉터리는 ROS 패키지가 아니므로 `COLCON_IGNORE`로 `colcon`과 `rosdep`
+탐색에서 제외합니다. 웹 검증은 Node.js 22.13 이상에서 별도로 실행합니다.
+
+```bash
+cd ~/ros2_ws/src/malbut/homecam_web
+npm ci
+npm run lint
+npm test
+```
+
+PostgreSQL을 포함한 로컬 실행, ALB Cognito 인증 환경 변수와 AWS CDK 사용법은
+[`homecam_web/README.md`](homecam_web/README.md)를 확인합니다.
+
+AWS 계정 ID, ARN, 장치 token, IAM 자격 정보, broker secret과 VAPID private key는
+Git에 저장하지 않습니다. 실제 운영값은 팀의 AWS 비밀 관리 서비스와 배포
+환경 변수로 주입해야 합니다. 팀 AWS용 Next.js/Node 런타임, PostgreSQL
+마이그레이션과 IaC는 구성되어 있으며, 운영 완료 여부는 과금 자원 배포와 외부
+네트워크 종단 간 검증 결과로 판단합니다.
+
+## 10. 대화·에이전트 안전 계약
 
 `malbut_agent_server`는 LLM과 로봇 실행 계층 사이의 요청·응답 스키마,
 고수준 Tool allowlist와 결정론적 안전 게이트를 정의합니다. LLM은
@@ -587,7 +614,7 @@ PYTHONPATH=. python3 -m malbut_agent_server.cli \
   --check
 ```
 
-## 10. 수정 후 다시 빌드
+## 11. 수정 후 다시 빌드
 
 launch나 config 파일이 삭제된 변경을 받은 뒤에는 이전 `--symlink-install`
 링크가 `build`와 `install`에 남을 수 있습니다. 이 경우 Malbut 패키지의
@@ -619,7 +646,7 @@ cbp malbut_gazebo
 cbp malbut_patrol
 ```
 
-## 11. 기본 점검
+## 12. 기본 점검
 
 ```bash
 ros2 topic list
@@ -638,7 +665,7 @@ rosdep check --from-paths ~/ros2_ws/src --ignore-src --rosdistro humble
 colcon build --symlink-install
 ```
 
-## 12. 라이선스
+## 13. 라이선스
 
 Malbut Contributors가 작성한 프로젝트 코드는 Apache License 2.0으로
 배포합니다. 이 라이선스는 저장소에 포함된 모든 제3자 자료에 일괄

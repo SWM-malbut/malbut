@@ -17,7 +17,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -37,11 +37,76 @@ jobs:
           fi
           python3 -m py_compile "${files[@]}"
 
+  homecam-web:
+    name: Homecam web lint and test
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: homecam_web
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.13.0"
+          cache: npm
+          cache-dependency-path: homecam_web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Validate Docker entrypoint
+        run: sh -n docker-entrypoint.sh
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build and test
+        run: npm test
+
+  homecam-web-infra:
+    name: Homecam web CDK build and test
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: homecam_web/infra/cdk
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.13.0"
+          cache: npm
+          cache-dependency-path: |
+            homecam_web/infra/cdk/package-lock.json
+            homecam_web/infra/aws/kvs-broker/package-lock.json
+            homecam_web/infra/aws/push-broker/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix ../aws/kvs-broker ci
+          npm --prefix ../aws/push-broker ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Synthesize CloudFormation template
+        run: npm run synth -- --no-lookups --quiet
+
   test:
     name: Test
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # ubuntu-22.04 runners ship an LLVM toolchain, and libunwind-15-dev
       # declares "Conflicts: libunwind-dev". That makes libgoogle-glog-dev
@@ -159,7 +224,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           path: src/malbut
 
