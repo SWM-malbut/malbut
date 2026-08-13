@@ -414,6 +414,23 @@ class SafetyPolicy:
                 or f'no{action}' in compact
             ):
                 return True
+            trailing_prohibitions = (
+                'notallowed',
+                'isntallowed',
+                'notpermitted',
+                'isntpermitted',
+                'forbidden',
+                'prohibited',
+                'disallowed',
+                'banned',
+            )
+            action_index = compact.find(action)
+            if action_index >= 0 and any(
+                prohibition
+                in compact[action_index + len(action):]
+                for prohibition in trailing_prohibitions
+            ):
+                return True
         return False
 
     @staticmethod

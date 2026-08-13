@@ -73,15 +73,15 @@ HTTP 클라이언트
 
 주요 구현 위치:
 
-- 요청 검증: [`schemas.py`](../../malbut_agent_server/schemas.py#L168)
-- 세션 저장소: [`conversation.py`](../../malbut_agent_server/conversation.py#L211)
+- 요청 검증: [`schemas.py`](../../malbut_agent_server/schemas.py)
+- 세션 저장소: [`conversation.py`](../../malbut_agent_server/conversation.py)
 - 대화 오케스트레이션:
-  [`orchestrator.py`](../../malbut_agent_server/orchestrator.py#L207)
+  [`orchestrator.py`](../../malbut_agent_server/orchestrator.py)
 - HTTP 세션 API:
-  [`http_server.py`](../../malbut_agent_server/http_server.py#L357)
+  [`http_server.py`](../../malbut_agent_server/http_server.py)
 - 런타임 제한:
-  [`config.py`](../../malbut_agent_server/config.py#L99)
-- 사용자 실행 설명: [`README.md`](../../README.md#L184)
+  [`config.py`](../../malbut_agent_server/config.py)
+- 사용자 실행 설명: [`README.md`](../../README.md)
 
 ## 4. 데이터 모델
 
@@ -101,7 +101,7 @@ HTTP 클라이언트
 | `expires_at` | 유휴 만료 시각 |
 
 스키마와 제약은
-[`conversation.py`](../../malbut_agent_server/conversation.py#L285)에 있다.
+[`conversation.py`](../../malbut_agent_server/conversation.py)에 있다.
 
 ### 4.2 `conversation_turns`
 
@@ -127,8 +127,8 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
 - 세션 삭제 시 턴을 함께 삭제하는 foreign key cascade
 
 구현 근거는
-[`conversation.py`](../../malbut_agent_server/conversation.py#L308)와
-[`conversation.py`](../../malbut_agent_server/conversation.py#L383)다.
+[`conversation.py`](../../malbut_agent_server/conversation.py)와
+[`conversation.py`](../../malbut_agent_server/conversation.py)다.
 
 ### 4.3 `conversation_summaries`
 
@@ -138,7 +138,7 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
 이전 요약을 현재 컨텍스트로 읽지 않는다.
 
 구현 근거는
-[`conversation.py`](../../malbut_agent_server/conversation.py#L349)다.
+[`conversation.py`](../../malbut_agent_server/conversation.py)다.
 
 ## 5. HTTP API
 
@@ -163,7 +163,7 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
   "user_id": "local-user",
   "conversation_id": "conversation-001",
   "turn_id": "turn-001",
-  "utterance": "내 이름은 신이야",
+  "utterance": "내 이름은 사용자A야",
   "robot_state": {},
   "available_tools": []
 }
@@ -171,7 +171,7 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
 
 세션 조회 응답의 `turns`는 사용자·로봇 한 쌍이고, `messages`는 각 발화를
 `sequence` 순서로 펼친 목록이다. HTTP 구현은
-[`http_server.py`](../../malbut_agent_server/http_server.py#L363)에서 확인할
+[`http_server.py`](../../malbut_agent_server/http_server.py)에서 확인할
 수 있다.
 
 관련 오류:
@@ -192,10 +192,10 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
 - `AgentRequest.from_dict()`가 `request_id`, `conversation_id`, `turn_id`를
   필수로 검증하고 알 수 없는 요청 필드를 거절한다.
 - 코드 근거:
-  [`schemas.py`](../../malbut_agent_server/schemas.py#L168),
-  [`http_server.py`](../../malbut_agent_server/http_server.py#L357)
+  [`schemas.py`](../../malbut_agent_server/schemas.py),
+  [`http_server.py`](../../malbut_agent_server/http_server.py)
 - 통합 테스트 근거:
-  [`test_conversation_lifecycle_and_follow_up_round_trip`](../../test/test_http_server.py#L201)
+  [`test_conversation_lifecycle_and_follow_up_round_trip`](../../test/test_http_server.py)
 
 ### 6.2 사용자와 로봇의 발화를 순서대로 저장한다
 
@@ -203,11 +203,11 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
 - `complete_turn()`이 사용자 발화, 최종 로봇 답변, 공개 응답을 한 턴으로
   저장한다. `ordinal`과 `to_messages()`의 `sequence`가 발화 순서를 보장한다.
 - 코드 근거:
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L80),
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L848)
+  [`conversation.py`](../../malbut_agent_server/conversation.py),
+  [`conversation.py`](../../malbut_agent_server/conversation.py)
 - 테스트 근거:
-  [`test_create_get_close_delete_lifecycle_and_ordered_messages`](../../test/test_conversation.py#L84),
-  [`test_conversation_lifecycle_and_follow_up_round_trip`](../../test/test_http_server.py#L201)
+  [`test_create_get_close_delete_lifecycle_and_ordered_messages`](../../test/test_conversation.py),
+  [`test_conversation_lifecycle_and_follow_up_round_trip`](../../test/test_http_server.py)
 
 ### 6.3 같은 세션에서 최소 10턴의 대화 문맥을 유지한다
 
@@ -215,11 +215,11 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
 - 기본 최근 원문 범위는 10턴이고 허용 설정 범위는 10~50턴이다. 10턴보다
   오래된 완료 대화는 별도 rolling summary로 이어진다.
 - 코드 근거:
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L214),
-  [`config.py`](../../malbut_agent_server/config.py#L275)
+  [`conversation.py`](../../malbut_agent_server/conversation.py),
+  [`config.py`](../../malbut_agent_server/config.py)
 - 테스트 근거:
-  [`test_history_keeps_latest_ten_completed_turns_in_order`](../../test/test_conversation.py#L141),
-  [`test_provider_receives_latest_ten_turns_in_order`](../../test/test_orchestrator.py#L511)
+  [`test_history_keeps_latest_ten_completed_turns_in_order`](../../test/test_conversation.py),
+  [`test_provider_receives_latest_ten_turns_in_order`](../../test/test_orchestrator.py)
 
 ### 6.4 “아까 말한 것”, “그 사람”, “그거” 같은 후속 표현을 처리한다
 
@@ -227,10 +227,10 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
 - provider에 현재 세션의 순서화된 최근 대화를 넘긴다. Mock provider 회귀
   기준에서 `아까`, 사람 지시어, 결과 지시어가 현재 세션 발화로 해석된다.
 - 코드 근거:
-  [`orchestrator.py`](../../malbut_agent_server/orchestrator.py#L279)
+  [`orchestrator.py`](../../malbut_agent_server/orchestrator.py)
 - 테스트 근거:
-  [`test_conversation_lifecycle_and_follow_up_round_trip`](../../test/test_http_server.py#L201),
-  [`test_mock_resolves_person_and_result_follow_ups`](../../test/test_orchestrator.py#L555)
+  [`test_conversation_lifecycle_and_follow_up_round_trip`](../../test/test_http_server.py),
+  [`test_mock_resolves_person_and_result_follow_ups`](../../test/test_orchestrator.py)
 - 제한: 이 조건의 저장·전달 경로는 구현됐지만, 최종 실 LLM에서도 동일한
   한국어 후속 표현 평가를 반복해야 한다.
 
@@ -241,10 +241,10 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
   `conversation_id`와 `request_id`를 서로 다른 사용자가 사용해도 이력이
   섞이지 않는다.
 - 코드 근거:
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L293),
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L1555)
+  [`conversation.py`](../../malbut_agent_server/conversation.py),
+  [`conversation.py`](../../malbut_agent_server/conversation.py)
 - 테스트 근거:
-  [`test_sessions_are_isolated_by_user_and_new_session_is_empty`](../../test/test_conversation.py#L177)
+  [`test_sessions_are_isolated_by_user_and_new_session_is_empty`](../../test/test_conversation.py)
 
 ### 6.6 새 세션에서는 이전 단기 대화를 사용하지 않는다
 
@@ -253,11 +253,11 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
   증가시키고, 삭제 후 재생성은 새 `session_instance_id`를 사용한다.
   provider에는 현재 instance와 generation에 정확히 맞는 이력만 전달한다.
 - 코드 근거:
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L1003),
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L1555)
+  [`conversation.py`](../../malbut_agent_server/conversation.py),
+  [`conversation.py`](../../malbut_agent_server/conversation.py)
 - 테스트 근거:
-  [`test_sessions_are_isolated_by_user_and_new_session_is_empty`](../../test/test_conversation.py#L177),
-  [`test_reset_starts_new_generation_without_old_short_term_context`](../../test/test_conversation.py#L231)
+  [`test_sessions_are_isolated_by_user_and_new_session_is_empty`](../../test/test_conversation.py),
+  [`test_reset_starts_new_generation_without_old_short_term_context`](../../test/test_conversation.py)
 - 주의: reset은 과거 완료 턴을 즉시 물리 삭제하는 기능이 아니라 현재
   generation에서 논리적으로 제외하는 기능이다. 물리 삭제는 delete API를
   사용한다.
@@ -267,11 +267,11 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
 - [x] **완료**
 - 다섯 생명주기 기능이 각각 HTTP endpoint와 저장소 메서드로 제공된다.
 - 코드 근거:
-  [`http_server.py`](../../malbut_agent_server/http_server.py#L363),
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L485)
+  [`http_server.py`](../../malbut_agent_server/http_server.py),
+  [`conversation.py`](../../malbut_agent_server/conversation.py)
 - 테스트 근거:
-  [`test_create_get_close_delete_lifecycle_and_ordered_messages`](../../test/test_conversation.py#L84),
-  [`test_conversation_lifecycle_and_follow_up_round_trip`](../../test/test_http_server.py#L201)
+  [`test_create_get_close_delete_lifecycle_and_ordered_messages`](../../test/test_conversation.py),
+  [`test_conversation_lifecycle_and_follow_up_round_trip`](../../test/test_http_server.py)
 
 ### 6.8 일정 시간 사용하지 않은 세션을 자동 만료한다
 
@@ -280,11 +280,11 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
   `expires_at`을 갱신한다. 저장소 접근 또는 `purge_expired()` 시 기한이 지난
   활성 세션을 `expired`로 전환한다.
 - 코드 근거:
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L848),
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L1588)
+  [`conversation.py`](../../malbut_agent_server/conversation.py),
+  [`conversation.py`](../../malbut_agent_server/conversation.py)
 - 테스트 근거:
-  [`test_idle_expiry_is_exact_and_reads_do_not_extend_it`](../../test/test_conversation.py#L296),
-  [`test_expiry_invalidates_in_flight_turn`](../../test/test_conversation.py#L328)
+  [`test_idle_expiry_is_exact_and_reads_do_not_extend_it`](../../test/test_conversation.py),
+  [`test_expiry_invalidates_in_flight_turn`](../../test/test_conversation.py)
 - 제한: 현재는 주기적인 background sweeper가 아니라 접근 시 만료를 확정하는
   방식이다. 유휴 상태에서도 DB status를 정시에 바꿔야 한다면 운영 scheduler가
   `purge_expired()`를 호출해야 한다.
@@ -297,12 +297,12 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
   동일 ID의 입력이 다르면 `409 conversation_conflict`로 거절한다. 이 기록은
   SQLite 재시작 후에도 유지된다.
 - 코드 근거:
-  [`orchestrator.py`](../../malbut_agent_server/orchestrator.py#L230),
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L1160)
+  [`orchestrator.py`](../../malbut_agent_server/orchestrator.py),
+  [`conversation.py`](../../malbut_agent_server/conversation.py)
 - 테스트 근거:
-  [`test_exact_retry_is_durable_and_changed_retry_conflicts`](../../test/test_conversation.py#L360),
-  [`test_request_id_is_idempotent_and_cannot_change_input`](../../test/test_orchestrator.py#L309),
-  [`test_concurrent_requests_are_ordered_and_exact_retry_runs_once`](../../test/test_orchestrator.py#L599)
+  [`test_exact_retry_is_durable_and_changed_retry_conflicts`](../../test/test_conversation.py),
+  [`test_request_id_is_idempotent_and_cannot_change_input`](../../test/test_orchestrator.py),
+  [`test_concurrent_requests_are_ordered_and_exact_retry_runs_once`](../../test/test_orchestrator.py)
 
 ### 6.10 동시에 들어온 요청의 대화 순서가 뒤섞이지 않는다
 
@@ -312,13 +312,13 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
   차단한다. 추론 중 reset·close·delete·만료가 발생하면 instance,
   generation, revision 비교에 실패한 늦은 답변을 저장하지 않는다.
 - 코드 근거:
-  [`orchestrator.py`](../../malbut_agent_server/orchestrator.py#L207),
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L663),
-  [`conversation.py`](../../malbut_agent_server/conversation.py#L848)
+  [`orchestrator.py`](../../malbut_agent_server/orchestrator.py),
+  [`conversation.py`](../../malbut_agent_server/conversation.py),
+  [`conversation.py`](../../malbut_agent_server/conversation.py)
 - 테스트 근거:
-  [`test_concurrent_reservation_allows_only_one_in_flight_turn`](../../test/test_conversation.py#L507),
-  [`test_concurrent_requests_are_ordered_and_exact_retry_runs_once`](../../test/test_orchestrator.py#L599),
-  [`test_reset_during_inference_discards_late_answer`](../../test/test_orchestrator.py#L741)
+  [`test_concurrent_reservation_allows_only_one_in_flight_turn`](../../test/test_conversation.py),
+  [`test_concurrent_requests_are_ordered_and_exact_retry_runs_once`](../../test/test_orchestrator.py),
+  [`test_reset_during_inference_discards_late_answer`](../../test/test_orchestrator.py)
 - 제한: 여러 worker 프로세스·여러 서버 사이에서 도착 순서대로 대기시키는
   분산 큐는 아직 없다. 현재 DB 제약은 충돌을 안전하게 거절하지만 분산 요청을
   모두 순서대로 처리해 주지는 않는다.
@@ -338,8 +338,8 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
 
 세션 조회의 `limit` 기본값은 100이고 저장소가 허용하는 범위는 1~500이다.
 상세 기본값과 범위는
-[`config.py`](../../malbut_agent_server/config.py#L99)와
-[`config.py`](../../malbut_agent_server/config.py#L255)를 기준으로 한다.
+[`config.py`](../../malbut_agent_server/config.py)와
+[`config.py`](../../malbut_agent_server/config.py)를 기준으로 한다.
 
 ## 8. 남은 위험과 다음 작업
 
@@ -350,9 +350,11 @@ DB는 다음 제약으로 중복과 순서 충돌을 차단한다.
 
 2. **다중 worker 정책 결정**
 
-   현재 오케스트레이터 lock은 프로세스 전역이라 서로 다른 세션도 직렬화한다.
-   처리량이 필요하면 사용자·세션별 lock으로 좁히고, 여러 worker를 사용할
-   경우 Redis queue, DB advisory lock 또는 단일 session owner를 설계한다.
+   한 프로세스 안에서는 `(user_id, conversation_id)`별 lock으로 같은 세션의
+   순서를 유지하면서 서로 다른 세션의 provider 호출을 병렬 처리한다. waiter를
+   포함한 참조 수가 0이 되면 lock entry를 제거해 세션 수만큼 영구 누적하지
+   않는다. 여러 프로세스·worker 사이에는 이 lock이 공유되지 않으므로 Redis
+   queue, DB advisory lock 또는 단일 session owner가 여전히 필요하다.
 
 3. **만료 sweeper 운영화**
 
@@ -398,7 +400,7 @@ ROS 2 bridge, 다중 프로세스 부하 시험을 통과했다는 의미는 아
 `malbut-agent-server --provider mock --database :memory: --check`도 정상
 종료했다.
 
-전체 패키지 회귀는 저장소의 [`README.md`](../../README.md#L635)에 적힌 다음
+전체 패키지 회귀는 저장소의 [`README.md`](../../README.md)에 적힌 다음
 명령으로 재현한다.
 
 ```bash

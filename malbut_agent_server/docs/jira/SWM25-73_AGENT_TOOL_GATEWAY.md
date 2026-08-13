@@ -237,6 +237,7 @@ SWM25-73 결과에는 `tool_call_id`가 없다. confirmation 필드를 추가하
 | `confirmation_required` | proposal 또는 production의 simulation Tool | 0회 |
 | `invalid_arguments` | strict Tool schema 불일치 | 0회 |
 | `executor_unavailable` | 허용 mode지만 신뢰 adapter 없음 | 0회 |
+| `gateway_busy` | bounded adapter admission이 모두 사용 중 | 0회 |
 | `stale_state` | 상태 timestamp가 freshness 제한 초과 | 1회 조회 후 폐기 |
 | `timed_out` | adapter 응답 deadline 초과 | 늦은 결과는 응답·cache를 덮어쓰지 않음 |
 | `adapter_failed` | 예외, 비 JSON, 크기·결과 검증 실패 | 성공 처리 안 함 |
@@ -287,6 +288,11 @@ Gateway deadline은 HTTP terminal 결과를 고정하지만 Python에서 이미 
 adapter thread를 강제로 종료하지는 못한다. 따라서 SWM25-73 adapter는 반드시
 비부작용이어야 하고 자체 I/O timeout을 가져야 한다. 실제 ROS Action의
 cooperative cancel과 late-result 처리는 SWM25-74에서 구현한다.
+동시에 executor에 인수되는 호출도 worker 수로 제한한다. 모든 slot이 사용
+중이면 새 고유 요청을 무제한 queue에 넣지 않고 `gateway_busy`로 종료하며,
+이미 실행된 adapter가 실제로 반환하거나 시작 전 취소된 뒤에만 slot을
+반납한다. `gateway_busy`도 같은 request ID의 재호출에는 cache된 terminal
+결과를 반환하므로, 회복 뒤 새 관측이 필요하면 새 request ID를 사용한다.
 
 `MALBUT_AGENT_TOOL_MODE=physical` 같은 값은 provider가 Mock이어도 서버 검증
 단계에서 거절한다.

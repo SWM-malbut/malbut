@@ -20,11 +20,17 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Dict, List, Sequence, Tuple
 
+import pytest
+
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PACKAGE_ROOT.parent
 
 Check = Tuple[str, Callable[[], None]]
+
+
+class SourceIntegrityError(RuntimeError):
+    """Raised without disclosing which source changed during a run."""
 
 
 def _load_module(filename: str) -> ModuleType:
@@ -63,8 +69,21 @@ def _case(
     return label, functools.partial(function, *arguments)
 
 
+def _monkeypatch_check(
+    function: Callable[[pytest.MonkeyPatch], None],
+    label: str,
+) -> Check:
+    def invoke() -> None:
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            function(monkeypatch)
+
+    return label, invoke
+
+
 def _resolve_checks(scratch_root: Path) -> Dict[str, List[Check]]:
     memory = _load_module('test_memory.py')
+    memory_service = _load_module('test_memory_service.py')
+    orchestrator = _load_module('test_orchestrator.py')
     speech = _load_module('test_speech_pipeline.py')
     expression = _load_module('test_expression.py')
 
@@ -120,6 +139,14 @@ def _resolve_checks(scratch_root: Path) -> Dict[str, List[Check]]:
             'test_version_one_database_is_migrated_without_data_loss',
         ),
         (
+            'real_version_two_migration',
+            'test_real_version_two_tables_are_migrated_with_legacy_rows',
+        ),
+        (
+            'idempotency_provenance_mismatch',
+            'test_idempotency_provenance_column_mismatch_fails_closed',
+        ),
+        (
             'concurrent_migration',
             'test_concurrent_version_one_open_migrates_once',
         ),
@@ -134,6 +161,67 @@ def _resolve_checks(scratch_root: Path) -> Dict[str, List[Check]]:
     ):
         memory_checks.append(
             _temporary_check(getattr(memory, name), label, scratch_root)
+        )
+    memory_checks.append(
+        _temporary_check(
+            memory.test_writer_gate_blocks_unmanaged_and_legacy_connections,
+            'writer_gate_unmanaged_legacy',
+            scratch_root,
+        )
+    )
+    for name in (
+        'test_low_level_confirmed_compatibility_marks_unknown_provenance',
+        'test_provenance_is_part_of_durable_idempotency_fingerprint',
+    ):
+        memory_checks.append(
+            (name.removeprefix('test_'), getattr(memory, name))
+        )
+    for name in (
+        'test_completed_same_user_turn_allows_confirmed_lifecycle',
+        'test_reset_reused_turn_identity_has_distinct_provenance',
+        'test_deleted_and_recreated_conversation_has_distinct_instance',
+        'test_pending_missing_and_other_user_turns_fail_closed',
+        'test_other_users_completed_turn_is_not_valid_evidence',
+        'test_update_and_delete_retries_survive_evidence_reset',
+        'test_closed_or_expired_evidence_only_allows_exact_retry',
+    ):
+        memory_checks.append(
+            (name.removeprefix('test_'), getattr(memory_service, name))
+        )
+    for label, name in (
+        (
+            'evidence_deleted_exact_replay_conflict',
+            'test_exact_retry_survives_deleted_evidence_but_conflict_does_not',
+        ),
+        (
+            'shared_conversation_memory_database',
+            'test_memory_gate_coexists_with_shared_conversation_database',
+        ),
+        (
+            'cross_connection_service_idempotency',
+            'test_cross_connection_service_idempotency_is_atomic',
+        ),
+        (
+            'cross_connection_service_conflict',
+            'test_cross_connection_request_conflict_is_atomic',
+        ),
+    ):
+        memory_checks.append(
+            _temporary_check(
+                getattr(memory_service, name),
+                label,
+                scratch_root,
+            )
+        )
+    for name in (
+        'test_memory_change_during_inference_discards_result',
+        'test_memory_expiring_during_inference_discards_result',
+        'test_provider_cannot_mutate_memory_snapshot_to_bypass_fence',
+        'test_independent_conversations_run_provider_calls_in_parallel',
+        'test_reset_during_inference_discards_late_answer',
+    ):
+        memory_checks.append(
+            (name.removeprefix('test_'), getattr(orchestrator, name))
         )
 
     speech_checks = [
@@ -203,6 +291,47 @@ def _resolve_checks(scratch_root: Path) -> Dict[str, List[Check]]:
                 field_value,
             )
         )
+    for name in (
+        'test_barge_in_does_not_wait_for_provider_and_discards_late_tts',
+        'test_close_does_not_wait_for_provider_and_discards_late_tts',
+        'test_completion_guard_linearizes_commit_before_barge_in',
+        'test_slow_commit_does_not_block_unrelated_session_barge_in',
+        'test_in_flight_duplicate_and_conflict_do_not_call_provider_twice',
+        'test_external_delete_during_inference_returns_typed_discard',
+        'test_provider_failure_releases_the_in_flight_reservation',
+        'test_cancellation_without_supersession_returns_fallback_result',
+        'test_barge_in_discards_a_concurrent_provider_failure',
+        'test_supersession_wins_a_concurrent_conversation_error',
+        'test_blank_agent_message_fails_before_durable_speech_commit',
+        'test_transient_conversation_conflict_is_typed_and_retryable',
+    ):
+        speech_checks.append(
+            (name.removeprefix('test_'), getattr(speech, name))
+        )
+    for mutation, expected_code in (
+        ('close', 'conversation_inactive'),
+        ('expire', 'conversation_inactive'),
+        ('delete', 'conversation_not_found'),
+    ):
+        speech_checks.append(
+            _case(
+                getattr(
+                    speech,
+                    'test_external_conversation_loss_is_a_'
+                    'typed_fail_closed_result',
+                ),
+                f'external_conversation_{mutation}',
+                mutation,
+                expected_code,
+            )
+        )
+    for name in (
+        'test_completion_guard_cancels_before_durable_commit',
+        'test_completion_guard_holds_through_conversation_commit',
+    ):
+        speech_checks.append(
+            (name.removeprefix('test_'), getattr(orchestrator, name))
+        )
 
     expression_checks = [
         (name.removeprefix('test_'), getattr(expression, name))
@@ -270,11 +399,43 @@ def _resolve_checks(scratch_root: Path) -> Dict[str, List[Check]]:
                 emotion,
             )
         )
-    return {
+    for name in (
+        'test_thread_start_failure_completes_and_caches_reservation',
+        'test_newer_emergency_wins_submit_precheck_reservation_race',
+        'test_token_cancelled_before_worker_start_skips_expression',
+    ):
+        expression_checks.append(
+            _monkeypatch_check(
+                getattr(expression, name),
+                name.removeprefix('test_'),
+            )
+        )
+    for name in (
+        'test_blocking_renderer_cannot_delay_emergency_neutral',
+        'test_late_renderer_completion_cannot_restore_superseded_state',
+        'test_receiver_generation_fence_rejects_late_visual_effect',
+        'test_explicit_neutral_supersedes_pending_expression',
+        'test_slow_concurrent_duplicates_share_one_dispatch',
+        'test_control_neutral_makes_normal_submission_renderer_busy',
+        'test_pending_conflict_and_unrelated_request_are_rejected',
+        'test_neutral_on_empty_lane_is_coalesced_without_rendering',
+        'test_unavailable_renderer_clears_active_without_neutral_dispatch',
+        'test_expiry_neutral_failure_disables_renderer',
+        'test_emergency_cancels_renderer_failure_neutral_fallback',
+    ):
+        expression_checks.append(
+            (name.removeprefix('test_'), getattr(expression, name))
+        )
+    resolved = {
         'SWM25-75': memory_checks,
         'SWM25-76': speech_checks,
         'SWM25-77': expression_checks,
     }
+    for story_id, checks in resolved.items():
+        labels = [label for label, _function in checks]
+        if len(labels) != len(set(labels)):
+            raise RuntimeError(f'{story_id} contains duplicate check labels')
+    return resolved
 
 
 def _percentile(values: Sequence[float], quantile: float) -> float:
@@ -385,24 +546,45 @@ def _run_story(
     }
 
 
-def _source_hashes() -> Dict[str, str]:
-    paths = [
-        Path(__file__),
-        PACKAGE_ROOT / 'malbut_agent_server' / 'memory.py',
-        PACKAGE_ROOT / 'malbut_agent_server' / 'orchestrator.py',
-        PACKAGE_ROOT / 'malbut_agent_server' / 'speech.py',
-        PACKAGE_ROOT / 'malbut_agent_server' / 'expression.py',
+def _source_manifest_paths() -> Tuple[Path, ...]:
+    """Return every local behavior source in stable manifest order."""
+    selected_tests = [
         PACKAGE_ROOT / 'test' / 'test_memory.py',
+        PACKAGE_ROOT / 'test' / 'test_memory_service.py',
         PACKAGE_ROOT / 'test' / 'test_orchestrator.py',
         PACKAGE_ROOT / 'test' / 'test_speech_pipeline.py',
         PACKAGE_ROOT / 'test' / 'test_expression.py',
     ]
+    paths = [
+        Path(__file__).resolve(),
+        *selected_tests,
+        *(PACKAGE_ROOT / 'malbut_agent_server').rglob('*.py'),
+    ]
+    return tuple(sorted(
+        paths,
+        key=lambda path: path.relative_to(PACKAGE_ROOT).as_posix(),
+    ))
+
+
+def _source_hashes() -> Dict[str, str]:
+    """Capture one sorted content hash manifest for the offline run."""
     return {
-        str(path.relative_to(PACKAGE_ROOT)): hashlib.sha256(
+        path.relative_to(PACKAGE_ROOT).as_posix(): hashlib.sha256(
             path.read_bytes()
         ).hexdigest()
-        for path in paths
+        for path in _source_manifest_paths()
     }
+
+
+def _require_unchanged_sources(
+    start_hashes: Dict[str, str],
+    end_hashes: Dict[str, str],
+) -> None:
+    """Fail closed without persisting source names or mismatch details."""
+    if start_hashes != end_hashes:
+        raise SourceIntegrityError(
+            'source integrity changed during stress run; report not written'
+        )
 
 
 def _git_value(*arguments: str) -> str:
@@ -449,6 +631,10 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     """Run the deterministic offline matrix and persist private evidence."""
+    if not __debug__:
+        raise SystemExit(
+            'optimized Python disables assertions; report not written'
+        )
     args = _parse_args()
     if not 1 <= args.iterations <= 10000:
         raise SystemExit('--iterations must be between 1 and 10000')
@@ -466,6 +652,12 @@ def main() -> int:
         prefix='.swm25-75-77-stress-',
         dir=str(output.parent),
     ) as scratch:
+        try:
+            start_source_hashes = _source_hashes()
+        except OSError:
+            raise SystemExit(
+                'source integrity manifest could not be captured'
+            ) from None
         checks = _resolve_checks(Path(scratch))
         started = time.perf_counter()
         stories = {
@@ -490,7 +682,10 @@ def main() -> int:
             'source': {
                 'git_head': _git_value('rev-parse', 'HEAD'),
                 'branch': _git_value('branch', '--show-current'),
-                'explicit_source_sha256': _source_hashes(),
+                'explicit_source_sha256': start_source_hashes,
+                'source_unchanged_during_run': True,
+                'assertions_enabled': __debug__,
+                'python_optimize': sys.flags.optimize,
                 'python': platform.python_version(),
                 'platform': platform.platform(),
             },
@@ -548,6 +743,18 @@ def main() -> int:
             },
             'stories': stories,
         }
+        try:
+            end_source_hashes = _source_hashes()
+            _require_unchanged_sources(
+                start_source_hashes,
+                end_source_hashes,
+            )
+        except OSError:
+            raise SystemExit(
+                'source integrity check failed; report not written'
+            ) from None
+        except SourceIntegrityError as error:
+            raise SystemExit(str(error)) from None
         _write_private_json(output, report)
     print(f'report: {output}', flush=True)
     return 0 if total_passed == total_iterations else 1

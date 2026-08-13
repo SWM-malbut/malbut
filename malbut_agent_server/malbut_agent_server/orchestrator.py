@@ -6,8 +6,19 @@ import json
 import threading
 import time
 import uuid
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
-from typing import Any, Dict, List, Sequence
+from typing import (
+    Any,
+    Callable,
+    ContextManager,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 from malbut_agent_server.conversation import (
     BeginTurnToken,
@@ -41,6 +52,18 @@ class ExpiredDecisionError(ValidationError):
 
 class MemoryChangedError(ValidationError):
     """Raised when memory changes while a model request is in flight."""
+
+
+class OrchestrationCancelledError(ValidationError):
+    """Raised when a trusted caller cancels before durable completion."""
+
+
+@dataclass
+class _ConversationLockEntry:
+    """One process-local conversation lock with waiter accounting."""
+
+    lock: threading.RLock
+    references: int = 0
 
 
 @dataclass
@@ -237,12 +260,57 @@ class AgentOrchestrator:
         self.capability_registry = (
             capability_registry or production_registry()
         )
-        self._handle_lock = threading.RLock()
+        self._conversation_locks_guard = threading.Lock()
+        self._conversation_locks: Dict[
+            Tuple[str, str],
+            _ConversationLockEntry,
+        ] = {}
 
-    def handle(self, request: AgentRequest) -> OrchestrationResult:
-        """Process one ordered turn with durable idempotency."""
+    def handle(
+        self,
+        request: AgentRequest,
+        *,
+        completion_guard: Optional[
+            Callable[[], ContextManager[None]]
+        ] = None,
+        result_completion_guard: Optional[
+            Callable[
+                [OrchestrationResult],
+                ContextManager[None],
+            ]
+        ] = None,
+    ) -> OrchestrationResult:
+        """Process one ordered turn with durable idempotency.
+
+        The legacy guard wraps only a new durable commit.  The result-aware
+        guard receives both new and cached results so a caller can validate
+        delivery state before entry and finalize it before releasing its
+        own synchronization fence.  A guard must not raise after its yield:
+        once ``complete_turn`` returns, the conversation commit is durable
+        and cannot be rolled back by this API.
+        """
+        if completion_guard is not None and not callable(
+            completion_guard
+        ):
+            raise TypeError('completion_guard must be callable')
+        if result_completion_guard is not None and not callable(
+            result_completion_guard
+        ):
+            raise TypeError(
+                'result_completion_guard must be callable'
+            )
+        if (
+            completion_guard is not None
+            and result_completion_guard is not None
+        ):
+            raise TypeError(
+                'completion guards are mutually exclusive'
+            )
         fingerprint = self._request_fingerprint(request)
-        with self._handle_lock:
+        with self._conversation_lock(
+            request.user_id,
+            request.conversation_id,
+        ):
             begin = self.conversation_store.begin_turn(
                 user_id=request.user_id,
                 conversation_id=request.conversation_id,
@@ -252,14 +320,19 @@ class AgentOrchestrator:
                 user_content=request.utterance,
             )
             if begin.cached_response is not None:
-                return OrchestrationResult.from_persisted_dict(
+                result = OrchestrationResult.from_persisted_dict(
                     begin.cached_response
                 )
+                if result_completion_guard is not None:
+                    with result_completion_guard(result):
+                        pass
+                return result
             token = begin.token
             if token is None:
                 raise RuntimeError(
                     'conversation begin returned no token'
                 )
+            committed = False
             try:
                 result = self._handle_uncached(
                     request,
@@ -267,13 +340,24 @@ class AgentOrchestrator:
                     begin.summary,
                     token,
                 )
-                session, _turn = (
-                    self.conversation_store.complete_turn(
-                        token,
-                        assistant_content=result.decision.message,
-                        response=result.to_persisted_dict(),
+                guard = (
+                    result_completion_guard(result)
+                    if result_completion_guard is not None
+                    else (
+                        completion_guard()
+                        if completion_guard is not None
+                        else nullcontext()
                     )
                 )
+                with guard:
+                    session, _turn = (
+                        self.conversation_store.complete_turn(
+                            token,
+                            assistant_content=result.decision.message,
+                            response=result.to_persisted_dict(),
+                        )
+                    )
+                    committed = True
                 if (
                     session.generation
                     != result.conversation_generation
@@ -285,8 +369,41 @@ class AgentOrchestrator:
                     )
                 return result
             except Exception:
-                self.conversation_store.fail_turn(token)
+                if not committed:
+                    self.conversation_store.fail_turn(token)
                 raise
+
+    @contextmanager
+    def _conversation_lock(
+        self,
+        user_id: str,
+        conversation_id: str,
+    ) -> Iterator[None]:
+        """Serialize one session while allowing independent sessions."""
+        key = (user_id, conversation_id)
+        with self._conversation_locks_guard:
+            entry = self._conversation_locks.get(key)
+            if entry is None:
+                entry = _ConversationLockEntry(
+                    lock=threading.RLock(),
+                )
+                self._conversation_locks[key] = entry
+            entry.references += 1
+        acquired = False
+        try:
+            entry.lock.acquire()
+            acquired = True
+            yield
+        finally:
+            if acquired:
+                entry.lock.release()
+            with self._conversation_locks_guard:
+                entry.references -= 1
+                if (
+                    entry.references == 0
+                    and self._conversation_locks.get(key) is entry
+                ):
+                    del self._conversation_locks[key]
 
     def _handle_uncached(
         self,

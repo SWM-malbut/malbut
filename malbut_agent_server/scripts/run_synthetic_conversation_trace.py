@@ -408,7 +408,7 @@ def _scenario_follow_up() -> Dict[str, Any]:
                 'synthetic-follow-up-request-1',
                 conversation_id,
                 'turn-1',
-                '내 이름은 신이야',
+                '내 이름은 사용자A야',
             ),
         )
         second = _trace_turn(
@@ -431,12 +431,12 @@ def _scenario_follow_up() -> Dict[str, Any]:
             ),
             _assertion(
                 'prior user utterance reached untrusted history',
-                '내 이름은 신이야',
+                '내 이름은 사용자A야',
                 history[0]['user'],
             ),
             _assertion(
                 'MockProvider resolved the follow-up from history',
-                '아까 “내 이름은 신이야”라고 말했어.',
+                '아까 “내 이름은 사용자A야”라고 말했어.',
                 second['result']['decision']['message'],
             ),
             _assertion(

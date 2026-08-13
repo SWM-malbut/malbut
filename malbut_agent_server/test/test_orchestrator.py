@@ -3,6 +3,7 @@
 import math
 import threading
 import time
+from contextlib import contextmanager
 from typing import List, Optional
 
 import pytest
@@ -21,6 +22,7 @@ from malbut_agent_server.memory import MemoryRecord, SQLiteMemoryStore
 from malbut_agent_server.orchestrator import (
     AgentOrchestrator,
     MemoryChangedError,
+    OrchestrationCancelledError,
     OrchestrationResult,
 )
 from malbut_agent_server.providers.base import AgentProvider
@@ -151,6 +153,7 @@ class UnknownToolProvider(AgentProvider):
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary] = None,
     ) -> ProviderResult:
+        """Return one unknown-tool proposal for policy testing."""
         del (
             request,
             memories,
@@ -182,6 +185,7 @@ class MutatingProvider(AgentProvider):
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary] = None,
     ) -> ProviderResult:
+        """Mutate copied inputs before returning a navigation proposal."""
         del (
             memories,
             conversation_turns,
@@ -229,6 +233,7 @@ class RecordingProvider(AgentProvider):
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary] = None,
     ) -> ProviderResult:
+        """Record the provided history and return deterministic text."""
         del memories, tools, conversation_summary
         if self.delay_seconds:
             time.sleep(self.delay_seconds)
@@ -917,6 +922,401 @@ def test_concurrent_requests_are_ordered_and_exact_retry_runs_once() -> None:
     finally:
         conversation_store.close()
         store.close()
+
+
+def test_independent_conversations_run_provider_calls_in_parallel() -> None:
+    """A slow session must not block an unrelated conversation."""
+    class ParallelProvider(AgentProvider):
+        def __init__(self) -> None:
+            self.lock = threading.Lock()
+            self.release = threading.Event()
+            self.both_entered = threading.Event()
+            self.active = 0
+            self.max_active = 0
+
+        def complete(
+            self,
+            request: AgentRequest,
+            memories: List[MemoryRecord],
+            conversation_turns: List[ConversationTurn],
+            tools: List[ToolSpec],
+            conversation_summary: Optional[
+                ConversationSummary
+            ] = None,
+        ) -> ProviderResult:
+            del memories, conversation_turns, tools, conversation_summary
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                if self.active == 2:
+                    self.both_entered.set()
+            try:
+                assert self.release.wait(timeout=5)
+                return ProviderResult(
+                    decision=AgentDecision(
+                        type='message',
+                        message=f'확인했어: {request.utterance}',
+                    ),
+                    provider='parallel-fixture',
+                    model='fixture',
+                    latency_ms=0,
+                )
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    memory_store = SQLiteMemoryStore(':memory:')
+    conversation_store = SQLiteConversationStore(':memory:')
+    provider = ParallelProvider()
+    errors = []
+    results = []
+    result_lock = threading.Lock()
+    try:
+        for conversation_id in ('conversation-a', 'conversation-b'):
+            conversation_store.create('test-user', conversation_id)
+        orchestrator = AgentOrchestrator(
+            provider=provider,
+            memory_store=memory_store,
+            conversation_store=conversation_store,
+            safety_policy=SafetyPolicy(),
+        )
+
+        def invoke(number: int) -> None:
+            try:
+                result = orchestrator.handle(
+                    _request(
+                        f'독립 발화 {number}',
+                        {},
+                        [],
+                        request_id=f'parallel-request-{number}',
+                        turn_id=f'parallel-turn-{number}',
+                        conversation_id=f'conversation-{chr(96 + number)}',
+                    )
+                )
+                with result_lock:
+                    results.append(result)
+            except Exception as error:  # noqa: B902
+                with result_lock:
+                    errors.append(error)
+
+        threads = [
+            threading.Thread(target=invoke, args=(number,))
+            for number in (1, 2)
+        ]
+        for thread in threads:
+            thread.start()
+        assert provider.both_entered.wait(timeout=5)
+        provider.release.set()
+        for thread in threads:
+            thread.join(timeout=5)
+
+        assert all(not thread.is_alive() for thread in threads)
+        assert errors == []
+        assert len(results) == 2
+        assert provider.max_active == 2
+        assert orchestrator._conversation_locks == {}
+    finally:
+        provider.release.set()
+        conversation_store.close()
+        memory_store.close()
+
+
+def test_provider_failure_releases_the_conversation_lock() -> None:
+    """A failed turn must not retain or poison its keyed lock entry."""
+    class FailOnceProvider(RecordingProvider):
+        def complete(
+            self,
+            request: AgentRequest,
+            memories: List[MemoryRecord],
+            conversation_turns: List[ConversationTurn],
+            tools: List[ToolSpec],
+            conversation_summary: Optional[
+                ConversationSummary
+            ] = None,
+        ) -> ProviderResult:
+            if self.calls == 0:
+                self.calls += 1
+                raise RuntimeError('synthetic provider failure')
+            return super().complete(
+                request,
+                memories,
+                conversation_turns,
+                tools,
+                conversation_summary,
+            )
+
+    memory_store = SQLiteMemoryStore(':memory:')
+    provider = FailOnceProvider()
+    try:
+        orchestrator, conversation_store = _runtime(
+            provider,
+            memory_store,
+            SafetyPolicy(),
+        )
+        with pytest.raises(RuntimeError, match='synthetic provider'):
+            orchestrator.handle(_request('첫 요청', {}, []))
+        assert orchestrator._conversation_locks == {}
+
+        result = orchestrator.handle(
+            _request(
+                '재시도',
+                {},
+                [],
+                request_id='retry-request',
+                turn_id='retry-turn',
+            )
+        )
+        assert result.decision.message == '확인했어: 재시도'
+        assert orchestrator._conversation_locks == {}
+    finally:
+        conversation_store.close()
+        memory_store.close()
+
+
+def test_completion_guard_cancels_before_durable_commit() -> None:
+    """A trusted late fence can discard a computed provider result."""
+    memory_store = SQLiteMemoryStore(':memory:')
+    provider = RecordingProvider()
+    try:
+        orchestrator, conversation_store = _runtime(
+            provider,
+            memory_store,
+            SafetyPolicy(),
+        )
+
+        @contextmanager
+        def cancelled_guard():
+            raise OrchestrationCancelledError(
+                'synthetic completion was superseded'
+            )
+            yield
+
+        with pytest.raises(
+            OrchestrationCancelledError,
+            match='superseded',
+        ):
+            orchestrator.handle(
+                _request('저장되면 안 되는 응답', {}, []),
+                completion_guard=cancelled_guard,
+            )
+
+        assert provider.calls == 1
+        assert conversation_store.list_turns(
+            'test-user',
+            'test-conversation',
+        ) == []
+        assert orchestrator._conversation_locks == {}
+    finally:
+        conversation_store.close()
+        memory_store.close()
+
+
+def test_completion_guard_holds_through_conversation_commit() -> None:
+    """The trusted guard linearizes state changes with durable commit."""
+    memory_store = SQLiteMemoryStore(':memory:')
+    provider = RecordingProvider()
+    guard_lock = threading.Lock()
+    entered = threading.Event()
+    release = threading.Event()
+    results = []
+    try:
+        orchestrator, conversation_store = _runtime(
+            provider,
+            memory_store,
+            SafetyPolicy(),
+        )
+
+        @contextmanager
+        def blocking_guard():
+            with guard_lock:
+                entered.set()
+                assert release.wait(timeout=5)
+                yield
+
+        thread = threading.Thread(
+            target=lambda: results.append(
+                orchestrator.handle(
+                    _request('선형화할 응답', {}, []),
+                    completion_guard=blocking_guard,
+                )
+            )
+        )
+        thread.start()
+        assert entered.wait(timeout=5)
+        assert not guard_lock.acquire(blocking=False)
+        release.set()
+        thread.join(timeout=5)
+
+        assert not thread.is_alive()
+        assert len(results) == 1
+        assert len(
+            conversation_store.list_turns(
+                'test-user',
+                'test-conversation',
+            )
+        ) == 1
+    finally:
+        release.set()
+        conversation_store.close()
+        memory_store.close()
+
+
+def test_result_completion_guard_wraps_fresh_and_cached_results() -> None:
+    """A result-aware guard can atomically register local delivery state."""
+    memory_store = SQLiteMemoryStore(':memory:')
+    provider = RecordingProvider()
+    observed = []
+    try:
+        orchestrator, conversation_store = _runtime(
+            provider,
+            memory_store,
+            SafetyPolicy(),
+        )
+
+        @contextmanager
+        def result_guard(result):
+            observed.append(('before', result))
+            yield
+            observed.append(('after', result))
+
+        request = _request('결과를 함께 선형화', {}, [])
+        first = orchestrator.handle(
+            request,
+            result_completion_guard=result_guard,
+        )
+        replay = orchestrator.handle(
+            request,
+            result_completion_guard=result_guard,
+        )
+
+        assert provider.calls == 1
+        assert [phase for phase, _result in observed] == [
+            'before',
+            'after',
+            'before',
+            'after',
+        ]
+        assert observed[0][1] is first
+        assert observed[2][1] is replay
+        assert replay.to_persisted_dict() == first.to_persisted_dict()
+    finally:
+        conversation_store.close()
+        memory_store.close()
+
+
+def test_guard_exit_error_does_not_misreport_durable_turn_failed() -> None:
+    """A post-yield guard error leaves the already committed turn durable."""
+    memory_store = SQLiteMemoryStore(':memory:')
+    provider = RecordingProvider()
+    try:
+        orchestrator, conversation_store = _runtime(
+            provider,
+            memory_store,
+            SafetyPolicy(),
+        )
+
+        @contextmanager
+        def bad_exit_guard(_result):
+            yield
+            raise RuntimeError('synthetic post-commit guard failure')
+
+        request = _request('커밋 뒤 guard 실패', {}, [])
+        with pytest.raises(
+            RuntimeError,
+            match='synthetic post-commit guard failure',
+        ):
+            orchestrator.handle(
+                request,
+                result_completion_guard=bad_exit_guard,
+            )
+
+        turns = conversation_store.list_turns(
+            'test-user',
+            'test-conversation',
+        )
+        assert len(turns) == 1
+        assert turns[0].assistant_content
+        assert provider.calls == 1
+
+        replay = orchestrator.handle(request)
+        assert replay.request_id == request.request_id
+        assert provider.calls == 1
+    finally:
+        conversation_store.close()
+        memory_store.close()
+
+
+@pytest.mark.parametrize(
+    ('guard_arguments', 'expected_message'),
+    [
+        (
+            {'completion_guard': object()},
+            'completion_guard must be callable',
+        ),
+        (
+            {'result_completion_guard': object()},
+            'result_completion_guard must be callable',
+        ),
+    ],
+)
+def test_completion_guards_reject_noncallable_values(
+    guard_arguments,
+    expected_message,
+) -> None:
+    """Invalid guard objects fail before provider or durable work."""
+    memory_store = SQLiteMemoryStore(':memory:')
+    provider = RecordingProvider()
+    try:
+        orchestrator, conversation_store = _runtime(
+            provider,
+            memory_store,
+            SafetyPolicy(),
+        )
+
+        with pytest.raises(TypeError, match=expected_message):
+            orchestrator.handle(
+                _request('잘못된 guard', {}, []),
+                **guard_arguments,
+            )
+        assert provider.calls == 0
+        assert conversation_store.list_turns(
+            'test-user',
+            'test-conversation',
+        ) == []
+    finally:
+        conversation_store.close()
+        memory_store.close()
+
+
+def test_completion_guard_variants_are_mutually_exclusive() -> None:
+    """A caller cannot accidentally create two competing commit fences."""
+    memory_store = SQLiteMemoryStore(':memory:')
+    provider = RecordingProvider()
+    try:
+        orchestrator, conversation_store = _runtime(
+            provider,
+            memory_store,
+            SafetyPolicy(),
+        )
+
+        @contextmanager
+        def legacy_guard():
+            yield
+
+        @contextmanager
+        def result_guard(_result):
+            yield
+
+        with pytest.raises(TypeError, match='mutually exclusive'):
+            orchestrator.handle(
+                _request('잘못된 이중 guard', {}, []),
+                completion_guard=legacy_guard,
+                result_completion_guard=result_guard,
+            )
+        assert provider.calls == 0
+    finally:
+        conversation_store.close()
+        memory_store.close()
 
 
 def test_durable_retry_survives_runtime_restart(tmp_path) -> None:

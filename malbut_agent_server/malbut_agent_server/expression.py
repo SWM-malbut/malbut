@@ -36,6 +36,7 @@ MIN_DURATION_MS = 250
 MAX_DURATION_MS = 5000
 MAX_DISPATCH_TTL_MS = 1000
 MAX_ASSISTANT_INTENSITY = 0.7
+DEFAULT_RENDER_TIMEOUT_SECONDS = 0.25
 
 _MAPPED_REASONS = {
     'greeting': ('happy', 0.5),
@@ -208,11 +209,18 @@ class ExpressionCue:
 
 @dataclass(frozen=True)
 class TrustedExpressionState:
-    """Trusted local overrides that never originate in model output."""
+    """Trusted local overrides that never originate in model output.
+
+    ``revision`` is a monotonic sequence owned by the trusted state source.
+    A newer revision replaces the previous snapshot.  Within one revision,
+    unsafe values may only become more restrictive, so a delayed normal
+    snapshot cannot clear an emergency, privacy, or availability override.
+    """
 
     emergency_active: bool = False
     privacy_mode: bool = False
     renderer_available: bool = True
+    revision: int = 0
 
     def __post_init__(self) -> None:
         """Require exact booleans for every trusted override field."""
@@ -225,6 +233,14 @@ class TrustedExpressionState:
                 raise ExpressionValidationError(
                     f'{field_name} must be a boolean'
                 )
+        if (
+            isinstance(self.revision, bool)
+            or not isinstance(self.revision, int)
+            or not 0 <= self.revision <= 2**63 - 1
+        ):
+            raise ExpressionValidationError(
+                'revision must be a non-negative 64-bit integer'
+            )
 
 
 @dataclass(frozen=True)
@@ -278,8 +294,36 @@ class RenderedExpression:
     duration_ms: int
 
 
+@dataclass(frozen=True)
+class ExpressionDispatchContext:
+    """Cooperative cancellation and ordering fence for one renderer call.
+
+    ``lane_id`` scopes monotonically increasing ``generation`` values to one
+    arbiter lifetime.  An asynchronous adapter must propagate both values to
+    its receiver, and that receiver must reject a generation lower than the
+    highest one already observed for the lane.  The adapter must also check
+    ``cancelled`` immediately before committing any local side effect.
+    """
+
+    lane_id: str
+    generation: int
+    _cancelled: threading.Event = field(repr=False, compare=False)
+
+    @property
+    def cancelled(self) -> bool:
+        """Return whether a newer or safety-critical dispatch superseded it."""
+        return self._cancelled.is_set()
+
+    def to_metadata(self) -> Dict[str, object]:
+        """Return content-free receiver-fence metadata."""
+        return {
+            'lane_id': self.lane_id,
+            'generation': self.generation,
+        }
+
+
 class VisualExpressionRenderer(Protocol):
-    """Narrow visual-only boundary; it exposes no motion or audio method."""
+    """Narrow visual-only boundary with a cooperative generation fence."""
 
     def render_visual(
         self,
@@ -287,8 +331,9 @@ class VisualExpressionRenderer(Protocol):
         emotion: str,
         intensity: float,
         duration_ms: int,
+        dispatch: ExpressionDispatchContext,
     ) -> None:
-        """Accept one already validated visual expression."""
+        """Accept one validated cue if ``dispatch`` remains current."""
 
 
 class NoopVisualExpressionRenderer:
@@ -300,9 +345,10 @@ class NoopVisualExpressionRenderer:
         emotion: str,
         intensity: float,
         duration_ms: int,
+        dispatch: ExpressionDispatchContext,
     ) -> None:
         """Discard one validated command without side effects."""
-        del request_id, emotion, intensity, duration_ms
+        del request_id, emotion, intensity, duration_ms, dispatch
 
 
 class RecordingVisualExpressionRenderer:
@@ -311,6 +357,8 @@ class RecordingVisualExpressionRenderer:
     def __init__(self) -> None:
         """Create an empty in-memory command list."""
         self.calls = []
+        self._highest_generation: Dict[str, int] = {}
+        self._lock = threading.Lock()
 
     def render_visual(
         self,
@@ -318,16 +366,22 @@ class RecordingVisualExpressionRenderer:
         emotion: str,
         intensity: float,
         duration_ms: int,
+        dispatch: ExpressionDispatchContext,
     ) -> None:
         """Record one command without ROS, files, network, GUI, or hardware."""
-        self.calls.append(
-            RenderedExpression(
-                request_id=request_id,
-                emotion=emotion,
-                intensity=intensity,
-                duration_ms=duration_ms,
+        with self._lock:
+            highest = self._highest_generation.get(dispatch.lane_id, 0)
+            if dispatch.cancelled or dispatch.generation < highest:
+                return
+            self._highest_generation[dispatch.lane_id] = dispatch.generation
+            self.calls.append(
+                RenderedExpression(
+                    request_id=request_id,
+                    emotion=emotion,
+                    intensity=intensity,
+                    duration_ms=duration_ms,
+                )
             )
-        )
 
 
 @dataclass(frozen=True)
@@ -375,6 +429,18 @@ class ExpressionResult:
             'renderer_error': self.renderer_error,
             'cached': self.cached,
         }
+
+
+@dataclass
+class _PendingSubmission:
+    """One in-flight cue shared by concurrent idempotent callers."""
+
+    cue: ExpressionCue
+    fingerprint: str
+    token: ExpressionDispatchContext
+    done: threading.Event = field(default_factory=threading.Event)
+    result: Optional[ExpressionResult] = None
+    cancel_code: Optional[str] = None
 
 
 def map_final_decision_to_expression(
@@ -435,7 +501,15 @@ def map_final_decision_to_expression(
 
 
 class ExpressionArbiter:
-    """Thread-safe, process-local visual expression state machine."""
+    """Thread-safe, process-local visual expression state machine.
+
+    Renderer code always runs in a daemon worker outside ``_lock``.  Each
+    invocation has a bounded wait and a generation token, so an emergency or
+    privacy transition can cancel its logical result without waiting for a
+    defective renderer to return.  Python cannot forcibly stop a blocked
+    thread; a production adapter must additionally enforce the generation at
+    its receiver before applying an external visual effect.
+    """
 
     def __init__(
         self,
@@ -447,8 +521,9 @@ class ExpressionArbiter:
         rate_window_seconds: float = 60.0,
         max_non_neutral_per_window: int = 6,
         cache_size: int = 256,
+        renderer_timeout_seconds: float = DEFAULT_RENDER_TIMEOUT_SECONDS,
     ) -> None:
-        """Configure bounded replay cache, rate policy, and monotonic clock."""
+        """Configure replay, rate, clock, and renderer timeout bounds."""
         if not callable(getattr(renderer, 'render_visual', None)):
             raise ValueError('renderer must implement render_visual')
         if not callable(clock):
@@ -462,6 +537,11 @@ class ExpressionArbiter:
             rate_window_seconds,
             'rate_window_seconds',
             maximum=3600.0,
+        )
+        self.renderer_timeout_seconds = self._positive_number(
+            renderer_timeout_seconds,
+            'renderer_timeout_seconds',
+            maximum=5.0,
         )
         if (
             isinstance(max_non_neutral_per_window, bool)
@@ -486,6 +566,11 @@ class ExpressionArbiter:
         self._recent_dispatches: Deque[float] = deque()
         self._active: Optional[ActiveExpression] = None
         self._renderer_disabled = False
+        self._lane_id = 'expression-lane-' + str(uuid.uuid4())
+        self._generation = 0
+        self._pending: Optional[_PendingSubmission] = None
+        self._control_token: Optional[ExpressionDispatchContext] = None
+        self._trusted_state: Optional[TrustedExpressionState] = None
         self._lock = threading.RLock()
 
     @staticmethod
@@ -514,7 +599,7 @@ class ExpressionArbiter:
         cue: ExpressionCue,
         state: TrustedExpressionState,
     ) -> ExpressionResult:
-        """Apply local policy and render a cue at most once per request ID."""
+        """Apply policy and dispatch a cue with bounded renderer waiting."""
         if not isinstance(cue, ExpressionCue):
             raise ExpressionValidationError('cue must be ExpressionCue')
         if not isinstance(state, TrustedExpressionState):
@@ -525,8 +610,15 @@ class ExpressionArbiter:
             raise ExpressionValidationError(
                 'cue was not produced by the local decision mapper'
             )
+        # Expiry and trusted overrides are handled first.  ``tick`` invokes
+        # renderer code outside the arbiter lock and may cancel an in-flight
+        # normal submission.
+        transition = self.tick(state)
         fingerprint = self._fingerprint(cue)
+        waiter: Optional[_PendingSubmission] = None
+        cancelled_pending = False
         with self._lock:
+            effective_state = self._merge_trusted_state_locked(state)
             cached = self._cache.get(cue.request_id)
             conflict = False
             if cached is not None:
@@ -534,17 +626,35 @@ class ExpressionArbiter:
                 if fingerprint != cached_fingerprint:
                     conflict = True
             now = self._now()
-            policy_result = self.policy.evaluate(cue, state, now)
+            policy_result = self.policy.evaluate(cue, effective_state, now)
             if policy_result.code in {
                 'emergency_override',
                 'privacy_override',
                 'renderer_unavailable',
             }:
-                result = self._suppressed_result(
+                result = self._result(
                     cue,
-                    state,
-                    policy_result.code,
-                    now,
+                    status='suppressed',
+                    code=policy_result.code,
+                    now=now,
+                    rendered_emotion=(
+                        transition.rendered_emotion
+                        if transition is not None
+                        else None
+                    ),
+                    fallback_used=(
+                        transition.fallback_used
+                        if transition is not None
+                        else False
+                    ),
+                    renderer_error=(
+                        policy_result.code == 'renderer_unavailable'
+                        or (
+                            transition.renderer_error
+                            if transition is not None
+                            else False
+                        )
+                    ),
                 )
                 if conflict:
                     raise ExpressionConflictError(
@@ -558,6 +668,9 @@ class ExpressionArbiter:
                 raise ExpressionConflictError(
                     'request_id was already used with a different cue'
                 )
+            if cached is not None:
+                self._cache.move_to_end(cue.request_id)
+                return replace(cached_result, cached=True)
             if self._renderer_disabled:
                 self._active = None
                 result = self._result(
@@ -567,14 +680,7 @@ class ExpressionArbiter:
                     now=now,
                     renderer_error=True,
                 )
-                if cached is not None:
-                    self._cache.move_to_end(cue.request_id)
-                    return replace(result, cached=True)
                 return self._remember(cue, fingerprint, result)
-            self._expire_locked(now)
-            if cached is not None:
-                self._cache.move_to_end(cue.request_id)
-                return replace(cached_result, cached=True)
             if not policy_result.allowed:
                 result = self._result(
                     cue,
@@ -583,7 +689,37 @@ class ExpressionArbiter:
                     now=now,
                 )
                 return self._remember(cue, fingerprint, result)
-            if cue.emotion == 'neutral' and self._active is None:
+            if self._control_token is not None:
+                result = self._result(
+                    cue,
+                    status='suppressed',
+                    code='renderer_busy',
+                    now=now,
+                )
+                return self._remember(cue, fingerprint, result)
+            pending = self._pending
+            if pending is not None:
+                if pending.cue.request_id == cue.request_id:
+                    if pending.fingerprint != fingerprint:
+                        raise ExpressionConflictError(
+                            'request_id was already used with a different cue'
+                        )
+                    waiter = pending
+                elif cue.emotion == 'neutral':
+                    self._cancel_pending_locked('superseded_to_neutral')
+                    cancelled_pending = True
+                else:
+                    result = self._result(
+                        cue,
+                        status='suppressed',
+                        code='renderer_busy',
+                        now=now,
+                    )
+                    return self._remember(cue, fingerprint, result)
+            if waiter is None and (
+                cue.emotion == 'neutral' and self._active is None
+                and not cancelled_pending
+            ):
                 result = self._result(
                     cue,
                     status='succeeded',
@@ -592,7 +728,9 @@ class ExpressionArbiter:
                     rendered_emotion='neutral',
                 )
                 return self._remember(cue, fingerprint, result)
-            if cue.emotion != 'neutral' and self._rate_limited(now):
+            if waiter is None and (
+                cue.emotion != 'neutral' and self._rate_limited(now)
+            ):
                 result = self._result(
                     cue,
                     status='suppressed',
@@ -600,124 +738,203 @@ class ExpressionArbiter:
                     now=now,
                 )
                 return self._remember(cue, fingerprint, result)
+            if waiter is None:
+                if cue.emotion != 'neutral':
+                    self._recent_dispatches.append(now)
+                token = self._next_token_locked()
+                pending = _PendingSubmission(cue, fingerprint, token)
+                self._pending = pending
+            else:
+                pending = waiter
 
-            if cue.emotion != 'neutral':
-                self._recent_dispatches.append(now)
-            result = self._render_cue(cue, now)
-            return self._remember(cue, fingerprint, result)
+        if waiter is not None:
+            wait_bound = self.renderer_timeout_seconds * 2.0 + 0.25
+            if not waiter.done.wait(wait_bound):
+                return self._result(
+                    cue,
+                    status='suppressed',
+                    code='renderer_busy',
+                    now=self._now(),
+                )
+            if waiter.result is None:
+                raise RuntimeError('pending renderer result disappeared')
+            return replace(waiter.result, cached=True)
+        return self._execute_pending(pending)
 
     def tick(
         self,
         state: TrustedExpressionState,
     ) -> Optional[ExpressionResult]:
-        """Apply trusted overrides and expire one active cue when due."""
+        """Apply overrides or expiry without holding the renderer lock."""
         if not isinstance(state, TrustedExpressionState):
             raise ExpressionValidationError(
                 'state must be TrustedExpressionState'
             )
         with self._lock:
+            state = self._merge_trusted_state_locked(state)
             now = self._now()
             active = self._active
-            if active is None:
-                return None
+            pending = self._pending
+            code: Optional[str] = None
             if state.emergency_active:
-                return self._clear_active_locked(
-                    active,
-                    state,
-                    now,
-                    'emergency_override',
-                )
-            if state.privacy_mode:
-                return self._clear_active_locked(
-                    active,
-                    state,
-                    now,
-                    'privacy_override',
-                )
-            if not state.renderer_available or self._renderer_disabled:
-                self._active = None
-                return self._active_result(
-                    active,
-                    status='suppressed',
-                    code='renderer_unavailable',
-                    now=now,
-                    renderer_error=True,
-                )
-            return self._expire_locked(now)
+                code = 'emergency_override'
+            elif state.privacy_mode:
+                code = 'privacy_override'
+            elif not state.renderer_available or self._renderer_disabled:
+                code = 'renderer_unavailable'
+            elif active is not None and now >= active.expires_at:
+                code = 'expired_to_neutral'
+            if code is None:
+                return None
+            if active is None and pending is None:
+                return None
+            subject = active or self._active_from_pending(pending, now)
+            self._active = None
+            if pending is not None:
+                self._cancel_pending_locked(code)
+            can_render_neutral = (
+                code != 'renderer_unavailable'
+                and state.renderer_available
+                and not self._renderer_disabled
+            )
+            token = None
+            if can_render_neutral:
+                if self._control_token is not None:
+                    self._control_token._cancelled.set()
+                token = self._next_token_locked()
+                self._control_token = token
 
-    def _suppressed_result(
-        self,
-        cue: ExpressionCue,
-        state: TrustedExpressionState,
-        code: str,
-        now: float,
-    ) -> ExpressionResult:
-        if code not in {'emergency_override', 'privacy_override'}:
-            if code == 'renderer_unavailable':
-                self._active = None
-            return self._result(
-                cue,
-                status='suppressed',
+        if token is None:
+            return self._active_result(
+                subject,
+                status=(
+                    'suppressed'
+                    if code != 'expired_to_neutral'
+                    else 'failed'
+                ),
                 code=code,
                 now=now,
                 renderer_error=(code == 'renderer_unavailable'),
             )
-        active = self._active
-        had_active = active is not None
-        self._active = None
-        if not had_active:
-            return self._result(
-                cue,
-                status='suppressed',
-                code=code,
-                now=now,
+        outcome = self._invoke_renderer(
+            self._neutral_request_id(subject.request_id),
+            'neutral',
+            0.0,
+            MIN_DURATION_MS,
+            token,
+        )
+        with self._lock:
+            owns_control = (
+                self._control_token is token
+                and self._generation == token.generation
             )
-        if not state.renderer_available or self._renderer_disabled:
-            return self._result(
-                cue,
-                status='suppressed',
-                code=code,
-                now=now,
-                renderer_error=True,
+            if self._control_token is token:
+                self._control_token = None
+            if outcome in {'error', 'timeout'} and owns_control:
+                self._renderer_disabled = True
+            rendered = (
+                outcome == 'succeeded'
+                and owns_control
+                and not token.cancelled
             )
-        if active is None:
-            raise RuntimeError('active expression disappeared')
-        rendered, renderer_error = self._try_neutral(active.request_id)
-        return self._result(
-            cue,
-            status='suppressed',
-            code=code,
+        return self._active_result(
+            subject,
+            status=(
+                'suppressed'
+                if code != 'expired_to_neutral'
+                else ('succeeded' if rendered else 'failed')
+            ),
+            code=(
+                code
+                if code != 'expired_to_neutral' or rendered
+                else 'renderer_unavailable'
+            ),
             now=now,
             rendered_emotion=('neutral' if rendered else None),
             fallback_used=True,
-            renderer_error=renderer_error,
+            renderer_error=(outcome in {'error', 'timeout'}),
         )
 
-    def _render_cue(
+    def _execute_pending(
         self,
-        cue: ExpressionCue,
-        now: float,
+        pending: _PendingSubmission,
     ) -> ExpressionResult:
-        try:
-            self.renderer.render_visual(
-                cue.request_id,
-                cue.emotion,
-                cue.intensity,
-                cue.duration_ms,
-            )
-        except Exception:
-            self._active = None
+        """Execute one reserved submission and safely publish its result."""
+        cue = pending.cue
+        outcome = self._invoke_renderer(
+            cue.request_id,
+            cue.emotion,
+            cue.intensity,
+            cue.duration_ms,
+            pending.token,
+        )
+        with self._lock:
+            if pending.result is not None:
+                return pending.result
+            if not self._pending_is_current(pending):
+                return self._finish_cancelled_pending_locked(pending, outcome)
+            if outcome == 'succeeded':
+                now = self._now()
+                if cue.emotion == 'neutral':
+                    self._active = None
+                    expires_at = None
+                else:
+                    expires_at = now + cue.duration_ms / 1000.0
+                    self._active = ActiveExpression(
+                        request_id=cue.request_id,
+                        cue_id=cue.cue_id,
+                        emotion=cue.emotion,
+                        intensity=cue.intensity,
+                        started_at=now,
+                        expires_at=expires_at,
+                    )
+                result = self._result(
+                    cue,
+                    status='succeeded',
+                    code='rendered',
+                    now=now,
+                    rendered_emotion=cue.emotion,
+                    expires_at=expires_at,
+                )
+                return self._finish_pending_locked(pending, result)
             if cue.emotion == 'neutral':
+                self._active = None
                 self._renderer_disabled = True
-                return self._result(
+                result = self._result(
                     cue,
                     status='failed',
                     code='renderer_unavailable',
-                    now=now,
+                    now=self._now(),
                     renderer_error=True,
                 )
-            rendered, renderer_error = self._try_neutral(cue.request_id)
-            return self._result(
+                return self._finish_pending_locked(pending, result)
+            timed_out = outcome == 'timeout'
+            fallback_token = self._next_token_locked()
+            pending.token = fallback_token
+
+        fallback_outcome = self._invoke_renderer(
+            self._neutral_request_id(cue.request_id),
+            'neutral',
+            0.0,
+            MIN_DURATION_MS,
+            fallback_token,
+        )
+        with self._lock:
+            if pending.result is not None:
+                return pending.result
+            if not self._pending_is_current(pending):
+                return self._finish_cancelled_pending_locked(
+                    pending,
+                    fallback_outcome,
+                )
+            self._active = None
+            rendered = fallback_outcome == 'succeeded'
+            if timed_out or not rendered:
+                # A timed-out adapter is unhealthy even if its one permitted
+                # neutral fallback succeeds.  This bounds leaked daemon
+                # workers to the failing request.
+                self._renderer_disabled = True
+            result = self._result(
                 cue,
                 status=('fallback' if rendered else 'failed'),
                 code=(
@@ -725,94 +942,176 @@ class ExpressionArbiter:
                     if rendered
                     else 'renderer_unavailable'
                 ),
-                now=now,
+                now=self._now(),
                 rendered_emotion=('neutral' if rendered else None),
                 fallback_used=True,
                 renderer_error=True,
             )
+            return self._finish_pending_locked(pending, result)
 
-        if cue.emotion == 'neutral':
-            self._active = None
-            expires_at = None
-        else:
-            expires_at = now + cue.duration_ms / 1000.0
-            self._active = ActiveExpression(
-                request_id=cue.request_id,
-                cue_id=cue.cue_id,
-                emotion=cue.emotion,
-                intensity=cue.intensity,
-                started_at=now,
-                expires_at=expires_at,
-            )
-        return self._result(
-            cue,
-            status='succeeded',
-            code='rendered',
-            now=now,
-            rendered_emotion=cue.emotion,
-            expires_at=expires_at,
-        )
-
-    def _expire_locked(self, now: float) -> Optional[ExpressionResult]:
-        active = self._active
-        if active is None or now < active.expires_at:
-            return None
-        self._active = None
-        rendered, renderer_error = self._try_neutral(active.request_id)
-        return self._active_result(
-            active,
-            status=('succeeded' if rendered else 'failed'),
-            code=(
-                'expired_to_neutral'
-                if rendered
-                else 'renderer_unavailable'
-            ),
-            now=now,
-            rendered_emotion=('neutral' if rendered else None),
-            fallback_used=True,
-            renderer_error=renderer_error,
-        )
-
-    def _clear_active_locked(
+    def _invoke_renderer(
         self,
-        active: ActiveExpression,
-        state: TrustedExpressionState,
-        now: float,
-        code: str,
-    ) -> ExpressionResult:
-        self._active = None
-        if not state.renderer_available or self._renderer_disabled:
-            return self._active_result(
-                active,
-                status='suppressed',
-                code=code,
-                now=now,
-                renderer_error=True,
+        request_id: str,
+        emotion: str,
+        intensity: float,
+        duration_ms: int,
+        token: ExpressionDispatchContext,
+    ) -> str:
+        """Run an untrusted renderer in a bounded daemon-thread boundary."""
+        completed = threading.Event()
+        outcome = {'value': 'error'}
+
+        def invoke() -> None:
+            try:
+                if token.cancelled:
+                    outcome['value'] = 'cancelled'
+                    return
+                self.renderer.render_visual(
+                    request_id,
+                    emotion,
+                    intensity,
+                    duration_ms,
+                    token,
+                )
+                outcome['value'] = 'succeeded'
+            except BaseException:
+                outcome['value'] = 'error'
+            finally:
+                completed.set()
+
+        try:
+            worker = threading.Thread(
+                target=invoke,
+                name=f'expression-render-{token.generation}',
+                daemon=True,
             )
-        rendered, renderer_error = self._try_neutral(active.request_id)
-        return self._active_result(
-            active,
+            worker.start()
+        except BaseException:
+            # Thread construction/start is part of the untrusted dispatch
+            # boundary too.  Cancel a partially started worker and report a
+            # normal renderer error so the pending reservation is completed.
+            token._cancelled.set()
+            return 'error'
+        deadline = time.monotonic() + self.renderer_timeout_seconds
+        while not completed.is_set():
+            if token.cancelled:
+                return 'cancelled'
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                token._cancelled.set()
+                return 'timeout'
+            completed.wait(min(remaining, 0.01))
+        if token.cancelled:
+            return 'cancelled'
+        return outcome['value']
+
+    def _pending_is_current(self, pending: _PendingSubmission) -> bool:
+        return (
+            self._pending is pending
+            and self._generation == pending.token.generation
+            and pending.cancel_code is None
+        )
+
+    def _finish_cancelled_pending_locked(
+        self,
+        pending: _PendingSubmission,
+        outcome: str,
+    ) -> ExpressionResult:
+        if pending.result is not None:
+            return pending.result
+        result = self._result(
+            pending.cue,
+            status='suppressed',
+            code=pending.cancel_code or 'superseded',
+            now=self._now(),
+            renderer_error=(outcome in {'error', 'timeout'}),
+        )
+        return self._finish_pending_locked(pending, result)
+
+    def _finish_pending_locked(
+        self,
+        pending: _PendingSubmission,
+        result: ExpressionResult,
+    ) -> ExpressionResult:
+        if self._pending is pending:
+            self._pending = None
+        existing = self._cache.get(pending.cue.request_id)
+        if existing is not None and existing[0] == pending.fingerprint:
+            result = existing[1]
+        elif existing is None:
+            result = self._remember(
+                pending.cue,
+                pending.fingerprint,
+                result,
+            )
+        pending.result = result
+        pending.done.set()
+        return result
+
+    def _cancel_pending_locked(self, code: str) -> None:
+        pending = self._pending
+        if pending is None:
+            return
+        pending.cancel_code = code
+        pending.token._cancelled.set()
+        self._pending = None
+        self._generation += 1
+        result = self._result(
+            pending.cue,
             status='suppressed',
             code=code,
-            now=now,
-            rendered_emotion=('neutral' if rendered else None),
-            fallback_used=True,
-            renderer_error=renderer_error,
+            now=self._now(),
+        )
+        self._remember(pending.cue, pending.fingerprint, result)
+        pending.result = result
+        pending.done.set()
+
+    def _next_token_locked(self) -> ExpressionDispatchContext:
+        self._generation += 1
+        return ExpressionDispatchContext(
+            self._lane_id,
+            self._generation,
+            threading.Event(),
         )
 
-    def _try_neutral(self, source_request_id: str) -> Tuple[bool, bool]:
-        neutral_request = self._neutral_request_id(source_request_id)
-        try:
-            self.renderer.render_visual(
-                neutral_request,
-                'neutral',
-                0.0,
-                MIN_DURATION_MS,
+    def _merge_trusted_state_locked(
+        self,
+        incoming: TrustedExpressionState,
+    ) -> TrustedExpressionState:
+        """Merge one ordered trusted snapshot without unsafe downgrades."""
+        current = self._trusted_state
+        if current is None or incoming.revision > current.revision:
+            self._trusted_state = incoming
+        elif incoming.revision == current.revision:
+            self._trusted_state = TrustedExpressionState(
+                emergency_active=(
+                    current.emergency_active or incoming.emergency_active
+                ),
+                privacy_mode=current.privacy_mode or incoming.privacy_mode,
+                renderer_available=(
+                    current.renderer_available
+                    and incoming.renderer_available
+                ),
+                revision=current.revision,
             )
-            return True, False
-        except Exception:
-            self._renderer_disabled = True
-            return False, True
+        return self._trusted_state
+
+    @staticmethod
+    def _active_from_pending(
+        pending: Optional[_PendingSubmission],
+        now: float,
+    ) -> ActiveExpression:
+        if pending is None:
+            raise RuntimeError('expression lane subject disappeared')
+        cue = pending.cue
+        return ActiveExpression(
+            request_id=cue.request_id,
+            cue_id=cue.cue_id,
+            emotion=cue.emotion,
+            intensity=cue.intensity,
+            started_at=now,
+            expires_at=now,
+        )
 
     def _rate_limited(self, now: float) -> bool:
         cutoff = now - self.rate_window_seconds

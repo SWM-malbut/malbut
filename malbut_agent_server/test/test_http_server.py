@@ -254,7 +254,7 @@ def test_conversation_lifecycle_and_follow_up_round_trip() -> None:
             **identity,
             'request_id': 'lifecycle-request-1',
             'turn_id': 'turn-1',
-            'utterance': '내 이름은 신이야',
+            'utterance': '내 이름은 사용자A야',
             'robot_state': {},
             'available_tools': [],
         }
@@ -286,7 +286,7 @@ def test_conversation_lifecycle_and_follow_up_round_trip() -> None:
             },
         )
         assert status == 200
-        assert '내 이름은 신이야' in follow_up['decision']['message']
+        assert '내 이름은 사용자A야' in follow_up['decision']['message']
 
         status, current = post(
             f'{base_url}/v1/conversations/get',

@@ -29,6 +29,9 @@ from malbut_agent_server.schemas import ValidationError, validate_user_id
 MAX_MEMORY_LENGTH = 4000
 MAX_RETRIEVAL_CANDIDATES = 5000
 MAX_MUTATION_ID_LENGTH = 128
+MEMORY_SCHEMA_VERSION = 3
+MEMORY_WRITER_PROTOCOL_VERSION = 3
+PREVIOUS_MEMORY_SCHEMA_VERSION = 2
 TOKEN_PATTERN = re.compile(r'[0-9A-Za-z가-힣_]+')
 KOREAN_SUFFIXES = (
     '으로',
@@ -78,6 +81,10 @@ class MemoryConsentError(ValidationError):
     """Raised when a persistent memory mutation lacks confirmation."""
 
 
+class MemorySchemaVersionError(RuntimeError):
+    """Raised when a database requires an incompatible memory writer."""
+
+
 @dataclass(frozen=True)
 class MemoryRecord:
     """One persisted memory safe for JSON serialization."""
@@ -95,6 +102,9 @@ class MemoryRecord:
     updated_at: Optional[float] = None
     evidence_conversation_id: Optional[str] = None
     evidence_turn_id: Optional[str] = None
+    evidence_session_instance_id: Optional[str] = None
+    evidence_generation: Optional[int] = None
+    evidence_completed_at: Optional[float] = None
     score: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
@@ -117,6 +127,11 @@ class MemoryRecord:
             'revision': self.revision,
             'evidence_conversation_id': self.evidence_conversation_id,
             'evidence_turn_id': self.evidence_turn_id,
+            'evidence_session_instance_id': (
+                self.evidence_session_instance_id
+            ),
+            'evidence_generation': self.evidence_generation,
+            'evidence_completed_at': self.evidence_completed_at,
             'score': round(self.score, 6),
         }
 
@@ -133,6 +148,11 @@ class MemoryMutationResult:
     global_revision: int
     audit_event_id: str
     occurred_at: float
+    evidence_conversation_id: Optional[str] = None
+    evidence_turn_id: Optional[str] = None
+    evidence_session_instance_id: Optional[str] = None
+    evidence_generation: Optional[int] = None
+    evidence_completed_at: Optional[float] = None
     deleted: bool = False
     cached: bool = False
 
@@ -147,6 +167,13 @@ class MemoryMutationResult:
             'global_revision': self.global_revision,
             'audit_event_id': self.audit_event_id,
             'occurred_at': self.occurred_at,
+            'evidence_conversation_id': self.evidence_conversation_id,
+            'evidence_turn_id': self.evidence_turn_id,
+            'evidence_session_instance_id': (
+                self.evidence_session_instance_id
+            ),
+            'evidence_generation': self.evidence_generation,
+            'evidence_completed_at': self.evidence_completed_at,
             'deleted': self.deleted,
             'cached': self.cached,
         }
@@ -167,7 +194,7 @@ class MemoryMutationResult:
             operation = str(value['operation'])
             if operation not in {'create', 'update', 'delete'}:
                 raise ValueError('unsupported mutation operation')
-            return cls(
+            result = cls(
                 request_id=str(value['request_id']),
                 operation=operation,
                 memory_id=str(value['memory_id']),
@@ -176,13 +203,65 @@ class MemoryMutationResult:
                 global_revision=int(value['global_revision']),
                 audit_event_id=str(value['audit_event_id']),
                 occurred_at=float(value['occurred_at']),
+                evidence_conversation_id=(
+                    str(value['evidence_conversation_id'])
+                    if value.get('evidence_conversation_id') is not None
+                    else None
+                ),
+                evidence_turn_id=(
+                    str(value['evidence_turn_id'])
+                    if value.get('evidence_turn_id') is not None
+                    else None
+                ),
+                evidence_session_instance_id=(
+                    str(value['evidence_session_instance_id'])
+                    if value.get('evidence_session_instance_id') is not None
+                    else None
+                ),
+                evidence_generation=(
+                    int(value['evidence_generation'])
+                    if value.get('evidence_generation') is not None
+                    else None
+                ),
+                evidence_completed_at=(
+                    float(value['evidence_completed_at'])
+                    if value.get('evidence_completed_at') is not None
+                    else None
+                ),
                 deleted=bool(value.get('deleted', False)),
                 cached=True,
             )
+            provenance = (
+                result.evidence_session_instance_id,
+                result.evidence_generation,
+                result.evidence_completed_at,
+            )
+            if not (
+                all(item is None for item in provenance)
+                or all(item is not None for item in provenance)
+            ):
+                raise ValueError('incomplete evidence provenance')
+            if result.evidence_session_instance_id is not None and (
+                not result.evidence_session_instance_id
+                or result.evidence_generation is None
+                or result.evidence_generation < 1
+                or result.evidence_completed_at is None
+                or not math.isfinite(result.evidence_completed_at)
+            ):
+                raise ValueError('invalid evidence provenance')
+            return result
         except (KeyError, TypeError, ValueError) as error:
             raise RuntimeError(
                 'stored memory mutation result is invalid'
             ) from error
+
+
+@dataclass(frozen=True)
+class MemoryMutationReplay:
+    """Validated idempotency replay or proof the request is unused."""
+
+    cached_result: Optional[MemoryMutationResult]
+    request_fingerprint: str
 
 
 @dataclass(frozen=True)
@@ -199,8 +278,11 @@ class MemoryAuditEvent:
     user_revision: int
     global_revision: int
     occurred_at: float
-    evidence_conversation_id: Optional[str]
-    evidence_turn_id: Optional[str]
+    evidence_conversation_id: Optional[str] = None
+    evidence_turn_id: Optional[str] = None
+    evidence_session_instance_id: Optional[str] = None
+    evidence_generation: Optional[int] = None
+    evidence_completed_at: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Return audit metadata that never contains memory content."""
@@ -217,6 +299,11 @@ class MemoryAuditEvent:
             'occurred_at': self.occurred_at,
             'evidence_conversation_id': self.evidence_conversation_id,
             'evidence_turn_id': self.evidence_turn_id,
+            'evidence_session_instance_id': (
+                self.evidence_session_instance_id
+            ),
+            'evidence_generation': self.evidence_generation,
+            'evidence_completed_at': self.evidence_completed_at,
         }
 
 
@@ -285,7 +372,17 @@ class SQLiteMemoryStore:
         )
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
-        self._initialize()
+        self._connection.create_function(
+            'memory_writer_protocol_version',
+            0,
+            lambda: MEMORY_WRITER_PROTOCOL_VERSION,
+            deterministic=True,
+        )
+        try:
+            self._initialize()
+        except Exception:
+            self._connection.close()
+            raise
         self._secure_file_permissions()
 
     def _initialize(self) -> None:
@@ -297,7 +394,9 @@ class SQLiteMemoryStore:
             # version-one columns and race to add the same field.
             self._connection.execute('BEGIN IMMEDIATE')
             try:
+                self._require_supported_schema_locked()
                 self._initialize_schema_locked()
+                self._initialize_version_gate_locked()
                 self._connection.commit()
             except Exception:
                 self._connection.rollback()
@@ -320,10 +419,14 @@ class SQLiteMemoryStore:
                     revision INTEGER NOT NULL DEFAULT 1,
                     updated_at REAL NOT NULL,
                     evidence_conversation_id TEXT,
-                    evidence_turn_id TEXT
+                    evidence_turn_id TEXT,
+                    evidence_session_instance_id TEXT,
+                    evidence_generation INTEGER,
+                    evidence_completed_at REAL
                 )
                 '''
             )
+
         columns = {
                 str(row['name'])
                 for row in self._connection.execute(
@@ -345,6 +448,18 @@ class SQLiteMemoryStore:
                 'evidence_turn_id': (
                     'ALTER TABLE memories ADD COLUMN '
                     'evidence_turn_id TEXT'
+                ),
+                'evidence_session_instance_id': (
+                    'ALTER TABLE memories ADD COLUMN '
+                    'evidence_session_instance_id TEXT'
+                ),
+                'evidence_generation': (
+                    'ALTER TABLE memories ADD COLUMN '
+                    'evidence_generation INTEGER'
+                ),
+                'evidence_completed_at': (
+                    'ALTER TABLE memories ADD COLUMN '
+                    'evidence_completed_at REAL'
                 ),
             }
         for column, statement in migrations.items():
@@ -411,10 +526,60 @@ class SQLiteMemoryStore:
                     request_id TEXT NOT NULL,
                     operation TEXT NOT NULL,
                     request_fingerprint TEXT NOT NULL,
+                    request_payload_fingerprint TEXT NOT NULL,
+                    fingerprint_version INTEGER NOT NULL,
                     response_json TEXT NOT NULL,
                     created_at REAL NOT NULL,
+                    evidence_session_instance_id TEXT,
+                    evidence_generation INTEGER,
+                    evidence_completed_at REAL,
                     PRIMARY KEY (user_id, request_id)
                 )
+                '''
+            )
+        request_columns = {
+                str(row['name'])
+                for row in self._connection.execute(
+                    'PRAGMA table_info(memory_mutation_requests)'
+                ).fetchall()
+            }
+        request_migrations = {
+                'request_payload_fingerprint': (
+                    'ALTER TABLE memory_mutation_requests ADD COLUMN '
+                    'request_payload_fingerprint TEXT'
+                ),
+                'fingerprint_version': (
+                    'ALTER TABLE memory_mutation_requests ADD COLUMN '
+                    'fingerprint_version INTEGER'
+                ),
+                'evidence_session_instance_id': (
+                    'ALTER TABLE memory_mutation_requests ADD COLUMN '
+                    'evidence_session_instance_id TEXT'
+                ),
+                'evidence_generation': (
+                    'ALTER TABLE memory_mutation_requests ADD COLUMN '
+                    'evidence_generation INTEGER'
+                ),
+                'evidence_completed_at': (
+                    'ALTER TABLE memory_mutation_requests ADD COLUMN '
+                    'evidence_completed_at REAL'
+                ),
+            }
+        for column, statement in request_migrations.items():
+            if column not in request_columns:
+                self._connection.execute(statement)
+        self._connection.execute(
+                '''
+                UPDATE memory_mutation_requests
+                SET request_payload_fingerprint = request_fingerprint
+                WHERE request_payload_fingerprint IS NULL
+                '''
+            )
+        self._connection.execute(
+                '''
+                UPDATE memory_mutation_requests
+                SET fingerprint_version = 1
+                WHERE fingerprint_version IS NULL
                 '''
             )
         self._connection.execute(
@@ -431,16 +596,226 @@ class SQLiteMemoryStore:
                     global_revision INTEGER NOT NULL,
                     occurred_at REAL NOT NULL,
                     evidence_conversation_id TEXT,
-                    evidence_turn_id TEXT
+                    evidence_turn_id TEXT,
+                    evidence_session_instance_id TEXT,
+                    evidence_generation INTEGER,
+                    evidence_completed_at REAL
                 )
                 '''
             )
+        audit_columns = {
+                str(row['name'])
+                for row in self._connection.execute(
+                    'PRAGMA table_info(memory_audit_events)'
+                ).fetchall()
+            }
+        audit_migrations = {
+                'evidence_session_instance_id': (
+                    'ALTER TABLE memory_audit_events ADD COLUMN '
+                    'evidence_session_instance_id TEXT'
+                ),
+                'evidence_generation': (
+                    'ALTER TABLE memory_audit_events ADD COLUMN '
+                    'evidence_generation INTEGER'
+                ),
+                'evidence_completed_at': (
+                    'ALTER TABLE memory_audit_events ADD COLUMN '
+                    'evidence_completed_at REAL'
+                ),
+            }
+        for column, statement in audit_migrations.items():
+            if column not in audit_columns:
+                self._connection.execute(statement)
         self._connection.execute(
                 '''
                 CREATE INDEX IF NOT EXISTS memory_audit_user_time_idx
                 ON memory_audit_events (user_id, occurred_at DESC)
                 '''
             )
+
+    def _require_supported_schema_locked(self) -> None:
+        """Reject a database created by a newer incompatible binary."""
+        table = self._connection.execute(
+            '''
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'memory_schema_metadata'
+            '''
+        ).fetchone()
+        if table is None:
+            return
+        row = self._connection.execute(
+            '''
+            SELECT schema_version,
+                   min_writer_protocol,
+                   max_writer_protocol
+            FROM memory_schema_metadata
+            WHERE singleton = 1
+            '''
+        ).fetchone()
+        if row is None:
+            raise MemorySchemaVersionError(
+                'memory schema metadata is incomplete'
+            )
+        schema_version = int(row['schema_version'])
+        minimum_writer = int(row['min_writer_protocol'])
+        maximum_writer = int(row['max_writer_protocol'])
+        if schema_version == PREVIOUS_MEMORY_SCHEMA_VERSION:
+            if not (
+                minimum_writer
+                <= PREVIOUS_MEMORY_SCHEMA_VERSION
+                <= maximum_writer
+            ):
+                raise MemorySchemaVersionError(
+                    'memory writer protocol is incompatible'
+                )
+            # Version-two triggers require its connection-local protocol
+            # value and would reject the version-three backfill DML. The
+            # surrounding BEGIN IMMEDIATE excludes another writer while the
+            # old gates are removed and the new gates are installed.
+            self._drop_writer_gate_triggers_locked()
+            return
+        if schema_version != MEMORY_SCHEMA_VERSION:
+            raise MemorySchemaVersionError(
+                'memory database schema is incompatible'
+            )
+        if not (
+            minimum_writer
+            <= MEMORY_WRITER_PROTOCOL_VERSION
+            <= maximum_writer
+        ):
+            raise MemorySchemaVersionError(
+                'memory writer protocol is incompatible'
+            )
+
+    def _initialize_version_gate_locked(self) -> None:
+        """Persist schema compatibility and gate every table mutation."""
+        self._connection.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS memory_schema_metadata (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                schema_version INTEGER NOT NULL,
+                min_writer_protocol INTEGER NOT NULL,
+                max_writer_protocol INTEGER NOT NULL,
+                migrated_at REAL NOT NULL
+            )
+            '''
+        )
+        row = self._connection.execute(
+            '''
+            SELECT schema_version,
+                   min_writer_protocol,
+                   max_writer_protocol
+            FROM memory_schema_metadata
+            WHERE singleton = 1
+            '''
+        ).fetchone()
+        if row is not None:
+            schema_version = int(row['schema_version'])
+            minimum_writer = int(row['min_writer_protocol'])
+            maximum_writer = int(row['max_writer_protocol'])
+            if schema_version == PREVIOUS_MEMORY_SCHEMA_VERSION:
+                self._connection.execute(
+                    '''
+                    UPDATE memory_schema_metadata
+                    SET schema_version = ?,
+                        min_writer_protocol = ?,
+                        max_writer_protocol = ?,
+                        migrated_at = ?
+                    WHERE singleton = 1
+                    ''',
+                    (
+                        MEMORY_SCHEMA_VERSION,
+                        MEMORY_WRITER_PROTOCOL_VERSION,
+                        MEMORY_WRITER_PROTOCOL_VERSION,
+                        self._validated_now(),
+                    ),
+                )
+            elif schema_version != MEMORY_SCHEMA_VERSION:
+                raise MemorySchemaVersionError(
+                    'memory schema metadata is incompatible'
+                )
+            elif not (
+                minimum_writer
+                <= MEMORY_WRITER_PROTOCOL_VERSION
+                <= maximum_writer
+            ):
+                raise MemorySchemaVersionError(
+                    'memory writer protocol is incompatible'
+                )
+        else:
+            self._connection.execute(
+                '''
+                INSERT INTO memory_schema_metadata (
+                    singleton,
+                    schema_version,
+                    min_writer_protocol,
+                    max_writer_protocol,
+                    migrated_at
+                ) VALUES (1, ?, ?, ?, ?)
+                ''',
+                (
+                    MEMORY_SCHEMA_VERSION,
+                    MEMORY_WRITER_PROTOCOL_VERSION,
+                    MEMORY_WRITER_PROTOCOL_VERSION,
+                    self._validated_now(),
+                ),
+            )
+        self._install_writer_gate_triggers_locked()
+
+    def _drop_writer_gate_triggers_locked(self) -> None:
+        """Remove known memory DML gates during an exclusive migration."""
+        tables = (
+            'memories',
+            'memory_store_state',
+            'memory_user_revisions',
+            'memory_mutation_requests',
+            'memory_audit_events',
+            'memory_schema_metadata',
+        )
+        for table in tables:
+            for operation in ('INSERT', 'UPDATE', 'DELETE'):
+                trigger = (
+                    f'memory_writer_gate_{table}_{operation.lower()}'
+                )
+                self._connection.execute(
+                    f'DROP TRIGGER IF EXISTS {trigger}'
+                )
+
+    def _install_writer_gate_triggers_locked(self) -> None:
+        """Block legacy or unmanaged connections from mutating state."""
+        tables = (
+            'memories',
+            'memory_store_state',
+            'memory_user_revisions',
+            'memory_mutation_requests',
+            'memory_audit_events',
+            'memory_schema_metadata',
+        )
+        for table in tables:
+            for operation in ('INSERT', 'UPDATE', 'DELETE'):
+                trigger = (
+                    f'memory_writer_gate_{table}_{operation.lower()}'
+                )
+                self._connection.execute(
+                    f'DROP TRIGGER IF EXISTS {trigger}'
+                )
+                self._connection.execute(
+                    f'''
+                    CREATE TRIGGER {trigger}
+                    BEFORE {operation} ON {table}
+                    BEGIN
+                        SELECT CASE
+                            WHEN memory_writer_protocol_version()
+                                 != {MEMORY_WRITER_PROTOCOL_VERSION}
+                            THEN RAISE(
+                                ABORT,
+                                'incompatible memory writer protocol'
+                            )
+                        END;
+                    END
+                    '''
+                )
 
     def _secure_file_permissions(self) -> None:
         if self.database_path == ':memory:':
@@ -582,6 +957,9 @@ class SQLiteMemoryStore:
         user_confirmed: bool,
         kind: str = 'fact',
         expires_at: Optional[float] = None,
+        evidence_session_instance_id: Optional[str] = None,
+        evidence_generation: Optional[int] = None,
+        evidence_completed_at: Optional[float] = None,
     ) -> MemoryMutationResult:
         """Create one memory with explicit consent and durable idempotency."""
         normalized_user = validate_user_id(user_id)
@@ -595,6 +973,15 @@ class SQLiteMemoryStore:
                 evidence_turn_id,
                 user_confirmed,
             )
+        )
+        (
+            evidence_instance,
+            evidence_generation_value,
+            evidence_completed,
+        ) = self._validated_evidence_provenance(
+            evidence_session_instance_id,
+            evidence_generation,
+            evidence_completed_at,
         )
         timestamp = self._validated_now()
         (
@@ -617,7 +1004,7 @@ class SQLiteMemoryStore:
             metadata={},
             created_at=timestamp,
         )
-        fingerprint = self._mutation_fingerprint({
+        fingerprint_value = {
             'operation': 'create',
             'content': normalized_content,
             'kind': normalized_kind,
@@ -625,7 +1012,16 @@ class SQLiteMemoryStore:
             'evidence_conversation_id': evidence_conversation,
             'evidence_turn_id': evidence_turn,
             'user_confirmed': True,
-        })
+        }
+        payload_fingerprint = self._mutation_fingerprint(fingerprint_value)
+        fingerprint_value['evidence_provenance'] = (
+            self._provenance_fingerprint_value(
+                evidence_instance,
+                evidence_generation_value,
+                evidence_completed,
+            )
+        )
+        fingerprint = self._mutation_fingerprint(fingerprint_value)
         with self._lock:
             try:
                 self._connection.execute('BEGIN IMMEDIATE')
@@ -634,6 +1030,7 @@ class SQLiteMemoryStore:
                     normalized_request,
                     'create',
                     fingerprint,
+                    payload_fingerprint,
                 )
                 if cached is not None:
                     self._connection.commit()
@@ -657,6 +1054,9 @@ class SQLiteMemoryStore:
                     revision=1,
                     evidence_conversation_id=evidence_conversation,
                     evidence_turn_id=evidence_turn,
+                    evidence_session_instance_id=evidence_instance,
+                    evidence_generation=evidence_generation_value,
+                    evidence_completed_at=evidence_completed,
                 )
                 self._insert_record_locked(record, metadata_json)
                 global_revision, user_revision = (
@@ -677,10 +1077,14 @@ class SQLiteMemoryStore:
                     occurred_at=timestamp,
                     evidence_conversation_id=evidence_conversation,
                     evidence_turn_id=evidence_turn,
+                    evidence_session_instance_id=evidence_instance,
+                    evidence_generation=evidence_generation_value,
+                    evidence_completed_at=evidence_completed,
                 )
                 self._store_mutation_locked(
                     normalized_user,
                     fingerprint,
+                    payload_fingerprint,
                     result,
                 )
                 self._connection.commit()
@@ -689,6 +1093,66 @@ class SQLiteMemoryStore:
                 raise
             self._secure_file_permissions()
         return result
+
+    def prepare_confirmed_create(
+        self,
+        user_id: str,
+        request_id: str,
+        content: str,
+        evidence_conversation_id: str,
+        evidence_turn_id: str,
+        user_confirmed: bool,
+        kind: str = 'fact',
+        expires_at: Optional[float] = None,
+    ) -> MemoryMutationReplay:
+        """Check a create retry without performing a new mutation."""
+        normalized_user = validate_user_id(user_id)
+        normalized_request = _required_identifier(
+            request_id,
+            'request_id',
+        )
+        evidence_conversation, evidence_turn = (
+            self._validated_confirmation(
+                evidence_conversation_id,
+                evidence_turn_id,
+                user_confirmed,
+            )
+        )
+        (
+            _user,
+            normalized_content,
+            normalized_kind,
+            _source,
+            _confidence,
+            normalized_expiry,
+            _metadata,
+            _metadata_json,
+            _created,
+        ) = self._validated_record_values(
+            user_id=normalized_user,
+            content=content,
+            kind=kind,
+            source='user_confirmed',
+            confidence=1.0,
+            expires_at=expires_at,
+            metadata={},
+            created_at=self._validated_now(),
+        )
+        fingerprint = self._mutation_fingerprint({
+            'operation': 'create',
+            'content': normalized_content,
+            'kind': normalized_kind,
+            'expires_at': normalized_expiry,
+            'evidence_conversation_id': evidence_conversation,
+            'evidence_turn_id': evidence_turn,
+            'user_confirmed': True,
+        })
+        return self._prepare_mutation(
+            normalized_user,
+            normalized_request,
+            'create',
+            fingerprint,
+        )
 
     def update_confirmed(
         self,
@@ -702,6 +1166,9 @@ class SQLiteMemoryStore:
         user_confirmed: bool,
         kind: Optional[str] = None,
         expires_at: Any = _UNSET,
+        evidence_session_instance_id: Optional[str] = None,
+        evidence_generation: Optional[int] = None,
+        evidence_completed_at: Optional[float] = None,
     ) -> MemoryMutationResult:
         """Update one owned memory with record-level compare-and-swap."""
         normalized_user = validate_user_id(user_id)
@@ -721,6 +1188,15 @@ class SQLiteMemoryStore:
                 user_confirmed,
             )
         )
+        (
+            evidence_instance,
+            evidence_generation_value,
+            evidence_completed,
+        ) = self._validated_evidence_provenance(
+            evidence_session_instance_id,
+            evidence_generation,
+            evidence_completed_at,
+        )
         if not isinstance(content, str) or not content.strip():
             raise ValidationError('memory content must not be empty')
         normalized_content = content.strip()
@@ -733,7 +1209,7 @@ class SQLiteMemoryStore:
         if expires_at is not _UNSET:
             normalized_expiry = self._validated_expiry(expires_at)
         timestamp = self._validated_now()
-        fingerprint = self._mutation_fingerprint({
+        fingerprint_value = {
             'operation': 'update',
             'memory_id': normalized_memory_id,
             'expected_revision': expected,
@@ -747,7 +1223,16 @@ class SQLiteMemoryStore:
             'evidence_conversation_id': evidence_conversation,
             'evidence_turn_id': evidence_turn,
             'user_confirmed': True,
-        })
+        }
+        payload_fingerprint = self._mutation_fingerprint(fingerprint_value)
+        fingerprint_value['evidence_provenance'] = (
+            self._provenance_fingerprint_value(
+                evidence_instance,
+                evidence_generation_value,
+                evidence_completed,
+            )
+        )
+        fingerprint = self._mutation_fingerprint(fingerprint_value)
         with self._lock:
             try:
                 self._connection.execute('BEGIN IMMEDIATE')
@@ -756,6 +1241,7 @@ class SQLiteMemoryStore:
                     normalized_request,
                     'update',
                     fingerprint,
+                    payload_fingerprint,
                 )
                 if cached is not None:
                     self._connection.commit()
@@ -803,7 +1289,10 @@ class SQLiteMemoryStore:
                         revision = ?,
                         updated_at = ?,
                         evidence_conversation_id = ?,
-                        evidence_turn_id = ?
+                        evidence_turn_id = ?,
+                        evidence_session_instance_id = ?,
+                        evidence_generation = ?,
+                        evidence_completed_at = ?
                     WHERE user_id = ? AND id = ? AND revision = ?
                     ''',
                     (
@@ -814,6 +1303,9 @@ class SQLiteMemoryStore:
                         timestamp,
                         evidence_conversation,
                         evidence_turn,
+                        evidence_instance,
+                        evidence_generation_value,
+                        evidence_completed,
                         normalized_user,
                         normalized_memory_id,
                         expected,
@@ -837,10 +1329,14 @@ class SQLiteMemoryStore:
                     occurred_at=timestamp,
                     evidence_conversation_id=evidence_conversation,
                     evidence_turn_id=evidence_turn,
+                    evidence_session_instance_id=evidence_instance,
+                    evidence_generation=evidence_generation_value,
+                    evidence_completed_at=evidence_completed,
                 )
                 self._store_mutation_locked(
                     normalized_user,
                     fingerprint,
+                    payload_fingerprint,
                     result,
                 )
                 self._connection.commit()
@@ -849,6 +1345,69 @@ class SQLiteMemoryStore:
                 raise
             self._secure_file_permissions()
         return result
+
+    def prepare_confirmed_update(
+        self,
+        user_id: str,
+        memory_id: str,
+        request_id: str,
+        expected_revision: int,
+        content: str,
+        evidence_conversation_id: str,
+        evidence_turn_id: str,
+        user_confirmed: bool,
+        kind: Optional[str] = None,
+        expires_at: Any = _UNSET,
+    ) -> MemoryMutationReplay:
+        """Check an update retry without performing a new mutation."""
+        normalized_user = validate_user_id(user_id)
+        normalized_memory = _required_identifier(memory_id, 'memory_id')
+        normalized_request = _required_identifier(
+            request_id,
+            'request_id',
+        )
+        expected = self._validated_expected_revision(expected_revision)
+        evidence_conversation, evidence_turn = (
+            self._validated_confirmation(
+                evidence_conversation_id,
+                evidence_turn_id,
+                user_confirmed,
+            )
+        )
+        if not isinstance(content, str) or not content.strip():
+            raise ValidationError('memory content must not be empty')
+        normalized_content = content.strip()
+        if len(normalized_content) > MAX_MEMORY_LENGTH:
+            raise ValidationError('memory content is too long')
+        normalized_kind = (
+            self._validated_label(kind, 'kind')
+            if kind is not None
+            else None
+        )
+        normalized_expiry = expires_at
+        if expires_at is not _UNSET:
+            normalized_expiry = self._validated_expiry(expires_at)
+        fingerprint = self._mutation_fingerprint({
+            'operation': 'update',
+            'memory_id': normalized_memory,
+            'expected_revision': expected,
+            'content': normalized_content,
+            'kind': normalized_kind,
+            'expires_at': (
+                '__unchanged__'
+                if normalized_expiry is _UNSET
+                else normalized_expiry
+            ),
+            'evidence_conversation_id': evidence_conversation,
+            'evidence_turn_id': evidence_turn,
+            'user_confirmed': True,
+        })
+        return self._prepare_mutation(
+            normalized_user,
+            normalized_request,
+            'update',
+            fingerprint,
+        )
 
     def delete_confirmed(
         self,
@@ -859,6 +1418,9 @@ class SQLiteMemoryStore:
         evidence_conversation_id: str,
         evidence_turn_id: str,
         user_confirmed: bool,
+        evidence_session_instance_id: Optional[str] = None,
+        evidence_generation: Optional[int] = None,
+        evidence_completed_at: Optional[float] = None,
     ) -> MemoryMutationResult:
         """Delete one owned memory with consent, CAS, and idempotency."""
         normalized_user = validate_user_id(user_id)
@@ -878,15 +1440,33 @@ class SQLiteMemoryStore:
                 user_confirmed,
             )
         )
+        (
+            evidence_instance,
+            evidence_generation_value,
+            evidence_completed,
+        ) = self._validated_evidence_provenance(
+            evidence_session_instance_id,
+            evidence_generation,
+            evidence_completed_at,
+        )
         timestamp = self._validated_now()
-        fingerprint = self._mutation_fingerprint({
+        fingerprint_value = {
             'operation': 'delete',
             'memory_id': normalized_memory_id,
             'expected_revision': expected,
             'evidence_conversation_id': evidence_conversation,
             'evidence_turn_id': evidence_turn,
             'user_confirmed': True,
-        })
+        }
+        payload_fingerprint = self._mutation_fingerprint(fingerprint_value)
+        fingerprint_value['evidence_provenance'] = (
+            self._provenance_fingerprint_value(
+                evidence_instance,
+                evidence_generation_value,
+                evidence_completed,
+            )
+        )
+        fingerprint = self._mutation_fingerprint(fingerprint_value)
         with self._lock:
             try:
                 self._connection.execute('BEGIN IMMEDIATE')
@@ -895,6 +1475,7 @@ class SQLiteMemoryStore:
                     normalized_request,
                     'delete',
                     fingerprint,
+                    payload_fingerprint,
                 )
                 if cached is not None:
                     self._connection.commit()
@@ -942,11 +1523,15 @@ class SQLiteMemoryStore:
                     occurred_at=timestamp,
                     evidence_conversation_id=evidence_conversation,
                     evidence_turn_id=evidence_turn,
+                    evidence_session_instance_id=evidence_instance,
+                    evidence_generation=evidence_generation_value,
+                    evidence_completed_at=evidence_completed,
                     deleted=True,
                 )
                 self._store_mutation_locked(
                     normalized_user,
                     fingerprint,
+                    payload_fingerprint,
                     result,
                 )
                 self._connection.commit()
@@ -955,6 +1540,46 @@ class SQLiteMemoryStore:
                 raise
             self._secure_file_permissions()
         return result
+
+    def prepare_confirmed_delete(
+        self,
+        user_id: str,
+        memory_id: str,
+        request_id: str,
+        expected_revision: int,
+        evidence_conversation_id: str,
+        evidence_turn_id: str,
+        user_confirmed: bool,
+    ) -> MemoryMutationReplay:
+        """Check a delete retry without performing a new mutation."""
+        normalized_user = validate_user_id(user_id)
+        normalized_memory = _required_identifier(memory_id, 'memory_id')
+        normalized_request = _required_identifier(
+            request_id,
+            'request_id',
+        )
+        expected = self._validated_expected_revision(expected_revision)
+        evidence_conversation, evidence_turn = (
+            self._validated_confirmation(
+                evidence_conversation_id,
+                evidence_turn_id,
+                user_confirmed,
+            )
+        )
+        fingerprint = self._mutation_fingerprint({
+            'operation': 'delete',
+            'memory_id': normalized_memory,
+            'expected_revision': expected,
+            'evidence_conversation_id': evidence_conversation,
+            'evidence_turn_id': evidence_turn,
+            'user_confirmed': True,
+        })
+        return self._prepare_mutation(
+            normalized_user,
+            normalized_request,
+            'delete',
+            fingerprint,
+        )
 
     def get_for_user(
         self,
@@ -1547,6 +2172,58 @@ class SQLiteMemoryStore:
         )
 
     @staticmethod
+    def _validated_evidence_provenance(
+        session_instance_id: Any,
+        generation: Any,
+        completed_at: Any,
+    ) -> Tuple[Optional[str], Optional[int], Optional[float]]:
+        """Validate an all-known or explicitly unknown evidence origin."""
+        values = (session_instance_id, generation, completed_at)
+        if all(value is None for value in values):
+            return None, None, None
+        if any(value is None for value in values):
+            raise ValidationError(
+                'evidence provenance must be complete or entirely unknown'
+            )
+        normalized_instance = _required_identifier(
+            session_instance_id,
+            'evidence_session_instance_id',
+        )
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            raise ValidationError(
+                'evidence_generation must be a positive integer'
+            )
+        if generation < 1:
+            raise ValidationError(
+                'evidence_generation must be a positive integer'
+            )
+        if isinstance(completed_at, bool) or not isinstance(
+            completed_at,
+            (int, float),
+        ):
+            raise ValidationError('evidence_completed_at must be finite')
+        normalized_completed_at = float(completed_at)
+        if not math.isfinite(normalized_completed_at):
+            raise ValidationError('evidence_completed_at must be finite')
+        return normalized_instance, generation, normalized_completed_at
+
+    @staticmethod
+    def _provenance_fingerprint_value(
+        session_instance_id: Optional[str],
+        generation: Optional[int],
+        completed_at: Optional[float],
+    ) -> Dict[str, Any]:
+        """Return a canonical explicit known/unknown provenance value."""
+        if session_instance_id is None:
+            return {'status': 'unknown'}
+        return {
+            'status': 'validated',
+            'session_instance_id': session_instance_id,
+            'generation': generation,
+            'completed_at': completed_at,
+        }
+
+    @staticmethod
     def _mutation_fingerprint(value: Dict[str, Any]) -> str:
         encoded = json.dumps(
             value,
@@ -1577,8 +2254,11 @@ class SQLiteMemoryStore:
                 revision,
                 updated_at,
                 evidence_conversation_id,
-                evidence_turn_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                evidence_turn_id,
+                evidence_session_instance_id,
+                evidence_generation,
+                evidence_completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 record.id,
@@ -1594,6 +2274,9 @@ class SQLiteMemoryStore:
                 record.updated_at,
                 record.evidence_conversation_id,
                 record.evidence_turn_id,
+                record.evidence_session_instance_id,
+                record.evidence_generation,
+                record.evidence_completed_at,
             ),
         )
 
@@ -1670,10 +2353,18 @@ class SQLiteMemoryStore:
         request_id: str,
         operation: str,
         fingerprint: str,
+        payload_fingerprint: str,
     ) -> Optional[MemoryMutationResult]:
         row = self._connection.execute(
             '''
-            SELECT operation, request_fingerprint, response_json
+            SELECT operation,
+                   request_fingerprint,
+                   request_payload_fingerprint,
+                   fingerprint_version,
+                   response_json,
+                   evidence_session_instance_id,
+                   evidence_generation,
+                   evidence_completed_at
             FROM memory_mutation_requests
             WHERE user_id = ? AND request_id = ?
             ''',
@@ -1683,7 +2374,12 @@ class SQLiteMemoryStore:
             return None
         if (
             str(row['operation']) != operation
-            or str(row['request_fingerprint']) != fingerprint
+            or str(row['request_payload_fingerprint'])
+            != payload_fingerprint
+            or (
+                int(row['fingerprint_version']) >= 2
+                and str(row['request_fingerprint']) != fingerprint
+            )
         ):
             raise MemoryMutationConflictError(
                 'request_id was already used with different input'
@@ -1696,7 +2392,95 @@ class SQLiteMemoryStore:
             ) from error
         if not isinstance(value, dict):
             raise RuntimeError('stored memory mutation response is invalid')
-        return MemoryMutationResult.from_stored_dict(value)
+        result = MemoryMutationResult.from_stored_dict(value)
+        if int(row['fingerprint_version']) >= 2 and (
+            result.evidence_session_instance_id
+            != row['evidence_session_instance_id']
+            or result.evidence_generation != row['evidence_generation']
+            or result.evidence_completed_at != row['evidence_completed_at']
+        ):
+            raise RuntimeError(
+                'stored memory mutation provenance is inconsistent'
+            )
+        return result
+
+    def _cached_payload_mutation_locked(
+        self,
+        user_id: str,
+        request_id: str,
+        operation: str,
+        payload_fingerprint: str,
+    ) -> Optional[MemoryMutationResult]:
+        """Replay only an exact caller payload before evidence lookup."""
+        row = self._connection.execute(
+            '''
+            SELECT operation,
+                   request_payload_fingerprint,
+                   response_json,
+                   fingerprint_version,
+                   evidence_session_instance_id,
+                   evidence_generation,
+                   evidence_completed_at
+            FROM memory_mutation_requests
+            WHERE user_id = ? AND request_id = ?
+            ''',
+            (user_id, request_id),
+        ).fetchone()
+        if row is None:
+            return None
+        if (
+            str(row['operation']) != operation
+            or str(row['request_payload_fingerprint'])
+            != payload_fingerprint
+        ):
+            raise MemoryMutationConflictError(
+                'request_id was already used with different input'
+            )
+        try:
+            value = json.loads(str(row['response_json']))
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                'stored memory mutation response is invalid'
+            ) from error
+        if not isinstance(value, dict):
+            raise RuntimeError('stored memory mutation response is invalid')
+        result = MemoryMutationResult.from_stored_dict(value)
+        if int(row['fingerprint_version']) >= 2 and (
+            result.evidence_session_instance_id
+            != row['evidence_session_instance_id']
+            or result.evidence_generation != row['evidence_generation']
+            or result.evidence_completed_at != row['evidence_completed_at']
+        ):
+            raise RuntimeError(
+                'stored memory mutation provenance is inconsistent'
+            )
+        return result
+
+    def _prepare_mutation(
+        self,
+        user_id: str,
+        request_id: str,
+        operation: str,
+        fingerprint: str,
+    ) -> MemoryMutationReplay:
+        """Atomically validate an exact retry or reserve no state."""
+        with self._lock:
+            try:
+                self._connection.execute('BEGIN')
+                cached = self._cached_payload_mutation_locked(
+                    user_id,
+                    request_id,
+                    operation,
+                    fingerprint,
+                )
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return MemoryMutationReplay(
+            cached_result=cached,
+            request_fingerprint=fingerprint,
+        )
 
     def _confirmed_result_locked(
         self,
@@ -1711,6 +2495,9 @@ class SQLiteMemoryStore:
         occurred_at: float,
         evidence_conversation_id: str,
         evidence_turn_id: str,
+        evidence_session_instance_id: Optional[str],
+        evidence_generation: Optional[int],
+        evidence_completed_at: Optional[float],
         deleted: bool = False,
     ) -> MemoryMutationResult:
         event_id = str(uuid.uuid4())
@@ -1727,6 +2514,9 @@ class SQLiteMemoryStore:
             occurred_at=occurred_at,
             evidence_conversation_id=evidence_conversation_id,
             evidence_turn_id=evidence_turn_id,
+            evidence_session_instance_id=evidence_session_instance_id,
+            evidence_generation=evidence_generation,
+            evidence_completed_at=evidence_completed_at,
         )
         self._insert_audit_locked(event)
         return MemoryMutationResult(
@@ -1738,6 +2528,11 @@ class SQLiteMemoryStore:
             global_revision=global_revision,
             audit_event_id=event_id,
             occurred_at=occurred_at,
+            evidence_conversation_id=evidence_conversation_id,
+            evidence_turn_id=evidence_turn_id,
+            evidence_session_instance_id=evidence_session_instance_id,
+            evidence_generation=evidence_generation,
+            evidence_completed_at=evidence_completed_at,
             deleted=deleted,
         )
 
@@ -1745,6 +2540,7 @@ class SQLiteMemoryStore:
         self,
         user_id: str,
         fingerprint: str,
+        payload_fingerprint: str,
         result: MemoryMutationResult,
     ) -> None:
         self._connection.execute(
@@ -1754,15 +2550,22 @@ class SQLiteMemoryStore:
                 request_id,
                 operation,
                 request_fingerprint,
+                request_payload_fingerprint,
+                fingerprint_version,
                 response_json,
-                created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                created_at,
+                evidence_session_instance_id,
+                evidence_generation,
+                evidence_completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 user_id,
                 result.request_id,
                 result.operation,
                 fingerprint,
+                payload_fingerprint,
+                2,
                 json.dumps(
                     result.to_stored_dict(),
                     ensure_ascii=False,
@@ -1771,6 +2574,9 @@ class SQLiteMemoryStore:
                     allow_nan=False,
                 ),
                 result.occurred_at,
+                result.evidence_session_instance_id,
+                result.evidence_generation,
+                result.evidence_completed_at,
             ),
         )
 
@@ -1789,8 +2595,11 @@ class SQLiteMemoryStore:
                 global_revision,
                 occurred_at,
                 evidence_conversation_id,
-                evidence_turn_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                evidence_turn_id,
+                evidence_session_instance_id,
+                evidence_generation,
+                evidence_completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 event.event_id,
@@ -1805,6 +2614,9 @@ class SQLiteMemoryStore:
                 event.occurred_at,
                 event.evidence_conversation_id,
                 event.evidence_turn_id,
+                event.evidence_session_instance_id,
+                event.evidence_generation,
+                event.evidence_completed_at,
             ),
         )
 
@@ -1839,6 +2651,21 @@ class SQLiteMemoryStore:
                 if row['evidence_turn_id'] is not None
                 else None
             ),
+            evidence_session_instance_id=(
+                str(row['evidence_session_instance_id'])
+                if row['evidence_session_instance_id'] is not None
+                else None
+            ),
+            evidence_generation=(
+                int(row['evidence_generation'])
+                if row['evidence_generation'] is not None
+                else None
+            ),
+            evidence_completed_at=(
+                float(row['evidence_completed_at'])
+                if row['evidence_completed_at'] is not None
+                else None
+            ),
         )
 
     @staticmethod
@@ -1868,6 +2695,21 @@ class SQLiteMemoryStore:
             evidence_turn_id=(
                 str(row['evidence_turn_id'])
                 if row['evidence_turn_id'] is not None
+                else None
+            ),
+            evidence_session_instance_id=(
+                str(row['evidence_session_instance_id'])
+                if row['evidence_session_instance_id'] is not None
+                else None
+            ),
+            evidence_generation=(
+                int(row['evidence_generation'])
+                if row['evidence_generation'] is not None
+                else None
+            ),
+            evidence_completed_at=(
+                float(row['evidence_completed_at'])
+                if row['evidence_completed_at'] is not None
                 else None
             ),
         )

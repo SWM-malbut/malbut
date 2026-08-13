@@ -546,3 +546,139 @@ def test_rejects_unbounded_or_invalid_configuration(
             [_ScriptedProvider([_message_result()])],
             **{keyword: value},
         )
+
+
+@pytest.mark.parametrize(
+    ('status_code', 'expected'),
+    (
+        (408, ProviderFailureCode.TIMEOUT),
+        (401, ProviderFailureCode.AUTHENTICATION),
+        (400, ProviderFailureCode.INVALID_REQUEST),
+        (418, ProviderFailureCode.INVALID_REQUEST),
+        (200, ProviderFailureCode.UNKNOWN),
+    ),
+)
+def test_classifies_http_status_families_without_response_text(
+    status_code: int,
+    expected: ProviderFailureCode,
+) -> None:
+    """HTTP categories normalize without retaining a response body."""
+    error = urllib.error.HTTPError(
+        'https://api.openai.com/v1/responses',
+        status_code,
+        'private response text',
+        {},
+        None,
+    )
+    assert classify_exception(error).code is expected
+
+
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    (
+        (
+            urllib.error.URLError(TimeoutError('private timeout')),
+            ProviderFailureCode.TIMEOUT,
+        ),
+        (
+            urllib.error.URLError('private DNS failure'),
+            ProviderFailureCode.NETWORK,
+        ),
+        (ConnectionError('private connection'), ProviderFailureCode.NETWORK),
+        (
+            ValueError('private malformed output'),
+            ProviderFailureCode.INVALID_RESPONSE,
+        ),
+        (RuntimeError('private unknown'), ProviderFailureCode.UNKNOWN),
+    ),
+)
+def test_classifies_non_http_failure_families(
+    error: BaseException,
+    expected: ProviderFailureCode,
+) -> None:
+    """Timeout, transport, validation, and unknown failures stay distinct."""
+    assert classify_exception(error).code is expected
+
+
+def test_rejects_missing_or_non_provider_entries() -> None:
+    """Fallback chains require at least one callable provider."""
+    with pytest.raises(ValueError, match='at least one provider'):
+        ReliableProvider([])
+    with pytest.raises(TypeError, match='must implement complete'):
+        ReliableProvider([object()])
+
+
+@pytest.mark.parametrize(
+    ('overrides', 'message'),
+    (
+        (
+            {'base_delay_seconds': 2.0, 'max_delay_seconds': 1.0},
+            'max_delay_seconds must be at least',
+        ),
+        (
+            {
+                'attempt_timeout_seconds': 2.0,
+                'total_timeout_seconds': 1.0,
+            },
+            'total_timeout_seconds must be at least',
+        ),
+    ),
+)
+def test_rejects_internally_inconsistent_timeout_configuration(
+    overrides,
+    message: str,
+) -> None:
+    """Individually valid limits must also form a schedulable budget."""
+    with pytest.raises(ValueError, match=message):
+        ReliableProvider(
+            [_ScriptedProvider([_message_result()])],
+            **overrides,
+        )
+
+
+@pytest.mark.parametrize('retry_after', (None, 'invalid', '-1'))
+def test_invalid_retry_after_metadata_is_ignored(retry_after) -> None:
+    """Missing, malformed, or negative retry metadata never adds delay."""
+    headers = None
+    if retry_after is not None:
+        headers = {'Retry-After': retry_after}
+    error = urllib.error.HTTPError(
+        'https://api.openai.com/v1/responses',
+        429,
+        'rate limited',
+        headers,
+        None,
+    )
+    assert ReliableProvider._retry_after_seconds(error) is None
+
+
+def test_raw_non_result_falls_back_without_retry() -> None:
+    """A provider returning an arbitrary object is a permanent bad response."""
+    primary = _ScriptedProvider([object(), _message_result('unused')])
+    fallback = _ScriptedProvider([_message_result('fallback')])
+    provider = ReliableProvider(
+        [primary, fallback],
+        max_retries=2,
+    )
+
+    result = _complete(provider)
+
+    assert result.provider == 'fallback'
+    assert primary.call_count == 1
+    assert fallback.call_count == 1
+
+
+def test_invalid_request_does_not_open_closed_circuit() -> None:
+    """Caller errors fall back but do not count as provider outages."""
+    primary = _ScriptedProvider(
+        [NormalizedProviderError(ProviderFailureCode.INVALID_REQUEST)]
+    )
+    fallback = _ScriptedProvider([_message_result('fallback')])
+    provider = ReliableProvider(
+        [primary, fallback],
+        max_retries=0,
+        failure_threshold=1,
+    )
+
+    assert _complete(provider).provider == 'fallback'
+    assert provider.circuit_state(0) is CircuitState.CLOSED

@@ -4,7 +4,7 @@
 
 기존 300회 stress JSON에는 발화·응답·prompt가 저장되지 않았다. 이 문서는 과거 로그를 복구한 것이 아니라, 현재 코드를 Mock으로 새로 실행해 사람이 읽을 수 있도록 남긴 별도 증거다.
 
-- 생성 시각: `2026-08-12T17:44:51.027914+00:00`
+- 생성 시각: `2026-08-13T08:25:14.243322+00:00`
 - 시나리오: `4`개
 - 통과: `4/4`
 - 실제 OpenAI 호출: `false`
@@ -23,7 +23,7 @@
 
 ### 턴 1: `turn-1`
 
-- 사용자: **내 이름은 신이야**
+- 사용자: **내 이름은 사용자A야**
 - Provider: `mock / malbut-korean-rules-v1`
 - 외부 API·ROS 호출: 없음
 
@@ -71,7 +71,7 @@ null
   "conversation_history_untrusted": [],
   "conversation_summary_untrusted": null,
   "memory_context_untrusted": [],
-  "current_user_utterance": "내 이름은 신이야",
+  "current_user_utterance": "내 이름은 사용자A야",
   "context_truncated": false
 }
 ```
@@ -114,9 +114,9 @@ MockProvider 원결정:
     "expires_in_ms": 5000
   },
   "execution": {
-    "decision_id": "754680c7-428e-4078-a82c-e29fb01cac3f",
-    "issued_at": 1786556690.9866664,
-    "expires_at": 1786556695.9866664,
+    "decision_id": "a5d54b46-8560-4b2b-8b5f-d45d3177480b",
+    "issued_at": 1786609514.2120118,
+    "expires_at": 1786609519.2120118,
     "authorized": false,
     "proposal_authorized": false,
     "state_trusted": false,
@@ -145,7 +145,7 @@ MockProvider 원결정:
   {
     "turn_id": "turn-1",
     "ordinal": 1,
-    "user": "내 이름은 신이야",
+    "user": "내 이름은 사용자A야",
     "assistant": "요청을 정확히 이해하지 못했어. 한 가지 작업으로 말해줘."
   }
 ]
@@ -190,7 +190,7 @@ null
     {
       "turn_id": "turn-1",
       "ordinal": 1,
-      "user": "내 이름은 신이야",
+      "user": "내 이름은 사용자A야",
       "assistant": "요청을 정확히 이해하지 못했어. 한 가지 작업으로 말해줘.",
       "user_truncated": false,
       "assistant_truncated": false
@@ -208,7 +208,7 @@ MockProvider 원결정:
 ```json
 {
   "type": "message",
-  "message": "아까 “내 이름은 신이야”라고 말했어.",
+  "message": "아까 “내 이름은 사용자A야”라고 말했어.",
   "tool_name": null,
   "arguments": {},
   "reason": "conversation_history_user_reference",
@@ -233,7 +233,7 @@ MockProvider 원결정:
 {
   "decision": {
     "type": "message",
-    "message": "아까 “내 이름은 신이야”라고 말했어.",
+    "message": "아까 “내 이름은 사용자A야”라고 말했어.",
     "tool_name": null,
     "arguments": {},
     "reason": "conversation_history_user_reference",
@@ -241,9 +241,9 @@ MockProvider 원결정:
     "expires_in_ms": 5000
   },
   "execution": {
-    "decision_id": "3f53fd40-e5d7-4332-ab5b-b6ec3886b51d",
-    "issued_at": 1786556690.9892223,
-    "expires_at": 1786556695.9892223,
+    "decision_id": "bd2f0f7d-67f0-4c72-9e4f-fa25ddbc4efb",
+    "issued_at": 1786609514.213251,
+    "expires_at": 1786609519.213251,
     "authorized": false,
     "proposal_authorized": false,
     "state_trusted": false,
@@ -349,10 +349,10 @@ MockProvider 원결정:
 
 ```json
 {
-  "summary_id": "b3246c40-6036-46ca-ab44-0f6e5395895f",
+  "summary_id": "d7bd121a-d762-48f5-841e-d19308ad818d",
   "user_id": "synthetic-user",
   "conversation_id": "synthetic-summary-memory",
-  "session_instance_id": "9e860bfd-4e21-46d9-aec2-130419a6e384",
+  "session_instance_id": "ab1f0842-a04c-485c-abaf-d37e82d27aa3",
   "generation": 1,
   "summary_revision": 2,
   "content": "[UNTRUSTED_CONVERSATION_SUMMARY_DATA source_start_ordinal=1 source_end_ordinal=2 source_turn_count=2 algorithm=local-extractive-rolling-v1]\n{\"assistant_data\":\"요청을 정확히 이해하지 못했어. 한 가지 작업으로 말해줘.\",\"source_ordinal\":1,\"turn_id\":\"seed-turn-01\",\"user_data\":\"합성 대화 01: 오늘 기록 01\"}\n{\"assistant_data\":\"요청을 정확히 이해하지 못했어. 한 가지 작업으로 말해줘.\",\"source_ordinal\":2,\"turn_id\":\"seed-turn-02\",\"user_data\":\"합성 대화 02: 오늘 기록 02\"}",
@@ -362,8 +362,8 @@ MockProvider 원결정:
   "source_digest": "b0fbe7e443755a32882fbbe5c27aaca880cd65c2d4478778af37aecf15817cc2",
   "summarizer": "local-extractive-rolling-v1",
   "fallback_used": false,
-  "created_at": 1786556691.0144215,
-  "updated_at": 1786556691.0189905
+  "created_at": 1786609514.2315333,
+  "updated_at": 1786609514.234059
 }
 ```
 
@@ -378,11 +378,18 @@ MockProvider 원결정:
     "content": "강아지 이름은 초코야",
     "source": "user_verified",
     "confidence": 1.0,
-    "created_at": 1786556690.9910963,
+    "created_at": 1786609514.2163332,
+    "updated_at": 1786609514.2163332,
     "expires_at": null,
     "metadata": {
       "synthetic": true
     },
+    "revision": 1,
+    "evidence_conversation_id": null,
+    "evidence_turn_id": null,
+    "evidence_session_instance_id": null,
+    "evidence_generation": null,
+    "evidence_completed_at": null,
     "score": 13.0
   }
 ]
@@ -494,7 +501,7 @@ MockProvider 원결정:
     }
   ],
   "conversation_summary_untrusted": {
-    "summary_id": "b3246c40-6036-46ca-ab44-0f6e5395895f",
+    "summary_id": "d7bd121a-d762-48f5-841e-d19308ad818d",
     "generation": 1,
     "summary_revision": 2,
     "source_start_ordinal": 1,
@@ -502,8 +509,8 @@ MockProvider 원결정:
     "source_turn_count": 2,
     "source_digest": "b0fbe7e443755a32882fbbe5c27aaca880cd65c2d4478778af37aecf15817cc2",
     "summarizer": "local-extractive-rolling-v1",
-    "created_at": 1786556691.0144215,
-    "updated_at": 1786556691.0189905,
+    "created_at": 1786609514.2315333,
+    "updated_at": 1786609514.234059,
     "content": "[UNTRUSTED_CONVERSATION_SUMMARY_DATA source_start_ordinal=1 source_end_ordinal=2 source_turn_count=2 algorithm=local-extractive-rolling-v1]\n{\"assistant_data\":\"요청을 정확히 이해하지 못했어. 한 가지 작업으로 말해줘.\",\"source_ordinal\":1,\"turn_id\":\"seed-turn-01\",\"user_data\":\"합성 대화 01: 오늘 기록 01\"}\n{\"assistant_data\":\"요청을 정확히 이해하지 못했어. 한 가지 작업으로 말해줘.\",\"source_ordinal\":2,\"turn_id\":\"seed-turn-02\",\"user_data\":\"합성 대화 02: 오늘 기록 02\"}",
     "truncated": false
   },
@@ -560,9 +567,9 @@ MockProvider 원결정:
     "expires_in_ms": 5000
   },
   "execution": {
-    "decision_id": "302d5459-cde2-437c-a81c-5ea939b7bc53",
-    "issued_at": 1786556691.0225194,
-    "expires_at": 1786556696.0225194,
+    "decision_id": "a9d51baf-64d4-44be-a68c-bf71a2863b82",
+    "issued_at": 1786609514.2370954,
+    "expires_at": 1786609519.2370954,
     "authorized": false,
     "proposal_authorized": false,
     "state_trusted": false,
@@ -688,9 +695,9 @@ MockProvider 원결정:
     "expires_in_ms": 5000
   },
   "execution": {
-    "decision_id": "259b0e3f-6f98-4430-b081-495ba9d1e491",
-    "issued_at": 1786556691.02644,
-    "expires_at": 1786556696.02644,
+    "decision_id": "5e50fde3-d748-4768-b8e4-47f15f35b954",
+    "issued_at": 1786609514.242443,
+    "expires_at": 1786609519.242443,
     "authorized": false,
     "proposal_authorized": false,
     "state_trusted": false,
@@ -801,13 +808,13 @@ MockProvider 원결정:
 ```json
 {
   "result": {
-    "result_id": "d10c34f6-d7f5-46a0-95e5-66452fab67e2",
+    "result_id": "7c59f9e9-f3a0-4696-aa61-8e7f2a794d85",
     "request_id": "synthetic-gateway-request-1",
     "tool_name": "navigate",
     "mode": "proposal_only",
     "status": "rejected",
-    "started_at": "2026-08-12T17:44:51.027781Z",
-    "completed_at": "2026-08-12T17:44:51.027846Z",
+    "started_at": "2026-08-13T08:25:14.243217Z",
+    "completed_at": "2026-08-13T08:25:14.243268Z",
     "result": null,
     "error": {
       "code": "confirmation_required",

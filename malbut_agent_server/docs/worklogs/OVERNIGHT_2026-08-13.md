@@ -196,7 +196,7 @@ mode `0600` JSON artifact에 남겼다. 합성 데이터·Mock·Noop/Recording a
 썼으며 실제 음성·화면·ROS·유료 API 호출은 0이다.
 
 한 가지 절차상 이탈도 숨기지 않는다. 초기 migration 원인 분리 중 한 번의
-진단 명령이 pytest 기본 임시 경로(`/tmp/pytest-of-shin`)와 `/tmp`의 진단 출력
+진단 명령이 pytest 기본 임시 경로(`/tmp/pytest-of-user`)와 `/tmp`의 진단 출력
 파일을 사용했다. 사용자 파일을 읽거나 삭제하지 않았고 제품 데이터도 쓰지
 않았다. 이후 반복·최종 검증의 모든 임시 DB와 출력은 package 내부 경로로
 제한했다.
@@ -217,7 +217,7 @@ mode `0600` JSON artifact에 남겼다. 합성 데이터·Mock·Noop/Recording a
 build·test 임시 산출물은 정확한 package 내부 임시 경로만 대상으로 검증 뒤
 정리했다. 기존 사용자 변경과 저장소 밖의 untracked 파일은 건드리지 않았다.
 
-## 아침 인계 판정
+## 초기 아침 인계 판정 — 아래 후속 강화 기록으로 대체됨
 
 SWM25-75~77은 모두 **외부 부작용이 없는 오프라인 안전 계약 MVP**까지
 구현·문서화·반복 검증을 마쳤다. 스크린샷의 항목을 실제 제품 연동 의미로
@@ -238,3 +238,63 @@ SWM25-75~77은 모두 **외부 부작용이 없는 오프라인 안전 계약 MV
 파일들을 함께 참조·패키징하고 있어 일부만 커밋하면 새 checkout의 source
 package가 불완전해지기 때문이다. 저장소 루트의 기존 benchmark/report,
 Gazebo map과 `malbut_vision` untracked 파일은 staging하지 않았다.
+
+## 2026-08-13 — 후속 완성도 강화 최종 기록
+
+위 `237 passed`, `24,900` subcheck와 초기 blocker 목록은 첫 오프라인 MVP
+시점의 이력이다. 그 상태를 별도 적대 검토한 뒤 발견한 결함을 수정하고 전체
+검증을 다시 수행했다. 아래 결과가 이 작업의 최종 인계 기준이다.
+
+### 구현 강화
+
+- SWM25-75: persistent evidence provenance, v1/v2→v3 원자 migration,
+  18개 row-DML writer gate, exact completed-turn validator, restart-safe
+  idempotency와 cross-connection CAS를 추가했다.
+- SWM25-76: provider 호출 밖의 per-session locking, result-aware completion
+  guard, DB 응답과 로컬 TTS 예약의 선형화, 외부 session 소실의 typed 결과,
+  barge-in·close 경합을 추가했다.
+- SWM25-77: renderer를 lock 밖 bounded worker로 격리하고 generation/cancel
+  fence, worker-start 오류, 긴급 lost-update, neutral timeout fail-closed와
+  pending dispatch 공유를 추가했다.
+- 공통: 같은 대화만 직렬화하고 서로 다른 대화는 병렬화했다. provider가
+  memory snapshot을 변조하는 우회, 영문 후행 이동 금지문 우회, Gateway의
+  boolean 정수 설정과 무제한 executor queue도 재현 후 수정했다.
+
+### 최종 검증
+
+- 전체 `pytest`: **584 passed**, 실패·skip 0
+- package-contained `colcon build`: **1 package finished**
+- package-contained `colcon test`: **584 tests**, 오류·실패·skip 0
+- Mock 고정 suite: **90/90**, schema 100%, 5개 safety gate 모두 통과
+- 전체 package coverage: line **93.18%**, branch **88.95%**
+- 승인 문서가 지정한 핵심 모듈 aggregate: line **95.65%**, branch **93.16%**
+- 이번 production 변경 executable line coverage: **96.89% (748/772)**. 남은 미실행
+  방어문은 public 선행 검사가 차단하는 중복 guard와 희귀 private invariant다.
+- `flake8`, `pydocstyle`, `compileall`, `git diff --check`: 모두 통과
+- 최종 반복 artifact: **900/900 story iteration**,
+  **40,500/40,500 subcheck**, 실패 0
+- artifact manifest: runner·선택 test·production Python **30/30 SHA-256 일치**,
+  `source_unchanged_during_run=true`, 생성 시 mode `0600`
+
+### 최종 판정과 남은 blocker
+
+SWM25-75~77의 **비부작용 오프라인 계약과 정책 경계**는 강화 구현·검증을
+완료했다. Jira 제목을 실제 제품 연동까지 완료한 뜻으로 바꾸면 안 된다.
+
+1. SWM25-75: evidence read→memory write 및 memory 재검사→conversation commit의
+   cross-transaction TOCTOU, 신뢰 person identity, 1회성 confirmation-token
+   CAS, 보존·파생 삭제 정책과 인증된 공개 adapter
+2. SWM25-76: 실제 STT/TTS/ROS, source-clock freshness, durable TTS outbox,
+   multi-process session lease, 실음성 WER·echo·latency
+3. SWM25-77: 실제 frontend/ROS renderer, receiver-side generation CAS,
+   uncooperative renderer process 격리, restart-safe execution ledger와 제품 UX값
+4. 공통: completion guard post-yield 실패의 durable DB rollback 불가, 반환하지
+   않는 Gateway adapter worker의 프로세스 종료 저해, lexical intent의 열린
+   자연어 한계. 실제 실행에는 outbox/UoW, adapter deadline·격리, closed grammar
+   또는 인증된 1회성 confirmation이 필요하다.
+4. LLM 전체: 실제 OpenAI 5초 post-fix gate, hard wall-clock deadline,
+   Terra→Luna→safe-refusal 운영 조합과 실제 Tool 실행 loop는 여전히 별도 단계
+
+push, PR, merge, deploy, 유료 API와 실제 로봇·카메라·마이크·스피커·알림
+호출은 수행하지 않았다. 저장소 루트 benchmark/report, Gazebo map,
+`malbut_vision`의 기존 untracked 파일도 수정하거나 staging하지 않았다.

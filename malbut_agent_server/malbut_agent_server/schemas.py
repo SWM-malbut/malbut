@@ -271,6 +271,8 @@ class AgentDecision:
             raise ValidationError(f'unknown decision type: {self.type}')
         if not isinstance(self.message, str):
             raise ValidationError('decision message must be a string')
+        if not self.message.strip():
+            raise ValidationError('decision message must not be empty')
         if len(self.message) > MAX_UTTERANCE_LENGTH:
             raise ValidationError('decision message is too long')
         if not isinstance(self.arguments, dict):

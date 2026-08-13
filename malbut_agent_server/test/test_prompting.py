@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from malbut_agent_server.conversation import ConversationTurn
 from malbut_agent_server.memory import MemoryRecord
 from malbut_agent_server.prompting import (
@@ -101,3 +103,56 @@ def test_conversation_context_is_latest_ten_and_data_only() -> None:
     assert 'private-user' not in model_input
     assert 'private-conversation' not in model_input
     assert 'private-turn' not in model_input
+
+
+@pytest.mark.parametrize(
+    ('keyword', 'value', 'message'),
+    (
+        ('max_model_input_chars', True, 'integer of at least 4096'),
+        ('max_model_input_chars', 4095, 'integer of at least 4096'),
+        ('recent_turn_limit', True, 'recent_turn_limit must be between'),
+        ('recent_turn_limit', 0, 'recent_turn_limit must be between'),
+        ('recent_turn_limit', 51, 'recent_turn_limit must be between'),
+    ),
+)
+def test_prompt_limits_reject_unbounded_or_ambiguous_values(
+    keyword: str,
+    value,
+    message: str,
+) -> None:
+    """Prompt limits reject booleans and values outside hard bounds."""
+    request = AgentRequest.from_dict(
+        {
+            'request_id': 'invalid-prompt-limit',
+            'user_id': 'test-user',
+            'conversation_id': 'prompt-conversation',
+            'turn_id': 'turn-1',
+            'utterance': '안녕',
+            'robot_state': {},
+            'available_tools': [],
+        }
+    )
+    with pytest.raises(ValueError, match=message):
+        build_model_input(request, [], **{keyword: value})
+
+
+def test_prompt_truncates_oversized_forbidden_zone_labels() -> None:
+    """Untrusted zone labels cannot consume the model-input budget."""
+    request = AgentRequest.from_dict(
+        {
+            'request_id': 'zone-prompt-limit',
+            'user_id': 'test-user',
+            'conversation_id': 'prompt-conversation',
+            'turn_id': 'turn-1',
+            'utterance': '상태 알려줘',
+            'robot_state': {
+                'forbidden_zones': ['가' * 200],
+            },
+            'available_tools': [],
+        }
+    )
+
+    payload = json.loads(build_model_input(request, []).split('\n', 1)[1])
+    zones = payload['robot_state_untrusted']['forbidden_zones']
+    assert zones == ['가' * 80]
+    assert payload['context_truncated'] is True

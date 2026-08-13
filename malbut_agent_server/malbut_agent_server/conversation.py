@@ -1000,6 +1000,60 @@ class SQLiteConversationStore:
                 normalized_limit,
             )
 
+    def get_completed_turn(
+        self,
+        user_id: str,
+        conversation_id: str,
+        turn_id: str,
+    ) -> ConversationTurn:
+        """Return one active-generation completed turn by exact identity."""
+        normalized_user = validate_user_id(user_id)
+        normalized_conversation = validate_conversation_id(
+            conversation_id
+        )
+        normalized_turn = validate_turn_id(turn_id)
+        with self._lock:
+            self._begin()
+            try:
+                self._expire_due_locked(self._now())
+                row = self._select_session_locked(
+                    normalized_user,
+                    normalized_conversation,
+                )
+                if row is None:
+                    raise ConversationNotFoundError(
+                        'completed conversation turn was not found'
+                    )
+                session = self._require_active(row)
+                turn_row = self._connection.execute(
+                    '''
+                    SELECT *
+                    FROM conversation_turns
+                    WHERE user_id = ?
+                      AND conversation_id = ?
+                      AND session_instance_id = ?
+                      AND generation = ?
+                      AND turn_id = ?
+                      AND status = 'completed'
+                    ''',
+                    (
+                        normalized_user,
+                        normalized_conversation,
+                        session.session_instance_id,
+                        session.generation,
+                        normalized_turn,
+                    ),
+                ).fetchone()
+                if turn_row is None:
+                    raise ConversationNotFoundError(
+                        'completed conversation turn was not found'
+                    )
+                self._connection.commit()
+                return self._turn_from_row(turn_row)
+            except Exception:
+                self._connection.rollback()
+                raise
+
     def reset(
         self,
         user_id: str,

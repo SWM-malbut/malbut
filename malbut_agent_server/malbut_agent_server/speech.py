@@ -9,11 +9,19 @@ import json
 import math
 import threading
 from collections import OrderedDict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, Optional, Sequence, Tuple
 
+from malbut_agent_server.conversation import (
+    ConversationChangedError,
+    ConversationConflictError,
+    ConversationNotFoundError,
+    ConversationStateError,
+)
 from malbut_agent_server.orchestrator import (
     AgentOrchestrator,
+    OrchestrationCancelledError,
     OrchestrationResult,
 )
 from malbut_agent_server.schemas import (
@@ -30,6 +38,7 @@ from malbut_agent_server.schemas import (
 SPEECH_SCHEMA_VERSION = 1
 DEFAULT_MINIMUM_CONFIDENCE = 0.75
 DEFAULT_EVENT_CACHE_SIZE = 256
+DEFAULT_MAX_SESSION_STATES = 1024
 MAX_SOURCE_LENGTH = 64
 MAX_AUDIO_DURATION_MS = 30000
 MIN_SAMPLE_RATE_HZ = 8000
@@ -789,8 +798,26 @@ class SpeechControlResult:
 
 
 @dataclass
+class _InFlightTranscript:
+    """One transcript reserved while inference runs without the lock."""
+
+    utterance_id: str
+    fingerprint: str
+    capture_epoch: int
+    sequence: int
+    request_id: str
+    turn_id: str
+    completed_result: Optional[SpeechPipelineResult] = None
+
+
+@dataclass
 class _SpeechSessionState:
     binding: TrustedSpeechBinding
+    lock: Any = field(
+        default_factory=threading.RLock,
+        repr=False,
+        compare=False,
+    )
     capture_epoch: int = 1
     last_final_sequence: int = 0
     closed: bool = False
@@ -806,6 +833,7 @@ class _SpeechSessionState:
     )
     close_control_id: Optional[str] = None
     close_result: Optional[SpeechControlResult] = None
+    in_flight: Optional[_InFlightTranscript] = None
 
 
 class SpeechConversationCoordinator:
@@ -816,6 +844,7 @@ class SpeechConversationCoordinator:
         orchestrator: AgentOrchestrator,
         minimum_confidence: float = DEFAULT_MINIMUM_CONFIDENCE,
         event_cache_size: int = DEFAULT_EVENT_CACHE_SIZE,
+        max_session_states: int = DEFAULT_MAX_SESSION_STATES,
     ) -> None:
         """Create a deterministic coordinator with bounded event caches."""
         if not isinstance(orchestrator, AgentOrchestrator):
@@ -833,8 +862,15 @@ class SpeechConversationCoordinator:
             1,
             4096,
         )
+        self.max_session_states = _integer(
+            max_session_states,
+            'max_session_states',
+            1,
+            4096,
+        )
         self._sessions: Dict[str, _SpeechSessionState] = {}
-        self._lock = threading.RLock()
+        self._sessions_lock = threading.RLock()
+        self._lease_lock = threading.Lock()
 
     def open_session(
         self,
@@ -843,36 +879,44 @@ class SpeechConversationCoordinator:
         """Bind identity and idempotently create its conversation."""
         if not isinstance(binding, TrustedSpeechBinding):
             raise TypeError('binding must be a TrustedSpeechBinding')
-        with self._lock:
-            existing = self._sessions.get(binding.speech_session_id)
+        with self._lease_lock:
+            existing = self._session_state(binding.speech_session_id)
             if existing is not None:
-                if existing.binding != binding:
-                    raise ValidationError(
-                        'speech_session_id is already bound differently'
+                with existing.lock:
+                    if existing.binding != binding:
+                        raise ValidationError(
+                            'speech_session_id is already bound differently'
+                        )
+                    if existing.closed:
+                        raise ValidationError('speech session is closed')
+                    return SpeechControlResult(
+                        status='ready',
+                        code='session_already_open',
+                        capture_epoch=existing.capture_epoch,
                     )
-                if existing.closed:
-                    raise ValidationError('speech session is closed')
-                return SpeechControlResult(
-                    status='ready',
-                    code='session_already_open',
-                    capture_epoch=existing.capture_epoch,
-                )
-            for state in self._sessions.values():
-                if (
-                    not state.closed
-                    and state.binding.user_id == binding.user_id
-                    and state.binding.conversation_id
-                    == binding.conversation_id
-                ):
-                    raise ValidationError(
-                        'conversation already has an active speech session'
-                    )
+            with self._sessions_lock:
+                states = list(self._sessions.values())
+            for state in states:
+                with state.lock:
+                    if (
+                        not state.closed
+                        and state.binding.user_id == binding.user_id
+                        and state.binding.conversation_id
+                        == binding.conversation_id
+                    ):
+                        raise ValidationError(
+                            'conversation already has an active speech '
+                            'session'
+                        )
+            if len(states) >= self.max_session_states:
+                raise ValidationError('speech session capacity reached')
             self.orchestrator.conversation_store.create(
                 binding.user_id,
                 binding.conversation_id,
             )
             state = _SpeechSessionState(binding=binding)
-            self._sessions[binding.speech_session_id] = state
+            with self._sessions_lock:
+                self._sessions[binding.speech_session_id] = state
             return SpeechControlResult(
                 status='ready',
                 code='session_opened',
@@ -893,14 +937,15 @@ class SpeechConversationCoordinator:
             robot_state, RobotState
         ):
             raise TypeError('robot_state must be a RobotState or None')
-        with self._lock:
-            state = self._sessions.get(event.speech_session_id)
-            if state is None:
-                return self._pipeline_result(
-                    'rejected',
-                    'unknown_speech_session',
-                    event.capture_epoch,
-                )
+        fingerprint = self._fingerprint(event.to_dict())
+        state = self._session_state(event.speech_session_id)
+        if state is None:
+            return self._pipeline_result(
+                'rejected',
+                'unknown_speech_session',
+                event.capture_epoch,
+            )
+        with state.lock:
             mismatch = self._binding_mismatch(state.binding, event)
             if mismatch is not None:
                 return self._pipeline_result(
@@ -914,7 +959,6 @@ class SpeechConversationCoordinator:
                     'speech_session_closed',
                     state.capture_epoch,
                 )
-            fingerprint = self._fingerprint(event.to_dict())
             cached = state.transcript_cache.get(event.utterance_id)
             if cached is not None:
                 cached_fingerprint, cached_result = cached
@@ -979,6 +1023,27 @@ class SpeechConversationCoordinator:
                 state.binding,
                 event.utterance_id,
             )
+            if state.in_flight is not None:
+                in_flight = state.in_flight
+                if in_flight.utterance_id == event.utterance_id:
+                    if in_flight.fingerprint != fingerprint:
+                        return self._pipeline_result(
+                            'rejected',
+                            'utterance_conflict',
+                            state.capture_epoch,
+                        )
+                    return SpeechPipelineResult(
+                        status='processing',
+                        code='transcript_in_progress',
+                        capture_epoch=state.capture_epoch,
+                        request_id=in_flight.request_id,
+                        turn_id=in_flight.turn_id,
+                    )
+                return self._pipeline_result(
+                    'retryable',
+                    'inference_in_progress',
+                    state.capture_epoch,
+                )
             request = AgentRequest.from_dict(
                 {
                     'request_id': request_id,
@@ -994,33 +1059,66 @@ class SpeechConversationCoordinator:
                     'available_tools': list(available_tools),
                 }
             )
-            result = self.orchestrator.handle(request)
-            tts_request = TTSRequest(
-                schema_version=SPEECH_SCHEMA_VERSION,
-                request_id=self._tts_request_id(request_id),
-                speech_session_id=state.binding.speech_session_id,
-                conversation_id=state.binding.conversation_id,
-                turn_id=turn_id,
-                source_utterance_id=event.utterance_id,
-                text=result.decision.message,
-            )
-            pipeline_result = SpeechPipelineResult(
-                status='responded',
-                code='final_transcript_processed',
+            reservation = _InFlightTranscript(
+                utterance_id=event.utterance_id,
+                fingerprint=fingerprint,
                 capture_epoch=state.capture_epoch,
+                sequence=event.sequence,
                 request_id=request_id,
                 turn_id=turn_id,
-                agent_result=result,
-                tts_request=tts_request,
             )
-            state.last_final_sequence = event.sequence
-            state.active_tts = tts_request
-            return self._remember_transcript(
-                state,
+            state.in_flight = reservation
+
+        try:
+            self.orchestrator.handle(
+                request,
+                result_completion_guard=lambda result: self._completion_guard(
+                    event.speech_session_id,
+                    reservation,
+                    result,
+                    event,
+                ),
+            )
+        except OrchestrationCancelledError:
+            discarded = self._discard_changed_inference(
                 event,
-                fingerprint,
-                pipeline_result,
+                reservation,
             )
+            if discarded is None:
+                return SpeechPipelineResult(
+                    status='discarded',
+                    code='inference_cancelled_before_commit',
+                    capture_epoch=reservation.capture_epoch,
+                    request_id=reservation.request_id,
+                    turn_id=reservation.turn_id,
+                )
+            return discarded
+        except (
+            ConversationChangedError,
+            ConversationConflictError,
+            ConversationNotFoundError,
+            ConversationStateError,
+        ) as error:
+            return self._conversation_failure_result(
+                event,
+                reservation,
+                error,
+            )
+        except Exception:
+            discarded = self._discard_changed_inference(
+                event,
+                reservation,
+            )
+            if discarded is not None:
+                return discarded
+            raise
+
+        pipeline_result = reservation.completed_result
+        if pipeline_result is None:
+            raise RuntimeError(
+                'speech completion guard returned no pipeline result'
+            )
+        return pipeline_result
 
     def handle_barge_in(
         self,
@@ -1029,14 +1127,14 @@ class SpeechConversationCoordinator:
         """Fence playback and return one idempotent TTS cancellation."""
         if not isinstance(event, SpeechActivityEvent):
             raise TypeError('event must be a SpeechActivityEvent')
-        with self._lock:
-            state = self._sessions.get(event.speech_session_id)
-            if state is None:
-                return SpeechControlResult(
-                    status='rejected',
-                    code='unknown_speech_session',
-                    capture_epoch=0,
-                )
+        state = self._session_state(event.speech_session_id)
+        if state is None:
+            return SpeechControlResult(
+                status='rejected',
+                code='unknown_speech_session',
+                capture_epoch=0,
+            )
+        with state.lock:
             if state.closed:
                 return SpeechControlResult(
                     status='rejected',
@@ -1120,14 +1218,14 @@ class SpeechConversationCoordinator:
             tts_request_id,
             'tts_request_id',
         )
-        with self._lock:
-            state = self._sessions.get(normalized_session)
-            if state is None:
-                return SpeechControlResult(
-                    status='rejected',
-                    code='unknown_speech_session',
-                    capture_epoch=0,
-                )
+        state = self._session_state(normalized_session)
+        if state is None:
+            return SpeechControlResult(
+                status='rejected',
+                code='unknown_speech_session',
+                capture_epoch=0,
+            )
+        with state.lock:
             if normalized_request in state.terminal_tts_ids:
                 return SpeechControlResult(
                     status='ready',
@@ -1163,15 +1261,24 @@ class SpeechConversationCoordinator:
             'speech_session_id',
         )
         normalized_control = _identifier(control_id, 'control_id')
-        with self._lock:
-            state = self._sessions.get(normalized_session)
-            if state is None:
-                return SpeechControlResult(
-                    status='rejected',
-                    code='unknown_speech_session',
-                    capture_epoch=0,
-                )
+        state = self._session_state(normalized_session)
+        if state is None:
+            return SpeechControlResult(
+                status='rejected',
+                code='unknown_speech_session',
+                capture_epoch=0,
+            )
+        with state.lock:
             if state.closed:
+                if state.close_control_id is None:
+                    result = SpeechControlResult(
+                        status='closed',
+                        code='session_already_closed_external',
+                        capture_epoch=state.capture_epoch,
+                    )
+                    state.close_control_id = normalized_control
+                    state.close_result = result
+                    return result
                 if state.close_control_id != normalized_control:
                     return SpeechControlResult(
                         status='rejected',
@@ -1181,10 +1288,17 @@ class SpeechConversationCoordinator:
                 if state.close_result is None:
                     raise RuntimeError('closed speech session has no result')
                 return state.close_result
-            self.orchestrator.conversation_store.close_session(
-                state.binding.user_id,
-                state.binding.conversation_id,
-            )
+            conversation_unavailable = False
+            try:
+                self.orchestrator.conversation_store.close_session(
+                    state.binding.user_id,
+                    state.binding.conversation_id,
+                )
+            except (
+                ConversationNotFoundError,
+                ConversationStateError,
+            ):
+                conversation_unavailable = True
             active_tts = state.active_tts
             cancel_request = None
             if active_tts is not None:
@@ -1205,19 +1319,214 @@ class SpeechConversationCoordinator:
             state.active_tts = None
             state.capture_epoch += 1
             state.closed = True
+            if conversation_unavailable:
+                code = 'session_closed_conversation_unavailable'
+                if cancel_request is not None:
+                    code += '_tts_cancel_requested'
+            elif cancel_request is not None:
+                code = 'session_closed_tts_cancel_requested'
+            else:
+                code = 'session_closed'
             result = SpeechControlResult(
                 status='closed',
-                code=(
-                    'session_closed_tts_cancel_requested'
-                    if cancel_request is not None
-                    else 'session_closed'
-                ),
+                code=code,
                 capture_epoch=state.capture_epoch,
                 cancel_request=cancel_request,
             )
             state.close_control_id = normalized_control
             state.close_result = result
             return result
+
+    @contextmanager
+    def _completion_guard(
+        self,
+        speech_session_id: str,
+        reservation: _InFlightTranscript,
+        result: OrchestrationResult,
+        event: SpeechTranscriptEvent,
+    ) -> Iterator[None]:
+        """Atomically register a validated TTS around durable commit."""
+        state = self._session_state(speech_session_id)
+        if state is None:
+            raise OrchestrationCancelledError(
+                'speech inference was superseded before commit'
+            )
+        with state.lock:
+            if (
+                state.in_flight is not reservation
+                or state.closed
+                or state.capture_epoch != reservation.capture_epoch
+            ):
+                raise OrchestrationCancelledError(
+                    'speech inference was superseded before commit'
+                )
+            tts_request = TTSRequest(
+                schema_version=SPEECH_SCHEMA_VERSION,
+                request_id=self._tts_request_id(
+                    reservation.request_id
+                ),
+                speech_session_id=state.binding.speech_session_id,
+                conversation_id=state.binding.conversation_id,
+                turn_id=reservation.turn_id,
+                source_utterance_id=reservation.utterance_id,
+                text=result.decision.message,
+            )
+            pipeline_result = SpeechPipelineResult(
+                status='responded',
+                code='final_transcript_processed',
+                capture_epoch=state.capture_epoch,
+                request_id=reservation.request_id,
+                turn_id=reservation.turn_id,
+                agent_result=result,
+                tts_request=tts_request,
+            )
+            yield
+            state.last_final_sequence = reservation.sequence
+            state.active_tts = tts_request
+            state.in_flight = None
+            reservation.completed_result = self._remember_transcript(
+                state,
+                event,
+                reservation.fingerprint,
+                pipeline_result,
+            )
+
+    def _conversation_failure_result(
+        self,
+        event: SpeechTranscriptEvent,
+        reservation: _InFlightTranscript,
+        error: Exception,
+    ) -> SpeechPipelineResult:
+        """Convert conversation lifecycle races into a typed rejection."""
+        state = self._session_state(event.speech_session_id)
+        if state is None:
+            discarded = self._discard_if_superseded(
+                None,
+                event,
+                reservation,
+            )
+            if discarded is None:
+                raise RuntimeError('missing speech session was not discarded')
+            return discarded
+        with state.lock:
+            discarded = self._discard_if_superseded(
+                state,
+                event,
+                reservation,
+            )
+            if discarded is not None:
+                return discarded
+            if isinstance(error, ConversationNotFoundError):
+                code = 'conversation_not_found'
+                terminal = True
+            elif isinstance(error, ConversationStateError):
+                code = 'conversation_inactive'
+                terminal = True
+            elif isinstance(error, ConversationChangedError):
+                code = 'conversation_changed_during_inference'
+                terminal = True
+            else:
+                code = 'conversation_conflict'
+                terminal = False
+            state.in_flight = None
+            result = SpeechPipelineResult(
+                status='rejected' if terminal else 'retryable',
+                code=code,
+                capture_epoch=(
+                    state.capture_epoch + 1
+                    if terminal
+                    else state.capture_epoch
+                ),
+                request_id=reservation.request_id,
+                turn_id=reservation.turn_id,
+            )
+            if not terminal:
+                return result
+            state.active_tts = None
+            state.capture_epoch += 1
+            state.closed = True
+            return self._remember_transcript(
+                state,
+                event,
+                reservation.fingerprint,
+                result,
+            )
+
+    def _discard_changed_inference(
+        self,
+        event: SpeechTranscriptEvent,
+        reservation: _InFlightTranscript,
+    ) -> Optional[SpeechPipelineResult]:
+        """Release a failed reservation or discard it after control change."""
+        state = self._session_state(event.speech_session_id)
+        if state is None:
+            return self._discard_if_superseded(
+                None,
+                event,
+                reservation,
+            )
+        with state.lock:
+            discarded = self._discard_if_superseded(
+                state,
+                event,
+                reservation,
+            )
+            if discarded is not None:
+                return discarded
+            state.in_flight = None
+            return None
+
+    def _session_state(
+        self,
+        speech_session_id: str,
+    ) -> Optional[_SpeechSessionState]:
+        """Return one stable state object under the registry lock."""
+        with self._sessions_lock:
+            return self._sessions.get(speech_session_id)
+
+    def _discard_if_superseded(
+        self,
+        state: Optional[_SpeechSessionState],
+        event: SpeechTranscriptEvent,
+        reservation: _InFlightTranscript,
+    ) -> Optional[SpeechPipelineResult]:
+        """Discard a late inference result after close or epoch advance."""
+        if state is None:
+            return SpeechPipelineResult(
+                status='discarded',
+                code='speech_session_removed_during_inference',
+                capture_epoch=reservation.capture_epoch,
+                request_id=reservation.request_id,
+                turn_id=reservation.turn_id,
+            )
+        if state.in_flight is not reservation:
+            return SpeechPipelineResult(
+                status='discarded',
+                code='inference_reservation_lost',
+                capture_epoch=state.capture_epoch,
+                request_id=reservation.request_id,
+                turn_id=reservation.turn_id,
+            )
+        if state.closed:
+            code = 'speech_session_closed_during_inference'
+        elif state.capture_epoch != reservation.capture_epoch:
+            code = 'capture_epoch_changed_during_inference'
+        else:
+            return None
+        state.in_flight = None
+        result = SpeechPipelineResult(
+            status='discarded',
+            code=code,
+            capture_epoch=state.capture_epoch,
+            request_id=reservation.request_id,
+            turn_id=reservation.turn_id,
+        )
+        return self._remember_transcript(
+            state,
+            event,
+            reservation.fingerprint,
+            result,
+        )
 
     @staticmethod
     def _binding_mismatch(

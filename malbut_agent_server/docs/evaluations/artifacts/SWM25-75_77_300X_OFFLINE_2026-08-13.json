@@ -1,28 +1,52 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-12T18:47:42.870657+00:00",
+  "generated_at": "2026-08-13T08:21:43.874867+00:00",
   "mode": "offline_non_actuating",
   "source": {
-    "git_head": "f311cfe2a69a61079a0f893674d902f45abc490e",
+    "git_head": "030fcc560604a15f7510e1971c4c45011c95c5c5",
     "branch": "overnight/swm25-75-77-20260813",
     "explicit_source_sha256": {
-      "scripts/run_swm25_75_77_stress.py": "85d593d1c00c09a1255ad812818aa749229494aae8d9eaaa0ebe9efc2797cde0",
-      "malbut_agent_server/memory.py": "7ef487b472d386f35d61bce6e415fb43c551e69397bca8cbb9c77ef0970b1195",
-      "malbut_agent_server/orchestrator.py": "dfbe85e5ece15f7fc19b8421cf38577f4f82b1e87fa3b1bf12c103b3e5c76a4d",
-      "malbut_agent_server/speech.py": "4b95ca7f3e33752ceca7e542f5461929cc604e5a7562fe6c1356bf78ba67bf58",
-      "malbut_agent_server/expression.py": "0d4b8beb74085e6f05de763ec7de0c5b99bc93fbd8a29316fed68b7b68a5955e",
-      "test/test_memory.py": "cef46d07e58138c89a387bfbae8e37fe2c7ae95327ad8dfb4a468e0fa97db4a0",
-      "test/test_orchestrator.py": "375185463e83d00df7e5591b8083d676b5d7d501247c06c87b11ba2fe8218e4a",
-      "test/test_speech_pipeline.py": "e340dcdf3a2708b29441ec08f59398f2dc7f1512033b79ae0e42983542885862",
-      "test/test_expression.py": "b89a8779eb7343a662dd2dfd8e46f472a3d6c9fa18a01ebde3e32d429976800c"
+      "malbut_agent_server/__init__.py": "30068a14244af2a507acc30554413b752c9a7d099418c320db12b45b1984727c",
+      "malbut_agent_server/cli.py": "cd107d72271784b4834ae48fa8c6221d7d9d3d0b3fcf1099fc8f1a1892551da3",
+      "malbut_agent_server/config.py": "46b898c3157429e133a6839008bdf7c9fc633dc5d96b04963d622e686cf307f1",
+      "malbut_agent_server/conversation.py": "ed73975193711af7e020b24f5be7a10fe6f7a807fc4547dcd61e28ceec99e6e6",
+      "malbut_agent_server/endpoint_policy.py": "769d17141c854e0c779b70ed47628950b23037a8fac8d2e69ea883f94aee2b65",
+      "malbut_agent_server/eval_runner.py": "47e42116e596f302b73e97188661a4b5a2894c1582492a6f22b93cf26006718c",
+      "malbut_agent_server/expression.py": "36ccb4c91a6cd563ec575868443fc05ccaf19faa35c8b3d9f54c09f9444068c6",
+      "malbut_agent_server/factory.py": "aed0168bbee68a3b82a70dbb9eacac48c2ee11ed2e8c2cb72e06caf47af46743",
+      "malbut_agent_server/gateway.py": "fe4ce32af2fc922dc7ebd391bd3b71d68b59d0c65b13e20cc3f744aa198eddc4",
+      "malbut_agent_server/http_server.py": "b4067445f32462d76c95e0d5f5b86f1790ad91479d3690d6ad628a809f8c8c52",
+      "malbut_agent_server/memory.py": "e55b372a0203e4ad859bb0a7b888395fcd867efa591ae574135bc6377a4c3ffe",
+      "malbut_agent_server/memory_service.py": "b7f2d6d66d53242677b2d1d0f58b292d6695012588074fc521d50a0f9b340864",
+      "malbut_agent_server/orchestrator.py": "a0d759ce799fc7c62c85b02186251936cbd81065c4de03248bd6a8422b832416",
+      "malbut_agent_server/prompting.py": "c52bcfb625b0a2dfabf969cf31fe0eebcadb9c9df32f086327ca813cf455b17d",
+      "malbut_agent_server/providers/__init__.py": "e0ab7a5db58fa157f30d0a3f328f06d868bb2ee01ed8160c1246a4ab01d66e44",
+      "malbut_agent_server/providers/base.py": "130b28709708bbe2ce672ef044eb1fb67ae61eaa4f5b6909aa097a4439f2ba49",
+      "malbut_agent_server/providers/mock.py": "7493eb5cdeb3e12a3984b54ce0090cfe1f703c2b44ad74aa3be30ad5cd709c53",
+      "malbut_agent_server/providers/openai_responses.py": "b91b9133f60e5bc08a0e7074e432ceda0e1f1167baded65209e2818a49b464ec",
+      "malbut_agent_server/providers/reliable.py": "91f7c0de15b4f9380607536ee957ff206a2522269dec6a7266113771bb04829e",
+      "malbut_agent_server/safety.py": "0c395dbf2b2e3e3cd61d6e9577969ab57137a01d101859fb3055ed478d5d8452",
+      "malbut_agent_server/schemas.py": "cb9ac935344af0633055e8f3af19c947f7fe8d0182c9a5e5832182bab12be042",
+      "malbut_agent_server/speech.py": "dec868b16fa9390c33baa8ac56c4fb002a54f485a519d0e608feebf054e6289d",
+      "malbut_agent_server/summarization.py": "3f5506f52c4a33d3f2c5f6227d84ce36c5a00c0c3b5fcc2a527180fce56c299b",
+      "malbut_agent_server/tools.py": "19dad7a86166822a8024713eb311520276969dba3d1e06add3c828d66fafe298",
+      "scripts/run_swm25_75_77_stress.py": "2cabf45566a604122ea041f18fbfdc0ff1e6428b047878c28ce3893371ebc329",
+      "test/test_expression.py": "0add1d71576d7b8b4a92cc882baf144ad55eda1e21bc59a0c1f2dd1b827fe244",
+      "test/test_memory.py": "61773be0c7377e2c7a937a65f1031249a0bd315fba55a34a8d798d7cf028cd52",
+      "test/test_memory_service.py": "a6ac1361b08d54fd88759bf293800385dd732d6585578efd293714de43c7e6e8",
+      "test/test_orchestrator.py": "e3359e6f33d039671783fe38afd8dc7715e33add040b17ba917953f09a70f22a",
+      "test/test_speech_pipeline.py": "9b244cfcace02c018ffa0629ad69afc14f4e11aa89f977e1b69c519e32d38250"
     },
+    "source_unchanged_during_run": true,
+    "assertions_enabled": true,
+    "python_optimize": 0,
     "python": "3.10.12",
     "platform": "Linux-6.8.0-136-generic-x86_64-with-glibc2.35"
   },
   "configuration": {
     "iterations_per_story": 300,
     "story_count": 3,
-    "selected_check_count": 83,
+    "selected_check_count": 135,
     "live_api_calls": false,
     "physical_ros_actions": false,
     "camera_or_microphone_access": false,
@@ -41,8 +65,8 @@
     "total_story_iterations": 900,
     "passed_story_iterations": 900,
     "failed_story_iterations": 0,
-    "total_subchecks": 24900,
-    "wall_duration_ms": 115379.802
+    "total_subchecks": 40500,
+    "wall_duration_ms": 334033.973
   },
   "interpretation": {
     "scope": "Repeated deterministic synthetic checks; not 300 independent users, real voice sessions, renderer sessions, or a production SLA.",
@@ -64,21 +88,42 @@
         "durable_update_delete_replay",
         "two_connection_revision_cas",
         "version_one_migration",
+        "real_version_two_migration",
+        "idempotency_provenance_mismatch",
         "concurrent_migration",
         "migration_rollback",
-        "content_free_operational_tables"
+        "content_free_operational_tables",
+        "writer_gate_unmanaged_legacy",
+        "low_level_confirmed_compatibility_marks_unknown_provenance",
+        "provenance_is_part_of_durable_idempotency_fingerprint",
+        "completed_same_user_turn_allows_confirmed_lifecycle",
+        "reset_reused_turn_identity_has_distinct_provenance",
+        "deleted_and_recreated_conversation_has_distinct_instance",
+        "pending_missing_and_other_user_turns_fail_closed",
+        "other_users_completed_turn_is_not_valid_evidence",
+        "update_and_delete_retries_survive_evidence_reset",
+        "closed_or_expired_evidence_only_allows_exact_retry",
+        "evidence_deleted_exact_replay_conflict",
+        "shared_conversation_memory_database",
+        "cross_connection_service_idempotency",
+        "cross_connection_service_conflict",
+        "memory_change_during_inference_discards_result",
+        "memory_expiring_during_inference_discards_result",
+        "provider_cannot_mutate_memory_snapshot_to_bypass_fence",
+        "independent_conversations_run_provider_calls_in_parallel",
+        "reset_during_inference_discards_late_answer"
       ],
-      "checks_per_iteration": 14,
-      "subchecks_attempted": 4200,
+      "checks_per_iteration": 35,
+      "subchecks_attempted": 10500,
       "iterations_attempted": 300,
       "iterations_passed": 300,
       "iterations_failed": 0,
       "pass_rate": 1.0,
       "duration_ms": {
-        "total": 94385.099,
-        "mean": 314.586,
-        "p95": 340.022,
-        "max": 8259.396
+        "total": 271794.88,
+        "mean": 905.95,
+        "p95": 825.151,
+        "max": 10708.028
       },
       "subchecks": [
         {
@@ -87,9 +132,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 2.073,
-            "p95": 2.911,
-            "max": 4.316
+            "mean": 2.921,
+            "p95": 4.033,
+            "max": 6.678
           }
         },
         {
@@ -98,9 +143,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 2.852,
-            "p95": 4.007,
-            "max": 5.506
+            "mean": 3.335,
+            "p95": 4.774,
+            "max": 7.163
           }
         },
         {
@@ -109,9 +154,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 2.208,
-            "p95": 3.048,
-            "max": 4.687
+            "mean": 2.893,
+            "p95": 3.981,
+            "max": 6.219
           }
         },
         {
@@ -120,9 +165,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 1.965,
-            "p95": 2.862,
-            "max": 5.671
+            "mean": 2.582,
+            "p95": 3.571,
+            "max": 4.86
           }
         },
         {
@@ -131,9 +176,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 2.211,
-            "p95": 3.197,
-            "max": 5.901
+            "mean": 2.847,
+            "p95": 3.589,
+            "max": 5.705
           }
         },
         {
@@ -142,9 +187,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 2.08,
-            "p95": 3.101,
-            "max": 4.134
+            "mean": 2.737,
+            "p95": 3.904,
+            "max": 5.431
           }
         },
         {
@@ -153,9 +198,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 20.106,
-            "p95": 22.679,
-            "max": 242.743
+            "mean": 23.792,
+            "p95": 22.42,
+            "max": 1082.528
           }
         },
         {
@@ -164,9 +209,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 16.759,
-            "p95": 18.802,
-            "max": 226.452
+            "mean": 28.105,
+            "p95": 25.258,
+            "max": 1524.842
           }
         },
         {
@@ -175,9 +220,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 32.538,
-            "p95": 30.838,
-            "max": 1558.408
+            "mean": 40.925,
+            "p95": 37.945,
+            "max": 1968.168
           }
         },
         {
@@ -186,9 +231,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 27.199,
-            "p95": 26.128,
-            "max": 1342.709
+            "mean": 42.645,
+            "p95": 40.202,
+            "max": 1963.344
           }
         },
         {
@@ -197,9 +242,31 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 32.848,
-            "p95": 28.863,
-            "max": 2087.543
+            "mean": 29.575,
+            "p95": 30.538,
+            "max": 660.13
+          }
+        },
+        {
+          "check": "real_version_two_migration",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 61.245,
+            "p95": 60.708,
+            "max": 1498.975
+          }
+        },
+        {
+          "check": "idempotency_provenance_mismatch",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 33.893,
+            "p95": 32.903,
+            "max": 1475.407
           }
         },
         {
@@ -208,9 +275,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 141.831,
-            "p95": 191.049,
-            "max": 1528.145
+            "mean": 213.303,
+            "p95": 207.34,
+            "max": 4122.864
           }
         },
         {
@@ -219,9 +286,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 12.04,
-            "p95": 18.831,
-            "max": 504.056
+            "mean": 10.703,
+            "p95": 8.796,
+            "max": 452.643
           }
         },
         {
@@ -230,9 +297,218 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 17.836,
-            "p95": 17.04,
-            "max": 755.833
+            "mean": 21.177,
+            "p95": 17.748,
+            "max": 828.631
+          }
+        },
+        {
+          "check": "writer_gate_unmanaged_legacy",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 40.948,
+            "p95": 30.567,
+            "max": 2141.664
+          }
+        },
+        {
+          "check": "low_level_confirmed_compatibility_marks_unknown_provenance",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 2.584,
+            "p95": 3.571,
+            "max": 6.748
+          }
+        },
+        {
+          "check": "provenance_is_part_of_durable_idempotency_fingerprint",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 2.706,
+            "p95": 3.921,
+            "max": 6.468
+          }
+        },
+        {
+          "check": "completed_same_user_turn_allows_confirmed_lifecycle",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 5.342,
+            "p95": 7.107,
+            "max": 12.343
+          }
+        },
+        {
+          "check": "reset_reused_turn_identity_has_distinct_provenance",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.738,
+            "p95": 6.455,
+            "max": 10.491
+          }
+        },
+        {
+          "check": "deleted_and_recreated_conversation_has_distinct_instance",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.611,
+            "p95": 6.275,
+            "max": 9.996
+          }
+        },
+        {
+          "check": "pending_missing_and_other_user_turns_fail_closed",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 3.599,
+            "p95": 5.05,
+            "max": 7.509
+          }
+        },
+        {
+          "check": "other_users_completed_turn_is_not_valid_evidence",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 3.395,
+            "p95": 4.542,
+            "max": 7.813
+          }
+        },
+        {
+          "check": "update_and_delete_retries_survive_evidence_reset",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 5.48,
+            "p95": 7.145,
+            "max": 11.435
+          }
+        },
+        {
+          "check": "closed_or_expired_evidence_only_allows_exact_retry",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 5.136,
+            "p95": 6.375,
+            "max": 12.93
+          }
+        },
+        {
+          "check": "evidence_deleted_exact_replay_conflict",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 85.345,
+            "p95": 67.704,
+            "max": 3971.623
+          }
+        },
+        {
+          "check": "shared_conversation_memory_database",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 76.453,
+            "p95": 67.968,
+            "max": 3386.08
+          }
+        },
+        {
+          "check": "cross_connection_service_idempotency",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 57.38,
+            "p95": 61.359,
+            "max": 943.283
+          }
+        },
+        {
+          "check": "cross_connection_service_conflict",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 62.795,
+            "p95": 60.594,
+            "max": 2699.127
+          }
+        },
+        {
+          "check": "memory_change_during_inference_discards_result",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.521,
+            "p95": 5.689,
+            "max": 9.033
+          }
+        },
+        {
+          "check": "memory_expiring_during_inference_discards_result",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.301,
+            "p95": 5.681,
+            "max": 13.53
+          }
+        },
+        {
+          "check": "provider_cannot_mutate_memory_snapshot_to_bypass_fence",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.05,
+            "p95": 5.522,
+            "max": 7.807
+          }
+        },
+        {
+          "check": "independent_conversations_run_provider_calls_in_parallel",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 5.335,
+            "p95": 6.57,
+            "max": 10.001
+          }
+        },
+        {
+          "check": "reset_during_inference_discards_late_answer",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.474,
+            "p95": 5.669,
+            "max": 12.763
           }
         }
       ],
@@ -240,1502 +516,1502 @@
         {
           "iteration": 1,
           "passed": true,
-          "duration_ms": 254.039
+          "duration_ms": 819.61
         },
         {
           "iteration": 2,
           "passed": true,
-          "duration_ms": 296.895
+          "duration_ms": 790.64
         },
         {
           "iteration": 3,
           "passed": true,
-          "duration_ms": 303.534
+          "duration_ms": 770.174
         },
         {
           "iteration": 4,
           "passed": true,
-          "duration_ms": 311.62
+          "duration_ms": 796.204
         },
         {
           "iteration": 5,
           "passed": true,
-          "duration_ms": 296.479
+          "duration_ms": 776.611
         },
         {
           "iteration": 6,
           "passed": true,
-          "duration_ms": 257.621
+          "duration_ms": 954.215
         },
         {
           "iteration": 7,
           "passed": true,
-          "duration_ms": 297.912
+          "duration_ms": 945.784
         },
         {
           "iteration": 8,
           "passed": true,
-          "duration_ms": 298.54
+          "duration_ms": 789.488
         },
         {
           "iteration": 9,
           "passed": true,
-          "duration_ms": 272.077
+          "duration_ms": 784.086
         },
         {
           "iteration": 10,
           "passed": true,
-          "duration_ms": 290.937
+          "duration_ms": 773.179
         },
         {
           "iteration": 11,
           "passed": true,
-          "duration_ms": 263.894
+          "duration_ms": 883.851
         },
         {
           "iteration": 12,
           "passed": true,
-          "duration_ms": 272.134
+          "duration_ms": 898.232
         },
         {
           "iteration": 13,
           "passed": true,
-          "duration_ms": 298.462
+          "duration_ms": 896.561
         },
         {
           "iteration": 14,
           "passed": true,
-          "duration_ms": 208.797
+          "duration_ms": 785.429
         },
         {
           "iteration": 15,
           "passed": true,
-          "duration_ms": 290.66
+          "duration_ms": 779.414
         },
         {
           "iteration": 16,
           "passed": true,
-          "duration_ms": 291.401
+          "duration_ms": 811.951
         },
         {
           "iteration": 17,
           "passed": true,
-          "duration_ms": 265.998
+          "duration_ms": 795.739
         },
         {
           "iteration": 18,
           "passed": true,
-          "duration_ms": 280.509
+          "duration_ms": 775.236
         },
         {
           "iteration": 19,
           "passed": true,
-          "duration_ms": 284.249
+          "duration_ms": 719.19
         },
         {
           "iteration": 20,
           "passed": true,
-          "duration_ms": 291.988
+          "duration_ms": 726.176
         },
         {
           "iteration": 21,
           "passed": true,
-          "duration_ms": 230.326
+          "duration_ms": 822.604
         },
         {
           "iteration": 22,
           "passed": true,
-          "duration_ms": 346.99
+          "duration_ms": 746.876
         },
         {
           "iteration": 23,
           "passed": true,
-          "duration_ms": 250.383
+          "duration_ms": 766.946
         },
         {
           "iteration": 24,
           "passed": true,
-          "duration_ms": 255.717
+          "duration_ms": 762.977
         },
         {
           "iteration": 25,
           "passed": true,
-          "duration_ms": 262.858
+          "duration_ms": 782.745
         },
         {
           "iteration": 26,
           "passed": true,
-          "duration_ms": 352.126
+          "duration_ms": 802.329
         },
         {
           "iteration": 27,
           "passed": true,
-          "duration_ms": 277.822
+          "duration_ms": 788.246
         },
         {
           "iteration": 28,
           "passed": true,
-          "duration_ms": 295.03
+          "duration_ms": 709.819
         },
         {
           "iteration": 29,
           "passed": true,
-          "duration_ms": 296.423
+          "duration_ms": 714.871
         },
         {
           "iteration": 30,
           "passed": true,
-          "duration_ms": 291.985
+          "duration_ms": 794.649
         },
         {
           "iteration": 31,
           "passed": true,
-          "duration_ms": 265.003
+          "duration_ms": 743.919
         },
         {
           "iteration": 32,
           "passed": true,
-          "duration_ms": 295.759
+          "duration_ms": 713.515
         },
         {
           "iteration": 33,
           "passed": true,
-          "duration_ms": 289.474
+          "duration_ms": 706.554
         },
         {
           "iteration": 34,
           "passed": true,
-          "duration_ms": 294.942
+          "duration_ms": 707.892
         },
         {
           "iteration": 35,
           "passed": true,
-          "duration_ms": 292.884
+          "duration_ms": 750.441
         },
         {
           "iteration": 36,
           "passed": true,
-          "duration_ms": 351.455
+          "duration_ms": 700.564
         },
         {
           "iteration": 37,
           "passed": true,
-          "duration_ms": 293.329
+          "duration_ms": 710.827
         },
         {
           "iteration": 38,
           "passed": true,
-          "duration_ms": 304.87
+          "duration_ms": 710.997
         },
         {
           "iteration": 39,
           "passed": true,
-          "duration_ms": 265.223
+          "duration_ms": 693.21
         },
         {
           "iteration": 40,
           "passed": true,
-          "duration_ms": 352.927
+          "duration_ms": 700.136
         },
         {
           "iteration": 41,
           "passed": true,
-          "duration_ms": 286.641
+          "duration_ms": 705.883
         },
         {
           "iteration": 42,
           "passed": true,
-          "duration_ms": 290.618
+          "duration_ms": 710.969
         },
         {
           "iteration": 43,
           "passed": true,
-          "duration_ms": 303.362
+          "duration_ms": 725.937
         },
         {
           "iteration": 44,
           "passed": true,
-          "duration_ms": 293.655
+          "duration_ms": 795.382
         },
         {
           "iteration": 45,
           "passed": true,
-          "duration_ms": 297.816
+          "duration_ms": 770.287
         },
         {
           "iteration": 46,
           "passed": true,
-          "duration_ms": 298.876
+          "duration_ms": 795.109
         },
         {
           "iteration": 47,
           "passed": true,
-          "duration_ms": 305.644
+          "duration_ms": 793.257
         },
         {
           "iteration": 48,
           "passed": true,
-          "duration_ms": 257.333
+          "duration_ms": 736.383
         },
         {
           "iteration": 49,
           "passed": true,
-          "duration_ms": 301.248
+          "duration_ms": 799.958
         },
         {
           "iteration": 50,
           "passed": true,
-          "duration_ms": 298.404
+          "duration_ms": 771.555
         },
         {
           "iteration": 51,
           "passed": true,
-          "duration_ms": 308.337
+          "duration_ms": 810.672
         },
         {
           "iteration": 52,
           "passed": true,
-          "duration_ms": 258.891
+          "duration_ms": 821.228
         },
         {
           "iteration": 53,
           "passed": true,
-          "duration_ms": 289.72
+          "duration_ms": 872.294
         },
         {
           "iteration": 54,
           "passed": true,
-          "duration_ms": 277.146
+          "duration_ms": 781.596
         },
         {
           "iteration": 55,
           "passed": true,
-          "duration_ms": 274.255
+          "duration_ms": 800.552
         },
         {
           "iteration": 56,
           "passed": true,
-          "duration_ms": 288.515
+          "duration_ms": 824.011
         },
         {
           "iteration": 57,
           "passed": true,
-          "duration_ms": 267.243
+          "duration_ms": 823.416
         },
         {
           "iteration": 58,
           "passed": true,
-          "duration_ms": 295.826
+          "duration_ms": 814.79
         },
         {
           "iteration": 59,
           "passed": true,
-          "duration_ms": 269.048
+          "duration_ms": 776.07
         },
         {
           "iteration": 60,
           "passed": true,
-          "duration_ms": 260.074
+          "duration_ms": 718.565
         },
         {
           "iteration": 61,
           "passed": true,
-          "duration_ms": 285.55
+          "duration_ms": 776.739
         },
         {
           "iteration": 62,
           "passed": true,
-          "duration_ms": 258.286
+          "duration_ms": 693.59
         },
         {
           "iteration": 63,
           "passed": true,
-          "duration_ms": 268.378
+          "duration_ms": 714.715
         },
         {
           "iteration": 64,
           "passed": true,
-          "duration_ms": 300.328
+          "duration_ms": 752.866
         },
         {
           "iteration": 65,
           "passed": true,
-          "duration_ms": 291.052
+          "duration_ms": 759.594
         },
         {
           "iteration": 66,
           "passed": true,
-          "duration_ms": 341.45
+          "duration_ms": 687.93
         },
         {
           "iteration": 67,
           "passed": true,
-          "duration_ms": 253.293
+          "duration_ms": 698.201
         },
         {
           "iteration": 68,
           "passed": true,
-          "duration_ms": 288.282
+          "duration_ms": 745.348
         },
         {
           "iteration": 69,
           "passed": true,
-          "duration_ms": 295.203
+          "duration_ms": 744.137
         },
         {
           "iteration": 70,
           "passed": true,
-          "duration_ms": 286.061
+          "duration_ms": 700.982
         },
         {
           "iteration": 71,
           "passed": true,
-          "duration_ms": 345.266
+          "duration_ms": 704.687
         },
         {
           "iteration": 72,
           "passed": true,
-          "duration_ms": 302.08
+          "duration_ms": 696.075
         },
         {
           "iteration": 73,
           "passed": true,
-          "duration_ms": 295.271
+          "duration_ms": 739.24
         },
         {
           "iteration": 74,
           "passed": true,
-          "duration_ms": 284.612
+          "duration_ms": 749.003
         },
         {
           "iteration": 75,
           "passed": true,
-          "duration_ms": 303.858
+          "duration_ms": 702.899
         },
         {
           "iteration": 76,
           "passed": true,
-          "duration_ms": 308.507
+          "duration_ms": 784.113
         },
         {
           "iteration": 77,
           "passed": true,
-          "duration_ms": 237.126
+          "duration_ms": 688.622
         },
         {
           "iteration": 78,
           "passed": true,
-          "duration_ms": 302.083
+          "duration_ms": 698.59
         },
         {
           "iteration": 79,
           "passed": true,
-          "duration_ms": 250.624
+          "duration_ms": 759.841
         },
         {
           "iteration": 80,
           "passed": true,
-          "duration_ms": 273.96
+          "duration_ms": 719.627
         },
         {
           "iteration": 81,
           "passed": true,
-          "duration_ms": 341.305
+          "duration_ms": 703.866
         },
         {
           "iteration": 82,
           "passed": true,
-          "duration_ms": 275.301
+          "duration_ms": 759.516
         },
         {
           "iteration": 83,
           "passed": true,
-          "duration_ms": 283.43
+          "duration_ms": 718.206
         },
         {
           "iteration": 84,
           "passed": true,
-          "duration_ms": 279.345
+          "duration_ms": 725.552
         },
         {
           "iteration": 85,
           "passed": true,
-          "duration_ms": 284.539
+          "duration_ms": 715.888
         },
         {
           "iteration": 86,
           "passed": true,
-          "duration_ms": 290.758
+          "duration_ms": 729.861
         },
         {
           "iteration": 87,
           "passed": true,
-          "duration_ms": 285.825
+          "duration_ms": 726.001
         },
         {
           "iteration": 88,
           "passed": true,
-          "duration_ms": 280.153
+          "duration_ms": 772.443
         },
         {
           "iteration": 89,
           "passed": true,
-          "duration_ms": 273.549
+          "duration_ms": 699.786
         },
         {
           "iteration": 90,
           "passed": true,
-          "duration_ms": 284.281
+          "duration_ms": 753.601
         },
         {
           "iteration": 91,
           "passed": true,
-          "duration_ms": 287.164
+          "duration_ms": 765.594
         },
         {
           "iteration": 92,
           "passed": true,
-          "duration_ms": 269.682
+          "duration_ms": 712.076
         },
         {
           "iteration": 93,
           "passed": true,
-          "duration_ms": 284.879
+          "duration_ms": 769.333
         },
         {
           "iteration": 94,
           "passed": true,
-          "duration_ms": 284.619
+          "duration_ms": 721.788
         },
         {
           "iteration": 95,
           "passed": true,
-          "duration_ms": 295.108
+          "duration_ms": 806.748
         },
         {
           "iteration": 96,
           "passed": true,
-          "duration_ms": 261.775
+          "duration_ms": 710.423
         },
         {
           "iteration": 97,
           "passed": true,
-          "duration_ms": 274.788
+          "duration_ms": 775.747
         },
         {
           "iteration": 98,
           "passed": true,
-          "duration_ms": 264.911
+          "duration_ms": 766.111
         },
         {
           "iteration": 99,
           "passed": true,
-          "duration_ms": 292.58
+          "duration_ms": 756.677
         },
         {
           "iteration": 100,
           "passed": true,
-          "duration_ms": 289.577
+          "duration_ms": 779.235
         },
         {
           "iteration": 101,
           "passed": true,
-          "duration_ms": 294.685
+          "duration_ms": 813.881
         },
         {
           "iteration": 102,
           "passed": true,
-          "duration_ms": 240.415
+          "duration_ms": 805.375
         },
         {
           "iteration": 103,
           "passed": true,
-          "duration_ms": 286.796
+          "duration_ms": 758.457
         },
         {
           "iteration": 104,
           "passed": true,
-          "duration_ms": 339.6
+          "duration_ms": 688.463
         },
         {
           "iteration": 105,
           "passed": true,
-          "duration_ms": 284.079
+          "duration_ms": 691.849
         },
         {
           "iteration": 106,
           "passed": true,
-          "duration_ms": 292.283
+          "duration_ms": 690.045
         },
         {
           "iteration": 107,
           "passed": true,
-          "duration_ms": 254.312
+          "duration_ms": 704.001
         },
         {
           "iteration": 108,
           "passed": true,
-          "duration_ms": 299.326
+          "duration_ms": 692.934
         },
         {
           "iteration": 109,
           "passed": true,
-          "duration_ms": 294.494
+          "duration_ms": 794.02
         },
         {
           "iteration": 110,
           "passed": true,
-          "duration_ms": 301.651
+          "duration_ms": 737.514
         },
         {
           "iteration": 111,
           "passed": true,
-          "duration_ms": 279.376
+          "duration_ms": 746.717
         },
         {
           "iteration": 112,
           "passed": true,
-          "duration_ms": 289.961
+          "duration_ms": 703.135
         },
         {
           "iteration": 113,
           "passed": true,
-          "duration_ms": 286.099
+          "duration_ms": 693.328
         },
         {
           "iteration": 114,
           "passed": true,
-          "duration_ms": 270.303
+          "duration_ms": 752.137
         },
         {
           "iteration": 115,
           "passed": true,
-          "duration_ms": 331.814
+          "duration_ms": 694.489
         },
         {
           "iteration": 116,
           "passed": true,
-          "duration_ms": 277.122
+          "duration_ms": 686.458
         },
         {
           "iteration": 117,
           "passed": true,
-          "duration_ms": 262.195
+          "duration_ms": 693.76
         },
         {
           "iteration": 118,
           "passed": true,
-          "duration_ms": 271.256
+          "duration_ms": 747.08
         },
         {
           "iteration": 119,
           "passed": true,
-          "duration_ms": 287.448
+          "duration_ms": 768.723
         },
         {
           "iteration": 120,
           "passed": true,
-          "duration_ms": 231.791
+          "duration_ms": 768.211
         },
         {
           "iteration": 121,
           "passed": true,
-          "duration_ms": 337.151
+          "duration_ms": 736.214
         },
         {
           "iteration": 122,
           "passed": true,
-          "duration_ms": 286.872
+          "duration_ms": 709.47
         },
         {
           "iteration": 123,
           "passed": true,
-          "duration_ms": 271.214
+          "duration_ms": 727.154
         },
         {
           "iteration": 124,
           "passed": true,
-          "duration_ms": 291.201
+          "duration_ms": 769.277
         },
         {
           "iteration": 125,
           "passed": true,
-          "duration_ms": 275.504
+          "duration_ms": 769.378
         },
         {
           "iteration": 126,
           "passed": true,
-          "duration_ms": 284.309
+          "duration_ms": 735.063
         },
         {
           "iteration": 127,
           "passed": true,
-          "duration_ms": 258.514
+          "duration_ms": 719.431
         },
         {
           "iteration": 128,
           "passed": true,
-          "duration_ms": 266.003
+          "duration_ms": 775.779
         },
         {
           "iteration": 129,
           "passed": true,
-          "duration_ms": 271.822
+          "duration_ms": 777.318
         },
         {
           "iteration": 130,
           "passed": true,
-          "duration_ms": 278.705
+          "duration_ms": 770.249
         },
         {
           "iteration": 131,
           "passed": true,
-          "duration_ms": 289.478
+          "duration_ms": 759.994
         },
         {
           "iteration": 132,
           "passed": true,
-          "duration_ms": 253.18
+          "duration_ms": 10576.73
         },
         {
           "iteration": 133,
           "passed": true,
-          "duration_ms": 316.861
+          "duration_ms": 797.62
         },
         {
           "iteration": 134,
           "passed": true,
-          "duration_ms": 291.656
+          "duration_ms": 799.344
         },
         {
           "iteration": 135,
           "passed": true,
-          "duration_ms": 293.193
+          "duration_ms": 804.04
         },
         {
           "iteration": 136,
           "passed": true,
-          "duration_ms": 339.595
+          "duration_ms": 821.748
         },
         {
           "iteration": 137,
           "passed": true,
-          "duration_ms": 285.517
+          "duration_ms": 808.28
         },
         {
           "iteration": 138,
           "passed": true,
-          "duration_ms": 282.895
+          "duration_ms": 809.448
         },
         {
           "iteration": 139,
           "passed": true,
-          "duration_ms": 273.477
+          "duration_ms": 809.679
         },
         {
           "iteration": 140,
           "passed": true,
-          "duration_ms": 269.42
+          "duration_ms": 795.967
         },
         {
           "iteration": 141,
           "passed": true,
-          "duration_ms": 287.873
+          "duration_ms": 795.573
         },
         {
           "iteration": 142,
           "passed": true,
-          "duration_ms": 342.517
+          "duration_ms": 789.138
         },
         {
           "iteration": 143,
           "passed": true,
-          "duration_ms": 275.641
+          "duration_ms": 788.99
         },
         {
           "iteration": 144,
           "passed": true,
-          "duration_ms": 281.09
+          "duration_ms": 804.652
         },
         {
           "iteration": 145,
           "passed": true,
-          "duration_ms": 291.108
+          "duration_ms": 798.959
         },
         {
           "iteration": 146,
           "passed": true,
-          "duration_ms": 266.575
+          "duration_ms": 797.575
         },
         {
           "iteration": 147,
           "passed": true,
-          "duration_ms": 291.094
+          "duration_ms": 818.306
         },
         {
           "iteration": 148,
           "passed": true,
-          "duration_ms": 277.128
+          "duration_ms": 800.632
         },
         {
           "iteration": 149,
           "passed": true,
-          "duration_ms": 290.953
+          "duration_ms": 796.217
         },
         {
           "iteration": 150,
           "passed": true,
-          "duration_ms": 287.02
+          "duration_ms": 747.244
         },
         {
           "iteration": 151,
           "passed": true,
-          "duration_ms": 346.296
+          "duration_ms": 786.609
         },
         {
           "iteration": 152,
           "passed": true,
-          "duration_ms": 275.704
+          "duration_ms": 785.587
         },
         {
           "iteration": 153,
           "passed": true,
-          "duration_ms": 241.366
+          "duration_ms": 780.07
         },
         {
           "iteration": 154,
           "passed": true,
-          "duration_ms": 292.391
+          "duration_ms": 704.866
         },
         {
           "iteration": 155,
           "passed": true,
-          "duration_ms": 298.905
+          "duration_ms": 727.85
         },
         {
           "iteration": 156,
           "passed": true,
-          "duration_ms": 294.066
+          "duration_ms": 857.016
         },
         {
           "iteration": 157,
           "passed": true,
-          "duration_ms": 268.282
+          "duration_ms": 811.434
         },
         {
           "iteration": 158,
           "passed": true,
-          "duration_ms": 294.822
+          "duration_ms": 721.863
         },
         {
           "iteration": 159,
           "passed": true,
-          "duration_ms": 295.272
+          "duration_ms": 779.495
         },
         {
           "iteration": 160,
           "passed": true,
-          "duration_ms": 293.376
+          "duration_ms": 775.526
         },
         {
           "iteration": 161,
           "passed": true,
-          "duration_ms": 304.345
+          "duration_ms": 773.244
         },
         {
           "iteration": 162,
           "passed": true,
-          "duration_ms": 285.939
+          "duration_ms": 787.833
         },
         {
           "iteration": 163,
           "passed": true,
-          "duration_ms": 288.153
+          "duration_ms": 729.803
         },
         {
           "iteration": 164,
           "passed": true,
-          "duration_ms": 294.548
+          "duration_ms": 729.926
         },
         {
           "iteration": 165,
           "passed": true,
-          "duration_ms": 296.298
+          "duration_ms": 767.567
         },
         {
           "iteration": 166,
           "passed": true,
-          "duration_ms": 283.794
+          "duration_ms": 777.552
         },
         {
           "iteration": 167,
           "passed": true,
-          "duration_ms": 302.83
+          "duration_ms": 779.027
         },
         {
           "iteration": 168,
           "passed": true,
-          "duration_ms": 270.653
+          "duration_ms": 780.944
         },
         {
           "iteration": 169,
           "passed": true,
-          "duration_ms": 290.801
+          "duration_ms": 767.281
         },
         {
           "iteration": 170,
           "passed": true,
-          "duration_ms": 295.843
+          "duration_ms": 795.062
         },
         {
           "iteration": 171,
           "passed": true,
-          "duration_ms": 286.205
+          "duration_ms": 771.735
         },
         {
           "iteration": 172,
           "passed": true,
-          "duration_ms": 285.178
+          "duration_ms": 728.642
         },
         {
           "iteration": 173,
           "passed": true,
-          "duration_ms": 299.191
+          "duration_ms": 779.256
         },
         {
           "iteration": 174,
           "passed": true,
-          "duration_ms": 294.798
+          "duration_ms": 792.638
         },
         {
           "iteration": 175,
           "passed": true,
-          "duration_ms": 288.23
+          "duration_ms": 812.837
         },
         {
           "iteration": 176,
           "passed": true,
-          "duration_ms": 341.542
+          "duration_ms": 742.072
         },
         {
           "iteration": 177,
           "passed": true,
-          "duration_ms": 237.134
+          "duration_ms": 786.712
         },
         {
           "iteration": 178,
           "passed": true,
-          "duration_ms": 293.971
+          "duration_ms": 806.417
         },
         {
           "iteration": 179,
           "passed": true,
-          "duration_ms": 271.38
+          "duration_ms": 804.434
         },
         {
           "iteration": 180,
           "passed": true,
-          "duration_ms": 288.855
+          "duration_ms": 798.283
         },
         {
           "iteration": 181,
           "passed": true,
-          "duration_ms": 282.891
+          "duration_ms": 805.729
         },
         {
           "iteration": 182,
           "passed": true,
-          "duration_ms": 297.085
+          "duration_ms": 795.778
         },
         {
           "iteration": 183,
           "passed": true,
-          "duration_ms": 296.991
+          "duration_ms": 814.984
         },
         {
           "iteration": 184,
           "passed": true,
-          "duration_ms": 281.84
+          "duration_ms": 821.099
         },
         {
           "iteration": 185,
           "passed": true,
-          "duration_ms": 340.022
+          "duration_ms": 817.201
         },
         {
           "iteration": 186,
           "passed": true,
-          "duration_ms": 292.632
+          "duration_ms": 10589.791
         },
         {
           "iteration": 187,
           "passed": true,
-          "duration_ms": 268.465
+          "duration_ms": 807.528
         },
         {
           "iteration": 188,
           "passed": true,
-          "duration_ms": 304.482
+          "duration_ms": 808.612
         },
         {
           "iteration": 189,
           "passed": true,
-          "duration_ms": 277.981
+          "duration_ms": 804.114
         },
         {
           "iteration": 190,
           "passed": true,
-          "duration_ms": 276.707
+          "duration_ms": 815.904
         },
         {
           "iteration": 191,
           "passed": true,
-          "duration_ms": 257.904
+          "duration_ms": 790.251
         },
         {
           "iteration": 192,
           "passed": true,
-          "duration_ms": 284.02
+          "duration_ms": 788.838
         },
         {
           "iteration": 193,
           "passed": true,
-          "duration_ms": 283.886
+          "duration_ms": 801.556
         },
         {
           "iteration": 194,
           "passed": true,
-          "duration_ms": 291.431
+          "duration_ms": 808.346
         },
         {
           "iteration": 195,
           "passed": true,
-          "duration_ms": 286.751
+          "duration_ms": 794.785
         },
         {
           "iteration": 196,
           "passed": true,
-          "duration_ms": 280.344
+          "duration_ms": 797.15
         },
         {
           "iteration": 197,
           "passed": true,
-          "duration_ms": 358.875
+          "duration_ms": 798.599
         },
         {
           "iteration": 198,
           "passed": true,
-          "duration_ms": 283.294
+          "duration_ms": 817.403
         },
         {
           "iteration": 199,
           "passed": true,
-          "duration_ms": 282.39
+          "duration_ms": 792.868
         },
         {
           "iteration": 200,
           "passed": true,
-          "duration_ms": 284.838
+          "duration_ms": 789.156
         },
         {
           "iteration": 201,
           "passed": true,
-          "duration_ms": 339.014
+          "duration_ms": 809.859
         },
         {
           "iteration": 202,
           "passed": true,
-          "duration_ms": 289.722
+          "duration_ms": 802.259
         },
         {
           "iteration": 203,
           "passed": true,
-          "duration_ms": 283.956
+          "duration_ms": 794.566
         },
         {
           "iteration": 204,
           "passed": true,
-          "duration_ms": 258.286
+          "duration_ms": 793.304
         },
         {
           "iteration": 205,
           "passed": true,
-          "duration_ms": 262.896
+          "duration_ms": 816.616
         },
         {
           "iteration": 206,
           "passed": true,
-          "duration_ms": 265.638
+          "duration_ms": 811.878
         },
         {
           "iteration": 207,
           "passed": true,
-          "duration_ms": 281.839
+          "duration_ms": 786.414
         },
         {
           "iteration": 208,
           "passed": true,
-          "duration_ms": 283.928
+          "duration_ms": 800.584
         },
         {
           "iteration": 209,
           "passed": true,
-          "duration_ms": 291.77
+          "duration_ms": 796.774
         },
         {
           "iteration": 210,
           "passed": true,
-          "duration_ms": 271.851
+          "duration_ms": 799.648
         },
         {
           "iteration": 211,
           "passed": true,
-          "duration_ms": 347.564
+          "duration_ms": 768.859
         },
         {
           "iteration": 212,
           "passed": true,
-          "duration_ms": 285.436
+          "duration_ms": 803.381
         },
         {
           "iteration": 213,
           "passed": true,
-          "duration_ms": 278.362
+          "duration_ms": 793.652
         },
         {
           "iteration": 214,
           "passed": true,
-          "duration_ms": 286.755
+          "duration_ms": 774.493
         },
         {
           "iteration": 215,
           "passed": true,
-          "duration_ms": 290.268
+          "duration_ms": 780.156
         },
         {
           "iteration": 216,
           "passed": true,
-          "duration_ms": 304.529
+          "duration_ms": 814.842
         },
         {
           "iteration": 217,
           "passed": true,
-          "duration_ms": 277.414
+          "duration_ms": 751.239
         },
         {
           "iteration": 218,
           "passed": true,
-          "duration_ms": 282.714
+          "duration_ms": 796.146
         },
         {
           "iteration": 219,
           "passed": true,
-          "duration_ms": 286.446
+          "duration_ms": 777.265
         },
         {
           "iteration": 220,
           "passed": true,
-          "duration_ms": 263.309
+          "duration_ms": 781.121
         },
         {
           "iteration": 221,
           "passed": true,
-          "duration_ms": 276.615
+          "duration_ms": 792.477
         },
         {
           "iteration": 222,
           "passed": true,
-          "duration_ms": 280.728
+          "duration_ms": 716.099
         },
         {
           "iteration": 223,
           "passed": true,
-          "duration_ms": 288.393
+          "duration_ms": 772.3
         },
         {
           "iteration": 224,
           "passed": true,
-          "duration_ms": 265.383
+          "duration_ms": 780.784
         },
         {
           "iteration": 225,
           "passed": true,
-          "duration_ms": 295.873
+          "duration_ms": 780.932
         },
         {
           "iteration": 226,
           "passed": true,
-          "duration_ms": 288.076
+          "duration_ms": 808.611
         },
         {
           "iteration": 227,
           "passed": true,
-          "duration_ms": 259.591
+          "duration_ms": 783.147
         },
         {
           "iteration": 228,
           "passed": true,
-          "duration_ms": 295.314
+          "duration_ms": 779.298
         },
         {
           "iteration": 229,
           "passed": true,
-          "duration_ms": 294.017
+          "duration_ms": 785.201
         },
         {
           "iteration": 230,
           "passed": true,
-          "duration_ms": 293.883
+          "duration_ms": 775.683
         },
         {
           "iteration": 231,
           "passed": true,
-          "duration_ms": 278.274
+          "duration_ms": 775.036
         },
         {
           "iteration": 232,
           "passed": true,
-          "duration_ms": 294.553
+          "duration_ms": 734.911
         },
         {
           "iteration": 233,
           "passed": true,
-          "duration_ms": 258.927
+          "duration_ms": 831.159
         },
         {
           "iteration": 234,
           "passed": true,
-          "duration_ms": 290.961
+          "duration_ms": 787.079
         },
         {
           "iteration": 235,
           "passed": true,
-          "duration_ms": 274.604
+          "duration_ms": 800.955
         },
         {
           "iteration": 236,
           "passed": true,
-          "duration_ms": 288.821
+          "duration_ms": 803.187
         },
         {
           "iteration": 237,
           "passed": true,
-          "duration_ms": 292.946
+          "duration_ms": 753.567
         },
         {
           "iteration": 238,
           "passed": true,
-          "duration_ms": 262.463
+          "duration_ms": 803.895
         },
         {
           "iteration": 239,
           "passed": true,
-          "duration_ms": 259.057
+          "duration_ms": 3602.174
         },
         {
           "iteration": 240,
           "passed": true,
-          "duration_ms": 232.083
+          "duration_ms": 7872.809
         },
         {
           "iteration": 241,
           "passed": true,
-          "duration_ms": 380.052
+          "duration_ms": 804.938
         },
         {
           "iteration": 242,
           "passed": true,
-          "duration_ms": 258.65
+          "duration_ms": 804.365
         },
         {
           "iteration": 243,
           "passed": true,
-          "duration_ms": 289.096
+          "duration_ms": 802.325
         },
         {
           "iteration": 244,
           "passed": true,
-          "duration_ms": 300.009
+          "duration_ms": 810.14
         },
         {
           "iteration": 245,
           "passed": true,
-          "duration_ms": 243.137
+          "duration_ms": 825.151
         },
         {
           "iteration": 246,
           "passed": true,
-          "duration_ms": 291.804
+          "duration_ms": 791.961
         },
         {
           "iteration": 247,
           "passed": true,
-          "duration_ms": 298.244
+          "duration_ms": 763.933
         },
         {
           "iteration": 248,
           "passed": true,
-          "duration_ms": 289.493
+          "duration_ms": 804.306
         },
         {
           "iteration": 249,
           "passed": true,
-          "duration_ms": 251.219
+          "duration_ms": 806.857
         },
         {
           "iteration": 250,
           "passed": true,
-          "duration_ms": 283.535
+          "duration_ms": 794.594
         },
         {
           "iteration": 251,
           "passed": true,
-          "duration_ms": 285.819
+          "duration_ms": 807.567
         },
         {
           "iteration": 252,
           "passed": true,
-          "duration_ms": 238.667
+          "duration_ms": 750.873
         },
         {
           "iteration": 253,
           "passed": true,
-          "duration_ms": 280.918
+          "duration_ms": 798.609
         },
         {
           "iteration": 254,
           "passed": true,
-          "duration_ms": 284.594
+          "duration_ms": 816.477
         },
         {
           "iteration": 255,
           "passed": true,
-          "duration_ms": 331.173
+          "duration_ms": 806.147
         },
         {
           "iteration": 256,
           "passed": true,
-          "duration_ms": 285.385
+          "duration_ms": 806.491
         },
         {
           "iteration": 257,
           "passed": true,
-          "duration_ms": 287.017
+          "duration_ms": 804.192
         },
         {
           "iteration": 258,
           "passed": true,
-          "duration_ms": 286.337
+          "duration_ms": 826.366
         },
         {
           "iteration": 259,
           "passed": true,
-          "duration_ms": 286.694
+          "duration_ms": 821.846
         },
         {
           "iteration": 260,
           "passed": true,
-          "duration_ms": 294.127
+          "duration_ms": 790.633
         },
         {
           "iteration": 261,
           "passed": true,
-          "duration_ms": 274.915
+          "duration_ms": 752.772
         },
         {
           "iteration": 262,
           "passed": true,
-          "duration_ms": 281.797
+          "duration_ms": 797.931
         },
         {
           "iteration": 263,
           "passed": true,
-          "duration_ms": 277.261
+          "duration_ms": 815.921
         },
         {
           "iteration": 264,
           "passed": true,
-          "duration_ms": 285.847
+          "duration_ms": 802.434
         },
         {
           "iteration": 265,
           "passed": true,
-          "duration_ms": 260.402
+          "duration_ms": 748.827
         },
         {
           "iteration": 266,
           "passed": true,
-          "duration_ms": 289.287
+          "duration_ms": 795.598
         },
         {
           "iteration": 267,
           "passed": true,
-          "duration_ms": 280.884
+          "duration_ms": 796.44
         },
         {
           "iteration": 268,
           "passed": true,
-          "duration_ms": 290.121
+          "duration_ms": 811.287
         },
         {
           "iteration": 269,
           "passed": true,
-          "duration_ms": 287.769
+          "duration_ms": 808.545
         },
         {
           "iteration": 270,
           "passed": true,
-          "duration_ms": 297.406
+          "duration_ms": 834.571
         },
         {
           "iteration": 271,
           "passed": true,
-          "duration_ms": 299.782
+          "duration_ms": 809.34
         },
         {
           "iteration": 272,
           "passed": true,
-          "duration_ms": 227.009
+          "duration_ms": 800.045
         },
         {
           "iteration": 273,
           "passed": true,
-          "duration_ms": 278.66
+          "duration_ms": 820.212
         },
         {
           "iteration": 274,
           "passed": true,
-          "duration_ms": 337.365
+          "duration_ms": 823.515
         },
         {
           "iteration": 275,
           "passed": true,
-          "duration_ms": 292.501
+          "duration_ms": 761.933
         },
         {
           "iteration": 276,
           "passed": true,
-          "duration_ms": 263.595
+          "duration_ms": 762.332
         },
         {
           "iteration": 277,
           "passed": true,
-          "duration_ms": 280.213
+          "duration_ms": 781.871
         },
         {
           "iteration": 278,
           "passed": true,
-          "duration_ms": 288.557
+          "duration_ms": 783.048
         },
         {
           "iteration": 279,
           "passed": true,
-          "duration_ms": 265.044
+          "duration_ms": 731.178
         },
         {
           "iteration": 280,
           "passed": true,
-          "duration_ms": 288.894
+          "duration_ms": 773.065
         },
         {
           "iteration": 281,
           "passed": true,
-          "duration_ms": 274.916
+          "duration_ms": 776.972
         },
         {
           "iteration": 282,
           "passed": true,
-          "duration_ms": 256.313
+          "duration_ms": 785.731
         },
         {
           "iteration": 283,
           "passed": true,
-          "duration_ms": 259.975
+          "duration_ms": 715.538
         },
         {
           "iteration": 284,
           "passed": true,
-          "duration_ms": 289.567
+          "duration_ms": 812.472
         },
         {
           "iteration": 285,
           "passed": true,
-          "duration_ms": 283.686
+          "duration_ms": 789.513
         },
         {
           "iteration": 286,
           "passed": true,
-          "duration_ms": 278.574
+          "duration_ms": 769.257
         },
         {
           "iteration": 287,
           "passed": true,
-          "duration_ms": 283.508
+          "duration_ms": 793.379
         },
         {
           "iteration": 288,
           "passed": true,
-          "duration_ms": 291.983
+          "duration_ms": 783.426
         },
         {
           "iteration": 289,
           "passed": true,
-          "duration_ms": 286.327
+          "duration_ms": 803.537
         },
         {
           "iteration": 290,
           "passed": true,
-          "duration_ms": 274.498
+          "duration_ms": 794.553
         },
         {
           "iteration": 291,
           "passed": true,
-          "duration_ms": 278.489
+          "duration_ms": 784.618
         },
         {
           "iteration": 292,
           "passed": true,
-          "duration_ms": 285.908
+          "duration_ms": 769.983
         },
         {
           "iteration": 293,
           "passed": true,
-          "duration_ms": 287.164
+          "duration_ms": 10708.028
         },
         {
           "iteration": 294,
           "passed": true,
-          "duration_ms": 266.291
+          "duration_ms": 776.032
         },
         {
           "iteration": 295,
           "passed": true,
-          "duration_ms": 272.012
+          "duration_ms": 781.693
         },
         {
           "iteration": 296,
           "passed": true,
-          "duration_ms": 283.05
+          "duration_ms": 785.691
         },
         {
           "iteration": 297,
           "passed": true,
-          "duration_ms": 274.211
+          "duration_ms": 778.328
         },
         {
           "iteration": 298,
           "passed": true,
-          "duration_ms": 292.251
+          "duration_ms": 723.352
         },
         {
           "iteration": 299,
           "passed": true,
-          "duration_ms": 935.742
+          "duration_ms": 754.046
         },
         {
           "iteration": 300,
           "passed": true,
-          "duration_ms": 8259.396
+          "duration_ms": 781.629
         }
       ],
       "failure_count": 0,
@@ -1771,19 +2047,36 @@
         "transcript_rejects_confidence_infinity",
         "transcript_rejects_confidence_negative",
         "transcript_rejects_sequence_zero",
-        "transcript_rejects_capture_epoch_zero"
+        "transcript_rejects_capture_epoch_zero",
+        "barge_in_does_not_wait_for_provider_and_discards_late_tts",
+        "close_does_not_wait_for_provider_and_discards_late_tts",
+        "completion_guard_linearizes_commit_before_barge_in",
+        "slow_commit_does_not_block_unrelated_session_barge_in",
+        "in_flight_duplicate_and_conflict_do_not_call_provider_twice",
+        "external_delete_during_inference_returns_typed_discard",
+        "provider_failure_releases_the_in_flight_reservation",
+        "cancellation_without_supersession_returns_fallback_result",
+        "barge_in_discards_a_concurrent_provider_failure",
+        "supersession_wins_a_concurrent_conversation_error",
+        "blank_agent_message_fails_before_durable_speech_commit",
+        "transient_conversation_conflict_is_typed_and_retryable",
+        "external_conversation_close",
+        "external_conversation_expire",
+        "external_conversation_delete",
+        "completion_guard_cancels_before_durable_commit",
+        "completion_guard_holds_through_conversation_commit"
       ],
-      "checks_per_iteration": 28,
-      "subchecks_attempted": 8400,
+      "checks_per_iteration": 45,
+      "subchecks_attempted": 13500,
       "iterations_attempted": 300,
       "iterations_passed": 300,
       "iterations_failed": 0,
       "pass_rate": 1.0,
       "duration_ms": {
-        "total": 18029.229,
-        "mean": 60.058,
-        "p95": 69.266,
-        "max": 89.456
+        "total": 52180.542,
+        "mean": 173.894,
+        "p95": 191.993,
+        "max": 250.656
       },
       "subchecks": [
         {
@@ -1792,9 +2085,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 4.925,
-            "p95": 6.236,
-            "max": 7.474
+            "mean": 4.253,
+            "p95": 5.506,
+            "max": 9.191
           }
         },
         {
@@ -1803,9 +2096,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 2.711,
-            "p95": 3.615,
-            "max": 4.283
+            "mean": 2.872,
+            "p95": 3.662,
+            "max": 5.818
           }
         },
         {
@@ -1814,9 +2107,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.108,
-            "p95": 0.171,
-            "max": 0.428
+            "mean": 0.066,
+            "p95": 0.107,
+            "max": 0.202
           }
         },
         {
@@ -1825,9 +2118,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 2.994,
-            "p95": 3.996,
-            "max": 4.733
+            "mean": 3.28,
+            "p95": 4.035,
+            "max": 7.119
           }
         },
         {
@@ -1836,9 +2129,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 4.745,
-            "p95": 6.253,
-            "max": 7.425
+            "mean": 4.189,
+            "p95": 5.225,
+            "max": 9.642
           }
         },
         {
@@ -1847,9 +2140,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 4.73,
-            "p95": 6.259,
-            "max": 8.501
+            "mean": 4.168,
+            "p95": 5.065,
+            "max": 9.461
           }
         },
         {
@@ -1858,9 +2151,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 6.355,
-            "p95": 8.151,
-            "max": 10.012
+            "mean": 5.192,
+            "p95": 6.192,
+            "max": 8.039
           }
         },
         {
@@ -1869,9 +2162,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 4.947,
-            "p95": 6.316,
-            "max": 8.291
+            "mean": 4.343,
+            "p95": 5.424,
+            "max": 8.648
           }
         },
         {
@@ -1880,9 +2173,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 4.694,
-            "p95": 6.481,
-            "max": 7.895
+            "mean": 4.24,
+            "p95": 5.208,
+            "max": 9.605
           }
         },
         {
@@ -1891,9 +2184,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 6.386,
-            "p95": 8.333,
-            "max": 10.218
+            "mean": 5.207,
+            "p95": 6.418,
+            "max": 10.302
           }
         },
         {
@@ -1902,9 +2195,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 6.322,
-            "p95": 8.176,
-            "max": 12.022
+            "mean": 5.248,
+            "p95": 6.29,
+            "max": 9.632
           }
         },
         {
@@ -1913,9 +2206,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 4.75,
-            "p95": 5.949,
-            "max": 8.117
+            "mean": 4.259,
+            "p95": 5.178,
+            "max": 7.693
           }
         },
         {
@@ -1924,9 +2217,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 5.129,
-            "p95": 6.394,
-            "max": 7.538
+            "mean": 4.497,
+            "p95": 5.762,
+            "max": 7.813
           }
         },
         {
@@ -1935,9 +2228,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.131,
-            "p95": 0.205,
-            "max": 0.373
+            "mean": 0.07,
+            "p95": 0.114,
+            "max": 0.194
           }
         },
         {
@@ -1946,9 +2239,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.133,
-            "p95": 0.212,
-            "max": 0.355
+            "mean": 0.084,
+            "p95": 0.139,
+            "max": 0.211
           }
         },
         {
@@ -1957,9 +2250,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.098,
-            "p95": 0.151,
-            "max": 0.214
+            "mean": 0.058,
+            "p95": 0.106,
+            "max": 0.142
           }
         },
         {
@@ -1968,9 +2261,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.086,
-            "p95": 0.132,
-            "max": 0.173
+            "mean": 0.052,
+            "p95": 0.093,
+            "max": 0.143
           }
         },
         {
@@ -1979,9 +2272,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.083,
-            "p95": 0.129,
-            "max": 0.174
+            "mean": 0.051,
+            "p95": 0.093,
+            "max": 0.126
           }
         },
         {
@@ -1990,9 +2283,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.084,
-            "p95": 0.133,
-            "max": 0.18
+            "mean": 0.05,
+            "p95": 0.09,
+            "max": 0.159
           }
         },
         {
@@ -2001,9 +2294,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.083,
-            "p95": 0.128,
-            "max": 0.175
+            "mean": 0.05,
+            "p95": 0.093,
+            "max": 0.122
           }
         },
         {
@@ -2012,9 +2305,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.107,
-            "p95": 0.17,
-            "max": 0.233
+            "mean": 0.066,
+            "p95": 0.129,
+            "max": 0.179
           }
         },
         {
@@ -2023,9 +2316,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.106,
-            "p95": 0.17,
-            "max": 0.245
+            "mean": 0.064,
+            "p95": 0.124,
+            "max": 0.195
           }
         },
         {
@@ -2034,9 +2327,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.106,
-            "p95": 0.172,
-            "max": 0.238
+            "mean": 0.064,
+            "p95": 0.12,
+            "max": 0.157
           }
         },
         {
@@ -2045,9 +2338,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.045,
-            "p95": 0.072,
-            "max": 0.102
+            "mean": 0.028,
+            "p95": 0.048,
+            "max": 0.11
           }
         },
         {
@@ -2056,9 +2349,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.039,
-            "p95": 0.065,
-            "max": 0.085
+            "mean": 0.023,
+            "p95": 0.041,
+            "max": 0.077
           }
         },
         {
@@ -2067,9 +2360,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.038,
-            "p95": 0.065,
-            "max": 0.079
+            "mean": 0.022,
+            "p95": 0.039,
+            "max": 0.078
           }
         },
         {
@@ -2078,9 +2371,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.035,
-            "p95": 0.059,
-            "max": 0.101
+            "mean": 0.021,
+            "p95": 0.04,
+            "max": 0.078
           }
         },
         {
@@ -2089,9 +2382,196 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.035,
-            "p95": 0.059,
-            "max": 0.111
+            "mean": 0.021,
+            "p95": 0.037,
+            "max": 0.083
+          }
+        },
+        {
+          "check": "barge_in_does_not_wait_for_provider_and_discards_late_tts",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.463,
+            "p95": 5.394,
+            "max": 8.838
+          }
+        },
+        {
+          "check": "close_does_not_wait_for_provider_and_discards_late_tts",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.472,
+            "p95": 5.464,
+            "max": 7.34
+          }
+        },
+        {
+          "check": "completion_guard_linearizes_commit_before_barge_in",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 55.252,
+            "p95": 56.561,
+            "max": 59.073
+          }
+        },
+        {
+          "check": "slow_commit_does_not_block_unrelated_session_barge_in",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.697,
+            "p95": 5.695,
+            "max": 18.14
+          }
+        },
+        {
+          "check": "in_flight_duplicate_and_conflict_do_not_call_provider_twice",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 5.987,
+            "p95": 7.232,
+            "max": 13.905
+          }
+        },
+        {
+          "check": "external_delete_during_inference_returns_typed_discard",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.449,
+            "p95": 5.391,
+            "max": 8.222
+          }
+        },
+        {
+          "check": "provider_failure_releases_the_in_flight_reservation",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.768,
+            "p95": 6.169,
+            "max": 12.921
+          }
+        },
+        {
+          "check": "cancellation_without_supersession_returns_fallback_result",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.153,
+            "p95": 5.028,
+            "max": 7.488
+          }
+        },
+        {
+          "check": "barge_in_discards_a_concurrent_provider_failure",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.17,
+            "p95": 5.113,
+            "max": 13.086
+          }
+        },
+        {
+          "check": "supersession_wins_a_concurrent_conversation_error",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 3.428,
+            "p95": 4.394,
+            "max": 6.506
+          }
+        },
+        {
+          "check": "blank_agent_message_fails_before_durable_speech_commit",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 3.685,
+            "p95": 4.812,
+            "max": 8.416
+          }
+        },
+        {
+          "check": "transient_conversation_conflict_is_typed_and_retryable",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.17,
+            "p95": 5.069,
+            "max": 8.918
+          }
+        },
+        {
+          "check": "external_conversation_close",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 3.467,
+            "p95": 4.384,
+            "max": 14.398
+          }
+        },
+        {
+          "check": "external_conversation_expire",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 3.207,
+            "p95": 3.972,
+            "max": 6.489
+          }
+        },
+        {
+          "check": "external_conversation_delete",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 3.19,
+            "p95": 4.199,
+            "max": 6.795
+          }
+        },
+        {
+          "check": "completion_guard_cancels_before_durable_commit",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 3.56,
+            "p95": 4.421,
+            "max": 7.442
+          }
+        },
+        {
+          "check": "completion_guard_holds_through_conversation_commit",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.163,
+            "p95": 4.893,
+            "max": 10.473
           }
         }
       ],
@@ -2099,1502 +2579,1502 @@
         {
           "iteration": 1,
           "passed": true,
-          "duration_ms": 63.966
+          "duration_ms": 169.776
         },
         {
           "iteration": 2,
           "passed": true,
-          "duration_ms": 69.266
+          "duration_ms": 181.937
         },
         {
           "iteration": 3,
           "passed": true,
-          "duration_ms": 62.406
+          "duration_ms": 172.272
         },
         {
           "iteration": 4,
           "passed": true,
-          "duration_ms": 65.972
+          "duration_ms": 177.209
         },
         {
           "iteration": 5,
           "passed": true,
-          "duration_ms": 48.933
+          "duration_ms": 176.599
         },
         {
           "iteration": 6,
           "passed": true,
-          "duration_ms": 54.215
+          "duration_ms": 157.668
         },
         {
           "iteration": 7,
           "passed": true,
-          "duration_ms": 57.587
+          "duration_ms": 170.743
         },
         {
           "iteration": 8,
           "passed": true,
-          "duration_ms": 53.448
+          "duration_ms": 184.567
         },
         {
           "iteration": 9,
           "passed": true,
-          "duration_ms": 56.477
+          "duration_ms": 186.456
         },
         {
           "iteration": 10,
           "passed": true,
-          "duration_ms": 61.498
+          "duration_ms": 167.084
         },
         {
           "iteration": 11,
           "passed": true,
-          "duration_ms": 61.851
+          "duration_ms": 186.641
         },
         {
           "iteration": 12,
           "passed": true,
-          "duration_ms": 59.117
+          "duration_ms": 174.704
         },
         {
           "iteration": 13,
           "passed": true,
-          "duration_ms": 60.578
+          "duration_ms": 179.737
         },
         {
           "iteration": 14,
           "passed": true,
-          "duration_ms": 58.049
+          "duration_ms": 172.903
         },
         {
           "iteration": 15,
           "passed": true,
-          "duration_ms": 52.212
+          "duration_ms": 158.3
         },
         {
           "iteration": 16,
           "passed": true,
-          "duration_ms": 55.364
+          "duration_ms": 159.753
         },
         {
           "iteration": 17,
           "passed": true,
-          "duration_ms": 61.897
+          "duration_ms": 161.278
         },
         {
           "iteration": 18,
           "passed": true,
-          "duration_ms": 55.646
+          "duration_ms": 166.718
         },
         {
           "iteration": 19,
           "passed": true,
-          "duration_ms": 55.689
+          "duration_ms": 162.31
         },
         {
           "iteration": 20,
           "passed": true,
-          "duration_ms": 75.831
+          "duration_ms": 169.82
         },
         {
           "iteration": 21,
           "passed": true,
-          "duration_ms": 59.103
+          "duration_ms": 165.767
         },
         {
           "iteration": 22,
           "passed": true,
-          "duration_ms": 53.464
+          "duration_ms": 166.991
         },
         {
           "iteration": 23,
           "passed": true,
-          "duration_ms": 57.272
+          "duration_ms": 168.538
         },
         {
           "iteration": 24,
           "passed": true,
-          "duration_ms": 54.182
+          "duration_ms": 168.562
         },
         {
           "iteration": 25,
           "passed": true,
-          "duration_ms": 69.648
+          "duration_ms": 169.774
         },
         {
           "iteration": 26,
           "passed": true,
-          "duration_ms": 66.61
+          "duration_ms": 173.948
         },
         {
           "iteration": 27,
           "passed": true,
-          "duration_ms": 63.84
+          "duration_ms": 160.424
         },
         {
           "iteration": 28,
           "passed": true,
-          "duration_ms": 71.275
+          "duration_ms": 161.791
         },
         {
           "iteration": 29,
           "passed": true,
-          "duration_ms": 56.225
+          "duration_ms": 165.909
         },
         {
           "iteration": 30,
           "passed": true,
-          "duration_ms": 60.841
+          "duration_ms": 172.401
         },
         {
           "iteration": 31,
           "passed": true,
-          "duration_ms": 62.175
+          "duration_ms": 169.267
         },
         {
           "iteration": 32,
           "passed": true,
-          "duration_ms": 62.734
+          "duration_ms": 178.59
         },
         {
           "iteration": 33,
           "passed": true,
-          "duration_ms": 55.742
+          "duration_ms": 170.533
         },
         {
           "iteration": 34,
           "passed": true,
-          "duration_ms": 53.601
+          "duration_ms": 171.539
         },
         {
           "iteration": 35,
           "passed": true,
-          "duration_ms": 54.592
+          "duration_ms": 167.306
         },
         {
           "iteration": 36,
           "passed": true,
-          "duration_ms": 58.585
+          "duration_ms": 167.722
         },
         {
           "iteration": 37,
           "passed": true,
-          "duration_ms": 60.073
+          "duration_ms": 164.517
         },
         {
           "iteration": 38,
           "passed": true,
-          "duration_ms": 62.65
+          "duration_ms": 174.506
         },
         {
           "iteration": 39,
           "passed": true,
-          "duration_ms": 55.94
+          "duration_ms": 183.881
         },
         {
           "iteration": 40,
           "passed": true,
-          "duration_ms": 60.547
+          "duration_ms": 171.64
         },
         {
           "iteration": 41,
           "passed": true,
-          "duration_ms": 56.664
+          "duration_ms": 173.045
         },
         {
           "iteration": 42,
           "passed": true,
-          "duration_ms": 60.473
+          "duration_ms": 172.47
         },
         {
           "iteration": 43,
           "passed": true,
-          "duration_ms": 57.235
+          "duration_ms": 170.983
         },
         {
           "iteration": 44,
           "passed": true,
-          "duration_ms": 51.605
+          "duration_ms": 174.914
         },
         {
           "iteration": 45,
           "passed": true,
-          "duration_ms": 52.237
+          "duration_ms": 170.522
         },
         {
           "iteration": 46,
           "passed": true,
-          "duration_ms": 59.024
+          "duration_ms": 167.384
         },
         {
           "iteration": 47,
           "passed": true,
-          "duration_ms": 54.406
+          "duration_ms": 159.543
         },
         {
           "iteration": 48,
           "passed": true,
-          "duration_ms": 62.195
+          "duration_ms": 164.759
         },
         {
           "iteration": 49,
           "passed": true,
-          "duration_ms": 64.287
+          "duration_ms": 161.945
         },
         {
           "iteration": 50,
           "passed": true,
-          "duration_ms": 56.199
+          "duration_ms": 171.586
         },
         {
           "iteration": 51,
           "passed": true,
-          "duration_ms": 61.306
+          "duration_ms": 169.485
         },
         {
           "iteration": 52,
           "passed": true,
-          "duration_ms": 58.433
+          "duration_ms": 180.259
         },
         {
           "iteration": 53,
           "passed": true,
-          "duration_ms": 78.408
+          "duration_ms": 165.377
         },
         {
           "iteration": 54,
           "passed": true,
-          "duration_ms": 75.606
+          "duration_ms": 160.57
         },
         {
           "iteration": 55,
           "passed": true,
-          "duration_ms": 85.579
+          "duration_ms": 165.075
         },
         {
           "iteration": 56,
           "passed": true,
-          "duration_ms": 79.004
+          "duration_ms": 175.321
         },
         {
           "iteration": 57,
           "passed": true,
-          "duration_ms": 69.163
+          "duration_ms": 160.611
         },
         {
           "iteration": 58,
           "passed": true,
-          "duration_ms": 67.636
+          "duration_ms": 162.011
         },
         {
           "iteration": 59,
           "passed": true,
-          "duration_ms": 64.199
+          "duration_ms": 165.759
         },
         {
           "iteration": 60,
           "passed": true,
-          "duration_ms": 69.611
+          "duration_ms": 161.203
         },
         {
           "iteration": 61,
           "passed": true,
-          "duration_ms": 58.777
+          "duration_ms": 169.36
         },
         {
           "iteration": 62,
           "passed": true,
-          "duration_ms": 60.1
+          "duration_ms": 170.184
         },
         {
           "iteration": 63,
           "passed": true,
-          "duration_ms": 59.889
+          "duration_ms": 168.678
         },
         {
           "iteration": 64,
           "passed": true,
-          "duration_ms": 59.26
+          "duration_ms": 162.898
         },
         {
           "iteration": 65,
           "passed": true,
-          "duration_ms": 56.857
+          "duration_ms": 157.597
         },
         {
           "iteration": 66,
           "passed": true,
-          "duration_ms": 56.951
+          "duration_ms": 162.021
         },
         {
           "iteration": 67,
           "passed": true,
-          "duration_ms": 56.705
+          "duration_ms": 165.069
         },
         {
           "iteration": 68,
           "passed": true,
-          "duration_ms": 65.375
+          "duration_ms": 175.821
         },
         {
           "iteration": 69,
           "passed": true,
-          "duration_ms": 58.759
+          "duration_ms": 167.509
         },
         {
           "iteration": 70,
           "passed": true,
-          "duration_ms": 65.375
+          "duration_ms": 169.264
         },
         {
           "iteration": 71,
           "passed": true,
-          "duration_ms": 56.611
+          "duration_ms": 168.699
         },
         {
           "iteration": 72,
           "passed": true,
-          "duration_ms": 56.649
+          "duration_ms": 176.826
         },
         {
           "iteration": 73,
           "passed": true,
-          "duration_ms": 66.265
+          "duration_ms": 183.453
         },
         {
           "iteration": 74,
           "passed": true,
-          "duration_ms": 55.497
+          "duration_ms": 180.425
         },
         {
           "iteration": 75,
           "passed": true,
-          "duration_ms": 62.5
+          "duration_ms": 175.466
         },
         {
           "iteration": 76,
           "passed": true,
-          "duration_ms": 60.372
+          "duration_ms": 204.778
         },
         {
           "iteration": 77,
           "passed": true,
-          "duration_ms": 68.512
+          "duration_ms": 218.854
         },
         {
           "iteration": 78,
           "passed": true,
-          "duration_ms": 60.345
+          "duration_ms": 191.131
         },
         {
           "iteration": 79,
           "passed": true,
-          "duration_ms": 58.225
+          "duration_ms": 196.76
         },
         {
           "iteration": 80,
           "passed": true,
-          "duration_ms": 60.571
+          "duration_ms": 158.807
         },
         {
           "iteration": 81,
           "passed": true,
-          "duration_ms": 55.572
+          "duration_ms": 158.554
         },
         {
           "iteration": 82,
           "passed": true,
-          "duration_ms": 53.046
+          "duration_ms": 165.524
         },
         {
           "iteration": 83,
           "passed": true,
-          "duration_ms": 57.8
+          "duration_ms": 162.835
         },
         {
           "iteration": 84,
           "passed": true,
-          "duration_ms": 57.987
+          "duration_ms": 159.517
         },
         {
           "iteration": 85,
           "passed": true,
-          "duration_ms": 62.91
+          "duration_ms": 160.52
         },
         {
           "iteration": 86,
           "passed": true,
-          "duration_ms": 57.892
+          "duration_ms": 159.908
         },
         {
           "iteration": 87,
           "passed": true,
-          "duration_ms": 64.635
+          "duration_ms": 158.99
         },
         {
           "iteration": 88,
           "passed": true,
-          "duration_ms": 58.368
+          "duration_ms": 163.529
         },
         {
           "iteration": 89,
           "passed": true,
-          "duration_ms": 58.222
+          "duration_ms": 164.871
         },
         {
           "iteration": 90,
           "passed": true,
-          "duration_ms": 56.753
+          "duration_ms": 167.222
         },
         {
           "iteration": 91,
           "passed": true,
-          "duration_ms": 50.056
+          "duration_ms": 168.735
         },
         {
           "iteration": 92,
           "passed": true,
-          "duration_ms": 55.426
+          "duration_ms": 166.464
         },
         {
           "iteration": 93,
           "passed": true,
-          "duration_ms": 55.782
+          "duration_ms": 165.723
         },
         {
           "iteration": 94,
           "passed": true,
-          "duration_ms": 52.281
+          "duration_ms": 165.711
         },
         {
           "iteration": 95,
           "passed": true,
-          "duration_ms": 56.216
+          "duration_ms": 163.229
         },
         {
           "iteration": 96,
           "passed": true,
-          "duration_ms": 55.818
+          "duration_ms": 162.512
         },
         {
           "iteration": 97,
           "passed": true,
-          "duration_ms": 63.788
+          "duration_ms": 167.329
         },
         {
           "iteration": 98,
           "passed": true,
-          "duration_ms": 69.836
+          "duration_ms": 163.798
         },
         {
           "iteration": 99,
           "passed": true,
-          "duration_ms": 66.413
+          "duration_ms": 159.775
         },
         {
           "iteration": 100,
           "passed": true,
-          "duration_ms": 62.251
+          "duration_ms": 158.33
         },
         {
           "iteration": 101,
           "passed": true,
-          "duration_ms": 59.015
+          "duration_ms": 168.75
         },
         {
           "iteration": 102,
           "passed": true,
-          "duration_ms": 65.604
+          "duration_ms": 169.48
         },
         {
           "iteration": 103,
           "passed": true,
-          "duration_ms": 59.684
+          "duration_ms": 161.066
         },
         {
           "iteration": 104,
           "passed": true,
-          "duration_ms": 57.02
+          "duration_ms": 162.762
         },
         {
           "iteration": 105,
           "passed": true,
-          "duration_ms": 65.123
+          "duration_ms": 175.084
         },
         {
           "iteration": 106,
           "passed": true,
-          "duration_ms": 56.78
+          "duration_ms": 169.495
         },
         {
           "iteration": 107,
           "passed": true,
-          "duration_ms": 61.068
+          "duration_ms": 158.879
         },
         {
           "iteration": 108,
           "passed": true,
-          "duration_ms": 61.958
+          "duration_ms": 167.465
         },
         {
           "iteration": 109,
           "passed": true,
-          "duration_ms": 89.456
+          "duration_ms": 169.611
         },
         {
           "iteration": 110,
           "passed": true,
-          "duration_ms": 83.715
+          "duration_ms": 178.384
         },
         {
           "iteration": 111,
           "passed": true,
-          "duration_ms": 61.258
+          "duration_ms": 203.362
         },
         {
           "iteration": 112,
           "passed": true,
-          "duration_ms": 60.93
+          "duration_ms": 169.753
         },
         {
           "iteration": 113,
           "passed": true,
-          "duration_ms": 65.234
+          "duration_ms": 169.929
         },
         {
           "iteration": 114,
           "passed": true,
-          "duration_ms": 59.499
+          "duration_ms": 172.061
         },
         {
           "iteration": 115,
           "passed": true,
-          "duration_ms": 59.675
+          "duration_ms": 171.007
         },
         {
           "iteration": 116,
           "passed": true,
-          "duration_ms": 59.844
+          "duration_ms": 167.264
         },
         {
           "iteration": 117,
           "passed": true,
-          "duration_ms": 58.812
+          "duration_ms": 169.107
         },
         {
           "iteration": 118,
           "passed": true,
-          "duration_ms": 52.907
+          "duration_ms": 165.458
         },
         {
           "iteration": 119,
           "passed": true,
-          "duration_ms": 53.359
+          "duration_ms": 223.588
         },
         {
           "iteration": 120,
           "passed": true,
-          "duration_ms": 53.215
+          "duration_ms": 175.626
         },
         {
           "iteration": 121,
           "passed": true,
-          "duration_ms": 59.449
+          "duration_ms": 172.697
         },
         {
           "iteration": 122,
           "passed": true,
-          "duration_ms": 56.491
+          "duration_ms": 178.636
         },
         {
           "iteration": 123,
           "passed": true,
-          "duration_ms": 58.506
+          "duration_ms": 176.344
         },
         {
           "iteration": 124,
           "passed": true,
-          "duration_ms": 65.563
+          "duration_ms": 170.234
         },
         {
           "iteration": 125,
           "passed": true,
-          "duration_ms": 65.836
+          "duration_ms": 171.569
         },
         {
           "iteration": 126,
           "passed": true,
-          "duration_ms": 63.698
+          "duration_ms": 175.434
         },
         {
           "iteration": 127,
           "passed": true,
-          "duration_ms": 63.953
+          "duration_ms": 175.994
         },
         {
           "iteration": 128,
           "passed": true,
-          "duration_ms": 53.876
+          "duration_ms": 183.956
         },
         {
           "iteration": 129,
           "passed": true,
-          "duration_ms": 60.493
+          "duration_ms": 179.635
         },
         {
           "iteration": 130,
           "passed": true,
-          "duration_ms": 56.757
+          "duration_ms": 178.001
         },
         {
           "iteration": 131,
           "passed": true,
-          "duration_ms": 58.923
+          "duration_ms": 175.658
         },
         {
           "iteration": 132,
           "passed": true,
-          "duration_ms": 59.006
+          "duration_ms": 169.976
         },
         {
           "iteration": 133,
           "passed": true,
-          "duration_ms": 59.022
+          "duration_ms": 173.749
         },
         {
           "iteration": 134,
           "passed": true,
-          "duration_ms": 59.299
+          "duration_ms": 175.567
         },
         {
           "iteration": 135,
           "passed": true,
-          "duration_ms": 56.97
+          "duration_ms": 182.304
         },
         {
           "iteration": 136,
           "passed": true,
-          "duration_ms": 59.79
+          "duration_ms": 178.479
         },
         {
           "iteration": 137,
           "passed": true,
-          "duration_ms": 64.497
+          "duration_ms": 180.41
         },
         {
           "iteration": 138,
           "passed": true,
-          "duration_ms": 46.252
+          "duration_ms": 175.595
         },
         {
           "iteration": 139,
           "passed": true,
-          "duration_ms": 60.119
+          "duration_ms": 178.401
         },
         {
           "iteration": 140,
           "passed": true,
-          "duration_ms": 51.832
+          "duration_ms": 214.37
         },
         {
           "iteration": 141,
           "passed": true,
-          "duration_ms": 54.053
+          "duration_ms": 202.953
         },
         {
           "iteration": 142,
           "passed": true,
-          "duration_ms": 58.187
+          "duration_ms": 180.29
         },
         {
           "iteration": 143,
           "passed": true,
-          "duration_ms": 65.295
+          "duration_ms": 174.386
         },
         {
           "iteration": 144,
           "passed": true,
-          "duration_ms": 66.998
+          "duration_ms": 180.633
         },
         {
           "iteration": 145,
           "passed": true,
-          "duration_ms": 63.179
+          "duration_ms": 184.784
         },
         {
           "iteration": 146,
           "passed": true,
-          "duration_ms": 68.068
+          "duration_ms": 190.352
         },
         {
           "iteration": 147,
           "passed": true,
-          "duration_ms": 63.119
+          "duration_ms": 250.656
         },
         {
           "iteration": 148,
           "passed": true,
-          "duration_ms": 56.804
+          "duration_ms": 187.167
         },
         {
           "iteration": 149,
           "passed": true,
-          "duration_ms": 56.413
+          "duration_ms": 181.183
         },
         {
           "iteration": 150,
           "passed": true,
-          "duration_ms": 54.469
+          "duration_ms": 191.041
         },
         {
           "iteration": 151,
           "passed": true,
-          "duration_ms": 59.023
+          "duration_ms": 187.829
         },
         {
           "iteration": 152,
           "passed": true,
-          "duration_ms": 58.755
+          "duration_ms": 194.297
         },
         {
           "iteration": 153,
           "passed": true,
-          "duration_ms": 55.241
+          "duration_ms": 187.899
         },
         {
           "iteration": 154,
           "passed": true,
-          "duration_ms": 60.526
+          "duration_ms": 165.541
         },
         {
           "iteration": 155,
           "passed": true,
-          "duration_ms": 55.608
+          "duration_ms": 168.991
         },
         {
           "iteration": 156,
           "passed": true,
-          "duration_ms": 59.09
+          "duration_ms": 170.25
         },
         {
           "iteration": 157,
           "passed": true,
-          "duration_ms": 61.633
+          "duration_ms": 177.631
         },
         {
           "iteration": 158,
           "passed": true,
-          "duration_ms": 54.344
+          "duration_ms": 181.256
         },
         {
           "iteration": 159,
           "passed": true,
-          "duration_ms": 62.475
+          "duration_ms": 179.782
         },
         {
           "iteration": 160,
           "passed": true,
-          "duration_ms": 56.534
+          "duration_ms": 176.734
         },
         {
           "iteration": 161,
           "passed": true,
-          "duration_ms": 57.503
+          "duration_ms": 173.806
         },
         {
           "iteration": 162,
           "passed": true,
-          "duration_ms": 55.201
+          "duration_ms": 176.521
         },
         {
           "iteration": 163,
           "passed": true,
-          "duration_ms": 67.575
+          "duration_ms": 173.319
         },
         {
           "iteration": 164,
           "passed": true,
-          "duration_ms": 59.838
+          "duration_ms": 180.056
         },
         {
           "iteration": 165,
           "passed": true,
-          "duration_ms": 54.699
+          "duration_ms": 174.908
         },
         {
           "iteration": 166,
           "passed": true,
-          "duration_ms": 54.542
+          "duration_ms": 173.164
         },
         {
           "iteration": 167,
           "passed": true,
-          "duration_ms": 59.647
+          "duration_ms": 184.033
         },
         {
           "iteration": 168,
           "passed": true,
-          "duration_ms": 57.364
+          "duration_ms": 191.993
         },
         {
           "iteration": 169,
           "passed": true,
-          "duration_ms": 53.381
+          "duration_ms": 202.305
         },
         {
           "iteration": 170,
           "passed": true,
-          "duration_ms": 58.858
+          "duration_ms": 191.011
         },
         {
           "iteration": 171,
           "passed": true,
-          "duration_ms": 58.421
+          "duration_ms": 175.487
         },
         {
           "iteration": 172,
           "passed": true,
-          "duration_ms": 65.33
+          "duration_ms": 167.43
         },
         {
           "iteration": 173,
           "passed": true,
-          "duration_ms": 53.565
+          "duration_ms": 163.662
         },
         {
           "iteration": 174,
           "passed": true,
-          "duration_ms": 55.828
+          "duration_ms": 172.08
         },
         {
           "iteration": 175,
           "passed": true,
-          "duration_ms": 55.058
+          "duration_ms": 173.538
         },
         {
           "iteration": 176,
           "passed": true,
-          "duration_ms": 57.042
+          "duration_ms": 180.663
         },
         {
           "iteration": 177,
           "passed": true,
-          "duration_ms": 57.936
+          "duration_ms": 168.243
         },
         {
           "iteration": 178,
           "passed": true,
-          "duration_ms": 59.454
+          "duration_ms": 167.931
         },
         {
           "iteration": 179,
           "passed": true,
-          "duration_ms": 55.069
+          "duration_ms": 175.654
         },
         {
           "iteration": 180,
           "passed": true,
-          "duration_ms": 61.7
+          "duration_ms": 179.659
         },
         {
           "iteration": 181,
           "passed": true,
-          "duration_ms": 50.676
+          "duration_ms": 176.811
         },
         {
           "iteration": 182,
           "passed": true,
-          "duration_ms": 59.876
+          "duration_ms": 188.105
         },
         {
           "iteration": 183,
           "passed": true,
-          "duration_ms": 62.091
+          "duration_ms": 185.701
         },
         {
           "iteration": 184,
           "passed": true,
-          "duration_ms": 64.859
+          "duration_ms": 180.228
         },
         {
           "iteration": 185,
           "passed": true,
-          "duration_ms": 63.98
+          "duration_ms": 177.745
         },
         {
           "iteration": 186,
           "passed": true,
-          "duration_ms": 55.627
+          "duration_ms": 177.159
         },
         {
           "iteration": 187,
           "passed": true,
-          "duration_ms": 59.264
+          "duration_ms": 172.929
         },
         {
           "iteration": 188,
           "passed": true,
-          "duration_ms": 53.721
+          "duration_ms": 166.514
         },
         {
           "iteration": 189,
           "passed": true,
-          "duration_ms": 53.813
+          "duration_ms": 173.537
         },
         {
           "iteration": 190,
           "passed": true,
-          "duration_ms": 67.442
+          "duration_ms": 169.893
         },
         {
           "iteration": 191,
           "passed": true,
-          "duration_ms": 60.97
+          "duration_ms": 173.674
         },
         {
           "iteration": 192,
           "passed": true,
-          "duration_ms": 64.507
+          "duration_ms": 178.01
         },
         {
           "iteration": 193,
           "passed": true,
-          "duration_ms": 64.179
+          "duration_ms": 187.488
         },
         {
           "iteration": 194,
           "passed": true,
-          "duration_ms": 59.01
+          "duration_ms": 176.968
         },
         {
           "iteration": 195,
           "passed": true,
-          "duration_ms": 57.846
+          "duration_ms": 171.023
         },
         {
           "iteration": 196,
           "passed": true,
-          "duration_ms": 66.28
+          "duration_ms": 169.596
         },
         {
           "iteration": 197,
           "passed": true,
-          "duration_ms": 60.308
+          "duration_ms": 168.87
         },
         {
           "iteration": 198,
           "passed": true,
-          "duration_ms": 54.874
+          "duration_ms": 176.219
         },
         {
           "iteration": 199,
           "passed": true,
-          "duration_ms": 59.018
+          "duration_ms": 178.685
         },
         {
           "iteration": 200,
           "passed": true,
-          "duration_ms": 55.507
+          "duration_ms": 175.313
         },
         {
           "iteration": 201,
           "passed": true,
-          "duration_ms": 64.409
+          "duration_ms": 178.346
         },
         {
           "iteration": 202,
           "passed": true,
-          "duration_ms": 68.294
+          "duration_ms": 171.118
         },
         {
           "iteration": 203,
           "passed": true,
-          "duration_ms": 63.527
+          "duration_ms": 182.216
         },
         {
           "iteration": 204,
           "passed": true,
-          "duration_ms": 63.007
+          "duration_ms": 191.74
         },
         {
           "iteration": 205,
           "passed": true,
-          "duration_ms": 55.374
+          "duration_ms": 189.182
         },
         {
           "iteration": 206,
           "passed": true,
-          "duration_ms": 54.454
+          "duration_ms": 187.259
         },
         {
           "iteration": 207,
           "passed": true,
-          "duration_ms": 55.059
+          "duration_ms": 189.771
         },
         {
           "iteration": 208,
           "passed": true,
-          "duration_ms": 54.05
+          "duration_ms": 196.563
         },
         {
           "iteration": 209,
           "passed": true,
-          "duration_ms": 63.225
+          "duration_ms": 180.457
         },
         {
           "iteration": 210,
           "passed": true,
-          "duration_ms": 60.036
+          "duration_ms": 172.579
         },
         {
           "iteration": 211,
           "passed": true,
-          "duration_ms": 64.603
+          "duration_ms": 193.872
         },
         {
           "iteration": 212,
           "passed": true,
-          "duration_ms": 61.452
+          "duration_ms": 210.03
         },
         {
           "iteration": 213,
           "passed": true,
-          "duration_ms": 65.741
+          "duration_ms": 193.312
         },
         {
           "iteration": 214,
           "passed": true,
-          "duration_ms": 53.384
+          "duration_ms": 188.145
         },
         {
           "iteration": 215,
           "passed": true,
-          "duration_ms": 52.939
+          "duration_ms": 188.648
         },
         {
           "iteration": 216,
           "passed": true,
-          "duration_ms": 58.963
+          "duration_ms": 174.4
         },
         {
           "iteration": 217,
           "passed": true,
-          "duration_ms": 58.919
+          "duration_ms": 164.345
         },
         {
           "iteration": 218,
           "passed": true,
-          "duration_ms": 55.569
+          "duration_ms": 178.175
         },
         {
           "iteration": 219,
           "passed": true,
-          "duration_ms": 62.789
+          "duration_ms": 180.81
         },
         {
           "iteration": 220,
           "passed": true,
-          "duration_ms": 58.342
+          "duration_ms": 194.366
         },
         {
           "iteration": 221,
           "passed": true,
-          "duration_ms": 59.298
+          "duration_ms": 168.225
         },
         {
           "iteration": 222,
           "passed": true,
-          "duration_ms": 67.597
+          "duration_ms": 168.156
         },
         {
           "iteration": 223,
           "passed": true,
-          "duration_ms": 59.315
+          "duration_ms": 163.716
         },
         {
           "iteration": 224,
           "passed": true,
-          "duration_ms": 53.317
+          "duration_ms": 167.118
         },
         {
           "iteration": 225,
           "passed": true,
-          "duration_ms": 59.008
+          "duration_ms": 175.955
         },
         {
           "iteration": 226,
           "passed": true,
-          "duration_ms": 58.754
+          "duration_ms": 179.209
         },
         {
           "iteration": 227,
           "passed": true,
-          "duration_ms": 64.153
+          "duration_ms": 161.928
         },
         {
           "iteration": 228,
           "passed": true,
-          "duration_ms": 55.944
+          "duration_ms": 162.241
         },
         {
           "iteration": 229,
           "passed": true,
-          "duration_ms": 60.668
+          "duration_ms": 168.512
         },
         {
           "iteration": 230,
           "passed": true,
-          "duration_ms": 72.48
+          "duration_ms": 165.179
         },
         {
           "iteration": 231,
           "passed": true,
-          "duration_ms": 59.099
+          "duration_ms": 161.024
         },
         {
           "iteration": 232,
           "passed": true,
-          "duration_ms": 61.7
+          "duration_ms": 161.714
         },
         {
           "iteration": 233,
           "passed": true,
-          "duration_ms": 67.304
+          "duration_ms": 158.135
         },
         {
           "iteration": 234,
           "passed": true,
-          "duration_ms": 50.138
+          "duration_ms": 157.097
         },
         {
           "iteration": 235,
           "passed": true,
-          "duration_ms": 56.019
+          "duration_ms": 161.299
         },
         {
           "iteration": 236,
           "passed": true,
-          "duration_ms": 63.155
+          "duration_ms": 166.201
         },
         {
           "iteration": 237,
           "passed": true,
-          "duration_ms": 55.748
+          "duration_ms": 166.057
         },
         {
           "iteration": 238,
           "passed": true,
-          "duration_ms": 61.459
+          "duration_ms": 183.673
         },
         {
           "iteration": 239,
           "passed": true,
-          "duration_ms": 59.03
+          "duration_ms": 167.591
         },
         {
           "iteration": 240,
           "passed": true,
-          "duration_ms": 59.42
+          "duration_ms": 160.402
         },
         {
           "iteration": 241,
           "passed": true,
-          "duration_ms": 58.93
+          "duration_ms": 158.675
         },
         {
           "iteration": 242,
           "passed": true,
-          "duration_ms": 58.853
+          "duration_ms": 157.013
         },
         {
           "iteration": 243,
           "passed": true,
-          "duration_ms": 56.692
+          "duration_ms": 164.539
         },
         {
           "iteration": 244,
           "passed": true,
-          "duration_ms": 55.247
+          "duration_ms": 180.637
         },
         {
           "iteration": 245,
           "passed": true,
-          "duration_ms": 53.171
+          "duration_ms": 170.952
         },
         {
           "iteration": 246,
           "passed": true,
-          "duration_ms": 59.092
+          "duration_ms": 173.237
         },
         {
           "iteration": 247,
           "passed": true,
-          "duration_ms": 61.347
+          "duration_ms": 178.838
         },
         {
           "iteration": 248,
           "passed": true,
-          "duration_ms": 61.493
+          "duration_ms": 173.018
         },
         {
           "iteration": 249,
           "passed": true,
-          "duration_ms": 64.081
+          "duration_ms": 173.43
         },
         {
           "iteration": 250,
           "passed": true,
-          "duration_ms": 63.353
+          "duration_ms": 189.161
         },
         {
           "iteration": 251,
           "passed": true,
-          "duration_ms": 63.171
+          "duration_ms": 189.441
         },
         {
           "iteration": 252,
           "passed": true,
-          "duration_ms": 64.787
+          "duration_ms": 176.207
         },
         {
           "iteration": 253,
           "passed": true,
-          "duration_ms": 57.37
+          "duration_ms": 178.418
         },
         {
           "iteration": 254,
           "passed": true,
-          "duration_ms": 54.566
+          "duration_ms": 165.996
         },
         {
           "iteration": 255,
           "passed": true,
-          "duration_ms": 55.443
+          "duration_ms": 168.751
         },
         {
           "iteration": 256,
           "passed": true,
-          "duration_ms": 59.779
+          "duration_ms": 168.015
         },
         {
           "iteration": 257,
           "passed": true,
-          "duration_ms": 62.829
+          "duration_ms": 166.292
         },
         {
           "iteration": 258,
           "passed": true,
-          "duration_ms": 61.588
+          "duration_ms": 168.834
         },
         {
           "iteration": 259,
           "passed": true,
-          "duration_ms": 66.559
+          "duration_ms": 170.479
         },
         {
           "iteration": 260,
           "passed": true,
-          "duration_ms": 69.096
+          "duration_ms": 169.521
         },
         {
           "iteration": 261,
           "passed": true,
-          "duration_ms": 59.317
+          "duration_ms": 180.797
         },
         {
           "iteration": 262,
           "passed": true,
-          "duration_ms": 56.374
+          "duration_ms": 167.072
         },
         {
           "iteration": 263,
           "passed": true,
-          "duration_ms": 56.787
+          "duration_ms": 162.067
         },
         {
           "iteration": 264,
           "passed": true,
-          "duration_ms": 61.168
+          "duration_ms": 161.803
         },
         {
           "iteration": 265,
           "passed": true,
-          "duration_ms": 58.923
+          "duration_ms": 169.009
         },
         {
           "iteration": 266,
           "passed": true,
-          "duration_ms": 64.465
+          "duration_ms": 166.079
         },
         {
           "iteration": 267,
           "passed": true,
-          "duration_ms": 58.97
+          "duration_ms": 169.346
         },
         {
           "iteration": 268,
           "passed": true,
-          "duration_ms": 71.57
+          "duration_ms": 165.501
         },
         {
           "iteration": 269,
           "passed": true,
-          "duration_ms": 69.522
+          "duration_ms": 165.869
         },
         {
           "iteration": 270,
           "passed": true,
-          "duration_ms": 59.362
+          "duration_ms": 164.621
         },
         {
           "iteration": 271,
           "passed": true,
-          "duration_ms": 55.894
+          "duration_ms": 168.695
         },
         {
           "iteration": 272,
           "passed": true,
-          "duration_ms": 56.47
+          "duration_ms": 167.763
         },
         {
           "iteration": 273,
           "passed": true,
-          "duration_ms": 56.709
+          "duration_ms": 176.939
         },
         {
           "iteration": 274,
           "passed": true,
-          "duration_ms": 59.767
+          "duration_ms": 174.491
         },
         {
           "iteration": 275,
           "passed": true,
-          "duration_ms": 60.482
+          "duration_ms": 173.629
         },
         {
           "iteration": 276,
           "passed": true,
-          "duration_ms": 58.574
+          "duration_ms": 182.415
         },
         {
           "iteration": 277,
           "passed": true,
-          "duration_ms": 70.736
+          "duration_ms": 176.774
         },
         {
           "iteration": 278,
           "passed": true,
-          "duration_ms": 62.159
+          "duration_ms": 172.994
         },
         {
           "iteration": 279,
           "passed": true,
-          "duration_ms": 49.081
+          "duration_ms": 177.932
         },
         {
           "iteration": 280,
           "passed": true,
-          "duration_ms": 63.688
+          "duration_ms": 174.303
         },
         {
           "iteration": 281,
           "passed": true,
-          "duration_ms": 55.309
+          "duration_ms": 176.75
         },
         {
           "iteration": 282,
           "passed": true,
-          "duration_ms": 56.046
+          "duration_ms": 179.733
         },
         {
           "iteration": 283,
           "passed": true,
-          "duration_ms": 56.444
+          "duration_ms": 177.22
         },
         {
           "iteration": 284,
           "passed": true,
-          "duration_ms": 56.537
+          "duration_ms": 180.094
         },
         {
           "iteration": 285,
           "passed": true,
-          "duration_ms": 58.769
+          "duration_ms": 178.915
         },
         {
           "iteration": 286,
           "passed": true,
-          "duration_ms": 60.715
+          "duration_ms": 174.295
         },
         {
           "iteration": 287,
           "passed": true,
-          "duration_ms": 61.983
+          "duration_ms": 173.613
         },
         {
           "iteration": 288,
           "passed": true,
-          "duration_ms": 64.232
+          "duration_ms": 177.948
         },
         {
           "iteration": 289,
           "passed": true,
-          "duration_ms": 55.55
+          "duration_ms": 178.572
         },
         {
           "iteration": 290,
           "passed": true,
-          "duration_ms": 65.054
+          "duration_ms": 171.891
         },
         {
           "iteration": 291,
           "passed": true,
-          "duration_ms": 52.117
+          "duration_ms": 173.298
         },
         {
           "iteration": 292,
           "passed": true,
-          "duration_ms": 56.758
+          "duration_ms": 171.964
         },
         {
           "iteration": 293,
           "passed": true,
-          "duration_ms": 57.686
+          "duration_ms": 172.959
         },
         {
           "iteration": 294,
           "passed": true,
-          "duration_ms": 63.155
+          "duration_ms": 172.102
         },
         {
           "iteration": 295,
           "passed": true,
-          "duration_ms": 65.963
+          "duration_ms": 173.887
         },
         {
           "iteration": 296,
           "passed": true,
-          "duration_ms": 67.56
+          "duration_ms": 176.486
         },
         {
           "iteration": 297,
           "passed": true,
-          "duration_ms": 61.843
+          "duration_ms": 174.619
         },
         {
           "iteration": 298,
           "passed": true,
-          "duration_ms": 61.371
+          "duration_ms": 173.118
         },
         {
           "iteration": 299,
           "passed": true,
-          "duration_ms": 51.267
+          "duration_ms": 166.091
         },
         {
           "iteration": 300,
           "passed": true,
-          "duration_ms": 60.599
+          "duration_ms": 168.003
         }
       ],
       "failure_count": 0,
@@ -3643,19 +4123,33 @@
         "mapper_thanks",
         "mapper_apology",
         "mapper_celebration",
-        "mapper_synthetic_unknown"
+        "mapper_synthetic_unknown",
+        "thread_start_failure_completes_and_caches_reservation",
+        "newer_emergency_wins_submit_precheck_reservation_race",
+        "token_cancelled_before_worker_start_skips_expression",
+        "blocking_renderer_cannot_delay_emergency_neutral",
+        "late_renderer_completion_cannot_restore_superseded_state",
+        "receiver_generation_fence_rejects_late_visual_effect",
+        "explicit_neutral_supersedes_pending_expression",
+        "slow_concurrent_duplicates_share_one_dispatch",
+        "control_neutral_makes_normal_submission_renderer_busy",
+        "pending_conflict_and_unrelated_request_are_rejected",
+        "neutral_on_empty_lane_is_coalesced_without_rendering",
+        "unavailable_renderer_clears_active_without_neutral_dispatch",
+        "expiry_neutral_failure_disables_renderer",
+        "emergency_cancels_renderer_failure_neutral_fallback"
       ],
-      "checks_per_iteration": 41,
-      "subchecks_attempted": 12300,
+      "checks_per_iteration": 55,
+      "subchecks_attempted": 16500,
       "iterations_attempted": 300,
       "iterations_passed": 300,
       "iterations_failed": 0,
       "pass_rate": 1.0,
       "duration_ms": {
-        "total": 2957.746,
-        "mean": 9.799,
-        "p95": 12.21,
-        "max": 14.936
+        "total": 10053.264,
+        "mean": 33.464,
+        "p95": 49.539,
+        "max": 64.355
       },
       "subchecks": [
         {
@@ -3664,9 +4158,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.253,
-            "p95": 0.41,
-            "max": 0.615
+            "mean": 0.265,
+            "p95": 0.432,
+            "max": 0.691
           }
         },
         {
@@ -3675,9 +4169,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.258,
-            "p95": 0.375,
-            "max": 1.207
+            "mean": 0.194,
+            "p95": 0.324,
+            "max": 0.385
           }
         },
         {
@@ -3686,9 +4180,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.034,
-            "p95": 0.055,
-            "max": 0.096
+            "mean": 0.041,
+            "p95": 0.073,
+            "max": 0.121
           }
         },
         {
@@ -3697,9 +4191,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.174,
-            "p95": 0.267,
-            "max": 0.505
+            "mean": 0.12,
+            "p95": 0.207,
+            "max": 0.246
           }
         },
         {
@@ -3708,9 +4202,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.03,
-            "p95": 0.052,
-            "max": 0.092
+            "mean": 0.02,
+            "p95": 0.034,
+            "max": 0.067
           }
         },
         {
@@ -3719,9 +4213,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.104,
-            "p95": 0.161,
-            "max": 0.251
+            "mean": 0.072,
+            "p95": 0.127,
+            "max": 0.171
           }
         },
         {
@@ -3730,9 +4224,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.122,
-            "p95": 0.196,
-            "max": 0.329
+            "mean": 0.084,
+            "p95": 0.149,
+            "max": 0.234
           }
         },
         {
@@ -3741,9 +4235,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.262,
-            "p95": 0.398,
-            "max": 0.676
+            "mean": 0.509,
+            "p95": 0.728,
+            "max": 0.869
           }
         },
         {
@@ -3752,9 +4246,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.244,
-            "p95": 0.372,
-            "max": 0.554
+            "mean": 0.354,
+            "p95": 0.484,
+            "max": 0.618
           }
         },
         {
@@ -3763,9 +4257,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.245,
-            "p95": 0.396,
-            "max": 0.525
+            "mean": 0.341,
+            "p95": 0.473,
+            "max": 0.692
           }
         },
         {
@@ -3774,9 +4268,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.262,
-            "p95": 0.385,
-            "max": 0.582
+            "mean": 0.482,
+            "p95": 0.656,
+            "max": 1.312
           }
         },
         {
@@ -3785,9 +4279,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 2.247,
-            "p95": 3.051,
-            "max": 5.163
+            "mean": 2.355,
+            "p95": 2.77,
+            "max": 3.609
           }
         },
         {
@@ -3796,9 +4290,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.547,
-            "p95": 0.745,
-            "max": 2.365
+            "mean": 0.705,
+            "p95": 0.955,
+            "max": 1.491
           }
         },
         {
@@ -3807,9 +4301,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.271,
-            "p95": 0.374,
-            "max": 0.511
+            "mean": 0.493,
+            "p95": 0.679,
+            "max": 0.851
           }
         },
         {
@@ -3818,9 +4312,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.194,
-            "p95": 0.282,
-            "max": 0.362
+            "mean": 0.404,
+            "p95": 0.546,
+            "max": 0.735
           }
         },
         {
@@ -3829,9 +4323,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.281,
-            "p95": 0.404,
-            "max": 0.549
+            "mean": 0.234,
+            "p95": 0.365,
+            "max": 0.435
           }
         },
         {
@@ -3840,9 +4334,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.711,
-            "p95": 0.985,
-            "max": 1.361
+            "mean": 1.199,
+            "p95": 1.576,
+            "max": 2.136
           }
         },
         {
@@ -3851,9 +4345,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.292,
-            "p95": 0.399,
-            "max": 0.654
+            "mean": 0.493,
+            "p95": 0.673,
+            "max": 1.494
           }
         },
         {
@@ -3862,9 +4356,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.209,
-            "p95": 0.303,
-            "max": 0.393
+            "mean": 0.39,
+            "p95": 0.526,
+            "max": 0.831
           }
         },
         {
@@ -3873,9 +4367,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.305,
-            "p95": 0.409,
-            "max": 0.743
+            "mean": 0.517,
+            "p95": 0.718,
+            "max": 0.872
           }
         },
         {
@@ -3884,9 +4378,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.313,
-            "p95": 0.431,
-            "max": 0.6
+            "mean": 0.484,
+            "p95": 0.667,
+            "max": 0.932
           }
         },
         {
@@ -3895,9 +4389,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.163,
-            "p95": 0.248,
-            "max": 0.386
+            "mean": 0.247,
+            "p95": 0.353,
+            "max": 0.479
           }
         },
         {
@@ -3906,9 +4400,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.165,
-            "p95": 0.246,
-            "max": 0.334
+            "mean": 0.111,
+            "p95": 0.187,
+            "max": 0.26
           }
         },
         {
@@ -3917,9 +4411,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.136,
-            "p95": 0.211,
-            "max": 0.314
+            "mean": 0.086,
+            "p95": 0.145,
+            "max": 0.184
           }
         },
         {
@@ -3928,9 +4422,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.124,
-            "p95": 0.19,
-            "max": 0.404
+            "mean": 0.079,
+            "p95": 0.145,
+            "max": 0.213
           }
         },
         {
@@ -3939,9 +4433,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.121,
-            "p95": 0.189,
-            "max": 0.264
+            "mean": 0.075,
+            "p95": 0.132,
+            "max": 0.21
           }
         },
         {
@@ -3950,9 +4444,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.12,
-            "p95": 0.187,
-            "max": 0.286
+            "mean": 0.075,
+            "p95": 0.133,
+            "max": 0.188
           }
         },
         {
@@ -3961,9 +4455,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.124,
-            "p95": 0.202,
-            "max": 0.348
+            "mean": 0.074,
+            "p95": 0.133,
+            "max": 0.198
           }
         },
         {
@@ -3972,9 +4466,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.119,
-            "p95": 0.178,
-            "max": 0.366
+            "mean": 0.074,
+            "p95": 0.137,
+            "max": 0.191
           }
         },
         {
@@ -3983,9 +4477,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.122,
-            "p95": 0.191,
-            "max": 0.346
+            "mean": 0.075,
+            "p95": 0.135,
+            "max": 0.18
           }
         },
         {
@@ -3994,9 +4488,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.119,
-            "p95": 0.178,
-            "max": 0.318
+            "mean": 0.075,
+            "p95": 0.128,
+            "max": 0.212
           }
         },
         {
@@ -4005,9 +4499,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.122,
-            "p95": 0.192,
-            "max": 0.32
+            "mean": 0.075,
+            "p95": 0.138,
+            "max": 0.235
           }
         },
         {
@@ -4016,9 +4510,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.118,
-            "p95": 0.181,
-            "max": 0.323
+            "mean": 0.076,
+            "p95": 0.146,
+            "max": 0.2
           }
         },
         {
@@ -4027,9 +4521,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.121,
-            "p95": 0.188,
-            "max": 0.293
+            "mean": 0.077,
+            "p95": 0.139,
+            "max": 0.193
           }
         },
         {
@@ -4038,9 +4532,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.119,
-            "p95": 0.186,
-            "max": 0.288
+            "mean": 0.077,
+            "p95": 0.149,
+            "max": 0.199
           }
         },
         {
@@ -4049,9 +4543,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.117,
-            "p95": 0.179,
-            "max": 0.259
+            "mean": 0.078,
+            "p95": 0.138,
+            "max": 0.204
           }
         },
         {
@@ -4060,9 +4554,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.104,
-            "p95": 0.159,
-            "max": 0.271
+            "mean": 0.067,
+            "p95": 0.114,
+            "max": 0.189
           }
         },
         {
@@ -4071,9 +4565,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.096,
-            "p95": 0.151,
-            "max": 0.213
+            "mean": 0.06,
+            "p95": 0.119,
+            "max": 0.168
           }
         },
         {
@@ -4082,9 +4576,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.096,
-            "p95": 0.15,
-            "max": 0.357
+            "mean": 0.058,
+            "p95": 0.106,
+            "max": 0.14
           }
         },
         {
@@ -4093,9 +4587,9 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.094,
-            "p95": 0.148,
-            "max": 0.223
+            "mean": 0.06,
+            "p95": 0.107,
+            "max": 0.177
           }
         },
         {
@@ -4104,9 +4598,163 @@
           "passed": 300,
           "failed": 0,
           "duration_ms": {
-            "mean": 0.094,
-            "p95": 0.145,
-            "max": 0.272
+            "mean": 0.061,
+            "p95": 0.118,
+            "max": 0.235
+          }
+        },
+        {
+          "check": "thread_start_failure_completes_and_caches_reservation",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 0.4,
+            "p95": 0.642,
+            "max": 0.93
+          }
+        },
+        {
+          "check": "newer_emergency_wins_submit_precheck_reservation_race",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 0.761,
+            "p95": 1.008,
+            "max": 1.388
+          }
+        },
+        {
+          "check": "token_cancelled_before_worker_start_skips_expression",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 0.435,
+            "p95": 0.576,
+            "max": 1.427
+          }
+        },
+        {
+          "check": "blocking_renderer_cannot_delay_emergency_neutral",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 0.639,
+            "p95": 0.868,
+            "max": 2.333
+          }
+        },
+        {
+          "check": "late_renderer_completion_cannot_restore_superseded_state",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 0.635,
+            "p95": 0.827,
+            "max": 1.397
+          }
+        },
+        {
+          "check": "receiver_generation_fence_rejects_late_visual_effect",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.496,
+            "p95": 10.851,
+            "max": 11.238
+          }
+        },
+        {
+          "check": "explicit_neutral_supersedes_pending_expression",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 4.287,
+            "p95": 10.913,
+            "max": 11.451
+          }
+        },
+        {
+          "check": "slow_concurrent_duplicates_share_one_dispatch",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 2.03,
+            "p95": 2.616,
+            "max": 3.641
+          }
+        },
+        {
+          "check": "control_neutral_makes_normal_submission_renderer_busy",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 0.854,
+            "p95": 1.096,
+            "max": 3.181
+          }
+        },
+        {
+          "check": "pending_conflict_and_unrelated_request_are_rejected",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 0.763,
+            "p95": 0.94,
+            "max": 4.945
+          }
+        },
+        {
+          "check": "neutral_on_empty_lane_is_coalesced_without_rendering",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 0.138,
+            "p95": 0.213,
+            "max": 0.382
+          }
+        },
+        {
+          "check": "unavailable_renderer_clears_active_without_neutral_dispatch",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 0.292,
+            "p95": 0.414,
+            "max": 0.57
+          }
+        },
+        {
+          "check": "expiry_neutral_failure_disables_renderer",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 0.555,
+            "p95": 0.757,
+            "max": 0.96
+          }
+        },
+        {
+          "check": "emergency_cancels_renderer_failure_neutral_fallback",
+          "attempted": 300,
+          "passed": 300,
+          "failed": 0,
+          "duration_ms": {
+            "mean": 5.716,
+            "p95": 10.961,
+            "max": 12.876
           }
         }
       ],
@@ -4114,1502 +4762,1502 @@
         {
           "iteration": 1,
           "passed": true,
-          "duration_ms": 11.962
+          "duration_ms": 31.229
         },
         {
           "iteration": 2,
           "passed": true,
-          "duration_ms": 10.463
+          "duration_ms": 31.807
         },
         {
           "iteration": 3,
           "passed": true,
-          "duration_ms": 7.006
+          "duration_ms": 42.601
         },
         {
           "iteration": 4,
           "passed": true,
-          "duration_ms": 6.206
+          "duration_ms": 42.123
         },
         {
           "iteration": 5,
           "passed": true,
-          "duration_ms": 11.082
+          "duration_ms": 31.595
         },
         {
           "iteration": 6,
           "passed": true,
-          "duration_ms": 9.415
+          "duration_ms": 33.318
         },
         {
           "iteration": 7,
           "passed": true,
-          "duration_ms": 9.911
+          "duration_ms": 31.652
         },
         {
           "iteration": 8,
           "passed": true,
-          "duration_ms": 8.771
+          "duration_ms": 32.812
         },
         {
           "iteration": 9,
           "passed": true,
-          "duration_ms": 8.803
+          "duration_ms": 32.113
         },
         {
           "iteration": 10,
           "passed": true,
-          "duration_ms": 9.677
+          "duration_ms": 32.79
         },
         {
           "iteration": 11,
           "passed": true,
-          "duration_ms": 8.905
+          "duration_ms": 41.496
         },
         {
           "iteration": 12,
           "passed": true,
-          "duration_ms": 10.702
+          "duration_ms": 41.236
         },
         {
           "iteration": 13,
           "passed": true,
-          "duration_ms": 11.362
+          "duration_ms": 40.072
         },
         {
           "iteration": 14,
           "passed": true,
-          "duration_ms": 10.458
+          "duration_ms": 31.54
         },
         {
           "iteration": 15,
           "passed": true,
-          "duration_ms": 7.641
+          "duration_ms": 42.5
         },
         {
           "iteration": 16,
           "passed": true,
-          "duration_ms": 9.791
+          "duration_ms": 20.309
         },
         {
           "iteration": 17,
           "passed": true,
-          "duration_ms": 10.645
+          "duration_ms": 30.897
         },
         {
           "iteration": 18,
           "passed": true,
-          "duration_ms": 9.418
+          "duration_ms": 20.105
         },
         {
           "iteration": 19,
           "passed": true,
-          "duration_ms": 9.205
+          "duration_ms": 29.23
         },
         {
           "iteration": 20,
           "passed": true,
-          "duration_ms": 9.653
+          "duration_ms": 20.002
         },
         {
           "iteration": 21,
           "passed": true,
-          "duration_ms": 9.13
+          "duration_ms": 29.085
         },
         {
           "iteration": 22,
           "passed": true,
-          "duration_ms": 9.338
+          "duration_ms": 31.657
         },
         {
           "iteration": 23,
           "passed": true,
-          "duration_ms": 10.275
+          "duration_ms": 32.381
         },
         {
           "iteration": 24,
           "passed": true,
-          "duration_ms": 10.989
+          "duration_ms": 40.371
         },
         {
           "iteration": 25,
           "passed": true,
-          "duration_ms": 10.827
+          "duration_ms": 41.891
         },
         {
           "iteration": 26,
           "passed": true,
-          "duration_ms": 11.217
+          "duration_ms": 40.893
         },
         {
           "iteration": 27,
           "passed": true,
-          "duration_ms": 9.824
+          "duration_ms": 42.941
         },
         {
           "iteration": 28,
           "passed": true,
-          "duration_ms": 10.999
+          "duration_ms": 20.303
         },
         {
           "iteration": 29,
           "passed": true,
-          "duration_ms": 11.706
+          "duration_ms": 31.696
         },
         {
           "iteration": 30,
           "passed": true,
-          "duration_ms": 10.847
+          "duration_ms": 40.939
         },
         {
           "iteration": 31,
           "passed": true,
-          "duration_ms": 10.642
+          "duration_ms": 22.379
         },
         {
           "iteration": 32,
           "passed": true,
-          "duration_ms": 10.594
+          "duration_ms": 44.198
         },
         {
           "iteration": 33,
           "passed": true,
-          "duration_ms": 10.279
+          "duration_ms": 52.372
         },
         {
           "iteration": 34,
           "passed": true,
-          "duration_ms": 10.353
+          "duration_ms": 33.329
         },
         {
           "iteration": 35,
           "passed": true,
-          "duration_ms": 9.398
+          "duration_ms": 32.684
         },
         {
           "iteration": 36,
           "passed": true,
-          "duration_ms": 13.191
+          "duration_ms": 32.652
         },
         {
           "iteration": 37,
           "passed": true,
-          "duration_ms": 13.21
+          "duration_ms": 29.659
         },
         {
           "iteration": 38,
           "passed": true,
-          "duration_ms": 10.389
+          "duration_ms": 34.902
         },
         {
           "iteration": 39,
           "passed": true,
-          "duration_ms": 14.936
+          "duration_ms": 42.123
         },
         {
           "iteration": 40,
           "passed": true,
-          "duration_ms": 10.171
+          "duration_ms": 30.951
         },
         {
           "iteration": 41,
           "passed": true,
-          "duration_ms": 10.941
+          "duration_ms": 20.926
         },
         {
           "iteration": 42,
           "passed": true,
-          "duration_ms": 8.199
+          "duration_ms": 31.872
         },
         {
           "iteration": 43,
           "passed": true,
-          "duration_ms": 8.212
+          "duration_ms": 20.911
         },
         {
           "iteration": 44,
           "passed": true,
-          "duration_ms": 10.862
+          "duration_ms": 30.472
         },
         {
           "iteration": 45,
           "passed": true,
-          "duration_ms": 9.14
+          "duration_ms": 32.622
         },
         {
           "iteration": 46,
           "passed": true,
-          "duration_ms": 10.695
+          "duration_ms": 20.787
         },
         {
           "iteration": 47,
           "passed": true,
-          "duration_ms": 9.376
+          "duration_ms": 41.808
         },
         {
           "iteration": 48,
           "passed": true,
-          "duration_ms": 7.874
+          "duration_ms": 31.703
         },
         {
           "iteration": 49,
           "passed": true,
-          "duration_ms": 10.129
+          "duration_ms": 32.94
         },
         {
           "iteration": 50,
           "passed": true,
-          "duration_ms": 8.467
+          "duration_ms": 41.28
         },
         {
           "iteration": 51,
           "passed": true,
-          "duration_ms": 8.277
+          "duration_ms": 42.391
         },
         {
           "iteration": 52,
           "passed": true,
-          "duration_ms": 7.058
+          "duration_ms": 31.986
         },
         {
           "iteration": 53,
           "passed": true,
-          "duration_ms": 7.307
+          "duration_ms": 55.131
         },
         {
           "iteration": 54,
           "passed": true,
-          "duration_ms": 9.505
+          "duration_ms": 31.735
         },
         {
           "iteration": 55,
           "passed": true,
-          "duration_ms": 9.059
+          "duration_ms": 21.387
         },
         {
           "iteration": 56,
           "passed": true,
-          "duration_ms": 9.194
+          "duration_ms": 23.728
         },
         {
           "iteration": 57,
           "passed": true,
-          "duration_ms": 9.37
+          "duration_ms": 19.978
         },
         {
           "iteration": 58,
           "passed": true,
-          "duration_ms": 9.63
+          "duration_ms": 32.429
         },
         {
           "iteration": 59,
           "passed": true,
-          "duration_ms": 9.83
+          "duration_ms": 42.485
         },
         {
           "iteration": 60,
           "passed": true,
-          "duration_ms": 10.184
+          "duration_ms": 20.563
         },
         {
           "iteration": 61,
           "passed": true,
-          "duration_ms": 9.85
+          "duration_ms": 30.508
         },
         {
           "iteration": 62,
           "passed": true,
-          "duration_ms": 11.583
+          "duration_ms": 53.912
         },
         {
           "iteration": 63,
           "passed": true,
-          "duration_ms": 11.801
+          "duration_ms": 51.856
         },
         {
           "iteration": 64,
           "passed": true,
-          "duration_ms": 10.012
+          "duration_ms": 21.641
         },
         {
           "iteration": 65,
           "passed": true,
-          "duration_ms": 9.63
+          "duration_ms": 32.731
         },
         {
           "iteration": 66,
           "passed": true,
-          "duration_ms": 11.198
+          "duration_ms": 31.649
         },
         {
           "iteration": 67,
           "passed": true,
-          "duration_ms": 10.733
+          "duration_ms": 30.932
         },
         {
           "iteration": 68,
           "passed": true,
-          "duration_ms": 8.531
+          "duration_ms": 32.723
         },
         {
           "iteration": 69,
           "passed": true,
-          "duration_ms": 10.045
+          "duration_ms": 41.874
         },
         {
           "iteration": 70,
           "passed": true,
-          "duration_ms": 8.176
+          "duration_ms": 30.623
         },
         {
           "iteration": 71,
           "passed": true,
-          "duration_ms": 8.761
+          "duration_ms": 32.184
         },
         {
           "iteration": 72,
           "passed": true,
-          "duration_ms": 8.109
+          "duration_ms": 52.165
         },
         {
           "iteration": 73,
           "passed": true,
-          "duration_ms": 9.338
+          "duration_ms": 23.346
         },
         {
           "iteration": 74,
           "passed": true,
-          "duration_ms": 9.88
+          "duration_ms": 32.16
         },
         {
           "iteration": 75,
           "passed": true,
-          "duration_ms": 8.266
+          "duration_ms": 22.157
         },
         {
           "iteration": 76,
           "passed": true,
-          "duration_ms": 10.301
+          "duration_ms": 31.124
         },
         {
           "iteration": 77,
           "passed": true,
-          "duration_ms": 13.359
+          "duration_ms": 31.452
         },
         {
           "iteration": 78,
           "passed": true,
-          "duration_ms": 12.368
+          "duration_ms": 43.065
         },
         {
           "iteration": 79,
           "passed": true,
-          "duration_ms": 12.51
+          "duration_ms": 26.939
         },
         {
           "iteration": 80,
           "passed": true,
-          "duration_ms": 11.912
+          "duration_ms": 34.751
         },
         {
           "iteration": 81,
           "passed": true,
-          "duration_ms": 10.607
+          "duration_ms": 40.474
         },
         {
           "iteration": 82,
           "passed": true,
-          "duration_ms": 13.095
+          "duration_ms": 31.607
         },
         {
           "iteration": 83,
           "passed": true,
-          "duration_ms": 9.271
+          "duration_ms": 21.059
         },
         {
           "iteration": 84,
           "passed": true,
-          "duration_ms": 9.46
+          "duration_ms": 32.764
         },
         {
           "iteration": 85,
           "passed": true,
-          "duration_ms": 11.014
+          "duration_ms": 32.021
         },
         {
           "iteration": 86,
           "passed": true,
-          "duration_ms": 12.087
+          "duration_ms": 31.244
         },
         {
           "iteration": 87,
           "passed": true,
-          "duration_ms": 11.335
+          "duration_ms": 32.13
         },
         {
           "iteration": 88,
           "passed": true,
-          "duration_ms": 10.627
+          "duration_ms": 41.472
         },
         {
           "iteration": 89,
           "passed": true,
-          "duration_ms": 12.015
+          "duration_ms": 22.136
         },
         {
           "iteration": 90,
           "passed": true,
-          "duration_ms": 13.926
+          "duration_ms": 30.747
         },
         {
           "iteration": 91,
           "passed": true,
-          "duration_ms": 13.97
+          "duration_ms": 20.256
         },
         {
           "iteration": 92,
           "passed": true,
-          "duration_ms": 14.073
+          "duration_ms": 41.359
         },
         {
           "iteration": 93,
           "passed": true,
-          "duration_ms": 12.987
+          "duration_ms": 31.45
         },
         {
           "iteration": 94,
           "passed": true,
-          "duration_ms": 12.15
+          "duration_ms": 30.548
         },
         {
           "iteration": 95,
           "passed": true,
-          "duration_ms": 10.045
+          "duration_ms": 31.097
         },
         {
           "iteration": 96,
           "passed": true,
-          "duration_ms": 9.375
+          "duration_ms": 23.694
         },
         {
           "iteration": 97,
           "passed": true,
-          "duration_ms": 13.776
+          "duration_ms": 30.1
         },
         {
           "iteration": 98,
           "passed": true,
-          "duration_ms": 11.267
+          "duration_ms": 40.064
         },
         {
           "iteration": 99,
           "passed": true,
-          "duration_ms": 10.249
+          "duration_ms": 42.939
         },
         {
           "iteration": 100,
           "passed": true,
-          "duration_ms": 12.719
+          "duration_ms": 32.296
         },
         {
           "iteration": 101,
           "passed": true,
-          "duration_ms": 12.21
+          "duration_ms": 42.773
         },
         {
           "iteration": 102,
           "passed": true,
-          "duration_ms": 10.808
+          "duration_ms": 30.974
         },
         {
           "iteration": 103,
           "passed": true,
-          "duration_ms": 8.918
+          "duration_ms": 43.246
         },
         {
           "iteration": 104,
           "passed": true,
-          "duration_ms": 10.488
+          "duration_ms": 41.401
         },
         {
           "iteration": 105,
           "passed": true,
-          "duration_ms": 8.832
+          "duration_ms": 51.338
         },
         {
           "iteration": 106,
           "passed": true,
-          "duration_ms": 8.522
+          "duration_ms": 31.992
         },
         {
           "iteration": 107,
           "passed": true,
-          "duration_ms": 9.035
+          "duration_ms": 31.034
         },
         {
           "iteration": 108,
           "passed": true,
-          "duration_ms": 10.569
+          "duration_ms": 41.711
         },
         {
           "iteration": 109,
           "passed": true,
-          "duration_ms": 10.103
+          "duration_ms": 51.402
         },
         {
           "iteration": 110,
           "passed": true,
-          "duration_ms": 12.629
+          "duration_ms": 40.7
         },
         {
           "iteration": 111,
           "passed": true,
-          "duration_ms": 11.076
+          "duration_ms": 41.05
         },
         {
           "iteration": 112,
           "passed": true,
-          "duration_ms": 11.351
+          "duration_ms": 20.505
         },
         {
           "iteration": 113,
           "passed": true,
-          "duration_ms": 12.179
+          "duration_ms": 40.403
         },
         {
           "iteration": 114,
           "passed": true,
-          "duration_ms": 10.259
+          "duration_ms": 20.53
         },
         {
           "iteration": 115,
           "passed": true,
-          "duration_ms": 9.94
+          "duration_ms": 21.164
         },
         {
           "iteration": 116,
           "passed": true,
-          "duration_ms": 10.982
+          "duration_ms": 32.626
         },
         {
           "iteration": 117,
           "passed": true,
-          "duration_ms": 11.195
+          "duration_ms": 22.566
         },
         {
           "iteration": 118,
           "passed": true,
-          "duration_ms": 7.664
+          "duration_ms": 41.785
         },
         {
           "iteration": 119,
           "passed": true,
-          "duration_ms": 7.725
+          "duration_ms": 31.161
         },
         {
           "iteration": 120,
           "passed": true,
-          "duration_ms": 8.048
+          "duration_ms": 41.336
         },
         {
           "iteration": 121,
           "passed": true,
-          "duration_ms": 9.526
+          "duration_ms": 30.71
         },
         {
           "iteration": 122,
           "passed": true,
-          "duration_ms": 8.499
+          "duration_ms": 20.697
         },
         {
           "iteration": 123,
           "passed": true,
-          "duration_ms": 10.124
+          "duration_ms": 34.173
         },
         {
           "iteration": 124,
           "passed": true,
-          "duration_ms": 8.787
+          "duration_ms": 30.195
         },
         {
           "iteration": 125,
           "passed": true,
-          "duration_ms": 9.187
+          "duration_ms": 20.452
         },
         {
           "iteration": 126,
           "passed": true,
-          "duration_ms": 11.754
+          "duration_ms": 30.996
         },
         {
           "iteration": 127,
           "passed": true,
-          "duration_ms": 11.392
+          "duration_ms": 19.833
         },
         {
           "iteration": 128,
           "passed": true,
-          "duration_ms": 9.636
+          "duration_ms": 36.42
         },
         {
           "iteration": 129,
           "passed": true,
-          "duration_ms": 7.449
+          "duration_ms": 42.113
         },
         {
           "iteration": 130,
           "passed": true,
-          "duration_ms": 10.139
+          "duration_ms": 32.749
         },
         {
           "iteration": 131,
           "passed": true,
-          "duration_ms": 11.568
+          "duration_ms": 41.343
         },
         {
           "iteration": 132,
           "passed": true,
-          "duration_ms": 11.237
+          "duration_ms": 42.577
         },
         {
           "iteration": 133,
           "passed": true,
-          "duration_ms": 10.33
+          "duration_ms": 32.049
         },
         {
           "iteration": 134,
           "passed": true,
-          "duration_ms": 10.925
+          "duration_ms": 40.442
         },
         {
           "iteration": 135,
           "passed": true,
-          "duration_ms": 11.798
+          "duration_ms": 31.04
         },
         {
           "iteration": 136,
           "passed": true,
-          "duration_ms": 11.293
+          "duration_ms": 21.44
         },
         {
           "iteration": 137,
           "passed": true,
-          "duration_ms": 11.506
+          "duration_ms": 31.87
         },
         {
           "iteration": 138,
           "passed": true,
-          "duration_ms": 10.677
+          "duration_ms": 21.962
         },
         {
           "iteration": 139,
           "passed": true,
-          "duration_ms": 10.411
+          "duration_ms": 33.005
         },
         {
           "iteration": 140,
           "passed": true,
-          "duration_ms": 10.903
+          "duration_ms": 31.2
         },
         {
           "iteration": 141,
           "passed": true,
-          "duration_ms": 9.474
+          "duration_ms": 41.313
         },
         {
           "iteration": 142,
           "passed": true,
-          "duration_ms": 9.301
+          "duration_ms": 20.322
         },
         {
           "iteration": 143,
           "passed": true,
-          "duration_ms": 10.868
+          "duration_ms": 31.096
         },
         {
           "iteration": 144,
           "passed": true,
-          "duration_ms": 7.453
+          "duration_ms": 42.482
         },
         {
           "iteration": 145,
           "passed": true,
-          "duration_ms": 8.634
+          "duration_ms": 40.387
         },
         {
           "iteration": 146,
           "passed": true,
-          "duration_ms": 9.64
+          "duration_ms": 43.611
         },
         {
           "iteration": 147,
           "passed": true,
-          "duration_ms": 10.349
+          "duration_ms": 29.566
         },
         {
           "iteration": 148,
           "passed": true,
-          "duration_ms": 10.549
+          "duration_ms": 33.762
         },
         {
           "iteration": 149,
           "passed": true,
-          "duration_ms": 10.145
+          "duration_ms": 41.172
         },
         {
           "iteration": 150,
           "passed": true,
-          "duration_ms": 11.071
+          "duration_ms": 30.986
         },
         {
           "iteration": 151,
           "passed": true,
-          "duration_ms": 12.486
+          "duration_ms": 30.467
         },
         {
           "iteration": 152,
           "passed": true,
-          "duration_ms": 11.344
+          "duration_ms": 42.447
         },
         {
           "iteration": 153,
           "passed": true,
-          "duration_ms": 8.929
+          "duration_ms": 43.754
         },
         {
           "iteration": 154,
           "passed": true,
-          "duration_ms": 9.281
+          "duration_ms": 22.368
         },
         {
           "iteration": 155,
           "passed": true,
-          "duration_ms": 9.326
+          "duration_ms": 29.811
         },
         {
           "iteration": 156,
           "passed": true,
-          "duration_ms": 10.692
+          "duration_ms": 39.5
         },
         {
           "iteration": 157,
           "passed": true,
-          "duration_ms": 9.604
+          "duration_ms": 32.844
         },
         {
           "iteration": 158,
           "passed": true,
-          "duration_ms": 9.97
+          "duration_ms": 64.355
         },
         {
           "iteration": 159,
           "passed": true,
-          "duration_ms": 11.507
+          "duration_ms": 43.316
         },
         {
           "iteration": 160,
           "passed": true,
-          "duration_ms": 10.795
+          "duration_ms": 49.455
         },
         {
           "iteration": 161,
           "passed": true,
-          "duration_ms": 9.999
+          "duration_ms": 48.929
         },
         {
           "iteration": 162,
           "passed": true,
-          "duration_ms": 10.376
+          "duration_ms": 32.03
         },
         {
           "iteration": 163,
           "passed": true,
-          "duration_ms": 10.324
+          "duration_ms": 40.594
         },
         {
           "iteration": 164,
           "passed": true,
-          "duration_ms": 9.973
+          "duration_ms": 19.098
         },
         {
           "iteration": 165,
           "passed": true,
-          "duration_ms": 9.658
+          "duration_ms": 18.909
         },
         {
           "iteration": 166,
           "passed": true,
-          "duration_ms": 8.585
+          "duration_ms": 40.861
         },
         {
           "iteration": 167,
           "passed": true,
-          "duration_ms": 10.242
+          "duration_ms": 39.64
         },
         {
           "iteration": 168,
           "passed": true,
-          "duration_ms": 9.643
+          "duration_ms": 30.112
         },
         {
           "iteration": 169,
           "passed": true,
-          "duration_ms": 9.066
+          "duration_ms": 39.097
         },
         {
           "iteration": 170,
           "passed": true,
-          "duration_ms": 9.183
+          "duration_ms": 38.692
         },
         {
           "iteration": 171,
           "passed": true,
-          "duration_ms": 9.852
+          "duration_ms": 18.785
         },
         {
           "iteration": 172,
           "passed": true,
-          "duration_ms": 10.984
+          "duration_ms": 29.037
         },
         {
           "iteration": 173,
           "passed": true,
-          "duration_ms": 11.078
+          "duration_ms": 30.684
         },
         {
           "iteration": 174,
           "passed": true,
-          "duration_ms": 6.708
+          "duration_ms": 30.461
         },
         {
           "iteration": 175,
           "passed": true,
-          "duration_ms": 6.758
+          "duration_ms": 42.221
         },
         {
           "iteration": 176,
           "passed": true,
-          "duration_ms": 8.123
+          "duration_ms": 30.848
         },
         {
           "iteration": 177,
           "passed": true,
-          "duration_ms": 9.555
+          "duration_ms": 40.373
         },
         {
           "iteration": 178,
           "passed": true,
-          "duration_ms": 9.475
+          "duration_ms": 30.102
         },
         {
           "iteration": 179,
           "passed": true,
-          "duration_ms": 9.344
+          "duration_ms": 20.017
         },
         {
           "iteration": 180,
           "passed": true,
-          "duration_ms": 9.01
+          "duration_ms": 40.805
         },
         {
           "iteration": 181,
           "passed": true,
-          "duration_ms": 8.774
+          "duration_ms": 32.097
         },
         {
           "iteration": 182,
           "passed": true,
-          "duration_ms": 7.416
+          "duration_ms": 39.259
         },
         {
           "iteration": 183,
           "passed": true,
-          "duration_ms": 6.63
+          "duration_ms": 30.73
         },
         {
           "iteration": 184,
           "passed": true,
-          "duration_ms": 9.222
+          "duration_ms": 40.412
         },
         {
           "iteration": 185,
           "passed": true,
-          "duration_ms": 8.864
+          "duration_ms": 40.368
         },
         {
           "iteration": 186,
           "passed": true,
-          "duration_ms": 10.754
+          "duration_ms": 20.585
         },
         {
           "iteration": 187,
           "passed": true,
-          "duration_ms": 9.243
+          "duration_ms": 41.581
         },
         {
           "iteration": 188,
           "passed": true,
-          "duration_ms": 8.323
+          "duration_ms": 39.665
         },
         {
           "iteration": 189,
           "passed": true,
-          "duration_ms": 8.637
+          "duration_ms": 39.984
         },
         {
           "iteration": 190,
           "passed": true,
-          "duration_ms": 9.488
+          "duration_ms": 39.729
         },
         {
           "iteration": 191,
           "passed": true,
-          "duration_ms": 7.055
+          "duration_ms": 19.674
         },
         {
           "iteration": 192,
           "passed": true,
-          "duration_ms": 8.892
+          "duration_ms": 27.842
         },
         {
           "iteration": 193,
           "passed": true,
-          "duration_ms": 7.999
+          "duration_ms": 40.464
         },
         {
           "iteration": 194,
           "passed": true,
-          "duration_ms": 7.1
+          "duration_ms": 30.066
         },
         {
           "iteration": 195,
           "passed": true,
-          "duration_ms": 6.366
+          "duration_ms": 19.548
         },
         {
           "iteration": 196,
           "passed": true,
-          "duration_ms": 7.93
+          "duration_ms": 49.224
         },
         {
           "iteration": 197,
           "passed": true,
-          "duration_ms": 8.591
+          "duration_ms": 40.079
         },
         {
           "iteration": 198,
           "passed": true,
-          "duration_ms": 9.706
+          "duration_ms": 29.378
         },
         {
           "iteration": 199,
           "passed": true,
-          "duration_ms": 8.571
+          "duration_ms": 29.098
         },
         {
           "iteration": 200,
           "passed": true,
-          "duration_ms": 7.441
+          "duration_ms": 28.823
         },
         {
           "iteration": 201,
           "passed": true,
-          "duration_ms": 9.3
+          "duration_ms": 40.68
         },
         {
           "iteration": 202,
           "passed": true,
-          "duration_ms": 9.709
+          "duration_ms": 20.596
         },
         {
           "iteration": 203,
           "passed": true,
-          "duration_ms": 8.788
+          "duration_ms": 31.192
         },
         {
           "iteration": 204,
           "passed": true,
-          "duration_ms": 10.268
+          "duration_ms": 51.225
         },
         {
           "iteration": 205,
           "passed": true,
-          "duration_ms": 7.396
+          "duration_ms": 32.055
         },
         {
           "iteration": 206,
           "passed": true,
-          "duration_ms": 8.704
+          "duration_ms": 40.598
         },
         {
           "iteration": 207,
           "passed": true,
-          "duration_ms": 11.181
+          "duration_ms": 30.63
         },
         {
           "iteration": 208,
           "passed": true,
-          "duration_ms": 11.586
+          "duration_ms": 29.285
         },
         {
           "iteration": 209,
           "passed": true,
-          "duration_ms": 9.505
+          "duration_ms": 38.921
         },
         {
           "iteration": 210,
           "passed": true,
-          "duration_ms": 8.38
+          "duration_ms": 31.063
         },
         {
           "iteration": 211,
           "passed": true,
-          "duration_ms": 9.028
+          "duration_ms": 39.666
         },
         {
           "iteration": 212,
           "passed": true,
-          "duration_ms": 9.698
+          "duration_ms": 20.23
         },
         {
           "iteration": 213,
           "passed": true,
-          "duration_ms": 9.681
+          "duration_ms": 41.753
         },
         {
           "iteration": 214,
           "passed": true,
-          "duration_ms": 11.007
+          "duration_ms": 39.617
         },
         {
           "iteration": 215,
           "passed": true,
-          "duration_ms": 7.802
+          "duration_ms": 41.015
         },
         {
           "iteration": 216,
           "passed": true,
-          "duration_ms": 7.131
+          "duration_ms": 19.434
         },
         {
           "iteration": 217,
           "passed": true,
-          "duration_ms": 9.914
+          "duration_ms": 49.539
         },
         {
           "iteration": 218,
           "passed": true,
-          "duration_ms": 9.487
+          "duration_ms": 28.942
         },
         {
           "iteration": 219,
           "passed": true,
-          "duration_ms": 7.537
+          "duration_ms": 39.102
         },
         {
           "iteration": 220,
           "passed": true,
-          "duration_ms": 8.095
+          "duration_ms": 39.505
         },
         {
           "iteration": 221,
           "passed": true,
-          "duration_ms": 8.609
+          "duration_ms": 39.958
         },
         {
           "iteration": 222,
           "passed": true,
-          "duration_ms": 9.971
+          "duration_ms": 28.816
         },
         {
           "iteration": 223,
           "passed": true,
-          "duration_ms": 7.923
+          "duration_ms": 20.115
         },
         {
           "iteration": 224,
           "passed": true,
-          "duration_ms": 9.223
+          "duration_ms": 19.026
         },
         {
           "iteration": 225,
           "passed": true,
-          "duration_ms": 9.319
+          "duration_ms": 39.73
         },
         {
           "iteration": 226,
           "passed": true,
-          "duration_ms": 9.842
+          "duration_ms": 30.597
         },
         {
           "iteration": 227,
           "passed": true,
-          "duration_ms": 8.968
+          "duration_ms": 50.854
         },
         {
           "iteration": 228,
           "passed": true,
-          "duration_ms": 11.655
+          "duration_ms": 31.16
         },
         {
           "iteration": 229,
           "passed": true,
-          "duration_ms": 10.702
+          "duration_ms": 30.537
         },
         {
           "iteration": 230,
           "passed": true,
-          "duration_ms": 9.919
+          "duration_ms": 29.749
         },
         {
           "iteration": 231,
           "passed": true,
-          "duration_ms": 11.366
+          "duration_ms": 19.388
         },
         {
           "iteration": 232,
           "passed": true,
-          "duration_ms": 10.688
+          "duration_ms": 31.117
         },
         {
           "iteration": 233,
           "passed": true,
-          "duration_ms": 10.581
+          "duration_ms": 30.995
         },
         {
           "iteration": 234,
           "passed": true,
-          "duration_ms": 9.5
+          "duration_ms": 30.341
         },
         {
           "iteration": 235,
           "passed": true,
-          "duration_ms": 9.391
+          "duration_ms": 41.256
         },
         {
           "iteration": 236,
           "passed": true,
-          "duration_ms": 10.456
+          "duration_ms": 19.507
         },
         {
           "iteration": 237,
           "passed": true,
-          "duration_ms": 9.572
+          "duration_ms": 30.685
         },
         {
           "iteration": 238,
           "passed": true,
-          "duration_ms": 6.59
+          "duration_ms": 39.331
         },
         {
           "iteration": 239,
           "passed": true,
-          "duration_ms": 6.51
+          "duration_ms": 31.276
         },
         {
           "iteration": 240,
           "passed": true,
-          "duration_ms": 9.486
+          "duration_ms": 40.101
         },
         {
           "iteration": 241,
           "passed": true,
-          "duration_ms": 10.082
+          "duration_ms": 30.716
         },
         {
           "iteration": 242,
           "passed": true,
-          "duration_ms": 8.506
+          "duration_ms": 30.688
         },
         {
           "iteration": 243,
           "passed": true,
-          "duration_ms": 8.861
+          "duration_ms": 19.577
         },
         {
           "iteration": 244,
           "passed": true,
-          "duration_ms": 10.348
+          "duration_ms": 50.488
         },
         {
           "iteration": 245,
           "passed": true,
-          "duration_ms": 8.303
+          "duration_ms": 30.274
         },
         {
           "iteration": 246,
           "passed": true,
-          "duration_ms": 8.975
+          "duration_ms": 30.78
         },
         {
           "iteration": 247,
           "passed": true,
-          "duration_ms": 8.744
+          "duration_ms": 31.654
         },
         {
           "iteration": 248,
           "passed": true,
-          "duration_ms": 10.066
+          "duration_ms": 40.453
         },
         {
           "iteration": 249,
           "passed": true,
-          "duration_ms": 11.358
+          "duration_ms": 18.872
         },
         {
           "iteration": 250,
           "passed": true,
-          "duration_ms": 10.461
+          "duration_ms": 39.237
         },
         {
           "iteration": 251,
           "passed": true,
-          "duration_ms": 9.706
+          "duration_ms": 30.272
         },
         {
           "iteration": 252,
           "passed": true,
-          "duration_ms": 9.133
+          "duration_ms": 18.992
         },
         {
           "iteration": 253,
           "passed": true,
-          "duration_ms": 7.669
+          "duration_ms": 25.003
         },
         {
           "iteration": 254,
           "passed": true,
-          "duration_ms": 8.928
+          "duration_ms": 44.483
         },
         {
           "iteration": 255,
           "passed": true,
-          "duration_ms": 8.768
+          "duration_ms": 28.821
         },
         {
           "iteration": 256,
           "passed": true,
-          "duration_ms": 10.324
+          "duration_ms": 20.13
         },
         {
           "iteration": 257,
           "passed": true,
-          "duration_ms": 9.192
+          "duration_ms": 19.566
         },
         {
           "iteration": 258,
           "passed": true,
-          "duration_ms": 9.125
+          "duration_ms": 28.535
         },
         {
           "iteration": 259,
           "passed": true,
-          "duration_ms": 8.581
+          "duration_ms": 29.553
         },
         {
           "iteration": 260,
           "passed": true,
-          "duration_ms": 10.591
+          "duration_ms": 29.269
         },
         {
           "iteration": 261,
           "passed": true,
-          "duration_ms": 9.035
+          "duration_ms": 28.678
         },
         {
           "iteration": 262,
           "passed": true,
-          "duration_ms": 6.933
+          "duration_ms": 30.019
         },
         {
           "iteration": 263,
           "passed": true,
-          "duration_ms": 8.761
+          "duration_ms": 29.133
         },
         {
           "iteration": 264,
           "passed": true,
-          "duration_ms": 9.999
+          "duration_ms": 39.241
         },
         {
           "iteration": 265,
           "passed": true,
-          "duration_ms": 10.605
+          "duration_ms": 40.271
         },
         {
           "iteration": 266,
           "passed": true,
-          "duration_ms": 10.327
+          "duration_ms": 25.127
         },
         {
           "iteration": 267,
           "passed": true,
-          "duration_ms": 10.932
+          "duration_ms": 30.106
         },
         {
           "iteration": 268,
           "passed": true,
-          "duration_ms": 10.09
+          "duration_ms": 19.625
         },
         {
           "iteration": 269,
           "passed": true,
-          "duration_ms": 8.705
+          "duration_ms": 30.463
         },
         {
           "iteration": 270,
           "passed": true,
-          "duration_ms": 10.65
+          "duration_ms": 39.335
         },
         {
           "iteration": 271,
           "passed": true,
-          "duration_ms": 9.238
+          "duration_ms": 29.481
         },
         {
           "iteration": 272,
           "passed": true,
-          "duration_ms": 9.226
+          "duration_ms": 30.129
         },
         {
           "iteration": 273,
           "passed": true,
-          "duration_ms": 10.7
+          "duration_ms": 19.028
         },
         {
           "iteration": 274,
           "passed": true,
-          "duration_ms": 10.896
+          "duration_ms": 40.789
         },
         {
           "iteration": 275,
           "passed": true,
-          "duration_ms": 10.458
+          "duration_ms": 53.237
         },
         {
           "iteration": 276,
           "passed": true,
-          "duration_ms": 9.045
+          "duration_ms": 42.371
         },
         {
           "iteration": 277,
           "passed": true,
-          "duration_ms": 10.873
+          "duration_ms": 34.958
         },
         {
           "iteration": 278,
           "passed": true,
-          "duration_ms": 9.464
+          "duration_ms": 25.062
         },
         {
           "iteration": 279,
           "passed": true,
-          "duration_ms": 10.069
+          "duration_ms": 20.919
         },
         {
           "iteration": 280,
           "passed": true,
-          "duration_ms": 10.556
+          "duration_ms": 51.609
         },
         {
           "iteration": 281,
           "passed": true,
-          "duration_ms": 9.984
+          "duration_ms": 30.846
         },
         {
           "iteration": 282,
           "passed": true,
-          "duration_ms": 9.467
+          "duration_ms": 31.874
         },
         {
           "iteration": 283,
           "passed": true,
-          "duration_ms": 7.426
+          "duration_ms": 30.637
         },
         {
           "iteration": 284,
           "passed": true,
-          "duration_ms": 8.782
+          "duration_ms": 29.496
         },
         {
           "iteration": 285,
           "passed": true,
-          "duration_ms": 9.46
+          "duration_ms": 28.919
         },
         {
           "iteration": 286,
           "passed": true,
-          "duration_ms": 7.152
+          "duration_ms": 40.593
         },
         {
           "iteration": 287,
           "passed": true,
-          "duration_ms": 9.184
+          "duration_ms": 29.909
         },
         {
           "iteration": 288,
           "passed": true,
-          "duration_ms": 8.215
+          "duration_ms": 19.354
         },
         {
           "iteration": 289,
           "passed": true,
-          "duration_ms": 8.063
+          "duration_ms": 30.555
         },
         {
           "iteration": 290,
           "passed": true,
-          "duration_ms": 8.992
+          "duration_ms": 39.274
         },
         {
           "iteration": 291,
           "passed": true,
-          "duration_ms": 9.471
+          "duration_ms": 39.719
         },
         {
           "iteration": 292,
           "passed": true,
-          "duration_ms": 9.748
+          "duration_ms": 41.164
         },
         {
           "iteration": 293,
           "passed": true,
-          "duration_ms": 10.329
+          "duration_ms": 30.53
         },
         {
           "iteration": 294,
           "passed": true,
-          "duration_ms": 10.282
+          "duration_ms": 31.238
         },
         {
           "iteration": 295,
           "passed": true,
-          "duration_ms": 12.127
+          "duration_ms": 49.988
         },
         {
           "iteration": 296,
           "passed": true,
-          "duration_ms": 7.451
+          "duration_ms": 29.642
         },
         {
           "iteration": 297,
           "passed": true,
-          "duration_ms": 7.783
+          "duration_ms": 51.435
         },
         {
           "iteration": 298,
           "passed": true,
-          "duration_ms": 10.098
+          "duration_ms": 30.12
         },
         {
           "iteration": 299,
           "passed": true,
-          "duration_ms": 8.992
+          "duration_ms": 28.933
         },
         {
           "iteration": 300,
           "passed": true,
-          "duration_ms": 8.894
+          "duration_ms": 39.221
         }
       ],
       "failure_count": 0,

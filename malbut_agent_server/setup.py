@@ -1,3 +1,5 @@
+"""Package and install the Malbut agent server and its evidence docs."""
+
 from setuptools import find_packages, setup
 
 
@@ -51,6 +53,8 @@ setup(
                 'SYNTHETIC_CONVERSATION_TRACE_2026-08-13.md',
                 'docs/evaluations/'
                 'SWM25-75_77_300X_OFFLINE_2026-08-13.md',
+                'docs/evaluations/'
+                'SWM25-75_77_HARDENING_2026-08-13.md',
             ],
         ),
         (

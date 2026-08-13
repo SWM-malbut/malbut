@@ -13,7 +13,7 @@ SWM25-72에서 오프라인 `mock`과 OpenAI Responses API를 같은
 - 사용자·로봇 발화의 순서 저장과 최근 10턴 전달
 - 세션 생성·조회·초기화·종료·삭제
 - 유휴 만료와 reset·delete 중 늦게 도착한 응답 차단
-- 같은 프로세스에서 동시에 들어온 요청의 직렬 처리
+- 같은 대화의 동시 요청 직렬화와 서로 다른 대화의 provider 병렬 처리
 - `아까 말한 것`, `그 사람`, `그거`의 Mock 기반 후속 표현 회귀
 - 최근 N턴 원문과 그 이전 대화의 결정론적 rolling summary 분리
 - 사용자별 장기 기억의 별도 검색과 만료 항목 제외
@@ -48,8 +48,9 @@ PYTHONPATH=. python3 -m pytest -q test
 전체 계약은
 [`docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md`](docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md)에
 정리되어 있다. 여섯 연관 스토리의 책임 경계는 관리자 승인을 받았지만,
-세부 ROS 타입·안전 임계값·Mock 시험은 SWM25-73~77에서 구현하고 검증하기
-전까지 실행 가능한 물리 기능으로 취급하지 않는다.
+SWM25-73~77의 오프라인 계약을 구현·검증했더라도, 실제 ROS·장치 adapter와
+통합 안전 시험을 별도로 완료하고 승인하기 전에는 실행 가능한 물리 기능으로
+취급하지 않는다.
 
 승인 증거와 후속 구현 전 확인할 항목은
 [`SWM25-69 인터페이스 승인 가이드`](docs/jira/SWM25-69_INTERFACE_APPROVAL_GUIDE.md)에
@@ -96,7 +97,7 @@ curl -X POST http://127.0.0.1:8765/v1/agent/respond \
     "user_id": "local-user",
     "conversation_id": "demo-conversation",
     "turn_id": "turn-001",
-    "utterance": "내 이름은 신이야",
+    "utterance": "내 이름은 사용자A야",
     "robot_state": {},
     "available_tools": []
   }'
@@ -307,6 +308,7 @@ ROS, 카메라, 파일 생성 Tool, 알림 전송을 호출하지 않는다. 전
 - [SWM25-72 OpenAI post-fix parity 평가](docs/evaluations/SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md)
 - [SWM25-69~74 구현 재검증·300회 반복 보고서](docs/evaluations/SWM25-69_74_REVALIDATION_2026-08-12.html)
 - [SWM25-75~77 기능별 300회 반복 보고서](docs/evaluations/SWM25-75_77_300X_OFFLINE_2026-08-13.md)
+- [SWM25-75~77 완성도 강화 보고서](docs/evaluations/SWM25-75_77_HARDENING_2026-08-13.md)
 - [합성 대화·컨텍스트 전체 흐름 기록](docs/evaluations/SYNTHETIC_CONVERSATION_TRACE_2026-08-13.md)
 - [Malbut LLM Agent 구현·출시 승인 기준](docs/LLM_AGENT_IMPLEMENTATION_ACCEPTANCE_CRITERIA.md)
 

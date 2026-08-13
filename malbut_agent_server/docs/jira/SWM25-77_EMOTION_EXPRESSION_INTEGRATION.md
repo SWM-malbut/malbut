@@ -56,8 +56,18 @@ text와 function call을 동시에 허용하지 않으므로, 일반 Tool로 추
    거절한다. renderer 실패 시 neutral을 한 번만 시도하고, neutral도
    실패하면 해당 arbiter 인스턴스에서 renderer를 비활성화한다.
 7. **표현 adapter에는 이동 권한이 없다.** protocol은
-   `render_visual(request_id, emotion, intensity, duration_ms)` 하나뿐이며
+   `render_visual(request_id, emotion, intensity, duration_ms, dispatch)`
+   하나뿐이며
    속도, pose, topic, shell, URL, 파일 경로 또는 오디오 인자를 받지 않는다.
+8. **renderer 호출은 시간 제한된다.** 기본 250ms, 설정 가능한 최대 5초 뒤
+   논리적으로 취소하고 renderer를 fail-closed한다. 호출 동안 arbiter lock을
+   점유하지 않아 긴급·privacy `tick()`은 고장 난 renderer를 기다리지 않는다.
+9. **늦은 성공은 상태를 되돌리지 못한다.** 모든 dispatch에는 arbiter별
+   `lane_id`와 단조 증가 `generation`, cancellation flag가 있다. arbiter는
+   supersede된 호출 결과로 active 상태를 복구하지 않는다.
+10. **신뢰 상태도 순서가 있다.** `TrustedExpressionState.revision`은 신뢰된
+    상태 공급자가 증가시키는 단조 64-bit 정수다. 최신 revision보다 오래된
+    normal snapshot은 뒤늦게 도착해도 emergency·privacy를 해제하지 못한다.
 
 ## 3. ExpressionCue 계약
 
@@ -123,7 +133,13 @@ emotion을 고르는 것은 renderer 권한이 되지 않는다.
 ## 5. 로컬 정책 우선순위
 
 `TrustedExpressionState`는 모델이나 일반 HTTP payload가 아니라 신뢰된 로컬
-호출자가 생성해야 한다. 필드는 exact boolean만 허용한다.
+호출자가 생성해야 한다. 상태 필드는 exact boolean만 허용하고 `revision`은
+0 이상 64-bit 정수만 허용한다. 신뢰된 상태 공급자는 상태 변경마다 revision을
+증가시켜야 한다. 더 높은 revision은 전체 snapshot을 교체한다. 같은 revision이
+중복 도착하면 fail-closed로 병합하여 emergency·privacy의 `true`와
+renderer availability의 `false`가 우선한다. 이 규칙 때문에 기본 revision 0만
+계속 보내는 legacy caller는 한 번 관찰된 override를 해제할 수 없다. override를
+해제하려면 반드시 더 높은 revision의 새 전체 snapshot을 보내야 한다.
 
 우선순위는 다음과 같이 고정된다.
 
@@ -144,6 +160,28 @@ emotion을 고르는 것은 renderer 권한이 되지 않는다.
 긴급·privacy 변화가 활성 표현을 즉시 중단할 수 있다. cached retry 역시
 현재 신뢰 상태를 다시 검사하므로 이전 성공 결과가 긴급 override를
 우회하지 못한다.
+
+renderer는 daemon worker에서 실행되며 arbiter lock 밖에 있다. 각 renderer 호출은
+설정된 timeout 안에 논리적으로 끝난다. 일반 non-neutral `submit()`은 원 표현과
+neutral fallback을 각각 한 번씩, 최대 두 번 호출하므로 전체 반환 상한은 대략
+`2 * timeout`이다. neutral submit과 긴급·privacy·만료 `tick()`은 최대 한 번만
+호출한다. 긴급 또는 privacy `tick()`은 진행 중인 일반 호출의 종료를 기다리지 않고
+generation을 올린 뒤 neutral을 별도 dispatch한다. pending cue와 같은 request의
+동시 duplicate는 한 dispatch의 결과를 공유한다. 다른 non-neutral cue는 lane이
+사용 중이면 `renderer_busy`로 억제하며, 명시적 neutral cue는 pending non-neutral을
+supersede할 수 있다.
+`submit()`의 사전 `tick()`과 dispatch reservation 사이에 새 trusted state가
+도착하더라도 revision 병합을 reservation lock 안에서 다시 수행한다. 따라서
+뒤늦은 normal submit이 더 새로운 emergency/privacy snapshot을 지우는
+lost-update를 만들지 않는다.
+
+Python thread는 강제로 종료할 수 없다. 그러므로 실제 adapter가 timeout 후에도
+계속 실행될 수 있다는 사실 자체는 arbiter가 없앨 수 없다. 실제 renderer는
+반드시 `ExpressionDispatchContext.cancelled`를 **side effect 직전** 확인하고,
+프로세스 밖 receiver에는 `dispatch.to_metadata()`의 `lane_id`와 `generation`을
+전달해야 한다. receiver는 lane별로 관찰한 가장 높은 generation보다 낮은 요청을
+거절해야 한다. 이 cooperative fence를 구현하지 않는 renderer는 이 계약에 맞지
+않으며 실제 장치에 연결해서는 안 된다.
 
 ## 6. TTL과 neutral 복귀
 
@@ -196,7 +234,8 @@ arbiter는 bounded LRU cache를 사용한다. 기본 보존 개수는 256이다.
 - 같은 `request_id`와 다른 cue payload → `ExpressionConflictError`
 - 비교 fingerprint에서 `issued_at`만 제외 → retry가 TTL을 갱신해도 최초
   결과를 재생하며 표현 시간을 늘리지 못함
-- 동시 duplicate → lock 안에서 하나만 renderer에 전달
+- 동시 duplicate → lock 안에서 하나의 reservation만 만들고 같은 결과를 공유;
+  renderer 호출 자체는 lock 밖에서 수행
 
 다만 이것은 **bounded cache 안의 process-local at-most-once**다. cache에서
 축출된 ID와 재시작 뒤 요청은 exactly-once를 보장하지 않는다. 실제 장치 연동
@@ -205,6 +244,9 @@ arbiter는 bounded LRU cache를 사용한다. 기본 보존 개수는 256이다.
 신뢰 상태는 cache보다 우선한다. 과거에 성공한 같은 request를 재시도해도
 현재 emergency/privacy가 활성화되어 있으면 표현을 neutral로 지우고 override
 결과를 반환한다.
+내부 renderer가 이미 fail-closed로 비활성화된 뒤의 exact retry도 cache에 남은
+최초 결과와 `result_id`를 그대로 반환한다. 비활성 상태를 이유로 새로운 결과를
+매번 만들지 않는다.
 
 ## 9. renderer 오류와 fallback
 
@@ -220,6 +262,9 @@ neutral cue 자체가 실패하면 neutral을 다시 재귀 요청하지 않고 
 비활성화한다. 예외 문자열은 `ExpressionResult`에 넣지 않는다. 로컬 결과에는
 bounded status·code와 boolean `renderer_error`만 남긴다. 일반 표현 호출에서
 예외가 한 번이라도 발생하면 neutral fallback이 성공해도 `renderer_error=true`다.
+daemon thread의 생성 또는 `start()`가 예외를 내는 경우도 같은 bounded renderer
+오류로 처리한다. pending reservation과 duplicate waiter를 반드시 완료하고,
+neutral 시도까지 시작할 수 없으면 renderer를 비활성화한다.
 
 ## 10. 상태와 결과 코드
 
@@ -229,12 +274,14 @@ bounded status·code와 boolean `renderer_error`만 남긴다. 일반 표현 호
 | `emergency_override` | trusted emergency가 일반 표현보다 우선 |
 | `privacy_override` | trusted privacy가 일반 표현보다 우선 |
 | `renderer_unavailable` | 신뢰 상태 또는 neutral 실패로 renderer 사용 불가 |
+| `renderer_busy` | 다른 dispatch 또는 안전 neutral 중이라 일반 cue 억제 |
 | `stale_cue` | dispatch TTL 만료 |
 | `future_cue` | 신뢰할 수 없는 미래 monotonic 발급 시각 |
 | `rate_limited` | 최소 간격 또는 window 한도 초과 |
 | `already_neutral` | active 표현이 없어 일반 neutral renderer 호출 생략 |
 | `expired_to_neutral` | display duration 만료 뒤 neutral 복귀 |
 | `renderer_failed_neutral_fallback` | 일반 표현 실패, neutral 복귀 성공 |
+| `superseded_to_neutral` | 명시적 neutral이 pending 일반 표현을 논리 취소 |
 
 결과에는 사용자 발화, assistant 본문, 기억, prompt, 진단 label을 넣지 않는다.
 
@@ -243,14 +290,14 @@ bounded status·code와 boolean `renderer_error`만 남긴다. 일반 표현 호
 집중 검증 명령:
 
 ```bash
-cd /home/shin/ros2_ws/src/malbut/malbut_agent_server
+cd ~/ros2_ws/src/malbut/malbut_agent_server
 python3 -m pytest -q test/test_expression.py
 python3 -m flake8 malbut_agent_server/expression.py test/test_expression.py
 python3 -m pydocstyle malbut_agent_server/expression.py test/test_expression.py
 ```
 
-2026-08-13 최종 결과: **41 passed**. 전체 통합 워크트리는
-**237 passed in 8.25s**다.
+2026-08-13 강화 후 집중 결과: **74 passed**. 전체 통합 숫자는 같은
+워크트리의 최종 검증 보고서를 기준으로 갱신한다.
 
 테스트 범위:
 
@@ -261,6 +308,12 @@ python3 -m pydocstyle malbut_agent_server/expression.py test/test_expression.py
 - 순차·동시 duplicate at-most-once, TTL 미연장, payload conflict
 - 최소 간격과 window rate-limit, neutral 우선 통과
 - renderer 실패 시 neutral 1회, neutral 실패 뒤 fail-closed
+- blocking renderer timeout, 긴급 `tick()` 비차단, late completion state fence
+- 안전 neutral timeout 뒤 renderer 비활성화와 이후 dispatch 차단
+- cooperative receiver generation fence와 explicit-neutral supersede
+- slow concurrent duplicate 단일 dispatch 공유
+- daemon worker 시작 실패의 pending 정리와 exact retry 결과 identity
+- submit precheck/reservation 사이 최신 emergency revision의 lost-update 방지
 - cached retry의 trusted state 재검사
 - Noop·Recording 이외 실제 renderer 및 모델 Tool이 없다는 경계
 
@@ -274,12 +327,15 @@ python3 -m pydocstyle malbut_agent_server/expression.py test/test_expression.py
 4. intensity, rate, 화면 접근성, 밝기·애니메이션 UX 승인값
 5. 긴급·privacy 안전 overlay와 assistant lane의 합성 규칙
 6. 재시작 뒤 idempotency를 보장할 영속 실행 ledger
-7. timeout·취소·renderer health feedback 계약
+7. renderer health feedback와 retry/re-enable 운영 계약
 8. 실제 장치가 이동 베이스, 스피커, 카메라, 파일, 네트워크 권한을 갖지
    않는다는 integration test
-9. renderer 호출 timeout과 비동기 dispatch. 현재 offline arbiter는 lock 안에서
-   renderer protocol을 호출하므로 renderer가 hang하면 `tick(emergency)`도
-   기다린다. blocking renderer가 있는 실제 integration에는 사용할 수 없다.
+9. 실제 adapter와 receiver가 cooperative `cancelled` 및 lane별 generation fence를
+   강제한다는 통합 검증. 이를 지키지 않는 renderer는 timeout 뒤 늦은 side effect를
+   만들 수 있으므로 사용 금지
+10. 장시간 block하는 uncooperative renderer의 daemon worker는 Python에서 강제
+    종료할 수 없다. 현 arbiter는 timeout 뒤 비활성화해 새 worker 증가를 막지만,
+    프로세스 격리·종료가 필요한 adapter의 supervisor 계약은 실제 연동 시 확정
 
 현재 완료 범위는 “안전한 비실행 visual cue 계약과 오프라인 arbiter”이다.
 실제 표정 표시, ROS publish, 웹 UI 변경, LLM 출력 schema 변경은 수행하지

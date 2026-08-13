@@ -9,9 +9,12 @@ import time
 import pytest
 
 from malbut_agent_server.memory import (
+    MEMORY_SCHEMA_VERSION,
+    MEMORY_WRITER_PROTOCOL_VERSION,
     MemoryConsentError,
     MemoryMutationConflictError,
     MemoryNotFoundError,
+    MemorySchemaVersionError,
     SQLiteMemoryStore,
 )
 from malbut_agent_server.schemas import ValidationError
@@ -458,6 +461,84 @@ def test_owner_snapshot_ignores_other_users_and_detects_expiry() -> None:
         store.close()
 
 
+def test_owner_snapshot_is_stable_across_connections_and_gate(
+    tmp_path,
+) -> None:
+    """Cross-process writers either advance revision or are rejected."""
+    database = tmp_path / 'cross-process-snapshot.sqlite3'
+    current_time = [100.0]
+    first = SQLiteMemoryStore(
+        str(database),
+        clock=lambda: current_time[0],
+    )
+    second = SQLiteMemoryStore(
+        str(database),
+        clock=lambda: current_time[0],
+    )
+    try:
+        record = first.add(
+            'user-a',
+            '반려견 이름은 초코',
+            expires_at=101.0,
+            created_at=99.0,
+        )
+        records, revision = first.search_with_owner_revision(
+            'user-a',
+            '반려견 이름이 뭐였지?',
+        )
+
+        second.add('user-b', '다른 사용자 기억')
+        assert first.owner_snapshot_is_current(
+            'user-a',
+            revision,
+            records,
+        ) is True
+
+        unmanaged = sqlite3.connect(database)
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                unmanaged.execute(
+                    "UPDATE memories SET content = 'bypass' WHERE id = ?",
+                    (record.id,),
+                )
+            unmanaged.rollback()
+        finally:
+            unmanaged.close()
+        assert first.owner_snapshot_is_current(
+            'user-a',
+            revision,
+            records,
+        ) is True
+
+        second.delete('user-a', record.id)
+        assert first.owner_snapshot_is_current(
+            'user-a',
+            revision,
+            records,
+        ) is False
+
+        expiring = first.add(
+            'user-a',
+            '만료 예정 기억',
+            expires_at=101.0,
+            created_at=99.0,
+        )
+        records, revision = first.search_with_owner_revision(
+            'user-a',
+            '만료 예정 기억',
+        )
+        assert [item.id for item in records] == [expiring.id]
+        current_time[0] = 101.0
+        assert first.owner_snapshot_is_current(
+            'user-a',
+            revision,
+            records,
+        ) is False
+    finally:
+        second.close()
+        first.close()
+
+
 def test_confirmed_mutations_do_not_cross_user_scope() -> None:
     """Another user cannot observe, update, delete, or audit a record."""
     store = SQLiteMemoryStore(':memory:')
@@ -554,6 +635,9 @@ def test_version_one_database_is_migrated_without_data_loss(
         assert record.updated_at == 100.0
         assert record.evidence_conversation_id is None
         assert record.evidence_turn_id is None
+        assert record.evidence_session_instance_id is None
+        assert record.evidence_generation is None
+        assert record.evidence_completed_at is None
         assert store.revision == 1
         assert store.user_revision('user-a') == 1
 
@@ -569,6 +653,659 @@ def test_version_one_database_is_migrated_without_data_loss(
         )
         assert result.record_revision == 2
         assert result.user_revision == 2
+    finally:
+        store.close()
+
+    connection = sqlite3.connect(database)
+    try:
+        assert connection.execute(
+            '''
+            SELECT schema_version,
+                   min_writer_protocol,
+                   max_writer_protocol
+            FROM memory_schema_metadata
+            WHERE singleton = 1
+            '''
+        ).fetchone() == (
+            MEMORY_SCHEMA_VERSION,
+            MEMORY_WRITER_PROTOCOL_VERSION,
+            MEMORY_WRITER_PROTOCOL_VERSION,
+        )
+    finally:
+        connection.close()
+
+
+def test_low_level_confirmed_compatibility_marks_unknown_provenance() -> None:
+    """Trusted low-level callers retain explicit unknown provenance."""
+    store = SQLiteMemoryStore(':memory:', clock=lambda: 1000.0)
+    try:
+        result = store.commit_confirmed(
+            user_id='user-a',
+            request_id='trusted-low-level',
+            content='trusted adapter compatibility',
+            evidence_conversation_id='conversation-1',
+            evidence_turn_id='turn-1',
+            user_confirmed=True,
+        )
+        record = store.get_for_user('user-a', result.memory_id)
+        event = store.list_audit_events('user-a')[0]
+
+        assert record is not None
+        assert result.evidence_session_instance_id is None
+        assert result.evidence_generation is None
+        assert result.evidence_completed_at is None
+        assert record.evidence_session_instance_id is None
+        assert event.evidence_session_instance_id is None
+        assert result.to_dict()['evidence_session_instance_id'] is None
+    finally:
+        store.close()
+
+
+def test_provenance_is_part_of_durable_idempotency_fingerprint() -> None:
+    """The same request cannot be rebound to a different turn instance."""
+    store = SQLiteMemoryStore(':memory:')
+    arguments = {
+        'user_id': 'user-a',
+        'request_id': 'bound-request',
+        'content': 'bound memory',
+        'evidence_conversation_id': 'conversation-1',
+        'evidence_turn_id': 'turn-1',
+        'user_confirmed': True,
+        'evidence_session_instance_id': 'instance-1',
+        'evidence_generation': 1,
+        'evidence_completed_at': 100.0,
+    }
+    try:
+        first = store.commit_confirmed(**arguments)
+        replay = store.commit_confirmed(**arguments)
+        assert replay.cached is True
+        assert replay.evidence_session_instance_id == 'instance-1'
+        assert replay.audit_event_id == first.audit_event_id
+
+        with pytest.raises(MemoryMutationConflictError):
+            store.commit_confirmed(
+                **{
+                    **arguments,
+                    'evidence_session_instance_id': 'instance-2',
+                }
+            )
+        assert len(store.list_audit_events('user-a')) == 1
+    finally:
+        store.close()
+
+
+def test_version_two_writer_gate_is_upgraded_atomically(tmp_path) -> None:
+    """The previous gate version migrates and rejects its old writer."""
+    database = tmp_path / 'version-two-gate.sqlite3'
+    store = SQLiteMemoryStore(str(database))
+    try:
+        store.add('user-a', 'upgrade survivor')
+    finally:
+        store.close()
+
+    connection = sqlite3.connect(database)
+    connection.create_function(
+        'memory_writer_protocol_version',
+        0,
+        lambda: MEMORY_WRITER_PROTOCOL_VERSION,
+    )
+    try:
+        connection.execute(
+            '''
+            UPDATE memory_schema_metadata
+            SET schema_version = 2,
+                min_writer_protocol = 2,
+                max_writer_protocol = 2
+            WHERE singleton = 1
+            '''
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    migrated = SQLiteMemoryStore(str(database))
+    try:
+        assert migrated.list_for_user('user-a')[0].content == (
+            'upgrade survivor'
+        )
+    finally:
+        migrated.close()
+
+    connection = sqlite3.connect(database)
+    connection.create_function(
+        'memory_writer_protocol_version',
+        0,
+        lambda: 2,
+    )
+    try:
+        metadata = connection.execute(
+            '''
+            SELECT schema_version, min_writer_protocol, max_writer_protocol
+            FROM memory_schema_metadata
+            WHERE singleton = 1
+            '''
+        ).fetchone()
+        assert tuple(metadata) == (
+            MEMORY_SCHEMA_VERSION,
+            MEMORY_WRITER_PROTOCOL_VERSION,
+            MEMORY_WRITER_PROTOCOL_VERSION,
+        )
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match='incompatible memory writer protocol',
+        ):
+            connection.execute(
+                "UPDATE memories SET kind = 'old-writer' WHERE user_id = ?",
+                ('user-a',),
+            )
+    finally:
+        connection.close()
+
+
+def test_real_version_two_tables_are_migrated_with_legacy_rows(
+    tmp_path,
+) -> None:
+    """A real v2 layout gains every v3 column before its gate returns."""
+    database = tmp_path / 'real-version-two.sqlite3'
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        '''
+        CREATE TABLE memories (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            created_at REAL NOT NULL,
+            expires_at REAL,
+            metadata_json TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 1,
+            updated_at REAL NOT NULL,
+            evidence_conversation_id TEXT,
+            evidence_turn_id TEXT
+        );
+        CREATE TABLE memory_mutation_requests (
+            user_id TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            request_fingerprint TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            PRIMARY KEY (user_id, request_id)
+        );
+        CREATE TABLE memory_audit_events (
+            event_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            memory_id TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            request_id TEXT,
+            record_revision_before INTEGER NOT NULL,
+            record_revision_after INTEGER NOT NULL,
+            user_revision INTEGER NOT NULL,
+            global_revision INTEGER NOT NULL,
+            occurred_at REAL NOT NULL,
+            evidence_conversation_id TEXT,
+            evidence_turn_id TEXT
+        );
+        CREATE TABLE memory_schema_metadata (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            schema_version INTEGER NOT NULL,
+            min_writer_protocol INTEGER NOT NULL,
+            max_writer_protocol INTEGER NOT NULL,
+            migrated_at REAL NOT NULL
+        );
+        INSERT INTO memory_schema_metadata
+        VALUES (1, 2, 2, 2, 100.0);
+        INSERT INTO memory_mutation_requests
+        VALUES (
+            'user-a', 'legacy-request', 'create',
+            'legacy-fingerprint', '{}', 100.0
+        );
+        INSERT INTO memory_audit_events
+        VALUES (
+            'legacy-event', 'user-a', 'legacy-memory', 'create',
+            'legacy-request', 0, 1, 1, 1, 100.0,
+            'conversation-a', 'turn-a'
+        );
+        CREATE TRIGGER memory_writer_gate_memory_mutation_requests_update
+        BEFORE UPDATE ON memory_mutation_requests
+        BEGIN
+            SELECT CASE
+                WHEN memory_writer_protocol_version() != 2
+                THEN RAISE(
+                    ABORT,
+                    'incompatible memory writer protocol'
+                )
+            END;
+        END;
+        '''
+    )
+    connection.commit()
+    connection.close()
+
+    store = SQLiteMemoryStore(str(database))
+    store.close()
+
+    connection = sqlite3.connect(database)
+    connection.row_factory = sqlite3.Row
+    try:
+        request = connection.execute(
+            '''
+            SELECT request_payload_fingerprint,
+                   fingerprint_version,
+                   evidence_session_instance_id,
+                   evidence_generation,
+                   evidence_completed_at
+            FROM memory_mutation_requests
+            WHERE request_id = 'legacy-request'
+            '''
+        ).fetchone()
+        audit = connection.execute(
+            '''
+            SELECT evidence_session_instance_id,
+                   evidence_generation,
+                   evidence_completed_at
+            FROM memory_audit_events
+            WHERE event_id = 'legacy-event'
+            '''
+        ).fetchone()
+        assert tuple(request) == (
+            'legacy-fingerprint',
+            1,
+            None,
+            None,
+            None,
+        )
+        assert tuple(audit) == (None, None, None)
+        metadata = connection.execute(
+            '''
+            SELECT schema_version, min_writer_protocol, max_writer_protocol
+            FROM memory_schema_metadata
+            WHERE singleton = 1
+            '''
+        ).fetchone()
+        assert tuple(metadata) == (
+            MEMORY_SCHEMA_VERSION,
+            MEMORY_WRITER_PROTOCOL_VERSION,
+            MEMORY_WRITER_PROTOCOL_VERSION,
+        )
+    finally:
+        connection.close()
+
+    legacy = sqlite3.connect(database)
+    legacy.create_function(
+        'memory_writer_protocol_version',
+        0,
+        lambda: 2,
+    )
+    try:
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match='incompatible memory writer protocol',
+        ):
+            legacy.execute(
+                '''
+                UPDATE memory_mutation_requests
+                SET created_at = 101.0
+                WHERE request_id = 'legacy-request'
+                '''
+            )
+    finally:
+        legacy.close()
+
+
+def test_missing_schema_metadata_singleton_fails_closed(tmp_path) -> None:
+    """A metadata table without its singleton is corruption, not v1."""
+    database = tmp_path / 'missing-memory-metadata.sqlite3'
+    store = SQLiteMemoryStore(str(database))
+    store.close()
+
+    connection = sqlite3.connect(database)
+    connection.create_function(
+        'memory_writer_protocol_version',
+        0,
+        lambda: MEMORY_WRITER_PROTOCOL_VERSION,
+    )
+    connection.execute('DELETE FROM memory_schema_metadata')
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        MemorySchemaVersionError,
+        match='metadata is incomplete',
+    ):
+        SQLiteMemoryStore(str(database))
+
+
+def test_version_two_metadata_rejects_a_non_v2_writer_scope(
+    tmp_path,
+) -> None:
+    """A v2 schema cannot be migrated if its own writer was excluded."""
+    database = tmp_path / 'invalid-v2-writer-scope.sqlite3'
+    store = SQLiteMemoryStore(str(database))
+    store.close()
+
+    connection = sqlite3.connect(database)
+    connection.create_function(
+        'memory_writer_protocol_version',
+        0,
+        lambda: MEMORY_WRITER_PROTOCOL_VERSION,
+    )
+    connection.execute(
+        '''
+        UPDATE memory_schema_metadata
+        SET schema_version = 2,
+            min_writer_protocol = 3,
+            max_writer_protocol = 3
+        WHERE singleton = 1
+        '''
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        MemorySchemaVersionError,
+        match='writer protocol',
+    ):
+        SQLiteMemoryStore(str(database))
+
+
+@pytest.mark.parametrize(
+    ('corruption', 'expected_message'),
+    [
+        ('invalid-json', 'stored memory mutation response is invalid'),
+        ('non-object', 'stored memory mutation response is invalid'),
+        ('partial-provenance', 'stored memory mutation result is invalid'),
+        ('invalid-provenance', 'stored memory mutation result is invalid'),
+    ],
+)
+def test_corrupt_idempotency_response_fails_closed(
+    tmp_path,
+    corruption,
+    expected_message,
+) -> None:
+    """A persisted replay must remain valid JSON with valid provenance."""
+    database = tmp_path / f'corrupt-response-{corruption}.sqlite3'
+    arguments = {
+        'user_id': 'user-a',
+        'request_id': 'corrupt-response',
+        'content': '검증된 기억',
+        'evidence_conversation_id': 'conversation-a',
+        'evidence_turn_id': 'turn-a',
+        'user_confirmed': True,
+        'evidence_session_instance_id': 'instance-a',
+        'evidence_generation': 1,
+        'evidence_completed_at': 100.0,
+    }
+    store = SQLiteMemoryStore(str(database), clock=lambda: 101.0)
+    try:
+        response = store.commit_confirmed(**arguments).to_stored_dict()
+    finally:
+        store.close()
+
+    if corruption == 'invalid-json':
+        response_json = '{'
+    elif corruption == 'non-object':
+        response_json = '[]'
+    else:
+        if corruption == 'partial-provenance':
+            response['evidence_completed_at'] = None
+        else:
+            response['evidence_session_instance_id'] = ''
+        response_json = json.dumps(response)
+
+    connection = sqlite3.connect(database)
+    connection.create_function(
+        'memory_writer_protocol_version',
+        0,
+        lambda: MEMORY_WRITER_PROTOCOL_VERSION,
+    )
+    connection.execute(
+        '''
+        UPDATE memory_mutation_requests
+        SET response_json = ?
+        WHERE user_id = ? AND request_id = ?
+        ''',
+        (response_json, 'user-a', 'corrupt-response'),
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = SQLiteMemoryStore(str(database), clock=lambda: 101.0)
+    try:
+        with pytest.raises(RuntimeError, match=expected_message):
+            reopened.prepare_confirmed_create(
+                user_id=arguments['user_id'],
+                request_id=arguments['request_id'],
+                content=arguments['content'],
+                evidence_conversation_id=(
+                    arguments['evidence_conversation_id']
+                ),
+                evidence_turn_id=arguments['evidence_turn_id'],
+                user_confirmed=True,
+            )
+    finally:
+        reopened.close()
+
+
+def test_idempotency_provenance_column_mismatch_fails_closed(
+    tmp_path,
+) -> None:
+    """Replay rejects disagreement between its row and stored result."""
+    database = tmp_path / 'mismatched-provenance.sqlite3'
+    arguments = {
+        'user_id': 'user-a',
+        'request_id': 'mismatched-provenance',
+        'content': '검증된 기억',
+        'evidence_conversation_id': 'conversation-a',
+        'evidence_turn_id': 'turn-a',
+        'user_confirmed': True,
+        'evidence_session_instance_id': 'instance-a',
+        'evidence_generation': 1,
+        'evidence_completed_at': 100.0,
+    }
+    store = SQLiteMemoryStore(str(database), clock=lambda: 101.0)
+    try:
+        store.commit_confirmed(**arguments)
+    finally:
+        store.close()
+
+    connection = sqlite3.connect(database)
+    connection.create_function(
+        'memory_writer_protocol_version',
+        0,
+        lambda: MEMORY_WRITER_PROTOCOL_VERSION,
+    )
+    connection.execute(
+        '''
+        UPDATE memory_mutation_requests
+        SET evidence_generation = 2
+        WHERE user_id = ? AND request_id = ?
+        ''',
+        ('user-a', 'mismatched-provenance'),
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = SQLiteMemoryStore(str(database), clock=lambda: 101.0)
+    try:
+        with pytest.raises(RuntimeError, match='provenance is inconsistent'):
+            reopened.commit_confirmed(**arguments)
+        with pytest.raises(RuntimeError, match='provenance is inconsistent'):
+            reopened.prepare_confirmed_create(
+                user_id=arguments['user_id'],
+                request_id=arguments['request_id'],
+                content=arguments['content'],
+                evidence_conversation_id=(
+                    arguments['evidence_conversation_id']
+                ),
+                evidence_turn_id=arguments['evidence_turn_id'],
+                user_confirmed=True,
+            )
+    finally:
+        reopened.close()
+
+
+def test_incompatible_schema_is_rejected_without_stranding_lock(
+    tmp_path,
+) -> None:
+    """A runtime must fail closed on incompatible memory metadata."""
+    database = tmp_path / 'future-schema.sqlite3'
+    connection = sqlite3.connect(database)
+    connection.execute(
+        '''
+        CREATE TABLE memory_schema_metadata (
+            singleton INTEGER PRIMARY KEY,
+            schema_version INTEGER NOT NULL,
+            min_writer_protocol INTEGER NOT NULL,
+            max_writer_protocol INTEGER NOT NULL,
+            migrated_at REAL NOT NULL
+        )
+        '''
+    )
+    connection.execute(
+        '''
+        INSERT INTO memory_schema_metadata
+        VALUES (1, ?, ?, ?, 100.0)
+        ''',
+        (
+            MEMORY_SCHEMA_VERSION + 1,
+            MEMORY_WRITER_PROTOCOL_VERSION + 1,
+            MEMORY_WRITER_PROTOCOL_VERSION + 1,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        MemorySchemaVersionError,
+        match='schema is incompatible',
+    ):
+        SQLiteMemoryStore(str(database))
+
+    connection = sqlite3.connect(database, timeout=0.1)
+    try:
+        connection.execute('BEGIN IMMEDIATE')
+        connection.rollback()
+    finally:
+        connection.close()
+
+
+def test_incompatible_writer_metadata_is_rejected(tmp_path) -> None:
+    """A persisted writer range excludes an incompatible runtime."""
+    database = tmp_path / 'writer-range.sqlite3'
+    store = SQLiteMemoryStore(str(database))
+    store.close()
+
+    connection = sqlite3.connect(database)
+    connection.create_function(
+        'memory_writer_protocol_version',
+        0,
+        lambda: MEMORY_WRITER_PROTOCOL_VERSION,
+    )
+    connection.execute(
+        '''
+        UPDATE memory_schema_metadata
+        SET min_writer_protocol = ?, max_writer_protocol = ?
+        WHERE singleton = 1
+        ''',
+        (
+            MEMORY_WRITER_PROTOCOL_VERSION + 1,
+            MEMORY_WRITER_PROTOCOL_VERSION + 1,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        MemorySchemaVersionError,
+        match='writer protocol',
+    ):
+        SQLiteMemoryStore(str(database))
+
+
+def test_writer_gate_blocks_unmanaged_and_legacy_connections(
+    tmp_path,
+) -> None:
+    """Database triggers reject raw SQL and mixed-version writers."""
+    database = tmp_path / 'writer-gate.sqlite3'
+    connection = sqlite3.connect(database)
+    connection.execute(
+        '''
+        CREATE TABLE unrelated_shared_state (
+            id INTEGER PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        '''
+    )
+    connection.commit()
+    preexisting_unmanaged = sqlite3.connect(database)
+    connection.close()
+    store = SQLiteMemoryStore(str(database), clock=lambda: 100.0)
+    try:
+        record = store.add('user-a', 'writer gate original')
+
+        try:
+            with pytest.raises(
+                sqlite3.OperationalError,
+                match='memory_writer_protocol_version',
+            ):
+                preexisting_unmanaged.execute(
+                    'DELETE FROM memories WHERE id = ?',
+                    (record.id,),
+                )
+            preexisting_unmanaged.rollback()
+            preexisting_unmanaged.execute(
+                '''
+                INSERT INTO unrelated_shared_state (value)
+                VALUES ('still writable')
+                '''
+            )
+            preexisting_unmanaged.commit()
+        finally:
+            preexisting_unmanaged.close()
+
+        unmanaged = sqlite3.connect(database)
+        try:
+            with pytest.raises(
+                sqlite3.OperationalError,
+                match='memory_writer_protocol_version',
+            ):
+                unmanaged.execute(
+                    'DELETE FROM memories WHERE id = ?',
+                    (record.id,),
+                )
+            unmanaged.rollback()
+        finally:
+            unmanaged.close()
+
+        legacy = sqlite3.connect(database)
+        legacy.create_function(
+            'memory_writer_protocol_version',
+            0,
+            lambda: MEMORY_WRITER_PROTOCOL_VERSION - 1,
+        )
+        try:
+            with pytest.raises(
+                sqlite3.IntegrityError,
+                match='incompatible memory writer protocol',
+            ):
+                legacy.execute(
+                    '''
+                    UPDATE memories
+                    SET content = 'legacy overwrite'
+                    WHERE id = ?
+                    ''',
+                    (record.id,),
+                )
+            legacy.rollback()
+        finally:
+            legacy.close()
+
+        observed = store.get_for_user('user-a', record.id)
+        assert observed is not None
+        assert observed.content == 'writer gate original'
     finally:
         store.close()
 
@@ -747,3 +1484,213 @@ def test_audit_and_idempotency_tables_do_not_duplicate_content(
         assert marker not in operational_json
     finally:
         connection.close()
+
+
+@pytest.mark.parametrize(
+    ('request_id', 'message'),
+    (
+        (None, 'request_id must be a string'),
+        ('   ', 'request_id must not be empty'),
+        ('x' * 129, 'request_id must be at most'),
+        ('request\ncontrol', 'request_id must not contain control'),
+    ),
+)
+def test_confirmed_create_rejects_malformed_request_identifiers(
+    request_id,
+    message: str,
+) -> None:
+    """Mutation identifiers reject ambiguous or unsafe boundary values."""
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        with pytest.raises(ValidationError, match=message):
+            store.commit_confirmed(
+                user_id='user-a',
+                request_id=request_id,
+                content='저장되지 않을 기억',
+                evidence_conversation_id='conversation-a',
+                evidence_turn_id='turn-a',
+                user_confirmed=True,
+            )
+        assert store.revision == 0
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ('overrides', 'message'),
+    (
+        ({'content': ''}, 'memory content must not be empty'),
+        ({'content': 'x' * 4001}, 'memory content is too long'),
+        ({'kind': ''}, 'memory kind is invalid'),
+        ({'source': 'x' * 65}, 'memory source is invalid'),
+        ({'confidence': True}, 'memory confidence must be a number'),
+        ({'confidence': 1.01}, 'memory confidence must be between'),
+        ({'expires_at': 'tomorrow'}, 'expires_at must be a number'),
+        ({'expires_at': float('nan')}, 'expires_at must be finite'),
+        ({'metadata': {'value': float('nan')}}, 'finite JSON values'),
+        ({'metadata': {'value': 'x' * 8001}}, 'metadata is too large'),
+        ({'created_at': False}, 'timestamp must be a number'),
+        ({'created_at': float('inf')}, 'timestamp must be finite'),
+    ),
+)
+def test_trusted_add_rejects_invalid_record_boundaries(
+    overrides,
+    message: str,
+) -> None:
+    """Trusted compatibility writes still enforce every record boundary."""
+    store = SQLiteMemoryStore(':memory:')
+    arguments = {
+        'user_id': 'user-a',
+        'content': '유효한 기본 기억',
+        'kind': 'fact',
+        'source': 'user_verified',
+        'confidence': 1.0,
+    }
+    arguments.update(overrides)
+    try:
+        with pytest.raises(ValidationError, match=message):
+            store.add(**arguments)
+        assert store.revision == 0
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ('query', 'limit', 'message'),
+    (
+        ('', 5, 'memory query must not be empty'),
+        ('기억', True, 'memory search limit must be an integer'),
+        ('기억', 0, 'memory search limit must be between'),
+        ('기억', 11, 'memory search limit must be between'),
+    ),
+)
+def test_search_rejects_invalid_query_and_limit(
+    query,
+    limit,
+    message: str,
+) -> None:
+    """Retrieval rejects empty questions and out-of-contract limits."""
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        with pytest.raises(ValidationError, match=message):
+            store.search('user-a', query, limit=limit)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('limit', (True, 0, 501))
+def test_audit_listing_rejects_invalid_limits(limit) -> None:
+    """Audit reads keep integer and bounded pagination semantics."""
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        with pytest.raises(ValidationError, match='audit limit'):
+            store.list_audit_events('user-a', limit=limit)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ('instance_id', 'generation', 'completed_at', 'message'),
+    (
+        ('instance-a', None, None, 'complete or entirely unknown'),
+        ('instance-a', True, 100.0, 'positive integer'),
+        ('instance-a', 0, 100.0, 'positive integer'),
+        ('instance-a', 1, True, 'completed_at must be finite'),
+        ('instance-a', 1, float('nan'), 'completed_at must be finite'),
+    ),
+)
+def test_confirmed_create_rejects_invalid_evidence_provenance(
+    instance_id,
+    generation,
+    completed_at,
+    message: str,
+) -> None:
+    """Evidence provenance is accepted only when complete and well typed."""
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        with pytest.raises(ValidationError, match=message):
+            store.commit_confirmed(
+                user_id='user-a',
+                request_id='invalid-provenance',
+                content='저장되지 않을 기억',
+                evidence_conversation_id='conversation-a',
+                evidence_turn_id='turn-a',
+                user_confirmed=True,
+                evidence_session_instance_id=instance_id,
+                evidence_generation=generation,
+                evidence_completed_at=completed_at,
+            )
+        assert store.revision == 0
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('expected_revision', (False, 0))
+def test_confirmed_update_rejects_invalid_expected_revision(
+    expected_revision,
+) -> None:
+    """CAS revisions reject booleans and non-positive integers."""
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        with pytest.raises(ValidationError, match='expected_revision'):
+            store.update_confirmed(
+                user_id='user-a',
+                memory_id='memory-a',
+                request_id='update-invalid-revision',
+                expected_revision=expected_revision,
+                content='수정되지 않을 기억',
+                evidence_conversation_id='conversation-a',
+                evidence_turn_id='turn-a',
+                user_confirmed=True,
+            )
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('content', ('', 'x' * 4001))
+def test_update_and_prepare_reject_invalid_content(content: str) -> None:
+    """Both mutation phases enforce the same content-size contract."""
+    store = SQLiteMemoryStore(':memory:')
+    arguments = {
+        'user_id': 'user-a',
+        'memory_id': 'memory-a',
+        'request_id': 'invalid-update-content',
+        'expected_revision': 1,
+        'content': content,
+        'evidence_conversation_id': 'conversation-a',
+        'evidence_turn_id': 'turn-a',
+        'user_confirmed': True,
+    }
+    try:
+        with pytest.raises(ValidationError, match='memory content'):
+            store.prepare_confirmed_update(**arguments)
+        with pytest.raises(ValidationError, match='memory content'):
+            store.update_confirmed(**arguments)
+        assert store.revision == 0
+    finally:
+        store.close()
+
+
+def test_owner_snapshot_rejects_invalid_revision_and_records() -> None:
+    """Snapshot validation fails before querying with untrusted evidence."""
+    store = SQLiteMemoryStore(':memory:')
+    own_record = store.add('user-a', '내 기억')
+    other_record = store.add('user-b', '다른 사용자의 기억')
+    try:
+        with pytest.raises(ValidationError, match='owner revision'):
+            store.owner_snapshot_is_current('user-a', False, [])
+        with pytest.raises(ValidationError, match='MemoryRecord'):
+            store.owner_snapshot_is_current('user-a', 1, [object()])
+        with pytest.raises(ValidationError, match='owner does not match'):
+            store.owner_snapshot_is_current(
+                'user-a',
+                1,
+                [other_record],
+            )
+        assert store.owner_snapshot_is_current(
+            'user-a',
+            store.user_revision('user-a'),
+            [own_record],
+        )
+    finally:
+        store.close()

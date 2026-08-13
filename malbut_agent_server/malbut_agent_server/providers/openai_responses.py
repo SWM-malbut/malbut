@@ -25,6 +25,7 @@ from malbut_agent_server.prompting import (
 )
 from malbut_agent_server.providers.base import AgentProvider, ProviderError
 from malbut_agent_server.schemas import (
+    MAX_UTTERANCE_LENGTH,
     AgentDecision,
     AgentRequest,
     ProviderResult,
@@ -75,6 +76,8 @@ TEXT_DECISION_SCHEMA: Dict[str, Any] = {
         },
         'message': {
             'type': 'string',
+            'minLength': 1,
+            'maxLength': MAX_UTTERANCE_LENGTH,
             'description': 'A concise user-facing Korean response.',
         },
         'reason': {

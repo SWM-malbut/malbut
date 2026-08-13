@@ -194,6 +194,10 @@ token 사용량은 provider usage로 별도 측정한다. 환경 변수
 차단한다. 부정·금지 표현은 fail-closed로 처리하고, 알림 문구의 모든
 내용은 현재 발화에 결속한다. 신뢰된 미디어 레지스트리가 없는 동안
 알림의 이미지 첨부는 허용하지 않는다.
+영문 행동 표현 뒤에 `not allowed`, `not permitted`, `forbidden`,
+`prohibited`, `disallowed`, `banned`가 명시되면 그 뒤에 `right now`,
+`by policy` 같은 수식어가 더 있어도 현재 행동 intent로 인정하지 않는다.
+번역·인용 같은 meta 요청은 기존 meta gate가 먼저 차단한다.
 
 응답의 `provider.context`는 내용을 포함하지 않고 다음 측정값만 제공한다.
 

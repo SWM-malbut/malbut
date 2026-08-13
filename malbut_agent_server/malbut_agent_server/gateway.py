@@ -408,9 +408,19 @@ class ToolGateway:
         max_workers: int = 4,
     ) -> None:
         """Create bounded in-process idempotency and adapter workers."""
-        if cache_size < 1 or cache_size > 10000:
+        if (
+            isinstance(cache_size, bool)
+            or not isinstance(cache_size, int)
+            or cache_size < 1
+            or cache_size > 10000
+        ):
             raise ValueError('Tool query cache_size is invalid')
-        if max_workers < 1 or max_workers > 16:
+        if (
+            isinstance(max_workers, bool)
+            or not isinstance(max_workers, int)
+            or max_workers < 1
+            or max_workers > 16
+        ):
             raise ValueError('Tool max_workers is invalid')
         self.registry = registry
         self._cache_size = cache_size
@@ -423,6 +433,7 @@ class ToolGateway:
             max_workers=max_workers,
             thread_name_prefix='malbut-tool-query',
         )
+        self._adapter_slots = threading.BoundedSemaphore(max_workers)
         self._closed = False
 
     def query(self, query: ToolQuery) -> GatewayResult:
@@ -535,10 +546,37 @@ class ToolGateway:
                 'executor_unavailable',
                 'A trusted Tool adapter is not available.',
             )
-        future = self._executor.submit(
-            capability.adapter.invoke,
-            arguments,
-        )
+        if not self._adapter_slots.acquire(blocking=False):
+            return self._failure(
+                query,
+                capability.mode,
+                started_at,
+                'failed',
+                'gateway_busy',
+                'The bounded Tool adapter capacity is busy.',
+            )
+        release_lock = threading.Lock()
+        slot_released = False
+
+        def release_slot() -> None:
+            nonlocal slot_released
+            with release_lock:
+                if not slot_released:
+                    slot_released = True
+                    self._adapter_slots.release()
+
+        def invoke() -> Dict[str, Any]:
+            try:
+                return capability.adapter.invoke(arguments)
+            finally:
+                release_slot()
+
+        try:
+            future = self._executor.submit(invoke)
+            future.add_done_callback(lambda _future: release_slot())
+        except BaseException:
+            release_slot()
+            raise
         try:
             adapter_result = future.result(
                 timeout=capability.timeout_seconds

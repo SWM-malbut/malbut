@@ -252,6 +252,32 @@ Level 0의 남은 항목은 coverage 계측과 전체 ROS CI 증거다. Level 1�
 fixture와 실제 LLM 멀티턴 harness다. 그 다음 confirmation·exactly-once·ROS
 adapter를 구현해 Level 2 시뮬레이션으로 진입한다.
 
+## 8.1 2026-08-13 로컬 hardening 추가 판정
+
+전용 로컬 브랜치 `overnight/swm25-75-77-20260813`에서 SWM25-75~77과
+연관 Safety/Gateway를 강화한 뒤 다음 결과를 얻었다. 이 결과는 아직
+`origin/main`이나 원격 CI에 반영되지 않은 로컬 증거다.
+
+| 항목 | 결과 | 판정 |
+| --- | --- | --- |
+| pytest | 584/584, 실패·skip 0 | 통과 |
+| Mock 고정 suite | 90/90, schema 100%, 5개 gate 통과 | 통과 |
+| 전체 package line/branch | 93.18% / 88.95% | 참고 통과 |
+| 문서상 핵심 모듈 aggregate | 95.65% / 93.16% | 통과 |
+| 변경 production executable lines | 748/772, 96.89% | **100% 기준 미달** |
+| SWM25-75~77 반복 matrix | 40,500/40,500, 실패 0 | 오프라인 통과 |
+
+따라서 coverage 미계측 상태는 해소됐지만, 표의 변경 코드 100% 기준은 아직
+통과하지 않았다. 미실행 24줄은 public validation이 선행 차단하는 중복 guard와
+private concurrency invariant 방어다. 수치를 맞추려고 내부 상태를 훼손하는
+테스트를 추가하지 않았으며 기준 자체도 낮추지 않았다.
+
+ROS package build/test는 통과했지만 실제 ROS Tool adapter·장치 action을
+실행한 것은 아니다. Level 1의 과거 live OpenAI 5초 gate 실패와 hard deadline,
+실제 fallback 조합 공백도 그대로 남는다. 상세 근거는
+[`SWM25-75_77_HARDENING_2026-08-13.md`](evaluations/SWM25-75_77_HARDENING_2026-08-13.md)에
+있다.
+
 ## 9. 현재 재현 명령
 
 ```bash
