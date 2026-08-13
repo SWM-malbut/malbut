@@ -161,7 +161,7 @@ jobs:
             --dependency-types exec \
             --dependency-types test \
             -r -y
-          rosdep install --from-paths malbut_patrol --ignore-src \
+          rosdep install --from-paths malbut_autonomy/malbut_patrol --ignore-src \
             --rosdistro humble \
             --dependency-types test \
             -r -y

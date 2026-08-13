@@ -8,7 +8,7 @@ import yaml
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-REPOSITORY_ROOT = PACKAGE_ROOT.parent
+AUTONOMY_ROOT = PACKAGE_ROOT.parent
 
 
 def test_runtime_config_matches_declared_node_defaults():
@@ -73,7 +73,7 @@ def test_tracking_is_robot_reusable_and_never_publishes_velocity():
 def test_follow_action_auto_selects_and_exposes_continuous_feedback():
     """Clients start auto-follow and observe the selected sensor track."""
     action = (
-        REPOSITORY_ROOT
+        AUTONOMY_ROOT
         / 'malbut_interfaces'
         / 'action'
         / 'FollowPerson.action'
