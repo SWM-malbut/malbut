@@ -1,7 +1,7 @@
 # MALBUT Homecam Web
 
-모바일 PWA, 홈캠 장치 API, AWS Kinesis Video Streams broker와 최근 7일
-이벤트·녹화 재생 기능을 제공하는 독립 Node.js 서비스입니다. ROS 패키지가
+모바일 PWA, 홈캠 장치 API, AWS Kinesis Video Streams broker, 최근 7일
+이벤트·녹화 재생과 로봇 지도·목적지 주행 기능을 제공하는 독립 Node.js 서비스입니다. ROS 패키지가
 아니며 `COLCON_IGNORE`로 로봇 워크스페이스 빌드와 분리됩니다.
 
 ## 로컬 검증
@@ -48,6 +48,10 @@ npm audit --audit-level=high
   `verify-full`로 서버 인증서와 호스트 이름 검증
 - 장치는 장기 AWS 키 없이 backend가 발급한 제한된 STS 자격 증명 사용
 - P2P와 Storage KVS 채널은 장치마다 분리하고 archive stream은 168시간 보존
+- 저장 SLAM 지도와 현재 위치는 장치 bearer API로 RDS에 동기화
+- 가족은 지도를 조회할 수 있고 지도 생성·목적지 주행 명령은 소유자만 등록
+- 목적지 좌표는 AWS에서 직접 `/cmd_vel`로 변환하지 않고, 장치의 Nav2
+  preview/start API와 최신 costmap·Zone 검사를 반드시 통과
 
 필수 운영 설정:
 
@@ -103,6 +107,10 @@ npm run synth -- --profile malbut-team
 PostgreSQL advisory lock으로 동시 실행을 직렬화합니다. 컨테이너는 시작 전에
 이 스크립트를 실행합니다. 기존 개인 D1의 환경 전용 seed와 장치 credential은
 이관하지 않고 새 장치를 provisioning해야 합니다.
+
+`0003_robot_map`은 장치별 최신 지도 1개, 실시간 위치 상태 1개와 직렬화된
+지도·주행 명령 큐를 추가합니다. 지도 PNG는 revision 기반으로만 교체되고,
+장치 상태는 15초 이상 갱신되지 않으면 웹에서 오프라인으로 표시됩니다.
 
 ## 장치 최초 등록
 

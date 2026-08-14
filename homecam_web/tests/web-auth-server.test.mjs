@@ -170,7 +170,7 @@ test("login and logout routes enforce same-origin JSON and never expose Cognito 
   assert.match(logout, /export async function GET/);
   assert.match(logout, /usesHostedUiLogout/);
   assert.match(logout, /AWSELBAuthSessionCookie/);
-  assert.match(migration, /0002_web_auth_sessions/);
+  assert.match(migration, /0003_robot_map/);
   assert.match(serverAuth, /cognito_session/);
   assert.match(serverAuth, /alb_oidc_or_cognito_session/);
   assert.match(serverAuth, /x-amzn-oidc-data/);

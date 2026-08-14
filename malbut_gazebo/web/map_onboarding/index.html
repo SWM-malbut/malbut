@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>말벗 · 우리 집 지도 만들기</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">MALBUT · MAP SETUP</p>
+        <h1>우리 집 지도 만들기</h1>
+        <p class="subtitle">말벗이 집 안을 둘러보고 다음 주행에 사용할 지도를 저장합니다.</p>
+      </div>
+      <span id="connection" class="connection">연결 중</span>
+    </header>
+
+    <section class="layout">
+      <article class="map-card">
+        <div class="map-heading">
+          <div>
+            <span id="state-label" class="state-label">준비 중</span>
+            <h2 id="message">로봇 상태를 확인하고 있습니다.</h2>
+          </div>
+          <div class="legend">
+            <span><i class="known"></i>확인한 공간</span>
+            <span><i class="wall"></i>벽</span>
+            <span><i class="unknown"></i>미확인</span>
+          </div>
+        </div>
+        <div id="map-wrap" class="map-wrap">
+          <canvas id="map" width="960" height="640"></canvas>
+          <div id="empty-map" class="empty-map">지도를 기다리고 있습니다</div>
+        </div>
+        <div class="stats">
+          <div><strong id="known-area">0.0 m²</strong><span>확인한 면적</span></div>
+          <div><strong id="free-area">0.0 m²</strong><span>이동 가능한 면적</span></div>
+          <div><strong id="frontiers">0</strong><span>남은 탐색 구역</span></div>
+        </div>
+      </article>
+
+      <aside>
+        <section class="guide-card">
+          <p class="step">시작하기 전에</p>
+          <h2>문을 열고 바닥을 정리해 주세요</h2>
+          <ul>
+            <li>탐색할 방의 문을 모두 열어 주세요.</li>
+            <li>전선, 얇은 천, 깨지기 쉬운 물건을 치워 주세요.</li>
+            <li>계단과 위험 구역은 물리적으로 막아 주세요.</li>
+          </ul>
+          <p class="safety">지도와 진입 금지 구역은 안전장치가 아닙니다. 탐색 중에는 로봇 주변을 확인해 주세요.</p>
+        </section>
+
+        <section class="action-card">
+          <button id="start" class="primary">지도 만들기 시작</button>
+          <button id="finish" class="success" disabled>탐색 완료 · 저장</button>
+          <button id="cancel" class="secondary" disabled>중단</button>
+          <p id="action-error" class="error" role="alert"></p>
+          <p id="saved-revision" class="saved"></p>
+        </section>
+      </aside>
+    </section>
+  </main>
+  <script src="app.js" defer></script>
+</body>
+</html>

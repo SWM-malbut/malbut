@@ -9,6 +9,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 const timestampText = (name: string) =>
   timestamp(name, { mode: "string", withTimezone: true });
@@ -238,3 +239,64 @@ export const talkLeases = pgTable("talk_leases", {
   createdAt: timestampText("created_at").notNull().defaultNow(),
   updatedAt: timestampText("updated_at").notNull().defaultNow(),
 });
+
+export const robotMaps = pgTable("robot_maps", {
+  deviceId: text("device_id")
+    .primaryKey()
+    .references(() => devices.id, { onDelete: "cascade" }),
+  revision: text("revision").notNull(),
+  mapId: text("map_id").notNull(),
+  mapRevision: text("map_revision").notNull(),
+  width: integer("width").notNull(),
+  height: integer("height").notNull(),
+  resolution: real("resolution").notNull(),
+  originX: real("origin_x").notNull(),
+  originY: real("origin_y").notNull(),
+  originYaw: real("origin_yaw").notNull(),
+  previewBase64: text("preview_base64").notNull(),
+  userMapJson: text("user_map_json"),
+  sourceCreatedAt: timestampText("source_created_at"),
+  updatedAt: timestampText("updated_at").notNull().defaultNow(),
+});
+
+export const robotRuntimeState = pgTable("robot_runtime_state", {
+  deviceId: text("device_id")
+    .primaryKey()
+    .references(() => devices.id, { onDelete: "cascade" }),
+  state: text("state").notNull(),
+  message: text("message").notNull(),
+  poseX: real("pose_x"),
+  poseY: real("pose_y"),
+  poseYaw: real("pose_yaw"),
+  localizationState: text("localization_state").notNull(),
+  tfAgeS: real("tf_age_s"),
+  nav2Json: text("nav2_json").notNull(),
+  targetJson: text("target_json"),
+  mapRevisionCounter: integer("map_revision_counter").notNull(),
+  observedAt: timestampText("observed_at").notNull(),
+  updatedAt: timestampText("updated_at").notNull().defaultNow(),
+});
+
+export const robotCommands = pgTable(
+  "robot_commands",
+  {
+    id: text("id").primaryKey(),
+    deviceId: text("device_id")
+      .notNull()
+      .references(() => devices.id, { onDelete: "cascade" }),
+    operation: text("operation").notNull(),
+    payloadJson: text("payload_json").notNull().default("{}"),
+    requestedBy: text("requested_by").notNull(),
+    status: text("status").notNull().default("queued"),
+    requestedAt: timestampText("requested_at").notNull(),
+    claimedAt: timestampText("claimed_at"),
+    completedAt: timestampText("completed_at"),
+    resultJson: text("result_json"),
+  },
+  (table) => [
+    index("robot_commands_device_status_idx").on(table.deviceId, table.status),
+    uniqueIndex("robot_commands_one_active_idx")
+      .on(table.deviceId)
+      .where(sql`${table.status} IN ('queued', 'claimed')`),
+  ],
+);

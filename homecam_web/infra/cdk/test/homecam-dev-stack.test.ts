@@ -264,6 +264,26 @@ test("prepare preserves the deployed ALB auth resources and task contract", () =
   for (const name of legacyAlbEnvironmentNames()) {
     assert.equal(environment.has(name), true, `prepare is missing ${name}`);
   }
+  for (const path of [
+    "/api/health",
+    "/auth/logout/complete",
+    "/api/device/v1/session",
+    "/api/device/v1/heartbeat",
+    "/api/device/v1/events",
+    "/api/device/v1/robot/state",
+    "/api/device/v1/robot/map",
+    "/api/device/v1/robot/commands",
+    "/api/device/v1/robot/commands/*/complete",
+    "/api/internal/maintenance",
+    "/api/internal/device-provisioning",
+  ]) {
+    const rule = ruleForPath(template, path);
+    assert.ok(rule, `missing public route for ${path}`);
+    assert.deepEqual(
+      rule.Properties?.Actions?.map((action: { Type: string }) => action.Type),
+      ["forward"],
+    );
+  }
   assert.equal(secrets.has("AUTH_SESSION_SECRET"), false);
   assert.equal(cognitoAdminStatements(template).length, 0);
   assert.equal(ruleAtPriority(template, 15)?.Properties?.Actions?.[0]?.Type,
@@ -410,6 +430,12 @@ function ruleAtPriority(template: Template, priority: number) {
   return Object.values(
     template.findResources("AWS::ElasticLoadBalancingV2::ListenerRule"),
   ).find((rule) => rule.Properties?.Priority === priority);
+}
+
+function ruleForPath(template: Template, path: string) {
+  return Object.values(
+    template.findResources("AWS::ElasticLoadBalancingV2::ListenerRule"),
+  ).find((rule) => rulePaths(rule).includes(path));
 }
 
 function rulePaths(rule: ReturnType<typeof ruleAtPriority>) {

@@ -86,6 +86,13 @@ Jetson / Gazebo
   401을 반환한다.
 - Cognito User Pool과 CloudFormation이 만든 최초 owner에는 `RETAIN`을 적용해
   client 교체나 우발적인 stack 삭제가 사용자 계정을 지우지 않게 한다.
+- `cleanup` 전 ALB는 `/api/health`, 로그아웃 완료 경로, 현재 구현된 장치 API와
+  내부 API 2개만 정확한 경로 규칙으로 Cognito 없이 전달한다. 장치·내부 API는
+  앱의 bearer/HMAC 검증이 최종 인증 경계다. 미래의 `/api/device/v1/*` 또는
+  `/api/internal/*` 경로가 실수로 공개되지 않도록 wildcard 예외는 사용하지
+  않는다.
+- Cognito client의 `logout_uri` 허용 목록과 앱의 로그아웃 완료 경로는 모두
+  `https://<homecam-domain>/auth/logout/complete`로 고정한다.
 - WebRTC 송신 계약은 H.264 영상과 Opus 오디오다. KVS Storage Session이
   Opus를 받아 저장 스트림에는 AAC로 변환하므로 archive stream의 정확한
   media type은 `video/h264,audio/aac`다.

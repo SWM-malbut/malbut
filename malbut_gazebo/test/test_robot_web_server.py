@@ -227,6 +227,12 @@ def test_navigation_endpoints_are_same_origin_and_session_bound(tmp_path):
         assert config["robot_stream_enabled"] is True
         assert config["navigation_enabled"] is True
         headers = _headers(address, cookie, config["csrf_token"])
+        status, response_headers, value = _request(
+            address, "GET", "/api/robot/status"
+        )
+        assert status == 200
+        assert response_headers["Cache-Control"] == "no-store"
+        assert value["pose"] == {"x": 1.0, "y": 2.0, "yaw": 0.5}
         preview = {
             "map_id": "home", "map_revision": "rev-current",
             "x": 1.0, "y": 2.0,

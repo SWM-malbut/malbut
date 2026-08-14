@@ -23,6 +23,7 @@ import {
   HomecamHeader,
   type HomecamTab,
 } from "./homecam-header";
+import { RobotMapPanel } from "./robot-map-panel";
 
 export type { HomecamTab } from "./homecam-header";
 
@@ -498,6 +499,7 @@ export function HomecamDashboard({
     window.queueMicrotask(() => {
       if (requestedDevice) setSelectedDeviceId(requestedDevice);
       if (requestedView === "events" || requestedEvent) setTab("events");
+      if (requestedView === "map") setTab("map");
       if (requestedView === "settings") setTab("settings");
     });
   }, []);
@@ -1096,6 +1098,8 @@ export function HomecamDashboard({
             </div>
           </section>
         )}
+
+        {tab === "map" && <RobotMapPanel device={selectedDevice} />}
 
         {tab === "settings" && (
           <section className="homecam-section" aria-labelledby="homecam-settings-title">

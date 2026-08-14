@@ -65,6 +65,27 @@ physics obstacle.
 
 ## SLAM mapping
 
+For the product-style first run, use the managed entry point instead of asking
+an end user to drive `map_saver_cli` and the User Map converter:
+
+```bash
+ros2 launch malbut_gazebo managed_home.launch.py
+```
+
+When real robot sensor and base drivers are already running, add
+`simulation:=false use_sim_time:=false`; this selects the hardware-neutral
+`map_onboarding.launch.py` stack and does not start Gazebo.
+
+With no valid revision under `~/.local/share/malbut/maps`, it starts online
+SLAM, Nav2 frontier exploration, and the setup UI at
+`http://127.0.0.1:8765/`. Finishing in the UI atomically stores the occupancy
+map, vector User Map, preview, and active manifest. The potentially large SLAM
+pose graph is opt-in with `save_posegraph:=true`; static AMCL navigation does
+not require it.
+On later starts the same launch selects the saved map and static localization.
+An interrupted or failed replacement never overwrites the previous active
+revision.
+
 Start the household world, robot, ROS-Gazebo bridge, SLAM Toolbox, and the
 project RViz mapping view with one command:
 

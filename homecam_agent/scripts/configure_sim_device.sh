@@ -154,6 +154,11 @@ config_temp="$(mktemp "$config_dir/.sim.env.XXXXXX")"
   # crashes taking down the required simulator process during long demos.
   printf 'HOMECAM_GAZEBO_GUI=false\n'
   printf 'HOMECAM_GAZEBO_HEADLESS=true\n'
+  printf 'HOMECAM_MAP_STORE=\n'
+  printf 'HOMECAM_MAP_WEB_HOST=127.0.0.1\n'
+  printf 'HOMECAM_MAP_WEB_PORT=8765\n'
+  printf 'HOMECAM_MAP_RVIZ=true\n'
+  printf 'HOMECAM_CLOUD_MAP_ENABLED=true\n'
   printf 'HOMECAM_IMAGE_TOPIC=\n'
   printf 'HOMECAM_CAMERA_INFO_TOPIC=\n'
   printf 'HOMECAM_ODOM_TOPIC=/odom\n'

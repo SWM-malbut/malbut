@@ -251,6 +251,57 @@ ros2 run malbut_gazebo teleop_key_control
 조작 키는 `w`/`s`(전진/후진), `a`/`d`(좌우 횡이동),
 `q`/`e`(좌우 회전), `Space`(정지)이며 종료는 `Ctrl+C`입니다.
 
+### 최초 실행 지도 만들기
+
+제품 실행 진입점은 저장된 지도가 있는지 먼저 확인합니다. 지도가 없으면
+SLAM·Nav2와 `우리 집 지도 만들기` 화면을 시작하고, 지도가 있으면 저장된
+지도·AMCL·목적지 주행 화면을 시작합니다. 사용자가 map saver나 User Map
+변환 명령을 직접 실행할 필요는 없습니다.
+
+```bash
+ros2 launch malbut_gazebo managed_home.launch.py
+# 최초 실행: http://127.0.0.1:8765/
+```
+
+위 기본값은 Small House 시뮬레이션용입니다. 실제 로봇에서는 센서·베이스
+드라이버가 먼저 실행된 상태에서 `simulation:=false use_sim_time:=false`로
+같은 수명주기를 사용합니다.
+
+```bash
+ros2 launch malbut_gazebo managed_home.launch.py \
+  simulation:=false use_sim_time:=false
+```
+
+최초 화면에서 `지도 만들기 시작`을 누르면 로봇은 SLAM 지도에서 확인한 공간과
+미확인 공간의 경계(frontier)를 찾아 Nav2로 순회합니다. 화면에는 costmap의
+inflation 그림자가 아닌 SLAM 원본 지도, 현재 위치, 다음 탐색 지점, 확인한
+면적과 남은 탐색 구역이 표시됩니다. 사용자는 언제든 `탐색 완료 · 저장`을
+누를 수 있고, 더 갈 수 있는 frontier가 일정 시간 없으면 화면이 완료 확인을
+요청합니다.
+
+완료 시 다음 산출물을 한 지도 버전으로 저장합니다.
+
+- Nav2 정적 지도 `map.yaml + map.pgm` (`free_thresh: 0.196`)
+- 선택적 SLAM Toolbox pose graph(`save_posegraph:=true`, 지도 이어 만들기용)
+- 웹·앱용 `user-map.geojson`과 미리보기
+- 현재 활성 버전을 가리키는 `active.json`
+
+기본 저장소는 `~/.local/share/malbut/maps`입니다. 새 버전은 임시 디렉터리에서
+전부 생성된 뒤 원자적으로 활성화됩니다. 저장 실패·탐색 중단 시 기존 활성
+지도는 바뀌지 않고, 이전 버전도 `versions/`에 유지됩니다. 다음 부팅에는
+`active.json`의 지도를 자동으로 사용합니다. 지도 다시 만들기 검증에는 기존
+지도를 유지한 채 `force_mapping:=true`를 사용할 수 있습니다.
+pose graph에는 원본 스캔이 누적되어 수백 MB가 될 수 있고 다음 부팅의 AMCL
+주행에는 필요하지 않으므로 기본적으로 저장하지 않습니다.
+
+```bash
+ros2 launch malbut_gazebo managed_home.launch.py force_mapping:=true
+```
+
+지도 만들기 중 문을 열고 바닥의 전선·얇은 천·깨지기 쉬운 물건을 치워야
+합니다. SLAM 지도와 Zone은 물리 안전장치가 아니므로 계단과 위험 구역은
+별도로 차단해야 합니다.
+
 ### 저장된 지도 기반 내비게이션
 
 시뮬레이션과 브리지가 실행 중인 상태에서 새 터미널을 열고 Nav2를
@@ -379,7 +430,8 @@ STVL은 `malbut_gazebo/package.xml`에 선언되어 `rosdep` 설치 대상이며
 ROS 2 map_saver가 미탐색 셀에 기록하는 회색값 `205`가 자유 공간으로
 바뀌지 않도록 `free_thresh`는 `0.196` 이하를 사용해야 합니다.
 
-SLAM 탐색과 지도 저장을 마친 뒤 저장된 YAML을 변환합니다.
+위 최초 실행 흐름에서는 이 변환이 자동 수행됩니다. 아래 명령은 CI, 지도
+복구, 개발자 진단처럼 저장된 YAML을 수동 변환해야 할 때만 사용합니다.
 `preview.png`는 결과 확인용이고, 영역 편집의 기준 데이터는 GeoJSON입니다.
 SLAM 실행 중에는 Navigation으로 넘길 위치 기준도 자동 저장되므로 mapper를
 강제로 종료하기 전에 별도의 `2D Pose Estimate`를 기록할 필요가 없습니다.
@@ -544,6 +596,20 @@ CameraInfo 및 실제 카메라 프레임 수신을 확인한 뒤 종료합니�
 ./homecam_agent/scripts/run_gazebo_homecam.sh
 ```
 
+일반 실행은 기기 ID별 영속 지도 저장소를 함께 관리합니다. 저장 지도가
+없을 때만 `우리 집 지도 만들기` 화면을 열고, 이후 AWS 스트리밍을
+재시작해도 저장된 지도·Room·Zone을 유지합니다. KVS 세션은 영상
+계층이며 SLAM 지도 수명주기를 변경하지 않습니다.
+
+같은 장치 프로세스의 `cloud_robot_sync`가 저장 지도, `map→base_footprint`
+현재 위치와 제한된 지도·주행 명령 큐를 장치 bearer token으로 AWS 백엔드에
+동기화합니다. 보호자는 별도 로컬 페이지가 아니라 기존 홈캠 서비스의 `지도`
+탭에서 최초 지도 생성·저장 상태를 확인하고, 저장 후에는 지도 클릭 → Nav2
+costmap 안전 검증 → 보정 목적지·경로 확인 → 이동 확정·취소를 수행합니다.
+지도 이미지는 사용자에게 불필요한 inflation 그림자를 제외한 SLAM 점유
+지도로 전송하며, 실제 주행 검증은 장치의 최신 global costmap과 Zone을
+사용합니다.
+
 이미 다른 터미널에서 Gazebo가 실행 중이면 해당 카메라 토픽을 그대로
 재사용합니다.
 
@@ -559,7 +625,7 @@ CameraInfo 및 실제 카메라 프레임 수신을 확인한 뒤 종료합니�
 `homecam_web`에는 모바일 PWA, 장치 API, 이벤트·녹화 데이터 모델과 AWS KVS·
 Web Push broker 참조 구현이 함께 있습니다. ROS 장치 측 `homecam_agent`는
 배포된 백엔드의 HTTPS 주소와 관리자가 발급한 장치 token을 사용해 heartbeat,
-세션 발급과 이벤트 API를 호출합니다.
+세션 발급, 이벤트, 지도·현재 위치와 목적지 주행 명령 API를 호출합니다.
 
 이 디렉터리는 ROS 패키지가 아니므로 `COLCON_IGNORE`로 `colcon`과 `rosdep`
 탐색에서 제외합니다. 웹 검증은 Node.js 22.13 이상에서 별도로 실행합니다.

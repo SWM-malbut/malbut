@@ -42,6 +42,14 @@ unset HOMECAM_WORLD HOMECAM_START_GAZEBO
 homecam_load_config "$config_path"
 [[ "$HOMECAM_WORLD" == small_house ]]
 [[ "$HOMECAM_START_GAZEBO" == true ]]
+homecam_config_key_allowed HOMECAM_MAP_STORE
+homecam_config_key_allowed HOMECAM_MAP_WEB_HOST
+homecam_config_key_allowed HOMECAM_MAP_WEB_PORT
+homecam_config_key_allowed HOMECAM_MAP_RVIZ
+if homecam_config_key_allowed HOMECAM_MAP_DELETE_ON_START; then
+  printf 'destructive map configuration key should be rejected\n' >&2
+  exit 1
+fi
 
 homecam_validate_backend_url https://example.com
 homecam_validate_backend_url http://localhost:3000
@@ -86,6 +94,18 @@ mkdir -p "$embedded_workspace/src/malbut/homecam_agent"
   homecam_workspace_from_repo \
     "$embedded_workspace/src/malbut/homecam_agent"
 )" == "$embedded_workspace" ]]
+
+repository_root_workspace="$temporary_dir/repository_root_workspace"
+mkdir -p \
+  "$repository_root_workspace/homecam_agent/homecam_detector" \
+  "$repository_root_workspace/homecam_agent/homecam_media_agent" \
+  "$repository_root_workspace/malbut_gazebo"
+: > "$repository_root_workspace/homecam_agent/homecam_detector/package.xml"
+: > "$repository_root_workspace/homecam_agent/homecam_media_agent/package.xml"
+: > "$repository_root_workspace/malbut_gazebo/package.xml"
+[[ "$(
+  homecam_workspace_from_repo "$repository_root_workspace/homecam_agent"
+)" == "$repository_root_workspace" ]]
 
 chmod 644 "$config_path"
 unset HOMECAM_WORLD HOMECAM_START_GAZEBO

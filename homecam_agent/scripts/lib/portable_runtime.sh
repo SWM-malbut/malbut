@@ -45,6 +45,7 @@ homecam_config_key_allowed() {
     HOMECAM_AUDIO_SOURCE|\
     HOMECAM_BACKEND_URL|\
     HOMECAM_CAMERA_INFO_TOPIC|\
+    HOMECAM_CLOUD_MAP_ENABLED|\
     HOMECAM_DEVICE_ID|\
     HOMECAM_DEVICE_TOKEN_FILE|\
     HOMECAM_GAZEBO_GUI|\
@@ -53,6 +54,10 @@ homecam_config_key_allowed() {
     HOMECAM_GST_REGISTRY|\
     HOMECAM_IMAGE_TOPIC|\
     HOMECAM_KVS_SDK_ROOT|\
+    HOMECAM_MAP_RVIZ|\
+    HOMECAM_MAP_STORE|\
+    HOMECAM_MAP_WEB_HOST|\
+    HOMECAM_MAP_WEB_PORT|\
     HOMECAM_MICROPHONE_ENABLED|\
     HOMECAM_MODEL_PATH|\
     HOMECAM_MONITORING_ENABLED|\
@@ -253,6 +258,10 @@ homecam_workspace_from_repo() {
   local current=""
   local candidate=""
 
+  # Prefer the conventional colcon layouts first. A merged repository below
+  # <workspace>/src/malbut also contains package.xml files, so checking for a
+  # repository-root workspace before this pass would incorrectly return the
+  # source checkout instead of the colcon workspace.
   current="$(realpath -m -- "$source_repo_root")"
   while [[ "$current" != / ]]; do
     if [[ "$(basename -- "$current")" == src ]]; then
@@ -261,6 +270,22 @@ homecam_workspace_from_repo() {
         printf '%s\n' "$candidate"
         return 0
       fi
+    fi
+    current="$(dirname -- "$current")"
+  done
+
+  # The team repository is also commonly cloned directly as the colcon
+  # workspace root (malbut/homecam_agent and malbut/malbut_gazebo live next to
+  # build/, install/, and log/). Support that layout so launch helpers work
+  # from a normal checkout without requiring HOMECAM_WORKSPACE on every run.
+  current="$(realpath -m -- "$source_repo_root")"
+  while [[ "$current" != / ]]; do
+    if [[ -f "$current/homecam_agent/homecam_detector/package.xml" &&
+      -f "$current/homecam_agent/homecam_media_agent/package.xml" &&
+      -f "$current/malbut_gazebo/package.xml" ]]
+    then
+      printf '%s\n' "$current"
+      return 0
     fi
     current="$(dirname -- "$current")"
   done

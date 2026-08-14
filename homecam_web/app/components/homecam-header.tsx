@@ -6,11 +6,12 @@ import {
   DownloadSimple,
   GearSix,
   House,
+  MapTrifold,
   User,
 } from "@phosphor-icons/react";
 import { logoutNavigationPath } from "../auth/logout/logout-flow";
 
-export type HomecamTab = "live" | "events" | "settings";
+export type HomecamTab = "live" | "map" | "events" | "settings";
 
 type AuthStatus = {
   authenticated: boolean;
@@ -109,6 +110,15 @@ export function HomecamHeader({
         >
           <House size={18} weight={activeTab === "live" ? "fill" : "regular"} />
           <span>홈</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === "map" ? "is-active" : ""}
+          onClick={() => onNavigate("map")}
+          aria-current={activeTab === "map" ? "page" : undefined}
+        >
+          <MapTrifold size={18} weight={activeTab === "map" ? "fill" : "regular"} />
+          <span>지도</span>
         </button>
         <button
           type="button"
