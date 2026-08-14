@@ -2631,6 +2631,14 @@ a:focus-visible {
   background: #3979d6;
   box-shadow: 0 2px 9px rgb(14 38 76 / 0.42);
   transition: left 180ms linear, top 180ms linear, transform 180ms linear;
+  will-change: left, top, transform;
+}
+
+.robot-map-marker.is-driving {
+  /* Cloud pose snapshots arrive once per second. Interpolate between them so
+     navigation reads as continuous motion instead of a short jump and pause. */
+  transition-duration: 950ms;
+  transition-timing-function: linear;
 }
 
 .robot-map-marker > span {
@@ -5451,6 +5459,14 @@ a:focus-visible {
 
 .homecam-dashboard-shell .robot-map-room-divider.is-selected { stroke-width: .52; }
 
+.homecam-dashboard-shell .robot-map-room-divider.is-context {
+  pointer-events: none;
+  stroke: #46676d;
+  stroke-width: .3;
+  stroke-dasharray: 1.15 .7;
+  opacity: .7;
+}
+
 .homecam-dashboard-shell .robot-map-room-divider.is-merge-target {
   stroke: #e07a28;
   stroke-width: .7;
@@ -5611,6 +5627,17 @@ a:focus-visible {
   color: var(--homecam-paper);
   border-color: var(--homecam-charcoal);
   background: var(--homecam-charcoal);
+}
+
+.homecam-dashboard-shell .robot-map-room-label.is-context {
+  z-index: 3;
+  padding: 3px 6px;
+  border-color: rgb(70 103 109 / .34);
+  color: #23444a;
+  background: rgb(251 248 243 / .76);
+  font-size: 11px;
+  pointer-events: none;
+  box-shadow: 0 1px 4px rgb(20 47 52 / .1);
 }
 
 .homecam-dashboard-shell .robot-map-path { z-index: 3; }
@@ -7762,6 +7789,15 @@ a:focus-visible {
 }
 
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-virtual-wall-note small { color: #d9aaa3; }
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-room-divider.is-context {
+  stroke: #91abb0;
+  opacity: .66;
+}
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-room-label.is-context {
+  color: #d6e3e1;
+  border-color: rgb(145 171 176 / .32);
+  background: rgb(32 38 36 / .78);
+}
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-add.is-active {
   color: #fbf8f3;
   border-color: #2b7885;

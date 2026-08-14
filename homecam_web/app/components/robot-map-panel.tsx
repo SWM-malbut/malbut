@@ -1005,7 +1005,7 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
                       <circle cx="1.1" cy="1.1" r=".22" fill="rgba(200,144,26,.65)" />
                     </pattern>
                   </defs>
-                  {mapMode === "rooms" && roomDrafts.map((room) => {
+                  {(mapMode === "rooms" || mapMode === "zones") && roomDrafts.map((room) => {
                     const path = walkableArea
                       ? roomInternalBoundaryPath(
                         room,
@@ -1019,7 +1019,7 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
                     return (
                       <path
                         key={id}
-                        className={`robot-map-room-divider ${selectedRoomId === id ? "is-selected" : ""} ${mergeTargetId === id ? "is-merge-target" : ""}`}
+                        className={`robot-map-room-divider ${mapMode === "zones" ? "is-context" : ""} ${selectedRoomId === id ? "is-selected" : ""} ${mergeTargetId === id ? "is-merge-target" : ""}`}
                         d={path}
                       />
                     );
@@ -1274,13 +1274,13 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
                   })()}
                 </svg>
               )}
-              {mapMode === "rooms" && roomDrafts.map((room) => {
+              {(mapMode === "rooms" || mapMode === "zones") && roomDrafts.map((room) => {
                 const label = featureLabelPoint(room, snapshot.map!.geometry);
                 if (!label) return null;
                 return (
                   <span
                     key={`${featureId(room)}-label`}
-                    className={`robot-map-room-label ${selectedRoomId === featureId(room) ? "is-selected" : ""}`}
+                    className={`robot-map-room-label ${mapMode === "zones" ? "is-context" : ""} ${selectedRoomId === featureId(room) ? "is-selected" : ""}`}
                     style={{ left: `${label.left}%`, top: `${label.top}%` }}
                   >
                     {featureName(room, "이름 없는 방")}
@@ -1314,7 +1314,7 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
                 })()}
               {marker && (
                 <span
-                  className="robot-map-marker"
+                  className={`robot-map-marker ${navigationDriving ? "is-driving" : ""}`}
                   aria-label="말벗 현재 위치"
                   style={{ left: `${marker.left}%`, top: `${marker.top}%`, transform: `translate(-50%, -50%) rotate(${marker.heading}deg)` }}
                 >
@@ -1334,7 +1334,7 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
             <span><i className="is-robot" />말벗 위치와 방향</span>
             <span><i className="is-goal" />선택·탐색 지점</span>
             <span><i className="is-route" />예상·실행 경로</span>
-            {mapMode === "rooms" && <span><i className="is-room" />방 경계</span>}
+            {(mapMode === "rooms" || mapMode === "zones") && <span><i className="is-room" />방 경계·이름</span>}
             {mapMode === "zones" && (
               <>
                 <span><i className="is-zone is-restricted" />진입 금지</span>
@@ -1391,6 +1391,7 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
                     value={selectedRoom ? featureName(selectedRoom, "") : ""}
                     disabled={!selectedRoom}
                     onChange={(event) => updateSelectedRoom({ name: event.target.value })}
+                    maxLength={40}
                     placeholder="방 이름"
                   />
                 </label>
@@ -2663,11 +2664,14 @@ function updateRoomProperties(room: GeoFeature, updates: Record<string, unknown>
     semantic_edited: true,
   };
   if (Object.prototype.hasOwnProperty.call(updates, "name")) {
-    const name = typeof updates.name === "string" && updates.name.trim()
+    // Keep the raw empty value while the user replaces a room name. Display
+    // labels apply their own fallback, so it must never be written back into
+    // the controlled input on every keystroke.
+    const name = typeof updates.name === "string"
       ? updates.name.slice(0, 40)
-      : "이름 없는 방";
+      : "";
     properties.name = name;
-    properties.base_name = name;
+    properties.base_name = name.trim() || "이름 없는 방";
     delete properties.merged_from_names;
     delete properties.split_path;
   }
