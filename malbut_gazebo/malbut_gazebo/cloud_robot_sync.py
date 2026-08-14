@@ -38,6 +38,7 @@ from malbut_gazebo.map_lifecycle import (
     map_grid_from_message,
     render_map_png,
 )
+from malbut_gazebo.runtime_control import write_runtime_request
 
 
 TOKEN_PATTERN = re.compile(
@@ -62,6 +63,13 @@ class CloudRobotSync(Node):
             self._parameter("map_store")
         ).expanduser().resolve()
         self.local_url = self._parameter("local_url").rstrip("/") + "/"
+        runtime_request_file = self._optional_parameter(
+            "runtime_request_file"
+        )
+        self.runtime_request_file = (
+            Path(runtime_request_file).expanduser().resolve()
+            if runtime_request_file else None
+        )
         self.token = self._read_token(self.token_file)
         self.lock = Lock()
         self.grid: MapGrid | None = None
@@ -99,6 +107,11 @@ class CloudRobotSync(Node):
         if not value:
             raise ValueError(f"{name} is required")
         return value
+
+    def _optional_parameter(self, name: str) -> str:
+        parameter = self.get_parameter(name)
+        value = parameter.value
+        return "" if value is None else str(value).strip()
 
     @staticmethod
     def _read_token(path: Path) -> str:
@@ -190,14 +203,27 @@ class CloudRobotSync(Node):
             or navigation.get("message")
             or "말벗 지도를 동기화하고 있습니다."
         )
+        target = status.get("target")
+        if isinstance(target, dict):
+            target = dict(target)
+            path = status.get("path")
+            if isinstance(path, dict):
+                target["path"] = path
+            frontier_count = status.get("frontier_count")
+            if isinstance(frontier_count, int) and frontier_count >= 0:
+                target["frontier_count"] = frontier_count
+        elif navigation:
+            target = navigation
+        else:
+            target = None
         state_payload = {
             "state": str(status.get("state", default_state)),
             "message": str(message),
             "pose": status.get("pose", pose),
             "localization": self._normal_localization(status, localization),
             "nav2": nav2,
-            "target": status.get("target", navigation or None),
-            "mapRevision": int(status.get("map_revision", counter)),
+            "target": target,
+            "mapRevision": self._normal_map_counter(status, counter),
             "observedAt": datetime.now(timezone.utc).isoformat().replace(
                 "+00:00", "Z"
             ),
@@ -221,6 +247,31 @@ class CloudRobotSync(Node):
             ),
         }
 
+    @staticmethod
+    def _normal_map_counter(status: dict, fallback: int) -> int:
+        """Return the numeric cloud revision, never the stable map hash."""
+        for key in ("seq", "map_revision"):
+            value = status.get(key)
+            if (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and 0 <= value <= 9_007_199_254_740_991
+            ):
+                return value
+        return max(0, int(fallback))
+
+    def _semantic_zone_bytes(self, active: dict | None) -> bytes:
+        if not active:
+            return b""
+        try:
+            user_map_path = (self.map_store / active["user_map"]).resolve()
+            zone_path = user_map_path.with_name(
+                f"{active['map_id']}-zones.geojson"
+            )
+            return zone_path.read_bytes()
+        except (KeyError, OSError):
+            return b""
+
     def _upload_map_if_needed(self, grid: MapGrid, status: dict) -> None:
         active = load_active_revision(self.map_store)
         user_map_bytes = b""
@@ -231,26 +282,45 @@ class CloudRobotSync(Node):
                 ).resolve().read_bytes()
             except (KeyError, OSError):
                 user_map_bytes = b""
+        zone_bytes = self._semantic_zone_bytes(active)
+        finalized = active if (
+            status.get("state") == "ready"
+            or status.get("_runtime_mode") == "navigation"
+        ) else None
+        preview_bytes = render_map_png(grid)
+        if finalized:
+            try:
+                preview_bytes = (
+                    self.map_store / finalized["preview"]
+                ).resolve().read_bytes()
+            except (KeyError, OSError):
+                preview_bytes = render_map_png(grid)
         metadata = (
             f"{grid.width}:{grid.height}:{grid.resolution}:"
             f"{grid.origin_x}:{grid.origin_y}"
         ).encode("ascii")
         fingerprint = hashlib.sha256(
-            grid.cells.tobytes() + metadata + user_map_bytes
+            grid.cells.tobytes() + metadata + user_map_bytes + zone_bytes
+            + preview_bytes
         ).hexdigest()
         now = self.get_clock().now().nanoseconds / 1e9
         if fingerprint == self.last_uploaded_map:
             return
         if now - self.last_map_upload_monotonic < 5.0:
             return
-        finalized = active if status.get("state") == "ready" else None
         user_map = None
+        semantic_zones = None
         if finalized:
             try:
                 user_map = json.loads(user_map_bytes.decode("utf-8"))
             except (KeyError, OSError, ValueError, json.JSONDecodeError):
                 user_map = None
+            try:
+                semantic_zones = json.loads(zone_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+                semantic_zones = None
         payload = {
+            "finalized": finalized is not None,
             "revision": str(
                 finalized.get("revision")
                 if finalized else f"live-{fingerprint[:24]}"
@@ -275,9 +345,10 @@ class CloudRobotSync(Node):
                 "originYaw": grid.origin_yaw,
             },
             "previewBase64": base64.b64encode(
-                render_map_png(grid)
+                preview_bytes
             ).decode("ascii"),
             "userMap": user_map,
+            "semanticZones": semantic_zones,
         }
         self._cloud_json("api/device/v1/robot/map", "PUT", payload)
         self.last_uploaded_map = fingerprint
@@ -305,14 +376,21 @@ class CloudRobotSync(Node):
                     "start", "finish", "cancel",
                     "navigation_preview", "navigation_start",
                     "navigation_cancel",
+                    "room_split", "room_merge", "rooms_save",
+                    "zones_apply",
                 }
                 or not isinstance(payload, dict)
             ):
                 continue
             ok = False
             result: object
+            runtime_request = ""
             try:
                 result = self._local_command(operation, payload)
+                if isinstance(result, dict):
+                    requested = result.pop("_runtime_request", "")
+                    if isinstance(requested, str):
+                        runtime_request = requested
                 ok = True
             except Exception as error:
                 result = {"error": str(error)[:512]}
@@ -322,6 +400,16 @@ class CloudRobotSync(Node):
                 "POST",
                 {"ok": ok, "result": result},
             )
+            if ok and runtime_request:
+                try:
+                    if not write_runtime_request(
+                        self.runtime_request_file,
+                        runtime_request,
+                        delay_seconds=1.0,
+                    ):
+                        raise OSError("runtime supervisor is unavailable")
+                except OSError as error:
+                    self._warn(str(error))
 
     def _local_status(self) -> dict:
         for path, runtime_mode in (
@@ -341,6 +429,16 @@ class CloudRobotSync(Node):
         return {}
 
     def _local_command(self, operation: str, payload: dict) -> dict:
+        if operation == "start":
+            status = self._local_status()
+            if status.get("_runtime_mode") == "navigation":
+                if self.runtime_request_file is None:
+                    raise RuntimeError("runtime supervisor is unavailable")
+                return {
+                    "accepted": True,
+                    "message": "지도 생성 모드로 전환합니다.",
+                    "_runtime_request": "mapping",
+                }
         config_request = Request(
             urljoin(self.local_url, "api/editor-config"),
             headers={"Accept": "application/json"},
@@ -368,9 +466,21 @@ class CloudRobotSync(Node):
             elif operation == "navigation_start":
                 path = "api/navigation/start"
                 body = {"preview_token": payload.get("previewToken")}
-            else:
+            elif operation == "navigation_cancel":
                 path = "api/navigation/cancel"
                 body = {"session_id": payload.get("sessionId")}
+            elif operation == "room_split":
+                path = "api/split-room"
+                body = payload
+            elif operation == "room_merge":
+                path = "api/merge-rooms"
+                body = payload
+            elif operation == "rooms_save":
+                path = "api/rooms"
+                body = payload
+            else:
+                path = "api/apply-zones"
+                body = payload
         request = Request(
             urljoin(self.local_url, path),
             method="POST",

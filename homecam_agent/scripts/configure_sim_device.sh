@@ -167,6 +167,7 @@ config_temp="$(mktemp "$config_dir/.sim.env.XXXXXX")"
   printf 'HOMECAM_MICROPHONE_ENABLED=false\n'
   printf 'HOMECAM_MODEL_PATH=\n'
   printf 'HOMECAM_MONITORING_ENABLED=false\n'
+  printf 'HOMECAM_FORCE_MAPPING=false\n'
   printf 'HOMECAM_TOPIC_TIMEOUT_SECONDS=90\n'
 } > "$config_temp"
 chmod 600 -- "$config_temp"

@@ -17,7 +17,7 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseStamped
 from lifecycle_msgs.srv import GetState
 from nav2_msgs.action import NavigateToPose
-from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import OccupancyGrid, Path as NavPath
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.clock import Clock, ClockType
@@ -42,6 +42,7 @@ from malbut_gazebo.map_lifecycle import (
     persist_map_revision,
     render_map_png,
 )
+from malbut_gazebo.runtime_control import write_runtime_request
 from malbut_gazebo.user_map_editor import (
     EditorRequestHandler,
     RequestError,
@@ -52,6 +53,42 @@ MAX_SSE_CLIENTS = 16
 GOAL_RESPONSE_TIMEOUT_S = 5.0
 GOAL_EXECUTION_TIMEOUT_S = 90.0
 NO_FRONTIER_REVIEW_DELAY_S = 12.0
+
+
+def _path_length(path: NavPath) -> float:
+    """Return the world-frame length of one Nav2 path."""
+    return sum(
+        math.hypot(
+            current.pose.position.x - previous.pose.position.x,
+            current.pose.position.y - previous.pose.position.y,
+        )
+        for previous, current in zip(path.poses, path.poses[1:])
+    )
+
+
+def _decimate_path(
+    path: NavPath, spacing: float = 0.1,
+) -> list[list[float]]:
+    """Keep a bounded, UI-friendly version of a Nav2 global path."""
+    if not path.poses:
+        return []
+    result = [[
+        path.poses[0].pose.position.x,
+        path.poses[0].pose.position.y,
+    ]]
+    last = result[0]
+    for stamped in path.poses[1:-1]:
+        point = [stamped.pose.position.x, stamped.pose.position.y]
+        if math.hypot(point[0] - last[0], point[1] - last[1]) >= spacing:
+            result.append(point)
+            last = point
+    final = [
+        path.poses[-1].pose.position.x,
+        path.poses[-1].pose.position.y,
+    ]
+    if final != result[-1]:
+        result.append(final)
+    return [[round(x, 4), round(y, 4)] for x, y in result]
 
 
 class MappingError(RuntimeError):
@@ -78,6 +115,7 @@ class MapOnboardingBridge(Node):
         auto_start: bool = False,
         replace_existing: bool = False,
         save_posegraph: bool = False,
+        runtime_request_file: Path | None = None,
     ) -> None:
         """Connect to SLAM, Nav2, TF, and the revision store."""
         super().__init__(
@@ -96,6 +134,8 @@ class MapOnboardingBridge(Node):
             "tf_age_s": None,
         }
         self.target: dict | None = None
+        self.path: dict | None = None
+        self.path_revision = 0
         self.frontier_count = 0
         self.blacklisted: list[tuple[float, float]] = []
         self.goal_handle = None
@@ -108,6 +148,7 @@ class MapOnboardingBridge(Node):
         self.previous_revision = self.active_revision
         self.replace_existing = replace_existing
         self.save_posegraph = save_posegraph
+        self.runtime_request_file = runtime_request_file
         if self.active_revision is not None and not replace_existing:
             self.state = "ready"
             self.message = "저장된 우리 집 지도를 사용하고 있습니다."
@@ -127,6 +168,9 @@ class MapOnboardingBridge(Node):
         )
         self.create_subscription(
             OccupancyGrid, "/map", self._receive_map, map_qos
+        )
+        self.create_subscription(
+            NavPath, "/plan", self._receive_navigation_path, 10
         )
         self.navigate = ActionClient(
             self, NavigateToPose, "/navigate_to_pose"
@@ -159,6 +203,21 @@ class MapOnboardingBridge(Node):
             self.state = "waiting_for_map"
             self.message = "SLAM 지도를 기다리고 있습니다."
 
+    def _request_runtime_mode(
+        self, mode: str, *, delay_seconds: float = 0.0
+    ) -> None:
+        """Notify the optional supervisor without invalidating saved work."""
+        try:
+            write_runtime_request(
+                self.runtime_request_file,
+                mode,
+                delay_seconds=delay_seconds,
+            )
+        except OSError as error:
+            self.get_logger().warning(
+                f"runtime mode request could not be written: {error}"
+            )
+
     def _receive_map(self, message: OccupancyGrid) -> None:
         """Keep the latest SLAM grid for rate-limited rendering."""
         try:
@@ -168,6 +227,22 @@ class MapOnboardingBridge(Node):
             return
         with self.lock:
             self.grid = grid
+
+    def _receive_navigation_path(self, path: NavPath) -> None:
+        """Keep Nav2's current global route for local and cloud UIs."""
+        if not path.poses:
+            return
+        payload = {
+            "length_m": round(_path_length(path), 3),
+            "points": _decimate_path(path),
+            "source": "live_global_costmap",
+        }
+        with self.lock:
+            if self.state != "navigating" or self.target is None:
+                return
+            self.path_revision += 1
+            payload["revision"] = self.path_revision
+            self.path = payload
 
     def _refresh_pose(self) -> None:
         try:
@@ -337,6 +412,7 @@ class MapOnboardingBridge(Node):
                 "y": round(frontier.y, 4),
                 "yaw": round(frontier.yaw, 5),
             }
+            self.path = None
             self.state = "navigating"
             self.message = "새로운 공간을 확인하러 이동하고 있습니다."
         future = self.navigate.send_goal_async(goal)
@@ -383,6 +459,7 @@ class MapOnboardingBridge(Node):
                 self.goal_requested_at = None
                 self.goal_started_at = None
                 self.target = None
+                self.path = None
                 self.state = "exploring"
                 self.message = "주변 지도를 갱신하고 있습니다."
             return
@@ -400,6 +477,7 @@ class MapOnboardingBridge(Node):
             self.goal_requested_at = None
             self.goal_started_at = None
             self.target = None
+            self.path = None
             if self.state not in {"canceled", "saving", "ready"}:
                 self.state = "exploring"
                 self.message = message
@@ -440,10 +518,13 @@ class MapOnboardingBridge(Node):
             self.goal_requested_at = None
             self.goal_started_at = None
             self.target = None
+            self.path = None
             self.state = "canceled"
             self.message = "지도 만들기를 중단했습니다. 이전 지도는 그대로 유지됩니다."
         if handle is not None:
             handle.cancel_goal_async()
+        if self.active_revision is not None:
+            self._request_runtime_mode("navigation", delay_seconds=2.0)
         return self.snapshot()
 
     def finish(self, _request: dict) -> dict:
@@ -480,6 +561,7 @@ class MapOnboardingBridge(Node):
             self.goal_requested_at = None
             self.goal_started_at = None
             self.target = None
+            self.path = None
             self.state = "saving"
             self.message = "지도를 안전하게 저장하고 있습니다."
         if handle is not None:
@@ -535,6 +617,7 @@ class MapOnboardingBridge(Node):
                 "우리 집 지도를 저장했습니다. "
                 "다음 실행부터 자동으로 사용합니다."
             )
+        self._request_runtime_mode("navigation", delay_seconds=1.0)
 
     def snapshot(self) -> dict:
         """Return one immutable browser status payload."""
@@ -551,6 +634,9 @@ class MapOnboardingBridge(Node):
                 "nav2": dict(self.lifecycle),
                 "target": (
                     dict(self.target) if self.target is not None else None
+                ),
+                "path": (
+                    dict(self.path) if self.path is not None else None
                 ),
                 "frontier_count": self.frontier_count,
                 "map_revision": self.map_revision,
@@ -686,6 +772,11 @@ def _parse_boolean(value: str) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def _optional_path(value: str) -> Path | None:
+    """Parse an optional launch path without treating empty as cwd."""
+    return Path(value) if value.strip() else None
+
+
 def _arguments(arguments: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Serve the Malbut first-run map workflow."
@@ -705,6 +796,7 @@ def _arguments(arguments: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--save-posegraph", type=_parse_boolean, default=False
     )
+    parser.add_argument("--runtime-request-file", type=_optional_path)
     parsed = parser.parse_args(arguments)
     if not 0 < parsed.port < 65536:
         parser.error("--port must be between 1 and 65535")
@@ -741,6 +833,7 @@ def main() -> int:
         auto_start=arguments.auto_start,
         replace_existing=arguments.replace_existing,
         save_posegraph=arguments.save_posegraph,
+        runtime_request_file=arguments.runtime_request_file,
     )
     MapOnboardingRequestHandler.bridge = bridge
     executor = MultiThreadedExecutor(num_threads=4)

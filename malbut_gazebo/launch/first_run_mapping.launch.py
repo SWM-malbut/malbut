@@ -48,6 +48,9 @@ def generate_launch_description():
             "auto_start": LaunchConfiguration("auto_start"),
             "replace_existing": LaunchConfiguration("replace_existing"),
             "save_posegraph": LaunchConfiguration("save_posegraph"),
+            "runtime_request_file": LaunchConfiguration(
+                "runtime_request_file"
+            ),
         }.items(),
     )
     declarations = [
@@ -88,5 +91,6 @@ def generate_launch_description():
                 "continuation."
             ),
         ),
+        DeclareLaunchArgument("runtime_request_file", default_value=""),
     ]
     return LaunchDescription([*declarations, simulation, onboarding])

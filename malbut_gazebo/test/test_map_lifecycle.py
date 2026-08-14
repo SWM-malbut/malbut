@@ -131,7 +131,7 @@ class _FakeBridge:
     def snapshot(self) -> dict:
         return {
             "state": "idle", "message": "ready", "map_revision": 0,
-            "map": None, "pose": None, "target": None,
+            "map": None, "pose": None, "target": None, "path": None,
             "frontier_count": 0, "active_revision": None,
         }
 

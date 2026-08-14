@@ -84,6 +84,17 @@ function drawMap() {
     mapImage, transform.left, transform.top,
     latest.map.width * transform.scale, latest.map.height * transform.scale,
   );
+  if (latest.path?.points?.length > 1) {
+    const points = latest.path.points.map(([x, y]) =>
+      pointToCanvas({x, y}, latest.map, transform));
+    context.strokeStyle = "#ff9f43";
+    context.lineWidth = Math.max(3, transform.scale * 1.2);
+    context.setLineDash([Math.max(7, transform.scale * 2.5), Math.max(5, transform.scale * 1.8)]);
+    context.beginPath();
+    points.forEach(([x, y], index) => index ? context.lineTo(x, y) : context.moveTo(x, y));
+    context.stroke();
+    context.setLineDash([]);
+  }
   if (latest.target) {
     const [x, y] = pointToCanvas(latest.target, latest.map, transform);
     context.strokeStyle = "#ff6b35";
