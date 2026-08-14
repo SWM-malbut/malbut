@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from malbut_perception.dnn import configure_network_target
+from malbut_perception.onnx_runtime import load_onnx_network
 
 from .base import BoundingBox, ImageDetection, PersonDetector
 from .hog_detector import _nms
@@ -71,7 +72,7 @@ def decode_yolo_people(
     confidence_threshold: float,
     nms_threshold: float,
 ) -> List[ImageDetection]:
-    """Decode common YOLOv5/v8/v11 detect exports and keep COCO person."""
+    """Decode common one-to-many and end-to-end YOLO detect exports."""
     rows = _prediction_rows(output)
     if rows.ndim != 2 or rows.shape[1] < 6 or rows.shape[0] == 0:
         return []
@@ -150,6 +151,7 @@ class YoloPersonDetector(PersonDetector):
         nms_threshold: float = 0.45,
         input_size: int = 640,
         dnn_target: str = 'auto',
+        inference_backend: str = 'auto',
         network: Optional[object] = None,
     ) -> None:
         """Load the ONNX network and configure inference thresholds."""
@@ -165,19 +167,16 @@ class YoloPersonDetector(PersonDetector):
                 raise FileNotFoundError(
                     f'YOLO ONNX model not found: {str(path)!r}'
                 )
-            try:
-                network = cv2.dnn.readNetFromONNX(str(path))
-            except cv2.error as error:
-                raise RuntimeError(
-                    f'cannot load YOLO ONNX model: {error}'
-                ) from error
+            network, resolved_target = load_onnx_network(
+                path, inference_backend, dnn_target
+            )
+        else:
+            resolved_target = configure_network_target(network, dnn_target)
         self._net = network
         self._confidence_threshold = confidence_threshold
         self._nms_threshold = nms_threshold
         self._input_size = input_size
-        self._resolved_target = configure_network_target(
-            self._net, dnn_target
-        )
+        self._resolved_target = resolved_target
 
     @property
     def resolved_target(self) -> str:

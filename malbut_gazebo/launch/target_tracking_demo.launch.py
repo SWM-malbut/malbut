@@ -53,6 +53,7 @@ def generate_launch_description():
             'debug_image_transport': LaunchConfiguration(
                 'debug_image_transport'
             ),
+            'inference_backend': LaunchConfiguration('inference_backend'),
             'dnn_target': LaunchConfiguration('dnn_target'),
             'projection_frame': 'camera_depth_optical_frame',
         }.items(),
@@ -159,6 +160,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'debug_image_transport', default_value='raw'
         ),
+        DeclareLaunchArgument('inference_backend', default_value='auto'),
         DeclareLaunchArgument('dnn_target', default_value='auto'),
         DeclareLaunchArgument('actor_spawn_delay', default_value='15.0'),
         DeclareLaunchArgument('actor_name', default_value='humanoid_target'),

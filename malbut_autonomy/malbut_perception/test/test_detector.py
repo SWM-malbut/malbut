@@ -26,7 +26,7 @@ def test_letterbox_keeps_source_aspect_ratio():
     assert transform.pad_y == 120.0
 
 
-def test_yolov8_decode_keeps_only_person_and_removes_overlap():
+def test_yolo26_decode_keeps_only_person_and_removes_overlap():
     output = np.zeros((1, 84, 100), dtype=np.float32)
     # The 640x400 source is letterboxed with 120 vertical model pixels.
     output[0, 0:4, 0] = [200.0, 320.0, 200.0, 300.0]

@@ -205,8 +205,9 @@ ros2 launch malbut_description display.launch.py
 
 ```bash
 cd ~/ros2_ws/src/malbut
-./malbut_autonomy/malbut_perception/scripts/prepare_yolov5_model.sh
+./malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh
 ./malbut_autonomy/malbut_perception/scripts/prepare_osnet_model.sh
+./malbut_autonomy/malbut_perception/scripts/prepare_inference_runtime.sh
 
 cd ~/ros2_ws
 source install/local_setup.bash
