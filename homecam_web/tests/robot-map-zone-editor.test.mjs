@@ -97,15 +97,22 @@ test("clearing a room name keeps the controlled input empty while editing", asyn
   assert.doesNotMatch(panel, /updates\.name\.trim\(\)[\s\S]{0,100}: "이름 없는 방"/);
 });
 
-test("zone editing keeps room boundaries and names as non-interactive context", async () => {
+test("all map modes share room boundaries, room names, and zone drafts", async () => {
   const [panel, styles] = await Promise.all([
     readFile(new URL("../app/components/robot-map-panel.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(panel, /\(mapMode === "rooms" \|\| mapMode === "zones"\) && roomDrafts\.map/g);
-  assert.match(panel, /mapMode === "zones" \? "is-context" : ""/);
+  assert.doesNotMatch(panel, /\(mapMode === "rooms" \|\| mapMode === "zones"\) && roomDrafts\.map/);
+  assert.match(panel, /const renderedZoneFeatures = zoneDrafts;/);
+  assert.match(panel, /mapMode !== "rooms" \? "is-context" : ""/);
   assert.match(panel, /방 경계·이름/);
+  assert.match(panel, /roomDrafts\.length > 0 && <span><i className="is-room"/);
+  assert.match(panel, /renderedZoneFeatures\.length > 0 &&/);
+  assert.ok(
+    panel.indexOf("{renderedZoneFeatures.map((zone)") < panel.indexOf("{roomDrafts.map((room)"),
+    "room boundaries must render above zone fills",
+  );
   assert.match(styles, /\.robot-map-room-divider\.is-context\s*\{[^}]*pointer-events:\s*none/s);
   assert.match(styles, /\.robot-map-room-label\.is-context\s*\{[^}]*pointer-events:\s*none/s);
 });

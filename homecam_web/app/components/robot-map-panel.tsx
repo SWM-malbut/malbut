@@ -393,7 +393,7 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
       ? navigation.goal
       : navigation;
   const zoneFeatures = featuresOf(semantics?.zones);
-  const renderedZoneFeatures = mapMode === "zones" ? zoneDrafts : zoneFeatures;
+  const renderedZoneFeatures = zoneDrafts;
   const selectedRoom = roomDrafts.find((room) => featureId(room) === selectedRoomId) ?? null;
   const mergeTarget = roomDrafts.find((room) => featureId(room) === mergeTargetId) ?? null;
   const selectedZone = zoneDrafts.find((zone) => featureId(zone) === selectedZoneId) ?? null;
@@ -1005,25 +1005,6 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
                       <circle cx="1.1" cy="1.1" r=".22" fill="rgba(200,144,26,.65)" />
                     </pattern>
                   </defs>
-                  {(mapMode === "rooms" || mapMode === "zones") && roomDrafts.map((room) => {
-                    const path = walkableArea
-                      ? roomInternalBoundaryPath(
-                        room,
-                        walkableArea,
-                        snapshot.map!.geometry,
-                        snapshot.map!.geometry.resolution,
-                      )
-                      : "";
-                    if (!path) return null;
-                    const id = featureId(room);
-                    return (
-                      <path
-                        key={id}
-                        className={`robot-map-room-divider ${mapMode === "zones" ? "is-context" : ""} ${selectedRoomId === id ? "is-selected" : ""} ${mergeTargetId === id ? "is-merge-target" : ""}`}
-                        d={path}
-                      />
-                    );
-                  })}
                   {renderedZoneFeatures.map((zone) => {
                     const path = featureGeometryPath(zone, snapshot.map!.geometry);
                     const behavior = zoneBehaviorOf(zone);
@@ -1114,6 +1095,25 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
                             wallEndpoints: null,
                           });
                         }}
+                      />
+                    );
+                  })}
+                  {roomDrafts.map((room) => {
+                    const path = walkableArea
+                      ? roomInternalBoundaryPath(
+                        room,
+                        walkableArea,
+                        snapshot.map!.geometry,
+                        snapshot.map!.geometry.resolution,
+                      )
+                      : "";
+                    if (!path) return null;
+                    const id = featureId(room);
+                    return (
+                      <path
+                        key={id}
+                        className={`robot-map-room-divider ${mapMode !== "rooms" ? "is-context" : ""} ${selectedRoomId === id ? "is-selected" : ""} ${mergeTargetId === id ? "is-merge-target" : ""}`}
+                        d={path}
                       />
                     );
                   })}
@@ -1274,13 +1274,13 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
                   })()}
                 </svg>
               )}
-              {(mapMode === "rooms" || mapMode === "zones") && roomDrafts.map((room) => {
+              {roomDrafts.map((room) => {
                 const label = featureLabelPoint(room, snapshot.map!.geometry);
                 if (!label) return null;
                 return (
                   <span
                     key={`${featureId(room)}-label`}
-                    className={`robot-map-room-label ${mapMode === "zones" ? "is-context" : ""} ${selectedRoomId === featureId(room) ? "is-selected" : ""}`}
+                    className={`robot-map-room-label ${mapMode !== "rooms" ? "is-context" : ""} ${selectedRoomId === featureId(room) ? "is-selected" : ""}`}
                     style={{ left: `${label.left}%`, top: `${label.top}%` }}
                   >
                     {featureName(room, "이름 없는 방")}
@@ -1334,8 +1334,8 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
             <span><i className="is-robot" />말벗 위치와 방향</span>
             <span><i className="is-goal" />선택·탐색 지점</span>
             <span><i className="is-route" />예상·실행 경로</span>
-            {(mapMode === "rooms" || mapMode === "zones") && <span><i className="is-room" />방 경계·이름</span>}
-            {mapMode === "zones" && (
+            {roomDrafts.length > 0 && <span><i className="is-room" />방 경계·이름</span>}
+            {renderedZoneFeatures.length > 0 && (
               <>
                 <span><i className="is-zone is-restricted" />진입 금지</span>
                 <span><i className="is-zone is-avoid" />우회 권장</span>
