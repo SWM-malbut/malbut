@@ -211,6 +211,10 @@ test("bypasses Cognito only for machine and public utility paths", () => {
     "/api/device/v1/session",
     "/api/device/v1/heartbeat",
     "/api/device/v1/events",
+    "/api/device/v1/robot/state",
+    "/api/device/v1/robot/map",
+    "/api/device/v1/robot/commands",
+    "/api/device/v1/robot/commands/*/complete",
     "/api/internal/maintenance",
     "/api/internal/device-provisioning",
   ]) {

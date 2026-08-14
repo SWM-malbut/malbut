@@ -30,9 +30,10 @@ Options:
   --check-only      Validate dependencies and camera frames, then exit
   -h, --help        Show this help
 
-By default the script starts the small_house world, discovers its RGB and
-CameraInfo topics, verifies that a frame arrives, and starts the KVS homecam
-agent. Ctrl+C stops only the processes started by this script.
+By default the script starts the managed Malbut device stack. It creates a map
+only when the device has no saved revision, otherwise it reuses the device's
+persistent map. It then discovers RGB and CameraInfo topics, verifies a frame,
+and starts the KVS homecam agent. Ctrl+C stops only processes started here.
 EOF
 }
 
@@ -76,6 +77,11 @@ fi
 : "${HOMECAM_START_GAZEBO:=true}"
 : "${HOMECAM_GAZEBO_GUI:=true}"
 : "${HOMECAM_GAZEBO_HEADLESS:=false}"
+: "${HOMECAM_MAP_STORE:=}"
+: "${HOMECAM_MAP_WEB_HOST:=127.0.0.1}"
+: "${HOMECAM_MAP_WEB_PORT:=8765}"
+: "${HOMECAM_MAP_RVIZ:=true}"
+: "${HOMECAM_CLOUD_MAP_ENABLED:=true}"
 : "${HOMECAM_IMAGE_TOPIC:=}"
 : "${HOMECAM_CAMERA_INFO_TOPIC:=}"
 : "${HOMECAM_ODOM_TOPIC:=/odom}"
@@ -92,6 +98,9 @@ fi
 homecam_validate_boolean HOMECAM_START_GAZEBO "$HOMECAM_START_GAZEBO"
 homecam_validate_boolean HOMECAM_GAZEBO_GUI "$HOMECAM_GAZEBO_GUI"
 homecam_validate_boolean HOMECAM_GAZEBO_HEADLESS "$HOMECAM_GAZEBO_HEADLESS"
+homecam_validate_boolean HOMECAM_MAP_RVIZ "$HOMECAM_MAP_RVIZ"
+homecam_validate_boolean \
+  HOMECAM_CLOUD_MAP_ENABLED "$HOMECAM_CLOUD_MAP_ENABLED"
 homecam_validate_boolean \
   HOMECAM_MONITORING_ENABLED "$HOMECAM_MONITORING_ENABLED"
 homecam_validate_boolean \
@@ -102,6 +111,26 @@ homecam_validate_boolean \
   exit 1
 }
 HOMECAM_TOPIC_TIMEOUT_SECONDS=$((10#$HOMECAM_TOPIC_TIMEOUT_SECONDS))
+[[ "$HOMECAM_MAP_WEB_PORT" =~ ^[0-9]+$ ]] &&
+  ((10#$HOMECAM_MAP_WEB_PORT >= 1)) &&
+  ((10#$HOMECAM_MAP_WEB_PORT <= 65535)) || {
+  homecam_die "HOMECAM_MAP_WEB_PORT must be an integer from 1 to 65535"
+  exit 1
+}
+HOMECAM_MAP_WEB_PORT=$((10#$HOMECAM_MAP_WEB_PORT))
+case "$HOMECAM_MAP_WEB_HOST" in
+  127.0.0.1|localhost|::1) ;;
+  *)
+    homecam_die "HOMECAM_MAP_WEB_HOST must be a loopback host"
+    exit 1
+    ;;
+esac
+if [[ -z "$HOMECAM_MAP_STORE" ]]; then
+  map_data_base="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}"
+  map_device_id="${HOMECAM_DEVICE_ID:-gazebo-homecam}"
+  HOMECAM_MAP_STORE="$map_data_base/malbut/devices/$map_device_id/maps"
+fi
+HOMECAM_MAP_STORE="$(realpath -m -- "$HOMECAM_MAP_STORE")"
 if homecam_is_true "$HOMECAM_GAZEBO_HEADLESS"; then
   HOMECAM_GAZEBO_GUI=false
 fi
@@ -212,15 +241,43 @@ if homecam_is_true "$HOMECAM_START_GAZEBO"; then
       "a ROS camera is already running; use --reuse-gazebo or stop it first"
     exit 1
   fi
-  gazebo_command=(
-    ros2 launch malbut_gazebo worlds.launch.py
-    "world_name:=$HOMECAM_WORLD"
-    "gui:=$HOMECAM_GAZEBO_GUI"
-    "headless:=$HOMECAM_GAZEBO_HEADLESS"
-    "spawn_robot:=true"
-    "bridge:=true"
-  )
-  homecam_log "starting Gazebo world: $HOMECAM_WORLD"
+  if "$check_only"; then
+    gazebo_command=(
+      ros2 launch malbut_gazebo worlds.launch.py
+      "world_name:=$HOMECAM_WORLD"
+      "gui:=$HOMECAM_GAZEBO_GUI"
+      "headless:=$HOMECAM_GAZEBO_HEADLESS"
+      "spawn_robot:=true"
+      "bridge:=true"
+    )
+    homecam_log "starting camera check world: $HOMECAM_WORLD"
+  else
+    if [[ "$HOMECAM_MAP_WEB_HOST" == *:* ]]; then
+      homecam_map_local_url="http://[$HOMECAM_MAP_WEB_HOST]:$HOMECAM_MAP_WEB_PORT"
+    else
+      homecam_map_local_url="http://$HOMECAM_MAP_WEB_HOST:$HOMECAM_MAP_WEB_PORT"
+    fi
+    gazebo_command=(
+      ros2 launch malbut_gazebo managed_home.launch.py
+      "world_name:=$HOMECAM_WORLD"
+      "gui:=$HOMECAM_GAZEBO_GUI"
+      "headless:=$HOMECAM_GAZEBO_HEADLESS"
+      "rviz:=$HOMECAM_MAP_RVIZ"
+      "simulation:=true"
+      "map_store:=$HOMECAM_MAP_STORE"
+      "web_host:=$HOMECAM_MAP_WEB_HOST"
+      "web_port:=$HOMECAM_MAP_WEB_PORT"
+      "cloud_sync:=$HOMECAM_CLOUD_MAP_ENABLED"
+      "cloud_backend_url:=$HOMECAM_BACKEND_URL"
+      "cloud_device_id:=$HOMECAM_DEVICE_ID"
+      "cloud_token_file:=$HOMECAM_DEVICE_TOKEN_FILE"
+      "cloud_local_url:=$homecam_map_local_url"
+    )
+    homecam_log "starting managed device world: $HOMECAM_WORLD"
+    homecam_log "persistent map store: $HOMECAM_MAP_STORE"
+    homecam_log \
+      "local map UI: http://$HOMECAM_MAP_WEB_HOST:$HOMECAM_MAP_WEB_PORT/"
+  fi
   setsid "${gazebo_command[@]}" &
   gazebo_pid=$!
 else
@@ -329,7 +386,7 @@ if [[ -n "$gazebo_pid" ]]; then
   child_status=$?
   set -e
   if kill -0 "$homecam_pid" 2>/dev/null; then
-    homecam_warn "Gazebo stopped; shutting down the homecam agent"
+    homecam_warn "managed device stack stopped; shutting down homecam"
   else
     homecam_warn "homecam agent stopped; shutting down Gazebo"
   fi

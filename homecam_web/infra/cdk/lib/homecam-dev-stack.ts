@@ -693,8 +693,12 @@ export class HomecamDevStack extends Stack {
       ["DeviceSessionApi", 3, "/api/device/v1/session"],
       ["DeviceHeartbeatApi", 4, "/api/device/v1/heartbeat"],
       ["DeviceEventsApi", 5, "/api/device/v1/events"],
-      ["MaintenanceApi", 6, "/api/internal/maintenance"],
-      ["DeviceProvisioningApi", 7, "/api/internal/device-provisioning"],
+      ["DeviceRobotStateApi", 6, "/api/device/v1/robot/state"],
+      ["DeviceRobotMapApi", 7, "/api/device/v1/robot/map"],
+      ["DeviceRobotCommandsApi", 8, "/api/device/v1/robot/commands"],
+      ["DeviceRobotCommandCompleteApi", 9, "/api/device/v1/robot/commands/*/complete"],
+      ["MaintenanceApi", 10, "/api/internal/maintenance"],
+      ["DeviceProvisioningApi", 11, "/api/internal/device-provisioning"],
     ] as const) {
       service.listener.addAction(ruleId, {
         priority,

@@ -2523,6 +2523,238 @@ a:focus-visible {
   }
 }
 
+.robot-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 290px;
+  gap: 10px;
+}
+
+.robot-map-card,
+.robot-map-sidebar {
+  border: 1px solid var(--homecam-line);
+  border-radius: 12px;
+  background: var(--homecam-paper);
+}
+
+.robot-map-card {
+  display: grid;
+  min-height: 430px;
+  place-items: center;
+  overflow: hidden;
+  padding: 22px;
+  background: #e8e7eb;
+}
+
+.robot-map-canvas {
+  position: relative;
+  width: 100%;
+  max-height: 72vh;
+  overflow: hidden;
+  border: 1px solid #bbb9c0;
+  border-radius: 8px;
+  background: #f7f2f7;
+  box-shadow: 0 10px 34px rgb(35 32 39 / 0.08);
+}
+
+.robot-map-canvas > img {
+  object-fit: contain;
+}
+
+.robot-map-canvas.is-navigation {
+  cursor: crosshair;
+}
+
+.robot-map-path {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.robot-map-path polyline {
+  fill: none;
+  stroke: #ed7138;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 0.65;
+  vector-effect: non-scaling-stroke;
+}
+
+.robot-map-goal {
+  position: absolute;
+  z-index: 2;
+  width: 17px;
+  height: 17px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #ed7138;
+  box-shadow: 0 2px 8px rgb(91 42 18 / 0.35);
+  transform: translate(-50%, -50%);
+}
+
+.robot-map-marker {
+  position: absolute;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #3979d6;
+  box-shadow: 0 2px 9px rgb(14 38 76 / 0.42);
+  transition: left 180ms linear, top 180ms linear, transform 180ms linear;
+}
+
+.robot-map-marker > span {
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  width: 13px;
+  height: 4px;
+  border-radius: 999px;
+  background: #3979d6;
+  transform: translateY(-50%);
+}
+
+.robot-map-empty {
+  display: flex;
+  max-width: 390px;
+  align-items: center;
+  flex-direction: column;
+  color: var(--homecam-muted);
+  text-align: center;
+}
+
+.robot-map-empty strong {
+  margin-top: 16px;
+  color: var(--homecam-ink);
+  font-size: 18px;
+}
+
+.robot-map-empty p {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.robot-map-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+
+.robot-map-status {
+  display: flex;
+  min-height: 78px;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--homecam-line);
+}
+
+.robot-map-status > svg {
+  color: #71706d;
+}
+
+.robot-map-status > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.robot-map-status small,
+.robot-map-owner-note {
+  color: var(--homecam-muted);
+  font-size: 11px;
+}
+
+.robot-map-status strong {
+  font-size: 14px;
+}
+
+.robot-map-online-dot {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #a5a29d;
+  box-shadow: 0 0 0 1px #a5a29d;
+}
+
+.robot-map-online-dot.is-online {
+  background: #5e8b3d;
+  box-shadow: 0 0 0 1px #5e8b3d;
+}
+
+.robot-map-message {
+  min-height: 76px;
+  margin: 0;
+  padding: 16px 18px;
+  color: var(--homecam-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.robot-map-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 18px 18px;
+}
+
+.robot-map-actions button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--homecam-ink);
+  border-radius: 999px;
+  color: #fff;
+  background: var(--homecam-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.robot-map-actions button.is-secondary {
+  color: var(--homecam-ink);
+  background: transparent;
+}
+
+.robot-map-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.robot-map-owner-note,
+.robot-map-notice {
+  margin: 0 18px 18px;
+  line-height: 1.5;
+}
+
+.robot-map-notice {
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #5b4d25;
+  background: #f2ebd4;
+  font-size: 11px;
+}
+
+@media (max-width: 820px) {
+  .robot-map-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .robot-map-card {
+    min-height: 300px;
+    padding: 10px;
+  }
+}
+
 /* Editorial home camera redesign */
 
 .homecam-shell {
