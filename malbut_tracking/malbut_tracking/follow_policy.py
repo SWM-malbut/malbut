@@ -11,7 +11,6 @@ class FollowCommand(Enum):
     """Motion decision made from one target observation."""
 
     HOLD = 'hold'
-    ALIGN = 'align'
     RETREAT = 'retreat'
     NAVIGATE = 'navigate'
 
@@ -27,7 +26,7 @@ class FollowSettings:
     goal_update_period_s: float
     maximum_linear_speed_mps: float
     temporary_lost_timeout_s: float
-    search_start_timeout_s: float
+    recovery_start_timeout_s: float
     target_lost_timeout_s: float
 
     def validate(self) -> None:
@@ -52,12 +51,12 @@ class FollowSettings:
             raise ValueError('maximum linear speed must be positive')
         if self.temporary_lost_timeout_s < 0.0:
             raise ValueError('temporary lost timeout must be non-negative')
-        if self.search_start_timeout_s < self.temporary_lost_timeout_s:
+        if self.recovery_start_timeout_s < self.temporary_lost_timeout_s:
             raise ValueError(
-                'search timeout must not precede temporary loss timeout'
+                'recovery timeout must not precede temporary loss timeout'
             )
-        if self.target_lost_timeout_s <= self.search_start_timeout_s:
-            raise ValueError('target lost timeout must exceed search timeout')
+        if self.target_lost_timeout_s <= self.recovery_start_timeout_s:
+            raise ValueError('target lost timeout must exceed recovery timeout')
 
 
 @dataclass(frozen=True)
@@ -127,11 +126,11 @@ def decide_follow_motion(
         goal.target_distance
         <= settings.desired_distance_m + settings.distance_tolerance_m
     ):
-        aligned_goal = FollowGoal(robot, goal.yaw, goal.target_distance)
+        hold_goal = FollowGoal(robot, goal.yaw, goal.target_distance)
         return FollowDecision(
-            FollowCommand.ALIGN,
-            aligned_goal,
-            'distance satisfied; keep camera facing target',
+            FollowCommand.HOLD,
+            hold_goal,
+            'distance satisfied',
         )
     return FollowDecision(FollowCommand.NAVIGATE, goal, 'target ahead')
 

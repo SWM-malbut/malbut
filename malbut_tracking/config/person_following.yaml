@@ -15,9 +15,8 @@ person_follower:
     follow_path_action: follow_path
     compute_path_action: compute_path_to_pose
     planner_id: GridBased
-    tracking_controller_id: FollowPerson
+    tracking_controller_id: FollowPath
     goal_checker_id: general_goal_checker
-    spin_action: spin
     navigation_retry_delay_s: 0.75
     speed_limit_topic: speed_limit
     global_frame: map
@@ -60,8 +59,6 @@ person_follower:
     # Nav2 ComputePathToPose and the configured holonomic controller.
     maximum_linear_speed_mps: 0.30
     retreat_maximum_travel_m: 0.25
-    target_yaw_rate_alpha: 0.35
-    maximum_target_yaw_rate_rps: 1.50
 
     # These are lookahead distances sampled along Nav2's global path, not
     # straight robot-person segments.
@@ -95,33 +92,14 @@ person_follower:
     # Visibility loss is measured from RGB-D rather than costmap update rate.
     # Transient detector gaps do not cancel an already selected movement.
     temporary_lost_timeout_s: 0.40
-    search_start_timeout_s: 0.60
+    recovery_start_timeout_s: 0.60
     target_lost_timeout_s: 8.0
-    # Predict the last absolute camera bearing briefly, look there first, then
-    # expand the bounded scan toward the side on which the person was moving.
-    search_prediction_horizon_s: 1.00
-    search_direction_rate_threshold_rps: 0.05
-    search_angle_rad: 0.80
-    maximum_search_angle_rad: 3.14
-    maximum_search_steps: 9
-    spin_allowance_s: 8.0
+    # Continue to a short-horizon sensor prediction instead of stopping for a
+    # blind scan. Replanning halfway gives the forward camera a new viewpoint.
+    recovery_prediction_horizon_s: 1.00
+    recovery_observation_fraction: 0.50
+    recovery_minimum_stage_m: 0.40
 
     # Bounded prediction supports identity association and display only.
     prediction_horizon_s: 0.60
     transform_timeout_s: 0.10
-
-tracking_twist_mixer:
-  ros__parameters:
-    # The tracking demo remaps Nav2's smoothed output here. Translation is
-    # preserved exactly; only angular.z is replaced while a person is visible.
-    nav_input_topic: /cmd_vel
-    tracking_status_topic: /tracking/person/status
-    output_topic: /cmd_vel_tracking_raw
-    output_frequency_hz: 20.0
-    nav_command_timeout_s: 0.25
-    tracking_status_timeout_s: 0.30
-    heading_proportional_gain: 1.25
-    heading_rate_feedforward_gain: 0.15
-    heading_deadband_rad: 0.04
-    maximum_angular_speed_rps: 0.40
-    maximum_angular_acceleration_rps2: 1.20

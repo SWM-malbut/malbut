@@ -42,7 +42,7 @@ def test_runtime_config_matches_declared_node_defaults():
 
 
 def test_tracking_is_robot_reusable_and_never_publishes_velocity():
-    """Follower stays at action level; only the explicit mixer owns Twist."""
+    """Follower stays at Nav2 action level and never owns robot velocity."""
     package = ElementTree.parse(PACKAGE_ROOT / 'package.xml').getroot()
     dependencies = {
         element.text
@@ -52,15 +52,11 @@ def test_tracking_is_robot_reusable_and_never_publishes_velocity():
     follower_source = (
         PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
     ).read_text(encoding='utf-8')
-    mixer_source = (
-        PACKAGE_ROOT / 'malbut_tracking' / 'tracking_twist_mixer_node.py'
-    ).read_text(encoding='utf-8')
     assert 'malbut_gazebo' not in dependencies
     assert 'spatio_temporal_voxel_layer' not in dependencies
     assert '/cmd_vel' not in follower_source
-    assert "'/cmd_vel'" in mixer_source
     assert 'FollowPath' in follower_source
-    assert 'Spin' in follower_source
+    assert 'Spin' not in follower_source
 
     config = yaml.safe_load(
         (PACKAGE_ROOT / 'config' / 'person_following.yaml').read_text(
@@ -87,7 +83,7 @@ def test_follow_action_auto_selects_and_exposes_continuous_feedback():
 
 
 def test_default_config_has_ordered_loss_timeouts_and_safe_distance():
-    """Default loss handling must hold, search, then terminate in order."""
+    """Default loss handling must recover, then terminate in order."""
     raw = yaml.safe_load(
         (PACKAGE_ROOT / 'config' / 'person_following.yaml').read_text(
             encoding='utf-8'
@@ -120,9 +116,11 @@ def test_default_config_has_ordered_loss_timeouts_and_safe_distance():
     ]
     assert (
         raw['temporary_lost_timeout_s']
-        < raw['search_start_timeout_s']
+        < raw['recovery_start_timeout_s']
         < raw['target_lost_timeout_s']
     )
+    assert 0.0 < raw['recovery_observation_fraction'] < 1.0
+    assert raw['tracking_controller_id'] == 'FollowPath'
 
 
 def test_target_selection_uses_sensor_position_not_exact_detection_id():
@@ -141,7 +139,8 @@ def test_target_selection_uses_sensor_position_not_exact_detection_id():
     assert 'Never create motion from a costmap callback alone' in node_source
     assert 'labeled.track.position' in node_source
     assert '_accept_camera_observation' in node_source
-    assert 'directed_search_offsets' in node_source
+    assert '_begin_recovery' in node_source
+    assert '_on_recovery_path' in node_source
     assert 'coarse_maximum_travel_m' in node_source
     assert 'should_update_goal' in node_source
     assert 'self._nav2.follow_path(' in node_source
@@ -149,8 +148,8 @@ def test_target_selection_uses_sensor_position_not_exact_detection_id():
     assert 'model_pose' not in node_source
 
 
-def test_planner_path_and_camera_control_are_separate():
-    """Perception may orient control but must not replace path geometry."""
+def test_planner_path_owns_translation_and_heading():
+    """Perception must not replace planner geometry or controller heading."""
     node_source = (
         PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
     ).read_text(encoding='utf-8')
@@ -161,19 +160,19 @@ def test_planner_path_and_camera_control_are_separate():
     assert 'truncate_path(' in node_source
     assert 'tracking_controller_id' in node_source
     assert (
-        'Camera control is deliberately handled downstream'
+        'without changing its heading'
         in sampling_source
     )
-    assert 'camera-yaw' in node_source
+    assert 'No separate camera-yaw command competes' in node_source
 
 
-def test_waiting_for_first_person_does_not_start_blind_search():
-    """Search rotation is allowed only after a sensor target was acquired."""
+def test_waiting_for_first_person_does_not_start_blind_recovery():
+    """Recovery motion is allowed only after a sensor target was acquired."""
     node_source = (
         PACKAGE_ROOT
         / 'malbut_tracking'
         / 'person_follower_node.py'
     ).read_text(encoding='utf-8')
     waiting_guard = node_source.index('if self._last_seen_s is None:')
-    search_call = node_source.index('self._continue_search()', waiting_guard)
-    assert waiting_guard < search_call
+    recovery_call = node_source.index('self._begin_recovery(', waiting_guard)
+    assert waiting_guard < recovery_call

@@ -20,6 +20,17 @@ class PathWaypoint:
     travelled_m: float
 
 
+def path_length(path: Path) -> float:
+    """Return the planar length of a Nav2 path."""
+    return sum(
+        math.hypot(
+            float(end.pose.position.x) - float(start.pose.position.x),
+            float(end.pose.position.y) - float(start.pose.position.y),
+        )
+        for start, end in zip(path.poses, path.poses[1:])
+    )
+
+
 def sample_path_waypoint(
     poses: Sequence[PoseStamped],
     lookahead_m: float,
@@ -82,8 +93,7 @@ def truncate_path(
 
     Every planner-produced position is preserved. If the lookahead falls
     inside a segment, only the same interpolation already used for bounded
-    tracking is appended. Camera control is deliberately handled downstream
-    and cannot alter either the global path geometry or its orientation.
+    tracking is appended. Nothing changes the path geometry or orientation.
     """
     if not path.poses:
         return None

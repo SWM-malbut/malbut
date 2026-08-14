@@ -23,7 +23,7 @@ def settings():
         goal_update_period_s=0.75,
         maximum_linear_speed_mps=0.30,
         temporary_lost_timeout_s=0.75,
-        search_start_timeout_s=1.5,
+        recovery_start_timeout_s=1.5,
         target_lost_timeout_s=8.0,
     )
 
@@ -86,14 +86,14 @@ def test_target_below_distance_band_triggers_retreat(settings):
 
 
 @pytest.mark.parametrize('target_x', [1.2, 1.34])
-def test_satisfied_distance_still_aligns_camera(target_x, settings):
-    """A nearby moving person must remain centered without translation."""
+def test_satisfied_distance_holds_position(target_x, settings):
+    """A nearby person inside the distance band needs no new motion."""
     decision = decide_follow_motion(
         Point2D(0.0, 0.0),
         Point2D(target_x, 0.0),
         settings,
     )
-    assert decision.command == FollowCommand.ALIGN
+    assert decision.command == FollowCommand.HOLD
     assert decision.goal.position == Point2D(0.0, 0.0)
 
 

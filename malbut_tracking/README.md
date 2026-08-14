@@ -14,7 +14,7 @@ read, and the package never publishes velocity commands directly.
 - State: `/tracking/person/status`
 - Estimated map pose: `/tracking/person/estimated_target_pose`
 - RViz costmap track labels: `/tracking/person/costmap_tracks`
-- Motion: Nav2 `ComputePathToPose`, `FollowPath`, `Spin`, and `SpeedLimit`
+- Motion: Nav2 `ComputePathToPose`, `FollowPath`, and `SpeedLimit`
 
 The first visible person is acquired automatically. The tracker subtracts the
 saved static map from lethal global-costmap cells, groups sparse LiDAR returns,
@@ -75,20 +75,18 @@ ros2 action send_goal \
 
 Cancel the command with `Ctrl-C`, or use an action client to cancel its goal.
 Before the first person is acquired, the action remains active and the robot
-waits stationary. The target-loss timer and bounded Nav2 search rotation start
-only after an RGB-D target has actually been acquired. A brief detection gap
-does not cancel the bounded movement already selected. Search starts promptly
-at the predicted absolute direction of the last camera observation, then
-expands toward the side on which the target was moving instead of starting a
-generic alternating scan. A spatially continuous
+waits stationary. The target-loss timer starts only after an RGB-D target has
+actually been acquired. A brief detection gap does not cancel the movement
+already selected. If the loss continues, the robot follows an ordinary Nav2
+path to the last short-horizon predicted target position. It replans halfway
+from the changed camera viewpoint instead of starting a blind alternating
+rotation. A spatially continuous
 camera observation preserves the person even if its detector ID changed.
 The robot advances when the person is beyond the configured distance band and
 holds inside it. When the person approaches too closely, the same Nav2 planner
-computes a safe short retreat path. The tracking-specific holonomic controller
-follows those planner-produced positions while independently aiming the fixed
-forward camera at the target; it can therefore move forward, laterally, or
-backward without changing the planned route. While stationary, bounded Nav2
-`Spin` goals correct residual camera bearing error.
+computes a safe short retreat path. The normal holonomic Nav2 controller
+follows those planner-produced positions and owns both translation and body
+heading; the follower does not inject a second camera-yaw command.
 Navigation failures are retried with fresh sensor goals instead of invoking
 Nav2's generic fixed-direction recovery sequence. The follower cancels Nav2
 and ends in `TARGET_LOST` only when the visibility timeout expires.

@@ -5,7 +5,7 @@ from typing import Callable
 
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import ComputePathToPose, FollowPath, Spin
+from nav2_msgs.action import ComputePathToPose, FollowPath
 from nav_msgs.msg import Path
 from rclpy.action import ActionClient
 
@@ -14,7 +14,6 @@ class MotionMode(Enum):
     """Kind of Nav2 motion currently owned by the follower."""
 
     NAVIGATE = 'navigate'
-    SPIN = 'spin'
 
 
 MotionResultCallback = Callable[[MotionMode, int, str], None]
@@ -121,7 +120,6 @@ class Nav2MotionClient:
         self,
         node,
         follow_path_action: str,
-        spin_action: str,
         on_result: MotionResultCallback,
     ) -> None:
         """Attach standard Nav2 action clients to a ROS node."""
@@ -130,7 +128,6 @@ class Nav2MotionClient:
             FollowPath,
             follow_path_action,
         )
-        self._spin_client = ActionClient(node, Spin, spin_action)
         self._on_result = on_result
         self._token = 0
         self._mode: MotionMode | None = None
@@ -161,21 +158,6 @@ class Nav2MotionClient:
             MotionMode.NAVIGATE,
         )
 
-    def spin(
-        self,
-        target_yaw: float,
-        allowance_seconds: float,
-    ) -> bool:
-        """Preempt current work and request a relative Nav2 body rotation."""
-        if not self._spin_client.server_is_ready():
-            return False
-        goal = Spin.Goal()
-        goal.target_yaw = float(target_yaw)
-        seconds = max(0.0, float(allowance_seconds))
-        goal.time_allowance.sec = int(seconds)
-        goal.time_allowance.nanosec = int((seconds % 1.0) * 1e9)
-        return self._send(self._spin_client, goal, MotionMode.SPIN)
-
     def cancel(self) -> None:
         """Invalidate and asynchronously cancel follower-owned Nav2 work."""
         self._token += 1
@@ -189,7 +171,6 @@ class Nav2MotionClient:
         """Release action clients before their parent node is destroyed."""
         self.cancel()
         self._follow_path_client.destroy()
-        self._spin_client.destroy()
 
     def _send(self, client, goal, mode: MotionMode) -> bool:
         replacing_navigation = (

@@ -41,17 +41,15 @@ from .follow_policy import (
 )
 from .geometry import (
     Point2D,
-    directed_search_offsets,
     distance,
     normalize_angle,
-    predict_search_heading,
     quaternion_to_yaw,
     yaw_to_quaternion,
 )
 from .goal_safety import project_navigation_goal
 from .motion_estimator import TargetMotionEstimator
 from .navigation import MotionMode, Nav2MotionClient, Nav2PathClient
-from .path_sampling import truncate_path
+from .path_sampling import path_length, truncate_path
 from .target_association import (
     TargetCandidate,
     select_target_candidate,
@@ -64,7 +62,6 @@ class FollowState:
     IDLE = 'IDLE'
     TRACKING = 'TRACKING'
     TEMPORARILY_LOST = 'TEMPORARILY_LOST'
-    SEARCHING = 'SEARCHING'
     TARGET_LOST = 'TARGET_LOST'
     STOPPED = 'STOPPED'
 
@@ -118,7 +115,6 @@ class PersonFollowerNode(Node):
         self._nav2 = Nav2MotionClient(
             self,
             str(self.get_parameter('follow_path_action').value),
-            str(self.get_parameter('spin_action').value),
             self._on_nav2_result,
         )
         self._path_planner = Nav2PathClient(
@@ -196,13 +192,10 @@ class PersonFollowerNode(Node):
         self._last_target_height = 0.0
         self._current_distance: float | None = None
         self._last_relative_bearing = 0.0
-        self._last_target_yaw: float | None = None
-        self._last_target_yaw_s: float | None = None
-        self._target_yaw_rate_rps = 0.0
-        self._search_step = 0
-        self._search_origin_yaw: float | None = None
-        self._search_offsets: tuple[float, ...] = ()
-        self._spin_purpose: str | None = None
+        self._recovery_target: Point2D | None = None
+        self._recovery_stage = 0
+        self._recovery_plan_in_flight = False
+        self._navigation_purpose = 'tracking'
         self._last_motion_target: Point2D | None = None
         self._last_motion_precise = False
         self._last_motion_bearing_only = False
@@ -237,9 +230,8 @@ class PersonFollowerNode(Node):
         self.declare_parameter('follow_path_action', 'follow_path')
         self.declare_parameter('compute_path_action', 'compute_path_to_pose')
         self.declare_parameter('planner_id', 'GridBased')
-        self.declare_parameter('tracking_controller_id', 'FollowPerson')
+        self.declare_parameter('tracking_controller_id', 'FollowPath')
         self.declare_parameter('goal_checker_id', 'general_goal_checker')
-        self.declare_parameter('spin_action', 'spin')
         self.declare_parameter('navigation_retry_delay_s', 0.75)
         self.declare_parameter('speed_limit_topic', 'speed_limit')
         self.declare_parameter('global_frame', 'map')
@@ -269,8 +261,6 @@ class PersonFollowerNode(Node):
         self.declare_parameter('distance_tolerance_m', 0.15)
         self.declare_parameter('maximum_linear_speed_mps', 0.30)
         self.declare_parameter('retreat_maximum_travel_m', 0.25)
-        self.declare_parameter('target_yaw_rate_alpha', 0.35)
-        self.declare_parameter('maximum_target_yaw_rate_rps', 1.50)
         self.declare_parameter('goal_update_distance_m', 0.25)
         self.declare_parameter('goal_update_period_s', 0.75)
         self.declare_parameter('coarse_goal_update_distance_m', 0.50)
@@ -292,15 +282,12 @@ class PersonFollowerNode(Node):
         self.declare_parameter('minimum_heading_clearance_m', 0.45)
         self.declare_parameter('require_global_costmap_for_goal', True)
         self.declare_parameter('temporary_lost_timeout_s', 0.40)
-        self.declare_parameter('search_start_timeout_s', 0.60)
+        self.declare_parameter('recovery_start_timeout_s', 0.60)
         self.declare_parameter('target_lost_timeout_s', 8.0)
         self.declare_parameter('prediction_horizon_s', 0.60)
-        self.declare_parameter('search_prediction_horizon_s', 1.00)
-        self.declare_parameter('search_direction_rate_threshold_rps', 0.05)
-        self.declare_parameter('search_angle_rad', 0.80)
-        self.declare_parameter('maximum_search_angle_rad', 3.14)
-        self.declare_parameter('maximum_search_steps', 9)
-        self.declare_parameter('spin_allowance_s', 8.0)
+        self.declare_parameter('recovery_prediction_horizon_s', 1.00)
+        self.declare_parameter('recovery_observation_fraction', 0.50)
+        self.declare_parameter('recovery_minimum_stage_m', 0.40)
         self.declare_parameter('transform_timeout_s', 0.10)
 
     def _validate_parameters(self) -> None:
@@ -334,12 +321,12 @@ class PersonFollowerNode(Node):
             'coarse_maximum_travel_m',
             'bearing_maximum_travel_m',
             'retreat_maximum_travel_m',
-            'maximum_target_yaw_rate_rps',
             'goal_safe_search_radius_m',
             'goal_openness_radius_m',
             'heading_probe_distance_m',
             'minimum_heading_clearance_m',
-            'search_prediction_horizon_s',
+            'recovery_prediction_horizon_s',
+            'recovery_minimum_stage_m',
         ):
             if float(self.get_parameter(parameter_name).value) <= 0.0:
                 raise ValueError(f'{parameter_name} must be positive')
@@ -355,22 +342,14 @@ class PersonFollowerNode(Node):
             raise ValueError('association_max_distance_m must be positive')
         if float(self.get_parameter('prediction_horizon_s').value) < 0.0:
             raise ValueError('prediction_horizon_s must be non-negative')
-        if float(self.get_parameter('search_angle_rad').value) <= 0.0:
-            raise ValueError('search_angle_rad must be positive')
-        if float(
-            self.get_parameter('maximum_search_angle_rad').value
-        ) <= 0.0:
-            raise ValueError('maximum_search_angle_rad must be positive')
+        recovery_fraction = float(
+            self.get_parameter('recovery_observation_fraction').value
+        )
+        if not 0.0 < recovery_fraction < 1.0:
+            raise ValueError(
+                'recovery_observation_fraction must be in (0, 1)'
+            )
         self._default_settings().validate()
-        for parameter_name in (
-            'target_yaw_rate_alpha',
-            'search_direction_rate_threshold_rps',
-        ):
-            value = float(self.get_parameter(parameter_name).value)
-            if value < 0.0:
-                raise ValueError(f'{parameter_name} must be non-negative')
-        if float(self.get_parameter('target_yaw_rate_alpha').value) > 1.0:
-            raise ValueError('target_yaw_rate_alpha must not exceed one')
 
     def _default_settings(self) -> FollowSettings:
         return FollowSettings(
@@ -395,8 +374,8 @@ class PersonFollowerNode(Node):
             temporary_lost_timeout_s=float(
                 self.get_parameter('temporary_lost_timeout_s').value
             ),
-            search_start_timeout_s=float(
-                self.get_parameter('search_start_timeout_s').value
+            recovery_start_timeout_s=float(
+                self.get_parameter('recovery_start_timeout_s').value
             ),
             target_lost_timeout_s=float(
                 self.get_parameter('target_lost_timeout_s').value
@@ -426,7 +405,7 @@ class PersonFollowerNode(Node):
                 else defaults.maximum_linear_speed_mps
             ),
             temporary_lost_timeout_s=defaults.temporary_lost_timeout_s,
-            search_start_timeout_s=defaults.search_start_timeout_s,
+            recovery_start_timeout_s=defaults.recovery_start_timeout_s,
             target_lost_timeout_s=(
                 lost_timeout if lost_timeout > 0.0
                 else defaults.target_lost_timeout_s
@@ -469,15 +448,8 @@ class PersonFollowerNode(Node):
         self._last_target_height = 0.0
         self._current_distance = None
         self._last_relative_bearing = 0.0
-        self._last_target_yaw = None
-        self._last_target_yaw_s = None
-        self._target_yaw_rate_rps = 0.0
-        self._search_step = 0
-        self._search_origin_yaw = None
-        self._search_offsets = ()
-        self._spin_purpose = None
-        self._last_alignment_yaw = None
-        self._last_alignment_request_s = -math.inf
+        self._reset_recovery()
+        self._navigation_purpose = 'tracking'
         self._last_motion_target = None
         self._last_motion_precise = False
         self._last_motion_bearing_only = False
@@ -540,9 +512,8 @@ class PersonFollowerNode(Node):
             camera_position,
             robot_position,
             robot_yaw,
-            now_s,
         )
-        self._reset_search()
+        self._reset_recovery()
 
         label = (
             self._costmap_tracker.target.label
@@ -615,40 +586,12 @@ class PersonFollowerNode(Node):
         target_position: Point2D,
         robot_position: Point2D,
         robot_yaw: float,
-        now_s: float,
     ) -> None:
-        """Store an absolute camera aim and a bounded angular trend."""
+        """Store the visible target bearing for status feedback only."""
         target_yaw = math.atan2(
             target_position.y - robot_position.y,
             target_position.x - robot_position.x,
         )
-        if (
-            self._last_target_yaw is not None
-            and self._last_target_yaw_s is not None
-        ):
-            elapsed_s = now_s - self._last_target_yaw_s
-            if elapsed_s > 1e-3:
-                measured_rate = normalize_angle(
-                    target_yaw - self._last_target_yaw
-                ) / elapsed_s
-                maximum_rate = float(
-                    self.get_parameter('maximum_target_yaw_rate_rps').value
-                )
-                measured_rate = max(
-                    -maximum_rate,
-                    min(maximum_rate, measured_rate),
-                )
-                alpha = float(
-                    self.get_parameter('target_yaw_rate_alpha').value
-                )
-                self._target_yaw_rate_rps = (
-                    alpha * measured_rate
-                    + (1.0 - alpha) * self._target_yaw_rate_rps
-                )
-        else:
-            self._target_yaw_rate_rps = 0.0
-        self._last_target_yaw = target_yaw
-        self._last_target_yaw_s = now_s
         self._last_relative_bearing = normalize_angle(target_yaw - robot_yaw)
 
     def _on_global_costmap(self, message: Costmap) -> None:
@@ -785,10 +728,7 @@ class PersonFollowerNode(Node):
             self._last_target_height,
         )
         self._target_pose_publisher.publish(self._last_target_pose)
-        self._reset_search()
-        if self._nav2.mode == MotionMode.SPIN and self._spin_purpose == 'search':
-            self._nav2.cancel()
-            self._spin_purpose = None
+        self._reset_recovery()
         self._set_state(FollowState.TRACKING)
         self._tracking_source = 'costmap'
         self._apply_tracking_motion(
@@ -815,9 +755,7 @@ class PersonFollowerNode(Node):
             self._last_target_height,
         )
         self._target_pose_publisher.publish(self._last_target_pose)
-        if self._nav2.mode == MotionMode.SPIN and self._spin_purpose == 'search':
-            self._nav2.cancel()
-            self._spin_purpose = None
+        self._reset_recovery()
         self._set_state(FollowState.TRACKING)
         self._tracking_source = 'bearing' if bearing_only else 'camera'
         self._apply_tracking_motion(
@@ -1019,15 +957,10 @@ class PersonFollowerNode(Node):
             self._last_plan_target = None
             self._publish_track_markers()
             return
-        if decision.command in {FollowCommand.HOLD, FollowCommand.ALIGN}:
+        if decision.command == FollowCommand.HOLD:
             # Stop translation as soon as the requested distance band is met.
-            # Target-facing yaw remains owned by the Twist mixer; starting a
-            # Nav2 Spin here would compete with the next FollowPath request.
             if self._nav2.mode == MotionMode.NAVIGATE:
                 self._nav2.cancel()
-            elif self._nav2.mode == MotionMode.SPIN:
-                self._nav2.cancel()
-                self._spin_purpose = None
             self._path_planner.cancel()
             self._last_goal_position = None
             self._last_plan_target = None
@@ -1036,11 +969,8 @@ class PersonFollowerNode(Node):
         if now_s < self._navigation_retry_not_before_s:
             return
         if decision.command == FollowCommand.RETREAT:
-            # BackUp fixes the body yaw for the whole segment. A mecanum base
-            # instead receives a short collision-checked Nav2 destination
-            # behind itself with a continuously refreshed person-facing yaw.
-            # This produces real reverse/lateral motion while the fixed camera
-            # remains aimed at the approaching person.
+            # Use a short collision-checked Nav2 destination behind the base.
+            # The standard holonomic controller owns both travel and heading.
             maximum_travel_m = min(
                 maximum_travel_m,
                 float(
@@ -1048,9 +978,6 @@ class PersonFollowerNode(Node):
                 ),
             )
             self._tracking_source = 'retreat'
-        if self._nav2.mode == MotionMode.SPIN:
-            self._nav2.cancel()
-            self._spin_purpose = None
         final_pose = PoseStamped()
         grid = self._latest_global_costmap
         if grid is None:
@@ -1186,13 +1113,14 @@ class PersonFollowerNode(Node):
             )
             return
         bounded_path, waypoint = bounded
-        # Controller Server receives the planner path without any camera-yaw
-        # modification. The tracking command mixer owns target-facing yaw.
+        # Controller Server receives the planner path unchanged and owns both
+        # translation and heading. No separate camera-yaw command competes.
         if self._nav2.follow_path(
             bounded_path,
             str(self.get_parameter('tracking_controller_id').value),
             str(self.get_parameter('goal_checker_id').value),
         ):
+            self._navigation_purpose = 'tracking'
             self._last_goal_position = waypoint.position
             self._navigation_retry_not_before_s = 0.0
             self._navigation_failure_count = 0
@@ -1228,36 +1156,24 @@ class PersonFollowerNode(Node):
         self._publish_speed_limit()
         if self._last_seen_s is None:
             # A follow request waits stationary for sensor-backed acquisition.
-            # Search rotation is valid only after a real target was acquired.
             self._publish_feedback()
             return
         lost_for = max(0.0, now_s - self._last_seen_s)
-        if target_loss_timed_out(
-            self._last_seen_s,
-            now_s,
-            settings.target_lost_timeout_s,
-        ):
-            self._finish_action(
-                success=False,
-                final_state=FollowState.TARGET_LOST,
-                message=(
-                    'the selected person was not reacquired'
-                ),
-            )
-            return
-        if lost_for >= settings.search_start_timeout_s:
-            if self._nav2.mode == MotionMode.NAVIGATE:
-                self._nav2.cancel()
-                self._path_planner.cancel()
-                self._last_goal_position = None
-                self._last_plan_target = None
-            if self._state != FollowState.SEARCHING:
-                self._begin_search(now_s)
-            self._continue_search()
+        if lost_for >= settings.recovery_start_timeout_s:
+            if self._state != FollowState.TEMPORARILY_LOST:
+                self._set_state(FollowState.TEMPORARILY_LOST)
+            if self._recovery_target is None:
+                self._begin_recovery(now_s)
+            elif (
+                self._recovery_stage < 2
+                and not self._recovery_plan_in_flight
+                and self._nav2.mode is None
+                and now_s >= self._navigation_retry_not_before_s
+            ):
+                self._request_recovery_path()
         elif lost_for >= settings.temporary_lost_timeout_s:
             if self._state != FollowState.TEMPORARILY_LOST:
-                # A short detector dropout does not invalidate the movement
-                # already chosen from the last RGB-D observation.
+                # Keep the current Nav2 path through a short detector dropout.
                 self._set_state(FollowState.TEMPORARILY_LOST)
         elif (
             self._state == FollowState.TRACKING
@@ -1280,94 +1196,222 @@ class PersonFollowerNode(Node):
                     precise=self._last_motion_precise,
                     bearing_only=self._last_motion_bearing_only,
                 )
+        recovery_busy = (
+            self._recovery_plan_in_flight
+            or (
+                self._state == FollowState.TEMPORARILY_LOST
+                and self._nav2.mode == MotionMode.NAVIGATE
+            )
+        )
+        if target_loss_timed_out(
+            self._last_seen_s,
+            now_s,
+            settings.target_lost_timeout_s,
+        ) and not recovery_busy:
+            self._finish_action(
+                success=False,
+                final_state=FollowState.TARGET_LOST,
+                message='the selected person was not reacquired',
+            )
+            return
         self._publish_predicted_target(now_s)
         self._publish_feedback()
 
-    def _reset_search(self) -> None:
-        self._search_step = 0
-        self._search_origin_yaw = None
-        self._search_offsets = ()
+    def _reset_recovery(self) -> None:
+        """Clear state belonging only to a previous visibility loss."""
+        was_recovering = self._recovery_target is not None
+        self._recovery_target = None
+        self._recovery_stage = 0
+        self._recovery_plan_in_flight = False
+        if was_recovering:
+            # Force the first reacquired observation to replace recovery now.
+            self._last_plan_target = None
+            self._navigation_retry_not_before_s = 0.0
 
-    def _begin_search(self, now_s: float) -> None:
-        self._nav2.cancel()
-        self._spin_purpose = None
-        self._path_planner.cancel()
-        self._last_goal_position = None
-        self._last_plan_target = None
-        self._set_state(FollowState.SEARCHING)
-        maximum_steps = int(
-            self.get_parameter('maximum_search_steps').value
+    def _begin_recovery(self, now_s: float) -> None:
+        """Freeze one bounded sensor prediction and plan toward it."""
+        horizon_s = float(
+            self.get_parameter('recovery_prediction_horizon_s').value
         )
-        direction_hint = self._last_relative_bearing
-        rate_threshold = float(
-            self.get_parameter('search_direction_rate_threshold_rps').value
-        )
-        if abs(self._target_yaw_rate_rps) >= rate_threshold:
-            direction_hint = self._target_yaw_rate_rps
-        self._search_offsets = directed_search_offsets(
-            direction_hint,
-            float(self.get_parameter('search_angle_rad').value),
-            float(self.get_parameter('maximum_search_angle_rad').value),
-            maximum_steps,
-        )
-        self._search_step = 0
-        if self._last_target_yaw is not None:
-            observation_age_s = (
-                max(0.0, now_s - self._last_target_yaw_s)
-                if self._last_target_yaw_s is not None
-                else 0.0
+        predicted = self._camera_estimator.predict(now_s, horizon_s)
+        if predicted is None:
+            predicted = self._costmap_tracker.predict_target(
+                now_s,
+                horizon_s,
             )
-            self._search_origin_yaw = predict_search_heading(
-                self._last_target_yaw,
-                self._target_yaw_rate_rps,
-                observation_age_s,
+        if predicted is None:
+            self._warn_periodically(
+                'recovery_target_unavailable',
+                'No sensor-backed target position is available for recovery',
+            )
+            return
+        self._recovery_target = predicted
+        self._recovery_stage = 0
+        self._tracking_source = 'predicted_recovery'
+        self._last_plan_target = None
+        self.get_logger().info(
+            'Target temporarily lost; following a Nav2 path to the '
+            f'predicted position ({predicted.x:.2f}, {predicted.y:.2f})'
+        )
+        self._request_recovery_path()
+
+    def _request_recovery_path(self) -> None:
+        """Plan from the current pose to the frozen recovery destination."""
+        target = self._recovery_target
+        if target is None or self._recovery_plan_in_flight:
+            return
+        try:
+            robot_position, _ = self._robot_pose()
+        except TransformException as error:
+            self._warn_periodically(
+                'recovery_tf', f'Recovery TF unavailable: {error}'
+            )
+            return
+        target_yaw = math.atan2(
+            target.y - robot_position.y,
+            target.x - robot_position.x,
+        )
+        safe_position = target
+        safe_yaw = target_yaw
+        grid = self._latest_global_costmap
+        if grid is None:
+            if bool(
+                self.get_parameter('require_global_costmap_for_goal').value
+            ):
+                self._warn_periodically(
+                    'recovery_costmap_unavailable',
+                    'Waiting for global costmap before recovery motion',
+                )
+                return
+        else:
+            safe_goal = project_navigation_goal(
+                grid,
+                target,
+                target_yaw,
+                int(self.get_parameter('goal_maximum_cost').value),
+                float(
+                    self.get_parameter('goal_safe_search_radius_m').value
+                ),
+                float(self.get_parameter('goal_openness_radius_m').value),
                 float(
                     self.get_parameter(
-                        'search_prediction_horizon_s'
+                        'goal_openness_preference_m'
+                    ).value
+                ),
+                float(
+                    self.get_parameter('heading_probe_distance_m').value
+                ),
+                float(
+                    self.get_parameter(
+                        'minimum_heading_clearance_m'
                     ).value
                 ),
             )
-        else:
-            try:
-                _, self._search_origin_yaw = self._robot_pose()
-            except TransformException:
-                self._search_origin_yaw = None
+            if safe_goal is None:
+                self._warn_periodically(
+                    'no_safe_recovery_goal',
+                    'No safe global-costmap cell near the predicted person '
+                    'position',
+                )
+                return
+            safe_position = safe_goal.position
+            safe_yaw = safe_goal.yaw
 
-    def _continue_search(self) -> None:
-        if self._nav2.mode is not None:
-            return
-        if self._search_step >= len(self._search_offsets):
-            # Repeat around the same absolute sensor-backed center rather than
-            # re-centering on the current body yaw and drifting into a generic
-            # left-right scan.
-            self._search_step = 0
-        try:
-            _, robot_yaw = self._robot_pose()
-        except TransformException as error:
+        goal_pose = PoseStamped()
+        goal_pose.header.frame_id = self._global_frame
+        goal_pose.header.stamp = self.get_clock().now().to_msg()
+        goal_pose.pose.position.x = safe_position.x
+        goal_pose.pose.position.y = safe_position.y
+        quaternion = yaw_to_quaternion(safe_yaw)
+        goal_pose.pose.orientation.x = quaternion[0]
+        goal_pose.pose.orientation.y = quaternion[1]
+        goal_pose.pose.orientation.z = quaternion[2]
+        goal_pose.pose.orientation.w = quaternion[3]
+        if self._path_planner.compute(
+            goal_pose,
+            str(self.get_parameter('planner_id').value),
+            self._on_recovery_path,
+        ):
+            self._recovery_plan_in_flight = True
+            self._last_plan_target = safe_position
+            self._last_plan_request_s = self._now_seconds()
+        else:
             self._warn_periodically(
-                'search_tf', f'Search TF unavailable: {error}'
+                'recovery_planner_unavailable',
+                'Nav2 ComputePathToPose action is not ready for recovery',
+            )
+
+    def _on_recovery_path(self, path, detail: str) -> None:
+        """Follow the recovery route in two stages for reacquisition."""
+        self._recovery_plan_in_flight = False
+        if (
+            self._active_goal is None
+            or self._state != FollowState.TEMPORARILY_LOST
+            or self._recovery_target is None
+        ):
+            return
+        if path is None:
+            self._navigation_failure_count += 1
+            self._navigation_retry_not_before_s = (
+                self._now_seconds()
+                + float(
+                    self.get_parameter('navigation_retry_delay_s').value
+                )
+            )
+            self._warn_periodically('recovery_path_failed', detail)
+            return
+        total_m = path_length(path)
+        minimum_stage_m = float(
+            self.get_parameter('recovery_minimum_stage_m').value
+        )
+        if total_m <= 0.05:
+            # The predicted point is already inside the Nav2 goal tolerance.
+            # Hold there and keep observing until reacquisition or timeout.
+            self._nav2.cancel()
+            self._recovery_stage = 2
+            self._last_goal_position = self._recovery_target
+            self._publish_track_markers()
+            return
+        if self._recovery_stage == 0 and total_m > minimum_stage_m * 2.0:
+            lookahead_m = max(
+                minimum_stage_m,
+                total_m
+                * float(
+                    self.get_parameter(
+                        'recovery_observation_fraction'
+                    ).value
+                ),
+            )
+            purpose = 'recovery_midpoint'
+        else:
+            lookahead_m = max(total_m, 1e-3)
+            purpose = 'recovery_final'
+        bounded = truncate_path(path, lookahead_m)
+        if bounded is None:
+            self._warn_periodically(
+                'empty_recovery_path',
+                'Nav2 returned an empty recovery path',
             )
             return
-        if self._search_origin_yaw is None:
-            self._search_origin_yaw = robot_yaw
-        desired_yaw = normalize_angle(
-            self._search_origin_yaw
-            + self._search_offsets[self._search_step]
-        )
-        angle = normalize_angle(desired_yaw - robot_yaw)
-        if abs(angle) < 0.03:
-            self._search_step += 1
-            return
-        if self._nav2.spin(
-            angle,
-            float(self.get_parameter('spin_allowance_s').value),
+        bounded_path, waypoint = bounded
+        if self._nav2.follow_path(
+            bounded_path,
+            str(self.get_parameter('tracking_controller_id').value),
+            str(self.get_parameter('goal_checker_id').value),
         ):
-            self._spin_purpose = 'search'
-            return
+            self._navigation_purpose = purpose
+            self._last_goal_position = waypoint.position
+            self._goal_dispatch_count += 1
+            self._navigation_retry_not_before_s = 0.0
+            self.get_logger().info(
+                f'Following {purpose} waypoint '
+                f'({waypoint.position.x:.2f}, {waypoint.position.y:.2f})'
+            )
+            self._publish_track_markers()
         else:
             self._warn_periodically(
-                'spin_unavailable',
-                'Nav2 Spin action is not ready',
+                'recovery_follow_path_unavailable',
+                'Nav2 FollowPath action is not ready for recovery',
             )
 
     def _publish_predicted_target(self, now_s: float) -> None:
@@ -1423,18 +1467,18 @@ class PersonFollowerNode(Node):
                 self._warn_periodically('navigate_failed', detail)
             else:
                 self._navigation_failure_count = 0
-        elif mode == MotionMode.SPIN and status not in {
-            GoalStatus.STATUS_SUCCEEDED,
-            GoalStatus.STATUS_CANCELED,
-        }:
-            if self._spin_purpose == 'search':
-                self._search_step += 1
-            self._spin_purpose = None
-            self._warn_periodically('spin_failed', detail)
-        elif mode == MotionMode.SPIN:
-            if self._spin_purpose == 'search':
-                self._search_step += 1
-            self._spin_purpose = None
+            if (
+                status == GoalStatus.STATUS_SUCCEEDED
+                and self._state == FollowState.TEMPORARILY_LOST
+            ):
+                if self._navigation_purpose == 'recovery_midpoint':
+                    # Replan at the changed viewpoint. A camera observation
+                    # received anywhere along the route already preempts this
+                    # recovery with ordinary TRACKING.
+                    self._recovery_stage = 1
+                    self._request_recovery_path()
+                elif self._navigation_purpose == 'recovery_final':
+                    self._recovery_stage = 2
 
     def _publish_feedback(self) -> None:
         if self._active_goal is None:
@@ -1486,7 +1530,7 @@ class PersonFollowerNode(Node):
                 'target_visible': target_visible,
                 'current_distance_m': self._current_distance,
                 'heading_error_rad': self._last_relative_bearing,
-                'target_yaw_rate_rps': self._target_yaw_rate_rps,
+                'recovery_stage': self._recovery_stage,
             },
             separators=(',', ':'),
         )
@@ -1649,17 +1693,12 @@ class PersonFollowerNode(Node):
         self._last_seen_s = None
         self._last_camera_seen_s = None
         self._last_costmap_stamp_s = None
-        self._last_target_yaw = None
-        self._last_target_yaw_s = None
-        self._target_yaw_rate_rps = 0.0
         self._last_goal_position = None
         self._last_plan_target = None
         self._last_motion_target = None
         self._last_motion_bearing_only = False
-        self._spin_purpose = None
-        self._last_alignment_yaw = None
-        self._last_alignment_request_s = -math.inf
-        self._reset_search()
+        self._reset_recovery()
+        self._navigation_purpose = 'tracking'
         self._tracking_source = 'none'
         result_future.set_result(result)
         self.get_logger().info(message)

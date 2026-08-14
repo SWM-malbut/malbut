@@ -6,7 +6,11 @@ import pytest
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path
 
-from malbut_tracking.path_sampling import sample_path_waypoint, truncate_path
+from malbut_tracking.path_sampling import (
+    path_length,
+    sample_path_waypoint,
+    truncate_path,
+)
 
 
 def _pose(x, y):
@@ -43,8 +47,15 @@ def test_short_path_uses_the_final_standoff_pose():
     assert waypoint.yaw == pytest.approx(1.2)
 
 
+def test_path_length_supports_midpoint_recovery_staging():
+    """Recovery can split an arbitrary planned route by travelled distance."""
+    path = Path()
+    path.poses = [_pose(0, 0), _pose(3, 0), _pose(3, 4)]
+    assert path_length(path) == pytest.approx(7.0)
+
+
 def test_tracking_control_does_not_change_planned_path_or_orientation():
-    """Camera aim is not allowed to alter the bounded planner path."""
+    """Follower logic is not allowed to alter the bounded planner path."""
     path = Path()
     path.header.frame_id = 'map'
     path.poses = [_pose(0, 0), _pose(2, 0), _pose(2, 2)]

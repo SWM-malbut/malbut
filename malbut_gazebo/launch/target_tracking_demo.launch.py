@@ -91,9 +91,6 @@ def generate_launch_description():
         ),
         launch_arguments={
             'use_sim_time': use_sim_time,
-            'twist_mixer': 'true',
-            'nav_cmd_vel_topic': '/cmd_vel',
-            'mixed_cmd_vel_topic': '/cmd_vel_tracking_raw',
         }.items(),
     )
     collision_monitor = Node(
@@ -105,7 +102,7 @@ def generate_launch_description():
             'use_sim_time': use_sim_time,
             'base_frame_id': 'base_footprint',
             'odom_frame_id': 'odom',
-            'cmd_vel_in_topic': '/cmd_vel_tracking_raw',
+            'cmd_vel_in_topic': '/cmd_vel',
             'cmd_vel_out_topic': '/cmd_vel_tracking_output',
             'transform_tolerance': 0.2,
             'source_timeout': 0.5,

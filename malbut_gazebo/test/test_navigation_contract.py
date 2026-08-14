@@ -201,17 +201,7 @@ def test_navigation_prefers_clearance_and_keeps_close_obstacles_visible():
     assert follow_path['PathAngleCritic']['forward_preference'] is True
     assert follow_path['PreferForwardCritic']['enabled'] is True
     assert follow_path['TwirlingCritic']['enabled'] is True
-    person_controller = controller['FollowPerson']
-    assert person_controller['plugin'] == (
-        'nav2_mppi_controller::MPPIController'
-    )
-    assert person_controller['motion_model'] == 'Omni'
-    assert person_controller['vx_min'] == follow_path['vx_min']
-    assert person_controller['wz_max'] <= 0.001
-    assert person_controller['wz_std'] <= 0.001
-    assert 'GoalAngleCritic' not in person_controller['critics']
-    assert 'PreferForwardCritic' not in person_controller['critics']
-    assert 'TwirlingCritic' not in person_controller['critics']
+    assert controller['controller_plugins'] == ['FollowPath']
     assert controller['general_goal_checker']['xy_goal_tolerance'] <= 0.05
     assert controller['general_goal_checker']['yaw_goal_tolerance'] >= 3.14
 

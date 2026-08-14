@@ -106,7 +106,7 @@ def test_demo_composes_sensor_perception_nav2_and_tracking():
     assert navigation['localization_source'] == 'static'
     assert navigation['set_initial_pose'] == 'true'
     tracking = dict(by_source['person_following.launch.py'].launch_arguments)
-    assert tracking['twist_mixer'] == 'true'
+    assert set(tracking) == {'use_sim_time'}
 
     collision_nodes = [
         entity
@@ -115,6 +115,11 @@ def test_demo_composes_sensor_perception_nav2_and_tracking():
         and entity.node_package == 'nav2_collision_monitor'
     ]
     assert len(collision_nodes) == 1
+    launch_source = (
+        PACKAGE_ROOT / 'launch' / 'target_tracking_demo.launch.py'
+    ).read_text(encoding='utf-8')
+    assert "'cmd_vel_in_topic': '/cmd_vel'" in launch_source
+    assert '/cmd_vel_tracking_raw' not in launch_source
 
 
 def test_demo_uses_optical_sensor_coordinates_without_ground_truth():
