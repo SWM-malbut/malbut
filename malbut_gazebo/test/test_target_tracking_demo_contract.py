@@ -49,6 +49,8 @@ def test_demo_composes_sensor_perception_nav2_and_tracking():
     assert defaults['image_view'] == 'true'
     assert defaults['actor_spawn_delay'] == '15.0'
     assert defaults['debug_image_transport'] == 'raw'
+    assert Path(defaults['actor_file']).name == 'model.sdf'
+    assert Path(defaults['map']).name == 'small_house.yaml'
 
     image_view_nodes = [
         entity
@@ -77,6 +79,7 @@ def test_demo_composes_sensor_perception_nav2_and_tracking():
     assert humanoid_arguments['perception'] == 'true'
     assert humanoid_arguments['rviz'] == 'false'
     assert 'actor_name' in humanoid_arguments
+    assert 'actor_file' in humanoid_arguments
     assert 'actor_z' in humanoid_arguments
     assert 'spawn_timeout' in humanoid_arguments
     assert (
@@ -102,7 +105,10 @@ def test_demo_composes_sensor_perception_nav2_and_tracking():
         'person_following.launch.py',
     }
     navigation = dict(by_source['navigation.launch.py'].launch_arguments)
-    assert Path(navigation['map']).name == 'small_house.yaml'
+    assert (
+        perform_substitutions(context, navigation['map'].variable_name)
+        == 'map'
+    )
     assert navigation['localization_source'] == 'static'
     assert navigation['set_initial_pose'] == 'true'
     tracking = dict(by_source['person_following.launch.py'].launch_arguments)

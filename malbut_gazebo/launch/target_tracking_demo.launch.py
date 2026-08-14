@@ -39,6 +39,7 @@ def generate_launch_description():
             'actor_z': LaunchConfiguration('actor_z'),
             'actor_yaw': LaunchConfiguration('actor_yaw'),
             'actor_name': LaunchConfiguration('actor_name'),
+            'actor_file': LaunchConfiguration('actor_file'),
             'actor_spawn_delay': LaunchConfiguration('actor_spawn_delay'),
             'spawn_timeout': LaunchConfiguration('spawn_timeout'),
             'gui': LaunchConfiguration('gui'),
@@ -74,7 +75,7 @@ def generate_launch_description():
             str(gazebo_share / 'launch' / 'navigation.launch.py')
         ),
         launch_arguments={
-            'map': str(gazebo_share / 'maps' / 'small_house.yaml'),
+            'map': LaunchConfiguration('map'),
             'use_sim_time': use_sim_time,
             'rviz': LaunchConfiguration('rviz'),
             'restore_localization': 'false',
@@ -159,6 +160,16 @@ def generate_launch_description():
         DeclareLaunchArgument('dnn_target', default_value='auto'),
         DeclareLaunchArgument('actor_spawn_delay', default_value='15.0'),
         DeclareLaunchArgument('actor_name', default_value='humanoid_target'),
+        DeclareLaunchArgument(
+            'actor_file',
+            default_value=str(
+                gazebo_share / 'models' / 'humanoid_actor' / 'model.sdf'
+            ),
+        ),
+        DeclareLaunchArgument(
+            'map',
+            default_value=str(gazebo_share / 'maps' / 'small_house.yaml'),
+        ),
         DeclareLaunchArgument('actor_z', default_value='0.0'),
         DeclareLaunchArgument('spawn_timeout', default_value='60'),
         DeclareLaunchArgument('x', default_value='-3.665503'),

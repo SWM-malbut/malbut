@@ -39,6 +39,8 @@ setup(
         'console_scripts': [
             'person_follower = '
             'malbut_tracking.person_follower_node:main',
+            'tracking_benchmark = '
+            'malbut_tracking.tracking_benchmark_node:main',
         ],
     },
 )

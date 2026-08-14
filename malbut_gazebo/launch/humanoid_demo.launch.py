@@ -76,7 +76,9 @@ def generate_launch_description():
         / GAZEBO_PACKAGE
         / "spawn_when_ready"
     )
-    actor_file = gazebo_share / "models" / "humanoid_actor" / "model.sdf"
+    default_actor_file = (
+        gazebo_share / "models" / "humanoid_actor" / "model.sdf"
+    )
 
     simulation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -94,7 +96,7 @@ def generate_launch_description():
             "--entity-name",
             LaunchConfiguration("actor_name"),
             "--file",
-            str(actor_file),
+            LaunchConfiguration("actor_file"),
             "--x",
             LaunchConfiguration("actor_x"),
             "--y",
@@ -172,6 +174,9 @@ def generate_launch_description():
             DeclareLaunchArgument("iterations", default_value=""),
             DeclareLaunchArgument(
                 "actor_name", default_value="humanoid_target"
+            ),
+            DeclareLaunchArgument(
+                "actor_file", default_value=str(default_actor_file)
             ),
             DeclareLaunchArgument(
                 "actor_spawn_delay",

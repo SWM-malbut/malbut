@@ -242,6 +242,22 @@ ros2 action send_goal \
 시도합니다. `Ctrl-C`로 액션을 취소하면 진행 중인 Nav2 목표도 취소되고
 정지합니다.
 
+#### 한 바퀴 추적 유지 시간 측정
+
+동일한 추적기를 기존 Small House 경로와 기본 제공 `robocup_home` 환경에서
+각각 한 바퀴 측정합니다. 사람을 처음 인식한 시점부터 경로가 원점으로
+돌아올 때까지 추적 유지 시간, 최장 연속 추적 시간, 재인식 횟수와 복구
+시간을 기록하며 성능 임계값으로 성공·실패를 판정하지 않습니다.
+
+```bash
+ros2 launch malbut_gazebo tracking_test_small_house.launch.py
+ros2 launch malbut_gazebo tracking_test_robocup_home.launch.py
+```
+
+각 실행은 액션을 자동으로 시작하고 한 바퀴 뒤 종료합니다. 결과는 터미널의
+`TRACKING_BENCHMARK_RESULT`와
+`~/.ros/malbut/tracking_benchmarks/<환경 이름>.json`에서 확인합니다.
+
 ### 키보드 조작
 
 시뮬레이션을 실행한 상태에서 새 터미널을 열고 실행합니다.
