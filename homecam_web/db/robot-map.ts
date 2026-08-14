@@ -8,6 +8,10 @@ import {
 } from "./homecam";
 
 const ROBOT_ONLINE_MS = 15_000;
+const ACTIVE_MAPPING_STATES = new Set([
+  "waiting_for_map", "waiting_for_navigation", "exploring", "navigating",
+  "review", "saving",
+]);
 
 type StateRow = {
   state: string;
@@ -36,6 +40,7 @@ type MapRow = {
   origin_yaw: number;
   preview_base64: string;
   user_map_json: string | null;
+  semantic_zones_json: string | null;
   source_created_at: string | null;
   updated_at: string;
 };
@@ -97,13 +102,15 @@ export async function storeRobotState(deviceId: string, state: RobotStateUpload)
 export async function storeRobotMap(deviceId: string, map: RobotMapUpload) {
   await ensureHomecamSchema();
   const now = new Date().toISOString();
-  await getD1()
+  const table = map.finalized ? "robot_maps" : "robot_map_drafts";
+  const statement = getD1()
     .prepare(
-      `INSERT INTO robot_maps
+      `INSERT INTO ${table}
        (device_id, revision, map_id, map_revision, width, height, resolution,
         origin_x, origin_y, origin_yaw, preview_base64, user_map_json,
+        semantic_zones_json,
         source_created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(device_id) DO UPDATE SET
          revision = excluded.revision,
          map_id = excluded.map_id,
@@ -116,6 +123,7 @@ export async function storeRobotMap(deviceId: string, map: RobotMapUpload) {
          origin_yaw = excluded.origin_yaw,
          preview_base64 = excluded.preview_base64,
          user_map_json = excluded.user_map_json,
+         semantic_zones_json = excluded.semantic_zones_json,
          source_created_at = excluded.source_created_at,
          updated_at = excluded.updated_at`,
     )
@@ -132,22 +140,34 @@ export async function storeRobotMap(deviceId: string, map: RobotMapUpload) {
       map.geometry.originYaw,
       map.previewBase64,
       map.userMap ? JSON.stringify(map.userMap) : null,
+      map.semanticZones ? JSON.stringify(map.semanticZones) : null,
       map.sourceCreatedAt,
       now,
-    )
-    .run();
+    );
+  if (map.finalized) {
+    await getD1().batch([
+      statement,
+      getD1().prepare("DELETE FROM robot_map_drafts WHERE device_id = ?").bind(deviceId),
+    ]);
+  } else {
+    await statement.run();
+  }
 }
 
 export async function getRobotSnapshot(deviceId: string, userEmail: string) {
   await ensureHomecamSchema();
   if (!(await userCanViewDevice(deviceId, userEmail))) return null;
-  const [state, map, command] = await Promise.all([
+  const [state, savedMap, draftMap, command] = await Promise.all([
     getD1()
       .prepare("SELECT * FROM robot_runtime_state WHERE device_id = ?")
       .bind(deviceId)
       .first<StateRow>(),
     getD1()
       .prepare("SELECT * FROM robot_maps WHERE device_id = ?")
+      .bind(deviceId)
+      .first<MapRow>(),
+    getD1()
+      .prepare("SELECT * FROM robot_map_drafts WHERE device_id = ?")
       .bind(deviceId)
       .first<MapRow>(),
     getD1()
@@ -160,29 +180,66 @@ export async function getRobotSnapshot(deviceId: string, userEmail: string) {
       .bind(deviceId)
       .first<CommandRow>(),
   ]);
+  const mappingActive = Boolean(state && ACTIVE_MAPPING_STATES.has(state.state));
+  const map = mappingActive && draftMap ? draftMap : savedMap ?? draftMap;
   return {
     online: Boolean(
       state && Date.parse(state.observed_at) >= Date.now() - ROBOT_ONLINE_MS,
     ),
     state: state ? mapState(state) : null,
-    map: map ? mapMetadata(map) : null,
+    map: map ? mapMetadata(map, map === savedMap) : null,
     command: command ? mapCommand(command) : null,
   };
 }
 
-export async function getRobotMapPreview(deviceId: string, userEmail: string) {
+export async function getRobotMapPreview(
+  deviceId: string,
+  userEmail: string,
+  revision = "",
+) {
   await ensureHomecamSchema();
   if (!(await userCanViewDevice(deviceId, userEmail))) return null;
-  return getD1()
-    .prepare("SELECT revision, preview_base64 FROM robot_maps WHERE device_id = ?")
+  const [saved, draft] = await Promise.all([
+    getD1()
+      .prepare("SELECT revision, preview_base64 FROM robot_maps WHERE device_id = ?")
+      .bind(deviceId)
+      .first<{ revision: string; preview_base64: string }>(),
+    getD1()
+      .prepare("SELECT revision, preview_base64 FROM robot_map_drafts WHERE device_id = ?")
+      .bind(deviceId)
+      .first<{ revision: string; preview_base64: string }>(),
+  ]);
+  if (revision) {
+    return [saved, draft].find((item) => item?.revision === revision) ?? null;
+  }
+  return saved ?? draft;
+}
+
+export async function getRobotMapSemantics(deviceId: string, userEmail: string) {
+  await ensureHomecamSchema();
+  if (!(await userCanViewDevice(deviceId, userEmail))) return null;
+  const map = await getD1()
+    .prepare(
+      `SELECT revision, map_id, map_revision, user_map_json, semantic_zones_json
+       FROM robot_maps WHERE device_id = ?`,
+    )
     .bind(deviceId)
-    .first<{ revision: string; preview_base64: string }>();
+    .first<Pick<MapRow, "revision" | "map_id" | "map_revision" | "user_map_json" | "semantic_zones_json">>();
+  if (!map) return null;
+  return {
+    revision: map.revision,
+    mapId: map.map_id,
+    mapRevision: map.map_revision,
+    userMap: map.user_map_json ? parseObject(map.user_map_json) : null,
+    zones: map.semantic_zones_json ? parseObject(map.semantic_zones_json) : null,
+  };
 }
 
 export async function createRobotCommand(input: {
   deviceId: string;
   userEmail: string;
-  operation: "start" | "finish" | "cancel" | "navigation_preview" | "navigation_start" | "navigation_cancel";
+  operation: "start" | "finish" | "cancel" | "navigation_preview" | "navigation_start" | "navigation_cancel" |
+    "room_split" | "room_merge" | "rooms_save" | "zones_apply";
   payload?: Record<string, unknown>;
 }) {
   await ensureHomecamSchema();
@@ -316,8 +373,9 @@ function mapState(row: StateRow) {
   };
 }
 
-function mapMetadata(row: MapRow) {
+function mapMetadata(row: MapRow, finalized: boolean) {
   return {
+    finalized,
     revision: row.revision,
     mapId: row.map_id,
     mapRevision: row.map_revision,

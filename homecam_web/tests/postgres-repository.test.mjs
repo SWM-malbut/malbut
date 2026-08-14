@@ -24,11 +24,16 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     new URL("../db/migrations/0003_robot_map.sql", import.meta.url),
     "utf8",
   );
+  const robotSemanticsMigration = await readFile(
+    new URL("../db/migrations/0004_robot_map_semantics.sql", import.meta.url),
+    "utf8",
+  );
   const database = new PGlite();
   try {
     await database.exec(initialMigration);
     await database.exec(authMigration);
     await database.exec(robotMigration);
+    await database.exec(robotSemanticsMigration);
     await database.exec(`
       CREATE TABLE homecam_schema_migrations (
         version TEXT PRIMARY KEY,
@@ -38,7 +43,8 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       VALUES
         ('0001_initial'),
         ('0002_web_auth_sessions'),
-        ('0003_robot_map');
+        ('0003_robot_map'),
+        ('0004_robot_map_semantics');
     `);
     await seedDevice(database);
 
@@ -189,6 +195,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         observedAt: new Date().toISOString(),
       });
       await robotMap.storeRobotMap("living-room", {
+        finalized: true,
         revision: "revision-1",
         mapId: "map-1",
         mapRevision: "map-revision-1",
@@ -203,6 +210,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         },
         previewBase64: "iVBORw0KGgo=",
         userMap: { rooms: [] },
+        semanticZones: { type: "FeatureCollection", features: [] },
       });
       const snapshot = await robotMap.getRobotSnapshot(
         "living-room",
@@ -211,6 +219,64 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       assert.equal(snapshot.online, true);
       assert.deepEqual(plain(snapshot.state.pose), { x: 1.25, y: -0.5, yaw: 0.75 });
       assert.equal(snapshot.map.revision, "revision-1");
+      const semantics = await robotMap.getRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+      );
+      assert.deepEqual(plain(semantics.userMap), { rooms: [] });
+      assert.deepEqual(plain(semantics.zones), {
+        type: "FeatureCollection",
+        features: [],
+      });
+
+      await robotMap.storeRobotMap("living-room", {
+        finalized: false,
+        revision: "live-candidate-1",
+        mapId: "live-candidate-map",
+        mapRevision: "live-candidate-revision",
+        sourceCreatedAt: null,
+        geometry: {
+          width: 400,
+          height: 240,
+          resolution: 0.05,
+          originX: -10,
+          originY: -5,
+          originYaw: 0,
+        },
+        previewBase64: "iVBORw0KGgo=",
+        userMap: null,
+        semanticZones: null,
+      });
+      await robotMap.storeRobotState("living-room", {
+        state: "exploring",
+        message: "새 지도를 만들고 있습니다.",
+        pose: { x: 1.5, y: -0.25, yaw: 0.5 },
+        localization: { state: "ok", tfAgeS: 0.02 },
+        nav2: { navigator: "active" },
+        target: null,
+        mapRevision: 9,
+        observedAt: new Date().toISOString(),
+      });
+      const mappingSnapshot = await robotMap.getRobotSnapshot(
+        "living-room", "owner@example.com",
+      );
+      assert.equal(mappingSnapshot.map.revision, "live-candidate-1");
+      assert.equal(mappingSnapshot.map.finalized, false);
+      await robotMap.storeRobotState("living-room", {
+        state: "canceled",
+        message: "기존 지도를 유지합니다.",
+        pose: { x: 1.5, y: -0.25, yaw: 0.5 },
+        localization: { state: "ok", tfAgeS: 0.02 },
+        nav2: { navigator: "active" },
+        target: null,
+        mapRevision: 10,
+        observedAt: new Date().toISOString(),
+      });
+      const canceledSnapshot = await robotMap.getRobotSnapshot(
+        "living-room", "owner@example.com",
+      );
+      assert.equal(canceledSnapshot.map.revision, "revision-1");
+      assert.equal(canceledSnapshot.map.finalized, true);
 
       const queued = await robotMap.createRobotCommand({
         deviceId: "living-room",

@@ -7,11 +7,12 @@ import {
   GearSix,
   House,
   MapTrifold,
+  VideoCamera,
   User,
 } from "@phosphor-icons/react";
 import { logoutNavigationPath } from "../auth/logout/logout-flow";
 
-export type HomecamTab = "live" | "map" | "events" | "settings";
+export type HomecamTab = "home" | "live" | "map" | "events" | "settings";
 
 type AuthStatus = {
   authenticated: boolean;
@@ -96,20 +97,29 @@ export function HomecamHeader({
         type="button"
         className="homecam-brand"
         aria-label="MALBUT 홈캠 홈"
-        onClick={() => onNavigate("live")}
+        onClick={() => onNavigate("home")}
       >
-        <strong>/MALBUT</strong>
-        <small>HOME CAMERA</small>
+        <strong>말</strong>
+        <small>MALBUT</small>
       </button>
       <nav className="homecam-nav" aria-label="홈캠 메뉴">
+        <button
+          type="button"
+          className={activeTab === "home" ? "is-active" : ""}
+          onClick={() => onNavigate("home")}
+          aria-current={activeTab === "home" ? "page" : undefined}
+        >
+          <House size={20} weight={activeTab === "home" ? "fill" : "regular"} />
+          <span>홈</span>
+        </button>
         <button
           type="button"
           className={activeTab === "live" ? "is-active" : ""}
           onClick={() => onNavigate("live")}
           aria-current={activeTab === "live" ? "page" : undefined}
         >
-          <House size={18} weight={activeTab === "live" ? "fill" : "regular"} />
-          <span>홈</span>
+          <VideoCamera size={20} weight={activeTab === "live" ? "fill" : "regular"} />
+          <span>홈캠</span>
         </button>
         <button
           type="button"
@@ -117,7 +127,7 @@ export function HomecamHeader({
           onClick={() => onNavigate("map")}
           aria-current={activeTab === "map" ? "page" : undefined}
         >
-          <MapTrifold size={18} weight={activeTab === "map" ? "fill" : "regular"} />
+          <MapTrifold size={20} weight={activeTab === "map" ? "fill" : "regular"} />
           <span>지도</span>
         </button>
         <button
@@ -127,22 +137,10 @@ export function HomecamHeader({
           aria-current={activeTab === "events" ? "page" : undefined}
         >
           <ClockCounterClockwise
-            size={18}
+            size={20}
             weight={activeTab === "events" ? "fill" : "regular"}
           />
           <span>이벤트</span>
-        </button>
-        <button
-          type="button"
-          className={activeTab === "settings" ? "is-active" : ""}
-          onClick={() => onNavigate("settings")}
-          aria-current={activeTab === "settings" ? "page" : undefined}
-        >
-          <GearSix
-            size={18}
-            weight={activeTab === "settings" ? "fill" : "regular"}
-          />
-          <span>설정</span>
         </button>
       </nav>
       <div className="homecam-header-actions">
@@ -152,6 +150,15 @@ export function HomecamHeader({
             홈 화면에 설치
           </button>
         )}
+        <button
+          type="button"
+          className={`homecam-settings-link ${activeTab === "settings" ? "is-active" : ""}`}
+          onClick={() => onNavigate("settings")}
+          aria-label="설정"
+        >
+          <GearSix size={20} weight={activeTab === "settings" ? "fill" : "regular"} />
+          <span>설정</span>
+        </button>
         {authStatus?.authenticated ? (
           <button
             type="button"

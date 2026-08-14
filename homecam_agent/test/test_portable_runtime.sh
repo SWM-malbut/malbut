@@ -81,6 +81,13 @@ generated_config="$temporary_dir/generated/sim.env"
   --token-file "$source_token" >/dev/null
 grep -Fqx 'HOMECAM_GAZEBO_GUI=false' "$generated_config"
 grep -Fqx 'HOMECAM_GAZEBO_HEADLESS=true' "$generated_config"
+grep -Fqx 'HOMECAM_FORCE_MAPPING=false' "$generated_config"
+
+runner="$repo_root/scripts/run_gazebo_homecam.sh"
+grep -Fq 'ros2 launch malbut_gazebo worlds.launch.py' "$runner"
+grep -Fq '"simulation:=false"' "$runner"
+grep -Fq '"runtime_request_file:=$runtime_control_file"' "$runner"
+grep -Fq 'start_robot_stack true true' "$runner"
 
 standalone_workspace="$temporary_dir/standalone_workspace"
 mkdir -p "$standalone_workspace/src/homecam_agent"

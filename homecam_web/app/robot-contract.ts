@@ -1,5 +1,6 @@
 const MAX_STATE_BYTES = 64 * 1024;
 const MAX_MAP_BYTES = 2 * 1024 * 1024;
+const MAX_COMMAND_BYTES = 1024 * 1024;
 const REVISION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export type RobotPose = { x: number; y: number; yaw: number };
@@ -16,6 +17,7 @@ export type RobotStateUpload = {
 };
 
 export type RobotMapUpload = {
+  finalized: boolean;
   revision: string;
   mapId: string;
   mapRevision: string;
@@ -30,10 +32,12 @@ export type RobotMapUpload = {
   };
   previewBase64: string;
   userMap: Record<string, unknown> | null;
+  semanticZones?: Record<string, unknown> | null;
 };
 
 export type RobotOperation = "start" | "finish" | "cancel" |
-  "navigation_preview" | "navigation_start" | "navigation_cancel";
+  "navigation_preview" | "navigation_start" | "navigation_cancel" |
+  "room_split" | "room_merge" | "rooms_save" | "zones_apply";
 
 export function parseRobotCommand(value: unknown): {
   operation: RobotOperation;
@@ -63,14 +67,25 @@ export function parseRobotCommand(value: unknown): {
       ? { operation, payload: { sessionId: payload.sessionId } }
       : null;
   }
+  if (["room_split", "room_merge", "rooms_save", "zones_apply"].includes(String(operation))) {
+    if (!validSemanticCommand(operation as RobotOperation, payload)) return null;
+    return { operation: operation as RobotOperation, payload };
+  }
   return null;
 }
 
+export async function readRobotCommandJson(request: Request) {
+  return readBoundedJson(request, MAX_COMMAND_BYTES);
+}
+
 export async function readRobotJson(request: Request, kind: "state" | "map") {
+  return readBoundedJson(request, kind === "map" ? MAX_MAP_BYTES : MAX_STATE_BYTES);
+}
+
+async function readBoundedJson(request: Request, limit: number) {
   const contentType = request.headers.get("content-type")?.split(";", 1)[0].trim();
   if (contentType !== "application/json") throw new Error("UNSUPPORTED_MEDIA_TYPE");
   const declaredLength = Number(request.headers.get("content-length") ?? "0");
-  const limit = kind === "map" ? MAX_MAP_BYTES : MAX_STATE_BYTES;
   if (Number.isFinite(declaredLength) && declaredLength > limit) {
     throw new Error("PAYLOAD_TOO_LARGE");
   }
@@ -118,6 +133,7 @@ export function parseRobotMap(value: unknown): RobotMapUpload | null {
   const geometry = value.geometry;
   if (
     !shortString(value.revision, 128) || !REVISION.test(value.revision) ||
+    !(value.finalized === undefined || typeof value.finalized === "boolean") ||
     !shortString(value.mapId, 128) || !REVISION.test(value.mapId) ||
     !shortString(value.mapRevision, 128) || !REVISION.test(value.mapRevision) ||
     !(value.sourceCreatedAt === null || validIso(value.sourceCreatedAt)) ||
@@ -128,9 +144,16 @@ export function parseRobotMap(value: unknown): RobotMapUpload | null {
     !finiteNumber(geometry.originYaw) ||
     typeof value.previewBase64 !== "string" || value.previewBase64.length > 1_500_000 ||
     !validPngBase64(value.previewBase64) ||
-    !(value.userMap === null || isObject(value.userMap))
+    !(value.userMap === null || isObject(value.userMap)) ||
+    !(
+      value.semanticZones === undefined || value.semanticZones === null ||
+      isObject(value.semanticZones)
+    )
   ) return null;
   return {
+    finalized: typeof value.finalized === "boolean"
+      ? value.finalized
+      : !value.revision.startsWith("live-"),
     revision: value.revision,
     mapId: value.mapId,
     mapRevision: value.mapRevision,
@@ -145,7 +168,40 @@ export function parseRobotMap(value: unknown): RobotMapUpload | null {
     },
     previewBase64: value.previewBase64,
     userMap: value.userMap,
+    semanticZones: isObject(value.semanticZones) ? value.semanticZones : null,
   };
+}
+
+function validSemanticCommand(operation: RobotOperation, payload: Record<string, unknown>) {
+  if (Buffer.byteLength(JSON.stringify(payload), "utf8") > 768 * 1024) return false;
+  if (operation === "room_split") {
+    return isObject(payload.room) &&
+      (Array.isArray(payload.lines) || Array.isArray(payload.line)) &&
+      optionalFinite(payload.resolution) && optionalFinite(payload.minimum_room_area);
+  }
+  if (operation === "room_merge") {
+    return Array.isArray(payload.rooms) && payload.rooms.length >= 2 && payload.rooms.length <= 512 &&
+      payload.rooms.every(isObject) && optionalFinite(payload.resolution);
+  }
+  if (operation === "rooms_save") {
+    return safeRevision(payload.map_id) && safeRevision(payload.map_revision) &&
+      Array.isArray(payload.rooms) && payload.rooms.length > 0 && payload.rooms.length <= 512 &&
+      payload.rooms.every(isObject) && optionalFinite(payload.resolution);
+  }
+  return operation === "zones_apply" &&
+    payload.type === "FeatureCollection" &&
+    payload.format === "malbut-semantic-zones-v1" &&
+    safeRevision(payload.map_id) && safeRevision(payload.map_revision) &&
+    Array.isArray(payload.features) && payload.features.length <= 512 &&
+    payload.features.every(isObject);
+}
+
+function optionalFinite(value: unknown) {
+  return value === undefined || finiteNumber(value);
+}
+
+function safeRevision(value: unknown): value is string {
+  return typeof value === "string" && REVISION.test(value);
 }
 
 function parsePose(value: unknown): RobotPose | null {

@@ -23,6 +23,7 @@ type RobotSnapshot = {
     observedAt: string;
   } | null;
   map: {
+    finalized: boolean;
     revision: string;
     mapId: string;
     geometry: {
@@ -55,7 +56,9 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
   const [navigationPreview, setNavigationPreview] = useState<Record<string, unknown> | null>(null);
   const [previewExpiresAt, setPreviewExpiresAt] = useState(0);
   const [clockNow, setClockNow] = useState(0);
+  const [robotTrail, setRobotTrail] = useState<Array<[number, number]>>([]);
   const processedCommand = useRef("");
+  const trailSession = useRef("");
 
   const load = useCallback(async (quiet = false) => {
     if (!device) {
@@ -131,17 +134,41 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
   const runtimeMode = snapshot?.state?.nav2.runtime_mode;
   const navigation = snapshot?.state?.target;
   const navigationDriving = navigation?.state === "driving" || navigation?.state === "canceling";
+  const navigationSession = typeof navigation?.session_id === "string" ? navigation.session_id : "";
   const previewToken = previewExpiresAt > clockNow && typeof navigationPreview?.preview_token === "string"
     ? navigationPreview.preview_token
     : "";
   const previewPath = isRecord(navigationPreview?.path) && Array.isArray(navigationPreview.path.points)
     ? navigationPreview.path.points as unknown[]
     : [];
-  const previewPolyline = previewPath.flatMap((point) => {
-    if (!Array.isArray(point) || point.length < 2 || typeof point[0] !== "number" || typeof point[1] !== "number" || !snapshot?.map) return [];
-    const mapped = worldToPercent(point[0], point[1], snapshot.map.geometry);
-    return [`${mapped.left},${mapped.top}`];
-  }).join(" ");
+  const livePath = isRecord(navigation?.path) && Array.isArray(navigation.path.points)
+    ? navigation.path.points as unknown[]
+    : [];
+  const previewPolyline = pathToPolyline(previewPath, snapshot?.map?.geometry);
+  const livePolyline = pathToPolyline(livePath, snapshot?.map?.geometry);
+  const trailPolyline = pathToPolyline(robotTrail, snapshot?.map?.geometry);
+  const visibleGoal = isRecord(navigationPreview?.resolved)
+    ? navigationPreview.resolved
+    : isRecord(navigation?.goal)
+      ? navigation.goal
+      : navigation;
+
+  useEffect(() => {
+    const pose = snapshot?.state?.pose;
+    if (!navigationDriving || !navigationSession || !pose) return;
+    if (trailSession.current !== navigationSession) {
+      trailSession.current = navigationSession;
+      setRobotTrail([[pose.x, pose.y]]);
+      return;
+    }
+    setRobotTrail((current) => {
+      const previous = current.at(-1);
+      if (previous && Math.hypot(pose.x - previous[0], pose.y - previous[1]) < 0.04) {
+        return current;
+      }
+      return [...current.slice(-499), [pose.x, pose.y]];
+    });
+  }, [navigationDriving, navigationSession, snapshot?.state?.pose]);
 
   const sendCommand = async (operation: RobotOperation, commandPayload: Record<string, unknown> = {}) => {
     if (!device || busy) return;
@@ -221,19 +248,29 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
                 priority
               />
               {previewPolyline && (
-                <svg className="robot-map-path" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                <svg className="robot-map-path is-preview" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                   <polyline points={previewPolyline} />
                 </svg>
               )}
-              {isRecord(navigationPreview?.resolved) &&
-                typeof navigationPreview.resolved.x === "number" &&
-                typeof navigationPreview.resolved.y === "number" && (() => {
+              {livePolyline && (
+                <svg className="robot-map-path is-live" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  <polyline points={livePolyline} />
+                </svg>
+              )}
+              {trailPolyline && (
+                <svg className="robot-map-path is-trail" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  <polyline points={trailPolyline} />
+                </svg>
+              )}
+              {isRecord(visibleGoal) &&
+                typeof visibleGoal.x === "number" &&
+                typeof visibleGoal.y === "number" && (() => {
                   const goal = worldToPercent(
-                    navigationPreview.resolved.x,
-                    navigationPreview.resolved.y,
+                    visibleGoal.x,
+                    visibleGoal.y,
                     snapshot.map.geometry,
                   );
-                  return <span className="robot-map-goal" style={{ left: `${goal.left}%`, top: `${goal.top}%` }} aria-label="선택한 목적지" />;
+                  return <span className={`robot-map-goal ${runtimeMode === "mapping" ? "is-exploration" : ""}`} style={{ left: `${goal.left}%`, top: `${goal.top}%` }} aria-label={runtimeMode === "mapping" ? "다음 자동 탐색 목표" : "선택한 목적지"} />;
                 })()}
               {marker && (
                 <span
@@ -291,6 +328,11 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
                 <StopCircle size={17} weight="bold" /> 주행 취소
               </button>
             )}
+            {runtimeMode === "navigation" && !navigationDriving && !previewToken && (
+              <button type="button" className="is-secondary" onClick={() => void sendCommand("start")} disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}>
+                <MapTrifold size={17} weight="bold" /> 지도 다시 만들기
+              </button>
+            )}
           </div>
           {runtimeMode === "navigation" && !navigationDriving && !previewToken && (
             <small className="robot-map-owner-note">지도에서 목적지를 선택하면 현재 costmap으로 안전성과 경로를 확인합니다.</small>
@@ -318,6 +360,21 @@ function worldToPercent(
     left: localX / (geometry.width * geometry.resolution) * 100,
     top: (1 - localY / (geometry.height * geometry.resolution)) * 100,
   };
+}
+
+function pathToPolyline(
+  points: unknown[],
+  geometry: NonNullable<RobotSnapshot["map"]>["geometry"] | undefined,
+) {
+  if (!geometry) return "";
+  return points.flatMap((point) => {
+    if (
+      !Array.isArray(point) || point.length < 2 ||
+      typeof point[0] !== "number" || typeof point[1] !== "number"
+    ) return [];
+    const mapped = worldToPercent(point[0], point[1], geometry);
+    return [`${mapped.left},${mapped.top}`];
+  }).join(" ");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

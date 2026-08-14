@@ -255,6 +255,27 @@ export const robotMaps = pgTable("robot_maps", {
   originYaw: real("origin_yaw").notNull(),
   previewBase64: text("preview_base64").notNull(),
   userMapJson: text("user_map_json"),
+  semanticZonesJson: text("semantic_zones_json"),
+  sourceCreatedAt: timestampText("source_created_at"),
+  updatedAt: timestampText("updated_at").notNull().defaultNow(),
+});
+
+export const robotMapDrafts = pgTable("robot_map_drafts", {
+  deviceId: text("device_id")
+    .primaryKey()
+    .references(() => devices.id, { onDelete: "cascade" }),
+  revision: text("revision").notNull(),
+  mapId: text("map_id").notNull(),
+  mapRevision: text("map_revision").notNull(),
+  width: integer("width").notNull(),
+  height: integer("height").notNull(),
+  resolution: real("resolution").notNull(),
+  originX: real("origin_x").notNull(),
+  originY: real("origin_y").notNull(),
+  originYaw: real("origin_yaw").notNull(),
+  previewBase64: text("preview_base64").notNull(),
+  userMapJson: text("user_map_json"),
+  semanticZonesJson: text("semantic_zones_json"),
   sourceCreatedAt: timestampText("source_created_at"),
   updatedAt: timestampText("updated_at").notNull().defaultNow(),
 });
