@@ -127,3 +127,22 @@ test("the cloud robot marker interpolates one-second pose updates while driving"
   assert.match(styles, /\.robot-map-marker\.is-driving\s*\{[^}]*transition-duration:\s*950ms/s);
   assert.match(styles, /\.robot-map-marker\.is-driving\s*\{[^}]*transition-timing-function:\s*linear/s);
 });
+
+test("the home map summary reuses rooms, zones, and the live localized robot pose", async () => {
+  const [dashboard, panel, styles] = await Promise.all([
+    readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/robot-map-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(dashboard, /<RobotMapSummaryOverlay snapshot=\{robotSnapshot\} semantics=\{semantics\} \/>/);
+  assert.match(dashboard, /window\.setInterval\(\(\) => void loadRobot\(\).*1_000\)/s);
+  assert.match(panel, /export function RobotMapSummaryOverlay/);
+  assert.match(panel, /semantics\?\.revision === map\.revision/);
+  assert.match(panel, /featuresOf\(semantics\?\.zones\)/);
+  assert.match(panel, /roomInternalBoundaryPath/);
+  assert.match(panel, /snapshot\?\.state\?\.localization\.state === "ok"/);
+  assert.match(panel, /robot-map-home-marker/);
+  assert.match(styles, /\.homecam-home-map-preview \.robot-map-home-semantics/);
+  assert.match(styles, /\.homecam-home-map-preview \.robot-map-home-marker/);
+});

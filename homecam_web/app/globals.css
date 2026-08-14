@@ -6396,6 +6396,25 @@ a:focus-visible {
 }
 
 .homecam-dashboard-shell .homecam-home-map-preview img { object-fit: contain; }
+.homecam-dashboard-shell .homecam-home-map-preview .robot-map-home-semantics { z-index: 2; }
+.homecam-dashboard-shell .homecam-home-map-preview .robot-map-room-label.is-home-summary {
+  z-index: 4;
+  max-width: 92px;
+  overflow: hidden;
+  padding: 3px 6px;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.homecam-dashboard-shell .homecam-home-map-preview .robot-map-home-marker {
+  z-index: 5;
+  width: 19px;
+  height: 19px;
+}
+.homecam-dashboard-shell .homecam-home-map-preview .robot-map-home-marker > span {
+  left: 13px;
+  width: 11px;
+}
 .homecam-dashboard-shell .homecam-home-map-actions { display: flex; gap: 10px; }
 .homecam-dashboard-shell .homecam-home-map-actions button {
   flex: 1;
