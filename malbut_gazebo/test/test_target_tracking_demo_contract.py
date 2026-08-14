@@ -128,7 +128,10 @@ def test_demo_uses_optical_sensor_coordinates_without_ground_truth():
     tracking_source = '\n'.join(
         path.read_text(encoding='utf-8')
         for path in (
-            PACKAGE_ROOT.parent / 'malbut_tracking' / 'malbut_tracking'
+            PACKAGE_ROOT.parent
+            / 'malbut_autonomy'
+            / 'malbut_tracking'
+            / 'malbut_tracking'
         ).glob('*.py')
     )
     combined = target_demo + tracking_source

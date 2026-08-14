@@ -52,8 +52,8 @@ YOLOv5n ONNX file in an isolated cache environment:
 
 ```bash
 cd ~/ros2_ws/src/malbut
-./malbut_perception/scripts/prepare_yolov5_model.sh
-./malbut_perception/scripts/prepare_osnet_model.sh
+./malbut_autonomy/malbut_perception/scripts/prepare_yolov5_model.sh
+./malbut_autonomy/malbut_perception/scripts/prepare_osnet_model.sh
 ```
 
 The one-time export installs its Python dependencies only under

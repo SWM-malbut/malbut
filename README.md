@@ -5,9 +5,12 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 저장소: [SWM-malbut/malbut](https://github.com/SWM-malbut/malbut)
 - 로봇 모델 패키지: `malbut_description`
 - 시뮬레이션 패키지: `malbut_gazebo`
-- RGB-D 사람 인식 패키지: `malbut_perception`
-- 공통 ROS 인터페이스 패키지: `malbut_interfaces`
-- 사람 목표 추적 패키지: `malbut_tracking`
+- 자율주행 응용 패키지 모음: `malbut_autonomy/`
+  - RGB-D 사람 인식: `malbut_perception`
+  - 사람 목표 추적: `malbut_tracking`
+  - 자율 순회: `malbut_roaming`
+  - 예약 순찰: `malbut_patrol`
+  - 공통 ROS 인터페이스: `malbut_interfaces`
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
 - 홈캠 웹·백엔드: `homecam_web`
 - 대화·에이전트 계약 패키지: `malbut_agent_server`
@@ -202,8 +205,8 @@ ros2 launch malbut_description display.launch.py
 
 ```bash
 cd ~/ros2_ws/src/malbut
-./malbut_perception/scripts/prepare_yolov5_model.sh
-./malbut_perception/scripts/prepare_osnet_model.sh
+./malbut_autonomy/malbut_perception/scripts/prepare_yolov5_model.sh
+./malbut_autonomy/malbut_perception/scripts/prepare_osnet_model.sh
 
 cd ~/ros2_ws
 source install/local_setup.bash
@@ -347,7 +350,8 @@ ros2 service call /roaming/stop std_srvs/srv/Trigger '{}'
 LLM 행동 계층은 map 좌표를 `/roaming/goal`로 보내 현재 순회를 선점할 수
 있습니다. 인식 계층은 센서로 위치를 추정한 이동 표적만
 `/roaming/interest_target`으로 전달합니다. 시뮬레이터의 모델 좌표는 사용하지
-않습니다. 전체 파라미터와 인터페이스는 `malbut_roaming/README.md`에 있습니다.
+않습니다. 전체 파라미터와 인터페이스는
+`malbut_autonomy/malbut_roaming/README.md`에 있습니다.
 
 기본값은 개별 Nav2 프로세스를 실행합니다. composition 경로를 검증하거나
 사용하려면 `use_composition:=True`를 전달합니다. `slam.launch.py`는 실행 중
