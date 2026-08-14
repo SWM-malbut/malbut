@@ -126,6 +126,35 @@ homecam_default_config_path() {
   printf '%s/homecam/sim.env\n' "$config_base"
 }
 
+homecam_saved_map_pose() {
+  local map_store="$1"
+  python3 - "$map_store/active.json" <<'PY'
+import json
+import math
+from pathlib import Path
+import sys
+
+manifest_path = Path(sys.argv[1])
+try:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    pose = manifest["initial_pose"]
+    values = [float(pose[name]) for name in ("x", "y", "yaw")]
+except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+if not all(math.isfinite(value) for value in values):
+    raise SystemExit(1)
+print(*(format(value, ".17g") for value in values))
+PY
+}
+
+homecam_append_pose_arguments() {
+  local target_name="$1"
+  shift
+  (($# == 3)) || return 1
+  local -n target="$target_name"
+  target+=("x:=$1" "y:=$2" "yaw:=$3")
+}
+
 homecam_resolve_config_relative_path() {
   local config_path="$1"
   local value="$2"
