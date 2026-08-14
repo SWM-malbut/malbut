@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
@@ -9,12 +10,14 @@ import {
   Cat,
   CheckCircle,
   ClockCounterClockwise,
+  CornersOut,
   Dog,
   Info,
-  MapTrifold,
+  Moon,
   Person,
   Play,
   ShieldCheck,
+  Sun,
   UsersThree,
   VideoCamera,
   Waveform,
@@ -46,6 +49,7 @@ export type HomecamDevice = {
 };
 
 type HomecamEventType = "motion" | "person" | "dog" | "cat";
+type HomecamEventFilter = HomecamEventType | "all" | "pet";
 type EventCursor = { occurredAt: string; id: string };
 
 type HomecamEvent = {
@@ -66,6 +70,7 @@ type FamilyMember = {
 };
 
 type ApiAvailability = "loading" | "ready" | "unavailable";
+type HomecamColorMode = "dark" | "light";
 
 type HomecamDashboardProps = {
   initialTab?: HomecamTab;
@@ -75,6 +80,10 @@ type HomecamDashboardProps = {
   creatingLegacyBroadcast: boolean;
   externalError?: string;
   legacyArchive?: React.ReactNode;
+  liveViewer?: (context: {
+    eventCount: number;
+    openEvents: () => void;
+  }) => React.ReactNode;
 };
 
 type BeforeInstallPromptEvent = Event & {
@@ -89,6 +98,89 @@ const EVENT_LABELS: Record<HomecamEventType, string> = {
   cat: "고양이",
 };
 
+function HomeMapSummary({
+  device,
+  onNavigate,
+}: {
+  device: HomecamDevice | null;
+  onNavigate: (tab: HomecamTab) => void;
+}) {
+  const [revision, setRevision] = useState("");
+  const [rooms, setRooms] = useState<Array<{ id: string; name: string; color: string }>>([]);
+
+  useEffect(() => {
+    if (!device) {
+      const timer = window.setTimeout(() => {
+        setRevision("");
+        setRooms([]);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+    const controller = new AbortController();
+    void Promise.all([
+      fetch(`/api/devices/${encodeURIComponent(device.id)}/robot`, { cache: "no-store", signal: controller.signal }),
+      fetch(`/api/devices/${encodeURIComponent(device.id)}/robot/semantic`, { cache: "no-store", signal: controller.signal }),
+    ]).then(async ([robotResponse, semanticResponse]) => {
+      const robot = asRecord(await robotResponse.json().catch(() => ({})));
+      const map = asRecord(robot.map);
+      if (robotResponse.ok) setRevision(stringValue(map.revision) ?? "");
+      if (!semanticResponse.ok) return;
+      const semantic = asRecord(await semanticResponse.json().catch(() => ({})));
+      const userMap = asRecord(semantic.userMap);
+      const features = Array.isArray(userMap.features) ? userMap.features : [];
+      setRooms(features.flatMap((value, index) => {
+        const feature = asRecord(value);
+        const properties = asRecord(feature.properties);
+        if (properties.role !== "room") return [];
+        return [{
+          id: stringValue(feature.id) ?? stringValue(properties.room_id) ?? `room-${index}`,
+          name: stringValue(properties.name) ?? `공간 ${index + 1}`,
+          color: stringValue(properties.color) ?? ["#E7EBE3", "#E3E7EE", "#EFE7DE", "#DDE9E8"][index % 4],
+        }];
+      }));
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [device]);
+
+  return (
+    <>
+      <article className="homecam-home-map-card">
+        <h2>우리 집 지도</h2>
+        <button type="button" className="homecam-home-map-preview" onClick={() => onNavigate("map")}>
+          {device && revision ? (
+            <Image
+              src={`/api/devices/${encodeURIComponent(device.id)}/robot/map?revision=${encodeURIComponent(revision)}`}
+              alt="저장된 우리 집 지도"
+              fill
+              unoptimized
+              sizes="376px"
+            />
+          ) : (
+            <span>저장된 지도를 확인하고 있어요</span>
+          )}
+        </button>
+        <div className="homecam-home-map-actions">
+          <button type="button" onClick={() => onNavigate("map")}>목적지 선택</button>
+          <button type="button" onClick={() => onNavigate("map")}>지도 열기</button>
+        </div>
+      </article>
+      <article className="homecam-home-favorites">
+        <h2>자주 보내는 곳</h2>
+        <div>
+          {rooms.length === 0 && <p>방을 나누고 이름을 정하면 여기에 표시됩니다.</p>}
+          {rooms.slice(0, 4).map((room) => (
+            <button type="button" key={room.id} onClick={() => onNavigate("map")}>
+              <i style={{ background: room.color }} />
+              <strong>{room.name}</strong>
+              <span>지도에서 선택</span>
+            </button>
+          ))}
+        </div>
+      </article>
+    </>
+  );
+}
+
 const LEGACY_PASSWORD_LENGTH = 16;
 
 function EventKindIcon({
@@ -102,6 +194,22 @@ function EventKindIcon({
   if (type === "dog") return <Dog size={size} weight="regular" />;
   if (type === "cat") return <Cat size={size} weight="regular" />;
   return <Waveform size={size} weight="regular" />;
+}
+
+function eventFilterLabel(filter: "all" | "person" | "pet" | "motion") {
+  if (filter === "all") return "전체";
+  if (filter === "pet") return "반려동물";
+  return EVENT_LABELS[filter];
+}
+
+function eventBadgeLabel(type: HomecamEventType) {
+  return type === "dog" || type === "cat" ? "반려동물" : EVENT_LABELS[type];
+}
+
+function eventTitle(event: HomecamEvent) {
+  if (event.type === "person") return "사람이 감지됐어요";
+  if (event.type === "dog" || event.type === "cat") return "반려동물 움직임이 감지됐어요";
+  return "작은 움직임이 감지됐어요";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -231,6 +339,14 @@ function formatEventTime(value: string) {
   }).format(new Date(value));
 }
 
+function formatLiveClock(value: number) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value));
+}
+
 function normalizeLegacyCode(value: string) {
   return value.replace(/[^A-HJ-NP-Z2-9]/gi, "").slice(0, 6).toUpperCase();
 }
@@ -263,23 +379,6 @@ function Switch({
     >
       <span />
     </button>
-  );
-}
-
-function StatePill({
-  active,
-  tone,
-  children,
-}: {
-  active: boolean;
-  tone: "live" | "recording" | "camera" | "microphone";
-  children: React.ReactNode;
-}) {
-  return (
-    <span className={`homecam-state-pill state-${tone} ${active ? "is-active" : ""}`}>
-      <span aria-hidden="true" />
-      {children}
-    </span>
   );
 }
 
@@ -423,6 +522,7 @@ export function HomecamDashboard({
   creatingLegacyBroadcast,
   externalError = "",
   legacyArchive,
+  liveViewer,
 }: HomecamDashboardProps) {
   const [devices, setDevices] = useState<HomecamDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
@@ -433,8 +533,9 @@ export function HomecamDashboard({
   const [events, setEvents] = useState<HomecamEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventCursor, setEventCursor] = useState<EventCursor | null>(null);
-  const [eventFilter, setEventFilter] = useState<HomecamEventType | "all">("all");
+  const [eventFilter, setEventFilter] = useState<HomecamEventFilter>("all");
   const [selectedEvent, setSelectedEvent] = useState<HomecamEvent | null>(null);
+  const [focusedEventId, setFocusedEventId] = useState("");
   const [family, setFamily] = useState<FamilyMember[]>([]);
   const [familyLoading, setFamilyLoading] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -446,12 +547,38 @@ export function HomecamDashboard({
   const [legacyOpen, setLegacyOpen] = useState(false);
   const [legacyCode, setLegacyCode] = useState("");
   const [legacyPassword, setLegacyPassword] = useState("");
+  const [colorMode, setColorMode] = useState<HomecamColorMode>("dark");
+  const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
   const deepLinkedEventIdRef = useRef("");
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("malbut-color-mode");
+    const preferred = stored === "dark" || stored === "light"
+      ? stored
+      : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    window.queueMicrotask(() => setColorMode(preferred));
+  }, []);
+
+  useEffect(() => {
+    if (tab !== "live") return;
+    const timer = window.setInterval(() => setLiveClockMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [tab]);
 
   const selectedDevice = useMemo(
     () => devices.find((device) => device.id === selectedDeviceId) ?? devices[0] ?? null,
     [devices, selectedDeviceId],
   );
+  const visibleEvents = useMemo(() => events.filter((event) =>
+    eventFilter === "all" || event.type === eventFilter ||
+      (eventFilter === "pet" && (event.type === "dog" || event.type === "cat"))), [eventFilter, events]);
+  const focusedEvent = visibleEvents.find((event) => event.id === focusedEventId) ?? visibleEvents[0] ?? null;
+  const eventCounts = useMemo(() => ({
+    all: events.length,
+    motion: events.filter((event) => event.type === "motion").length,
+    person: events.filter((event) => event.type === "person").length,
+    pet: events.filter((event) => event.type === "dog" || event.type === "cat").length,
+  }), [events]);
 
   const loadDevices = useCallback(async (quiet = false) => {
     if (!quiet) setAvailability("loading");
@@ -576,7 +703,6 @@ export function HomecamDashboard({
     setNotice("");
     try {
       const params = new URLSearchParams();
-      if (eventFilter !== "all") params.set("type", eventFilter);
       if (append && options?.before) {
         params.set("before", options.before.occurredAt);
         params.set("beforeId", options.before.id);
@@ -655,7 +781,7 @@ export function HomecamDashboard({
     } finally {
       setEventsLoading(false);
     }
-  }, [eventFilter, selectedDevice]);
+  }, [selectedDevice]);
 
   useEffect(() => {
     if (tab === "events" || tab === "home") window.queueMicrotask(() => void loadEvents());
@@ -910,15 +1036,8 @@ export function HomecamDashboard({
   };
 
   const isOwner = selectedDevice?.role === "owner";
-  const recActive = Boolean(
-    selectedDevice?.online &&
-    selectedDevice.mediaHealthy &&
-    selectedDevice.monitoringEnabled &&
-    selectedDevice.activeSession?.storageMode,
-  );
-
   return (
-    <div className="homecam-shell homecam-dashboard-shell">
+    <div className={`homecam-shell homecam-dashboard-shell tab-${tab} theme-${colorMode}`}>
       <HomecamHeader
         activeTab={tab}
         onNavigate={setTab}
@@ -927,8 +1046,32 @@ export function HomecamDashboard({
       />
 
       <main className="homecam-main">
-        <div className="homecam-device-bar">
-          <div>
+        {tab !== "map" && <div className="homecam-device-bar">
+          {tab !== "home" && <h1>{tab === "live" ? "홈캠" : tab === "events" ? "이벤트" : "설정"}</h1>}
+          {tab === "events" && (
+            <>
+              <div className="homecam-event-period">최근 7일</div>
+              <div className="homecam-filter-row" aria-label="이벤트 종류 필터">
+                {(["all", "person", "pet", "motion"] as const).map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    className={eventFilter === filter ? "is-selected" : ""}
+                    aria-pressed={eventFilter === filter}
+                    onClick={() => { setEventFilter(filter); setFocusedEventId(""); }}
+                  >
+                    {eventFilterLabel(filter)} {eventCounts[filter]}
+                  </button>
+                ))}
+              </div>
+              <span className="homecam-device-bar-meta">검색 · 보관 정책에 따라 자동 삭제</span>
+              <button type="button" className="homecam-refresh-button" onClick={() => void loadEvents()} disabled={eventsLoading}>
+                <ArrowClockwise size={15} weight="bold" aria-hidden="true" />
+                {eventsLoading ? "불러오는 중" : "새로고침"}
+              </button>
+            </>
+          )}
+          {tab !== "events" && <div className="homecam-device-selector">
             <span className="homecam-device-avatar" aria-hidden="true">말</span>
             <label htmlFor="homecam-device-select">말벗 기기</label>
             {devices.length > 1 ? (
@@ -944,12 +1087,21 @@ export function HomecamDashboard({
             ) : (
               <strong>{selectedDevice?.displayName ?? "등록된 말벗 없음"}</strong>
             )}
-          </div>
-          <span className={`homecam-connection-pill ${selectedDevice?.online ? "is-online" : ""}`}>
+          </div>}
+          {tab !== "events" && <span className={`homecam-connection-pill ${selectedDevice?.online ? "is-online" : ""}`}>
             <i aria-hidden="true" />
-            {selectedDevice?.online ? "연결됨" : "오프라인"}
-          </span>
-        </div>
+            {selectedDevice?.online
+              ? tab === "live" && selectedDevice.mediaHealthy ? "실시간 연결됨" : "연결됨"
+              : "오프라인"}
+          </span>}
+          {tab === "live" && (
+            <span className="homecam-device-bar-meta">
+              {selectedDevice?.mediaHealthy ? "보안 영상 채널 준비됨" : "영상 채널 확인 중"}
+              {` · ${selectedDevice?.monitoringEnabled ? "이벤트 영상만 저장" : "영상 저장 안 함"}`}
+            </span>
+          )}
+          {tab === "settings" && <span className="homecam-device-bar-meta">{selectedDevice?.role === "owner" ? "소유자 설정" : "읽기 전용"}</span>}
+        </div>}
 
         {availability === "loading" && (
           <div className="homecam-loading" role="status">
@@ -960,88 +1112,80 @@ export function HomecamDashboard({
 
         {tab === "home" && (
           <section className="homecam-home-view" aria-label="말벗 지금 상태">
-            <article className="homecam-home-hero">
-              <div>
-                <span>지금 말벗은</span>
-                <h1>
-                  {selectedDevice?.online
-                    ? "집 안에서 대기하고 있어요"
-                    : "연결을 기다리고 있어요"}
-                </h1>
-                <div className="homecam-home-chips">
-                  <span>{selectedDevice?.online ? "기기 연결됨" : "기기 오프라인"}</span>
-                  <span>{selectedDevice?.mediaHealthy ? "영상 상태 정상" : "영상 확인 필요"}</span>
-                  <span>{selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"} · {selectedDevice?.microphoneEnabled ? "마이크 켜짐" : "마이크 꺼짐"}</span>
+            <div className="homecam-home-workspace">
+              <div className="homecam-home-primary">
+                <article className="homecam-home-hero">
+                  <div>
+                    <span>지금 말벗은</span>
+                    <h1>
+                      {selectedDevice?.online
+                        ? "집 안에서 대기하고 있어요"
+                        : "연결을 기다리고 있어요"}
+                    </h1>
+                    <div className="homecam-home-chips">
+                      <span>{selectedDevice?.online ? "기기 연결됨" : "기기 오프라인"}</span>
+                      <span>{selectedDevice?.mediaHealthy ? "영상 상태 정상" : "영상 확인 필요"}</span>
+                      <span>{selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"} · {selectedDevice?.microphoneEnabled ? "마이크 켜짐" : "마이크 꺼짐"}</span>
+                    </div>
+                  </div>
+                  <div className="homecam-home-actions">
+                    <button type="button" onClick={() => setTab("map")}>지도에서 보내기</button>
+                    <button type="button" className="is-secondary" onClick={() => setTab("live")}>홈캠 열기</button>
+                  </div>
+                </article>
+
+                <div className="homecam-home-main-grid">
+                  <button type="button" className="homecam-home-camera" onClick={() => setTab("live")}>
+                    <span className="homecam-home-live"><i aria-hidden="true" />실시간</span>
+                    <VideoCamera size={42} weight="light" aria-hidden="true" />
+                    <strong>{selectedDevice?.online ? "거실 실시간 영상 열기" : "홈캠 연결 상태 확인"}</strong>
+                    <small>보호자 계정으로 안전하게 연결합니다</small>
+                    <span className="homecam-home-camera-action">홈캠 크게 보기</span>
+                  </button>
+
+                  <article className="homecam-home-events">
+                    <header>
+                      <div><h2>확인이 필요해요</h2><span>{events.length}건</span></div>
+                      <button type="button" onClick={() => setTab("events")}>전체 보기</button>
+                    </header>
+                    <div>
+                      {eventsLoading && events.length === 0 && <p>이벤트를 확인하고 있어요…</p>}
+                      {!eventsLoading && events.length === 0 && (
+                        <p className="is-safe"><CheckCircle size={24} weight="fill" /> 지금 상태는 안전해요</p>
+                      )}
+                      {events.slice(0, 3).map((event) => (
+                        <button type="button" key={event.id} onClick={() => { setSelectedEvent(event); setTab("events"); }}>
+                          <span className={`event-kind-icon kind-${event.type}`}><EventKindIcon type={event.type} /></span>
+                          <span><strong>{EVENT_LABELS[event.type]} 감지</strong><small>{formatEventTime(event.occurredAt)}</small></span>
+                          <CaretRight size={17} weight="bold" />
+                        </button>
+                      ))}
+                    </div>
+                  </article>
                 </div>
               </div>
-              <div className="homecam-home-actions">
-                <button type="button" onClick={() => setTab("map")}>지도에서 보내기</button>
-                <button type="button" className="is-secondary" onClick={() => setTab("live")}>홈캠 열기</button>
-              </div>
-            </article>
 
-            <div className="homecam-home-grid">
-              <button type="button" className="homecam-home-camera" onClick={() => setTab("live")}>
-                <span className="homecam-home-live"><i aria-hidden="true" />실시간</span>
-                <VideoCamera size={42} weight="light" aria-hidden="true" />
-                <strong>{selectedDevice?.online ? "거실 실시간 영상 열기" : "홈캠 연결 상태 확인"}</strong>
-                <small>보호자 계정으로 안전하게 연결합니다</small>
-              </button>
-
-              <article className="homecam-home-events">
-                <header>
-                  <div><h2>확인이 필요해요</h2><span>{events.length}건</span></div>
-                  <button type="button" onClick={() => setTab("events")}>전체 보기</button>
-                </header>
-                <div>
-                  {eventsLoading && events.length === 0 && <p>이벤트를 확인하고 있어요…</p>}
-                  {!eventsLoading && events.length === 0 && (
-                    <p className="is-safe"><CheckCircle size={24} weight="fill" /> 지금 상태는 안전해요</p>
-                  )}
-                  {events.slice(0, 3).map((event) => (
-                    <button type="button" key={event.id} onClick={() => { setSelectedEvent(event); setTab("events"); }}>
-                      <span className={`event-kind-icon kind-${event.type}`}><EventKindIcon type={event.type} /></span>
-                      <span><strong>{EVENT_LABELS[event.type]} 감지</strong><small>{formatEventTime(event.occurredAt)}</small></span>
-                      <CaretRight size={17} weight="bold" />
-                    </button>
-                  ))}
-                </div>
-              </article>
-
-              <article className="homecam-home-shortcut">
-                <MapTrifold size={25} weight="regular" aria-hidden="true" />
-                <div><span>우리 집 지도</span><strong>현재 위치와 이동 경로를 확인하세요</strong></div>
-                <button type="button" onClick={() => setTab("map")}>지도 열기</button>
-              </article>
-
-              <article className="homecam-home-privacy">
-                <ShieldCheck size={24} weight="regular" aria-hidden="true" />
-                <div><span>개인정보</span><strong>{selectedDevice?.monitoringEnabled ? "이벤트 영상을 저장하고 있어요" : "영상 저장을 사용하지 않아요"}</strong></div>
-                <button type="button" onClick={() => setTab("settings")}>저장 설정</button>
-              </article>
+              <aside className="homecam-home-sidebar">
+                <HomeMapSummary device={selectedDevice} onNavigate={setTab} />
+                <article className="homecam-home-privacy">
+                  <ShieldCheck size={24} weight="regular" aria-hidden="true" />
+                  <div><span>개인정보</span><strong>{selectedDevice?.monitoringEnabled ? "이벤트 영상만 저장하고 있어요" : "영상 저장을 사용하지 않아요"}</strong></div>
+                  <button type="button" onClick={() => setTab("settings")}>저장 설정 보기</button>
+                </article>
+              </aside>
             </div>
           </section>
         )}
 
         {tab === "live" && (
           <section className="homecam-live-view" aria-label="실시간 홈캠">
-            <div className="homecam-video-card">
+            {liveViewer?.({ eventCount: events.length, openEvents: () => setTab("events") }) ?? <div className="homecam-video-card">
               <div className="homecam-video-frame">
                 <div className="homecam-video-topbar">
-                  <div className="homecam-state-row" aria-label="홈캠 상태">
-                    <StatePill
-                      tone="live"
-                      active={Boolean(
-                        selectedDevice?.online && selectedDevice.mediaHealthy,
-                      )}
-                    >
-                      LIVE
-                    </StatePill>
-                    <StatePill tone="recording" active={recActive}>REC</StatePill>
-                    <StatePill tone="camera" active={Boolean(selectedDevice?.cameraEnabled)}>CAM</StatePill>
-                    <StatePill tone="microphone" active={Boolean(selectedDevice?.microphoneEnabled)}>MIC</StatePill>
-                  </div>
-                  <span>640 × 400 · SECURE</span>
+                  <span className="homecam-video-clock">{formatLiveClock(liveClockMs)}</span>
+                  <button type="button" onClick={() => void openLive()} disabled={!selectedDevice?.online || !selectedDevice.cameraEnabled || busy === "live"} aria-label="실시간 영상을 크게 보기">
+                    <CornersOut size={19} weight="regular" aria-hidden="true" />
+                  </button>
                 </div>
                 <div className="homecam-video-message">
                   <VideoCamera size={38} weight="light" aria-hidden="true" />
@@ -1065,126 +1209,155 @@ export function HomecamDashboard({
                   </button>
                 </div>
                 <div className="homecam-video-bottom">
-                  <span>{selectedDevice?.monitoringEnabled ? "모니터링 켜짐" : "녹화 꺼짐"}</span>
-                  <span>영상은 허용된 가족 계정만 볼 수 있어요</span>
+                  <span className="homecam-video-control-chip">
+                    <Camera size={16} weight="regular" aria-hidden="true" />
+                    {selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"}
+                  </span>
+                  <span className="homecam-video-control-chip">
+                    <ShieldCheck size={16} weight="regular" aria-hidden="true" />
+                    {selectedDevice?.monitoringEnabled ? "이벤트만 저장" : "저장 안 함"}
+                  </span>
+                  <button type="button" onClick={() => setTab("events")}>
+                    최근 클립 {events.length}건
+                  </button>
                 </div>
               </div>
-            </div>
+            </div>}
 
             <div className="homecam-quick-grid">
-              <article className="homecam-summary-card">
-                <span className="summary-icon icon-monitoring" aria-hidden="true">
-                  <ShieldCheck size={22} weight="regular" />
-                </span>
-                <div>
-                  <span>모니터링</span>
-                  <strong>{selectedDevice?.monitoringEnabled ? "켜짐 · 7일 보관" : "꺼짐"}</strong>
+              <article className="homecam-live-state-card">
+                <h2>지금 상태</h2>
+                <div className="homecam-live-state-list">
+                  <div>
+                    <i className={selectedDevice?.online && selectedDevice.mediaHealthy ? "is-good" : ""} aria-hidden="true" />
+                    <span>영상 연결</span>
+                    <strong>{selectedDevice?.online && selectedDevice.mediaHealthy ? "좋음" : selectedDevice?.online ? "준비 중" : "오프라인"}</strong>
+                  </div>
+                  <div>
+                    <i className={selectedDevice?.cameraEnabled ? "is-good" : ""} aria-hidden="true" />
+                    <span>카메라</span>
+                    <strong>{selectedDevice?.cameraEnabled ? "켜짐" : "꺼짐"}</strong>
+                  </div>
+                  <div>
+                    <i className={selectedDevice?.microphoneEnabled ? "is-good" : ""} aria-hidden="true" />
+                    <span>보호자 마이크</span>
+                    <strong>{selectedDevice?.microphoneEnabled ? "사용 가능" : "꺼짐"}</strong>
+                  </div>
+                  <div>
+                    <i aria-hidden="true" />
+                    <span>영상 저장</span>
+                    <strong>{selectedDevice?.monitoringEnabled ? "이벤트만" : "안 함"}</strong>
+                    {selectedDevice && (
+                      <Switch
+                        checked={selectedDevice.monitoringEnabled}
+                        disabled={!isOwner || Boolean(busy)}
+                        label="이벤트 영상 저장"
+                        onChange={(value) => void updateSetting("monitoringEnabled", value)}
+                      />
+                    )}
+                  </div>
                 </div>
-                {selectedDevice && (
-                  <Switch
-                    checked={selectedDevice.monitoringEnabled}
-                    disabled={!isOwner || Boolean(busy)}
-                    label="모니터링 모드"
-                    onChange={(value) => void updateSetting("monitoringEnabled", value)}
-                  />
-                )}
               </article>
-              <button type="button" className="homecam-summary-card is-button" onClick={() => setTab("events")}>
-                <span className="summary-icon icon-events" aria-hidden="true">
-                  <ClockCounterClockwise size={22} weight="regular" />
-                </span>
-                <div>
-                  <span>최근 이벤트</span>
-                  <strong>타임라인 보기</strong>
-                </div>
-                <CaretRight className="summary-arrow" size={18} weight="bold" aria-hidden="true" />
-              </button>
-              <button type="button" className="homecam-summary-card is-button" onClick={() => setTab("settings")}>
-                <span className="summary-icon icon-family" aria-hidden="true">
-                  <UsersThree size={22} weight="regular" />
-                </span>
-                <div>
-                  <span>가족 공유</span>
-                  <strong>{family.length > 0 ? `${family.length}명 연결됨` : "계정으로 안전하게"}</strong>
-                </div>
-                <CaretRight className="summary-arrow" size={18} weight="bold" aria-hidden="true" />
-              </button>
+              <article className="homecam-live-recent-card">
+                <div><h2>최근 이벤트 클립</h2><button type="button" onClick={() => setTab("events")}>전체 보기</button></div>
+                <section>
+                  {events.slice(0, 2).map((event) => (
+                    <button type="button" key={event.id} onClick={() => { setFocusedEventId(event.id); setTab("events"); }}>
+                      <span className={`kind-${event.type}`}><EventKindIcon type={event.type} /></span>
+                      <small>{formatEventTime(event.occurredAt)}</small>
+                      <strong>{eventBadgeLabel(event.type)}</strong>
+                    </button>
+                  ))}
+                  {events.length === 0 && <p>아직 저장된 이벤트 클립이 없습니다.</p>}
+                </section>
+              </article>
+              <div className="homecam-live-side-actions">
+                <button type="button" onClick={() => void openLive()} disabled={!selectedDevice?.online || !selectedDevice.cameraEnabled || busy === "live"}>
+                  <ArrowClockwise size={16} weight="bold" aria-hidden="true" />
+                  {liveViewer ? "연결 재시도" : "실시간 연결"}
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedDevice || !isOwner || Boolean(busy)}
+                  onClick={() => selectedDevice && void updateSetting("cameraEnabled", !selectedDevice.cameraEnabled)}
+                >
+                  <Camera size={16} weight="regular" aria-hidden="true" />
+                  {selectedDevice?.cameraEnabled ? "카메라 끄기" : "카메라 켜기"}
+                </button>
+              </div>
             </div>
           </section>
         )}
 
         {tab === "events" && (
           <section className="homecam-section" aria-labelledby="homecam-events-title">
-            <div className="homecam-section-heading">
-              <div>
-                <span>최근 7일</span>
-                <h1 id="homecam-events-title">이벤트 타임라인</h1>
+            <h1 id="homecam-events-title" className="sr-only">이벤트</h1>
+            <div className="homecam-events-workspace">
+              <div className="homecam-event-list">
+                {visibleEvents.length > 0 && <h2>최근 이벤트</h2>}
+                {eventsLoading && events.length === 0 && (
+                  <div className="homecam-empty-state" role="status">이벤트를 불러오는 중입니다…</div>
+                )}
+                {!eventsLoading && visibleEvents.length === 0 && (
+                  <div className="homecam-empty-state">
+                    <CheckCircle size={34} weight="light" aria-hidden="true" />
+                    <strong>확인할 이벤트가 없어요</strong>
+                    <p>{eventFilter === "all" ? "모니터링을 켜면 감지 기록이 시간순으로 표시됩니다." : "선택한 종류의 이벤트가 없습니다."}</p>
+                  </div>
+                )}
+                {visibleEvents.map((event) => (
+                  <button
+                    type="button"
+                    className={`homecam-event-row ${focusedEvent?.id === event.id ? "is-focused" : ""}`}
+                    key={event.id}
+                    onClick={() => setFocusedEventId(event.id)}
+                  >
+                    <span className={`homecam-event-thumbnail kind-${event.type}`} aria-hidden="true">
+                      <EventKindIcon type={event.type} />
+                      <small>{event.recordingId ? "클립" : "기록"}</small>
+                    </span>
+                    <span className="homecam-event-row-copy">
+                      <small><i className={`kind-${event.type}`}>{eventBadgeLabel(event.type)}</i>{formatEventTime(event.occurredAt)}</small>
+                      <strong>{eventTitle(event)}</strong>
+                      <em>{event.recordingId ? "저장된 이벤트 영상" : "감지 기록만 있음"}{event.confidence !== null ? ` · 신뢰도 ${Math.round(event.confidence * 100)}%` : ""}</em>
+                    </span>
+                    <span className="event-play-icon" aria-hidden="true">
+                      {event.recordingId
+                        ? <Play size={14} weight="fill" />
+                        : <CaretRight size={16} weight="bold" />}
+                    </span>
+                  </button>
+                ))}
+                {eventCursor && events.length > 0 && (
+                  <button type="button" className="homecam-refresh-button" disabled={eventsLoading} onClick={() => void loadEvents({ append: true, before: eventCursor })}>
+                    {eventsLoading ? "불러오는 중" : "이전 이벤트 더 보기"}
+                  </button>
+                )}
               </div>
-              <button type="button" className="homecam-refresh-button" onClick={() => void loadEvents()} disabled={eventsLoading}>
-                <ArrowClockwise size={15} weight="bold" aria-hidden="true" />
-                {eventsLoading ? "불러오는 중" : "새로고침"}
-              </button>
-            </div>
-            <div className="homecam-filter-row" aria-label="이벤트 종류 필터">
-              {(["all", "motion", "person", "dog", "cat"] as const).map((filter) => (
-                <button
-                  key={filter}
-                  type="button"
-                  className={eventFilter === filter ? "is-selected" : ""}
-                  aria-pressed={eventFilter === filter}
-                  onClick={() => setEventFilter(filter)}
-                >
-                  {filter === "all" ? "전체" : EVENT_LABELS[filter]}
-                </button>
-              ))}
-            </div>
-            <div className="homecam-event-list">
-              {eventsLoading && events.length === 0 && (
-                <div className="homecam-empty-state" role="status">이벤트를 불러오는 중입니다…</div>
-              )}
-              {!eventsLoading && events.length === 0 && (
-                <div className="homecam-empty-state">
-                  <CheckCircle size={34} weight="light" aria-hidden="true" />
-                  <strong>확인할 이벤트가 없어요</strong>
-                  <p>모니터링을 켜면 움직임·사람·강아지·고양이 감지 기록이 표시됩니다.</p>
-                </div>
-              )}
-              {events.map((event) => (
-                <button
-                  type="button"
-                  className="homecam-event-row"
-                  key={event.id}
-                  onClick={() => setSelectedEvent(event)}
-                >
-                  <span className={`event-kind-icon kind-${event.type}`} aria-hidden="true">
-                    <EventKindIcon type={event.type} />
-                  </span>
-                  <span>
-                    <strong>{EVENT_LABELS[event.type]} 감지</strong>
-                    <small>
-                      {formatEventTime(event.occurredAt)}
-                      {event.confidence !== null ? ` · 신뢰도 ${Math.round(event.confidence * 100)}%` : ""}
-                    </small>
-                  </span>
-                  <span className="event-play-icon" aria-hidden="true">
-                    {event.recordingId
-                      ? <Play size={14} weight="fill" />
-                      : <CaretRight size={16} weight="bold" />}
-                  </span>
-                </button>
-              ))}
-              {eventCursor && events.length > 0 && (
-                <button
-                  type="button"
-                  className="homecam-refresh-button"
-                  disabled={eventsLoading}
-                  onClick={() =>
-                    void loadEvents({ append: true, before: eventCursor })
-                  }
-                >
-                  {eventsLoading ? "불러오는 중" : "이전 이벤트 더 보기"}
-                </button>
-              )}
+              <aside className="homecam-event-detail">
+                {focusedEvent ? (
+                  <>
+                    <div className="homecam-event-detail-video">
+                      <span className="homecam-event-video-meta">{eventBadgeLabel(focusedEvent.type)} · {formatEventTime(focusedEvent.occurredAt)}</span>
+                      <div><EventKindIcon type={focusedEvent.type} /><span>{focusedEvent.recordingId ? "저장된 이벤트 클립" : "영상이 없는 이벤트"}</span></div>
+                      {focusedEvent.recordingId && <button type="button" onClick={() => setSelectedEvent(focusedEvent)}><Play size={17} weight="fill" /> 영상 재생</button>}
+                    </div>
+                    <div className="homecam-event-detail-copy">
+                      <span><i className={`kind-${focusedEvent.type}`}>{eventBadgeLabel(focusedEvent.type)}</i>{formatEventTime(focusedEvent.occurredAt)}</span>
+                      <h2>{eventTitle(focusedEvent)}</h2>
+                      <div>
+                        <strong>감지 정보</strong>
+                        <p>{focusedEvent.recordingId ? "이벤트가 감지된 시각부터 저장된 영상 구간을 확인할 수 있습니다." : "이 이벤트는 감지 기록만 있으며 연결된 영상 구간은 없습니다."} 자동 감지 결과는 실제 상황과 다를 수 있습니다.</p>
+                      </div>
+                      <div className="homecam-event-detail-actions">
+                        <button type="button" onClick={() => setSelectedEvent(focusedEvent)} disabled={!focusedEvent.recordingId}>영상 클립 확인</button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="homecam-empty-state"><ClockCounterClockwise size={34} weight="light" /><strong>이벤트를 선택해 주세요</strong><p>왼쪽 목록에서 기록을 선택하면 상세 내용이 표시됩니다.</p></div>
+                )}
+              </aside>
             </div>
           </section>
         )}
@@ -1206,7 +1379,51 @@ export function HomecamDashboard({
                     : "읽기 전용"}
               </span>
             </div>
-            <div className="homecam-settings-grid">
+            <div className="homecam-settings-workspace">
+              <aside className="homecam-settings-nav" aria-label="설정 항목">
+                <button type="button" className="is-active">화면 모드</button>
+                <button type="button">가족 구성원</button>
+                <button type="button">로봇 이름</button>
+                <button type="button">카메라와 마이크</button>
+                <button type="button">알림</button>
+                <button type="button">영상 보관</button>
+                <button type="button">이벤트 감지</button>
+                <button type="button">개인정보</button>
+                <button type="button" onClick={() => setTab("map")}>지도 관리</button>
+                <button type="button">연결된 장치</button>
+                <button type="button">소프트웨어 정보</button>
+              </aside>
+              <div className="homecam-settings-grid">
+              <section className="homecam-settings-card homecam-display-settings">
+                <div className="settings-card-heading">
+                  <span className="settings-heading-icon" aria-hidden="true">
+                    {colorMode === "dark"
+                      ? <Moon size={21} weight="regular" />
+                      : <Sun size={21} weight="regular" />}
+                  </span>
+                  <div>
+                    <h2>화면 모드</h2>
+                    <p>홈·홈캠·이벤트·지도·설정 화면의 밝기를 선택합니다.</p>
+                  </div>
+                </div>
+                <div className="homecam-theme-options" role="group" aria-label="화면 모드 선택">
+                  <button type="button" className={colorMode === "light" ? "is-active" : ""} onClick={() => {
+                    window.localStorage.setItem("malbut-color-mode", "light");
+                    setColorMode("light");
+                  }}>
+                    <Sun size={19} weight="regular" aria-hidden="true" />
+                    화이트 모드
+                  </button>
+                  <button type="button" className={colorMode === "dark" ? "is-active" : ""} onClick={() => {
+                    window.localStorage.setItem("malbut-color-mode", "dark");
+                    setColorMode("dark");
+                  }}>
+                    <Moon size={19} weight="regular" aria-hidden="true" />
+                    블랙 모드
+                  </button>
+                </div>
+              </section>
+
               <section className="homecam-settings-card">
                 <div className="settings-card-heading">
                   <span className="settings-heading-icon" aria-hidden="true">
@@ -1321,6 +1538,7 @@ export function HomecamDashboard({
                   ))}
                 </div>
               </section>
+              </div>
             </div>
           </section>
         )}

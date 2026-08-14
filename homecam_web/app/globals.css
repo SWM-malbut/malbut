@@ -4859,6 +4859,19 @@ a:focus-visible {
   background: var(--homecam-canvas);
 }
 
+.homecam-dashboard-shell .homecam-device-bar > h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.homecam-dashboard-shell .homecam-device-bar-meta {
+  margin-left: auto;
+  color: var(--homecam-muted);
+  font-size: 15px;
+  font-weight: 600;
+}
+
 .homecam-dashboard-shell .homecam-device-avatar {
   display: grid;
   width: 32px;
@@ -5223,4 +5236,2574 @@ a:focus-visible {
   .homecam-home-shortcut,
   .homecam-home-privacy { align-items: flex-start; flex-wrap: wrap; }
   .homecam-dashboard-shell .robot-map-card { min-height: 330px; padding: 10px; }
+}
+
+/* Desktop map workspace mirrors the approved MALBUT product mockup. */
+@media (min-width: 981px) {
+  .homecam-dashboard-shell .homecam-brand > small,
+  .homecam-dashboard-shell .homecam-nav button svg,
+  .homecam-dashboard-shell .homecam-settings-link svg {
+    display: none;
+  }
+
+  .homecam-dashboard-shell .homecam-nav button,
+  .homecam-dashboard-shell .homecam-settings-link {
+    min-height: 49px;
+    gap: 0;
+    padding: 13px 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+}
+
+.homecam-dashboard-shell .robot-map-section {
+  display: flex;
+  min-height: 100svh;
+  flex-direction: column;
+}
+
+.homecam-dashboard-shell .robot-map-topbar {
+  display: flex;
+  min-height: 76px;
+  align-items: center;
+  gap: 16px;
+  margin: 0 -28px;
+  padding: 0 28px;
+  border-bottom: 1px solid #ebe4d9;
+  background: var(--homecam-paper);
+}
+
+.homecam-dashboard-shell .robot-map-topbar h1 {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+}
+
+.homecam-dashboard-shell .robot-map-mode-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 14px;
+  background: var(--homecam-canvas);
+}
+
+.homecam-dashboard-shell .robot-map-mode-tabs button {
+  min-height: 38px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 11px;
+  color: #4a524e;
+  background: transparent;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .robot-map-mode-tabs button.is-active {
+  color: var(--homecam-charcoal);
+  background: var(--homecam-teal-light);
+  font-weight: 700;
+}
+
+.homecam-dashboard-shell .robot-map-mode-tabs button:nth-child(2).is-active {
+  color: #a0521a;
+  border: 1px solid #f0d3b8;
+  background: #fbebdc;
+}
+
+.homecam-dashboard-shell .robot-map-mode-tabs button:disabled {
+  color: #a9a296;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.homecam-dashboard-shell .robot-map-top-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  color: #7c837e;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.homecam-dashboard-shell .robot-map-top-status i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #a9aaa5;
+}
+
+.homecam-dashboard-shell .robot-map-top-status.is-online {
+  color: #1f6641;
+}
+
+.homecam-dashboard-shell .robot-map-top-status.is-online i {
+  background: #2e7d51;
+}
+
+.homecam-dashboard-shell .robot-map-refresh {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid var(--homecam-line);
+  border-radius: 12px;
+  color: var(--homecam-charcoal);
+  background: var(--homecam-paper);
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .robot-map-layout {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) 392px;
+  gap: 24px;
+  padding: 26px 0 0;
+}
+
+.homecam-dashboard-shell .robot-map-primary {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.homecam-dashboard-shell .robot-map-mode-banner {
+  display: flex;
+  min-height: 50px;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  color: #14606e;
+  background: var(--homecam-teal-light);
+  font-size: 16px;
+}
+
+.homecam-dashboard-shell .robot-map-mode-banner strong {
+  color: var(--homecam-charcoal);
+}
+
+.homecam-dashboard-shell .robot-map-mode-banner.mode-mapping,
+.homecam-dashboard-shell .robot-map-mode-banner.mode-view {
+  color: #4a524e;
+  background: var(--homecam-paper);
+}
+
+.homecam-dashboard-shell .robot-map-mode-banner.mode-mapping strong,
+.homecam-dashboard-shell .robot-map-mode-banner.mode-view strong {
+  color: var(--homecam-ink);
+}
+
+.homecam-dashboard-shell .robot-map-mode-banner.mode-navigate {
+  color: #a0521a;
+  border: 1px solid #f0d3b8;
+  background: #fbebdc;
+}
+
+.homecam-dashboard-shell .robot-map-mode-banner.mode-navigate strong {
+  color: #a0521a;
+}
+
+.homecam-dashboard-shell .robot-map-card {
+  display: grid;
+  min-height: 540px;
+  flex: 1;
+  place-items: center;
+  padding: 0;
+  border: 2px solid var(--homecam-line);
+  border-radius: 22px;
+  background: #efeae1;
+}
+
+.homecam-dashboard-shell .robot-map-canvas {
+  width: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 20px;
+  background: #f5f0e9;
+  box-shadow: none;
+  isolation: isolate;
+}
+
+.homecam-dashboard-shell .robot-map-semantics {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.homecam-dashboard-shell .robot-map-room-divider {
+  fill: none;
+  stroke: #0b3c45;
+  stroke-width: .38;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.homecam-dashboard-shell .robot-map-room-divider.is-selected { stroke-width: .52; }
+
+.homecam-dashboard-shell .robot-map-room-divider.is-merge-target {
+  stroke: #e07a28;
+  stroke-width: .7;
+  stroke-dasharray: 1.4 .7;
+}
+
+.homecam-dashboard-shell .robot-map-zone-shape {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  transition: opacity 140ms ease, stroke-width 140ms ease;
+}
+
+.homecam-dashboard-shell .robot-map-card.mode-zones .robot-map-zone-shape {
+  pointer-events: all;
+  cursor: grab;
+}
+
+.homecam-dashboard-shell .robot-map-card.mode-zones .robot-map-zone-shape:active { cursor: grabbing; }
+.homecam-dashboard-shell .robot-map-zone-shape.is-selected {
+  stroke-width: .9;
+}
+
+.homecam-dashboard-shell .robot-map-card.mode-zones .robot-map-zone-shape:not(.is-selected) { opacity: .78; }
+.homecam-dashboard-shell .robot-map-card.mode-zones .robot-map-zone-shape:not(.is-selected):hover { opacity: 1; stroke-width: .65; }
+.homecam-dashboard-shell .robot-map-zone-shape.is-restricted { stroke: #c0402f; stroke-width: .48; }
+.homecam-dashboard-shell .robot-map-zone-shape.is-avoid { stroke: #c8901a; stroke-width: .48; }
+.homecam-dashboard-shell .robot-map-zone-shape.is-allow { stroke: #2e7d51; stroke-width: .48; stroke-dasharray: 1.25 .85; }
+
+.homecam-dashboard-shell .robot-map-virtual-wall {
+  pointer-events: none;
+  stroke-width: 4px;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 1px .7px rgb(92 26 19 / .28));
+  transition: opacity 140ms ease, stroke-width 140ms ease;
+}
+
+.homecam-dashboard-shell .robot-map-virtual-wall-hit {
+  pointer-events: none;
+  stroke: transparent;
+  stroke-width: 18px;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.homecam-dashboard-shell .robot-map-card.mode-zones .robot-map-virtual-wall-hit {
+  pointer-events: stroke;
+  cursor: grab;
+}
+
+.homecam-dashboard-shell .robot-map-card.mode-zones .robot-map-virtual-wall-hit:active { cursor: grabbing; }
+.homecam-dashboard-shell .robot-map-card.mode-zones .robot-map-virtual-wall:not(.is-selected) { opacity: .8; }
+.homecam-dashboard-shell .robot-map-card.mode-zones .robot-map-virtual-wall-hit:hover + .robot-map-virtual-wall { opacity: 1; stroke-width: 5px; }
+.homecam-dashboard-shell .robot-map-virtual-wall.is-selected {
+  stroke-width: 6px;
+  filter: drop-shadow(0 1px 1px rgb(92 26 19 / .35)) drop-shadow(0 0 1.6px rgb(255 255 255 / .92));
+}
+
+.homecam-dashboard-shell .robot-map-split-draft,
+.homecam-dashboard-shell .robot-map-zone-draft {
+  fill: none;
+  stroke: #0b3c45;
+  stroke-width: .8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 2 1.1;
+  vector-effect: non-scaling-stroke;
+}
+
+.homecam-dashboard-shell .robot-map-zone-draft {
+  fill: rgb(224 122 40 / .15);
+  stroke: #e07a28;
+}
+
+.homecam-dashboard-shell .robot-map-split-draft.is-invalid { stroke: #b3392d; }
+.homecam-dashboard-shell .robot-map-split-draft.is-checking { stroke: #d28a22; }
+.homecam-dashboard-shell .robot-map-split-draft.is-valid {
+  stroke: #0b6a5d;
+  stroke-dasharray: none;
+}
+
+.homecam-dashboard-shell .robot-map-split-handle {
+  pointer-events: all;
+  cursor: grab;
+  stroke: #fbf8f3;
+  stroke-width: .32;
+  vector-effect: non-scaling-stroke;
+}
+
+.homecam-dashboard-shell .robot-map-split-handle:active { cursor: grabbing; }
+.homecam-dashboard-shell .robot-map-split-handle.is-endpoint { fill: #0b3c45; }
+.homecam-dashboard-shell .robot-map-split-handle.is-corner { fill: #e07a28; }
+.homecam-dashboard-shell .robot-map-split-handle.is-bend {
+  fill: #fff;
+  stroke: #e07a28;
+  stroke-width: .42;
+}
+.homecam-dashboard-shell .robot-map-split-handle.is-pending {
+  fill: #e07a28;
+  stroke: #fff;
+  stroke-width: .42;
+  pointer-events: none;
+  animation: robot-map-split-pulse 1.2s ease-in-out infinite;
+}
+
+.homecam-dashboard-shell .robot-map-zone-handle {
+  pointer-events: all;
+  cursor: grab;
+  fill: #fbf8f3;
+  stroke: #0b3c45;
+  stroke-width: .42;
+  vector-effect: non-scaling-stroke;
+}
+
+.homecam-dashboard-shell .robot-map-zone-handle:active { cursor: grabbing; }
+.homecam-dashboard-shell .robot-map-zone-handle.is-corner { filter: drop-shadow(0 1px .8px rgb(11 60 69 / .28)); }
+.homecam-dashboard-shell .robot-map-zone-handle.is-edge { fill: #0b3c45; stroke: #fbf8f3; filter: drop-shadow(0 1px .8px rgb(11 60 69 / .25)); }
+.homecam-dashboard-shell .robot-map-virtual-wall-handle {
+  pointer-events: all;
+  cursor: grab;
+  fill: #fbf8f3;
+  stroke: #c0402f;
+  stroke-width: .46;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 1px .8px rgb(92 26 19 / .28));
+}
+
+.homecam-dashboard-shell .robot-map-virtual-wall-handle:active { cursor: grabbing; }
+.homecam-dashboard-shell .robot-map-zone-goal {
+  fill: #3979d6;
+  stroke: #fff;
+  stroke-width: .45;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
+
+@keyframes robot-map-split-pulse {
+  0%, 100% { opacity: .55; }
+  50% { opacity: 1; }
+}
+
+.homecam-dashboard-shell .robot-map-room-label {
+  position: absolute;
+  z-index: 5;
+  padding: 5px 9px;
+  border: 1px solid rgb(222 214 200 / .9);
+  border-radius: 999px;
+  color: var(--homecam-ink);
+  background: rgb(251 248 243 / .9);
+  font-size: 13px;
+  font-weight: 700;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.homecam-dashboard-shell .robot-map-room-label.is-selected {
+  color: var(--homecam-paper);
+  border-color: var(--homecam-charcoal);
+  background: var(--homecam-charcoal);
+}
+
+.homecam-dashboard-shell .robot-map-path { z-index: 3; }
+.homecam-dashboard-shell .robot-map-goal { z-index: 5; }
+.homecam-dashboard-shell .robot-map-marker { z-index: 6; }
+
+.homecam-dashboard-shell .robot-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  min-height: 30px;
+  padding: 0 4px;
+  color: #4a524e;
+  font-size: 14px;
+}
+
+.homecam-dashboard-shell .robot-map-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.homecam-dashboard-shell .robot-map-legend i { width: 11px; height: 11px; border-radius: 50%; background: #3979d6; }
+.homecam-dashboard-shell .robot-map-legend i.is-goal { background: #e07a28; }
+.homecam-dashboard-shell .robot-map-legend i.is-route { width: 20px; height: 0; border-top: 2px dashed #e07a28; border-radius: 0; background: transparent; }
+.homecam-dashboard-shell .robot-map-legend i.is-room { border: 1px solid #0b3c45; border-radius: 3px; background: #dcebec; }
+.homecam-dashboard-shell .robot-map-legend i.is-zone { border: 1px solid #c0402f; border-radius: 3px; background: #f5cfc8; }
+.homecam-dashboard-shell .robot-map-legend i.is-zone.is-restricted { background: repeating-linear-gradient(45deg, rgb(192 64 47 / .55) 0 1px, rgb(192 64 47 / .1) 1px 4px); }
+.homecam-dashboard-shell .robot-map-legend i.is-zone.is-avoid { border-color: #c8901a; background: radial-gradient(circle, rgb(200 144 26 / .75) 1px, rgb(200 144 26 / .1) 1px); background-size: 4px 4px; }
+.homecam-dashboard-shell .robot-map-legend i.is-zone.is-allow { border: 1.5px dashed #2e7d51; background: rgb(46 125 81 / .12); }
+.homecam-dashboard-shell .robot-map-legend i.is-virtual-wall {
+  width: 17px;
+  height: 4px;
+  border-radius: 999px;
+  background: #c0402f;
+  box-shadow: 0 1px 2px rgb(92 26 19 / .22);
+}
+
+.homecam-dashboard-shell .robot-map-sidebar {
+  display: flex;
+  min-width: 0;
+  gap: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.homecam-dashboard-shell .robot-map-summary,
+.homecam-dashboard-shell .robot-map-panel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px;
+  border: 0;
+  border-radius: 22px;
+  background: var(--homecam-paper);
+}
+
+.homecam-dashboard-shell .robot-map-summary.is-driving {
+  color: var(--homecam-paper);
+  background: var(--homecam-charcoal);
+}
+
+.homecam-dashboard-shell .robot-map-summary > small {
+  color: var(--homecam-teal);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.homecam-dashboard-shell .robot-map-summary.is-driving > small { color: #8fd3dd; }
+
+.homecam-dashboard-shell .robot-map-summary h2,
+.homecam-dashboard-shell .robot-map-panel-card h2 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -.025em;
+}
+
+.homecam-dashboard-shell .robot-map-panel-card h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.homecam-dashboard-shell .robot-map-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.homecam-dashboard-shell .robot-map-summary-grid > div {
+  display: flex;
+  min-height: 70px;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--homecam-canvas);
+}
+
+.homecam-dashboard-shell .robot-map-summary.is-driving .robot-map-summary-grid > div {
+  background: rgb(251 248 243 / .12);
+}
+
+.homecam-dashboard-shell .robot-map-summary-grid span {
+  color: var(--homecam-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.homecam-dashboard-shell .robot-map-summary.is-driving .robot-map-summary-grid span { color: #8fd3dd; }
+.homecam-dashboard-shell .robot-map-summary-grid strong { font-size: 20px; }
+
+.homecam-dashboard-shell .robot-map-progress {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f1eee9;
+}
+
+.homecam-dashboard-shell .robot-map-summary.is-driving .robot-map-progress { background: rgb(251 248 243 / .2); }
+.homecam-dashboard-shell .robot-map-progress i { display: block; height: 100%; border-radius: inherit; background: #e07a28; }
+
+.homecam-dashboard-shell .robot-map-panel-card p {
+  margin: 0;
+  color: var(--homecam-muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.homecam-dashboard-shell .robot-map-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  color: var(--homecam-muted);
+  font-size: 16px;
+  list-style: none;
+}
+
+.homecam-dashboard-shell .robot-map-steps li::before { display: inline-block; width: 23px; color: #a9a296; content: "·"; }
+.homecam-dashboard-shell .robot-map-steps li.is-done { color: #4a524e; }
+.homecam-dashboard-shell .robot-map-steps li.is-done::before { color: #2e7d51; font-weight: 800; content: "✓"; }
+.homecam-dashboard-shell .robot-map-steps li.is-current { color: var(--homecam-ink); font-weight: 700; }
+.homecam-dashboard-shell .robot-map-steps li.is-current::before { color: #e07a28; content: "▸"; }
+
+.homecam-dashboard-shell .robot-map-help {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  padding: 18px;
+  border: 1px solid var(--homecam-line);
+  border-radius: 18px;
+  color: #4a524e;
+  background: var(--homecam-canvas);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.homecam-dashboard-shell .robot-map-help strong { color: var(--homecam-ink); font-size: 16px; }
+
+.homecam-dashboard-shell .robot-map-actions {
+  display: flex;
+  gap: 10px;
+  padding: 0;
+}
+
+.homecam-dashboard-shell .robot-map-actions.is-inline button { flex: 1; min-height: 56px; }
+.homecam-dashboard-shell .robot-map-actions button { min-height: 52px; border-radius: 16px; font-size: 17px; }
+.homecam-dashboard-shell .robot-map-actions button.is-danger { color: #a6301f; border-color: #e3b3ab; background: #fdf3f1; }
+
+.homecam-dashboard-shell .robot-map-snap-note {
+  padding: 16px;
+  border: 1px solid #f0d3b8;
+  border-radius: 16px;
+  color: #7a4a17;
+  background: #fff7f1;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.homecam-dashboard-shell .robot-map-editor-card label,
+.homecam-dashboard-shell .robot-map-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.homecam-dashboard-shell .robot-map-editor-card label > span,
+.homecam-dashboard-shell .robot-map-editor-field > span {
+  color: var(--homecam-muted);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.homecam-dashboard-shell .robot-map-editor-card input {
+  min-height: 52px;
+  padding: 0 16px;
+  border: 1.5px solid var(--homecam-line);
+  border-radius: 12px;
+  color: var(--homecam-ink);
+  background: #fff;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.homecam-dashboard-shell .robot-map-editor-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.homecam-dashboard-shell .robot-map-editor-heading small {
+  color: var(--homecam-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.homecam-dashboard-shell .robot-map-editor-heading h2 { margin-top: 4px; }
+
+.homecam-dashboard-shell .robot-map-zone-add,
+.homecam-dashboard-shell .robot-map-zone-delete,
+.homecam-dashboard-shell .robot-map-zone-goal-setting button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1.5px solid var(--homecam-line);
+  border-radius: 12px;
+  color: var(--homecam-charcoal);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .robot-map-zone-add { flex: 0 0 auto; }
+.homecam-dashboard-shell .robot-map-zone-add.is-active {
+  color: #fbf8f3;
+  border-color: #0b3c45;
+  background: #0b3c45;
+}
+.homecam-dashboard-shell .robot-map-zone-delete { color: #a6301f; border-color: #e3b3ab; }
+.homecam-dashboard-shell .robot-map-zone-meta,
+.homecam-dashboard-shell .robot-map-zone-goal-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.homecam-dashboard-shell .robot-map-zone-meta span,
+.homecam-dashboard-shell .robot-map-zone-goal-setting span {
+  color: var(--homecam-muted);
+  font-size: 14px;
+}
+
+.homecam-dashboard-shell .robot-map-zone-goal-setting > div { display: grid; gap: 4px; }
+.homecam-dashboard-shell .robot-map-zone-goal-setting button.is-active {
+  color: #a0521a;
+  border-color: #e07a28;
+  background: #fff7f1;
+}
+
+.homecam-dashboard-shell .robot-map-zone-color {
+  display: grid !important;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.homecam-dashboard-shell .robot-map-zone-color input[type="color"] {
+  width: 52px;
+  min-height: 38px;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .robot-map-zone-empty {
+  display: grid;
+  gap: 7px;
+  padding: 15px;
+  border: 1px dashed var(--homecam-line);
+  border-radius: 14px;
+  color: var(--homecam-muted);
+  line-height: 1.5;
+}
+
+.homecam-dashboard-shell .robot-map-zone-empty p { margin: 0; color: var(--homecam-ink); font-weight: 700; }
+
+.homecam-dashboard-shell .robot-map-representative-note {
+  margin: 0;
+  padding: 11px 13px;
+  border-radius: 11px;
+  color: #426066;
+  background: #eef5f3;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.homecam-dashboard-shell .robot-map-choice-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.homecam-dashboard-shell .robot-map-choice-chips button,
+.homecam-dashboard-shell .robot-map-tool-grid button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1.5px solid var(--homecam-line);
+  border-radius: 999px;
+  color: var(--homecam-ink);
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .robot-map-choice-chips button.is-active,
+.homecam-dashboard-shell .robot-map-tool-grid button.is-active {
+  color: var(--homecam-charcoal);
+  border-color: var(--homecam-charcoal);
+  background: var(--homecam-teal-light);
+  font-weight: 700;
+}
+
+.homecam-dashboard-shell .robot-map-tool-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.homecam-dashboard-shell .robot-map-tool-grid button { border-radius: 14px; }
+
+.homecam-dashboard-shell .robot-map-split-guide {
+  display: grid;
+  gap: 11px;
+}
+
+.homecam-dashboard-shell .robot-map-split-guide > p {
+  margin: 0;
+  color: var(--homecam-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.homecam-dashboard-shell .robot-map-split-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 13px;
+  color: #4f5d5a;
+  font-size: 12px;
+}
+
+.homecam-dashboard-shell .robot-map-split-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.homecam-dashboard-shell .robot-map-split-legend i {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #0b3c45;
+  box-shadow: 0 0 0 1px #0b3c45;
+}
+
+.homecam-dashboard-shell .robot-map-split-legend i.is-bend {
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 2px #e07a28;
+}
+
+.homecam-dashboard-shell .robot-map-split-legend i.is-pending {
+  background: #e07a28;
+  box-shadow: 0 0 0 1px #e07a28;
+}
+
+.homecam-dashboard-shell .robot-map-split-status {
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid #ded6c8;
+  border-radius: 11px;
+  color: #55605d;
+  background: #f8f5ef;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.homecam-dashboard-shell .robot-map-split-status.is-ready {
+  color: #245c47;
+  border-color: #bcd6cb;
+  background: #eef7f2;
+}
+
+.homecam-dashboard-shell .robot-map-split-status.is-valid {
+  color: #175d4c;
+  border-color: #9fcbbc;
+  background: #e7f5ef;
+  font-weight: 650;
+}
+
+.homecam-dashboard-shell .robot-map-split-status.is-invalid {
+  color: #9b3126;
+  border-color: #e6bcb7;
+  background: #fff3f1;
+}
+
+.homecam-dashboard-shell .robot-map-split-status.is-checking {
+  color: #825512;
+  border-color: #ead19e;
+  background: #fff8e9;
+}
+
+.homecam-dashboard-shell .robot-map-apply-tool {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 14px;
+  color: var(--homecam-paper);
+  background: var(--homecam-charcoal);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .robot-map-apply-tool:disabled { cursor: not-allowed; opacity: .42; }
+
+.homecam-dashboard-shell .robot-map-list-card > button,
+.homecam-dashboard-shell .robot-map-list-card > div {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+  border: 0;
+  color: #4a524e;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+}
+
+.homecam-dashboard-shell .robot-map-list-card > button { cursor: pointer; }
+.homecam-dashboard-shell .robot-map-list-card > button.is-selected {
+  margin: 0 -10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  color: var(--homecam-ink);
+  background: var(--homecam-teal-light);
+}
+.homecam-dashboard-shell .robot-map-list-card > button > i,
+.homecam-dashboard-shell .robot-map-list-card > div > i { width: 14px; height: 14px; border-radius: 4px; }
+.homecam-dashboard-shell .robot-map-list-card strong { margin-left: auto; color: var(--homecam-charcoal); font-size: 14px; }
+.homecam-dashboard-shell .robot-map-list-card > div > button { margin-left: auto; border: 0; color: #a6301f; background: transparent; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.homecam-dashboard-shell .robot-map-list-card i.is-restricted { background: rgb(192 64 47 / .4); }
+.homecam-dashboard-shell .robot-map-list-card i.is-avoid { background: rgb(200 144 26 / .4); }
+.homecam-dashboard-shell .robot-map-list-card i.is-allow { background: rgb(46 125 81 / .35); }
+.homecam-dashboard-shell .robot-map-list-card i.is-virtual-wall { height: 4px; border-radius: 999px; background: #c0402f; }
+
+.homecam-dashboard-shell .robot-map-zone-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.homecam-dashboard-shell .robot-map-zone-choices button {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border: 1.5px solid var(--homecam-line);
+  border-radius: 14px;
+  color: var(--homecam-ink);
+  background: transparent;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .robot-map-zone-choices button.is-active.is-restricted { color: #a6301f; border: 2px solid #c0402f; background: #fdf3f1; }
+.homecam-dashboard-shell .robot-map-zone-choices button.is-active.is-avoid { color: #7a4a17; border: 2px solid #c8901a; background: #fff7f1; }
+.homecam-dashboard-shell .robot-map-zone-choices button.is-active.is-allow { color: #1f6641; border: 2px solid #2e7d51; background: #e6f2ea; }
+.homecam-dashboard-shell .robot-map-zone-choices button i { width: 22px; height: 16px; border-radius: 4px; background: #ddd; }
+.homecam-dashboard-shell .robot-map-zone-choices button.is-restricted i { border: 1px solid #c0402f; background: repeating-linear-gradient(45deg, rgb(192 64 47 / .55) 0 2px, rgb(192 64 47 / .1) 2px 6px); }
+.homecam-dashboard-shell .robot-map-zone-choices button.is-avoid i { border: 1px solid #c8901a; background: radial-gradient(circle, rgb(200 144 26 / .65) 1px, rgb(200 144 26 / .1) 1px); background-size: 5px 5px; }
+.homecam-dashboard-shell .robot-map-zone-choices button.is-allow i { border: 1.5px dashed #2e7d51; background: rgb(46 125 81 / .16); }
+
+.homecam-dashboard-shell .robot-map-zone-choices.is-compact {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.homecam-dashboard-shell .robot-map-zone-choices.is-compact button {
+  min-height: 44px;
+  justify-content: center;
+  padding: 0 8px;
+  font-size: 13px;
+}
+
+.homecam-dashboard-shell .robot-map-zone-choices.is-compact button i { width: 16px; height: 13px; }
+.homecam-dashboard-shell .robot-map-zone-create-menu {
+  display: grid;
+  gap: 13px;
+  padding: 14px;
+  border: 1px solid var(--homecam-line);
+  border-radius: 15px;
+  background: #f8f5ef;
+}
+
+.homecam-dashboard-shell .robot-map-zone-create-rule { display: grid; gap: 8px; }
+.homecam-dashboard-shell .robot-map-zone-create-rule > span {
+  color: var(--homecam-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.homecam-dashboard-shell .robot-map-zone-create-actions { display: grid; gap: 8px; }
+.homecam-dashboard-shell .robot-map-zone-create-actions > button {
+  display: grid;
+  min-height: 62px;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--homecam-line);
+  border-radius: 13px;
+  color: var(--homecam-ink);
+  background: var(--homecam-paper);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .robot-map-zone-create-actions > button:hover,
+.homecam-dashboard-shell .robot-map-zone-create-actions > button.is-active {
+  border-color: #7b9a9e;
+  background: #edf3f1;
+}
+
+.homecam-dashboard-shell .robot-map-zone-create-actions > button > span { display: grid; gap: 3px; }
+.homecam-dashboard-shell .robot-map-zone-create-actions strong { font-size: 14px; }
+.homecam-dashboard-shell .robot-map-zone-create-actions small { color: var(--homecam-muted); font-size: 11px; line-height: 1.35; }
+.homecam-dashboard-shell .robot-map-zone-create-actions > button > i {
+  position: relative;
+  display: block;
+  width: 34px;
+  height: 27px;
+  border: 2px solid #0b3c45;
+  border-radius: 6px;
+  background: rgb(11 60 69 / .07);
+}
+
+.homecam-dashboard-shell .robot-map-zone-create-actions > button > i.is-wall {
+  height: 3px;
+  border: 0;
+  border-radius: 999px;
+  background: #c0402f;
+  transform: rotate(-12deg);
+}
+
+.homecam-dashboard-shell .robot-map-zone-create-actions > button > i.is-wall::before,
+.homecam-dashboard-shell .robot-map-zone-create-actions > button > i.is-wall::after {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border: 2px solid #c0402f;
+  border-radius: 50%;
+  background: #fbf8f3;
+  content: "";
+  transform: translateY(-50%);
+}
+
+.homecam-dashboard-shell .robot-map-zone-create-actions > button > i.is-wall::before { left: -3px; }
+.homecam-dashboard-shell .robot-map-zone-create-actions > button > i.is-wall::after { right: -3px; }
+.homecam-dashboard-shell .robot-map-zone-create-actions > button > i.is-room {
+  border-color: #6f7d79;
+  border-radius: 4px 10px 4px 4px;
+  background: linear-gradient(90deg, rgb(111 125 121 / .14) 0 46%, transparent 46% 52%, rgb(111 125 121 / .14) 52%);
+}
+
+.homecam-dashboard-shell .robot-map-virtual-wall-note {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e3b3ab;
+  border-radius: 12px;
+  color: #8d2c21;
+  background: #fdf3f1;
+}
+
+.homecam-dashboard-shell .robot-map-virtual-wall-note > i { width: 27px; height: 4px; border-radius: 999px; background: #c0402f; }
+.homecam-dashboard-shell .robot-map-virtual-wall-note > span { display: grid; gap: 2px; }
+.homecam-dashboard-shell .robot-map-virtual-wall-note strong { font-size: 13px; }
+.homecam-dashboard-shell .robot-map-virtual-wall-note small { color: #9a5b53; font-size: 11px; line-height: 1.4; }
+
+.homecam-dashboard-shell .robot-map-room-zone-list { display: grid; gap: 7px; }
+.homecam-dashboard-shell .robot-map-room-zone-list button {
+  display: grid;
+  min-height: 42px;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 0 11px;
+  border: 1px solid var(--homecam-line);
+  border-radius: 11px;
+  color: var(--homecam-ink);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .robot-map-room-zone-list button > i { width: 13px; height: 13px; border-radius: 4px; }
+.homecam-dashboard-shell .robot-map-room-zone-list button > strong { color: #14606e; font-size: 12px; }
+
+.homecam-dashboard-shell .robot-map-editor-buttons { display: flex; gap: 10px; }
+.homecam-dashboard-shell .robot-map-editor-buttons button { flex: 1; min-height: 48px; border: 1.5px solid var(--homecam-line); border-radius: 14px; color: var(--homecam-charcoal); background: transparent; font: inherit; font-weight: 700; cursor: pointer; }
+.homecam-dashboard-shell .robot-map-editor-buttons button:last-child { color: var(--homecam-paper); border-color: var(--homecam-charcoal); background: var(--homecam-charcoal); }
+.homecam-dashboard-shell .robot-map-editor-buttons button:disabled { cursor: not-allowed; opacity: .42; }
+
+.homecam-dashboard-shell .robot-map-notice {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 40;
+  max-width: 430px;
+  margin: 0;
+  padding: 14px 18px;
+  border: 1px solid #f0d3b8;
+  border-radius: 14px;
+  color: #7a4a17;
+  background: #fff7f1;
+  box-shadow: 0 10px 30px rgb(30 36 34 / .12);
+}
+
+@media (max-width: 1180px) {
+  .homecam-dashboard-shell .robot-map-layout { grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; }
+  .homecam-dashboard-shell .robot-map-mode-tabs button { padding: 0 10px; font-size: 14px; }
+  .homecam-dashboard-shell .robot-map-top-status { font-size: 13px; }
+}
+
+@media (max-width: 980px) {
+  .homecam-dashboard-shell .robot-map-section { min-height: auto; }
+  .homecam-dashboard-shell .robot-map-topbar { flex-wrap: wrap; gap: 10px; padding-top: 12px; padding-bottom: 12px; }
+  .homecam-dashboard-shell .robot-map-mode-tabs { order: 3; width: 100%; overflow-x: auto; }
+  .homecam-dashboard-shell .robot-map-layout { grid-template-columns: 1fr; }
+  .homecam-dashboard-shell .robot-map-card { min-height: 420px; }
+  .homecam-dashboard-shell .robot-map-sidebar { width: 100%; }
+}
+
+@media (max-width: 680px) {
+  .homecam-dashboard-shell .robot-map-topbar { margin: 0 -14px; padding-right: 14px; padding-left: 14px; }
+  .homecam-dashboard-shell .robot-map-mode-tabs button { flex: 0 0 auto; }
+  .homecam-dashboard-shell .robot-map-top-status { margin-left: 0; }
+  .homecam-dashboard-shell .robot-map-layout { padding-top: 16px; }
+  .homecam-dashboard-shell .robot-map-mode-banner { align-items: flex-start; flex-direction: column; font-size: 14px; }
+  .homecam-dashboard-shell .robot-map-card { min-height: 300px; }
+  .homecam-dashboard-shell .robot-map-summary h2,
+  .homecam-dashboard-shell .robot-map-panel-card h2 { font-size: 22px; }
+}
+
+/* Home screen: approved 70/30 desktop composition. */
+.homecam-dashboard-shell .homecam-home-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 376px;
+  gap: 24px;
+}
+
+.homecam-dashboard-shell .homecam-home-primary,
+.homecam-dashboard-shell .homecam-home-sidebar {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.homecam-dashboard-shell .homecam-home-hero {
+  min-height: 222px;
+  padding: 32px;
+}
+
+.homecam-dashboard-shell .homecam-home-hero h1 {
+  font-size: 34px;
+  line-height: 1.3;
+}
+
+.homecam-dashboard-shell .homecam-home-chips span { padding: 10px 15px; font-size: 16px; }
+.homecam-dashboard-shell .homecam-home-actions button { min-height: 52px; padding: 0 22px; border-radius: 16px; font-size: 18px; }
+
+.homecam-dashboard-shell .homecam-home-main-grid {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1.25fr) minmax(300px, 1fr);
+  gap: 20px;
+}
+
+.homecam-dashboard-shell .homecam-home-camera,
+.homecam-dashboard-shell .homecam-home-events {
+  min-height: 420px;
+}
+
+.homecam-dashboard-shell .homecam-home-camera-action {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  left: 18px;
+  z-index: 2;
+  min-height: 52px;
+  padding: 16px;
+  border-radius: 16px;
+  color: var(--homecam-ink);
+  background: rgb(251 248 243 / .94);
+  font-size: 17px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.homecam-dashboard-shell .homecam-home-events { padding: 24px; }
+.homecam-dashboard-shell .homecam-home-map-card,
+.homecam-dashboard-shell .homecam-home-favorites {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px;
+  border-radius: 24px;
+  background: var(--homecam-paper);
+}
+
+.homecam-dashboard-shell .homecam-home-map-card h2,
+.homecam-dashboard-shell .homecam-home-favorites h2 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.homecam-dashboard-shell .homecam-home-map-preview {
+  position: relative;
+  display: grid;
+  height: 212px;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--homecam-line);
+  border-radius: 18px;
+  color: var(--homecam-muted);
+  background: #efeae1;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .homecam-home-map-preview img { object-fit: contain; }
+.homecam-dashboard-shell .homecam-home-map-actions { display: flex; gap: 10px; }
+.homecam-dashboard-shell .homecam-home-map-actions button {
+  flex: 1;
+  min-height: 47px;
+  border: 1.5px solid #c7bfb1;
+  border-radius: 14px;
+  color: var(--homecam-ink);
+  background: transparent;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .homecam-home-map-actions button:first-child {
+  color: var(--homecam-paper);
+  border-color: var(--homecam-charcoal);
+  background: var(--homecam-charcoal);
+}
+
+.homecam-dashboard-shell .homecam-home-favorites > div { display: flex; flex-direction: column; gap: 9px; }
+.homecam-dashboard-shell .homecam-home-favorites p { margin: 0; color: var(--homecam-muted); font-size: 15px; line-height: 1.6; }
+.homecam-dashboard-shell .homecam-home-favorites button {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border: 1px solid var(--homecam-line);
+  border-radius: 14px;
+  color: var(--homecam-ink);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .homecam-home-favorites button i { width: 12px; height: 12px; border-radius: 4px; }
+.homecam-dashboard-shell .homecam-home-favorites button strong { font-size: 17px; }
+.homecam-dashboard-shell .homecam-home-favorites button span { margin-left: auto; color: var(--homecam-muted); font-size: 14px; }
+.homecam-dashboard-shell .homecam-home-sidebar .homecam-home-privacy { min-height: 0; padding: 22px; border: 0; }
+
+/* Homecam screen: dark monitoring workspace from the approved mockup. */
+.homecam-dashboard-shell.tab-live,
+.homecam-dashboard-shell.tab-live .homecam-main {
+  color: var(--homecam-paper);
+  background: #1e2422;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-header {
+  border-right-color: rgb(251 248 243 / .1);
+  background: #141a19;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-brand > strong { color: var(--homecam-charcoal); background: var(--homecam-teal-light); }
+.homecam-dashboard-shell.tab-live .homecam-nav button,
+.homecam-dashboard-shell.tab-live .homecam-settings-link { color: rgb(251 248 243 / .7); }
+.homecam-dashboard-shell.tab-live .homecam-nav button.is-active { color: var(--homecam-paper); background: rgb(251 248 243 / .14); }
+.homecam-dashboard-shell.tab-live .homecam-account-link { color: var(--homecam-paper); border-color: rgb(251 248 243 / .25); }
+.homecam-dashboard-shell.tab-live .homecam-device-bar {
+  color: var(--homecam-paper);
+  border-bottom-color: rgb(251 248 243 / .1);
+  background: #1e2422;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-device-bar > div { border-color: rgb(251 248 243 / .18); background: rgb(251 248 243 / .07); }
+.homecam-dashboard-shell.tab-live .homecam-device-bar strong,
+.homecam-dashboard-shell.tab-live .homecam-device-bar select { color: var(--homecam-paper); }
+
+.homecam-dashboard-shell.tab-live .homecam-live-view {
+  grid-template-columns: minmax(0, 1fr) 392px;
+  gap: 22px;
+  min-height: calc(100svh - 126px);
+}
+
+.homecam-dashboard-shell.tab-live .homecam-video-card,
+.homecam-dashboard-shell.tab-live .homecam-video-frame {
+  height: 100%;
+  min-height: 680px;
+  border: 0;
+  background: linear-gradient(150deg, #3e4a47, #242c2a);
+}
+
+.homecam-dashboard-shell.tab-live .homecam-video-frame { border-radius: 22px; }
+.homecam-dashboard-shell.tab-live .homecam-quick-grid { display: flex; flex-direction: column; gap: 18px; }
+.homecam-dashboard-shell.tab-live .homecam-summary-card,
+.homecam-dashboard-shell.tab-live .homecam-summary-card:first-child {
+  min-height: 130px;
+  color: var(--homecam-paper);
+  border: 0;
+  border-radius: 22px;
+  background: rgb(251 248 243 / .07);
+}
+
+.homecam-dashboard-shell.tab-live .homecam-summary-card span,
+.homecam-dashboard-shell.tab-live .homecam-summary-card small { color: rgb(251 248 243 / .65); }
+.homecam-dashboard-shell.tab-live .homecam-summary-card strong { color: var(--homecam-paper); }
+.homecam-dashboard-shell.tab-live .summary-arrow { color: var(--homecam-paper); }
+
+.homecam-dashboard-shell.tab-live .homecam-summary-card small {
+  display: block;
+  margin-top: 5px;
+  font-size: 13px;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-status-card {
+  min-height: 145px;
+  background: #424644;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-recent-card {
+  display: flex;
+  min-height: 168px;
+  flex-direction: column;
+  gap: 13px;
+  padding: 20px;
+  border-radius: 22px;
+  background: rgb(251 248 243 / .07);
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-recent-card > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-recent-card h2 {
+  margin: 0;
+  color: var(--homecam-paper);
+  font-size: 18px;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-recent-card > div button {
+  border: 0;
+  color: rgb(251 248 243 / .68);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-recent-card > section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-recent-card > section > button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 2px 8px;
+  padding: 9px;
+  border: 0;
+  border-radius: 12px;
+  color: var(--homecam-paper);
+  background: rgb(251 248 243 / .08);
+  text-align: left;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-recent-card > section > button > span {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  grid-row: 1 / 3;
+  place-items: center;
+  border-radius: 10px;
+  color: rgb(251 248 243 / .74);
+  background: #4a5754;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-recent-card small {
+  overflow: hidden;
+  color: rgb(251 248 243 / .55);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-recent-card strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-recent-card p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: rgb(251 248 243 / .58);
+  font-size: 13px;
+}
+
+@media (max-width: 1180px) {
+  .homecam-dashboard-shell .homecam-home-workspace { grid-template-columns: minmax(0, 1fr) 330px; }
+  .homecam-dashboard-shell .homecam-home-main-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 980px) {
+  .homecam-dashboard-shell .homecam-home-workspace { grid-template-columns: 1fr; }
+  .homecam-dashboard-shell .homecam-home-sidebar { display: grid; grid-template-columns: 1fr 1fr; }
+  .homecam-dashboard-shell.tab-live .homecam-live-view { grid-template-columns: 1fr; }
+  .homecam-dashboard-shell.tab-live .homecam-video-card,
+  .homecam-dashboard-shell.tab-live .homecam-video-frame { min-height: 520px; }
+}
+
+@media (max-width: 680px) {
+  .homecam-dashboard-shell .homecam-home-sidebar { display: flex; }
+  .homecam-dashboard-shell .homecam-home-hero { padding: 24px; }
+  .homecam-dashboard-shell .homecam-home-hero h1 { font-size: 28px; }
+  .homecam-dashboard-shell .homecam-home-chips span { font-size: 13px; }
+  .homecam-dashboard-shell .homecam-home-main-grid { display: flex; flex-direction: column; }
+  .homecam-dashboard-shell .homecam-home-camera,
+  .homecam-dashboard-shell .homecam-home-events { min-height: 320px; }
+  .homecam-dashboard-shell.tab-live .homecam-video-card,
+  .homecam-dashboard-shell.tab-live .homecam-video-frame { min-height: 400px; }
+}
+
+/* Event timeline: list and selected clip stay visible together on desktop. */
+.homecam-dashboard-shell.tab-events .homecam-section-heading {
+  display: none;
+}
+
+.homecam-dashboard-shell .homecam-event-toolbar {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.homecam-dashboard-shell .homecam-event-period {
+  flex: none;
+  padding: 10px 14px;
+  border: 1px solid var(--homecam-line);
+  border-radius: 12px;
+  color: var(--homecam-ink);
+  background: var(--homecam-canvas);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.homecam-dashboard-shell .homecam-event-toolbar > span {
+  margin-left: auto;
+  color: var(--homecam-muted);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-filter-row {
+  gap: 8px;
+  margin: 0;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-filter-row button {
+  min-height: 36px;
+  padding: 0 14px;
+  border-width: 1.5px;
+  color: #4a524e;
+  background: transparent;
+  font-size: 15px;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-filter-row button.is-selected {
+  color: var(--homecam-paper);
+  border-color: var(--homecam-charcoal);
+  background: var(--homecam-charcoal);
+}
+
+.homecam-dashboard-shell .homecam-events-workspace {
+  display: grid;
+  grid-template-columns: 452px minmax(0, 1fr);
+  gap: 24px;
+  min-height: calc(100svh - 166px);
+}
+
+.homecam-dashboard-shell.tab-events .homecam-event-list {
+  display: flex;
+  overflow: visible;
+  flex-direction: column;
+  gap: 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-event-list > h2 {
+  margin: 0 0 2px;
+  color: var(--homecam-muted);
+  font-size: 15px;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-event-row {
+  min-height: 112px;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--homecam-line);
+  border-radius: 18px;
+  background: var(--homecam-paper);
+}
+
+.homecam-dashboard-shell.tab-events .homecam-event-row.is-focused {
+  border: 2px solid var(--homecam-charcoal);
+}
+
+.homecam-dashboard-shell.tab-events .homecam-event-thumbnail {
+  position: relative;
+  display: flex;
+  width: 120px;
+  height: 82px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  color: rgb(251 248 243 / .8);
+  background: #3e4a47;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-event-thumbnail.kind-person { background: #4a5754; }
+.homecam-dashboard-shell.tab-events .homecam-event-thumbnail.kind-dog,
+.homecam-dashboard-shell.tab-events .homecam-event-thumbnail.kind-cat { background: #57625f; }
+.homecam-dashboard-shell.tab-events .homecam-event-thumbnail svg { width: 28px; height: 28px; }
+.homecam-dashboard-shell.tab-events .homecam-event-thumbnail small {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  color: var(--homecam-paper);
+  background: rgb(30 36 34 / .72);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-event-row-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-event-row-copy > small,
+.homecam-dashboard-shell .homecam-event-detail-copy > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-event-row-copy i,
+.homecam-dashboard-shell .homecam-event-detail-copy > span i {
+  padding: 4px 9px;
+  border-radius: 999px;
+  color: #5e5a53;
+  background: #f1eee9;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-event-row-copy i.kind-person,
+.homecam-dashboard-shell .homecam-event-detail-copy > span i.kind-person { color: #1f4f9e; background: #e1eafb; }
+.homecam-dashboard-shell.tab-events .homecam-event-row-copy i.kind-dog,
+.homecam-dashboard-shell.tab-events .homecam-event-row-copy i.kind-cat,
+.homecam-dashboard-shell .homecam-event-detail-copy > span i.kind-dog,
+.homecam-dashboard-shell .homecam-event-detail-copy > span i.kind-cat { color: #7a4a17; background: #fbebdc; }
+
+.homecam-dashboard-shell.tab-events .homecam-event-row strong { font-size: 18px; text-align: left; }
+.homecam-dashboard-shell.tab-events .homecam-event-row-copy > small { color: var(--homecam-muted); font-size: 14px; }
+.homecam-dashboard-shell.tab-events .homecam-event-row-copy > em {
+  overflow: hidden;
+  max-width: 100%;
+  color: #4a524e;
+  font-size: 14px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.homecam-dashboard-shell .homecam-event-detail {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.homecam-dashboard-shell .homecam-event-detail-video {
+  position: relative;
+  display: flex;
+  height: 392px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  border-radius: 22px;
+  color: rgb(251 248 243 / .72);
+  background: linear-gradient(150deg, #3e4a47, #242c2a);
+}
+
+.homecam-dashboard-shell .homecam-event-detail-video > div {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+}
+.homecam-dashboard-shell .homecam-event-detail-video > div svg { width: 38px; height: 38px; }
+.homecam-dashboard-shell .homecam-event-video-meta {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  padding: 9px 13px;
+  border-radius: 999px;
+  color: var(--homecam-paper);
+  background: rgb(30 36 34 / .62);
+  font-size: 14px;
+  font-weight: 700;
+}
+.homecam-dashboard-shell .homecam-event-detail-video > button {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 14px;
+  color: var(--homecam-ink);
+  background: var(--homecam-paper);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .homecam-event-detail-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px;
+  border-radius: 22px;
+  background: var(--homecam-paper);
+}
+
+.homecam-dashboard-shell .homecam-event-detail-copy > span { color: var(--homecam-muted); font-size: 16px; }
+.homecam-dashboard-shell .homecam-event-detail-copy h2 { margin: 0; font-size: 26px; line-height: 1.4; }
+.homecam-dashboard-shell .homecam-event-detail-copy > div { padding: 18px; border-radius: 16px; background: var(--homecam-canvas); }
+.homecam-dashboard-shell .homecam-event-detail-copy > div strong { color: var(--homecam-teal); font-size: 15px; }
+.homecam-dashboard-shell .homecam-event-detail-copy > div p { margin: 8px 0 0; color: #4a524e; font-size: 16px; line-height: 1.7; }
+.homecam-dashboard-shell .homecam-event-detail-copy > .homecam-event-detail-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: auto;
+  padding: 0;
+  background: transparent;
+}
+.homecam-dashboard-shell .homecam-event-detail-actions > button {
+  flex: 1;
+  min-height: 54px;
+  border: 0;
+  border-radius: 16px;
+  color: var(--homecam-paper);
+  background: var(--homecam-charcoal);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .homecam-event-detail-actions > button:disabled { cursor: not-allowed; opacity: .42; }
+
+@media (max-width: 1100px) {
+  .homecam-dashboard-shell .homecam-events-workspace { grid-template-columns: 380px minmax(0, 1fr); gap: 18px; }
+  .homecam-dashboard-shell .homecam-event-toolbar > span { display: none; }
+}
+
+@media (max-width: 900px) {
+  .homecam-dashboard-shell .homecam-events-workspace { grid-template-columns: 1fr; }
+  .homecam-dashboard-shell .homecam-event-detail-video { height: 320px; }
+  .homecam-dashboard-shell .homecam-event-toolbar { overflow-x: auto; }
+}
+
+/* Settings: persistent category rail plus live settings cards. */
+.homecam-dashboard-shell.tab-settings .homecam-section-heading {
+  display: none;
+}
+
+.homecam-dashboard-shell .homecam-settings-workspace {
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr);
+  gap: 24px;
+}
+
+.homecam-dashboard-shell .homecam-settings-nav {
+  display: flex;
+  min-height: calc(100svh - 132px);
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px;
+  border-radius: 22px;
+  background: var(--homecam-paper);
+}
+
+.homecam-dashboard-shell .homecam-settings-nav button {
+  min-height: 48px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 12px;
+  color: #4a524e;
+  background: transparent;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .homecam-settings-nav button.is-active {
+  color: var(--homecam-charcoal);
+  background: var(--homecam-teal-light);
+  font-weight: 700;
+}
+
+.homecam-dashboard-shell.tab-settings .homecam-settings-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 18px;
+}
+
+.homecam-dashboard-shell.tab-settings .homecam-settings-card {
+  border: 0;
+  border-radius: 22px;
+  background: var(--homecam-paper);
+}
+
+.homecam-dashboard-shell.tab-settings .homecam-family-card { grid-column: 1 / -1; }
+
+@media (max-width: 1080px) {
+  .homecam-dashboard-shell .homecam-settings-workspace { grid-template-columns: 220px minmax(0, 1fr); gap: 18px; }
+  .homecam-dashboard-shell.tab-settings .homecam-settings-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  .homecam-dashboard-shell .homecam-settings-workspace { grid-template-columns: 1fr; }
+  .homecam-dashboard-shell .homecam-settings-nav { min-height: 0; overflow-x: auto; flex-direction: row; }
+  .homecam-dashboard-shell .homecam-settings-nav button { flex: 0 0 auto; }
+}
+
+/* Live homecam: keep the approved 16:10 camera composition at every width. */
+.homecam-dashboard-shell.tab-live .homecam-device-selector {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-device-avatar { display: none; }
+.homecam-dashboard-shell.tab-live .homecam-device-selector strong,
+.homecam-dashboard-shell.tab-live .homecam-device-selector select {
+  color: rgb(251 248 243 / .68);
+  font-weight: 600;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-connection-pill.is-online {
+  color: #78d6a0;
+  border-color: transparent;
+  background: rgb(120 214 160 / .14);
+}
+
+.homecam-dashboard-shell.tab-live .homecam-device-bar-meta {
+  color: rgb(251 248 243 / .65);
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-view {
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 392px);
+  align-items: start;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-video-card,
+.homecam-dashboard-shell.tab-live .homecam-video-frame {
+  width: 100%;
+  height: auto;
+  min-height: 0;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-video-card {
+  align-self: start;
+  overflow: hidden;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-video-frame {
+  aspect-ratio: 16 / 10;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-video-bottom {
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-video-topbar > .homecam-video-clock,
+.homecam-stream-video-frame .homecam-video-topbar > .homecam-video-clock {
+  padding: 9px 13px;
+  border-radius: 999px;
+  color: var(--homecam-paper);
+  background: rgb(30 36 34 / .62);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-video-topbar > button,
+.homecam-stream-video-frame .homecam-video-topbar > button {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 15px;
+  color: var(--homecam-paper);
+  background: rgb(30 36 34 / .62);
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-video-topbar > button:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-video-control-chip,
+.homecam-dashboard-shell.tab-live .homecam-video-bottom > button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 14px;
+  color: var(--homecam-paper);
+  background: rgb(30 36 34 / .68);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-video-bottom > button {
+  margin-left: auto;
+  color: var(--homecam-charcoal);
+  background: rgb(251 248 243 / .92);
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-quick-grid {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-state-card,
+.homecam-dashboard-shell.tab-live .homecam-live-recent-card {
+  color: var(--homecam-paper);
+  border-radius: 22px;
+  background: rgb(251 248 243 / .07);
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-state-card {
+  padding: 22px;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-state-card h2 {
+  margin: 0 0 16px;
+  font-size: 19px;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-state-list {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-state-list > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 9px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-state-list i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #8c8378;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-state-list i.is-good { background: #78d6a0; }
+.homecam-dashboard-shell.tab-live .homecam-live-state-list span { min-width: 0; }
+.homecam-dashboard-shell.tab-live .homecam-live-state-list strong {
+  color: rgb(251 248 243 / .62);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-state-list .homecam-switch {
+  margin-left: 2px;
+  transform: scale(.88);
+  transform-origin: right center;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-side-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-side-actions button {
+  display: inline-flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1.5px solid rgb(251 248 243 / .35);
+  border-radius: 16px;
+  color: var(--homecam-paper);
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-side-actions button:last-child {
+  color: #a6301f;
+  border-color: transparent;
+  background: #fdf3f1;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-side-actions button:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+}
+
+/* The connected WebRTC viewer follows the same responsive camera ratio. */
+.homecam-stream-view {
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  align-items: start;
+}
+
+.homecam-stream-video-card { align-self: start; }
+.homecam-stream-video-frame {
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 16 / 10;
+}
+
+@media (max-width: 980px) {
+  .homecam-dashboard-shell.tab-live .homecam-live-view,
+  .homecam-stream-view {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .homecam-dashboard-shell.tab-live .homecam-quick-grid,
+  .homecam-stream-sidebar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .homecam-dashboard-shell.tab-live .homecam-live-side-actions { grid-column: 1 / -1; }
+  .homecam-stream-sidebar .homecam-summary-card:first-child { grid-column: 1 / -1; }
+}
+
+@media (max-width: 680px) {
+  .homecam-dashboard-shell.tab-live .homecam-device-bar {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .homecam-dashboard-shell.tab-live .homecam-device-bar h1 { width: 100%; }
+  .homecam-dashboard-shell.tab-live .homecam-device-bar-meta { display: none; }
+  .homecam-dashboard-shell.tab-live .homecam-live-view { gap: 14px; }
+  .homecam-dashboard-shell.tab-live .homecam-video-frame { aspect-ratio: 16 / 10; }
+
+  .homecam-dashboard-shell.tab-live .homecam-video-message > svg { display: none; }
+  .homecam-dashboard-shell.tab-live .homecam-video-message h2 { font-size: clamp(17px, 5.5vw, 24px); }
+  .homecam-dashboard-shell.tab-live .homecam-video-message .homecam-live-button {
+    width: auto;
+    min-height: 36px;
+    margin-top: 10px;
+    padding: 0 14px;
+    font-size: 11px;
+  }
+
+  .homecam-dashboard-shell.tab-live .homecam-video-topbar,
+  .homecam-dashboard-shell.tab-live .homecam-video-bottom {
+    right: 10px;
+    left: 10px;
+  }
+
+  .homecam-dashboard-shell.tab-live .homecam-video-topbar { top: 10px; }
+  .homecam-dashboard-shell.tab-live .homecam-video-topbar > .homecam-video-clock,
+  .homecam-stream-video-frame .homecam-video-topbar > .homecam-video-clock {
+    padding: 7px 10px;
+    font-size: 11px;
+  }
+  .homecam-dashboard-shell.tab-live .homecam-video-topbar > button,
+  .homecam-stream-video-frame .homecam-video-topbar > button {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+  .homecam-dashboard-shell.tab-live .homecam-video-bottom { bottom: 10px; gap: 6px; }
+  .homecam-dashboard-shell.tab-live .homecam-video-control-chip,
+  .homecam-dashboard-shell.tab-live .homecam-video-bottom > button {
+    min-height: 32px;
+    padding: 0 9px;
+    border-radius: 10px;
+    font-size: 10px;
+  }
+
+  .homecam-dashboard-shell.tab-live .homecam-video-control-chip:nth-child(2) { display: none; }
+  .homecam-dashboard-shell.tab-live .homecam-quick-grid,
+  .homecam-stream-sidebar { grid-template-columns: 1fr; }
+  .homecam-stream-sidebar .homecam-summary-card:first-child { grid-column: auto; }
+  .homecam-dashboard-shell.tab-live .homecam-live-side-actions { grid-column: auto; }
+}
+
+@media (max-width: 420px) {
+  .homecam-dashboard-shell.tab-live .homecam-live-state-card,
+  .homecam-dashboard-shell.tab-live .homecam-live-recent-card { border-radius: 16px; }
+  .homecam-dashboard-shell.tab-live .homecam-live-state-card { padding: 18px; }
+  .homecam-dashboard-shell.tab-live .homecam-live-side-actions { grid-template-columns: 1fr; }
+}
+
+.homecam-dashboard-shell .homecam-display-settings { grid-column: 1 / -1; }
+
+.homecam-dashboard-shell .homecam-theme-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.homecam-dashboard-shell .homecam-theme-options button {
+  display: flex;
+  min-height: 82px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1.5px solid var(--homecam-line);
+  border-radius: 16px;
+  color: var(--homecam-ink);
+  background: var(--homecam-canvas);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell .homecam-theme-options button.is-active {
+  color: var(--homecam-paper);
+  border-color: var(--homecam-charcoal);
+  background: var(--homecam-charcoal);
+}
+
+@media (max-width: 520px) {
+  .homecam-dashboard-shell .homecam-theme-options { grid-template-columns: 1fr; }
+  .homecam-dashboard-shell .homecam-theme-options button { min-height: 64px; }
+}
+
+/* Theme control is shared by the live and event workspaces. */
+.homecam-dashboard-shell .homecam-theme-toggle {
+  display: inline-flex;
+  min-height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 13px;
+  border: 1px solid var(--homecam-line);
+  border-radius: 999px;
+  color: var(--homecam-ink);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-theme-toggle {
+  color: var(--homecam-paper);
+  border-color: rgb(251 248 243 / .25);
+}
+
+/* Event toolbar is the single 76px top bar from the approved mockup. */
+.homecam-dashboard-shell.tab-events .homecam-device-bar {
+  gap: 12px;
+  margin-bottom: 26px;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-device-bar > .homecam-event-period {
+  display: block;
+  padding: 10px 14px;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-device-bar > .homecam-filter-row {
+  display: flex;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-device-bar .homecam-refresh-button {
+  flex: 0 0 auto;
+}
+
+.homecam-dashboard-shell.tab-events .homecam-events-workspace {
+  min-height: calc(100svh - 132px);
+}
+
+/* White version of the live screen: the camera remains dark, its chrome does not. */
+.homecam-dashboard-shell.theme-light.tab-live,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-main {
+  color: var(--homecam-ink);
+  background: var(--homecam-canvas);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-header,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-device-bar {
+  color: var(--homecam-ink);
+  border-color: #ebe4d9;
+  background: var(--homecam-paper);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-brand > strong {
+  color: var(--homecam-paper);
+  background: var(--homecam-charcoal);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-nav button,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-settings-link,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-account-link,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-device-bar strong,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-device-bar select,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-theme-toggle {
+  color: var(--homecam-ink);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-nav button.is-active {
+  color: var(--homecam-charcoal);
+  background: var(--homecam-teal-light);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-account-link,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-theme-toggle {
+  border-color: var(--homecam-line);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-device-selector strong,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-device-selector select,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-device-bar-meta {
+  color: var(--homecam-muted);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-state-card,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-recent-card,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-summary-card,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-summary-card:first-child {
+  color: var(--homecam-ink);
+  border: 1px solid var(--homecam-line);
+  background: var(--homecam-paper);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-state-card h2,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-recent-card h2,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-recent-card strong,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-summary-card strong {
+  color: var(--homecam-ink);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-state-list strong,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-recent-card small,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-recent-card p,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-summary-card span,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-summary-card small {
+  color: var(--homecam-muted);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-recent-card > section > button {
+  color: var(--homecam-ink);
+  background: var(--homecam-canvas);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-side-actions button:first-child {
+  color: var(--homecam-paper);
+  border-color: var(--homecam-charcoal);
+  background: var(--homecam-charcoal);
+}
+
+/* Dark version of the event timeline keeps the same geometry and data hierarchy. */
+.homecam-dashboard-shell.theme-dark.tab-events {
+  --homecam-canvas: #1e2422;
+  --homecam-paper: #2b312f;
+  --homecam-panel: #323936;
+  --homecam-ink: #fbf8f3;
+  --homecam-muted: #abb3ae;
+  --homecam-line: rgb(251 248 243 / .15);
+  color: var(--homecam-ink);
+  background: var(--homecam-canvas);
+}
+
+.homecam-dashboard-shell.theme-dark.tab-events .homecam-header,
+.homecam-dashboard-shell.theme-dark.tab-events .homecam-device-bar {
+  color: var(--homecam-ink);
+  border-color: rgb(251 248 243 / .1);
+  background: #141a19;
+}
+
+.homecam-dashboard-shell.theme-dark.tab-events .homecam-nav button,
+.homecam-dashboard-shell.theme-dark.tab-events .homecam-settings-link,
+.homecam-dashboard-shell.theme-dark.tab-events .homecam-account-link {
+  color: rgb(251 248 243 / .7);
+}
+
+.homecam-dashboard-shell.theme-dark.tab-events .homecam-nav button.is-active {
+  color: var(--homecam-paper);
+  background: rgb(251 248 243 / .14);
+}
+
+.homecam-dashboard-shell.theme-dark.tab-events .homecam-account-link { border-color: var(--homecam-line); }
+.homecam-dashboard-shell.theme-dark.tab-events .homecam-event-period { color: var(--homecam-ink); }
+.homecam-dashboard-shell.theme-dark.tab-events .homecam-event-row-copy > em,
+.homecam-dashboard-shell.theme-dark.tab-events .homecam-event-detail-copy > div p { color: #c4cbc7; }
+.homecam-dashboard-shell.theme-dark.tab-events .homecam-event-detail-copy > div { background: #202624; }
+.homecam-dashboard-shell.theme-dark.tab-events .homecam-event-detail-video > button {
+  color: #1e2422;
+  background: #fbf8f3;
+}
+
+/* Registered-device viewing stays inside the selected Homecam tab. */
+.homecam-stream-shell.is-embedded,
+.homecam-stream-shell.is-embedded > .homecam-stream-main {
+  display: contents;
+}
+
+.homecam-stream-shell.is-embedded > .homecam-header,
+.homecam-stream-shell.is-embedded .homecam-stream-context {
+  display: none;
+}
+
+.homecam-stream-shell.is-embedded .homecam-stream-view {
+  display: contents;
+  width: 100%;
+  padding-top: 0;
+}
+
+.homecam-stream-shell.is-embedded .homecam-stream-sidebar { display: none; }
+
+.homecam-stream-shell.is-embedded .homecam-stream-video-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  border: 0;
+  background: transparent;
+}
+
+.homecam-stream-shell.is-embedded .homecam-stream-video-frame {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.homecam-stream-shell.is-embedded .homecam-stream-controls {
+  z-index: 4;
+  min-height: 0;
+  grid-row: 1;
+  grid-column: 1;
+  align-self: end;
+  margin: 0 18px 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.homecam-stream-shell.is-embedded .homecam-stream-privacy,
+.homecam-stream-shell.is-embedded .homecam-video-bottom { display: none; }
+
+.homecam-stream-shell.is-embedded .homecam-stream-control-button,
+.homecam-stream-shell.is-embedded .homecam-stream-control-button:first-child {
+  min-height: 44px;
+  color: var(--homecam-paper);
+  border: 0;
+  border-radius: 14px;
+  background: rgb(30 36 34 / .72);
+  backdrop-filter: blur(6px);
+}
+
+.homecam-stream-shell.is-embedded .homecam-stream-control-button.is-talking {
+  color: var(--homecam-paper);
+  background: var(--homecam-red);
+}
+
+.homecam-stream-shell.is-embedded .homecam-stream-mockup-controls {
+  display: grid;
+  width: 100%;
+  grid-template-columns: max-content max-content minmax(max-content, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.homecam-stream-shell.is-embedded .homecam-stream-status-chip {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 13px;
+  border-radius: 14px;
+  color: var(--homecam-paper);
+  background: rgb(30 36 34 / .72);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.homecam-stream-shell.is-embedded .homecam-stream-control-button.is-clips {
+  width: max-content;
+  margin-left: 0;
+  justify-self: end;
+  color: #1e2422;
+  background: rgb(251 248 243 / .92);
+}
+
+.homecam-stream-shell.is-embedded .homecam-stream-notice {
+  grid-column: 1;
+  border: 1px solid var(--homecam-line);
+  border-top: 0;
+  border-radius: 0 0 14px 14px;
+}
+
+@media (max-width: 680px) {
+  .homecam-stream-shell.is-embedded .homecam-stream-controls { margin: 0 10px 10px; }
+  .homecam-stream-shell.is-embedded .homecam-stream-control-buttons { width: 100%; }
+  .homecam-stream-shell.is-embedded .homecam-stream-control-button {
+    min-height: 34px;
+    padding: 0 8px;
+    border-radius: 10px;
+    font-size: 10px;
+  }
+  .homecam-stream-shell.is-embedded .homecam-stream-status-chip {
+    min-height: 34px;
+    padding: 0 8px;
+    border-radius: 10px;
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 520px) {
+  .homecam-stream-shell.is-embedded .homecam-stream-mockup-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+  .homecam-stream-shell.is-embedded .homecam-stream-status-chip {
+    width: 100%;
+  }
+  .homecam-stream-shell.is-embedded .homecam-stream-control-button.is-clips {
+    width: 100%;
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+}
+
+@media (max-width: 1180px) {
+  .homecam-dashboard-shell.tab-events .homecam-device-bar-meta { display: none; }
+  .homecam-dashboard-shell.tab-events .homecam-device-bar .homecam-refresh-button span { display: none; }
+}
+
+@media (max-width: 980px) {
+  .homecam-dashboard-shell.tab-events .homecam-device-bar {
+    min-height: 0;
+    flex-wrap: wrap;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .homecam-dashboard-shell.tab-events .homecam-device-bar > h1 { width: 100%; }
+  .homecam-dashboard-shell.tab-events .homecam-device-bar > .homecam-filter-row {
+    min-width: 0;
+    overflow-x: auto;
+    flex: 1;
+  }
+}
+
+@media (max-width: 680px) {
+  .homecam-dashboard-shell .homecam-theme-toggle {
+    min-width: 40px;
+    padding: 0 10px;
+    font-size: 0;
+  }
+
+  .homecam-dashboard-shell.tab-events .homecam-device-bar > .homecam-event-period { display: none; }
+  .homecam-dashboard-shell.tab-events .homecam-device-bar .homecam-refresh-button { display: none; }
+  .homecam-dashboard-shell.tab-events .homecam-events-workspace { min-height: 0; }
+}
+
+/* Color mode applies to the complete authenticated product shell. The camera
+   and map imagery keep their source colors so status and map semantics are not
+   altered by presentation mode. */
+.homecam-dashboard-shell.theme-dark:not(.tab-live) {
+  --homecam-canvas: #1e2422;
+  --homecam-paper: #2b312f;
+  --homecam-panel: #323936;
+  --homecam-ink: #fbf8f3;
+  --homecam-muted: #abb3ae;
+  --homecam-line: rgb(251 248 243 / .15);
+  --homecam-teal: #8fd3dd;
+  --homecam-teal-light: #344947;
+  color: var(--homecam-ink);
+  background: var(--homecam-canvas);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-main {
+  color: var(--homecam-ink);
+  background: var(--homecam-canvas);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-header,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-bar,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-topbar {
+  color: var(--homecam-ink);
+  border-color: rgb(251 248 243 / .1);
+  background: #141a19;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-nav button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-link,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-account-link,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-bar strong,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-bar select,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-selector strong,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-selector select,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-filter-row button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-nav button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-tabs button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-top-status,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-refresh {
+  color: #c4cbc7;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-nav button.is-active,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-link.is-active,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-nav button.is-active,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-tabs button.is-active {
+  color: #fbf8f3;
+  background: rgb(143 211 221 / .16);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-account-link,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-theme-toggle,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-refresh-button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-refresh {
+  border-color: var(--homecam-line);
+  background: transparent;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-bar > div,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-period,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-tabs {
+  color: var(--homecam-ink);
+  border-color: var(--homecam-line);
+  background: rgb(251 248 243 / .07);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-connection-pill {
+  color: var(--homecam-muted);
+  border-color: var(--homecam-line);
+  background: rgb(251 248 243 / .07);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-connection-pill.is-online {
+  color: #78d6a0;
+  border-color: rgb(120 214 160 / .24);
+  background: rgb(120 214 160 / .12);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-events,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-shortcut,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-privacy,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-map-card,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-favorites,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-row,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-detail-copy,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-nav,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-card,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-sidebar,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-mapping,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-view,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-list-card,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-editor-panel {
+  color: var(--homecam-ink);
+  border-color: var(--homecam-line);
+  background: var(--homecam-paper);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-map-preview,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-card,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-canvas {
+  border-color: var(--homecam-line);
+  background-color: #252b29;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-map-actions button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-favorites button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-theme-options button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-actions button.is-secondary,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-choices button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-list-card button {
+  color: var(--homecam-ink);
+  border-color: var(--homecam-line);
+  background: transparent;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-map-actions button:first-child,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-filter-row button.is-selected,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-detail-actions > button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-theme-options button.is-active,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-actions button:not(.is-secondary) {
+  color: #fbf8f3;
+  border-color: #14606e;
+  background: #0b3c45;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-row.is-focused {
+  border-color: #8fd3dd;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-row-copy > em,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-detail-copy > div p,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-nav button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-setting-row span,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-message,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-steps,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-list-card small {
+  color: var(--homecam-muted);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-detail-copy > div,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-family-invite input,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-editor-card input:not([type="color"]),
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-progress {
+  color: var(--homecam-ink);
+  border-color: var(--homecam-line);
+  background: #202624;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-list-card > button.is-selected,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-empty,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-room-zone-list button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-create-menu,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-create-actions > button {
+  color: var(--homecam-ink);
+  border-color: var(--homecam-line);
+  background: #28312e;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-create-actions > button:hover,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-create-actions > button.is-active {
+  border-color: #719095;
+  background: #303d39;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-create-actions > button > i.is-wall::before,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-create-actions > button > i.is-wall::after {
+  background: #28312e;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-virtual-wall-note {
+  color: #ff9e90;
+  border-color: rgb(223 117 103 / .55);
+  background: rgb(192 64 47 / .15);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-virtual-wall-note small { color: #d9aaa3; }
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-add.is-active {
+  color: #fbf8f3;
+  border-color: #2b7885;
+  background: #0b3c45;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-choices button.is-active.is-restricted {
+  color: #ff9e90;
+  border-color: #df7567;
+  background: rgb(192 64 47 / .18);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-choices button.is-active.is-avoid {
+  color: #f2c673;
+  border-color: #c8901a;
+  background: rgb(200 144 26 / .17);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-choices button.is-active.is-allow {
+  color: #8ed6aa;
+  border-color: #4da674;
+  background: rgb(46 125 81 / .2);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-family-invite input::placeholder {
+  color: var(--homecam-muted);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-hero,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-actions button.is-secondary,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-brand > strong {
+  color: #fbf8f3;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-actions button:not(.is-secondary) {
+  color: #1e2422;
+  border-color: #fbf8f3;
+  background: #fbf8f3;
+}
+
+@media (max-width: 680px) {
+  .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-header {
+    border-top-color: rgb(251 248 243 / .1);
+  }
 }

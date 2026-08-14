@@ -618,6 +618,12 @@ AWS에서 `지도 다시 만들기`를 요청하면 시뮬레이션 장치 super
 draft로 격리되고, 저장 시에만 활성 지도·Room·Zone과 사용자용 미리보기를
 원자적으로 교체합니다. 취소하면 기존 활성 지도를 계속 사용합니다.
 
+시뮬레이션 재기동은 같은 supervisor가 활성 지도의 저장 위치를 Gazebo spawn과
+AMCL에 원자적으로 적용합니다. 실제 로봇에서는 저장 위치를 자동 신뢰하지 않고,
+동일 odometry 세션이나 검증된 도킹/위치 기준이 없으면 위치 확인 전까지 주행을
+fail-closed로 차단합니다. SLAM→Navigation 위치 handoff도 OS boot ID와 odometry
+clock이 모두 이어진 경우에만 허용하므로 전원 OFF 중 이동 후에는 복원되지 않습니다.
+
 이미 다른 터미널에서 Gazebo가 실행 중이면 해당 카메라 토픽을 그대로
 재사용합니다.
 

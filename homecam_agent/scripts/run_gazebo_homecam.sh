@@ -20,6 +20,7 @@ gazebo_pid=""
 robot_pid=""
 homecam_pid=""
 runtime_control_file=""
+simulation_bootstrap_pose=()
 
 usage() {
   cat <<'EOF'
@@ -144,6 +145,20 @@ fi
 
 homecam_source_runtime "$repo_root"
 homecam_prepare_media_runtime "$HOMECAM_WORKSPACE"
+if ! "$check_only" && homecam_is_true "$HOMECAM_START_GAZEBO"; then
+  saved_pose_line="$(
+    homecam_saved_map_pose "$HOMECAM_MAP_STORE" 2>/dev/null || true
+  )"
+  if [[ -n "$saved_pose_line" ]]; then
+    read -r -a simulation_bootstrap_pose <<< "$saved_pose_line"
+    if ((${#simulation_bootstrap_pose[@]} != 3)); then
+      homecam_die "saved map pose is malformed"
+      exit 1
+    fi
+    homecam_log \
+      "restoring simulator spawn from the active map revision"
+  fi
+fi
 command -v setsid >/dev/null 2>&1 || {
   homecam_die "setsid is required to manage the Gazebo and homecam process groups"
   exit 1
@@ -259,6 +274,8 @@ stop_robot_stack() {
 start_robot_stack() {
   local force_mapping="$1"
   local auto_start="$2"
+  local trust_bootstrap_pose="${3:-false}"
+  local trust_localization_handoff="${4:-false}"
   robot_command=(
     ros2 launch malbut_gazebo managed_home.launch.py
     "world_name:=$HOMECAM_WORLD"
@@ -276,7 +293,15 @@ start_robot_stack() {
     "runtime_request_file:=$runtime_control_file"
     "force_mapping:=$force_mapping"
     "auto_start:=$auto_start"
+    "trusted_localization_handoff:=$trust_localization_handoff"
   )
+  if "$trust_bootstrap_pose" &&
+    ((${#simulation_bootstrap_pose[@]} == 3))
+  then
+    robot_command+=("trusted_initial_pose:=true")
+    homecam_append_pose_arguments \
+      robot_command "${simulation_bootstrap_pose[@]}"
+  fi
   homecam_log \
     "starting robot runtime: force_mapping=$force_mapping auto_start=$auto_start"
   setsid "${robot_command[@]}" &
@@ -330,10 +355,14 @@ if homecam_is_true "$HOMECAM_START_GAZEBO"; then
     homecam_log \
       "local map UI: http://$HOMECAM_MAP_WEB_HOST:$HOMECAM_MAP_WEB_PORT/"
   fi
+  if ((${#simulation_bootstrap_pose[@]} == 3)); then
+    homecam_append_pose_arguments \
+      gazebo_command "${simulation_bootstrap_pose[@]}"
+  fi
   setsid "${gazebo_command[@]}" &
   gazebo_pid=$!
   if ! "$check_only"; then
-    start_robot_stack "$HOMECAM_FORCE_MAPPING" false
+    start_robot_stack "$HOMECAM_FORCE_MAPPING" false true false
   fi
 else
   homecam_log "using the already-running Gazebo/ROS graph"
@@ -474,12 +503,14 @@ while true; do
         mapping)
           homecam_log "switching the robot runtime to mapping"
           stop_robot_stack
-          start_robot_stack true true
+          start_robot_stack true true false false
           ;;
         navigation)
           homecam_log "switching the robot runtime to saved-map navigation"
           stop_robot_stack
-          start_robot_stack false false
+          # Gazebo and its odometry bridge remain alive across this managed
+          # SLAM-to-navigation transition, so the handoff is trusted here.
+          start_robot_stack false false false true
           ;;
         *)
           homecam_warn "ignored an invalid robot runtime request"

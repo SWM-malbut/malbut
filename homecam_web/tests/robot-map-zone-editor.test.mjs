@@ -1,0 +1,86 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+test("the cloud zone editor keeps the established map editing contract", async () => {
+  const panel = await readFile(
+    new URL("../app/components/robot-map-panel.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(panel, /type: "corner"/);
+  assert.match(panel, /type: "edge"/);
+  assert.match(panel, /type: "move"/);
+  assert.match(panel, /zoneRingValidationError/);
+  assert.match(panel, /zoneInteriorInsideBoundary/);
+  assert.match(panel, /구역 내부에 벽이나 장애물이 포함될 수 없습니다/);
+  assert.match(panel, /preferred_goal/);
+  assert.match(panel, /role: "semantic_zone"/);
+  assert.match(panel, /sendCommand\("zones_apply"/);
+  assert.doesNotMatch(panel, /zonePoints|setZonePoints/);
+});
+
+test("the add menu can copy a complete room into a semantic movement zone", async () => {
+  const panel = await readFile(
+    new URL("../app/components/robot-map-panel.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(panel, /function addRoomAsZone|const addRoomAsZone/);
+  assert.match(panel, /polygonGeometries\(room\.geometry\)/);
+  assert.match(panel, /source_room_id/);
+  assert.match(panel, /방 전체 적용/);
+  assert.match(panel, /저장된 방 경계를 그대로 사용/);
+  assert.match(panel, /zoneCreateMode === "room"/);
+});
+
+test("virtual walls remain compatible with the semantic polygon contract", async () => {
+  const panel = await readFile(
+    new URL("../app/components/robot-map-panel.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(panel, /geometry_kind = "virtual_wall"/);
+  assert.match(panel, /wall_endpoints/);
+  assert.match(panel, /wall_width_m/);
+  assert.match(panel, /virtualWallRing/);
+  assert.match(panel, /type: "wall-endpoint"/);
+  assert.match(panel, /<line/);
+  assert.match(panel, /가상 벽/);
+  assert.match(panel, /properties\.behavior = "restricted"/);
+});
+
+test("existing zones can be selected directly on the map", async () => {
+  const [panel, styles] = await Promise.all([
+    readFile(new URL("../app/components/robot-map-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(panel, /setSelectedZoneId\(id\)/);
+  assert.match(panel, /featureContains\(candidate, x, y\)/);
+  assert.match(panel, /robot-map-zone-shape/);
+  assert.match(panel, /robot-map-virtual-wall/);
+  assert.match(panel, /robot-map-virtual-wall-hit/);
+  assert.doesNotMatch(panel, /robot-map-zone-label/);
+  assert.match(panel, /robot-map-list-card/);
+  assert.match(panel, /robot-map-semantics.*is-interactive/);
+  assert.match(panel, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(panel, /pointerEvents: "auto"/);
+  assert.match(panel, /const deviceId = device\?\.id \?\? ""/);
+  assert.match(panel, /\}, \[deviceId\]\);/);
+  assert.doesNotMatch(panel, /\}, \[device, semanticRefresh/);
+  assert.match(styles, /\.robot-map-virtual-wall-handle\s*\{[^}]*pointer-events:\s*all/s);
+  assert.match(styles, /\.robot-map-virtual-wall-hit\s*\{[^}]*stroke-width:\s*18px/s);
+});
+
+test("room editing never redraws the saved map wall outline", async () => {
+  const [panel, styles] = await Promise.all([
+    readFile(new URL("../app/components/robot-map-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.doesNotMatch(panel, /robot-map-room-shape/);
+  assert.doesNotMatch(styles, /robot-map-room-shape/);
+  assert.match(panel, /roomInternalBoundaryPath/);
+  assert.match(styles, /\.robot-map-room-divider/);
+});
