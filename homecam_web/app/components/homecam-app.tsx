@@ -1977,7 +1977,7 @@ function safeAuthActionPath(value: unknown, fallback: string): string {
 
 export function HomecamApp() {
   const [mode, setMode] = useState<Mode>("landing");
-  const [dashboardTab, setDashboardTab] = useState<HomecamTab>("live");
+  const [dashboardTab, setDashboardTab] = useState<HomecamTab>("home");
   const [roomCode, setRoomCode] = useState("");
   const [viewerPassword, setViewerPassword] = useState("");
   const [viewerDeviceId, setViewerDeviceId] = useState("");
@@ -1999,7 +1999,7 @@ export function HomecamApp() {
     }
   }, []);
 
-  const reset = (tab: HomecamTab = "live") => {
+  const reset = (tab: HomecamTab = "home") => {
     window.history.replaceState({}, "", window.location.pathname);
     setDashboardTab(tab);
     setMode("landing");

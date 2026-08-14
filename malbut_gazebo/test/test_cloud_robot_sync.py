@@ -1,4 +1,5 @@
 from pathlib import Path
+import base64
 from http.cookiejar import CookieJar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -6,8 +7,10 @@ from threading import Thread
 from urllib.request import HTTPCookieProcessor, build_opener
 
 import pytest
+import numpy as np
 
 from malbut_gazebo.cloud_robot_sync import CloudRobotSync, TOKEN_PATTERN
+from malbut_gazebo.map_lifecycle import MapGrid
 
 
 def test_cloud_token_contract_matches_homecam_device_token():
@@ -31,6 +34,31 @@ def test_cloud_localization_normalizes_ros_field_name():
         {"localization": {"state": "ok", "tf_age_s": 0.025}},
         {},
     ) == {"state": "ok", "tfAgeS": 0.025}
+
+
+def test_cloud_map_counter_prefers_navigation_sequence_over_stable_hash():
+    assert CloudRobotSync._normal_map_counter({
+        "seq": 17, "map_revision": "rev-c8e4c785849b",
+    }, 3) == 17
+    assert CloudRobotSync._normal_map_counter({
+        "map_revision": "rev-c8e4c785849b",
+    }, 3) == 3
+
+
+def test_cloud_remap_command_requests_supervised_runtime_switch(
+    tmp_path: Path,
+):
+    sync = CloudRobotSync.__new__(CloudRobotSync)
+    sync.runtime_request_file = tmp_path / "mode-request"
+    sync._local_status = lambda: {"_runtime_mode": "navigation"}
+
+    result = sync._local_command("start", {})
+
+    assert result == {
+        "accepted": True,
+        "message": "지도 생성 모드로 전환합니다.",
+        "_runtime_request": "mapping",
+    }
 
 
 def test_cloud_navigation_command_uses_saved_map_and_one_local_session(
@@ -97,6 +125,14 @@ def test_cloud_navigation_command_uses_saved_map_and_one_local_session(
         sync._local_command(
             "navigation_start", {"previewToken": preview["preview_token"]}
         )
+        zones = {
+            "type": "FeatureCollection",
+            "format": "malbut-semantic-zones-v1",
+            "map_id": "map-home",
+            "map_revision": "map-revision-home",
+            "features": [],
+        }
+        sync._local_command("zones_apply", zones)
         assert calls == [
             (
                 "/api/navigation/preview",
@@ -113,8 +149,80 @@ def test_cloud_navigation_command_uses_saved_map_and_one_local_session(
                 {"preview_token": "preview_token_123"},
                 "session=test-session",
             ),
+            (
+                "/api/apply-zones",
+                zones,
+                "session=test-session",
+            ),
         ]
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_finalized_map_upload_uses_friendly_preview_and_semantics(
+    tmp_path: Path,
+):
+    revision = tmp_path / "versions" / "rev-1"
+    revision.mkdir(parents=True)
+    (revision / "map.yaml").write_text("{}", encoding="utf-8")
+    (revision / "map.pgm").write_bytes(b"P5\n1 1\n255\n\xff")
+    (revision / "user-map.geojson").write_text(
+        json.dumps({"type": "FeatureCollection", "features": []}),
+        encoding="utf-8",
+    )
+    friendly = b"\x89PNG\r\n\x1a\nFRIENDLY"
+    (revision / "preview.png").write_bytes(friendly)
+    zones = {
+        "type": "FeatureCollection",
+        "format": "malbut-semantic-zones-v1",
+        "map_id": "map-home",
+        "map_revision": "map-revision-home",
+        "features": [],
+    }
+    (revision / "map-home-zones.geojson").write_text(
+        json.dumps(zones), encoding="utf-8"
+    )
+    (tmp_path / "active.json").write_text(json.dumps({
+        "format": "malbut-map-store/v1",
+        "revision": "rev-1",
+        "created_at": "2026-08-14T00:00:00+00:00",
+        "map_id": "map-home",
+        "map_revision": "map-revision-home",
+        "map_yaml": "versions/rev-1/map.yaml",
+        "map_image": "versions/rev-1/map.pgm",
+        "user_map": "versions/rev-1/user-map.geojson",
+        "preview": "versions/rev-1/preview.png",
+    }), encoding="utf-8")
+    cells = np.zeros((2, 2), dtype=np.int16)
+    cells.setflags(write=False)
+    grid = MapGrid(2, 2, 0.05, 0.0, 0.0, 0.0, cells)
+
+    class _Now:
+        nanoseconds = 10_000_000_000
+
+    class _Clock:
+        @staticmethod
+        def now():
+            return _Now()
+
+    uploaded = []
+    sync = CloudRobotSync.__new__(CloudRobotSync)
+    sync.map_store = tmp_path
+    sync.last_uploaded_map = ""
+    sync.last_map_upload_monotonic = 0.0
+    sync.get_clock = lambda: _Clock()
+    sync._cloud_json = lambda path, method, payload: uploaded.append(
+        (path, method, payload)
+    ) or {}
+
+    sync._upload_map_if_needed(
+        grid, {"_runtime_mode": "navigation"}
+    )
+
+    payload = uploaded[0][2]
+    assert payload["finalized"] is True
+    assert base64.b64decode(payload["previewBase64"]) == friendly
+    assert payload["userMap"]["type"] == "FeatureCollection"
+    assert payload["semanticZones"] == zones

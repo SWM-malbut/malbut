@@ -120,6 +120,12 @@ AWS KVS 세션 시작·종료와 카메라·모니터링 설정은 이 지도를
 생성·저장 명령은 로컬 onboarding API로, 목적지 미리보기·이동·취소 명령은
 로컬 Nav2 웹 API로 전달된다. 목적지 좌표를 받은 장치는 반드시 로컬의 최신
 costmap·Zone 안전 검사를 통과한 preview token으로만 주행을 시작한다.
+저장 지도에서 `지도 다시 만들기`를 요청하면 장치 supervisor는 Gazebo와
+카메라 스트림을 유지한 채 Nav2/AMCL 스택만 SLAM 탐색 스택으로 교체한다.
+저장 또는 취소가 끝나면 같은 방식으로 저장 지도 주행에 복귀한다. 작성 중인
+지도는 cloud draft로만 보이고, 취소 시 기존 사용자 지도를 다시 표시한다.
+완료된 웹 미리보기는 raw costmap이 아니라 저장 과정에서 정리한
+`preview.png`를 사용하므로 inflation 그림자를 사용자 지도에 노출하지 않는다.
 
 이후 `small_house`와 로봇을 headless 모드로 시작하고
 `sensor_msgs/msg/Image` 및 `CameraInfo` 토픽을 자동 탐색한다. RGB 프레임

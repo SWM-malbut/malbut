@@ -10,7 +10,11 @@ export async function GET(
   const userEmail = await getRequestUserEmail(request);
   if (!userEmail) return new Response("로그인이 필요합니다.", { status: 401 });
   const { deviceId } = await context.params;
-  const map = await getRobotMapPreview(deviceId, userEmail);
+  const revision = new URL(request.url).searchParams.get("revision") ?? "";
+  if (revision && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(revision)) {
+    return new Response("지도 버전을 확인해 주세요.", { status: 400 });
+  }
+  const map = await getRobotMapPreview(deviceId, userEmail, revision);
   if (!map) return new Response("지도를 찾을 수 없습니다.", { status: 404 });
   const bytes = Buffer.from(map.preview_base64, "base64");
   return new Response(bytes, {

@@ -17,7 +17,9 @@ config_path="$(homecam_default_config_path)"
 reuse_gazebo=false
 check_only=false
 gazebo_pid=""
+robot_pid=""
 homecam_pid=""
+runtime_control_file=""
 
 usage() {
   cat <<'EOF'
@@ -90,6 +92,7 @@ fi
 : "${HOMECAM_MICROPHONE_ENABLED:=false}"
 : "${HOMECAM_MODEL_PATH:=}"
 : "${HOMECAM_MONITORING_ENABLED:=false}"
+: "${HOMECAM_FORCE_MAPPING:=false}"
 : "${HOMECAM_TOPIC_TIMEOUT_SECONDS:=90}"
 
 if ! "$check_only"; then
@@ -103,6 +106,7 @@ homecam_validate_boolean \
   HOMECAM_CLOUD_MAP_ENABLED "$HOMECAM_CLOUD_MAP_ENABLED"
 homecam_validate_boolean \
   HOMECAM_MONITORING_ENABLED "$HOMECAM_MONITORING_ENABLED"
+homecam_validate_boolean HOMECAM_FORCE_MAPPING "$HOMECAM_FORCE_MAPPING"
 homecam_validate_boolean \
   HOMECAM_MICROPHONE_ENABLED "$HOMECAM_MICROPHONE_ENABLED"
 [[ "$HOMECAM_TOPIC_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] &&
@@ -170,6 +174,8 @@ if ! "$check_only"; then
       "another Gazebo homecam launcher is already active in ROS domain ${ROS_DOMAIN_ID:-0}"
     exit 1
   fi
+  runtime_control_file="$runtime_base/sim-${ROS_DOMAIN_ID:-0}.mode-request"
+  rm -f -- "$runtime_control_file"
 fi
 
 cleanup_process_group() {
@@ -191,6 +197,7 @@ cleanup() {
   local exit_status=$?
   trap - EXIT INT TERM
   cleanup_process_group "$homecam_pid" INT
+  cleanup_process_group "$robot_pid" INT
   cleanup_process_group "$gazebo_pid" INT
   local deadline=$((SECONDS + 8))
   while ((SECONDS < deadline)); do
@@ -201,14 +208,19 @@ cleanup() {
     if process_group_alive "$gazebo_pid"; then
       alive=true
     fi
+    if process_group_alive "$robot_pid"; then
+      alive=true
+    fi
     "$alive" || break
     sleep 0.2
   done
   cleanup_process_group "$homecam_pid" TERM
+  cleanup_process_group "$robot_pid" TERM
   cleanup_process_group "$gazebo_pid" TERM
   deadline=$((SECONDS + 3))
   while ((SECONDS < deadline)); do
     if ! process_group_alive "$homecam_pid" &&
+      ! process_group_alive "$robot_pid" &&
       ! process_group_alive "$gazebo_pid"
     then
       break
@@ -216,14 +228,60 @@ cleanup() {
     sleep 0.2
   done
   cleanup_process_group "$homecam_pid" KILL
+  cleanup_process_group "$robot_pid" KILL
   cleanup_process_group "$gazebo_pid" KILL
   [[ -z "$homecam_pid" ]] || wait "$homecam_pid" 2>/dev/null || true
+  [[ -z "$robot_pid" ]] || wait "$robot_pid" 2>/dev/null || true
   [[ -z "$gazebo_pid" ]] || wait "$gazebo_pid" 2>/dev/null || true
   exit "$exit_status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+stop_robot_stack() {
+  [[ -n "$robot_pid" ]] || return 0
+  cleanup_process_group "$robot_pid" INT
+  local deadline=$((SECONDS + 8))
+  while ((SECONDS < deadline)) && process_group_alive "$robot_pid"; do
+    sleep 0.2
+  done
+  cleanup_process_group "$robot_pid" TERM
+  deadline=$((SECONDS + 3))
+  while ((SECONDS < deadline)) && process_group_alive "$robot_pid"; do
+    sleep 0.2
+  done
+  cleanup_process_group "$robot_pid" KILL
+  wait "$robot_pid" 2>/dev/null || true
+  robot_pid=""
+}
+
+start_robot_stack() {
+  local force_mapping="$1"
+  local auto_start="$2"
+  robot_command=(
+    ros2 launch malbut_gazebo managed_home.launch.py
+    "world_name:=$HOMECAM_WORLD"
+    "rviz:=$HOMECAM_MAP_RVIZ"
+    "simulation:=false"
+    "use_sim_time:=true"
+    "map_store:=$HOMECAM_MAP_STORE"
+    "web_host:=$HOMECAM_MAP_WEB_HOST"
+    "web_port:=$HOMECAM_MAP_WEB_PORT"
+    "cloud_sync:=$HOMECAM_CLOUD_MAP_ENABLED"
+    "cloud_backend_url:=$HOMECAM_BACKEND_URL"
+    "cloud_device_id:=$HOMECAM_DEVICE_ID"
+    "cloud_token_file:=$HOMECAM_DEVICE_TOKEN_FILE"
+    "cloud_local_url:=$homecam_map_local_url"
+    "runtime_request_file:=$runtime_control_file"
+    "force_mapping:=$force_mapping"
+    "auto_start:=$auto_start"
+  )
+  homecam_log \
+    "starting robot runtime: force_mapping=$force_mapping auto_start=$auto_start"
+  setsid "${robot_command[@]}" &
+  robot_pid=$!
+}
 
 if ! "$check_only" &&
   ros2 node list 2>/dev/null | grep -Fxq '/homecam_media_agent'
@@ -258,20 +316,14 @@ if homecam_is_true "$HOMECAM_START_GAZEBO"; then
       homecam_map_local_url="http://$HOMECAM_MAP_WEB_HOST:$HOMECAM_MAP_WEB_PORT"
     fi
     gazebo_command=(
-      ros2 launch malbut_gazebo managed_home.launch.py
+      ros2 launch malbut_gazebo worlds.launch.py
       "world_name:=$HOMECAM_WORLD"
       "gui:=$HOMECAM_GAZEBO_GUI"
       "headless:=$HOMECAM_GAZEBO_HEADLESS"
-      "rviz:=$HOMECAM_MAP_RVIZ"
-      "simulation:=true"
-      "map_store:=$HOMECAM_MAP_STORE"
-      "web_host:=$HOMECAM_MAP_WEB_HOST"
-      "web_port:=$HOMECAM_MAP_WEB_PORT"
-      "cloud_sync:=$HOMECAM_CLOUD_MAP_ENABLED"
-      "cloud_backend_url:=$HOMECAM_BACKEND_URL"
-      "cloud_device_id:=$HOMECAM_DEVICE_ID"
-      "cloud_token_file:=$HOMECAM_DEVICE_TOKEN_FILE"
-      "cloud_local_url:=$homecam_map_local_url"
+      "rviz:=false"
+      "lidar_enabled:=true"
+      "spawn_robot:=true"
+      "bridge:=true"
     )
     homecam_log "starting managed device world: $HOMECAM_WORLD"
     homecam_log "persistent map store: $HOMECAM_MAP_STORE"
@@ -280,6 +332,9 @@ if homecam_is_true "$HOMECAM_START_GAZEBO"; then
   fi
   setsid "${gazebo_command[@]}" &
   gazebo_pid=$!
+  if ! "$check_only"; then
+    start_robot_stack "$HOMECAM_FORCE_MAPPING" false
+  fi
 else
   homecam_log "using the already-running Gazebo/ROS graph"
 fi
@@ -291,6 +346,11 @@ while ((SECONDS < deadline)); do
   if [[ -n "$gazebo_pid" ]] && ! kill -0 "$gazebo_pid" 2>/dev/null; then
     wait "$gazebo_pid" || true
     homecam_die "Gazebo exited before publishing an RGB image"
+    exit 1
+  fi
+  if [[ -n "$robot_pid" ]] && ! kill -0 "$robot_pid" 2>/dev/null; then
+    wait "$robot_pid" || true
+    homecam_die "robot map/navigation stack exited before camera startup"
     exit 1
   fi
   topic_snapshot="$(ros2 topic list -t 2>/dev/null || true)"
@@ -380,20 +440,52 @@ homecam_log \
 setsid "${homecam_command[@]}" &
 homecam_pid=$!
 
-if [[ -n "$gazebo_pid" ]]; then
-  set +e
-  wait -n "$homecam_pid" "$gazebo_pid"
-  child_status=$?
-  set -e
-  if kill -0 "$homecam_pid" 2>/dev/null; then
-    homecam_warn "managed device stack stopped; shutting down homecam"
-  else
-    homecam_warn "homecam agent stopped; shutting down Gazebo"
-  fi
-  if ((child_status == 0)); then
-    child_status=1
-  fi
-  exit "$child_status"
+if [[ -z "$gazebo_pid" ]]; then
+  wait "$homecam_pid"
+  exit $?
 fi
 
-wait "$homecam_pid"
+while true; do
+  if ! process_group_alive "$homecam_pid"; then
+    wait "$homecam_pid" 2>/dev/null || true
+    homecam_die "homecam agent stopped; shutting down the device runtime"
+    exit 1
+  fi
+  if ! process_group_alive "$gazebo_pid"; then
+    wait "$gazebo_pid" 2>/dev/null || true
+    homecam_die "Gazebo stopped; shutting down the device runtime"
+    exit 1
+  fi
+  if [[ -n "$robot_pid" ]] && ! process_group_alive "$robot_pid"; then
+    wait "$robot_pid" 2>/dev/null || true
+    homecam_die "robot map/navigation stack stopped unexpectedly"
+    exit 1
+  fi
+  if [[ -s "$runtime_control_file" ]]; then
+    requested_mode=""
+    not_before=""
+    read -r requested_mode not_before < "$runtime_control_file" || true
+    if [[ ! "$not_before" =~ ^[0-9]+$ ]]; then
+      rm -f -- "$runtime_control_file"
+      homecam_warn "ignored an invalid robot runtime request"
+    elif ((10#$not_before <= $(date +%s))); then
+      rm -f -- "$runtime_control_file"
+      case "$requested_mode" in
+        mapping)
+          homecam_log "switching the robot runtime to mapping"
+          stop_robot_stack
+          start_robot_stack true true
+          ;;
+        navigation)
+          homecam_log "switching the robot runtime to saved-map navigation"
+          stop_robot_stack
+          start_robot_stack false false
+          ;;
+        *)
+          homecam_warn "ignored an invalid robot runtime request"
+          ;;
+      esac
+    fi
+  fi
+  sleep 0.5
+done

@@ -84,6 +84,10 @@ def _select_mode(context):
             "map_store": LaunchConfiguration("map_store"),
             "replace_existing": "true" if active is not None else "false",
             "save_posegraph": LaunchConfiguration("save_posegraph"),
+            "auto_start": LaunchConfiguration("auto_start"),
+            "runtime_request_file": LaunchConfiguration(
+                "runtime_request_file"
+            ),
         }
         if simulation_enabled:
             mapping_arguments.update(common)
@@ -161,6 +165,9 @@ def _cloud_sync() -> Node:
             "token_file": LaunchConfiguration("cloud_token_file"),
             "map_store": LaunchConfiguration("map_store"),
             "local_url": LaunchConfiguration("cloud_local_url"),
+            "runtime_request_file": LaunchConfiguration(
+                "runtime_request_file"
+            ),
         }],
     )
 
@@ -216,6 +223,8 @@ def generate_launch_description():
                 "Keep the active revision while creating a replacement."
             ),
         ),
+        DeclareLaunchArgument("auto_start", default_value="false"),
+        DeclareLaunchArgument("runtime_request_file", default_value=""),
         DeclareLaunchArgument(
             "save_posegraph",
             default_value="false",

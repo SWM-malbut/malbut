@@ -58,6 +58,8 @@ def generate_launch_description():
             "--auto-start", LaunchConfiguration("auto_start"),
             "--replace-existing", LaunchConfiguration("replace_existing"),
             "--save-posegraph", LaunchConfiguration("save_posegraph"),
+            "--runtime-request-file",
+            LaunchConfiguration("runtime_request_file"),
         ],
     )
     rviz = Node(
@@ -95,6 +97,7 @@ def generate_launch_description():
         DeclareLaunchArgument("auto_start", default_value="false"),
         DeclareLaunchArgument("replace_existing", default_value="false"),
         DeclareLaunchArgument("save_posegraph", default_value="false"),
+        DeclareLaunchArgument("runtime_request_file", default_value=""),
         mapper,
         navigation,
         recorder,
