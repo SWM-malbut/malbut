@@ -84,3 +84,39 @@ test("room editing never redraws the saved map wall outline", async () => {
   assert.match(panel, /roomInternalBoundaryPath/);
   assert.match(styles, /\.robot-map-room-divider/);
 });
+
+test("clearing a room name keeps the controlled input empty while editing", async () => {
+  const panel = await readFile(
+    new URL("../app/components/robot-map-panel.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(panel, /value=\{selectedRoom \? featureName\(selectedRoom, ""\) : ""\}/);
+  assert.match(panel, /const name = typeof updates\.name === "string"\s*\? updates\.name\.slice\(0, 40\)\s*:\s*"";/s);
+  assert.match(panel, /properties\.base_name = name\.trim\(\) \|\| "이름 없는 방"/);
+  assert.doesNotMatch(panel, /updates\.name\.trim\(\)[\s\S]{0,100}: "이름 없는 방"/);
+});
+
+test("zone editing keeps room boundaries and names as non-interactive context", async () => {
+  const [panel, styles] = await Promise.all([
+    readFile(new URL("../app/components/robot-map-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(panel, /\(mapMode === "rooms" \|\| mapMode === "zones"\) && roomDrafts\.map/g);
+  assert.match(panel, /mapMode === "zones" \? "is-context" : ""/);
+  assert.match(panel, /방 경계·이름/);
+  assert.match(styles, /\.robot-map-room-divider\.is-context\s*\{[^}]*pointer-events:\s*none/s);
+  assert.match(styles, /\.robot-map-room-label\.is-context\s*\{[^}]*pointer-events:\s*none/s);
+});
+
+test("the cloud robot marker interpolates one-second pose updates while driving", async () => {
+  const [panel, styles] = await Promise.all([
+    readFile(new URL("../app/components/robot-map-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(panel, /robot-map-marker \$\{navigationDriving \? "is-driving" : ""\}/);
+  assert.match(styles, /\.robot-map-marker\.is-driving\s*\{[^}]*transition-duration:\s*950ms/s);
+  assert.match(styles, /\.robot-map-marker\.is-driving\s*\{[^}]*transition-timing-function:\s*linear/s);
+});
