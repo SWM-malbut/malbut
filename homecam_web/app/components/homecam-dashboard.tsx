@@ -27,7 +27,12 @@ import {
   HomecamHeader,
   type HomecamTab,
 } from "./homecam-header";
-import { RobotMapPanel } from "./robot-map-panel";
+import {
+  RobotMapPanel,
+  RobotMapSummaryOverlay,
+  type RobotSemantics,
+  type RobotSnapshot,
+} from "./robot-map-panel";
 
 export type { HomecamTab } from "./homecam-header";
 
@@ -105,27 +110,52 @@ function HomeMapSummary({
   device: HomecamDevice | null;
   onNavigate: (tab: HomecamTab) => void;
 }) {
-  const [revision, setRevision] = useState("");
+  const deviceId = device?.id ?? "";
+  const [robotSnapshot, setRobotSnapshot] = useState<RobotSnapshot | null>(null);
+  const [semantics, setSemantics] = useState<RobotSemantics | null>(null);
   const [rooms, setRooms] = useState<Array<{ id: string; name: string; color: string }>>([]);
+  const revision = robotSnapshot?.map?.revision ?? "";
 
   useEffect(() => {
-    if (!device) {
+    if (!deviceId) {
       const timer = window.setTimeout(() => {
-        setRevision("");
+        setRobotSnapshot(null);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+    const controller = new AbortController();
+    const loadRobot = async () => {
+      const response = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/robot`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => ({})) as RobotSnapshot;
+      if (response.ok && !controller.signal.aborted) setRobotSnapshot(payload);
+    };
+    void loadRobot().catch(() => undefined);
+    const timer = window.setInterval(() => void loadRobot().catch(() => undefined), 1_000);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [deviceId]);
+
+  useEffect(() => {
+    if (!deviceId || !revision) {
+      const timer = window.setTimeout(() => {
+        setSemantics(null);
         setRooms([]);
       }, 0);
       return () => window.clearTimeout(timer);
     }
     const controller = new AbortController();
-    void Promise.all([
-      fetch(`/api/devices/${encodeURIComponent(device.id)}/robot`, { cache: "no-store", signal: controller.signal }),
-      fetch(`/api/devices/${encodeURIComponent(device.id)}/robot/semantic`, { cache: "no-store", signal: controller.signal }),
-    ]).then(async ([robotResponse, semanticResponse]) => {
-      const robot = asRecord(await robotResponse.json().catch(() => ({})));
-      const map = asRecord(robot.map);
-      if (robotResponse.ok) setRevision(stringValue(map.revision) ?? "");
-      if (!semanticResponse.ok) return;
-      const semantic = asRecord(await semanticResponse.json().catch(() => ({})));
+    void fetch(`/api/devices/${encodeURIComponent(deviceId)}/robot/semantic`, {
+      cache: "no-store",
+      signal: controller.signal,
+    }).then(async (response) => {
+      const semantic = await response.json().catch(() => ({})) as RobotSemantics;
+      if (!response.ok || controller.signal.aborted) return;
+      setSemantics(semantic);
       const userMap = asRecord(semantic.userMap);
       const features = Array.isArray(userMap.features) ? userMap.features : [];
       setRooms(features.flatMap((value, index) => {
@@ -140,7 +170,7 @@ function HomeMapSummary({
       }));
     }).catch(() => undefined);
     return () => controller.abort();
-  }, [device]);
+  }, [deviceId, revision]);
 
   return (
     <>
@@ -148,13 +178,16 @@ function HomeMapSummary({
         <h2>우리 집 지도</h2>
         <button type="button" className="homecam-home-map-preview" onClick={() => onNavigate("map")}>
           {device && revision ? (
-            <Image
-              src={`/api/devices/${encodeURIComponent(device.id)}/robot/map?revision=${encodeURIComponent(revision)}`}
-              alt="저장된 우리 집 지도"
-              fill
-              unoptimized
-              sizes="376px"
-            />
+            <>
+              <Image
+                src={`/api/devices/${encodeURIComponent(device.id)}/robot/map?revision=${encodeURIComponent(revision)}`}
+                alt="저장된 우리 집 지도"
+                fill
+                unoptimized
+                sizes="376px"
+              />
+              <RobotMapSummaryOverlay snapshot={robotSnapshot} semantics={semantics} />
+            </>
           ) : (
             <span>저장된 지도를 확인하고 있어요</span>
           )}

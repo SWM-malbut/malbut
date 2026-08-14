@@ -9,7 +9,7 @@ import {
 } from "@phosphor-icons/react";
 import type { HomecamDevice } from "./homecam-dashboard";
 
-type RobotSnapshot = {
+export type RobotSnapshot = {
   online: boolean;
   state: {
     state: string;
@@ -67,7 +67,7 @@ type GeoFeature = {
   geometry: { type: string; coordinates: unknown };
 };
 
-type RobotSemantics = {
+export type RobotSemantics = {
   revision: string;
   mapId: string;
   mapRevision: string;
@@ -1744,6 +1744,125 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
         </aside>
       </div>
     </section>
+  );
+}
+
+export function RobotMapSummaryOverlay({
+  snapshot,
+  semantics,
+}: {
+  snapshot: RobotSnapshot | null;
+  semantics: RobotSemantics | null;
+}) {
+  const map = snapshot?.map;
+  if (!map) return null;
+
+  const semanticsMatch = semantics?.revision === map.revision;
+  const userFeatures = semanticsMatch ? featuresOf(semantics?.userMap) : [];
+  const rooms = userFeatures.filter((feature) => feature.properties.role === "room");
+  const walkableArea = userFeatures.find((feature) => feature.properties.role === "walkable_area") ?? null;
+  const zones = semanticsMatch ? featuresOf(semantics?.zones) : [];
+  const pose = snapshot?.state?.localization.state === "ok" ? snapshot.state.pose : null;
+  const mappedPose = pose ? worldToPercent(pose.x, pose.y, map.geometry) : null;
+  const marker = mappedPose && mappedPose.left >= 0 && mappedPose.left <= 100 && mappedPose.top >= 0 && mappedPose.top <= 100
+    ? {
+        ...mappedPose,
+        heading: -(pose!.yaw - map.geometry.originYaw) * 180 / Math.PI,
+      }
+    : null;
+  const targetState = snapshot?.state?.target?.state;
+  const driving = targetState === "driving" || targetState === "canceling";
+
+  return (
+    <>
+      {(rooms.length > 0 || zones.length > 0) && (
+        <svg
+          className="robot-map-semantics robot-map-home-semantics"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <defs>
+            <pattern id="home-restricted-hatch" width="1.8" height="1.8" patternUnits="userSpaceOnUse">
+              <rect width="1.8" height="1.8" fill="rgba(192,64,47,.08)" />
+              <path d="M-.45 1.35 L1.35 -.45 M.45 2.25 L2.25 .45" stroke="rgba(192,64,47,.48)" strokeWidth=".18" />
+            </pattern>
+            <pattern id="home-avoid-dots" width="2.2" height="2.2" patternUnits="userSpaceOnUse">
+              <rect width="2.2" height="2.2" fill="rgba(200,144,26,.07)" />
+              <circle cx="1.1" cy="1.1" r=".22" fill="rgba(200,144,26,.65)" />
+            </pattern>
+          </defs>
+          {zones.map((zone) => {
+            const id = featureId(zone);
+            const wall = virtualWallEndpoints(zone);
+            if (wall) {
+              const start = worldToPercent(wall[0][0], wall[0][1], map.geometry);
+              const end = worldToPercent(wall[1][0], wall[1][1], map.geometry);
+              return (
+                <line
+                  key={id}
+                  className="robot-map-virtual-wall"
+                  x1={start.left}
+                  y1={start.top}
+                  x2={end.left}
+                  y2={end.top}
+                  stroke={zoneColor(zone)}
+                />
+              );
+            }
+            const path = featureGeometryPath(zone, map.geometry);
+            if (!path) return null;
+            const behavior = zoneBehaviorOf(zone);
+            return (
+              <path
+                key={id}
+                className={`robot-map-zone-shape is-${behavior}`}
+                d={path}
+                fill={behavior === "restricted" ? "url(#home-restricted-hatch)" : behavior === "avoid" ? "url(#home-avoid-dots)" : "rgba(46,125,81,.15)"}
+                fillRule="evenodd"
+                stroke={zoneColor(zone)}
+              />
+            );
+          })}
+          {walkableArea && rooms.map((room) => {
+            const path = roomInternalBoundaryPath(
+              room,
+              walkableArea,
+              map.geometry,
+              map.geometry.resolution,
+            );
+            return path ? (
+              <path
+                key={featureId(room)}
+                className="robot-map-room-divider is-context"
+                d={path}
+              />
+            ) : null;
+          })}
+        </svg>
+      )}
+      {rooms.map((room) => {
+        const label = featureLabelPoint(room, map.geometry);
+        return label ? (
+          <span
+            key={`${featureId(room)}-home-label`}
+            className="robot-map-room-label is-context is-home-summary"
+            style={{ left: `${label.left}%`, top: `${label.top}%` }}
+          >
+            {featureName(room, "이름 없는 방")}
+          </span>
+        ) : null;
+      })}
+      {marker && (
+        <span
+          className={`robot-map-marker robot-map-home-marker ${driving ? "is-driving" : ""}`}
+          aria-label="말벗 현재 위치"
+          style={{ left: `${marker.left}%`, top: `${marker.top}%`, transform: `translate(-50%, -50%) rotate(${marker.heading}deg)` }}
+        >
+          <span />
+        </span>
+      )}
+    </>
   );
 }
 
