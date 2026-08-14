@@ -73,6 +73,7 @@ git pull
 
 `--check-only`는 device id나 token 없이 `small_house` Gazebo를 실행하고,
 RGB 및 CameraInfo 토픽과 실제 RGB 프레임 수신까지 검증한 뒤 종료한다.
+이 점검 모드는 저장 지도를 생성하거나 교체하지 않는다.
 
 원격 스트리밍에는 PC별로 발급된 장치 정보가 한 번 필요하다.
 
@@ -107,11 +108,28 @@ PR 배포의 기본 절차는 아니다.
 `${XDG_CONFIG_HOME:-$HOME/.config}/homecam/device.token`에 권한 `600`으로
 보관한다. 설정과 token은 Git에 커밋하지 않는다.
 
-실행 스크립트는 `small_house`와 로봇을 시작하고
+일반 실행은 먼저 기기별 영속 저장소의 활성 지도를 확인한다. 지도가
+없을 때만 SLAM과 `우리 집 지도 만들기` 화면을 시작하고, 저장 지도가
+있으면 정적 지도와 AMCL을 사용한다. 기본 저장 경로는
+`${XDG_DATA_HOME:-$HOME/.local/share}/malbut/devices/<device-id>/maps`이다.
+AWS KVS 세션 시작·종료와 카메라·모니터링 설정은 이 지도를 삭제하거나
+교체하지 않는다.
+
+기본값인 `HOMECAM_CLOUD_MAP_ENABLED=true`에서는 같은 bearer token으로
+저장 지도와 현재 위치를 AWS `homecam_web`에 동기화한다. AWS 웹의 지도
+생성·저장 명령은 로컬 onboarding API로, 목적지 미리보기·이동·취소 명령은
+로컬 Nav2 웹 API로 전달된다. 목적지 좌표를 받은 장치는 반드시 로컬의 최신
+costmap·Zone 안전 검사를 통과한 preview token으로만 주행을 시작한다.
+
+이후 `small_house`와 로봇을 시작하고
 `sensor_msgs/msg/Image` 및 `CameraInfo` 토픽을 자동 탐색한다. RGB 프레임
 수신, 필수 GStreamer plugin, KVS 활성 빌드, SDK CA 파일을 확인한 뒤에만
 원격 세션을 시작한다. Ctrl+C를 누르면 이 스크립트가 시작한 Gazebo와 homecam
 프로세스만 종료한다.
+
+시뮬레이션을 다시 실행해도 같은 `device-id`는 같은 지도를 재사용한다.
+다른 테스트 지도가 필요하면 보호된 `sim.env`에 별도의 절대 경로로
+`HOMECAM_MAP_STORE`를 지정한다. 이 값은 AWS 자격 증명과 무관하다.
 
 마이크 없는 PC에서는 기본적으로 무음 Opus track을 사용한다. 실제 마이크를
 사용할 때는 보호된 `sim.env`의 `HOMECAM_MICROPHONE_ENABLED=true`와

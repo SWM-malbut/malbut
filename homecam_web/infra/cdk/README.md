@@ -63,7 +63,7 @@ Jetson / Gazebo
   security group은 ALB만 container port 3000에 접근하도록 한다. 인터넷에서
   task로의 직접 inbound 접근은 허용하지 않는다.
 - 녹화 HLS는 같은 origin의 애플리케이션 proxy를 통해 제공해야 한다.
-- ALB는 `/api/health`, `/auth/logout/complete`와 현재 구현된 장치 API 3개,
+- ALB는 `/api/health`, `/auth/logout/complete`와 현재 구현된 장치 API,
   내부 API 2개만 정확한 경로 규칙으로 Cognito 없이 전달한다. 장치·내부 API는
   앱의 bearer/HMAC 검증이 최종 인증 경계다. 미래의 `/api/device/v1/*` 또는
   `/api/internal/*` 경로가 실수로 공개되지 않도록 wildcard 예외는 사용하지

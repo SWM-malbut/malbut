@@ -71,6 +71,9 @@ setup(
             'malbut_gazebo.zone_filter_mask:main',
             'user_map_editor = malbut_gazebo.user_map_editor:main',
             'robot_web_server = malbut_gazebo.robot_web_server:main',
+            'map_onboarding_server = '
+            'malbut_gazebo.map_onboarding_server:main',
+            'cloud_robot_sync = malbut_gazebo.cloud_robot_sync:main',
             'record_localization_state = '
             'malbut_gazebo.localization_handoff:record_main',
             'restore_localization_state = '
