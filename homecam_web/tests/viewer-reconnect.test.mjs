@@ -39,7 +39,10 @@ test("authorized P2P reconnect delay is exponential, jittered, capped, and bound
 
 test("viewer reconnect lifecycle is generation-safe and P2P-only", async () => {
   const [page, client] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(
+      new URL("../app/components/homecam-app.tsx", import.meta.url),
+      "utf8",
+    ),
     readFile(new URL("../app/lib/kvs-client.ts", import.meta.url), "utf8"),
   ]);
 
@@ -63,7 +66,10 @@ test("viewer reconnect lifecycle is generation-safe and P2P-only", async () => {
 });
 
 test("PTT lease release keeps the client and generation that acquired it", async () => {
-  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const page = await readFile(
+    new URL("../app/components/homecam-app.tsx", import.meta.url),
+    "utf8",
+  );
 
   assert.match(page, /type ViewerTalkLease = \{[\s\S]*clientId: string;[\s\S]*generation: number;/);
   assert.match(page, /clientId: lease\.clientId/);

@@ -85,15 +85,22 @@ test("the Node runtime resolves the maintenance scheduler secret server-side", a
 });
 
 test("the container binds Next to loopback-safe all interfaces on Fargate", async () => {
-  const entrypoint = await readFile(
-    new URL("../docker-entrypoint.sh", import.meta.url),
-    "utf8",
-  );
+  const [entrypoint, dockerfile] = await Promise.all([
+    readFile(new URL("../docker-entrypoint.sh", import.meta.url), "utf8"),
+    readFile(new URL("../Dockerfile", import.meta.url), "utf8"),
+  ]);
 
   assert.match(entrypoint, /exec env HOSTNAME=0\.0\.0\.0 node \.\/server\.js/);
   assert.ok(
     entrypoint.indexOf("node ./scripts/migrate.mjs") <
       entrypoint.indexOf("exec env HOSTNAME=0.0.0.0 node ./server.js"),
     "database migrations must finish before the web server starts",
+  );
+  assert.equal(
+    dockerfile.match(
+      /node:22\.23\.2-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436/g,
+    )?.length,
+    3,
+    "all image stages must use the pinned multi-architecture Node base",
   );
 });

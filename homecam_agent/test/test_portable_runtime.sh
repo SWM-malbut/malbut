@@ -42,6 +42,14 @@ unset HOMECAM_WORLD HOMECAM_START_GAZEBO
 homecam_load_config "$config_path"
 [[ "$HOMECAM_WORLD" == small_house ]]
 [[ "$HOMECAM_START_GAZEBO" == true ]]
+homecam_config_key_allowed HOMECAM_MAP_STORE
+homecam_config_key_allowed HOMECAM_MAP_WEB_HOST
+homecam_config_key_allowed HOMECAM_MAP_WEB_PORT
+homecam_config_key_allowed HOMECAM_MAP_RVIZ
+if homecam_config_key_allowed HOMECAM_MAP_DELETE_ON_START; then
+  printf 'destructive map configuration key should be rejected\n' >&2
+  exit 1
+fi
 
 homecam_validate_backend_url https://example.com
 homecam_validate_backend_url http://localhost:3000
@@ -62,6 +70,18 @@ homecam_validate_backend_url HTTPS://example.com
 
 [[ $((10#08)) -eq 8 ]]
 
+source_token="$temporary_dir/source.token"
+printf 'hc1.123e4567-e89b-42d3-a456-426614174000.%064d' 0 > "$source_token"
+chmod 600 "$source_token"
+generated_config="$temporary_dir/generated/sim.env"
+"$repo_root/scripts/configure_sim_device.sh" \
+  --config "$generated_config" \
+  --device-id gazebo-test \
+  --backend-url https://example.com \
+  --token-file "$source_token" >/dev/null
+grep -Fqx 'HOMECAM_GAZEBO_GUI=false' "$generated_config"
+grep -Fqx 'HOMECAM_GAZEBO_HEADLESS=true' "$generated_config"
+
 standalone_workspace="$temporary_dir/standalone_workspace"
 mkdir -p "$standalone_workspace/src/homecam_agent"
 [[ "$(
@@ -74,6 +94,18 @@ mkdir -p "$embedded_workspace/src/malbut/homecam_agent"
   homecam_workspace_from_repo \
     "$embedded_workspace/src/malbut/homecam_agent"
 )" == "$embedded_workspace" ]]
+
+repository_root_workspace="$temporary_dir/repository_root_workspace"
+mkdir -p \
+  "$repository_root_workspace/homecam_agent/homecam_detector" \
+  "$repository_root_workspace/homecam_agent/homecam_media_agent" \
+  "$repository_root_workspace/malbut_gazebo"
+: > "$repository_root_workspace/homecam_agent/homecam_detector/package.xml"
+: > "$repository_root_workspace/homecam_agent/homecam_media_agent/package.xml"
+: > "$repository_root_workspace/malbut_gazebo/package.xml"
+[[ "$(
+  homecam_workspace_from_repo "$repository_root_workspace/homecam_agent"
+)" == "$repository_root_workspace" ]]
 
 chmod 644 "$config_path"
 unset HOMECAM_WORLD HOMECAM_START_GAZEBO

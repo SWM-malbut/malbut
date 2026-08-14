@@ -12,19 +12,33 @@ const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(testDirectory, "..");
 
 test("homecam PostgreSQL repository completes the device storage event lifecycle", async () => {
-  const migration = await readFile(
+  const initialMigration = await readFile(
     new URL("../db/migrations/0001_initial.sql", import.meta.url),
+    "utf8",
+  );
+  const authMigration = await readFile(
+    new URL("../db/migrations/0002_web_auth_sessions.sql", import.meta.url),
+    "utf8",
+  );
+  const robotMigration = await readFile(
+    new URL("../db/migrations/0003_robot_map.sql", import.meta.url),
     "utf8",
   );
   const database = new PGlite();
   try {
-    await database.exec(migration);
+    await database.exec(initialMigration);
+    await database.exec(authMigration);
+    await database.exec(robotMigration);
     await database.exec(`
       CREATE TABLE homecam_schema_migrations (
         version TEXT PRIMARY KEY,
         applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
-      INSERT INTO homecam_schema_migrations (version) VALUES ('0001_initial');
+      INSERT INTO homecam_schema_migrations (version)
+      VALUES
+        ('0001_initial'),
+        ('0002_web_auth_sessions'),
+        ('0003_robot_map');
     `);
     await seedDevice(database);
 
@@ -32,6 +46,8 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     const postgres = loadModule(path.join(projectDirectory, "db/postgres.ts"));
     const homecam = loadModule(path.join(projectDirectory, "db/homecam.ts"));
     const petcam = loadModule(path.join(projectDirectory, "db/petcam.ts"));
+    const robotMap = loadModule(path.join(projectDirectory, "db/robot-map.ts"));
+    const robotContract = loadModule(path.join(projectDirectory, "app/robot-contract.ts"));
     const pool = pglitePoolAdapter(database);
 
     await postgres.withPostgresPoolForTest(pool, async () => {
@@ -74,6 +90,13 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       assert.equal(heartbeat.streamMode, "storage");
       assert.equal(heartbeat.mediaHealthy, true);
       assert.equal(heartbeat.detectorHealthy, true);
+      assert.equal(heartbeat.activeSessionId, session.id);
+      assert.equal(heartbeat.activeSession?.id, session.id);
+      assert.equal(heartbeat.activeSession?.mode, "storage");
+      assert.ok(
+        Date.parse(heartbeat.activeSession?.expiresAt) >=
+          Date.parse(session.expiresAt),
+      );
 
       const activeSession = await homecam.getActiveMediaSession("living-room");
       assert.equal(activeSession?.id, session.id);
@@ -154,6 +177,94 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       assert.equal(finalState.streamMode, "idle");
       assert.equal(finalState.activeSessionId, null);
       assert.equal(finalState.mediaHealthy, false);
+
+      await robotMap.storeRobotState("living-room", {
+        state: "ready",
+        message: "저장된 지도를 사용하고 있습니다.",
+        pose: { x: 1.25, y: -0.5, yaw: 0.75 },
+        localization: { state: "ok", tfAgeS: 0.02 },
+        nav2: { navigator: "active" },
+        target: null,
+        mapRevision: 8,
+        observedAt: new Date().toISOString(),
+      });
+      await robotMap.storeRobotMap("living-room", {
+        revision: "revision-1",
+        mapId: "map-1",
+        mapRevision: "map-revision-1",
+        sourceCreatedAt: new Date().toISOString(),
+        geometry: {
+          width: 375,
+          height: 224,
+          resolution: 0.05,
+          originX: -9.1,
+          originY: -4.2,
+          originYaw: 0,
+        },
+        previewBase64: "iVBORw0KGgo=",
+        userMap: { rooms: [] },
+      });
+      const snapshot = await robotMap.getRobotSnapshot(
+        "living-room",
+        "owner@example.com",
+      );
+      assert.equal(snapshot.online, true);
+      assert.deepEqual(plain(snapshot.state.pose), { x: 1.25, y: -0.5, yaw: 0.75 });
+      assert.equal(snapshot.map.revision, "revision-1");
+
+      const queued = await robotMap.createRobotCommand({
+        deviceId: "living-room",
+        userEmail: "owner@example.com",
+        operation: "finish",
+      });
+      assert.equal(queued.status, "queued");
+      await assert.rejects(
+        robotMap.createRobotCommand({
+          deviceId: "living-room",
+          userEmail: "owner@example.com",
+          operation: "start",
+        }),
+        /COMMAND_IN_PROGRESS/,
+      );
+      const claimed = await robotMap.claimRobotCommands("living-room");
+      assert.equal(claimed.length, 1);
+      assert.equal(claimed[0].id, queued.id);
+      assert.equal(claimed[0].status, "claimed");
+      const completed = await robotMap.completeRobotCommand({
+        deviceId: "living-room",
+        commandId: queued.id,
+        ok: true,
+        result: { revision: "revision-1" },
+      });
+      assert.equal(completed.status, "completed");
+      assert.deepEqual(plain(completed.result), { revision: "revision-1" });
+
+      const previewCommand = await robotMap.createRobotCommand({
+        deviceId: "living-room",
+        userEmail: "owner@example.com",
+        operation: "navigation_preview",
+        payload: { x: 2.5, y: -1.25 },
+      });
+      const claimedPreview = await robotMap.claimRobotCommands("living-room");
+      assert.equal(claimedPreview[0].id, previewCommand.id);
+      assert.deepEqual(plain(claimedPreview[0].payload), { x: 2.5, y: -1.25 });
+      assert.deepEqual(
+        plain(robotContract.parseRobotCommand({
+          operation: "navigation_start",
+          payload: { previewToken: "preview_token_123" },
+        })),
+        {
+          operation: "navigation_start",
+          payload: { previewToken: "preview_token_123" },
+        },
+      );
+      assert.equal(
+        robotContract.parseRobotCommand({
+          operation: "navigation_preview",
+          payload: { x: Number.NaN, y: 0 },
+        }),
+        null,
+      );
     });
 
     const persisted = await database.query(`

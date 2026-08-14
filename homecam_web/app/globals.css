@@ -123,6 +123,7 @@ a:focus-visible {
 }
 
 .login-link {
+  border: 0;
   padding: 9px 12px;
   border-radius: 10px;
   color: #fff;
@@ -130,6 +131,12 @@ a:focus-visible {
   font-size: 11px;
   font-weight: 800;
   text-decoration: none;
+  cursor: pointer;
+}
+
+.login-link:disabled {
+  cursor: wait;
+  opacity: 0.62;
 }
 
 .auth-loading {
@@ -2523,6 +2530,238 @@ a:focus-visible {
   }
 }
 
+.robot-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 290px;
+  gap: 10px;
+}
+
+.robot-map-card,
+.robot-map-sidebar {
+  border: 1px solid var(--homecam-line);
+  border-radius: 12px;
+  background: var(--homecam-paper);
+}
+
+.robot-map-card {
+  display: grid;
+  min-height: 430px;
+  place-items: center;
+  overflow: hidden;
+  padding: 22px;
+  background: #e8e7eb;
+}
+
+.robot-map-canvas {
+  position: relative;
+  width: 100%;
+  max-height: 72vh;
+  overflow: hidden;
+  border: 1px solid #bbb9c0;
+  border-radius: 8px;
+  background: #f7f2f7;
+  box-shadow: 0 10px 34px rgb(35 32 39 / 0.08);
+}
+
+.robot-map-canvas > img {
+  object-fit: contain;
+}
+
+.robot-map-canvas.is-navigation {
+  cursor: crosshair;
+}
+
+.robot-map-path {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.robot-map-path polyline {
+  fill: none;
+  stroke: #ed7138;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 0.65;
+  vector-effect: non-scaling-stroke;
+}
+
+.robot-map-goal {
+  position: absolute;
+  z-index: 2;
+  width: 17px;
+  height: 17px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #ed7138;
+  box-shadow: 0 2px 8px rgb(91 42 18 / 0.35);
+  transform: translate(-50%, -50%);
+}
+
+.robot-map-marker {
+  position: absolute;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #3979d6;
+  box-shadow: 0 2px 9px rgb(14 38 76 / 0.42);
+  transition: left 180ms linear, top 180ms linear, transform 180ms linear;
+}
+
+.robot-map-marker > span {
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  width: 13px;
+  height: 4px;
+  border-radius: 999px;
+  background: #3979d6;
+  transform: translateY(-50%);
+}
+
+.robot-map-empty {
+  display: flex;
+  max-width: 390px;
+  align-items: center;
+  flex-direction: column;
+  color: var(--homecam-muted);
+  text-align: center;
+}
+
+.robot-map-empty strong {
+  margin-top: 16px;
+  color: var(--homecam-ink);
+  font-size: 18px;
+}
+
+.robot-map-empty p {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.robot-map-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+
+.robot-map-status {
+  display: flex;
+  min-height: 78px;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--homecam-line);
+}
+
+.robot-map-status > svg {
+  color: #71706d;
+}
+
+.robot-map-status > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.robot-map-status small,
+.robot-map-owner-note {
+  color: var(--homecam-muted);
+  font-size: 11px;
+}
+
+.robot-map-status strong {
+  font-size: 14px;
+}
+
+.robot-map-online-dot {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #a5a29d;
+  box-shadow: 0 0 0 1px #a5a29d;
+}
+
+.robot-map-online-dot.is-online {
+  background: #5e8b3d;
+  box-shadow: 0 0 0 1px #5e8b3d;
+}
+
+.robot-map-message {
+  min-height: 76px;
+  margin: 0;
+  padding: 16px 18px;
+  color: var(--homecam-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.robot-map-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 18px 18px;
+}
+
+.robot-map-actions button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--homecam-ink);
+  border-radius: 999px;
+  color: #fff;
+  background: var(--homecam-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.robot-map-actions button.is-secondary {
+  color: var(--homecam-ink);
+  background: transparent;
+}
+
+.robot-map-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.robot-map-owner-note,
+.robot-map-notice {
+  margin: 0 18px 18px;
+  line-height: 1.5;
+}
+
+.robot-map-notice {
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #5b4d25;
+  background: #f2ebd4;
+  font-size: 11px;
+}
+
+@media (max-width: 820px) {
+  .robot-map-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .robot-map-card {
+    min-height: 300px;
+    padding: 10px;
+  }
+}
+
 /* Editorial home camera redesign */
 
 .homecam-shell {
@@ -2653,6 +2892,12 @@ a:focus-visible {
   width: auto;
   height: auto;
   padding: 0 14px;
+  cursor: pointer;
+}
+
+.homecam-account-link:disabled {
+  cursor: wait;
+  opacity: 0.58;
 }
 
 .homecam-account-link > span {
@@ -4098,5 +4343,319 @@ a:focus-visible {
   .homecam-stream-control-button {
     width: 100%;
     min-height: 42px;
+  }
+}
+
+/* MALBUT integrated account access */
+
+.homecam-login-shell {
+  display: grid;
+  min-height: 100svh;
+  place-items: center;
+  padding: 28px;
+  color: #1c1b1b;
+  background: #a3a799;
+  font-family: "Source Sans 3", "Noto Sans CJK KR", sans-serif;
+}
+
+.homecam-login-panel {
+  display: grid;
+  width: min(1040px, 100%);
+  min-height: min(720px, calc(100svh - 56px));
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.homecam-login-header,
+.homecam-login-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding-right: 30px;
+  padding-left: 30px;
+}
+
+.homecam-login-header {
+  min-height: 72px;
+  border-bottom: 1px solid rgb(28 27 27 / 0.16);
+}
+
+.homecam-login-brand {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 9px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.homecam-login-brand strong {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.homecam-login-brand small,
+.homecam-login-header > span {
+  color: #686963;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.homecam-login-body {
+  display: grid;
+  width: min(840px, calc(100% - 60px));
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 390px);
+  gap: clamp(56px, 9vw, 112px);
+  align-items: center;
+  justify-self: center;
+  padding: 72px 0;
+}
+
+.homecam-login-copy > span {
+  color: #686963;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.homecam-login-copy h1 {
+  margin: 18px 0 16px;
+  font-size: clamp(40px, 5.2vw, 62px);
+  font-weight: 700;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+  text-wrap: balance;
+}
+
+.homecam-login-copy p {
+  max-width: 360px;
+  margin: 0;
+  color: #686963;
+  font-size: 14px;
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+.homecam-login-form {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.homecam-login-form > label {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.homecam-login-form > input,
+.homecam-password-field input {
+  width: 100%;
+  height: 50px;
+  padding: 0 14px;
+  border: 1px solid rgb(28 27 27 / 0.22);
+  border-radius: 8px;
+  color: #1c1b1b;
+  background: #f7f7f5;
+  font-size: 14px;
+}
+
+.homecam-login-form > input,
+.homecam-password-field {
+  margin-bottom: 20px;
+}
+
+.homecam-login-form > input::placeholder,
+.homecam-password-field input::placeholder {
+  color: #898a84;
+}
+
+.homecam-login-form > input:focus,
+.homecam-password-field:focus-within {
+  border-color: #1c1b1b;
+  background: #fff;
+}
+
+.homecam-password-field:focus-within {
+  outline: 2px solid #1c1b1b;
+  outline-offset: 3px;
+}
+
+.homecam-password-field {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgb(28 27 27 / 0.22);
+  border-radius: 8px;
+  background: #f7f7f5;
+}
+
+.homecam-password-field input {
+  padding-right: 50px;
+  border: 0;
+  background: transparent;
+}
+
+.homecam-password-field input:focus-visible {
+  outline: 0;
+}
+
+.homecam-password-field button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  width: 48px;
+  height: 50px;
+  place-items: center;
+  border: 0;
+  color: #686963;
+  background: transparent;
+  cursor: pointer;
+}
+
+.homecam-mfa-input {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.42em;
+  text-align: center;
+}
+
+.homecam-login-hint {
+  margin: -7px 0 0;
+  color: #686963;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.homecam-login-message {
+  min-height: 38px;
+  padding: 10px 0 8px;
+  color: #a84038;
+  font-size: 11px;
+  line-height: 1.45;
+  visibility: hidden;
+}
+
+.homecam-login-message.is-visible {
+  visibility: visible;
+}
+
+.homecam-login-message.is-info {
+  color: #547050;
+}
+
+.homecam-login-submit {
+  display: flex;
+  width: 100%;
+  min-height: 50px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border: 1px solid #1c1b1b;
+  border-radius: 999px;
+  color: #fff;
+  background: #1c1b1b;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.homecam-login-submit:disabled,
+.homecam-login-restart:disabled,
+.homecam-password-field button:disabled,
+.homecam-login-form input:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.homecam-login-restart {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 10px auto 0;
+  padding: 0 10px;
+  border: 0;
+  color: #686963;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.homecam-login-footer {
+  min-height: 64px;
+  border-top: 1px solid rgb(28 27 27 / 0.16);
+  color: #686963;
+  font-size: 10px;
+}
+
+@media (hover: hover) {
+  .homecam-login-submit:not(:disabled):hover {
+    background: #474545;
+  }
+
+  .homecam-login-restart:not(:disabled):hover,
+  .homecam-login-brand:hover {
+    color: #474545;
+  }
+
+  .homecam-password-field button:not(:disabled):hover {
+    color: #1c1b1b;
+  }
+}
+
+@media (max-width: 760px) {
+  .homecam-login-shell {
+    padding: 0;
+    background: #fff;
+  }
+
+  .homecam-login-panel {
+    width: 100%;
+    min-height: 100svh;
+    border-radius: 0;
+  }
+
+  .homecam-login-header,
+  .homecam-login-footer {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .homecam-login-body {
+    width: min(430px, calc(100% - 40px));
+    grid-template-columns: 1fr;
+    gap: 40px;
+    align-content: center;
+    padding: 52px 0;
+  }
+
+  .homecam-login-copy h1 {
+    margin-top: 14px;
+    font-size: clamp(38px, 12vw, 52px);
+  }
+
+  .homecam-login-copy p {
+    font-size: 13px;
+  }
+
+  .homecam-login-footer span:last-child {
+    display: none;
+  }
+}
+
+@media (max-width: 400px) {
+  .homecam-login-brand small,
+  .homecam-login-header > span {
+    display: none;
+  }
+
+  .homecam-login-body {
+    width: calc(100% - 32px);
   }
 }

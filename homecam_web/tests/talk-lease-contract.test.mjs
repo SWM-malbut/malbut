@@ -12,7 +12,10 @@ test("PTT lease is bound to one viewer client and released on every exit path", 
       ),
       "utf8",
     ),
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(
+      new URL("../app/components/homecam-app.tsx", import.meta.url),
+      "utf8",
+    ),
     readFile(
       new URL("../db/migrations/0001_initial.sql", import.meta.url),
       "utf8",

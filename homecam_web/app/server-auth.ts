@@ -1,3 +1,8 @@
+import {
+  getWebSessionUser,
+  readCookie,
+  WEB_SESSION_COOKIE,
+} from "../db/web-auth";
 import { getRuntimeEnvironment } from "./runtime-env";
 
 const ALB_CLAIMS_HEADER = "x-amzn-oidc-data";
@@ -13,6 +18,7 @@ const PUBLIC_KEY_CACHE_MS = 6 * 60 * 60 * 1000;
 
 type AuthRuntimeEnvironment = {
   AUTH_MODE?: string;
+  AUTH_SESSION_SECRET?: string;
   AUTH_AWS_REGION?: string;
   AUTH_ALB_ARN?: string;
   AUTH_OIDC_CLIENT_ID?: string;
@@ -62,14 +68,29 @@ export async function getAuthenticatedUser(
   if (runtime.AUTH_MODE === "dev_header") {
     return developmentHeaderUser(headers, requestUrl, runtime);
   }
-  if (runtime.AUTH_MODE !== "alb_oidc") return null;
 
-  try {
-    return await verifiedAlbUser(headers, runtime);
-  } catch {
-    // Authentication is fail-closed. Do not log tokens or claims.
-    return null;
+  if (
+    runtime.AUTH_MODE === "cognito_session" ||
+    runtime.AUTH_MODE === "alb_oidc_or_cognito_session"
+  ) {
+    const sessionUser = await opaqueSessionUser(headers, runtime);
+    if (sessionUser) return sessionUser;
+    if (runtime.AUTH_MODE === "cognito_session") return null;
   }
+
+  if (
+    runtime.AUTH_MODE === "alb_oidc" ||
+    runtime.AUTH_MODE === "alb_oidc_or_cognito_session"
+  ) {
+    try {
+      return await verifiedAlbUser(headers, runtime);
+    } catch {
+      // Authentication is fail-closed. Do not log tokens or claims.
+      return null;
+    }
+  }
+
+  return null;
 }
 
 export function canBroadcastForConfiguredAccount(userEmail: string) {
@@ -82,6 +103,29 @@ export function canBroadcastForConfiguredAccount(userEmail: string) {
     .map(normalizeEmail)
     .filter((email): email is string => Boolean(email))
     .includes(normalizedUser);
+}
+
+async function opaqueSessionUser(
+  headers: Headers,
+  runtime: AuthRuntimeEnvironment,
+): Promise<AuthenticatedUser | null> {
+  const secret = runtime.AUTH_SESSION_SECRET?.trim();
+  const token = readCookie(headers.get("cookie"), WEB_SESSION_COOKIE);
+  if (!secret || !token) return null;
+  try {
+    const user = await getWebSessionUser(token, secret);
+    if (!user) return null;
+    const email = normalizeEmail(user.email);
+    if (!email || !validSubject(user.subject)) return null;
+    return {
+      email,
+      fullName: normalizeDisplayName(user.fullName),
+      subject: user.subject,
+    };
+  } catch {
+    // Database/auth configuration errors fail closed. Never log session cookies.
+    return null;
+  }
 }
 
 async function verifiedAlbUser(
@@ -272,6 +316,10 @@ function normalizeDisplayName(value: unknown): string | null {
     return null;
   }
   return normalized;
+}
+
+function validSubject(value: string) {
+  return Boolean(value && value.length <= 256 && !/[\u0000-\u001f\u007f]/.test(value));
 }
 
 function isHttpsUrl(value: string): boolean {

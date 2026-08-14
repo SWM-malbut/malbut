@@ -1283,7 +1283,8 @@ class RobotRequestHandler(EditorRequestHandler):
 
     def do_GET(self) -> None:
         """Serve the robot SSE stream or a regular editor resource."""
-        if urlparse(self.path).path != "/api/robot/stream":
+        path = urlparse(self.path).path
+        if path not in {"/api/robot/status", "/api/robot/stream"}:
             super().do_GET()
             return
         if not self._host_allowed():
@@ -1291,6 +1292,11 @@ class RobotRequestHandler(EditorRequestHandler):
             return
         if self.bridge is None:
             self._json_response(503, {"error": "robot bridge is unavailable"})
+            return
+        if path == "/api/robot/status":
+            self._json_response(
+                200, self.bridge.snapshot(), {"Cache-Control": "no-store"}
+            )
             return
         if not self.stream_slots.acquire(blocking=False):
             self._json_response(429, {"error": "too many robot streams"})

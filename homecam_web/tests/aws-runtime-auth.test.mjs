@@ -11,26 +11,18 @@ const SIGNER =
 const CLIENT_ID = "homecam-client";
 const ISSUER = "https://cognito-idp.ap-northeast-2.amazonaws.com/ap-northeast-2_example";
 
-async function serverAuthHarness(runtime) {
+async function serverAuthHarness(runtime, sessionUser = null) {
   const source = await readFile(new URL("../app/server-auth.ts", import.meta.url), "utf8");
   const javascript = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-    },
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   const commonJsModule = { exports: {} };
+  let lookedUpToken = null;
   let publicKeyPem = "";
   let fetchCount = 0;
   runInNewContext(javascript, {
     module: commonJsModule,
     exports: commonJsModule.exports,
-    require(specifier) {
-      if (specifier === "./runtime-env") {
-        return { getRuntimeEnvironment: () => runtime };
-      }
-      throw new Error(`Unexpected import: ${specifier}`);
-    },
     AbortSignal,
     Buffer,
     Date,
@@ -52,9 +44,28 @@ async function serverAuthHarness(runtime) {
         headers: { "content-type": "text/plain" },
       });
     },
+    require(specifier) {
+      if (specifier === "./runtime-env") return { getRuntimeEnvironment: () => runtime };
+      if (specifier === "../db/web-auth") {
+        return {
+          WEB_SESSION_COOKIE: "__Host-malbut_session",
+          readCookie(header, name) {
+            const match = new RegExp(`(?:^|;\\s*)${name}=([^;]+)`).exec(header ?? "");
+            return match?.[1] ?? null;
+          },
+          async getWebSessionUser(token) {
+            lookedUpToken = token;
+            if (sessionUser instanceof Error) throw sessionUser;
+            return sessionUser;
+          },
+        };
+      }
+      throw new Error(`Unexpected import: ${specifier}`);
+    },
   });
   return {
     auth: commonJsModule.exports,
+    lookedUpToken: () => lookedUpToken,
     setPublicKeyPem(value) {
       publicKeyPem = value;
     },
@@ -87,9 +98,9 @@ async function albToken(privateKey, overrides = {}) {
     ...(overrides.header ?? {}),
   };
   const claims = {
-    sub: "user-123",
-    email: "Owner@Example.com",
-    name: "Malbut Owner",
+    sub: "alb-user-123",
+    email: "Legacy@Example.com",
+    name: "Legacy ALB User",
     ...(overrides.claims ?? {}),
   };
   const encodedHeader = encodeJson(header);
@@ -109,9 +120,10 @@ function encodeJson(value) {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
 
-function albRuntime() {
+function dualAuthRuntime() {
   return {
-    AUTH_MODE: "alb_oidc",
+    AUTH_MODE: "alb_oidc_or_cognito_session",
+    AUTH_SESSION_SECRET: Buffer.alloc(32, 5).toString("base64url"),
     AUTH_AWS_REGION: REGION,
     AUTH_ALB_ARN: SIGNER,
     AUTH_OIDC_CLIENT_ID: CLIENT_ID,
@@ -120,154 +132,139 @@ function albRuntime() {
   };
 }
 
-test("verified ALB OIDC claims authenticate and cache the regional public key", async () => {
-  const runtime = albRuntime();
-  const harness = await serverAuthHarness(runtime);
+test("opaque Cognito sessions authenticate from the HttpOnly cookie", async () => {
+  const runtime = {
+    AUTH_MODE: "cognito_session",
+    AUTH_SESSION_SECRET: Buffer.alloc(32, 5).toString("base64url"),
+    NODE_ENV: "production",
+  };
+  const harness = await serverAuthHarness(runtime, {
+    email: "Owner@Example.com", fullName: "Malbut Owner", subject: "subject-1",
+  });
+  const user = await harness.auth.getAuthenticatedUser(new Headers({
+    cookie: "other=1; __Host-malbut_session=opaque-session-token",
+  }));
+  assert.deepEqual(JSON.parse(JSON.stringify(user)), {
+    email: "owner@example.com", fullName: "Malbut Owner", subject: "subject-1",
+  });
+  assert.equal(harness.lookedUpToken(), "opaque-session-token");
+});
+
+test("dual auth prefers an opaque session over a valid legacy ALB identity", async () => {
+  const harness = await serverAuthHarness(dualAuthRuntime(), {
+    email: "Session@Example.com", fullName: "Session User", subject: "session-subject",
+  });
   const key = await signingKey();
   harness.setPublicKeyPem(key.publicKeyPem);
   const token = await albToken(key.privateKey);
-  const headers = new Headers({
+  const user = await harness.auth.getAuthenticatedUser(new Headers({
+    cookie: "__Host-malbut_session=preferred-session-token",
     "x-amzn-oidc-data": token,
-    "x-amzn-oidc-identity": "user-123",
-  });
+    "x-amzn-oidc-identity": "alb-user-123",
+  }));
 
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(await harness.auth.getAuthenticatedUser(headers))),
-    {
-      email: "owner@example.com",
-      fullName: "Malbut Owner",
-      subject: "user-123",
-    },
-  );
-  assert.equal((await harness.auth.getAuthenticatedUser(headers)).email, "owner@example.com");
+  assert.deepEqual(JSON.parse(JSON.stringify(user)), {
+    email: "session@example.com", fullName: "Session User", subject: "session-subject",
+  });
+  assert.equal(harness.lookedUpToken(), "preferred-session-token");
+  assert.equal(harness.fetchCount(), 0);
+});
+
+test("dual auth falls back to a valid signed ALB identity after an invalid session", async () => {
+  const harness = await serverAuthHarness(dualAuthRuntime(), null);
+  const key = await signingKey();
+  harness.setPublicKeyPem(key.publicKeyPem);
+  const token = await albToken(key.privateKey);
+  const user = await harness.auth.getAuthenticatedUser(new Headers({
+    cookie: "__Host-malbut_session=invalid-session-token",
+    "x-amzn-oidc-data": token,
+    "x-amzn-oidc-identity": "alb-user-123",
+  }));
+
+  assert.deepEqual(JSON.parse(JSON.stringify(user)), {
+    email: "legacy@example.com", fullName: "Legacy ALB User", subject: "alb-user-123",
+  });
+  assert.equal(harness.lookedUpToken(), "invalid-session-token");
   assert.equal(harness.fetchCount(), 1);
 });
 
-test("unverified, expired, or mismatched ALB identity claims fail closed", async () => {
-  const runtime = albRuntime();
-  const harness = await serverAuthHarness(runtime);
+test("session-only auth rejects ALB identity and database failures fail closed", async () => {
+  const runtime = {
+    AUTH_MODE: "cognito_session",
+    AUTH_SESSION_SECRET: Buffer.alloc(32, 5).toString("base64url"),
+    NODE_ENV: "production",
+  };
+  const noSession = await serverAuthHarness(runtime, null);
   const key = await signingKey();
-  harness.setPublicKeyPem(key.publicKeyPem);
-
-  const spoofedLegacyHeader = new Headers({
-    "oai-authenticated-user-email": "attacker@example.com",
-  });
-  assert.equal(await harness.auth.getAuthenticatedUser(spoofedLegacyHeader), null);
-
-  const expired = await albToken(key.privateKey, {
-    header: { exp: Math.floor(Date.now() / 1000) - 1 },
-  });
+  noSession.setPublicKeyPem(key.publicKeyPem);
+  const validAlbToken = await albToken(key.privateKey);
   assert.equal(
-    await harness.auth.getAuthenticatedUser(
-      new Headers({
-        "x-amzn-oidc-data": expired,
-        "x-amzn-oidc-identity": "user-123",
-      }),
-    ),
+    await noSession.auth.getAuthenticatedUser(new Headers({
+      "x-amzn-oidc-data": validAlbToken,
+      "x-amzn-oidc-identity": "alb-user-123",
+    })),
     null,
   );
+  assert.equal(noSession.fetchCount(), 0);
 
-  const valid = await albToken(key.privateKey);
-  assert.equal(
-    await harness.auth.getAuthenticatedUser(
-      new Headers({
-        "x-amzn-oidc-data": valid,
-        "x-amzn-oidc-identity": "different-user",
-      }),
-    ),
-    null,
-  );
+  const failed = await serverAuthHarness(runtime, new Error("DATABASE_UNAVAILABLE"));
+  assert.equal(await failed.auth.getAuthenticatedUser(new Headers({
+    cookie: "__Host-malbut_session=opaque-session-token",
+  })), null);
 });
 
 test("development header authentication is explicit, loopback-only, and disabled in production", async () => {
   const runtime = {
-    AUTH_MODE: "dev_header",
-    AUTH_DEV_USER_EMAIL: "developer@example.com",
-    NODE_ENV: "development",
+    AUTH_MODE: "dev_header", AUTH_DEV_USER_EMAIL: "developer@example.com", NODE_ENV: "development",
   };
   const harness = await serverAuthHarness(runtime);
   const headers = new Headers({ "x-malbut-dev-user-email": "Developer@Example.com" });
-
   assert.equal(
     (await harness.auth.getAuthenticatedUser(headers, "http://127.0.0.1:3000/"))?.email,
     "developer@example.com",
   );
-  assert.equal(
-    await harness.auth.getAuthenticatedUser(headers, "https://homecam.example.com/"),
-    null,
-  );
+  assert.equal(await harness.auth.getAuthenticatedUser(headers, "https://homecam.example.com/"), null);
   runtime.NODE_ENV = "production";
-  assert.equal(
-    await harness.auth.getAuthenticatedUser(headers, "http://127.0.0.1:3000/"),
-    null,
-  );
+  assert.equal(await harness.auth.getAuthenticatedUser(headers, "http://127.0.0.1:3000/"), null);
 });
 
 test("auth action paths stay same-origin and reject open redirect return paths", async () => {
-  const runtime = {
-    AUTH_SIGN_IN_PATH: "/account/login",
-    AUTH_SIGN_OUT_PATH: "/account/logout",
-  };
+  const runtime = { AUTH_SIGN_IN_PATH: "/account/login", AUTH_SIGN_OUT_PATH: "/account/logout" };
   const source = await readFile(new URL("../app/chatgpt-auth.ts", import.meta.url), "utf8");
   const javascript = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-    },
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   const commonJsModule = { exports: {} };
   runInNewContext(javascript, {
-    module: commonJsModule,
-    exports: commonJsModule.exports,
-    URL,
+    module: commonJsModule, exports: commonJsModule.exports, URL,
     require(specifier) {
       if (specifier === "next/headers") return { headers: async () => new Headers() };
       if (specifier === "next/navigation") return { redirect: () => undefined };
-      if (specifier === "./runtime-env") {
-        return { getRuntimeValue: (name) => runtime[name] };
-      }
-      if (specifier === "./server-auth") {
-        return { getAuthenticatedUser: async () => null };
-      }
+      if (specifier === "./runtime-env") return { getRuntimeValue: (name) => runtime[name] };
+      if (specifier === "./server-auth") return { getAuthenticatedUser: async () => null };
       throw new Error(`Unexpected import: ${specifier}`);
     },
   });
-
   assert.equal(
     commonJsModule.exports.chatGPTSignInPath("/events?type=person"),
     "/account/login?return_to=%2Fevents%3Ftype%3Dperson",
   );
-  assert.equal(
-    commonJsModule.exports.chatGPTSignOutPath("//attacker.example/"),
-    "/account/logout?return_to=%2F",
-  );
+  assert.equal(commonJsModule.exports.chatGPTSignOutPath("//attacker.example/"), "/account/logout?return_to=%2F");
   runtime.AUTH_SIGN_IN_PATH = "//attacker.example/login";
-  assert.equal(
-    commonJsModule.exports.chatGPTSignInPath("/"),
-    "/auth/login?return_to=%2F",
-  );
+  assert.equal(commonJsModule.exports.chatGPTSignInPath("/"), "/auth/login?return_to=%2F");
 });
 
 test("the Node runtime migration removes direct Cloudflare imports from app code", async () => {
   const files = [
-    "../app/server-auth.ts",
-    "../app/kvs-broker.ts",
-    "../app/push-broker.ts",
-    "../app/api/device/v1/session/route.ts",
-    "../app/api/devices/[deviceId]/live-session/route.ts",
-    "../app/api/internal/device-provisioning/route.ts",
-    "../app/api/internal/maintenance/route.ts",
-    "../app/api/kvs/join/route.ts",
-    "../app/api/kvs/session/route.ts",
-    "../app/api/live-sessions/route.ts",
-    "../app/api/push-subscriptions/vapid-public-key/route.ts",
-    "../app/api/recordings/route.ts",
-    "../app/api/recordings/[recordingId]/playback/route.ts",
+    "../app/server-auth.ts", "../app/kvs-broker.ts", "../app/push-broker.ts",
+    "../app/api/device/v1/session/route.ts", "../app/api/devices/[deviceId]/live-session/route.ts",
+    "../app/api/internal/device-provisioning/route.ts", "../app/api/internal/maintenance/route.ts",
+    "../app/api/kvs/join/route.ts", "../app/api/kvs/session/route.ts",
+    "../app/api/live-sessions/route.ts", "../app/api/push-subscriptions/vapid-public-key/route.ts",
+    "../app/api/recordings/route.ts", "../app/api/recordings/[recordingId]/playback/route.ts",
     "../app/api/recordings/[recordingId]/hls/[playbackId]/[resource]/route.ts",
   ];
-  const sources = await Promise.all(
-    files.map((file) => readFile(new URL(file, import.meta.url), "utf8")),
-  );
+  const sources = await Promise.all(files.map((file) => readFile(new URL(file, import.meta.url), "utf8")));
   assert.doesNotMatch(sources.join("\n"), /cloudflare:workers/);
   assert.match(sources.join("\n"), /getRuntimeEnvironment/);
 });

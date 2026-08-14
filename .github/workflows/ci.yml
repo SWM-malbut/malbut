@@ -100,7 +100,7 @@ jobs:
         run: npm test
 
       - name: Synthesize CloudFormation template
-        run: npm run synth -- --no-lookups --quiet
+        run: npm run synth -- -c authMigrationPhase=cleanup --no-lookups --quiet
 
   test:
     name: Test
