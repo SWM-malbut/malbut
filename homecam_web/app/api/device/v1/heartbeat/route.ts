@@ -1,6 +1,4 @@
 import {
-  getActiveMediaSession,
-  getDeviceSettings,
   updateDeviceHeartbeat,
   type HomecamStreamMode,
 } from "../../../../../db/homecam";
@@ -19,19 +17,18 @@ export async function POST(request: Request) {
   const parsed = parseHeartbeat(payload);
   if (!parsed) return noStore({ error: "장치 상태 형식을 확인해 주세요." }, 400);
 
-  const reportedState = await updateDeviceHeartbeat({
+  const heartbeat = await updateDeviceHeartbeat({
     deviceId: device.deviceId,
     ...parsed,
   });
-  const desired = await getDeviceSettings(device.deviceId);
-  const activeSession = await getActiveMediaSession(device.deviceId);
+  const { activeSession, ...reportedState } = heartbeat;
   return noStore(
     {
       deviceId: device.deviceId,
       desiredState: {
-        monitoringEnabled: desired.monitoringEnabled,
-        cameraEnabled: desired.cameraEnabled,
-        microphoneEnabled: desired.microphoneEnabled,
+        monitoringEnabled: reportedState.monitoringEnabled,
+        cameraEnabled: reportedState.cameraEnabled,
+        microphoneEnabled: reportedState.microphoneEnabled,
       },
       reportedState: {
         sourceProfile: reportedState.sourceProfile,

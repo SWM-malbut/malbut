@@ -35,13 +35,17 @@ test("D1 placeholders become PostgreSQL parameters without touching literals", a
 });
 
 test("PostgreSQL migration creates the homecam schema and durable event outbox", async () => {
-  const migration = await readFile(
-    new URL("../db/migrations/0001_initial.sql", import.meta.url),
-    "utf8",
-  );
+  const [initialMigration, authMigration] = await Promise.all([
+    readFile(new URL("../db/migrations/0001_initial.sql", import.meta.url), "utf8"),
+    readFile(
+      new URL("../db/migrations/0002_web_auth_sessions.sql", import.meta.url),
+      "utf8",
+    ),
+  ]);
   const database = new PGlite();
   try {
-    await database.exec(migration);
+    await database.exec(initialMigration);
+    await database.exec(authMigration);
     const now = "2026-08-12T04:00:00.000Z";
     await database.query(
       `INSERT INTO devices (id, display_name, kvs_channel_arn, created_at)
@@ -84,6 +88,16 @@ test("PostgreSQL migration creates the homecam schema and durable event outbox",
     );
     assert.deepEqual(outbox.rows, [
       { event_id: "event-1", device_id: "living-room", attempt_count: 0 },
+    ]);
+    const authTables = await database.query(
+      `SELECT tablename FROM pg_tables
+       WHERE schemaname = 'public'
+         AND tablename IN ('web_auth_sessions', 'web_auth_challenges')
+       ORDER BY tablename`,
+    );
+    assert.deepEqual(authTables.rows, [
+      { tablename: "web_auth_challenges" },
+      { tablename: "web_auth_sessions" },
     ]);
   } finally {
     await database.close();

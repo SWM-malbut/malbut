@@ -75,8 +75,8 @@ fi
 
 : "${HOMECAM_WORLD:=small_house}"
 : "${HOMECAM_START_GAZEBO:=true}"
-: "${HOMECAM_GAZEBO_GUI:=true}"
-: "${HOMECAM_GAZEBO_HEADLESS:=false}"
+: "${HOMECAM_GAZEBO_GUI:=false}"
+: "${HOMECAM_GAZEBO_HEADLESS:=true}"
 : "${HOMECAM_MAP_STORE:=}"
 : "${HOMECAM_MAP_WEB_HOST:=127.0.0.1}"
 : "${HOMECAM_MAP_WEB_PORT:=8765}"

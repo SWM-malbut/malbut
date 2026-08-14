@@ -2,18 +2,40 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
-import { HomecamDevStack } from "../lib/homecam-dev-stack";
+import {
+  type AuthMigrationPhase,
+  HomecamDevStack,
+} from "../lib/homecam-dev-stack";
 
-function synthesize(deviceIds = ["gazebo-homecam"]) {
+function synthesize(
+  deviceIds = ["gazebo-homecam"],
+  authMigrationPhase: AuthMigrationPhase = "prepare",
+) {
   const app = new App();
   const stack = new HomecamDevStack(app, "TestHomecam", {
     stage: "dev",
     deviceIds,
     containerImageTag: "dev",
+    authMigrationPhase,
     env: { account: "111122223333", region: "ap-northeast-2" },
   });
   return Template.fromStack(stack);
 }
+
+const LEGACY_ALB_RULE_LOGICAL_IDS = [
+  "HomecamServiceLBPublicListenerPublicHealthRuleCE34865B",
+  "HomecamServiceLBPublicListenerPublicLogoutLandingRule4AC197BE",
+  "HomecamServiceLBPublicListenerDeviceSessionApiRuleD3B410E3",
+  "HomecamServiceLBPublicListenerDeviceHeartbeatApiRule7CCA4C69",
+  "HomecamServiceLBPublicListenerDeviceEventsApiRuleC571CF03",
+  "HomecamServiceLBPublicListenerMaintenanceApiRuleD1DB8DF5",
+  "HomecamServiceLBPublicListenerDeviceProvisioningApiRuleDE59504A",
+  "HomecamServiceLBPublicListenerPublicPwaRuntimeRule88A0DCA3",
+  "HomecamServiceLBPublicListenerPublicPwaIconsRule340EFB93",
+  "HomecamServiceLBPublicListenerPublicMediaAssetsRule5C756A00",
+  "HomecamServiceLBPublicListenerCognitoApiAuthenticationRule3C75BE1A",
+  "HomecamServiceLBPublicListenerCognitoAuthenticationRuleBF79C1B7",
+] as const;
 
 test("creates the isolated homecam network and application platform", () => {
   const template = synthesize();
@@ -151,7 +173,15 @@ test("uses HTTPS, no-echo bootstrap inputs, and server-side secrets", () => {
     Protocol: "HTTPS",
   });
   template.hasResourceProperties("AWS::Lambda::Url", { AuthType: "NONE" });
-  template.resourceCountIs("AWS::SecretsManager::Secret", 8);
+  template.resourceCountIs("AWS::SecretsManager::Secret", 9);
+  template.hasResourceProperties("AWS::SecretsManager::Secret", {
+    Name: "malbut-homecam-dev/auth-session-secret",
+    GenerateSecretString: {
+      ExcludePunctuation: true,
+      IncludeSpace: false,
+      PasswordLength: 43,
+    },
+  });
 
   const rendered = template.toJSON() as {
     Parameters: Record<string, { NoEcho?: boolean }>;
@@ -192,19 +222,48 @@ test("uses the imported child hosted zone apex as the homecam domain", () => {
   });
 });
 
-test("bypasses Cognito only for machine and public utility paths", () => {
-  const template = synthesize();
-  const rules = Object.values(
-    template.findResources("AWS::ElasticLoadBalancingV2::ListenerRule"),
-  );
-  const ruleFor = (path: string) =>
-    rules.find((rule) =>
-      rule.Properties?.Conditions?.some(
-        (condition: { PathPatternConfig?: { Values?: string[] } }) =>
-          condition.PathPatternConfig?.Values?.includes(path),
-      ),
-    );
+test("prepare preserves the deployed ALB auth resources and task contract", () => {
+  const template = synthesize(["gazebo-homecam"], "prepare");
+  assertLegacyAuthLogicalIds(template);
+  const clients = template.findResources("AWS::Cognito::UserPoolClient");
+  const legacyClient = clients.HomecamUsersHomecamWebClient81F860FC;
+  const serverClient = clientByName(template, "malbut-homecam-dev-server-auth");
 
+  template.resourceCountIs("AWS::Cognito::UserPool", 1);
+  const userPool = template.findResources("AWS::Cognito::UserPool")
+    .HomecamUsers1D372190;
+  assert.ok(userPool);
+  assert.equal(userPool.DeletionPolicy, "Retain");
+  assert.equal(userPool.UpdateReplacePolicy, "Retain");
+  const initialOwner = template.findResources("AWS::Cognito::UserPoolUser")
+    .InitialOwnerUser;
+  assert.equal(initialOwner?.DeletionPolicy, "Retain");
+  assert.equal(initialOwner?.UpdateReplacePolicy, "Retain");
+  template.resourceCountIs("AWS::Cognito::UserPoolClient", 2);
+  template.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
+  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 12);
+  assert.ok(legacyClient, "the deployed HomecamWebClient logical ID must be stable");
+  assert.equal(legacyClient.Properties?.GenerateSecret, true);
+  assert.deepEqual(legacyClient.Properties?.ExplicitAuthFlows, [
+    "ALLOW_USER_SRP_AUTH",
+    "ALLOW_REFRESH_TOKEN_AUTH",
+  ]);
+  assert.equal(legacyClient.Properties?.AllowedOAuthFlowsUserPoolClient, true);
+  assert.ok(serverClient);
+  assert.equal(serverClient.Properties?.GenerateSecret, false);
+  assert.deepEqual(serverClient.Properties?.ExplicitAuthFlows, [
+    "ALLOW_ADMIN_USER_PASSWORD_AUTH",
+    "ALLOW_REFRESH_TOKEN_AUTH",
+  ]);
+
+  const { environment, secrets } = taskRuntime(template);
+  assert.equal(environment.get("AUTH_MODE"), "alb_oidc");
+  assert.deepEqual(environment.get("COGNITO_USER_POOL_CLIENT_ID"), {
+    Ref: "HomecamUsersHomecamWebClient81F860FC",
+  });
+  for (const name of legacyAlbEnvironmentNames()) {
+    assert.equal(environment.has(name), true, `prepare is missing ${name}`);
+  }
   for (const path of [
     "/api/health",
     "/auth/logout/complete",
@@ -218,68 +277,204 @@ test("bypasses Cognito only for machine and public utility paths", () => {
     "/api/internal/maintenance",
     "/api/internal/device-provisioning",
   ]) {
+    const rule = ruleForPath(template, path);
+    assert.ok(rule, `missing public route for ${path}`);
     assert.deepEqual(
-      ruleFor(path)?.Properties?.Actions?.map((action: { Type: string }) => action.Type),
+      rule.Properties?.Actions?.map((action: { Type: string }) => action.Type),
       ["forward"],
     );
   }
-  assert.deepEqual(
-    ruleFor("/*")?.Properties?.Actions?.map(
-      (action: { Type: string }) => action.Type,
-    ),
-    ["authenticate-cognito", "forward"],
-  );
-  assert.equal(ruleFor("/api/device/v1/*"), undefined);
-  assert.equal(ruleFor("/api/internal/*"), undefined);
-
-  const userPoolClient = Object.values(
-    template.findResources("AWS::Cognito::UserPoolClient"),
-  )[0];
-  assert.ok(userPoolClient);
-  assert.match(
-    JSON.stringify(userPoolClient.Properties?.LogoutURLs),
-    /auth\/logout\/complete/,
-  );
+  assert.equal(secrets.has("AUTH_SESSION_SECRET"), false);
+  assert.equal(cognitoAdminStatements(template).length, 0);
+  assert.equal(ruleAtPriority(template, 15)?.Properties?.Actions?.[0]?.Type,
+    "authenticate-cognito");
+  assert.equal(ruleAtPriority(template, 20)?.Properties?.Actions?.[0]?.Type,
+    "authenticate-cognito");
 });
 
-test("injects the AWS authentication and PostgreSQL runtime contract", () => {
-  const template = synthesize();
+test("dual exposes only auth endpoints and enables both server auth contracts", () => {
+  const template = synthesize(["gazebo-homecam"], "dual");
+  assertLegacyAuthLogicalIds(template);
+  template.resourceCountIs("AWS::Cognito::UserPoolClient", 2);
+  template.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
+  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 13);
+
+  const serverClientId = clientLogicalIdByName(
+    template,
+    "malbut-homecam-dev-server-auth",
+  );
+  const { environment, secrets } = taskRuntime(template);
+  assert.equal(environment.get("AUTH_MODE"), "alb_oidc_or_cognito_session");
+  assert.deepEqual(environment.get("COGNITO_USER_POOL_CLIENT_ID"), {
+    Ref: serverClientId,
+  });
+  for (const name of legacyAlbEnvironmentNames()) {
+    assert.equal(environment.has(name), true, `dual is missing ${name}`);
+  }
+  assert.equal(secrets.has("AUTH_SESSION_SECRET"), true);
+  assert.deepEqual(rulePaths(ruleAtPriority(template, 11)), [
+    "/api/auth/login",
+    "/api/auth/logout",
+    "/api/auth/me",
+    "/auth/login",
+    "/auth/logout",
+  ]);
+  assert.deepEqual(ruleAtPriority(template, 11)?.Properties?.Actions?.map(
+    (action: { Type: string }) => action.Type,
+  ), ["forward"]);
+  assert.equal(ruleAtPriority(template, 14), undefined);
+  assertAdminPolicyIsScoped(template);
+});
+
+test("cutover forwards the catch-all before retaining rollback auth rules", () => {
+  const template = synthesize(["gazebo-homecam"], "cutover");
+  assertLegacyAuthLogicalIds(template);
+  template.resourceCountIs("AWS::Cognito::UserPoolClient", 2);
+  template.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
+  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 14);
+  assert.deepEqual(rulePaths(ruleAtPriority(template, 14)), ["/*"]);
+  assert.deepEqual(ruleAtPriority(template, 14)?.Properties?.Actions?.map(
+    (action: { Type: string }) => action.Type,
+  ), ["forward"]);
+  assert.equal(ruleAtPriority(template, 15)?.Properties?.Actions?.[0]?.Type,
+    "authenticate-cognito");
+  assert.equal(ruleAtPriority(template, 20)?.Properties?.Actions?.[0]?.Type,
+    "authenticate-cognito");
+  assert.equal(taskRuntime(template).environment.get("AUTH_MODE"),
+    "alb_oidc_or_cognito_session");
+});
+
+test("cleanup removes Hosted UI auth and keeps only application sessions", () => {
+  const template = synthesize(["gazebo-homecam"], "cleanup");
+  template.resourceCountIs("AWS::Cognito::UserPoolClient", 1);
+  template.resourceCountIs("AWS::Cognito::UserPoolDomain", 0);
+  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 0);
+  assert.equal(
+    clientByName(template, "malbut-homecam-dev-web"),
+    undefined,
+  );
+  assert.ok(clientByName(template, "malbut-homecam-dev-server-auth"));
+  assert.doesNotMatch(JSON.stringify(template.toJSON()), /authenticate-cognito/);
+
+  const { environment, secrets, task } = taskRuntime(template);
+  assert.equal(environment.get("AUTH_MODE"), "cognito_session");
+  for (const name of legacyAlbEnvironmentNames()) {
+    assert.equal(environment.has(name), false, `cleanup retained ${name}`);
+  }
+  assert.equal(secrets.has("AUTH_SESSION_SECRET"), true);
+  assert.equal(environment.get("DATABASE_SSL_CA_FILE"),
+    "/app/certs/ap-northeast-2-bundle.pem");
+  assert.doesNotMatch(JSON.stringify(task), /PENDING_ALB_ARN/);
+  assertAdminPolicyIsScoped(template);
+
+  const listeners = Object.values(
+    template.findResources("AWS::ElasticLoadBalancingV2::Listener"),
+  );
+  const httpsListener = listeners.find(
+    (listener) => listener.Properties?.Protocol === "HTTPS",
+  );
+  assert.deepEqual(httpsListener?.Properties?.DefaultActions?.map(
+    (action: { Type: string }) => action.Type,
+  ), ["forward"]);
+});
+
+function clientByName(template: Template, clientName: string) {
+  return Object.values(template.findResources("AWS::Cognito::UserPoolClient"))
+    .find((resource) => resource.Properties?.ClientName === clientName);
+}
+
+function assertLegacyAuthLogicalIds(template: Template) {
+  assert.ok(template.findResources("AWS::Cognito::UserPool").HomecamUsers1D372190);
+  assert.ok(
+    template.findResources("AWS::Cognito::UserPoolClient")
+      .HomecamUsersHomecamWebClient81F860FC,
+  );
+  assert.ok(
+    template.findResources("AWS::Cognito::UserPoolDomain")
+      .HomecamUsersHomecamCognitoDomain54674BED,
+  );
+  const rules = template.findResources(
+    "AWS::ElasticLoadBalancingV2::ListenerRule",
+  );
+  for (const logicalId of LEGACY_ALB_RULE_LOGICAL_IDS) {
+    assert.ok(rules[logicalId], `missing deployed listener rule ${logicalId}`);
+  }
+}
+
+function clientLogicalIdByName(template: Template, clientName: string) {
+  const entry = Object.entries(
+    template.findResources("AWS::Cognito::UserPoolClient"),
+  ).find(([, resource]) => resource.Properties?.ClientName === clientName);
+  assert.ok(entry, `missing Cognito client ${clientName}`);
+  return entry[0];
+}
+
+function taskRuntime(template: Template) {
   const task = Object.values(template.findResources("AWS::ECS::TaskDefinition"))[0];
   assert.ok(task);
   const [container] = task.Properties?.ContainerDefinitions ?? [];
-  const environmentNames = new Set(
-    container.Environment.map((entry: { Name: string }) => entry.Name),
-  );
-  const secretNames = new Set(
-    container.Secrets.map((entry: { Name: string }) => entry.Name),
-  );
+  assert.ok(container);
+  return {
+    task,
+    environment: new Map(
+      container.Environment.map((entry: { Name: string; Value: unknown }) =>
+        [entry.Name, entry.Value]),
+    ),
+    secrets: new Set(
+      container.Secrets.map((entry: { Name: string }) => entry.Name),
+    ),
+  };
+}
 
-  for (const name of [
-    "AUTH_MODE",
-    "AUTH_AWS_REGION",
+function ruleAtPriority(template: Template, priority: number) {
+  return Object.values(
+    template.findResources("AWS::ElasticLoadBalancingV2::ListenerRule"),
+  ).find((rule) => rule.Properties?.Priority === priority);
+}
+
+function ruleForPath(template: Template, path: string) {
+  return Object.values(
+    template.findResources("AWS::ElasticLoadBalancingV2::ListenerRule"),
+  ).find((rule) => rulePaths(rule).includes(path));
+}
+
+function rulePaths(rule: ReturnType<typeof ruleAtPriority>) {
+  return (rule?.Properties?.Conditions ?? [])
+    .flatMap((condition: { PathPatternConfig?: { Values?: string[] } }) =>
+      condition.PathPatternConfig?.Values ?? [])
+    .sort();
+}
+
+function legacyAlbEnvironmentNames() {
+  return [
     "AUTH_ALB_ARN",
     "AUTH_OIDC_CLIENT_ID",
     "AUTH_OIDC_ISSUER",
     "AUTH_COGNITO_DOMAIN",
     "AUTH_COGNITO_CLIENT_ID",
-    "AUTH_PUBLIC_ORIGIN",
-    "DEVICE_PROVISIONING_MANIFEST_SHA256",
-    "DEVICE_PROVISIONING_EXPIRES_AT",
-    "DATABASE_SSL_MODE",
-    "DATABASE_SSL_CA_FILE",
-    "DATABASE_POOL_MAX",
-  ]) {
-    assert.equal(environmentNames.has(name), true, `missing ${name}`);
-  }
-  assert.equal(secretNames.has("DATABASE_URL"), true);
-  assert.equal(secretNames.has("DATABASE_SSL_CA_BASE64"), false);
-  assert.equal(secretNames.has("DEVICE_PROVISIONING_SECRET"), true);
-  assert.equal(
-    container.Environment.find(
-      (entry: { Name: string; Value: string }) =>
-        entry.Name === "DATABASE_SSL_CA_FILE",
-    )?.Value,
-    "/app/certs/ap-northeast-2-bundle.pem",
-  );
-  assert.doesNotMatch(JSON.stringify(task), /PENDING_ALB_ARN/);
-});
+    "COGNITO_ISSUER",
+  ];
+}
+
+function cognitoAdminStatements(template: Template) {
+  return Object.values(template.findResources("AWS::IAM::Policy"))
+    .flatMap((policy) => policy.Properties?.PolicyDocument?.Statement ?? [])
+    .filter((statement: { Action?: string | string[] }) =>
+      (Array.isArray(statement.Action) ? statement.Action : [statement.Action])
+        .some((action) =>
+          typeof action === "string" && action.startsWith("cognito-idp:")),
+    );
+}
+
+function assertAdminPolicyIsScoped(template: Template) {
+  const statements = cognitoAdminStatements(template);
+  assert.equal(statements.length, 1);
+  assert.deepEqual(statements[0]?.Action, [
+    "cognito-idp:AdminInitiateAuth",
+    "cognito-idp:AdminRespondToAuthChallenge",
+    "cognito-idp:AdminGetUser",
+  ]);
+  assert.deepEqual(statements[0]?.Resource, {
+    "Fn::GetAtt": ["HomecamUsers1D372190", "Arn"],
+  });
+}

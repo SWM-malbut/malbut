@@ -150,8 +150,10 @@ config_temp="$(mktemp "$config_dir/.sim.env.XXXXXX")"
   printf 'HOMECAM_DEVICE_TOKEN_FILE=%s\n' "$token_path"
   printf 'HOMECAM_WORLD=small_house\n'
   printf 'HOMECAM_START_GAZEBO=true\n'
-  printf 'HOMECAM_GAZEBO_GUI=true\n'
-  printf 'HOMECAM_GAZEBO_HEADLESS=false\n'
+  # The browser is the primary viewer. Headless Gazebo avoids Qt/QML GUI
+  # crashes taking down the required simulator process during long demos.
+  printf 'HOMECAM_GAZEBO_GUI=false\n'
+  printf 'HOMECAM_GAZEBO_HEADLESS=true\n'
   printf 'HOMECAM_MAP_STORE=\n'
   printf 'HOMECAM_MAP_WEB_HOST=127.0.0.1\n'
   printf 'HOMECAM_MAP_WEB_PORT=8765\n'

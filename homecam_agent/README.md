@@ -121,11 +121,16 @@ AWS KVS 세션 시작·종료와 카메라·모니터링 설정은 이 지도를
 로컬 Nav2 웹 API로 전달된다. 목적지 좌표를 받은 장치는 반드시 로컬의 최신
 costmap·Zone 안전 검사를 통과한 preview token으로만 주행을 시작한다.
 
-이후 `small_house`와 로봇을 시작하고
+이후 `small_house`와 로봇을 headless 모드로 시작하고
 `sensor_msgs/msg/Image` 및 `CameraInfo` 토픽을 자동 탐색한다. RGB 프레임
 수신, 필수 GStreamer plugin, KVS 활성 빌드, SDK CA 파일을 확인한 뒤에만
 원격 세션을 시작한다. Ctrl+C를 누르면 이 스크립트가 시작한 Gazebo와 homecam
 프로세스만 종료한다.
+
+로컬 Gazebo 화면도 함께 확인해야 할 때만 보호된 `sim.env`에서
+`HOMECAM_GAZEBO_GUI=true`, `HOMECAM_GAZEBO_HEADLESS=false`로 바꾼다.
+브라우저 스트리밍 시연은 Qt/QML GUI 종료가 전체 시뮬레이션을 중단하지 않도록
+headless 설정을 유지하는 것을 권장한다.
 
 시뮬레이션을 다시 실행해도 같은 `device-id`는 같은 지도를 재사용한다.
 다른 테스트 지도가 필요하면 보호된 `sim.env`에 별도의 절대 경로로

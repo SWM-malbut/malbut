@@ -19,7 +19,10 @@ test("family revocation blocks new grants and closes the cooperative live client
       ),
       "utf8",
     ),
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(
+      new URL("../app/components/homecam-app.tsx", import.meta.url),
+      "utf8",
+    ),
   ]);
 
   assert.match(database, /DELETE FROM device_memberships/);

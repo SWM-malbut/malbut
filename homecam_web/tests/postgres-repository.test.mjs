@@ -16,13 +16,18 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     new URL("../db/migrations/0001_initial.sql", import.meta.url),
     "utf8",
   );
+  const authMigration = await readFile(
+    new URL("../db/migrations/0002_web_auth_sessions.sql", import.meta.url),
+    "utf8",
+  );
   const robotMigration = await readFile(
-    new URL("../db/migrations/0002_robot_map.sql", import.meta.url),
+    new URL("../db/migrations/0003_robot_map.sql", import.meta.url),
     "utf8",
   );
   const database = new PGlite();
   try {
     await database.exec(initialMigration);
+    await database.exec(authMigration);
     await database.exec(robotMigration);
     await database.exec(`
       CREATE TABLE homecam_schema_migrations (
@@ -30,7 +35,10 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       INSERT INTO homecam_schema_migrations (version)
-      VALUES ('0001_initial'), ('0002_robot_map');
+      VALUES
+        ('0001_initial'),
+        ('0002_web_auth_sessions'),
+        ('0003_robot_map');
     `);
     await seedDevice(database);
 
@@ -82,6 +90,13 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       assert.equal(heartbeat.streamMode, "storage");
       assert.equal(heartbeat.mediaHealthy, true);
       assert.equal(heartbeat.detectorHealthy, true);
+      assert.equal(heartbeat.activeSessionId, session.id);
+      assert.equal(heartbeat.activeSession?.id, session.id);
+      assert.equal(heartbeat.activeSession?.mode, "storage");
+      assert.ok(
+        Date.parse(heartbeat.activeSession?.expiresAt) >=
+          Date.parse(session.expiresAt),
+      );
 
       const activeSession = await homecam.getActiveMediaSession("living-room");
       assert.equal(activeSession?.id, session.id);

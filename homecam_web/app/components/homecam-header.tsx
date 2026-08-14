@@ -9,6 +9,7 @@ import {
   MapTrifold,
   User,
 } from "@phosphor-icons/react";
+import { logoutNavigationPath } from "../auth/logout/logout-flow";
 
 export type HomecamTab = "live" | "map" | "events" | "settings";
 
@@ -32,6 +33,7 @@ export function HomecamHeader({
   showInstall = false,
 }: HomecamHeaderProps) {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -64,6 +66,29 @@ export function HomecamHeader({
 
     return () => controller.abort();
   }, []);
+
+  const signOut = async () => {
+    if (!authStatus?.authenticated || signingOut) return;
+    setSigningOut(true);
+    let redirectTo = "/";
+    try {
+      const response = await fetch(authStatus.signOutPath, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok) {
+        redirectTo = logoutNavigationPath(payload, "/");
+      }
+    } catch {
+      redirectTo = "/";
+    } finally {
+      window.location.replace(redirectTo);
+    }
+  };
 
   return (
     <header className="homecam-header">
@@ -127,28 +152,27 @@ export function HomecamHeader({
             홈 화면에 설치
           </button>
         )}
-        <a
-          className="homecam-account-link"
-          href={
-            authStatus?.authenticated
-              ? authStatus.signOutPath
-              : authStatus?.signInPath ?? "/auth/login?return_to=%2F"
-          }
-          aria-label={
-            authStatus?.authenticated
-              ? "로그아웃"
-              : authStatus === null
-                ? "로그인 상태 확인 중"
-                : "ID 로그인"
-          }
-        >
-          <User
-            size={16}
-            weight={authStatus?.authenticated ? "fill" : "regular"}
-            aria-hidden="true"
-          />
-          <span>{authStatus?.authenticated ? "내 계정" : "로그인"}</span>
-        </a>
+        {authStatus?.authenticated ? (
+          <button
+            type="button"
+            className="homecam-account-link"
+            aria-label={signingOut ? "로그아웃 중" : "로그아웃"}
+            disabled={signingOut}
+            onClick={() => void signOut()}
+          >
+            <User size={16} weight="fill" aria-hidden="true" />
+            <span>{signingOut ? "로그아웃 중" : "로그아웃"}</span>
+          </button>
+        ) : (
+          <a
+            className="homecam-account-link"
+            href={authStatus?.signInPath ?? "/auth/login?return_to=%2F"}
+            aria-label={authStatus === null ? "로그인 상태 확인 중" : "ID 로그인"}
+          >
+            <User size={16} weight="regular" aria-hidden="true" />
+            <span>로그인</span>
+          </a>
+        )}
       </div>
     </header>
   );

@@ -13,6 +13,7 @@ Internet
 Route 53 + ACM ── ALB ── ECS Fargate (public subnet, public IP)
                               │
                               ├── RDS PostgreSQL (isolated subnet)
+                              ├── Cognito User Pool (server-side auth API)
                               ├── KVS broker Lambda Function URL
                               └── Push broker Lambda Function URL
 
@@ -30,7 +31,7 @@ Jetson / Gazebo
 - 2개 AZ의 public/database subnet. PoC 비용을 줄이기 위해 NAT Gateway는 사용하지 않음
 - HTTPS ALB, public subnet Fargate 서비스, ARM64 task, 1~4개 자동 확장
 - 암호화된 PostgreSQL 16 RDS와 Secrets Manager 관리 자격 증명
-- Cognito User Pool, OAuth code flow 웹 client, Hosted UI domain
+- `RETAIN`으로 보호한 Cognito User Pool, 기존 ALB용 client와 별도 서버 인증 client
 - 장치마다 분리된 P2P·Storage signaling channel과 archive stream
 - Storage channel과 archive stream을 연결하는 custom resource. 신규 P2P channel은
   AWS 기본값인 Media Storage `DISABLED`를 유지
@@ -63,15 +64,35 @@ Jetson / Gazebo
   security group은 ALB만 container port 3000에 접근하도록 한다. 인터넷에서
   task로의 직접 inbound 접근은 허용하지 않는다.
 - 녹화 HLS는 같은 origin의 애플리케이션 proxy를 통해 제공해야 한다.
-- ALB는 `/api/health`, `/auth/logout/complete`와 현재 구현된 장치 API,
+- 인증 전환은 `prepare → dual → cutover → cleanup` 네 단계로 진행한다.
+  `cleanup` 전까지 기존 Cognito Hosted UI, client, domain, ALB 인증 rule을
+  유지해 직전 단계로 되돌릴 수 있게 한다.
+- `cleanup`에서는 ALB가 인증 상태를 판단하거나 Cognito로 redirect하지 않고
+  모든 HTTPS 요청을 ECS target으로 전달한다. 로그인 화면과 사용자 API의
+  인증 경계는 같은 origin의 애플리케이션이다. 장치·내부 API는 기존
+  bearer/HMAC 검증을 계속 사용한다.
+- 별도 서버 인증 client만 `ADMIN_USER_PASSWORD_AUTH`를 허용한다. 서버가
+  임시 비밀번호·TOTP challenge에 응답하며 브라우저는 Cognito token이나
+  AWS 자격 증명을 받지 않는다.
+- ECS task role의 Cognito 권한은 이 stack의 User Pool ARN에 대한
+  `AdminInitiateAuth`, `AdminRespondToAuthChallenge`, `AdminGetUser`로 제한한다.
+  app client는 secret과 OAuth flow를 사용하지 않는다.
+- 브라우저 세션은 Secrets Manager가 만든 32-byte base64url
+  `AUTH_SESSION_SECRET`으로 서버에서 보호하며, ECS에는 secret value로만
+  주입한다. 저장소·CloudFormation output·브라우저 번들에 값을 넣지 않는다.
+- `dual`·`cutover`의 ECS는 `AUTH_MODE=alb_oidc_or_cognito_session`,
+  `cleanup`은 `AUTH_MODE=cognito_session`을 사용한다. 앱이 미인증 페이지에는
+  같은 사이트의 로그인 화면을 렌더링하고, 보호된 API는 자체 세션을 검증해
+  401을 반환한다.
+- Cognito User Pool과 CloudFormation이 만든 최초 owner에는 `RETAIN`을 적용해
+  client 교체나 우발적인 stack 삭제가 사용자 계정을 지우지 않게 한다.
+- `cleanup` 전 ALB는 `/api/health`, 로그아웃 완료 경로, 현재 구현된 장치 API와
   내부 API 2개만 정확한 경로 규칙으로 Cognito 없이 전달한다. 장치·내부 API는
   앱의 bearer/HMAC 검증이 최종 인증 경계다. 미래의 `/api/device/v1/*` 또는
   `/api/internal/*` 경로가 실수로 공개되지 않도록 wildcard 예외는 사용하지
-  않으며, 나머지 `/*`는 Cognito 인증 후에만 ECS로 전달한다.
+  않는다.
 - Cognito client의 `logout_uri` 허용 목록과 앱의 로그아웃 완료 경로는 모두
   `https://<homecam-domain>/auth/logout/complete`로 고정한다.
-- ECS는 ALB 서명의 signer ARN·Cognito client·issuer를 모두 검증하도록
-  `AUTH_MODE=alb_oidc`와 관련 환경 변수를 주입받는다.
 - WebRTC 송신 계약은 H.264 영상과 Opus 오디오다. KVS Storage Session이
   Opus를 받아 저장 스트림에는 AAC로 변환하므로 archive stream의 정확한
   media type은 `video/h264,audio/aac`다.
@@ -101,7 +122,8 @@ CloudFormation 배포 시 다음 parameter가 반드시 필요하다. 값은 저
 - 최초 stack은 `ServiceDesiredCount=0`으로 생성해 ECR부터 준비
 - `InitialOwnerEmail`로 Cognito 임시 사용자 초대 이메일을 받을 수 있어야 함
 - 생성된 PostgreSQL에 AWS용 migration 적용
-- 애플리케이션이 Cognito JWT와 PostgreSQL 환경 변수를 사용하도록 포팅 완료
+- 애플리케이션이 Cognito admin auth·서버 세션과 PostgreSQL 환경 변수를
+  사용하도록 포팅 완료
 - 관리자의 SNS alarm 구독 추가
 - 조직 SCP가 CloudFormation, IAM, VPC, ECS, RDS, KVS, Lambda, Route 53,
   ACM, Secrets Manager 리소스 생성을 허용
@@ -122,7 +144,7 @@ npm --prefix ../aws/kvs-broker ci
 npm --prefix ../aws/push-broker ci
 npm run build
 npm test
-npm run synth -- --no-lookups --quiet
+npm run synth -- -c authMigrationPhase=cleanup --no-lookups --quiet
 ```
 
 장치 목록이나 이미지 tag를 바꾸려면 context를 사용한다.
@@ -133,8 +155,14 @@ npm run synth -- \
   -c region=ap-northeast-2 \
   -c 'deviceIds=["gazebo-homecam","jetson-homecam-01"]' \
   -c containerImageTag=git-commit-sha \
+  -c authMigrationPhase=prepare \
   --no-lookups --quiet
 ```
+
+`authMigrationPhase`는 반드시 명시해야 한다. 생략하면 과거 전환 단계가 의도치
+않게 재적용되는 일을 막기 위해 합성이 즉시 실패한다. 허용값은 `prepare`,
+`dual`, `cutover`, `cleanup`뿐이며 기존 운영 stack에서는 순서를 건너뛰지 않는다.
+CI와 전환을 마친 정상 상태의 합성은 `cleanup`을 명시한다.
 
 `cdk synth` 결과의 다음 내용을 배포 리뷰에서 확인한다.
 
@@ -145,8 +173,18 @@ npm run synth -- \
 - Fargate `AssignPublicIp=ENABLED`와 ALB security group에서만 3000 ingress
 - NAT Gateway가 없고 RDS는 isolated subnet을 사용하는지
 - HTTPS listener와 ACM DNS validation
+- `prepare`에서 기존 User Pool, `HomecamWebClient`, domain, listener rule의
+  logical ID와 ECS task definition이 운영 template과 동일한지
+- `dual`에서 로그인·로그아웃 네 경로와 세션 확인용 `/api/auth/me`만 priority
+  11 forward이고 기존 `authenticate-cognito` rule이 priority 15/20에 남아 있는지
+- `cutover`에서 priority 14 `/*` forward가 기존 인증 rule보다 먼저 실행되는지
+- `cleanup`에서 listener default action만 forward이고 Hosted UI client,
+  domain, `authenticate-cognito` rule이 모두 사라지는지
 - `malbut.hyenje29.click` child Hosted Zone apex의 ALB alias A record
 - VAPID parameter의 `NoEcho=true`
+- 별도 서버 client에 `ALLOW_ADMIN_USER_PASSWORD_AUTH`와 token refresh만
+  활성화되고 OAuth와 client secret이 없는지
+- ECS task role의 Cognito admin auth 권한이 User Pool ARN 하나로 제한되는지
 
 ## 배포 인계
 
@@ -154,20 +192,57 @@ npm run synth -- \
 `cdk diff`와 예상 비용을 검토해야 한다. 특히 ALB, RDS 및 KVS
 녹화는 실행 시간과 트래픽에 따라 지속 비용이 발생한다.
 
-배포 순서는 다음과 같다.
+기존 ALB Hosted UI 인증을 같은 사이트 로그인으로 옮길 때는 다음 순서를
+지킨다. 각 명령에는 운영 stack의 기존 parameter 값을 그대로 사용하고,
+`containerImageTag`는 해당 단계에서 검증한 불변 Git SHA로 지정한다.
 
-1. 도메인·VAPID·owner 정보와 조직 배포 역할을 확정한다.
-2. `ServiceDesiredCount=0`으로 stack change set을 생성하고 IAM·삭제 정책·비용을 검토한다.
-3. 최초 stack 생성 후 출력된 ECR에 AWS 포팅된 앱 이미지를 올린다.
-4. 같은 stack을 `ServiceDesiredCount=1`로 업데이트하고 DB migration을 수행한다.
-5. 앱의 provisioning helper로 정확한 manifest hash와 가까운 미래의 만료
-   시각을 만들고, Secrets Manager의 generated bearer를 노출하지 않는
-   관리 세션에서 `/api/internal/device-provisioning`에 한 번만 전송한다.
-   이 단계에서 최초 owner membership과 device credential이 생성된다.
-6. provisioning 만료 후 외부 모바일 네트워크에서 P2P, Storage, HLS, PTT,
-   Push를 smoke test한다.
+```bash
+# 1. 새 server auth client와 session secret만 추가. 기존 ECS/ALB는 불변이어야 한다.
+npx cdk -c authMigrationPhase=prepare \
+  -c containerImageTag="$OLD_IMAGE_SHA" diff MalbutHomecam-dev --no-change-set
+npx cdk -c authMigrationPhase=prepare \
+  -c containerImageTag="$OLD_IMAGE_SHA" deploy MalbutHomecam-dev
 
-dev stack은 반복 실험을 위해 RDS·KVS·Secrets 등에 `DESTROY` 정책을 쓴다.
+# 2. 통합 인증 이미지를 올린 뒤 로그인/로그아웃 경로만 공개한다.
+npx cdk -c authMigrationPhase=dual \
+  -c containerImageTag="$NEW_IMAGE_SHA" diff MalbutHomecam-dev --no-change-set
+npx cdk -c authMigrationPhase=dual \
+  -c containerImageTag="$NEW_IMAGE_SHA" deploy MalbutHomecam-dev
+
+# 3. dual smoke test 후 priority 14 catch-all로 앱 인증을 활성화한다.
+npx cdk -c authMigrationPhase=cutover \
+  -c containerImageTag="$NEW_IMAGE_SHA" diff MalbutHomecam-dev --no-change-set
+npx cdk -c authMigrationPhase=cutover \
+  -c containerImageTag="$NEW_IMAGE_SHA" deploy MalbutHomecam-dev
+
+# 4. 충분한 관찰 기간 뒤에만 레거시 client/domain/rule을 삭제한다.
+npx cdk -c authMigrationPhase=cleanup \
+  -c containerImageTag="$NEW_IMAGE_SHA" diff MalbutHomecam-dev --no-change-set
+npx cdk -c authMigrationPhase=cleanup \
+  -c containerImageTag="$NEW_IMAGE_SHA" deploy MalbutHomecam-dev
+```
+
+단계별 확인과 롤백은 다음과 같다.
+
+- `prepare`: diff가 서버 client, session secret, User Pool/owner의 `RETAIN` 변경만
+  포함해야 한다. ECS task definition, 기존 client/domain/rule 변경이 보이면 중단한다.
+- `dual`: `/auth/login`, `/api/auth/login`, `/auth/logout`, `/api/auth/logout`을
+  확인하고, `/auth/login?return_to=%2Fapi%2Fauth%2Fme`에서 로그인해 전후
+  `/api/auth/me`의 401/성공 응답으로 새 opaque session을 E2E 검증한다. 이
+  단계에서는 `/`와 나머지 사용자 API가 기존 ALB 인증을 계속 사용한다.
+  실패하면 `prepare + $OLD_IMAGE_SHA`로 되돌린다.
+- `cutover`: 미인증 `/`이 같은 사이트 로그인 화면으로 열리고 기존 device/internal
+  API 및 외부 모바일 스트리밍이 정상인지 확인한다. 실패하면 `dual`로 되돌린다.
+- `cleanup`: 최소 한 번의 관찰 기간과 로그인 재검증 후 실행한다. 실패하면
+  `cutover`를 다시 배포한다. 삭제된 레거시 app client가 재생성되므로 기존 ALB
+  세션은 다시 로그인해야 하지만 `RETAIN` User Pool의 사용자와 비밀번호는 유지된다.
+
+신규 stack을 처음 만드는 경우에는 기존 절차대로 `ServiceDesiredCount=0`으로
+리소스와 ECR을 만든 뒤 이미지를 올리고, `ServiceDesiredCount=1`과 `cleanup`으로
+바로 시작할 수 있다. 기존 운영 stack에서는 반드시 네 단계를 사용한다.
+
+dev stack은 반복 실험을 위해 RDS·KVS·Secrets 등에 `DESTROY` 정책을 쓰지만,
+Cognito User Pool과 최초 owner만은 `RETAIN`으로 보호한다.
 운영 stack을 만들 때는 RDS Multi-AZ, deletion protection, backup 보존,
 Secrets·KVS·S3 `RETAIN`, private application subnet과 NAT/VPC endpoint,
 아웃바운드 제어, WAF를 별도 적용해야 한다.
@@ -189,9 +264,13 @@ project_name=$(aws cloudformation describe-stacks \
   --stack-name MalbutHomecam-dev \
   --query 'Stacks[0].Outputs[?OutputKey==`ImageBuilderProjectName`].OutputValue' \
   --output text)
+image_git_sha=$(git rev-parse HEAD)
 build_id=$(aws codebuild start-build \
   --profile malbut-team --region ap-northeast-2 \
-  --project-name "$project_name" --query 'build.id' --output text)
+  --project-name "$project_name" \
+  --environment-variables-override \
+    "name=GIT_SHA,value=$image_git_sha,type=PLAINTEXT" \
+  --query 'build.id' --output text)
 aws codebuild batch-get-builds \
   --profile malbut-team --region ap-northeast-2 \
   --ids "$build_id" --query 'builds[0].buildStatus' --output text
@@ -199,3 +278,5 @@ aws codebuild batch-get-builds \
 
 CodeBuild service role은 이 stack의 ECR repository pull/push만 허용하며,
 소스 URL과 repository URI는 build 시작 요청으로 바꾸지 않는다.
+호출자가 덮어쓰는 값은 공개 저장소에 push된 40자 `GIT_SHA` 하나뿐이며,
+`dual`·`cutover` 배포의 `containerImageTag`에도 같은 값을 사용한다.

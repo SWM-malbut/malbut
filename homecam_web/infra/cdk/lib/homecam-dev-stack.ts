@@ -43,7 +43,10 @@ export interface HomecamDevStackProps extends StackProps {
   readonly stage: string;
   readonly deviceIds: string[];
   readonly containerImageTag: string;
+  readonly authMigrationPhase: AuthMigrationPhase;
 }
+
+export type AuthMigrationPhase = "prepare" | "dual" | "cutover" | "cleanup";
 
 type DeviceResources = {
   readonly deviceId: string;
@@ -74,8 +77,13 @@ export class HomecamDevStack extends Stack {
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(props.containerImageTag)) {
       throw new Error("containerImageTag is not a valid ECR image tag");
     }
+    if (!["prepare", "dual", "cutover", "cleanup"].includes(props.authMigrationPhase)) {
+      throw new Error("authMigrationPhase is invalid");
+    }
 
     const prefix = `malbut-homecam-${props.stage}`;
+    const keepsLegacyAlbAuth = props.authMigrationPhase !== "cleanup";
+    const usesApplicationSession = props.authMigrationPhase !== "prepare";
     Tags.of(this).add("Project", "malbut-homecam");
     Tags.of(this).add("Environment", props.stage);
     Tags.of(this).add("ManagedBy", "aws-cdk");
@@ -200,46 +208,64 @@ export class HomecamDevStack extends Stack {
         requireUppercase: true,
         tempPasswordValidity: Duration.days(3),
       },
-      removalPolicy: RemovalPolicy.DESTROY,
+      removalPolicy: RemovalPolicy.RETAIN,
     });
-    const userPoolClient = userPool.addClient("HomecamWebClient", {
-      userPoolClientName: `${prefix}-web`,
-      generateSecret: true,
-      authFlows: { userSrp: true },
-      preventUserExistenceErrors: true,
-      enableTokenRevocation: true,
-      accessTokenValidity: Duration.minutes(30),
-      idTokenValidity: Duration.minutes(30),
-      refreshTokenValidity: Duration.days(7),
-      oAuth: {
-        flows: { authorizationCodeGrant: true },
-        scopes: [
-          cognito.OAuthScope.OPENID,
-          cognito.OAuthScope.EMAIL,
-          cognito.OAuthScope.PROFILE,
-        ],
-        callbackUrls: [
-          Fn.join("", [
-            "https://",
-            homecamDomainName,
-            "/oauth2/idpresponse",
-          ]),
-        ],
-        logoutUrls: [
-          Fn.join("", [
-            "https://",
-            homecamDomainName,
-            "/auth/logout/complete",
-          ]),
-        ],
+    const legacyUserPoolClient = keepsLegacyAlbAuth
+      ? userPool.addClient("HomecamWebClient", {
+          userPoolClientName: `${prefix}-web`,
+          generateSecret: true,
+          authFlows: { userSrp: true },
+          preventUserExistenceErrors: true,
+          enableTokenRevocation: true,
+          accessTokenValidity: Duration.minutes(30),
+          idTokenValidity: Duration.minutes(30),
+          refreshTokenValidity: Duration.days(7),
+          oAuth: {
+            flows: { authorizationCodeGrant: true },
+            scopes: [
+              cognito.OAuthScope.OPENID,
+              cognito.OAuthScope.EMAIL,
+              cognito.OAuthScope.PROFILE,
+            ],
+            callbackUrls: [
+              Fn.join("", [
+                "https://",
+                homecamDomainName,
+                "/oauth2/idpresponse",
+              ]),
+            ],
+            logoutUrls: [
+              Fn.join("", [
+                "https://",
+                homecamDomainName,
+                "/auth/logout/complete",
+              ]),
+            ],
+          },
+        })
+      : undefined;
+    const serverAuthUserPoolClient = userPool.addClient(
+      "HomecamServerAuthClient",
+      {
+        userPoolClientName: `${prefix}-server-auth`,
+        generateSecret: false,
+        authFlows: { adminUserPassword: true },
+        preventUserExistenceErrors: true,
+        enableTokenRevocation: true,
+        accessTokenValidity: Duration.minutes(30),
+        idTokenValidity: Duration.minutes(30),
+        refreshTokenValidity: Duration.days(7),
+        disableOAuth: true,
       },
-    });
-    const userPoolDomain = userPool.addDomain("HomecamCognitoDomain", {
-      cognitoDomain: {
-        domainPrefix: Fn.join("-", [prefix, Aws.ACCOUNT_ID]),
-      },
-    });
-    new cognito.CfnUserPoolUser(this, "InitialOwnerUser", {
+    );
+    const userPoolDomain = keepsLegacyAlbAuth
+      ? userPool.addDomain("HomecamCognitoDomain", {
+          cognitoDomain: {
+            domainPrefix: Fn.join("-", [prefix, Aws.ACCOUNT_ID]),
+          },
+        })
+      : undefined;
+    const initialOwnerUser = new cognito.CfnUserPoolUser(this, "InitialOwnerUser", {
       userPoolId: userPool.userPoolId,
       username: parameters.initialOwnerEmail.valueAsString,
       desiredDeliveryMediums: ["EMAIL"],
@@ -251,6 +277,7 @@ export class HomecamDevStack extends Stack {
         { name: "email_verified", value: "true" },
       ],
     });
+    initialOwnerUser.applyRemovalPolicy(RemovalPolicy.RETAIN);
 
     const appShareSecret = generatedSecret(
       this,
@@ -277,6 +304,18 @@ export class HomecamDevStack extends Stack {
       "ProvisioningSecret",
       `${prefix}/device-provisioning-secret`,
     );
+    const authSessionSecret = new secretsmanager.Secret(this, "AuthSessionSecret", {
+      secretName: `${prefix}/auth-session-secret`,
+      description: "256-bit base64url key for encrypted homecam web sessions",
+      generateSecretString: {
+        // 43 unpadded base64url characters decode to 32 bytes. Restricting the
+        // alphabet to alphanumerics keeps every generated value base64url-safe.
+        passwordLength: 43,
+        excludePunctuation: true,
+        includeSpace: false,
+      },
+    });
+    authSessionSecret.applyRemovalPolicy(RemovalPolicy.DESTROY);
     const vapidSecret = new secretsmanager.Secret(this, "VapidSecret", {
       secretName: `${prefix}/vapid`,
       description: "VAPID key pair supplied by the homecam administrator",
@@ -569,6 +608,12 @@ export class HomecamDevStack extends Stack {
       retention: logs.RetentionDays.ONE_MONTH,
       removalPolicy: RemovalPolicy.DESTROY,
     });
+    const cognitoIssuer = Fn.join("", [
+      "https://cognito-idp.",
+      this.region,
+      ".amazonaws.com/",
+      userPool.userPoolId,
+    ]);
     const container = taskDefinition.addContainer("HomecamWeb", {
       containerName: "homecam-web",
       image: ecs.ContainerImage.fromEcrRepository(
@@ -592,20 +637,28 @@ export class HomecamDevStack extends Stack {
         DATABASE_POOL_MAX: "10",
         DATABASE_IDLE_TIMEOUT_MS: "30000",
         DATABASE_CONNECT_TIMEOUT_MS: "10000",
-        AUTH_MODE: "alb_oidc",
+        AUTH_MODE:
+          props.authMigrationPhase === "prepare"
+            ? "alb_oidc"
+            : keepsLegacyAlbAuth
+              ? "alb_oidc_or_cognito_session"
+              : "cognito_session",
         AUTH_AWS_REGION: this.region,
-        AUTH_OIDC_CLIENT_ID: userPoolClient.userPoolClientId,
-        AUTH_OIDC_ISSUER: Fn.join("", [
-          "https://cognito-idp.",
-          this.region,
-          ".amazonaws.com/",
-          userPool.userPoolId,
-        ]),
-        AUTH_EMAIL_CLAIM: "email",
+        ...(keepsLegacyAlbAuth
+          ? {
+              AUTH_OIDC_CLIENT_ID: legacyUserPoolClient!.userPoolClientId,
+              AUTH_OIDC_ISSUER: cognitoIssuer,
+              AUTH_EMAIL_CLAIM: "email",
+            }
+          : {}),
         AUTH_SIGN_IN_PATH: "/auth/login",
         AUTH_SIGN_OUT_PATH: "/auth/logout",
-        AUTH_COGNITO_DOMAIN: userPoolDomain.baseUrl(),
-        AUTH_COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+        ...(keepsLegacyAlbAuth
+          ? {
+              AUTH_COGNITO_DOMAIN: userPoolDomain!.baseUrl(),
+              AUTH_COGNITO_CLIENT_ID: legacyUserPoolClient!.userPoolClientId,
+            }
+          : {}),
         AUTH_PUBLIC_ORIGIN: Fn.join("", ["https://", homecamDomainName]),
         PETCAM_DEVICE_ID: props.deviceIds[0]!,
         PETCAM_BROADCASTER_EMAILS: parameters.initialOwnerEmail.valueAsString,
@@ -617,13 +670,14 @@ export class HomecamDevStack extends Stack {
         KVS_BROKER_URL: kvsBrokerUrl.url,
         PUSH_BROKER_URL: pushBrokerUrl.url,
         COGNITO_USER_POOL_ID: userPool.userPoolId,
-        COGNITO_USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId,
-        COGNITO_ISSUER: Fn.join("", [
-          "https://cognito-idp.",
-          this.region,
-          ".amazonaws.com/",
-          userPool.userPoolId,
-        ]),
+        COGNITO_USER_POOL_CLIENT_ID: usesApplicationSession
+          ? serverAuthUserPoolClient.userPoolClientId
+          : legacyUserPoolClient!.userPoolClientId,
+        ...(keepsLegacyAlbAuth
+          ? {
+              COGNITO_ISSUER: cognitoIssuer,
+            }
+          : {}),
       },
       secrets: {
         DATABASE_URL: ecs.Secret.fromSecretsManager(databaseUrlSecret),
@@ -637,6 +691,12 @@ export class HomecamDevStack extends Stack {
         MAINTENANCE_SECRET: ecs.Secret.fromSecretsManager(maintenanceSecret),
         DEVICE_PROVISIONING_SECRET:
           ecs.Secret.fromSecretsManager(provisioningSecret),
+        ...(usesApplicationSession
+          ? {
+              AUTH_SESSION_SECRET:
+                ecs.Secret.fromSecretsManager(authSessionSecret),
+            }
+          : {}),
       },
       healthCheck: {
         command: [
@@ -650,6 +710,18 @@ export class HomecamDevStack extends Stack {
       },
     });
     container.addPortMappings({ containerPort: 3000, protocol: ecs.Protocol.TCP });
+    if (usesApplicationSession) {
+      taskDefinition.taskRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          actions: [
+            "cognito-idp:AdminInitiateAuth",
+            "cognito-idp:AdminRespondToAuthChallenge",
+            "cognito-idp:AdminGetUser",
+          ],
+          resources: [userPool.userPoolArn],
+        }),
+      );
+    }
 
     const albLogBucket = new s3.Bucket(this, "AlbLogBucket", {
       bucketName: Fn.join("-", [prefix, Aws.ACCOUNT_ID, "alb-logs"]),
@@ -681,44 +753,95 @@ export class HomecamDevStack extends Stack {
         healthCheckGracePeriod: Duration.seconds(90),
       },
     );
-    const taskContainer = taskDefinition.defaultContainer;
-    if (!taskContainer) throw new Error("Homecam task container is missing");
-    taskContainer.addEnvironment(
-      "AUTH_ALB_ARN",
-      service.loadBalancer.loadBalancerArn,
-    );
-    for (const [ruleId, priority, pathPattern] of [
-      ["PublicHealth", 1, "/api/health"],
-      ["PublicLogoutLanding", 2, "/auth/logout/complete"],
-      ["DeviceSessionApi", 3, "/api/device/v1/session"],
-      ["DeviceHeartbeatApi", 4, "/api/device/v1/heartbeat"],
-      ["DeviceEventsApi", 5, "/api/device/v1/events"],
-      ["DeviceRobotStateApi", 6, "/api/device/v1/robot/state"],
-      ["DeviceRobotMapApi", 7, "/api/device/v1/robot/map"],
-      ["DeviceRobotCommandsApi", 8, "/api/device/v1/robot/commands"],
-      ["DeviceRobotCommandCompleteApi", 9, "/api/device/v1/robot/commands/*/complete"],
-      ["MaintenanceApi", 10, "/api/internal/maintenance"],
-      ["DeviceProvisioningApi", 11, "/api/internal/device-provisioning"],
-    ] as const) {
-      service.listener.addAction(ruleId, {
-        priority,
-        conditions: [elbv2.ListenerCondition.pathPatterns([pathPattern])],
-        action: elbv2.ListenerAction.forward([service.targetGroup]),
+    if (keepsLegacyAlbAuth) {
+      const taskContainer = taskDefinition.defaultContainer;
+      if (!taskContainer) throw new Error("Homecam task container is missing");
+      taskContainer.addEnvironment(
+        "AUTH_ALB_ARN",
+        service.loadBalancer.loadBalancerArn,
+      );
+      for (const [ruleId, priority, pathPatterns] of [
+        ["PublicHealth", 1, ["/api/health"]],
+        ["PublicLogoutLanding", 2, ["/auth/logout", "/auth/logout/complete"]],
+        ["DeviceSessionApi", 3, ["/api/device/v1/session"]],
+        ["DeviceHeartbeatApi", 4, ["/api/device/v1/heartbeat"]],
+        [
+          "DeviceEventsApi",
+          5,
+          [
+            "/api/device/v1/events",
+            "/api/device/v1/robot/state",
+            "/api/device/v1/robot/map",
+            "/api/device/v1/robot/commands",
+            "/api/device/v1/robot/commands/*/complete",
+          ],
+        ],
+        ["MaintenanceApi", 6, ["/api/internal/maintenance"]],
+        ["DeviceProvisioningApi", 7, ["/api/internal/device-provisioning"]],
+        [
+          "PublicPwaRuntime",
+          8,
+          ["/_next/static/*", "/sw.js", "/manifest.webmanifest"],
+        ],
+        [
+          "PublicPwaIcons",
+          9,
+          ["/favicon.ico", "/favicon.svg", "/homecam-icon.svg"],
+        ],
+        ["PublicMediaAssets", 10, ["/og.png", "/vendor/kvs-webrtc.min.js"]],
+      ] as const) {
+        service.listener.addAction(ruleId, {
+          priority,
+          conditions: [elbv2.ListenerCondition.pathPatterns([...pathPatterns])],
+          action: elbv2.ListenerAction.forward([service.targetGroup]),
+        });
+      }
+      if (usesApplicationSession) {
+        service.listener.addAction("IntegratedAuthPublic", {
+          priority: 11,
+          conditions: [
+            elbv2.ListenerCondition.pathPatterns([
+              "/auth/login",
+              "/api/auth/login",
+              "/api/auth/me",
+              "/auth/logout",
+              "/api/auth/logout",
+            ]),
+          ],
+          action: elbv2.ListenerAction.forward([service.targetGroup]),
+        });
+      }
+      if (props.authMigrationPhase === "cutover") {
+        service.listener.addAction("ApplicationAuthCutover", {
+          priority: 14,
+          conditions: [elbv2.ListenerCondition.pathPatterns(["/*"])],
+          action: elbv2.ListenerAction.forward([service.targetGroup]),
+        });
+      }
+      const authenticatedAction = (
+        onUnauthenticatedRequest: elbv2.UnauthenticatedAction,
+      ) =>
+        new elbv2Actions.AuthenticateCognitoAction({
+          userPool,
+          userPoolClient: legacyUserPoolClient!,
+          userPoolDomain: userPoolDomain!,
+          scope: "openid email profile",
+          sessionCookieName: "AWSELBAuthSessionCookie",
+          sessionTimeout: Duration.hours(12),
+          onUnauthenticatedRequest,
+          next: elbv2.ListenerAction.forward([service.targetGroup]),
+        });
+      service.listener.addAction("CognitoApiAuthentication", {
+        priority: 15,
+        conditions: [elbv2.ListenerCondition.pathPatterns(["/api/*"])],
+        action: authenticatedAction(elbv2.UnauthenticatedAction.DENY),
+      });
+      service.listener.addAction("CognitoAuthentication", {
+        priority: 20,
+        conditions: [elbv2.ListenerCondition.pathPatterns(["/*"])],
+        action: authenticatedAction(elbv2.UnauthenticatedAction.AUTHENTICATE),
       });
     }
-    service.listener.addAction("CognitoAuthentication", {
-      priority: 20,
-      conditions: [elbv2.ListenerCondition.pathPatterns(["/*"])],
-      action: new elbv2Actions.AuthenticateCognitoAction({
-        userPool,
-        userPoolClient,
-        userPoolDomain,
-        scope: "openid email profile",
-        sessionTimeout: Duration.hours(12),
-        onUnauthenticatedRequest: elbv2.UnauthenticatedAction.AUTHENTICATE,
-        next: elbv2.ListenerAction.forward([service.targetGroup]),
-      }),
-    });
     new route53.ARecord(this, "HomecamDnsRecord", {
       zone: hostedZone,
       target: route53.RecordTarget.fromAlias(
@@ -850,11 +973,18 @@ export class HomecamDevStack extends Stack {
     });
     new CfnOutput(this, "CognitoUserPoolId", { value: userPool.userPoolId });
     new CfnOutput(this, "CognitoUserPoolClientId", {
-      value: userPoolClient.userPoolClientId,
+      value:
+        legacyUserPoolClient?.userPoolClientId ??
+        serverAuthUserPoolClient.userPoolClientId,
     });
-    new CfnOutput(this, "CognitoHostedUiBaseUrl", {
-      value: userPoolDomain.baseUrl(),
+    new CfnOutput(this, "CognitoServerAuthClientId", {
+      value: serverAuthUserPoolClient.userPoolClientId,
     });
+    if (userPoolDomain) {
+      new CfnOutput(this, "CognitoHostedUiBaseUrl", {
+        value: userPoolDomain.baseUrl(),
+      });
+    }
     new CfnOutput(this, "KvsBrokerFunctionUrl", { value: kvsBrokerUrl.url });
     new CfnOutput(this, "PushBrokerFunctionUrl", { value: pushBrokerUrl.url });
     new CfnOutput(this, "KvsDeviceChannelsJson", {

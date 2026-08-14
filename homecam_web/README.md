@@ -37,9 +37,12 @@ npm audit --audit-level=high
 
 운영 구성은 다음 경계를 사용합니다.
 
-- ALB가 Cognito 인증을 수행하고 ECS의 Next.js 서비스로 전달
-- 앱은 ALB가 서명한 `x-amzn-oidc-data`를 signer, client, issuer, 만료 시각,
-  서명 공개키와 subject까지 검증
+- ALB는 HTTPS 요청을 ECS의 Next.js 서비스로 전달하고 인증은 앱이 수행
+- `/auth/login`의 MALBUT 화면이 서버 전용 Cognito API를 호출하며, 최초
+  비밀번호 변경과 TOTP MFA도 같은 화면에서 처리
+- 브라우저에는 Cognito token 대신 `HttpOnly`·`Secure`·`SameSite=Lax`인
+  불투명 세션 쿠키만 발급하고, PostgreSQL에는 원문이 아닌 HMAC digest 저장
+- Cognito challenge session은 5분 동안만 AES-256-GCM으로 암호화해 저장
 - RDS PostgreSQL에는 ECS Task Role과 Secrets Manager로만 접속 정보 주입
 - 서울 리전 RDS 공개 루트 CA 번들은 검증된 이미지 자산으로 고정하고
   `verify-full`로 서버 인증서와 호스트 이름 검증
@@ -56,14 +59,12 @@ npm audit --audit-level=high
 DATABASE_URL
 DATABASE_SSL_MODE=verify-full
 DATABASE_SSL_CA_FILE=/app/certs/ap-northeast-2-bundle.pem
-AUTH_MODE=alb_oidc
+AUTH_MODE=cognito_session
 AUTH_AWS_REGION
-AUTH_ALB_ARN
-AUTH_OIDC_CLIENT_ID
-AUTH_OIDC_ISSUER
-AUTH_COGNITO_DOMAIN
-AUTH_COGNITO_CLIENT_ID
+AUTH_SESSION_SECRET
 AUTH_PUBLIC_ORIGIN
+COGNITO_USER_POOL_ID
+COGNITO_USER_POOL_CLIENT_ID
 KVS_DEVICE_CHANNELS_JSON
 KVS_BROKER_URL
 KVS_BROKER_SECRET
@@ -96,7 +97,7 @@ npm test
 npm run synth -- --profile malbut-team
 ```
 
-`cdk deploy`는 VPC, NAT Gateway, ALB, ECS Fargate, RDS, KVS와 Lambda 등 과금
+`cdk deploy`는 VPC, ALB, ECS Fargate, RDS, KVS와 Lambda 등 과금
 자원을 생성합니다. 비용·도메인·장치 ID를 팀에서 승인하기 전에는 실행하지
 않습니다.
 
@@ -107,7 +108,7 @@ PostgreSQL advisory lock으로 동시 실행을 직렬화합니다. 컨테이너
 이 스크립트를 실행합니다. 기존 개인 D1의 환경 전용 seed와 장치 credential은
 이관하지 않고 새 장치를 provisioning해야 합니다.
 
-`0002_robot_map`은 장치별 최신 지도 1개, 실시간 위치 상태 1개와 직렬화된
+`0003_robot_map`은 장치별 최신 지도 1개, 실시간 위치 상태 1개와 직렬화된
 지도·주행 명령 큐를 추가합니다. 지도 PNG는 revision 기반으로만 교체되고,
 장치 상태는 15초 이상 갱신되지 않으면 웹에서 오프라인으로 표시됩니다.
 
