@@ -32,14 +32,14 @@ def test_auto_prefers_cuda_over_opencl(monkeypatch):
     assert dnn.resolve_dnn_target('auto') == 'cuda'
 
 
-def test_auto_uses_gpu_opencl_when_cuda_dnn_is_unavailable(monkeypatch):
+def test_auto_uses_cpu_when_only_opencl_is_available(monkeypatch):
     monkeypatch.setattr(dnn, 'available_cuda_targets', lambda: [])
     monkeypatch.setattr(
         dnn,
         'available_opencl_targets',
         lambda: [cv2.dnn.DNN_TARGET_OPENCL],
     )
-    assert dnn.resolve_dnn_target('auto') == 'opencl'
+    assert dnn.resolve_dnn_target('auto') == 'cpu'
 
 
 def test_auto_falls_back_to_cpu_without_a_gpu_runtime(monkeypatch):

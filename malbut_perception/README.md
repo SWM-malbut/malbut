@@ -76,9 +76,11 @@ official OSNet x0.25 checkpoint trained on MSMT17, exports a 512-dimensional
 opset 12 descriptor, and validates it with the system OpenCV. The model is only
 0.08 GFLOPs at its 256x128 input size and runs only for detected people.
 
-`dnn_target:=auto` is the default. It prefers OpenCV CUDA DNN, then a GPU-backed
-OpenCL DNN target, and finally CPU. Explicit `cuda`, `cuda_fp16`, `opencl`, and
-`opencl_fp16` modes fail at startup instead of silently falling back.
+`dnn_target:=auto` is the default. It uses OpenCV CUDA DNN when CUDA is actually
+available and otherwise uses CPU. OpenCL is explicit-only because device
+discovery does not guarantee that a particular model compiles successfully.
+Explicit `cuda`, `cuda_fp16`, `opencl`, and `opencl_fp16` modes fail at startup
+instead of silently falling back.
 
 The main tracking and Re-ID controls are:
 
@@ -96,16 +98,23 @@ so a restored ID is a visual association rather than proof of identity.
 ros2 topic hz /camera/color/image_raw
 ros2 topic hz /camera/depth/image_raw
 ros2 topic echo /perception/person/detections_3d --once
+ros2 launch malbut_gazebo humanoid_demo.launch.py \
+  perception:=true debug_image_transport:=raw
 ros2 run rqt_image_view rqt_image_view \
-  /perception/person/debug_image/compressed
+  /perception/person/debug_image
 ```
 
 The standard configuration publishes JPEG-compressed debug frames to avoid
-dropping large raw images in the ROS middleware. Set
-`debug_image_transport:=raw` or `both` only when a raw-image consumer needs it.
+dropping large raw images in the ROS middleware. `rqt_image_view` needs the raw
+launch option shown above; use it only while visually inspecting the detector.
 
 The generic launch works with both Gazebo and the physical robot as long as
 the three RGB-D topic arguments are mapped to aligned images and CameraInfo.
+Depth pixels are projected in REP-103 optical coordinates. Leave
+`projection_frame` empty when the camera message already names its optical
+frame. The Gazebo humanoid demo sets it to `camera_depth_optical_frame`
+because Fortress shares the `camera_link` label with its body-frame point
+cloud; the Nav2 PointCloud frame itself is unchanged.
 
 ## Design references
 

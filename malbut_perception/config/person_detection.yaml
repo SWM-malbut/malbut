@@ -1,6 +1,7 @@
 person_localizer:
   ros__parameters:
-    use_sim_time: true
+    # Physical robots use wall time. Simulation launch files override this.
+    use_sim_time: false
 
     # Aligned RGB-D inputs. No Gazebo model pose or actor state is consumed.
     rgb_topic: /camera/color/image_raw
@@ -13,7 +14,10 @@ person_localizer:
     compressed_debug_image_topic: /perception/person/debug_image/compressed
     health_topic: /perception/person/healthy
 
-    # Empty publishes 3D results in the optical frame from the sensor message.
+    # Pixel projection is expressed in a REP-103 optical frame. Leave empty
+    # when the camera message already names that frame; override simulators
+    # that share one body-frame label across images and point clouds.
+    projection_frame: ''
     # Set base_link or map only when the corresponding TF is available.
     output_frame: ''
 
@@ -23,7 +27,8 @@ person_localizer:
     confidence_threshold: 0.20
     nms_threshold: 0.45
     yolo_input_size: 640
-    # auto selects CUDA, then GPU OpenCL, and finally CPU.
+    # auto selects verified CUDA and otherwise uses the stable CPU target.
+    # OpenCL remains available only as an explicit opt-in target.
     dnn_target: auto
     # Four workers performed best without competing heavily with Gazebo.
     opencv_num_threads: 4
@@ -52,6 +57,10 @@ person_localizer:
     maximum_depth_m: 3.0
     minimum_depth_samples: 20
     fallback_depth_scale: 1.0
+    # RGB remains useful past the Aurora930 Pro depth limit: publish the
+    # image bearing at the 3 m lower bound with deliberately high covariance.
+    enable_bearing_only_fallback: true
+    bearing_only_uncertainty_m: 2.0
     person_thickness_m: 0.35
 
     # Keep synchronization shallow so slow CPU inference drops stale frames.
