@@ -10,6 +10,8 @@ import { HomecamHeader } from "./homecam-header";
 import {
   ArrowClockwise,
   ArrowLeft,
+  Camera,
+  CornersOut,
   Microphone,
   ShieldCheck,
   SpeakerHigh,
@@ -128,6 +130,14 @@ function formatRecordingTime(value: string) {
   }).format(new Date(value));
 }
 
+function formatViewerClock(value: number) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value));
+}
+
 async function markRecordingStarted(roomCode: string, shouldContinue: () => boolean) {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     if (!shouldContinue()) return false;
@@ -157,23 +167,6 @@ function StatusBadge({ state }: { state: ConnectionState }) {
     <span className={`status-badge status-${state}`} data-testid="connection-status">
       <span className="status-dot" aria-hidden="true" />
       {STATE_COPY[state]}
-    </span>
-  );
-}
-
-function ViewerStatePill({
-  active,
-  tone,
-  children,
-}: {
-  active: boolean;
-  tone: "live" | "recording" | "camera" | "microphone";
-  children: React.ReactNode;
-}) {
-  return (
-    <span className={`homecam-state-pill state-${tone} ${active ? "is-active" : ""}`}>
-      <span aria-hidden="true" />
-      {children}
     </span>
   );
 }
@@ -782,12 +775,18 @@ function Viewer({
   deviceId,
   device,
   onExit,
+  embedded = false,
+  embeddedEventCount = 0,
+  onOpenEmbeddedEvents,
 }: {
   roomCode: string;
   viewerPassword: string;
   deviceId?: string;
   device?: HomecamDevice;
   onExit: (tab?: HomecamTab) => void;
+  embedded?: boolean;
+  embeddedEventCount?: number;
+  onOpenEmbeddedEvents?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const microphoneRef = useRef<MediaStream | null>(null);
@@ -816,13 +815,12 @@ function Viewer({
   const [error, setError] = useState("");
   const [microphoneAvailable, setMicrophoneAvailable] = useState(false);
   const [microphonePending, setMicrophonePending] = useState(false);
-  const [microphoneNotice, setMicrophoneNotice] = useState(
-    "영상은 바로 연결하고, 말하기를 누를 때만 보호자 마이크 권한을 요청합니다.",
-  );
+  const [microphoneNotice, setMicrophoneNotice] = useState("");
   const [talking, setTalking] = useState(false);
   const [talkLeasePending, setTalkLeasePending] = useState(false);
   const [speakerMuted, setSpeakerMuted] = useState(true);
   const [soundBlocked, setSoundBlocked] = useState(false);
+  const [viewerClockMs, setViewerClockMs] = useState(() => Date.now());
   const expectedStorageMode =
     deviceId && typeof device?.activeSession?.storageMode === "boolean"
       ? device.activeSession.storageMode
@@ -834,6 +832,11 @@ function Viewer({
   useEffect(() => {
     viewerStateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setViewerClockMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     viewerAccessRevokedRef.current = false;
@@ -1360,11 +1363,7 @@ function Viewer({
             }
             if (transportLive && !mediaReady) startMediaTimer();
           }
-          if (localAudioStream) {
-            setMicrophoneNotice("마이크가 연결되었습니다. 말하기 버튼을 누르는 동안만 전송됩니다.");
-          } else if (!connection.storageMode) {
-            setMicrophoneNotice("P2P 실시간 보기입니다. 말하기를 누를 때만 보호자 마이크를 연결합니다.");
-          }
+          setMicrophoneNotice("");
           connectionRef.current = connection;
         }
       } catch (reason) {
@@ -1633,7 +1632,7 @@ function Viewer({
   };
 
   return (
-    <div className="homecam-shell homecam-stream-shell">
+    <div className={`homecam-shell homecam-stream-shell ${embedded ? "is-embedded" : ""}`}>
       <HomecamHeader activeTab="live" onNavigate={onExit} />
       <main className="homecam-main homecam-stream-main">
         <div className="homecam-stream-context">
@@ -1675,28 +1674,10 @@ function Viewer({
                 data-testid="guardian-video"
               />
               <div className="homecam-video-topbar">
-                <div className="homecam-state-row" aria-label="실시간 홈캠 상태">
-                  <ViewerStatePill tone="live" active={state === "live"}>LIVE</ViewerStatePill>
-                  <ViewerStatePill
-                    tone="recording"
-                    active={Boolean(storageMode && state === "live")}
-                  >
-                    REC
-                  </ViewerStatePill>
-                  <ViewerStatePill
-                    tone="camera"
-                    active={state !== "offline" && (device?.cameraEnabled ?? true)}
-                  >
-                    CAM
-                  </ViewerStatePill>
-                  <ViewerStatePill
-                    tone="microphone"
-                    active={device?.microphoneEnabled ?? true}
-                  >
-                    MIC
-                  </ViewerStatePill>
-                </div>
-                <span>640 × 400 · SECURE</span>
+                <span className="homecam-video-clock">{formatViewerClock(viewerClockMs)}</span>
+                <button type="button" onClick={() => void videoRef.current?.requestFullscreen().catch(() => undefined)} aria-label="실시간 영상 전체 화면">
+                  <CornersOut size={19} weight="regular" aria-hidden="true" />
+                </button>
               </div>
 
               {state !== "live" && (
@@ -1735,7 +1716,27 @@ function Viewer({
                     : "영상과 양방향 음성은 7일간 저장되며 안전하게 보관됩니다."}
                 </span>
               </div>
-              <div className="homecam-stream-control-buttons">
+              {embedded ? (
+                <div className="homecam-stream-control-buttons homecam-stream-mockup-controls">
+                  <button
+                    type="button"
+                    className="homecam-stream-control-button"
+                    onClick={toggleSpeaker}
+                  >
+                    {speakerMuted && !soundBlocked
+                      ? <SpeakerSlash size={16} weight="regular" aria-hidden="true" />
+                      : <SpeakerHigh size={16} weight="regular" aria-hidden="true" />}
+                    {soundBlocked ? "소리 재생" : speakerMuted ? "스피커 꺼짐" : "스피커 켜짐"}
+                  </button>
+                  <span className="homecam-stream-status-chip">
+                    <Camera size={16} weight="regular" aria-hidden="true" />
+                    {device?.cameraEnabled === false ? "카메라 꺼짐" : "카메라 켜짐"}
+                  </span>
+                  <button type="button" className="homecam-stream-control-button is-clips" onClick={onOpenEmbeddedEvents}>
+                    최근 클립 {embeddedEventCount}건
+                  </button>
+                </div>
+              ) : <div className="homecam-stream-control-buttons">
                 <button
                   type="button"
                   className={`homecam-stream-control-button ${talking ? "is-talking" : ""}`}
@@ -1821,11 +1822,11 @@ function Viewer({
                   <ArrowClockwise size={16} weight="bold" aria-hidden="true" />
                   다시 연결
                 </button>
-              </div>
+              </div>}
             </div>
           </div>
 
-          <aside
+          {!embedded && <aside
             className="homecam-quick-grid homecam-stream-sidebar"
             aria-label="실시간 연결 정보"
           >
@@ -1858,7 +1859,7 @@ function Viewer({
                 </strong>
               </div>
             </article>
-          </aside>
+          </aside>}
         </section>
       </main>
     </div>
@@ -1982,6 +1983,7 @@ export function HomecamApp() {
   const [viewerPassword, setViewerPassword] = useState("");
   const [viewerDeviceId, setViewerDeviceId] = useState("");
   const [viewerDevice, setViewerDevice] = useState<HomecamDevice | null>(null);
+  const [inlineViewerDevice, setInlineViewerDevice] = useState<HomecamDevice | null>(null);
   const [creatingSession, setCreatingSession] = useState(false);
   const [landingError, setLandingError] = useState("");
 
@@ -2007,6 +2009,7 @@ export function HomecamApp() {
     setViewerPassword("");
     setViewerDeviceId("");
     setViewerDevice(null);
+    setInlineViewerDevice(null);
     setLandingError("");
   };
 
@@ -2053,12 +2056,9 @@ export function HomecamApp() {
   };
 
   const openRegisteredDevice = async (device: HomecamDevice) => {
-    setRoomCode(device.activeSession?.roomCode ?? "");
-    // 등록된 소유자·가족은 공유 비밀번호가 아니라 로그인된 계정 권한으로 입장합니다.
-    setViewerPassword("");
-    setViewerDeviceId(device.id);
-    setViewerDevice(device);
-    setMode("viewer");
+    setInlineViewerDevice(null);
+    await Promise.resolve();
+    setInlineViewerDevice(device);
   };
 
   return (
@@ -2069,6 +2069,18 @@ export function HomecamApp() {
       onJoinLegacy={joinLegacyBroadcast}
       creatingLegacyBroadcast={creatingSession}
       externalError={landingError}
+      liveViewer={inlineViewerDevice ? ({ eventCount, openEvents }) => (
+        <Viewer
+          roomCode={inlineViewerDevice.activeSession?.roomCode ?? ""}
+          viewerPassword=""
+          deviceId={inlineViewerDevice.id}
+          device={inlineViewerDevice}
+          embedded
+          embeddedEventCount={eventCount}
+          onOpenEmbeddedEvents={openEvents}
+          onExit={() => setInlineViewerDevice(null)}
+        />
+      ) : undefined}
       legacyArchive={
         <>
           <p className="sr-only">
