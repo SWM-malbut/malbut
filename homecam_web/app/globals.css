@@ -5751,6 +5751,7 @@ a:focus-visible {
 .homecam-dashboard-shell .robot-map-summary-grid strong { font-size: 20px; }
 
 .homecam-dashboard-shell .robot-map-progress {
+  flex: 1;
   height: 9px;
   overflow: hidden;
   border-radius: 999px;
@@ -5758,7 +5759,25 @@ a:focus-visible {
 }
 
 .homecam-dashboard-shell .robot-map-summary.is-driving .robot-map-progress { background: rgb(251 248 243 / .2); }
-.homecam-dashboard-shell .robot-map-progress i { display: block; height: 100%; border-radius: inherit; background: #e07a28; }
+.homecam-dashboard-shell .robot-map-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.homecam-dashboard-shell .robot-map-progress-row > strong {
+  min-width: 38px;
+  color: #8fd3dd;
+  font-size: 13px;
+  text-align: right;
+}
+.homecam-dashboard-shell .robot-map-summary.is-succeeded .robot-map-progress-row > strong { color: var(--homecam-teal); }
+.homecam-dashboard-shell .robot-map-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #e07a28;
+  transition: width 950ms linear;
+}
 
 .homecam-dashboard-shell .robot-map-panel-card p {
   margin: 0;
