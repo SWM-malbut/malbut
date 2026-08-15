@@ -18,6 +18,7 @@ import {
   Play,
   ShieldCheck,
   Sun,
+  Trash,
   UsersThree,
   VideoCamera,
   Waveform,
@@ -30,6 +31,7 @@ import {
 import {
   RobotMapPanel,
   RobotMapSummaryOverlay,
+  type MapMode,
   type RobotSemantics,
   type RobotSnapshot,
 } from "./robot-map-panel";
@@ -66,6 +68,17 @@ type HomecamEvent = {
   recordingSegment: number;
   playbackOffsetSeconds: number;
   recordingStartedAt: string | null;
+  eventGroupId: string | null;
+  segmentIndex: number | null;
+  labels: HomecamEventType[];
+  clipStartAt: string | null;
+  clipEndAt: string | null;
+  clipState: "detected" | "recording" | "ready" | "incomplete" | "unavailable" | "expired";
+  monotonicDurationMs: number | null;
+  ai: {
+    status: string;
+    summary: string | null;
+  };
 };
 
 type FamilyMember = {
@@ -105,10 +118,10 @@ const EVENT_LABELS: Record<HomecamEventType, string> = {
 
 function HomeMapSummary({
   device,
-  onNavigate,
+  onOpenMap,
 }: {
   device: HomecamDevice | null;
-  onNavigate: (tab: HomecamTab) => void;
+  onOpenMap: (mode: MapMode) => void;
 }) {
   const deviceId = device?.id ?? "";
   const [robotSnapshot, setRobotSnapshot] = useState<RobotSnapshot | null>(null);
@@ -176,7 +189,7 @@ function HomeMapSummary({
     <>
       <article className="homecam-home-map-card">
         <h2>우리 집 지도</h2>
-        <button type="button" className="homecam-home-map-preview" onClick={() => onNavigate("map")}>
+        <button type="button" className="homecam-home-map-preview" onClick={() => onOpenMap("view")}>
           {device && revision ? (
             <>
               <Image
@@ -193,8 +206,8 @@ function HomeMapSummary({
           )}
         </button>
         <div className="homecam-home-map-actions">
-          <button type="button" onClick={() => onNavigate("map")}>목적지 선택</button>
-          <button type="button" onClick={() => onNavigate("map")}>지도 열기</button>
+          <button type="button" onClick={() => onOpenMap("navigate")}>목적지 선택</button>
+          <button type="button" onClick={() => onOpenMap("view")}>지도 열기</button>
         </div>
       </article>
       <article className="homecam-home-favorites">
@@ -202,7 +215,7 @@ function HomeMapSummary({
         <div>
           {rooms.length === 0 && <p>방을 나누고 이름을 정하면 여기에 표시됩니다.</p>}
           {rooms.slice(0, 4).map((room) => (
-            <button type="button" key={room.id} onClick={() => onNavigate("map")}>
+            <button type="button" key={room.id} onClick={() => onOpenMap("navigate")}>
               <i style={{ background: room.color }} />
               <strong>{room.name}</strong>
               <span>지도에서 선택</span>
@@ -341,6 +354,24 @@ function normalizeEvent(value: unknown): HomecamEvent | null {
       : typeof offsetMsValue === "number" && Number.isFinite(offsetMsValue)
         ? Math.max(0, offsetMsValue / 1_000)
         : 0;
+  const labels = Array.isArray(raw.labels)
+    ? raw.labels.filter(
+        (label): label is HomecamEventType =>
+          typeof label === "string" && ["motion", "person", "dog", "cat"].includes(label),
+      )
+    : [];
+  const clipStateValue = stringValue(raw.clipState, raw.clip_state) ?? "detected";
+  const clipState = [
+    "detected",
+    "recording",
+    "ready",
+    "incomplete",
+    "unavailable",
+    "expired",
+  ].includes(clipStateValue)
+    ? clipStateValue as HomecamEvent["clipState"]
+    : "detected";
+  const ai = asRecord(raw.ai);
 
   return {
     id: stringValue(raw.id, raw.eventId, raw.event_id) ?? `${rawType}:${occurredAt}`,
@@ -359,7 +390,42 @@ function normalizeEvent(value: unknown): HomecamEvent | null {
     playbackOffsetSeconds: totalOffsetSeconds % 3_600,
     recordingStartedAt:
       stringValue(raw.recordingStartedAt, raw.recording_started_at, recording.startedAt) ?? null,
+    eventGroupId: stringValue(raw.eventGroupId, raw.event_group_id) ?? null,
+    segmentIndex:
+      typeof raw.segmentIndex === "number" && Number.isSafeInteger(raw.segmentIndex)
+        ? raw.segmentIndex
+        : null,
+    labels,
+    clipStartAt: stringValue(raw.clipStartAt, raw.clip_start_at) ?? null,
+    clipEndAt: stringValue(raw.clipEndAt, raw.clip_end_at) ?? null,
+    clipState,
+    monotonicDurationMs:
+      typeof raw.monotonicDurationMs === "number" && Number.isFinite(raw.monotonicDurationMs)
+        ? raw.monotonicDurationMs
+        : null,
+    ai: {
+      status: stringValue(ai.status) ?? "not_requested",
+      summary: stringValue(ai.summary) ?? null,
+    },
   };
+}
+
+function eventClipStatus(event: HomecamEvent) {
+  if (!event.eventGroupId) return event.recordingId ? "지난 영상에서 재생" : "감지 기록만 있음";
+  if (event.clipState === "recording") return "클립 저장 중";
+  if (event.clipState === "ready") return "이벤트 클립 저장됨";
+  if (event.clipState === "incomplete") return "종료 정보가 없는 클립";
+  if (event.clipState === "unavailable") return "영상 없음";
+  if (event.clipState === "expired") return "보관 기간 만료";
+  return "감지됨";
+}
+
+function eventCanPlay(event: HomecamEvent) {
+  return Boolean(
+    event.recordingId &&
+      (!event.eventGroupId ||
+        (event.clipState === "ready" && event.clipStartAt && event.clipEndAt)),
+  );
 }
 
 function formatEventTime(value: string) {
@@ -417,9 +483,11 @@ function Switch({
 
 function EventPlayback({
   event,
+  deviceId,
   onClose,
 }: {
   event: HomecamEvent;
+  deviceId: string;
   onClose: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -431,6 +499,8 @@ function EventPlayback({
     const controller = new AbortController();
     let dispose: () => void = () => undefined;
     let seekAdjustmentSeconds = 0;
+    let clipDurationSeconds: number | null = null;
+    const isBoundedClip = Boolean(event.eventGroupId && event.clipState === "ready");
     if (!video || !event.recordingId) {
       setState("error");
       setMessage("이 이벤트는 연결된 녹화 구간이 아직 없습니다.");
@@ -438,6 +508,10 @@ function EventPlayback({
     }
 
     const seekToEvent = () => {
+      if (isBoundedClip) {
+        video.currentTime = seekAdjustmentSeconds;
+        return;
+      }
       const explicitOffset = event.playbackOffsetSeconds;
       const calculatedOffset =
         event.recordingStartedAt
@@ -466,13 +540,25 @@ function EventPlayback({
       setState("error");
       setMessage("이벤트 영상을 불러오지 못했습니다.");
     };
+    const handleTimeUpdate = () => {
+      if (
+        clipDurationSeconds !== null &&
+        video.currentTime >= seekAdjustmentSeconds + clipDurationSeconds
+      ) {
+        video.pause();
+      }
+    };
     video.addEventListener("loadedmetadata", handleReady);
     video.addEventListener("error", handleError);
+    video.addEventListener("timeupdate", handleTimeUpdate);
 
-    void fetch(`/api/recordings/${encodeURIComponent(event.recordingId)}/playback`, {
+    const playbackEndpoint = isBoundedClip
+      ? `/api/devices/${encodeURIComponent(deviceId)}/events/${encodeURIComponent(event.id)}/playback`
+      : `/api/recordings/${encodeURIComponent(event.recordingId)}/playback`;
+    void fetch(playbackEndpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ segment: event.recordingSegment }),
+      body: isBoundedClip ? JSON.stringify({}) : JSON.stringify({ segment: event.recordingSegment }),
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -488,6 +574,11 @@ function EventPlayback({
           adjustment >= 0
             ? adjustment
             : 0;
+        const duration = payload.durationSeconds;
+        clipDurationSeconds =
+          typeof duration === "number" && Number.isFinite(duration) && duration > 0
+            ? duration
+            : null;
         if (video.canPlayType("application/vnd.apple.mpegurl")) {
           video.src = playbackUrl;
           video.load();
@@ -516,11 +607,12 @@ function EventPlayback({
       dispose();
       video.removeEventListener("loadedmetadata", handleReady);
       video.removeEventListener("error", handleError);
+      video.removeEventListener("timeupdate", handleTimeUpdate);
       video.pause();
       video.removeAttribute("src");
       video.load();
     };
-  }, [event]);
+  }, [deviceId, event]);
 
   return (
     <div className="event-playback" role="dialog" aria-modal="true" aria-label="이벤트 영상 재생">
@@ -541,7 +633,7 @@ function EventPlayback({
         <video ref={videoRef} controls playsInline />
         {state === "loading" && <p role="status">해당 시각의 녹화를 불러오는 중입니다…</p>}
         {state === "error" && <p className="homecam-inline-error" role="alert">{message}</p>}
-        {state === "ready" && <p>이벤트가 감지된 시각으로 이동했습니다.</p>}
+        {state === "ready" && <p>{event.eventGroupId ? "감지 전 5초부터 이벤트 종료까지 재생합니다." : "이벤트가 감지된 시각으로 이동했습니다."}</p>}
       </section>
     </div>
   );
@@ -560,6 +652,7 @@ export function HomecamDashboard({
   const [devices, setDevices] = useState<HomecamDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const [tab, setTab] = useState<HomecamTab>(initialTab);
+  const [mapEntryMode, setMapEntryMode] = useState<MapMode>("view");
   const [availability, setAvailability] = useState<ApiAvailability>("loading");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
@@ -583,6 +676,10 @@ export function HomecamDashboard({
   const [colorMode, setColorMode] = useState<HomecamColorMode>("dark");
   const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
   const deepLinkedEventIdRef = useRef("");
+  const openMap = useCallback((mode: MapMode) => {
+    setMapEntryMode(mode);
+    setTab("map");
+  }, []);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("malbut-color-mode");
@@ -724,6 +821,37 @@ export function HomecamDashboard({
       })
       .catch(() => undefined);
     return () => controller.abort();
+  }, [selectedDevice]);
+
+  const removeEventFromList = useCallback(async (event: HomecamEvent) => {
+    if (!selectedDevice) return;
+    const confirmed = window.confirm(
+      "이 이벤트를 목록에서 삭제할까요? 저장된 원본 영상은 7일 보관 기간이 지나면 자동으로 삭제됩니다.",
+    );
+    if (!confirmed) return;
+    setBusy(`event-delete:${event.id}`);
+    setNotice("");
+    try {
+      const response = await fetch(
+        `/api/devices/${encodeURIComponent(selectedDevice.id)}/events/${encodeURIComponent(event.id)}`,
+        { method: "DELETE" },
+      );
+      const payload = asRecord(await response.json().catch(() => ({})));
+      if (!response.ok) {
+        throw new Error(stringValue(payload.error) ?? "이벤트를 삭제하지 못했습니다.");
+      }
+      setEvents((current) => current.filter((item) => item.id !== event.id));
+      setFocusedEventId("");
+      setSelectedEvent((current) => current?.id === event.id ? null : current);
+      setNotice(
+        stringValue(payload.message) ??
+          "목록에서 삭제했습니다. 원본 영상은 보관 기간이 지나면 자동 삭제됩니다.",
+      );
+    } catch (reason) {
+      setNotice(reason instanceof Error ? reason.message : "이벤트를 삭제하지 못했습니다.");
+    } finally {
+      setBusy("");
+    }
   }, [selectedDevice]);
 
   const loadEvents = useCallback(async (options?: {
@@ -1073,7 +1201,10 @@ export function HomecamDashboard({
     <div className={`homecam-shell homecam-dashboard-shell tab-${tab} theme-${colorMode}`}>
       <HomecamHeader
         activeTab={tab}
-        onNavigate={setTab}
+        onNavigate={(nextTab) => {
+          if (nextTab === "map") openMap("view");
+          else setTab(nextTab);
+        }}
         onInstall={installApp}
         showInstall={!standalone && Boolean(installPrompt)}
       />
@@ -1162,7 +1293,7 @@ export function HomecamDashboard({
                     </div>
                   </div>
                   <div className="homecam-home-actions">
-                    <button type="button" onClick={() => setTab("map")}>지도에서 보내기</button>
+                    <button type="button" onClick={() => openMap("navigate")}>지도에서 보내기</button>
                     <button type="button" className="is-secondary" onClick={() => setTab("live")}>홈캠 열기</button>
                   </div>
                 </article>
@@ -1187,7 +1318,7 @@ export function HomecamDashboard({
                         <p className="is-safe"><CheckCircle size={24} weight="fill" /> 지금 상태는 안전해요</p>
                       )}
                       {events.slice(0, 3).map((event) => (
-                        <button type="button" key={event.id} onClick={() => { setSelectedEvent(event); setTab("events"); }}>
+                        <button type="button" key={event.id} onClick={() => { setFocusedEventId(event.id); setTab("events"); }}>
                           <span className={`event-kind-icon kind-${event.type}`}><EventKindIcon type={event.type} /></span>
                           <span><strong>{EVENT_LABELS[event.type]} 감지</strong><small>{formatEventTime(event.occurredAt)}</small></span>
                           <CaretRight size={17} weight="bold" />
@@ -1199,7 +1330,7 @@ export function HomecamDashboard({
               </div>
 
               <aside className="homecam-home-sidebar">
-                <HomeMapSummary device={selectedDevice} onNavigate={setTab} />
+                <HomeMapSummary device={selectedDevice} onOpenMap={openMap} />
                 <article className="homecam-home-privacy">
                   <ShieldCheck size={24} weight="regular" aria-hidden="true" />
                   <div><span>개인정보</span><strong>{selectedDevice?.monitoringEnabled ? "이벤트 영상만 저장하고 있어요" : "영상 저장을 사용하지 않아요"}</strong></div>
@@ -1347,15 +1478,15 @@ export function HomecamDashboard({
                   >
                     <span className={`homecam-event-thumbnail kind-${event.type}`} aria-hidden="true">
                       <EventKindIcon type={event.type} />
-                      <small>{event.recordingId ? "클립" : "기록"}</small>
+                      <small>{event.clipState === "recording" ? "저장 중" : eventCanPlay(event) ? "클립" : "기록"}</small>
                     </span>
                     <span className="homecam-event-row-copy">
                       <small><i className={`kind-${event.type}`}>{eventBadgeLabel(event.type)}</i>{formatEventTime(event.occurredAt)}</small>
                       <strong>{eventTitle(event)}</strong>
-                      <em>{event.recordingId ? "저장된 이벤트 영상" : "감지 기록만 있음"}{event.confidence !== null ? ` · 신뢰도 ${Math.round(event.confidence * 100)}%` : ""}</em>
+                      <em>{eventClipStatus(event)}{event.confidence !== null ? ` · 신뢰도 ${Math.round(event.confidence * 100)}%` : ""}</em>
                     </span>
                     <span className="event-play-icon" aria-hidden="true">
-                      {event.recordingId
+                      {eventCanPlay(event)
                         ? <Play size={14} weight="fill" />
                         : <CaretRight size={16} weight="bold" />}
                     </span>
@@ -1372,18 +1503,24 @@ export function HomecamDashboard({
                   <>
                     <div className="homecam-event-detail-video">
                       <span className="homecam-event-video-meta">{eventBadgeLabel(focusedEvent.type)} · {formatEventTime(focusedEvent.occurredAt)}</span>
-                      <div><EventKindIcon type={focusedEvent.type} /><span>{focusedEvent.recordingId ? "저장된 이벤트 클립" : "영상이 없는 이벤트"}</span></div>
-                      {focusedEvent.recordingId && <button type="button" onClick={() => setSelectedEvent(focusedEvent)}><Play size={17} weight="fill" /> 영상 재생</button>}
+                      <div><EventKindIcon type={focusedEvent.type} /><span>{eventClipStatus(focusedEvent)}</span></div>
+                      {eventCanPlay(focusedEvent) && <button type="button" onClick={() => setSelectedEvent(focusedEvent)}><Play size={17} weight="fill" /> 영상 재생</button>}
                     </div>
                     <div className="homecam-event-detail-copy">
                       <span><i className={`kind-${focusedEvent.type}`}>{eventBadgeLabel(focusedEvent.type)}</i>{formatEventTime(focusedEvent.occurredAt)}</span>
                       <h2>{eventTitle(focusedEvent)}</h2>
                       <div>
                         <strong>감지 정보</strong>
-                        <p>{focusedEvent.recordingId ? "이벤트가 감지된 시각부터 저장된 영상 구간을 확인할 수 있습니다." : "이 이벤트는 감지 기록만 있으며 연결된 영상 구간은 없습니다."} 자동 감지 결과는 실제 상황과 다를 수 있습니다.</p>
+                        <p>{focusedEvent.eventGroupId && focusedEvent.clipState === "ready" ? "감지 전 5초부터 마지막 움직임 10초 후까지 저장된 구간입니다." : focusedEvent.recordingId ? "지난 저장 영상에서 감지 시각을 확인할 수 있습니다." : "이 이벤트는 감지 기록만 있으며 연결된 영상 구간은 없습니다."} 자동 감지 결과는 실제 상황과 다를 수 있습니다.</p>
+                        {focusedEvent.ai.summary && <p>{focusedEvent.ai.summary}</p>}
                       </div>
                       <div className="homecam-event-detail-actions">
-                        <button type="button" onClick={() => setSelectedEvent(focusedEvent)} disabled={!focusedEvent.recordingId}>영상 클립 확인</button>
+                        <button type="button" onClick={() => setSelectedEvent(focusedEvent)} disabled={!eventCanPlay(focusedEvent)}>영상 클립 확인</button>
+                        {isOwner && (
+                          <button type="button" onClick={() => void removeEventFromList(focusedEvent)} disabled={busy === `event-delete:${focusedEvent.id}`}>
+                            <Trash size={16} weight="regular" /> 목록에서 삭제
+                          </button>
+                        )}
                       </div>
                     </div>
                   </>
@@ -1395,7 +1532,7 @@ export function HomecamDashboard({
           </section>
         )}
 
-        {tab === "map" && <RobotMapPanel device={selectedDevice} />}
+        {tab === "map" && <RobotMapPanel key={mapEntryMode} device={selectedDevice} initialMode={mapEntryMode} />}
 
         {tab === "settings" && (
           <section className="homecam-section" aria-labelledby="homecam-settings-title">
@@ -1422,7 +1559,7 @@ export function HomecamDashboard({
                 <button type="button">영상 보관</button>
                 <button type="button">이벤트 감지</button>
                 <button type="button">개인정보</button>
-                <button type="button" onClick={() => setTab("map")}>지도 관리</button>
+                <button type="button" onClick={() => openMap("view")}>지도 관리</button>
                 <button type="button">연결된 장치</button>
                 <button type="button">소프트웨어 정보</button>
               </aside>
@@ -1633,7 +1770,7 @@ export function HomecamDashboard({
         )}
       </main>
 
-      {selectedEvent && <EventPlayback event={selectedEvent} onClose={() => setSelectedEvent(null)} />}
+      {selectedEvent && selectedDevice && <EventPlayback event={selectedEvent} deviceId={selectedDevice.id} onClose={() => setSelectedEvent(null)} />}
     </div>
   );
 }
