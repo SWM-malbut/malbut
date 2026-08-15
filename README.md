@@ -8,16 +8,6 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
 - 대화·에이전트 계약 패키지: `malbut_agent_server`
 
-전체 구조를 정식 표기법으로 공부한다면
-[`MALBUT Architecture Atlas`](docs/architecture/README.md)를 먼저 보십시오.
-C4, DFD, Deployment, ROS Runtime Graph, ERD와 시나리오 Dynamic view를 같은
-범례로 묶었고,
-[브라우저용 Atlas](docs/architecture/index.html)에서 관점을 전환할 수 있습니다.
-
-빠르게 한 장으로 훑을 때는
-[`MALBUT 한 페이지 전체 구조 맵`](docs/MALBUT_ONE_PAGE_SYSTEM_MAP.md) 또는
-[`브라우저용 요약 포스터`](docs/MALBUT_ONE_PAGE_SYSTEM_MAP.html)를 사용하십시오.
-
 ## 1. 기준 환경
 
 Ubuntu 설치, GPU 드라이버, 네트워크와 GitHub 계정 설정은 완료되어 있다고 가정합니다.
@@ -417,15 +407,6 @@ CameraInfo 및 실제 카메라 프레임 수신을 확인한 뒤 종료합니�
 고수준 Tool allowlist와 결정론적 안전 게이트를 정의합니다. LLM은
 `/cmd_vel`, 모터 PWM, 비상 정지 해제 같은 저수준 제어를 직접 수행하지
 않습니다.
-
-`monitor_room(location)`은 “거실로 가서 방 전체를 live view로
-보여줘”를 하나의 고수준 mission으로 표현하는 제안이다. 현재는
-시뮬레이션 전용 계약과 상태 기계만 있으며 실제 Nav2·Homecam·KVS
-실행으로 이어지지 않는다. 기본 factory는 `trusted_robot_state=False`이고
-plan-backed monitorable Room도 주입하지 않으므로 이 제안은 safe-off다.
-시나리오·확인·영속 장부·실기 blocker는
-[`SWM25-78_ROOM_LIVE_MONITORING_SCENARIO.md`](malbut_agent_server/docs/jira/SWM25-78_ROOM_LIVE_MONITORING_SCENARIO.md)에
-분리했습니다.
 
 승인된 책임 경계와 아직 구현·검증이 필요한 세부 연관 인터페이스는
 [`SWM25-69_CONVERSATION_AGENT_CONTRACT.md`](malbut_agent_server/docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md)를

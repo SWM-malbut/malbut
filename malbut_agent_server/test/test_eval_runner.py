@@ -1,16 +1,13 @@
 """Offline tests for the focused OpenAI comparison runner."""
 
 import json
-import hashlib
 import stat
 from pathlib import Path
 
 import pytest
 
-import malbut_agent_server.eval_runner as eval_runner_module
 from malbut_agent_server.eval_runner import (
     EvaluationCase,
-    EvaluationSourceBindingError,
     build_eval_providers,
     evaluation_exit_code,
     load_cases,
@@ -35,20 +32,6 @@ class _FixedDecisionMock(MockProvider):
     def _decide(self, request, memories, conversation_turns, tools):
         del request, memories, conversation_turns, tools
         return self.decision
-
-
-class _RecordingMock(MockProvider):
-    """Record provider entry without changing deterministic behavior."""
-
-    def __init__(self, events: list) -> None:
-        """Keep the shared event list used by ordering assertions."""
-        super().__init__()
-        self.events = events
-
-    def complete(self, *args, **kwargs):
-        """Record the provider call and delegate to the offline mock."""
-        self.events.append('provider')
-        return super().complete(*args, **kwargs)
 
 
 def test_versioned_suite_contains_thirty_unique_cases() -> None:
@@ -109,152 +92,9 @@ def test_mock_repeats_full_suite_without_network() -> None:
     assert len(
         report['evaluation_contract']['runtime_source_sha256']
     ) == 64
-    contract = report['evaluation_contract']
-    assert contract['runtime_source_algorithm'] == 'sha256'
-    assert contract['source_unchanged_during_run'] is True
-    components = contract['runtime_source_components']
-    component_modules = {
-        component['module'] for component in components
-    }
-    assert {
-        'malbut_agent_server.conversation',
-        'malbut_agent_server.endpoint_policy',
-        'malbut_agent_server.eval_runner',
-        'malbut_agent_server.gateway',
-        'malbut_agent_server.memory',
-        'malbut_agent_server.orchestrator',
-        'malbut_agent_server.safety',
-        'malbut_agent_server.tools',
-    } <= component_modules
-
-    package_root = Path(eval_runner_module.__file__).resolve().parent
-    expected_paths = {
-        path.resolve().relative_to(package_root)
-        for path in package_root.rglob('*.py')
-    }
-    artifact_paths = set()
-    for component in components:
-        assert set(component) == {
-            'import_path',
-            'module',
-            'relative_path',
-            'module_sha256',
-        }
-        assert component['import_path'] == component['module']
-        relative_path = Path(component['relative_path'])
-        assert not relative_path.is_absolute()
-        assert relative_path.parts[0] == 'malbut_agent_server'
-        assert '..' not in relative_path.parts
-        package_relative = Path(*relative_path.parts[1:])
-        artifact_paths.add(package_relative)
-        source_path = package_root / package_relative
-        assert source_path.resolve().is_relative_to(package_root)
-        assert component['module_sha256'] == hashlib.sha256(
-            source_path.read_bytes()
-        ).hexdigest()
-    assert artifact_paths == expected_paths
-    encoded_components = json.dumps(
-        components,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(',', ':'),
-    ).encode('utf-8')
-    assert contract['runtime_source_sha256'] == hashlib.sha256(
-        encoded_components
-    ).hexdigest()
     serialized = json.dumps(report, ensure_ascii=False)
     assert '거실로 가줘' not in serialized
     assert '안녕, 말벗아' not in serialized
-
-
-def test_source_manifest_wraps_provider_calls_and_detects_change(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A different final package manifest invalidates the whole run."""
-    baseline = eval_runner_module._runtime_source_manifest()
-    changed = json.loads(json.dumps(baseline))
-    changed['components'][0]['module_sha256'] = '0' * 64
-    changed['manifest_sha256'] = '1' * 64
-    manifests = iter((baseline, changed))
-    events = []
-
-    def read_manifest():
-        """Return the controlled start and end manifests in order."""
-        events.append('manifest')
-        return next(manifests)
-
-    monkeypatch.setattr(
-        eval_runner_module,
-        '_runtime_source_manifest',
-        read_manifest,
-    )
-    with pytest.raises(
-        EvaluationSourceBindingError,
-        match='evaluation source binding failed',
-    ) as captured:
-        run_suite(
-            [('_recording', _RecordingMock(events))],
-            load_cases()[:1],
-            repetitions=1,
-        )
-    assert captured.value.__cause__ is None
-    assert captured.value.__context__ is None
-    assert events == ['manifest', 'provider', 'manifest']
-
-
-def test_source_binding_failure_precedes_provider_call(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An unreadable source manifest fails before evaluating any text."""
-    events = []
-
-    def fail_manifest():
-        """Raise the fixed source-binding error for the test boundary."""
-        raise EvaluationSourceBindingError()
-
-    monkeypatch.setattr(
-        eval_runner_module,
-        '_runtime_source_manifest',
-        fail_manifest,
-    )
-    with pytest.raises(EvaluationSourceBindingError):
-        run_suite(
-            [('_recording', _RecordingMock(events))],
-            load_cases()[:1],
-            repetitions=1,
-        )
-    assert events == []
-
-
-def test_source_change_cli_does_not_write_report(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The CLI leaves no artifact when the end manifest differs."""
-    baseline = eval_runner_module._runtime_source_manifest()
-    changed = json.loads(json.dumps(baseline))
-    changed['manifest_sha256'] = 'f' * 64
-    manifests = iter((baseline, changed))
-    monkeypatch.setattr(
-        eval_runner_module,
-        '_runtime_source_manifest',
-        lambda: next(manifests),
-    )
-    output = tmp_path / 'must-not-exist.json'
-    with pytest.raises(EvaluationSourceBindingError):
-        main(
-            [
-                '--provider',
-                'mock',
-                '--repetitions',
-                '1',
-                '--limit',
-                '1',
-                '--output',
-                str(output),
-            ]
-        )
-    assert not output.exists()
 
 
 def test_private_report_redacts_secrets_and_uses_mode_600(
@@ -296,21 +136,8 @@ def test_live_cli_requires_three_repetitions_before_key_lookup(
         )
 
 
-def test_mock_cli_writes_a_private_report(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_mock_cli_writes_a_private_report(tmp_path: Path) -> None:
     """The packaged CLI can validate the evaluator without credentials."""
-    def forbid_env_read(*args, **kwargs):
-        """Fail if the offline Mock path attempts to read an env file."""
-        del args, kwargs
-        raise AssertionError('Mock evaluation must not read env files')
-
-    monkeypatch.setattr(
-        eval_runner_module,
-        'load_env_file',
-        forbid_env_read,
-    )
     output = tmp_path / 'mock.json'
     assert main(
         [

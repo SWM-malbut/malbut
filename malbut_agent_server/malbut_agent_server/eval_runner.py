@@ -2,12 +2,12 @@
 
 import argparse
 import hashlib
+import inspect
 import json
 import math
 import os
 import platform
 import re
-import stat
 import sys
 import tempfile
 import time
@@ -30,6 +30,7 @@ from malbut_agent_server.orchestrator import AgentOrchestrator
 from malbut_agent_server.prompting import (
     MAX_MODEL_INPUT_CHARS,
     SYSTEM_INSTRUCTIONS,
+    prepare_model_input,
 )
 from malbut_agent_server.providers.base import AgentProvider
 from malbut_agent_server.providers.mock import MockProvider
@@ -69,18 +70,6 @@ SECRET_PATTERNS = (
     ),
     re.compile(r'(?i)(Bearer\s+)[A-Za-z0-9._-]{8,}'),
 )
-MAX_SOURCE_COMPONENT_BYTES = 4 * 1024 * 1024
-MAX_SOURCE_COMPONENTS = 512
-MAX_SOURCE_TOTAL_BYTES = 32 * 1024 * 1024
-SOURCE_PACKAGE_NAME = 'malbut_agent_server'
-
-
-class EvaluationSourceBindingError(RuntimeError):
-    """Raised when evaluation source cannot be bound or changes in-run."""
-
-    def __init__(self) -> None:
-        """Return one fixed diagnostic without a local filesystem path."""
-        super().__init__('evaluation source binding failed')
 
 
 @dataclass(frozen=True)
@@ -271,219 +260,19 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _source_package_root() -> Path:
-    """Return the resolved package root without exposing it in reports."""
-    failed = False
-    package_root = None
-    try:
-        module_path = Path(__file__).resolve(strict=True)
-        package_root = module_path.parent
-        if (
-            package_root.name != SOURCE_PACKAGE_NAME
-            or not stat.S_ISREG(module_path.stat().st_mode)
-        ):
-            failed = True
-    except Exception:
-        failed = True
-    if failed or not isinstance(package_root, Path):
-        raise EvaluationSourceBindingError()
-    return package_root
-
-
-def _source_relative_paths(package_root: Path) -> Tuple[Path, ...]:
-    """List every regular Python source below the package root."""
-    failed = False
-    relative_paths = []
-    try:
-        pending = [package_root]
-        while pending:
-            directory = pending.pop()
-            with os.scandir(directory) as entries:
-                for entry in entries:
-                    if entry.is_symlink():
-                        if entry.name.endswith('.py') or entry.is_dir():
-                            failed = True
-                            break
-                        continue
-                    if entry.is_dir(follow_symlinks=False):
-                        pending.append(Path(entry.path))
-                    elif entry.name.endswith('.py'):
-                        metadata = entry.stat(follow_symlinks=False)
-                        if not stat.S_ISREG(metadata.st_mode):
-                            failed = True
-                            break
-                        resolved = Path(entry.path).resolve(strict=True)
-                        relative = resolved.relative_to(package_root)
-                        if package_root / relative != resolved:
-                            failed = True
-                            break
-                        relative_paths.append(relative)
-            if failed:
-                break
-    except Exception:
-        failed = True
-    ordered = tuple(sorted(relative_paths, key=lambda path: path.as_posix()))
-    if (
-        failed
-        or not ordered
-        or len(ordered) > MAX_SOURCE_COMPONENTS
-        or Path('__init__.py') not in ordered
-        or Path('eval_runner.py') not in ordered
-        or len(set(ordered)) != len(ordered)
-    ):
-        raise EvaluationSourceBindingError()
-    return ordered
-
-
-def _stable_source_sha256(
-    package_root: Path,
-    relative_path: Path,
-) -> Tuple[str, int]:
-    """Hash one package source through a stable regular-file descriptor."""
-    failed = False
-    file_descriptor = -1
-    source_sha256 = None
-    byte_count = 0
-    try:
-        source_path = package_root / relative_path
-        resolved_path = source_path.resolve(strict=True)
-        if resolved_path.relative_to(package_root) != relative_path:
-            failed = True
-        before_path = os.stat(source_path, follow_symlinks=False)
-        if (
-            not stat.S_ISREG(before_path.st_mode)
-            or before_path.st_size > MAX_SOURCE_COMPONENT_BYTES
-        ):
-            failed = True
-        flags = os.O_RDONLY
-        for option in ('O_CLOEXEC', 'O_NOFOLLOW', 'O_NONBLOCK'):
-            flags |= getattr(os, option, 0)
-        file_descriptor = os.open(str(source_path), flags)
-        before = os.fstat(file_descriptor)
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or before.st_dev != before_path.st_dev
-            or before.st_ino != before_path.st_ino
-            or before.st_size != before_path.st_size
-        ):
-            failed = True
-        digest = hashlib.sha256()
-        while not failed:
-            chunk = os.read(file_descriptor, 64 * 1024)
-            if not chunk:
-                break
-            byte_count += len(chunk)
-            if byte_count > MAX_SOURCE_COMPONENT_BYTES:
-                failed = True
-                break
-            digest.update(chunk)
-        after = os.fstat(file_descriptor)
-        after_path = os.stat(source_path, follow_symlinks=False)
-        stable_values = (
-            before.st_dev,
-            before.st_ino,
-            before.st_size,
-            before.st_mtime_ns,
-            before.st_ctime_ns,
-        )
-        if (
-            byte_count != before.st_size
-            or stable_values != (
-                after.st_dev,
-                after.st_ino,
-                after.st_size,
-                after.st_mtime_ns,
-                after.st_ctime_ns,
-            )
-            or stable_values != (
-                after_path.st_dev,
-                after_path.st_ino,
-                after_path.st_size,
-                after_path.st_mtime_ns,
-                after_path.st_ctime_ns,
-            )
-        ):
-            failed = True
-        if not failed:
-            source_sha256 = digest.hexdigest()
-    except Exception:
-        failed = True
-    finally:
-        if file_descriptor >= 0:
-            try:
-                os.close(file_descriptor)
-            except OSError:
-                failed = True
-    if failed or type(source_sha256) is not str:
-        raise EvaluationSourceBindingError()
-    return source_sha256, byte_count
-
-
-def _source_import_path(relative_path: Path) -> str:
-    """Convert one validated package-relative path to a logical import."""
-    parts = list(relative_path.parts)
-    filename = parts.pop()
-    module_name = filename[:-3]
-    if module_name != '__init__':
-        parts.append(module_name)
-    if any(not part.isidentifier() for part in parts):
-        raise EvaluationSourceBindingError()
-    suffix = '.'.join(parts)
-    if suffix:
-        return f'{SOURCE_PACKAGE_NAME}.{suffix}'
-    return SOURCE_PACKAGE_NAME
-
-
-def _source_manifest(*objects: object) -> Dict[str, Any]:
-    """Return an exact manifest for every Python file in the package."""
-    del objects
-    package_root = _source_package_root()
-    paths_before = _source_relative_paths(package_root)
-    components = []
-    total_bytes = 0
-    import_paths = set()
-    for relative_path in paths_before:
-        module_sha256, byte_count = _stable_source_sha256(
-            package_root,
-            relative_path,
-        )
-        total_bytes += byte_count
-        import_path = _source_import_path(relative_path)
-        if import_path in import_paths:
-            raise EvaluationSourceBindingError()
-        import_paths.add(import_path)
-        components.append(
-            {
-                'import_path': import_path,
-                'module': import_path,
-                'relative_path': (
-                    f'{SOURCE_PACKAGE_NAME}/'
-                    f'{relative_path.as_posix()}'
-                ),
-                'module_sha256': module_sha256,
-            }
-        )
-    paths_after = _source_relative_paths(package_root)
-    if (
-        paths_after != paths_before
-        or total_bytes > MAX_SOURCE_TOTAL_BYTES
-    ):
-        raise EvaluationSourceBindingError()
-    return {
-        'algorithm': 'sha256',
-        'components': components,
-        'manifest_sha256': _digest(components),
-    }
-
-
-def _runtime_source_manifest() -> Dict[str, Any]:
-    """Capture the complete package source used by the evaluation."""
-    return _source_manifest()
-
-
 def _source_digest(*objects: object) -> str:
-    """Return the aggregate digest retained for report compatibility."""
-    return _source_manifest(*objects)['manifest_sha256']
+    """Bind a report to the runtime code that made safety decisions."""
+    modules = {}
+    for item in objects:
+        module = inspect.getmodule(item)
+        if module is None or not getattr(module, '__name__', ''):
+            raise RuntimeError('evaluation source module is unavailable')
+        modules[module.__name__] = inspect.getsource(module)
+    source = '\n'.join(
+        f'## {name}\n{modules[name]}'
+        for name in sorted(modules)
+    )
+    return hashlib.sha256(source.encode('utf-8')).hexdigest()
 
 
 def _seed_case_memories(
@@ -996,8 +785,6 @@ def run_suite(
             'request_delay_seconds must be between 0 and 60'
         )
 
-    source_manifest_reader = _runtime_source_manifest
-    source_manifest_before = source_manifest_reader()
     case_contract = [
         {
             'id': case.id,
@@ -1047,10 +834,6 @@ def run_suite(
             )
         )
 
-    source_manifest_after = source_manifest_reader()
-    if source_manifest_after != source_manifest_before:
-        raise EvaluationSourceBindingError()
-
     return {
         'schema_version': 1,
         'suite': 'malbut-korean-commands-v2',
@@ -1073,17 +856,14 @@ def run_suite(
             'system_prompt_sha256': _digest(SYSTEM_INSTRUCTIONS),
             'tool_schema_sha256': _digest(tool_contract),
             'case_suite_sha256': _digest(case_contract),
-            'runtime_source_sha256': source_manifest_before[
-                'manifest_sha256'
-            ],
-            'runtime_source_algorithm': source_manifest_before[
-                'algorithm'
-            ],
-            'runtime_source_components': [
-                dict(component)
-                for component in source_manifest_before['components']
-            ],
-            'source_unchanged_during_run': True,
+            'runtime_source_sha256': _source_digest(
+                AgentOrchestrator,
+                SafetyPolicy,
+                OpenAIResponsesProvider,
+                prepare_model_input,
+                AgentRequest,
+                run_suite,
+            ),
             'python': platform.python_version(),
             'platform': sys.platform,
         },
@@ -1242,8 +1022,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.repetitions < 1 or args.repetitions > 10:
         raise ValueError('repetitions must be between 1 and 10')
 
-    if args.provider == 'openai':
-        load_env_file(Path(args.env_file).expanduser())
+    load_env_file(Path(args.env_file).expanduser())
     cases = load_cases(args.cases)
     if args.case_id:
         if args.limit is not None:

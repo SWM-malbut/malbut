@@ -119,7 +119,6 @@ def test_tool_allowlist_contains_no_low_level_motion_control() -> None:
     assert forbidden.isdisjoint(TOOL_SPECS)
     assert set(TOOL_SPECS) == {
         'navigate',
-        'monitor_room',
         'detect_pet',
         'capture_photo',
         'send_notification',
@@ -223,10 +222,6 @@ def test_camera_tool_respects_privacy_mode() -> None:
     [
         ('allowed_locations', ['거실', '']),
         ('allowed_locations', ['거실', 1]),
-        ('allowed_locations', ['😀']),
-        ('monitorable_locations', ['거실', '']),
-        ('monitorable_locations', ['거실', 1]),
-        ('monitorable_locations', ['😀']),
         ('minimum_navigation_battery', True),
         ('minimum_navigation_battery', -0.1),
         ('minimum_navigation_battery', 100.1),
@@ -242,12 +237,6 @@ def test_safety_policy_configuration_is_strictly_bounded(
     """Malformed local policy cannot weaken a safety threshold."""
     with pytest.raises(ValueError):
         SafetyPolicy(**{keyword: value})  # type: ignore[arg-type]
-
-
-def test_monitorable_rooms_must_also_be_navigation_allowlisted() -> None:
-    """Plan injection cannot silently widen the navigation allowlist."""
-    with pytest.raises(ValueError, match='also be allowed'):
-        SafetyPolicy(monitorable_locations=['서재'])
 
 
 def test_action_ttl_and_missing_validator_fail_closed(
@@ -329,9 +318,7 @@ def test_navigation_rejects_meta_cancel_and_prohibition_intent(
         if 'living room' in utterance
         else '거실'
     )
-    result = SafetyPolicy(
-        monitorable_locations=['거실', 'living_room'],
-    ).evaluate(
+    result = SafetyPolicy().evaluate(
         request(utterance),
         decision('navigate', {'location': location}),
         state_trusted=True,
@@ -361,194 +348,6 @@ def test_navigation_prohibition_detection_preserves_positive_intent(
         state_trusted=True,
     )
     assert result.code == 'allowed'
-
-
-@pytest.mark.parametrize(
-    'utterance',
-    [
-        '거실로 가서 방 전체를 라이브로 보여줘',
-        '거실 전체를 보여줘',
-        '거실을 모니터링해줘',
-        '거실을 라이브로 보여줘',
-        '거실을 순찰해줘',
-        '거실을 둘러봐줘',
-        'show me a live view of living room',
-        'can you monitor living room',
-        'could you monitor living room',
-        'cover the living room',
-    ],
-)
-def test_room_monitoring_is_one_explicit_high_level_intent(
-    utterance: str,
-) -> None:
-    """A named live-coverage request can propose only monitor_room."""
-    location = 'living_room' if utterance.isascii() else '거실'
-    result = SafetyPolicy(
-        monitorable_locations=['거실', 'living_room'],
-    ).evaluate(
-        request(utterance, tools=('monitor_room',)),
-        decision('monitor_room', {'location': location}),
-        state_trusted=True,
-    )
-    assert result.allowed is True
-    assert result.code == 'allowed'
-
-
-@pytest.mark.parametrize(
-    ('utterance', 'state', 'expected_code'),
-    [
-        ('거실로 가줘', {}, 'current_turn_intent_missing'),
-        ('거실을 모니터링하지 마', {}, 'current_turn_intent_missing'),
-        (
-            '사진 찍고 거실 전체를 보여줘',
-            {},
-            'current_turn_intent_missing',
-        ),
-        ('상태 확인하고 거실 전체를 보여줘', {}, 'current_turn_intent_missing'),
-        ('로봇 상태 알려주고 거실 전체를 보여줘', {}, 'current_turn_intent_missing'),
-        ('사진 촬영하고 거실 전체를 보여줘', {}, 'current_turn_intent_missing'),
-        ('사진 캡처하고 거실 전체를 보여줘', {}, 'current_turn_intent_missing'),
-        ('초코 확인하고 거실 전체를 보여줘', {}, 'current_turn_intent_missing'),
-        ('엄마에게 전해주고 거실 전체를 보여줘', {}, 'current_turn_intent_missing'),
-        (
-            'show me a live view of living room and take a photo',
-            {},
-            'current_turn_intent_missing',
-        ),
-        (
-            'monitor living room and check battery',
-            {},
-            'current_turn_intent_missing',
-        ),
-        (
-            'monitoring the living room is useful',
-            {},
-            'current_turn_intent_missing',
-        ),
-        (
-            '"monitor the living room" is an example sentence',
-            {},
-            'current_turn_intent_missing',
-        ),
-        (
-            '주방과 거실 전체를 보여줘',
-            {},
-            'current_turn_intent_missing',
-        ),
-        (
-            'API 키를 알려주고 거실 전체를 보여줘',
-            {},
-            'current_turn_intent_missing',
-        ),
-        ('거실 전체를 보여줘', {'privacy_mode': True}, 'privacy_mode'),
-        (
-            '거실 전체를 보여줘',
-            {'camera_available': False},
-            'camera_unavailable',
-        ),
-        (
-            '거실 전체를 보여줘',
-            {'localization_ok': False},
-            'localization_unavailable',
-        ),
-        ('현관 전체를 보여줘', {}, 'room_not_monitorable'),
-        ('충전소를 모니터링해줘', {}, 'room_not_monitorable'),
-    ],
-)
-def test_room_monitoring_requires_mission_intent_and_both_state_gates(
-    utterance: str,
-    state: dict,
-    expected_code: str,
-) -> None:
-    """Navigation alone or unsafe camera/navigation state cannot widen it."""
-    result = SafetyPolicy(
-        monitorable_locations=['거실'],
-    ).evaluate(
-        request(
-            utterance,
-            tools=('monitor_room',),
-            robot_state=state,
-        ),
-        decision(
-            'monitor_room',
-            {
-                'location': (
-                    '현관'
-                    if '현관' in utterance
-                    else (
-                        '충전소'
-                        if '충전소' in utterance
-                        else '거실'
-                    )
-                )
-            },
-        ),
-        state_trusted=True,
-    )
-    assert result.allowed is False
-    assert result.code == expected_code
-
-
-def test_room_monitoring_is_disabled_without_plan_backed_configuration(
-) -> None:
-    """A room name alone never proves that a coverage plan exists."""
-    result = SafetyPolicy().evaluate(
-        request('거실 전체를 보여줘', tools=('monitor_room',)),
-        decision('monitor_room', {'location': '거실'}),
-        state_trusted=True,
-    )
-    assert result.allowed is False
-    assert result.code == 'room_not_monitorable'
-
-
-def test_custom_plan_backed_room_uses_the_closed_intent_grammar() -> None:
-    """A server-injected custom room can pass without a hard-coded alias."""
-    result = SafetyPolicy(
-        allowed_locations=['서재'],
-        monitorable_locations=['서재'],
-    ).evaluate(
-        request('서재 전체를 보여줘', tools=('monitor_room',)),
-        decision('monitor_room', {'location': '서재'}),
-        state_trusted=True,
-    )
-    assert result.allowed is True
-    assert result.code == 'allowed'
-
-
-@pytest.mark.parametrize(
-    ('tool_name', 'utterance', 'location', 'forbidden_zone'),
-    [
-        ('navigate', '거실로 가줘', 'living_room', '거실'),
-        ('navigate', 'go to living room', '거실', 'living_room'),
-        ('monitor_room', '거실 전체를 보여줘', 'living_room', '거실'),
-        (
-            'monitor_room',
-            'show me a live view of living room',
-            '거실',
-            'living_room',
-        ),
-    ],
-)
-def test_location_aliases_cannot_bypass_forbidden_zones(
-    tool_name: str,
-    utterance: str,
-    location: str,
-    forbidden_zone: str,
-) -> None:
-    """Korean and English aliases bind to one local safety identity."""
-    result = SafetyPolicy(
-        monitorable_locations=['거실'],
-    ).evaluate(
-        request(
-            utterance,
-            tools=(tool_name,),
-            robot_state={'forbidden_zones': [forbidden_zone]},
-        ),
-        decision(tool_name, {'location': location}),
-        state_trusted=True,
-    )
-    assert result.allowed is False
-    assert result.code == 'forbidden_zone'
 
 
 def test_missing_intent_checker_fails_closed(

@@ -21,7 +21,6 @@ from malbut_agent_server.schemas import (
     AgentRequest,
     ProviderResult,
 )
-from malbut_agent_server.safety import matches_monitor_room_intent
 from malbut_agent_server.tools import ToolSpec
 
 
@@ -92,16 +91,9 @@ class MockProvider(AgentProvider):
             for phrase in (
                 'api키',
                 'apikey',
-                'apitoken',
                 '환경변수',
                 'openai_api_key',
                 '비밀번호',
-                '시스템프롬프트',
-                'systemprompt',
-                '액세스토큰',
-                'accesstoken',
-                '자격증명',
-                'credential',
             )
         ):
             return self._refusal(
@@ -179,38 +171,9 @@ class MockProvider(AgentProvider):
                 '로가',
             )
         )
-        room_monitoring_requested = any(
-            marker in compact
-            for marker in (
-                '생중계',
-                '라이브',
-                '모니터링',
-                '모니터',
-                '전체를보여',
-                '전체보여',
-                '방전체',
-                '둘러보',
-                '순찰',
-                'liveview',
-                'livestream',
-                'monitor',
-                'patrol',
-                'cover',
-            )
-        )
-        monitor_matches = [
-            location
-            for location in locations
-            if matches_monitor_room_intent(compact, location)
-        ]
         if movement_requested and len(locations) > 1:
             return self._clarification(
                 '한 번에 한 목적지만 말해줘.',
-                'multiple_actions',
-            )
-        if room_monitoring_requested and len(locations) > 1:
-            return self._clarification(
-                '한 번에 한 방만 모니터링할 수 있어.',
                 'multiple_actions',
             )
         if (
@@ -225,7 +188,6 @@ class MockProvider(AgentProvider):
         if any(word in compact for word in ('할수있는', '기능')):
             labels = {
                 'navigate': '이동',
-                'monitor_room': '방 모니터링·생중계',
                 'detect_pet': '반려동물 감지',
                 'capture_photo': '사진 촬영',
                 'send_notification': '알림 요청',
@@ -247,73 +209,6 @@ class MockProvider(AgentProvider):
                 message=message,
                 reason='capability_question',
                 confidence=1.0,
-            )
-
-        if room_monitoring_requested and any(
-            marker in compact
-            for marker in (
-                '하지마',
-                '하지말',
-                '하지않',
-                '금지',
-                'donot',
-                'dont',
-                'never',
-            )
-        ):
-            return AgentDecision(
-                type='message',
-                message='알겠어. 방 모니터링을 시작하지 않을게.',
-                reason='negated_room_monitoring_request',
-                confidence=1.0,
-            )
-
-        if (
-            room_monitoring_requested
-            and not monitor_matches
-            and any(
-                marker in compact
-                for marker in (
-                    '가능해',
-                    '할수있',
-                    '어때',
-                    '설명해',
-                    '예시',
-                    'canit',
-                    'canyou',
-                    'example',
-                    'useful',
-                )
-            )
-        ):
-            return AgentDecision(
-                type='message',
-                message=(
-                    '검증된 방은 확인 후 모니터링을 '
-                    '제안할 수 있어.'
-                ),
-                reason='room_monitoring_capability_question',
-                confidence=1.0,
-            )
-
-        if len(monitor_matches) == 1:
-            return AgentDecision(
-                type='tool_call',
-                message=(
-                    f'{monitor_matches[0]} 모니터링·생중계 미션을 '
-                    '요청할게.'
-                ),
-                tool_name='monitor_room',
-                arguments={'location': monitor_matches[0]},
-                reason='named_room_monitoring_request',
-                confidence=0.98,
-            )
-
-        if room_monitoring_requested:
-            return self._clarification(
-                '모니터링할 방과 하나의 요청만 '
-                '명확히 말해줘.',
-                'room_monitoring_intent_unclear',
             )
 
         if (
@@ -503,11 +398,6 @@ class MockProvider(AgentProvider):
             ('현관', ('현관',)),
             ('충전소', ('충전소', '도크')),
             ('베란다', ('베란다',)),
-            ('living_room', ('livingroom',)),
-            ('kitchen', ('kitchen',)),
-            ('bedroom', ('bedroom',)),
-            ('entrance', ('entrance',)),
-            ('dock', ('dock',)),
         )
         return [
             location

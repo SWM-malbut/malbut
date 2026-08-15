@@ -9,7 +9,6 @@ __pycache__/
 .env.*
 !.env.example
 .pytest_cache/
-.venv-stt/
 *.egg-info/
 .coverage
 htmlcov/

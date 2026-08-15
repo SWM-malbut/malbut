@@ -39,7 +39,6 @@ TOOL_RISK_LEVELS = {
     'capture_photo': 'L2',
     'send_notification': 'L2',
     'navigate': 'L3',
-    'monitor_room': 'L3',
 }
 
 TOOL_TIMEOUT_SECONDS = {
@@ -48,7 +47,6 @@ TOOL_TIMEOUT_SECONDS = {
     'detect_pet': 3.0,
     'capture_photo': 5.0,
     'send_notification': 5.0,
-    'monitor_room': 5.0,
 }
 
 READ_ONLY_ELIGIBLE = frozenset(
@@ -385,14 +383,6 @@ class MockToolAdapter(ReadOnlyToolAdapter, SimulationToolAdapter):
                 'accepted': False,
                 'destination': arguments['location'],
                 'nav2_goal_published': False,
-            }
-        if self.tool_name == 'monitor_room':
-            return {
-                **common,
-                'accepted': False,
-                'destination': arguments['location'],
-                'mission_started': False,
-                'physical_effects': False,
             }
         if self.tool_name == 'capture_photo':
             return {
@@ -820,14 +810,6 @@ def _validate_result_fields(
             'destination',
             'nav2_goal_published',
         },
-        'monitor_room': {
-            'simulated',
-            'source',
-            'accepted',
-            'destination',
-            'mission_started',
-            'physical_effects',
-        },
         'capture_photo': {
             'simulated',
             'source',
@@ -884,20 +866,6 @@ def _validate_result_fields(
         _require_result_bool(
             result,
             'nav2_goal_published',
-            expected=False,
-        )
-        return
-    if tool_name == 'monitor_room':
-        _require_result_bool(result, 'accepted', expected=False)
-        _require_result_string(result, 'destination')
-        _require_result_bool(
-            result,
-            'mission_started',
-            expected=False,
-        )
-        _require_result_bool(
-            result,
-            'physical_effects',
             expected=False,
         )
         return

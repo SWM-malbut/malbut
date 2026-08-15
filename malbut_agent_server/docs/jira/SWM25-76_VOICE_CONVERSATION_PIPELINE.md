@@ -6,17 +6,15 @@
 | --- | --- |
 | Jira 스토리 | SWM25-76 음성 대화 파이프라인 |
 | 대상 패키지 | `malbut_agent_server` |
-| 구현 기준일 | 2026-08-14 |
-| 현재 범위 | 순수 Python 오프라인 계약과 선택형 one-shot 로컬 STT 경계 |
-| 현재 상태 | 대화 경계와 SWM25-34 개발용 STT 구현, 연속 STT·TTS·ROS adapter 미연결 |
+| 구현 기준일 | 2026-08-13 |
+| 현재 범위 | 순수 Python 오프라인 계약과 결정론적 Mock 시험 |
+| 현재 상태 | 텍스트·메타데이터·비차단 추론 경계 구현, 실제 STT·TTS·ROS adapter 미연결 |
 | 안전 원칙 | 최종 transcript만 추론, 원시 오디오 비수용·비저장, 최종 Safety 응답만 TTS |
 
 이 문서는 SWM25-34가 소유하는 음성 입출력과 SWM25-69 대화 서버 사이에서
-SWM25-76이 구현한 오프라인 경계를 설명한다. `speech.py` 자체는 여전히 음성을
-인식하거나 재생하지 않는다. 별도 SWM25-34 개발 adapter인 `local_stt.py`가
-PCM16 WAV 또는 짧은 push-to-talk 녹음을 선택형 로컬 모델로 변환한 뒤, 확정
-text와 제한된 metadata만 이 경계에 전달한다. TTS, 연속 수음, ROS Topic과
-Action은 아직 연결하지 않았다.
+SWM25-76이 구현한 오프라인 경계를 설명한다. 현재 구현은 실제 음성을
+인식하거나 재생하지 않는다. 마이크·스피커, 외부 STT·TTS API, ROS Topic과
+Action을 호출하지 않고 합성 이벤트로 계약만 검증한다.
 
 관련 상위 책임 경계는
 [`SWM25-69 대화·에이전트 계약`](SWM25-69_CONVERSATION_AGENT_CONTRACT.md)의
@@ -51,11 +49,11 @@ Action은 아직 연결하지 않았다.
 
 ### 1.2 이번 범위에서 하지 않는 것
 
-- `speech.py` 내부의 PCM, WAV, Opus 등 음성 데이터 수신·디코딩·저장
+- PCM, WAV, Opus 등 음성 데이터 수신·디코딩·저장
 - 파일 경로, URI, object storage key를 통한 음성 참조
 - VAD, wake word, speaker recognition, echo cancellation 구현
-- SWM25-76 core 내부의 STT·TTS 모델 또는 유료 API 호출
-- 연속 마이크 입력과 스피커 출력
+- STT·TTS 모델 또는 유료 API 호출
+- 마이크 입력과 스피커 출력
 - `rclpy` node, ROS Topic, Service, Action 정의·호출
 - 실제 음성 latency·WER·한국어 인식 품질 측정
 - 실제 TTS 재생 성공·실패·취소 확인
@@ -70,8 +68,6 @@ fail-closed한다는 것까지만 증명한다.
 | --- | --- |
 | [`speech.py`](../../malbut_agent_server/speech.py) | typed 계약, 세션 상태와 coordinator |
 | [`test_speech_pipeline.py`](../../test/test_speech_pipeline.py) | 합성 이벤트 기반 오프라인 회귀 시험 |
-| [`local_stt.py`](../../malbut_agent_server/local_stt.py) | SWM25-34 one-shot 로컬 변환 adapter |
-| [`SWM25-34 기본 로컬 STT`](SWM25-34_BASIC_LOCAL_STT.md) | 실제 WAV·마이크 adapter의 별도 범위와 사용법 |
 | 이 문서 | 책임 경계, 정책, 상태 전이와 남은 운영 결정 |
 
 `SpeechConversationCoordinator`가 `AgentOrchestrator` 앞에 놓이고,
@@ -544,15 +540,12 @@ PYTHONPATH=. python3 -m pytest -q test
 | 실제 dispatcher durable outbox·delivery ordering | 미구현 |
 | 외부 conversation lifecycle fail-closed 변환 | 구현·오프라인 검증 |
 | 재시작·multi-process durable speech ledger | 미구현 |
-| SWM25-34 one-shot 로컬 STT adapter | 구현·합성 WAV/Fake 및 actual local model 검증 |
-| STT→Coordinator→Agent one-shot demo | 구현·합성 audio + live provider 연결 검증 |
-| 연속 STT·실제 TTS·ROS bridge | 미구현 |
+| 실제 STT·TTS·ROS bridge | 미구현 |
 | 실장치 echo·latency·음성 품질 시험 | 미실시 |
 
 따라서 SWM25-76의 현재 정확한 명칭은 다음과 같다.
 
-> **선택형 one-shot 로컬 STT를 앞단에 둘 수 있는 안전한 음성 대화 계약 MVP.**
+> **실제 음성 I/O가 없는 안전한 오프라인 음성 대화 계약 MVP.**
 
-이 명칭은 실제 마이크 인식 품질이나 end-to-end 음성 대화 완료를 뜻하지 않는다.
-실제 음성 파이프라인 완료 처리는 위 미결정 사항과 ROS adapter, TTS, 실장치
-시험을 통과한 뒤에만 가능하다.
+실제 음성 파이프라인 완료 처리는 위 미결정 사항과 ROS adapter, 실장치 시험을
+통과한 뒤에만 가능하다.
