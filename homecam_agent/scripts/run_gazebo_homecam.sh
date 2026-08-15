@@ -93,6 +93,7 @@ fi
 : "${HOMECAM_MICROPHONE_ENABLED:=false}"
 : "${HOMECAM_MODEL_PATH:=}"
 : "${HOMECAM_MONITORING_ENABLED:=false}"
+: "${HOMECAM_EVENT_CLIPS_ENABLED:=true}"
 : "${HOMECAM_FORCE_MAPPING:=false}"
 : "${HOMECAM_TOPIC_TIMEOUT_SECONDS:=90}"
 
@@ -107,6 +108,8 @@ homecam_validate_boolean \
   HOMECAM_CLOUD_MAP_ENABLED "$HOMECAM_CLOUD_MAP_ENABLED"
 homecam_validate_boolean \
   HOMECAM_MONITORING_ENABLED "$HOMECAM_MONITORING_ENABLED"
+homecam_validate_boolean \
+  HOMECAM_EVENT_CLIPS_ENABLED "$HOMECAM_EVENT_CLIPS_ENABLED"
 homecam_validate_boolean HOMECAM_FORCE_MAPPING "$HOMECAM_FORCE_MAPPING"
 homecam_validate_boolean \
   HOMECAM_MICROPHONE_ENABLED "$HOMECAM_MICROPHONE_ENABLED"
@@ -452,6 +455,7 @@ homecam_command=(
   "backend_url:=$HOMECAM_BACKEND_URL"
   "device_id:=$HOMECAM_DEVICE_ID"
   "monitoring_enabled:=$HOMECAM_MONITORING_ENABLED"
+  "event_clips_enabled:=$HOMECAM_EVENT_CLIPS_ENABLED"
   "image_topic:=$image_topic"
   "odom_topic:=$HOMECAM_ODOM_TOPIC"
   "audio_source:=$HOMECAM_AUDIO_SOURCE"

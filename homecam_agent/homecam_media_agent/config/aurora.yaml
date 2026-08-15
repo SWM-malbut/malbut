@@ -28,6 +28,12 @@ homecam_detector:
     confidence_threshold: 0.45
     consecutive_frames: 3
     event_cooldown_sec: 30.0
+    event_confirmation_window_frames: 5
+    event_confirmation_required_frames: 3
+    event_pre_roll_sec: 5.0
+    event_merge_gap_sec: 10.0
+    max_event_clip_sec: 120.0
+    event_clips_enabled: true
     max_frame_gap_sec: 1.0
     stationary_after_sec: 1.0
     odom_timeout_sec: 2.0

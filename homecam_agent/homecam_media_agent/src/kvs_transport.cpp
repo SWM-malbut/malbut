@@ -129,6 +129,22 @@ bool session_lease_expired(
   return expires_at_unix_ms != 0 && expires_at_unix_ms <= now_unix_ms;
 }
 
+bool storage_session_refresh_due(
+  const std::int64_t active_age_ms,
+  const std::int64_t refresh_age_ms)
+{
+  return active_age_ms >= 0 &&
+         active_age_ms >= std::max<std::int64_t>(refresh_age_ms, 0);
+}
+
+bool storage_session_hard_expired(
+  const std::int64_t active_age_ms,
+  const std::int64_t hard_age_ms)
+{
+  return active_age_ms >= 0 &&
+         active_age_ms >= std::max<std::int64_t>(hard_age_ms, 0);
+}
+
 SessionRefreshDecision decide_session_refresh(
   const SessionMode mode,
   const bool peer_connected,
