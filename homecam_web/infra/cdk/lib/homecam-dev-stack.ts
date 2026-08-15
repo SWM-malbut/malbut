@@ -771,7 +771,6 @@ export class HomecamDevStack extends Stack {
           5,
           [
             "/api/device/v1/events",
-            "/api/device/v1/event-clips/*",
             "/api/device/v1/robot/state",
             "/api/device/v1/robot/map",
             "/api/device/v1/robot/commands",
@@ -791,6 +790,7 @@ export class HomecamDevStack extends Stack {
           ["/favicon.ico", "/favicon.svg", "/homecam-icon.svg"],
         ],
         ["PublicMediaAssets", 10, ["/og.png", "/vendor/kvs-webrtc.min.js"]],
+        ["DeviceEventClipsApi", 12, ["/api/device/v1/event-clips/*"]],
       ] as const) {
         service.listener.addAction(ruleId, {
           priority,
