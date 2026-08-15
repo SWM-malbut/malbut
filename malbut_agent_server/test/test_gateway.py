@@ -130,6 +130,16 @@ def test_capability_snapshot_never_exposes_adapter_objects() -> None:
     )
     assert navigate['executable'] is False
     assert navigate['blocked_by'] == 'confirmation_required'
+    monitor_room = next(
+        item
+        for item in snapshot['capabilities']
+        if item['name'] == 'monitor_room'
+    )
+    assert monitor_room['risk_level'] == 'L3'
+    assert monitor_room['mode'] == 'proposal_only'
+    assert monitor_room['timeout_ms'] == 5000
+    assert monitor_room['executable'] is False
+    assert monitor_room['blocked_by'] == 'confirmation_required'
     status = next(
         item
         for item in snapshot['capabilities']
@@ -323,6 +333,84 @@ def test_invalid_arguments_never_reach_adapter() -> None:
         )
         assert result.error['code'] == 'invalid_arguments'
         assert adapter.calls == 0
+    finally:
+        gateway.close()
+
+
+@pytest.mark.parametrize(
+    'arguments',
+    [
+        {},
+        {'location': '거실', 'record': True},
+        {'location': 1},
+    ],
+)
+def test_monitor_room_arguments_are_strict_before_simulation(
+    arguments: Dict[str, Any],
+) -> None:
+    """A room workflow accepts only one bounded string location."""
+    adapter = MockToolAdapter('monitor_room')
+    gateway = ToolGateway(
+        CapabilityRegistry(
+            [
+                ToolCapability(
+                    'monitor_room',
+                    mode=SIMULATION_ONLY,
+                    adapter=adapter,
+                )
+            ],
+            runtime_mode=SIMULATION,
+        )
+    )
+    try:
+        result = gateway.query(_query('monitor_room', arguments))
+        assert result.status == 'rejected'
+        assert result.error['code'] == 'invalid_arguments'
+        assert adapter.calls == 0
+    finally:
+        gateway.close()
+
+
+@pytest.mark.parametrize(
+    'unsafe_field',
+    ['accepted', 'mission_started', 'physical_effects'],
+)
+def test_monitor_room_simulation_cannot_claim_a_real_effect(
+    unsafe_field: str,
+) -> None:
+    """A forged success flag fails closed at the result schema boundary."""
+
+    class ForgedMonitorAdapter(SimulationToolAdapter):
+        def invoke(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+            result = {
+                'simulated': True,
+                'source': 'forged-monitor-test',
+                'accepted': False,
+                'destination': arguments['location'],
+                'mission_started': False,
+                'physical_effects': False,
+            }
+            result[unsafe_field] = True
+            return result
+
+    gateway = ToolGateway(
+        CapabilityRegistry(
+            [
+                ToolCapability(
+                    'monitor_room',
+                    mode=SIMULATION_ONLY,
+                    adapter=ForgedMonitorAdapter(),
+                )
+            ],
+            runtime_mode=SIMULATION,
+        )
+    )
+    try:
+        result = gateway.query(
+            _query('monitor_room', {'location': '거실'})
+        )
+        assert result.status == 'failed'
+        assert result.error['code'] == 'adapter_failed'
     finally:
         gateway.close()
 
@@ -796,6 +884,7 @@ def test_all_mock_adapters_are_non_actuating_and_schema_valid() -> None:
         ('get_robot_status', {}, 'battery_percent'),
         ('detect_pet', {}, 'privacy_checked'),
         ('navigate', {'location': '거실'}, 'nav2_goal_published'),
+        ('monitor_room', {'location': '거실'}, 'mission_started'),
         ('capture_photo', {}, 'image_created'),
         (
             'send_notification',
@@ -815,5 +904,9 @@ def test_all_mock_adapters_are_non_actuating_and_schema_valid() -> None:
             assert result.status == 'succeeded'
             assert result.result['simulated'] is True
             assert evidence in result.result
+            if tool_name == 'monitor_room':
+                assert result.result['accepted'] is False
+                assert result.result['mission_started'] is False
+                assert result.result['physical_effects'] is False
     finally:
         gateway.close()

@@ -1,0 +1,112 @@
+digraph MalbutDFD {
+  graph [
+    label="MALBUT — Data Flow Diagram + Trust Boundaries\n데이터가 어디로 이동하고, 어디에서 인증·신뢰 수준이 바뀌는가",
+    labelloc=t,
+    fontsize=22,
+    fontname="DejaVu Sans",
+    rankdir=LR,
+    compound=true,
+    newrank=true,
+    bgcolor="#F7F9FC",
+    pad=0.35,
+    nodesep=0.42,
+    ranksep=0.78,
+    splines=polyline
+  ];
+  node [fontname="DejaVu Sans", fontsize=9.5, penwidth=1.35, margin="0.14,0.08"];
+  edge [fontname="DejaVu Sans", fontsize=7.7, arrowsize=0.65, penwidth=1.25];
+
+  owner [label="보호자·가족\n[External Entity]", shape=box, style="filled", fillcolor="#E8E1FA", color="#6747C7"];
+  operator [label="개발자·운영자\n[External Entity]", shape=box, style="filled", fillcolor="#E0ECFA", color="#2672BF"];
+
+  subgraph cluster_user {
+    label="TRUST ZONE U · 사용자 장치";
+    color="#7A61C8";
+    fontcolor="#4D368F";
+    fontname="DejaVu Sans";
+    style="rounded,dashed";
+    pwa [label="P1\nBrowser PWA", shape=ellipse, style="filled", fillcolor="#F1ECFF", color="#6747C7"];
+  }
+
+  subgraph cluster_cloud {
+    label="TRUST ZONE C · AWS application/VPC";
+    color="#A56A9F";
+    fontcolor="#6A3A65";
+    fontname="DejaVu Sans";
+    style="rounded,dashed";
+    api [label="P2\nHomecam API", shape=ellipse, style="filled", fillcolor="#F9ECF7", color="#A04F92"];
+    auth [label="P3\nAuth / Broker", shape=ellipse, style="filled", fillcolor="#F9ECF7", color="#A04F92"];
+    pg [label="D1\nPostgreSQL\n장치·세션·이벤트·감사", shape=cylinder, style="filled", fillcolor="#E8F5E9", color="#2E7D32"];
+    outbox [label="D2\nPush Outbox", shape=cylinder, style="filled", fillcolor="#E8F5E9", color="#2E7D32"];
+  }
+
+  subgraph cluster_managed {
+    label="TRUST ZONE M · AWS managed media/identity";
+    color="#7D8796";
+    fontcolor="#505965";
+    fontname="DejaVu Sans";
+    style="rounded,dashed";
+    kvs [label="P4\nKVS WebRTC/Storage", shape=ellipse, style="filled", fillcolor="#EEF0F3", color="#7D8796"];
+    archive [label="D3\nKVS Archive", shape=cylinder, style="filled", fillcolor="#EEF0F3", color="#7D8796"];
+    cognito [label="P5\nCognito / Web Push", shape=ellipse, style="filled", fillcolor="#EEF0F3", color="#7D8796"];
+  }
+
+  subgraph cluster_robot {
+    label="TRUST ZONE R · Robot Edge / local ROS domain";
+    color="#2A8B69";
+    fontcolor="#17523D";
+    fontname="DejaVu Sans";
+    style="rounded,dashed";
+    camera [label="E1\nGazebo/Aurora sensors", shape=box, style="filled", fillcolor="#FFF4DE", color="#C57A18"];
+    ros [label="P6\nROS 2 / Nav2 / SLAM", shape=ellipse, style="filled", fillcolor="#E7F7F1", color="#23805E", URL="../../malbut_gazebo/launch/navigation.launch.py", target="_top"];
+    media [label="P7\nHomecam Media", shape=ellipse, style="filled", fillcolor="#E7F7F1", color="#23805E", URL="../../homecam_agent/homecam_media_agent/src/media_agent_node.cpp", target="_top"];
+    detector [label="P8\nHomecam Detector", shape=ellipse, style="filled", fillcolor="#E7F7F1", color="#23805E", URL="../../homecam_agent/homecam_detector/homecam_detector/detector_node.py", target="_top"];
+    agent [label="P9\nAgent Orchestrator + Safety", shape=ellipse, style="filled", fillcolor="#E6F0FA", color="#2672BF", URL="../../malbut_agent_server/malbut_agent_server/orchestrator.py", target="_top"];
+    sqlite [label="D4\nAgent SQLite\n대화·요약·기억·감사", shape=cylinder, style="filled", fillcolor="#E8F5E9", color="#2E7D32"];
+    maps [label="D5\nMap/GeoJSON/Zone files", shape=cylinder, style="filled", fillcolor="#FFF4DE", color="#C57A18"];
+    noexec [label="GAP\n실제 Tool 실행 token/adapter 없음", shape=octagon, style="filled,dashed", fillcolor="#FFF0F0", color="#C62828", fontcolor="#922222"];
+  }
+
+  subgraph cluster_provider {
+    label="TRUST ZONE P · Third-party LLM";
+    color="#7D8796";
+    fontcolor="#505965";
+    fontname="DejaVu Sans";
+    style="rounded,dashed";
+    openai [label="P10\nOpenAI Responses API", shape=ellipse, style="filled", fillcolor="#EEF0F3", color="#7D8796"];
+  }
+
+  owner -> pwa [label="UI input", color="#6747C7"];
+  pwa -> api [dir=both, label="HTTPS\nopaque HttpOnly session cookie\nJSON API", color="#6747C7", fontcolor="#4D368F"];
+  api -> auth [dir=both, label="server-side auth\nHMAC broker request", color="#A04F92"];
+  auth -> cognito [dir=both, label="AWS SDK / Web Push", color="#7D8796"];
+  api -> pg [dir=both, label="TLS SQL\nstate·session·event", color="#A04F92"];
+  api -> outbox [label="event transaction", color="#D17B17"];
+  outbox -> auth [label="due notification", color="#D17B17"];
+
+  pwa -> kvs [dir=both, label="signed WSS·ICE\nH.264/Opus", color="#7857D8", fontcolor="#5B3FB2"];
+  kvs -> archive [label="recorded fragments", color="#7857D8"];
+  archive -> api [label="HLS playback via\nsame-origin proxy", color="#7857D8"];
+
+  camera -> ros [dir=both, label="Image·CameraInfo·scan·imu·odom·tf\n/ cmd_vel", color="#168A63", fontcolor="#116548"];
+  ros -> media [label="Image·CameraInfo·odom", color="#7857D8"];
+  ros -> detector [label="Image·odom", color="#D17B17"];
+  media -> detector [label="monitoring/privacy state", color="#D17B17"];
+  detector -> media [label="detector health", color="#D17B17"];
+  media -> api [dir=both, label="HTTPS device bearer\nheartbeat·desired state·session", color="#7857D8"];
+  api -> media [label="short-lived STS/KVS config", color="#7857D8"];
+  media -> kvs [dir=both, label="H.264/Opus media", color="#7857D8"];
+  detector -> api [label="HTTPS event + idempotency key", color="#D17B17"];
+  ros -> maps [dir=both, label="SLAM map / keepout config", color="#D17B17"];
+
+  operator -> agent [label="loopback HTTP/JSON\nBearer + fixed user_id", color="#2672BF"];
+  agent -> sqlite [dir=both, label="conversation·memory transaction", color="#2672BF"];
+  agent -> openai [dir=both, label="HTTPS store:false\nuntrusted context → strict decision", color="#2672BF"];
+  agent -> noexec [label="validated Tool proposal", style=dashed, color="#C62828", fontcolor="#922222"];
+  noexec -> ros [label="차단됨\nexecution.authorized=false", style=dashed, color="#C62828", fontcolor="#922222"];
+
+  legend_entity [label="External Entity", shape=box, style="filled", fillcolor="#F2F3F5", color="#697586"];
+  legend_process [label="Process", shape=ellipse, style="filled", fillcolor="#F2F3F5", color="#697586"];
+  legend_store [label="Data Store", shape=cylinder, style="filled", fillcolor="#F2F3F5", color="#697586"];
+  legend_entity -> legend_process -> legend_store [style=invis];
+}

@@ -29,6 +29,134 @@ from malbut_agent_server.summarization import (
 MAX_RESPONSE_JSON_LENGTH = 65536
 DEFAULT_SUMMARY_MAX_CHARS = 2000
 SUMMARY_UPDATE_BATCH_SIZE = 128
+TRUSTED_TOOL_RESULT_SCHEMA_VERSION = 1
+MAX_TRUSTED_TOOL_RESULTS_PER_GENERATION = 1000
+_TRUSTED_TOOL_RESULT_STATUSES = frozenset({
+    'succeeded', 'failed', 'cancelled', 'timed_out',
+})
+_TRUSTED_TOOL_RESULT_SOURCES = frozenset({
+    'controller', 'simulation_adapter', 'recovery',
+})
+_TRUSTED_TOOL_RESULT_CODES = frozenset({
+    'simulation_succeeded',
+    'preflight_failed',
+    'preflight_timeout',
+    'navigating_failed',
+    'navigating_timeout',
+    'coverage_failed',
+    'coverage_timeout',
+    'live_ready_failed',
+    'live_ready_timeout',
+    'simulation_cancelled',
+    'simulation_cancel_failed',
+    'simulation_cancel_timeout',
+    'authority_revoked',
+    'state_unavailable',
+    'state_stale',
+    'privacy_blocked',
+    'emergency_stop',
+    'map_changed',
+    'device_unavailable',
+    'recovery_unavailable',
+    'authorization_expired',
+    'event_capacity_reached',
+})
+_TRUSTED_TOOL_RESULT_STATUS_CODES = {
+    'succeeded': frozenset({'simulation_succeeded'}),
+    'failed': frozenset({
+        'preflight_failed',
+        'navigating_failed',
+        'coverage_failed',
+        'live_ready_failed',
+        'simulation_cancel_failed',
+        'authority_revoked',
+        'state_unavailable',
+        'state_stale',
+        'privacy_blocked',
+        'emergency_stop',
+        'map_changed',
+        'device_unavailable',
+        'recovery_unavailable',
+        'event_capacity_reached',
+    }),
+    'cancelled': frozenset({'simulation_cancelled'}),
+    'timed_out': frozenset({
+        'preflight_timeout',
+        'navigating_timeout',
+        'coverage_timeout',
+        'live_ready_timeout',
+        'simulation_cancel_timeout',
+        'authorization_expired',
+    }),
+}
+_TRUSTED_TOOL_RESULT_CODE_SOURCES = {
+    'simulation_succeeded': frozenset({
+        'simulation_adapter', 'recovery',
+    }),
+    'preflight_failed': frozenset({'simulation_adapter', 'recovery'}),
+    'preflight_timeout': frozenset({'simulation_adapter', 'recovery'}),
+    'navigating_failed': frozenset({'simulation_adapter', 'recovery'}),
+    'navigating_timeout': frozenset({'simulation_adapter', 'recovery'}),
+    'coverage_failed': frozenset({'simulation_adapter', 'recovery'}),
+    'coverage_timeout': frozenset({'simulation_adapter', 'recovery'}),
+    'live_ready_failed': frozenset({'simulation_adapter', 'recovery'}),
+    'live_ready_timeout': frozenset({'simulation_adapter', 'recovery'}),
+    'simulation_cancelled': frozenset({'simulation_adapter'}),
+    'simulation_cancel_failed': frozenset({'simulation_adapter'}),
+    'simulation_cancel_timeout': frozenset({'simulation_adapter'}),
+    'authority_revoked': frozenset({'controller'}),
+    'state_unavailable': frozenset({'controller'}),
+    'state_stale': frozenset({'controller'}),
+    'privacy_blocked': frozenset({'controller'}),
+    'emergency_stop': frozenset({'controller'}),
+    'map_changed': frozenset({'controller'}),
+    'device_unavailable': frozenset({'controller'}),
+    'recovery_unavailable': frozenset({'recovery'}),
+    'authorization_expired': frozenset({'controller', 'recovery'}),
+    'event_capacity_reached': frozenset({'controller'}),
+}
+_REQUEST_NAMESPACE_TRIGGER_DIGESTS = {
+    'conversation_result_request_namespace_insert': (
+        'e35a9108e6068937d5e0e9381b52d9df5ae30a077d1e822cf08aaa73e1c77837'
+    ),
+    'conversation_result_request_namespace_update': (
+        '9e5b04750d198b8990eeb1df4f12368b39eeae931da6a06b15177a1a62610933'
+    ),
+    'conversation_turn_request_namespace_insert': (
+        '8936ba73a7b284f36d33b43b22c7f481e6e742821ae5e3a31c62a754f36ca17b'
+    ),
+    'conversation_turn_request_namespace_update': (
+        '065c31e205953c0cdb7c916584d58b2b80cafa7592787818890ba263d07e4856'
+    ),
+}
+
+
+def _trusted_result_identifier(value: Any, field_name: str) -> str:
+    """Validate an opaque trusted-result identifier without normalizing."""
+    if (
+        type(value) is not str
+        or not 1 <= len(value) <= 128
+        or value != value.strip()
+        or any(
+            ord(character) < 32 or ord(character) == 127
+            for character in value
+        )
+    ):
+        raise ValidationError(
+            f'{field_name} is not a valid opaque identifier'
+        )
+    return value
+
+
+def _trusted_result_digest(value: Any, field_name: str) -> str:
+    """Validate one lowercase SHA-256 digest."""
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in '0123456789abcdef' for character in value)
+    ):
+        raise ValidationError(f'{field_name} is not a valid digest')
+    return value
 
 
 class ConversationNotFoundError(ValidationError):
@@ -45,6 +173,12 @@ class ConversationConflictError(ValidationError):
 
 class ConversationChangedError(ValidationError):
     """Raised when a session changes while model inference is running."""
+
+
+class ConversationBusyError(ConversationStateError):
+    """Raised when a retryable in-flight turn blocks a trusted result."""
+
+    retryable = True
 
 
 @dataclass(frozen=True)
@@ -173,6 +307,239 @@ class ConversationSummary:
         }
 
 
+@dataclass(frozen=True, repr=False)
+class TrustedRoomMissionTerminalResult:
+    """Strict content-free terminal result from the simulated mission."""
+
+    terminal_digest: str
+    status: str
+    code: str
+    source: str
+    sequence: int
+    schema_version: int = TRUSTED_TOOL_RESULT_SCHEMA_VERSION
+    phase: str = 'terminal'
+    runtime_mode: str = 'simulation'
+    simulated: bool = True
+    physical_effects: bool = False
+    viewer_live: bool = False
+    durability: str = 'sqlite_local'
+    lease_scope: str = 'database_device'
+
+    def __post_init__(self) -> None:
+        """Reject forged terminal outcomes and runtime markers."""
+        _trusted_result_digest(
+            self.terminal_digest,
+            'terminal_digest',
+        )
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version
+            != TRUSTED_TOOL_RESULT_SCHEMA_VERSION
+        ):
+            raise ValidationError(
+                'trusted tool result schema version is invalid'
+            )
+        if self.status not in _TRUSTED_TOOL_RESULT_STATUSES:
+            raise ValidationError(
+                'trusted tool result status is invalid'
+            )
+        if self.code not in _TRUSTED_TOOL_RESULT_CODES:
+            raise ValidationError(
+                'trusted tool result code is invalid'
+            )
+        if self.code not in _TRUSTED_TOOL_RESULT_STATUS_CODES[self.status]:
+            raise ValidationError(
+                'trusted tool result status and code conflict'
+            )
+        if self.source not in _TRUSTED_TOOL_RESULT_SOURCES:
+            raise ValidationError(
+                'trusted tool result source is invalid'
+            )
+        if self.source not in _TRUSTED_TOOL_RESULT_CODE_SOURCES[self.code]:
+            raise ValidationError(
+                'trusted tool result source and code conflict'
+            )
+        if type(self.sequence) is not int or self.sequence < 1:
+            raise ValidationError(
+                'trusted tool result sequence is invalid'
+            )
+        if (
+            self.phase != 'terminal'
+            or self.runtime_mode != 'simulation'
+            or self.simulated is not True
+            or self.physical_effects is not False
+            or self.viewer_live is not False
+            or self.durability != 'sqlite_local'
+            or self.lease_scope != 'database_device'
+        ):
+            raise ValidationError(
+                'trusted tool result simulation marker is invalid'
+            )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return the bounded result without environment or user content."""
+        return {
+            'schema_version': self.schema_version,
+            'terminal_digest': self.terminal_digest,
+            'status': self.status,
+            'phase': self.phase,
+            'code': self.code,
+            'source': self.source,
+            'sequence': self.sequence,
+            'runtime_mode': self.runtime_mode,
+            'simulated': self.simulated,
+            'physical_effects': self.physical_effects,
+            'viewer_live': self.viewer_live,
+            'durability': self.durability,
+            'lease_scope': self.lease_scope,
+        }
+
+    def __repr__(self) -> str:
+        """Avoid reflecting the stable terminal digest into logs."""
+        return (
+            '<TrustedRoomMissionTerminalResult '
+            f'status={self.status} code={self.code}>'
+        )
+
+
+@dataclass(frozen=True, repr=False)
+class ConversationTrustedToolResult:
+    """Owner-bound handoff envelope for one terminal Tool result."""
+
+    feedback_id: str
+    request_id: str
+    tool_call_id: str
+    user_id: str
+    conversation_id: str
+    session_instance_id: str
+    generation: int
+    source_revision: int
+    result: TrustedRoomMissionTerminalResult
+    schema_version: int = TRUSTED_TOOL_RESULT_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        """Validate exact destination identity and a strict v1 payload."""
+        _trusted_result_identifier(self.feedback_id, 'feedback_id')
+        _trusted_result_identifier(self.request_id, 'request_id')
+        _trusted_result_identifier(self.tool_call_id, 'tool_call_id')
+        _trusted_result_identifier(
+            self.session_instance_id,
+            'session_instance_id',
+        )
+        if validate_user_id(self.user_id) != self.user_id:
+            raise ValidationError('trusted tool result user is invalid')
+        if (
+            validate_conversation_id(self.conversation_id)
+            != self.conversation_id
+        ):
+            raise ValidationError(
+                'trusted tool result conversation is invalid'
+            )
+        if type(self.generation) is not int or self.generation < 1:
+            raise ValidationError(
+                'trusted tool result generation is invalid'
+            )
+        if (
+            type(self.source_revision) is not int
+            or self.source_revision < 0
+        ):
+            raise ValidationError(
+                'trusted tool result source revision is invalid'
+            )
+        if type(self.result) is not TrustedRoomMissionTerminalResult:
+            raise ValidationError(
+                'trusted tool result payload is invalid'
+            )
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version
+            != TRUSTED_TOOL_RESULT_SCHEMA_VERSION
+        ):
+            raise ValidationError(
+                'trusted tool result envelope version is invalid'
+            )
+
+    def __repr__(self) -> str:
+        """Avoid reflecting owner or execution identifiers in logs."""
+        return '<ConversationTrustedToolResult opaque>'
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return the internal content-free persistence envelope."""
+        return {
+            'schema_version': self.schema_version,
+            'feedback_id': self.feedback_id,
+            'request_id': self.request_id,
+            'tool_call_id': self.tool_call_id,
+            'user_id': self.user_id,
+            'conversation_id': self.conversation_id,
+            'session_instance_id': self.session_instance_id,
+            'generation': self.generation,
+            'source_revision': self.source_revision,
+            'result': TrustedRoomMissionTerminalResult.to_dict(
+                self.result
+            ),
+        }
+
+
+@dataclass(frozen=True, repr=False)
+class TrustedToolResultCommit:
+    """Durable receipt for one conversation Tool-result append."""
+
+    commit_id: str
+    envelope: ConversationTrustedToolResult
+    conversation_revision_after: int
+    committed_at: float
+    cached: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate the persisted receipt without weakening its envelope."""
+        _trusted_result_identifier(self.commit_id, 'commit_id')
+        if type(self.envelope) is not ConversationTrustedToolResult:
+            raise ValidationError(
+                'trusted tool result commit envelope is invalid'
+            )
+        if (
+            type(self.conversation_revision_after) is not int
+            or self.conversation_revision_after < 1
+            or self.conversation_revision_after
+            <= self.envelope.source_revision
+        ):
+            raise ValidationError(
+                'trusted tool result commit revision is invalid'
+            )
+        if (
+            type(self.committed_at) not in {int, float}
+            or not math.isfinite(float(self.committed_at))
+        ):
+            raise ValidationError(
+                'trusted tool result commit time is invalid'
+            )
+        if type(self.cached) is not bool:
+            raise ValidationError(
+                'trusted tool result cached marker is invalid'
+            )
+
+    def __repr__(self) -> str:
+        """Avoid reflecting nested trusted execution identifiers."""
+        return (
+            '<TrustedToolResultCommit '
+            f'revision={self.conversation_revision_after} '
+            f'cached={self.cached}>'
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return the content-free handoff receipt."""
+        return {
+            'commit_id': self.commit_id,
+            'conversation_revision_after': (
+                self.conversation_revision_after
+            ),
+            'committed_at': self.committed_at,
+            'cached': self.cached,
+            'envelope': self.envelope.to_dict(),
+        }
+
+
 @dataclass(frozen=True)
 class BeginTurnToken:
     """Immutable compare-and-swap token for one in-flight turn."""
@@ -206,6 +573,7 @@ class ConversationSnapshot:
     session: ConversationSession
     turns: Tuple[ConversationTurn, ...]
     summary: Optional[ConversationSummary]
+    trusted_tool_results: Tuple[TrustedToolResultCommit, ...] = ()
 
 
 class SQLiteConversationStore:
@@ -382,6 +750,121 @@ class SQLiteConversationStore:
             )
             self._connection.execute(
                 '''
+                CREATE TABLE IF NOT EXISTS
+                    conversation_trusted_tool_results (
+                    feedback_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    conversation_id TEXT NOT NULL,
+                    session_instance_id TEXT NOT NULL,
+                    generation INTEGER NOT NULL CHECK (generation >= 1),
+                    source_revision INTEGER NOT NULL
+                        CHECK (source_revision >= 0),
+                    request_id TEXT NOT NULL,
+                    tool_call_id TEXT NOT NULL UNIQUE,
+                    request_fingerprint TEXT NOT NULL,
+                    commit_fingerprint TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL CHECK (
+                        schema_version = 1
+                    ),
+                    terminal_digest TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (
+                        status IN (
+                            'succeeded', 'failed',
+                            'cancelled', 'timed_out'
+                        )
+                    ),
+                    phase TEXT NOT NULL CHECK (phase = 'terminal'),
+                    code TEXT NOT NULL CHECK (
+                        code IN (
+                            'simulation_succeeded',
+                            'preflight_failed',
+                            'preflight_timeout',
+                            'navigating_failed',
+                            'navigating_timeout',
+                            'coverage_failed',
+                            'coverage_timeout',
+                            'live_ready_failed',
+                            'live_ready_timeout',
+                            'simulation_cancelled',
+                            'simulation_cancel_failed',
+                            'simulation_cancel_timeout',
+                            'authority_revoked',
+                            'state_unavailable',
+                            'state_stale',
+                            'privacy_blocked',
+                            'emergency_stop',
+                            'map_changed',
+                            'device_unavailable',
+                            'recovery_unavailable',
+                            'authorization_expired',
+                            'event_capacity_reached'
+                        )
+                    ),
+                    terminal_source TEXT NOT NULL CHECK (
+                        terminal_source IN (
+                            'controller',
+                            'simulation_adapter',
+                            'recovery'
+                        )
+                    ),
+                    result_sequence INTEGER NOT NULL
+                        CHECK (result_sequence >= 1),
+                    runtime_mode TEXT NOT NULL CHECK (
+                        runtime_mode = 'simulation'
+                    ),
+                    simulated INTEGER NOT NULL CHECK (simulated = 1),
+                    physical_effects INTEGER NOT NULL CHECK (
+                        physical_effects = 0
+                    ),
+                    viewer_live INTEGER NOT NULL CHECK (viewer_live = 0),
+                    durability TEXT NOT NULL CHECK (
+                        durability = 'sqlite_local'
+                    ),
+                    lease_scope TEXT NOT NULL CHECK (
+                        lease_scope = 'database_device'
+                    ),
+                    commit_id TEXT NOT NULL UNIQUE,
+                    conversation_revision_after INTEGER NOT NULL CHECK (
+                        conversation_revision_after > source_revision
+                    ),
+                    committed_at REAL NOT NULL,
+                    UNIQUE (user_id, request_id),
+                    FOREIGN KEY (user_id, conversation_id)
+                        REFERENCES conversation_sessions (
+                            user_id,
+                            conversation_id
+                        )
+                        ON DELETE CASCADE
+                )
+                '''
+            )
+            self._connection.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS
+                    conversation_trusted_result_metadata (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    schema_version INTEGER NOT NULL CHECK (
+                        schema_version = 1
+                    ),
+                    writer_protocol_version INTEGER NOT NULL CHECK (
+                        writer_protocol_version = 1
+                    )
+                )
+                '''
+            )
+            self._connection.execute(
+                '''
+                INSERT OR IGNORE INTO
+                    conversation_trusted_result_metadata (
+                        singleton,
+                        schema_version,
+                        writer_protocol_version
+                    )
+                VALUES (1, 1, 1)
+                '''
+            )
+            self._connection.execute(
+                '''
                 CREATE INDEX IF NOT EXISTS conversation_turns_order_idx
                 ON conversation_turns (
                     user_id,
@@ -399,7 +882,257 @@ class SQLiteConversationStore:
                 WHERE status = 'pending'
                 '''
             )
+            self._connection.execute(
+                '''
+                CREATE INDEX IF NOT EXISTS
+                    conversation_trusted_results_order_idx
+                ON conversation_trusted_tool_results (
+                    user_id,
+                    conversation_id,
+                    session_instance_id,
+                    generation,
+                    conversation_revision_after DESC
+                )
+                '''
+            )
+            self._create_request_namespace_triggers()
+            self._verify_trusted_result_schema_locked()
             self._connection.commit()
+
+    def _create_request_namespace_triggers(self) -> None:
+        """Fence the shared per-user request namespace in raw SQL too."""
+        self._connection.executescript(
+            '''
+            CREATE TRIGGER IF NOT EXISTS
+                conversation_turn_request_namespace_insert
+            BEFORE INSERT ON conversation_turns
+            WHEN EXISTS (
+                SELECT 1
+                FROM conversation_trusted_tool_results
+                WHERE user_id = NEW.user_id
+                  AND request_id = NEW.request_id
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'conversation request namespace conflict'
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS
+                conversation_turn_request_namespace_update
+            BEFORE UPDATE OF user_id, request_id ON conversation_turns
+            WHEN EXISTS (
+                SELECT 1
+                FROM conversation_trusted_tool_results
+                WHERE user_id = NEW.user_id
+                  AND request_id = NEW.request_id
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'conversation request namespace conflict'
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS
+                conversation_result_request_namespace_insert
+            BEFORE INSERT ON conversation_trusted_tool_results
+            WHEN EXISTS (
+                SELECT 1
+                FROM conversation_turns
+                WHERE user_id = NEW.user_id
+                  AND request_id = NEW.request_id
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'conversation request namespace conflict'
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS
+                conversation_result_request_namespace_update
+            BEFORE UPDATE OF user_id, request_id
+                ON conversation_trusted_tool_results
+            WHEN EXISTS (
+                SELECT 1
+                FROM conversation_turns
+                WHERE user_id = NEW.user_id
+                  AND request_id = NEW.request_id
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'conversation request namespace conflict'
+                );
+            END;
+            '''
+        )
+
+    def _verify_trusted_result_schema_locked(self) -> None:
+        """Reject incompatible or weakened trusted-result databases."""
+        metadata = self._connection.execute(
+            '''
+            SELECT schema_version, writer_protocol_version
+            FROM conversation_trusted_result_metadata
+            WHERE singleton = 1
+            '''
+        ).fetchone()
+        metadata_count = self._connection.execute(
+            '''
+            SELECT COUNT(*) AS row_count
+            FROM conversation_trusted_result_metadata
+            '''
+        ).fetchone()
+        if (
+            metadata is None
+            or int(metadata_count['row_count']) != 1
+            or int(metadata['schema_version'])
+            != TRUSTED_TOOL_RESULT_SCHEMA_VERSION
+            or int(metadata['writer_protocol_version']) != 1
+        ):
+            raise RuntimeError(
+                'trusted tool result database version is incompatible'
+            )
+        expected_columns = {
+            'feedback_id',
+            'user_id',
+            'conversation_id',
+            'session_instance_id',
+            'generation',
+            'source_revision',
+            'request_id',
+            'tool_call_id',
+            'request_fingerprint',
+            'commit_fingerprint',
+            'schema_version',
+            'terminal_digest',
+            'status',
+            'phase',
+            'code',
+            'terminal_source',
+            'result_sequence',
+            'runtime_mode',
+            'simulated',
+            'physical_effects',
+            'viewer_live',
+            'durability',
+            'lease_scope',
+            'commit_id',
+            'conversation_revision_after',
+            'committed_at',
+        }
+        observed_columns = {
+            str(row['name'])
+            for row in self._connection.execute(
+                'PRAGMA table_info(conversation_trusted_tool_results)'
+            ).fetchall()
+        }
+        if observed_columns != expected_columns:
+            raise RuntimeError(
+                'trusted tool result database schema is incompatible'
+            )
+        trigger_rows = self._connection.execute(
+            '''
+            SELECT name, sql
+            FROM sqlite_master
+            WHERE type = 'trigger'
+              AND name LIKE 'conversation_%request_namespace_%'
+            '''
+        ).fetchall()
+        trigger_names = {
+            str(row['name'])
+            for row in trigger_rows
+        }
+        if trigger_names != set(_REQUEST_NAMESPACE_TRIGGER_DIGESTS):
+            raise RuntimeError(
+                'trusted tool result request fence is incompatible'
+            )
+        for row in trigger_rows:
+            normalized_sql = ' '.join(str(row['sql']).split())
+            observed_digest = hashlib.sha256(
+                normalized_sql.encode('utf-8')
+            ).hexdigest()
+            expected_digest = _REQUEST_NAMESPACE_TRIGGER_DIGESTS[
+                str(row['name'])
+            ]
+            if observed_digest != expected_digest:
+                raise RuntimeError(
+                    'trusted tool result request fence is incompatible'
+                )
+        index_contracts = set()
+        for index_row in self._connection.execute(
+            'PRAGMA index_list(conversation_trusted_tool_results)'
+        ).fetchall():
+            index_name = str(index_row['name'])
+            columns = tuple(
+                str(column['name'])
+                for column in self._connection.execute(
+                    f'PRAGMA index_info("{index_name}")'
+                ).fetchall()
+            )
+            index_contracts.add((bool(index_row['unique']), columns))
+        required_indexes = {
+            (True, ('feedback_id',)),
+            (True, ('tool_call_id',)),
+            (True, ('commit_id',)),
+            (True, ('user_id', 'request_id')),
+            (
+                False,
+                (
+                    'user_id',
+                    'conversation_id',
+                    'session_instance_id',
+                    'generation',
+                    'conversation_revision_after',
+                ),
+            ),
+        }
+        if not required_indexes.issubset(index_contracts):
+            raise RuntimeError(
+                'trusted tool result database index is incompatible'
+            )
+        collision = self._connection.execute(
+            '''
+            SELECT 1
+            FROM conversation_turns AS turn
+            JOIN conversation_trusted_tool_results AS result
+              ON result.user_id = turn.user_id
+             AND result.request_id = turn.request_id
+            LIMIT 1
+            '''
+        ).fetchone()
+        if collision is not None:
+            raise RuntimeError(
+                'trusted tool result request namespace is invalid'
+            )
+        rows = self._connection.execute(
+            'SELECT * FROM conversation_trusted_tool_results'
+        ).fetchall()
+        for row in rows:
+            commit = self._trusted_result_from_row(row, cached=True)
+            expected = self._trusted_result_fingerprint(commit.envelope)
+            expected_commit = self._trusted_result_commit_fingerprint(
+                expected,
+                commit.commit_id,
+                commit.conversation_revision_after,
+                commit.committed_at,
+            )
+            session_row = self._select_session_locked(
+                commit.envelope.user_id,
+                commit.envelope.conversation_id,
+            )
+            if (
+                row['request_fingerprint'] != expected
+                or row['commit_fingerprint'] != expected_commit
+                or session_row is None
+                or int(session_row['revision'])
+                < commit.conversation_revision_after
+            ):
+                raise RuntimeError(
+                    'trusted tool result binding is invalid'
+                )
 
     def _ensure_session_instance_columns(self) -> None:
         """Add opaque session identities to databases from version 0.2."""
@@ -650,15 +1383,394 @@ class SQLiteConversationStore:
                     if summary_row is not None
                     else None
                 )
+                trusted_results = self._trusted_results_locked(
+                    session,
+                    normalized_limit,
+                )
                 self._connection.commit()
                 return ConversationSnapshot(
                     session=session,
                     turns=tuple(turns),
                     summary=summary,
+                    trusted_tool_results=tuple(trusted_results),
                 )
             except Exception:
                 self._connection.rollback()
                 raise
+
+    def append_trusted_tool_result(
+        self,
+        envelope: ConversationTrustedToolResult,
+    ) -> TrustedToolResultCommit:
+        """Atomically append or exactly replay one trusted Tool result."""
+        if type(envelope) is not ConversationTrustedToolResult:
+            raise ValidationError(
+                'trusted tool result envelope is invalid'
+            )
+        envelope = self._snapshot_trusted_result_envelope(envelope)
+        fingerprint = self._trusted_result_fingerprint(envelope)
+        failure: Optional[str] = None
+        with self._lock:
+            try:
+                self._begin()
+                now = self._now()
+                self._expire_due_locked(now)
+                existing_rows = self._existing_trusted_results_locked(
+                    envelope,
+                )
+                if existing_rows:
+                    if len(existing_rows) != 1:
+                        raise ConversationConflictError(
+                            'trusted tool result identity conflicts'
+                        )
+                    existing = existing_rows[0]
+                    if not self._trusted_result_replay_matches(
+                        existing,
+                        envelope,
+                        fingerprint,
+                    ):
+                        raise ConversationConflictError(
+                            'trusted tool result identity conflicts'
+                        )
+                    result = self._trusted_result_from_row(
+                        existing,
+                        cached=True,
+                    )
+                    self._connection.commit()
+                    return result
+                request_collision = self._existing_request_locked(
+                    envelope.user_id,
+                    envelope.request_id,
+                )
+                if request_collision is not None:
+                    raise ConversationConflictError(
+                        'conversation request identity conflicts'
+                    )
+                session_row = self._select_session_locked(
+                    envelope.user_id,
+                    envelope.conversation_id,
+                )
+                session = self._require_active(session_row)
+                if (
+                    session.session_instance_id
+                    != envelope.session_instance_id
+                    or session.generation != envelope.generation
+                ):
+                    raise ConversationChangedError(
+                        'trusted tool result destination changed'
+                    )
+                if session.revision < envelope.source_revision:
+                    raise ConversationChangedError(
+                        'trusted tool result source revision is ahead'
+                    )
+                pending = self._connection.execute(
+                    '''
+                    SELECT 1
+                    FROM conversation_turns
+                    WHERE user_id = ?
+                      AND conversation_id = ?
+                      AND session_instance_id = ?
+                      AND generation = ?
+                      AND status = 'pending'
+                    LIMIT 1
+                    ''',
+                    (
+                        envelope.user_id,
+                        envelope.conversation_id,
+                        envelope.session_instance_id,
+                        envelope.generation,
+                    ),
+                ).fetchone()
+                if pending is not None:
+                    raise ConversationBusyError(
+                        'conversation has a retryable pending turn'
+                    )
+                count_row = self._connection.execute(
+                    '''
+                    SELECT COUNT(*) AS result_count
+                    FROM conversation_trusted_tool_results
+                    WHERE user_id = ?
+                      AND conversation_id = ?
+                      AND session_instance_id = ?
+                      AND generation = ?
+                    ''',
+                    (
+                        envelope.user_id,
+                        envelope.conversation_id,
+                        envelope.session_instance_id,
+                        envelope.generation,
+                    ),
+                ).fetchone()
+                if (
+                    int(count_row['result_count'])
+                    >= MAX_TRUSTED_TOOL_RESULTS_PER_GENERATION
+                ):
+                    raise ConversationStateError(
+                        'trusted tool result limit reached'
+                    )
+                revision_after = session.revision + 1
+                commit_id = f'conversation-tool-result-{uuid.uuid4()}'
+                commit_fingerprint = (
+                    self._trusted_result_commit_fingerprint(
+                        fingerprint,
+                        commit_id,
+                        revision_after,
+                        now,
+                    )
+                )
+                terminal = envelope.result
+                self._connection.execute(
+                    '''
+                    INSERT INTO conversation_trusted_tool_results (
+                        feedback_id,
+                        user_id,
+                        conversation_id,
+                        session_instance_id,
+                        generation,
+                        source_revision,
+                        request_id,
+                        tool_call_id,
+                        request_fingerprint,
+                        commit_fingerprint,
+                        schema_version,
+                        terminal_digest,
+                        status,
+                        phase,
+                        code,
+                        terminal_source,
+                        result_sequence,
+                        runtime_mode,
+                        simulated,
+                        physical_effects,
+                        viewer_live,
+                        durability,
+                        lease_scope,
+                        commit_id,
+                        conversation_revision_after,
+                        committed_at
+                    )
+                    VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    ''',
+                    (
+                        envelope.feedback_id,
+                        envelope.user_id,
+                        envelope.conversation_id,
+                        envelope.session_instance_id,
+                        envelope.generation,
+                        envelope.source_revision,
+                        envelope.request_id,
+                        envelope.tool_call_id,
+                        fingerprint,
+                        commit_fingerprint,
+                        envelope.schema_version,
+                        terminal.terminal_digest,
+                        terminal.status,
+                        terminal.phase,
+                        terminal.code,
+                        terminal.source,
+                        terminal.sequence,
+                        terminal.runtime_mode,
+                        int(terminal.simulated),
+                        int(terminal.physical_effects),
+                        int(terminal.viewer_live),
+                        terminal.durability,
+                        terminal.lease_scope,
+                        commit_id,
+                        revision_after,
+                        now,
+                    ),
+                )
+                cursor = self._connection.execute(
+                    '''
+                    UPDATE conversation_sessions
+                    SET revision = ?,
+                        updated_at = ?
+                    WHERE user_id = ?
+                      AND conversation_id = ?
+                      AND session_instance_id = ?
+                      AND generation = ?
+                      AND revision = ?
+                      AND status = 'active'
+                    ''',
+                    (
+                        revision_after,
+                        now,
+                        envelope.user_id,
+                        envelope.conversation_id,
+                        envelope.session_instance_id,
+                        envelope.generation,
+                        session.revision,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ConversationChangedError(
+                        'trusted tool result destination changed'
+                    )
+                stored = self._connection.execute(
+                    '''
+                    SELECT *
+                    FROM conversation_trusted_tool_results
+                    WHERE feedback_id = ?
+                    ''',
+                    (envelope.feedback_id,),
+                ).fetchone()
+                self._connection.commit()
+                self._secure_file_permissions()
+                return self._trusted_result_from_row(
+                    stored,
+                    cached=False,
+                )
+            except (
+                ConversationBusyError,
+                ConversationChangedError,
+                ConversationConflictError,
+                ConversationNotFoundError,
+                ConversationStateError,
+            ):
+                self._connection.rollback()
+                raise
+            except sqlite3.IntegrityError:
+                self._connection.rollback()
+                failure = 'conflict'
+            except Exception:
+                self._connection.rollback()
+                failure = 'storage'
+        if failure == 'conflict':
+            error = ConversationConflictError(
+                'trusted tool result identity conflicts'
+            )
+            error.__cause__ = None
+            error.__context__ = None
+            raise error
+        error = ConversationStateError(
+            'trusted tool result storage failed'
+        )
+        error.__cause__ = None
+        error.__context__ = None
+        raise error
+
+    def list_trusted_tool_results(
+        self,
+        user_id: str,
+        conversation_id: str,
+        limit: int = 100,
+    ) -> List[TrustedToolResultCommit]:
+        """Return current-generation trusted results in commit order."""
+        normalized_limit = self._bounded_integer(
+            limit,
+            'trusted result limit',
+            1,
+            500,
+        )
+        normalized_user = validate_user_id(user_id)
+        normalized_conversation = validate_conversation_id(
+            conversation_id
+        )
+        failed = False
+        with self._lock:
+            try:
+                self._begin()
+                self._expire_due_locked(self._now())
+                row = self._select_session_locked(
+                    normalized_user,
+                    normalized_conversation,
+                )
+                if row is None:
+                    raise ConversationNotFoundError(
+                        'conversation was not found'
+                    )
+                session = self._session_from_row(row)
+                results = self._trusted_results_locked(
+                    session,
+                    normalized_limit,
+                )
+                self._connection.commit()
+                return results
+            except ConversationNotFoundError:
+                self._connection.rollback()
+                raise
+            except Exception:
+                self._connection.rollback()
+                failed = True
+        if failed:
+            error = ConversationStateError(
+                'trusted tool result read failed'
+            )
+            error.__cause__ = None
+            error.__context__ = None
+            raise error
+        raise RuntimeError('trusted tool result read did not finish')
+
+    def get_trusted_tool_result(
+        self,
+        user_id: str,
+        conversation_id: str,
+        feedback_id: str,
+    ) -> TrustedToolResultCommit:
+        """Return one current-generation result without cross-owner hints."""
+        normalized_user = validate_user_id(user_id)
+        normalized_conversation = validate_conversation_id(
+            conversation_id
+        )
+        normalized_feedback = _trusted_result_identifier(
+            feedback_id,
+            'feedback_id',
+        )
+        failed = False
+        with self._lock:
+            try:
+                self._begin()
+                self._expire_due_locked(self._now())
+                session_row = self._select_session_locked(
+                    normalized_user,
+                    normalized_conversation,
+                )
+                if session_row is None:
+                    raise ConversationNotFoundError(
+                        'trusted tool result was not found'
+                    )
+                session = self._session_from_row(session_row)
+                row = self._connection.execute(
+                    '''
+                    SELECT *
+                    FROM conversation_trusted_tool_results
+                    WHERE user_id = ?
+                      AND conversation_id = ?
+                      AND session_instance_id = ?
+                      AND generation = ?
+                      AND feedback_id = ?
+                    ''',
+                    (
+                        normalized_user,
+                        normalized_conversation,
+                        session.session_instance_id,
+                        session.generation,
+                        normalized_feedback,
+                    ),
+                ).fetchone()
+                if row is None:
+                    raise ConversationNotFoundError(
+                        'trusted tool result was not found'
+                    )
+                self._connection.commit()
+                return self._trusted_result_from_row(row, cached=True)
+            except ConversationNotFoundError:
+                self._connection.rollback()
+                raise
+            except Exception:
+                self._connection.rollback()
+                failed = True
+        if failed:
+            error = ConversationStateError(
+                'trusted tool result read failed'
+            )
+            error.__cause__ = None
+            error.__context__ = None
+            raise error
+        raise RuntimeError('trusted tool result read did not finish')
 
     def begin_turn(
         self,
@@ -698,6 +1810,19 @@ class SQLiteConversationStore:
                     normalized_id,
                 )
                 session = self._require_active(row)
+                trusted_request = self._connection.execute(
+                    '''
+                    SELECT 1
+                    FROM conversation_trusted_tool_results
+                    WHERE user_id = ? AND request_id = ?
+                    LIMIT 1
+                    ''',
+                    (normalized_user, normalized_request),
+                ).fetchone()
+                if trusted_request is not None:
+                    raise ConversationConflictError(
+                        'conversation request identity conflicts'
+                    )
                 existing = self._existing_request_locked(
                     normalized_user,
                     normalized_request,
@@ -1638,6 +2763,225 @@ class SQLiteConversationStore:
             self._turn_from_row(row)
             for row in reversed(rows)
         ]
+
+    def _existing_trusted_results_locked(
+        self,
+        envelope: ConversationTrustedToolResult,
+    ) -> List[sqlite3.Row]:
+        """Resolve every globally or owner-scoped idempotency key."""
+        return self._connection.execute(
+            '''
+            SELECT *
+            FROM conversation_trusted_tool_results
+            WHERE feedback_id = ?
+               OR tool_call_id = ?
+               OR (user_id = ? AND request_id = ?)
+            ''',
+            (
+                envelope.feedback_id,
+                envelope.tool_call_id,
+                envelope.user_id,
+                envelope.request_id,
+            ),
+        ).fetchall()
+
+    @staticmethod
+    def _snapshot_trusted_result_envelope(
+        envelope: ConversationTrustedToolResult,
+    ) -> ConversationTrustedToolResult:
+        """Revalidate a detached scalar snapshot at the store boundary."""
+        if type(envelope.result) is not TrustedRoomMissionTerminalResult:
+            raise ValidationError(
+                'trusted tool result payload is invalid'
+            )
+        source = envelope.result
+        result = TrustedRoomMissionTerminalResult(
+            terminal_digest=source.terminal_digest,
+            status=source.status,
+            code=source.code,
+            source=source.source,
+            sequence=source.sequence,
+            schema_version=source.schema_version,
+            phase=source.phase,
+            runtime_mode=source.runtime_mode,
+            simulated=source.simulated,
+            physical_effects=source.physical_effects,
+            viewer_live=source.viewer_live,
+            durability=source.durability,
+            lease_scope=source.lease_scope,
+        )
+        return ConversationTrustedToolResult(
+            feedback_id=envelope.feedback_id,
+            request_id=envelope.request_id,
+            tool_call_id=envelope.tool_call_id,
+            user_id=envelope.user_id,
+            conversation_id=envelope.conversation_id,
+            session_instance_id=envelope.session_instance_id,
+            generation=envelope.generation,
+            source_revision=envelope.source_revision,
+            result=result,
+            schema_version=envelope.schema_version,
+        )
+
+    @staticmethod
+    def _trusted_result_replay_matches(
+        row: sqlite3.Row,
+        envelope: ConversationTrustedToolResult,
+        fingerprint: str,
+    ) -> bool:
+        """Match all three keys and the complete canonical payload."""
+        return (
+            row['feedback_id'] == envelope.feedback_id
+            and row['user_id'] == envelope.user_id
+            and row['conversation_id'] == envelope.conversation_id
+            and row['session_instance_id']
+            == envelope.session_instance_id
+            and int(row['generation']) == envelope.generation
+            and int(row['source_revision'])
+            == envelope.source_revision
+            and row['request_id'] == envelope.request_id
+            and row['tool_call_id'] == envelope.tool_call_id
+            and row['request_fingerprint'] == fingerprint
+        )
+
+    @staticmethod
+    def _trusted_result_fingerprint(
+        envelope: ConversationTrustedToolResult,
+    ) -> str:
+        """Hash the full normalized owner, destination, and terminal input."""
+        canonical = json.dumps(
+            ConversationTrustedToolResult.to_dict(envelope),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(',', ':'),
+        ).encode('utf-8')
+        return hashlib.sha256(canonical).hexdigest()
+
+    @staticmethod
+    def _trusted_result_commit_fingerprint(
+        request_fingerprint: str,
+        commit_id: str,
+        conversation_revision_after: int,
+        committed_at: float,
+    ) -> str:
+        """Bind the immutable receipt fields to the canonical request."""
+        canonical = json.dumps(
+            {
+                'request_fingerprint': request_fingerprint,
+                'commit_id': commit_id,
+                'conversation_revision_after': (
+                    conversation_revision_after
+                ),
+                'committed_at': committed_at,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(',', ':'),
+        ).encode('utf-8')
+        return hashlib.sha256(canonical).hexdigest()
+
+    def _trusted_results_locked(
+        self,
+        session: ConversationSession,
+        limit: int,
+    ) -> List[TrustedToolResultCommit]:
+        """Read only the session's current opaque instance and generation."""
+        rows = self._connection.execute(
+            '''
+            SELECT *
+            FROM conversation_trusted_tool_results
+            WHERE user_id = ?
+              AND conversation_id = ?
+              AND session_instance_id = ?
+              AND generation = ?
+            ORDER BY conversation_revision_after DESC
+            LIMIT ?
+            ''',
+            (
+                session.user_id,
+                session.conversation_id,
+                session.session_instance_id,
+                session.generation,
+                limit,
+            ),
+        ).fetchall()
+        return [
+            self._trusted_result_from_row(row, cached=True)
+            for row in reversed(rows)
+        ]
+
+    @staticmethod
+    def _trusted_result_from_row(
+        row: sqlite3.Row,
+        *,
+        cached: bool,
+    ) -> TrustedToolResultCommit:
+        """Rebuild and revalidate one content-free stored result."""
+        if row is None:
+            raise RuntimeError('trusted tool result is missing')
+        if (
+            int(row['simulated']) != 1
+            or int(row['physical_effects']) != 0
+            or int(row['viewer_live']) != 0
+        ):
+            raise RuntimeError(
+                'trusted tool result simulation marker is invalid'
+            )
+        result = TrustedRoomMissionTerminalResult(
+            terminal_digest=str(row['terminal_digest']),
+            status=str(row['status']),
+            code=str(row['code']),
+            source=str(row['terminal_source']),
+            sequence=int(row['result_sequence']),
+            schema_version=int(row['schema_version']),
+            phase=str(row['phase']),
+            runtime_mode=str(row['runtime_mode']),
+            simulated=bool(row['simulated']),
+            physical_effects=bool(row['physical_effects']),
+            viewer_live=bool(row['viewer_live']),
+            durability=str(row['durability']),
+            lease_scope=str(row['lease_scope']),
+        )
+        envelope = ConversationTrustedToolResult(
+            feedback_id=str(row['feedback_id']),
+            request_id=str(row['request_id']),
+            tool_call_id=str(row['tool_call_id']),
+            user_id=str(row['user_id']),
+            conversation_id=str(row['conversation_id']),
+            session_instance_id=str(row['session_instance_id']),
+            generation=int(row['generation']),
+            source_revision=int(row['source_revision']),
+            result=result,
+            schema_version=int(row['schema_version']),
+        )
+        commit = TrustedToolResultCommit(
+            commit_id=str(row['commit_id']),
+            envelope=envelope,
+            conversation_revision_after=int(
+                row['conversation_revision_after']
+            ),
+            committed_at=float(row['committed_at']),
+            cached=cached,
+        )
+        request_fingerprint = (
+            SQLiteConversationStore._trusted_result_fingerprint(
+                envelope
+            )
+        )
+        commit_fingerprint = (
+            SQLiteConversationStore._trusted_result_commit_fingerprint(
+                request_fingerprint,
+                commit.commit_id,
+                commit.conversation_revision_after,
+                commit.committed_at,
+            )
+        )
+        if (
+            row['request_fingerprint'] != request_fingerprint
+            or row['commit_fingerprint'] != commit_fingerprint
+        ):
+            raise RuntimeError('trusted tool result binding is invalid')
+        return commit
 
     def _expire_and_commit(self, now: float) -> None:
         self._begin()

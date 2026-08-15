@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MALBUT 한 페이지 전체 구조 맵</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #647085;
+      --paper: #f6f7fb;
+      --card: #ffffff;
+      --line: #d9dfeb;
+      --video: #7857d8;
+      --move: #168a63;
+      --map: #d17b17;
+      --agent: #2672bf;
+      --danger: #d44949;
+      --shadow: 0 8px 26px rgba(29, 42, 68, .08);
+    }
+
+    * { box-sizing: border-box; }
+    html { background: #dfe4ee; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: Inter, Pretendard, "Noto Sans KR", system-ui, sans-serif;
+      line-height: 1.35;
+    }
+    a { color: inherit; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .page {
+      width: min(1600px, 100%);
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: 28px 34px 24px;
+      background:
+        radial-gradient(circle at 4% 2%, rgba(120,87,216,.10), transparent 20%),
+        radial-gradient(circle at 97% 1%, rgba(38,114,191,.10), transparent 24%),
+        var(--paper);
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 22px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+    .eyebrow {
+      color: var(--agent);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 3px 0 7px;
+      font-size: clamp(28px, 3.1vw, 48px);
+      line-height: 1.03;
+      letter-spacing: -.045em;
+    }
+    .lede { margin: 0; color: #3f4c63; font-size: 15px; max-width: 900px; }
+    .atlas-link {
+      display: inline-flex;
+      margin-top: 9px;
+      padding: 6px 10px;
+      border: 1px solid #9fc2e6;
+      border-radius: 8px;
+      color: #1d5e9f;
+      background: #eef6ff;
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .truth {
+      padding: 14px 16px;
+      border: 1px solid #f0b8b8;
+      border-left: 5px solid var(--danger);
+      border-radius: 12px;
+      background: #fff8f8;
+      font-size: 13px;
+    }
+    .truth strong { color: #9e2929; }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin: 0 0 13px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 8px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+    .routes { display: grid; gap: 10px; }
+    .route {
+      --route: var(--agent);
+      display: grid;
+      grid-template-columns: 128px 1fr;
+      gap: 10px;
+      padding: 10px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      position: relative;
+    }
+    .route::before {
+      content: "";
+      position: absolute;
+      left: 148px;
+      right: 22px;
+      top: 50%;
+      height: 4px;
+      transform: translateY(-2px);
+      background: color-mix(in srgb, var(--route) 32%, white);
+      z-index: 0;
+    }
+    .route.video { --route: var(--video); }
+    .route.move { --route: var(--move); }
+    .route.map { --route: var(--map); }
+    .route.agent { --route: var(--agent); }
+
+    .route-label {
+      min-height: 70px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 10px 12px;
+      color: #fff;
+      background: var(--route);
+      border-radius: 11px;
+      position: relative;
+      z-index: 2;
+    }
+    .route-label b { font-size: 17px; letter-spacing: -.02em; }
+    .route-label span { opacity: .83; font-size: 10px; margin-top: 2px; }
+
+    .stations {
+      display: grid;
+      grid-template-columns: repeat(var(--cols), minmax(100px, 1fr));
+      gap: 12px;
+      align-items: stretch;
+      position: relative;
+      z-index: 1;
+    }
+    .station {
+      min-height: 70px;
+      padding: 10px 10px 9px;
+      background: #fff;
+      border: 2px solid var(--route);
+      border-radius: 11px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+      box-shadow: 0 3px 10px rgba(29,42,68,.06);
+    }
+    .station b { font-size: 12px; }
+    .station small { display: block; color: var(--muted); font-size: 9.5px; margin-top: 3px; }
+    .station.external { border-style: dashed; background: #fafbfc; }
+    .station.gap {
+      border-color: var(--danger);
+      border-style: dashed;
+      background: #fff5f5;
+      color: #9e2929;
+    }
+    .station.gap::before { content: "현재 끊김 · "; font-size: 9px; font-weight: 800; }
+
+    .foundation {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .panel {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 13px 15px;
+      box-shadow: var(--shadow);
+    }
+    .panel h2 { margin: 0 0 9px; font-size: 14px; }
+
+    .base-flow {
+      display: grid;
+      grid-template-columns: repeat(7, auto);
+      align-items: center;
+      gap: 7px;
+      font-size: 11px;
+    }
+    .base-node {
+      padding: 9px 8px;
+      border: 1px solid #dda658;
+      border-radius: 9px;
+      text-align: center;
+      background: #fff9ef;
+    }
+    .arrow { color: var(--map); font-weight: 900; }
+
+    .packages {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 7px;
+      font-size: 10px;
+    }
+    .pkg {
+      padding: 8px;
+      border-radius: 8px;
+      background: #f7f9fc;
+      border: 1px solid #e1e6ef;
+    }
+    .pkg b { display: block; font-size: 10.5px; margin-bottom: 2px; }
+
+    footer {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .study {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 5px;
+      counter-reset: step;
+    }
+    .study div {
+      counter-increment: step;
+      position: relative;
+      min-height: 52px;
+      padding: 8px 7px 7px 27px;
+      border: 1px solid #dbe1ec;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 9.5px;
+    }
+    .study div::before {
+      content: counter(step);
+      position: absolute;
+      left: 7px;
+      top: 8px;
+      width: 15px;
+      height: 15px;
+      line-height: 15px;
+      text-align: center;
+      border-radius: 50%;
+      color: #fff;
+      background: var(--agent);
+      font-size: 9px;
+      font-weight: 800;
+    }
+    .status-list { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 12px; font-size: 10px; }
+    .status-list b { display: inline-block; min-width: 49px; }
+    .tiny { color: var(--muted); font-size: 9px; margin-top: 7px; }
+
+    @media (max-width: 980px) {
+      header, .foundation, footer { grid-template-columns: 1fr; }
+      .route { grid-template-columns: 1fr; }
+      .route::before { display: none; }
+      .stations { grid-template-columns: repeat(2, 1fr); }
+      .study { grid-template-columns: repeat(2, 1fr); }
+      .base-flow { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); text-align: center; }
+    }
+
+    @media print {
+      @page { size: A3 landscape; margin: 8mm; }
+      html, body { background: #fff; }
+      .page { width: 100%; min-height: auto; padding: 0; }
+      .route, .panel { box-shadow: none; break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div>
+        <div class="eyebrow">MALBUT · SYSTEM MAP · 2026-08-14</div>
+        <h1>이동형 홈캠 로봇, 한 장 전체 구조</h1>
+        <p class="lede">설계도와 Gazebo가 ROS 데이터를 만들고, Nav2가 이동하며,
+          Homecam은 영상을 웹으로 보낸다. LLM Agent는 현재 대화·안전 판정·Tool 제안까지만 담당한다.</p>
+        <a class="atlas-link" href="architecture/index.html">정식 Architecture Atlas 열기 →</a>
+      </div>
+      <div class="truth"><strong>절대 헷갈리면 안 되는 경계</strong><br>
+        LLM이 바퀴를 직접 움직이지 않는다. 현재 Agent의 Tool 결과는
+        <code>execution.authorized=false</code>이며, Agent↔ROS 실제 실행 adapter는 없다.</div>
+    </header>
+
+    <div class="legend">
+      <span class="chip"><i class="dot" style="background:#168a63"></i> 연결·구현</span>
+      <span class="chip"><i class="dot" style="background:#d17b17"></i> 조건부/시뮬레이션</span>
+      <span class="chip"><i class="dot" style="background:#d44949"></i> 미연결 경계</span>
+      <span class="chip"><i class="dot" style="background:#7a818b"></i> 외부 서비스/실물</span>
+      <span class="chip">실선 = 현재 데이터 흐름 · 점선 = 계약만 있거나 후속 연결</span>
+    </div>
+
+    <section class="routes" aria-label="Malbut의 네 가지 핵심 흐름">
+      <article class="route video">
+        <div class="route-label"><b>① HOME-CAM</b><span>영상·이벤트·PTT 노선</span></div>
+        <div class="stations" style="--cols: 5">
+          <a class="station" href="../malbut_gazebo/config/bridge.yaml"><b>Gazebo / Aurora</b><small>RGB·CameraInfo·/odom</small></a>
+          <div class="station"><b>ROS Topics</b><small>같은 Image가 두 노드로 분기</small></div>
+          <a class="station" href="../homecam_agent/README.md"><b>Media ∥ Detector</b><small>H.264/Opus ∥ motion/YOLO</small></a>
+          <div class="station external"><b>Backend ∥ AWS KVS</b><small>장치 API·이벤트 ∥ WebRTC·HLS</small></div>
+          <div class="station external"><b>Web / PWA</b><small>라이브·녹화·알림·PTT</small></div>
+        </div>
+      </article>
+
+      <article class="route move">
+        <div class="route-label"><b>② MOVE</b><span>위치추정·주행 노선</span></div>
+        <div class="stations" style="--cols: 6">
+          <div class="station"><b>Nav2 Goal / RViz</b><small>이동 목표</small></div>
+          <a class="station" href="../malbut_gazebo/config/nav2_params.yaml"><b>BT + Planner</b><small>SmacPlanner2D</small></a>
+          <a class="station" href="../malbut_gazebo/config/nav2_params.yaml"><b>Controller</b><small>MPPI·omnidirectional</small></a>
+          <div class="station"><b>/cmd_vel</b><small>ROS → Gazebo</small></div>
+          <a class="station" href="../malbut_gazebo/urdf/gazebo_plugins.xacro"><b>Mecanum Plugin</b><small>바퀴 4개 물리</small></a>
+          <div class="station"><b>Feedback</b><small>/scan·/odom·/tf</small></div>
+        </div>
+      </article>
+
+      <article class="route map">
+        <div class="route-label"><b>③ MAP</b><span>지도·Room·Zone 노선</span></div>
+        <div class="stations" style="--cols: 6">
+          <div class="station"><b>LiDAR + TF</b><small>/scan·odom→base</small></div>
+          <a class="station" href="../malbut_gazebo/launch/slam.launch.py"><b>SLAM Toolbox</b><small>/map·map→odom</small></a>
+          <div class="station"><b>ROS Map</b><small>map.yaml + map.pgm</small></div>
+          <a class="station" href="../malbut_gazebo/malbut_gazebo/user_map_builder.py"><b>User Map</b><small>주행영역 → GeoJSON</small></a>
+          <a class="station" href="../malbut_gazebo/malbut_gazebo/user_map_editor.py"><b>Room / Zone</b><small>사용자 분할·이름·규칙</small></a>
+          <a class="station" href="../malbut_gazebo/launch/navigation.launch.py"><b>Nav2 Filter</b><small>허용·우회·진입금지</small></a>
+        </div>
+      </article>
+
+      <article class="route agent">
+        <div class="route-label"><b>④ LLM AGENT</b><span>대화·안전·제안 노선</span></div>
+        <div class="stations" style="--cols: 7">
+          <a class="station" href="../malbut_agent_server/malbut_agent_server/http_server.py"><b>HTTP Request</b><small>loopback·Bearer·strict JSON</small></a>
+          <a class="station" href="../malbut_agent_server/malbut_agent_server/conversation.py"><b>Context</b><small>대화·요약·기억 SQLite</small></a>
+          <a class="station" href="../malbut_agent_server/malbut_agent_server/prompting.py"><b>Prompt</b><small>과거 문맥은 untrusted</small></a>
+          <a class="station" href="../malbut_agent_server/malbut_agent_server/providers/openai_responses.py"><b>Provider</b><small>Mock / OpenAI Responses</small></a>
+          <a class="station" href="../malbut_agent_server/malbut_agent_server/schemas.py"><b>AgentDecision</b><small>message·tool·clarify·refuse</small></a>
+          <a class="station" href="../malbut_agent_server/malbut_agent_server/safety.py"><b>SafetyPolicy</b><small>로컬 결정론적 gate</small></a>
+          <div class="station gap"><b>ROS Executor</b><small>확인·신뢰상태·1회실행 필요</small></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="foundation">
+      <div class="panel">
+        <h2>기반: 설계도가 시뮬레이션 로봇이 되는 순서</h2>
+        <div class="base-flow">
+          <a class="base-node" href="../malbut_description/config/ultimate_orin_nx_super_mecanum.yaml">variant YAML<br><small>수치</small></a><span class="arrow">→</span>
+          <a class="base-node" href="../malbut_description/urdf/rosorin.xacro">Xacro/URDF<br><small>링크·조인트</small></a><span class="arrow">→</span>
+          <a class="base-node" href="../malbut_gazebo/urdf/robot.gazebo.xacro">Gazebo Xacro<br><small>물리·센서</small></a><span class="arrow">→</span>
+          <a class="base-node" href="../malbut_gazebo/launch/simulation.launch.py">Gazebo<br><small>world·robot</small></a><span class="arrow">→</span>
+          <a class="base-node" href="../malbut_gazebo/config/bridge.yaml">ros_gz_bridge<br><small>ROS topics</small></a>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>패키지 소유권</h2>
+        <div class="packages">
+          <div class="pkg"><b>malbut_description</b>로봇 설계도</div>
+          <div class="pkg"><b>malbut_gazebo</b>물리·센서·SLAM·Nav2·지도</div>
+          <div class="pkg"><b>homecam_media_agent</b>인코딩·KVS·장치 health</div>
+          <div class="pkg"><b>homecam_detector</b>motion/YOLO·이벤트</div>
+          <div class="pkg"><b>malbut_agent_server</b>대화·LLM·Safety·제안</div>
+          <div class="pkg"><b>homecam_web (별도)</b>PWA·인증·DB·AWS broker</div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="panel">
+        <h2>추천 공부 순서</h2>
+        <div class="study">
+          <div><b>설계도</b><br>Xacro·link·joint</div>
+          <div><b>Gazebo</b><br>plugin·bridge</div>
+          <div><b>이동</b><br>TF·SLAM·Nav2</div>
+          <div><b>지도</b><br>Room·Zone·mask</div>
+          <div><b>홈캠</b><br>media·detector·KVS</div>
+          <div><b>LLM</b><br>context·decision·safety</div>
+          <div><b>통합</b><br>확인·ROS adapter·feedback</div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>현재 완성도 표시</h2>
+        <div class="status-list">
+          <span><b>구현</b> Gazebo·bridge·SLAM/Nav2·지도 편집</span>
+          <span><b>구현</b> Agent 대화·기억·Provider·Safety</span>
+          <span><b>조건부</b> KVS 활성 빌드·YOLO 모델·Jetson</span>
+          <span><b>개발용</b> one-shot 로컬 STT (WAV·짧은 마이크)</span>
+          <span><b>미연결</b> Agent→ROS 실행, Agent↔Homecam</span>
+          <span><b>코어만</b> 연속 STT/TTS·표정 renderer·Memory API</span>
+          <span><b>실험</b> malbut_vision OpenCV 학습 도구</span>
+        </div>
+        <div class="tiny">Castform은 Agent 실행선이 아니라 데이터·Tool·reward → 튜닝 모델 → Provider로 들어오는 별도 학습/평가 가지다.</div>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>

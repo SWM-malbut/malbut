@@ -1,0 +1,182 @@
+digraph MalbutContainers {
+  graph [
+    label="MALBUT · C4 Level 2 — Container View\n프로그램·프로세스·데이터 저장소가 어떻게 나뉘는가",
+    labelloc=t,
+    fontsize=22,
+    fontname="DejaVu Sans",
+    rankdir=TB,
+    compound=true,
+    newrank=true,
+    bgcolor="#F7F9FC",
+    pad=0.35,
+    nodesep=0.34,
+    ranksep=0.72,
+    splines=polyline
+  ];
+  node [
+    shape=box,
+    style="rounded,filled",
+    fontname="DejaVu Sans",
+    fontsize=9.5,
+    color="#2368A2",
+    fillcolor="#438DD5",
+    fontcolor="white",
+    penwidth=1.35,
+    margin="0.14,0.09"
+  ];
+  edge [
+    fontname="DejaVu Sans",
+    fontsize=7.8,
+    color="#53657A",
+    fontcolor="#33465C",
+    arrowsize=0.65,
+    penwidth=1.05
+  ];
+
+  owner [label="보호자·가족\n[Person]", shape=oval, fillcolor="#08427B", color="#052E56"];
+  operator [label="개발자·운영자\n[Person]", shape=oval, fillcolor="#08427B", color="#052E56"];
+
+  subgraph cluster_web {
+    label="Cloud / Web — 별도 homecam_web 저장소";
+    color="#9E6AAB";
+    fontcolor="#593463";
+    fontsize=12;
+    fontname="DejaVu Sans";
+    style="rounded,dashed";
+    bgcolor="#FCF7FD";
+
+    pwa [label="Homecam PWA\n[Container · RUN]\nNext.js 16 / React 19\n라이브·녹화·이벤트·PTT"];
+    api [label="Homecam Backend API\n[Container · RUN]\nNext.js Node service\n인증·장치·session·event"];
+    pg [label="Homecam PostgreSQL\n[Data Store · RUN/COND]\n장치·상태·이벤트·세션·감사", shape=cylinder, fillcolor="#2E7D32", color="#1B5E20"];
+    kvs_broker [label="KVS Broker\n[Container · RUN code/COND deploy]\nLambda·HMAC·scoped STS"];
+    push_broker [label="Push/Maintenance\n[Container · RUN code/COND deploy]\nLambda·outbox·retention"];
+  }
+
+  subgraph cluster_edge {
+    label="Robot Edge — Ubuntu 22.04 / ROS 2 Humble";
+    color="#28856A";
+    fontcolor="#174E3F";
+    fontsize=12;
+    fontname="DejaVu Sans";
+    style="rounded,dashed";
+    bgcolor="#F2FCF7";
+
+    media [
+      label="homecam_media_agent\n[Container · RUN/COND]\nC++ ROS node·GStreamer\nheartbeat·session·KVS",
+      URL="../../homecam_agent/homecam_media_agent/src/media_agent_node.cpp",
+      target="_top"
+    ];
+    detector [
+      label="homecam_detector\n[Container · RUN/COND]\nPython ROS node\nmotion·YOLO·event",
+      URL="../../homecam_agent/homecam_detector/homecam_detector/detector_node.py",
+      target="_top"
+    ];
+    agent [
+      label="malbut_agent_server\n[Container · RUN, non-actuating]\nHTTP·context·provider·Safety\none-shot local STT optional",
+      URL="../../malbut_agent_server/README.md",
+      target="_top"
+    ];
+    agent_db [
+      label="Agent SQLite\n[Data Store · RUN]\nconversation·summary·memory·audit",
+      shape=cylinder,
+      fillcolor="#2E7D32",
+      color="#1B5E20",
+      URL="../../malbut_agent_server/malbut_agent_server/conversation.py",
+      target="_top"
+    ];
+  }
+
+  subgraph cluster_ros {
+    label="ROS / Simulation / Navigation";
+    color="#C37A1D";
+    fontcolor="#6D420C";
+    fontsize=12;
+    fontname="DejaVu Sans";
+    style="rounded,dashed";
+    bgcolor="#FFF9EF";
+
+    gazebo [
+      label="Gazebo Fortress\n[Container · RUN sim]\nworld·physics·drive/sensor plugins",
+      URL="../../malbut_gazebo/launch/simulation.launch.py",
+      target="_top"
+    ];
+    bridge [
+      label="ros_gz_bridge\n[Container · RUN sim]\nGazebo Transport ↔ ROS messages",
+      URL="../../malbut_gazebo/config/bridge.yaml",
+      target="_top"
+    ];
+    rsp [label="robot_state_publisher\n[Container · RUN sim]\nURDF + joints → TF"];
+    slam [
+      label="SLAM Toolbox / AMCL\n[Container · RUN sim]\nmap↔odom 위치 추정",
+      URL="../../malbut_gazebo/launch/slam.launch.py",
+      target="_top"
+    ];
+    nav [
+      label="Nav2\n[Container · RUN sim]\nBT·Smac planner·MPPI controller",
+      URL="../../malbut_gazebo/launch/navigation.launch.py",
+      target="_top"
+    ];
+    map_tools [
+      label="User Map / Room / Zone Tools\n[Container · RUN local]\nGeoJSON editor·Keepout mask",
+      URL="../../malbut_gazebo/malbut_gazebo/user_map_editor.py",
+      target="_top"
+    ];
+    artifacts [
+      label="Runtime Artifacts\n[Files]\nURDF·YAML·map.pgm/yaml\nGeoJSON·zone mask",
+      shape=folder,
+      fillcolor="#7B8794",
+      color="#59636E",
+      URL="../../malbut_description/urdf/rosorin.xacro",
+      target="_top"
+    ];
+  }
+
+  aws_kvs [label="AWS KVS / STS\n[External System]", fillcolor="#8D96A5", color="#656E7C"];
+  cognito [label="AWS Cognito\n[External System]", fillcolor="#8D96A5", color="#656E7C"];
+  web_push [label="Web Push\n[External System]", fillcolor="#8D96A5", color="#656E7C"];
+  openai [label="OpenAI Responses API\n[External System · optional]", fillcolor="#8D96A5", color="#656E7C"];
+  real_hw [label="Real base / Aurora / Jetson\n[External Physical · COND]", fillcolor="#FFF4DE", fontcolor="#5D3909", color="#C57A18", style="rounded,filled,dashed"];
+  execution_gap [label="GAP\n확인·trusted state·durable once·ROS adapter 없음", shape=octagon, fillcolor="#FFF0F0", fontcolor="#922222", color="#C62828", style="filled,dashed"];
+
+  owner -> pwa [label="HTTPS UI"];
+  pwa -> api [dir=both, label="same-origin HTTPS/JSON\nrecording HLS proxy"];
+  api -> pg [dir=both, label="PostgreSQL/TLS"];
+  api -> cognito [label="server auth"];
+  api -> kvs_broker [label="HMAC HTTPS"];
+  kvs_broker -> aws_kvs [label="AWS SDK·STS"];
+  pwa -> aws_kvs [dir=both, label="WebRTC live/PTT"];
+  api -> aws_kvs [dir=both, label="recording HLS\nbroker/proxy"];
+  api -> push_broker [label="outbox"];
+  push_broker -> web_push [label="Web Push"];
+  web_push -> pwa [label="service worker"];
+
+  media -> api [dir=both, label="HTTPS device bearer\nheartbeat·desired state·session"];
+  media -> aws_kvs [dir=both, label="H.264/Opus\nWebRTC/Storage"];
+  detector -> api [label="HTTPS idempotent event"];
+  media -> detector [label="ROS 2 DDS\n/monitoring_enabled"];
+  detector -> media [label="ROS 2 DDS\n/detector_healthy"];
+
+  gazebo -> bridge [dir=both, label="Gazebo Transport"];
+  bridge -> media [label="ROS 2 DDS\nImage·CameraInfo·Odom"];
+  bridge -> detector [label="ROS 2 DDS\nImage·Odom"];
+  bridge -> rsp [label="ROS 2 DDS\n/joint_states"];
+  bridge -> slam [label="ROS 2 DDS\n/scan·/tf·/clock"];
+  rsp -> slam [label="ROS 2 DDS · TF"];
+  rsp -> nav [label="ROS 2 DDS · TF"];
+  slam -> nav [label="ROS 2 DDS\n/map·map→odom"];
+  nav -> bridge [label="ROS 2 DDS\n/cmd_vel"];
+  slam -> artifacts [label="save map"];
+  map_tools -> artifacts [dir=both, label="read/write"];
+  artifacts -> nav [label="map·keepout config"];
+
+  operator -> agent [label="loopback HTTP/Bearer"];
+  operator -> map_tools [label="local browser/CLI"];
+  operator -> nav [label="RViz/Nav2 Goal"];
+  agent -> agent_db [dir=both, label="SQLite"];
+  agent -> openai [label="HTTPS /responses"];
+  agent -> execution_gap [style=dashed, color="#C62828", fontcolor="#922222", label="Tool proposal"];
+  execution_gap -> nav [style=dashed, color="#C62828", label="미연결"];
+  execution_gap -> media [style=dashed, color="#C62828", label="미연결"];
+  real_hw -> media [label="ROS camera/odom\nactual topic discovered"];
+  nav -> real_hw [style=dashed, color="#C57A18", label="/cmd_vel\n실물 driver는 외부"];
+}

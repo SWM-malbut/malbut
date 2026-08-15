@@ -1,0 +1,125 @@
+digraph MalbutContext {
+  graph [
+    label="MALBUT · C4 Level 1 — System Context\n누가 사용하고, 어떤 외부 시스템·물리 환경과 만나는가",
+    labelloc=t,
+    fontsize=22,
+    fontname="DejaVu Sans",
+    rankdir=LR,
+    bgcolor="#F7F9FC",
+    pad=0.35,
+    nodesep=0.55,
+    ranksep=1.05,
+    splines=polyline
+  ];
+  node [
+    shape=box,
+    style="rounded,filled",
+    fontname="DejaVu Sans",
+    fontsize=11,
+    color="#3D4A5D",
+    penwidth=1.5,
+    margin="0.18,0.12"
+  ];
+  edge [
+    fontname="DejaVu Sans",
+    fontsize=9,
+    color="#53657A",
+    fontcolor="#33465C",
+    arrowsize=0.75,
+    penwidth=1.25
+  ];
+
+  owner [
+    label="보호자 · 가족\n[Person]\n라이브·녹화·이벤트·PTT 사용",
+    shape=oval,
+    fillcolor="#08427B",
+    fontcolor="white",
+    color="#052E56"
+  ];
+  operator [
+    label="로봇 개발자 · 운영자\n[Person]\nGazebo·RViz·CLI·지도·Agent API",
+    shape=oval,
+    fillcolor="#08427B",
+    fontcolor="white",
+    color="#052E56",
+    URL="../../README.md",
+    target="_top"
+  ];
+  admin [
+    label="팀 · AWS 관리자\n[Person]\n배포·장치 provisioning·운영",
+    shape=oval,
+    fillcolor="#08427B",
+    fontcolor="white",
+    color="#052E56"
+  ];
+
+  malbut [
+    label="MALBUT 이동형 홈캠 로봇 플랫폼\n[Software System — system of interest]\n로봇 설계·시뮬레이션·주행·지도·홈캠·대화 Agent",
+    fillcolor="#1168BD",
+    fontcolor="white",
+    color="#0A4F92",
+    penwidth=2.5,
+    width=3.4,
+    height=1.25,
+    URL="../../README.md",
+    target="_top"
+  ];
+
+  aws_media [
+    label="AWS KVS · STS\n[External Software System]\nWebRTC·Storage·HLS·단기 자격 증명",
+    fillcolor="#8D96A5",
+    fontcolor="white",
+    color="#656E7C"
+  ];
+  cognito [
+    label="AWS Cognito\n[External Software System]\n사용자 인증",
+    fillcolor="#8D96A5",
+    fontcolor="white",
+    color="#656E7C"
+  ];
+  push [
+    label="Web Push Service\n[External Software System]\n브라우저 알림 전달",
+    fillcolor="#8D96A5",
+    fontcolor="white",
+    color="#656E7C"
+  ];
+  openai [
+    label="OpenAI Responses API\n[External Software System · optional]\n구조화된 AgentDecision 생성",
+    fillcolor="#8D96A5",
+    fontcolor="white",
+    color="#656E7C",
+    URL="../../malbut_agent_server/malbut_agent_server/providers/openai_responses.py",
+    target="_top"
+  ];
+  real_hw [
+    label="집 · 사람/반려동물 · 실물 로봇 장치\n[Physical Environment · EXT/COND]\nAurora·Jetson·base·LiDAR·IMU",
+    fillcolor="#FFF4DE",
+    color="#C57A18",
+    style="rounded,filled,dashed",
+    URL="../../homecam_agent/README.md",
+    target="_top"
+  ];
+
+  gap_note [
+    label="현재 경계\nHomecam Web ↔ LLM Agent 통합 없음\nAgent → ROS 물리 실행기 없음",
+    shape=note,
+    fillcolor="#FFF0F0",
+    color="#C62828",
+    fontcolor="#922222",
+    style="filled,dashed"
+  ];
+
+  { rank=same; owner; operator; admin; }
+  { rank=same; aws_media; cognito; push; openai; }
+
+  owner -> malbut [label="HTTPS/PWA\n라이브·녹화·이벤트·PTT"];
+  operator -> malbut [label="ROS CLI·RViz·local browser\nloopback Agent HTTP"];
+  admin -> malbut [label="provision · deploy · operate"];
+
+  malbut -> aws_media [dir=both, label="KVS WebRTC/Storage/HLS\nscoped STS"];
+  malbut -> cognito [label="server-side auth"];
+  malbut -> push [label="Web Push"];
+  malbut -> openai [label="HTTPS /responses\nprovider=openai일 때"];
+  malbut -> real_hw [dir=both, label="관측: RGB-D·scan·IMU·odom\n동작: cmd_vel (실물 adapter는 외부)"];
+  malbut -> gap_note [style=dashed, color="#C62828", arrowhead=none];
+}

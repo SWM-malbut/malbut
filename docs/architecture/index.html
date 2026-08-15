@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MALBUT Architecture Atlas</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #162538;
+      --muted: #607086;
+      --line: #d8e0ea;
+      --panel: #ffffff;
+      --canvas: #f3f6fa;
+      --blue: #0a5fa8;
+      --blue-soft: #e6f1fb;
+      --green: #1f7a58;
+      --amber: #b96b0b;
+      --red: #b4232f;
+      --gray: #667085;
+      --shadow: 0 14px 40px rgba(27, 51, 79, 0.10);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 0%, #e6f1ff 0, transparent 27rem),
+        var(--canvas);
+      font-family: "Noto Sans KR", "Pretendard", "DejaVu Sans", system-ui, sans-serif;
+    }
+
+    a { color: var(--blue); }
+
+    .shell {
+      width: min(1840px, 100%);
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .masthead {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 18px;
+      padding: 4px 4px 0;
+    }
+
+    .eyebrow {
+      margin: 0 0 7px;
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(27px, 3vw, 45px);
+      line-height: 1.08;
+      letter-spacing: -.035em;
+    }
+
+    .subtitle {
+      max-width: 850px;
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.65;
+    }
+
+    .header-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      flex: 0 0 auto;
+    }
+
+    .header-links a,
+    .source-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 38px;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--ink);
+      background: rgba(255, 255, 255, .82);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .header-links a:hover,
+    .source-link:hover { border-color: #8ab4dc; background: #fff; }
+
+    .status-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 18px;
+      padding: 13px 15px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, .78);
+      box-shadow: 0 5px 18px rgba(27, 51, 79, .04);
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status::before {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--status-color);
+      content: "";
+    }
+
+    .status strong { color: var(--ink); }
+    .run { --status-color: var(--green); }
+    .cond { --status-color: var(--amber); }
+    .offline { --status-color: var(--blue); }
+    .gap { --status-color: var(--red); }
+    .ext { --status-color: var(--gray); }
+
+    .atlas {
+      display: grid;
+      grid-template-columns: minmax(235px, 280px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .rail {
+      position: sticky;
+      top: 18px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .rail-label {
+      margin: 3px 8px 10px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .view-tab {
+      display: grid;
+      width: 100%;
+      grid-template-columns: 31px minmax(0, 1fr);
+      gap: 9px;
+      align-items: start;
+      margin: 0 0 5px;
+      padding: 11px 10px;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      color: var(--ink);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .view-tab:hover { background: #f5f8fc; }
+
+    .view-tab[aria-selected="true"] {
+      border-color: #a7c9e8;
+      background: var(--blue-soft);
+    }
+
+    .view-number {
+      display: grid;
+      width: 29px;
+      height: 29px;
+      place-items: center;
+      border-radius: 9px;
+      color: #fff;
+      background: var(--blue);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .view-tab strong { display: block; font-size: 13px; line-height: 1.35; }
+    .view-tab small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+
+    .rail-note {
+      margin: 12px 3px 2px;
+      padding: 12px;
+      border-radius: 10px;
+      color: #713b05;
+      background: #fff5df;
+      font-size: 11px;
+      line-height: 1.55;
+    }
+
+    .workspace {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .view-panel[hidden] { display: none; }
+
+    .panel-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-kicker {
+      margin: 0 0 3px;
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    h2 { margin: 0; font-size: 20px; letter-spacing: -.018em; }
+
+    .panel-copy {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .diagram-frame {
+      width: 100%;
+      height: min(72vh, 920px);
+      min-height: 560px;
+      border: 0;
+      background: #f7f9fc;
+    }
+
+    .reading-guide {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      border-top: 1px solid var(--line);
+      background: var(--line);
+    }
+
+    .guide-card {
+      min-height: 98px;
+      padding: 14px 16px;
+      background: #fff;
+    }
+
+    .guide-card strong { display: block; margin-bottom: 5px; font-size: 12px; }
+    .guide-card p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+
+    .footnote {
+      margin: 18px 2px 2px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 980px) {
+      .masthead { display: block; }
+      .header-links { justify-content: flex-start; margin-top: 14px; }
+      .atlas { grid-template-columns: 1fr; }
+      .rail { position: static; }
+      .rail [role="tablist"] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .diagram-frame { height: 68vh; min-height: 480px; }
+    }
+
+    @media (max-width: 620px) {
+      .shell { padding: 14px; }
+      .rail [role="tablist"] { grid-template-columns: 1fr; }
+      .panel-head { grid-template-columns: 1fr; }
+      .source-link { justify-self: start; }
+      .reading-guide { grid-template-columns: 1fr; }
+      .diagram-frame { min-height: 430px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">Architecture view set · 2026-08-15</p>
+        <h1>MALBUT Architecture Atlas</h1>
+        <p class="subtitle">
+          한 시스템을 일곱 가지 질문으로 나눠 본 정식 구조 지도다. C4로 경계를,
+          DFD로 데이터 이동을, Deployment로 실행 위치를, ROS graph로 topic 연결을,
+          ERD로 저장 관계를, Dynamic view로 시나리오 상태 전이를 확인한다.
+        </p>
+      </div>
+      <nav class="header-links" aria-label="관련 문서">
+        <a href="README.md">읽는 법</a>
+        <a href="../MALBUT_ONE_PAGE_SYSTEM_MAP.html">빠른 요약 포스터</a>
+        <a href="../../README.md">저장소 README</a>
+      </nav>
+    </header>
+
+    <section class="status-strip" aria-label="구현 상태 범례">
+      <span class="status run"><strong>RUN</strong> 실행 코드·검증 경로</span>
+      <span class="status cond"><strong>COND</strong> SDK·모델·계정·실물 조건부</span>
+      <span class="status offline"><strong>OFFLINE</strong> 코어만 있고 실제 adapter 없음</span>
+      <span class="status gap"><strong>GAP</strong> 연결 자체가 아직 없음</span>
+      <span class="status ext"><strong>EXT</strong> 외부 서비스·저장소 밖</span>
+    </section>
+
+    <div class="atlas">
+      <aside class="rail">
+        <p class="rail-label">View selector</p>
+        <div role="tablist" aria-label="아키텍처 관점">
+          <button class="view-tab" id="tab-context" role="tab" aria-selected="true" aria-controls="panel-context" data-view="context">
+            <span class="view-number">01</span><span><strong>C4 System Context</strong><small>누가 쓰고 무엇과 만나는가</small></span>
+          </button>
+          <button class="view-tab" id="tab-container" role="tab" aria-selected="false" aria-controls="panel-container" data-view="container" tabindex="-1">
+            <span class="view-number">02</span><span><strong>C4 Container</strong><small>프로그램과 저장소의 경계</small></span>
+          </button>
+          <button class="view-tab" id="tab-dfd" role="tab" aria-selected="false" aria-controls="panel-dfd" data-view="dfd" tabindex="-1">
+            <span class="view-number">03</span><span><strong>DFD + Trust</strong><small>데이터 흐름과 신뢰 전환</small></span>
+          </button>
+          <button class="view-tab" id="tab-deployment" role="tab" aria-selected="false" aria-controls="panel-deployment" data-view="deployment" tabindex="-1">
+            <span class="view-number">04</span><span><strong>Deployment</strong><small>어느 장치에서 실행되는가</small></span>
+          </button>
+          <button class="view-tab" id="tab-ros" role="tab" aria-selected="false" aria-controls="panel-ros" data-view="ros" tabindex="-1">
+            <span class="view-number">05</span><span><strong>ROS Runtime Graph</strong><small>node와 topic의 연결</small></span>
+          </button>
+          <button class="view-tab" id="tab-erd" role="tab" aria-selected="false" aria-controls="panel-erd" data-view="erd" tabindex="-1">
+            <span class="view-number">06</span><span><strong>Conceptual ERD</strong><small>DB entity와 키 관계</small></span>
+          </button>
+          <button class="view-tab" id="tab-room-live" role="tab" aria-selected="false" aria-controls="panel-room-live" data-view="room-live" tabindex="-1">
+            <span class="view-number">07</span><span><strong>Room Live Dynamic</strong><small>음성 mission의 순서와 GAP</small></span>
+          </button>
+        </div>
+        <p class="rail-note">
+          빨간 점선은 계획이 아니라 <strong>현재 미연결 경계</strong>다.
+          특히 LLM Agent는 아직 Nav2·Homecam을 실제 실행하지 않는다.
+        </p>
+      </aside>
+
+      <section class="workspace" aria-live="polite">
+        <article class="view-panel" id="panel-context" role="tabpanel" aria-labelledby="tab-context" data-view="context">
+          <div class="panel-head">
+            <div><p class="panel-kicker">C4 · Level 1</p><h2>System Context</h2><p class="panel-copy">사람, Malbut 전체 시스템, AWS·OpenAI·실물 환경의 가장 바깥 경계를 본다.</p></div>
+            <a class="source-link" href="01-c4-system-context.svg">SVG만 열기</a>
+          </div>
+          <object class="diagram-frame" data="01-c4-system-context.svg" type="image/svg+xml" aria-label="MALBUT C4 System Context"><a href="01-c4-system-context.svg">C4 System Context 열기</a></object>
+          <div class="reading-guide"><div class="guide-card"><strong>먼저 볼 것</strong><p>가운데 파란 MALBUT가 분석 대상 전체다.</p></div><div class="guide-card"><strong>관계 읽기</strong><p>화살표의 라벨은 통신 방식과 교환 정보를 뜻한다.</p></div><div class="guide-card"><strong>주의</strong><p>사용자는 PWA로 Homecam을 쓰지만 Agent 통합은 아직 없다.</p></div></div>
+        </article>
+
+        <article class="view-panel" id="panel-container" role="tabpanel" aria-labelledby="tab-container" data-view="container" hidden>
+          <div class="panel-head">
+            <div><p class="panel-kicker">C4 · Level 2</p><h2>Container View</h2><p class="panel-copy">Web·Robot Edge·ROS/Simulation을 실행 단위와 데이터 저장소 수준으로 확대한다.</p></div>
+            <a class="source-link" href="02-c4-container.svg">SVG만 열기</a>
+          </div>
+          <object class="diagram-frame" data="02-c4-container.svg" type="image/svg+xml" aria-label="MALBUT C4 Container View"><a href="02-c4-container.svg">C4 Container View 열기</a></object>
+          <div class="reading-guide"><div class="guide-card"><strong>영역</strong><p>보라=Cloud/Web, 초록=Robot Edge, 주황=ROS/Simulation.</p></div><div class="guide-card"><strong>Artifact</strong><p>URDF·YAML·지도는 프로세스가 아니라 입력 파일이다.</p></div><div class="guide-card"><strong>GAP</strong><p>Agent의 Tool proposal이 Nav2/Homecam 실행으로 이어지지 않는다.</p></div></div>
+        </article>
+
+        <article class="view-panel" id="panel-dfd" role="tabpanel" aria-labelledby="tab-dfd" data-view="dfd" hidden>
+          <div class="panel-head">
+            <div><p class="panel-kicker">Data Flow Diagram</p><h2>Data Flow + Trust Boundaries</h2><p class="panel-copy">영상·이벤트·인증·LLM 문맥이 신뢰 영역을 넘는 경로와 저장 위치를 본다.</p></div>
+            <a class="source-link" href="03-dfd-trust-boundaries.svg">SVG만 열기</a>
+          </div>
+          <object class="diagram-frame" data="03-dfd-trust-boundaries.svg" type="image/svg+xml" aria-label="MALBUT Data Flow Diagram"><a href="03-dfd-trust-boundaries.svg">DFD 열기</a></object>
+          <div class="reading-guide"><div class="guide-card"><strong>도형</strong><p>사각형=외부 entity, 타원=process, 원통=data store.</p></div><div class="guide-card"><strong>경계</strong><p>점선 cluster를 넘을 때 인증·권한·데이터 정책이 바뀐다.</p></div><div class="guide-card"><strong>핵심</strong><p>영상 경로와 LLM 경로는 서로 독립되어 있다.</p></div></div>
+        </article>
+
+        <article class="view-panel" id="panel-deployment" role="tabpanel" aria-labelledby="tab-deployment" data-view="deployment" hidden>
+          <div class="panel-head">
+            <div><p class="panel-kicker">UML-style Deployment</p><h2>Deployment View</h2><p class="panel-copy">브라우저·AWS·Robot PC·시뮬레이터·외부 API 중 어디에 무엇이 배치되는지 본다.</p></div>
+            <a class="source-link" href="04-deployment.svg">SVG만 열기</a>
+          </div>
+          <object class="diagram-frame" data="04-deployment.svg" type="image/svg+xml" aria-label="MALBUT Deployment View"><a href="04-deployment.svg">Deployment View 열기</a></object>
+          <div class="reading-guide"><div class="guide-card"><strong>Node</strong><p>큰 경계는 물리·가상 실행 환경, 내부 상자는 배치 artifact다.</p></div><div class="guide-card"><strong>대안 경로</strong><p>Gazebo simulation과 실물 장치 경로를 구분해서 읽는다.</p></div><div class="guide-card"><strong>조건부</strong><p>AWS·KVS·Jetson은 코드 존재와 실제 배포 검증을 구분한다.</p></div></div>
+        </article>
+
+        <article class="view-panel" id="panel-ros" role="tabpanel" aria-labelledby="tab-ros" data-view="ros" hidden>
+          <div class="panel-head">
+            <div><p class="panel-kicker">ROS 2 Runtime</p><h2>Node–Topic Graph</h2><p class="panel-copy">예상 simulation 구성에서 publisher·topic·subscriber의 방향을 본다.</p></div>
+            <a class="source-link" href="05-ros-runtime.svg">SVG만 열기</a>
+          </div>
+          <object class="diagram-frame" data="05-ros-runtime.svg" type="image/svg+xml" aria-label="MALBUT ROS Runtime Graph"><a href="05-ros-runtime.svg">ROS Runtime Graph 열기</a></object>
+          <div class="reading-guide"><div class="guide-card"><strong>도형</strong><p>상자=node/process, 타원=topic 또는 TF data path.</p></div><div class="guide-card"><strong>방향</strong><p>publisher → topic → subscriber 순서로 읽는다.</p></div><div class="guide-card"><strong>주의</strong><p>이 그림은 코드 기반 예상도다. 실제 실행 증거는 rqt_graph로 캡처한다.</p></div></div>
+        </article>
+
+        <article class="view-panel" id="panel-erd" role="tabpanel" aria-labelledby="tab-erd" data-view="erd" hidden>
+          <div class="panel-head">
+            <div><p class="panel-kicker">Entity–Relationship</p><h2>Conceptual ERD</h2><p class="panel-copy">Agent SQLite와 Homecam PostgreSQL의 주요 entity·cardinality·identity gap을 본다.</p></div>
+            <a class="source-link" href="06-conceptual-erd.svg">SVG만 열기</a>
+          </div>
+          <object class="diagram-frame" data="06-conceptual-erd.svg" type="image/svg+xml" aria-label="MALBUT Conceptual ERD"><a href="06-conceptual-erd.svg">Conceptual ERD 열기</a></object>
+          <div class="reading-guide"><div class="guide-card"><strong>분리된 DB</strong><p>Agent SQLite와 Homecam PostgreSQL은 서로 다른 저장소다.</p></div><div class="guide-card"><strong>Cardinality</strong><p>1, 0..1, * 표기로 개체 수 관계를 읽는다.</p></div><div class="guide-card"><strong>Identity GAP</strong><p>Agent user_id와 Homecam account/device 권한의 신뢰 매핑은 없다.</p></div></div>
+        </article>
+
+        <article class="view-panel" id="panel-room-live" role="tabpanel" aria-labelledby="tab-room-live" data-view="room-live" hidden>
+          <div class="panel-head">
+            <div><p class="panel-kicker">UML-style Dynamic / Sequence</p><h2>Room Live Monitoring</h2><p class="panel-copy">wake와 final STT부터 <code>monitor_room</code> 제안·확인·semantic plan·offline simulation까지의 순서와 실제 E2E에 남은 경계를 본다.</p></div>
+            <a class="source-link" href="07-room-live-dynamic.svg">SVG만 열기</a>
+          </div>
+          <object class="diagram-frame" data="07-room-live-dynamic.svg" type="image/svg+xml" aria-label="MALBUT Room Live Monitoring Dynamic Sequence View"><a href="07-room-live-dynamic.svg">Room Live Dynamic View 열기</a></object>
+          <div class="reading-guide"><div class="guide-card"><strong>현재 경로</strong><p>①–⑪은 닫힌 안전 문법, server authority, verifier-issued TrustedConfirmation과 semantic Room plan을 side-effect 없이 시험한다.</p></div><div class="guide-card"><strong>Simulation 경계</strong><p><code>simulation_succeeded</code>, <code>simulated=true</code>, <code>viewer_live=false</code>는 계약 시험 결과다. 실제 이동이나 live video를 뜻하지 않는다.</p></div><div class="guide-card"><strong>빨간 GAP</strong><p>durable ledger, Nav2 adapter, Homecam/KVS callback과 대화 feedback이 실제 E2E 전에 필요하다.</p></div></div>
+        </article>
+      </section>
+    </div>
+
+    <p class="footnote">
+      이 Atlas는 2026-08-15 저장소 코드와 문서를 기준으로 만든 구조 모델이다.
+      RUN은 프로덕션 배포 완료와 같은 뜻이 아니다. 실제 프로세스 상태는 ROS graph,
+      AWS 관측, 실물 E2E 검증으로 별도 확인해야 한다.
+    </p>
+  </main>
+
+  <script>
+    (() => {
+      const tabs = [...document.querySelectorAll('[role="tab"]')];
+      const panels = [...document.querySelectorAll('[role="tabpanel"]')];
+      const known = new Set(tabs.map((tab) => tab.dataset.view));
+
+      function select(view, updateHash = true) {
+        const selected = known.has(view) ? view : 'context';
+        tabs.forEach((tab) => {
+          const active = tab.dataset.view === selected;
+          tab.setAttribute('aria-selected', String(active));
+          tab.tabIndex = active ? 0 : -1;
+        });
+        panels.forEach((panel) => { panel.hidden = panel.dataset.view !== selected; });
+        if (updateHash) history.replaceState(null, '', `#${selected}`);
+      }
+
+      tabs.forEach((tab, index) => {
+        tab.addEventListener('click', () => select(tab.dataset.view));
+        tab.addEventListener('keydown', (event) => {
+          if (!['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          let target = index;
+          if (event.key === 'ArrowDown' || event.key === 'ArrowRight') target = (index + 1) % tabs.length;
+          if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') target = (index - 1 + tabs.length) % tabs.length;
+          if (event.key === 'Home') target = 0;
+          if (event.key === 'End') target = tabs.length - 1;
+          tabs[target].focus();
+          select(tabs[target].dataset.view);
+        });
+      });
+
+      window.addEventListener('hashchange', () => select(location.hash.slice(1), false));
+      select(location.hash.slice(1), false);
+    })();
+  </script>
+</body>
+</html>

@@ -56,6 +56,32 @@ TOOL_SPECS = {
             'additionalProperties': False,
         },
     ),
+    'monitor_room': ToolSpec(
+        name='monitor_room',
+        description=(
+            'Propose one server-owned room monitoring mission. After '
+            'separate confirmation, the server must resolve a verified '
+            'named-room plan before any Nav2, approved camera-viewpoint, '
+            'or privacy-safe live-readiness step. This is one high-level '
+            'workflow; never invent raw poses, routes, recording, or '
+            'multiple low-level Tool calls.'
+        ),
+        parameters={
+            'type': 'object',
+            'properties': {
+                'location': {
+                    'type': 'string',
+                    'description': (
+                        'A named room such as 거실, 주방, or 침실. '
+                        'The server, not the model, resolves its verified '
+                        'navigation goal and coverage viewpoints.'
+                    ),
+                },
+            },
+            'required': ['location'],
+            'additionalProperties': False,
+        },
+    ),
     'detect_pet': ToolSpec(
         name='detect_pet',
         description=(
@@ -73,7 +99,10 @@ TOOL_SPECS = {
     'send_notification': ToolSpec(
         name='send_notification',
         description=(
-            'Send a short notification to the registered caregiver.'
+            'Send one short user-requested notification to the registered '
+            'caregiver or family. Use this when the user explicitly asks '
+            'to tell or notify them, preserving only the message the user '
+            'provided. Never send credentials, API keys, or other secrets.'
         ),
         parameters={
             'type': 'object',

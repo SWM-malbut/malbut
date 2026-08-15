@@ -23,6 +23,7 @@ setup(
         (
             'share/' + package_name + '/docs/jira',
             [
+                'docs/jira/SWM25-34_BASIC_LOCAL_STT.md',
                 'docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md',
                 'docs/jira/SWM25-69_INTERFACE_APPROVAL_GUIDE.md',
                 'docs/jira/SWM25-70_MULTITURN_CONVERSATION_SESSION.md',
@@ -32,6 +33,7 @@ setup(
                 'docs/jira/SWM25-75_LONG_TERM_MEMORY_INTEGRATION.md',
                 'docs/jira/SWM25-76_VOICE_CONVERSATION_PIPELINE.md',
                 'docs/jira/SWM25-77_EMOTION_EXPRESSION_INTEGRATION.md',
+                'docs/jira/SWM25-78_ROOM_LIVE_MONITORING_SCENARIO.md',
             ],
         ),
         (
@@ -55,6 +57,10 @@ setup(
                 'SWM25-75_77_300X_OFFLINE_2026-08-13.md',
                 'docs/evaluations/'
                 'SWM25-75_77_HARDENING_2026-08-13.md',
+                'docs/evaluations/'
+                'SWM25-34_35_LIVE_VOICE_EVALUATION_2026-08-15.md',
+                'docs/evaluations/'
+                'SWM25-34_35_LIVE_VOICE_EVALUATION_2026-08-15.html',
             ],
         ),
         (
@@ -72,14 +78,44 @@ setup(
                 'SYNTHETIC_CONVERSATION_TRACE_2026-08-13.json',
                 'docs/evaluations/artifacts/'
                 'SWM25-75_77_300X_OFFLINE_2026-08-13.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-34_35_LIVE_VOICE_REPORT_ARTIFACT_2026-08-15.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-34_LOCAL_STT_MODEL_COMPARISON_2026-08-15.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-35_OPENAI_PHASED_SUMMARY_2026-08-15.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-35_OPENAI_LUNA_FULL3_15S_2026-08-15.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-35_OPENAI_TERRA_FULL10_15S_2026-08-15.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-35_OPENAI_TERRA_FULL3_5S_2026-08-15.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-35_OPENAI_LUNA_FULL3_15S_SOURCE_UNBOUND_'
+                '2026-08-15.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-35_OPENAI_TERRA_FULL10_15S_SOURCE_UNBOUND_'
+                '2026-08-15.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-35_OPENAI_TERRA_FULL3_15S_SOURCE_UNBOUND_'
+                '2026-08-15.json',
+                'docs/evaluations/artifacts/'
+                'SWM25-35_OPENAI_TERRA_FULL3_5S_SOURCE_UNBOUND_'
+                '2026-08-15.json',
             ],
         ),
         (
             'share/' + package_name + '/docs/worklogs',
-            ['docs/worklogs/OVERNIGHT_2026-08-13.md'],
+            [
+                'docs/worklogs/OVERNIGHT_2026-08-13.md',
+                'docs/worklogs/OVERNIGHT_2026-08-15.md',
+            ],
         ),
     ],
     install_requires=['setuptools'],
+    extras_require={
+        'stt': ['faster-whisper==1.2.1'],
+    },
     zip_safe=True,
     maintainer='SWM Malbut contributors',
     maintainer_email='maintainers@example.com',
@@ -98,6 +134,14 @@ setup(
             (
                 'malbut-agent-eval = '
                 'malbut_agent_server.eval_runner:main'
+            ),
+            (
+                'malbut-stt = '
+                'malbut_agent_server.local_stt:main'
+            ),
+            (
+                'malbut-voice-demo = '
+                'malbut_agent_server.local_voice_demo:main'
             ),
         ],
     },

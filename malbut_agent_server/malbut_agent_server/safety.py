@@ -22,6 +22,8 @@ DEFAULT_LOCATIONS = {
     'dock',
 }
 
+DEFAULT_MONITORABLE_LOCATIONS = frozenset()
+
 NAVIGATION_LOCATION_ALIASES = {
     '거실': ('거실',),
     '주방': ('주방', '부엌'),
@@ -33,6 +35,22 @@ NAVIGATION_LOCATION_ALIASES = {
     'bedroom': ('bedroom', '침실'),
     'entrance': ('entrance', '현관'),
     'dock': ('dock', '도크', '충전소'),
+}
+
+LOCATION_CANONICAL_IDS = {
+    '거실': 'living_room',
+    'living_room': 'living_room',
+    'livingroom': 'living_room',
+    '주방': 'kitchen',
+    '부엌': 'kitchen',
+    'kitchen': 'kitchen',
+    '침실': 'bedroom',
+    'bedroom': 'bedroom',
+    '현관': 'entrance',
+    'entrance': 'entrance',
+    '충전소': 'dock',
+    '도크': 'dock',
+    'dock': 'dock',
 }
 
 META_REQUEST_MARKERS = (
@@ -49,6 +67,119 @@ META_REQUEST_MARKERS = (
     '가능한기능',
     '가능해',
 )
+
+
+def matches_monitor_room_intent(
+    compact_utterance: str,
+    location: Any,
+) -> bool:
+    """Match one deliberately closed high-risk room mission grammar."""
+    if type(compact_utterance) is not str or not compact_utterance:
+        return False
+    if type(location) is not str or not location.strip():
+        return False
+    normalized_location = unicodedata.normalize(
+        'NFKC',
+        location,
+    ).casefold().strip()
+    aliases = NAVIGATION_LOCATION_ALIASES.get(
+        normalized_location,
+        (
+            ''.join(
+                character
+                for character in normalized_location
+                if character.isalnum() or character == '_'
+            ),
+        ),
+    )
+    aliases = tuple(alias for alias in aliases if alias)
+    if not aliases:
+        return False
+
+    korean_templates = (
+        '{}전체를보여줘',
+        '{}전체를보여주세요',
+        '{}전체보여줘',
+        '{}전체보여주세요',
+        '{}을모니터링해줘',
+        '{}을모니터링해주세요',
+        '{}를모니터링해줘',
+        '{}를모니터링해주세요',
+        '{}을생중계해줘',
+        '{}을생중계해주세요',
+        '{}를생중계해줘',
+        '{}를생중계해주세요',
+        '{}을라이브로보여줘',
+        '{}을라이브로보여주세요',
+        '{}를라이브로보여줘',
+        '{}를라이브로보여주세요',
+        '{}방전체를보여줘',
+        '{}방전체를보여주세요',
+        '{}을순찰해줘',
+        '{}을순찰해주세요',
+        '{}를순찰해줘',
+        '{}를순찰해주세요',
+        '{}을둘러봐줘',
+        '{}을둘러봐주세요',
+        '{}를둘러봐줘',
+        '{}를둘러봐주세요',
+        '{}로가서방전체를라이브로보여줘',
+        '{}로가서방전체를라이브로보여주세요',
+        '{}으로가서방전체를라이브로보여줘',
+        '{}으로가서방전체를라이브로보여주세요',
+        '{}로가서전체를라이브로보여줘',
+        '{}로가서전체를라이브로보여주세요',
+        '{}으로가서전체를라이브로보여줘',
+        '{}으로가서전체를라이브로보여주세요',
+    )
+    english_actions = (
+        'monitor{}',
+        'monitorthe{}',
+        'patrol{}',
+        'patrolthe{}',
+        'showmealiveviewof{}',
+        'showaliveviewof{}',
+        'livestream{}',
+        'livestreamthe{}',
+        'cover{}',
+        'coverthe{}',
+    )
+    allowed = {
+        template.format(alias)
+        for alias in aliases
+        for template in korean_templates
+    }
+    english_prefixes = (
+        '',
+        'please',
+        'couldyou',
+        'wouldyou',
+        'canyou',
+        'iwantyouto',
+    )
+    allowed.update(
+        prefix + action.format(alias)
+        for alias in aliases
+        for action in english_actions
+        for prefix in english_prefixes
+    )
+    return compact_utterance in allowed
+
+
+def canonical_location_id(value: Any) -> Optional[str]:
+    """Return one stable server-side identifier for a location alias."""
+    if type(value) is not str or not value.strip():
+        return None
+    normalized = unicodedata.normalize('NFKC', value).casefold().strip()
+    compact = ''.join(
+        character
+        for character in normalized
+        if character.isalnum() or character == '_'
+    )
+    if not compact:
+        return None
+    return LOCATION_CANONICAL_IDS.get(compact, compact)
+
 
 GENERIC_CANCEL_MARKERS = (
     '취소해',
@@ -193,10 +324,16 @@ class SafetyPolicy:
     def __init__(
         self,
         allowed_locations: Optional[Iterable[str]] = None,
+        monitorable_locations: Optional[Iterable[str]] = None,
         minimum_navigation_battery: float = 15.0,
         maximum_action_ttl_ms: int = 10000,
     ) -> None:
-        """Initialize local allowlists and action limits."""
+        """Initialize local allowlists and action limits.
+
+        ``monitorable_locations`` defaults to empty.  A trusted semantic-map
+        loader must inject only locations backed by a validated coverage plan;
+        user or model input must never populate this set.
+        """
         location_source = (
             DEFAULT_LOCATIONS
             if allowed_locations is None
@@ -238,6 +375,45 @@ class SafetyPolicy:
             location.strip()
             for location in locations
         }
+        self._allowed_location_ids = {
+            canonical_location_id(location)
+            for location in self.allowed_locations
+        }
+        if None in self._allowed_location_ids:
+            raise ValueError(
+                'allowed_locations must contain canonical labels'
+            )
+        monitor_source = (
+            DEFAULT_MONITORABLE_LOCATIONS
+            if monitorable_locations is None
+            else monitorable_locations
+        )
+        monitor_locations = list(monitor_source)
+        if not all(
+            isinstance(location, str) and location.strip()
+            for location in monitor_locations
+        ):
+            raise ValueError(
+                'monitorable_locations must contain non-empty strings'
+            )
+        self.monitorable_locations: Set[str] = {
+            location.strip()
+            for location in monitor_locations
+        }
+        self._monitorable_location_ids = {
+            canonical_location_id(location)
+            for location in self.monitorable_locations
+        }
+        if None in self._monitorable_location_ids:
+            raise ValueError(
+                'monitorable_locations must contain canonical labels'
+            )
+        if not self._monitorable_location_ids.issubset(
+            self._allowed_location_ids
+        ):
+            raise ValueError(
+                'monitorable_locations must also be allowed locations'
+            )
         self.minimum_navigation_battery = float(
             minimum_navigation_battery
         )
@@ -563,6 +739,17 @@ class SafetyPolicy:
             or english_request
         )
 
+    def _has_monitor_room_intent(
+        self,
+        compact: str,
+        arguments: Dict[str, Any],
+    ) -> bool:
+        """Require an exact whole-utterance named-room workflow."""
+        return matches_monitor_room_intent(
+            compact,
+            arguments.get('location'),
+        )
+
     def _has_capture_photo_intent(
         self,
         compact: str,
@@ -833,13 +1020,18 @@ class SafetyPolicy:
                 '이동 목적지가 올바르지 않습니다.',
             )
         location = location.strip()
-        if location not in self.allowed_locations:
+        location_id = canonical_location_id(location)
+        if location_id not in self._allowed_location_ids:
             return SafetyResult(
                 False,
                 'location_not_allowed',
                 '허용 목록에 없는 목적지입니다.',
             )
-        if location in request.robot_state.forbidden_zones:
+        forbidden_location_ids = {
+            canonical_location_id(zone)
+            for zone in request.robot_state.forbidden_zones
+        }
+        if location_id in forbidden_location_ids:
             return SafetyResult(
                 False,
                 'forbidden_zone',
@@ -866,7 +1058,7 @@ class SafetyPolicy:
             )
         if (
             battery < self.minimum_navigation_battery
-            and location not in {'충전소', 'dock'}
+            and location_id != 'dock'
         ):
             return SafetyResult(
                 False,
@@ -874,6 +1066,36 @@ class SafetyPolicy:
                 '배터리가 부족해 충전소 외 이동을 허용하지 않습니다.',
             )
         return SafetyResult(True, 'allowed', '이동 안전 조건을 통과했습니다.')
+
+    def _validate_monitor_room(
+        self,
+        request: AgentRequest,
+        arguments: Dict[str, Any],
+    ) -> SafetyResult:
+        """Require both navigation and camera preconditions."""
+        location = arguments.get('location')
+        location_id = canonical_location_id(location)
+        if (
+            not isinstance(location, str)
+            or location_id not in self._monitorable_location_ids
+        ):
+            return SafetyResult(
+                False,
+                'room_not_monitorable',
+                '검증된 방 커버리지 계획이 없는 장소입니다.',
+            )
+        navigation = self._validate_navigate(request, arguments)
+        if not navigation.allowed:
+            return navigation
+        camera = self._validate_camera(request, {})
+        if not camera.allowed:
+            return camera
+        return SafetyResult(
+            True,
+            'allowed',
+            '서버가 주입한 방 계획 후보와 '
+            '이동·카메라 조건을 통과했습니다.',
+        )
 
     def _validate_camera(
         self,

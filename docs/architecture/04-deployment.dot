@@ -1,0 +1,324 @@
+digraph MalbutDeployment {
+  graph [
+    label="MALBUT — UML/C4 Deployment View\n실행 프로그램이 어느 장치·호스트·클라우드 자원에 배치되는가",
+    labelloc=t,
+    fontsize=22,
+    fontname="DejaVu Sans",
+    rankdir=LR,
+    compound=true,
+    newrank=true,
+    bgcolor="#F7F9FC",
+    pad=0.38,
+    nodesep=0.34,
+    ranksep=0.78,
+    splines=polyline
+  ];
+  node [
+    shape=box3d,
+    style="filled",
+    fontname="DejaVu Sans",
+    fontsize=9.2,
+    color="#2368A2",
+    fillcolor="#E6F0FA",
+    fontcolor="#173A5E",
+    penwidth=1.35,
+    margin="0.14,0.09"
+  ];
+  edge [
+    fontname="DejaVu Sans",
+    fontsize=7.7,
+    color="#53657A",
+    fontcolor="#33465C",
+    arrowsize=0.65,
+    penwidth=1.1
+  ];
+
+  subgraph cluster_user_device {
+    label="사용자 장치 · Smartphone / PC [EXT]";
+    color="#7656C9";
+    fontcolor="#4D368F";
+    fontname="DejaVu Sans";
+    fontsize=12;
+    style="rounded,dashed";
+    bgcolor="#F7F3FF";
+
+    browser [
+      label="Browser + Homecam PWA\n[RUN]\nNext.js client / Service Worker\n라이브·녹화·이벤트·PTT",
+      fillcolor="#EDE6FF",
+      color="#6747C7",
+      fontcolor="#463084"
+    ];
+  }
+
+  subgraph cluster_aws {
+    label="AWS · ap-northeast-2 (Seoul)";
+    color="#A56A9F";
+    fontcolor="#6A3A65";
+    fontname="DejaVu Sans";
+    fontsize=13;
+    style="rounded,dashed";
+    bgcolor="#FCF7FD";
+
+    dns_tls [
+      label="Route 53 + ACM\n[RUN/EXT]\nDNS · TLS certificate",
+      fillcolor="#F4E9F3",
+      color="#A04F92",
+      fontcolor="#63345C"
+    ];
+
+    subgraph cluster_aws_public {
+      label="VPC · Public Subnets";
+      color="#C98FC2";
+      fontcolor="#784873";
+      fontname="DejaVu Sans";
+      style="rounded";
+      bgcolor="#FFF9FF";
+
+      alb [
+        label="Application Load Balancer\n[RUN]\nHTTPS ingress",
+        fillcolor="#F4E9F3",
+        color="#A04F92",
+        fontcolor="#63345C"
+      ];
+      ecs [
+        label="ECS Fargate · ARM64\n[RUN]\nNext.js Web + Backend API\ncontainer port 3000",
+        fillcolor="#E8D9F0",
+        color="#8D4E91",
+        fontcolor="#58315B"
+      ];
+    }
+
+    subgraph cluster_aws_data {
+      label="VPC · Isolated Subnets";
+      color="#55A66B";
+      fontcolor="#27623A";
+      fontname="DejaVu Sans";
+      style="rounded";
+      bgcolor="#F5FCF6";
+
+      rds [
+        label="RDS PostgreSQL 16\n[RUN]\n장치·세션·이벤트·감사",
+        shape=cylinder,
+        fillcolor="#DFF2E3",
+        color="#2E7D32",
+        fontcolor="#205825"
+      ];
+    }
+
+    subgraph cluster_aws_managed {
+      label="AWS Managed Services";
+      color="#8A94A2";
+      fontcolor="#515B68";
+      fontname="DejaVu Sans";
+      style="rounded";
+      bgcolor="#F7F8FA";
+
+      cognito [
+        label="Cognito User Pool\n[RUN/EXT]\nserver-side authentication",
+        fillcolor="#ECEFF3",
+        color="#7D8796",
+        fontcolor="#48515D"
+      ];
+      broker [
+        label="KVS Broker Lambda\n[RUN code / COND deploy]\nHMAC request → scoped STS",
+        fillcolor="#FFF1D9",
+        color="#C57A18",
+        fontcolor="#68420E"
+      ];
+      maintenance [
+        label="Push + Maintenance Lambda\n[RUN code / COND deploy]\noutbox · retention · Web Push",
+        fillcolor="#FFF1D9",
+        color="#C57A18",
+        fontcolor="#68420E"
+      ];
+      kvs [
+        label="Kinesis Video Streams\n[COND/EXT]\nWebRTC signaling · storage · HLS",
+        fillcolor="#FFF1D9",
+        color="#C57A18",
+        fontcolor="#68420E"
+      ];
+      cloud_ops [
+        label="CloudWatch + SNS\n[RUN code / COND deploy]\nlogs · alarms",
+        fillcolor="#ECEFF3",
+        color="#7D8796",
+        fontcolor="#48515D"
+      ];
+    }
+  }
+
+  subgraph cluster_robot {
+    label="Robot Edge · Ubuntu 22.04 / ROS 2 Humble";
+    color="#28856A";
+    fontcolor="#174E3F";
+    fontname="DejaVu Sans";
+    fontsize=13;
+    style="rounded,dashed";
+    bgcolor="#F2FCF7";
+
+    subgraph cluster_sim_host {
+      label="개발 PC · Simulation deployment [RUN]";
+      color="#D29035";
+      fontcolor="#73480E";
+      fontname="DejaVu Sans";
+      style="rounded";
+      bgcolor="#FFF9EF";
+
+      gazebo [
+        label="Gazebo Fortress\n[RUN sim]\nworld · physics · sensor/drive plugins",
+        fillcolor="#FFF0D5",
+        color="#C57A18",
+        fontcolor="#69420C",
+        URL="../../malbut_gazebo/launch/simulation.launch.py",
+        target="_top"
+      ];
+      bridge [
+        label="ros_gz_bridge\n[RUN sim]\nGazebo Transport ↔ ROS 2",
+        fillcolor="#FFF0D5",
+        color="#C57A18",
+        fontcolor="#69420C",
+        URL="../../malbut_gazebo/config/bridge.yaml",
+        target="_top"
+      ];
+    }
+
+    subgraph cluster_ros_runtime {
+      label="ROS Runtime";
+      color="#55A98A";
+      fontcolor="#26634F";
+      fontname="DejaVu Sans";
+      style="rounded";
+      bgcolor="#F7FFFB";
+
+      ros_core [
+        label="robot_state_publisher\nSLAM Toolbox / AMCL · Nav2\n[RUN sim]\nTF · localization · planning · control",
+        fillcolor="#DDF4EB",
+        color="#23805E",
+        fontcolor="#17543F",
+        URL="../../malbut_gazebo/launch/navigation.launch.py",
+        target="_top"
+      ];
+      homecam [
+        label="Homecam Media + Detector\n[RUN local / COND AWS]\nC++/Python ROS nodes · GStreamer\nmotion/YOLO · heartbeat · KVS",
+        fillcolor="#DDF4EB",
+        color="#23805E",
+        fontcolor="#17543F",
+        URL="../../homecam_agent/README.md",
+        target="_top"
+      ];
+    }
+
+    subgraph cluster_agent_runtime {
+      label="Agent Runtime · loopback only";
+      color="#5A91C8";
+      fontcolor="#28527B";
+      fontname="DejaVu Sans";
+      style="rounded";
+      bgcolor="#F3F8FD";
+
+      agent [
+        label="malbut_agent_server\n[RUN/OFFLINE, non-actuating]\nHTTP · LLM · Safety · optional one-shot STT\nTool proposal only",
+        fillcolor="#DCECF9",
+        color="#2672BF",
+        fontcolor="#174A7A",
+        URL="../../malbut_agent_server/README.md",
+        target="_top"
+      ];
+      sqlite [
+        label="Agent SQLite file\n[RUN]\nconversation · summary · memory · audit",
+        shape=cylinder,
+        fillcolor="#DFF2E3",
+        color="#2E7D32",
+        fontcolor="#205825",
+        URL="../../malbut_agent_server/malbut_agent_server/conversation.py",
+        target="_top"
+      ];
+    }
+
+    execution_gap [
+      label="GAP\nAgent Tool execution token/registry와\nROS·Homecam adapter가 아직 없음",
+      shape=octagon,
+      style="filled,dashed",
+      fillcolor="#FFF0F0",
+      color="#C62828",
+      fontcolor="#922222"
+    ];
+  }
+
+  subgraph cluster_physical {
+    label="실물 로봇 배치 · 개발 저장소 밖";
+    color="#C57A18";
+    fontcolor="#69420C";
+    fontname="DejaVu Sans";
+    fontsize=12;
+    style="rounded,dashed";
+    bgcolor="#FFF9EF";
+
+    jetson [
+      label="Jetson / Robot PC\n[COND/EXT]\nROS 2 + Homecam 배치 대상",
+      fillcolor="#FFF0D5",
+      color="#C57A18",
+      fontcolor="#69420C"
+    ];
+    hardware [
+      label="Aurora camera · mecanum base\nreal sensor/drive drivers\n[COND/EXT]\n실물 driver는 이 저장소 밖",
+      shape=component,
+      fillcolor="#FFF0D5",
+      color="#C57A18",
+      fontcolor="#69420C"
+    ];
+  }
+
+  openai [
+    label="OpenAI Responses API\n[COND/EXT]\noptional LLM provider",
+    shape=box3d,
+    fillcolor="#ECEFF3",
+    color="#7D8796",
+    fontcolor="#48515D"
+  ];
+  web_push [
+    label="Browser Push Service\n[COND/EXT]",
+    shape=box3d,
+    fillcolor="#ECEFF3",
+    color="#7D8796",
+    fontcolor="#48515D"
+  ];
+
+  browser -> dns_tls [label="HTTPS"];
+  dns_tls -> alb [label="TLS / DNS"];
+  alb -> ecs [dir=both, label="HTTP :3000\nhealth check"];
+  ecs -> rds [dir=both, label="PostgreSQL/TLS :5432"];
+  ecs -> cognito [dir=both, label="AWS SDK\nserver auth"];
+  ecs -> broker [dir=both, label="HMAC HTTPS"];
+  broker -> kvs [dir=both, label="AWS SDK · STS"];
+  ecs -> maintenance [dir=both, label="outbox / schedule"];
+  maintenance -> web_push [label="VAPID Web Push"];
+  web_push -> browser [label="Push API"];
+  browser -> kvs [dir=both, label="signed WSS · WebRTC\nlive/PTT", color="#7857D8", fontcolor="#5B3FB2"];
+  ecs -> kvs [dir=both, label="recording HLS\nsame-origin proxy", color="#7857D8", fontcolor="#5B3FB2"];
+  ecs -> cloud_ops [label="logs · metrics"];
+  broker -> cloud_ops [label="logs · alarms"];
+  maintenance -> cloud_ops [label="logs · DLQ alarm"];
+
+  gazebo -> bridge [dir=both, label="Gazebo Transport"];
+  bridge -> ros_core [dir=both, label="ROS 2 DDS\nImage · scan · odom · TF · cmd_vel"];
+  bridge -> homecam [label="ROS 2 DDS\nImage · CameraInfo · odom"];
+  homecam -> ecs [dir=both, label="HTTPS device bearer\nheartbeat · desired state · event", color="#168A63", fontcolor="#116548"];
+  homecam -> kvs [dir=both, label="H.264 / Opus\nWebRTC + storage", color="#7857D8", fontcolor="#5B3FB2"];
+
+  agent -> sqlite [dir=both, label="local file / SQLite transaction"];
+  agent -> openai [dir=both, label="HTTPS /responses\nstore:false"];
+  agent -> execution_gap [style=dashed, color="#C62828", fontcolor="#922222", label="validated Tool proposal"];
+  execution_gap -> ros_core [style=dashed, color="#C62828", fontcolor="#922222", label="미배치 · 실행 차단"];
+  execution_gap -> homecam [style=dashed, color="#C62828", fontcolor="#922222", label="미배치 · 실행 차단"];
+
+  jetson -> hardware [dir=both, style=dashed, color="#C57A18", label="실물 driver / ROS 2"];
+  jetson -> ros_core [style=dashed, color="#C57A18", label="simulation을 대체하는\n실물 runtime 대상"];
+  jetson -> homecam [style=dashed, color="#C57A18", label="배치 대상"];
+
+  legend_run [label="RUN\n실행·검증 경로 있음", shape=note, fillcolor="#DFF2E3", color="#2E7D32", fontcolor="#205825"];
+  legend_cond [label="COND\n환경·계정·SDK 필요", shape=note, fillcolor="#FFF1D9", color="#C57A18", fontcolor="#68420E"];
+  legend_offline [label="OFFLINE\n코어만 존재", shape=note, fillcolor="#DCECF9", color="#2672BF", fontcolor="#174A7A"];
+  legend_gap [label="GAP\n연결 미구현", shape=note, style="filled,dashed", fillcolor="#FFF0F0", color="#C62828", fontcolor="#922222"];
+  legend_ext [label="EXT\n외부 소유·서비스", shape=note, fillcolor="#ECEFF3", color="#7D8796", fontcolor="#48515D"];
+  legend_run -> legend_cond -> legend_offline -> legend_gap -> legend_ext [style=invis];
+}

@@ -10,9 +10,22 @@ from malbut_agent_server.prompting import (
     DEFAULT_RECENT_CONVERSATION_TURNS,
     MAX_CONVERSATION_MESSAGE_CHARS,
     MAX_MEMORY_CONTEXT_CHARS,
+    SYSTEM_INSTRUCTIONS,
     build_model_input,
 )
 from malbut_agent_server.schemas import AgentRequest
+
+
+def test_secret_refusal_precedes_compound_action_clarification() -> None:
+    """Prompt priority cannot downgrade a secret request to clarification."""
+    danger = SYSTEM_INSTRUCTIONS.index(
+        '- 위험·저수준·규칙 우회·비밀 노출:'
+    )
+    multiple = SYSTEM_INSTRUCTIONS.index(
+        '- 둘 이상의 행동: clarification.'
+    )
+    assert danger < multiple
+    assert '다른 행동이 함께' in SYSTEM_INSTRUCTIONS
 
 
 def test_memory_context_has_a_total_character_budget() -> None:
