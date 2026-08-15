@@ -35,10 +35,14 @@ test("D1 placeholders become PostgreSQL parameters without touching literals", a
 });
 
 test("PostgreSQL migration creates the homecam schema and durable event outbox", async () => {
-  const [initialMigration, authMigration] = await Promise.all([
+  const [initialMigration, authMigration, eventClipsMigration] = await Promise.all([
     readFile(new URL("../db/migrations/0001_initial.sql", import.meta.url), "utf8"),
     readFile(
       new URL("../db/migrations/0002_web_auth_sessions.sql", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../db/migrations/0005_event_clips.sql", import.meta.url),
       "utf8",
     ),
   ]);
@@ -46,11 +50,27 @@ test("PostgreSQL migration creates the homecam schema and durable event outbox",
   try {
     await database.exec(initialMigration);
     await database.exec(authMigration);
+    await database.exec(eventClipsMigration);
     const now = "2026-08-12T04:00:00.000Z";
     await database.query(
       `INSERT INTO devices (id, display_name, kvs_channel_arn, created_at)
        VALUES ($1, $2, $3, $4)`,
       ["living-room", "거실 홈캠", "arn:test:p2p", now],
+    );
+    await database.query(
+      `INSERT INTO homecam_events
+       (id, device_id, event_type, confidence, occurred_at, idempotency_key,
+        request_fingerprint, notification_suppressed)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 1)`,
+      [
+        "event-suppressed",
+        "living-room",
+        "motion",
+        1,
+        now,
+        "motion:suppressed",
+        "fingerprint-suppressed",
+      ],
     );
     await database.query(
       `INSERT INTO stream_sessions

@@ -412,6 +412,7 @@ export class HomecamDevStack extends Stack {
           "kinesisvideo:GetDataEndpoint",
           "kinesisvideo:DescribeStream",
           "kinesisvideo:GetHLSStreamingSessionURL",
+          "kinesisvideo:ListFragments",
         ],
         resources: streamArns,
       }),
@@ -770,6 +771,7 @@ export class HomecamDevStack extends Stack {
           5,
           [
             "/api/device/v1/events",
+            "/api/device/v1/event-clips/*",
             "/api/device/v1/robot/state",
             "/api/device/v1/robot/map",
             "/api/device/v1/robot/commands",

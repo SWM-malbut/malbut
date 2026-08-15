@@ -1,12 +1,10 @@
 import {
-  claimPendingHomecamPushes,
-  finishHomecamPushAttempt,
   insertHomecamEvent,
 } from "../../../../../db/homecam";
 import { parseHomecamEventInput } from "../../../../../db/homecam-validation";
 import { noStore, unauthorized } from "../../../../api-response";
 import { getRequestDevice } from "../../../../device-auth";
-import { dispatchHomecamEventPush } from "../../../../push-broker";
+import { deliverPendingEventPushes } from "../../../../device-event-push";
 
 export const dynamic = "force-dynamic";
 
@@ -18,61 +16,10 @@ export async function POST(request: Request) {
 
   try {
     const result = await insertHomecamEvent(device.deviceId, event);
-    const claimed = await claimPendingHomecamPushes({
+    const { push, currentPushFailed } = await deliverPendingEventPushes({
       deviceId: device.deviceId,
       preferredEventId: result.event.id,
-      limit: 2,
     });
-    let push: Record<string, unknown> = {
-      dispatched: false,
-      delivered: 0,
-      pruned: 0,
-      reason: claimed.length > 0 ? "queued" : "duplicate_or_in_progress",
-    };
-    let currentPushFailed = false;
-    for (const pendingEvent of claimed) {
-      try {
-        const outcome = await dispatchHomecamEventPush({
-          deviceId: device.deviceId,
-          event: pendingEvent,
-        });
-        const reason = "reason" in outcome ? outcome.reason : undefined;
-        const failed =
-          "failed" in outcome && typeof outcome.failed === "number"
-            ? outcome.failed
-            : 0;
-        const delivered =
-          reason === "no_subscribers" ||
-          (outcome.dispatched === true && failed === 0);
-        await finishHomecamPushAttempt({
-          eventId: pendingEvent.id,
-          delivered,
-          error: delivered ? undefined : reason ?? "delivery_failed",
-        });
-        if (pendingEvent.id === result.event.id) {
-          push = delivered
-            ? outcome
-            : { ...outcome, reason: reason ?? "delivery_failed" };
-          currentPushFailed =
-            !delivered && reason !== "not_configured";
-        }
-      } catch {
-        await finishHomecamPushAttempt({
-          eventId: pendingEvent.id,
-          delivered: false,
-          error: "broker_error",
-        });
-        if (pendingEvent.id === result.event.id) {
-          currentPushFailed = true;
-          push = {
-            dispatched: false,
-            delivered: 0,
-            pruned: 0,
-            reason: "broker_error",
-          };
-        }
-      }
-    }
     return noStore(
       { ...result, push },
       currentPushFailed ? 503 : result.created ? 201 : 200,

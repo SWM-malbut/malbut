@@ -28,12 +28,17 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     new URL("../db/migrations/0004_robot_map_semantics.sql", import.meta.url),
     "utf8",
   );
+  const eventClipsMigration = await readFile(
+    new URL("../db/migrations/0005_event_clips.sql", import.meta.url),
+    "utf8",
+  );
   const database = new PGlite();
   try {
     await database.exec(initialMigration);
     await database.exec(authMigration);
     await database.exec(robotMigration);
     await database.exec(robotSemanticsMigration);
+    await database.exec(eventClipsMigration);
     await database.exec(`
       CREATE TABLE homecam_schema_migrations (
         version TEXT PRIMARY KEY,
@@ -44,7 +49,8 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         ('0001_initial'),
         ('0002_web_auth_sessions'),
         ('0003_robot_map'),
-        ('0004_robot_map_semantics');
+        ('0004_robot_map_semantics'),
+        ('0005_event_clips');
     `);
     await seedDevice(database);
 
@@ -138,6 +144,59 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       });
       assert.equal(events.length, 1);
       assert.deepEqual(plain(events[0]), plain(firstEvent.event));
+
+      const clipStartAt = new Date(
+        Date.parse(activeSession.recordingStartedAt) + 2_000,
+      ).toISOString();
+      const clipStarted = {
+        eventGroupId: "0198a0e8-5800-7000-8000-000000000001",
+        segmentIndex: 0,
+        primaryType: "person",
+        labels: ["person", "motion"],
+        confidence: 0.92,
+        detectedAt: new Date(Date.parse(clipStartAt) + 5_000).toISOString(),
+        startAt: clipStartAt,
+        endAt: null,
+        monotonicDurationMs: null,
+        bootId: "11111111-1111-4111-8111-111111111111",
+        sessionIds: [session.id],
+        clockSteppedDuringEvent: false,
+        notificationEligible: false,
+        idempotencyKey: "a".repeat(64),
+      };
+      const startedClip = await homecam.upsertHomecamEventClip(
+        "living-room",
+        "started",
+        clipStarted,
+      );
+      const duplicateClip = await homecam.upsertHomecamEventClip(
+        "living-room",
+        "started",
+        clipStarted,
+      );
+      assert.equal(startedClip.created, true);
+      assert.equal(duplicateClip.created, false);
+      assert.equal(startedClip.event.clipState, "recording");
+
+      const endedClip = await homecam.upsertHomecamEventClip(
+        "living-room",
+        "ended",
+        {
+          ...clipStarted,
+          confidence: 0.97,
+          endAt: new Date(Date.parse(clipStartAt) + 15_000).toISOString(),
+          monotonicDurationMs: 15_000,
+          idempotencyKey: "b".repeat(64),
+        },
+      );
+      assert.equal(endedClip.event.clipState, "ready");
+      assert.equal(endedClip.event.monotonicDurationMs, 15_000);
+      assert.deepEqual(endedClip.event.labels, ["person", "motion"]);
+      const playbackInfo = await homecam.getEventClipPlayback(
+        "living-room",
+        endedClip.event.id,
+      );
+      assert.equal(playbackInfo?.streamArn, "arn:test:kvs:archive");
 
       const rateLimitInput = {
         userEmail: "owner@example.com",
@@ -380,7 +439,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     `);
     assert.deepEqual(plain(persisted.rows[0]), {
       credentials: 1,
-      events: 1,
+      events: 2,
       outbox: 1,
       session_status: "ended",
       recording_ended: true,

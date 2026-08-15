@@ -48,6 +48,10 @@ npm audit --audit-level=high
   `verify-full`로 서버 인증서와 호스트 이름 검증
 - 장치는 장기 AWS 키 없이 backend가 발급한 제한된 STS 자격 증명 사용
 - P2P와 Storage KVS 채널은 장치마다 분리하고 archive stream은 168시간 보존
+- 이벤트 클립은 감지 전 5초부터 마지막 감지 10초 후까지의 메타데이터만
+  PostgreSQL에 저장하고, KVS fragment 경계에 맞춘 HLS URL을 요청 시 발급
+- 이벤트의 `목록에서 삭제`는 메타데이터를 즉시 숨기지만 KVS 원본은 개별
+  fragment 삭제가 불가능하므로 7일 retention 만료 시 자동 삭제
 - 저장 SLAM 지도와 현재 위치는 장치 bearer API로 RDS에 동기화
 - 가족은 지도를 조회할 수 있고 지도 생성·목적지 주행 명령은 소유자만 등록
 - 목적지 좌표는 AWS에서 직접 `/cmd_vel`로 변환하지 않고, 장치의 Nav2

@@ -7,6 +7,7 @@ import {
 import {
   GetHLSStreamingSessionURLCommand,
   KinesisVideoArchivedMediaClient,
+  ListFragmentsCommand,
 } from "@aws-sdk/client-kinesis-video-archived-media";
 import {
   GetIceServerConfigCommand,
@@ -70,14 +71,20 @@ export async function handler(event) {
 
   const action = payload.action ?? "SESSION";
   if (
-    !["SESSION", "JOIN_STORAGE", "HLS_PLAYBACK", "DEVICE_CREDENTIALS"].includes(
+    ![
+      "SESSION",
+      "JOIN_STORAGE",
+      "HLS_PLAYBACK",
+      "EVENT_PLAYBACK",
+      "DEVICE_CREDENTIALS",
+    ].includes(
       action,
     )
   ) {
     return response(400, { error: "Invalid action" });
   }
 
-  if (action === "HLS_PLAYBACK") {
+  if (action === "HLS_PLAYBACK" || action === "EVENT_PLAYBACK") {
     const input = validateHlsPlaybackInput(payload);
     if (!input) return response(400, { error: "Invalid HLS playback request" });
     const resources = resolveDeviceResources(
@@ -95,7 +102,12 @@ export async function handler(event) {
     }
 
     try {
-      return response(200, await createHlsPlayback(input));
+      return response(
+        200,
+        action === "EVENT_PLAYBACK"
+          ? await createEventPlayback(input)
+          : await createHlsPlayback(input),
+      );
     } catch (error) {
       console.error(
         "KVS HLS playback failed",
@@ -385,6 +397,63 @@ async function createHlsPlayback({ streamArn, startAt, endAt, expiresSeconds }) 
     expiresAt,
     streamArn,
   };
+}
+
+async function createEventPlayback(input) {
+  const listEndpoint = await kinesisVideo.send(
+    new GetDataEndpointCommand({
+      APIName: "LIST_FRAGMENTS",
+      StreamARN: input.streamArn,
+    }),
+  );
+  if (!listEndpoint.DataEndpoint) {
+    throw new Error("Missing KVS fragment endpoint");
+  }
+  const endpoint = new URL(listEndpoint.DataEndpoint);
+  if (endpoint.protocol !== "https:" || endpoint.search || endpoint.hash) {
+    throw new Error("Invalid KVS fragment endpoint");
+  }
+  const archivedMedia = new KinesisVideoArchivedMediaClient({
+    region,
+    endpoint: listEndpoint.DataEndpoint,
+  });
+  const requestedStartMs = Date.parse(input.startAt);
+  const result = await archivedMedia.send(
+    new ListFragmentsCommand({
+      StreamARN: input.streamArn,
+      FragmentSelector: {
+        FragmentSelectorType: "SERVER_TIMESTAMP",
+        TimestampRange: {
+          StartTimestamp: new Date(requestedStartMs - 20_000),
+          EndTimestamp: new Date(input.endAt),
+        },
+      },
+      MaxResults: 1000,
+    }),
+  );
+  const fragments = (result.Fragments ?? [])
+    .filter((fragment) => fragment.ServerTimestamp instanceof Date)
+    .sort(
+      (left, right) =>
+        left.ServerTimestamp.getTime() - right.ServerTimestamp.getTime(),
+    );
+  if (fragments.length === 0) {
+    const error = new Error("No fragments found for event");
+    error.name = "ResourceNotFoundException";
+    throw error;
+  }
+  const containing = [...fragments].reverse().find((fragment) => {
+    const fragmentStart = fragment.ServerTimestamp.getTime();
+    const duration = Number(fragment.FragmentLengthInMilliseconds ?? 0);
+    return fragmentStart <= requestedStartMs && fragmentStart + duration >= requestedStartMs;
+  });
+  const firstAfter = fragments.find(
+    (fragment) => fragment.ServerTimestamp.getTime() >= requestedStartMs,
+  );
+  const aligned = containing ?? firstAfter ?? fragments.at(-1);
+  const alignedStartAt = aligned.ServerTimestamp.toISOString();
+  const playback = await createHlsPlayback({ ...input, startAt: alignedStartAt });
+  return { ...playback, alignedStartAt };
 }
 
 async function getChannelEndpoints(role, protocols, channelArn) {
