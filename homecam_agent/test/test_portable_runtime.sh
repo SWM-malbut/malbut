@@ -68,6 +68,24 @@ if homecam_validate_backend_url http://192.168.0.2:3000; then
 fi
 homecam_validate_backend_url HTTPS://example.com
 
+map_store="$temporary_dir/maps"
+mkdir -p "$map_store"
+printf '%s\n' \
+  '{"initial_pose":{"x":-1.25,"y":2.5,"yaw":0.75}}' \
+  > "$map_store/active.json"
+[[ "$(homecam_saved_map_pose "$map_store")" == '-1.25 2.5 0.75' ]]
+printf '%s\n' \
+  '{"initial_pose":{"x":"NaN","y":2.5,"yaw":0.75}}' \
+  > "$map_store/active.json"
+if homecam_saved_map_pose "$map_store" >/dev/null 2>&1; then
+  printf 'non-finite saved pose should fail\n' >&2
+  exit 1
+fi
+pose_command=(ros2 launch example)
+homecam_append_pose_arguments pose_command -1.25 2.5 0.75
+[[ "${pose_command[*]}" == \
+  'ros2 launch example x:=-1.25 y:=2.5 yaw:=0.75' ]]
+
 [[ $((10#08)) -eq 8 ]]
 
 source_token="$temporary_dir/source.token"
@@ -87,6 +105,9 @@ runner="$repo_root/scripts/run_gazebo_homecam.sh"
 grep -Fq 'ros2 launch malbut_gazebo worlds.launch.py' "$runner"
 grep -Fq '"simulation:=false"' "$runner"
 grep -Fq '"runtime_request_file:=$runtime_control_file"' "$runner"
+grep -Fq '"trusted_initial_pose:=true"' "$runner"
+grep -Fq '"trusted_localization_handoff:=$trust_localization_handoff"' \
+  "$runner"
 grep -Fq 'start_robot_stack true true' "$runner"
 
 standalone_workspace="$temporary_dir/standalone_workspace"

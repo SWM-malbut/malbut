@@ -175,18 +175,21 @@ export function parseRobotMap(value: unknown): RobotMapUpload | null {
 function validSemanticCommand(operation: RobotOperation, payload: Record<string, unknown>) {
   if (Buffer.byteLength(JSON.stringify(payload), "utf8") > 768 * 1024) return false;
   if (operation === "room_split") {
-    return isObject(payload.room) &&
-      (Array.isArray(payload.lines) || Array.isArray(payload.line)) &&
-      optionalFinite(payload.resolution) && optionalFinite(payload.minimum_room_area);
+    const dividers = payload.lines ?? payload.line;
+    return roomFeature(payload.room) && validSplitDividers(dividers) &&
+      optionalPositiveFinite(payload.resolution) && optionalPositiveFinite(payload.minimum_room_area);
   }
   if (operation === "room_merge") {
-    return Array.isArray(payload.rooms) && payload.rooms.length >= 2 && payload.rooms.length <= 512 &&
-      payload.rooms.every(isObject) && optionalFinite(payload.resolution);
+    return Array.isArray(payload.rooms) && payload.rooms.length === 2 &&
+      payload.rooms.every(roomFeature) &&
+      roomFeatureId(payload.rooms[0]) !== roomFeatureId(payload.rooms[1]) &&
+      optionalPositiveFinite(payload.resolution);
   }
   if (operation === "rooms_save") {
     return safeRevision(payload.map_id) && safeRevision(payload.map_revision) &&
       Array.isArray(payload.rooms) && payload.rooms.length > 0 && payload.rooms.length <= 512 &&
-      payload.rooms.every(isObject) && optionalFinite(payload.resolution);
+      payload.rooms.every(roomFeature) && new Set(payload.rooms.map(roomFeatureId)).size === payload.rooms.length &&
+      optionalPositiveFinite(payload.resolution);
   }
   return operation === "zones_apply" &&
     payload.type === "FeatureCollection" &&
@@ -196,8 +199,33 @@ function validSemanticCommand(operation: RobotOperation, payload: Record<string,
     payload.features.every(isObject);
 }
 
-function optionalFinite(value: unknown) {
-  return value === undefined || finiteNumber(value);
+function optionalPositiveFinite(value: unknown) {
+  return value === undefined || (finiteNumber(value) && value > 0);
+}
+
+function validSplitDividers(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  const dividers = finitePoint(value[0]) ? [value] : value;
+  return dividers.every((divider) => Array.isArray(divider) && divider.length >= 2 && divider.every(finitePoint));
+}
+
+function finitePoint(value: unknown) {
+  return Array.isArray(value) && value.length === 2 && value.every(finiteNumber);
+}
+
+function roomFeature(value: unknown): value is Record<string, unknown> {
+  return isObject(value) && value.type === "Feature" && isObject(value.properties) &&
+    value.properties.role === "room" && isObject(value.geometry) &&
+    (value.geometry.type === "Polygon" || value.geometry.type === "MultiPolygon") &&
+    Array.isArray(value.geometry.coordinates) && Boolean(roomFeatureId(value));
+}
+
+function roomFeatureId(value: unknown) {
+  if (!isObject(value)) return "";
+  if (shortString(value.id, 128)) return value.id;
+  return isObject(value.properties) && shortString(value.properties.room_id, 128)
+    ? value.properties.room_id
+    : "";
 }
 
 function safeRevision(value: unknown): value is string {

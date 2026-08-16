@@ -124,6 +124,14 @@ def test_user_map_keeps_slam_coordinates_and_stable_identity(tmp_path):
     assert user_map["room_segmentation"]["room_count"] == 1
     assert preview.ndim == 3
     assert preview.shape == (160, 220, 3)
+    room = next(
+        feature for feature in user_map["features"]
+        if feature["properties"]["role"] == "room"
+    )
+    center = first_source.transform.pixel(room["properties"]["centroid"])
+    # The product preview contains only map geometry. Room names are rendered
+    # by the interactive web overlay, never baked in as debug numbers.
+    assert preview[center[1], center[0]].tolist() == [255, 232, 220]
 
 
 def test_small_occupancy_speckles_do_not_become_user_map_rooms(tmp_path):

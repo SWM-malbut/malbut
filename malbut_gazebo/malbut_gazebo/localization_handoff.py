@@ -7,6 +7,7 @@ import hashlib
 import math
 from pathlib import Path
 import time
+import uuid
 
 from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped
 from nav2_msgs.srv import SetInitialPose
@@ -19,7 +20,8 @@ from tf2_msgs.msg import TFMessage
 import yaml
 
 
-FORMAT = "malbut-localization-handoff-v1"
+FORMAT = "malbut-localization-handoff-v2"
+BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 MAP_QOS = QoSProfile(
     depth=1,
     durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -150,19 +152,35 @@ def _compose(saved: dict, odom_to_base: TransformStamped) -> dict:
     }
 
 
-def _same_odom_session(saved_stamp: int, current_stamp: int) -> bool:
-    """Accept normal TF skew while rejecting a reset simulation clock."""
-    return current_stamp + ODOM_STAMP_TOLERANCE_NS >= saved_stamp
+def _boot_id(path: Path = BOOT_ID_PATH) -> str:
+    """Return the OS boot identity used as a power-cycle boundary."""
+    value = path.read_text(encoding="utf-8").strip()
+    return str(uuid.UUID(value))
+
+
+def _same_odom_session(
+    saved_stamp: int,
+    current_stamp: int,
+    saved_boot_id: str,
+    current_boot_id: str,
+) -> bool:
+    """Require one OS boot and a non-reset odometry clock."""
+    return (
+        saved_boot_id == current_boot_id
+        and current_stamp + ODOM_STAMP_TOLERANCE_NS >= saved_stamp
+    )
 
 
 def _write_state(
     path: Path,
     map_message: OccupancyGrid,
     map_to_odom: TransformStamped,
+    boot_id: str | None = None,
 ) -> None:
     """Atomically write the latest map identity and frame transform."""
     state = {
         "format": FORMAT,
+        "boot_id": boot_id or _boot_id(),
         "map_digest": _map_digest(map_message),
         "map_to_odom": _transform_value(map_to_odom),
     }
@@ -179,6 +197,10 @@ def _load_state(path: Path) -> dict:
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or value.get("format") != FORMAT:
         raise ValueError("unsupported localization handoff format")
+    try:
+        value["boot_id"] = str(uuid.UUID(value["boot_id"]))
+    except (KeyError, TypeError, ValueError, AttributeError) as error:
+        raise ValueError("localization handoff has no valid boot id") from error
     if not isinstance(value.get("map_digest"), str):
         raise ValueError("localization handoff has no map digest")
     transform = value.get("map_to_odom")
@@ -265,6 +287,20 @@ class LocalizationRestorer(Node):
             self.get_logger().error("localization state frame mismatch")
             self.finished = True
             return
+        try:
+            self.boot_id = _boot_id()
+        except (OSError, ValueError) as error:
+            self.get_logger().error(
+                f"cannot identify the current odometry session: {error}"
+            )
+            self.finished = True
+            return
+        if self.state["boot_id"] != self.boot_id:
+            self.get_logger().error(
+                "OS restarted; refusing stale localization state"
+            )
+            self.finished = True
+            return
         self.client = self.create_client(SetInitialPose, "set_initial_pose")
         self.create_subscription(
             OccupancyGrid, "map", self._receive_map, MAP_QOS
@@ -295,6 +331,8 @@ class LocalizationRestorer(Node):
         if not _same_odom_session(
             int(saved["stamp_nanoseconds"]),
             _stamp_nanoseconds(odom_to_base),
+            self.state["boot_id"],
+            self.boot_id,
         ):
             self.get_logger().error(
                 "odom clock restarted; refusing stale localization state"
