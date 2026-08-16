@@ -27,8 +27,8 @@ person_localizer:
     confidence_threshold: 0.20
     nms_threshold: 0.45
     yolo_input_size: 640
-    # ONNX Runtime is required for YOLO26. On Orin NX, auto selects TensorRT
-    # FP16, then CUDA; on development PCs it selects the CPU provider.
+    # ONNX Runtime is required for YOLO26. Auto selects TensorRT FP16 on the
+    # Orin NX and prepared NVIDIA development PCs, then falls back to CUDA.
     inference_backend: auto
     dnn_target: auto
     # Four workers performed best without competing heavily with Gazebo.
@@ -65,7 +65,7 @@ person_localizer:
     bearing_only_uncertainty_m: 2.0
     person_thickness_m: 0.35
 
-    # Keep synchronization shallow so slow CPU inference drops stale frames.
+    # Keep synchronization shallow so inference drops stale frames under load.
     sync_queue_size: 3
     sync_slop_sec: 0.08
     max_inference_rate_hz: 6.0

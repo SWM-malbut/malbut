@@ -49,7 +49,7 @@ animated humanoid and recommended for the real robot.
 
 The repository does not commit model binaries. Prepare the tested FP32
 YOLO26n and OSNet x0.5 ONNX files in isolated cache environments, then install
-the small runtime used by the ROS process:
+the inference runtime used by the ROS process:
 
 ```bash
 cd ~/ros2_ws/src/malbut
@@ -60,10 +60,9 @@ cd ~/ros2_ws/src/malbut
 
 The YOLO export dependencies stay under
 `~/.cache/malbut_perception/yolo26-export-env`. The script pins Ultralytics
-8.4.55 and the official YOLO26n weights, exports the one-to-many opset 12 head,
-and validates a forward pass with ONNX Runtime. The one-to-many head lets this
-package apply its existing, testable NMS instead of embedding device-specific
-TopK/NMS operations in the model.
+8.4.55 and the official YOLO26n weights, exports the end-to-end one-to-one
+opset 12 head, and validates its `(1, 300, 6)` output with ONNX Runtime. This
+head returns final detections without external NMS.
 
 The standard launch selects the cached model automatically. To require YOLO
 and reject a missing or incompatible model explicitly:
@@ -85,9 +84,11 @@ Rank-1/mAP while staying small relative to YOLO26n's 5.4 GFLOPs.
 `inference_backend:=auto dnn_target:=auto` is the default. When ONNX Runtime is
 installed, an Orin NX selects TensorRT FP16 first, CUDA second, and CPU only as
 a final fallback. TensorRT engines are cached locally after the first load and
-are never committed or copied between devices. A development PC uses the CPU
-provider. The legacy OpenCV backend remains available for older compatible
-models, but Ubuntu 22.04's OpenCV 4.5.4 cannot execute YOLO26.
+are never committed or copied between devices. An x86_64 NVIDIA development
+PC also selects TensorRT FP16 when the preparation script has installed its
+pinned TensorRT runtime, then falls back to CUDA. The legacy OpenCV backend
+remains available for older compatible models, but Ubuntu 22.04's OpenCV
+4.5.4 cannot execute YOLO26.
 
 The physical target is the ROSOrin Jetson Orin NX Super on Ubuntu 22.04 and
 JetPack 6/L4T R36. `prepare_inference_runtime.sh` installs the official ARM64

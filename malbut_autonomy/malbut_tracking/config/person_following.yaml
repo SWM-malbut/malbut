@@ -15,7 +15,7 @@ person_follower:
     follow_path_action: follow_path
     compute_path_action: compute_path_to_pose
     planner_id: GridBased
-    tracking_controller_id: FollowPerson
+    tracking_controller_id: FollowPath
     goal_checker_id: general_goal_checker
     spin_action: spin
     navigation_retry_delay_s: 0.75
@@ -49,9 +49,16 @@ person_follower:
     maximum_missed_updates: 4
     maximum_coast_time_s: 3.0
     camera_label_gate_m: 0.75
+    # Keep a current LiDAR label through small centroid noise, but let a
+    # clearly closer RGB-D match correct an obstacle-label mix-up.
+    camera_rebind_margin_m: 0.15
     # A newly observed costmap cluster refines the camera position only while
     # the same person is still visible; stale obstacles cannot drive motion.
     costmap_refinement_max_camera_age_s: 1.0
+    # After RGB-D labels a confirmed obstacle, current LiDAR measurements may
+    # continue that same track briefly after camera loss. While RGB-D remains
+    # current, its callback alone owns Nav2 goal updates to prevent churn.
+    lidar_continuation_timeout_s: 3.0
     desired_distance_m: 1.20
     minimum_distance_m: 0.65
     distance_tolerance_m: 0.15
@@ -60,11 +67,9 @@ person_follower:
     # Nav2 ComputePathToPose and the configured holonomic controller.
     maximum_linear_speed_mps: 0.30
     retreat_maximum_travel_m: 0.25
-    target_yaw_rate_alpha: 0.35
-    maximum_target_yaw_rate_rps: 1.50
 
-    # These are lookahead distances sampled along Nav2's global path, not
-    # straight robot-person segments.
+    # Nav2 plans toward the observed person or its nearest admissible costmap
+    # cell. These existing per-update lookaheads bound that global path.
     goal_update_distance_m: 0.25
     goal_update_period_s: 0.75
     precise_maximum_travel_m: 0.50
@@ -92,36 +97,26 @@ person_follower:
     minimum_heading_clearance_m: 0.45
     require_global_costmap_for_goal: true
 
-    # Visibility loss is measured from RGB-D rather than costmap update rate.
-    # Transient detector gaps do not cancel an already selected movement.
-    temporary_lost_timeout_s: 0.40
-    search_start_timeout_s: 0.60
+    # RGB-D establishes identity. A confirmed, still-observed LiDAR track may
+    # keep the target alive for the bounded continuation window above. When
+    # both sensors lose it, freeze and finish the current waypoint, turn once
+    # toward the predicted exit direction, then travel to the last safe point.
+    # At the nominal 3 Hz perception contract this requires more than one
+    # missed frame, avoiding recovery churn from a single delayed inference.
+    temporary_lost_timeout_s: 0.75
     target_lost_timeout_s: 8.0
-    # Predict the last absolute camera bearing briefly, look there first, then
-    # expand the bounded scan toward the side on which the person was moving.
-    search_prediction_horizon_s: 1.00
-    search_direction_rate_threshold_rps: 0.05
-    search_angle_rad: 0.80
-    maximum_search_angle_rad: 3.14
-    maximum_search_steps: 9
-    spin_allowance_s: 8.0
+    # The camera's 74-degree horizontal field of view has a roughly
+    # 37-degree half-angle. Turn at least 40 degrees toward the exit side so
+    # a stale map estimate cannot reduce reacquisition to a tiny correction.
+    recovery_direction_minimum_turn_rad: 0.70
+    # FollowPath can struggle over the final centimeters while rotating.
+    # This tolerance applies only to the frozen loss-recovery waypoint.
+    recovery_waypoint_tolerance_m: 0.08
+    # Search 270 degrees in the sign of the last observed camera bearing,
+    # rather than always rotating counter-clockwise through a full circle.
+    recovery_scan_angle_rad: 4.71238898
+    recovery_spin_allowance_s: 12.0
 
     # Bounded prediction supports identity association and display only.
     prediction_horizon_s: 0.60
     transform_timeout_s: 0.10
-
-tracking_twist_mixer:
-  ros__parameters:
-    # The tracking demo remaps Nav2's smoothed output here. Translation is
-    # preserved exactly; only angular.z is replaced while a person is visible.
-    nav_input_topic: /cmd_vel
-    tracking_status_topic: /tracking/person/status
-    output_topic: /cmd_vel_tracking_raw
-    output_frequency_hz: 20.0
-    nav_command_timeout_s: 0.25
-    tracking_status_timeout_s: 0.30
-    heading_proportional_gain: 1.25
-    heading_rate_feedforward_gain: 0.15
-    heading_deadband_rad: 0.04
-    maximum_angular_speed_rps: 0.40
-    maximum_angular_acceleration_rps2: 1.20

@@ -8,7 +8,10 @@ architecture="$(uname -m)"
 python_version="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 
 if [[ "$architecture" == "x86_64" ]]; then
-  runtime="onnxruntime==1.23.2"
+  runtime_packages=(
+    "onnxruntime-gpu[cuda,cudnn]==1.23.2"
+    "tensorrt-cu12==10.9.0.34"
+  )
 elif [[ "$architecture" == "aarch64" ]]; then
   if [[ "$python_version" != "3.10" ]]; then
     echo "JetPack 6 deployment requires Python 3.10; found $python_version" >&2
@@ -20,13 +23,19 @@ elif [[ "$architecture" == "aarch64" ]]; then
     echo "Check /etc/nv_tegra_release before selecting another wheel." >&2
     exit 1
   fi
-  runtime="https://github.com/ultralytics/assets/releases/download/v0.0.0/onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl"
+  runtime_packages=(
+    "https://github.com/ultralytics/assets/releases/download/v0.0.0/onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl"
+  )
 else
   echo "Unsupported architecture: $architecture" >&2
   exit 1
 fi
 
-python3 -m pip install --user --upgrade 'numpy==1.23.5' "$runtime"
+if python3 -m pip show onnxruntime >/dev/null 2>&1; then
+  python3 -m pip uninstall -y onnxruntime
+fi
+python3 -m pip install --user --upgrade \
+  'numpy==1.23.5' "${runtime_packages[@]}"
 
 python3 - "$architecture" <<'PY'
 import sys
@@ -39,9 +48,14 @@ architecture = sys.argv[1]
 providers = ort.get_available_providers()
 print(f'ONNX Runtime {ort.__version__}: {providers}')
 print(f'NumPy {np.__version__}')
-if architecture == 'aarch64' and not {
+if architecture in {'x86_64', 'aarch64'} and not {
     'TensorrtExecutionProvider',
     'CUDAExecutionProvider',
 }.intersection(providers):
-    raise RuntimeError('Jetson runtime exposes no NVIDIA GPU provider')
+    raise RuntimeError('ONNX Runtime exposes no NVIDIA GPU provider')
+if architecture == 'x86_64':
+    import tensorrt as trt
+    if not trt.__version__.startswith('10.9.'):
+        raise RuntimeError(f'Expected TensorRT 10.9, found {trt.__version__}')
+    print(f'TensorRT {trt.__version__}')
 PY

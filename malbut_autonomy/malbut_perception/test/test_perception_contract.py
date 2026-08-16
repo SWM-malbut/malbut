@@ -64,7 +64,7 @@ def test_model_preparation_is_pinned_and_machine_independent():
     assert '9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef' in source
     assert "'torch==2.5.1'" in source
     assert "'onnx==1.20.1'" in source
-    assert 'end2end=False' in source
+    assert 'end2end=True' in source
     assert '/home/' not in source
     assert '/Users/' not in source
 

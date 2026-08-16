@@ -81,7 +81,8 @@ def decode_yolo_people(
     if rows.shape[0] == 0:
         return []
 
-    if rows.shape[1] == 6:
+    end_to_end = rows.shape[1] == 6
+    if end_to_end:
         scores = rows[:, 4]
         class_indices = rows[:, 5].astype(np.int64)
         model_boxes = rows[:, :4]
@@ -138,6 +139,8 @@ def decode_yolo_people(
         )
         for (left, top, right, bottom), score in zip(boxes, scores)
     ]
+    if end_to_end:
+        return candidates
     return _nms(candidates, nms_threshold)
 
 

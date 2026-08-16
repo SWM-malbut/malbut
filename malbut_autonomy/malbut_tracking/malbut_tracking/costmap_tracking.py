@@ -342,6 +342,7 @@ class CostmapTargetTracker:
         maximum_missed_updates: int = 4,
         maximum_coast_time_s: float = 3.0,
         camera_label_gate_m: float = 0.75,
+        camera_rebind_margin_m: float = 0.15,
     ) -> None:
         """Configure extraction, estimation, association, and track aging."""
         _validate_cluster_parameters(
@@ -367,6 +368,8 @@ class CostmapTargetTracker:
             raise ValueError('maximum coast time must be positive')
         if camera_label_gate_m <= 0.0:
             raise ValueError('camera label gate must be positive')
+        if camera_rebind_margin_m < 0.0:
+            raise ValueError('camera rebind margin must be non-negative')
         self._cluster_radius_m = cluster_radius_m
         self._threshold = obstacle_cost_threshold
         self._minimum_cells = minimum_cluster_cells
@@ -381,7 +384,9 @@ class CostmapTargetTracker:
         self._maximum_missed_updates = maximum_missed_updates
         self._maximum_coast_time_s = maximum_coast_time_s
         self._camera_label_gate_m = camera_label_gate_m
+        self._camera_rebind_margin_m = camera_rebind_margin_m
         self._tracks: dict[int, _KalmanTrack] = {}
+        self._observed_track_ids: set[int] = set()
         self._next_track_id = 1
         self._selected_track_id: int | None = None
         self._selected_label = ''
@@ -417,6 +422,7 @@ class CostmapTargetTracker:
     def reset(self) -> None:
         """Clear every costmap track and semantic selection."""
         self._tracks.clear()
+        self._observed_track_ids.clear()
         self._next_track_id = 1
         self.clear_selection()
 
@@ -451,6 +457,7 @@ class CostmapTargetTracker:
         associations = self._associate(tracks, measurements)
         matched_tracks = set()
         matched_measurements = set()
+        self._observed_track_ids.clear()
         self._last_target_observed = False
         for track_index, measurement_index in associations:
             track = tracks[track_index]
@@ -461,6 +468,7 @@ class CostmapTargetTracker:
             )
             matched_tracks.add(track_index)
             matched_measurements.add(measurement_index)
+            self._observed_track_ids.add(track.track_id)
             if track.track_id == self._selected_track_id:
                 self._last_target_observed = True
                 self._last_selected_snapshot = track.snapshot()
@@ -469,7 +477,11 @@ class CostmapTargetTracker:
                 track.miss()
         for measurement_index, measurement in enumerate(measurements):
             if measurement_index not in matched_measurements:
-                self._create_track(measurement, grid.stamp_seconds)
+                track_id = self._create_track(
+                    measurement,
+                    grid.stamp_seconds,
+                )
+                self._observed_track_ids.add(track_id)
         self._delete_expired_tracks(grid.stamp_seconds)
         target = self.target
         return target if target is not None and self._last_target_observed else None
@@ -480,28 +492,28 @@ class CostmapTargetTracker:
         detected_position: Point2D,
         detector_track_id: str = '',
     ) -> LabeledObstacle | None:
-        """Attach or reconfirm one camera person on an admissible grid track."""
+        """Attach the camera person to a current, spatially consistent track."""
         if not label:
             raise ValueError('target label is required')
+        self._selected_label = label
+        self._selected_detector_id = detector_track_id
         selected = self._selected_track()
-        if selected is not None:
-            if (
-                distance(selected.snapshot().position, detected_position)
-                <= self._camera_label_gate_m
-            ):
-                self._selected_detector_id = detector_track_id
-                self._last_selected_snapshot = selected.snapshot()
-                return self.target
-
         candidates = [
             track
             for track in self._tracks.values()
+            if track.track_id in self._observed_track_ids
             if distance(track.snapshot().position, detected_position)
             <= self._camera_label_gate_m
         ]
         if not candidates:
+            # A visible camera person is authoritative. Do not let a stale or
+            # spatially inconsistent obstacle retain the semantic label and
+            # drive LiDAR-only continuation.
+            self._selected_track_id = None
+            self._last_selected_snapshot = None
+            self._last_target_observed = False
             return None
-        chosen = min(
+        nearest = min(
             candidates,
             key=lambda track: (
                 distance(track.snapshot().position, detected_position),
@@ -509,10 +521,32 @@ class CostmapTargetTracker:
                 track.track_id,
             ),
         )
+        chosen = nearest
+        if (
+            selected is not None
+            and selected.track_id in self._observed_track_ids
+            and selected in candidates
+        ):
+            selected_residual = distance(
+                selected.snapshot().position,
+                detected_position,
+            )
+            nearest_residual = distance(
+                nearest.snapshot().position,
+                detected_position,
+            )
+            # Association hysteresis prevents two nearby obstacle clusters
+            # from exchanging the person label due to one noisy grid frame.
+            # A clearly better camera match still corrects a wrong label.
+            if (
+                nearest.track_id == selected.track_id
+                or nearest_residual + self._camera_rebind_margin_m
+                >= selected_residual
+            ):
+                chosen = selected
         self._selected_track_id = chosen.track_id
-        self._selected_label = label
-        self._selected_detector_id = detector_track_id
         self._last_selected_snapshot = chosen.snapshot()
+        self._last_target_observed = True
         return self.target
 
     def predict_target(
@@ -553,7 +587,7 @@ class CostmapTargetTracker:
         self,
         measurement: ObstacleCluster,
         stamp_seconds: float,
-    ) -> None:
+    ) -> int:
         track = _KalmanTrack(
             self._next_track_id,
             measurement,
@@ -563,6 +597,7 @@ class CostmapTargetTracker:
         )
         self._tracks[track.track_id] = track
         self._next_track_id += 1
+        return track.track_id
 
     def _delete_expired_tracks(self, stamp_seconds: float) -> None:
         expired = [
@@ -574,6 +609,7 @@ class CostmapTargetTracker:
         ]
         for track_id in expired:
             track = self._tracks.pop(track_id)
+            self._observed_track_ids.discard(track_id)
             if track_id == self._selected_track_id:
                 self._last_selected_snapshot = track.snapshot()
                 self._selected_track_id = None

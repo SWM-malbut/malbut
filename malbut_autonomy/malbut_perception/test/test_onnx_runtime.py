@@ -33,6 +33,21 @@ def test_auto_uses_cuda_when_tensorrt_is_unavailable(tmp_path):
     assert resolved == 'onnxruntime-cuda'
 
 
+def test_desktop_auto_uses_cuda_even_when_tensorrt_is_compiled(tmp_path):
+    providers, resolved = resolve_onnxruntime_providers(
+        [
+            'TensorrtExecutionProvider',
+            'CUDAExecutionProvider',
+            'CPUExecutionProvider',
+        ],
+        'auto',
+        tmp_path,
+        prefer_tensorrt=False,
+    )
+    assert providers == ['CUDAExecutionProvider', 'CPUExecutionProvider']
+    assert resolved == 'onnxruntime-cuda'
+
+
 def test_auto_uses_cpu_on_development_machine(tmp_path):
     providers, resolved = resolve_onnxruntime_providers(
         ['CPUExecutionProvider'], 'auto', tmp_path

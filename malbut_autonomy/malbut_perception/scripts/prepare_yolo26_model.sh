@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Export the official YOLO26n weights to a portable FP32 ONNX model. The
-# one-to-many head avoids embedding device-specific NMS/TopK operations;
-# malbut_perception applies NMS after inference. Runtime acceleration is
-# selected independently by ONNX Runtime on the deployment device.
+# Export the official YOLO26n end-to-end weights to a portable FP32 ONNX
+# model. The one-to-one head returns final detections without external NMS.
+# Runtime acceleration is selected independently by ONNX Runtime.
 
 cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/malbut_perception"
 export_env="$cache_root/yolo26-export-env"
@@ -51,7 +50,7 @@ exported = YOLO(str(weights)).export(
     opset=12,
     simplify=True,
     dynamic=False,
-    end2end=False,
+    end2end=True,
     device='cpu',
 )
 print(f'Exported model: {exported}')
@@ -75,7 +74,7 @@ output = session.run(
     None,
     {input_name: np.zeros((1, 3, 640, 640), dtype=np.float32)},
 )[0]
-if output.ndim != 3 or 84 not in output.shape:
+if output.shape != (1, 300, 6):
     raise RuntimeError(f'unexpected YOLO26 output shape: {output.shape}')
 if not np.all(np.isfinite(output)):
     raise RuntimeError('YOLO26 output contains non-finite values')

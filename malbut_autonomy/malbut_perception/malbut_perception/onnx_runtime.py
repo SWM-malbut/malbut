@@ -21,10 +21,30 @@ def _runtime_cache_root() -> Path:
     return root / 'malbut_perception' / 'tensorrt'
 
 
+def _is_jetson() -> bool:
+    """Return whether the process is running on an NVIDIA Jetson image."""
+    return Path('/etc/nv_tegra_release').is_file()
+
+
+def _provider_name(provider: Provider) -> str:
+    """Return the execution-provider name from an ORT provider setting."""
+    return provider[0] if isinstance(provider, tuple) else provider
+
+
+def _preload_tensorrt() -> bool:
+    """Load pip TensorRT libraries into the process when they are installed."""
+    try:
+        importlib.import_module('tensorrt')
+    except ImportError:
+        return False
+    return True
+
+
 def resolve_onnxruntime_providers(
     available: Sequence[str],
     requested_target: str,
     cache_path: Path,
+    prefer_tensorrt: bool = True,
 ) -> Tuple[List[Provider], str]:
     """Choose the fastest provider set without silently ignoring requests."""
     known_targets = {
@@ -82,7 +102,7 @@ def resolve_onnxruntime_providers(
             selected.append(cpu)
         return selected, 'onnxruntime-tensorrt-fp16'
 
-    if tensorrt in providers:
+    if prefer_tensorrt and tensorrt in providers:
         cache_path.mkdir(parents=True, exist_ok=True)
         selected = [
             (
@@ -122,10 +142,23 @@ class OnnxRuntimeNetwork:
                 'onnxruntime is not installed; run '
                 'scripts/prepare_inference_runtime.sh'
             ) from error
+        preload_dlls = getattr(runtime, 'preload_dlls', None)
+        if preload_dlls is not None:
+            preload_dlls()
+        available_providers = runtime.get_available_providers()
+        has_tensorrt = (
+            'TensorrtExecutionProvider' in available_providers
+            and (_preload_tensorrt() or _is_jetson())
+        )
+        if requested_target == 'cuda_fp16' and not has_tensorrt:
+            raise RuntimeError(
+                'TensorRT libraries are required for cuda_fp16'
+            )
         providers, resolved_target = resolve_onnxruntime_providers(
-            runtime.get_available_providers(),
+            available_providers,
             requested_target,
             _runtime_cache_root(),
+            prefer_tensorrt=has_tensorrt,
         )
         try:
             session = runtime.InferenceSession(
@@ -135,6 +168,34 @@ class OnnxRuntimeNetwork:
             raise RuntimeError(
                 f'cannot load ONNX Runtime model {model_path}: {error}'
             ) from error
+        primary_provider = _provider_name(providers[0])
+        if primary_provider not in session.get_providers():
+            if (
+                requested_target == 'auto'
+                and primary_provider == 'TensorrtExecutionProvider'
+                and 'CUDAExecutionProvider'
+                in available_providers
+            ):
+                providers, resolved_target = resolve_onnxruntime_providers(
+                    available_providers,
+                    'cuda',
+                    _runtime_cache_root(),
+                )
+                try:
+                    session = runtime.InferenceSession(
+                        str(model_path), providers=providers
+                    )
+                except Exception as error:
+                    raise RuntimeError(
+                        'TensorRT and CUDA execution providers failed to load: '
+                        f'{error}'
+                    ) from error
+                primary_provider = _provider_name(providers[0])
+            if primary_provider not in session.get_providers():
+                raise RuntimeError(
+                    f'ONNX Runtime requested {primary_provider} but activated '
+                    f'{session.get_providers()}'
+                )
         inputs = session.get_inputs()
         if len(inputs) != 1:
             raise RuntimeError(

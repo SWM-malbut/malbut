@@ -59,6 +59,19 @@ def test_end_to_end_nms_export_shape_is_supported():
     assert detections[0].bbox == BoundingBox(10.0, 20.0, 110.0, 220.0)
 
 
+def test_end_to_end_output_is_not_filtered_by_external_nms():
+    output = np.array(
+        [
+            [10.0, 20.0, 110.0, 220.0, 0.8, 0.0],
+            [11.0, 21.0, 111.0, 221.0, 0.7, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    transform = LetterboxTransform(1.0, 0.0, 0.0, 640, 640)
+    detections = decode_yolo_people(output, transform, 0.20, 0.45)
+    assert len(detections) == 2
+
+
 def test_decode_ignores_nonfinite_and_outside_predictions():
     output = np.zeros((1, 5, 85), dtype=np.float32)
     output[0, 0, :6] = [320.0, 320.0, 200.0, 300.0, 0.9, 0.9]
