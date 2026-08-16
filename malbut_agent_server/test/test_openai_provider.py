@@ -7,12 +7,17 @@ from typing import Any, Dict, List
 
 import pytest
 
+from malbut_agent_server.monitor_room_coverage import (
+    DEFAULT_COVERAGE_PROFILE,
+    PLANNER_REVISION,
+)
 from malbut_agent_server.providers.base import ProviderError
 from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
 )
 from malbut_agent_server.schemas import AgentRequest
 from malbut_agent_server.tools import select_tool_specs
+from malbut_agent_server.trusted_results import TrustedToolResult
 
 
 def _request() -> AgentRequest:
@@ -30,6 +35,30 @@ def _request() -> AgentRequest:
             },
             'available_tools': ['navigate'],
         }
+    )
+
+
+def _trusted_result() -> TrustedToolResult:
+    return TrustedToolResult(
+        trusted_result_id='trusted-tool-result-openai-test',
+        trusted_result_fingerprint='1' * 64,
+        user_id='private-trusted-user',
+        conversation_id='private-trusted-conversation',
+        session_instance_id='private-trusted-session',
+        generation=1,
+        source_revision=2,
+        source_turn_id='private-trusted-turn',
+        source_ordinal=1,
+        record_kind='planned',
+        state='succeeded',
+        result_code='semantic_sample_plan_created',
+        planner_revision=PLANNER_REVISION,
+        profile_digest=DEFAULT_COVERAGE_PROFILE.digest,
+        plan_digest='2' * 64,
+        result_digest='3' * 64,
+        sample_count=7,
+        component_count=1,
+        completed_at=123.0,
     )
 
 
@@ -116,6 +145,39 @@ def test_builds_strict_responses_payload_and_parses_tool_call() -> None:
     assert result.decision.tool_name == 'navigate'
     assert result.decision.arguments == {'location': '거실'}
     assert result.usage.total_tokens == 14
+
+
+def test_build_payload_includes_closed_trusted_result_projection() -> None:
+    """Official API input receives trusted facts without private linkage."""
+    provider = OpenAIResponsesProvider(
+        api_key='test-only-key',
+        model='test-model',
+        transport=lambda *_args: {},
+    )
+    result = _trusted_result()
+
+    payload = provider.build_payload(
+        _request(),
+        [],
+        [],
+        [],
+        trusted_server_tool_results=(result,),
+    )
+    context = json.loads(payload['input'].split('\n', 1)[1])
+
+    assert context['trusted_server_tool_results'] == [
+        result.to_prompt_dict()
+    ]
+    for private_value in (
+        result.trusted_result_id,
+        result.user_id,
+        result.conversation_id,
+        result.session_instance_id,
+        result.profile_digest,
+        result.plan_digest,
+        result.result_digest,
+    ):
+        assert private_value not in payload['input']
 
 
 def test_parses_structured_text_message() -> None:

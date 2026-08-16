@@ -124,6 +124,14 @@ def test_user_map_keeps_slam_coordinates_and_stable_identity(tmp_path):
     assert user_map["room_segmentation"]["room_count"] == 1
     assert preview.ndim == 3
     assert preview.shape == (160, 220, 3)
+    room = next(
+        feature for feature in user_map["features"]
+        if feature["properties"]["role"] == "room"
+    )
+    center = first_source.transform.pixel(room["properties"]["centroid"])
+    # The product preview contains only map geometry. Room names are rendered
+    # by the interactive web overlay, never baked in as debug numbers.
+    assert preview[center[1], center[0]].tolist() == [255, 232, 220]
 
 
 def test_small_occupancy_speckles_do_not_become_user_map_rooms(tmp_path):
@@ -316,6 +324,36 @@ def test_map_identity_ignores_file_names_and_yaml_formatting(tmp_path):
     assert load_slam_map(first).map_id == load_slam_map(second).map_id
 
 
+def test_map_identity_survives_threshold_tuning_with_new_revision(tmp_path):
+    """Occupancy tuning must invalidate previews without orphaning Rooms."""
+    map_path = _write_slam_map(
+        tmp_path,
+        "thresholds",
+        [(20, 20), (190, 20), (190, 130), (20, 130)],
+    )
+    first = load_slam_map(map_path)
+    metadata = yaml.safe_load(map_path.read_text(encoding="utf-8"))
+    metadata["free_thresh"] = 0.25
+    map_path.write_text(yaml.safe_dump(metadata), encoding="utf-8")
+    second = load_slam_map(map_path)
+
+    assert first.map_id == second.map_id
+    assert first.map_revision != second.map_revision
+    assert first.legacy_map_ids != second.legacy_map_ids
+
+
+def test_packaged_map_keeps_legacy_identity_and_unknown_threshold():
+    """The shipped map must stay bound to saved Zones while preserving unknown."""
+    slam_map = load_slam_map(
+        GAZEBO_ROOT / "maps" / "robocup_home.yaml"
+    )
+
+    assert slam_map.map_id == "map-12e2d8760d08"
+    assert slam_map.free_threshold == pytest.approx(0.196)
+    assert np.any(slam_map.image == 205)
+    assert not np.any(clean_free_space(slam_map)[slam_map.image == 205])
+
+
 def test_loader_uses_ros_defaults_and_rejects_unsupported_modes(tmp_path):
     """Optional ROS metadata has defaults; unsupported semantics fail loud."""
     map_path = _write_slam_map(
@@ -378,9 +416,21 @@ def test_editor_loads_maps_dynamically_and_has_no_fixed_house_geometry():
     assert "walkable_area" in script
     assert 'role === "room"' in script
     assert "function renderRooms()" in script
-    assert 'fetch("/api/split-room"' in script
-    assert 'fetch("/api/merge-rooms"' in script
-    assert 'fetch("/api/apply-zones"' in script
+    assert 'postJson("/api/split-room"' in script
+    assert 'postJson("/api/merge-rooms"' in script
+    assert 'postJson("/api/apply-zones"' in script
+    assert 'postJson("/api/rooms"' in script
+    assert 'id="navigateMode"' in html
+    assert 'id="navigationPanel"' in html
+    assert 'id="robotLayer"' in html
+    assert 'new EventSource("/api/robot/stream")' in script
+    assert 'postJson("/api/navigation/preview"' in script
+    assert 'postJson("/api/navigation/start"' in script
+    assert 'postJson("/api/navigation/cancel"' in script
+    assert 'state.mode === "navigate"' in script
+    assert "liveNavigationPath" in script
+    assert 'class: "navigation-trail"' in script
+    assert '"live_global_costmap"' in script
     assert 'fetch("/api/editor-config"' in script
     assert "function pointNearRoomWall(" in script
     assert "function orthogonalCorner(" in script
@@ -401,6 +451,7 @@ def test_editor_loads_maps_dynamically_and_has_no_fixed_house_geometry():
     assert "state.draft.push" not in script
     assert 'state.mode = "drawing"' not in script
     assert "function persistRooms()" in script
+    assert '"X-CSRF-Token": state.csrfToken' in script
     assert "malbut-rooms:v2:" in script
     assert "function roomDisplayName(room)" in script
     assert "semantic_zone" in script
@@ -410,6 +461,6 @@ def test_editor_loads_maps_dynamically_and_has_no_fixed_house_geometry():
     assert 'if (!zones.length)' in script
     assert "function readStoredArray(" in script
     assert "delete zone.properties.needs_review" in script
-    assert "value.map_id !== state.userMap.map_id" in script
+    assert "acceptedMapIds.has(value.map_id)" in script
     assert "small_house" not in script.lower()
     assert "aws" not in script.lower()

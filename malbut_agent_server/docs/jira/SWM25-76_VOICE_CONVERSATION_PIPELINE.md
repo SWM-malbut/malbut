@@ -6,9 +6,9 @@
 | --- | --- |
 | Jira 스토리 | SWM25-76 음성 대화 파이프라인 |
 | 대상 패키지 | `malbut_agent_server` |
-| 구현 기준일 | 2026-08-13 |
-| 현재 범위 | 순수 Python 오프라인 계약과 결정론적 Mock 시험 |
-| 현재 상태 | 텍스트·메타데이터·비차단 추론 경계 구현, 실제 STT·TTS·ROS adapter 미연결 |
+| 구현 기준일 | 2026-08-16 |
+| 현재 범위 | 순수 Python 오프라인 계약, 결정론적 Mock, opt-in authenticated scripted HTTP |
+| 현재 상태 | 텍스트·메타데이터·비차단 추론과 simulation-result 알림 pull/terminal 경계 구현, 별도 `malbut_voice` M0 one-shot microphone→local STT source core 추가, wake·speaker·ROS/Agent adapter 미연결 |
 | 안전 원칙 | 최종 transcript만 추론, 원시 오디오 비수용·비저장, 최종 Safety 응답만 TTS |
 
 이 문서는 SWM25-34가 소유하는 음성 입출력과 SWM25-69 대화 서버 사이에서
@@ -46,6 +46,10 @@ Action을 호출하지 않고 합성 이벤트로 계약만 검증한다.
 - 추론 중 barge-in·close의 즉시 처리와 늦은 결과의 typed discard
 - 외부 conversation close·expire·delete를 예외 없는 typed rejection으로 변환
 - transcript 원문과 speaker 식별자를 제외한 명시적 audit projection
+- simulation trusted result에서 원자적으로 파생된 fixed-template
+  outbox의 leased claim·cancel·terminal을 별도 scripted lane으로 연결
+- 일반 TTS와 result notification의 단일 process-local playback slot,
+  exact conversation generation fence와 generic-terminal 격리
 
 ### 1.2 이번 범위에서 하지 않는 것
 
@@ -67,7 +71,11 @@ fail-closed한다는 것까지만 증명한다.
 | 파일 | 역할 |
 | --- | --- |
 | [`speech.py`](../../malbut_agent_server/speech.py) | typed 계약, 세션 상태와 coordinator |
+| [`trusted_result_tts.py`](../../malbut_agent_server/trusted_result_tts.py) | simulation result 알림 outbox·lease·fence·ACK 계약 |
+| [`conversation.py`](../../malbut_agent_server/conversation.py) | result/outbox same-transaction 생성과 lifecycle cancel |
+| [`http_server.py`](../../malbut_agent_server/http_server.py) | opt-in authenticated scripted pull/terminal 경계 |
 | [`test_speech_pipeline.py`](../../test/test_speech_pipeline.py) | 합성 이벤트 기반 오프라인 회귀 시험 |
+| [`test_trusted_result_tts_speech_bridge.py`](../../test/test_trusted_result_tts_speech_bridge.py) | durable claim과 process-local playback 경합 회귀 |
 | 이 문서 | 책임 경계, 정책, 상태 전이와 남은 운영 결정 |
 
 `SpeechConversationCoordinator`가 `AgentOrchestrator` 앞에 놓이고,
@@ -107,6 +115,27 @@ TTSRequest(interruptible=true)
         v
 실제 음성 재생
 ```
+
+simulation-result 알림은 위 일반 `TTSRequest`와 별도 lane이다.
+
+```text
+same-transaction TrustedToolResult + trusted_result_tts_outbox
+        |
+        | authenticated explicit claim(speech session + request ID)
+        v
+TrustedResultTTSRequest(fixed template, leased, non-authorizing)
+        |
+        | active normal TTS/confirmation/inference와 상호 배제
+        | barge-in·lease expiry → deterministic cancel → terminal-pending
+        | dedicated terminal → durable ACK 또는 local cancel-terminal
+        v
+scripted_text_only / physical_audio_verified=false
+```
+
+이 bridge는 background drain이 아니며 실제 speaker를 호출하지 않는다.
+claim token은 coordinator 내부에만 두고 HTTP body에서 받지 않는다.
+모든 scripted claim/terminal 경로는 서버가 허용한 user/conversation binding에
+묶이고, 다른 사용자의 식별자는 존재 여부를 드러내지 않도록 404로 숨긴다.
 
 ## 3. 입력 계약
 
@@ -322,6 +351,26 @@ instance-local lease는 DB에 영속되지 않으므로 같은 프로세스 안�
 coordinator 인스턴스나 multi-process deployment에는 별도 durable lease가
 필요하다.
 
+### 6.4 simulation-result TTS outbox bridge
+
+`claim_trusted_result_tts()`는 열린 speech binding의 user, conversation,
+speech session, conversation instance/generation을 서버에서 고정한 뒤 speech
+lock 밖에서 Store lease를 얻고, lock을 다시 얻어 같은 reservation일 때만
+`TrustedResultTTSRequest`를 공개한다. 일반 TTS, pending confirmation,
+in-flight inference, 다른 notification이 있으면 claim하지 않는다.
+
+`mark_trusted_result_tts_terminal()`만 서버가 보관한 claim token과 fence로
+Store ACK를 시도한다. 일반 `mark_tts_terminal()`은 이 lane을 끝낼 수
+없다. lease가 끝났다고 재생이 끝난 것으로 간주하지 않고
+`TTSCancelRequest(reason=lease_expired)`를 먼저 반환한다. cancel terminal
+전에는 다음 claim과 transcript를 모두 막는다. 만료된 credential의
+terminal은 local slot을 정리할 뿐 durable ACK나 audible evidence로 승격하지
+않는다.
+
+미완료 claim은 재시작 후 같은 speech session과 claim request ID로 복구할
+수 있지만, ACK된 event는 다시 음성 request로 내보내지 않는다. 이것은
+DB delivery state의 멱등성이지 audio exactly-once나 사람의 청취 증거가 아니다.
+
 ## 7. 세션 종료
 
 `close_session(speech_session_id, control_id)`은 다음 작업을 한 번 수행한다.
@@ -391,7 +440,9 @@ pydocstyle \
   test/test_speech_pipeline.py
 ```
 
-2026-08-13 원자성·동시성·strict 경계 강화 후 결과: **69 passed**
+2026-08-16 Agent 음성 core와 trusted-result bridge 직접 회귀: **99 passed**.
+별도 `malbut_voice` M0 package 회귀는 **85 passed, 3 skipped**다. skipped는
+명시적 hardware smoke opt-in과 현재 환경에 없는 ament lint runner다.
 
 provider·commit 차단 barrier를 사용하는 barge-in·close·동시 duplicate·추론 중
 삭제·commit/TTS 선형화·세션 간 비차단 경쟁 시험 6개는 별도로 각각 **100회
@@ -427,6 +478,19 @@ provider·commit 차단 barrier를 사용하는 barge-in·close·동시 duplicat
   폐기 상태가 우선하는지 확인
 - cancellation 예외가 외부로 누출되지 않고 typed fallback으로 끝나는지 확인
 - audit projection에서 transcript와 speaker 원문 제외
+- result notification의 normal TTS·confirmation·inference 상호 배제와
+  generic terminal의 durable ACK 차단
+- restart live-claim 복구, ACK 후 no-redelivery, exact claim/cancel/terminal replay
+- claim/ACK Store I/O 동안 speech lock 미보유와 CAS loss exact retry
+- claim commit 직후 reset/delete, terminal ACK↔reset/close/delete 경합
+- lease 경계, `lease_expired` cancel·terminal-pending·local cancel-terminal 후
+  다음 fence만 허용
+- scripted HTTP의 bearer/opt-in, untrusted user·conversation·text·result·token
+  주입 거절, cross-user claim/terminal 은닉과 `physical_audio_verified=false`
+- `malbut_voice` M0의 protected config seal, exact fixed ALSA binding,
+  no-microphone `--check`, explicit `--microphone` capture gate,
+  local-only faster-whisper model hash verification, current-value final
+  provenance seal, BaseException cleanup과 concurrent capture exclusion
 
 `result_completion_guard`는 commit 전 검증과 동일 프로세스의 TTS 상태 등록을
 하나의 동기화 fence로 묶지만, SQLite commit 자체를 되돌리는 transaction은
@@ -444,8 +508,9 @@ PYTHONPATH=. python3 -m pytest -q test
 ```
 
 전체 워크트리 수치는 SWM25-75~77 변경을 모두 합친 최종 검증 시점의 야간
-작업 보고서와 평가 artifact에 기록한다. 위 **69 passed**는 이 문서가 직접
-소유하는 음성 경계 시험의 독립 결과다.
+작업 보고서와 평가 artifact에 기록한다. 위 **99 passed**는 Agent 음성 경계
+시험의 독립 결과이며, `malbut_voice` M0 숫자는 실제 microphone을 열지 않는
+패키지 회귀다.
 
 ## 10. 실제 연결 전 미결정 사항
 
@@ -474,9 +539,11 @@ PYTHONPATH=. python3 -m pytest -q test
 
    accepted, playback-started, completed, failed, cancelled, timed-out 상태와
    늦은 결과 무시, 취소 응답 deadline을 Action adapter에서 구현해야 한다.
-   현재 coordinator의 active TTS 예약은 process memory일 뿐 durable outbox가
-   아니다. 실제 dispatcher가 요청을 인수했다는 원자적 확인, 재시작 후 재전송,
-   commit 순서와 발행 순서를 보존하는 durable outbox·delivery ledger가 필요하다.
+   일반 assistant `TTSRequest`의 active 예약은 여전히 process memory일 뿐
+   durable outbox가 아니다. simulation-result에만 same-transaction durable outbox와
+   scripted claim/terminal bridge가 있다. 실제 dispatcher가 요청을 인수했다는
+   원자적 확인, multi-process playback arbitration, stable ID 기반 downstream
+   dedupe/observe, 재생·취소 reconcile는 추가로 필요하다.
 
 5. **실제 self-echo·barge-in**
 
@@ -501,11 +568,14 @@ PYTHONPATH=. python3 -m pytest -q test
    timeout·cancellation과 자원 회수 SLA는 별도 운영 정책이 필요하다. barge-in과
    close의 상태 변경은 추론 완료를 기다리지 않는다.
 
-   transcript/activity/TTS terminal cache와 in-flight 예약은 process-local이다.
+   transcript/activity/일반 TTS terminal cache와 in-flight 예약은 process-local이다.
    재시작 뒤 같은
    speech session ID를 재사용하면 TTS lifecycle exactly-once가 보장되지 않는다.
    운영에서는 새 session ID를 강제하거나 durable speech/TTS ledger를 구현해야
    한다.
+
+   simulation-result outbox claim은 재시작 복구가 가능하지만 coordinator의
+   normal-vs-notification slot 상호 배제와 cancel delivery는 process-local이다.
 
 9. **multi-process lease**
 
@@ -537,7 +607,8 @@ PYTHONPATH=. python3 -m pytest -q test
 | session state hard cap과 기존 replay 보존 | 구현·오프라인 검증 |
 | provider 중 non-blocking control·per-session completion fence | 구현·동시성 검증 |
 | conversation commit과 로컬 TTS 예약의 선형화 | 구현·오프라인 검증 |
-| 실제 dispatcher durable outbox·delivery ordering | 미구현 |
+| simulation-result durable outbox·scripted claim/cancel/terminal | 구현·오프라인/소켓 검증 |
+| 일반 TTS durable outbox·실제 speaker dispatcher | 미구현 |
 | 외부 conversation lifecycle fail-closed 변환 | 구현·오프라인 검증 |
 | 재시작·multi-process durable speech ledger | 미구현 |
 | 실제 STT·TTS·ROS bridge | 미구현 |
@@ -545,7 +616,8 @@ PYTHONPATH=. python3 -m pytest -q test
 
 따라서 SWM25-76의 현재 정확한 명칭은 다음과 같다.
 
-> **실제 음성 I/O가 없는 안전한 오프라인 음성 대화 계약 MVP.**
+> **실제 음성 I/O가 없는 안전한 음성 대화 계약과
+> simulation-result scripted delivery 경계 MVP.**
 
 실제 음성 파이프라인 완료 처리는 위 미결정 사항과 ROS adapter, 실장치 시험을
 통과한 뒤에만 가능하다.

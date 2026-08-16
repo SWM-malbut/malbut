@@ -94,6 +94,76 @@ def _rasterize_room(
     return masks[0], transform
 
 
+def room_representative_point(
+    geometry: dict,
+    resolution: float = 0.05,
+) -> tuple[list[float], float]:
+    """Return an interior Room point with the greatest wall clearance."""
+    if resolution <= 0.0:
+        raise ValueError("resolution must be positive")
+    mask, transform = _rasterize_room(geometry, resolution)
+    distance = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+    _, maximum_distance, _, maximum_point = cv2.minMaxLoc(distance)
+    if maximum_distance <= 0.0:
+        raise ValueError("Room geometry contains no usable interior")
+    return (
+        transform.world(*maximum_point),
+        round(float(maximum_distance) * resolution, 3),
+    )
+
+
+def normalize_room_feature(
+    room: dict,
+    resolution: float = 0.05,
+) -> dict:
+    """Validate a Room and refresh its server-owned navigation metadata."""
+    if not isinstance(room, dict) or room.get("type") != "Feature":
+        raise ValueError("every Room must be a GeoJSON Feature")
+    properties = room.get("properties")
+    if not isinstance(properties, dict) or properties.get("role") != "room":
+        raise ValueError("every Room must have the room role")
+    room_id = room.get("id") or properties.get("room_id")
+    if not isinstance(room_id, str) or not room_id.strip():
+        raise ValueError("every Room must have a non-empty ID")
+    geometry = room.get("geometry")
+    if not isinstance(geometry, dict):
+        raise ValueError("every Room must contain geometry")
+    polygons = _geometry_polygons(geometry)
+    for polygon in polygons:
+        if not isinstance(polygon, list) or not polygon:
+            raise ValueError("Room Polygon must contain an outer ring")
+        for ring in polygon:
+            if (
+                not isinstance(ring, list)
+                or len(ring) < 4
+                or ring[0] != ring[-1]
+            ):
+                raise ValueError("Room rings must be closed polygons")
+            if any(
+                not isinstance(point, list)
+                or len(point) < 2
+                or not all(
+                    isinstance(value, (int, float))
+                    and math.isfinite(value)
+                    for value in point[:2]
+                )
+                for point in ring
+            ):
+                raise ValueError("Room coordinates must be finite [x, y]")
+    normalized = deepcopy(room)
+    normalized["id"] = room_id.strip()
+    normalized["properties"]["room_id"] = room_id.strip()
+    representative_point, clearance_m = room_representative_point(
+        geometry, resolution
+    )
+    normalized["properties"].update({
+        "area_m2": round(_geometry_area(geometry), 2),
+        "representative_point": representative_point,
+        "clearance_m": clearance_m,
+    })
+    return normalized
+
+
 def _rasterize_geometries(
     geometries: list[dict],
     resolution: float,
@@ -352,6 +422,8 @@ def _split_feature(
     color: str,
     area: float,
     centroid: list[float],
+    representative_point: list[float],
+    clearance_m: float,
     split_operation_id: str,
     parent_geometry: dict | None,
 ) -> dict:
@@ -378,6 +450,8 @@ def _split_feature(
         "color": color,
         "area_m2": round(area, 2),
         "centroid": centroid,
+        "representative_point": representative_point,
+        "clearance_m": clearance_m,
         "generated": False,
         "edited": True,
         "split_from": source_id,
@@ -443,10 +517,15 @@ def split_room_feature(
         centroid = transform.world(
             round(float(xs.mean())), round(float(ys.mean()))
         )
+        representative_point, clearance_m = room_representative_point(
+            geometry, resolution
+        )
         parts.append({
             "geometry": geometry,
             "area": _geometry_area(geometry),
             "centroid": centroid,
+            "representative_point": representative_point,
+            "clearance_m": clearance_m,
         })
     parts.sort(key=lambda part: (part["centroid"][0], part["centroid"][1]))
     source_color = room["properties"].get("color", SPLIT_COLORS[0])
@@ -467,6 +546,8 @@ def split_room_feature(
             source_color,
             parts[0]["area"],
             parts[0]["centroid"],
+            parts[0]["representative_point"],
+            parts[0]["clearance_m"],
             operation_id,
             room["geometry"],
         ),
@@ -477,6 +558,8 @@ def split_room_feature(
             next_color,
             parts[1]["area"],
             parts[1]["centroid"],
+            parts[1]["representative_point"],
+            parts[1]["clearance_m"],
             operation_id,
             None,
         ),
@@ -547,6 +630,9 @@ def merge_room_features(
         round(float(xs.mean())), round(float(ys.mean()))
     )
     area = _geometry_area(geometry)
+    representative_point, clearance_m = room_representative_point(
+        geometry, resolution
+    )
     if restores_split:
         room_id = str(rooms[0]["properties"]["split_parent_id"])
     else:
@@ -602,6 +688,8 @@ def merge_room_features(
         "base_name": merged_base_name,
         "area_m2": round(area, 2),
         "centroid": centroid,
+        "representative_point": representative_point,
+        "clearance_m": clearance_m,
         "category": categories.pop()
         if len(categories) == 1 else "unassigned",
         "generated": False,

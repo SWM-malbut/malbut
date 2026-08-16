@@ -167,7 +167,7 @@ class RobotState:
 
 @dataclass(frozen=True)
 class AgentRequest:
-    """One user request plus the current local robot state."""
+    """One user request plus optional untrusted robot-state context."""
 
     request_id: str
     user_id: str
@@ -176,6 +176,12 @@ class AgentRequest:
     utterance: str
     robot_state: RobotState
     available_tools: Tuple[str, ...]
+    robot_state_provided: bool = True
+
+    def __post_init__(self) -> None:
+        """Keep state presence explicit without treating defaults as facts."""
+        if type(self.robot_state_provided) is not bool:
+            raise ValidationError('robot_state_provided must be a boolean')
 
     @classmethod
     def from_dict(cls, value: Any) -> 'AgentRequest':
@@ -226,6 +232,7 @@ class AgentRequest:
             if tool_name not in normalized_tools:
                 normalized_tools.append(tool_name)
 
+        robot_state_value = value.get('robot_state')
         return cls(
             request_id=request_id,
             user_id=user_id,
@@ -233,9 +240,13 @@ class AgentRequest:
             turn_id=turn_id,
             utterance=utterance,
             robot_state=RobotState.from_dict(
-                value.get('robot_state')
+                robot_state_value
             ),
             available_tools=tuple(normalized_tools),
+            robot_state_provided=(
+                'robot_state' in value
+                and robot_state_value is not None
+            ),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -246,7 +257,11 @@ class AgentRequest:
             'conversation_id': self.conversation_id,
             'turn_id': self.turn_id,
             'utterance': self.utterance,
-            'robot_state': self.robot_state.to_dict(),
+            'robot_state': (
+                self.robot_state.to_dict()
+                if self.robot_state_provided
+                else None
+            ),
             'available_tools': list(self.available_tools),
         }
 

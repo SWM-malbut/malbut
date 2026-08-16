@@ -89,6 +89,25 @@ def test_request_deduplicates_available_tools() -> None:
     assert value.available_tools == ('navigate',)
 
 
+@pytest.mark.parametrize('include_null', [False, True])
+def test_request_preserves_absent_robot_state(include_null: bool) -> None:
+    """Round-trip missing state without manufacturing false sensor facts."""
+    payload = request().to_dict()
+    if include_null:
+        payload['robot_state'] = None
+    else:
+        payload.pop('robot_state')
+    value = AgentRequest.from_dict(payload)
+    assert value.robot_state_provided is False
+    assert value.to_dict()['robot_state'] is None
+
+    provided = dict(payload)
+    provided['robot_state'] = {}
+    present_value = AgentRequest.from_dict(provided)
+    assert present_value.robot_state_provided is True
+    assert present_value.to_dict()['robot_state'] == RobotState().to_dict()
+
+
 def test_non_tool_decision_cannot_smuggle_arguments() -> None:
     """Only a validated tool proposal may carry action arguments."""
     value = AgentDecision(
@@ -119,6 +138,7 @@ def test_tool_allowlist_contains_no_low_level_motion_control() -> None:
     assert forbidden.isdisjoint(TOOL_SPECS)
     assert set(TOOL_SPECS) == {
         'navigate',
+        'monitor_room',
         'detect_pet',
         'capture_photo',
         'send_notification',

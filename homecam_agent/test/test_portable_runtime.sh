@@ -42,6 +42,14 @@ unset HOMECAM_WORLD HOMECAM_START_GAZEBO
 homecam_load_config "$config_path"
 [[ "$HOMECAM_WORLD" == small_house ]]
 [[ "$HOMECAM_START_GAZEBO" == true ]]
+homecam_config_key_allowed HOMECAM_MAP_STORE
+homecam_config_key_allowed HOMECAM_MAP_WEB_HOST
+homecam_config_key_allowed HOMECAM_MAP_WEB_PORT
+homecam_config_key_allowed HOMECAM_MAP_RVIZ
+if homecam_config_key_allowed HOMECAM_MAP_DELETE_ON_START; then
+  printf 'destructive map configuration key should be rejected\n' >&2
+  exit 1
+fi
 
 homecam_validate_backend_url https://example.com
 homecam_validate_backend_url http://localhost:3000
@@ -60,7 +68,47 @@ if homecam_validate_backend_url http://192.168.0.2:3000; then
 fi
 homecam_validate_backend_url HTTPS://example.com
 
+map_store="$temporary_dir/maps"
+mkdir -p "$map_store"
+printf '%s\n' \
+  '{"initial_pose":{"x":-1.25,"y":2.5,"yaw":0.75}}' \
+  > "$map_store/active.json"
+[[ "$(homecam_saved_map_pose "$map_store")" == '-1.25 2.5 0.75' ]]
+printf '%s\n' \
+  '{"initial_pose":{"x":"NaN","y":2.5,"yaw":0.75}}' \
+  > "$map_store/active.json"
+if homecam_saved_map_pose "$map_store" >/dev/null 2>&1; then
+  printf 'non-finite saved pose should fail\n' >&2
+  exit 1
+fi
+pose_command=(ros2 launch example)
+homecam_append_pose_arguments pose_command -1.25 2.5 0.75
+[[ "${pose_command[*]}" == \
+  'ros2 launch example x:=-1.25 y:=2.5 yaw:=0.75' ]]
+
 [[ $((10#08)) -eq 8 ]]
+
+source_token="$temporary_dir/source.token"
+printf 'hc1.123e4567-e89b-42d3-a456-426614174000.%064d' 0 > "$source_token"
+chmod 600 "$source_token"
+generated_config="$temporary_dir/generated/sim.env"
+"$repo_root/scripts/configure_sim_device.sh" \
+  --config "$generated_config" \
+  --device-id gazebo-test \
+  --backend-url https://example.com \
+  --token-file "$source_token" >/dev/null
+grep -Fqx 'HOMECAM_GAZEBO_GUI=false' "$generated_config"
+grep -Fqx 'HOMECAM_GAZEBO_HEADLESS=true' "$generated_config"
+grep -Fqx 'HOMECAM_FORCE_MAPPING=false' "$generated_config"
+
+runner="$repo_root/scripts/run_gazebo_homecam.sh"
+grep -Fq 'ros2 launch malbut_gazebo worlds.launch.py' "$runner"
+grep -Fq '"simulation:=false"' "$runner"
+grep -Fq '"runtime_request_file:=$runtime_control_file"' "$runner"
+grep -Fq '"trusted_initial_pose:=true"' "$runner"
+grep -Fq '"trusted_localization_handoff:=$trust_localization_handoff"' \
+  "$runner"
+grep -Fq 'start_robot_stack true true' "$runner"
 
 standalone_workspace="$temporary_dir/standalone_workspace"
 mkdir -p "$standalone_workspace/src/homecam_agent"
@@ -74,6 +122,18 @@ mkdir -p "$embedded_workspace/src/malbut/homecam_agent"
   homecam_workspace_from_repo \
     "$embedded_workspace/src/malbut/homecam_agent"
 )" == "$embedded_workspace" ]]
+
+repository_root_workspace="$temporary_dir/repository_root_workspace"
+mkdir -p \
+  "$repository_root_workspace/homecam_agent/homecam_detector" \
+  "$repository_root_workspace/homecam_agent/homecam_media_agent" \
+  "$repository_root_workspace/malbut_gazebo"
+: > "$repository_root_workspace/homecam_agent/homecam_detector/package.xml"
+: > "$repository_root_workspace/homecam_agent/homecam_media_agent/package.xml"
+: > "$repository_root_workspace/malbut_gazebo/package.xml"
+[[ "$(
+  homecam_workspace_from_repo "$repository_root_workspace/homecam_agent"
+)" == "$repository_root_workspace" ]]
 
 chmod 644 "$config_path"
 unset HOMECAM_WORLD HOMECAM_START_GAZEBO

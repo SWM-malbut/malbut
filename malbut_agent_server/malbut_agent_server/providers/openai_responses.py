@@ -5,7 +5,7 @@ import json
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from malbut_agent_server.conversation import (
     ConversationSummary,
@@ -32,6 +32,7 @@ from malbut_agent_server.schemas import (
     ProviderUsage,
 )
 from malbut_agent_server.tools import ToolSpec
+from malbut_agent_server.trusted_results import TrustedToolResult
 
 
 Transport = Callable[
@@ -172,6 +173,24 @@ class OpenAIResponsesProvider(AgentProvider):
         conversation_summary: Optional[ConversationSummary] = None,
     ) -> ProviderResult:
         """Call the API once and normalize either a tool call or text."""
+        return self.complete_with_context(
+            request,
+            memories,
+            conversation_turns,
+            tools,
+            conversation_summary,
+        )
+
+    def complete_with_context(
+        self,
+        request: AgentRequest,
+        memories: List[MemoryRecord],
+        conversation_turns: List[ConversationTurn],
+        tools: List[ToolSpec],
+        conversation_summary: Optional[ConversationSummary] = None,
+        trusted_server_tool_results: Sequence[TrustedToolResult] = (),
+    ) -> ProviderResult:
+        """Call the API with server-authenticated historical results."""
         prepared = prepare_model_input(
             request,
             memories,
@@ -179,6 +198,7 @@ class OpenAIResponsesProvider(AgentProvider):
             conversation_summary,
             self.max_model_input_chars,
             MAX_CONVERSATION_TURNS,
+            trusted_server_tool_results,
         )
         payload = self.build_payload(
             request,
@@ -187,6 +207,7 @@ class OpenAIResponsesProvider(AgentProvider):
             tools,
             conversation_summary,
             prepared=prepared,
+            trusted_server_tool_results=trusted_server_tool_results,
         )
         headers = {
             'Authorization': f'Bearer {self._api_key}',
@@ -234,6 +255,7 @@ class OpenAIResponsesProvider(AgentProvider):
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary] = None,
         prepared: Optional[PreparedModelInput] = None,
+        trusted_server_tool_results: Sequence[TrustedToolResult] = (),
     ) -> Dict[str, Any]:
         """Build the documented Responses API request body."""
         prepared_context = prepared or prepare_model_input(
@@ -243,6 +265,7 @@ class OpenAIResponsesProvider(AgentProvider):
             conversation_summary,
             self.max_model_input_chars,
             MAX_CONVERSATION_TURNS,
+            trusted_server_tool_results,
         )
         payload: Dict[str, Any] = {
             'model': self.model,

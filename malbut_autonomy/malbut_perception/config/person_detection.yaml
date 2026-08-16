@@ -1,0 +1,74 @@
+person_localizer:
+  ros__parameters:
+    # Physical robots use wall time. Simulation launch files override this.
+    use_sim_time: false
+
+    # Aligned RGB-D inputs. No Gazebo model pose or actor state is consumed.
+    rgb_topic: /camera/color/image_raw
+    depth_topic: /camera/depth/image_raw
+    camera_info_topic: /camera/color/camera_info
+
+    detections_2d_topic: /perception/person/detections_2d
+    detections_3d_topic: /perception/person/detections_3d
+    debug_image_topic: /perception/person/debug_image
+    compressed_debug_image_topic: /perception/person/debug_image/compressed
+    health_topic: /perception/person/healthy
+
+    # Pixel projection is expressed in a REP-103 optical frame. Leave empty
+    # when the camera message already names that frame; override simulators
+    # that share one body-frame label across images and point clouds.
+    projection_frame: ''
+    # Set base_link or map only when the corresponding TF is available.
+    output_frame: ''
+
+    # auto loads YOLO when model_path exists and otherwise uses OpenCV HOG.
+    detector_backend: auto
+    model_path: ''
+    confidence_threshold: 0.20
+    nms_threshold: 0.45
+    yolo_input_size: 640
+    # auto selects verified CUDA and otherwise uses the stable CPU target.
+    # OpenCL remains available only as an explicit opt-in target.
+    dnn_target: auto
+    # Four workers performed best without competing heavily with Gazebo.
+    opencv_num_threads: 4
+    hog_hit_threshold: 0.0
+
+    tracker_high_threshold: 0.45
+    tracker_low_threshold: 0.15
+    tracker_iou_threshold: 0.30
+    tracker_max_missed_frames: 15
+    tracker_min_confirmed_hits: 2
+    tracker_appearance_threshold: 0.30
+    tracker_appearance_weight: 0.65
+
+    # Long-term ID restoration uses only cropped RGB pixels. The lightweight
+    # HSV encoder is a fallback when the OSNet model has not been prepared.
+    reid_backend: auto
+    reid_model_path: ''
+    reid_cosine_threshold: 0.25
+    reid_max_inactive_frames: 300
+    reid_feature_budget: 30
+    reid_minimum_crop_width: 16
+    reid_minimum_crop_height: 32
+
+    depth_roi_scale: 0.45
+    minimum_depth_m: 0.30
+    maximum_depth_m: 3.0
+    minimum_depth_samples: 20
+    fallback_depth_scale: 1.0
+    # RGB remains useful past the Aurora930 Pro depth limit: publish the
+    # image bearing at the 3 m lower bound with deliberately high covariance.
+    enable_bearing_only_fallback: true
+    bearing_only_uncertainty_m: 2.0
+    person_thickness_m: 0.35
+
+    # Keep synchronization shallow so slow CPU inference drops stale frames.
+    sync_queue_size: 3
+    sync_slop_sec: 0.08
+    max_inference_rate_hz: 6.0
+    publish_debug_image: true
+    # compressed avoids dropping large raw debug frames over ROS middleware.
+    # Select raw or both only when an uncompressed consumer requires it.
+    debug_image_transport: compressed
+    debug_jpeg_quality: 80

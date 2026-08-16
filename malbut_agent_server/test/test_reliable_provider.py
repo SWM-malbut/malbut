@@ -10,6 +10,10 @@ from malbut_agent_server.conversation import (
     ConversationTurn,
 )
 from malbut_agent_server.memory import MemoryRecord
+from malbut_agent_server.monitor_room_coverage import (
+    DEFAULT_COVERAGE_PROFILE,
+    PLANNER_REVISION,
+)
 from malbut_agent_server.providers.base import (
     AgentProvider,
     ProviderError,
@@ -30,6 +34,7 @@ from malbut_agent_server.schemas import (
     ProviderResult,
 )
 from malbut_agent_server.tools import ToolSpec, select_tool_specs
+from malbut_agent_server.trusted_results import TrustedToolResult
 
 
 def _request() -> AgentRequest:
@@ -103,6 +108,58 @@ class _ScriptedProvider(AgentProvider):
         return outcome  # type: ignore[return-value]
 
 
+class _ContextProvider(_ScriptedProvider):
+    """Capture the explicit trusted-result compatibility seam."""
+
+    def __init__(self) -> None:
+        super().__init__([_message_result('context')])
+        self.trusted_results = ()
+
+    def complete_with_context(
+        self,
+        request,
+        memories,
+        conversation_turns,
+        tools,
+        conversation_summary=None,
+        trusted_server_tool_results=(),
+    ) -> ProviderResult:
+        self.trusted_results = tuple(trusted_server_tool_results)
+        return self.complete(
+            request,
+            memories,
+            conversation_turns,
+            tools,
+            conversation_summary,
+        )
+
+
+class _PoisoningContextProvider(_ScriptedProvider):
+    """Mutate its private attempt snapshot before failing."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+
+    def complete_with_context(
+        self,
+        request,
+        memories,
+        conversation_turns,
+        tools,
+        conversation_summary=None,
+        trusted_server_tool_results=(),
+    ) -> ProviderResult:
+        del request, memories, conversation_turns, tools
+        del conversation_summary
+        object.__setattr__(
+            trusted_server_tool_results[0],
+            'sample_count',
+            4096,
+        )
+        trusted_server_tool_results.clear()
+        raise TimeoutError('content-free poisoned attempt')
+
+
 class _TimedTimeoutProvider(AgentProvider):
     """Advance a fake clock by one bounded attempt, then time out."""
 
@@ -133,6 +190,74 @@ def _complete(provider: ReliableProvider) -> ProviderResult:
         [],
         select_tool_specs(['navigate']),
     )
+
+
+def _trusted_result() -> TrustedToolResult:
+    return TrustedToolResult(
+        trusted_result_id='trusted-tool-result-reliable-test',
+        trusted_result_fingerprint='1' * 64,
+        user_id='private-user',
+        conversation_id='private-conversation',
+        session_instance_id='private-session',
+        generation=1,
+        source_revision=2,
+        source_turn_id='private-turn',
+        source_ordinal=1,
+        record_kind='planned',
+        state='succeeded',
+        result_code='semantic_sample_plan_created',
+        planner_revision=PLANNER_REVISION,
+        profile_digest=DEFAULT_COVERAGE_PROFILE.digest,
+        plan_digest='2' * 64,
+        result_digest='3' * 64,
+        sample_count=5,
+        component_count=1,
+        completed_at=123.0,
+    )
+
+
+def test_reliable_provider_forwards_trusted_result_context() -> None:
+    """Retry routing preserves the official provider context seam."""
+    nested = _ContextProvider()
+    provider = ReliableProvider([nested], max_retries=0)
+    trusted_result = _trusted_result()
+
+    result = provider.complete_with_context(
+        _request(),
+        [],
+        [],
+        select_tool_specs(['navigate']),
+        trusted_server_tool_results=(trusted_result,),
+    )
+
+    assert result.provider == 'context'
+    assert nested.trusted_results == (trusted_result,)
+
+
+def test_reliable_provider_isolates_trusted_results_between_adapters() -> None:
+    """A failed adapter cannot poison the fallback adapter's snapshot."""
+    malicious = _PoisoningContextProvider()
+    fallback = _ContextProvider()
+    provider = ReliableProvider(
+        [malicious, fallback],
+        max_retries=0,
+    )
+    trusted_result = _trusted_result()
+    caller_results = [trusted_result]
+
+    result = provider.complete_with_context(
+        _request(),
+        [],
+        [],
+        select_tool_specs(['navigate']),
+        trusted_server_tool_results=caller_results,
+    )
+
+    assert result.provider == 'context'
+    assert caller_results == [trusted_result]
+    assert trusted_result.sample_count == 5
+    assert len(fallback.trusted_results) == 1
+    assert fallback.trusted_results[0].sample_count == 5
 
 
 def test_classifies_existing_provider_errors_without_exposing_text() -> None:

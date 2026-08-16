@@ -202,7 +202,7 @@ def _runtime(
         memory_store=memory_store,
         conversation_store=conversation_store,
         safety_policy=SafetyPolicy(),
-        trusted_robot_state=True,
+        test_only_trusted_robot_state=True,
     )
     coordinator = SpeechConversationCoordinator(
         orchestrator,
@@ -233,6 +233,44 @@ def _run_transcript_in_thread(coordinator, event):
     thread = threading.Thread(target=invoke, daemon=True)
     thread.start()
     return thread, outcome
+
+
+def _run_close_in_thread(coordinator, control_id):
+    """Start one speech close and retain its result or exception."""
+    outcome = {}
+
+    def invoke() -> None:
+        try:
+            outcome['result'] = coordinator.close_session(
+                'speech-session-1',
+                control_id,
+            )
+        except Exception as error:  # pragma: no cover - assertion aid
+            outcome['error'] = error
+
+    thread = threading.Thread(target=invoke, daemon=True)
+    thread.start()
+    return thread, outcome
+
+
+def _install_active_tts(
+    coordinator: SpeechConversationCoordinator,
+    request_id: str,
+) -> TTSRequest:
+    """Seed process-local playback without invoking a Provider or Store."""
+    request = TTSRequest(
+        schema_version=SPEECH_SCHEMA_VERSION,
+        request_id=request_id,
+        speech_session_id='speech-session-1',
+        conversation_id='voice-conversation-1',
+        turn_id='seeded-local-turn',
+        source_utterance_id='seeded-local-utterance',
+        text='로컬 재생 테스트',
+    )
+    state = coordinator._sessions['speech-session-1']
+    with state.lock:
+        state.active_tts = request
+    return request
 
 
 @pytest.mark.parametrize(
@@ -562,6 +600,31 @@ def test_open_session_is_idempotent_but_cannot_rebind_or_reopen() -> None:
             coordinator.open_session(_binding())
 
 
+def test_open_session_revalidates_generation_after_external_reset() -> None:
+    """Do not report an old generation voice lease as already open."""
+    with _runtime() as (coordinator, provider, store):
+        first = coordinator.handle_transcript(_transcript())
+        request_id = first.tts_request.request_id
+        assert store.reset(
+            'voice-user',
+            'voice-conversation-1',
+        ).generation == 2
+
+        reopened = coordinator.open_session(_binding())
+
+        assert reopened.status == 'rejected'
+        assert reopened.code == 'conversation_changed_during_inference'
+        assert reopened.capture_epoch == 2
+        assert reopened.cancel_request is not None
+        assert reopened.cancel_request.tts_request_id == request_id
+        current = store.get('voice-user', 'voice-conversation-1')
+        assert current.status == 'active'
+        assert current.generation == 2
+        assert provider.calls == 1
+        with pytest.raises(ValidationError, match='session is closed'):
+            coordinator.open_session(_binding())
+
+
 def test_activity_binding_and_replay_fingerprint_fail_closed() -> None:
     """VAD identity mismatch is cached but mutated replay is rejected."""
     with _runtime() as (coordinator, provider, _store):
@@ -601,6 +664,95 @@ def test_one_conversation_cannot_have_two_live_speech_sessions() -> None:
             coordinator.open_session(
                 _binding(speech_session_id='speech-session-2')
             )
+
+
+def test_new_speech_id_retires_reset_generation_collision_once() -> None:
+    """Fence an old local lease, then open the reset generation on retry."""
+    with _runtime() as (coordinator, provider, store):
+        active_tts = _install_active_tts(
+            coordinator,
+            'seeded-reset-collision-tts',
+        )
+        current = store.reset('voice-user', 'voice-conversation-1')
+        candidate = _binding(speech_session_id='speech-session-2')
+
+        fenced = coordinator.open_session(candidate)
+
+        assert fenced.status == 'rejected'
+        assert fenced.code == 'conversation_changed_during_inference'
+        assert fenced.cancel_request is not None
+        assert fenced.cancel_request.speech_session_id == 'speech-session-1'
+        assert (
+            fenced.cancel_request.tts_request_id
+            == active_tts.request_id
+        )
+        assert 'speech-session-2' not in coordinator._sessions
+        assert store.get('voice-user', 'voice-conversation-1') == current
+        opened = coordinator.open_session(candidate)
+        assert opened.status == 'ready'
+        assert opened.code == 'session_opened'
+        assert opened.cancel_request is None
+        assert store.get('voice-user', 'voice-conversation-1') == current
+        assert provider.calls == 0
+
+
+def test_new_speech_id_retires_recreated_session_collision_once() -> None:
+    """A deleted lease cannot block the replacement durable instance."""
+    with _runtime() as (coordinator, provider, store):
+        active_tts = _install_active_tts(
+            coordinator,
+            'seeded-recreated-collision-tts',
+        )
+        assert store.delete('voice-user', 'voice-conversation-1') is True
+        current = store.create('voice-user', 'voice-conversation-1')
+        candidate = _binding(speech_session_id='speech-session-2')
+
+        fenced = coordinator.open_session(candidate)
+
+        assert fenced.status == 'rejected'
+        assert fenced.code == 'conversation_changed_during_inference'
+        assert fenced.cancel_request is not None
+        assert fenced.cancel_request.speech_session_id == 'speech-session-1'
+        assert (
+            fenced.cancel_request.tts_request_id
+            == active_tts.request_id
+        )
+        assert 'speech-session-2' not in coordinator._sessions
+        assert store.get('voice-user', 'voice-conversation-1') == current
+        opened = coordinator.open_session(candidate)
+        assert opened.status == 'ready'
+        assert opened.code == 'session_opened'
+        assert opened.cancel_request is None
+        assert store.get('voice-user', 'voice-conversation-1') == current
+        assert provider.calls == 0
+
+
+def test_new_speech_id_keeps_collision_on_transient_context_failure(
+    monkeypatch,
+) -> None:
+    """A transient Store read cannot retire the current local lease."""
+    with _runtime() as (coordinator, provider, store):
+        original_get = store.get
+
+        def fail_get(*_args, **_kwargs):
+            raise RuntimeError('synthetic transient Store failure')
+
+        monkeypatch.setattr(store, 'get', fail_get)
+        retryable = coordinator.open_session(
+            _binding(speech_session_id='speech-session-2')
+        )
+
+        assert retryable.status == 'retryable'
+        assert retryable.code == 'conversation_context_unavailable'
+        assert retryable.cancel_request is None
+        assert coordinator._sessions['speech-session-1'].closed is False
+        assert 'speech-session-2' not in coordinator._sessions
+        monkeypatch.setattr(store, 'get', original_get)
+        with pytest.raises(ValidationError, match='active speech session'):
+            coordinator.open_session(
+                _binding(speech_session_id='speech-session-2')
+            )
+        assert provider.calls == 0
 
 
 def test_source_control_characters_are_rejected() -> None:
@@ -1062,6 +1214,46 @@ def test_close_does_not_wait_for_provider_and_discards_late_tts() -> None:
         ).status == 'closed'
 
 
+def test_reset_before_agent_begin_cannot_attach_new_generation_tts() -> None:
+    """A generation-2 result cannot complete on a generation-1 voice lease."""
+    with _runtime() as (coordinator, provider, store):
+        original_handle = coordinator.orchestrator.handle
+        handle_entered = threading.Event()
+        release_handle = threading.Event()
+
+        def delayed_handle(*args, **kwargs):
+            handle_entered.set()
+            if not release_handle.wait(timeout=3.0):
+                raise RuntimeError('delayed agent handle timed out')
+            return original_handle(*args, **kwargs)
+
+        coordinator.orchestrator.handle = delayed_handle
+        thread, outcome = _run_transcript_in_thread(
+            coordinator,
+            _transcript(),
+        )
+        assert handle_entered.wait(timeout=1.0)
+        assert store.reset(
+            'voice-user',
+            'voice-conversation-1',
+        ).generation == 2
+
+        release_handle.set()
+        thread.join(timeout=2.0)
+
+        assert not thread.is_alive()
+        assert 'error' not in outcome
+        result = outcome['result']
+        assert result.status == 'discarded'
+        assert result.code == 'inference_cancelled_before_commit'
+        assert result.tts_request is None
+        assert provider.calls == 1
+        assert store.list_turns(
+            'voice-user',
+            'voice-conversation-1',
+        ) == []
+
+
 def test_completion_guard_linearizes_commit_before_barge_in() -> None:
     """A control event cannot split the guarded durable commit section."""
     with _runtime() as (coordinator, _provider, store):
@@ -1272,6 +1464,269 @@ def test_external_conversation_loss_is_a_typed_fail_closed_result(
             'speech-session-1',
             'acknowledge-external-close',
         ) == local_close
+
+
+def test_external_reset_rejects_old_tts_terminal_and_fences_once() -> None:
+    """A prior-generation playback ACK cannot reopen the capture loop."""
+    with _runtime() as (coordinator, provider, store):
+        event = _transcript()
+        first = coordinator.handle_transcript(event)
+        request_id = first.tts_request.request_id
+        reset = store.reset('voice-user', 'voice-conversation-1')
+
+        terminal = coordinator.mark_tts_terminal(
+            'speech-session-1',
+            request_id,
+        )
+
+        assert reset.generation == 2
+        assert terminal.status == 'rejected'
+        assert terminal.code == 'conversation_changed_during_inference'
+        assert terminal.capture_epoch == 2
+        assert terminal.cancel_request is not None
+        assert terminal.cancel_request.tts_request_id == request_id
+        assert terminal.cancel_request.reason == 'session_closed'
+        duplicate = coordinator.mark_tts_terminal(
+            'speech-session-1',
+            request_id,
+        )
+        assert duplicate.code == 'tts_already_terminal'
+        assert duplicate.cancel_request is None
+        replay = coordinator.handle_transcript(event)
+        assert replay.status == 'rejected'
+        assert replay.code == 'speech_session_closed'
+        assert replay.tts_request is None
+        assert provider.calls == 1
+
+
+def test_external_reset_never_replays_cached_old_tts() -> None:
+    """Check generation before returning a cached transcript delivery."""
+    with _runtime() as (coordinator, provider, store):
+        event = _transcript()
+        first = coordinator.handle_transcript(event)
+        request_id = first.tts_request.request_id
+        store.reset('voice-user', 'voice-conversation-1')
+
+        replay = coordinator.handle_transcript(event)
+
+        assert replay is not first
+        assert replay.status == 'rejected'
+        assert replay.code == 'conversation_changed_during_inference'
+        assert replay.capture_epoch == 2
+        assert replay.tts_request is None
+        assert replay.tts_cancel_request is not None
+        assert replay.tts_cancel_request.tts_request_id == request_id
+        assert replay.tts_cancel_request.reason == 'session_closed'
+        duplicate = coordinator.handle_transcript(event)
+        assert duplicate.status == 'rejected'
+        assert duplicate.code == 'speech_session_closed'
+        assert duplicate.tts_request is None
+        assert duplicate.tts_cancel_request is None
+        assert provider.calls == 1
+
+
+def test_stale_speech_close_cannot_close_reset_generation() -> None:
+    """Close only the old local lease when reset created a new generation."""
+    with _runtime() as (coordinator, provider, store):
+        first = coordinator.handle_transcript(_transcript())
+        request_id = first.tts_request.request_id
+        assert store.reset(
+            'voice-user',
+            'voice-conversation-1',
+        ).generation == 2
+
+        closed = coordinator.close_session(
+            'speech-session-1',
+            'close-stale-reset-lease',
+        )
+
+        assert closed.status == 'closed'
+        assert (
+            closed.code
+            == 'session_closed_conversation_changed_'
+            'tts_cancel_requested'
+        )
+        assert closed.capture_epoch == 2
+        assert closed.cancel_request is not None
+        assert closed.cancel_request.tts_request_id == request_id
+        assert coordinator.close_session(
+            'speech-session-1',
+            'close-stale-reset-lease',
+        ) == closed
+        assert coordinator.close_session(
+            'speech-session-1',
+            'different-stale-close',
+        ).code == 'close_conflict'
+        current = store.get('voice-user', 'voice-conversation-1')
+        assert current.status == 'active'
+        assert current.generation == 2
+        replacement = coordinator.open_session(
+            _binding(speech_session_id='speech-session-2')
+        )
+        assert replacement.status == 'ready'
+        assert replacement.code == 'session_opened'
+        assert provider.calls == 1
+
+
+def test_reset_between_close_check_and_cas_preserves_new_generation(
+    monkeypatch,
+) -> None:
+    """The atomic close rejects reset after the speech preflight read."""
+    with _runtime() as (coordinator, provider, store):
+        original = store.get('voice-user', 'voice-conversation-1')
+        active_tts = _install_active_tts(
+            coordinator,
+            'seeded-reset-close-cas-tts',
+        )
+        original_close = store.close_session_if_current
+        cas_entered = threading.Event()
+        release_cas = threading.Event()
+        observed = {}
+
+        def delayed_close(*args, **kwargs):
+            observed.update(kwargs)
+            cas_entered.set()
+            if not release_cas.wait(timeout=3.0):
+                raise RuntimeError('delayed close CAS timed out')
+            return original_close(*args, **kwargs)
+
+        monkeypatch.setattr(
+            store,
+            'close_session_if_current',
+            delayed_close,
+        )
+        thread, outcome = _run_close_in_thread(
+            coordinator,
+            'close-across-reset-cas',
+        )
+        assert cas_entered.wait(timeout=1.0)
+        current = store.reset('voice-user', 'voice-conversation-1')
+        release_cas.set()
+        thread.join(timeout=2.0)
+
+        assert not thread.is_alive()
+        assert 'error' not in outcome
+        assert observed == {
+            'expected_session_instance_id': original.session_instance_id,
+            'expected_generation': original.generation,
+        }
+        closed = outcome['result']
+        assert closed.status == 'closed'
+        assert (
+            closed.code
+            == 'session_closed_conversation_changed_'
+            'tts_cancel_requested'
+        )
+        assert closed.cancel_request is not None
+        assert (
+            closed.cancel_request.tts_request_id
+            == active_tts.request_id
+        )
+        assert store.get('voice-user', 'voice-conversation-1') == current
+        assert current.status == 'active'
+        assert current.generation == original.generation + 1
+        assert provider.calls == 0
+
+
+def test_recreate_between_close_check_and_cas_preserves_new_instance(
+    monkeypatch,
+) -> None:
+    """The atomic close cannot mutate a replacement conversation row."""
+    with _runtime() as (coordinator, provider, store):
+        original = store.get('voice-user', 'voice-conversation-1')
+        active_tts = _install_active_tts(
+            coordinator,
+            'seeded-recreated-close-cas-tts',
+        )
+        original_close = store.close_session_if_current
+        cas_entered = threading.Event()
+        release_cas = threading.Event()
+
+        def delayed_close(*args, **kwargs):
+            cas_entered.set()
+            if not release_cas.wait(timeout=3.0):
+                raise RuntimeError('delayed close CAS timed out')
+            return original_close(*args, **kwargs)
+
+        monkeypatch.setattr(
+            store,
+            'close_session_if_current',
+            delayed_close,
+        )
+        thread, outcome = _run_close_in_thread(
+            coordinator,
+            'close-across-recreate-cas',
+        )
+        assert cas_entered.wait(timeout=1.0)
+        assert store.delete('voice-user', 'voice-conversation-1') is True
+        current = store.create('voice-user', 'voice-conversation-1')
+        release_cas.set()
+        thread.join(timeout=2.0)
+
+        assert not thread.is_alive()
+        assert 'error' not in outcome
+        closed = outcome['result']
+        assert closed.status == 'closed'
+        assert (
+            closed.code
+            == 'session_closed_conversation_changed_'
+            'tts_cancel_requested'
+        )
+        assert closed.cancel_request is not None
+        assert (
+            closed.cancel_request.tts_request_id
+            == active_tts.request_id
+        )
+        assert current.session_instance_id != original.session_instance_id
+        assert store.get('voice-user', 'voice-conversation-1') == current
+        assert current.status == 'active'
+        assert provider.calls == 0
+
+
+def test_old_speech_session_cannot_attach_to_recreated_conversation() -> None:
+    """Fence the private lifecycle identity before provider inference."""
+    with _runtime() as (coordinator, provider, store):
+        original = store.get('voice-user', 'voice-conversation-1')
+        assert store.delete('voice-user', 'voice-conversation-1') is True
+        recreated = store.create('voice-user', 'voice-conversation-1')
+        assert recreated.session_instance_id != original.session_instance_id
+
+        result = coordinator.handle_transcript(_transcript())
+
+        assert result.status == 'rejected'
+        assert result.code == 'conversation_changed_during_inference'
+        assert result.tts_request is None
+        assert result.capture_epoch == 2
+        assert provider.calls == 0
+        assert store.snapshot(
+            'voice-user',
+            'voice-conversation-1',
+        ).turns == ()
+
+
+def test_cached_old_transcript_cannot_replay_after_recreate() -> None:
+    """Do not return a historical TTS receipt across session instances."""
+    with _runtime() as (coordinator, provider, store):
+        event = _transcript()
+        first = coordinator.handle_transcript(event)
+        assert first.tts_request is not None
+        coordinator.mark_tts_terminal(
+            'speech-session-1',
+            first.tts_request.request_id,
+        )
+        assert store.delete('voice-user', 'voice-conversation-1') is True
+        store.create('voice-user', 'voice-conversation-1')
+
+        replay = coordinator.handle_transcript(event)
+
+        assert replay.status == 'rejected'
+        assert replay.code == 'conversation_changed_during_inference'
+        assert replay.tts_request is None
+        assert provider.calls == 1
+        assert store.snapshot(
+            'voice-user',
+            'voice-conversation-1',
+        ).turns == ()
 
 
 def test_external_delete_during_inference_returns_typed_discard() -> None:

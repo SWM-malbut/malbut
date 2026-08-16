@@ -25,19 +25,6 @@
   </xacro:macro>
 
   <xacro:macro name="rosorin_gazebo">
-    <gazebo reference="base_link">
-      <material>Gazebo/Orange</material>
-    </gazebo>
-    <gazebo reference="upper_body_link">
-      <material>Gazebo/Grey</material>
-    </gazebo>
-    <gazebo reference="camera_link">
-      <material>Gazebo/DarkGrey</material>
-    </gazebo>
-    <gazebo reference="laser_frame">
-      <material>Gazebo/DarkGrey</material>
-    </gazebo>
-
     <!-- Same directional-friction approximation used by Fortress' mecanum demo. -->
     <xacro:mecanum_friction link="front_left_wheel_link" direction="1 -1 0"/>
     <xacro:mecanum_friction link="front_right_wheel_link" direction="1 1 0"/>
@@ -88,12 +75,8 @@
     <xacro:if value="$(arg lidar_enabled)">
       <gazebo reference="laser_frame">
         <sensor name="stl19p_d500" type="gpu_lidar">
-          <!--
-            The profile locates laser_frame at the D500 enclosure center.
-            Emit rays from the top scan plane so they do not intersect the
-            upper-body collision geometry directly below the sensor.
-          -->
-          <pose>0 0 ${lidar_height / 2.0} 0 0 0</pose>
+          <!-- Hiwonder defines laser_frame at the physical scan plane. -->
+          <pose>0 0 0 0 0 0</pose>
           <always_on>true</always_on>
           <update_rate>${lidar_rate}</update_rate>
           <visualize>false</visualize>
@@ -136,7 +119,10 @@
           <update_rate>${camera_rate}</update_rate>
           <visualize>false</visualize>
           <topic>/rgbd_camera</topic>
-          <gz_frame_id>camera_depth_optical_frame</gz_frame_id>
+          <!-- Fortress RGBD point clouds are expressed with +X forward and
+               +Z up.  Label them with the matching REP-103 body frame;
+               using the optical frame here rotates obstacle points twice. -->
+          <gz_frame_id>camera_link</gz_frame_id>
           <camera>
             <horizontal_fov>${camera_hfov}</horizontal_fov>
             <image>

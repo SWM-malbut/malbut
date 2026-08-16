@@ -73,6 +73,7 @@ git pull
 
 `--check-only`는 device id나 token 없이 `small_house` Gazebo를 실행하고,
 RGB 및 CameraInfo 토픽과 실제 RGB 프레임 수신까지 검증한 뒤 종료한다.
+이 점검 모드는 저장 지도를 생성하거나 교체하지 않는다.
 
 원격 스트리밍에는 PC별로 발급된 장치 정보가 한 번 필요하다.
 
@@ -107,11 +108,54 @@ PR 배포의 기본 절차는 아니다.
 `${XDG_CONFIG_HOME:-$HOME/.config}/homecam/device.token`에 권한 `600`으로
 보관한다. 설정과 token은 Git에 커밋하지 않는다.
 
-실행 스크립트는 `small_house`와 로봇을 시작하고
+일반 실행은 먼저 기기별 영속 저장소의 활성 지도를 확인한다. 지도가
+없을 때만 SLAM과 `우리 집 지도 만들기` 화면을 시작하고, 저장 지도가
+있으면 정적 지도와 AMCL을 사용한다. 기본 저장 경로는
+`${XDG_DATA_HOME:-$HOME/.local/share}/malbut/devices/<device-id>/maps`이다.
+AWS KVS 세션 시작·종료와 카메라·모니터링 설정은 이 지도를 삭제하거나
+교체하지 않는다.
+
+기본값인 `HOMECAM_CLOUD_MAP_ENABLED=true`에서는 같은 bearer token으로
+저장 지도와 현재 위치를 AWS `homecam_web`에 동기화한다. AWS 웹의 지도
+생성·저장 명령은 로컬 onboarding API로, 목적지 미리보기·이동·취소 명령은
+로컬 Nav2 웹 API로 전달된다. 목적지 좌표를 받은 장치는 반드시 로컬의 최신
+costmap·Zone 안전 검사를 통과한 preview token으로만 주행을 시작한다.
+저장 지도에서 `지도 다시 만들기`를 요청하면 장치 supervisor는 Gazebo와
+카메라 스트림을 유지한 채 Nav2/AMCL 스택만 SLAM 탐색 스택으로 교체한다.
+저장 또는 취소가 끝나면 같은 방식으로 저장 지도 주행에 복귀한다. 작성 중인
+지도는 cloud draft로만 보이고, 취소 시 기존 사용자 지도를 다시 표시한다.
+완료된 웹 미리보기는 raw costmap이 아니라 저장 과정에서 정리한
+`preview.png`를 사용하므로 inflation 그림자를 사용자 지도에 노출하지 않는다.
+
+이후 `small_house`와 로봇을 headless 모드로 시작하고
 `sensor_msgs/msg/Image` 및 `CameraInfo` 토픽을 자동 탐색한다. RGB 프레임
 수신, 필수 GStreamer plugin, KVS 활성 빌드, SDK CA 파일을 확인한 뒤에만
 원격 세션을 시작한다. Ctrl+C를 누르면 이 스크립트가 시작한 Gazebo와 homecam
 프로세스만 종료한다.
+
+로컬 Gazebo 화면도 함께 확인해야 할 때만 보호된 `sim.env`에서
+`HOMECAM_GAZEBO_GUI=true`, `HOMECAM_GAZEBO_HEADLESS=false`로 바꾼다.
+브라우저 스트리밍 시연은 Qt/QML GUI 종료가 전체 시뮬레이션을 중단하지 않도록
+headless 설정을 유지하는 것을 권장한다.
+
+시뮬레이션을 다시 실행해도 같은 `device-id`는 같은 지도를 재사용한다.
+다른 테스트 지도가 필요하면 보호된 `sim.env`에 별도의 절대 경로로
+`HOMECAM_MAP_STORE`를 지정한다. 이 값은 AWS 자격 증명과 무관하다.
+
+재기동 시 supervisor는 활성 지도에 저장된 마지막 위치를 Gazebo spawn과
+AMCL 초기 위치에 동시에 전달한다. 둘 중 한쪽에만 적용하지 않으므로 물리
+시뮬레이션 위치와 지도 마커가 갈라지지 않는다. 이 보장은
+`run_gazebo_homecam.sh`가 가진 단일 실행 lock과 독립 프로세스 그룹 수명주기를
+통해 제공되므로 제품 시뮬레이션은 `managed_home.launch.py`를 별도 터미널에서
+중복 실행하지 않는다.
+
+실제 로봇은 이 시뮬레이션 복원 정책을 사용하지 않는다. 전원이 꺼진 동안
+기기가 옮겨졌을 수 있으므로 기본값은 저장된 마지막 위치를 신뢰하지 않으며,
+동일 odometry 세션 또는 도킹 스테이션·fiducial 같은 검증된 위치 기준이 없으면
+`위치 확인 필요` 상태로 주행을 차단한다. 외부 supervisor가 물리 위치 기준도
+함께 소유할 때만 `trusted_initial_pose:=true`를 사용할 수 있다.
+`trusted_localization_handoff:=true`도 Gazebo/바퀴 odometry가 중단되지 않은
+SLAM→Navigation 전환에서만 사용하며 제품 부팅 시에는 항상 false로 시작한다.
 
 마이크 없는 PC에서는 기본적으로 무음 Opus track을 사용한다. 실제 마이크를
 사용할 때는 보호된 `sim.env`의 `HOMECAM_MICROPHONE_ENABLED=true`와

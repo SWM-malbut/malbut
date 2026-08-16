@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Spawn the robot only after Gazebo and robot_description are ready."""
+"""Spawn an SDF file or ROS description after Gazebo is ready."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 
 Probe = Callable[[], tuple[bool, str]]
@@ -47,7 +48,9 @@ def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--world", required=True)
     parser.add_argument("--entity-name", required=True)
-    parser.add_argument("--topic", default="/robot_description")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--topic")
+    source.add_argument("--file")
     parser.add_argument("--x", required=True)
     parser.add_argument("--y", required=True)
     parser.add_argument("--z", required=True)
@@ -56,6 +59,8 @@ def _parse_arguments() -> argparse.Namespace:
     arguments = parser.parse_args()
     if arguments.timeout <= 0:
         parser.error("--timeout must be positive")
+    if arguments.file and not Path(arguments.file).is_file():
+        parser.error(f"--file does not exist: {arguments.file}")
     return arguments
 
 
@@ -70,29 +75,36 @@ def main() -> int:
             f"Gazebo service {create_service}",
             deadline,
         )
-        _wait_for(
-            lambda: _listed(
-                [
-                    "ros2",
-                    "topic",
-                    "list",
-                    "--no-daemon",
-                    "--spin-time",
-                    "1",
-                ],
-                arguments.topic,
-            ),
-            f"ROS topic {arguments.topic}",
-            deadline,
-        )
+        if arguments.topic:
+            _wait_for(
+                lambda: _listed(
+                    [
+                        "ros2",
+                        "topic",
+                        "list",
+                        "--no-daemon",
+                        "--spin-time",
+                        "1",
+                    ],
+                    arguments.topic,
+                ),
+                f"ROS topic {arguments.topic}",
+                deadline,
+            )
     except TimeoutError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
 
+    source_kind = "topic" if arguments.topic else "file"
+    source_value = arguments.topic or arguments.file
     print(
-        f"Gazebo and {arguments.topic} are ready; spawning "
+        f"Gazebo and {source_kind} {source_value} are ready; spawning "
         f"{arguments.entity_name!r}."
     )
+    source_arguments = [
+        "-topic" if arguments.topic else "-file",
+        source_value,
+    ]
     command = [
         "ros2",
         "run",
@@ -102,8 +114,7 @@ def main() -> int:
         arguments.world,
         "-name",
         arguments.entity_name,
-        "-topic",
-        arguments.topic,
+        *source_arguments,
         "-allow_renaming",
         "false",
         "-x",

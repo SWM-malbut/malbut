@@ -37,6 +37,9 @@ Options:
 The normal merged layout is:
   <workspace>/src/malbut/homecam_agent
 
+The repository-root workspace layout is also supported:
+  <workspace>/homecam_agent
+
 The standalone layout is also supported:
   <workspace>/src/malbut
   <workspace>/src/homecam_agent
@@ -120,16 +123,23 @@ else
 fi
 standalone_repo_root="$(realpath -m -- "$workspace/src/homecam_agent")"
 embedded_repo_root="$(realpath -m -- "$workspace/src/malbut/homecam_agent")"
+workspace_root_repo="$(realpath -m -- "$workspace/homecam_agent")"
 if [[ "$repo_root" != "$standalone_repo_root" &&
-  "$repo_root" != "$embedded_repo_root" ]]
+  "$repo_root" != "$embedded_repo_root" &&
+  "$repo_root" != "$workspace_root_repo" ]]
 then
   printf \
-    'homecam_agent must be at %s or %s (current: %s).\n' \
-    "$standalone_repo_root" "$embedded_repo_root" "$repo_root" >&2
+    'homecam_agent must be at %s, %s, or %s (current: %s).\n' \
+    "$standalone_repo_root" "$embedded_repo_root" \
+    "$workspace_root_repo" "$repo_root" >&2
   exit 1
 fi
 
-malbut_source="$workspace/src/malbut"
+if [[ "$repo_root" == "$workspace_root_repo" ]]; then
+  malbut_source="$workspace"
+else
+  malbut_source="$workspace/src/malbut"
+fi
 if ! "$skip_apt"; then
   "$script_dir/install_dependencies.sh"
 fi
@@ -161,6 +171,7 @@ fi
 
 required_malbut_files=(
   "$malbut_source/malbut_gazebo/package.xml"
+  "$malbut_source/malbut_gazebo/launch/managed_home.launch.py"
   "$malbut_source/malbut_gazebo/launch/worlds.launch.py"
   "$malbut_source/malbut_gazebo/worlds/small_house.sdf"
 )

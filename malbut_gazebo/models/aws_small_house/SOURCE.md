@@ -6,6 +6,7 @@
 - Commit date: 2021-08-20
 - Imported on: 2026-07-26
 - Upstream world: `worlds/small_house.world`
+- Upstream map: `maps/turtlebot3_waffle_pi/map.{yaml,pgm}`
 - License: the adjacent `LICENSE` file is copied verbatim from the commit
 
 ## Selected content
@@ -23,8 +24,10 @@ The import intentionally excludes:
 - the unused `aws_Bed_01.png` texture, which is not referenced by the selected
   Bed model's Collada files.
 
-No AWS launch file, ROS package manifest, map, route, or Gazebo Classic
-dependency was imported.
+No AWS launch file, ROS package manifest, route, or Gazebo Classic dependency
+was imported. The occupancy map paired with this exact world was imported as
+`../../maps/small_house.{yaml,pgm}`. Its geometry, resolution, origin, and
+thresholds are unchanged; only the generic image filename was made explicit.
 
 ## Local adaptations
 
@@ -42,6 +45,16 @@ dependency was imported.
 - Replaced the Dumbbell's invalid zero axial inertia with a small positive
   value; the object remains static in this world.
 - Added package-relative Fortress resource paths in `worlds.launch.py`.
+
+## Integrity audit
+
+The selected files were compared with the recorded commit on 2026-08-07.
+All 67 active non-portrait instances retain the upstream name, URI, and pose.
+All 43 selected model directories contain collision geometry, including the
+Ball model used by both active Ball instances. Every selected model file is
+byte-identical to upstream except for the two SDF validation corrections
+documented above. The bundled Small House PGM is byte-identical to the map in
+the same upstream commit.
 
 The upstream package manifest says `Apache 2.0`, but the upstream `LICENSE`
 file contains MIT-style permission terms. Both facts are recorded here; the

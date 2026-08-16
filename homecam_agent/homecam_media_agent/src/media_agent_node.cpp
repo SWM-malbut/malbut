@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -16,8 +17,10 @@
 #include "homecam_media_agent/config.hpp"
 #include "homecam_media_agent/heartbeat_client.hpp"
 #include "homecam_media_agent/kvs_transport.hpp"
+#include "homecam_media_agent/media_evidence.hpp"
 #include "homecam_media_agent/pipeline_builder.hpp"
 #include "homecam_media_agent/session_client.hpp"
+#include "malbut_interfaces/msg/homecam_media_evidence.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
@@ -62,6 +65,34 @@ public:
       trim_trailing_slashes(config_.backend_url), token);
     session_client_ = std::make_unique<DeviceSessionClient>(
       trim_trailing_slashes(config_.backend_url), config_.device_id, token);
+    if (config_.physical_authority) {
+#if !(HOMECAM_HAVE_CURL && HOMECAM_HAVE_GSTREAMER)
+      throw std::invalid_argument(
+              "physical_authority requires libcurl and GStreamer support");
+#else
+      if (!is_valid_device_token(token) || !heartbeat_client_->available()) {
+        throw std::invalid_argument(
+                "physical_authority requires a valid backend device token");
+      }
+      bool use_sim_time = false;
+      if (has_parameter("use_sim_time")) {
+        use_sim_time = get_parameter("use_sim_time").as_bool();
+      }
+      if (use_sim_time) {
+        throw std::invalid_argument(
+                "physical_authority rejects use_sim_time");
+      }
+      (void)strict_boottime_ns();
+#endif
+    }
+    evidence_state_ = std::make_unique<MediaEvidenceState>(
+      MediaEvidenceConfig{
+        config_.device_id,
+        config_.physical_authority,
+        HOMECAM_HAVE_GSTREAMER != 0,
+        static_cast<std::uint64_t>(config_.evidence_ttl_ms) * 1'000'000ULL,
+        static_cast<std::uint64_t>(config_.frame_timeout_ms) * 1'000'000ULL});
+    evidence_source_instance_id_ = generate_source_instance_id();
     desired_state_confirmed_ = config_.backend_url.empty();
     transport_ = make_kvs_transport();
     transport_->set_ptt_audio_callback(
@@ -103,6 +134,10 @@ public:
     monitoring_publisher_ = create_publisher<std_msgs::msg::Bool>(
       "/homecam/monitoring_enabled",
       rclcpp::QoS(1).reliable().transient_local());
+    media_evidence_publisher_ =
+      create_publisher<malbut_interfaces::msg::HomecamMediaEvidence>(
+      "/homecam/media_evidence",
+      rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile());
     detector_health_subscription_ = create_subscription<std_msgs::msg::Bool>(
       "/homecam/detector_healthy",
       rclcpp::QoS(1).reliable().transient_local(),
@@ -130,6 +165,10 @@ public:
 #endif
     session_timer_ = create_wall_timer(
       250ms, std::bind(&MediaAgentNode::maintain_media_runtime, this));
+    evidence_timer_ = create_wall_timer(
+      std::chrono::milliseconds(config_.evidence_publish_interval_ms),
+      std::bind(&MediaAgentNode::publish_media_evidence, this));
+    publish_media_evidence();
 
 #if HOMECAM_HAVE_KVS && HOMECAM_HAVE_GSTREAMER
     RCLCPP_INFO(
@@ -223,9 +262,12 @@ private:
     declare_parameter<int>("bitrate_kbps", 700);
     declare_parameter<int>("heartbeat_interval_ms", 2000);
     declare_parameter<int>("frame_timeout_ms", 2000);
+    declare_parameter<int>("evidence_ttl_ms", 2000);
+    declare_parameter<int>("evidence_publish_interval_ms", 500);
     declare_parameter<bool>("monitoring_enabled", false);
     declare_parameter<bool>("camera_enabled", true);
     declare_parameter<bool>("microphone_enabled", true);
+    declare_parameter<bool>("physical_authority", false);
   }
 
   MediaConfig read_config() const
@@ -246,10 +288,109 @@ private:
       static_cast<int>(get_parameter("heartbeat_interval_ms").as_int());
     config.frame_timeout_ms =
       static_cast<int>(get_parameter("frame_timeout_ms").as_int());
+    config.evidence_ttl_ms =
+      static_cast<int>(get_parameter("evidence_ttl_ms").as_int());
+    config.evidence_publish_interval_ms = static_cast<int>(
+      get_parameter("evidence_publish_interval_ms").as_int());
     config.monitoring_enabled = get_parameter("monitoring_enabled").as_bool();
     config.camera_enabled = get_parameter("camera_enabled").as_bool();
     config.microphone_enabled = get_parameter("microphone_enabled").as_bool();
+    config.physical_authority = get_parameter("physical_authority").as_bool();
     return config;
+  }
+
+  void publish_media_evidence()
+  {
+    try {
+      const std::uint64_t now = strict_boottime_ns();
+      EvidenceTruth transport_running = EvidenceTruth::kUnknown;
+      {
+        std::unique_lock<std::mutex> lock(
+          transport_mutex_, std::try_to_lock);
+        if (lock.owns_lock()) {
+          transport_running = transport_->running() ?
+            EvidenceTruth::kTrue : EvidenceTruth::kFalse;
+        }
+      }
+
+      const bool media_io_closed = !media_generation_allows_io(
+        active_transport_generation_.load(),
+        session_generation_.load(),
+        media_permitted_.load());
+      ActiveSessionEvidence session;
+      if (
+        transport_running == EvidenceTruth::kTrue &&
+        active_stream_mode_ != "idle" &&
+        is_valid_session_id(active_session_id_) &&
+        active_transport_generation_.load() == session_generation_.load() &&
+        evidence_state_->backend_device_bound())
+      {
+        session.session_id = active_session_id_;
+        session.control_plane_generation =
+          evidence_state_->control_plane_generation();
+      }
+
+      const MediaEvidenceSnapshot candidate = evidence_state_->snapshot(
+        now, config_.camera_enabled, media_io_closed,
+        transport_running, session);
+      const MediaEvidencePublication publication =
+        evidence_publication_cache_.observe(candidate);
+      if (!publication.material_changed &&
+        cached_evidence_message_.has_value())
+      {
+        media_evidence_publisher_->publish(*cached_evidence_message_);
+        return;
+      }
+
+      const MediaEvidenceSnapshot & snapshot = publication.snapshot;
+      malbut_interfaces::msg::HomecamMediaEvidence message;
+      message.schema_version = kMediaEvidenceSchemaVersion;
+      message.device_id = config_.device_id;
+      message.source_instance_id = evidence_source_instance_id_;
+      message.sequence = publication.sequence;
+      message.control_plane_generation =
+        snapshot.control_plane_generation;
+      message.observed_boottime_ns = snapshot.observed_boottime_ns;
+      message.valid_until_boottime_ns =
+        snapshot.valid_until_boottime_ns;
+      message.camera_available_state =
+        static_cast<std::uint8_t>(snapshot.camera_available);
+      message.privacy_mode_state =
+        static_cast<std::uint8_t>(snapshot.privacy_mode);
+      message.last_valid_frame_boottime_ns =
+        snapshot.last_valid_frame_boottime_ns;
+      message.frame_generation = snapshot.frame_generation;
+      message.active_session_id = snapshot.active_session_id;
+      message.active_session_generation =
+        snapshot.active_session_generation;
+      message.backend_device_bound = snapshot.backend_device_bound;
+      message.physical_authority = bound_physical_authority(
+        config_.physical_authority, snapshot.backend_device_bound);
+
+      cached_evidence_message_ = message;
+      media_evidence_publisher_->publish(message);
+    } catch (const std::exception &) {
+      // Keep the last immutable envelope. Replaying it cannot extend its
+      // validity, and consumers will independently expire it.
+      if (cached_evidence_message_.has_value()) {
+        media_evidence_publisher_->publish(*cached_evidence_message_);
+      }
+      RCLCPP_ERROR_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "Homecam media evidence is unavailable; retaining fail-closed state");
+    }
+  }
+
+  void set_evidence_pipeline_state(const VideoPipelineEvidence state)
+  {
+    try {
+      evidence_state_->set_video_pipeline_state(
+        state, evidence_state_->control_plane_generation());
+    } catch (const std::exception &) {
+      RCLCPP_ERROR_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "Could not update the media evidence pipeline state");
+    }
   }
 
   void on_image(const sensor_msgs::msg::Image::ConstSharedPtr message)
@@ -263,6 +404,15 @@ private:
     }
 
 #if HOMECAM_HAVE_GSTREAMER
+    if (!valid_evidence_image_shape(
+        message->encoding, message->width, message->height,
+        message->step, message->data.size()))
+    {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "Dropping image that does not satisfy the evidence frame contract");
+      return;
+    }
     const bool dimensions_fit =
       message->width <= static_cast<std::uint32_t>(
       std::numeric_limits<int>::max()) &&
@@ -282,6 +432,7 @@ private:
         format_.width, format_.height, format_.ros_encoding.c_str(),
         message->width, message->height, message->encoding.c_str());
       stop_pipeline();
+      set_evidence_pipeline_state(VideoPipelineEvidence::kUnknown);
     }
     if (pipeline_ == nullptr &&
       std::chrono::steady_clock::now() < next_video_retry_)
@@ -293,7 +444,16 @@ private:
         return;
       }
     }
-    push_image(*message);
+    if (push_image(*message)) {
+      try {
+        evidence_state_->record_valid_frame(
+          evidence_state_->control_plane_generation(),
+          strict_boottime_ns());
+      } catch (const std::exception &) {
+        // A frame from an unbound or superseded generation is deliberately
+        // ignored. A subsequent authoritative heartbeat/frame pair can bind it.
+      }
+    }
 #else
     (void)message;
 #endif
@@ -327,6 +487,7 @@ private:
         }
         RCLCPP_ERROR(get_logger(), "Cannot create video pipeline: %s", detail.c_str());
         stop_pipeline();
+        set_evidence_pipeline_state(VideoPipelineEvidence::kFailed);
         schedule_video_retry();
         return false;
       }
@@ -334,6 +495,7 @@ private:
       if (video_source_ == nullptr) {
         RCLCPP_ERROR(get_logger(), "Video pipeline has no ros_video_source appsrc");
         stop_pipeline();
+        set_evidence_pipeline_state(VideoPipelineEvidence::kFailed);
         schedule_video_retry();
         return false;
       }
@@ -343,6 +505,7 @@ private:
       if (video_encoded_sink_ == nullptr) {
         RCLCPP_ERROR(get_logger(), "Video pipeline has no kvs_video_sink appsink");
         stop_pipeline();
+        set_evidence_pipeline_state(VideoPipelineEvidence::kFailed);
         schedule_video_retry();
         return false;
       }
@@ -354,6 +517,7 @@ private:
       if (state == GST_STATE_CHANGE_FAILURE) {
         RCLCPP_ERROR(get_logger(), "GStreamer video pipeline failed to start");
         stop_pipeline();
+        set_evidence_pipeline_state(VideoPipelineEvidence::kFailed);
         schedule_video_retry();
         return false;
       }
@@ -361,15 +525,18 @@ private:
         get_logger(), "Video encoder started: %dx%d %s -> H.264, %d FPS, %d kbps",
         format_.width, format_.height, format_.gst_format.c_str(),
         config_.fps, config_.bitrate_kbps);
+      set_evidence_pipeline_state(VideoPipelineEvidence::kRunning);
       return true;
     } catch (const std::exception & exception) {
       RCLCPP_ERROR(get_logger(), "Cannot configure video pipeline: %s", exception.what());
+      stop_pipeline();
+      set_evidence_pipeline_state(VideoPipelineEvidence::kFailed);
       schedule_video_retry();
       return false;
     }
   }
 
-  void push_image(const sensor_msgs::msg::Image & message)
+  bool push_image(const sensor_msgs::msg::Image & message)
   {
     const std::size_t packed_row =
       static_cast<std::size_t>(message.width) * format_.bytes_per_pixel;
@@ -383,14 +550,14 @@ private:
         get_logger(), *get_clock(), 5000,
         "Dropping malformed image: step=%u, data=%zu, expected at least %zu",
         message.step, message.data.size(), required_size);
-      return;
+      return false;
     }
 
     GstBuffer * buffer = gst_buffer_new_allocate(nullptr, packed_size, nullptr);
     if (buffer == nullptr) {
       RCLCPP_ERROR_THROTTLE(
         get_logger(), *get_clock(), 5000, "Cannot allocate GStreamer frame buffer");
-      return;
+      return false;
     }
 
     GstMapInfo map;
@@ -398,7 +565,7 @@ private:
       gst_buffer_unref(buffer);
       RCLCPP_ERROR_THROTTLE(
         get_logger(), *get_clock(), 5000, "Cannot map GStreamer frame buffer");
-      return;
+      return false;
     }
     for (std::size_t row = 0; row < message.height; ++row) {
       std::memcpy(
@@ -413,7 +580,10 @@ private:
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 5000,
         "GStreamer rejected a camera frame (flow=%d)", static_cast<int>(flow));
+      set_evidence_pipeline_state(VideoPipelineEvidence::kFailed);
+      return false;
     }
+    return true;
   }
 
   static GstFlowReturn on_video_sample(GstAppSink * sink, gpointer user_data)
@@ -741,6 +911,7 @@ private:
     const auto now = std::chrono::steady_clock::now();
     if (pipeline_ != nullptr && !pipeline_bus_healthy(pipeline_, "video")) {
       stop_pipeline();
+      set_evidence_pipeline_state(VideoPipelineEvidence::kFailed);
       schedule_video_retry();
     }
     if (audio_capture_pipeline_ != nullptr &&
@@ -886,6 +1057,28 @@ private:
       delay_seconds, error.c_str());
   }
 
+  bool desired_matches_applied_config(
+    const DesiredDeviceSettings & desired) const
+  {
+    return desired.camera_enabled.has_value() &&
+           desired.microphone_enabled.has_value() &&
+           desired.monitoring_enabled.has_value() &&
+           *desired.camera_enabled == config_.camera_enabled &&
+           *desired.microphone_enabled == config_.microphone_enabled &&
+           *desired.monitoring_enabled == config_.monitoring_enabled;
+  }
+
+  void invalidate_evidence_for_session_conflict()
+  {
+    try {
+      evidence_state_->invalidate_for_session_conflict();
+    } catch (const std::exception &) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "Media evidence request generation is exhausted; remaining closed");
+    }
+  }
+
   void collect_session_result()
   {
     if (!session_future_.valid() ||
@@ -994,7 +1187,30 @@ private:
       outcome.request_generation == session_generation_.load() &&
       !shutting_down_.load())
     {
-      apply_desired_settings(outcome.session.desired, outcome.success);
+      const bool desired_matches =
+        desired_matches_applied_config(outcome.session.desired);
+      // A session request can overlap an earlier heartbeat. Fence every
+      // session response, including an apparently identical one, so the late
+      // heartbeat cannot become authority after this application point.
+      invalidate_evidence_for_session_conflict();
+      if (config_.physical_authority && !desired_matches) {
+        const std::string session_to_cleanup = outcome.session.session_id;
+        fail_closed_active_session(
+          "session response conflicted with the authoritative heartbeat");
+        if (is_valid_session_id(session_to_cleanup)) {
+          cleanup_session_id_ = session_to_cleanup;
+          backend_session_may_be_open_ = true;
+        }
+        clear_session_credentials(&outcome.session.lease.credentials);
+        publish_media_evidence();
+        return;
+      }
+      if (!config_.physical_authority) {
+        // Preserve the non-authoritative development behavior. This never
+        // binds collector authority; only a newer exact heartbeat can do so.
+        apply_desired_settings(outcome.session.desired, outcome.success);
+      }
+      publish_media_evidence();
     }
 
     if (!outcome.success) {
@@ -1462,10 +1678,13 @@ private:
     {
       HeartbeatClient * const client = heartbeat_client_.get();
       try {
+        const std::uint64_t request_sequence =
+          evidence_state_->issue_heartbeat_request();
         heartbeat_future_ = std::async(
           std::launch::async,
-          [client, status]() {
+          [client, status, request_sequence]() {
             HeartbeatOutcome outcome;
+            outcome.request_sequence = request_sequence;
             try {
               outcome.success =
               client->post(status, &outcome.desired, &outcome.error);
@@ -1486,6 +1705,7 @@ private:
   struct HeartbeatOutcome
   {
     bool success{false};
+    std::uint64_t request_sequence{0U};
     DesiredDeviceSettings desired;
     std::string error;
   };
@@ -1511,7 +1731,44 @@ private:
         "Device heartbeat failed: %s", outcome.error.c_str());
       return;
     }
-    apply_desired_settings(outcome.desired, false);
+    if (!evidence_state_->heartbeat_request_can_apply(
+        outcome.request_sequence))
+    {
+      RCLCPP_WARN(
+        get_logger(),
+        "Discarded a superseded or invalidated heartbeat response");
+      return;
+    }
+    if (!outcome.desired.camera_enabled.has_value() ||
+      !outcome.desired.microphone_enabled.has_value() ||
+      !outcome.desired.monitoring_enabled.has_value())
+    {
+      RCLCPP_ERROR(
+        get_logger(), "Heartbeat response omitted required desired state");
+      return;
+    }
+    try {
+      const std::uint64_t received_boottime_ns = strict_boottime_ns();
+      apply_desired_settings(outcome.desired, false);
+      evidence_state_->apply_device_bound_heartbeat(
+        outcome.request_sequence,
+        *outcome.desired.camera_enabled,
+        received_boottime_ns);
+#if HOMECAM_HAVE_GSTREAMER
+      set_evidence_pipeline_state(
+        config_.camera_enabled ?
+        (pipeline_ == nullptr ? VideoPipelineEvidence::kUnknown :
+        VideoPipelineEvidence::kRunning) :
+        VideoPipelineEvidence::kStopped);
+#endif
+      publish_media_evidence();
+    } catch (const std::exception &) {
+      invalidate_evidence_for_session_conflict();
+      publish_media_evidence();
+      RCLCPP_ERROR(
+        get_logger(),
+        "Heartbeat state could not be bound to trusted media evidence");
+    }
   }
 
   void apply_desired_settings(
@@ -1593,6 +1850,11 @@ private:
   std::unique_ptr<HeartbeatClient> heartbeat_client_;
   std::unique_ptr<DeviceSessionClient> session_client_;
   std::unique_ptr<KvsTransport> transport_;
+  std::unique_ptr<MediaEvidenceState> evidence_state_;
+  std::string evidence_source_instance_id_;
+  MediaEvidencePublicationCache evidence_publication_cache_;
+  std::optional<malbut_interfaces::msg::HomecamMediaEvidence>
+  cached_evidence_message_;
   std::future<HeartbeatOutcome> heartbeat_future_;
   std::future<SessionOutcome> session_future_;
   std::mutex transport_mutex_;
@@ -1615,10 +1877,13 @@ private:
     camera_info_subscription_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr monitoring_publisher_;
+  rclcpp::Publisher<malbut_interfaces::msg::HomecamMediaEvidence>::SharedPtr
+    media_evidence_publisher_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr
     detector_health_subscription_;
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
   rclcpp::TimerBase::SharedPtr session_timer_;
+  rclcpp::TimerBase::SharedPtr evidence_timer_;
   std::atomic<std::uint64_t> frames_received_{0};
   std::atomic<bool> has_frame_{false};
   std::atomic<bool> camera_info_received_{false};

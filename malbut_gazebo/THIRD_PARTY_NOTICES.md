@@ -6,8 +6,10 @@ terms.
 
 ## Hiwonder ROSOrin
 
-- Project: Hiwonder ROSOrin / ROSOrin Pro
-- Public project page: <https://github.com/Hiwonder/ROSOrin-Pro>
+- Project: Hiwonder ROSOrin
+- Product: <https://www.hiwonder.com/products/rosorin?variant=42123598463063>
+- Simulation guide: <https://docs.hiwonder.com/projects/ROSOrin/en/jetson-orin-nano-version/docs/9_Gazebo_Simulation.html>
+- Import record: `worlds/SOURCE.md` and `maps/README.md`
 - Copyright owner: Hiwonder
 - Repository identifier: `LicenseRef-Hiwonder-ROSOrin`
 
@@ -33,8 +35,32 @@ The upstream `LICENSE` file contains MIT-style permission terms, while its
 actual upstream license text and records the discrepancy instead of silently
 changing it.
 
+## TurtleBot Maze Small House navigation map
+
+- Source: <https://github.com/pantelis/turtlebot-maze>
+- Imported commit: `d306a5c94a359b595c76800e7b8766fa9e2503b0`
+- Imported file: `tb_worlds/maps/house_world_map.pgm`
+- Local file and import details: `maps/small_house.pgm`, `maps/SOURCE.md`
+- License: MIT
+
+The imported occupancy grid is used with the matching AWS RoboMaker Small
+House model layout. The legacy `map_01.*` files are not used by the Small
+House navigation default.
+
 ## Intel Corporation and Open Source Robotics Foundation
 
 The Nav2 launch adaptation and ament lint test templates retain their original
 Apache-2.0 copyright and license notices. Malbut's modification notice is
 preserved in the Nav2 launch file.
+
+## Gazebo Fuel humanoid actor
+
+- Source: `OpenRobotics / actor - relative paths`, version 2
+- URL:
+  <https://fuel.gazebosim.org/1.0/OpenRobotics/models/actor%20-%20relative%20paths>
+- Repository identifier: `LicenseRef-Gazebo-Fuel-Actor`
+- Import details: `models/humanoid_actor/SOURCE.md`
+
+Only the walking COLLADA asset is included. The upstream Fuel metadata does
+not declare a per-model license, so the asset is kept outside the project's
+Apache-2.0 grant and its origin is recorded explicitly.

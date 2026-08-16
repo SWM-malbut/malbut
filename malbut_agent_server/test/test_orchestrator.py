@@ -1,13 +1,17 @@
 """Tests for provider normalization and deterministic safety gating."""
 
+import hashlib
+import json
 import math
 import threading
 import time
 from contextlib import contextmanager
+from types import SimpleNamespace
 from typing import List, Optional
 
 import pytest
 
+from malbut_agent_server import orchestrator as orchestrator_module
 from malbut_agent_server.conversation import (
     ConversationChangedError,
     ConversationSummary,
@@ -19,14 +23,25 @@ from malbut_agent_server.gateway import (
     ToolCapability,
 )
 from malbut_agent_server.memory import MemoryRecord, SQLiteMemoryStore
+from malbut_agent_server.monitor_room_coverage import (
+    DEFAULT_COVERAGE_PROFILE,
+    PLANNER_REVISION,
+)
 from malbut_agent_server.orchestrator import (
     AgentOrchestrator,
     MemoryChangedError,
     OrchestrationCancelledError,
     OrchestrationResult,
+    RobotStateEvidenceBinding,
 )
+from malbut_agent_server.prompting import build_model_input
 from malbut_agent_server.providers.base import AgentProvider
 from malbut_agent_server.providers.mock import MockProvider
+from malbut_agent_server.robot_state import (
+    RobotStateFieldEvidence,
+    TrustedRobotStateError,
+    TrustedRobotStateEvidence,
+)
 from malbut_agent_server.safety import SafetyPolicy
 from malbut_agent_server.schemas import (
     AgentDecision,
@@ -35,6 +50,7 @@ from malbut_agent_server.schemas import (
     ValidationError,
 )
 from malbut_agent_server.tools import ToolSpec
+from malbut_agent_server.trusted_results import TrustedToolResult
 
 
 def _request(
@@ -72,6 +88,7 @@ def _runtime(
     store: SQLiteMemoryStore,
     safety_policy: SafetyPolicy,
     trusted_robot_state: bool = False,
+    trusted_robot_state_source=None,
     capability_registry: CapabilityRegistry | None = None,
 ) -> tuple[AgentOrchestrator, SQLiteConversationStore]:
     conversation_store = SQLiteConversationStore(':memory:')
@@ -85,11 +102,94 @@ def _runtime(
             memory_store=store,
             conversation_store=conversation_store,
             safety_policy=safety_policy,
-            trusted_robot_state=trusted_robot_state,
+            test_only_trusted_robot_state=trusted_robot_state,
+            trusted_robot_state_source=trusted_robot_state_source,
             capability_registry=capability_registry,
         ),
         conversation_store,
     )
+
+
+def _boottime_ns() -> int:
+    clock_id = getattr(time, 'CLOCK_BOOTTIME', None)
+    if clock_id is not None:
+        return time.clock_gettime_ns(clock_id)
+    return time.monotonic_ns()
+
+
+class StaticRobotStateSource:
+    """Return fresh deterministic evidence or one injected typed error."""
+
+    def __init__(
+        self,
+        *,
+        error: TrustedRobotStateError | None = None,
+        provider_finished=None,
+        valid_for_ns: int = 4_000_000_000,
+        **overrides,
+    ) -> None:
+        """Configure a state result and retain read ordering evidence."""
+        self.error = error
+        self.provider_finished = provider_finished
+        self.valid_for_ns = valid_for_ns
+        self.overrides = overrides
+        self.calls = 0
+        self.evidence = None
+
+    def read(self) -> TrustedRobotStateEvidence:
+        """Return one current complete state after provider inference."""
+        if self.provider_finished is not None:
+            assert self.provider_finished.is_set()
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        if self.evidence is not None:
+            return self.evidence
+        assembled = _boottime_ns()
+        receipt = RobotStateFieldEvidence(
+            source='test_ros_topic',
+            received_boottime_ns=assembled,
+        )
+        values = {
+            'evidence_digest': hashlib.sha256(
+                f'orchestrator-state-{self.calls}'.encode('ascii')
+            ).hexdigest(),
+            'device_id': 'monitor-device-1',
+            'map_id': 'monitor-map-1',
+            'map_revision': 'monitor-map-revision-1',
+            'host_boot_id': '11111111-1111-4111-8111-111111111111',
+            'instance_id': '22222222-2222-4222-8222-222222222222',
+            'sequence': self.calls,
+            'assembled_at': '2026-08-15T00:00:00+00:00',
+            'assembled_boottime_ns': assembled,
+            'valid_until_boottime_ns': (
+                assembled + self.valid_for_ns
+            ),
+            'battery_percent': 80.0,
+            'navigation_available': True,
+            'localization_ok': True,
+            'emergency_stop': False,
+            'camera_available': True,
+            'privacy_mode': False,
+            'docked': False,
+            'forbidden_zones': (),
+            'field_evidence': {
+                name: receipt
+                for name in (
+                    'battery_percent',
+                    'navigation_available',
+                    'localization_ok',
+                    'emergency_stop',
+                    'camera_available',
+                    'privacy_mode',
+                    'docked',
+                    'forbidden_zones',
+                )
+            },
+        }
+        values.update(self.overrides)
+        self.evidence = TrustedRobotStateEvidence(**values)
+        return self.evidence
 
 
 def test_navigation_is_blocked_during_emergency_stop() -> None:
@@ -251,6 +351,103 @@ class RecordingProvider(AgentProvider):
         )
 
 
+class TrustedContextRecordingProvider(RecordingProvider):
+    """Record server-authenticated context passed on uncached turns."""
+
+    def __init__(self) -> None:
+        """Initialize separate call and trusted-context recordings."""
+        super().__init__()
+        self.trusted_results = []
+
+    def complete_with_context(
+        self,
+        request,
+        memories,
+        conversation_turns,
+        tools,
+        conversation_summary=None,
+        trusted_server_tool_results=(),
+    ) -> ProviderResult:
+        """Capture a detached trusted-result sequence, then complete."""
+        self.trusted_results.append(
+            tuple(trusted_server_tool_results)
+        )
+        return self.complete(
+            request,
+            memories,
+            conversation_turns,
+            tools,
+            conversation_summary,
+        )
+
+
+def _trusted_tool_result() -> TrustedToolResult:
+    return TrustedToolResult(
+        trusted_result_id='trusted-tool-result-orchestrator-test',
+        trusted_result_fingerprint='1' * 64,
+        user_id='test-user',
+        conversation_id='test-conversation',
+        session_instance_id='test-session',
+        generation=1,
+        source_revision=1,
+        source_turn_id='prior-turn',
+        source_ordinal=1,
+        record_kind='planned',
+        state='succeeded',
+        result_code='semantic_sample_plan_created',
+        planner_revision=PLANNER_REVISION,
+        profile_digest=DEFAULT_COVERAGE_PROFILE.digest,
+        plan_digest='2' * 64,
+        result_digest='3' * 64,
+        sample_count=4,
+        component_count=1,
+        completed_at=123.0,
+    )
+
+
+def test_uncached_turn_forwards_trusted_results_but_cache_does_not(
+    monkeypatch,
+) -> None:
+    """Only a newly inferred turn consumes its trusted result snapshot."""
+    provider = TrustedContextRecordingProvider()
+    memory_store = SQLiteMemoryStore(':memory:')
+    orchestrator, conversation_store = _runtime(
+        provider,
+        memory_store,
+        SafetyPolicy(),
+    )
+    trusted_result = _trusted_tool_result()
+    begin_turn = conversation_store.begin_turn
+
+    def begin_with_trusted_results(*args, **kwargs):
+        begin = begin_turn(*args, **kwargs)
+        return SimpleNamespace(
+            session=begin.session,
+            history=begin.history,
+            summary=begin.summary,
+            trusted_results=(trusted_result,),
+            token=begin.token,
+            cached_response=begin.cached_response,
+        )
+
+    monkeypatch.setattr(
+        conversation_store,
+        'begin_turn',
+        begin_with_trusted_results,
+    )
+    request = _request('안녕', {}, [])
+    try:
+        first = orchestrator.handle(request)
+        cached = orchestrator.handle(request)
+
+        assert first.to_dict() == cached.to_dict()
+        assert provider.calls == 1
+        assert provider.trusted_results == [(trusted_result,)]
+    finally:
+        conversation_store.close()
+        memory_store.close()
+
+
 def test_unknown_provider_tool_never_reaches_executor() -> None:
     """Hallucinated capabilities are rejected after model inference."""
     store = SQLiteMemoryStore(':memory:')
@@ -316,6 +513,393 @@ def test_untrusted_http_style_state_never_authorizes_action() -> None:
     finally:
         conversation_store.close()
         store.close()
+
+
+def test_monitor_room_uses_post_provider_state_and_ignores_client_state(
+) -> None:
+    """Only fresh local evidence can satisfy monitor_room Safety."""
+    provider_finished = threading.Event()
+
+    class OrderedProvider(MockProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.request = None
+
+        def complete(self, request, *args, **kwargs):
+            self.request = request
+            result = super().complete(request, *args, **kwargs)
+            provider_finished.set()
+            return result
+
+    provider = OrderedProvider()
+    source = StaticRobotStateSource(
+        provider_finished=provider_finished,
+    )
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        orchestrator, conversation_store = _runtime(
+            provider,
+            store,
+            SafetyPolicy(monitorable_locations=['거실']),
+            trusted_robot_state_source=source,
+        )
+        result = orchestrator.handle(
+            _request(
+                '거실 전체를 보여줘',
+                {
+                    'battery_percent': 0,
+                    'emergency_stop': True,
+                    'privacy_mode': True,
+                    'camera_available': False,
+                },
+                ['monitor_room'],
+            )
+        )
+
+        assert source.calls == 1
+        assert provider.request.robot_state.battery_percent is None
+        assert provider.request.robot_state.navigation_available is False
+        assert provider.request.robot_state_provided is False
+        assert provider.request.to_dict()['robot_state'] is None
+        model_context = json.loads(
+            build_model_input(provider.request, []).split('\n', 1)[1]
+        )
+        assert model_context['robot_state_untrusted'] == {
+            'availability': 'unknown',
+        }
+        assert result.decision.type == 'tool_call'
+        assert result.safety.allowed is True
+        assert result.state_evidence is not None
+        assert result.expires_at - result.issued_at <= 4.01
+        public = result.to_dict()
+        assert public['execution']['proposal_authorized'] is True
+        assert public['execution']['state_evidence'] == {
+            'scope': 'monitor_room',
+            'evidence_digest': result.state_evidence.evidence_digest,
+            'current': True,
+        }
+        public_json = json.dumps(public, sort_keys=True)
+        assert 'monitor-device-1' not in public_json
+        assert 'monitor-map-1' not in public_json
+        assert result.state_evidence.instance_id not in public_json
+        persisted = result.to_persisted_dict()
+        assert persisted['state_evidence']['device_id'] == (
+            'monitor-device-1'
+        )
+        assert persisted['state_evidence']['map_revision'] == (
+            'monitor-map-revision-1'
+        )
+        assert persisted['state_evidence']['sequence'] == 1
+    finally:
+        conversation_store.close()
+        store.close()
+
+
+def test_typed_state_source_failure_creates_no_monitor_proposal() -> None:
+    """Timeout/incomplete source failures are content-free refusals."""
+    source = StaticRobotStateSource(
+        error=TrustedRobotStateError('robot_state_response_timeout'),
+    )
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        orchestrator, conversation_store = _runtime(
+            MockProvider(),
+            store,
+            SafetyPolicy(monitorable_locations=['거실']),
+            trusted_robot_state_source=source,
+        )
+        result = orchestrator.handle(
+            _request(
+                '거실 전체를 보여줘',
+                {},
+                ['monitor_room'],
+            )
+        )
+        assert result.raw_decision.type == 'tool_call'
+        assert result.decision.type == 'refusal'
+        assert result.safety.code == 'robot_state_response_timeout'
+        assert result.state_trusted is False
+        assert result.state_evidence is None
+        assert result.to_dict()['execution']['proposal_authorized'] is False
+    finally:
+        conversation_store.close()
+        store.close()
+
+
+def test_incomplete_state_evidence_fails_closed_at_integration() -> None:
+    """A present but unknown required field cannot authorize a proposal."""
+    source = StaticRobotStateSource(camera_available=None)
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        orchestrator, conversation_store = _runtime(
+            MockProvider(),
+            store,
+            SafetyPolicy(monitorable_locations=['거실']),
+            trusted_robot_state_source=source,
+        )
+        result = orchestrator.handle(
+            _request('거실 전체를 보여줘', {}, ['monitor_room'])
+        )
+        assert result.decision.type == 'refusal'
+        assert result.safety.code == 'robot_state_incomplete'
+        assert result.state_evidence is None
+        assert result.to_dict()['execution']['proposal_authorized'] is False
+    finally:
+        conversation_store.close()
+        store.close()
+
+
+def test_stale_state_evidence_fails_closed_at_integration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The orchestration clock rejects evidence at its exact deadline."""
+    source = StaticRobotStateSource()
+    evidence = source.read()
+    source.calls = 0
+    monkeypatch.setattr(
+        orchestrator_module,
+        'trusted_boottime_ns',
+        lambda: evidence.valid_until_boottime_ns,
+    )
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        orchestrator, conversation_store = _runtime(
+            MockProvider(),
+            store,
+            SafetyPolicy(monitorable_locations=['거실']),
+            trusted_robot_state_source=source,
+        )
+        result = orchestrator.handle(
+            _request('거실 전체를 보여줘', {}, ['monitor_room'])
+        )
+        assert result.decision.type == 'refusal'
+        assert result.safety.code == 'robot_state_stale'
+        assert result.state_evidence is None
+    finally:
+        conversation_store.close()
+        store.close()
+
+
+def test_clock_failure_during_expiry_clamp_revokes_state_trust(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second boottime failure cannot leave a trusted proposal behind."""
+    source = StaticRobotStateSource()
+    evidence = source.read()
+    source.calls = 0
+
+    class FailingClock:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self) -> int:
+            self.calls += 1
+            if self.calls == 1:
+                return evidence.assembled_boottime_ns
+            raise TrustedRobotStateError(
+                'robot_state_clock_unavailable'
+            )
+
+    clock = FailingClock()
+    monkeypatch.setattr(
+        orchestrator_module,
+        'trusted_boottime_ns',
+        clock,
+    )
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        orchestrator, conversation_store = _runtime(
+            MockProvider(),
+            store,
+            SafetyPolicy(monitorable_locations=['거실']),
+            trusted_robot_state_source=source,
+        )
+        result = orchestrator.handle(
+            _request('거실 전체를 보여줘', {}, ['monitor_room'])
+        )
+        assert result.decision.type == 'refusal'
+        assert result.safety.code == 'robot_state_clock_unavailable'
+        assert result.state_trusted is False
+        assert result.state_evidence is not None
+        assert result.current_state_trusted() is False
+        assert result.to_dict()['execution']['proposal_authorized'] is False
+    finally:
+        conversation_store.close()
+        store.close()
+
+
+def test_monitor_state_source_is_not_authority_for_other_tools() -> None:
+    """The first trusted snapshot scope cannot authorize capture_photo."""
+    source = StaticRobotStateSource()
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        orchestrator, conversation_store = _runtime(
+            MockProvider(),
+            store,
+            SafetyPolicy(),
+            trusted_robot_state_source=source,
+        )
+        result = orchestrator.handle(
+            _request('사진 찍어줘', {}, ['capture_photo'])
+        )
+        assert source.calls == 0
+        assert result.decision.type == 'refusal'
+        assert result.safety.code == 'untrusted_robot_state'
+    finally:
+        conversation_store.close()
+        store.close()
+
+
+def test_cached_monitor_proposal_requires_exact_same_state_evidence() -> None:
+    """A cached decision cannot migrate across map/state sequences."""
+    class CountingProvider(MockProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        def complete(self, *args, **kwargs):
+            self.calls += 1
+            return super().complete(*args, **kwargs)
+
+    first_state = StaticRobotStateSource().read()
+    second_state = StaticRobotStateSource(
+        map_revision='monitor-map-revision-2',
+        sequence=2,
+    ).read()
+    restored_state = StaticRobotStateSource(
+        sequence=3,
+    ).read()
+
+    class SequenceSource:
+        def __init__(self) -> None:
+            self.values = [first_state, second_state, restored_state]
+            self.calls = 0
+
+        def read(self):
+            value = self.values[min(self.calls, 2)]
+            self.calls += 1
+            return value
+
+    provider = CountingProvider()
+    source = SequenceSource()
+    store = SQLiteMemoryStore(':memory:')
+    request = _request(
+        '거실 전체를 보여줘',
+        {},
+        ['monitor_room'],
+    )
+    try:
+        orchestrator, conversation_store = _runtime(
+            provider,
+            store,
+            SafetyPolicy(monitorable_locations=['거실']),
+            trusted_robot_state_source=source,
+        )
+        first = orchestrator.handle(request)
+        assert first.decision.type == 'tool_call'
+        original_binding = first.state_evidence
+
+        changed = orchestrator.handle(request)
+        assert provider.calls == 1
+        assert changed.decision.type == 'refusal'
+        assert changed.safety.code == 'robot_state_evidence_changed'
+        assert changed.state_evidence == original_binding
+        assert changed.to_dict()['execution']['proposal_authorized'] is False
+
+        restored = orchestrator.handle(request)
+        assert provider.calls == 1
+        assert restored.decision.type == 'refusal'
+        assert restored.safety.code == 'robot_state_evidence_changed'
+        assert restored.state_evidence == original_binding
+        assert source.calls == 3
+    finally:
+        conversation_store.close()
+        store.close()
+
+
+def test_legacy_cached_state_trust_without_evidence_is_never_current() -> None:
+    """A schema-3 legacy boolean cannot become replay authority."""
+    store = SQLiteMemoryStore(':memory:')
+    try:
+        orchestrator, conversation_store = _runtime(
+            MockProvider(),
+            store,
+            SafetyPolicy(),
+            True,
+        )
+        original = orchestrator.handle(
+            _request('거실로 가줘', {}, ['navigate'])
+        )
+        persisted = original.to_persisted_dict()
+        assert persisted['state_evidence'] is None
+        restored = OrchestrationResult.from_persisted_dict(persisted)
+        assert restored.state_trusted is True
+        assert restored.current_state_trusted() is False
+        assert (
+            restored.to_dict()['execution']['proposal_authorized']
+            is False
+        )
+
+        tampered = original.to_persisted_dict()
+        tampered['state_evidence'] = {
+            'schema_version': 1,
+            'scope': 'monitor_room',
+            'evidence_digest': 'a' * 64,
+            'device_id': 'device',
+            'map_id': 'map',
+            'map_revision': 'revision',
+            'host_boot_id': 'boot',
+            'instance_id': 'instance',
+            'sequence': True,
+            'assembled_boottime_ns': 1,
+            'valid_until_boottime_ns': 2,
+        }
+        with pytest.raises(RuntimeError, match='stored orchestration'):
+            OrchestrationResult.from_persisted_dict(tampered)
+    finally:
+        conversation_store.close()
+        store.close()
+
+
+@pytest.mark.parametrize('sequence', [0, (1 << 64) - 1])
+def test_state_evidence_binding_accepts_uint64_sequence_edges(
+    sequence: int,
+) -> None:
+    """Persist both exact sequence edges accepted by the wire contract."""
+    binding = RobotStateEvidenceBinding(
+        evidence_digest='a' * 64,
+        device_id='device-1',
+        map_id='map-1',
+        map_revision='revision-1',
+        host_boot_id='11111111-1111-4111-8111-111111111111',
+        instance_id='22222222-2222-4222-8222-222222222222',
+        sequence=sequence,
+        assembled_boottime_ns=1,
+        valid_until_boottime_ns=2,
+    )
+    assert binding.sequence == sequence
+    assert RobotStateEvidenceBinding.from_dict(
+        binding.to_dict()
+    ) == binding
+
+
+@pytest.mark.parametrize('sequence', [-1, 1 << 64, True])
+def test_state_evidence_binding_rejects_non_uint64_sequence(
+    sequence,
+) -> None:
+    """Reject values immediately outside the exact unsigned boundary."""
+    with pytest.raises(ValueError, match='sequence'):
+        RobotStateEvidenceBinding(
+            evidence_digest='a' * 64,
+            device_id='device-1',
+            map_id='map-1',
+            map_revision='revision-1',
+            host_boot_id='11111111-1111-4111-8111-111111111111',
+            instance_id='22222222-2222-4222-8222-222222222222',
+            sequence=sequence,
+            assembled_boottime_ns=1,
+            valid_until_boottime_ns=2,
+        )
 
 
 def test_registry_limits_model_capability_claims() -> None:
@@ -390,7 +974,11 @@ def test_request_id_is_idempotent_and_cannot_change_input() -> None:
         second = orchestrator.handle(first_request)
         assert first.decision_id == second.decision_id
         persisted = first.to_persisted_dict()
-        assert persisted['schema_version'] == 2
+        assert persisted['schema_version'] == 3
+        assert (
+            persisted['public']['conversation']['session_instance_id']
+            == first.conversation_session_instance_id
+        )
         persisted['schema_version'] = 1
         legacy = OrchestrationResult.from_persisted_dict(persisted)
         assert legacy.to_dict()['execution']['authorized'] is False

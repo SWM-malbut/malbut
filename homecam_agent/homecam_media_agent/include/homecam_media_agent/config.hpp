@@ -22,9 +22,12 @@ struct MediaConfig
   int bitrate_kbps{700};
   int heartbeat_interval_ms{2000};
   int frame_timeout_ms{2000};
+  int evidence_ttl_ms{2000};
+  int evidence_publish_interval_ms{500};
   bool monitoring_enabled{false};
   bool camera_enabled{true};
   bool microphone_enabled{true};
+  bool physical_authority{false};
 };
 
 std::vector<std::string> validate_config(const MediaConfig & config);

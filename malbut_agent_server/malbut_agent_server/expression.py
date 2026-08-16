@@ -1,4 +1,5 @@
-"""Non-actuating visual-expression contract for SWM25-77.
+"""
+Non-actuating visual-expression contract for SWM25-77.
 
 This module deliberately contains no ROS, network, file, audio, or motion
 adapter.  It turns a final agent decision into a bounded presentation cue and
@@ -79,7 +80,8 @@ def _finite_number(value: object, field_name: str) -> float:
 
 @dataclass(frozen=True)
 class ExpressionCue:
-    """One bounded, visual-only presentation suggestion.
+    """
+    One bounded, visual-only presentation suggestion.
 
     ``issued_at`` uses the arbiter's monotonic clock.  It is intentionally not
     a wall-clock timestamp and must never be used as a cross-process lease.
@@ -209,7 +211,8 @@ class ExpressionCue:
 
 @dataclass(frozen=True)
 class TrustedExpressionState:
-    """Trusted local overrides that never originate in model output.
+    """
+    Trusted local overrides that never originate in model output.
 
     ``revision`` is a monotonic sequence owned by the trusted state source.
     A newer revision replaces the previous snapshot.  Within one revision,
@@ -296,7 +299,8 @@ class RenderedExpression:
 
 @dataclass(frozen=True)
 class ExpressionDispatchContext:
-    """Cooperative cancellation and ordering fence for one renderer call.
+    """
+    Cooperative cancellation and ordering fence for one renderer call.
 
     ``lane_id`` scopes monotonically increasing ``generation`` values to one
     arbiter lifetime.  An asynchronous adapter must propagate both values to
@@ -450,7 +454,8 @@ def map_final_decision_to_expression(
     *,
     issued_at: Optional[float] = None,
 ) -> ExpressionCue:
-    """Map only final decision metadata, never user text, into one cue.
+    """
+    Map only final decision metadata, never user text, into one cue.
 
     The fixed mapping describes Malbut's presentation.  It does not inspect or
     label a user's or pet's emotion, psychology, health, face, voice, memory,
@@ -501,7 +506,8 @@ def map_final_decision_to_expression(
 
 
 class ExpressionArbiter:
-    """Thread-safe, process-local visual expression state machine.
+    """
+    Thread-safe, process-local visual expression state machine.
 
     Renderer code always runs in a daemon worker outside ``_lock``.  Each
     invocation has a bounded wait and a generation token, so an emergency or

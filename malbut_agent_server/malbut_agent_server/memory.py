@@ -872,7 +872,8 @@ class SQLiteMemoryStore:
         memory_id: Optional[str] = None,
         created_at: Optional[float] = None,
     ) -> MemoryRecord:
-        """Persist an explicit trusted internal memory.
+        """
+        Persist an explicit trusted internal memory.
 
         This compatibility method remains available for fixtures and trusted
         adapters. Product-facing changes must use the confirmed methods.
@@ -1671,7 +1672,8 @@ class SQLiteMemoryStore:
         records: Sequence[MemoryRecord],
         now: Optional[float] = None,
     ) -> bool:
-        """Check an inference snapshot for owner changes and expiry.
+        """
+        Check an inference snapshot for owner changes and expiry.
 
         The check uses one SQLite read transaction so a cross-process
         mutation cannot be observed half-way through validation.  Expiry is

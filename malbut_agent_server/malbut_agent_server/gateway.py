@@ -39,11 +39,13 @@ TOOL_RISK_LEVELS = {
     'capture_photo': 'L2',
     'send_notification': 'L2',
     'navigate': 'L3',
+    'monitor_room': 'L3',
 }
 
 TOOL_TIMEOUT_SECONDS = {
     'get_robot_status': 1.0,
     'navigate': 2.0,
+    'monitor_room': 2.0,
     'detect_pet': 3.0,
     'capture_photo': 5.0,
     'send_notification': 5.0,
@@ -52,6 +54,7 @@ TOOL_TIMEOUT_SECONDS = {
 READ_ONLY_ELIGIBLE = frozenset(
     {'get_robot_status', 'detect_pet'}
 )
+PERMANENT_PROPOSAL_ONLY = frozenset({'monitor_room'})
 
 
 class ToolAdapter(Protocol):
@@ -99,6 +102,13 @@ class ToolCapability:
             raise ValueError(f'unknown Tool capability: {self.name}')
         if self.mode not in CAPABILITY_MODES:
             raise ValueError(f'unsupported Tool mode: {self.mode}')
+        if (
+            self.name in PERMANENT_PROPOSAL_ONLY
+            and self.mode != PROPOSAL_ONLY
+        ):
+            raise ValueError(
+                f'{self.name} must remain proposal-only'
+            )
         if not isinstance(self.available, bool):
             raise ValueError('Tool availability must be a boolean')
         if self.mode == READ_ONLY and self.name not in READ_ONLY_ELIGIBLE:
@@ -698,6 +708,15 @@ def simulation_registry() -> CapabilityRegistry:
     """Build explicit side-effect-free adapters for local demonstrations."""
     capabilities = []
     for name in TOOL_SPECS:
+        if name == 'monitor_room':
+            capabilities.append(
+                ToolCapability(
+                    name=name,
+                    mode=PROPOSAL_ONLY,
+                    timeout_seconds=TOOL_TIMEOUT_SECONDS[name],
+                )
+            )
+            continue
         capabilities.append(
             ToolCapability(
                 name=name,

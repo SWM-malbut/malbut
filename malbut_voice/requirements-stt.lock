@@ -1,0 +1,8 @@
+# Provision this optional runtime separately; ordinary package tests do not
+# import it. The model manifest independently enforces these exact versions.
+faster-whisper==1.2.1
+ctranslate2==4.8.1
+numpy==2.2.6
+av==17.1.0
+onnxruntime==1.23.2
+tokenizers==0.23.1

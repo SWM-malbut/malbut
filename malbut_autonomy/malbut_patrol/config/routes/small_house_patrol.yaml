@@ -1,0 +1,81 @@
+schema_version: 1
+
+route:
+  name: small_house_household_patrol
+  map_id: small_house
+  frame_id: map
+  cycles_per_run: 1
+  defaults:
+    dwell_seconds: 3.0
+    max_retries: 1
+    retry_backoff_seconds: 2.0
+    on_failure: skip
+  waypoints:
+    - name: start_area
+      pose:
+        x: -3.665503
+        y: -0.4874
+        yaw: 0.0
+      dwell_seconds: 5.0
+
+    - name: west_living_area
+      pose:
+        x: -7.0
+        y: -3.0
+        yaw: -2.5
+
+    # Force the wide side of the divider; the short western gap is too narrow.
+    - name: west_south_transfer
+      pose:
+        x: -3.5
+        y: -2.5
+        yaw: 1.570796327
+      dwell_seconds: 0.0
+
+    - name: west_north_transfer
+      pose:
+        x: -3.5
+        y: -0.5
+        yaw: 1.570796327
+      dwell_seconds: 0.0
+
+    - name: west_hall_area
+      pose:
+        x: -7.5
+        y: 0.0
+        yaw: 1.570796327
+
+    - name: center_transfer
+      pose:
+        x: -3.5
+        y: -0.5
+        yaw: 0.0
+      dwell_seconds: 0.0
+
+    - name: center_north_area
+      pose:
+        x: 0.0
+        y: 2.0
+        yaw: 0.0
+
+    - name: east_north_area
+      pose:
+        x: 8.0
+        y: 2.3
+        yaw: 0.0
+
+    - name: east_south_area
+      pose:
+        x: 7.0
+        y: -3.0
+        yaw: -1.570796327
+
+    - name: south_center_area
+      pose:
+        x: 2.5
+        y: -4.0
+        yaw: 3.141592654
+
+schedule:
+  mode: interval
+  interval_seconds: 300.0

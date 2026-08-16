@@ -17,6 +17,7 @@
         <span id="saveState">저장되지 않음</span>
       </div>
       <div class="header-actions">
+        <button id="navigateMode" class="button primary hidden" disabled>목적지 이동</button>
         <label class="button secondary" for="mapFile">User Map 열기</label>
         <input id="mapFile" type="file" accept=".geojson,.json">
         <button id="exportMap" class="button secondary" disabled>User Map 내보내기</button>
@@ -124,10 +125,28 @@
           <g id="roomLayer"></g>
           <g id="wallLayer"></g>
           <g id="zoneLayer"></g>
+          <g id="navigationLayer"></g>
           <g id="draftLayer"></g>
           <g id="handleLayer"></g>
+          <g id="robotLayer"></g>
         </svg>
         <div id="modeBanner" class="mode-banner hidden"></div>
+        <section id="navigationPanel" class="navigation-panel hidden" aria-live="polite">
+          <div class="navigation-heading">
+            <div><span class="eyebrow">NAVIGATION</span><strong id="navigationTitle">목적지를 선택하세요</strong></div>
+            <span id="localizationBadge" class="status-badge waiting">위치 확인 중</span>
+          </div>
+          <p id="navigationMessage">지도에서 이동할 위치를 누르세요.</p>
+          <div id="navigationMetrics" class="navigation-metrics hidden">
+            <span><small>경로</small><strong id="navigationDistance">-</strong></span>
+            <span><small>남은 거리</small><strong id="navigationRemaining">-</strong></span>
+            <span><small>예상 시간</small><strong id="navigationEta">-</strong></span>
+          </div>
+          <div class="navigation-actions">
+            <button id="startNavigation" class="button primary" disabled>이동</button>
+            <button id="cancelNavigation" class="button danger" disabled>취소</button>
+          </div>
+        </section>
         <div class="canvas-tools">
           <button id="zoomIn" title="확대">＋</button>
           <button id="zoomOut" title="축소">−</button>
@@ -140,6 +159,6 @@
       </section>
     </main>
 
-    <script src="app.js?v=swm25-81-2"></script>
+  <script src="app.js?v=swm25-85-nav-4"></script>
   </body>
 </html>

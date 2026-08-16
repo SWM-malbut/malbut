@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "audio": {
+    "alsa_device": "plughw:CARD=PCH,DEV=0",
+    "device_node": "/dev/snd/pcmC1D0c",
+    "rdev_major": 116,
+    "rdev_minor": 9,
+    "device_uid": 0,
+    "device_gid": 29,
+    "device_mode": 432,
+    "card_id": "PCH",
+    "driver": "snd_hda_intel",
+    "arecord_path": "/usr/bin/arecord",
+    "arecord_resolved_path": "/usr/bin/aplay",
+    "arecord_sha256": "27c5a655f2a03db27728c087177d466e72a7357b07fba887df3e1ef267a9e480",
+    "alsa_config_path": "/usr/share/alsa/alsa.conf",
+    "alsa_config_sha256": "ea7c6cedb7da16ba51a0fea3e960416a2240e29c1f5d42e475c1dfcd19eb74ee"
+  },
+  "capture": {
+    "sample_rate_hz": 16000,
+    "channels": 1,
+    "sample_format": "S16_LE",
+    "default_duration_seconds": 5,
+    "maximum_duration_seconds": 30,
+    "maximum_stderr_bytes": 8192,
+    "attestation_timeout_ms": 1000,
+    "completion_grace_ms": 1500,
+    "term_grace_ms": 500,
+    "kill_grace_ms": 500
+  },
+  "model": {
+    "root": "/var/lib/malbut/models/faster-whisper-small",
+    "manifest": "/etc/malbut/faster-whisper-small.manifest.json"
+  },
+  "binding": {
+    "user_id": "local-operator",
+    "speaker_id": "operator-unverified",
+    "speech_session_id": "operator-one-shot",
+    "conversation_id": "operator-one-shot",
+    "capture_epoch": 1
+  }
+}

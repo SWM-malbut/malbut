@@ -13,9 +13,12 @@ homecam_media_agent:
     bitrate_kbps: 700
     heartbeat_interval_ms: 2000
     frame_timeout_ms: 2000
+    evidence_ttl_ms: 2000
+    evidence_publish_interval_ms: 500
     monitoring_enabled: false
     camera_enabled: true
     microphone_enabled: true
+    physical_authority: false
 
 homecam_detector:
   ros__parameters:

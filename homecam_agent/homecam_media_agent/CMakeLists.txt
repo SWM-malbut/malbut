@@ -18,6 +18,7 @@ set(HOMECAM_KVS_CA_CERT_PATH "" CACHE FILEPATH
   "CA bundle passed to the upstream KVS sample support code")
 
 find_package(ament_cmake REQUIRED)
+find_package(malbut_interfaces REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -163,6 +164,7 @@ configure_file(
 
 add_library(homecam_media_core
   src/config.cpp
+  src/media_evidence.cpp
   src/pipeline_builder.cpp
   src/http_runtime.cpp
   src/heartbeat_client.cpp
@@ -193,7 +195,7 @@ target_link_libraries(
 target_include_directories(homecam_media_agent_node
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 ament_target_dependencies(
-  homecam_media_agent_node nav_msgs rclcpp sensor_msgs std_msgs)
+  homecam_media_agent_node malbut_interfaces nav_msgs rclcpp sensor_msgs std_msgs)
 if(HOMECAM_HAVE_KVS)
   # SDK-enabled deployment keeps the pinned SDK tree at this exact path.
   # Embed it so systemd does not depend on a shell LD_LIBRARY_PATH.
@@ -222,6 +224,9 @@ install(
   DESTINATION share/${PROJECT_NAME}
   PATTERN "__pycache__" EXCLUDE
   PATTERN "*.pyc" EXCLUDE)
+install(
+  FILES README.md
+  DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
@@ -233,6 +238,8 @@ if(BUILD_TESTING)
   target_link_libraries(test_kvs_transport homecam_media_core)
   ament_add_gtest(test_session_client test/test_session_client.cpp)
   target_link_libraries(test_session_client homecam_media_core)
+  ament_add_gtest(test_media_evidence test/test_media_evidence.cpp)
+  target_link_libraries(test_media_evidence homecam_media_core)
 endif()
 
 ament_export_include_directories(include)

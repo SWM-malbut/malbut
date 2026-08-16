@@ -25,6 +25,7 @@ from malbut_agent_server.schemas import (
     ProviderResult,
 )
 from malbut_agent_server.tools import ToolSpec
+from malbut_agent_server.trusted_results import TrustedToolResult
 
 
 class ProviderFailureCode(str, Enum):
@@ -206,6 +207,21 @@ class ReliableProvider(AgentProvider):
     _SAFE_MESSAGE = (
         '현재 응답 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.'
     )
+
+    @staticmethod
+    def _trusted_result_snapshot(
+        results: Sequence[TrustedToolResult],
+    ) -> Tuple[TrustedToolResult, ...]:
+        """Validate and detach one immutable trusted-result sequence."""
+        if not isinstance(results, (list, tuple)):
+            raise TypeError(
+                'trusted_server_tool_results must be a list or tuple'
+            )
+        if any(type(result) is not TrustedToolResult for result in results):
+            raise TypeError(
+                'trusted_server_tool_results contains an invalid result'
+            )
+        return tuple(replace(result) for result in results)
 
     def __init__(
         self,
@@ -458,6 +474,7 @@ class ReliableProvider(AgentProvider):
         conversation_turns: List[ConversationTurn],
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary],
+        trusted_server_tool_results: Sequence[TrustedToolResult],
         deadline: float,
     ) -> Tuple[Optional[ProviderResult], ProviderFailure]:
         failure = _FAILURES[ProviderFailureCode.UNKNOWN]
@@ -469,13 +486,49 @@ class ReliableProvider(AgentProvider):
                 break
             caught_error: Optional[BaseException] = None
             try:
-                result = provider.complete(
-                    request,
-                    memories,
-                    conversation_turns,
-                    tools,
-                    conversation_summary,
+                complete_with_context = getattr(
+                    provider,
+                    'complete_with_context',
+                    None,
                 )
+                provider_type = type(provider)
+                legacy_subclass_override = (
+                    'complete' in provider_type.__dict__
+                    and 'complete_with_context'
+                    not in provider_type.__dict__
+                    and getattr(
+                        provider_type,
+                        'complete_with_context',
+                        None,
+                    ) is not AgentProvider.complete_with_context
+                )
+                if (
+                    callable(complete_with_context)
+                    and not legacy_subclass_override
+                ):
+                    attempt_trusted_results = list(
+                        self._trusted_result_snapshot(
+                            trusted_server_tool_results
+                        )
+                    )
+                    result = complete_with_context(
+                        request,
+                        memories,
+                        conversation_turns,
+                        tools,
+                        conversation_summary,
+                        trusted_server_tool_results=(
+                            attempt_trusted_results
+                        ),
+                    )
+                else:
+                    result = provider.complete(
+                        request,
+                        memories,
+                        conversation_turns,
+                        tools,
+                        conversation_summary,
+                    )
                 return self._validated_result(result), failure
             except Exception as error:
                 caught_error = error
@@ -511,6 +564,27 @@ class ReliableProvider(AgentProvider):
         conversation_summary: Optional[ConversationSummary] = None,
     ) -> ProviderResult:
         """Return the first valid result or a safe non-action response."""
+        return self.complete_with_context(
+            request,
+            memories,
+            conversation_turns,
+            tools,
+            conversation_summary,
+        )
+
+    def complete_with_context(
+        self,
+        request: AgentRequest,
+        memories: List[MemoryRecord],
+        conversation_turns: List[ConversationTurn],
+        tools: List[ToolSpec],
+        conversation_summary: Optional[ConversationSummary] = None,
+        trusted_server_tool_results: Sequence[TrustedToolResult] = (),
+    ) -> ProviderResult:
+        """Forward trusted result context through retry and fallback."""
+        sealed_trusted_results = self._trusted_result_snapshot(
+            trusted_server_tool_results
+        )
         started_at = self._clock()
         deadline = started_at + self._total_timeout_seconds
         for index, provider in enumerate(self._providers):
@@ -528,6 +602,7 @@ class ReliableProvider(AgentProvider):
                 conversation_turns,
                 tools,
                 conversation_summary,
+                sealed_trusted_results,
                 deadline,
             )
             if result is not None:

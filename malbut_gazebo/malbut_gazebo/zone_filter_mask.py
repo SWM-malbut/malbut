@@ -29,7 +29,12 @@ RESTRICTED_COST = 100
 SUPPORTED_BEHAVIORS = {"allow", "avoid", "restricted"}
 
 
-def load_zones(path: Path, expected_map_id: str) -> list[dict]:
+def load_zones(
+    path: Path,
+    expected_map_id: str,
+    expected_map_revision: str = "",
+    accepted_map_ids: tuple[str, ...] = (),
+) -> list[dict]:
     """Load and validate semantic Zones for one User Map."""
     try:
         value = json.loads(path.expanduser().read_text(encoding="utf-8"))
@@ -37,10 +42,20 @@ def load_zones(path: Path, expected_map_id: str) -> list[dict]:
         raise ValueError(
             f"cannot read Zone GeoJSON {path}: {error}"
         ) from error
-    return validate_zone_collection(value, expected_map_id)
+    return validate_zone_collection(
+        value,
+        expected_map_id,
+        expected_map_revision,
+        accepted_map_ids,
+    )
 
 
-def validate_zone_collection(value: dict, expected_map_id: str) -> list[dict]:
+def validate_zone_collection(
+    value: dict,
+    expected_map_id: str,
+    expected_map_revision: str = "",
+    accepted_map_ids: tuple[str, ...] = (),
+) -> list[dict]:
     """Validate one in-memory semantic Zone FeatureCollection."""
     if not isinstance(value, dict):
         raise ValueError("Zone GeoJSON must contain an object")
@@ -48,8 +63,15 @@ def validate_zone_collection(value: dict, expected_map_id: str) -> list[dict]:
         raise ValueError("Zone GeoJSON must be a FeatureCollection")
     if value.get("format") != ZONE_FORMAT:
         raise ValueError(f"Zone GeoJSON format must be {ZONE_FORMAT}")
-    if value.get("map_id") != expected_map_id:
+    if value.get("map_id") not in {expected_map_id, *accepted_map_ids}:
         raise ValueError("Zone map_id does not match the SLAM map")
+    revision = value.get("map_revision")
+    if (
+        revision is not None
+        and expected_map_revision
+        and revision != expected_map_revision
+    ):
+        raise ValueError("Zone map_revision does not match the SLAM map")
     if value.get("frame_id", "map") != "map":
         raise ValueError("Zone frame_id must be map")
     features = value.get("features")
@@ -120,6 +142,35 @@ def _zone_mask(zone: dict, slam_map: SlamMap) -> np.ndarray:
     for hole in rings[1:]:
         cv2.fillPoly(mask, [_ring_pixels(hole, slam_map)], 0)
     return mask
+
+
+def _validate_preferred_goals(
+    zones: list[dict],
+    slam_map: SlamMap,
+    result: np.ndarray,
+) -> None:
+    """Reject representative Zone goals that cannot be driven to safely."""
+    height, width = result.shape
+    for zone in zones:
+        goal = zone["properties"].get("preferred_goal")
+        if goal is None:
+            continue
+        if (
+            not isinstance(goal, list)
+            or len(goal) != 2
+            or not all(
+                isinstance(value, (int, float)) and math.isfinite(value)
+                for value in goal
+            )
+        ):
+            raise ValueError("Zone preferred_goal must be a finite [x, y]")
+        x, y = slam_map.transform.pixel(goal)
+        if not 0 <= x < width or not 0 <= y < height:
+            raise ValueError("Zone preferred_goal is outside the SLAM map")
+        if _zone_mask(zone, slam_map)[y, x] == 0:
+            raise ValueError("Zone preferred_goal must stay inside its Zone")
+        if result[y, x] >= RESTRICTED_COST:
+            raise ValueError("Zone preferred_goal is not safely traversable")
 
 
 def _clearance_mask(
@@ -210,6 +261,7 @@ def build_filter_mask(
                 np.ones((size, size), dtype=np.uint8),
             )
         result[current > 0] = np.maximum(result[current > 0], cost)
+    _validate_preferred_goals(zones, slam_map, result)
     return result
 
 
@@ -291,7 +343,12 @@ def main() -> int:
     arguments = _parse_arguments()
     try:
         slam_map = load_slam_map(arguments.map_yaml, arguments.map_id)
-        zones = load_zones(arguments.zones_geojson, slam_map.map_id)
+        zones = load_zones(
+            arguments.zones_geojson,
+            slam_map.map_id,
+            slam_map.map_revision,
+            slam_map.legacy_map_ids,
+        )
         mask = build_filter_mask(
             slam_map,
             zones,

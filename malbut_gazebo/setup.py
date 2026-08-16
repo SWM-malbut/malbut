@@ -58,7 +58,8 @@ setup(
         'Malbut'
     ),
     license=(
-        'Apache-2.0 AND MIT AND LicenseRef-Hiwonder-ROSOrin'
+        'Apache-2.0 AND MIT AND LicenseRef-Hiwonder-ROSOrin AND '
+        'LicenseRef-Gazebo-Fuel-Actor'
     ),
     tests_require=['pytest'],
     entry_points={
@@ -69,6 +70,14 @@ setup(
             'build_zone_filter_mask = '
             'malbut_gazebo.zone_filter_mask:main',
             'user_map_editor = malbut_gazebo.user_map_editor:main',
+            'robot_web_server = malbut_gazebo.robot_web_server:main',
+            'map_onboarding_server = '
+            'malbut_gazebo.map_onboarding_server:main',
+            'cloud_robot_sync = malbut_gazebo.cloud_robot_sync:main',
+            'trusted_robot_state_observer = '
+            'malbut_gazebo.robot_state_observer:main',
+            'gazebo_monitor_room_runtime = '
+            'malbut_gazebo.gazebo_monitor_room_runtime:main',
             'record_localization_state = '
             'malbut_gazebo.localization_handoff:record_main',
             'restore_localization_state = '

@@ -38,6 +38,7 @@ TEST(PipelineBuilder, DetectsCameraFormatChanges)
 TEST(PipelineBuilder, BuildsX264AndJetsonPipelines)
 {
   MediaConfig config;
+  config.device_id = "gazebo-homecam";
   const auto format = video_format_from_ros("bgr8", 640, 400);
   const std::string x264 = build_video_pipeline(config, format, true);
   EXPECT_NE(x264.find("x264enc"), std::string::npos);
@@ -58,6 +59,7 @@ TEST(PipelineBuilder, BuildsX264AndJetsonPipelines)
 TEST(PipelineBuilder, UsesSilenceWhenMicrophoneIsPrivate)
 {
   MediaConfig config;
+  config.device_id = "gazebo-homecam";
   const auto pipeline = build_audio_capture_pipeline(config, true, true);
   EXPECT_NE(pipeline.find("audiotestsrc wave=silence"), std::string::npos);
   EXPECT_NE(pipeline.find("opusenc"), std::string::npos);

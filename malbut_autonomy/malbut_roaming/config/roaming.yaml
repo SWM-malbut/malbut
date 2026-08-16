@@ -1,0 +1,60 @@
+roaming_manager:
+  ros__parameters:
+    use_sim_time: true
+    autostart: false
+
+    # Nav2/map interface. The package does not publish cmd_vel.
+    map_frame: map
+    base_frame: base_footprint
+    map_topic: map
+    planner_action_name: compute_path_to_pose
+    navigation_action_name: navigate_to_pose
+    navigator_lifecycle_node: bt_navigator
+    external_goal_topic: roaming/goal
+    interest_target_topic: roaming/interest_target
+
+    # Map sampling and absolute collision clearance.
+    map_refresh_period_seconds: 2.0
+    occupied_threshold: 65
+    maximum_free_occupancy: 20
+    candidate_spacing: 0.5
+    minimum_clearance: 0.45
+
+    # Mostly visit broad free space, with occasional safe peripheral visits.
+    open_clearance: 0.9
+    peripheral_clearance: 0.7
+    peripheral_probability: 0.22
+    minimum_goal_distance: 1.3
+    maximum_goal_distance: 7.0
+    preferred_goal_distance: 4.0
+    distance_scale: 1.5
+
+    # Weighted-idleness policy with recent-goal and planner-failure memory.
+    revisit_horizon_seconds: 180.0
+    recent_goal_radius: 2.0
+    recent_memory_size: 8
+    failure_cooldown_seconds: 60.0
+    idleness_weight: 3.0
+    distance_weight: 1.5
+    clearance_weight: 1.2
+    novelty_weight: 2.0
+    selection_top_k: 12
+    selection_temperature: 0.35
+    dwell_min_seconds: 1.0
+    dwell_max_seconds: 4.0
+    failure_retry_delay_seconds: 1.0
+    random_seed: -1
+
+    # Optional sensor-localized moving target interest behavior.
+    target_timeout_seconds: 1.5
+    target_minimum_speed: 0.08
+    target_standoff_distance: 1.2
+    target_follow_max_seconds: 15.0
+    target_follow_cooldown_seconds: 20.0
+    target_replan_period_seconds: 1.0
+    target_replan_distance: 0.4
+    target_goal_snap_distance: 1.0
+
+    # External/LLM coordinate goals preempt roaming, then roaming resumes.
+    resume_after_external_goal: true
+    control_period_seconds: 0.2

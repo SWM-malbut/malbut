@@ -1,0 +1,736 @@
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+import { PGlite } from "@electric-sql/pglite";
+import ts from "typescript";
+
+const requireFromTest = createRequire(import.meta.url);
+const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+const projectDirectory = path.resolve(testDirectory, "..");
+
+test("homecam PostgreSQL repository completes the device storage event lifecycle", async () => {
+  const initialMigration = await readFile(
+    new URL("../db/migrations/0001_initial.sql", import.meta.url),
+    "utf8",
+  );
+  const authMigration = await readFile(
+    new URL("../db/migrations/0002_web_auth_sessions.sql", import.meta.url),
+    "utf8",
+  );
+  const robotMigration = await readFile(
+    new URL("../db/migrations/0003_robot_map.sql", import.meta.url),
+    "utf8",
+  );
+  const robotSemanticsMigration = await readFile(
+    new URL("../db/migrations/0004_robot_map_semantics.sql", import.meta.url),
+    "utf8",
+  );
+  const agentSemanticMigration = await readFile(
+    new URL("../db/migrations/0005_agent_semantic_binding.sql", import.meta.url),
+    "utf8",
+  );
+  const database = new PGlite();
+  try {
+    await database.exec(initialMigration);
+    await database.exec(authMigration);
+    await database.exec(robotMigration);
+    await database.exec(robotSemanticsMigration);
+    await database.exec(agentSemanticMigration);
+    await database.exec(`
+      CREATE TABLE homecam_schema_migrations (
+        version TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO homecam_schema_migrations (version)
+      VALUES
+        ('0001_initial'),
+        ('0002_web_auth_sessions'),
+        ('0003_robot_map'),
+        ('0004_robot_map_semantics'),
+        ('0005_agent_semantic_binding');
+    `);
+    await seedDevice(database);
+
+    const loadModule = createTypescriptModuleLoader();
+    const postgres = loadModule(path.join(projectDirectory, "db/postgres.ts"));
+    const homecam = loadModule(path.join(projectDirectory, "db/homecam.ts"));
+    const petcam = loadModule(path.join(projectDirectory, "db/petcam.ts"));
+    const robotMap = loadModule(path.join(projectDirectory, "db/robot-map.ts"));
+    const robotContract = loadModule(path.join(projectDirectory, "app/robot-contract.ts"));
+    const pool = pglitePoolAdapter(database);
+
+    await postgres.withPostgresPoolForTest(pool, async () => {
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      const credential = await homecam.createDeviceCredential({
+        deviceId: "living-room",
+        userEmail: "owner@example.com",
+        label: "PGlite integration credential",
+        expiresAt,
+      });
+      assert.match(
+        credential.token,
+        /^hc1\.[0-9a-f-]{36}\.[A-Za-z0-9_-]{32,}$/,
+      );
+
+      const identity = await homecam.authenticateDeviceToken(credential.token);
+      assert.deepEqual(plain(identity), {
+        credentialId: credential.id,
+        deviceId: "living-room",
+        displayName: "거실 홈캠",
+        legacyChannelArn: "arn:test:kvs:p2p",
+      });
+
+      const session = await homecam.prepareDeviceMediaSession({
+        deviceId: "living-room",
+        mode: "storage",
+        channelArn: "arn:test:kvs:storage",
+        streamArn: "arn:test:kvs:archive",
+      });
+      assert.equal(session.mode, "storage");
+
+      const heartbeat = await homecam.updateDeviceHeartbeat({
+        deviceId: "living-room",
+        sourceProfile: "sim",
+        imageTopic: "/camera/color/image_raw",
+        streamMode: "storage",
+        mediaHealthy: true,
+        detectorHealthy: true,
+      });
+      assert.equal(heartbeat.streamMode, "storage");
+      assert.equal(heartbeat.mediaHealthy, true);
+      assert.equal(heartbeat.detectorHealthy, true);
+      assert.equal(heartbeat.activeSessionId, session.id);
+      assert.equal(heartbeat.activeSession?.id, session.id);
+      assert.equal(heartbeat.activeSession?.mode, "storage");
+      assert.ok(
+        Date.parse(heartbeat.activeSession?.expiresAt) >=
+          Date.parse(session.expiresAt),
+      );
+
+      const activeSession = await homecam.getActiveMediaSession("living-room");
+      assert.equal(activeSession?.id, session.id);
+      assert.equal(activeSession?.streamArn, "arn:test:kvs:archive");
+      assert.ok(activeSession?.recordingStartedAt);
+
+      const occurredAt = new Date(
+        Date.parse(activeSession.recordingStartedAt) + 1_000,
+      ).toISOString();
+      const eventInput = {
+        eventType: "person",
+        confidence: 0.94,
+        occurredAt,
+        idempotencyKey: "repository-person-0001",
+        recordingOffsetMs: 1_000,
+      };
+      const firstEvent = await homecam.insertHomecamEvent(
+        "living-room",
+        eventInput,
+      );
+      const duplicateEvent = await homecam.insertHomecamEvent(
+        "living-room",
+        eventInput,
+      );
+      assert.equal(firstEvent.created, true);
+      assert.equal(duplicateEvent.created, false);
+      assert.equal(duplicateEvent.event.id, firstEvent.event.id);
+
+      const events = await homecam.listHomecamEvents({
+        deviceId: "living-room",
+        eventTypes: ["person"],
+        limit: 10,
+      });
+      assert.equal(events.length, 1);
+      assert.deepEqual(plain(events[0]), plain(firstEvent.event));
+
+      const rateLimitInput = {
+        userEmail: "owner@example.com",
+        roomCode: session.roomCode,
+        scope: "repository-integration",
+        limit: 2,
+      };
+      assert.equal(await petcam.consumeRequestRateLimit(rateLimitInput), true);
+      assert.equal(await petcam.consumeRequestRateLimit(rateLimitInput), true);
+      assert.equal(await petcam.consumeRequestRateLimit(rateLimitInput), false);
+      const rateKey = `${rateLimitInput.scope}:${rateLimitInput.userEmail}:${rateLimitInput.roomCode}`;
+      const currentWindow = await database.query(
+        `SELECT window_started_at, request_count
+         FROM request_rate_limits WHERE rate_key = $1`,
+        [rateKey],
+      );
+      assert.ok(Number(currentWindow.rows[0].window_started_at) > 2_147_483_647);
+      assert.equal(currentWindow.rows[0].request_count, 3);
+
+      await database.query(
+        `UPDATE request_rate_limits
+         SET window_started_at = window_started_at - 60000, request_count = 99
+         WHERE rate_key = $1`,
+        [rateKey],
+      );
+      assert.equal(await petcam.consumeRequestRateLimit(rateLimitInput), true);
+      const resetWindow = await database.query(
+        `SELECT request_count FROM request_rate_limits WHERE rate_key = $1`,
+        [rateKey],
+      );
+      assert.equal(resetWindow.rows[0].request_count, 1);
+
+      assert.equal(
+        await homecam.stopDeviceMediaSession(
+          "living-room",
+          "integration_test_complete",
+          session.id,
+        ),
+        true,
+      );
+      assert.equal(await homecam.getActiveMediaSession("living-room"), null);
+      const finalState = await homecam.getDeviceSettings("living-room");
+      assert.equal(finalState.streamMode, "idle");
+      assert.equal(finalState.activeSessionId, null);
+      assert.equal(finalState.mediaHealthy, false);
+
+      await robotMap.storeRobotState("living-room", {
+        state: "ready",
+        message: "저장된 지도를 사용하고 있습니다.",
+        pose: { x: 1.25, y: -0.5, yaw: 0.75 },
+        localization: { state: "ok", tfAgeS: 0.02 },
+        nav2: { navigator: "active" },
+        target: null,
+        mapRevision: 8,
+        observedAt: new Date().toISOString(),
+      });
+      const finalizedMapA = {
+        finalized: true,
+        revision: "revision-1",
+        mapId: "map-1",
+        mapRevision: "map-revision-1",
+        sourceCreatedAt: new Date().toISOString(),
+        geometry: {
+          width: 375,
+          height: 224,
+          resolution: 0.05,
+          originX: -9.1,
+          originY: -4.2,
+          originYaw: 0,
+        },
+        previewBase64: "iVBORw0KGgo=",
+        userMap: { rooms: [] },
+        semanticZones: { type: "FeatureCollection", features: [] },
+      };
+      await robotMap.storeRobotMap("living-room", finalizedMapA);
+      const snapshot = await robotMap.getRobotSnapshot(
+        "living-room",
+        "owner@example.com",
+      );
+      assert.equal(snapshot.online, true);
+      assert.deepEqual(plain(snapshot.state.pose), { x: 1.25, y: -0.5, yaw: 0.75 });
+      assert.equal(snapshot.map.revision, "revision-1");
+      const semantics = await robotMap.getRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+      );
+      assert.deepEqual(plain(semantics.userMap), { rooms: [] });
+      assert.deepEqual(plain(semantics.zones), {
+        type: "FeatureCollection",
+        features: [],
+      });
+      const agentPrincipalSubject = "cognito-subject-0001";
+      assert.equal(
+        await robotMap.getAgentRobotMapSemantics(
+          "living-room",
+          "owner@example.com",
+          agentPrincipalSubject,
+        ),
+        null,
+      );
+      await insertWebAuthSession(database, {
+        tokenDigest: "a".repeat(64),
+        subject: "different-subject",
+        email: "owner@example.com",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
+      });
+      assert.equal(
+        await robotMap.getAgentRobotMapSemantics(
+          "living-room",
+          "owner@example.com",
+          agentPrincipalSubject,
+        ),
+        null,
+      );
+      await insertWebAuthSession(database, {
+        tokenDigest: "b".repeat(64),
+        subject: agentPrincipalSubject,
+        email: "different@example.com",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
+      });
+      assert.equal(
+        await robotMap.getAgentRobotMapSemantics(
+          "living-room",
+          "owner@example.com",
+          agentPrincipalSubject,
+        ),
+        null,
+      );
+      await insertWebAuthSession(database, {
+        tokenDigest: "c".repeat(64),
+        subject: agentPrincipalSubject,
+        email: "owner@example.com",
+        expiresAt: new Date(Date.now() - 60 * 1_000).toISOString(),
+      });
+      assert.equal(
+        await robotMap.getAgentRobotMapSemantics(
+          "living-room",
+          "owner@example.com",
+          agentPrincipalSubject,
+        ),
+        null,
+      );
+      await insertWebAuthSession(database, {
+        tokenDigest: "d".repeat(64),
+        subject: agentPrincipalSubject,
+        email: "owner@example.com",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
+        revokedAt: new Date().toISOString(),
+      });
+      assert.equal(
+        await robotMap.getAgentRobotMapSemantics(
+          "living-room",
+          "owner@example.com",
+          agentPrincipalSubject,
+        ),
+        null,
+      );
+      await insertWebAuthSession(database, {
+        tokenDigest: "e".repeat(64),
+        subject: agentPrincipalSubject,
+        email: "owner@example.com",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
+      });
+      const agentSemantics = await robotMap.getAgentRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+        agentPrincipalSubject,
+      );
+      assert.match(agentSemantics.membershipGeneration, /^[1-9][0-9]*$/);
+      assert.match(agentSemantics.mapGeneration, /^[1-9][0-9]*$/);
+      assert.equal(agentSemantics.deviceRevision, "revision-1");
+      assert.deepEqual(plain(agentSemantics.semantics), {
+        revision: "revision-1",
+        mapId: "map-1",
+        mapRevision: "map-revision-1",
+        userMap: { rooms: [] },
+        zones: { type: "FeatureCollection", features: [] },
+      });
+      assert.doesNotMatch(
+        JSON.stringify(agentSemantics),
+        /token_digest|web_auth_sessions|cognito-subject|owner@example/,
+      );
+
+      await robotMap.storeRobotMap("living-room", finalizedMapA);
+      const exactRetry = await robotMap.getAgentRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+        agentPrincipalSubject,
+      );
+      assert.equal(exactRetry.mapGeneration, agentSemantics.mapGeneration);
+      await robotMap.storeRobotMap("living-room", {
+        ...finalizedMapA,
+        semanticZones: { features: [], type: "FeatureCollection" },
+      });
+      const reorderedJsonRetry = await robotMap.getAgentRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+        agentPrincipalSubject,
+      );
+      assert.equal(
+        reorderedJsonRetry.mapGeneration,
+        agentSemantics.mapGeneration,
+      );
+
+      const finalizedMapB = {
+        ...finalizedMapA,
+        revision: "revision-2",
+        mapId: "map-2",
+        mapRevision: "map-revision-2",
+        userMap: { rooms: [{ id: "room-b" }] },
+      };
+      await robotMap.storeRobotMap("living-room", finalizedMapB);
+      const changedMap = await robotMap.getAgentRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+        agentPrincipalSubject,
+      );
+      assert.ok(
+        BigInt(changedMap.mapGeneration) >
+          BigInt(reorderedJsonRetry.mapGeneration),
+      );
+
+      await robotMap.storeRobotMap("living-room", finalizedMapA);
+      const restoredMap = await robotMap.getAgentRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+        agentPrincipalSubject,
+      );
+      assert.ok(
+        BigInt(restoredMap.mapGeneration) > BigInt(changedMap.mapGeneration),
+      );
+      assert.equal(restoredMap.deviceRevision, "revision-1");
+
+      await database.query(
+        `UPDATE device_memberships
+         SET binding_generation = 9007199254740993
+         WHERE device_id = 'living-room' AND user_email = 'owner@example.com'`,
+      );
+      await database.query(
+        `UPDATE robot_maps SET server_generation = 9007199254740993
+         WHERE device_id = 'living-room'`,
+      );
+      const largeGenerations = await robotMap.getAgentRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+        agentPrincipalSubject,
+      );
+      assert.equal(typeof largeGenerations.membershipGeneration, "string");
+      assert.equal(typeof largeGenerations.mapGeneration, "string");
+      assert.equal(largeGenerations.membershipGeneration, "9007199254740993");
+      assert.equal(largeGenerations.mapGeneration, "9007199254740993");
+
+      await robotMap.storeRobotMap("living-room", {
+        finalized: false,
+        revision: "live-candidate-1",
+        mapId: "live-candidate-map",
+        mapRevision: "live-candidate-revision",
+        sourceCreatedAt: null,
+        geometry: {
+          width: 400,
+          height: 240,
+          resolution: 0.05,
+          originX: -10,
+          originY: -5,
+          originYaw: 0,
+        },
+        previewBase64: "iVBORw0KGgo=",
+        userMap: null,
+        semanticZones: null,
+      });
+      await robotMap.storeRobotState("living-room", {
+        state: "exploring",
+        message: "새 지도를 만들고 있습니다.",
+        pose: { x: 1.5, y: -0.25, yaw: 0.5 },
+        localization: { state: "ok", tfAgeS: 0.02 },
+        nav2: { navigator: "active" },
+        target: null,
+        mapRevision: 9,
+        observedAt: new Date().toISOString(),
+      });
+      const mappingSnapshot = await robotMap.getRobotSnapshot(
+        "living-room", "owner@example.com",
+      );
+      assert.equal(mappingSnapshot.map.revision, "live-candidate-1");
+      assert.equal(mappingSnapshot.map.finalized, false);
+      await robotMap.storeRobotState("living-room", {
+        state: "canceled",
+        message: "기존 지도를 유지합니다.",
+        pose: { x: 1.5, y: -0.25, yaw: 0.5 },
+        localization: { state: "ok", tfAgeS: 0.02 },
+        nav2: { navigator: "active" },
+        target: null,
+        mapRevision: 10,
+        observedAt: new Date().toISOString(),
+      });
+      const canceledSnapshot = await robotMap.getRobotSnapshot(
+        "living-room", "owner@example.com",
+      );
+      assert.equal(canceledSnapshot.map.revision, "revision-1");
+      assert.equal(canceledSnapshot.map.finalized, true);
+
+      const queued = await robotMap.createRobotCommand({
+        deviceId: "living-room",
+        userEmail: "owner@example.com",
+        operation: "finish",
+      });
+      assert.equal(queued.status, "queued");
+      await assert.rejects(
+        robotMap.createRobotCommand({
+          deviceId: "living-room",
+          userEmail: "owner@example.com",
+          operation: "start",
+        }),
+        /COMMAND_IN_PROGRESS/,
+      );
+      const claimed = await robotMap.claimRobotCommands("living-room");
+      assert.equal(claimed.length, 1);
+      assert.equal(claimed[0].id, queued.id);
+      assert.equal(claimed[0].status, "claimed");
+      const completed = await robotMap.completeRobotCommand({
+        deviceId: "living-room",
+        commandId: queued.id,
+        ok: true,
+        result: { revision: "revision-1" },
+      });
+      assert.equal(completed.status, "completed");
+      assert.deepEqual(plain(completed.result), { revision: "revision-1" });
+
+      const previewCommand = await robotMap.createRobotCommand({
+        deviceId: "living-room",
+        userEmail: "owner@example.com",
+        operation: "navigation_preview",
+        payload: { x: 2.5, y: -1.25 },
+      });
+      const claimedPreview = await robotMap.claimRobotCommands("living-room");
+      assert.equal(claimedPreview[0].id, previewCommand.id);
+      assert.deepEqual(plain(claimedPreview[0].payload), { x: 2.5, y: -1.25 });
+      assert.deepEqual(
+        plain(robotContract.parseRobotCommand({
+          operation: "navigation_start",
+          payload: { previewToken: "preview_token_123" },
+        })),
+        {
+          operation: "navigation_start",
+          payload: { previewToken: "preview_token_123" },
+        },
+      );
+      assert.equal(
+        robotContract.parseRobotCommand({
+          operation: "navigation_preview",
+          payload: { x: Number.NaN, y: 0 },
+        }),
+        null,
+      );
+      const room = (id, minimumX = 0) => ({
+        type: "Feature",
+        id,
+        properties: { role: "room", room_id: id, name: id },
+        geometry: {
+          type: "Polygon",
+          coordinates: [[
+            [minimumX, 0], [minimumX + 2, 0], [minimumX + 2, 2],
+            [minimumX, 2], [minimumX, 0],
+          ]],
+        },
+      });
+      assert.ok(robotContract.parseRobotCommand({
+        operation: "room_split",
+        payload: {
+          room: room("room-a"),
+          lines: [[[1, 0], [1, 2]], [[0, 1], [2, 1]]],
+          resolution: 0.05,
+          minimum_room_area: 1,
+        },
+      }));
+      assert.equal(robotContract.parseRobotCommand({
+        operation: "room_split",
+        payload: { room: room("room-a"), lines: [[[1, 0]]], resolution: 0.05 },
+      }), null);
+      assert.ok(robotContract.parseRobotCommand({
+        operation: "room_merge",
+        payload: { rooms: [room("room-a"), room("room-b", 2)], resolution: 0.05 },
+      }));
+      assert.equal(robotContract.parseRobotCommand({
+        operation: "room_merge",
+        payload: { rooms: [room("room-a"), room("room-b", 2), room("room-c", 4)] },
+      }), null);
+      assert.equal(robotContract.parseRobotCommand({
+        operation: "room_merge",
+        payload: { rooms: [room("room-a"), room("room-a")] },
+      }), null);
+    });
+
+    const persisted = await database.query(`
+      SELECT
+        (SELECT COUNT(*)::int FROM device_credentials) AS credentials,
+        (SELECT COUNT(*)::int FROM homecam_events) AS events,
+        (SELECT COUNT(*)::int FROM homecam_push_outbox) AS outbox,
+        (SELECT status FROM stream_sessions LIMIT 1) AS session_status,
+        (SELECT ended_at IS NOT NULL FROM recording_sessions LIMIT 1) AS recording_ended
+    `);
+    assert.deepEqual(plain(persisted.rows[0]), {
+      credentials: 1,
+      events: 1,
+      outbox: 1,
+      session_status: "ended",
+      recording_ended: true,
+    });
+  } finally {
+    await database.close();
+  }
+});
+
+test("test pool injection is isolated across concurrent async contexts", async () => {
+  const first = new PGlite();
+  const second = new PGlite();
+  try {
+    await first.exec("CREATE TABLE context_value (value TEXT); INSERT INTO context_value VALUES ('first')");
+    await second.exec("CREATE TABLE context_value (value TEXT); INSERT INTO context_value VALUES ('second')");
+    const loadModule = createTypescriptModuleLoader();
+    const postgres = loadModule(path.join(projectDirectory, "db/postgres.ts"));
+
+    const [firstValue, secondValue] = await Promise.all([
+      postgres.withPostgresPoolForTest(pglitePoolAdapter(first), async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const result = await postgres.getPostgresPool().query(
+          "SELECT value FROM context_value",
+        );
+        return result.rows[0].value;
+      }),
+      postgres.withPostgresPoolForTest(pglitePoolAdapter(second), async () => {
+        await Promise.resolve();
+        const result = await postgres.getPostgresPool().query(
+          "SELECT value FROM context_value",
+        );
+        return result.rows[0].value;
+      }),
+    ]);
+    assert.deepEqual([firstValue, secondValue], ["first", "second"]);
+  } finally {
+    await Promise.all([first.close(), second.close()]);
+  }
+});
+
+test("PostgreSQL BIGINT parsing never rounds unsafe decimal values", () => {
+  const loadModule = createTypescriptModuleLoader();
+  const postgres = loadModule(path.join(projectDirectory, "db/postgres.ts"));
+  assert.equal(postgres.parsePostgresBigint("42"), 42);
+  assert.equal(
+    postgres.parsePostgresBigint("9007199254740991"),
+    9_007_199_254_740_991,
+  );
+  assert.equal(
+    postgres.parsePostgresBigint("9007199254740993"),
+    "9007199254740993",
+  );
+  assert.equal(
+    postgres.parsePostgresBigint("9223372036854775807"),
+    "9223372036854775807",
+  );
+});
+
+async function seedDevice(database) {
+  const createdAt = new Date().toISOString();
+  await database.query(
+    `INSERT INTO devices (id, display_name, kvs_channel_arn, created_at)
+     VALUES ($1, $2, $3, $4)`,
+    ["living-room", "거실 홈캠", "arn:test:kvs:p2p", createdAt],
+  );
+  await database.query(
+    `INSERT INTO device_memberships (device_id, user_email, role, created_at)
+     VALUES ($1, $2, 'owner', $3)`,
+    ["living-room", "owner@example.com", createdAt],
+  );
+  await database.query(
+    `INSERT INTO device_state
+       (device_id, monitoring_enabled, camera_enabled, microphone_enabled,
+        source_profile, active_stream_mode, media_healthy, detector_healthy,
+        updated_at)
+     VALUES ($1, 1, 1, 1, 'sim', 'idle', 0, 0, $2)`,
+    ["living-room", createdAt],
+  );
+}
+
+async function insertWebAuthSession(database, input) {
+  const now = new Date().toISOString();
+  await database.query(
+    `INSERT INTO web_auth_sessions
+       (token_digest, cognito_sub, cognito_username, user_email, full_name,
+        created_at, last_seen_at, expires_at, revoked_at)
+     VALUES ($1, $2, $3, $4, NULL, $5, $5, $6, $7)`,
+    [
+      input.tokenDigest,
+      input.subject,
+      input.email,
+      input.email,
+      now,
+      input.expiresAt,
+      input.revokedAt ?? null,
+    ],
+  );
+}
+
+function pglitePoolAdapter(database) {
+  const query = async (sql, values = []) => {
+    const result = await database.query(sql, values);
+    const rows = result.rows.map(normalizeRow);
+    return {
+      ...result,
+      rows,
+      rowCount: result.affectedRows || rows.length,
+      command: sql.trim().split(/\s+/, 1)[0]?.toUpperCase() ?? "",
+      oid: 0,
+    };
+  };
+  return {
+    query,
+    async connect() {
+      return { query, release() {} };
+    },
+  };
+}
+
+function normalizeRow(row) {
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [
+      key,
+      value instanceof Date ? value.toISOString() : value,
+    ]),
+  );
+}
+
+function createTypescriptModuleLoader() {
+  const cache = new Map();
+  const loadModule = (filename) => {
+    const resolved = resolveTypescriptModule(filename);
+    if (cache.has(resolved)) return cache.get(resolved).exports;
+
+    const source = requireFromTest("node:fs").readFileSync(resolved, "utf8");
+    const javascript = ts.transpileModule(source, {
+      // The test loader executes everything as CommonJS. TypeScript preserves
+      // ESM syntax when the input filename ends in .mjs, so use a virtual .ts
+      // filename for shared ESM helpers while retaining the real path for
+      // dependency resolution and diagnostics.
+      fileName: resolved.endsWith(".mjs") ? `${resolved}.ts` : resolved,
+      compilerOptions: {
+        esModuleInterop: true,
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+      },
+    }).outputText;
+    const loadedModule = { exports: {} };
+    cache.set(resolved, loadedModule);
+    const localRequire = (specifier) => {
+      if (specifier.startsWith(".")) {
+        return loadModule(path.resolve(path.dirname(resolved), specifier));
+      }
+      return requireFromTest(specifier);
+    };
+    const execute = new Function(
+      "require",
+      "module",
+      "exports",
+      "__filename",
+      "__dirname",
+      javascript,
+    );
+    execute(
+      localRequire,
+      loadedModule,
+      loadedModule.exports,
+      resolved,
+      path.dirname(resolved),
+    );
+    return loadedModule.exports;
+  };
+  return loadModule;
+}
+
+function resolveTypescriptModule(candidate) {
+  const fs = requireFromTest("node:fs");
+  for (const resolved of [candidate, `${candidate}.ts`, path.join(candidate, "index.ts")]) {
+    if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) return resolved;
+  }
+  throw new Error(`Cannot resolve TypeScript module: ${candidate}`);
+}
+
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}

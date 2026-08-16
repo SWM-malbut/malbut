@@ -104,12 +104,13 @@ def generate_launch_description():
                 "world_name",
                 default_value="small_house",
                 description=(
-                    "World catalog key: empty, test_arena, or small_house."
+                    "World catalog key: empty, test_arena, robocup_home, "
+                    "or small_house."
                 ),
             ),
             DeclareLaunchArgument(
                 "variant_config",
-                default_value="ultimate_orin_nx_super_mecanum.yaml",
+                default_value="rosorin_ultimate_mecanum.yaml",
             ),
             DeclareLaunchArgument("entity_name", default_value="malbut"),
             DeclareLaunchArgument("spawn_timeout", default_value="60"),

@@ -32,6 +32,7 @@ setup(
                 'docs/jira/SWM25-75_LONG_TERM_MEMORY_INTEGRATION.md',
                 'docs/jira/SWM25-76_VOICE_CONVERSATION_PIPELINE.md',
                 'docs/jira/SWM25-77_EMOTION_EXPRESSION_INTEGRATION.md',
+                'docs/jira/SWM25-78_ROOM_MONITORING_REBUILD.md',
             ],
         ),
         (

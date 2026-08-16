@@ -33,6 +33,14 @@ amcl:
     transform_tolerance: 1.0
     update_min_a: 0.2
     update_min_d: 0.25
+    # Disabled by default so normal launches keep their existing localization
+    # workflow. A deterministic simulation demo may override these values.
+    set_initial_pose: false
+    initial_pose:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      yaw: 0.0
     z_hit: 0.5
     z_max: 0.05
     z_rand: 0.5
@@ -134,7 +142,7 @@ controller_server:
 
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"] 
-    controller_plugins: ["FollowPath"]
+    controller_plugins: ["FollowPath", "FollowPerson"]
 
     # Progress checker parameters
     progress_checker:
@@ -147,7 +155,10 @@ controller_server:
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
+      # Web/app destinations should finish at the selected point, not merely
+      # within the former 25 cm acceptance radius. Keep yaw unconstrained so
+      # this tighter position check does not reintroduce a final camera turn.
+      xy_goal_tolerance: 0.05
       # A semantic Room/Zone target is a destination, not a docking pose.
       # The predictive controller owns the travel heading; arriving at the
       # requested position must not trigger an unrelated final camera turn.
@@ -220,7 +231,7 @@ controller_server:
         cost_weight: 4.0
         offset_from_furthest: 4
         threshold_to_consider: 0.5
-        max_angle_to_furthest: 1.0
+        max_angle_to_furthest: 0.8
         forward_preference: true
       PreferForwardCritic:
         enabled: true
@@ -231,6 +242,63 @@ controller_server:
         enabled: true
         cost_power: 1
         cost_weight: 8.0
+    # Tracking-only translation controller. Its angular search space is
+    # intentionally negligible: the tracking Twist mixer owns target-facing
+    # yaw independently, while this controller owns collision-aware vx/vy.
+    FollowPerson:
+      plugin: "nav2_mppi_controller::MPPIController"
+      motion_model: "Omni"
+      time_steps: 56
+      model_dt: 0.05
+      batch_size: 2000
+      iteration_count: 1
+      vx_std: 0.20
+      vy_std: 0.10
+      wz_std: 0.001
+      vx_max: 0.40
+      vx_min: -0.10
+      vy_max: 0.10
+      wz_max: 0.001
+      prune_distance: 1.5
+      transform_tolerance: 0.2
+      temperature: 0.3
+      gamma: 0.015
+      visualize: false
+      retry_attempt_limit: 2
+      regenerate_noises: false
+      critics: ["ConstraintCritic", "CostCritic", "GoalCritic", "PathAlignCritic", "PathFollowCritic"]
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+      CostCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.81
+        critical_cost: 300.0
+        consider_footprint: true
+        collision_cost: 1000000.0
+        near_goal_distance: 0.5
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 1.4
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 10.0
+        max_path_occupancy_ratio: 0.07
+        trajectory_point_step: 4
+        threshold_to_consider: 0.5
+        offset_from_furthest: 20
+        use_path_orientations: false
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        offset_from_furthest: 6
+        threshold_to_consider: 1.4
 controller_server_rclcpp_node:
   ros__parameters:
     use_sim_time: True
@@ -254,9 +322,10 @@ local_costmap:
       footprint: "[[0.1385, 0.127], [0.1385, -0.127], [-0.1385, -0.127], [-0.1385, 0.127]]"
       plugins: [
         # "static_layer",
-        "voxel_layer",
-         "inflation_layer"
-         ]
+        "obstacle_layer",
+        "depth_voxel_layer",
+        "inflation_layer"
+      ]
       filters: ["keepout_filter"]
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
@@ -268,15 +337,11 @@ local_costmap:
         # clearance over tightly following the shortest global path.
         cost_scaling_factor: 3.0
         inflation_radius: 0.55
-      voxel_layer:
-        plugin: "nav2_costmap_2d::VoxelLayer"
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
-        publish_voxel_map: True
-        origin_z: 0.0
-        z_resolution: 0.05
-        z_voxels: 16
-        max_obstacle_height: 2.0
-        mark_threshold: 0
+        # Keep persistent household geometry on the planar LiDAR's standard
+        # ray-traced layer. RGB-D observations use the decaying layer below.
         observation_sources: scan
         scan:
           topic: /scan
@@ -290,6 +355,55 @@ local_costmap:
           # The laser sits inside the roughly 0.19 m circumscribed footprint.
           # Ignore self returns so they cannot leave inflated ghost obstacles.
           obstacle_min_range: 0.20
+      depth_voxel_layer:
+        plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
+        enabled: True
+        # Linear decay prevents a moving person from leaving permanent depth
+        # obstacles while retaining current observations for brief occlusions.
+        voxel_decay: 2.0
+        decay_model: 0
+        voxel_size: 0.05
+        track_unknown_space: false
+        mark_threshold: 0
+        update_footprint_enabled: true
+        combination_method: 1
+        origin_z: 0.0
+        publish_voxel_map: false
+        transform_tolerance: 0.2
+        mapping_mode: false
+        observation_sources: depth_mark depth_clear
+        depth_mark:
+          topic: /camera/depth/points
+          data_type: "PointCloud2"
+          marking: True
+          clearing: False
+          # Reject floor noise while retaining objects at least 5 cm high.
+          min_obstacle_height: 0.05
+          max_obstacle_height: 1.50
+          obstacle_range: 2.50
+          expected_update_rate: 0.0
+          observation_persistence: 0.0
+          filter: "voxel"
+          voxel_min_points: 1
+          clear_after_reading: true
+        depth_clear:
+          topic: /camera/depth/points
+          data_type: "PointCloud2"
+          marking: False
+          clearing: True
+          # Gazebo's point coordinates and header correctly use camera_link
+          # (+X forward). STVL's depth-camera frustum, however, is defined
+          # around sensor +Z, so only the clearing origin/orientation must use
+          # the co-located REP-103 optical frame. The marking cloud is not
+          # relabelled or rotated a second time.
+          sensor_frame: camera_depth_optical_frame
+          min_z: 0.30
+          max_z: 3.00
+          # Derived from the 640x400 image and 1.291543646 rad horizontal FOV.
+          vertical_fov_angle: 0.880312270
+          horizontal_fov_angle: 1.291543646
+          decay_acceleration: 5.0
+          model_type: 0
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
@@ -299,8 +413,10 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 1.0
-      publish_frequency: 1.0
+      # Dynamic-object tracking consumes the raw master grid. Three updates
+      # per second preserve person motion without changing Nav2 ownership.
+      update_frequency: 3.0
+      publish_frequency: 3.0
       global_frame: map
       robot_base_frame: base_footprint
       footprint_padding: 0.05
@@ -310,10 +426,11 @@ global_costmap:
       resolution: 0.05
       track_unknown_space: true
       plugins: [
-        "static_layer", 
+        "static_layer",
         "obstacle_layer",
-         "inflation_layer"
-         ]
+        "depth_voxel_layer",
+        "inflation_layer"
+      ]
       filters: ["keepout_filter"]
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
@@ -322,6 +439,9 @@ global_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
+        # The laser retains stable household geometry. RGB-D observations are
+        # kept in a separate temporal layer so moving people do not burn into
+        # the global navigation grid.
         observation_sources: scan
         scan:
           topic: /scan
@@ -333,6 +453,46 @@ global_costmap:
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
           obstacle_min_range: 0.20
+      depth_voxel_layer:
+        plugin: "spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer"
+        enabled: True
+        voxel_decay: 2.0
+        decay_model: 0
+        voxel_size: 0.05
+        track_unknown_space: true
+        mark_threshold: 0
+        update_footprint_enabled: true
+        combination_method: 1
+        origin_z: 0.0
+        publish_voxel_map: false
+        transform_tolerance: 0.2
+        mapping_mode: false
+        observation_sources: depth_mark depth_clear
+        depth_mark:
+          topic: /camera/depth/points
+          data_type: "PointCloud2"
+          marking: True
+          clearing: False
+          min_obstacle_height: 0.05
+          max_obstacle_height: 1.50
+          obstacle_range: 2.50
+          expected_update_rate: 0.0
+          observation_persistence: 0.0
+          filter: "voxel"
+          voxel_min_points: 1
+          clear_after_reading: true
+        depth_clear:
+          topic: /camera/depth/points
+          data_type: "PointCloud2"
+          marking: False
+          clearing: True
+          sensor_frame: camera_depth_optical_frame
+          min_z: 0.30
+          max_z: 3.00
+          vertical_fov_angle: 0.880312270
+          horizontal_fov_angle: 1.291543646
+          decay_acceleration: 5.0
+          model_type: 0
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
@@ -354,7 +514,9 @@ planner_server:
       # Smac 2D exposes an explicit traversal-cost weight. Prefer a wider,
       # safer detour over a shorter route through wall-inflation gradients.
       plugin: "nav2_smac_planner/SmacPlanner2D"
-      tolerance: 0.5
+      # Match the controller's positional acceptance radius. A larger planner
+      # tolerance can return a path that ends beside, rather than at, the goal.
+      tolerance: 0.05
       allow_unknown: false
       downsample_costmap: false
       downsampling_factor: 1
