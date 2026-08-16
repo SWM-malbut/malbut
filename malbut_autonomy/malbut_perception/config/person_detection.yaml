@@ -21,14 +21,15 @@ person_localizer:
     # Set base_link or map only when the corresponding TF is available.
     output_frame: ''
 
-    # auto loads YOLO when model_path exists and otherwise uses OpenCV HOG.
+    # auto loads YOLO26 when model_path exists and otherwise uses OpenCV HOG.
     detector_backend: auto
     model_path: ''
     confidence_threshold: 0.20
     nms_threshold: 0.45
     yolo_input_size: 640
-    # auto selects verified CUDA and otherwise uses the stable CPU target.
-    # OpenCL remains available only as an explicit opt-in target.
+    # ONNX Runtime is required for YOLO26. Auto selects TensorRT FP16 on the
+    # Orin NX and prepared NVIDIA development PCs, then falls back to CUDA.
+    inference_backend: auto
     dnn_target: auto
     # Four workers performed best without competing heavily with Gazebo.
     opencv_num_threads: 4
@@ -43,7 +44,8 @@ person_localizer:
     tracker_appearance_weight: 0.65
 
     # Long-term ID restoration uses only cropped RGB pixels. The lightweight
-    # HSV encoder is a fallback when the OSNet model has not been prepared.
+    # OSNet x0.5 improves re-entry matching while remaining lightweight.
+    # HSV is retained only as a fallback when the model is unavailable.
     reid_backend: auto
     reid_model_path: ''
     reid_cosine_threshold: 0.25
@@ -63,7 +65,7 @@ person_localizer:
     bearing_only_uncertainty_m: 2.0
     person_thickness_m: 0.35
 
-    # Keep synchronization shallow so slow CPU inference drops stale frames.
+    # Keep synchronization shallow so inference drops stale frames under load.
     sync_queue_size: 3
     sync_slop_sec: 0.08
     max_inference_rate_hz: 6.0

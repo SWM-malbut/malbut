@@ -27,7 +27,6 @@ class FollowSettings:
     goal_update_period_s: float
     maximum_linear_speed_mps: float
     temporary_lost_timeout_s: float
-    search_start_timeout_s: float
     target_lost_timeout_s: float
 
     def validate(self) -> None:
@@ -52,12 +51,10 @@ class FollowSettings:
             raise ValueError('maximum linear speed must be positive')
         if self.temporary_lost_timeout_s < 0.0:
             raise ValueError('temporary lost timeout must be non-negative')
-        if self.search_start_timeout_s < self.temporary_lost_timeout_s:
+        if self.target_lost_timeout_s <= self.temporary_lost_timeout_s:
             raise ValueError(
-                'search timeout must not precede temporary loss timeout'
+                'target lost timeout must exceed temporary loss timeout'
             )
-        if self.target_lost_timeout_s <= self.search_start_timeout_s:
-            raise ValueError('target lost timeout must exceed search timeout')
 
 
 @dataclass(frozen=True)

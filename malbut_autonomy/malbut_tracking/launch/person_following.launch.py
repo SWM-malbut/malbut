@@ -5,7 +5,6 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -28,13 +27,6 @@ def generate_launch_description():
         DeclareLaunchArgument('static_map_topic', default_value='/map'),
         DeclareLaunchArgument('global_frame', default_value='map'),
         DeclareLaunchArgument('robot_frame', default_value='base_footprint'),
-        DeclareLaunchArgument('twist_mixer', default_value='false'),
-        DeclareLaunchArgument(
-            'nav_cmd_vel_topic', default_value='/cmd_vel'
-        ),
-        DeclareLaunchArgument(
-            'mixed_cmd_vel_topic', default_value='/cmd_vel_tracking_raw'
-        ),
     ]
     node = Node(
         package='malbut_tracking',
@@ -55,19 +47,4 @@ def generate_launch_description():
             },
         ],
     )
-    twist_mixer = Node(
-        package='malbut_tracking',
-        executable='tracking_twist_mixer',
-        name='tracking_twist_mixer',
-        output='screen',
-        condition=IfCondition(LaunchConfiguration('twist_mixer')),
-        parameters=[
-            LaunchConfiguration('config'),
-            {
-                'use_sim_time': LaunchConfiguration('use_sim_time'),
-                'nav_input_topic': LaunchConfiguration('nav_cmd_vel_topic'),
-                'output_topic': LaunchConfiguration('mixed_cmd_vel_topic'),
-            },
-        ],
-    )
-    return LaunchDescription(arguments + [node, twist_mixer])
+    return LaunchDescription(arguments + [node])

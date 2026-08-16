@@ -23,7 +23,6 @@ def settings():
         goal_update_period_s=0.75,
         maximum_linear_speed_mps=0.30,
         temporary_lost_timeout_s=0.75,
-        search_start_timeout_s=1.5,
         target_lost_timeout_s=8.0,
     )
 

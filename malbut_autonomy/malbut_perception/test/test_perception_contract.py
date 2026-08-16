@@ -24,6 +24,7 @@ def test_config_uses_only_rgbd_inputs_and_standard_outputs():
     assert config['compressed_debug_image_topic'].endswith('/compressed')
     assert 1 <= config['debug_jpeg_quality'] <= 100
     assert config['max_inference_rate_hz'] == 6.0
+    assert config['inference_backend'] == 'auto'
     assert config['dnn_target'] == 'auto'
     assert config['opencv_num_threads'] == 4
     assert config['reid_backend'] == 'auto'
@@ -56,19 +57,32 @@ def test_launch_file_is_valid_python_and_installed():
 
 
 def test_model_preparation_is_pinned_and_machine_independent():
-    script = PACKAGE_ROOT / 'scripts' / 'prepare_yolov5_model.sh'
+    script = PACKAGE_ROOT / 'scripts' / 'prepare_yolo26_model.sh'
     source = script.read_text(encoding='utf-8')
     assert script.stat().st_mode & 0o111
-    assert '915bbf294bb74c859f0b41f1c23bc395014ea679' in source
+    assert 'ultralytics==8.4.55' in source
+    assert '9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef' in source
     assert "'torch==2.5.1'" in source
-    assert "'onnx==1.16.2'" in source
+    assert "'onnx==1.20.1'" in source
+    assert 'end2end=True' in source
     assert '/home/' not in source
     assert '/Users/' not in source
+
+    runtime_script = (
+        PACKAGE_ROOT / 'scripts' / 'prepare_inference_runtime.sh'
+    )
+    runtime_source = runtime_script.read_text(encoding='utf-8')
+    assert runtime_script.stat().st_mode & 0o111
+    assert 'onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl' in runtime_source
+    assert "'numpy==1.23.5'" in runtime_source
+    assert '/home/' not in runtime_source
+    assert '/Users/' not in runtime_source
 
     reid_script = PACKAGE_ROOT / 'scripts' / 'prepare_osnet_model.sh'
     reid_source = reid_script.read_text(encoding='utf-8')
     assert reid_script.stat().st_mode & 0o111
     assert 'f8cd150fdf77e8d9e1ed143b7f308c2c609ded50' in reid_source
-    assert 'cf55163d78fc44c62c82f85ab62d39f10438679b5abe8c698ae08cfa84aa6e18' in reid_source
+    assert 'd80f5b7913076ae1ca89c3ed02eb93133f3114ff6e51cadc5e3cb0aa33f2bf38' in reid_source
+    assert 'osnet_x0_5' in reid_source
     assert '/home/' not in reid_source
     assert '/Users/' not in reid_source

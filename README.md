@@ -205,8 +205,9 @@ ros2 launch malbut_description display.launch.py
 
 ```bash
 cd ~/ros2_ws/src/malbut
-./malbut_autonomy/malbut_perception/scripts/prepare_yolov5_model.sh
+./malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh
 ./malbut_autonomy/malbut_perception/scripts/prepare_osnet_model.sh
+./malbut_autonomy/malbut_perception/scripts/prepare_inference_runtime.sh
 
 cd ~/ros2_ws
 source install/local_setup.bash
@@ -240,8 +241,10 @@ ros2 action send_goal \
 ```
 
 목표 추적은 RGB-D 인식 결과, TF, 저장 지도와 global costmap만 사용하며,
-이동·장애물 회피·소실 시 회전 탐색은 Nav2에 맡깁니다. `Ctrl-C`로 액션을
-취소하면 진행 중인 Nav2 목표도 취소되고 정지합니다.
+이동·회전·장애물 회피를 모두 Nav2에 맡깁니다. 사람이 사라지면 이미 선택한
+LiDAR 트랙으로 짧게 추적을 이어갑니다. 두 센서에서 모두 사라지면 중간 지점과
+마지막 안전 위치까지 이동한 뒤, 사람이 사라진 방향으로 한 번 270도 회전합니다. `Ctrl-C`로
+액션을 취소하면 진행 중인 Nav2 목표도 취소되고 정지합니다.
 
 ### 키보드 조작
 

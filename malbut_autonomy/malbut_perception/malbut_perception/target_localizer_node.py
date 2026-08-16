@@ -234,6 +234,7 @@ class PersonLocalizerNode(Node):
         self.declare_parameter('confidence_threshold', 0.20)
         self.declare_parameter('nms_threshold', 0.45)
         self.declare_parameter('yolo_input_size', 640)
+        self.declare_parameter('inference_backend', 'auto')
         self.declare_parameter('dnn_target', 'auto')
         self.declare_parameter('opencv_num_threads', 4)
         self.declare_parameter('hog_hit_threshold', 0.0)
@@ -291,6 +292,13 @@ class PersonLocalizerNode(Node):
             raise ValueError(
                 'reid_backend must be auto, osnet, or histogram'
             )
+        inference_backend = str(
+            self.get_parameter('inference_backend').value
+        )
+        if inference_backend not in {'auto', 'onnxruntime', 'opencv'}:
+            raise ValueError(
+                'inference_backend must be auto, onnxruntime, or opencv'
+            )
         minimum = float(self.get_parameter('minimum_depth_m').value)
         maximum = float(self.get_parameter('maximum_depth_m').value)
         if minimum < 0.0 or maximum <= minimum:
@@ -340,6 +348,9 @@ class PersonLocalizerNode(Node):
                         self.get_parameter('yolo_input_size').value
                     ),
                     dnn_target=str(self.get_parameter('dnn_target').value),
+                    inference_backend=str(
+                        self.get_parameter('inference_backend').value
+                    ),
                 )
                 self.get_logger().info(
                     'Loaded YOLO person model: '
@@ -381,6 +392,9 @@ class PersonLocalizerNode(Node):
                 encoder = OsNetPersonEncoder(
                     model_path=model_path,
                     dnn_target=str(self.get_parameter('dnn_target').value),
+                    inference_backend=str(
+                        self.get_parameter('inference_backend').value
+                    ),
                     minimum_width=minimum_width,
                     minimum_height=minimum_height,
                 )
