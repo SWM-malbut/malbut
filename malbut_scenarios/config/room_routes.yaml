@@ -1,0 +1,57 @@
+frame_id: map
+
+# Scenario semantics only: Nav2 still validates every waypoint against the
+# current costmap and the common keepout filter before motion.
+rooms:
+  - id: left_room
+    name: 왼쪽 방
+    bounds:
+      minimum_x: -9.4
+      minimum_y: -5.5
+      maximum_x: -2.5
+      maximum_y: 5.5
+    waypoints:
+      - {x: -7.0, y: -2.75, yaw: 1.57}
+      - {x: -5.5, y: -2.75, yaw: 1.57}
+      - {x: -5.5, y: -0.25, yaw: 3.14}
+      - {x: -7.75, y: 0.0, yaw: -1.57}
+
+  - id: center_south
+    name: 중앙 생활 공간
+    bounds:
+      minimum_x: -2.5
+      minimum_y: -5.5
+      maximum_x: 4.7
+      maximum_y: 1.49
+    waypoints:
+      - {x: -2.25, y: -1.0, yaw: 0.0}
+      - {x: 1.75, y: 0.75, yaw: -1.57}
+      - {x: 3.0, y: -3.5, yaw: 3.14}
+      - {x: 0.5, y: -4.25, yaw: 2.36}
+
+  - id: center_north
+    name: 중앙 위쪽 방
+    bounds:
+      minimum_x: -2.5
+      minimum_y: 1.5
+      maximum_x: 4.7
+      maximum_y: 5.5
+    waypoints:
+      - {x: -1.25, y: 2.5, yaw: 0.0}
+      - {x: 1.5, y: 4.25, yaw: 0.0}
+      - {x: 3.75, y: 1.5, yaw: 3.14}
+      - {x: 1.0, y: 2.75, yaw: 3.14}
+
+  - id: right_room
+    name: 오른쪽 방
+    bounds:
+      minimum_x: 4.71
+      minimum_y: -5.5
+      maximum_x: 9.5
+      maximum_y: 5.5
+    waypoints:
+      - {x: 5.75, y: -2.25, yaw: 0.0}
+      - {x: 7.0, y: -3.25, yaw: 1.57}
+      - {x: 7.0, y: -1.25, yaw: 0.0}
+      - {x: 8.25, y: 0.5, yaw: 1.57}
+      - {x: 8.25, y: 2.0, yaw: 3.14}

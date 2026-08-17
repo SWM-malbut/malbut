@@ -61,6 +61,9 @@ def generate_launch_description():
     localization_source = LaunchConfiguration('localization_source')
     robot_web = LaunchConfiguration('robot_web')
     robot_web_port = LaunchConfiguration('robot_web_port')
+    robot_web_navigation_action = LaunchConfiguration(
+        'robot_web_navigation_action'
+    )
     user_map = LaunchConfiguration('user_map')
     use_active_slam = EqualsSubstitution(localization_source, 'slam')
     use_static_map = NotEqualsSubstitution(localization_source, 'slam')
@@ -222,7 +225,10 @@ def generate_launch_description():
             '--map', user_map,
             '--slam-map', map_file,
         ],
-        parameters=[{'use_sim_time': use_sim_time}],
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'navigation_action_name': robot_web_navigation_action,
+        }],
     )
 
     return LaunchDescription(
@@ -308,6 +314,14 @@ def generate_launch_description():
                 'robot_web_port',
                 default_value='8765',
                 description='TCP port for the robot map web server.',
+            ),
+            DeclareLaunchArgument(
+                'robot_web_navigation_action',
+                default_value='/navigate_to_pose',
+                description=(
+                    'NavigateToPose action used by the robot web server. '
+                    'A scenario coordinator may proxy this action.'
+                ),
             ),
             DeclareLaunchArgument(
                 'user_map',

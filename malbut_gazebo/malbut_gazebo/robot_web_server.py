@@ -372,8 +372,14 @@ class RobotWebBridge(Node):
         self.compute_path = ActionClient(
             self, ComputePathToPose, "/compute_path_to_pose"
         )
+        if not self.has_parameter("navigation_action_name"):
+            self.declare_parameter(
+                "navigation_action_name", "/navigate_to_pose"
+            )
         self.navigate = ActionClient(
-            self, NavigateToPose, "/navigate_to_pose"
+            self,
+            NavigateToPose,
+            str(self.get_parameter("navigation_action_name").value),
         )
         self.get_costmap = self.create_client(
             GetCostmap, "/global_costmap/get_costmap"

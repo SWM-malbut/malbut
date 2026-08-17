@@ -3,3 +3,4 @@
 malbut_gazebo/models/aws_small_house/**/*.DAE binary
 malbut_gazebo/models/aws_small_house/**/model.config binary
 malbut_gazebo/models/aws_small_house/**/model.sdf binary
+malbut_scenarios/maps/*.pgm binary

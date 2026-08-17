@@ -103,6 +103,7 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     assert 'localization_state' in declared_arguments
     assert 'robot_web' in declared_arguments
     assert 'robot_web_port' in declared_arguments
+    assert 'robot_web_navigation_action' in declared_arguments
     assert 'user_map' in declared_arguments
     assert 'set_initial_pose' in declared_arguments
     assert 'initial_pose_x' in declared_arguments

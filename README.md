@@ -356,6 +356,23 @@ LLM 행동 계층은 map 좌표를 `/roaming/goal`로 보내 현재 순회를 �
 않습니다. 전체 파라미터와 인터페이스는
 `malbut_autonomy/malbut_roaming/README.md`에 있습니다.
 
+### 자율주행 통합 시나리오
+
+SWM25-94 시연은 Small House, Nav2/RViz, 기존 웹 지도·Zone, 자율 순찰,
+사람 인식·추적과 수동 제어 선점을 한 launch로 구성합니다.
+
+```bash
+ros2 launch malbut_scenarios autonomous_driving.launch.py
+ros2 service call /scenario/start_patrol std_srvs/srv/Trigger '{}'
+ros2 service call /scenario/start_person_tracking std_srvs/srv/Trigger '{}'
+```
+
+웹에서 선택한 위치는 기존 로봇 웹 서버의 costmap·Zone 검증을 거친 뒤
+자율 순찰을 선점합니다. 도착 후 해당 구역을 순찰하고 다시 전체 순찰로
+복귀합니다. `/cmd_vel_manual`에 조이스틱 입력이 들어오면 자율 goal을
+취소하고 수동 제어권을 획득합니다. 상세 실행 옵션은
+`malbut_scenarios/README.md`에 있습니다.
+
 기본값은 개별 Nav2 프로세스를 실행합니다. composition 경로를 검증하거나
 사용하려면 `use_composition:=True`를 전달합니다. `slam.launch.py`는 실행 중
 `map→odom` 상태를 `~/.ros/malbut/localization_state.yaml`에 자동 기록하고,

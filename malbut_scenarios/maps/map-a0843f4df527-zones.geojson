@@ -1,0 +1,30 @@
+{
+  "type": "FeatureCollection",
+  "format": "malbut-semantic-zones-v1",
+  "map_id": "map-a0843f4df527",
+  "map_revision": "rev-5e8bdb2b88ea",
+  "frame_id": "map",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "demo-restricted-zone",
+      "properties": {
+        "role": "semantic_zone",
+        "name": "시연 이동 금지 구역",
+        "behavior": "restricted"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-5.2, -0.5],
+            [-4.2, -0.5],
+            [-4.2, 0.5],
+            [-5.2, 0.5],
+            [-5.2, -0.5]
+          ]
+        ]
+      }
+    }
+  ]
+}

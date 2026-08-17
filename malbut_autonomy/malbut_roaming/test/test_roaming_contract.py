@@ -85,6 +85,8 @@ def test_deployment_configuration_builds_a_valid_policy():
     assert config['peripheral_clearance'] < config['open_clearance']
     assert config['map_frame'] == 'map'
     assert config['base_frame'] == 'base_footprint'
+    assert config['filter_mask_topic'] == ''
+    assert config['filter_restricted_threshold'] == 100
 
 
 def test_launch_exposes_overrides_and_starts_only_the_reusable_node():

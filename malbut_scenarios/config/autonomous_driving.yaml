@@ -1,0 +1,20 @@
+autonomous_driving_manager:
+  ros__parameters:
+    use_sim_time: true
+    patrol_autostart: false
+
+    navigation_action_name: /navigate_to_pose
+    web_navigation_action_name: /scenario/navigate_to_pose
+    follow_person_action_name: /follow_person
+
+    # Nav2 is remapped to the autonomous input. A joystick must publish to the
+    # manual input. Both pass through one collision monitor before /cmd_vel.
+    nav_cmd_vel_topic: /scenario/nav_cmd_vel
+    manual_cmd_vel_topic: /cmd_vel_manual
+    output_cmd_vel_topic: /scenario/safety_input
+    manual_deadband: 0.01
+
+    desired_distance_m: 1.20
+    minimum_distance_m: 0.65
+    maximum_linear_speed_mps: 0.30
+    target_lost_timeout_s: 8.0
