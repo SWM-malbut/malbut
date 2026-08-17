@@ -8,6 +8,7 @@ import {
 } from "./homecam";
 
 const ROBOT_ONLINE_MS = 15_000;
+const POSITIVE_GENERATION = /^[1-9][0-9]{0,18}$/;
 const ACTIVE_MAPPING_STATES = new Set([
   "waiting_for_map", "waiting_for_navigation", "exploring", "navigating",
   "review", "saving",
@@ -41,6 +42,7 @@ type MapRow = {
   preview_base64: string;
   user_map_json: string | null;
   semantic_zones_json: string | null;
+  server_generation: string | number;
   source_created_at: string | null;
   updated_at: string;
 };
@@ -103,6 +105,25 @@ export async function storeRobotMap(deviceId: string, map: RobotMapUpload) {
   await ensureHomecamSchema();
   const now = new Date().toISOString();
   const table = map.finalized ? "robot_maps" : "robot_map_drafts";
+  const generationUpdate = map.finalized
+    ? ", server_generation = nextval('robot_map_generation_seq')"
+    : "";
+  const idempotentUpdateGuard = map.finalized
+    ? `
+         WHERE ROW(
+           ${table}.revision, ${table}.map_id, ${table}.map_revision,
+           ${table}.width, ${table}.height, ${table}.resolution,
+           ${table}.origin_x, ${table}.origin_y, ${table}.origin_yaw,
+           ${table}.preview_base64, ${table}.user_map_json::jsonb,
+           ${table}.semantic_zones_json::jsonb, ${table}.source_created_at
+         ) IS DISTINCT FROM ROW(
+           excluded.revision, excluded.map_id, excluded.map_revision,
+           excluded.width, excluded.height, excluded.resolution,
+           excluded.origin_x, excluded.origin_y, excluded.origin_yaw,
+           excluded.preview_base64, excluded.user_map_json::jsonb,
+           excluded.semantic_zones_json::jsonb, excluded.source_created_at
+         )`
+    : "";
   const statement = getD1()
     .prepare(
       `INSERT INTO ${table}
@@ -125,7 +146,7 @@ export async function storeRobotMap(deviceId: string, map: RobotMapUpload) {
          user_map_json = excluded.user_map_json,
          semantic_zones_json = excluded.semantic_zones_json,
          source_created_at = excluded.source_created_at,
-         updated_at = excluded.updated_at`,
+         updated_at = excluded.updated_at${generationUpdate}${idempotentUpdateGuard}`,
     )
     .bind(
       deviceId,
@@ -232,6 +253,68 @@ export async function getRobotMapSemantics(deviceId: string, userEmail: string) 
     mapRevision: map.map_revision,
     userMap: map.user_map_json ? parseObject(map.user_map_json) : null,
     zones: map.semantic_zones_json ? parseObject(map.semantic_zones_json) : null,
+  };
+}
+
+export async function getAgentRobotMapSemantics(
+  deviceId: string,
+  userEmail: string,
+  principalSubject: string,
+) {
+  await ensureHomecamSchema();
+  const row = await getD1()
+    .prepare(
+      `SELECT memberships.binding_generation::text AS binding_generation,
+              maps.server_generation::text AS server_generation,
+              maps.revision, maps.map_id,
+              maps.map_revision, maps.user_map_json,
+              maps.semantic_zones_json
+       FROM device_memberships AS memberships
+       INNER JOIN robot_maps AS maps
+         ON maps.device_id = memberships.device_id
+       WHERE memberships.device_id = ?
+         AND memberships.user_email = ?
+         AND memberships.role = 'owner'
+         AND EXISTS (
+           SELECT 1
+           FROM web_auth_sessions AS sessions
+           WHERE sessions.cognito_sub = ?
+             AND sessions.user_email = ?
+             AND sessions.revoked_at IS NULL
+             AND sessions.expires_at > CURRENT_TIMESTAMP
+         )`,
+    )
+    .bind(deviceId, userEmail, principalSubject, userEmail)
+    .first<{
+      binding_generation: string;
+      server_generation: string;
+      revision: string;
+      map_id: string;
+      map_revision: string;
+      user_map_json: string | null;
+      semantic_zones_json: string | null;
+    }>();
+  if (!row) return null;
+  const userMap = parseStrictObject(row.user_map_json);
+  const zones = row.semantic_zones_json === null
+    ? null
+    : parseStrictObject(row.semantic_zones_json);
+  if (!userMap || (row.semantic_zones_json !== null && !zones)) return null;
+  if (
+    !POSITIVE_GENERATION.test(row.binding_generation) ||
+    !POSITIVE_GENERATION.test(row.server_generation)
+  ) return null;
+  return {
+    membershipGeneration: row.binding_generation,
+    mapGeneration: row.server_generation,
+    deviceRevision: row.revision,
+    semantics: {
+      revision: row.revision,
+      mapId: row.map_id,
+      mapRevision: row.map_revision,
+      userMap,
+      zones,
+    },
   };
 }
 
@@ -411,6 +494,14 @@ function parseObject(value: string): Record<string, unknown> {
   return parsed && typeof parsed === "object" && !Array.isArray(parsed)
     ? parsed as Record<string, unknown>
     : {};
+}
+
+function parseStrictObject(value: string | null) {
+  if (value === null) return null;
+  const parsed = parseJson(value);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : null;
 }
 
 function parseJson(value: string): unknown {

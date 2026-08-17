@@ -24,6 +24,7 @@ from malbut_agent_server.gateway import (
     production_registry,
     simulation_registry,
 )
+from malbut_agent_server.schemas import ValidationError
 
 
 def _query(
@@ -46,9 +47,11 @@ class CountingStatusAdapter(ReadOnlyToolAdapter):
     """Return a fresh status and record dispatch count."""
 
     def __init__(self) -> None:
+        """Initialize a zero-call trusted status adapter."""
         self.calls = 0
 
     def invoke(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Return one fresh bounded local status observation."""
         assert arguments == {}
         self.calls += 1
         return {
@@ -483,3 +486,334 @@ def test_timeout_stale_state_and_bad_results_are_normalized() -> None:
             assert 'secret-token' not in str(result)
         finally:
             gateway.close()
+
+
+def test_hung_adapter_cannot_grow_the_executor_queue() -> None:
+    """Admission fails closed instead of queueing behind a hung worker."""
+
+    class HungStatusAdapter(ReadOnlyToolAdapter):
+        def __init__(self) -> None:
+            self.calls = 0
+            self.release = threading.Event()
+
+        def invoke(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+            del arguments
+            self.calls += 1
+            self.release.wait(1.0)
+            return {
+                'observed_at': datetime.now(timezone.utc).isoformat(),
+                'source': 'released-test-state',
+                'battery_percent': 75,
+                'emergency_stop': False,
+            }
+
+    adapter = HungStatusAdapter()
+    gateway = ToolGateway(
+        CapabilityRegistry(
+            [
+                ToolCapability(
+                    'get_robot_status',
+                    mode=READ_ONLY,
+                    adapter=adapter,
+                    timeout_seconds=0.005,
+                )
+            ]
+        ),
+        cache_size=10,
+        max_workers=1,
+    )
+    try:
+        first = gateway.query(_query(request_id='hung-first'))
+        busy_results = [
+            gateway.query(_query(request_id=f'hung-busy-{index}'))
+            for index in range(100)
+        ]
+        exact_retry = gateway.query(_query(request_id='hung-busy-99'))
+
+        assert first.error['code'] == 'timed_out'
+        assert all(
+            result.error['code'] == 'gateway_busy'
+            for result in busy_results
+        )
+        assert exact_retry.result_id == busy_results[-1].result_id
+        assert adapter.calls == 1
+        assert gateway._executor._work_queue.qsize() == 0
+    finally:
+        adapter.release.set()
+        gateway.close()
+
+
+def test_executor_submit_failure_releases_adapter_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A startup exception cannot permanently consume adapter capacity."""
+    adapter = CountingStatusAdapter()
+    gateway = ToolGateway(
+        CapabilityRegistry(
+            [
+                ToolCapability(
+                    'get_robot_status',
+                    mode=READ_ONLY,
+                    adapter=adapter,
+                )
+            ]
+        ),
+        max_workers=1,
+    )
+    original_submit = gateway._executor.submit
+
+    def fail_submit(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise RuntimeError('synthetic executor startup failure')
+
+    try:
+        monkeypatch.setattr(gateway._executor, 'submit', fail_submit)
+        with pytest.raises(RuntimeError, match='synthetic executor'):
+            gateway.query(_query(request_id='submit-failure'))
+        monkeypatch.setattr(gateway._executor, 'submit', original_submit)
+
+        recovered = gateway.query(_query(request_id='submit-recovered'))
+        assert recovered.status == 'succeeded'
+        assert adapter.calls == 1
+    finally:
+        gateway.close()
+
+
+@pytest.mark.parametrize(
+    ('keyword', 'value', 'message'),
+    [
+        ('mode', 'execute', 'mode'),
+        ('available', 1, 'availability'),
+        ('timeout_seconds', True, 'timeout'),
+        ('timeout_seconds', 0, 'timeout'),
+        ('timeout_seconds', 10.1, 'timeout'),
+        ('max_result_bytes', True, 'max_result_bytes'),
+        ('max_result_bytes', 127, 'max_result_bytes'),
+        ('max_result_bytes', 65537, 'max_result_bytes'),
+        ('max_state_age_seconds', True, 'max_state_age'),
+        ('max_state_age_seconds', 0, 'max_state_age'),
+        ('max_state_age_seconds', 60.1, 'max_state_age'),
+    ],
+)
+def test_capability_numeric_and_mode_configuration_is_strict(
+    keyword: str,
+    value: object,
+    message: str,
+) -> None:
+    """Invalid registration bounds cannot expand an adapter capability."""
+    with pytest.raises(ValueError, match=message):
+        ToolCapability(
+            'get_robot_status',
+            **{keyword: value},  # type: ignore[arg-type]
+        )
+
+
+def test_read_only_adapter_requires_explicit_marker() -> None:
+    """Duck typing alone cannot authorize a production read adapter."""
+
+    class UnmarkedAdapter:
+        def invoke(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+            del arguments
+            return {}
+
+    with pytest.raises(ValueError, match='ReadOnlyToolAdapter'):
+        ToolCapability(
+            'get_robot_status',
+            mode=READ_ONLY,
+            adapter=UnmarkedAdapter(),  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    ('keyword', 'value'),
+    [
+        ('runtime_mode', 'unsafe-production'),
+        ('revision', ''),
+        ('revision', 1),
+        ('revision', 'r' * 129),
+    ],
+)
+def test_registry_rejects_ambiguous_runtime_metadata(
+    keyword: str,
+    value: object,
+) -> None:
+    """Runtime mode and revision are strict server-owned metadata."""
+    with pytest.raises(ValueError):
+        CapabilityRegistry(
+            [],
+            **{keyword: value},  # type: ignore[arg-type]
+        )
+
+
+def test_registry_snapshot_covers_disabled_and_executable_modes() -> None:
+    """Discovery exposes why each capability is blocked or executable."""
+    adapter = CountingStatusAdapter()
+    registry = CapabilityRegistry(
+        [
+            ToolCapability(
+                'get_robot_status',
+                mode=READ_ONLY,
+                adapter=adapter,
+            ),
+            ToolCapability(
+                'detect_pet',
+                mode=READ_ONLY,
+                available=False,
+            ),
+            ToolCapability(
+                'navigate',
+                mode=SIMULATION_ONLY,
+                adapter=MockToolAdapter('navigate'),
+            ),
+        ],
+        runtime_mode=SIMULATION,
+    )
+    snapshot = {
+        item['name']: item
+        for item in registry.to_dict()['capabilities']
+    }
+
+    assert snapshot['get_robot_status']['executable'] is True
+    assert snapshot['get_robot_status']['blocked_by'] is None
+    assert snapshot['detect_pet']['executable'] is False
+    assert snapshot['detect_pet']['blocked_by'] == 'tool_unavailable'
+    assert snapshot['navigate']['executable'] is True
+    assert snapshot['navigate']['blocked_by'] is None
+
+
+@pytest.mark.parametrize(
+    ('value', 'message'),
+    [
+        (None, 'object'),
+        ({'request_id': 'r', 'user_id': 'u', 'tool_name': 'navigate',
+          'arguments': {}, 'confirmed': True}, 'unknown'),
+        ({'request_id': 1, 'user_id': 'u', 'tool_name': 'navigate',
+          'arguments': {}}, 'request_id'),
+        ({'request_id': '', 'user_id': 'u', 'tool_name': 'navigate',
+          'arguments': {}}, 'request_id'),
+        ({'request_id': 'bad\nrequest', 'user_id': 'u',
+          'tool_name': 'navigate', 'arguments': {}}, 'control'),
+        ({'request_id': 'r', 'user_id': 'u', 'tool_name': 'navigate',
+          'arguments': []}, 'arguments'),
+        ({'request_id': 'r', 'user_id': 'u', 'tool_name': 'navigate',
+          'arguments': {'value': float('nan')}}, 'JSON'),
+        ({'request_id': 'r', 'user_id': 'u', 'tool_name': 'navigate',
+          'arguments': {'value': object()}}, 'JSON'),
+        ({'request_id': 'r', 'user_id': 'u', 'tool_name': 'navigate',
+          'arguments': {'value': 'x' * 16384}}, 'too large'),
+    ],
+)
+def test_tool_query_strictly_rejects_execution_and_bad_json(
+    value: object,
+    message: str,
+) -> None:
+    """Untrusted Tool query fields and JSON are rejected before dispatch."""
+    with pytest.raises(ValidationError, match=message):
+        ToolQuery.from_dict(value)
+
+
+def test_gateway_rejects_unavailable_and_missing_executor() -> None:
+    """Known Tools need both availability and a trusted adapter binding."""
+    unavailable = ToolGateway(
+        CapabilityRegistry(
+            [ToolCapability('get_robot_status', available=False)]
+        )
+    )
+    missing = ToolGateway(
+        CapabilityRegistry(
+            [ToolCapability('get_robot_status', mode=READ_ONLY)]
+        )
+    )
+    try:
+        assert unavailable.query(_query()).error['code'] == (
+            'tool_unavailable'
+        )
+        assert missing.query(_query()).error['code'] == (
+            'executor_unavailable'
+        )
+    finally:
+        unavailable.close()
+        missing.close()
+
+
+def test_gateway_cache_eviction_and_close_are_bounded() -> None:
+    """LRU eviction permits bounded replay and close rejects new work."""
+    adapter = CountingStatusAdapter()
+    gateway = ToolGateway(
+        CapabilityRegistry(
+            [
+                ToolCapability(
+                    'get_robot_status',
+                    mode=READ_ONLY,
+                    adapter=adapter,
+                )
+            ]
+        ),
+        cache_size=1,
+    )
+    first = _query(request_id='evict-1')
+    gateway.query(first)
+    gateway.query(_query(request_id='evict-2'))
+    replay = gateway.query(first)
+    assert replay.status == 'succeeded'
+    assert adapter.calls == 3
+
+    gateway.close()
+    gateway.close()
+    with pytest.raises(RuntimeError, match='closed'):
+        gateway.query(_query(request_id='after-close'))
+
+
+@pytest.mark.parametrize(
+    ('cache_size', 'max_workers', 'message'),
+    [
+        (0, 1, 'cache_size'),
+        (10001, 1, 'cache_size'),
+        (True, 1, 'cache_size'),
+        (1, 0, 'max_workers'),
+        (1, 17, 'max_workers'),
+        (1, True, 'max_workers'),
+    ],
+)
+def test_gateway_capacity_bounds_reject_invalid_integers(
+    cache_size: object,
+    max_workers: object,
+    message: str,
+) -> None:
+    """Worker and replay capacity have strict finite integer bounds."""
+    with pytest.raises(ValueError, match=message):
+        ToolGateway(
+            CapabilityRegistry([]),
+            cache_size=cache_size,  # type: ignore[arg-type]
+            max_workers=max_workers,  # type: ignore[arg-type]
+        )
+
+
+def test_all_mock_adapters_are_non_actuating_and_schema_valid() -> None:
+    """Every shipped simulation adapter returns bounded denial evidence."""
+    gateway = ToolGateway(simulation_registry())
+    cases = [
+        ('get_robot_status', {}, 'battery_percent'),
+        ('detect_pet', {}, 'privacy_checked'),
+        ('navigate', {'location': '거실'}, 'nav2_goal_published'),
+        ('capture_photo', {}, 'image_created'),
+        (
+            'send_notification',
+            {'message': '도착', 'image_id': None},
+            'delivered',
+        ),
+    ]
+    try:
+        for index, (tool_name, arguments, evidence) in enumerate(cases):
+            result = gateway.query(
+                _query(
+                    tool_name,
+                    arguments,
+                    request_id=f'all-mocks-{index}',
+                )
+            )
+            assert result.status == 'succeeded'
+            assert result.result['simulated'] is True
+            assert evidence in result.result
+    finally:
+        gateway.close()

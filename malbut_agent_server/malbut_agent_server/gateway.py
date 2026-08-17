@@ -39,11 +39,13 @@ TOOL_RISK_LEVELS = {
     'capture_photo': 'L2',
     'send_notification': 'L2',
     'navigate': 'L3',
+    'monitor_room': 'L3',
 }
 
 TOOL_TIMEOUT_SECONDS = {
     'get_robot_status': 1.0,
     'navigate': 2.0,
+    'monitor_room': 2.0,
     'detect_pet': 3.0,
     'capture_photo': 5.0,
     'send_notification': 5.0,
@@ -52,6 +54,7 @@ TOOL_TIMEOUT_SECONDS = {
 READ_ONLY_ELIGIBLE = frozenset(
     {'get_robot_status', 'detect_pet'}
 )
+PERMANENT_PROPOSAL_ONLY = frozenset({'monitor_room'})
 
 
 class ToolAdapter(Protocol):
@@ -99,6 +102,13 @@ class ToolCapability:
             raise ValueError(f'unknown Tool capability: {self.name}')
         if self.mode not in CAPABILITY_MODES:
             raise ValueError(f'unsupported Tool mode: {self.mode}')
+        if (
+            self.name in PERMANENT_PROPOSAL_ONLY
+            and self.mode != PROPOSAL_ONLY
+        ):
+            raise ValueError(
+                f'{self.name} must remain proposal-only'
+            )
         if not isinstance(self.available, bool):
             raise ValueError('Tool availability must be a boolean')
         if self.mode == READ_ONLY and self.name not in READ_ONLY_ELIGIBLE:
@@ -408,9 +418,19 @@ class ToolGateway:
         max_workers: int = 4,
     ) -> None:
         """Create bounded in-process idempotency and adapter workers."""
-        if cache_size < 1 or cache_size > 10000:
+        if (
+            isinstance(cache_size, bool)
+            or not isinstance(cache_size, int)
+            or cache_size < 1
+            or cache_size > 10000
+        ):
             raise ValueError('Tool query cache_size is invalid')
-        if max_workers < 1 or max_workers > 16:
+        if (
+            isinstance(max_workers, bool)
+            or not isinstance(max_workers, int)
+            or max_workers < 1
+            or max_workers > 16
+        ):
             raise ValueError('Tool max_workers is invalid')
         self.registry = registry
         self._cache_size = cache_size
@@ -423,6 +443,7 @@ class ToolGateway:
             max_workers=max_workers,
             thread_name_prefix='malbut-tool-query',
         )
+        self._adapter_slots = threading.BoundedSemaphore(max_workers)
         self._closed = False
 
     def query(self, query: ToolQuery) -> GatewayResult:
@@ -535,10 +556,37 @@ class ToolGateway:
                 'executor_unavailable',
                 'A trusted Tool adapter is not available.',
             )
-        future = self._executor.submit(
-            capability.adapter.invoke,
-            arguments,
-        )
+        if not self._adapter_slots.acquire(blocking=False):
+            return self._failure(
+                query,
+                capability.mode,
+                started_at,
+                'failed',
+                'gateway_busy',
+                'The bounded Tool adapter capacity is busy.',
+            )
+        release_lock = threading.Lock()
+        slot_released = False
+
+        def release_slot() -> None:
+            nonlocal slot_released
+            with release_lock:
+                if not slot_released:
+                    slot_released = True
+                    self._adapter_slots.release()
+
+        def invoke() -> Dict[str, Any]:
+            try:
+                return capability.adapter.invoke(arguments)
+            finally:
+                release_slot()
+
+        try:
+            future = self._executor.submit(invoke)
+            future.add_done_callback(lambda _future: release_slot())
+        except BaseException:
+            release_slot()
+            raise
         try:
             adapter_result = future.result(
                 timeout=capability.timeout_seconds
@@ -660,6 +708,15 @@ def simulation_registry() -> CapabilityRegistry:
     """Build explicit side-effect-free adapters for local demonstrations."""
     capabilities = []
     for name in TOOL_SPECS:
+        if name == 'monitor_room':
+            capabilities.append(
+                ToolCapability(
+                    name=name,
+                    mode=PROPOSAL_ONLY,
+                    timeout_seconds=TOOL_TIMEOUT_SECONDS[name],
+                )
+            )
+            continue
         capabilities.append(
             ToolCapability(
                 name=name,

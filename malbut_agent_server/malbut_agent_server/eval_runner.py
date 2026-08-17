@@ -53,7 +53,14 @@ DEFAULT_ROBOT_STATE = {
     'docked': False,
     'forbidden_zones': [],
 }
-DEFAULT_TOOLS = list(TOOL_SPECS)
+LEGACY_EVALUATION_TOOLS = (
+    'navigate',
+    'detect_pet',
+    'capture_photo',
+    'send_notification',
+    'get_robot_status',
+)
+DEFAULT_TOOLS = list(LEGACY_EVALUATION_TOOLS)
 DEFAULT_OPENAI_MODELS = ('gpt-5.6-luna', DEFAULT_OPENAI_MODEL)
 PRICE_SOURCE = 'https://developers.openai.com/api/docs/pricing'
 PRICE_AS_OF = '2026-08-05'

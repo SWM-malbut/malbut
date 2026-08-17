@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "model_id": "faster-whisper-small",
+  "snapshot_revision": "536b0662742c02347bc0e980a01041f333bce120",
+  "snapshot_path": "snapshots/536b0662742c02347bc0e980a01041f333bce120",
+  "runtime_versions": {
+    "av": "17.1.0",
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.1",
+    "numpy": "2.2.6",
+    "onnxruntime": "1.23.2",
+    "tokenizers": "0.23.1"
+  },
+  "files": [
+    {
+      "path": "config.json",
+      "sha256": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828"
+    },
+    {
+      "path": "model.bin",
+      "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671"
+    },
+    {
+      "path": "tokenizer.json",
+      "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab"
+    },
+    {
+      "path": "vocabulary.txt",
+      "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+    }
+  ]
+}

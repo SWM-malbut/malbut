@@ -144,7 +144,8 @@ class ExtractiveConversationSummarizer:
         source_turn_count: int,
         max_chars: int,
     ) -> SummaryResult:
-        """Merge turns into rolling state and render a bounded summary.
+        """
+        Merge turns into rolling state and render a bounded summary.
 
         Conversation text is always emitted as untrusted JSON data. Corrupt
         prior state is ignored, allowing a new summary to be built locally.

@@ -26,10 +26,17 @@ export type PostgresPoolTestAdapter = {
   connect(): Promise<Pick<PoolClient, "query" | "release">>;
 };
 
-// Keep the values consumed by the application identical between raw pg and
-// Drizzle queries. Homecam timestamps are exposed as ISO-8601 strings and
-// aggregate counts are small enough to be represented safely as numbers.
-types.setTypeParser(20, (value) => Number(value));
+// Preserve exact PostgreSQL BIGINT values. Existing counters and epoch values
+// stay numbers while safe; generations beyond 2^53 remain decimal strings
+// until a caller deliberately converts them to bigint.
+export function parsePostgresBigint(value: string): number | string {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && String(parsed) === value
+    ? parsed
+    : value;
+}
+
+types.setTypeParser(20, parsePostgresBigint);
 types.setTypeParser(1114, (value) => new Date(`${value}Z`).toISOString());
 types.setTypeParser(1184, (value) => new Date(value).toISOString());
 

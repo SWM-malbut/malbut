@@ -22,6 +22,31 @@ DEFAULT_LOCATIONS = {
     'dock',
 }
 
+ROBOT_STATE_PROFILE_PHYSICAL = 'physical'
+ROBOT_STATE_PROFILE_GAZEBO_SIMULATION = 'gazebo_simulation'
+ROBOT_STATE_PROFILES = frozenset({
+    ROBOT_STATE_PROFILE_PHYSICAL,
+    ROBOT_STATE_PROFILE_GAZEBO_SIMULATION,
+})
+
+
+def _monitor_room_location_key(value: Any) -> str:
+    """Return one canonical key for room allow/deny comparisons."""
+    if not isinstance(value, str):
+        return ''
+    normalized = unicodedata.normalize('NFKC', value)
+    normalized = ' '.join(normalized.split()).casefold()
+    if (
+        not normalized
+        or any(
+            unicodedata.category(character).startswith('C')
+            for character in normalized
+        )
+    ):
+        return ''
+    return normalized
+
+
 NAVIGATION_LOCATION_ALIASES = {
     '거실': ('거실',),
     '주방': ('주방', '부엌'),
@@ -193,6 +218,7 @@ class SafetyPolicy:
     def __init__(
         self,
         allowed_locations: Optional[Iterable[str]] = None,
+        monitorable_locations: Optional[Iterable[str]] = None,
         minimum_navigation_battery: float = 15.0,
         maximum_action_ttl_ms: int = 10000,
     ) -> None:
@@ -209,6 +235,19 @@ class SafetyPolicy:
         ):
             raise ValueError(
                 'allowed_locations must contain non-empty strings'
+            )
+        monitorable_source = (
+            ()
+            if monitorable_locations is None
+            else monitorable_locations
+        )
+        monitorable = list(monitorable_source)
+        if not all(
+            isinstance(location, str) and location.strip()
+            for location in monitorable
+        ):
+            raise ValueError(
+                'monitorable_locations must contain non-empty strings'
             )
         if (
             isinstance(minimum_navigation_battery, bool)
@@ -238,6 +277,14 @@ class SafetyPolicy:
             location.strip()
             for location in locations
         }
+        self.monitorable_locations: Set[str] = {
+            location.strip()
+            for location in monitorable
+        }
+        self._monitorable_location_keys: Set[str] = {
+            _monitor_room_location_key(location)
+            for location in self.monitorable_locations
+        }
         self.minimum_navigation_battery = float(
             minimum_navigation_battery
         )
@@ -248,8 +295,15 @@ class SafetyPolicy:
         request: AgentRequest,
         decision: AgentDecision,
         state_trusted: bool = False,
+        state_profile: str = ROBOT_STATE_PROFILE_PHYSICAL,
     ) -> SafetyResult:
         """Return whether a normalized decision may reach an executor."""
+        if state_profile not in ROBOT_STATE_PROFILES:
+            return SafetyResult(
+                False,
+                'untrusted_robot_state',
+                '지원되지 않는 로봇 상태 신뢰 프로필입니다.',
+            )
         if decision.type != 'tool_call':
             return SafetyResult(True, 'not_an_action', '행동 요청이 아닙니다.')
 
@@ -260,7 +314,20 @@ class SafetyPolicy:
                 '신뢰된 로컬 ROS 상태가 없어 행동을 실행하지 않습니다.',
             )
 
-        if request.robot_state.emergency_stop:
+        if (
+            state_profile == ROBOT_STATE_PROFILE_GAZEBO_SIMULATION
+            and decision.tool_name != 'monitor_room'
+        ):
+            return SafetyResult(
+                False,
+                'untrusted_robot_state',
+                'Gazebo 상태는 방 모니터링 제안에만 사용할 수 있습니다.',
+            )
+
+        if (
+            state_profile == ROBOT_STATE_PROFILE_PHYSICAL
+            and request.robot_state.emergency_stop
+        ):
             return SafetyResult(
                 False,
                 'emergency_stop',
@@ -295,7 +362,13 @@ class SafetyPolicy:
                 'missing_validator',
                 '도구별 안전 검증기가 없습니다.',
             )
-        tool_result = validator(request, decision.arguments)
+        if state_profile == ROBOT_STATE_PROFILE_GAZEBO_SIMULATION:
+            tool_result = self._validate_monitor_room_gazebo_simulation(
+                request,
+                decision.arguments,
+            )
+        else:
+            tool_result = validator(request, decision.arguments)
         if not tool_result.allowed:
             return tool_result
         if not self._has_current_turn_intent(request, decision):
@@ -338,6 +411,75 @@ class SafetyPolicy:
                 decision.arguments,
             )
         return True
+
+    def _has_monitor_room_intent(
+        self,
+        compact: str,
+        arguments: Dict[str, Any],
+    ) -> bool:
+        """Accept only one complete, narrow room-monitoring command."""
+        if self._has_action_prohibition(
+            compact,
+            korean_stems=(
+                '보여',
+                '모니터링하',
+                '모니터링',
+                '살펴보',
+                '둘러보',
+            ),
+            english_actions=('show', 'monitor', 'inspect'),
+        ):
+            return False
+        location = arguments.get('location')
+        if not isinstance(location, str):
+            return False
+        normalized_location = unicodedata.normalize(
+            'NFKC',
+            location,
+        ).casefold().strip()
+        aliases = NAVIGATION_LOCATION_ALIASES.get(
+            normalized_location,
+            (self._compact_utterance(normalized_location),),
+        )
+        exact_commands = set()
+        for alias in aliases:
+            normalized_alias = self._compact_utterance(alias)
+            for coverage in (
+                '전체',
+                '방전체',
+                '의전체',
+                '모든부분',
+                '의모든부분',
+            ):
+                for particle in ('', '을', '를'):
+                    for action in ('보여줘', '보여주세요'):
+                        exact_commands.add(
+                            f'{normalized_alias}{coverage}{particle}{action}'
+                        )
+            for particle in ('', '을', '를'):
+                for action in (
+                    '모니터링해줘',
+                    '모니터링해주세요',
+                    '살펴봐줘',
+                    '살펴봐주세요',
+                    '둘러봐줘',
+                    '둘러봐주세요',
+                ):
+                    exact_commands.add(
+                        f'{normalized_alias}{particle}{action}'
+                    )
+
+            english_alias = normalized_alias.replace('_', '')
+            for prefix in ('', 'please'):
+                exact_commands.update(
+                    {
+                        f'{prefix}showmethewhole{english_alias}',
+                        f'{prefix}showmetheentire{english_alias}',
+                        f'{prefix}monitorthe{english_alias}',
+                        f'{prefix}inspectthe{english_alias}',
+                    }
+                )
+        return compact in exact_commands
 
     @staticmethod
     def _compact_utterance(value: str) -> str:
@@ -412,6 +554,23 @@ class SafetyPolicy:
             if (
                 f'{action}notallowed' in compact
                 or f'no{action}' in compact
+            ):
+                return True
+            trailing_prohibitions = (
+                'notallowed',
+                'isntallowed',
+                'notpermitted',
+                'isntpermitted',
+                'forbidden',
+                'prohibited',
+                'disallowed',
+                'banned',
+            )
+            action_index = compact.find(action)
+            if action_index >= 0 and any(
+                prohibition
+                in compact[action_index + len(action):]
+                for prohibition in trailing_prohibitions
             ):
                 return True
         return False
@@ -857,6 +1016,136 @@ class SafetyPolicy:
                 '배터리가 부족해 충전소 외 이동을 허용하지 않습니다.',
             )
         return SafetyResult(True, 'allowed', '이동 안전 조건을 통과했습니다.')
+
+    def _validate_monitor_room(
+        self,
+        request: AgentRequest,
+        arguments: Dict[str, Any],
+    ) -> SafetyResult:
+        """Validate a proposal without authorizing mission execution."""
+        if set(arguments) != {'location'}:
+            return SafetyResult(
+                False,
+                'invalid_arguments',
+                'monitor_room 인자는 location 하나여야 합니다.',
+            )
+        location = arguments.get('location')
+        if not isinstance(location, str) or not location.strip():
+            return SafetyResult(
+                False,
+                'invalid_arguments',
+                '모니터링할 방 이름이 올바르지 않습니다.',
+            )
+        location = location.strip()
+        location_key = _monitor_room_location_key(location)
+        if (
+            not location_key
+            or location_key not in self._monitorable_location_keys
+        ):
+            return SafetyResult(
+                False,
+                'room_not_monitorable',
+                '검증된 방 모니터링 계획이 없는 장소입니다.',
+            )
+        forbidden_keys = {
+            _monitor_room_location_key(zone)
+            for zone in request.robot_state.forbidden_zones
+        }
+        if location_key in forbidden_keys:
+            return SafetyResult(
+                False,
+                'forbidden_zone',
+                '현재 금지 구역으로 설정된 장소입니다.',
+            )
+        if not request.robot_state.navigation_available:
+            return SafetyResult(
+                False,
+                'navigation_unavailable',
+                'Nav2 실행 상태가 확인되지 않았습니다.',
+            )
+        if not request.robot_state.localization_ok:
+            return SafetyResult(
+                False,
+                'localization_unavailable',
+                '로봇 위치가 신뢰 가능한 상태가 아닙니다.',
+            )
+        battery = request.robot_state.battery_percent
+        if battery is None:
+            return SafetyResult(
+                False,
+                'battery_unknown',
+                '배터리 상태를 확인할 수 없습니다.',
+            )
+        if battery < self.minimum_navigation_battery:
+            return SafetyResult(
+                False,
+                'battery_low',
+                '배터리가 부족해 방 모니터링을 시작하지 않습니다.',
+            )
+        if request.robot_state.privacy_mode:
+            return SafetyResult(
+                False,
+                'privacy_mode',
+                '프라이버시 모드에서는 카메라를 사용하지 않습니다.',
+            )
+        if not request.robot_state.camera_available:
+            return SafetyResult(
+                False,
+                'camera_unavailable',
+                '카메라 사용 가능 상태가 아닙니다.',
+            )
+        return SafetyResult(
+            True,
+            'allowed',
+            '방 모니터링 제안의 안전 조건을 통과했습니다.',
+        )
+
+    def _validate_monitor_room_gazebo_simulation(
+        self,
+        request: AgentRequest,
+        arguments: Dict[str, Any],
+    ) -> SafetyResult:
+        """Check only server-issued facts relevant to simulated motion."""
+        if set(arguments) != {'location'}:
+            return SafetyResult(
+                False,
+                'invalid_arguments',
+                'monitor_room 인자는 location 하나여야 합니다.',
+            )
+        location = arguments.get('location')
+        if not isinstance(location, str) or not location.strip():
+            return SafetyResult(
+                False,
+                'invalid_arguments',
+                '모니터링할 방 이름이 올바르지 않습니다.',
+            )
+        location_key = _monitor_room_location_key(location.strip())
+        if (
+            not location_key
+            or location_key not in self._monitorable_location_keys
+        ):
+            return SafetyResult(
+                False,
+                'room_not_monitorable',
+                '검증된 방 모니터링 계획이 없는 장소입니다.',
+            )
+        if not request.robot_state.navigation_available:
+            return SafetyResult(
+                False,
+                'navigation_unavailable',
+                'Gazebo Nav2 실행 상태가 확인되지 않았습니다.',
+            )
+        if not request.robot_state.localization_ok:
+            return SafetyResult(
+                False,
+                'localization_unavailable',
+                'Gazebo 로봇 위치가 신뢰 가능한 상태가 아닙니다.',
+            )
+        return SafetyResult(
+            True,
+            'allowed',
+            'Gazebo 시뮬레이션 주행 제안의 안전 조건을 통과했습니다.',
+        )
 
     def _validate_camera(
         self,

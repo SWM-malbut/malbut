@@ -84,6 +84,24 @@ Manager 또는 ECS secret injection을 사용합니다. 공개 신뢰 앵커인 
 번들은 예외로 `certs/`에 출처와 SHA-256을 기록해 이미지에 고정합니다.
 `.env.example`의 ARN과 주소는 동작하지 않는 예시입니다.
 
+## Agent semantic 내부 경계
+
+`POST /api/internal/agent/semantic`은 브라우저 cookie를 Agent에 전달하지 않고,
+독립 service bearer를 먼저 검사한 뒤 고정된 Agent user·Cognito subject·owner
+email·device를 서버 설정에서 선택합니다. 하나의 DB snapshot에서 다음 조건을
+모두 만족할 때만 finalized semantic map을 반환합니다.
+
+- 설정된 subject와 email이 정확히 일치하는 Web session이 활성·미폐기 상태
+- 같은 email이 해당 device의 `owner` membership을 보유
+- 해당 device에 finalized `robot_maps` snapshot이 존재
+
+응답은 5초 TTL, server-owned membership/map generation, content digest와 HMAC
+서명을 포함합니다. raw subject, email, session token과 secret은 반환하지
+않습니다. 동일 finalized PUT 재시도는 generation을 유지하지만 material
+변경과 A→B→A 복원은 매번 새 generation을 발급합니다. 이 응답은 방을 어떤
+snapshot으로 해석했는지 증명할 뿐, Nav2·camera·KVS 실행 capability가 아닙니다.
+owner가 로그아웃해 모든 Web session이 폐기·만료되면 endpoint도 fail-closed합니다.
+
 ## 배포
 
 `infra/cdk`는 팀 AWS의 개발 스택을 정의합니다. 먼저 SSO 로그인 후 synth로

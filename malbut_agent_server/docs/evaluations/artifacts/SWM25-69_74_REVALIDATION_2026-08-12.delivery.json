@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-08-12T12:35:30+00:00",
+  "input": {
+    "path": "docs/evaluations/artifacts/SWM25-69_74_REVALIDATION_2026-08-12.artifact.json",
+    "sha256": "69df1d3bbcc4fc0800f5f7caf487733d7f784af66456f3d546ad09e7bbeb487e"
+  },
+  "output": {
+    "path": "docs/evaluations/SWM25-69_74_REVALIDATION_2026-08-12.html",
+    "sha256": "f71635806005f3ad579bbc90f1623f00d355a52dfca84a88fd46bcd45e20b4c4"
+  },
+  "delivery": {
+    "ok": true,
+    "stages": {
+      "validation": "passed",
+      "package": "passed",
+      "verification": "structural_only"
+    },
+    "browser_warning": {
+      "code": "browser_unavailable",
+      "meaning": "No compatible installed Chromium was available; the tooling did not download one."
+    },
+    "counts": {
+      "blocks": 11,
+      "charts": 1,
+      "html_blocks": 0,
+      "metrics": 0,
+      "tables": 1
+    },
+    "source_dialog": "not_verified",
+    "source_interaction": "not_verified",
+    "viewports": []
+  }
+}

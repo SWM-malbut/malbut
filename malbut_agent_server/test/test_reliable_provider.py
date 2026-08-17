@@ -10,6 +10,10 @@ from malbut_agent_server.conversation import (
     ConversationTurn,
 )
 from malbut_agent_server.memory import MemoryRecord
+from malbut_agent_server.monitor_room_coverage import (
+    DEFAULT_COVERAGE_PROFILE,
+    PLANNER_REVISION,
+)
 from malbut_agent_server.providers.base import (
     AgentProvider,
     ProviderError,
@@ -30,6 +34,7 @@ from malbut_agent_server.schemas import (
     ProviderResult,
 )
 from malbut_agent_server.tools import ToolSpec, select_tool_specs
+from malbut_agent_server.trusted_results import TrustedToolResult
 
 
 def _request() -> AgentRequest:
@@ -103,6 +108,58 @@ class _ScriptedProvider(AgentProvider):
         return outcome  # type: ignore[return-value]
 
 
+class _ContextProvider(_ScriptedProvider):
+    """Capture the explicit trusted-result compatibility seam."""
+
+    def __init__(self) -> None:
+        super().__init__([_message_result('context')])
+        self.trusted_results = ()
+
+    def complete_with_context(
+        self,
+        request,
+        memories,
+        conversation_turns,
+        tools,
+        conversation_summary=None,
+        trusted_server_tool_results=(),
+    ) -> ProviderResult:
+        self.trusted_results = tuple(trusted_server_tool_results)
+        return self.complete(
+            request,
+            memories,
+            conversation_turns,
+            tools,
+            conversation_summary,
+        )
+
+
+class _PoisoningContextProvider(_ScriptedProvider):
+    """Mutate its private attempt snapshot before failing."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+
+    def complete_with_context(
+        self,
+        request,
+        memories,
+        conversation_turns,
+        tools,
+        conversation_summary=None,
+        trusted_server_tool_results=(),
+    ) -> ProviderResult:
+        del request, memories, conversation_turns, tools
+        del conversation_summary
+        object.__setattr__(
+            trusted_server_tool_results[0],
+            'sample_count',
+            4096,
+        )
+        trusted_server_tool_results.clear()
+        raise TimeoutError('content-free poisoned attempt')
+
+
 class _TimedTimeoutProvider(AgentProvider):
     """Advance a fake clock by one bounded attempt, then time out."""
 
@@ -133,6 +190,74 @@ def _complete(provider: ReliableProvider) -> ProviderResult:
         [],
         select_tool_specs(['navigate']),
     )
+
+
+def _trusted_result() -> TrustedToolResult:
+    return TrustedToolResult(
+        trusted_result_id='trusted-tool-result-reliable-test',
+        trusted_result_fingerprint='1' * 64,
+        user_id='private-user',
+        conversation_id='private-conversation',
+        session_instance_id='private-session',
+        generation=1,
+        source_revision=2,
+        source_turn_id='private-turn',
+        source_ordinal=1,
+        record_kind='planned',
+        state='succeeded',
+        result_code='semantic_sample_plan_created',
+        planner_revision=PLANNER_REVISION,
+        profile_digest=DEFAULT_COVERAGE_PROFILE.digest,
+        plan_digest='2' * 64,
+        result_digest='3' * 64,
+        sample_count=5,
+        component_count=1,
+        completed_at=123.0,
+    )
+
+
+def test_reliable_provider_forwards_trusted_result_context() -> None:
+    """Retry routing preserves the official provider context seam."""
+    nested = _ContextProvider()
+    provider = ReliableProvider([nested], max_retries=0)
+    trusted_result = _trusted_result()
+
+    result = provider.complete_with_context(
+        _request(),
+        [],
+        [],
+        select_tool_specs(['navigate']),
+        trusted_server_tool_results=(trusted_result,),
+    )
+
+    assert result.provider == 'context'
+    assert nested.trusted_results == (trusted_result,)
+
+
+def test_reliable_provider_isolates_trusted_results_between_adapters() -> None:
+    """A failed adapter cannot poison the fallback adapter's snapshot."""
+    malicious = _PoisoningContextProvider()
+    fallback = _ContextProvider()
+    provider = ReliableProvider(
+        [malicious, fallback],
+        max_retries=0,
+    )
+    trusted_result = _trusted_result()
+    caller_results = [trusted_result]
+
+    result = provider.complete_with_context(
+        _request(),
+        [],
+        [],
+        select_tool_specs(['navigate']),
+        trusted_server_tool_results=caller_results,
+    )
+
+    assert result.provider == 'context'
+    assert caller_results == [trusted_result]
+    assert trusted_result.sample_count == 5
+    assert len(fallback.trusted_results) == 1
+    assert fallback.trusted_results[0].sample_count == 5
 
 
 def test_classifies_existing_provider_errors_without_exposing_text() -> None:
@@ -546,3 +671,139 @@ def test_rejects_unbounded_or_invalid_configuration(
             [_ScriptedProvider([_message_result()])],
             **{keyword: value},
         )
+
+
+@pytest.mark.parametrize(
+    ('status_code', 'expected'),
+    (
+        (408, ProviderFailureCode.TIMEOUT),
+        (401, ProviderFailureCode.AUTHENTICATION),
+        (400, ProviderFailureCode.INVALID_REQUEST),
+        (418, ProviderFailureCode.INVALID_REQUEST),
+        (200, ProviderFailureCode.UNKNOWN),
+    ),
+)
+def test_classifies_http_status_families_without_response_text(
+    status_code: int,
+    expected: ProviderFailureCode,
+) -> None:
+    """HTTP categories normalize without retaining a response body."""
+    error = urllib.error.HTTPError(
+        'https://api.openai.com/v1/responses',
+        status_code,
+        'private response text',
+        {},
+        None,
+    )
+    assert classify_exception(error).code is expected
+
+
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    (
+        (
+            urllib.error.URLError(TimeoutError('private timeout')),
+            ProviderFailureCode.TIMEOUT,
+        ),
+        (
+            urllib.error.URLError('private DNS failure'),
+            ProviderFailureCode.NETWORK,
+        ),
+        (ConnectionError('private connection'), ProviderFailureCode.NETWORK),
+        (
+            ValueError('private malformed output'),
+            ProviderFailureCode.INVALID_RESPONSE,
+        ),
+        (RuntimeError('private unknown'), ProviderFailureCode.UNKNOWN),
+    ),
+)
+def test_classifies_non_http_failure_families(
+    error: BaseException,
+    expected: ProviderFailureCode,
+) -> None:
+    """Timeout, transport, validation, and unknown failures stay distinct."""
+    assert classify_exception(error).code is expected
+
+
+def test_rejects_missing_or_non_provider_entries() -> None:
+    """Fallback chains require at least one callable provider."""
+    with pytest.raises(ValueError, match='at least one provider'):
+        ReliableProvider([])
+    with pytest.raises(TypeError, match='must implement complete'):
+        ReliableProvider([object()])
+
+
+@pytest.mark.parametrize(
+    ('overrides', 'message'),
+    (
+        (
+            {'base_delay_seconds': 2.0, 'max_delay_seconds': 1.0},
+            'max_delay_seconds must be at least',
+        ),
+        (
+            {
+                'attempt_timeout_seconds': 2.0,
+                'total_timeout_seconds': 1.0,
+            },
+            'total_timeout_seconds must be at least',
+        ),
+    ),
+)
+def test_rejects_internally_inconsistent_timeout_configuration(
+    overrides,
+    message: str,
+) -> None:
+    """Individually valid limits must also form a schedulable budget."""
+    with pytest.raises(ValueError, match=message):
+        ReliableProvider(
+            [_ScriptedProvider([_message_result()])],
+            **overrides,
+        )
+
+
+@pytest.mark.parametrize('retry_after', (None, 'invalid', '-1'))
+def test_invalid_retry_after_metadata_is_ignored(retry_after) -> None:
+    """Missing, malformed, or negative retry metadata never adds delay."""
+    headers = None
+    if retry_after is not None:
+        headers = {'Retry-After': retry_after}
+    error = urllib.error.HTTPError(
+        'https://api.openai.com/v1/responses',
+        429,
+        'rate limited',
+        headers,
+        None,
+    )
+    assert ReliableProvider._retry_after_seconds(error) is None
+
+
+def test_raw_non_result_falls_back_without_retry() -> None:
+    """A provider returning an arbitrary object is a permanent bad response."""
+    primary = _ScriptedProvider([object(), _message_result('unused')])
+    fallback = _ScriptedProvider([_message_result('fallback')])
+    provider = ReliableProvider(
+        [primary, fallback],
+        max_retries=2,
+    )
+
+    result = _complete(provider)
+
+    assert result.provider == 'fallback'
+    assert primary.call_count == 1
+    assert fallback.call_count == 1
+
+
+def test_invalid_request_does_not_open_closed_circuit() -> None:
+    """Caller errors fall back but do not count as provider outages."""
+    primary = _ScriptedProvider(
+        [NormalizedProviderError(ProviderFailureCode.INVALID_REQUEST)]
+    )
+    fallback = _ScriptedProvider([_message_result('fallback')])
+    provider = ReliableProvider(
+        [primary, fallback],
+        max_retries=0,
+        failure_threshold=1,
+    )
+
+    assert _complete(provider).provider == 'fallback'
+    assert provider.circuit_state(0) is CircuitState.CLOSED

@@ -74,6 +74,10 @@ setup(
             'map_onboarding_server = '
             'malbut_gazebo.map_onboarding_server:main',
             'cloud_robot_sync = malbut_gazebo.cloud_robot_sync:main',
+            'trusted_robot_state_observer = '
+            'malbut_gazebo.robot_state_observer:main',
+            'gazebo_monitor_room_runtime = '
+            'malbut_gazebo.gazebo_monitor_room_runtime:main',
             'record_localization_state = '
             'malbut_gazebo.localization_handoff:record_main',
             'restore_localization_state = '

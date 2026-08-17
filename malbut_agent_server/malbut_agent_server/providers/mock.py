@@ -3,7 +3,7 @@
 import re
 import time
 import unicodedata
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from malbut_agent_server.conversation import (
     ConversationSummary,
@@ -22,6 +22,7 @@ from malbut_agent_server.schemas import (
     ProviderResult,
 )
 from malbut_agent_server.tools import ToolSpec
+from malbut_agent_server.trusted_results import TrustedToolResult
 
 
 def _normalized(value: str) -> str:
@@ -50,6 +51,24 @@ class MockProvider(AgentProvider):
         conversation_summary: Optional[ConversationSummary] = None,
     ) -> ProviderResult:
         """Return a predictable response for regression and safety tests."""
+        return self.complete_with_context(
+            request,
+            memories,
+            conversation_turns,
+            tools,
+            conversation_summary,
+        )
+
+    def complete_with_context(
+        self,
+        request: AgentRequest,
+        memories: List[MemoryRecord],
+        conversation_turns: List[ConversationTurn],
+        tools: List[ToolSpec],
+        conversation_summary: Optional[ConversationSummary] = None,
+        trusted_server_tool_results: Sequence[TrustedToolResult] = (),
+    ) -> ProviderResult:
+        """Return a decision while accounting for trusted result context."""
         started = time.perf_counter()
         decision = self._decide(
             request,
@@ -66,6 +85,7 @@ class MockProvider(AgentProvider):
             conversation_summary,
             self.max_model_input_chars,
             MAX_CONVERSATION_TURNS,
+            trusted_server_tool_results,
         )
         return ProviderResult(
             decision=decision,
@@ -85,6 +105,7 @@ class MockProvider(AgentProvider):
     ) -> AgentDecision:
         text = _normalized(request.utterance)
         compact = re.sub(r'\s+', '', text)
+        tool_names = {tool.name for tool in tools}
 
         if any(
             phrase in compact
@@ -185,9 +206,51 @@ class MockProvider(AgentProvider):
                 'multiple_actions',
             )
 
+        monitor_requested = any(
+            phrase in compact
+            for phrase in (
+                '전체를보여줘',
+                '전체보여줘',
+                '모든부분을보여줘',
+                '모니터링해줘',
+                '모니터링해주세요',
+                '살펴봐줘',
+                '둘러봐줘',
+                'showmethewhole',
+                'showmetheentire',
+                'monitor',
+            )
+        )
+        if (
+            'monitor_room' in tool_names
+            and monitor_requested
+            and len(locations) > 1
+        ):
+            return self._clarification(
+                '한 번에 한 방만 말해줘.',
+                'multiple_monitoring_locations',
+            )
+        if (
+            'monitor_room' in tool_names
+            and monitor_requested
+            and len(locations) == 1
+        ):
+            return AgentDecision(
+                type='tool_call',
+                message=(
+                    f'{locations[0]} 전체 모니터링을 시작할지 '
+                    '확인해 줘.'
+                ),
+                tool_name='monitor_room',
+                arguments={'location': locations[0]},
+                reason='named_room_monitoring_request',
+                confidence=0.98,
+            )
+
         if any(word in compact for word in ('할수있는', '기능')):
             labels = {
                 'navigate': '이동',
+                'monitor_room': '방 모니터링',
                 'detect_pet': '반려동물 감지',
                 'capture_photo': '사진 촬영',
                 'send_notification': '알림 요청',

@@ -4,6 +4,7 @@ import hmac
 import json
 import threading
 import time
+import weakref
 from collections import deque
 from http import HTTPStatus
 from http.server import (
@@ -12,6 +13,11 @@ from http.server import (
 )
 from typing import Any, Dict, Optional, Tuple
 
+from malbut_agent_server.config import (
+    DEFAULT_FAILED_AUTH_ATTEMPTS_PER_MINUTE,
+    MAX_FAILED_AUTH_ATTEMPTS_PER_MINUTE,
+    validate_scripted_auth_token,
+)
 from malbut_agent_server.conversation import (
     ConversationChangedError,
     ConversationConflictError,
@@ -22,6 +28,11 @@ from malbut_agent_server.gateway import (
     GatewayConflictError,
     ToolGateway,
     ToolQuery,
+)
+from malbut_agent_server.gazebo_simulation_execution import (
+    GazeboSimulationExecutionError,
+    GazeboSimulationExecutionResult,
+    GazeboSimulationExecutionSeam,
 )
 from malbut_agent_server.orchestrator import (
     AgentOrchestrator,
@@ -35,12 +46,33 @@ from malbut_agent_server.schemas import (
     validate_conversation_id,
     validate_user_id,
 )
+from malbut_agent_server.speech import (
+    SpeechConversationCoordinator,
+    SpeechTranscriptEvent,
+    TrustedSpeechBinding,
+)
+
+
+SCRIPTED_SPEECH_RUNTIME = 'scripted_text_only'
+SCRIPTED_SPEAKER_ID = 'scripted-http-user'
+SCRIPTED_SOURCE = 'scripted-http'
+AUTHORIZATION_ALLOWED = 'allowed'
+AUTHORIZATION_REJECTED = 'rejected'
+AUTHORIZATION_RATE_LIMITED = 'rate_limited'
+GAZEBO_SIMULATION_EXECUTION_PATH = (
+    '/v1/internal/gazebo-simulation/consume-and-prepare'
+)
+_GAZEBO_SERVER_BINDING_LOCK = threading.RLock()
+_GAZEBO_SERVER_BINDINGS: (
+    'weakref.WeakKeyDictionary[Any, Tuple[Any, ...]]'
+) = weakref.WeakKeyDictionary()
 
 
 class AgentHTTPServer(ThreadingHTTPServer):
     """Threaded server carrying explicit service dependencies."""
 
-    daemon_threads = True
+    daemon_threads = False
+    block_on_close = True
 
     def __init__(
         self,
@@ -51,8 +83,17 @@ class AgentHTTPServer(ThreadingHTTPServer):
         allowed_user_id: str = 'local-user',
         max_concurrent_requests: int = 8,
         requests_per_minute: int = 60,
+        failed_auth_attempts_per_minute: int = (
+            DEFAULT_FAILED_AUTH_ATTEMPTS_PER_MINUTE
+        ),
         socket_timeout_seconds: int = 10,
         tool_gateway: Optional[ToolGateway] = None,
+        speech_coordinator: Optional[
+            SpeechConversationCoordinator
+        ] = None,
+        gazebo_simulation_execution_seam: Optional[
+            GazeboSimulationExecutionSeam
+        ] = None,
     ) -> None:
         """Attach runtime services before binding the HTTP listener."""
         if address[0] not in {'127.0.0.1', 'localhost', '::1'}:
@@ -65,10 +106,68 @@ class AgentHTTPServer(ThreadingHTTPServer):
             )
         if requests_per_minute < 1:
             raise ValueError('requests_per_minute must be positive')
+        if (
+            isinstance(failed_auth_attempts_per_minute, bool)
+            or not isinstance(failed_auth_attempts_per_minute, int)
+            or failed_auth_attempts_per_minute < 1
+            or failed_auth_attempts_per_minute
+            > MAX_FAILED_AUTH_ATTEMPTS_PER_MINUTE
+        ):
+            raise ValueError(
+                'failed_auth_attempts_per_minute is invalid'
+            )
         if socket_timeout_seconds < 1:
             raise ValueError(
                 'socket_timeout_seconds must be positive'
             )
+        if orchestrator.test_only_trusted_robot_state:
+            raise ValueError(
+                'HTTP cannot use test-only client RobotState trust'
+            )
+        normalized_allowed_user = validate_user_id(allowed_user_id)
+        if speech_coordinator is not None:
+            if not isinstance(
+                speech_coordinator,
+                SpeechConversationCoordinator,
+            ):
+                raise TypeError(
+                    'speech_coordinator must be a '
+                    'SpeechConversationCoordinator'
+                )
+            if speech_coordinator.orchestrator is not orchestrator:
+                raise ValueError(
+                    'speech coordinator and HTTP server must share one '
+                    'orchestrator'
+                )
+            if not auth_token:
+                raise ValueError(
+                    'scripted speech requires HTTP bearer auth'
+                )
+            validate_scripted_auth_token(auth_token)
+        if gazebo_simulation_execution_seam is not None:
+            if type(
+                gazebo_simulation_execution_seam
+            ) is not GazeboSimulationExecutionSeam:
+                raise TypeError(
+                    'gazebo_simulation_execution_seam must be a fixed '
+                    'GazeboSimulationExecutionSeam'
+                )
+            if not auth_token:
+                raise ValueError(
+                    'Gazebo simulation execution requires HTTP bearer auth'
+                )
+            validate_scripted_auth_token(auth_token)
+            if not (
+                GazeboSimulationExecutionSeam.matches_runtime(
+                    gazebo_simulation_execution_seam,
+                    orchestrator.conversation_store,
+                    normalized_allowed_user,
+                )
+            ):
+                raise ValueError(
+                    'Gazebo simulation execution and HTTP server must '
+                    'share one principal and store'
+                )
         self.orchestrator = orchestrator
         self.memory_store = orchestrator.memory_store
         self.conversation_store = orchestrator.conversation_store
@@ -85,17 +184,83 @@ class AgentHTTPServer(ThreadingHTTPServer):
         self.tool_gateway = tool_gateway or ToolGateway(
             orchestrator.capability_registry
         )
+        self.speech_coordinator = speech_coordinator
+        self.gazebo_simulation_execution_seam = (
+            gazebo_simulation_execution_seam
+        )
         self.max_request_bytes = max_request_bytes
         self.auth_token = auth_token
-        self.allowed_user_id = validate_user_id(allowed_user_id)
+        self.allowed_user_id = normalized_allowed_user
         self.socket_timeout_seconds = socket_timeout_seconds
         self.requests_per_minute = requests_per_minute
+        self.failed_auth_attempts_per_minute = (
+            failed_auth_attempts_per_minute
+        )
         self._capacity = threading.BoundedSemaphore(
             max_concurrent_requests
         )
         self._rate_lock = threading.Lock()
         self._request_times = deque()
+        self._failed_auth_lock = threading.Lock()
+        self._failed_auth_times = deque()
         super().__init__(address, AgentRequestHandler)
+        with _GAZEBO_SERVER_BINDING_LOCK:
+            _GAZEBO_SERVER_BINDINGS[self] = (
+                orchestrator,
+                orchestrator.conversation_store,
+                normalized_allowed_user,
+                auth_token,
+                gazebo_simulation_execution_seam,
+            )
+
+    def attested_gazebo_simulation_execution_seam(
+        self,
+    ) -> Optional[GazeboSimulationExecutionSeam]:
+        """Return only the immutable server-owned execution binding."""
+        expected = None
+        current = None
+        try:
+            with _GAZEBO_SERVER_BINDING_LOCK:
+                expected = _GAZEBO_SERVER_BINDINGS.get(self)
+            current = (
+                object.__getattribute__(self, 'orchestrator'),
+                object.__getattribute__(self, 'conversation_store'),
+                object.__getattribute__(self, 'allowed_user_id'),
+                object.__getattribute__(self, 'auth_token'),
+                object.__getattribute__(
+                    self,
+                    'gazebo_simulation_execution_seam',
+                ),
+            )
+        except Exception:
+            expected = None
+            current = None
+        if (
+            type(self) is not AgentHTTPServer
+            or expected is None
+            or current is None
+            or len(expected) != 5
+            or current[0] is not expected[0]
+            or current[1] is not expected[1]
+            or current[2] != expected[2]
+            or current[3] != expected[3]
+            or current[4] is not expected[4]
+        ):
+            raise GazeboSimulationExecutionError(
+                'gazebo_simulation_configuration_changed'
+            )
+        seam = expected[4]
+        if seam is not None and not (
+            GazeboSimulationExecutionSeam.matches_runtime(
+                seam,
+                expected[1],
+                expected[2],
+            )
+        ):
+            raise GazeboSimulationExecutionError(
+                'gazebo_simulation_configuration_changed'
+            )
+        return seam
 
     def server_close(self) -> None:
         """Close adapter workers together with the HTTP listener."""
@@ -171,6 +336,36 @@ class AgentHTTPServer(ThreadingHTTPServer):
             self._request_times.append(current_time)
             return True
 
+    def authorize(self, authorization: str) -> str:
+        """Check one bearer within a separate failed-attempt budget."""
+        if not self.auth_token:
+            return AUTHORIZATION_ALLOWED
+        expected = f'Bearer {self.auth_token}'
+        try:
+            authorized = hmac.compare_digest(
+                authorization.encode('utf-8'),
+                expected.encode('utf-8'),
+            )
+        except UnicodeError:
+            authorized = False
+        if authorized:
+            return AUTHORIZATION_ALLOWED
+        current_time = time.monotonic()
+        cutoff = current_time - 60.0
+        with self._failed_auth_lock:
+            while (
+                self._failed_auth_times
+                and self._failed_auth_times[0] <= cutoff
+            ):
+                self._failed_auth_times.popleft()
+            if (
+                len(self._failed_auth_times)
+                >= self.failed_auth_attempts_per_minute
+            ):
+                return AUTHORIZATION_RATE_LIMITED
+            self._failed_auth_times.append(current_time)
+            return AUTHORIZATION_REJECTED
+
 
 class AgentRequestHandler(BaseHTTPRequestHandler):
     """Bounded request handler that never logs bodies or credentials."""
@@ -200,13 +395,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 'Endpoint not found.',
             )
             return
-        if not self._authorized():
-            self.close_connection = True
-            self._send_error(
-                HTTPStatus.UNAUTHORIZED,
-                'unauthorized',
-                'Authentication is required.',
-            )
+        if not self._authorize_request():
             return
         if not self.server.consume_rate_slot():
             self.close_connection = True
@@ -224,13 +413,18 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         """Route JSON-only mutation and query endpoints."""
         try:
-            if not self._authorized():
-                self.close_connection = True
-                self._send_error(
-                    HTTPStatus.UNAUTHORIZED,
-                    'unauthorized',
-                    'Authentication is required.',
+            gazebo_execution_path = (
+                self.path == GAZEBO_SIMULATION_EXECUTION_PATH
+            )
+            gazebo_execution_seam = None
+            if gazebo_execution_path:
+                gazebo_execution_seam = (
+                    AgentHTTPServer
+                    .attested_gazebo_simulation_execution_seam(
+                        self.server
+                    )
                 )
+            if not self._authorize_request():
                 return
             if not self.server.consume_rate_slot():
                 self.close_connection = True
@@ -255,6 +449,48 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 self._handle_close_conversation(body)
             elif self.path == '/v1/conversations/delete':
                 self._handle_delete_conversation(body)
+            elif (
+                gazebo_execution_path
+                and gazebo_execution_seam is not None
+            ):
+                self._handle_gazebo_simulation_consume_and_prepare(
+                    body,
+                    gazebo_execution_seam,
+                )
+            elif (
+                self.server.speech_coordinator is not None
+                and self.path
+                == '/v1/speech/scripted/sessions/open'
+            ):
+                self._handle_scripted_speech_open(body)
+            elif (
+                self.server.speech_coordinator is not None
+                and self.path == '/v1/speech/scripted/transcripts'
+            ):
+                self._handle_scripted_speech_transcript(body)
+            elif (
+                self.server.speech_coordinator is not None
+                and self.path
+                == '/v1/speech/scripted/trusted-result-tts/claim'
+            ):
+                self._handle_scripted_trusted_result_tts_claim(body)
+            elif (
+                self.server.speech_coordinator is not None
+                and self.path
+                == '/v1/speech/scripted/trusted-result-tts/terminal'
+            ):
+                self._handle_scripted_trusted_result_tts_terminal(body)
+            elif (
+                self.server.speech_coordinator is not None
+                and self.path == '/v1/speech/scripted/tts/terminal'
+            ):
+                self._handle_scripted_tts_terminal(body)
+            elif (
+                self.server.speech_coordinator is not None
+                and self.path
+                == '/v1/speech/scripted/sessions/close'
+            ):
+                self._handle_scripted_speech_close(body)
             else:
                 self._send_error(
                     HTTPStatus.NOT_FOUND,
@@ -315,6 +551,17 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 'provider_error',
                 'The model provider did not return a valid response.',
             )
+        except GazeboSimulationExecutionError as error:
+            status = (
+                HTTPStatus.CONFLICT
+                if error.code == 'gazebo_simulation_not_authorized'
+                else HTTPStatus.SERVICE_UNAVAILABLE
+            )
+            self._send_error(
+                status,
+                error.code,
+                'Gazebo simulation execution is unavailable.',
+            )
         except json.JSONDecodeError:
             self._send_error(
                 HTTPStatus.BAD_REQUEST,
@@ -338,18 +585,26 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 'Unexpected server error.',
             )
 
-    def _authorized(self) -> bool:
-        if not self.server.auth_token:
-            return True
+    def _authorize_request(self) -> bool:
+        """Authenticate once and emit a content-free bounded failure."""
         authorization = self.headers.get('Authorization', '')
-        expected = f'Bearer {self.server.auth_token}'
-        try:
-            return hmac.compare_digest(
-                authorization.encode('utf-8'),
-                expected.encode('utf-8'),
+        result = self.server.authorize(authorization)
+        if result == AUTHORIZATION_ALLOWED:
+            return True
+        self.close_connection = True
+        if result == AUTHORIZATION_RATE_LIMITED:
+            self._send_error(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                'auth_rate_limited',
+                'Authentication attempt rate limit exceeded.',
             )
-        except UnicodeError:
             return False
+        self._send_error(
+            HTTPStatus.UNAUTHORIZED,
+            'unauthorized',
+            'Authentication is required.',
+        )
+        return False
 
     def _read_json_body(self) -> Dict[str, Any]:
         content_type = self.headers.get('Content-Type', '')
@@ -564,6 +819,274 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _handle_gazebo_simulation_consume_and_prepare(
+        self,
+        body: Dict[str, Any],
+        seam: GazeboSimulationExecutionSeam,
+    ) -> None:
+        """Explicitly consume one approval and attempt one UDS prepare."""
+        self._reject_unknown_fields(
+            body,
+            {'confirmation_request_id'},
+            'Gazebo simulation consume and prepare',
+        )
+        result = GazeboSimulationExecutionSeam.consume_and_prepare(
+            seam,
+            body.get('confirmation_request_id'),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            GazeboSimulationExecutionResult.to_public_dict(result),
+        )
+
+    def _handle_scripted_speech_open(
+        self,
+        body: Dict[str, Any],
+    ) -> None:
+        """Open one authenticated, server-identity-bound test session."""
+        self._reject_unknown_fields(
+            body,
+            {'speech_session_id', 'conversation_id'},
+            'scripted speech session open',
+        )
+        binding = TrustedSpeechBinding.from_dict(
+            {
+                'user_id': self.server.allowed_user_id,
+                'speaker_id': SCRIPTED_SPEAKER_ID,
+                'speech_session_id': body.get('speech_session_id'),
+                'conversation_id': body.get('conversation_id'),
+                'source': SCRIPTED_SOURCE,
+            }
+        )
+        coordinator = self._scripted_speech_coordinator()
+        result = coordinator.open_session(binding)
+        self._send_json(
+            HTTPStatus.OK,
+            self._scripted_speech_response(
+                {
+                    'binding': binding.to_dict(),
+                    'result': result.to_dict(),
+                }
+            ),
+        )
+
+    def _handle_scripted_speech_transcript(
+        self,
+        body: Dict[str, Any],
+    ) -> None:
+        """Process text only; never accept RobotState or Tool authority."""
+        allowed = {
+            'schema_version',
+            'utterance_id',
+            'speech_session_id',
+            'conversation_id',
+            'sequence',
+            'capture_epoch',
+            'source_timestamp_ns',
+            'text',
+            'confidence',
+            'is_final',
+            'capture_origin',
+            'audio_metadata',
+        }
+        self._reject_unknown_fields(
+            body,
+            allowed,
+            'scripted speech transcript',
+        )
+        event = SpeechTranscriptEvent.from_dict(
+            {
+                **body,
+                'speaker_id': SCRIPTED_SPEAKER_ID,
+                'source': SCRIPTED_SOURCE,
+            }
+        )
+        capabilities = (
+            self.server.orchestrator.capability_registry.to_dict()[
+                'capabilities'
+            ]
+        )
+        available_tools = tuple(
+            item['name']
+            for item in capabilities
+            if item['available_for_proposal'] is True
+        )
+        coordinator = self._scripted_speech_coordinator()
+        self._require_scripted_speech_session_owner(
+            coordinator,
+            event.speech_session_id,
+        )
+        result = coordinator.handle_transcript(
+            event,
+            # Deliberately omit RobotState.  HTTP text is not a trusted
+            # robot-state or Tool-capability source; the advertised Tool
+            # subset comes only from the server registry.
+            available_tools=available_tools,
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            self._scripted_speech_response(
+                {'result': result.to_dict()}
+            ),
+        )
+
+    def _handle_scripted_tts_terminal(
+        self,
+        body: Dict[str, Any],
+    ) -> None:
+        """Acknowledge text playback so the next scripted turn can run."""
+        self._reject_unknown_fields(
+            body,
+            {'speech_session_id', 'tts_request_id'},
+            'scripted TTS terminal',
+        )
+        speech_session_id = body.get('speech_session_id')
+        coordinator = self._scripted_speech_coordinator()
+        self._require_scripted_speech_session_owner(
+            coordinator,
+            speech_session_id,
+        )
+        result = coordinator.mark_tts_terminal(
+            speech_session_id,
+            body.get('tts_request_id'),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            self._scripted_speech_response(
+                {'result': result.to_dict()}
+            ),
+        )
+
+    def _handle_scripted_trusted_result_tts_claim(
+        self,
+        body: Dict[str, Any],
+    ) -> None:
+        """Explicitly claim one durable simulation notification."""
+        self._reject_unknown_fields(
+            body,
+            {
+                'speech_session_id',
+                'claim_request_id',
+                'lease_seconds',
+            },
+            'scripted trusted result TTS claim',
+        )
+        speech_session_id = body.get('speech_session_id')
+        coordinator = self._scripted_speech_coordinator()
+        self._require_scripted_speech_session_owner(
+            coordinator,
+            speech_session_id,
+        )
+        result = (
+            coordinator.claim_trusted_result_tts(
+                speech_session_id,
+                body.get('claim_request_id'),
+                body.get('lease_seconds', 30),
+            )
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            self._scripted_speech_response(
+                {'result': result.to_dict()}
+            ),
+        )
+
+    def _handle_scripted_trusted_result_tts_terminal(
+        self,
+        body: Dict[str, Any],
+    ) -> None:
+        """ACK downstream terminal state, never audible playback proof."""
+        self._reject_unknown_fields(
+            body,
+            {
+                'speech_session_id',
+                'tts_request_id',
+                'terminal_request_id',
+            },
+            'scripted trusted result TTS terminal',
+        )
+        speech_session_id = body.get('speech_session_id')
+        coordinator = self._scripted_speech_coordinator()
+        self._require_scripted_speech_session_owner(
+            coordinator,
+            speech_session_id,
+        )
+        result = (
+            coordinator.mark_trusted_result_tts_terminal(
+                speech_session_id,
+                body.get('tts_request_id'),
+                body.get('terminal_request_id'),
+            )
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            self._scripted_speech_response(
+                {'result': result.to_dict()}
+            ),
+        )
+
+    def _handle_scripted_speech_close(
+        self,
+        body: Dict[str, Any],
+    ) -> None:
+        """Close an in-memory voice binding and its conversation session."""
+        self._reject_unknown_fields(
+            body,
+            {'speech_session_id', 'control_id'},
+            'scripted speech session close',
+        )
+        speech_session_id = body.get('speech_session_id')
+        coordinator = self._scripted_speech_coordinator()
+        self._require_scripted_speech_session_owner(
+            coordinator,
+            speech_session_id,
+        )
+        result = coordinator.close_session(
+            speech_session_id,
+            body.get('control_id'),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            self._scripted_speech_response(
+                {'result': result.to_dict()}
+            ),
+        )
+
+    def _scripted_speech_coordinator(
+        self,
+    ) -> SpeechConversationCoordinator:
+        """Return the opt-in dependency after route-level gating."""
+        coordinator = self.server.speech_coordinator
+        if coordinator is None:
+            raise RuntimeError('scripted speech runtime is disabled')
+        return coordinator
+
+    def _require_scripted_speech_session_owner(
+        self,
+        coordinator: SpeechConversationCoordinator,
+        speech_session_id: Any,
+    ) -> None:
+        """Hide unknown and cross-user speech sessions behind one result."""
+        if not coordinator.is_speech_session_bound_to_user(
+            speech_session_id,
+            self.server.allowed_user_id,
+        ):
+            raise ConversationNotFoundError(
+                'speech session was not found'
+            )
+
+    @staticmethod
+    def _scripted_speech_response(
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Label evidence so it cannot be mistaken for physical input."""
+        return {
+            'runtime': SCRIPTED_SPEECH_RUNTIME,
+            'physical_authority': False,
+            'physical_audio_verified': False,
+            **payload,
+        }
+
     def _validated_conversation_identity(
         self,
         body: Dict[str, Any],
@@ -661,8 +1184,17 @@ def make_server(
     allowed_user_id: str = 'local-user',
     max_concurrent_requests: int = 8,
     requests_per_minute: int = 60,
+    failed_auth_attempts_per_minute: int = (
+        DEFAULT_FAILED_AUTH_ATTEMPTS_PER_MINUTE
+    ),
     socket_timeout_seconds: int = 10,
     tool_gateway: Optional[ToolGateway] = None,
+    speech_coordinator: Optional[
+        SpeechConversationCoordinator
+    ] = None,
+    gazebo_simulation_execution_seam: Optional[
+        GazeboSimulationExecutionSeam
+    ] = None,
 ) -> AgentHTTPServer:
     """Build a server without starting its event loop."""
     return AgentHTTPServer(
@@ -673,6 +1205,13 @@ def make_server(
         allowed_user_id=allowed_user_id,
         max_concurrent_requests=max_concurrent_requests,
         requests_per_minute=requests_per_minute,
+        failed_auth_attempts_per_minute=(
+            failed_auth_attempts_per_minute
+        ),
         socket_timeout_seconds=socket_timeout_seconds,
         tool_gateway=tool_gateway,
+        speech_coordinator=speech_coordinator,
+        gazebo_simulation_execution_seam=(
+            gazebo_simulation_execution_seam
+        ),
     )

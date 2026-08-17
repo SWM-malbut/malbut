@@ -1,0 +1,437 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "SWM25-69~74 구현 재검증",
+    "description": "Jira 완료 표시와 실제 구현 범위, 300회 오프라인 반복 증거를 분리한 기술 감사 보고서",
+    "generatedAt": "2026-08-12T12:27:45.370016+00:00",
+    "charts": [
+      {
+        "id": "repeated_subchecks",
+        "title": "Jira 스토리별 대표 세부 검사 호출 수",
+        "subtitle": "각 스토리 300회 반복, 총 10,500회 호출·실패 0건; SWM25-74는 실행 차단의 음성 증거",
+        "showDescription": true,
+        "headerMarkdown": "막대 길이는 구현 완성도가 아니라 **선정한 대표 검사의 반복 호출 수**입니다. 주황색 SWM25-74는 구현 성공이 아닌 실행 부재 확인입니다.",
+        "intent": "comparison",
+        "question": "각 스토리에서 몇 개의 대표 검사를 300회 반복했고, 어떤 결과가 음성 증거뿐인가?",
+        "rationale": "6개 범주의 호출량 비교이며 Jira 라벨이 길어 수평 막대를 사용한다.",
+        "comparisonContext": {
+          "baseline": "스토리별 300 iteration",
+          "denominator": "선정한 대표 검사 함수 호출",
+          "grain": "Jira story",
+          "unit": "invocations"
+        },
+        "type": "horizontalBar",
+        "dataset": "repeated_checks",
+        "sourceId": "chart_projection",
+        "encodings": {
+          "x": {
+            "field": "story",
+            "type": "ordinal",
+            "label": "Jira"
+          },
+          "y": {
+            "field": "subcheck_invocations",
+            "type": "quantitative",
+            "label": "세부 검사 호출",
+            "format": "number",
+            "unit": "회"
+          },
+          "color": {
+            "field": "evidence_type",
+            "type": "nominal",
+            "label": "증거 유형"
+          },
+          "tooltip": [
+            {
+              "field": "iterations_passed",
+              "type": "quantitative",
+              "label": "통과 iteration",
+              "format": "number"
+            },
+            {
+              "field": "subchecks_per_iteration",
+              "type": "quantitative",
+              "label": "회당 대표 검사",
+              "format": "number"
+            },
+            {
+              "field": "failed_invocations",
+              "type": "quantitative",
+              "label": "실패 호출",
+              "format": "number"
+            }
+          ]
+        },
+        "xAxisTitle": "Jira story",
+        "yAxisTitle": "세부 검사 호출 수",
+        "valueFormat": "number",
+        "unit": "회",
+        "layout": "full",
+        "labels": {
+          "values": "all"
+        },
+        "legend": {
+          "position": "bottom",
+          "sort": "spec",
+          "title": "증거 유형"
+        },
+        "maxRows": 6,
+        "palette": {
+          "kind": "semantic",
+          "name": "blue-orange"
+        },
+        "settings": {
+          "categoryLabelPolicy": "wrap",
+          "groupMode": "single",
+          "orientation": "horizontal",
+          "showValues": true,
+          "sort": "none"
+        },
+        "surface": {
+          "surface": "explorer",
+          "interactiveLegend": true,
+          "showControls": false,
+          "viewMode": "both"
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "story_verdicts",
+        "title": "스토리별 구현 판정과 Jira 권고",
+        "subtitle": "최신 origin/main과 동일한 agent tree, 문서·코드·PR·CI를 대조한 2026-08-12 판정",
+        "showDescription": true,
+        "headerMarkdown": "`완료`라는 한 단어를 계약, 제한 범위 구현, 실 API 배포, 물리 실행으로 나눠 읽어야 합니다.",
+        "dataset": "story_verdicts",
+        "defaultSort": {
+          "field": "story",
+          "direction": "asc"
+        },
+        "density": "spacious",
+        "sourceId": "chart_projection",
+        "layout": "full",
+        "columns": [
+          {
+            "field": "story",
+            "label": "Jira",
+            "type": "text"
+          },
+          {
+            "field": "verified_scope",
+            "label": "검증된 범위",
+            "type": "text"
+          },
+          {
+            "field": "product_verdict",
+            "label": "제품 판정",
+            "type": "text"
+          },
+          {
+            "field": "jira_recommendation",
+            "label": "Jira 상태 권고",
+            "type": "text"
+          },
+          {
+            "field": "evidence_type",
+            "label": "증거 유형",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "stress_result",
+        "label": "SWM25-69~74 300회 오프라인 원시 결과",
+        "path": "docs/evaluations/artifacts/SWM25-69_74_300X_OFFLINE_2026-08-12.json",
+        "query": {
+          "engine": "Python 3.10 direct-function harness",
+          "description": "34개 고유 zero-argument pytest/harness 함수를 스토리별 300회 호출해 iteration·subcheck 집계를 기록했다.",
+          "executed_at": "2026-08-12T12:27:45.370016+00:00",
+          "language": "python",
+          "filters": [
+            "offline_non_actuating mode",
+            "300 iterations per Jira story",
+            "no live OpenAI calls",
+            "no physical ROS actions"
+          ],
+          "metric_definitions": [
+            "story iteration pass: 해당 story에 선정한 모든 대표 검사가 같은 iteration에서 통과",
+            "subcheck invocation: 대표 pytest 또는 harness 함수를 한 번 직접 호출",
+            "SWM25-74 pass: physical execution 부재와 차단 경계 유지; 기능 구현 성공이 아님"
+          ],
+          "tables_used": [
+            "SWM25-69_74_300X_OFFLINE_2026-08-12.json"
+          ]
+        }
+      },
+      {
+        "id": "chart_projection",
+        "label": "300회 결과와 Jira 판정의 검토된 SQL projection",
+        "path": "docs/evaluations/artifacts/SWM25-69_74_REVALIDATION_2026-08-12.sql",
+        "query": {
+          "engine": "SQLite 3",
+          "description": "원시 JSON의 story별 반복 집계와 문서 감사 판정을 두 개의 bounded result set으로 투영한다.",
+          "executed_at": "2026-08-12T12:27:45.370016+00:00",
+          "language": "sql",
+          "filters": [
+            "SWM25-69 through SWM25-74",
+            "2026-08-12 frozen snapshot"
+          ],
+          "metric_definitions": [
+            "subcheck_invocations = iterations_attempted × subchecks_per_iteration",
+            "failed_invocations = 선정한 대표 검사 호출 중 실패 수"
+          ],
+          "tables_used": [
+            "reviewed VALUES projection from SWM25-69_74_300X_OFFLINE_2026-08-12.json"
+          ]
+        }
+      },
+      {
+        "id": "audit_notes",
+        "label": "SWM25-69~74 코드·문서·Git 감사 기록",
+        "path": "docs/evaluations/SWM25-69_74_REVALIDATION_2026-08-12.md"
+      },
+      {
+        "id": "origin_main",
+        "label": "SWM-malbut/malbut origin/main 검증 기준",
+        "href": "https://github.com/SWM-malbut/malbut/commit/984fcc5538969ecb726abaaa2e704c7ced92de72"
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# SWM25-69~74 구현 재검증"
+      },
+      {
+        "id": "technical_summary",
+        "type": "markdown",
+        "sourceId": "audit_notes",
+        "body": "## 300회 반복은 모두 통과했지만 SWM25-74 완료를 증명하지 않는다\n\nSWM25-69~74를 각각 300회 반복해 총 **1,800/1,800 story iteration**과 **10,500/10,500 세부 검사 호출**이 통과했다. 별도의 agent package 전체 회귀도 **153/153** 통과했다. 그러나 74의 300회는 실행·confirmation·feedback 구현 성공이 아니라 현재 런타임이 물리 실행을 계속 차단한다는 음성 증거다. 제품 판정상 69·70·71·73은 명시된 제한 범위 완료, 72는 실 API 배포 보류, 74는 구현 근거 없음이다."
+      },
+      {
+        "id": "visual_takeaway",
+        "type": "markdown",
+        "sourceId": "stress_result",
+        "body": "## 반복량은 충분했지만 증거의 종류가 서로 다르다\n\n각 막대는 스토리별로 선택한 대표 검사 호출량이다. 모든 호출이 통과했지만 호출량이나 통과율을 기능 완성도로 해석하면 안 된다. 특히 SWM25-74는 3개 차단 검사를 300회 반복한 900회 음성 증거뿐이며, 실제 실행 경로를 한 번도 시험하지 않았다."
+      },
+      {
+        "id": "repeated_subchecks_block",
+        "type": "chart",
+        "chartId": "repeated_subchecks",
+        "layout": "full"
+      },
+      {
+        "id": "verdict_takeaway",
+        "type": "markdown",
+        "sourceId": "audit_notes",
+        "body": "## Jira의 완료 표시는 제품 완료와 일치하지 않는다\n\nSWM25-69는 계약 전용, 70은 단일 프로세스 MVP, 71은 내부 context builder, 73은 비부작용 Gateway 범위에서 완료로 볼 수 있다. SWM25-72는 5초 실 API 평가에서 Luna 89/90, Terra 86/90 schema-valid로 둘 다 100% gate를 통과하지 못했다. SWM25-74는 전용 문서·구현 커밋·PR·실행 adapter가 없으므로 `할 일`로 되돌리는 것이 저장소 증거와 맞다."
+      },
+      {
+        "id": "story_verdicts_block",
+        "type": "table",
+        "tableId": "story_verdicts",
+        "layout": "full"
+      },
+      {
+        "id": "scope_definitions",
+        "type": "markdown",
+        "sourceId": "stress_result",
+        "body": "## 측정 단위는 제품 기능이 아니라 대표 경계 검사다\n\n**Story iteration**은 해당 Jira에 선정한 모든 대표 검사가 한 차례 통과한 경우다. **세부 검사 호출**은 zero-argument pytest/harness 함수를 직접 한 번 호출한 값이다. 선정 항목은 스토리 간 중복 하나를 포함해 35개이고 고유 함수는 34개다. 전체 153개 pytest를 각각 300회 실행한 시험은 아니다. 지연 수치는 같은 프로세스 내부 검사 시간이며 제품 SLA가 아니다."
+      },
+      {
+        "id": "methodology",
+        "type": "markdown",
+        "sourceId": "audit_notes",
+        "body": "## 판정은 최신 agent tree와 네 종류의 증거를 교차 확인했다\n\n최신 `origin/main`과 로컬 HEAD의 `malbut_agent_server` tree가 동일한지 먼저 확인한 뒤 문서의 선언 범위, 실제 코드 경계, 테스트 기대값, Git 커밋·PR·CI를 대조했다. 반복 harness는 기존 테스트 모듈의 zero-argument 함수만 로드하고 story별 300회 실행했으며, iteration·개별 subcheck 결과와 실패 digest를 mode `0600` JSON으로 원자적 저장했다. 패키지는 `colcon build` 후 153개 테스트를 별도로 다시 실행했다."
+      },
+      {
+        "id": "limitations",
+        "type": "markdown",
+        "sourceId": "stress_result",
+        "body": "## 실제 모델·다중 프로세스·물리 실행은 검증 범위 밖이다\n\n이번 시험에는 유료 OpenAI 호출, 실제 HTTP 운영 트래픽, 여러 worker·재시작, Nav2·촬영 파일·외부 알림이 없다. SWM25-72의 Terra→Luna→safe-refusal 조합과 hard deadline도 실측하지 않았다. SWM25-74의 confirmation, 영속 exactly-once, 최신 ROS safety 재검사, feedback·cancel·terminal audit은 구현 자체가 없으므로 통과율을 만들 수 없다."
+      },
+      {
+        "id": "next_steps",
+        "type": "markdown",
+        "sourceId": "audit_notes",
+        "body": "## 다음 조치는 74 상태 수정과 72 실 API 재평가다\n\n1. SWM25-74를 `할 일`로 되돌리고 confirmation → trusted state 재검사 → durable consume-once → ROS 실행 → feedback/cancel → terminal audit를 구현한다.\n2. SWM25-72를 `배포 검증 중`으로 표시하고 현재 agent tree에서 Terra→Luna→safe-refusal을 실제 timeout 조건으로 반복 측정한다.\n3. 69·70·71·73의 완료 라벨에는 각각 계약 전용, 단일 프로세스, 내부 경계, 비부작용 Gateway라는 범위를 붙인다.\n4. 코드가 바뀌면 기존 JSON을 덮어쓰지 말고 새 날짜 artifact와 source hash를 남긴다."
+      },
+      {
+        "id": "further_questions",
+        "type": "markdown",
+        "sourceId": "audit_notes",
+        "body": "## 남은 결정은 운영 완료의 정의와 실물 시험 권한이다\n\n실 API 300회에 사용할 모델·비용 상한·deadline, 다중 worker 목표 부하, 물리 로봇 시험의 장소·안전 감시·중단 조건을 별도로 승인해야 한다. 또한 SWM25-69의 한 명 위임 reviewer 승인만으로 여섯 도메인 승인이 충분한지 조직 절차 증거를 Jira에 보강할 필요가 있다."
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-08-12T12:27:45.370016+00:00",
+    "status": "ready",
+    "datasets": {
+      "repeated_checks": [
+        {
+          "story": "SWM25-69",
+          "iterations_attempted": 300,
+          "iterations_passed": 300,
+          "subchecks_per_iteration": 6,
+          "subcheck_invocations": 1800,
+          "failed_invocations": 0,
+          "evidence_type": "implementation boundary"
+        },
+        {
+          "story": "SWM25-70",
+          "iterations_attempted": 300,
+          "iterations_passed": 300,
+          "subchecks_per_iteration": 6,
+          "subcheck_invocations": 1800,
+          "failed_invocations": 0,
+          "evidence_type": "implementation boundary"
+        },
+        {
+          "story": "SWM25-71",
+          "iterations_attempted": 300,
+          "iterations_passed": 300,
+          "subchecks_per_iteration": 6,
+          "subcheck_invocations": 1800,
+          "failed_invocations": 0,
+          "evidence_type": "implementation boundary"
+        },
+        {
+          "story": "SWM25-72",
+          "iterations_attempted": 300,
+          "iterations_passed": 300,
+          "subchecks_per_iteration": 8,
+          "subcheck_invocations": 2400,
+          "failed_invocations": 0,
+          "evidence_type": "implementation boundary"
+        },
+        {
+          "story": "SWM25-73",
+          "iterations_attempted": 300,
+          "iterations_passed": 300,
+          "subchecks_per_iteration": 6,
+          "subcheck_invocations": 1800,
+          "failed_invocations": 0,
+          "evidence_type": "implementation boundary"
+        },
+        {
+          "story": "SWM25-74",
+          "iterations_attempted": 300,
+          "iterations_passed": 300,
+          "subchecks_per_iteration": 3,
+          "subcheck_invocations": 900,
+          "failed_invocations": 0,
+          "evidence_type": "negative evidence only"
+        }
+      ],
+      "story_verdicts": [
+        {
+          "story": "SWM25-69",
+          "verified_scope": "책임·인터페이스 계약",
+          "product_verdict": "계약 범위 완료",
+          "jira_recommendation": "완료 유지 + 계약 전용 표기",
+          "evidence_type": "implementation boundary"
+        },
+        {
+          "story": "SWM25-70",
+          "verified_scope": "단일 프로세스 세션 MVP",
+          "product_verdict": "제한 범위 완료",
+          "jira_recommendation": "완료 유지 + 운영 후속 분리",
+          "evidence_type": "implementation boundary"
+        },
+        {
+          "story": "SWM25-71",
+          "verified_scope": "내부 context builder",
+          "product_verdict": "내부 범위 완료",
+          "jira_recommendation": "완료 유지 + 제품 연동 후속 분리",
+          "evidence_type": "implementation boundary"
+        },
+        {
+          "story": "SWM25-72",
+          "verified_scope": "provider 코드·오프라인 계약",
+          "product_verdict": "실 API 배포 보류",
+          "jira_recommendation": "부분 완료 또는 배포 검증 중",
+          "evidence_type": "implementation boundary"
+        },
+        {
+          "story": "SWM25-73",
+          "verified_scope": "비부작용 Tool Gateway",
+          "product_verdict": "제한 범위 완료",
+          "jira_recommendation": "완료 유지 + ROS 실행 아님 표기",
+          "evidence_type": "implementation boundary"
+        },
+        {
+          "story": "SWM25-74",
+          "verified_scope": "실행 부재·차단 경계",
+          "product_verdict": "구현 근거 없음",
+          "jira_recommendation": "할 일로 되돌림",
+          "evidence_type": "negative evidence only"
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "stress_result",
+      "label": "SWM25-69~74 300회 오프라인 원시 결과",
+      "path": "docs/evaluations/artifacts/SWM25-69_74_300X_OFFLINE_2026-08-12.json",
+      "query": {
+        "engine": "Python 3.10 direct-function harness",
+        "description": "34개 고유 zero-argument pytest/harness 함수를 스토리별 300회 호출해 iteration·subcheck 집계를 기록했다.",
+        "executed_at": "2026-08-12T12:27:45.370016+00:00",
+        "language": "python",
+        "filters": [
+          "offline_non_actuating mode",
+          "300 iterations per Jira story",
+          "no live OpenAI calls",
+          "no physical ROS actions"
+        ],
+        "metric_definitions": [
+          "story iteration pass: 해당 story에 선정한 모든 대표 검사가 같은 iteration에서 통과",
+          "subcheck invocation: 대표 pytest 또는 harness 함수를 한 번 직접 호출",
+          "SWM25-74 pass: physical execution 부재와 차단 경계 유지; 기능 구현 성공이 아님"
+        ],
+        "tables_used": [
+          "SWM25-69_74_300X_OFFLINE_2026-08-12.json"
+        ]
+      }
+    },
+    {
+      "id": "chart_projection",
+      "label": "300회 결과와 Jira 판정의 검토된 SQL projection",
+      "path": "docs/evaluations/artifacts/SWM25-69_74_REVALIDATION_2026-08-12.sql",
+      "query": {
+        "engine": "SQLite 3",
+        "description": "원시 JSON의 story별 반복 집계와 문서 감사 판정을 두 개의 bounded result set으로 투영한다.",
+        "executed_at": "2026-08-12T12:27:45.370016+00:00",
+        "language": "sql",
+        "filters": [
+          "SWM25-69 through SWM25-74",
+          "2026-08-12 frozen snapshot"
+        ],
+        "metric_definitions": [
+          "subcheck_invocations = iterations_attempted × subchecks_per_iteration",
+          "failed_invocations = 선정한 대표 검사 호출 중 실패 수"
+        ],
+        "tables_used": [
+          "reviewed VALUES projection from SWM25-69_74_300X_OFFLINE_2026-08-12.json"
+        ]
+      }
+    },
+    {
+      "id": "audit_notes",
+      "label": "SWM25-69~74 코드·문서·Git 감사 기록",
+      "path": "docs/evaluations/SWM25-69_74_REVALIDATION_2026-08-12.md"
+    },
+    {
+      "id": "origin_main",
+      "label": "SWM-malbut/malbut origin/main 검증 기준",
+      "href": "https://github.com/SWM-malbut/malbut/commit/984fcc5538969ecb726abaaa2e704c7ced92de72"
+    }
+  ]
+}

@@ -56,6 +56,29 @@ TOOL_SPECS = {
             'additionalProperties': False,
         },
     ),
+    'monitor_room': ToolSpec(
+        name='monitor_room',
+        description=(
+            'Propose one server-owned room monitoring mission for a '
+            'verified named room. The server, never the model, owns '
+            'confirmation, Nav2 movement, coverage, camera privacy, and '
+            'live-view readiness.'
+        ),
+        parameters={
+            'type': 'object',
+            'properties': {
+                'location': {
+                    'type': 'string',
+                    'description': (
+                        'One server-resolvable room name such as 거실. '
+                        'Never provide coordinates or a route.'
+                    ),
+                },
+            },
+            'required': ['location'],
+            'additionalProperties': False,
+        },
+    ),
     'detect_pet': ToolSpec(
         name='detect_pet',
         description=(

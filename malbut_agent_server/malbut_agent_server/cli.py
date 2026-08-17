@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import List, Optional
 
 from malbut_agent_server.config import Settings, load_env_file
-from malbut_agent_server.factory import build_orchestrator
+from malbut_agent_server.factory import (
+    build_orchestrator,
+    build_speech_coordinator,
+    get_gazebo_simulation_execution_seam,
+)
 from malbut_agent_server.http_server import make_server
 
 
@@ -37,6 +41,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument('--port', type=int)
     parser.add_argument('--database')
     parser.add_argument(
+        '--enable-scripted-speech',
+        action='store_true',
+        default=None,
+        help=(
+            'Enable authenticated text-only speech test endpoints; '
+            'this does not trust client RobotState or authorize Tools.'
+        ),
+    )
+    parser.add_argument(
         '--check',
         action='store_true',
         help='Validate configuration and exit without an API request.',
@@ -62,9 +75,22 @@ def server_main(argv: Optional[List[str]] = None) -> int:
         overrides['port'] = args.port
     if args.database is not None:
         overrides['database_path'] = args.database
+    if args.enable_scripted_speech is not None:
+        overrides['enable_scripted_speech'] = (
+            args.enable_scripted_speech
+        )
+        overrides['auth_token'] = os.environ.get(
+            'MALBUT_AGENT_AUTH_TOKEN',
+            '',
+        )
     settings = replace(settings, **overrides)
     settings.validate_for_server()
-    orchestrator = build_orchestrator(settings)
+    speech_coordinator = None
+    if settings.enable_scripted_speech:
+        speech_coordinator = build_speech_coordinator(settings)
+        orchestrator = speech_coordinator.orchestrator
+    else:
+        orchestrator = build_orchestrator(settings)
     if args.check:
         orchestrator.conversation_store.close()
         orchestrator.memory_store.close()
@@ -80,12 +106,27 @@ def server_main(argv: Optional[List[str]] = None) -> int:
         allowed_user_id=settings.user_id,
         max_concurrent_requests=settings.max_concurrent_requests,
         requests_per_minute=settings.requests_per_minute,
+        failed_auth_attempts_per_minute=(
+            settings.failed_auth_attempts_per_minute
+        ),
         socket_timeout_seconds=settings.socket_timeout_seconds,
+        speech_coordinator=speech_coordinator,
+        gazebo_simulation_execution_seam=(
+            get_gazebo_simulation_execution_seam(orchestrator)
+        ),
+    )
+    gazebo_status = (
+        'enabled'
+        if settings.enable_gazebo_simulation_execution
+        else 'disabled'
     )
     print(
         'Malbut agent server listening on '
         f'http://{settings.host}:{settings.port} '
-        f'(provider={settings.provider})'
+        f'(provider={settings.provider}, scripted_speech='
+        f'{"enabled" if settings.enable_scripted_speech else "disabled"}, '
+        'gazebo_simulation_execution='
+        f'{gazebo_status})'
     )
     try:
         server.serve_forever()

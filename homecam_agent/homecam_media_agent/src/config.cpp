@@ -222,15 +222,44 @@ std::vector<std::string> validate_config(const MediaConfig & config)
   if (config.frame_timeout_ms < 250) {
     errors.emplace_back("frame_timeout_ms must be at least 250");
   }
+  if (config.evidence_ttl_ms < 1 || config.evidence_ttl_ms > 5000 ||
+    config.evidence_ttl_ms > config.frame_timeout_ms)
+  {
+    errors.emplace_back(
+      "evidence_ttl_ms must be between 1 and min(frame_timeout_ms, 5000)");
+  }
+  if (config.evidence_publish_interval_ms < 1 ||
+    config.evidence_publish_interval_ms > config.evidence_ttl_ms / 2)
+  {
+    errors.emplace_back(
+      "evidence_publish_interval_ms must be between 1 and half the evidence TTL");
+  }
   if (!config.backend_url.empty() && !is_allowed_backend_url(config.backend_url)) {
     errors.emplace_back(
       "backend_url must use HTTPS; plaintext HTTP is accepted only for the "
       "exact localhost, 127.0.0.1, or [::1] hostname");
   }
-  if (!config.backend_url.empty() && !is_valid_device_id(config.device_id)) {
+  if (!is_valid_device_id(config.device_id)) {
     errors.emplace_back(
-      "device_id must match [A-Za-z0-9][A-Za-z0-9._:-]{0,127} when "
-      "backend_url is configured");
+      "device_id must match [A-Za-z0-9][A-Za-z0-9._:-]{0,127}");
+  }
+  if (config.physical_authority) {
+    if (config.source_profile != "aurora") {
+      errors.emplace_back(
+        "physical_authority requires the aurora source_profile");
+    }
+    if (config.backend_url.rfind("https://", 0U) != 0U) {
+      errors.emplace_back(
+        "physical_authority requires a nonempty HTTPS backend_url");
+    }
+    if (!is_valid_device_id(config.device_id)) {
+      errors.emplace_back(
+        "physical_authority requires a valid fixed device_id");
+    }
+    if (config.heartbeat_interval_ms > config.evidence_ttl_ms / 2) {
+      errors.emplace_back(
+        "physical heartbeat_interval_ms must not exceed half the evidence TTL");
+    }
   }
   return errors;
 }

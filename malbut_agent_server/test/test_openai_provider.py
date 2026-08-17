@@ -7,12 +7,17 @@ from typing import Any, Dict, List
 
 import pytest
 
+from malbut_agent_server.monitor_room_coverage import (
+    DEFAULT_COVERAGE_PROFILE,
+    PLANNER_REVISION,
+)
 from malbut_agent_server.providers.base import ProviderError
 from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
 )
 from malbut_agent_server.schemas import AgentRequest
 from malbut_agent_server.tools import select_tool_specs
+from malbut_agent_server.trusted_results import TrustedToolResult
 
 
 def _request() -> AgentRequest:
@@ -30,6 +35,30 @@ def _request() -> AgentRequest:
             },
             'available_tools': ['navigate'],
         }
+    )
+
+
+def _trusted_result() -> TrustedToolResult:
+    return TrustedToolResult(
+        trusted_result_id='trusted-tool-result-openai-test',
+        trusted_result_fingerprint='1' * 64,
+        user_id='private-trusted-user',
+        conversation_id='private-trusted-conversation',
+        session_instance_id='private-trusted-session',
+        generation=1,
+        source_revision=2,
+        source_turn_id='private-trusted-turn',
+        source_ordinal=1,
+        record_kind='planned',
+        state='succeeded',
+        result_code='semantic_sample_plan_created',
+        planner_revision=PLANNER_REVISION,
+        profile_digest=DEFAULT_COVERAGE_PROFILE.digest,
+        plan_digest='2' * 64,
+        result_digest='3' * 64,
+        sample_count=7,
+        component_count=1,
+        completed_at=123.0,
     )
 
 
@@ -91,6 +120,11 @@ def test_builds_strict_responses_payload_and_parses_tool_call() -> None:
         'context': 'current_turn',
     }
     assert captured['payload']['max_output_tokens'] == 500
+    message_schema = captured['payload']['text']['format'][
+        'schema'
+    ]['properties']['message']
+    assert message_schema['minLength'] == 1
+    assert message_schema['maxLength'] == 2000
     assert tool['type'] == 'function'
     assert tool['strict'] is True
     assert tool['parameters']['additionalProperties'] is False
@@ -111,6 +145,39 @@ def test_builds_strict_responses_payload_and_parses_tool_call() -> None:
     assert result.decision.tool_name == 'navigate'
     assert result.decision.arguments == {'location': '거실'}
     assert result.usage.total_tokens == 14
+
+
+def test_build_payload_includes_closed_trusted_result_projection() -> None:
+    """Official API input receives trusted facts without private linkage."""
+    provider = OpenAIResponsesProvider(
+        api_key='test-only-key',
+        model='test-model',
+        transport=lambda *_args: {},
+    )
+    result = _trusted_result()
+
+    payload = provider.build_payload(
+        _request(),
+        [],
+        [],
+        [],
+        trusted_server_tool_results=(result,),
+    )
+    context = json.loads(payload['input'].split('\n', 1)[1])
+
+    assert context['trusted_server_tool_results'] == [
+        result.to_prompt_dict()
+    ]
+    for private_value in (
+        result.trusted_result_id,
+        result.user_id,
+        result.conversation_id,
+        result.session_instance_id,
+        result.profile_digest,
+        result.plan_digest,
+        result.result_digest,
+    ):
+        assert private_value not in payload['input']
 
 
 def test_parses_structured_text_message() -> None:
@@ -365,6 +432,43 @@ def test_invalid_structured_confidence_is_a_provider_error() -> None:
         provider.complete(_request(), [], [], [])
 
 
+@pytest.mark.parametrize('message', ['', '   ', '\n\t'])
+def test_blank_structured_message_is_a_provider_error(
+    message: str,
+) -> None:
+    """Blank remote messages fail before orchestration can persist them."""
+    decision = {
+        'type': 'message',
+        'message': message,
+        'reason': 'test',
+        'confidence': 0.5,
+    }
+
+    def transport(*_args):
+        return {
+            'status': 'completed',
+            'output': [
+                {
+                    'type': 'message',
+                    'content': [
+                        {
+                            'type': 'output_text',
+                            'text': json.dumps(decision),
+                        }
+                    ],
+                }
+            ],
+        }
+
+    provider = OpenAIResponsesProvider(
+        api_key='test-only-key',
+        model='test-model',
+        transport=transport,
+    )
+    with pytest.raises(ProviderError, match='invalid normalized decision'):
+        provider.complete(_request(), [], [], [])
+
+
 def test_response_requires_explicit_completed_status() -> None:
     """Missing lifecycle status is not accepted as a final response."""
 
@@ -378,3 +482,173 @@ def test_response_requires_explicit_completed_status() -> None:
     )
     with pytest.raises(ProviderError, match='not completed'):
         provider.complete(_request(), [], [], [])
+
+
+@pytest.mark.parametrize(
+    ('overrides', 'message'),
+    (
+        ({'api_key': ''}, 'api_key must not be empty'),
+        ({'model': ''}, 'model must not be empty'),
+        ({'timeout_seconds': True}, 'timeout_seconds must be between'),
+        ({'timeout_seconds': 121}, 'timeout_seconds must be between'),
+    ),
+)
+def test_constructor_rejects_missing_identity_and_invalid_timeout(
+    overrides,
+    message: str,
+) -> None:
+    """Credentials, model identity, and request timeout remain bounded."""
+    arguments = {
+        'api_key': 'test-only-key',
+        'model': 'test-model',
+    }
+    arguments.update(overrides)
+    with pytest.raises(ValueError, match=message):
+        OpenAIResponsesProvider(**arguments)
+
+
+@pytest.mark.parametrize(
+    ('response', 'message'),
+    (
+        ([], 'provider response must be an object'),
+        (
+            {'status': 'completed', 'output': {}},
+            'provider response output must be a list',
+        ),
+        (
+            {
+                'status': 'completed',
+                'output': [
+                    {'type': 'message', 'content': 'not-a-list'},
+                ],
+            },
+            'neither a tool call nor text',
+        ),
+        (
+            {
+                'status': 'completed',
+                'output': [
+                    {
+                        'type': 'message',
+                        'content': [None],
+                    },
+                ],
+            },
+            'neither a tool call nor text',
+        ),
+        (
+            {
+                'status': 'completed',
+                'output': [
+                    {
+                        'type': 'function_call',
+                        'name': '',
+                        'arguments': '{}',
+                    },
+                ],
+            },
+            'function call name is invalid',
+        ),
+        (
+            {
+                'status': 'completed',
+                'output': [
+                    {
+                        'type': 'function_call',
+                        'name': 'navigate',
+                        'arguments': {},
+                    },
+                ],
+            },
+            'arguments must be JSON text',
+        ),
+        (
+            {
+                'status': 'completed',
+                'output': [
+                    {
+                        'type': 'function_call',
+                        'name': 'navigate',
+                        'arguments': '[]',
+                    },
+                ],
+            },
+            'arguments must decode to an object',
+        ),
+        (
+            {
+                'status': 'completed',
+                'output': [
+                    {
+                        'type': 'message',
+                        'content': [
+                            {'type': 'output_text', 'text': '[]'},
+                        ],
+                    },
+                ],
+            },
+            'structured text decision must be an object',
+        ),
+        (
+            {
+                'status': 'completed',
+                'output': [
+                    {
+                        'type': 'message',
+                        'content': [
+                            {
+                                'type': 'output_text',
+                                'text': '{"type":"message"}',
+                            },
+                        ],
+                    },
+                ],
+            },
+            'fields do not match the schema',
+        ),
+    ),
+)
+def test_parser_rejects_malformed_response_shapes(
+    response,
+    message: str,
+) -> None:
+    """Every malformed terminal shape fails before orchestration."""
+    with pytest.raises(ProviderError, match=message):
+        OpenAIResponsesProvider._parse_decision(response)
+
+
+def test_parser_normalizes_provider_refusal() -> None:
+    """A provider refusal becomes a non-action decision, never a tool."""
+    decision = OpenAIResponsesProvider._parse_decision(
+        {
+            'status': 'completed',
+            'output': [
+                {
+                    'type': 'message',
+                    'content': [
+                        {
+                            'type': 'refusal',
+                            'refusal': '요청을 처리할 수 없습니다.',
+                        },
+                    ],
+                },
+            ],
+        }
+    )
+    assert decision.type == 'refusal'
+    assert decision.tool_name is None
+    assert decision.message == '요청을 처리할 수 없습니다.'
+
+
+def test_usage_ignores_boolean_and_non_integer_counters() -> None:
+    """Malformed usage metadata cannot masquerade as token counts."""
+    usage = OpenAIResponsesProvider._parse_usage(
+        {
+            'input_tokens': True,
+            'output_tokens': '4',
+            'total_tokens': 5.0,
+        }
+    )
+    assert usage.input_tokens is None
+    assert usage.output_tokens is None
+    assert usage.total_tokens is None

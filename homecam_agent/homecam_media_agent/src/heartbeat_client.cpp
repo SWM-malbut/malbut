@@ -109,6 +109,7 @@ std::string heartbeat_to_json(const HeartbeatStatus & status)
 
 bool parse_desired_settings(
   const std::string & response_body,
+  const std::string & expected_device_id,
   DesiredDeviceSettings * const desired,
   std::string * const error)
 {
@@ -135,6 +136,18 @@ bool parse_desired_settings(
   if (root.is_discarded() || duplicate_key || !root.is_object()) {
     if (error != nullptr) {
       *error = duplicate_key ? "duplicate JSON key" : "malformed JSON object";
+    }
+    return false;
+  }
+  const auto device_iterator = root.find("deviceId");
+  if (
+    !is_valid_device_id(expected_device_id) ||
+    device_iterator == root.end() ||
+    !device_iterator->is_string() ||
+    device_iterator->get_ref<const std::string &>() != expected_device_id)
+  {
+    if (error != nullptr) {
+      *error = "deviceId does not match this device";
     }
     return false;
   }
@@ -267,7 +280,9 @@ bool HeartbeatClient::post(
   }
   DesiredDeviceSettings parsed_desired;
   std::string parse_error;
-  if (!parse_desired_settings(response.body, &parsed_desired, &parse_error)) {
+  if (!parse_desired_settings(
+      response.body, status.device_id, &parsed_desired, &parse_error))
+  {
     if (error != nullptr) {
       *error = "invalid heartbeat response: " + parse_error;
     }

@@ -5,7 +5,9 @@ import http.client
 from http.server import ThreadingHTTPServer
 import importlib.util
 import json
+import os
 from pathlib import Path
+import stat
 from threading import Thread
 
 import numpy as np
@@ -28,6 +30,11 @@ from malbut_gazebo.map_lifecycle import (
     map_statistics,
     persist_map_revision,
     render_map_png,
+)
+from malbut_gazebo.gazebo_monitor_room_active_map import (
+    ActiveMapEvidenceResolver,
+    ActiveMapResolverConfig,
+    ActiveMapValidationError,
 )
 from malbut_gazebo.map_onboarding_server import MapOnboardingRequestHandler
 
@@ -122,6 +129,138 @@ def test_revision_save_is_atomic_and_preserves_previous_map(tmp_path):
             initial_pose={"x": float("nan"), "y": 0.0, "yaw": 0.0},
         )
     assert load_active_revision(tmp_path) == first
+
+
+def _permission_mode(path: Path) -> int:
+    return stat.S_IMODE(os.stat(path, follow_symlinks=False).st_mode)
+
+
+def test_revision_store_is_private_and_resolver_ready_under_group_umask(
+    tmp_path,
+):
+    """A normal 0002 shell umask must not publish 0775/0664 map data."""
+    store = tmp_path / "fresh-active-map-store"
+
+    def write_posegraph(base: Path) -> bool:
+        base.with_suffix(".posegraph").write_bytes(b"graph")
+        base.with_suffix(".data").write_bytes(b"data")
+        return True
+
+    previous_umask = os.umask(0o002)
+    try:
+        manifest = persist_map_revision(
+            _grid(),
+            store,
+            posegraph_writer=write_posegraph,
+        )
+    finally:
+        os.umask(previous_umask)
+
+    revision = store / "versions" / manifest["revision"]
+    assert _permission_mode(store) == 0o700
+    assert _permission_mode(store / "versions") == 0o700
+    assert _permission_mode(revision) == 0o700
+    assert _permission_mode(store / "active.json") == 0o600
+    assert not any(
+        path.name.startswith(".staging-")
+        for path in (store / "versions").iterdir()
+    )
+    for path in revision.iterdir():
+        assert path.is_file()
+        assert _permission_mode(path) == 0o600
+        assert path.stat().st_nlink == 1
+
+    evidence = ActiveMapEvidenceResolver(
+        ActiveMapResolverConfig(str(store))
+    ).resolve()
+    assert evidence.map_id == manifest["map_id"]
+    assert evidence.map_revision == manifest["map_revision"]
+
+
+def test_published_permission_drift_fails_without_silent_repair(tmp_path):
+    """Saving and trusted reads both reject every unsafe published layer."""
+    store = tmp_path / "protected-active-map-store"
+    manifest = persist_map_revision(_grid(), store)
+    revision = store / "versions" / manifest["revision"]
+    resolver = ActiveMapEvidenceResolver(ActiveMapResolverConfig(str(store)))
+    resolver.resolve()
+    original_active = (store / "active.json").read_bytes()
+    original_entries = set((store / "versions").iterdir())
+    targets = (
+        (store, 0o770),
+        (store / "versions", 0o770),
+        (revision, 0o770),
+        (store / "active.json", 0o660),
+        (revision / "map.yaml", 0o660),
+        (revision / "map.pgm", 0o660),
+        (revision / "user-map.geojson", 0o660),
+    )
+    for target, unsafe_mode in targets:
+        safe_mode = _permission_mode(target)
+        target.chmod(unsafe_mode)
+        try:
+            with pytest.raises(OSError, match="map store is not protected"):
+                persist_map_revision(_grid(), store)
+            with pytest.raises(ActiveMapValidationError):
+                resolver.resolve()
+            assert _permission_mode(target) == unsafe_mode
+            assert (store / "active.json").read_bytes() == original_active
+            assert set((store / "versions").iterdir()) == original_entries
+        finally:
+            target.chmod(safe_mode)
+        resolver.resolve()
+
+
+def test_posegraph_hardlink_is_rejected_before_permission_normalization(
+    tmp_path,
+):
+    """Provisioning must not chmod or publish a writer-supplied hardlink."""
+    store = tmp_path / "hardlink-map-store"
+    outside = tmp_path / "outside-posegraph"
+    outside.write_bytes(b"outside")
+    outside.chmod(0o644)
+
+    def write_hardlink(base: Path) -> bool:
+        os.link(outside, base.with_suffix(".posegraph"))
+        return True
+
+    with pytest.raises(OSError, match="map store is not protected"):
+        persist_map_revision(
+            _grid(),
+            store,
+            posegraph_writer=write_hardlink,
+        )
+
+    assert _permission_mode(outside) == 0o644
+    assert outside.stat().st_nlink == 1
+    assert not (store / "active.json").exists()
+
+
+def test_published_map_mutation_during_staging_aborts_active_commit(tmp_path):
+    """A changed old source cannot be hidden by publishing a new revision."""
+    store = tmp_path / "mutated-active-map-store"
+    first = persist_map_revision(_grid(), store)
+    active_path = store / "active.json"
+    active_bytes = active_path.read_bytes()
+    old_map_image = store / first["map_image"]
+
+    def mutate_published_map(_base: Path) -> bool:
+        old_map_image.write_bytes(b"mutated while replacement was staged")
+        return False
+
+    with pytest.raises(OSError, match="map store is not protected"):
+        persist_map_revision(
+            _grid(),
+            store,
+            posegraph_writer=mutate_published_map,
+        )
+
+    assert active_path.read_bytes() == active_bytes
+    assert _permission_mode(old_map_image) == 0o600
+    with pytest.raises(ActiveMapValidationError):
+        ActiveMapEvidenceResolver(
+            ActiveMapResolverConfig(str(store))
+        ).resolve()
 
 
 class _FakeBridge:

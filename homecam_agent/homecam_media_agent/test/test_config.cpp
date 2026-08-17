@@ -23,6 +23,7 @@ TEST(MediaConfig, AcceptsSafeSimulationDefaults)
 {
   MediaConfig config;
   EXPECT_EQ(config.heartbeat_interval_ms, 2000);
+  EXPECT_FALSE(config.physical_authority);
   config.device_id = "gazebo-poc";
   config.backend_url = "https://homecam.example.test";
   EXPECT_TRUE(validate_config(config).empty());
@@ -63,6 +64,39 @@ TEST(MediaConfig, RejectsUnsafeOrInvalidValues)
   config.device_id.clear();
   const auto errors = validate_config(config);
   EXPECT_GE(errors.size(), 5U);
+}
+
+TEST(MediaConfig, PhysicalAuthorityRequiresTightAuroraHttpsConfiguration)
+{
+  MediaConfig config;
+  config.device_id = "jetson-homecam";
+  config.backend_url = "https://homecam.example.test";
+  config.source_profile = "aurora";
+  config.physical_authority = true;
+  config.heartbeat_interval_ms = 1000;
+  EXPECT_TRUE(validate_config(config).empty());
+
+  config.source_profile = "sim";
+  EXPECT_FALSE(validate_config(config).empty());
+  config.source_profile = "aurora";
+  config.backend_url = "http://127.0.0.1:3000";
+  EXPECT_FALSE(validate_config(config).empty());
+  config.backend_url = "https://homecam.example.test";
+  config.heartbeat_interval_ms = 1001;
+  EXPECT_FALSE(validate_config(config).empty());
+}
+
+TEST(MediaConfig, EvidencePublicationCannotOutrunFreshnessContract)
+{
+  MediaConfig config;
+  config.device_id = "gazebo-homecam";
+  config.evidence_ttl_ms = 5001;
+  EXPECT_FALSE(validate_config(config).empty());
+  config.evidence_ttl_ms = 2000;
+  config.evidence_publish_interval_ms = 1001;
+  EXPECT_FALSE(validate_config(config).empty());
+  config.evidence_publish_interval_ms = 1000;
+  EXPECT_TRUE(validate_config(config).empty());
 }
 
 TEST(MediaConfig, AllowsLocalHttpForDevelopment)
@@ -165,7 +199,8 @@ TEST(HeartbeatContract, UsesCamelCaseAndParsesDesiredState)
   std::string error;
   ASSERT_TRUE(
     parse_desired_settings(
-      R"({"reportedState":{"cameraEnabled":true},"desiredState":{"cameraEnabled":false,"microphoneEnabled":true,"monitoringEnabled":true}})",
+      R"({"deviceId":"device-1","reportedState":{"cameraEnabled":true},"desiredState":{"cameraEnabled":false,"microphoneEnabled":true,"monitoringEnabled":true}})",
+      "device-1",
       &desired, &error));
   ASSERT_TRUE(desired.camera_enabled.has_value());
   EXPECT_FALSE(*desired.camera_enabled);
@@ -190,17 +225,34 @@ TEST(HeartbeatContract, RejectsMalformedWrongTypeAndDuplicateDesiredState)
 {
   homecam_media_agent::DesiredDeviceSettings desired;
   std::string error;
-  EXPECT_FALSE(parse_desired_settings("{", &desired, &error));
+  EXPECT_FALSE(parse_desired_settings("{", "device-1", &desired, &error));
   EXPECT_FALSE(
     parse_desired_settings(
-      R"({"desiredState":{"cameraEnabled":"false","microphoneEnabled":true,"monitoringEnabled":true}})",
+      R"({"deviceId":"device-1","desiredState":{"cameraEnabled":"false","microphoneEnabled":true,"monitoringEnabled":true}})",
+      "device-1",
       &desired, &error));
   EXPECT_FALSE(
     parse_desired_settings(
-      R"({"desiredState":{"cameraEnabled":false,"cameraEnabled":true,"microphoneEnabled":true,"monitoringEnabled":true}})",
+      R"({"deviceId":"device-1","desiredState":{"cameraEnabled":false,"cameraEnabled":true,"microphoneEnabled":true,"monitoringEnabled":true}})",
+      "device-1",
       &desired, &error));
   EXPECT_FALSE(
     parse_desired_settings(
-      R"({"desiredState":{"cameraEnabled":false,"microphoneEnabled":true,"monitoringEnabled":true,"unexpected":false}})",
+      R"({"deviceId":"device-1","desiredState":{"cameraEnabled":false,"microphoneEnabled":true,"monitoringEnabled":true,"unexpected":false}})",
+      "device-1",
       &desired, &error));
+}
+
+TEST(HeartbeatContract, RequiresExactTopLevelDeviceBinding)
+{
+  homecam_media_agent::DesiredDeviceSettings desired;
+  std::string error;
+  const std::string body =
+    R"({"deviceId":"device-1","desiredState":{"cameraEnabled":false,"microphoneEnabled":true,"monitoringEnabled":true}})";
+  EXPECT_TRUE(parse_desired_settings(body, "device-1", &desired, &error));
+  EXPECT_FALSE(parse_desired_settings(body, "device-2", &desired, &error));
+  EXPECT_FALSE(
+    parse_desired_settings(
+      R"({"desiredState":{"cameraEnabled":false,"microphoneEnabled":true,"monitoringEnabled":true}})",
+      "device-1", &desired, &error));
 }

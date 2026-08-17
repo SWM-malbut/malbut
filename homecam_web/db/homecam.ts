@@ -1141,7 +1141,9 @@ export async function inviteFamilyMember(input: {
     .prepare(
       `INSERT INTO device_memberships (device_id, user_email, role, created_at)
        VALUES (?, ?, 'family', ?)
-       ON CONFLICT(device_id, user_email) DO UPDATE SET role = 'family'`,
+       ON CONFLICT(device_id, user_email) DO UPDATE SET
+         role = 'family',
+         binding_generation = nextval('device_membership_generation_seq')`,
     )
     .bind(input.deviceId, input.familyEmail, createdAt)
     .run();

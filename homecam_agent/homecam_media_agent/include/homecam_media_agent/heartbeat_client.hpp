@@ -53,6 +53,7 @@ bool append_heartbeat_response_chunk(
   std::size_t bytes);
 bool parse_desired_settings(
   const std::string & response_body,
+  const std::string & expected_device_id,
   DesiredDeviceSettings * desired,
   std::string * error);
 

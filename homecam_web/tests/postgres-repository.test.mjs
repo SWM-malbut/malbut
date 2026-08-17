@@ -28,12 +28,17 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     new URL("../db/migrations/0004_robot_map_semantics.sql", import.meta.url),
     "utf8",
   );
+  const agentSemanticMigration = await readFile(
+    new URL("../db/migrations/0005_agent_semantic_binding.sql", import.meta.url),
+    "utf8",
+  );
   const database = new PGlite();
   try {
     await database.exec(initialMigration);
     await database.exec(authMigration);
     await database.exec(robotMigration);
     await database.exec(robotSemanticsMigration);
+    await database.exec(agentSemanticMigration);
     await database.exec(`
       CREATE TABLE homecam_schema_migrations (
         version TEXT PRIMARY KEY,
@@ -44,7 +49,8 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         ('0001_initial'),
         ('0002_web_auth_sessions'),
         ('0003_robot_map'),
-        ('0004_robot_map_semantics');
+        ('0004_robot_map_semantics'),
+        ('0005_agent_semantic_binding');
     `);
     await seedDevice(database);
 
@@ -194,7 +200,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         mapRevision: 8,
         observedAt: new Date().toISOString(),
       });
-      await robotMap.storeRobotMap("living-room", {
+      const finalizedMapA = {
         finalized: true,
         revision: "revision-1",
         mapId: "map-1",
@@ -211,7 +217,8 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         previewBase64: "iVBORw0KGgo=",
         userMap: { rooms: [] },
         semanticZones: { type: "FeatureCollection", features: [] },
-      });
+      };
+      await robotMap.storeRobotMap("living-room", finalizedMapA);
       const snapshot = await robotMap.getRobotSnapshot(
         "living-room",
         "owner@example.com",
@@ -228,6 +235,166 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         type: "FeatureCollection",
         features: [],
       });
+      const agentPrincipalSubject = "cognito-subject-0001";
+      assert.equal(
+        await robotMap.getAgentRobotMapSemantics(
+          "living-room",
+          "owner@example.com",
+          agentPrincipalSubject,
+        ),
+        null,
+      );
+      await insertWebAuthSession(database, {
+        tokenDigest: "a".repeat(64),
+        subject: "different-subject",
+        email: "owner@example.com",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
+      });
+      assert.equal(
+        await robotMap.getAgentRobotMapSemantics(
+          "living-room",
+          "owner@example.com",
+          agentPrincipalSubject,
+        ),
+        null,
+      );
+      await insertWebAuthSession(database, {
+        tokenDigest: "b".repeat(64),
+        subject: agentPrincipalSubject,
+        email: "different@example.com",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
+      });
+      assert.equal(
+        await robotMap.getAgentRobotMapSemantics(
+          "living-room",
+          "owner@example.com",
+          agentPrincipalSubject,
+        ),
+        null,
+      );
+      await insertWebAuthSession(database, {
+        tokenDigest: "c".repeat(64),
+        subject: agentPrincipalSubject,
+        email: "owner@example.com",
+        expiresAt: new Date(Date.now() - 60 * 1_000).toISOString(),
+      });
+      assert.equal(
+        await robotMap.getAgentRobotMapSemantics(
+          "living-room",
+          "owner@example.com",
+          agentPrincipalSubject,
+        ),
+        null,
+      );
+      await insertWebAuthSession(database, {
+        tokenDigest: "d".repeat(64),
+        subject: agentPrincipalSubject,
+        email: "owner@example.com",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
+        revokedAt: new Date().toISOString(),
+      });
+      assert.equal(
+        await robotMap.getAgentRobotMapSemantics(
+          "living-room",
+          "owner@example.com",
+          agentPrincipalSubject,
+        ),
+        null,
+      );
+      await insertWebAuthSession(database, {
+        tokenDigest: "e".repeat(64),
+        subject: agentPrincipalSubject,
+        email: "owner@example.com",
+        expiresAt: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
+      });
+      const agentSemantics = await robotMap.getAgentRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+        agentPrincipalSubject,
+      );
+      assert.match(agentSemantics.membershipGeneration, /^[1-9][0-9]*$/);
+      assert.match(agentSemantics.mapGeneration, /^[1-9][0-9]*$/);
+      assert.equal(agentSemantics.deviceRevision, "revision-1");
+      assert.deepEqual(plain(agentSemantics.semantics), {
+        revision: "revision-1",
+        mapId: "map-1",
+        mapRevision: "map-revision-1",
+        userMap: { rooms: [] },
+        zones: { type: "FeatureCollection", features: [] },
+      });
+      assert.doesNotMatch(
+        JSON.stringify(agentSemantics),
+        /token_digest|web_auth_sessions|cognito-subject|owner@example/,
+      );
+
+      await robotMap.storeRobotMap("living-room", finalizedMapA);
+      const exactRetry = await robotMap.getAgentRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+        agentPrincipalSubject,
+      );
+      assert.equal(exactRetry.mapGeneration, agentSemantics.mapGeneration);
+      await robotMap.storeRobotMap("living-room", {
+        ...finalizedMapA,
+        semanticZones: { features: [], type: "FeatureCollection" },
+      });
+      const reorderedJsonRetry = await robotMap.getAgentRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+        agentPrincipalSubject,
+      );
+      assert.equal(
+        reorderedJsonRetry.mapGeneration,
+        agentSemantics.mapGeneration,
+      );
+
+      const finalizedMapB = {
+        ...finalizedMapA,
+        revision: "revision-2",
+        mapId: "map-2",
+        mapRevision: "map-revision-2",
+        userMap: { rooms: [{ id: "room-b" }] },
+      };
+      await robotMap.storeRobotMap("living-room", finalizedMapB);
+      const changedMap = await robotMap.getAgentRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+        agentPrincipalSubject,
+      );
+      assert.ok(
+        BigInt(changedMap.mapGeneration) >
+          BigInt(reorderedJsonRetry.mapGeneration),
+      );
+
+      await robotMap.storeRobotMap("living-room", finalizedMapA);
+      const restoredMap = await robotMap.getAgentRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+        agentPrincipalSubject,
+      );
+      assert.ok(
+        BigInt(restoredMap.mapGeneration) > BigInt(changedMap.mapGeneration),
+      );
+      assert.equal(restoredMap.deviceRevision, "revision-1");
+
+      await database.query(
+        `UPDATE device_memberships
+         SET binding_generation = 9007199254740993
+         WHERE device_id = 'living-room' AND user_email = 'owner@example.com'`,
+      );
+      await database.query(
+        `UPDATE robot_maps SET server_generation = 9007199254740993
+         WHERE device_id = 'living-room'`,
+      );
+      const largeGenerations = await robotMap.getAgentRobotMapSemantics(
+        "living-room",
+        "owner@example.com",
+        agentPrincipalSubject,
+      );
+      assert.equal(typeof largeGenerations.membershipGeneration, "string");
+      assert.equal(typeof largeGenerations.mapGeneration, "string");
+      assert.equal(largeGenerations.membershipGeneration, "9007199254740993");
+      assert.equal(largeGenerations.mapGeneration, "9007199254740993");
 
       await robotMap.storeRobotMap("living-room", {
         finalized: false,
@@ -421,6 +588,24 @@ test("test pool injection is isolated across concurrent async contexts", async (
   }
 });
 
+test("PostgreSQL BIGINT parsing never rounds unsafe decimal values", () => {
+  const loadModule = createTypescriptModuleLoader();
+  const postgres = loadModule(path.join(projectDirectory, "db/postgres.ts"));
+  assert.equal(postgres.parsePostgresBigint("42"), 42);
+  assert.equal(
+    postgres.parsePostgresBigint("9007199254740991"),
+    9_007_199_254_740_991,
+  );
+  assert.equal(
+    postgres.parsePostgresBigint("9007199254740993"),
+    "9007199254740993",
+  );
+  assert.equal(
+    postgres.parsePostgresBigint("9223372036854775807"),
+    "9223372036854775807",
+  );
+});
+
 async function seedDevice(database) {
   const createdAt = new Date().toISOString();
   await database.query(
@@ -440,6 +625,25 @@ async function seedDevice(database) {
         updated_at)
      VALUES ($1, 1, 1, 1, 'sim', 'idle', 0, 0, $2)`,
     ["living-room", createdAt],
+  );
+}
+
+async function insertWebAuthSession(database, input) {
+  const now = new Date().toISOString();
+  await database.query(
+    `INSERT INTO web_auth_sessions
+       (token_digest, cognito_sub, cognito_username, user_email, full_name,
+        created_at, last_seen_at, expires_at, revoked_at)
+     VALUES ($1, $2, $3, $4, NULL, $5, $5, $6, $7)`,
+    [
+      input.tokenDigest,
+      input.subject,
+      input.email,
+      input.email,
+      now,
+      input.expiresAt,
+      input.revokedAt ?? null,
+    ],
   );
 }
 

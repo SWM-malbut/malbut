@@ -15,6 +15,10 @@ from malbut_agent_server.conversation import (
     ConversationStateError,
     SQLiteConversationStore,
 )
+from malbut_agent_server.schemas import (
+    MAX_UTTERANCE_LENGTH,
+    ValidationError,
+)
 
 
 class FakeClock:
@@ -170,6 +174,96 @@ def test_history_keeps_latest_ten_completed_turns_in_order() -> None:
         ]
         assert next_turn.token is not None
         store.fail_turn(next_turn.token)
+    finally:
+        store.close()
+
+
+def test_exact_completed_turn_lookup_ignores_history_window() -> None:
+    """Trusted evidence lookup can resolve an older current turn exactly."""
+    store = SQLiteConversationStore(
+        ':memory:',
+        history_limit=10,
+        max_turns_per_session=1000,
+    )
+    try:
+        store.create('user-a', 'conversation-a')
+        for number in range(1, 502):
+            _complete(store, number)
+
+        oldest = store.get_completed_turn(
+            'user-a',
+            'conversation-a',
+            'turn-1',
+        )
+        assert oldest.ordinal == 1
+        assert oldest.user_id == 'user-a'
+
+        with pytest.raises(ConversationNotFoundError):
+            store.get_completed_turn(
+                'user-b',
+                'conversation-a',
+                'turn-1',
+            )
+        with pytest.raises(ConversationNotFoundError):
+            store.get_completed_turn(
+                'user-a',
+                'conversation-a',
+                'turn-missing',
+            )
+
+        store.reset('user-a', 'conversation-a')
+        with pytest.raises(ConversationNotFoundError):
+            store.get_completed_turn(
+                'user-a',
+                'conversation-a',
+                'turn-1',
+            )
+    finally:
+        store.close()
+
+
+def test_pending_turn_is_not_completed_evidence() -> None:
+    """Exact lookup never returns a pending conversation turn."""
+    store = SQLiteConversationStore(':memory:')
+    try:
+        store.create('user-a', 'conversation-a')
+        pending = _begin(store, 1)
+        assert pending.token is not None
+        with pytest.raises(ConversationNotFoundError):
+            store.get_completed_turn(
+                'user-a',
+                'conversation-a',
+                'turn-1',
+            )
+        store.fail_turn(pending.token)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('terminal_state', ['closed', 'expired'])
+def test_inactive_turn_is_not_confirmation_evidence(
+    terminal_state: str,
+) -> None:
+    """A closed or expired session cannot authorize a new mutation."""
+    clock = FakeClock()
+    store = SQLiteConversationStore(
+        ':memory:',
+        ttl_seconds=60,
+        clock=clock,
+    )
+    try:
+        store.create('user-a', 'conversation-a')
+        _complete(store, 1)
+        if terminal_state == 'closed':
+            store.close_session('user-a', 'conversation-a')
+        else:
+            clock.advance(60)
+        with pytest.raises(ConversationStateError):
+            store.get_completed_turn(
+                'user-a',
+                'conversation-a',
+                'turn-1',
+            )
     finally:
         store.close()
 
@@ -542,5 +636,210 @@ def test_concurrent_reservation_allows_only_one_in_flight_turn() -> None:
         assert results[0].token is not None
         assert results[0].token.ordinal == 1
         store.fail_turn(results[0].token)
+    finally:
+        store.close()
+
+
+def test_snapshot_is_atomic_and_missing_session_rolls_back() -> None:
+    """Snapshot returns one generation and leaves no transaction on failure."""
+    store = SQLiteConversationStore(':memory:')
+    try:
+        generated = store.create('user-a')
+        _complete(
+            store,
+            1,
+            conversation_id=generated.conversation_id,
+        )
+
+        snapshot = store.snapshot(
+            'user-a',
+            generated.conversation_id,
+        )
+        assert snapshot.session == store.get(
+            'user-a',
+            generated.conversation_id,
+        )
+        assert [turn.ordinal for turn in snapshot.turns] == [1]
+        assert snapshot.summary is None
+        assert snapshot.session.to_dict()['conversation_id'] == (
+            generated.conversation_id
+        )
+        assert snapshot.turns[0].to_dict()['decision']['type'] == (
+            'message'
+        )
+
+        with pytest.raises(ConversationNotFoundError):
+            store.snapshot('user-a', 'missing-conversation')
+        with pytest.raises(ValueError, match='turn limit'):
+            store.snapshot('user-a', generated.conversation_id, limit=0)
+
+        assert store.get('user-a', generated.conversation_id).status == (
+            'active'
+        )
+    finally:
+        store.close()
+
+
+def test_terminal_create_close_and_session_limit_fail_closed() -> None:
+    """Terminal IDs stay reserved and per-user session limits are enforced."""
+    clock = FakeClock()
+    store = SQLiteConversationStore(
+        ':memory:',
+        ttl_seconds=60,
+        max_sessions_per_user=1,
+        clock=clock,
+    )
+    try:
+        store.create('user-a', 'conversation-a')
+        with pytest.raises(ConversationStateError, match='limit'):
+            store.create('user-a', 'conversation-b')
+
+        closed = store.close_session('user-a', 'conversation-a')
+        assert closed.status == 'closed'
+        with pytest.raises(ConversationConflictError, match='closed'):
+            store.create('user-a', 'conversation-a')
+        with pytest.raises(ConversationNotFoundError):
+            store.close_session('user-b', 'conversation-a')
+    finally:
+        store.close()
+
+    expiring = SQLiteConversationStore(
+        ':memory:',
+        ttl_seconds=60,
+        clock=clock,
+    )
+    try:
+        expiring.create('user-a', 'expired-conversation')
+        clock.advance(60)
+        with pytest.raises(ConversationStateError, match='expired'):
+            expiring.close_session('user-a', 'expired-conversation')
+        with pytest.raises(ConversationConflictError, match='expired'):
+            expiring.create('user-a', 'expired-conversation')
+    finally:
+        expiring.close()
+
+
+def test_turn_limit_and_strict_completion_payloads_fail_closed() -> None:
+    """Bounded turns and response fields reject oversized or forged values."""
+    store = SQLiteConversationStore(
+        ':memory:',
+        max_turns_per_session=10,
+    )
+    try:
+        store.create('user-a', 'conversation-a')
+        for number in range(1, 11):
+            _complete(store, number)
+        with pytest.raises(ConversationStateError, match='turn limit'):
+            _begin(store, 11)
+
+        store.reset('user-a', 'conversation-a')
+        pending = _begin(store, 20)
+        assert pending.token is not None
+        with pytest.raises(ValidationError, match='assistant_content'):
+            store.complete_turn(
+                pending.token,
+                object(),  # type: ignore[arg-type]
+                _response(20),
+            )
+        with pytest.raises(ValidationError, match='too long'):
+            store.complete_turn(
+                pending.token,
+                'x' * (MAX_UTTERANCE_LENGTH + 1),
+                _response(20),
+            )
+        with pytest.raises(ValidationError, match='object'):
+            store.complete_turn(
+                pending.token,
+                'valid assistant response',
+                [],  # type: ignore[arg-type]
+            )
+        with pytest.raises(ValidationError, match='too large'):
+            store.complete_turn(
+                pending.token,
+                'valid assistant response',
+                {'payload': 'x' * 65536},
+            )
+
+        assert store.list_turns('user-a', 'conversation-a') == []
+        store.fail_turn(pending.token)
+    finally:
+        store.close()
+
+
+def test_concurrent_exact_duplicate_reports_pending_conflict() -> None:
+    """Concurrent exact retries share no response before commit completes."""
+    store = SQLiteConversationStore(':memory:')
+    barrier = threading.Barrier(3)
+    results = []
+    errors = []
+    result_lock = threading.Lock()
+
+    def reserve_same_request() -> None:
+        barrier.wait()
+        try:
+            result = _begin(store, 1)
+            with result_lock:
+                results.append(result)
+        except Exception as error:  # noqa: B902
+            with result_lock:
+                errors.append(error)
+
+    try:
+        store.create('user-a', 'conversation-a')
+        threads = [
+            threading.Thread(target=reserve_same_request)
+            for _index in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(timeout=5)
+
+        assert all(not thread.is_alive() for thread in threads)
+        assert len(results) == 1
+        assert len(errors) == 1
+        assert isinstance(errors[0], ConversationConflictError)
+        assert 'same turn is already in progress' in str(errors[0])
+        assert results[0].token is not None
+        store.fail_turn(results[0].token)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ('keyword', 'value', 'message'),
+    [
+        ('database_path', '', 'database_path'),
+        ('ttl_seconds', True, 'integer'),
+        ('ttl_seconds', 59, 'between'),
+        ('history_limit', 9, 'between'),
+        ('max_sessions_per_user', 0, 'between'),
+        ('max_turns_per_session', 9, 'between'),
+        ('summary_max_chars', 255, 'between'),
+    ],
+)
+def test_store_configuration_is_strictly_bounded(
+    keyword: str,
+    value: object,
+    message: str,
+) -> None:
+    """Invalid persistence bounds cannot silently weaken retention limits."""
+    arguments = {'database_path': ':memory:'}
+    arguments[keyword] = value
+    with pytest.raises(ValueError, match=message):
+        SQLiteConversationStore(**arguments)  # type: ignore[arg-type]
+
+
+def test_nonfinite_clock_is_rejected_before_lifecycle_mutation() -> None:
+    """A non-finite clock cannot create an immortal or expired session."""
+    clock = FakeClock(float('nan'))
+    store = SQLiteConversationStore(':memory:', clock=clock)
+    try:
+        with pytest.raises(RuntimeError, match='clock'):
+            store.create('user-a', 'conversation-a')
+        clock.now = 1000.0
+        with pytest.raises(ConversationNotFoundError):
+            store.get('user-a', 'conversation-a')
     finally:
         store.close()

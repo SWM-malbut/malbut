@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
@@ -173,7 +174,7 @@ test("uses HTTPS, no-echo bootstrap inputs, and server-side secrets", () => {
     Protocol: "HTTPS",
   });
   template.hasResourceProperties("AWS::Lambda::Url", { AuthType: "NONE" });
-  template.resourceCountIs("AWS::SecretsManager::Secret", 9);
+  template.resourceCountIs("AWS::SecretsManager::Secret", 11);
   template.hasResourceProperties("AWS::SecretsManager::Secret", {
     Name: "malbut-homecam-dev/auth-session-secret",
     GenerateSecretString: {
@@ -193,6 +194,115 @@ test("uses HTTPS, no-echo bootstrap inputs, and server-side secrets", () => {
     true,
   );
   assert.equal(rendered.Parameters.DeviceProvisioningExpiresAt?.NoEcho, true);
+});
+
+test("binds the Agent semantic endpoint to explicit identities and independent secrets", () => {
+  const template = synthesize(["gazebo-homecam", "jetson-homecam-01"]);
+  const rendered = template.toJSON() as {
+    Parameters: Record<string, {
+      AllowedPattern?: string;
+      AllowedValues?: string[];
+      Default?: unknown;
+      NoEcho?: boolean;
+    }>;
+    Outputs: Record<string, { Value?: unknown }>;
+  };
+  const { environment, secrets } = taskRuntime(template);
+
+  assert.deepEqual(
+    rendered.Parameters.AgentSemanticAgentUserId,
+    {
+      Type: "String",
+      AllowedPattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      Description:
+        "Stable Agent user ID bound to the single-owner semantic endpoint",
+    },
+  );
+  assert.equal(
+    rendered.Parameters.AgentSemanticPrincipalSubject?.NoEcho,
+    true,
+  );
+  assert.equal(
+    rendered.Parameters.AgentSemanticPrincipalSubject?.Default,
+    undefined,
+  );
+  assert.deepEqual(
+    rendered.Parameters.AgentSemanticDeviceId?.AllowedValues,
+    ["gazebo-homecam", "jetson-homecam-01"],
+  );
+  assert.equal(rendered.Parameters.AgentSemanticDeviceId?.Default, undefined);
+
+  assert.deepEqual(environment.get("AGENT_SEMANTIC_AGENT_USER_ID"), {
+    Ref: "AgentSemanticAgentUserId",
+  });
+  assert.deepEqual(environment.get("AGENT_SEMANTIC_USER_EMAIL"), {
+    Ref: "InitialOwnerEmail",
+  });
+  assert.deepEqual(environment.get("AGENT_SEMANTIC_PRINCIPAL_SUBJECT"), {
+    Ref: "AgentSemanticPrincipalSubject",
+  });
+  assert.deepEqual(environment.get("AGENT_SEMANTIC_DEVICE_ID"), {
+    Ref: "AgentSemanticDeviceId",
+  });
+
+  const secretResources = Object.entries(
+    template.findResources("AWS::SecretsManager::Secret"),
+  );
+  const serviceSecret = secretResources.find(([, resource]) =>
+    resource.Properties?.Name ===
+      "malbut-homecam-dev/agent-semantic-service-secret");
+  const signingSecret = secretResources.find(([, resource]) =>
+    resource.Properties?.Name ===
+      "malbut-homecam-dev/agent-semantic-signing-secret");
+  assert.ok(serviceSecret);
+  assert.ok(signingSecret);
+  assert.notEqual(serviceSecret[0], signingSecret[0]);
+  for (const [, resource] of [serviceSecret, signingSecret]) {
+    assert.deepEqual(resource.Properties?.GenerateSecretString, {
+      ExcludePunctuation: true,
+      IncludeSpace: false,
+      PasswordLength: 64,
+    });
+  }
+  assert.deepEqual(secrets.get("AGENT_SEMANTIC_SECRET"), {
+    Ref: serviceSecret[0],
+  });
+  assert.deepEqual(secrets.get("AGENT_SEMANTIC_SIGNING_SECRET"), {
+    Ref: signingSecret[0],
+  });
+  assert.notDeepEqual(
+    secrets.get("AGENT_SEMANTIC_SECRET"),
+    secrets.get("AGENT_SEMANTIC_SIGNING_SECRET"),
+  );
+  assert.deepEqual(rendered.Outputs.AgentSemanticServiceSecretArn?.Value, {
+    Ref: serviceSecret[0],
+  });
+  assert.deepEqual(rendered.Outputs.AgentSemanticSigningSecretArn?.Value, {
+    Ref: signingSecret[0],
+  });
+});
+
+test("the internal semantic route rejects requests before DB access without its bearer", () => {
+  const route = readFileSync(
+    `${__dirname}/../../../app/api/internal/agent/semantic/route.ts`,
+    "utf8",
+  );
+  const handler = route.slice(route.indexOf("export async function POST"));
+  const bearerGuard = handler.indexOf("authorizedAgentSemanticRequest(");
+  const authorizationHeader = handler.indexOf(
+    'request.headers.get("authorization")',
+  );
+  const unauthorizedResponse = handler.indexOf(
+    'return noStore({ error: "유효한 Agent 인증이 필요합니다." }, 401)',
+  );
+  const bodyRead = handler.indexOf("await request.text()");
+  const repositoryRead = handler.indexOf("getAgentRobotMapSemantics(");
+
+  assert.ok(bearerGuard >= 0);
+  assert.ok(authorizationHeader > bearerGuard);
+  assert.ok(unauthorizedResponse > authorizationHeader);
+  assert.ok(bodyRead > unauthorizedResponse);
+  assert.ok(repositoryRead > bodyRead);
 });
 
 test("uses the imported child hosted zone apex as the homecam domain", () => {
@@ -241,7 +351,7 @@ test("prepare preserves the deployed ALB auth resources and task contract", () =
   assert.equal(initialOwner?.UpdateReplacePolicy, "Retain");
   template.resourceCountIs("AWS::Cognito::UserPoolClient", 2);
   template.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
-  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 12);
+  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 13);
   assert.ok(legacyClient, "the deployed HomecamWebClient logical ID must be stable");
   assert.equal(legacyClient.Properties?.GenerateSecret, true);
   assert.deepEqual(legacyClient.Properties?.ExplicitAuthFlows, [
@@ -276,6 +386,7 @@ test("prepare preserves the deployed ALB auth resources and task contract", () =
     "/api/device/v1/robot/commands/*/complete",
     "/api/internal/maintenance",
     "/api/internal/device-provisioning",
+    "/api/internal/agent/semantic",
   ]) {
     const rule = ruleForPath(template, path);
     assert.ok(rule, `missing public route for ${path}`);
@@ -286,6 +397,8 @@ test("prepare preserves the deployed ALB auth resources and task contract", () =
   }
   assert.equal(secrets.has("AUTH_SESSION_SECRET"), false);
   assert.equal(cognitoAdminStatements(template).length, 0);
+  assertAgentSemanticTaskContract(template);
+  assertAgentSemanticRulePrecedesCognito(template);
   assert.equal(ruleAtPriority(template, 15)?.Properties?.Actions?.[0]?.Type,
     "authenticate-cognito");
   assert.equal(ruleAtPriority(template, 20)?.Properties?.Actions?.[0]?.Type,
@@ -297,7 +410,7 @@ test("dual exposes only auth endpoints and enables both server auth contracts", 
   assertLegacyAuthLogicalIds(template);
   template.resourceCountIs("AWS::Cognito::UserPoolClient", 2);
   template.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
-  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 13);
+  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 14);
 
   const serverClientId = clientLogicalIdByName(
     template,
@@ -323,6 +436,8 @@ test("dual exposes only auth endpoints and enables both server auth contracts", 
     (action: { Type: string }) => action.Type,
   ), ["forward"]);
   assert.equal(ruleAtPriority(template, 14), undefined);
+  assertAgentSemanticTaskContract(template);
+  assertAgentSemanticRulePrecedesCognito(template);
   assertAdminPolicyIsScoped(template);
 });
 
@@ -331,7 +446,9 @@ test("cutover forwards the catch-all before retaining rollback auth rules", () =
   assertLegacyAuthLogicalIds(template);
   template.resourceCountIs("AWS::Cognito::UserPoolClient", 2);
   template.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
-  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 14);
+  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 15);
+  assertAgentSemanticTaskContract(template);
+  assertAgentSemanticRulePrecedesCognito(template);
   assert.deepEqual(rulePaths(ruleAtPriority(template, 14)), ["/*"]);
   assert.deepEqual(ruleAtPriority(template, 14)?.Properties?.Actions?.map(
     (action: { Type: string }) => action.Type,
@@ -362,6 +479,7 @@ test("cleanup removes Hosted UI auth and keeps only application sessions", () =>
     assert.equal(environment.has(name), false, `cleanup retained ${name}`);
   }
   assert.equal(secrets.has("AUTH_SESSION_SECRET"), true);
+  assertAgentSemanticTaskContract(template);
   assert.equal(environment.get("DATABASE_SSL_CA_FILE"),
     "/app/certs/ap-northeast-2-bundle.pem");
   assert.doesNotMatch(JSON.stringify(task), /PENDING_ALB_ARN/);
@@ -420,8 +538,9 @@ function taskRuntime(template: Template) {
       container.Environment.map((entry: { Name: string; Value: unknown }) =>
         [entry.Name, entry.Value]),
     ),
-    secrets: new Set(
-      container.Secrets.map((entry: { Name: string }) => entry.Name),
+    secrets: new Map(
+      container.Secrets.map((entry: { Name: string; ValueFrom: unknown }) =>
+        [entry.Name, entry.ValueFrom]),
     ),
   };
 }
@@ -438,10 +557,60 @@ function ruleForPath(template: Template, path: string) {
   ).find((rule) => rulePaths(rule).includes(path));
 }
 
+function assertAgentSemanticRulePrecedesCognito(template: Template) {
+  const rule = ruleAtPriority(template, 12);
+  const cognitoRule = ruleAtPriority(template, 15);
+  assert.deepEqual(rulePaths(rule), ["/api/internal/agent/semantic"]);
+  assert.deepEqual(ruleMethods(rule), ["POST"]);
+  assert.deepEqual(
+    rule?.Properties?.Actions?.map((action: { Type: string }) => action.Type),
+    ["forward"],
+  );
+  assert.doesNotMatch(
+    JSON.stringify(rulePaths(rule)),
+    /\/api\/internal\/agent\/\*/,
+  );
+  assert.ok(rule?.Properties?.Priority < cognitoRule?.Properties?.Priority);
+  assert.equal(
+    cognitoRule?.Properties?.Actions?.[0]?.Type,
+    "authenticate-cognito",
+  );
+}
+
+function assertAgentSemanticTaskContract(template: Template) {
+  const { environment, secrets } = taskRuntime(template);
+  assert.deepEqual(environment.get("AGENT_SEMANTIC_AGENT_USER_ID"), {
+    Ref: "AgentSemanticAgentUserId",
+  });
+  assert.deepEqual(environment.get("AGENT_SEMANTIC_USER_EMAIL"), {
+    Ref: "InitialOwnerEmail",
+  });
+  assert.deepEqual(environment.get("AGENT_SEMANTIC_PRINCIPAL_SUBJECT"), {
+    Ref: "AgentSemanticPrincipalSubject",
+  });
+  assert.deepEqual(environment.get("AGENT_SEMANTIC_DEVICE_ID"), {
+    Ref: "AgentSemanticDeviceId",
+  });
+  assert.ok(secrets.has("AGENT_SEMANTIC_SECRET"));
+  assert.ok(secrets.has("AGENT_SEMANTIC_SIGNING_SECRET"));
+  assert.notDeepEqual(
+    secrets.get("AGENT_SEMANTIC_SECRET"),
+    secrets.get("AGENT_SEMANTIC_SIGNING_SECRET"),
+  );
+}
+
 function rulePaths(rule: ReturnType<typeof ruleAtPriority>) {
   return (rule?.Properties?.Conditions ?? [])
     .flatMap((condition: { PathPatternConfig?: { Values?: string[] } }) =>
       condition.PathPatternConfig?.Values ?? [])
+    .sort();
+}
+
+function ruleMethods(rule: ReturnType<typeof ruleAtPriority>) {
+  return (rule?.Properties?.Conditions ?? [])
+    .flatMap((condition: {
+      HttpRequestMethodConfig?: { Values?: string[] };
+    }) => condition.HttpRequestMethodConfig?.Values ?? [])
     .sort();
 }
 

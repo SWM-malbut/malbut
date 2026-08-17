@@ -17,6 +17,10 @@ Route 53 + ACM ── ALB ── ECS Fargate (public subnet, public IP)
                               ├── KVS broker Lambda Function URL
                               └── Push broker Lambda Function URL
 
+Malbut Agent Server
+  └── service bearer ── exact ALB path ── ECS semantic endpoint
+                                      └── 5초 HMAC 응답 envelope
+
 Jetson / Gazebo
   └── device bearer token ── ECS API ── 15분 STS ── KVS
 
@@ -39,6 +43,8 @@ Jetson / Gazebo
 - VAPID Web Push broker Lambda
 - 5분 주기 retention/push-outbox maintenance Lambda와 DLQ
 - ALB·ECS·RDS·Lambda 로그와 CloudWatch 경보, SNS topic
+- Agent 전용 semantic service bearer와 응답 HMAC signing key를 각각 보관하는
+  독립 Secrets Manager secret
 - 애플리케이션 ECR 저장소와 30일 ALB access log 버킷
 - 정확한 Git commit을 ARM64로 빌드해 ECR에 push하는 온디맨드 CodeBuild
 
@@ -87,10 +93,32 @@ Jetson / Gazebo
 - Cognito User Pool과 CloudFormation이 만든 최초 owner에는 `RETAIN`을 적용해
   client 교체나 우발적인 stack 삭제가 사용자 계정을 지우지 않게 한다.
 - `cleanup` 전 ALB는 `/api/health`, 로그아웃 완료 경로, 현재 구현된 장치 API와
-  내부 API 2개만 정확한 경로 규칙으로 Cognito 없이 전달한다. 장치·내부 API는
+  내부 API의 정확한 경로만 Cognito 없이 전달한다. 장치·내부 API는
   앱의 bearer/HMAC 검증이 최종 인증 경계다. 미래의 `/api/device/v1/*` 또는
   `/api/internal/*` 경로가 실수로 공개되지 않도록 wildcard 예외는 사용하지
   않는다.
+- `/api/internal/agent/semantic`은 `prepare`·`dual`·`cutover`에서 priority 12
+  exact-path + `POST` rule로 ECS에 전달된다. 이 규칙은 Cognito API
+  rule(priority 15)보다 먼저 적용되지만 인증을 생략한다는 뜻은 아니다.
+  endpoint가 ECS Secret으로 주입된 `AGENT_SEMANTIC_SECRET` bearer를 본문
+  파싱과 DB 조회 전에 검증하며, 없거나 틀리면 401로 종료한다. 다른 HTTP
+  method는 이 service 예외를 타지 않는다. `cleanup`에서는 listener 기본
+  forward 뒤에도 같은 애플리케이션 bearer 검증이 유지된다.
+- semantic service bearer와 HMAC signing key는 서로 다른 Secrets Manager
+  resource에서 독립적으로 생성하고 ECS `secrets`로만 주입한다. 두 값이 같거나
+  identity 설정이 불완전하면 endpoint는 fail-closed(404)한다. secret 값이나
+  raw principal subject를 CloudFormation output에 기록하지 않는다. 다만 raw
+  principal subject는 인증 secret이 아니며 ECS 일반 environment로 전달되므로
+  `DescribeTaskDefinition` 권한이 있는 운영자는 볼 수 있다. `NoEcho`는
+  CloudFormation parameter 표시를 가릴 뿐 ECS task 조회 권한을 대체하지 않는다.
+- 현재 semantic endpoint는 단일 owner·Agent user·device binding이다.
+  `InitialOwnerEmail` 하나를 Cognito 최초 owner와 semantic DB owner 조회에 같이
+  사용하며, `AgentSemanticDeviceId`는 배포에 포함된 `deviceIds` 중 하나만
+  허용한다. `AgentSemanticPrincipalSubject`는 실제 owner의 안정적인 인증
+  subject를 운영자가 입력해야 하며 응답에는 SHA-256 digest만 포함된다.
+  endpoint는 이 subject/email 쌍과 정확히 일치하는 활성·미폐기 Cognito 웹
+  세션도 DB `web_auth_sessions`에서 확인한다. 따라서 owner가 아직 로그인하지
+  않았거나 세션이 만료·폐기됐다면 고정 설정이 맞아도 403으로 닫힌다.
 - Cognito client의 `logout_uri` 허용 목록과 앱의 로그아웃 완료 경로는 모두
   `https://<homecam-domain>/auth/logout/complete`로 고정한다.
 - WebRTC 송신 계약은 H.264 영상과 Opus 오디오다. KVS Storage Session이
@@ -107,6 +135,9 @@ CloudFormation 배포 시 다음 parameter가 반드시 필요하다. 값은 저
 | `HomecamHostedZoneId` | 기존 public child Hosted Zone의 ID. `hyenje29.click` parent zone ID가 아니라 `malbut.hyenje29.click` zone ID |
 | `HomecamHostedZoneName` | 홈캠 주소로 사용할 child zone apex. 현재 값은 `malbut.hyenje29.click` |
 | `InitialOwnerEmail` | 최초 owner/broadcaster 이메일 |
+| `AgentSemanticAgentUserId` | Agent의 `MALBUT_AGENT_USER_ID`와 정확히 같은 안정적 사용자 ID |
+| `AgentSemanticPrincipalSubject` | 최초 owner의 안정적인 인증 subject 원문. 1~256자의 제한된 ASCII이며 `NoEcho` |
+| `AgentSemanticDeviceId` | Agent에 고정할 장치 ID. CDK `deviceIds` 목록 중 하나만 허용 |
 | `DeviceProvisioningManifestSha256` | helper가 생성한 one-time provisioning manifest의 소문자 SHA-256 |
 | `DeviceProvisioningExpiresAt` | provisioning 만료 UTC ISO 시각. 예: `2026-08-13T00:00:00.000Z` |
 | `VapidSubject` | `mailto:` 또는 HTTPS 연락처 |
@@ -121,6 +152,13 @@ CloudFormation 배포 시 다음 parameter가 반드시 필요하다. 값은 저
 - `ap-northeast-2`에 CDK bootstrap 완료
 - 최초 stack은 `ServiceDesiredCount=0`으로 생성해 ECR부터 준비
 - `InitialOwnerEmail`로 Cognito 임시 사용자 초대 이메일을 받을 수 있어야 함
+- `AgentSemanticPrincipalSubject`가 위 owner의 실제 인증 subject인지 관리자
+  조회로 확인하고, 그 원문 SHA-256을 Agent의
+  `MALBUT_HOMECAM_PRINCIPAL_SUBJECT_DIGEST`에 설정해야 함
+- stack output의 두 Agent semantic secret ARN에서 값을 안전한 배포 채널로
+  읽어 Agent의 `MALBUT_HOMECAM_AGENT_TOKEN`과
+  `MALBUT_HOMECAM_SIGNING_SECRET`에 각각 전달해야 함. 두 값을 서로 바꾸거나
+  같은 값으로 덮어쓰면 안 됨
 - 생성된 PostgreSQL에 AWS용 migration 적용
 - 애플리케이션이 Cognito admin auth·서버 세션과 PostgreSQL 환경 변수를
   사용하도록 포팅 완료
@@ -174,10 +212,14 @@ CI와 전환을 마친 정상 상태의 합성은 `cleanup`을 명시한다.
 - NAT Gateway가 없고 RDS는 isolated subnet을 사용하는지
 - HTTPS listener와 ACM DNS validation
 - `prepare`에서 기존 User Pool, `HomecamWebClient`, domain, listener rule의
-  logical ID와 ECS task definition이 운영 template과 동일한지
+  logical ID·priority가 유지되고, ECS task 변경이 문서화한 Agent semantic
+  environment/secret 추가로 한정되는지
 - `dual`에서 로그인·로그아웃 네 경로와 세션 확인용 `/api/auth/me`만 priority
   11 forward이고 기존 `authenticate-cognito` rule이 priority 15/20에 남아 있는지
 - `cutover`에서 priority 14 `/*` forward가 기존 인증 rule보다 먼저 실행되는지
+- `prepare`·`dual`·`cutover`에서 priority 12가 오직
+  `/api/internal/agent/semantic`의 `POST`만 forward하고 priority 15 Cognito API
+  rule보다 먼저인지
 - `cleanup`에서 listener default action만 forward이고 Hosted UI client,
   domain, `authenticate-cognito` rule이 모두 사라지는지
 - `malbut.hyenje29.click` child Hosted Zone apex의 ALB alias A record
@@ -185,6 +227,9 @@ CI와 전환을 마친 정상 상태의 합성은 `cleanup`을 명시한다.
 - 별도 서버 client에 `ALLOW_ADMIN_USER_PASSWORD_AUTH`와 token refresh만
   활성화되고 OAuth와 client secret이 없는지
 - ECS task role의 Cognito admin auth 권한이 User Pool ARN 하나로 제한되는지
+- ECS task definition의 `AGENT_SEMANTIC_SECRET`과
+  `AGENT_SEMANTIC_SIGNING_SECRET`이 서로 다른 Secrets Manager ARN을 가리키고,
+  네 identity 환경 변수가 위 CloudFormation parameter를 참조하는지
 
 ## 배포 인계
 
@@ -197,7 +242,7 @@ CI와 전환을 마친 정상 상태의 합성은 `cleanup`을 명시한다.
 `containerImageTag`는 해당 단계에서 검증한 불변 Git SHA로 지정한다.
 
 ```bash
-# 1. 새 server auth client와 session secret만 추가. 기존 ECS/ALB는 불변이어야 한다.
+# 1. server auth와 Agent semantic 선행 리소스를 추가하되 기존 auth ID는 보존한다.
 npx cdk -c authMigrationPhase=prepare \
   -c containerImageTag="$OLD_IMAGE_SHA" diff MalbutHomecam-dev --no-change-set
 npx cdk -c authMigrationPhase=prepare \
@@ -224,8 +269,10 @@ npx cdk -c authMigrationPhase=cleanup \
 
 단계별 확인과 롤백은 다음과 같다.
 
-- `prepare`: diff가 서버 client, session secret, User Pool/owner의 `RETAIN` 변경만
-  포함해야 한다. ECS task definition, 기존 client/domain/rule 변경이 보이면 중단한다.
+- `prepare`: 기존 인증 전환 변경에 더해 두 Agent secret, 세 identity 입력,
+  ECS task revision, priority 12 exact-path rule만 의도된 추가 변경이다. 기존
+  User Pool·owner·client·domain·listener rule의 logical ID 또는 기존 priority
+  변경이 보이면 중단한다.
 - `dual`: `/auth/login`, `/api/auth/login`, `/auth/logout`, `/api/auth/logout`을
   확인하고, `/auth/login?return_to=%2Fapi%2Fauth%2Fme`에서 로그인해 전후
   `/api/auth/me`의 401/성공 응답으로 새 opaque session을 E2E 검증한다. 이
@@ -240,6 +287,31 @@ npx cdk -c authMigrationPhase=cleanup \
 신규 stack을 처음 만드는 경우에는 기존 절차대로 `ServiceDesiredCount=0`으로
 리소스와 ECR을 만든 뒤 이미지를 올리고, `ServiceDesiredCount=1`과 `cleanup`으로
 바로 시작할 수 있다. 기존 운영 stack에서는 반드시 네 단계를 사용한다.
+
+Agent semantic 값을 넘기는 형태는 다음과 같다. 실제 값은 셸 history나 문서에
+남기지 말고 승인된 secret/parameter 전달 수단을 사용한다.
+
+```bash
+npx cdk -c authMigrationPhase=prepare deploy MalbutHomecam-dev \
+  --parameters MalbutHomecam-dev:InitialOwnerEmail="$OWNER_EMAIL" \
+  --parameters MalbutHomecam-dev:AgentSemanticAgentUserId="$AGENT_USER_ID" \
+  --parameters MalbutHomecam-dev:AgentSemanticPrincipalSubject="$OWNER_SUBJECT" \
+  --parameters MalbutHomecam-dev:AgentSemanticDeviceId="$AGENT_DEVICE_ID"
+```
+
+배포 후 최소 smoke test는 다음 네 가지를 구분한다.
+
+1. bearer 없음·오류: Cognito redirect가 아니라 endpoint의 `401`
+2. 올바른 bearer지만 identity/body 불일치: `400`
+3. 올바른 bearer·identity지만 활성 owner session/finalized map 불충족: `403`
+4. 모든 binding 충족: 5초 TTL과 HMAC signature가 있는 `200`
+
+ALB forward 성공만으로 인증 또는 semantic 데이터 권한이 성공했다고 판단하면
+안 된다. 또한 이 stack은 입력한 principal subject와 Cognito user의 `sub` 관계를
+CloudFormation 안에서 조회·증명하지 않는다. endpoint의 활성 웹 세션 검사가
+런타임 오결속을 차단하고 잘못된 subject는 Agent의 digest 검증에서도 닫히지만,
+배포 전 `AdminGetUser` 기반 확인은 여전히 운영자의 필수 절차다. 첫 200 smoke
+test 전에 해당 owner가 새 애플리케이션 세션으로 로그인해야 한다.
 
 dev stack은 반복 실험을 위해 RDS·KVS·Secrets 등에 `DESTROY` 정책을 쓰지만,
 Cognito User Pool과 최초 owner만은 `RETAIN`으로 보호한다.

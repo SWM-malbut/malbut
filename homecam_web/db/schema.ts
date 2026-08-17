@@ -33,6 +33,8 @@ export const deviceMemberships = pgTable(
       .references(() => devices.id, { onDelete: "cascade" }),
     userEmail: text("user_email").notNull(),
     role: text("role").notNull().default("owner"),
+    bindingGeneration: bigint("binding_generation", { mode: "bigint" })
+      .notNull(),
     createdAt: timestampText("created_at").notNull().defaultNow(),
   },
   (table) => [
@@ -256,6 +258,8 @@ export const robotMaps = pgTable("robot_maps", {
   previewBase64: text("preview_base64").notNull(),
   userMapJson: text("user_map_json"),
   semanticZonesJson: text("semantic_zones_json"),
+  serverGeneration: bigint("server_generation", { mode: "bigint" })
+    .notNull(),
   sourceCreatedAt: timestampText("source_created_at"),
   updatedAt: timestampText("updated_at").notNull().defaultNow(),
 });

@@ -1,6 +1,9 @@
 const MAX_STATE_BYTES = 64 * 1024;
 const MAX_MAP_BYTES = 2 * 1024 * 1024;
 const MAX_COMMAND_BYTES = 1024 * 1024;
+const MAX_SEMANTIC_JSON_BYTES = 1_500_000;
+const MAX_SEMANTIC_JSON_NODES = 100_000;
+const MAX_SEMANTIC_JSON_DEPTH = 32;
 const REVISION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export type RobotPose = { x: number; y: number; yaw: number };
@@ -131,9 +134,12 @@ export function parseRobotState(value: unknown, nowMs = Date.now()): RobotStateU
 export function parseRobotMap(value: unknown): RobotMapUpload | null {
   if (!isObject(value) || !isObject(value.geometry)) return null;
   const geometry = value.geometry;
+  const semanticZones = isObject(value.semanticZones)
+    ? value.semanticZones
+    : null;
   if (
     !shortString(value.revision, 128) || !REVISION.test(value.revision) ||
-    !(value.finalized === undefined || typeof value.finalized === "boolean") ||
+    typeof value.finalized !== "boolean" ||
     !shortString(value.mapId, 128) || !REVISION.test(value.mapId) ||
     !shortString(value.mapRevision, 128) || !REVISION.test(value.mapRevision) ||
     !(value.sourceCreatedAt === null || validIso(value.sourceCreatedAt)) ||
@@ -148,12 +154,11 @@ export function parseRobotMap(value: unknown): RobotMapUpload | null {
     !(
       value.semanticZones === undefined || value.semanticZones === null ||
       isObject(value.semanticZones)
-    )
+    ) ||
+    !validBoundedSemanticJson(value.userMap, semanticZones)
   ) return null;
   return {
-    finalized: typeof value.finalized === "boolean"
-      ? value.finalized
-      : !value.revision.startsWith("live-"),
+    finalized: value.finalized,
     revision: value.revision,
     mapId: value.mapId,
     mapRevision: value.mapRevision,
@@ -168,8 +173,91 @@ export function parseRobotMap(value: unknown): RobotMapUpload | null {
     },
     previewBase64: value.previewBase64,
     userMap: value.userMap,
-    semanticZones: isObject(value.semanticZones) ? value.semanticZones : null,
+    semanticZones,
   };
+}
+
+/**
+ * Validate the two arbitrary semantic JSON trees without recursion before
+ * either one can reach the recursive canonicalizer used by the Agent API.
+ * Uploads originate in JSON, so accessors, sparse arrays, symbols, repeated
+ * object references, and other JavaScript-only values are rejected as well.
+ */
+function validBoundedSemanticJson(...roots: unknown[]) {
+  const pending = roots.map((item) => ({ item, depth: 0 }));
+  const visited = new WeakSet<object>();
+  let bytes = 32;
+  let nodes = 0;
+
+  try {
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (!current) return false;
+      nodes += 1;
+      if (
+        nodes > MAX_SEMANTIC_JSON_NODES ||
+        current.depth > MAX_SEMANTIC_JSON_DEPTH
+      ) return false;
+
+      const item = current.item;
+      if (item === null) {
+        bytes += 4;
+      } else if (typeof item === "boolean") {
+        bytes += item ? 4 : 5;
+      } else if (typeof item === "number") {
+        if (!Number.isFinite(item)) return false;
+        bytes += JSON.stringify(item).length;
+      } else if (typeof item === "string") {
+        const rawBytes = Buffer.byteLength(item, "utf8");
+        if (rawBytes > MAX_SEMANTIC_JSON_BYTES) return false;
+        bytes += Buffer.byteLength(JSON.stringify(item), "utf8");
+      } else if (typeof item === "object") {
+        if (visited.has(item)) return false;
+        visited.add(item);
+
+        if (Array.isArray(item)) {
+          const keys = Object.keys(item);
+          if (
+            keys.length !== item.length ||
+            keys.some((key, index) => key !== String(index)) ||
+            nodes + pending.length + item.length > MAX_SEMANTIC_JSON_NODES
+          ) return false;
+          bytes += 2 + Math.max(0, item.length - 1);
+          for (let index = item.length - 1; index >= 0; index -= 1) {
+            pending.push({ item: item[index], depth: current.depth + 1 });
+          }
+        } else {
+          const keys = Reflect.ownKeys(item);
+          if (
+            keys.some((key) => typeof key !== "string") ||
+            nodes + pending.length + keys.length > MAX_SEMANTIC_JSON_NODES
+          ) return false;
+          const descriptors = Object.getOwnPropertyDescriptors(item);
+          if (keys.some((key) => {
+            const descriptor = descriptors[key as string];
+            return !descriptor || !descriptor.enumerable || !("value" in descriptor);
+          })) return false;
+          bytes += 2 + Math.max(0, keys.length - 1);
+          for (const key of keys) {
+            const stringKey = key as string;
+            const rawKeyBytes = Buffer.byteLength(stringKey, "utf8");
+            if (rawKeyBytes > MAX_SEMANTIC_JSON_BYTES) return false;
+            bytes += Buffer.byteLength(JSON.stringify(stringKey), "utf8") + 1;
+            pending.push({
+              item: descriptors[stringKey].value,
+              depth: current.depth + 1,
+            });
+          }
+        }
+      } else {
+        return false;
+      }
+      if (bytes > MAX_SEMANTIC_JSON_BYTES) return false;
+    }
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 function validSemanticCommand(operation: RobotOperation, payload: Record<string, unknown>) {

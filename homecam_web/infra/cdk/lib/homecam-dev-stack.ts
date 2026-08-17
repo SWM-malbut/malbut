@@ -88,7 +88,7 @@ export class HomecamDevStack extends Stack {
     Tags.of(this).add("Environment", props.stage);
     Tags.of(this).add("ManagedBy", "aws-cdk");
 
-    const parameters = deploymentParameters(this);
+    const parameters = deploymentParameters(this, props.deviceIds);
     const homecamDomainName = parameters.hostedZoneName.valueAsString;
     const hostedZone = route53.HostedZone.fromHostedZoneAttributes(
       this,
@@ -303,6 +303,16 @@ export class HomecamDevStack extends Stack {
       this,
       "ProvisioningSecret",
       `${prefix}/device-provisioning-secret`,
+    );
+    const agentSemanticServiceSecret = generatedSecret(
+      this,
+      "AgentSemanticServiceSecret",
+      `${prefix}/agent-semantic-service-secret`,
+    );
+    const agentSemanticSigningSecret = generatedSecret(
+      this,
+      "AgentSemanticSigningSecret",
+      `${prefix}/agent-semantic-signing-secret`,
     );
     const authSessionSecret = new secretsmanager.Secret(this, "AuthSessionSecret", {
       secretName: `${prefix}/auth-session-secret`,
@@ -662,6 +672,14 @@ export class HomecamDevStack extends Stack {
         AUTH_PUBLIC_ORIGIN: Fn.join("", ["https://", homecamDomainName]),
         PETCAM_DEVICE_ID: props.deviceIds[0]!,
         PETCAM_BROADCASTER_EMAILS: parameters.initialOwnerEmail.valueAsString,
+        AGENT_SEMANTIC_AGENT_USER_ID:
+          parameters.agentSemanticAgentUserId.valueAsString,
+        AGENT_SEMANTIC_USER_EMAIL:
+          parameters.initialOwnerEmail.valueAsString,
+        AGENT_SEMANTIC_PRINCIPAL_SUBJECT:
+          parameters.agentSemanticPrincipalSubject.valueAsString,
+        AGENT_SEMANTIC_DEVICE_ID:
+          parameters.agentSemanticDeviceId.valueAsString,
         DEVICE_PROVISIONING_MANIFEST_SHA256:
           parameters.deviceProvisioningManifestSha256.valueAsString,
         DEVICE_PROVISIONING_EXPIRES_AT:
@@ -691,6 +709,10 @@ export class HomecamDevStack extends Stack {
         MAINTENANCE_SECRET: ecs.Secret.fromSecretsManager(maintenanceSecret),
         DEVICE_PROVISIONING_SECRET:
           ecs.Secret.fromSecretsManager(provisioningSecret),
+        AGENT_SEMANTIC_SECRET:
+          ecs.Secret.fromSecretsManager(agentSemanticServiceSecret),
+        AGENT_SEMANTIC_SIGNING_SECRET:
+          ecs.Secret.fromSecretsManager(agentSemanticSigningSecret),
         ...(usesApplicationSession
           ? {
               AUTH_SESSION_SECRET:
@@ -811,6 +833,16 @@ export class HomecamDevStack extends Stack {
           action: elbv2.ListenerAction.forward([service.targetGroup]),
         });
       }
+      service.listener.addAction("AgentSemanticApi", {
+        priority: 12,
+        conditions: [
+          elbv2.ListenerCondition.pathPatterns([
+            "/api/internal/agent/semantic",
+          ]),
+          elbv2.ListenerCondition.httpRequestMethods(["POST"]),
+        ],
+        action: elbv2.ListenerAction.forward([service.targetGroup]),
+      });
       if (props.authMigrationPhase === "cutover") {
         service.listener.addAction("ApplicationAuthCutover", {
           priority: 14,
@@ -987,6 +1019,12 @@ export class HomecamDevStack extends Stack {
     }
     new CfnOutput(this, "KvsBrokerFunctionUrl", { value: kvsBrokerUrl.url });
     new CfnOutput(this, "PushBrokerFunctionUrl", { value: pushBrokerUrl.url });
+    new CfnOutput(this, "AgentSemanticServiceSecretArn", {
+      value: agentSemanticServiceSecret.secretArn,
+    });
+    new CfnOutput(this, "AgentSemanticSigningSecretArn", {
+      value: agentSemanticSigningSecret.secretArn,
+    });
     new CfnOutput(this, "KvsDeviceChannelsJson", {
       value: kvsDeviceMapping,
       description: "Server-only device mapping; do not expose in public client config",
@@ -995,7 +1033,7 @@ export class HomecamDevStack extends Stack {
   }
 }
 
-function deploymentParameters(stack: Stack) {
+function deploymentParameters(stack: Stack, deviceIds: readonly string[]) {
   return {
     hostedZoneId: new CfnParameter(stack, "HomecamHostedZoneId", {
       type: "String",
@@ -1012,6 +1050,37 @@ function deploymentParameters(stack: Stack) {
       description: "Initial homecam owner and broadcaster email",
       allowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
     }),
+    agentSemanticAgentUserId: new CfnParameter(
+      stack,
+      "AgentSemanticAgentUserId",
+      {
+        type: "String",
+        description:
+          "Stable Agent user ID bound to the single-owner semantic endpoint",
+        allowedPattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      },
+    ),
+    agentSemanticPrincipalSubject: new CfnParameter(
+      stack,
+      "AgentSemanticPrincipalSubject",
+      {
+        type: "String",
+        description:
+          "Stable authenticated owner subject; the endpoint exposes only its SHA-256 digest",
+        allowedPattern: "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$",
+        noEcho: true,
+      },
+    ),
+    agentSemanticDeviceId: new CfnParameter(
+      stack,
+      "AgentSemanticDeviceId",
+      {
+        type: "String",
+        description:
+          "One configured homecam device bound to the Agent semantic endpoint",
+        allowedValues: [...deviceIds],
+      },
+    ),
     deviceProvisioningManifestSha256: new CfnParameter(
       stack,
       "DeviceProvisioningManifestSha256",
