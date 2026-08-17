@@ -45,8 +45,19 @@ def _saved_initial_pose(active: dict) -> dict[str, str] | None:
     return {name: str(value) for name, value in values.items()}
 
 
-def _simulation_initial_pose(context, share: Path) -> dict[str, str]:
-    """Resolve the same catalog/override pose used by Gazebo spawning."""
+def _simulation_initial_pose(
+    context,
+    share: Path,
+    saved_pose: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """
+    Resolve one pose shared by Gazebo spawning and AMCL.
+
+    An explicit launch override wins.  Otherwise a saved map pose is used
+    before falling back to the world catalog.  Sharing this result prevents
+    Gazebo from spawning at the catalog pose while AMCL is initialized at a
+    different saved pose.
+    """
     world_name = LaunchConfiguration("world_name").perform(context)
     _, config = resolve_world(
         share / "config" / "worlds.yaml", share / "worlds", world_name
@@ -54,7 +65,64 @@ def _simulation_initial_pose(context, share: Path) -> dict[str, str]:
     pose = {}
     for name in ("x", "y", "yaw"):
         override = LaunchConfiguration(name).perform(context).strip()
-        pose[name] = override or str(config["spawn"][name])
+        fallback = (
+            saved_pose[name]
+            if saved_pose is not None
+            else str(config["spawn"][name])
+        )
+        pose[name] = override or fallback
+    return pose
+
+
+def _localization_arguments(
+    trusted_pose: dict[str, str] | None,
+    trusted_handoff: bool = False,
+) -> dict[str, str]:
+    """
+    Return fail-closed localization arguments for this runtime.
+
+    A simulator can be deterministically spawned at ``trusted_pose`` and
+    AMCL may therefore use that same pose.  Real hardware must not trust a map
+    revision's last pose after a restart: it may have been carried while off.
+    A SLAM-to-navigation handoff is allowed only when the supervisor proves
+    that the odometry source stayed alive.  A hardware boot defaults to no
+    initial pose and therefore leaves navigation unlocalized.
+    """
+    if trusted_pose is None and trusted_handoff:
+        return {
+            "restore_localization": "true",
+            "set_initial_pose": "false",
+        }
+    if trusted_pose is None:
+        return {
+            "restore_localization": "false",
+            "set_initial_pose": "false",
+        }
+    return {
+        "restore_localization": "false",
+        "set_initial_pose": "true",
+        "initial_pose_x": trusted_pose["x"],
+        "initial_pose_y": trusted_pose["y"],
+        "initial_pose_yaw": trusted_pose["yaw"],
+    }
+
+
+def _explicit_initial_pose(context) -> dict[str, str]:
+    """Return a finite pose supplied by a trusted runtime supervisor."""
+    pose = {}
+    for name in ("x", "y", "yaw"):
+        raw = LaunchConfiguration(name).perform(context).strip()
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as error:
+            raise RuntimeError(
+                f"trusted_initial_pose requires a finite {name}"
+            ) from error
+        if not math.isfinite(value):
+            raise RuntimeError(
+                f"trusted_initial_pose requires a finite {name}"
+            )
+        pose[name] = str(value)
     return pose
 
 
@@ -66,6 +134,14 @@ def _select_mode(context):
     forced = _is_true(LaunchConfiguration("force_mapping").perform(context))
     simulation_enabled = _is_true(
         LaunchConfiguration("simulation").perform(context)
+    )
+    trusted_initial_pose = _is_true(
+        LaunchConfiguration("trusted_initial_pose").perform(context)
+    )
+    trusted_localization_handoff = _is_true(
+        LaunchConfiguration(
+            "trusted_localization_handoff"
+        ).perform(context)
     )
     active = load_active_revision(store)
     common = {
@@ -102,35 +178,33 @@ def _select_mode(context):
     user_map = str((store / active["user_map"]).resolve())
     revision = (store / active["map_yaml"]).resolve().parent
     zone_mask = revision / "zone-filter.yaml"
+    saved_pose = _saved_initial_pose(active)
+    simulation_pose = None
     actions = []
     if simulation_enabled:
+        simulation_pose = _simulation_initial_pose(
+            context, share, saved_pose
+        )
         actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 str(share / "launch" / "worlds.launch.py")
             ),
             launch_arguments={
                 **common,
+                "x": simulation_pose["x"],
+                "y": simulation_pose["y"],
+                "yaw": simulation_pose["yaw"],
                 "rviz": "false",
                 "lidar_enabled": "true",
                 "spawn_robot": "true",
                 "bridge": "true",
             }.items(),
         ))
-    initial_pose = _saved_initial_pose(active)
-    if initial_pose is None and simulation_enabled:
-        initial_pose = _simulation_initial_pose(context, share)
-    localization_arguments = {
-        "restore_localization": "true",
-        "set_initial_pose": "false",
-    }
-    if initial_pose is not None:
-        localization_arguments = {
-            "restore_localization": "false",
-            "set_initial_pose": "true",
-            "initial_pose_x": initial_pose["x"],
-            "initial_pose_y": initial_pose["y"],
-            "initial_pose_yaw": initial_pose["yaw"],
-        }
+    elif trusted_initial_pose:
+        simulation_pose = _explicit_initial_pose(context)
+    localization_arguments = _localization_arguments(
+        simulation_pose, trusted_localization_handoff
+    )
     navigation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             str(share / "launch" / "navigation.launch.py")
@@ -199,6 +273,25 @@ def generate_launch_description():
             default_value="true",
             description=(
                 "Start Gazebo; set false when real robot drivers are running."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "trusted_initial_pose",
+            default_value="false",
+            description=(
+                "Allow explicit x/y/yaw initialization only when an external "
+                "supervisor also owns the simulator spawn or a verified "
+                "hardware localization anchor. Real robots must leave this "
+                "false unless that invariant is proven."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "trusted_localization_handoff",
+            default_value="false",
+            description=(
+                "Restore a saved map-to-odom handoff only when an external "
+                "supervisor proves that the same odometry session remained "
+                "alive. Never enable this merely because a pose was saved."
             ),
         ),
         DeclareLaunchArgument("web_host", default_value="127.0.0.1"),

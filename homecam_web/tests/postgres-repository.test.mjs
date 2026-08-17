@@ -331,6 +331,43 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         }),
         null,
       );
+      const room = (id, minimumX = 0) => ({
+        type: "Feature",
+        id,
+        properties: { role: "room", room_id: id, name: id },
+        geometry: {
+          type: "Polygon",
+          coordinates: [[
+            [minimumX, 0], [minimumX + 2, 0], [minimumX + 2, 2],
+            [minimumX, 2], [minimumX, 0],
+          ]],
+        },
+      });
+      assert.ok(robotContract.parseRobotCommand({
+        operation: "room_split",
+        payload: {
+          room: room("room-a"),
+          lines: [[[1, 0], [1, 2]], [[0, 1], [2, 1]]],
+          resolution: 0.05,
+          minimum_room_area: 1,
+        },
+      }));
+      assert.equal(robotContract.parseRobotCommand({
+        operation: "room_split",
+        payload: { room: room("room-a"), lines: [[[1, 0]]], resolution: 0.05 },
+      }), null);
+      assert.ok(robotContract.parseRobotCommand({
+        operation: "room_merge",
+        payload: { rooms: [room("room-a"), room("room-b", 2)], resolution: 0.05 },
+      }));
+      assert.equal(robotContract.parseRobotCommand({
+        operation: "room_merge",
+        payload: { rooms: [room("room-a"), room("room-b", 2), room("room-c", 4)] },
+      }), null);
+      assert.equal(robotContract.parseRobotCommand({
+        operation: "room_merge",
+        payload: { rooms: [room("room-a"), room("room-a")] },
+      }), null);
     });
 
     const persisted = await database.query(`

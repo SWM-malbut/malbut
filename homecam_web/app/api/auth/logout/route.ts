@@ -108,7 +108,7 @@ function sameOriginJsonRequest(request: Request) {
   return request.headers.get("origin") === expected;
 }
 
-export function expireAllAuthenticationCookies(response: NextResponse) {
+function expireAllAuthenticationCookies(response: NextResponse) {
   expireApplicationCookie(response, WEB_SESSION_COOKIE);
   expireApplicationCookie(response, WEB_CHALLENGE_COOKIE);
   expireApplicationCookie(response, LOGOUT_RETURN_COOKIE);

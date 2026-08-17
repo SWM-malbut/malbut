@@ -285,6 +285,11 @@ def test_mapping_launches_separate_hardware_and_simulation_layers():
         "managed_home.launch.py", "malbut_managed_home_launch"
     )
     assert _launch_defaults(managed)["simulation"] == "true"
+    assert _launch_defaults(managed)["trusted_initial_pose"] == "false"
+    assert (
+        _launch_defaults(managed)["trusted_localization_handoff"]
+        == "false"
+    )
     assert sum(
         isinstance(entity, OpaqueFunction) for entity in managed.entities
     ) == 1
@@ -310,3 +315,89 @@ def test_managed_launch_accepts_only_finite_saved_initial_pose():
     assert module._saved_initial_pose({
         "initial_pose": {"x": float("nan"), "y": 0.0, "yaw": 0.0}
     }) is None
+
+
+def test_managed_launch_uses_one_pose_for_simulation_spawn_and_amcl():
+    """A saved map pose must initialize both physics and localization."""
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "launch"
+        / "managed_home.launch.py"
+    )
+    specification = importlib.util.spec_from_file_location(
+        "malbut_managed_home_simulation_pose", path
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    context = LaunchContext()
+    context.launch_configurations.update({
+        "world_name": "small_house",
+        "x": "",
+        "y": "",
+        "yaw": "",
+    })
+    saved = {"x": "1.25", "y": "-0.5", "yaw": "0.75"}
+
+    pose = module._simulation_initial_pose(
+        context, Path(__file__).resolve().parents[1], saved
+    )
+
+    assert pose == saved
+    assert module._localization_arguments(pose) == {
+        "restore_localization": "false",
+        "set_initial_pose": "true",
+        "initial_pose_x": "1.25",
+        "initial_pose_y": "-0.5",
+        "initial_pose_yaw": "0.75",
+    }
+
+
+def test_managed_hardware_restart_does_not_trust_map_last_pose():
+    """Hardware remains unlocalized when safe state restoration is rejected."""
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "launch"
+        / "managed_home.launch.py"
+    )
+    specification = importlib.util.spec_from_file_location(
+        "malbut_managed_home_hardware_pose", path
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+
+    assert module._localization_arguments(None) == {
+        "restore_localization": "false",
+        "set_initial_pose": "false",
+    }
+    assert module._localization_arguments(None, True) == {
+        "restore_localization": "true",
+        "set_initial_pose": "false",
+    }
+
+
+def test_managed_trusted_pose_requires_finite_explicit_coordinates():
+    """A supervisor opt-in must never silently fall back to zero."""
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "launch"
+        / "managed_home.launch.py"
+    )
+    specification = importlib.util.spec_from_file_location(
+        "malbut_managed_home_trusted_pose", path
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    context = LaunchContext()
+    context.launch_configurations.update({
+        "x": "-1.25", "y": "2.5", "yaw": "0.75"
+    })
+
+    assert module._explicit_initial_pose(context) == {
+        "x": "-1.25", "y": "2.5", "yaw": "0.75"
+    }
+    context.launch_configurations["x"] = ""
+    with pytest.raises(RuntimeError, match="finite x"):
+        module._explicit_initial_pose(context)

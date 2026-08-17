@@ -592,29 +592,6 @@ def render_preview(
             slam_map.transform.pixel(point) for point in outline
         ], dtype=np.int32)
         cv2.polylines(canvas, [pixels], True, (48, 59, 70), 2)
-    for room in rooms:
-        center = slam_map.transform.pixel(
-            room["properties"]["centroid"]
-        )
-        label = room["properties"]["room_id"].split("-")[-1]
-        cv2.circle(canvas, center, 11, (255, 255, 255), -1)
-        cv2.circle(canvas, center, 11, (74, 84, 94), 1)
-        text_size, _ = cv2.getTextSize(
-            label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1
-        )
-        cv2.putText(
-            canvas,
-            label,
-            (
-                center[0] - text_size[0] // 2,
-                center[1] + text_size[1] // 2,
-            ),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            (48, 59, 70),
-            1,
-            cv2.LINE_AA,
-        )
     return canvas
 
 

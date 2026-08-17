@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "test": "npm run build && node --test tests/*.test.mjs",
     "test:unit": "node --test tests/*.test.mjs",
