@@ -256,6 +256,34 @@ class ByteTrackTracker(PersonTracker):
             <= self._reid_max_inactive_frames
         ]
 
+    def needs_appearance_features(
+        self,
+        detections: Sequence[ImageDetection],
+    ) -> bool:
+        """Return whether geometry alone cannot safely associate a person."""
+        high = [
+            index
+            for index, detection in enumerate(detections)
+            if detection.score >= self._high_threshold
+        ]
+        if not high:
+            return False
+        if not self._tracks:
+            return True
+
+        features: List[AppearanceFeature] = [None] * len(detections)
+        _, _, unmatched_high = _greedy_matches(
+            self._tracks,
+            list(range(len(self._tracks))),
+            detections,
+            high,
+            features,
+            self._match_iou_threshold,
+            self._appearance_threshold,
+            self._appearance_weight,
+        )
+        return bool(unmatched_high)
+
     def update(
         self,
         detections: List[ImageDetection],

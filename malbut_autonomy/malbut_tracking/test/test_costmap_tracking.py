@@ -126,6 +126,15 @@ def test_static_exclusion_margin_rejects_localization_edge_noise():
     assert clusters == []
 
 
+def test_camera_label_gate_rejects_nearby_unrelated_obstacle():
+    """Nearby furniture cannot steal a visible camera person's label."""
+    tracker = _tracker(confirmation_hits=1, camera_label_gate_m=0.40)
+    _step(tracker, {(10, 10)}, 1.0)
+    target = tracker.bind('person', Point2D(1.50, 1.05), 'detector-1')
+    assert target is None
+    assert tracker.target is None
+
+
 def test_person_label_requires_confirmed_repeated_costmap_track():
     """A one-frame costmap artifact may be labeled but never drive motion."""
     tracker = _tracker()

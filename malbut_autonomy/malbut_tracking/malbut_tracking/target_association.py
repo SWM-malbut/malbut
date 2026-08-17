@@ -1,4 +1,4 @@
-"""Associate changing person detections by map-frame position continuity."""
+"""Select the camera-observed person without rejecting visible detections."""
 
 from dataclasses import dataclass
 
@@ -18,12 +18,9 @@ class TargetCandidate:
 def select_target_candidate(
     candidates: list[TargetCandidate],
     predicted_position: Point2D | None,
-    maximum_distance_m: float,
     preferred_track_id: str = '',
 ) -> TargetCandidate | None:
-    """Preserve a person by Re-ID first and spatial continuity second."""
-    if maximum_distance_m <= 0.0:
-        raise ValueError('maximum association distance must be positive')
+    """Prefer Re-ID, then choose the visible camera person by continuity."""
     if not candidates:
         return None
     if preferred_track_id:
@@ -57,6 +54,4 @@ def select_target_candidate(
             candidate.source_index,
         ),
     )
-    if distance(nearest.position, predicted_position) > maximum_distance_m:
-        return None
     return nearest

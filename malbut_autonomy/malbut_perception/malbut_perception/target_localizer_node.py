@@ -43,6 +43,49 @@ from .reid import (
 from .tracker import ByteTrackTracker, TrackedDetection
 
 
+class TimestampRateLimiter:
+    """Select source timestamps without drifting on discrete camera periods."""
+
+    _MAX_TOLERANCE_NS = 5_000_000
+
+    def __init__(self) -> None:
+        self._interval_ns: Optional[int] = None
+        self._last_input_ns: Optional[int] = None
+        self._next_due_ns: Optional[int] = None
+
+    def should_process(self, stamp_ns: int, rate_hz: float) -> bool:
+        """Return whether a frame belongs to the requested sampling cadence."""
+        if rate_hz <= 0.0:
+            self._interval_ns = None
+            self._last_input_ns = stamp_ns
+            self._next_due_ns = None
+            return True
+
+        interval_ns = max(1, int(round(1_000_000_000 / rate_hz)))
+        clock_reset = (
+            self._last_input_ns is not None
+            and stamp_ns < self._last_input_ns
+        )
+        rate_changed = self._interval_ns != interval_ns
+        self._last_input_ns = stamp_ns
+        if clock_reset or rate_changed or self._next_due_ns is None:
+            self._interval_ns = interval_ns
+            self._next_due_ns = stamp_ns + interval_ns
+            return True
+
+        tolerance_ns = min(
+            self._MAX_TOLERANCE_NS,
+            max(1, interval_ns // 20),
+        )
+        if stamp_ns + tolerance_ns < self._next_due_ns:
+            return False
+
+        overdue_ns = stamp_ns + tolerance_ns - self._next_due_ns
+        elapsed_periods = overdue_ns // interval_ns + 1
+        self._next_due_ns += elapsed_periods * interval_ns
+        return True
+
+
 def _rotate_vector(
     point: Tuple[float, float, float],
     rotation: Quaternion,
@@ -130,7 +173,8 @@ class PersonLocalizerNode(Node):
             ),
         )
         self._camera_info: Optional[CameraInfo] = None
-        self._last_processed_ns: Optional[int] = None
+        self._rate_limiter = TimestampRateLimiter()
+        self._inference_frame_index = 0
         self._warning_times: Dict[str, int] = {}
 
         self._output_frame = str(self.get_parameter('output_frame').value)
@@ -250,6 +294,7 @@ class PersonLocalizerNode(Node):
         self.declare_parameter('reid_cosine_threshold', 0.25)
         self.declare_parameter('reid_max_inactive_frames', 300)
         self.declare_parameter('reid_feature_budget', 30)
+        self.declare_parameter('reid_refresh_interval_frames', 3)
         self.declare_parameter('reid_minimum_crop_width', 16)
         self.declare_parameter('reid_minimum_crop_height', 32)
         self.declare_parameter('depth_roi_scale', 0.45)
@@ -265,7 +310,7 @@ class PersonLocalizerNode(Node):
         self.declare_parameter('person_thickness_m', 0.35)
         self.declare_parameter('sync_queue_size', 10)
         self.declare_parameter('sync_slop_sec', 0.08)
-        self.declare_parameter('max_inference_rate_hz', 6.0)
+        self.declare_parameter('max_inference_rate_hz', 8.0)
         self.declare_parameter('publish_debug_image', True)
         self.declare_parameter('debug_image_transport', 'compressed')
         self.declare_parameter('debug_jpeg_quality', 80)
@@ -327,6 +372,12 @@ class PersonLocalizerNode(Node):
         )
         if opencv_threads < 1:
             raise ValueError('opencv_num_threads must be positive')
+        if int(
+            self.get_parameter('reid_refresh_interval_frames').value
+        ) < 1:
+            raise ValueError(
+                'reid_refresh_interval_frames must be positive'
+            )
 
     def _create_detector(self) -> PersonDetector:
         backend = str(self.get_parameter('detector_backend').value)
@@ -438,21 +489,13 @@ class PersonLocalizerNode(Node):
 
     def _should_process(self, message: Image) -> bool:
         rate = float(self.get_parameter('max_inference_rate_hz').value)
-        if rate == 0.0:
-            return True
         stamp_ns = (
             int(message.header.stamp.sec) * 1_000_000_000
             + int(message.header.stamp.nanosec)
         )
         if stamp_ns <= 0:
             stamp_ns = self.get_clock().now().nanoseconds
-        if self._last_processed_ns is not None:
-            interval_ns = int(1_000_000_000 / rate)
-            if stamp_ns >= self._last_processed_ns:
-                if stamp_ns - self._last_processed_ns < interval_ns:
-                    return False
-        self._last_processed_ns = stamp_ns
-        return True
+        return self._rate_limiter.should_process(stamp_ns, rate)
 
     def _on_rgb_depth(self, rgb_message: Image, depth_message: Image) -> None:
         if not self._should_process(rgb_message):
@@ -474,9 +517,22 @@ class PersonLocalizerNode(Node):
                 desired_encoding='passthrough',
             )
             detections = self._detector.detect(bgr_image)
-            appearance_features = self._reidentifier.encode(
-                bgr_image, detections
+            self._inference_frame_index += 1
+            refresh_interval = int(
+                self.get_parameter('reid_refresh_interval_frames').value
             )
+            refresh_due = (
+                (self._inference_frame_index - 1) % refresh_interval == 0
+            )
+            appearance_required = (
+                refresh_due
+                or self._tracker.needs_appearance_features(detections)
+            )
+            appearance_features = None
+            if appearance_required:
+                appearance_features = self._reidentifier.encode(
+                    bgr_image, detections
+                )
             tracks = self._tracker.update(
                 detections, appearance_features
             )

@@ -262,7 +262,7 @@ def find_obstacle_clusters(
     maximum_cluster_extent_m: float,
     static_map: CostmapGrid | None = None,
     static_occupied_threshold: int = 65,
-    static_exclusion_radius_m: float = 0.10,
+    static_exclusion_radius_m: float = 0.20,
 ) -> list[ObstacleCluster]:
     """Extract compact non-static obstacles from the complete costmap."""
     grid.validate()
@@ -334,14 +334,14 @@ class CostmapTargetTracker:
         maximum_cluster_cells: int,
         maximum_cluster_extent_m: float,
         static_occupied_threshold: int = 65,
-        static_exclusion_radius_m: float = 0.10,
+        static_exclusion_radius_m: float = 0.20,
         process_variance: float = 1.0,
         measurement_variance: float = 0.04,
         mahalanobis_gate: float = 9.21,
         confirmation_hits: int = 3,
         maximum_missed_updates: int = 4,
         maximum_coast_time_s: float = 3.0,
-        camera_label_gate_m: float = 0.75,
+        camera_label_gate_m: float = 0.40,
         camera_rebind_margin_m: float = 0.15,
     ) -> None:
         """Configure extraction, estimation, association, and track aging."""

@@ -103,8 +103,10 @@ overriding its angular velocity.
 Navigation failures are retried with fresh sensor goals instead of invoking
 Nav2's generic fixed-direction recovery sequence. Every recovery step remains
 preemptible: a new RGB-D observation immediately resumes normal tracking. The
-follower cancels Nav2 and ends in `TARGET_LOST` only after the last-position
-recovery and directional scan have completed without reacquisition.
+follower cancels Nav2 and waits stationary in `TARGET_LOST` after the
+last-position recovery and directional scan complete without reacquisition.
+The follow Action remains active until explicitly canceled, and a later RGB-D
+observation immediately resumes `TRACKING` without a new Action goal.
 
 ## Algorithm basis
 

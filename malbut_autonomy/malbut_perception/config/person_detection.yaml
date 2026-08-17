@@ -51,6 +51,9 @@ person_localizer:
     reid_cosine_threshold: 0.25
     reid_max_inactive_frames: 300
     reid_feature_budget: 30
+    # Refresh stable tracks periodically; new, displaced, and returning people
+    # still request an appearance embedding immediately.
+    reid_refresh_interval_frames: 3
     reid_minimum_crop_width: 16
     reid_minimum_crop_height: 32
 
@@ -68,7 +71,9 @@ person_localizer:
     # Keep synchronization shallow so inference drops stale frames under load.
     sync_queue_size: 3
     sync_slop_sec: 0.08
-    max_inference_rate_hz: 6.0
+    # Eight hertz is sustainable with YOLO26n plus periodic OSNet on the
+    # development GPU while leaving headroom for Gazebo and Nav2.
+    max_inference_rate_hz: 8.0
     publish_debug_image: true
     # compressed avoids dropping large raw debug frames over ROS middleware.
     # Select raw or both only when an uncompressed consumer requires it.
