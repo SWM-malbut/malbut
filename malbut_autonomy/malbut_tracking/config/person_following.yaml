@@ -24,8 +24,10 @@ person_follower:
     robot_frame: base_footprint
 
     minimum_confidence: 0.20
-    # RGB-D supplies the long-range map position and target identity.
-    association_max_distance_m: 1.50
+    # RGB-D supplies the authoritative visible-person position and is never
+    # rejected by a stale-position distance gate. The 1.5 m continuity gate
+    # applies only after camera loss when LiDAR continues the labeled track.
+    lidar_continuation_max_distance_m: 1.50
     camera_position_alpha: 0.55
     camera_velocity_alpha: 0.35
     maximum_person_speed_mps: 2.0
@@ -37,8 +39,9 @@ person_follower:
     maximum_cluster_cells: 120
     maximum_cluster_extent_m: 1.00
     static_occupied_threshold: 65
-    # Suppress saved walls and furniture plus one small localization margin.
-    static_exclusion_radius_m: 0.10
+    # Suppress saved walls and furniture plus localization/map-edge error.
+    # Camera tracking remains available when a person passes near furniture.
+    static_exclusion_radius_m: 0.20
 
     # Constant-velocity Kalman filter and global nearest-neighbor assignment.
     # 9.21 is the 99 percent chi-square gate for a 2-D measurement.
@@ -48,13 +51,12 @@ person_follower:
     track_confirmation_hits: 3
     maximum_missed_updates: 4
     maximum_coast_time_s: 3.0
-    camera_label_gate_m: 0.75
+    # RGB-D is authoritative while visible. A costmap obstacle receives its
+    # label only when its centroid is tightly consistent with that map point.
+    camera_label_gate_m: 0.40
     # Keep a current LiDAR label through small centroid noise, but let a
     # clearly closer RGB-D match correct an obstacle-label mix-up.
     camera_rebind_margin_m: 0.15
-    # A newly observed costmap cluster refines the camera position only while
-    # the same person is still visible; stale obstacles cannot drive motion.
-    costmap_refinement_max_camera_age_s: 1.0
     # After RGB-D labels a confirmed obstacle, current LiDAR measurements may
     # continue that same track briefly after camera loss. While RGB-D remains
     # current, its callback alone owns Nav2 goal updates to prevent churn.
@@ -67,6 +69,12 @@ person_follower:
     # Nav2 ComputePathToPose and the configured holonomic controller.
     maximum_linear_speed_mps: 0.30
     retreat_maximum_travel_m: 0.25
+    # Start backing away before an approaching person crosses the lower
+    # distance bound, then refresh the short collision-checked retreat path.
+    approach_prediction_horizon_s: 0.75
+    approach_speed_threshold_mps: 0.10
+    retreat_goal_update_distance_m: 0.10
+    retreat_goal_update_period_s: 0.25
 
     # Nav2 plans toward the observed person or its nearest admissible costmap
     # cell. These existing per-update lookaheads bound that global path.
@@ -103,6 +111,9 @@ person_follower:
     # toward the predicted exit direction, then travel to the last safe point.
     # At the nominal 3 Hz perception contract this requires more than one
     # missed frame, avoiding recovery churn from a single delayed inference.
+    # This timeout transitions to stationary TARGET_LOST; it does not finish
+    # the long-running FollowPerson action. Explicit client cancellation is
+    # the only normal way to end that action.
     temporary_lost_timeout_s: 0.75
     target_lost_timeout_s: 8.0
     # The camera's 74-degree horizontal field of view has a roughly

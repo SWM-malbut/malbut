@@ -104,3 +104,14 @@ def test_appearance_count_must_match_detections():
         assert 'count must match' in str(error)
     else:
         raise AssertionError('mismatched appearance features were accepted')
+
+
+def test_tracker_requests_appearance_only_when_geometry_is_insufficient():
+    tracker = ByteTrackTracker(min_confirmed_hits=1)
+    first = _detection(10.0, 0.9)
+    assert tracker.needs_appearance_features([first])
+
+    feature = np.array([1.0, 0.0], dtype=np.float32)
+    tracker.update([first], [feature])
+    assert not tracker.needs_appearance_features([_detection(12.0, 0.9)])
+    assert tracker.needs_appearance_features([_detection(300.0, 0.9)])

@@ -82,9 +82,16 @@ def decide_follow_motion(
     target: Point2D,
     settings: FollowSettings,
     maximum_travel_m: float | None = None,
+    target_velocity: Point2D | None = None,
+    approach_prediction_horizon_s: float = 0.0,
+    approach_speed_threshold_mps: float = 0.0,
 ) -> FollowDecision:
-    """Choose forward, hold, or reverse motion around the distance band."""
+    """Choose motion using current range and bounded approach prediction."""
     settings.validate()
+    if approach_prediction_horizon_s < 0.0:
+        raise ValueError('approach prediction horizon must be non-negative')
+    if approach_speed_threshold_mps < 0.0:
+        raise ValueError('approach speed threshold must be non-negative')
     target_distance = distance(robot, target)
     yaw = math.atan2(target.y - robot.y, target.x - robot.x)
     lower_bound = settings.desired_distance_m - settings.distance_tolerance_m
@@ -94,8 +101,24 @@ def decide_follow_motion(
             FollowGoal(robot, yaw, target_distance),
             'target position is indistinguishable from robot position',
         )
-    if target_distance < lower_bound:
-        retreat_distance = settings.desired_distance_m - target_distance
+    control_distance = target_distance
+    approaching = False
+    if target_velocity is not None and approach_prediction_horizon_s > 0.0:
+        direction_x = (target.x - robot.x) / target_distance
+        direction_y = (target.y - robot.y) / target_distance
+        radial_speed = (
+            target_velocity.x * direction_x
+            + target_velocity.y * direction_y
+        )
+        if radial_speed <= -approach_speed_threshold_mps:
+            control_distance = max(
+                0.0,
+                target_distance
+                + radial_speed * approach_prediction_horizon_s,
+            )
+            approaching = control_distance < target_distance
+    if control_distance < lower_bound:
+        retreat_distance = settings.desired_distance_m - control_distance
         retreat_goal = FollowGoal(
             Point2D(
                 robot.x - retreat_distance * math.cos(yaw),
@@ -107,7 +130,11 @@ def decide_follow_motion(
         reason = (
             'minimum distance safety retreat'
             if target_distance <= settings.minimum_distance_m
-            else 'target inside desired distance band'
+            else (
+                'approaching target predicted inside distance band'
+                if approaching
+                else 'target inside desired distance band'
+            )
         )
         return FollowDecision(
             FollowCommand.RETREAT,
