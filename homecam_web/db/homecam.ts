@@ -256,7 +256,7 @@ export async function updateDeviceSettings(input: {
            media_healthy = CASE WHEN ? = 1 THEN 0 ELSE media_healthy END,
            updated_at = ?
        WHERE device_id = ?
-         AND NOT (? = 1 AND COALESCE(?, camera_enabled) = 0)`,
+         AND NOT (COALESCE(?, 0) = 1 AND COALESCE(?, camera_enabled) = 0)`,
     )
     .bind(
       cameraPatch,

@@ -69,6 +69,16 @@ export async function POST(
   if (joinStorage && mode !== "storage") {
     return noStore({ error: "P2P 세션에는 Storage join을 사용할 수 없습니다." }, 409);
   }
+  if (
+    joinStorage &&
+    (state.streamMode !== "storage" || !state.mediaHealthy)
+  ) {
+    return noStore(
+      { error: "홈캠이 AWS 저장 세션을 준비 중입니다." },
+      425,
+      { "retry-after": "2" },
+    );
+  }
   const canIssueCredentials = await consumeRequestRateLimit({
     userEmail,
     roomCode: activeSession.roomCode,

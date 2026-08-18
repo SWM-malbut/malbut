@@ -37,7 +37,7 @@ test("settings, event pagination, idempotency, push, and viewer grants stay hard
   );
   assert.match(
     database,
-    /AND NOT \(\? = 1 AND COALESCE\(\?, camera_enabled\) = 0\)/,
+    /AND NOT \(COALESCE\(\?, 0\) = 1 AND COALESCE\(\?, camera_enabled\) = 0\)/,
   );
   assert.match(
     database,
