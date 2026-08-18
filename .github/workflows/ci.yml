@@ -13,6 +13,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changed modules
+    runs-on: ubuntu-22.04
+    outputs:
+      web: ${{ steps.modules.outputs.web }}
+      infra: ${{ steps.modules.outputs.infra }}
+      ros: ${{ steps.modules.outputs.ros }}
+      homecam: ${{ steps.modules.outputs.homecam }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Test module selector
+        run: .github/scripts/test-detect-ci-modules.sh
+
+      - name: Select affected test groups
+        id: modules
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          result="$(.github/scripts/detect-ci-modules.sh "$BASE_SHA")"
+          printf '%s\n' "$result"
+          printf '%s\n' "$result" >> "$GITHUB_OUTPUT"
+
   lint:
     name: Lint
     runs-on: ubuntu-22.04
@@ -40,13 +65,21 @@ jobs:
   homecam-web:
     name: Homecam web lint and test
     runs-on: ubuntu-22.04
+    needs: changes
     defaults:
       run:
         working-directory: homecam_web
     steps:
+      - name: Skip unchanged Homecam web
+        if: needs.changes.outputs.web != 'true'
+        run: echo "No Homecam web files changed."
+        working-directory: .
+
       - uses: actions/checkout@v6
+        if: needs.changes.outputs.web == 'true'
 
       - name: Use Node.js 22
+        if: needs.changes.outputs.web == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: "22.13.0"
@@ -54,30 +87,43 @@ jobs:
           cache-dependency-path: homecam_web/package-lock.json
 
       - name: Install dependencies
+        if: needs.changes.outputs.web == 'true'
         run: npm ci
 
       - name: Audit dependencies
+        if: needs.changes.outputs.web == 'true'
         run: npm audit --audit-level=high
 
       - name: Validate Docker entrypoint
+        if: needs.changes.outputs.web == 'true'
         run: sh -n docker-entrypoint.sh
 
       - name: Lint
+        if: needs.changes.outputs.web == 'true'
         run: npm run lint
 
       - name: Build and test
+        if: needs.changes.outputs.web == 'true'
         run: npm test
 
   homecam-web-infra:
     name: Homecam web CDK build and test
     runs-on: ubuntu-22.04
+    needs: changes
     defaults:
       run:
         working-directory: homecam_web/infra/cdk
     steps:
+      - name: Skip unchanged Homecam infrastructure
+        if: needs.changes.outputs.infra != 'true'
+        run: echo "No Homecam infrastructure files changed."
+        working-directory: .
+
       - uses: actions/checkout@v6
+        if: needs.changes.outputs.infra == 'true'
 
       - name: Use Node.js 22
+        if: needs.changes.outputs.infra == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: "22.13.0"
@@ -88,25 +134,35 @@ jobs:
             homecam_web/infra/aws/push-broker/package-lock.json
 
       - name: Install dependencies
+        if: needs.changes.outputs.infra == 'true'
         run: |
           npm ci
           npm --prefix ../aws/kvs-broker ci
           npm --prefix ../aws/push-broker ci
 
       - name: Build
+        if: needs.changes.outputs.infra == 'true'
         run: npm run build
 
       - name: Test
+        if: needs.changes.outputs.infra == 'true'
         run: npm test
 
       - name: Synthesize CloudFormation template
+        if: needs.changes.outputs.infra == 'true'
         run: npm run synth -- -c authMigrationPhase=cleanup --no-lookups --quiet
 
   test:
     name: Test
     runs-on: ubuntu-22.04
+    needs: changes
     steps:
+      - name: Skip unchanged ROS packages
+        if: needs.changes.outputs.ros != 'true'
+        run: echo "No ROS package files changed."
+
       - uses: actions/checkout@v6
+        if: needs.changes.outputs.ros == 'true'
 
       # ubuntu-22.04 runners ship an LLVM toolchain, and libunwind-15-dev
       # declares "Conflicts: libunwind-dev". That makes libgoogle-glog-dev
@@ -114,6 +170,7 @@ jobs:
       # and ros-humble-nav2-bringup during rosdep install. Drop the versioned
       # LLVM copies so apt can resolve the plain libunwind-dev again.
       - name: Unblock libunwind-dev
+        if: needs.changes.outputs.ros == 'true'
         shell: bash
         run: |
           echo "installed libunwind packages before:"
@@ -137,6 +194,7 @@ jobs:
           fi
 
       - name: Install ROS and package dependencies
+        if: needs.changes.outputs.ros == 'true'
         env:
           ROS_APT_SOURCE_VERSION: "1.2.0"
         run: |
@@ -167,6 +225,7 @@ jobs:
             -r -y
 
       - name: Build ROS packages
+        if: needs.changes.outputs.ros == 'true'
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
@@ -182,6 +241,7 @@ jobs:
               malbut_tracking
 
       - name: Test patrol package
+        if: needs.changes.outputs.ros == 'true'
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
@@ -190,6 +250,7 @@ jobs:
           colcon test-result --verbose
 
       - name: Run ROS package tests
+        if: needs.changes.outputs.ros == 'true'
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
@@ -205,6 +266,7 @@ jobs:
           colcon test-result --verbose
 
       - name: Validate robot Xacro
+        if: needs.changes.outputs.ros == 'true'
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
@@ -213,6 +275,7 @@ jobs:
           test -s /tmp/malbut.urdf
 
       - name: Validate navigation launch
+        if: needs.changes.outputs.ros == 'true'
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
@@ -222,19 +285,27 @@ jobs:
   homecam:
     name: Homecam build and test
     runs-on: ubuntu-22.04
+    needs: changes
     timeout-minutes: 60
     steps:
+      - name: Skip unchanged Homecam agent
+        if: needs.changes.outputs.homecam != 'true'
+        run: echo "No Homecam agent files changed."
+
       - uses: actions/checkout@v6
+        if: needs.changes.outputs.homecam == 'true'
         with:
           path: src/malbut
 
       - name: Cache pinned KVS WebRTC SDK
+        if: needs.changes.outputs.homecam == 'true'
         uses: actions/cache@v4
         with:
           path: .deps/amazon-kinesis-video-streams-webrtc-sdk-c-v1.19.1
           key: kvs-webrtc-${{ runner.os }}-${{ hashFiles('src/malbut/homecam_agent/scripts/build_kvs_webrtc_sdk.sh') }}
 
       - name: Unblock libunwind-dev
+        if: needs.changes.outputs.homecam == 'true'
         shell: bash
         run: |
           echo "installed libunwind packages before:"
@@ -250,6 +321,7 @@ jobs:
           dpkg -l | grep -E '^ii +libunwind' || echo "  (none)"
 
       - name: Configure ROS apt source
+        if: needs.changes.outputs.homecam == 'true'
         env:
           ROS_APT_SOURCE_VERSION: "1.2.0"
         run: |
@@ -269,6 +341,7 @@ jobs:
           rosdep update
 
       - name: Install Malbut dependencies
+        if: needs.changes.outputs.homecam == 'true'
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
@@ -284,6 +357,7 @@ jobs:
             -r -y
 
       - name: Build and test homecam
+        if: needs.changes.outputs.homecam == 'true'
         shell: bash
         working-directory: src/malbut
         run: |
