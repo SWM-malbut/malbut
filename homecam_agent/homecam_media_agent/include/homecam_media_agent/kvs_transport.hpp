@@ -49,6 +49,14 @@ bool session_lease_expired(
   std::int64_t now_unix_ms,
   std::int64_t expires_at_unix_ms);
 
+bool storage_session_refresh_due(
+  std::int64_t active_age_ms,
+  std::int64_t refresh_age_ms);
+
+bool storage_session_hard_expired(
+  std::int64_t active_age_ms,
+  std::int64_t hard_age_ms);
+
 // Routine P2P credential renewal must not tear down a healthy peer. Defer it
 // until that peer disconnects, but retain a bounded safety window for a final
 // fail-closed replacement before the current lease expires.

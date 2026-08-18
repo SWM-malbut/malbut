@@ -10,6 +10,7 @@ import {
   canManageHomecam,
   canViewHomecam,
   type DeviceSettingsPatch,
+  type HomecamEventClipInput,
   type HomecamEventInput,
 } from "./homecam-validation";
 import { recordingPlaybackPosition } from "../app/recording-segments";
@@ -21,6 +22,7 @@ const EVENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const AUDIT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const TALK_LEASE_MS = 15_000;
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const EVENT_CLIP_INCOMPLETE_MS = 3 * 60 * 1000;
 
 export type DeviceIdentity = {
   credentialId: string;
@@ -895,8 +897,279 @@ export async function insertHomecamEvent(
   };
 }
 
+export async function upsertHomecamEventClip(
+  deviceId: string,
+  phase: "started" | "ended",
+  event: HomecamEventClipInput,
+) {
+  await ensureHomecamSchema();
+  await cleanupExpiredHomecamData();
+  const state = await getDeviceSettings(deviceId);
+  if (!state.monitoringEnabled || !state.cameraEnabled) {
+    throw new Error("MONITORING_DISABLED");
+  }
+
+  const sessions = await getEventClipSessions(deviceId, event.sessionIds);
+  if (sessions.length !== event.sessionIds.length) {
+    throw new Error("EVENT_SESSION_INVALID");
+  }
+  const primarySession = sessions.find(
+    (session) => session.session_id === event.sessionIds[0],
+  );
+  if (!primarySession) throw new Error("EVENT_SESSION_INVALID");
+  const recordingStartedAt =
+    primarySession.recording_started_at ?? primarySession.session_started_at;
+  const rangeEnd = event.endAt ?? event.detectedAt;
+  if (
+    sessions.some(
+      (session) =>
+        Date.parse(session.session_started_at) > Date.parse(rangeEnd) + 5_000 ||
+        (session.recording_ended_at !== null &&
+          Date.parse(session.recording_ended_at) < Date.parse(event.startAt) - 5_000),
+    )
+  ) {
+    throw new Error("EVENT_OUTSIDE_RECORDING");
+  }
+
+  const fingerprint = await eventClipRequestFingerprint(phase, event);
+  const existing = await findEventClip(deviceId, event.eventGroupId, event.segmentIndex);
+  const existingPhaseKey =
+    phase === "started" ? existing?.start_idempotency_key : existing?.end_idempotency_key;
+  const existingPhaseFingerprint =
+    phase === "started"
+      ? existing?.start_request_fingerprint
+      : existing?.end_request_fingerprint;
+  if (existingPhaseKey) {
+    if (
+      existingPhaseKey !== event.idempotencyKey ||
+      existingPhaseFingerprint !== fingerprint
+    ) {
+      throw new Error("IDEMPOTENCY_CONFLICT");
+    }
+    return { created: false, event: mapEvent(existing!) };
+  }
+
+  const eventId = existing?.id ?? crypto.randomUUID();
+  const recordingOffsetMs = Math.max(
+    0,
+    Date.parse(event.startAt) - Date.parse(recordingStartedAt),
+  );
+  const d1 = getD1();
+  if (!existing) {
+    const clipState = phase === "ended" ? "ready" : "recording";
+    const legacyKey = `clip:${event.eventGroupId}:${event.segmentIndex}`;
+    const result = await d1
+      .prepare(
+        `INSERT INTO homecam_events
+         (id, device_id, event_type, confidence, occurred_at,
+          idempotency_key, request_fingerprint,
+          recording_session_id, recording_offset_ms,
+          event_group_id, segment_index, labels_json,
+          clip_start_at, clip_end_at, clip_state,
+          monotonic_duration_ms, boot_id, session_ids_json,
+          clock_stepped, notification_suppressed,
+          start_idempotency_key, end_idempotency_key,
+          start_request_fingerprint, end_request_fingerprint)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (device_id, event_group_id, segment_index)
+           WHERE event_group_id IS NOT NULL AND segment_index IS NOT NULL
+         DO NOTHING`,
+      )
+      .bind(
+        eventId,
+        deviceId,
+        event.primaryType,
+        event.confidence,
+        event.detectedAt,
+        legacyKey,
+        fingerprint,
+        primarySession.session_id,
+        recordingOffsetMs,
+        event.eventGroupId,
+        event.segmentIndex,
+        JSON.stringify(event.labels),
+        event.startAt,
+        event.endAt,
+        clipState,
+        event.monotonicDurationMs,
+        event.bootId,
+        JSON.stringify(event.sessionIds),
+        event.clockSteppedDuringEvent ? 1 : 0,
+        event.notificationEligible ? 0 : 1,
+        phase === "started" ? event.idempotencyKey : null,
+        phase === "ended" ? event.idempotencyKey : null,
+        phase === "started" ? fingerprint : null,
+        phase === "ended" ? fingerprint : null,
+      )
+      .run();
+    const stored = await findEventClip(deviceId, event.eventGroupId, event.segmentIndex);
+    if (!stored) throw new Error("EVENT_CLIP_WRITE_FAILED");
+    const storedKey =
+      phase === "started" ? stored.start_idempotency_key : stored.end_idempotency_key;
+    const storedFingerprint =
+      phase === "started"
+        ? stored.start_request_fingerprint
+        : stored.end_request_fingerprint;
+    if (storedKey !== event.idempotencyKey || storedFingerprint !== fingerprint) {
+      throw new Error("IDEMPOTENCY_CONFLICT");
+    }
+    return { created: result.meta.changes > 0, event: mapEvent(stored) };
+  }
+
+  if (
+    existing.boot_id !== event.bootId ||
+    existing.clip_start_at !== event.startAt
+  ) {
+    throw new Error("IDEMPOTENCY_CONFLICT");
+  }
+  await d1
+    .prepare(
+      phase === "ended"
+        ? `UPDATE homecam_events
+           SET event_type = ?, confidence = ?, labels_json = ?,
+               clip_end_at = ?, clip_state = 'ready', monotonic_duration_ms = ?,
+               session_ids_json = ?, clock_stepped = ?,
+               end_idempotency_key = ?, end_request_fingerprint = ?
+           WHERE id = ? AND device_id = ? AND end_idempotency_key IS NULL`
+        : `UPDATE homecam_events
+           SET start_idempotency_key = ?, start_request_fingerprint = ?
+           WHERE id = ? AND device_id = ? AND start_idempotency_key IS NULL`,
+    )
+    .bind(
+      ...(phase === "ended"
+        ? [
+            event.primaryType,
+            event.confidence,
+            JSON.stringify(event.labels),
+            event.endAt,
+            event.monotonicDurationMs,
+            JSON.stringify(event.sessionIds),
+            event.clockSteppedDuringEvent ? 1 : 0,
+            event.idempotencyKey,
+            fingerprint,
+          ]
+        : [event.idempotencyKey, fingerprint]),
+      eventId,
+      deviceId,
+    )
+    .run();
+  const stored = await findEventClip(deviceId, event.eventGroupId, event.segmentIndex);
+  if (!stored) throw new Error("EVENT_CLIP_WRITE_FAILED");
+  const storedKey =
+    phase === "started" ? stored.start_idempotency_key : stored.end_idempotency_key;
+  const storedFingerprint =
+    phase === "started"
+      ? stored.start_request_fingerprint
+      : stored.end_request_fingerprint;
+  if (storedKey !== event.idempotencyKey || storedFingerprint !== fingerprint) {
+    throw new Error("IDEMPOTENCY_CONFLICT");
+  }
+  return { created: false, event: mapEvent(stored) };
+}
+
+export async function softDeleteHomecamEvent(input: {
+  deviceId: string;
+  eventId: string;
+  userEmail: string;
+}) {
+  await ensureHomecamSchema();
+  const nowIso = new Date().toISOString();
+  const result = await getD1()
+    .prepare(
+      `UPDATE homecam_events SET deleted_at = ?
+       WHERE id = ? AND device_id = ? AND deleted_at IS NULL`,
+    )
+    .bind(nowIso, input.eventId, input.deviceId)
+    .run();
+  if (result.meta.changes > 0) {
+    await getD1()
+      .prepare(
+        "DELETE FROM homecam_push_outbox WHERE event_id = ? AND delivered_at IS NULL",
+      )
+      .bind(input.eventId)
+      .run();
+    await writeAuditLog({
+      deviceId: input.deviceId,
+      actorType: "user",
+      actorId: input.userEmail,
+      action: "event.remove_from_list",
+      metadata: { eventId: input.eventId },
+    });
+  }
+  return result.meta.changes > 0;
+}
+
+export async function getEventClipPlayback(deviceId: string, eventId: string) {
+  const event = await getHomecamEvent(deviceId, eventId);
+  if (
+    !event ||
+    event.clipState !== "ready" ||
+    !event.clipStartAt ||
+    !event.clipEndAt ||
+    !event.recordingId
+  ) {
+    return null;
+  }
+  const clipStartAt = event.clipStartAt;
+  const clipEndAt = event.clipEndAt;
+  const recordingId = event.recordingId;
+  const recording = await getD1()
+    .prepare(
+      `SELECT recording_sessions.kvs_stream_arn
+       FROM recording_sessions
+       INNER JOIN stream_sessions
+         ON stream_sessions.id = recording_sessions.session_id
+       WHERE recording_sessions.session_id = ? AND stream_sessions.device_id = ?`,
+    )
+    .bind(recordingId, deviceId)
+    .first<{ kvs_stream_arn: string }>();
+  if (!recording) return null;
+  return {
+    event: { ...event, clipStartAt, clipEndAt, recordingId },
+    streamArn: recording.kvs_stream_arn,
+  };
+}
+
+type EventClipSessionRow = {
+  session_id: string;
+  session_started_at: string;
+  recording_started_at: string | null;
+  recording_ended_at: string | null;
+};
+
+async function getEventClipSessions(deviceId: string, sessionIds: string[]) {
+  const placeholders = sessionIds.map(() => "?").join(",");
+  const result = await getD1()
+    .prepare(
+      `SELECT stream_sessions.id AS session_id,
+              stream_sessions.started_at AS session_started_at,
+              recording_sessions.started_at AS recording_started_at,
+              recording_sessions.ended_at AS recording_ended_at
+       FROM stream_sessions
+       INNER JOIN recording_sessions
+         ON recording_sessions.session_id = stream_sessions.id
+       WHERE stream_sessions.device_id = ?
+         AND stream_sessions.id IN (${placeholders})`,
+    )
+    .bind(deviceId, ...sessionIds)
+    .all<EventClipSessionRow>();
+  return result.results;
+}
+
+async function eventClipRequestFingerprint(
+  phase: "started" | "ended",
+  event: HomecamEventClipInput,
+) {
+  const canonical = JSON.stringify({ phase, ...event, idempotencyKey: undefined });
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical)),
+  );
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 type EventRowWithFingerprint = {
   id: string;
+  device_id?: string;
   event_type: string;
   confidence: number | null;
   occurred_at: string;
@@ -904,7 +1177,59 @@ type EventRowWithFingerprint = {
   request_fingerprint: string;
   recording_session_id: string | null;
   recording_offset_ms: number | null;
+  event_group_id?: string | null;
+  segment_index?: number | null;
+  labels_json?: string | null;
+  clip_start_at?: string | null;
+  clip_end_at?: string | null;
+  clip_state?: string | null;
+  monotonic_duration_ms?: number | null;
+  boot_id?: string | null;
+  session_ids_json?: string | null;
+  clock_stepped?: number | null;
+  notification_suppressed?: number | null;
+  start_idempotency_key?: string | null;
+  end_idempotency_key?: string | null;
+  start_request_fingerprint?: string | null;
+  end_request_fingerprint?: string | null;
+  deleted_at?: string | null;
+  ai_status?: string | null;
+  ai_summary?: string | null;
+  ai_labels_json?: string | null;
+  ai_severity?: string | null;
+  ai_confidence?: number | null;
+  ai_model_id?: string | null;
+  ai_model_version?: string | null;
+  ai_prompt_version?: string | null;
+  ai_input_spec_json?: string | null;
+  ai_error?: string | null;
+  ai_analyzed_at?: string | null;
 };
+
+async function findEventClip(
+  deviceId: string,
+  eventGroupId: string,
+  segmentIndex: number,
+) {
+  return getD1()
+    .prepare(
+      `SELECT id, device_id, event_type, confidence, occurred_at, received_at,
+              request_fingerprint, recording_session_id, recording_offset_ms,
+              event_group_id, segment_index, labels_json,
+              clip_start_at, clip_end_at, clip_state,
+              monotonic_duration_ms, boot_id, session_ids_json,
+              clock_stepped, notification_suppressed,
+              start_idempotency_key, end_idempotency_key,
+              start_request_fingerprint, end_request_fingerprint,
+              deleted_at, ai_status, ai_summary, ai_labels_json,
+              ai_severity, ai_confidence, ai_model_id, ai_model_version,
+              ai_prompt_version, ai_input_spec_json, ai_error, ai_analyzed_at
+       FROM homecam_events
+       WHERE device_id = ? AND event_group_id = ? AND segment_index = ?`,
+    )
+    .bind(deviceId, eventGroupId, segmentIndex)
+    .first<EventRowWithFingerprint>();
+}
 
 async function eventRequestFingerprint(event: HomecamEventInput) {
   const canonical = JSON.stringify({
@@ -953,9 +1278,13 @@ export async function listHomecamEvents(input: {
   const result = await getD1()
     .prepare(
       `SELECT id, event_type, confidence, occurred_at, received_at,
-              recording_session_id, recording_offset_ms
+              recording_session_id, recording_offset_ms,
+              event_group_id, segment_index, labels_json,
+              clip_start_at, clip_end_at, clip_state,
+              monotonic_duration_ms, clock_stepped, ai_status, ai_summary,
+              ai_labels_json, ai_severity, ai_confidence, ai_error
        FROM homecam_events
-       WHERE device_id = ? AND occurred_at >= ?
+       WHERE device_id = ? AND occurred_at >= ? AND deleted_at IS NULL
        ${typeClause} ${beforeClause}
        ORDER BY occurred_at DESC, id DESC LIMIT ?`,
     )
@@ -978,9 +1307,13 @@ export async function getHomecamEvent(deviceId: string, eventId: string) {
   const row = await getD1()
     .prepare(
       `SELECT id, event_type, confidence, occurred_at, received_at,
-              recording_session_id, recording_offset_ms
+              recording_session_id, recording_offset_ms,
+              event_group_id, segment_index, labels_json,
+              clip_start_at, clip_end_at, clip_state,
+              monotonic_duration_ms, clock_stepped, ai_status, ai_summary,
+              ai_labels_json, ai_severity, ai_confidence, ai_error
        FROM homecam_events
-       WHERE id = ? AND device_id = ? AND occurred_at >= ?`,
+       WHERE id = ? AND device_id = ? AND occurred_at >= ? AND deleted_at IS NULL`,
     )
     .bind(
       eventId,
@@ -1013,6 +1346,11 @@ export async function claimPendingHomecamPushes(input: {
     .prepare(
       `SELECT event_id FROM homecam_push_outbox
        WHERE device_id = ? AND delivered_at IS NULL AND next_attempt_at <= ?
+         AND EXISTS (
+           SELECT 1 FROM homecam_events
+           WHERE homecam_events.id = homecam_push_outbox.event_id
+             AND homecam_events.deleted_at IS NULL
+         )
        ORDER BY CASE WHEN event_id = ? THEN 0 ELSE 1 END, created_at ASC
        LIMIT ?`,
     )
@@ -1503,6 +1841,13 @@ async function cleanupExpiredHomecamData() {
   const d1 = getD1();
   await d1.batch([
     d1
+      .prepare(
+        `UPDATE homecam_events
+         SET clip_state = 'incomplete'
+         WHERE clip_state = 'recording' AND received_at < ?`,
+      )
+      .bind(new Date(Date.now() - EVENT_CLIP_INCOMPLETE_MS).toISOString()),
+    d1
       .prepare("DELETE FROM homecam_events WHERE occurred_at < ?")
       .bind(new Date(Date.now() - EVENT_RETENTION_MS).toISOString()),
     d1
@@ -1535,6 +1880,20 @@ function mapEvent(row: {
   received_at: string;
   recording_session_id: string | null;
   recording_offset_ms: number | null;
+  event_group_id?: string | null;
+  segment_index?: number | null;
+  labels_json?: string | null;
+  clip_start_at?: string | null;
+  clip_end_at?: string | null;
+  clip_state?: string | null;
+  monotonic_duration_ms?: number | null;
+  clock_stepped?: number | null;
+  ai_status?: string | null;
+  ai_summary?: string | null;
+  ai_labels_json?: string | null;
+  ai_severity?: string | null;
+  ai_confidence?: number | null;
+  ai_error?: string | null;
 }) {
   const playback = recordingPlaybackPosition(row.recording_offset_ms);
   return {
@@ -1545,8 +1904,36 @@ function mapEvent(row: {
     receivedAt: row.received_at,
     recordingId: row.recording_session_id,
     recordingOffsetMs: row.recording_offset_ms,
+    eventGroupId: row.event_group_id ?? null,
+    segmentIndex: row.segment_index ?? null,
+    labels: parseStringArray(row.labels_json),
+    clipStartAt: row.clip_start_at ?? null,
+    clipEndAt: row.clip_end_at ?? null,
+    clipState: row.clip_state ?? "detected",
+    monotonicDurationMs: row.monotonic_duration_ms ?? null,
+    clockSteppedDuringEvent: Boolean(row.clock_stepped),
+    ai: {
+      status: row.ai_status ?? "not_requested",
+      summary: row.ai_summary ?? null,
+      labels: parseStringArray(row.ai_labels_json),
+      severity: row.ai_severity ?? null,
+      confidence: row.ai_confidence ?? null,
+      error: row.ai_error ?? null,
+    },
     ...playback,
   };
+}
+
+function parseStringArray(value: string | null | undefined) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 function normalizeStreamMode(value: string): HomecamStreamMode {

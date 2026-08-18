@@ -13,11 +13,14 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool
+from std_msgs.msg import String
 
+from .clip_poster import EventClipPoster
 from .config import DetectorConfig, validate_config
 from .credentials import load_device_token
 from .event_dedupe import EventDedupe
 from .event_poster import EventPoster
+from .event_segmenter import EventSegmenter
 from .inference_health import InferenceHealth
 from .motion_detector import FrameMotionDetector
 from .motion_gate import MotionGate
@@ -54,6 +57,21 @@ class HomecamDetectorNode(Node):
             cooldown_sec=self._config.event_cooldown_sec,
             max_frame_gap_sec=self._config.max_frame_gap_sec,
         )
+        self._segmenter = EventSegmenter(
+            device_id=self._config.device_id or "local-homecam",
+            confirmation_window_frames=(
+                self._config.event_confirmation_window_frames
+            ),
+            confirmation_required_frames=(
+                self._config.event_confirmation_required_frames
+            ),
+            pre_roll_sec=self._config.event_pre_roll_sec,
+            merge_gap_sec=self._config.event_merge_gap_sec,
+            max_segment_sec=self._config.max_event_clip_sec,
+            notification_cooldown_sec=self._config.event_cooldown_sec,
+            max_frame_gap_sec=self._config.max_frame_gap_sec,
+        )
+        self._storage_session_id = ""
         self._model: Optional[YoloOnnxDetector] = None
         if self._config.model_path:
             try:
@@ -80,13 +98,22 @@ class HomecamDetectorNode(Node):
 
         token = load_device_token()
         self._poster: Optional[EventPoster] = None
+        self._clip_poster: Optional[EventClipPoster] = None
         if self._config.backend_url and token:
-            self._poster = EventPoster(
-                self._config.backend_url,
-                token,
-                enabled=self._config.monitoring_enabled,
-                on_error=self.get_logger().error,
-            )
+            if self._config.event_clips_enabled:
+                self._clip_poster = EventClipPoster(
+                    self._config.backend_url,
+                    token,
+                    enabled=self._config.monitoring_enabled,
+                    on_error=self.get_logger().error,
+                )
+            else:
+                self._poster = EventPoster(
+                    self._config.backend_url,
+                    token,
+                    enabled=self._config.monitoring_enabled,
+                    on_error=self.get_logger().error,
+                )
         else:
             self.get_logger().warning(
                 "Remote event delivery disabled. Set backend_url and "
@@ -118,6 +145,12 @@ class HomecamDetectorNode(Node):
             self._on_monitoring_state,
             monitoring_qos,
         )
+        self._storage_session_subscription = self.create_subscription(
+            String,
+            "/homecam/storage_session_id",
+            self._on_storage_session,
+            monitoring_qos,
+        )
         self._health_publisher = self.create_publisher(
             Bool, "/homecam/detector_healthy", monitoring_qos
         )
@@ -139,6 +172,12 @@ class HomecamDetectorNode(Node):
         self.declare_parameter("confidence_threshold", 0.45)
         self.declare_parameter("consecutive_frames", 3)
         self.declare_parameter("event_cooldown_sec", 30.0)
+        self.declare_parameter("event_confirmation_window_frames", 5)
+        self.declare_parameter("event_confirmation_required_frames", 3)
+        self.declare_parameter("event_pre_roll_sec", 5.0)
+        self.declare_parameter("event_merge_gap_sec", 10.0)
+        self.declare_parameter("max_event_clip_sec", 120.0)
+        self.declare_parameter("event_clips_enabled", False)
         self.declare_parameter("max_frame_gap_sec", 1.0)
         self.declare_parameter("stationary_after_sec", 1.0)
         self.declare_parameter("odom_timeout_sec", 2.0)
@@ -160,6 +199,24 @@ class HomecamDetectorNode(Node):
             consecutive_frames=int(self.get_parameter("consecutive_frames").value),
             event_cooldown_sec=float(
                 self.get_parameter("event_cooldown_sec").value
+            ),
+            event_confirmation_window_frames=int(
+                self.get_parameter("event_confirmation_window_frames").value
+            ),
+            event_confirmation_required_frames=int(
+                self.get_parameter("event_confirmation_required_frames").value
+            ),
+            event_pre_roll_sec=float(
+                self.get_parameter("event_pre_roll_sec").value
+            ),
+            event_merge_gap_sec=float(
+                self.get_parameter("event_merge_gap_sec").value
+            ),
+            max_event_clip_sec=float(
+                self.get_parameter("max_event_clip_sec").value
+            ),
+            event_clips_enabled=bool(
+                self.get_parameter("event_clips_enabled").value
             ),
             max_frame_gap_sec=float(
                 self.get_parameter("max_frame_gap_sec").value
@@ -196,8 +253,11 @@ class HomecamDetectorNode(Node):
             self._inference_health.set_active(enabled, time.monotonic())
             if self._poster is not None:
                 self._poster.set_enabled(enabled)
+            if self._clip_poster is not None:
+                self._clip_poster.set_enabled(enabled)
             self._motion_detector.reset()
             self._dedupe.reset()
+            self._segmenter.discard()
             self.get_logger().info(
                 f"Monitoring changed to {'on' if enabled else 'off'}"
             )
@@ -219,12 +279,24 @@ class HomecamDetectorNode(Node):
         self._inference_health.set_active(enabled, time.monotonic())
         if self._poster is not None:
             self._poster.set_enabled(enabled)
+        if self._clip_poster is not None:
+            self._clip_poster.set_enabled(enabled)
         self._motion_detector.reset()
         self._dedupe.reset()
+        self._segmenter.discard()
         self.get_logger().info(
             f"Monitoring state received from media agent: "
             f"{'on' if enabled else 'off'}"
         )
+
+    def _on_storage_session(self, message: String) -> None:
+        session_id = message.data.strip()
+        if session_id and not _is_uuid(session_id):
+            self.get_logger().error("Ignoring malformed storage session ID")
+            return
+        if not session_id and self._storage_session_id:
+            self._segmenter.discard()
+        self._storage_session_id = session_id
 
     def _publish_health(self) -> None:
         message = Bool()
@@ -259,25 +331,57 @@ class HomecamDetectorNode(Node):
                 self._inference_health.record_failure()
                 self.get_logger().error(f"YOLO inference failed: {error}")
 
-        for event in self._dedupe.observe(
-            candidates,
-            occurred_at=time.time(),
-            observed_at=now_monotonic,
-        ):
-            self.get_logger().info(
-                f"Confirmed {event.event_type} event "
-                f"(confidence={event.confidence:.3f}, "
-                f"id={event.idempotency_key[:8]})"
-            )
-            if self._poster is not None:
-                self._poster.enqueue(event)
+        now_wall = time.time()
+        if self._config.event_clips_enabled:
+            if not self._storage_session_id:
+                self._segmenter.discard()
+                return
+            for boundary in self._segmenter.observe(
+                candidates,
+                occurred_at=now_wall,
+                observed_at=now_monotonic,
+                session_id=self._storage_session_id,
+            ):
+                self.get_logger().info(
+                    f"Event clip {boundary.phase}: {boundary.primary_type} "
+                    f"(group={boundary.event_group_id}, "
+                    f"segment={boundary.segment_index})"
+                )
+                if self._clip_poster is not None:
+                    self._clip_poster.enqueue(boundary)
+        else:
+            for event in self._dedupe.observe(
+                candidates,
+                occurred_at=now_wall,
+                observed_at=now_monotonic,
+            ):
+                self.get_logger().info(
+                    f"Confirmed {event.event_type} event "
+                    f"(confidence={event.confidence:.3f}, "
+                    f"id={event.idempotency_key[:8]})"
+                )
+                if self._poster is not None:
+                    self._poster.enqueue(event)
 
     def destroy_node(self):
         """Stop delivery before ROS tears down the logger and subscriptions."""
         if self._poster is not None:
             self._poster.close()
             self._poster = None
+        if self._clip_poster is not None:
+            self._clip_poster.close()
+            self._clip_poster = None
         return super().destroy_node()
+
+
+def _is_uuid(value: str) -> bool:
+    import uuid
+
+    try:
+        parsed = uuid.UUID(value)
+        return parsed.version == 4 and str(parsed) == value.lower()
+    except ValueError:
+        return False
 
 
 def main(args=None) -> int:

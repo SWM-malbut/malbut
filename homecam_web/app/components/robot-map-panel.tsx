@@ -46,7 +46,7 @@ export type RobotSnapshot = {
 type RobotOperation = "start" | "finish" | "cancel" |
   "navigation_preview" | "navigation_start" | "navigation_cancel" |
   "room_split" | "room_merge" | "rooms_save" | "zones_apply";
-type MapMode = "view" | "navigate" | "rooms" | "zones";
+export type MapMode = "view" | "navigate" | "rooms" | "zones";
 type RoomTool = "select" | "split" | "merge";
 type SplitLine = Array<[number, number]>;
 type SplitValidation = "idle" | "ready" | "checking" | "valid" | "invalid";
@@ -75,7 +75,13 @@ export type RobotSemantics = {
   zones: Record<string, unknown> | null;
 };
 
-export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
+export function RobotMapPanel({
+  device,
+  initialMode = "view",
+}: {
+  device: HomecamDevice | null;
+  initialMode?: MapMode;
+}) {
   const deviceId = device?.id ?? "";
   const [snapshot, setSnapshot] = useState<RobotSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,7 +90,7 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
   const [navigationPreview, setNavigationPreview] = useState<Record<string, unknown> | null>(null);
   const [previewExpiresAt, setPreviewExpiresAt] = useState(0);
   const [clockNow, setClockNow] = useState(0);
-  const [mapMode, setMapMode] = useState<MapMode>("view");
+  const [mapMode, setMapMode] = useState<MapMode>(initialMode);
   const [semantics, setSemantics] = useState<RobotSemantics | null>(null);
   const [roomDrafts, setRoomDrafts] = useState<GeoFeature[]>([]);
   const [roomTool, setRoomTool] = useState<RoomTool>("select");
@@ -378,6 +384,8 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
   const previewToken = previewExpiresAt > clockNow && typeof navigationPreview?.preview_token === "string"
     ? navigationPreview.preview_token
     : "";
+  const navigationSucceeded = mapMode === "navigate" && !previewToken && navigation?.state === "succeeded";
+  const navigationProgress = navigationSucceeded ? 100 : navigationProgressPercent(navigation);
   const previewPath = isRecord(navigationPreview?.path) && Array.isArray(navigationPreview.path.points)
     ? navigationPreview.path.points as unknown[]
     : [];
@@ -914,7 +922,7 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
   return (
     <section className="homecam-section robot-map-section" aria-labelledby="robot-map-title">
       <div className="robot-map-topbar">
-        <h1 id="robot-map-title">{mapping ? "집 둘러보는 중" : navigationDriving ? "이동 중" : "우리 집 지도"}</h1>
+        <h1 id="robot-map-title">{mapping ? "집 둘러보는 중" : navigationDriving ? "이동 중" : navigationSucceeded ? "이동 완료" : "우리 집 지도"}</h1>
         <div className="robot-map-mode-tabs" aria-label="지도 모드">
           {([
             ["view", "보기"],
@@ -1669,22 +1677,37 @@ export function RobotMapPanel({ device }: { device: HomecamDevice | null }) {
             </>
           ) : (
             <>
-              <div className={`robot-map-summary ${navigationDriving ? "is-driving" : ""}`}>
+              <div className={`robot-map-summary ${navigationDriving ? "is-driving" : navigationSucceeded ? "is-succeeded" : ""}`}>
                 <small>지금 말벗은</small>
                 <h2>
                   {navigationDriving ? "주변 장애물을 확인하며 이동하고 있어요"
+                    : navigationSucceeded ? "선택한 목적지에 도착했어요"
                     : previewToken ? "선택한 위치까지 이동할 수 있어요"
                       : mapMode === "navigate" ? "지도에서 보낼 곳을 선택해 주세요"
                         : "저장된 지도를 사용하고 있어요"}
                 </h2>
-                {navigationDriving && <div className="robot-map-progress"><i style={{ width: `${Math.round(numberValue(navigation?.progress_ratio) * 100)}%` }} /></div>}
+                {(navigationDriving || navigationSucceeded) && (
+                  <div className="robot-map-progress-row">
+                    <div
+                      className="robot-map-progress"
+                      role="progressbar"
+                      aria-label="목적지 이동 진행률"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={navigationProgress}
+                    >
+                      <i style={{ width: `${navigationProgress}%` }} />
+                    </div>
+                    <strong>{navigationProgress}%</strong>
+                  </div>
+                )}
                 <div className="robot-map-summary-grid">
-                  {mapMode === "navigate" || navigationDriving ? (
+                  {mapMode === "navigate" || navigationDriving || navigationSucceeded ? (
                     <>
-                      <div><span>{navigationDriving ? "남은 거리" : "거리"}</span><strong>{formatMeters(navigationDriving ? navigation?.distance_remaining_m : isRecord(navigationPreview?.path) ? navigationPreview.path.length_m : null)}</strong></div>
-                      <div><span>{navigationDriving ? "도착까지" : "예상 시간"}</span><strong>{formatEta(navigationDriving ? navigation?.estimated_time_remaining_s : estimateSeconds(navigationPreview))}</strong></div>
+                      <div><span>{navigationDriving || navigationSucceeded ? "남은 거리" : "거리"}</span><strong>{navigationSucceeded ? "0.0m" : formatMeters(navigationDriving ? navigation?.distance_remaining_m : isRecord(navigationPreview?.path) ? navigationPreview.path.length_m : null)}</strong></div>
+                      <div><span>{navigationDriving || navigationSucceeded ? "도착까지" : "예상 시간"}</span><strong>{navigationSucceeded ? "도착" : formatEta(navigationDriving ? navigation?.estimated_time_remaining_s : estimateSeconds(navigationPreview))}</strong></div>
                       <div><span>현재 위치</span><strong>{snapshot?.state?.localization.state === "ok" ? "확인됨" : "확인 필요"}</strong></div>
-                      <div><span>구역 확인</span><strong>{previewToken || navigationDriving ? "문제 없음" : "선택 전"}</strong></div>
+                      <div><span>구역 확인</span><strong>{previewToken || navigationDriving || navigationSucceeded ? "문제 없음" : "선택 전"}</strong></div>
                     </>
                   ) : (
                     <>
@@ -2822,6 +2845,18 @@ function zoneBehaviorLabel(behavior: ZoneBehavior) {
 
 function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function navigationProgressPercent(value: unknown) {
+  if (!isRecord(value)) return 0;
+  const reported = numberValue(value.progress_ratio);
+  const pathLength = numberValue(value.path_length_m);
+  const remaining = numberValue(value.distance_remaining_m);
+  const derived = pathLength > 0
+    ? 1 - Math.max(0, remaining) / pathLength
+    : 0;
+  const ratio = Math.max(reported, derived);
+  return Math.round(Math.max(0, Math.min(1, ratio)) * 100);
 }
 
 function formatMeters(value: unknown) {

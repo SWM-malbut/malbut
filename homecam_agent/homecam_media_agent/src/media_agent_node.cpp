@@ -23,6 +23,7 @@
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/string.hpp"
 
 #if HOMECAM_HAVE_GSTREAMER
 #include <gst/app/gstappsrc.h>
@@ -103,6 +104,9 @@ public:
     monitoring_publisher_ = create_publisher<std_msgs::msg::Bool>(
       "/homecam/monitoring_enabled",
       rclcpp::QoS(1).reliable().transient_local());
+    storage_session_publisher_ = create_publisher<std_msgs::msg::String>(
+      "/homecam/storage_session_id",
+      rclcpp::QoS(1).reliable().transient_local());
     detector_health_subscription_ = create_subscription<std_msgs::msg::Bool>(
       "/homecam/detector_healthy",
       rclcpp::QoS(1).reliable().transient_local(),
@@ -111,6 +115,7 @@ public:
         detector_health_received_at_ns_.store(steady_now_ns());
       });
     publish_monitoring_state();
+    publish_storage_session_id();
 
     heartbeat_timer_ = create_wall_timer(
       std::chrono::milliseconds(config_.heartbeat_interval_ms),
@@ -811,6 +816,8 @@ private:
     bool permanent_failure{false};
     bool fail_closed{false};
     std::uint64_t request_generation{0};
+    std::chrono::steady_clock::time_point transport_started_at{
+      std::chrono::steady_clock::time_point::min()};
     DeviceSessionResult session;
     std::string cleanup_session_id;
     std::string closed_session_id;
@@ -853,13 +860,17 @@ private:
     active_transport_generation_.store(0U);
     active_stream_mode_ = "idle";
     active_session_expires_at_ms_ = 0;
+    active_transport_started_at_ =
+      std::chrono::steady_clock::time_point::min();
     active_session_id_.clear();
     cleanup_session_id_.clear();
     backend_session_may_be_open_ = false;
+    publish_storage_session_id();
   }
 
   void fail_closed_active_session(const std::string & reason)
   {
+    const std::string session_to_cleanup = active_session_id_;
     session_generation_.fetch_add(1U);
     active_transport_generation_.store(0U);
     {
@@ -867,6 +878,10 @@ private:
       transport_->stop();
     }
     clear_local_session_state();
+    if (is_valid_session_id(session_to_cleanup)) {
+      cleanup_session_id_ = session_to_cleanup;
+      backend_session_may_be_open_ = true;
+    }
     RCLCPP_ERROR(
       get_logger(), "Device media session stopped fail-closed: %s",
       reason.c_str());
@@ -967,7 +982,10 @@ private:
     if (outcome.operation == SessionOperation::kStop) {
       active_stream_mode_ = "idle";
       active_session_expires_at_ms_ = 0;
+      active_transport_started_at_ =
+        std::chrono::steady_clock::time_point::min();
       active_transport_generation_.store(0U);
+      publish_storage_session_id();
       if (!outcome.success) {
         if (outcome.permanent_failure) {
           RCLCPP_ERROR(
@@ -1001,7 +1019,10 @@ private:
       if (outcome.transport_replaced) {
         active_stream_mode_ = "idle";
         active_session_expires_at_ms_ = 0;
+        active_transport_started_at_ =
+          std::chrono::steady_clock::time_point::min();
         active_transport_generation_.store(0U);
+        publish_storage_session_id();
       }
       if (outcome.permanent_failure) {
         RCLCPP_ERROR(
@@ -1035,7 +1056,9 @@ private:
       "storage" : "p2p";
     active_session_expires_at_ms_ =
       outcome.session.lease.credentials.expires_at_unix_ms;
+    active_transport_started_at_ = outcome.transport_started_at;
     active_transport_generation_.store(session_generation_.load());
+    publish_storage_session_id();
     RCLCPP_INFO(
       get_logger(),
       "Device media session %s started (refresh before %ld)",
@@ -1147,6 +1170,10 @@ private:
                   outcome.transport_replaced = true;
                   outcome.success =
                   transport->start(outcome.session.lease, &outcome.error);
+                  if (outcome.success) {
+                    outcome.transport_started_at =
+                      std::chrono::steady_clock::now();
+                  }
                   if (outcome.success && !request_is_current()) {
                     transport->stop();
                     active_transport_generation->store(0U);
@@ -1283,6 +1310,25 @@ private:
     return;
 #else
     const std::int64_t now = unix_now_ms();
+    const auto now_steady = std::chrono::steady_clock::now();
+    constexpr std::int64_t storage_refresh_age_ms = 50LL * 60LL * 1000LL;
+    constexpr std::int64_t storage_hard_age_ms = 55LL * 60LL * 1000LL;
+    std::int64_t active_transport_age_ms = -1;
+    if (
+      active_stream_mode_ == "storage" &&
+      active_transport_started_at_ !=
+      std::chrono::steady_clock::time_point::min())
+    {
+      active_transport_age_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+        now_steady - active_transport_started_at_).count();
+    }
+    if (storage_session_hard_expired(
+        active_transport_age_ms, storage_hard_age_ms))
+    {
+      fail_closed_active_session(
+        "KVS storage session exceeded the 55 minute hard lifetime");
+    }
     if (
       active_stream_mode_ != "idle" &&
       session_lease_expired(now, active_session_expires_at_ms_))
@@ -1297,7 +1343,6 @@ private:
       return;
     }
 
-    const auto now_steady = std::chrono::steady_clock::now();
     if (now_steady < next_session_attempt_) {
       return;
     }
@@ -1353,6 +1398,18 @@ private:
     const SessionMode session_mode =
       active_stream_mode_ == "storage" ?
       SessionMode::kStorage : SessionMode::kPeerToPeer;
+    if (
+      session_mode == SessionMode::kStorage &&
+      storage_session_refresh_due(
+        active_transport_age_ms, storage_refresh_age_ms))
+    {
+      RCLCPP_INFO(
+        get_logger(),
+        "Refreshing KVS storage session after %ld ms of active lifetime",
+        static_cast<long>(active_transport_age_ms));
+      launch_session_start_or_refresh();
+      return;
+    }
     const SessionRefreshDecision refresh_decision = decide_session_refresh(
       session_mode,
       peer_connected,
@@ -1410,6 +1467,7 @@ private:
   void publish_heartbeat()
   {
     collect_heartbeat_result();
+    publish_storage_session_id();
     HeartbeatStatus status;
     status.device_id = config_.device_id;
     status.camera_enabled = config_.camera_enabled;
@@ -1589,6 +1647,20 @@ private:
     monitoring_publisher_->publish(message);
   }
 
+  void publish_storage_session_id()
+  {
+    std_msgs::msg::String message;
+    if (
+      active_stream_mode_ == "storage" &&
+      config_.camera_enabled &&
+      config_.monitoring_enabled &&
+      is_valid_session_id(active_session_id_))
+    {
+      message.data = active_session_id_;
+    }
+    storage_session_publisher_->publish(message);
+  }
+
   MediaConfig config_;
   std::unique_ptr<HeartbeatClient> heartbeat_client_;
   std::unique_ptr<DeviceSessionClient> session_client_;
@@ -1604,6 +1676,8 @@ private:
   std::string active_session_id_;
   std::string cleanup_session_id_;
   std::int64_t active_session_expires_at_ms_{0};
+  std::chrono::steady_clock::time_point active_transport_started_at_{
+    std::chrono::steady_clock::time_point::min()};
   bool backend_session_may_be_open_{false};
   bool desired_state_confirmed_{false};
   bool session_permanent_failure_{false};
@@ -1615,6 +1689,8 @@ private:
     camera_info_subscription_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr monitoring_publisher_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
+    storage_session_publisher_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr
     detector_health_subscription_;
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;

@@ -19,6 +19,12 @@ class DetectorConfig:
     confidence_threshold: float = 0.45
     consecutive_frames: int = 3
     event_cooldown_sec: float = 30.0
+    event_confirmation_window_frames: int = 5
+    event_confirmation_required_frames: int = 3
+    event_pre_roll_sec: float = 5.0
+    event_merge_gap_sec: float = 10.0
+    max_event_clip_sec: float = 120.0
+    event_clips_enabled: bool = False
     max_frame_gap_sec: float = 1.0
     stationary_after_sec: float = 1.0
     odom_timeout_sec: float = 2.0
@@ -82,6 +88,25 @@ def validate_config(config: DetectorConfig) -> List[str]:
         or config.event_cooldown_sec < 0.0
     ):
         errors.append("event_cooldown_sec must be non-negative")
+    if config.event_confirmation_window_frames < 1:
+        errors.append("event_confirmation_window_frames must be at least 1")
+    if not (
+        1
+        <= config.event_confirmation_required_frames
+        <= config.event_confirmation_window_frames
+    ):
+        errors.append(
+            "event_confirmation_required_frames must be within the window"
+        )
+    for name, value in (
+        ("event_pre_roll_sec", config.event_pre_roll_sec),
+        ("event_merge_gap_sec", config.event_merge_gap_sec),
+        ("max_event_clip_sec", config.max_event_clip_sec),
+    ):
+        if not math.isfinite(value) or value < 0.0:
+            errors.append(f"{name} must be finite and non-negative")
+    if config.max_event_clip_sec <= config.event_pre_roll_sec:
+        errors.append("max_event_clip_sec must be greater than event_pre_roll_sec")
     if (
         not math.isfinite(config.max_frame_gap_sec)
         or config.max_frame_gap_sec <= 0.0

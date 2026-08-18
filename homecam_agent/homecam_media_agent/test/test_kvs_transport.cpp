@@ -15,6 +15,8 @@ using homecam_media_agent::SharedMediaTimeline;
 using homecam_media_agent::decide_session_refresh;
 using homecam_media_agent::make_kvs_transport;
 using homecam_media_agent::session_lease_expired;
+using homecam_media_agent::storage_session_hard_expired;
+using homecam_media_agent::storage_session_refresh_due;
 
 TEST(SessionLease, RefreshesBeforeShortLivedCredentialsExpire)
 {
@@ -87,6 +89,17 @@ TEST(SessionRefreshPolicy, StorageRenewalIsNeverDeferredForP2p)
     decide_session_refresh(
       SessionMode::kStorage, true, now, now + 300'000, 300'000, 60'000),
     SessionRefreshDecision::kRefreshNow);
+}
+
+TEST(SessionRefreshPolicy, StorageLifetimeUsesMonotonicSoftAndHardBoundaries)
+{
+  constexpr std::int64_t refresh_age = 50LL * 60LL * 1000LL;
+  constexpr std::int64_t hard_age = 55LL * 60LL * 1000LL;
+  EXPECT_FALSE(storage_session_refresh_due(-1, refresh_age));
+  EXPECT_FALSE(storage_session_refresh_due(refresh_age - 1, refresh_age));
+  EXPECT_TRUE(storage_session_refresh_due(refresh_age, refresh_age));
+  EXPECT_FALSE(storage_session_hard_expired(hard_age - 1, hard_age));
+  EXPECT_TRUE(storage_session_hard_expired(hard_age, hard_age));
 }
 
 TEST(KvsTransport, FailsClosedWithoutAReviewedAdapter)

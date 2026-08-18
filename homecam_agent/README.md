@@ -274,18 +274,33 @@ heartbeat body는 백엔드가 허용하는 필드만 전송한다. 실제 peer/
 - 모니터링/카메라 변경: 유효 상태(`monitoringEnabled && cameraEnabled`)를
   transient-local `/homecam/monitoring_enabled`에 전달
 
-감지 노드는 `POST /api/device/v1/events`에 다음 camelCase payload를 보낸다.
+감지 노드는 기본적으로 5프레임 중 3프레임 확인 후 이벤트를 열고,
+마지막 감지 10초 뒤 닫는다. 120초를 넘는 이벤트는 같은 `eventGroupId`의
+다음 `segmentIndex`로 분할한다. 시작과 종료는 각각
+`POST /api/device/v1/event-clips/started`,
+`POST /api/device/v1/event-clips/ended`에 전송한다.
 
 ```json
 {
-  "eventType": "person",
+  "eventGroupId": "0198a0e8-5800-7000-8000-000000000001",
+  "segmentIndex": 0,
+  "primaryType": "person",
+  "labels": ["person", "motion"],
   "confidence": 0.91,
-  "occurredAt": "2026-07-26T12:34:56.789Z",
+  "detectedAt": "2026-07-26T12:34:56.789Z",
+  "startAt": "2026-07-26T12:34:51.789Z",
+  "sessionIds": ["22222222-2222-4222-8222-222222222222"],
+  "bootId": "11111111-1111-4111-8111-111111111111",
+  "clockSource": "wall",
+  "clockSteppedDuringEvent": false,
+  "notificationEligible": true,
   "idempotencyKey": "64-character-sha256"
 }
 ```
 
-전송은 camera callback과 분리된 bounded worker에서 최대 3회 재시도한다.
+종료 payload에는 `endAt`과 steady clock으로 계산한
+`monotonicDurationMs`가 추가된다. 전송은 camera callback과 분리된 bounded
+worker에서 시작 2회, 종료 3회까지 재시도한다.
 같은 idempotency key를 사용하므로 백엔드는 재시도를 중복 생성하지 않아야 한다.
 장치 token이 들어 있는 요청은 HTTP redirect를 절대 따라가지 않으며 3xx를
 전송 실패로 처리한다.
@@ -305,6 +320,8 @@ region, channel ARN, session/credential 만료 시각을 엄격히 검증하고
 - 모니터링 OFF: P2P master session
 - 모니터링 ON: `useMediaStorage=true`인 Storage Session
 - 만료 5분 전 또는 mode 변경: 새 단기 session credential로 교체
+  - Storage Session은 AWS 1시간 상한과 backend 만료 시각이 어긋나도
+    50분에 선제 갱신하고 55분에는 fail-closed로 교체한다.
   - P2P viewer가 연결되어 있으면 routine 교체를 유예하고, peer 종료 직후
     갱신한다.
   - viewer가 계속 연결된 경우에도 현재 lease 만료 60초 전에는 fail-closed
