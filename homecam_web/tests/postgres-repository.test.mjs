@@ -83,6 +83,22 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         legacyChannelArn: "arn:test:kvs:p2p",
       });
 
+      const cameraOff = await homecam.updateDeviceSettings({
+        deviceId: "living-room",
+        userEmail: "owner@example.com",
+        patch: { cameraEnabled: false },
+      });
+      assert.equal(cameraOff.cameraEnabled, false);
+      assert.equal(cameraOff.monitoringEnabled, false);
+
+      const cameraAndMonitoringOn = await homecam.updateDeviceSettings({
+        deviceId: "living-room",
+        userEmail: "owner@example.com",
+        patch: { cameraEnabled: true, monitoringEnabled: true },
+      });
+      assert.equal(cameraAndMonitoringOn.cameraEnabled, true);
+      assert.equal(cameraAndMonitoringOn.monitoringEnabled, true);
+
       const session = await homecam.prepareDeviceMediaSession({
         deviceId: "living-room",
         mode: "storage",

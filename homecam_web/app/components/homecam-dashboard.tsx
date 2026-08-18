@@ -98,9 +98,11 @@ type HomecamDashboardProps = {
   creatingLegacyBroadcast: boolean;
   externalError?: string;
   legacyArchive?: React.ReactNode;
+  liveMediaReady?: boolean;
   liveViewer?: (context: {
     eventCount: number;
     openEvents: () => void;
+    device: HomecamDevice | null;
   }) => React.ReactNode;
 };
 
@@ -647,6 +649,7 @@ export function HomecamDashboard({
   creatingLegacyBroadcast,
   externalError = "",
   legacyArchive,
+  liveMediaReady = false,
   liveViewer,
 }: HomecamDashboardProps) {
   const [devices, setDevices] = useState<HomecamDevice[]>([]);
@@ -699,6 +702,9 @@ export function HomecamDashboard({
     () => devices.find((device) => device.id === selectedDeviceId) ?? devices[0] ?? null,
     [devices, selectedDeviceId],
   );
+  const displayedMediaReady = liveViewer
+    ? liveMediaReady
+    : Boolean(selectedDevice?.online && selectedDevice.mediaHealthy);
   const visibleEvents = useMemo(() => events.filter((event) =>
     eventFilter === "all" || event.type === eventFilter ||
       (eventFilter === "pet" && (event.type === "dog" || event.type === "cat"))), [eventFilter, events]);
@@ -1255,12 +1261,12 @@ export function HomecamDashboard({
           {tab !== "events" && <span className={`homecam-connection-pill ${selectedDevice?.online ? "is-online" : ""}`}>
             <i aria-hidden="true" />
             {selectedDevice?.online
-              ? tab === "live" && selectedDevice.mediaHealthy ? "실시간 연결됨" : "연결됨"
+              ? tab === "live" && displayedMediaReady ? "실시간 연결됨" : "연결됨"
               : "오프라인"}
           </span>}
           {tab === "live" && (
             <span className="homecam-device-bar-meta">
-              {selectedDevice?.mediaHealthy ? "보안 영상 채널 준비됨" : "영상 채널 확인 중"}
+              {displayedMediaReady ? "보안 영상 채널 연결됨" : "영상 채널 연결 중"}
               {` · ${selectedDevice?.monitoringEnabled ? "이벤트 영상만 저장" : "영상 저장 안 함"}`}
             </span>
           )}
@@ -1343,7 +1349,11 @@ export function HomecamDashboard({
 
         {tab === "live" && (
           <section className="homecam-live-view" aria-label="실시간 홈캠">
-            {liveViewer?.({ eventCount: events.length, openEvents: () => setTab("events") }) ?? <div className="homecam-video-card">
+            {liveViewer?.({
+              eventCount: events.length,
+              openEvents: () => setTab("events"),
+              device: selectedDevice,
+            }) ?? <div className="homecam-video-card">
               <div className="homecam-video-frame">
                 <div className="homecam-video-topbar">
                   <span className="homecam-video-clock">{formatLiveClock(liveClockMs)}</span>
@@ -1393,14 +1403,22 @@ export function HomecamDashboard({
                 <h2>지금 상태</h2>
                 <div className="homecam-live-state-list">
                   <div>
-                    <i className={selectedDevice?.online && selectedDevice.mediaHealthy ? "is-good" : ""} aria-hidden="true" />
+                    <i className={displayedMediaReady ? "is-good" : ""} aria-hidden="true" />
                     <span>영상 연결</span>
-                    <strong>{selectedDevice?.online && selectedDevice.mediaHealthy ? "좋음" : selectedDevice?.online ? "준비 중" : "오프라인"}</strong>
+                    <strong>{displayedMediaReady ? "연결됨" : selectedDevice?.online ? "연결 중" : "오프라인"}</strong>
                   </div>
                   <div>
                     <i className={selectedDevice?.cameraEnabled ? "is-good" : ""} aria-hidden="true" />
-                    <span>카메라</span>
+                    <span>카메라 전원</span>
                     <strong>{selectedDevice?.cameraEnabled ? "켜짐" : "꺼짐"}</strong>
+                    {selectedDevice && (
+                      <Switch
+                        checked={selectedDevice.cameraEnabled}
+                        disabled={!isOwner || Boolean(busy)}
+                        label="카메라 전원"
+                        onChange={(value) => void updateSetting("cameraEnabled", value)}
+                      />
+                    )}
                   </div>
                   <div>
                     <i className={selectedDevice?.microphoneEnabled ? "is-good" : ""} aria-hidden="true" />
@@ -1439,14 +1457,6 @@ export function HomecamDashboard({
                 <button type="button" onClick={() => void openLive()} disabled={!selectedDevice?.online || !selectedDevice.cameraEnabled || busy === "live"}>
                   <ArrowClockwise size={16} weight="bold" aria-hidden="true" />
                   {liveViewer ? "연결 재시도" : "실시간 연결"}
-                </button>
-                <button
-                  type="button"
-                  disabled={!selectedDevice || !isOwner || Boolean(busy)}
-                  onClick={() => selectedDevice && void updateSetting("cameraEnabled", !selectedDevice.cameraEnabled)}
-                >
-                  <Camera size={16} weight="regular" aria-hidden="true" />
-                  {selectedDevice?.cameraEnabled ? "카메라 끄기" : "카메라 켜기"}
                 </button>
               </div>
             </div>

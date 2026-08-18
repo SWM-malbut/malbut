@@ -7152,7 +7152,7 @@ a:focus-visible {
 
 .homecam-dashboard-shell.tab-live .homecam-live-side-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 10px;
   margin-top: auto;
 }
@@ -7172,12 +7172,6 @@ a:focus-visible {
   font-size: 15px;
   font-weight: 700;
   cursor: pointer;
-}
-
-.homecam-dashboard-shell.tab-live .homecam-live-side-actions button:last-child {
-  color: #a6301f;
-  border-color: transparent;
-  background: #fdf3f1;
 }
 
 .homecam-dashboard-shell.tab-live .homecam-live-side-actions button:disabled {

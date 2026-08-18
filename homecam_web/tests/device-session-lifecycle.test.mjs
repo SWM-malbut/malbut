@@ -47,7 +47,7 @@ test("an idle heartbeat does not close a provisioned device session", async () =
     /getActiveMediaSession\(device\.deviceId\)/,
   );
   assert.match(sessionRoute, /confirmedSession\?\.id !== session\.id/);
-  assert.match(dashboard, /selectedDevice\?\.online\s*&&\s*selectedDevice\.mediaHealthy/);
+  assert.match(dashboard, /const displayedMediaReady = liveViewer[\s\S]*selectedDevice\?\.online && selectedDevice\.mediaHealthy/);
   assert.match(
     database,
     /WHERE device_id = \? AND active_session_id = \?/,
@@ -68,6 +68,11 @@ test("an idle heartbeat does not close a provisioned device session", async () =
     database,
     /monitoring_enabled = 1[\s\S]*camera_enabled = 1[\s\S]*media_healthy = 1[\s\S]*active_stream_mode = 'storage'[\s\S]*active_session_id = \?/,
   );
+  assert.match(
+    liveRoute,
+    /joinStorage[\s\S]*state\.streamMode !== "storage" \|\| !state\.mediaHealthy[\s\S]*425/,
+  );
+  assert.match(liveRoute, /"retry-after": "2"/);
   assert.match(database, /SET started_at = COALESCE\(started_at, \?\)/);
   assert.match(database, /EVENT_OUTSIDE_RECORDING/);
   assert.doesNotMatch(liveRoute, /activeSession,\s*\n/);
