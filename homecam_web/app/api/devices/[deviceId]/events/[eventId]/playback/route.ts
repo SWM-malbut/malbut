@@ -46,7 +46,7 @@ export async function POST(
     userEmail,
     roomCode: eventId,
     scope: "event-clip-playback",
-    limit: 10,
+    limit: 20,
   });
   if (!canIssuePlayback) {
     return noStore(
@@ -101,7 +101,11 @@ export async function POST(
     );
   } catch (error) {
     if (error instanceof Error && error.message === "KVS_BROKER_404") {
-      return noStore({ error: "해당 시간에 저장된 영상이 없습니다." }, 404);
+      return noStore(
+        { error: "이벤트 영상의 저장을 마무리하고 있습니다." },
+        425,
+        { "retry-after": "2" },
+      );
     }
     return noStore({ error: "이벤트 클립 재생 주소를 발급하지 못했습니다." }, 503);
   }

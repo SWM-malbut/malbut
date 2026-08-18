@@ -106,9 +106,16 @@ test("the container binds Next to loopback-safe all interfaces on Fargate", asyn
 });
 
 test("bounded event clips keep privacy deletion and direct destination navigation explicit", async () => {
-  const [dashboard, clipRoute, deletionRoute, migration, broker, stack] =
+  const [dashboard, playbackRoute, clipRoute, deletionRoute, migration, broker, stack] =
     await Promise.all([
       readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
+      readFile(
+        new URL(
+          "../app/api/devices/[deviceId]/events/[eventId]/playback/route.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
       readFile(
         new URL("../app/api/device/v1/event-clips/[phase]/route.ts", import.meta.url),
         "utf8",
@@ -123,6 +130,9 @@ test("bounded event clips keep privacy deletion and direct destination navigatio
     ]);
   assert.match(dashboard, /onClick=\{\(\) => onOpenMap\("navigate"\)\}>목적지 선택/);
   assert.match(dashboard, /목록에서 삭제/);
+  assert.match(dashboard, /response\.status !== 425/);
+  assert.match(dashboard, /homecam-event-delete-button/);
+  assert.match(playbackRoute, /"retry-after": "2"/);
   assert.match(deletionRoute, /rawMediaDeletion:\s*"retention"/);
   assert.match(clipRoute, /Idempotency-Key 헤더가 본문과 일치/);
   assert.match(migration, /clip_state IN \('detected', 'recording', 'ready', 'incomplete'/);

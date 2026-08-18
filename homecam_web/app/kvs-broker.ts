@@ -25,6 +25,8 @@ export type KvsBrokerPlayback = {
   streamArn: string;
 };
 
+export type KvsBrokerLivePlayback = KvsBrokerPlayback;
+
 export type KvsBrokerEventPlayback = KvsBrokerPlayback & {
   alignedStartAt: string;
 };
@@ -174,6 +176,28 @@ export async function requestBrokerEventPlayback(input: {
     throw new Error("KVS_BROKER_RESPONSE_INVALID");
   }
   return payload as KvsBrokerEventPlayback;
+}
+
+export async function requestBrokerLivePlayback(input: {
+  deviceId: string;
+  streamArn: string;
+  expiresSeconds: number;
+}): Promise<KvsBrokerLivePlayback> {
+  const payload = (await requestBroker({
+    action: "LIVE_PLAYBACK",
+    deviceId: input.deviceId,
+    streamArn: input.streamArn,
+    expiresSeconds: input.expiresSeconds,
+  })) as Partial<KvsBrokerLivePlayback>;
+  if (
+    typeof payload.playbackUrl !== "string" ||
+    !payload.playbackUrl.startsWith("https://") ||
+    typeof payload.expiresAt !== "string" ||
+    payload.streamArn !== input.streamArn
+  ) {
+    throw new Error("KVS_BROKER_RESPONSE_INVALID");
+  }
+  return payload as KvsBrokerLivePlayback;
 }
 
 async function requestBroker(input: object) {

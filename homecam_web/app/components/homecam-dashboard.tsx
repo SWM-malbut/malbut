@@ -457,6 +457,24 @@ function normalizeLegacyPassword(value: string) {
   return raw.match(/.{1,4}/g)?.join("-") ?? raw;
 }
 
+function abortableDelay(milliseconds: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 function Switch({
   checked,
   disabled,
@@ -557,18 +575,36 @@ function EventPlayback({
     const playbackEndpoint = isBoundedClip
       ? `/api/devices/${encodeURIComponent(deviceId)}/events/${encodeURIComponent(event.id)}/playback`
       : `/api/recordings/${encodeURIComponent(event.recordingId)}/playback`;
-    void fetch(playbackEndpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: isBoundedClip ? JSON.stringify({}) : JSON.stringify({ segment: event.recordingSegment }),
-      signal: controller.signal,
-    })
-      .then(async (response) => {
+    const requestPlayback = async () => {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const response = await fetch(playbackEndpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: isBoundedClip
+            ? JSON.stringify({})
+            : JSON.stringify({ segment: event.recordingSegment }),
+          signal: controller.signal,
+        });
         const payload = asRecord(await response.json().catch(() => ({})));
         const playbackUrl = stringValue(payload.playbackUrl, payload.playback_url);
-        if (!response.ok || !playbackUrl) {
-          throw new Error(stringValue(payload.error) ?? "재생 주소를 발급하지 못했습니다.");
+        if (response.ok && playbackUrl) return { payload, playbackUrl };
+        if (response.status !== 425 || attempt === 9) {
+          throw new Error(
+            stringValue(payload.error) ?? "재생 주소를 발급하지 못했습니다.",
+          );
         }
+        setMessage("이벤트 영상 저장을 마무리하고 있습니다…");
+        const retrySeconds = Number(response.headers.get("retry-after"));
+        await abortableDelay(
+          (Number.isFinite(retrySeconds) && retrySeconds > 0 ? retrySeconds : 2) * 1_000,
+          controller.signal,
+        );
+      }
+      throw new Error("이벤트 영상 준비 시간이 초과되었습니다.");
+    };
+
+    void requestPlayback()
+      .then(({ payload, playbackUrl }) => {
         const adjustment = payload.seekAdjustmentSeconds;
         seekAdjustmentSeconds =
           typeof adjustment === "number" &&
@@ -1527,8 +1563,19 @@ export function HomecamDashboard({
                       <div className="homecam-event-detail-actions">
                         <button type="button" onClick={() => setSelectedEvent(focusedEvent)} disabled={!eventCanPlay(focusedEvent)}>영상 클립 확인</button>
                         {isOwner && (
-                          <button type="button" onClick={() => void removeEventFromList(focusedEvent)} disabled={busy === `event-delete:${focusedEvent.id}`}>
-                            <Trash size={16} weight="regular" /> 목록에서 삭제
+                          <button
+                            type="button"
+                            className="homecam-event-delete-button"
+                            onClick={() => void removeEventFromList(focusedEvent)}
+                            disabled={busy === `event-delete:${focusedEvent.id}`}
+                            aria-label="이벤트를 목록에서 삭제"
+                          >
+                            <Trash size={16} weight="regular" aria-hidden="true" />
+                            <span>
+                              {busy === `event-delete:${focusedEvent.id}`
+                                ? "삭제 중…"
+                                : "목록에서 삭제"}
+                            </span>
                           </button>
                         )}
                       </div>
