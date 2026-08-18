@@ -1,6 +1,11 @@
 "use client";
 
 import { AUTHORIZED_P2P_DISCONNECT_GRACE_MS } from "./viewer-reconnect";
+import {
+  assertStorageAnswerSdp,
+  storageTransceiverDirection,
+  type StorageParticipantRole,
+} from "./storage-negotiation";
 
 export type KvsConnectionState = "waiting" | "connecting" | "live" | "offline";
 
@@ -740,9 +745,18 @@ function connectKvsStorageGeneration(input: StorageParticipantInput): KvsConnect
       for (const candidate of queuedCandidates.splice(0)) {
         await nextPeer.addIceCandidate(candidate);
       }
-      preferStorageCodecs(nextPeer);
+      configureStorageTransceivers(
+        nextPeer,
+        input.role,
+        localTracks.some((track) => track.kind === "audio"),
+      );
       await limitStorageSenders(nextPeer);
       const answer = await nextPeer.createAnswer();
+      assertStorageAnswerSdp(
+        answer.sdp,
+        input.role,
+        localTracks.some((track) => track.kind === "audio"),
+      );
       await nextPeer.setLocalDescription(answer);
       if (closed || peer !== nextPeer || !nextPeer.localDescription) return;
       signaling.sendSdpAnswer(
@@ -821,10 +835,19 @@ function getStorageLocalTracks(role: KvsRole, stream: MediaStream | null) {
   return [audioTrack];
 }
 
-function preferStorageCodecs(peer: RTCPeerConnection) {
+function configureStorageTransceivers(
+  peer: RTCPeerConnection,
+  role: StorageParticipantRole,
+  hasLocalAudio: boolean,
+) {
   for (const transceiver of peer.getTransceivers()) {
     const kind = transceiver.receiver.track.kind;
     if (kind !== "video" && kind !== "audio") continue;
+    transceiver.direction = storageTransceiverDirection(
+      role,
+      kind,
+      hasLocalAudio,
+    );
     const mimeType = kind === "video" ? "video/h264" : "audio/opus";
     const codecs = RTCRtpReceiver.getCapabilities(kind)?.codecs.filter(
       (codec) => codec.mimeType.toLowerCase() === mimeType,

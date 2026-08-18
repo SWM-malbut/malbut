@@ -47,7 +47,7 @@ test("an idle heartbeat does not close a provisioned device session", async () =
     /getActiveMediaSession\(device\.deviceId\)/,
   );
   assert.match(sessionRoute, /confirmedSession\?\.id !== session\.id/);
-  assert.match(dashboard, /selectedDevice\?\.online\s*&&\s*selectedDevice\.mediaHealthy/);
+  assert.match(dashboard, /const displayedMediaReady = liveViewer[\s\S]*selectedDevice\?\.online && selectedDevice\.mediaHealthy/);
   assert.match(
     database,
     /WHERE device_id = \? AND active_session_id = \?/,

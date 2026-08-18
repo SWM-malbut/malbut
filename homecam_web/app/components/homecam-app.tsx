@@ -778,6 +778,7 @@ function Viewer({
   embedded = false,
   embeddedEventCount = 0,
   onOpenEmbeddedEvents,
+  onMediaReadyChange,
 }: {
   roomCode: string;
   viewerPassword: string;
@@ -787,6 +788,7 @@ function Viewer({
   embedded?: boolean;
   embeddedEventCount?: number;
   onOpenEmbeddedEvents?: () => void;
+  onMediaReadyChange?: (ready: boolean) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const microphoneRef = useRef<MediaStream | null>(null);
@@ -831,7 +833,13 @@ function Viewer({
 
   useEffect(() => {
     viewerStateRef.current = state;
-  }, [state]);
+    onMediaReadyChange?.(state === "live");
+  }, [onMediaReadyChange, state]);
+
+  useEffect(
+    () => () => onMediaReadyChange?.(false),
+    [onMediaReadyChange],
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => setViewerClockMs(Date.now()), 1_000);
@@ -1148,8 +1156,9 @@ function Viewer({
         !videoElement ||
         !observedVideoTrack ||
         observedVideoTrack.readyState !== "live" ||
-        observedVideoTrack.muted ||
-        videoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+        videoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+        videoElement.videoWidth <= 0 ||
+        videoElement.videoHeight <= 0
       ) {
         return;
       }
@@ -1173,7 +1182,17 @@ function Viewer({
         }, AUTHORIZED_P2P_STABLE_LIVE_MS);
       }
     };
-    videoElement?.addEventListener("loadeddata", markVideoReady);
+    const mediaReadyEvents = [
+      "loadedmetadata",
+      "loadeddata",
+      "canplay",
+      "playing",
+      "timeupdate",
+      "resize",
+    ] as const;
+    mediaReadyEvents.forEach((eventName) =>
+      videoElement?.addEventListener(eventName, markVideoReady),
+    );
 
     if (deviceId && expectedStorageMode === false) {
       setupTimer = window.setTimeout(() => {
@@ -1200,13 +1219,16 @@ function Viewer({
             if (!active || !videoElement) return;
             remoteStream = stream;
             videoElement.srcObject = stream;
-            void videoElement.play().catch(async () => {
+            void videoElement.play().then(markVideoReady).catch(async () => {
               if (!active) return;
               videoElement.muted = true;
               setSpeakerMuted(true);
               try {
                 await videoElement.play();
-                if (active) setSoundBlocked(false);
+                if (active) {
+                  setSoundBlocked(false);
+                  markVideoReady();
+                }
               } catch {
                 if (active) setSoundBlocked(true);
               }
@@ -1413,7 +1435,9 @@ function Viewer({
       localConnection?.close();
       if (connectionRef.current === localConnection) connectionRef.current = null;
       if (videoElement) {
-        videoElement.removeEventListener("loadeddata", markVideoReady);
+        mediaReadyEvents.forEach((eventName) =>
+          videoElement.removeEventListener(eventName, markVideoReady),
+        );
         videoElement.srcObject = null;
       }
       remoteStream?.getTracks().forEach((track) => track.stop());
@@ -1984,6 +2008,7 @@ export function HomecamApp() {
   const [viewerDeviceId, setViewerDeviceId] = useState("");
   const [viewerDevice, setViewerDevice] = useState<HomecamDevice | null>(null);
   const [inlineViewerDevice, setInlineViewerDevice] = useState<HomecamDevice | null>(null);
+  const [inlineViewerReady, setInlineViewerReady] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
   const [landingError, setLandingError] = useState("");
 
@@ -2010,6 +2035,7 @@ export function HomecamApp() {
     setViewerDeviceId("");
     setViewerDevice(null);
     setInlineViewerDevice(null);
+    setInlineViewerReady(false);
     setLandingError("");
   };
 
@@ -2057,6 +2083,7 @@ export function HomecamApp() {
 
   const openRegisteredDevice = async (device: HomecamDevice) => {
     setInlineViewerDevice(null);
+    setInlineViewerReady(false);
     await Promise.resolve();
     setInlineViewerDevice(device);
   };
@@ -2069,16 +2096,21 @@ export function HomecamApp() {
       onJoinLegacy={joinLegacyBroadcast}
       creatingLegacyBroadcast={creatingSession}
       externalError={landingError}
-      liveViewer={inlineViewerDevice ? ({ eventCount, openEvents }) => (
+      liveMediaReady={inlineViewerReady}
+      liveViewer={inlineViewerDevice ? ({ eventCount, openEvents, device }) => (
         <Viewer
           roomCode={inlineViewerDevice.activeSession?.roomCode ?? ""}
           viewerPassword=""
           deviceId={inlineViewerDevice.id}
-          device={inlineViewerDevice}
+          device={device ?? inlineViewerDevice}
           embedded
           embeddedEventCount={eventCount}
           onOpenEmbeddedEvents={openEvents}
-          onExit={() => setInlineViewerDevice(null)}
+          onMediaReadyChange={setInlineViewerReady}
+          onExit={() => {
+            setInlineViewerReady(false);
+            setInlineViewerDevice(null);
+          }}
         />
       ) : undefined}
       legacyArchive={
