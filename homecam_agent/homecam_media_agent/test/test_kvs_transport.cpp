@@ -17,6 +17,7 @@ using homecam_media_agent::make_kvs_transport;
 using homecam_media_agent::session_lease_expired;
 using homecam_media_agent::storage_session_hard_expired;
 using homecam_media_agent::storage_session_refresh_due;
+using homecam_media_agent::use_explicit_signaling_channel_arn;
 
 TEST(SessionLease, RefreshesBeforeShortLivedCredentialsExpire)
 {
@@ -100,6 +101,12 @@ TEST(SessionRefreshPolicy, StorageLifetimeUsesMonotonicSoftAndHardBoundaries)
   EXPECT_TRUE(storage_session_refresh_due(refresh_age, refresh_age));
   EXPECT_FALSE(storage_session_hard_expired(hard_age - 1, hard_age));
   EXPECT_TRUE(storage_session_hard_expired(hard_age, hard_age));
+}
+
+TEST(KvsTransport, StorageSessionLetsSdkDiscoverMediaStorageConfiguration)
+{
+  EXPECT_TRUE(use_explicit_signaling_channel_arn(SessionMode::kPeerToPeer));
+  EXPECT_FALSE(use_explicit_signaling_channel_arn(SessionMode::kStorage));
 }
 
 TEST(KvsTransport, FailsClosedWithoutAReviewedAdapter)

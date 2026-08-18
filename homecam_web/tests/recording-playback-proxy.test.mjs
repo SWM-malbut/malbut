@@ -201,3 +201,22 @@ test("live playback grants are device-scoped and cannot cross device boundaries"
     null,
   );
 });
+
+test("uses the configured public origin behind an internal container listener", async () => {
+  const helper = await loadHelper();
+  const upstream = `https://${AWS_HOST}/hls/v1/getHLSMasterPlaylist.m3u8?SessionToken=${encodeURIComponent(SESSION_TOKEN)}`;
+  const proxy = await helper.createDeviceLivePlaybackProxy(
+    {
+      requestUrl: "https://0.0.0.0:3000/api/devices/gazebo-homecam/live-playback",
+      publicOrigin: "https://malbut.example.com",
+      playbackUrl: upstream,
+      deviceId: "gazebo-homecam",
+      userEmail: "owner@example.com",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    },
+    SECRET,
+  );
+
+  assert.equal(new URL(proxy.playbackUrl).origin, "https://malbut.example.com");
+  assert.doesNotMatch(proxy.playbackUrl, /0\.0\.0\.0|SessionToken|kinesisvideo/);
+});

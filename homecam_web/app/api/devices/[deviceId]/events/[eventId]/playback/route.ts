@@ -15,7 +15,10 @@ import { getRequestUserEmail } from "../../../../../../server-auth";
 
 export const dynamic = "force-dynamic";
 
-type PlaybackEnv = DeviceKvsEnvironment & { KVS_BROKER_SECRET?: string };
+type PlaybackEnv = DeviceKvsEnvironment & {
+  KVS_BROKER_SECRET?: string;
+  AUTH_PUBLIC_ORIGIN?: string;
+};
 
 export async function POST(
   request: Request,
@@ -67,6 +70,7 @@ export async function POST(
     const proxy = await createRecordingPlaybackProxy(
       {
         requestUrl: request.url,
+        publicOrigin: runtime.AUTH_PUBLIC_ORIGIN,
         playbackUrl: playback.playbackUrl,
         recordingId: event.recordingId,
         userEmail,

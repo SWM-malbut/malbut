@@ -23,6 +23,7 @@ type PlaybackGrant = {
 
 type CreatePlaybackProxyInput = {
   requestUrl: string;
+  publicOrigin?: string;
   playbackUrl: string;
   subjectId: string;
   proxyPath: string;
@@ -116,6 +117,7 @@ async function createPlaybackProxy(
   };
   const cookieValue = await encryptGrant(grant, secret);
   const request = new URL(input.requestUrl);
+  const publicOrigin = playbackPublicOrigin(input.publicOrigin, request.origin);
   const path = `${input.proxyPath}/${playbackId}/`;
   const maxAge = Math.max(1, expiresAt - Math.floor(Date.now() / 1000));
   const cookie = [
@@ -128,9 +130,29 @@ async function createPlaybackProxy(
   ].join("; ");
 
   return {
-    playbackUrl: new URL(`${path}getHLSMasterPlaylist.m3u8`, request).toString(),
+    playbackUrl: new URL(
+      `${path}getHLSMasterPlaylist.m3u8`,
+      publicOrigin,
+    ).toString(),
     setCookie: cookie,
   };
+}
+
+function playbackPublicOrigin(configured: string | undefined, fallback: string) {
+  if (!configured) return fallback;
+  const origin = new URL(configured);
+  if (
+    origin.protocol !== "https:" ||
+    origin.username ||
+    origin.password ||
+    origin.port ||
+    origin.pathname !== "/" ||
+    origin.search ||
+    origin.hash
+  ) {
+    throw new Error("PLAYBACK_PUBLIC_ORIGIN_INVALID");
+  }
+  return origin.origin;
 }
 
 export async function resolveRecordingPlaybackProxy(
