@@ -36,6 +36,8 @@ import {
   authorizedP2pReconnectDelayMs,
   canAutomaticallyReconnectAuthorizedP2p,
 } from "../lib/viewer-reconnect";
+import { connectDeviceLiveHls } from "../lib/live-hls-client";
+import { storageViewerTransport } from "../lib/storage-viewer-transport";
 import { logoutNavigationPath } from "../auth/logout/logout-flow";
 
 type Mode = "landing" | "broadcaster" | "viewer";
@@ -89,6 +91,8 @@ type ViewerTalkLease = {
   clientId: string;
   generation: number;
 };
+
+type LiveHlsConnection = { close: () => void };
 
 const STATE_COPY: Record<ConnectionState, string> = {
   idle: "준비 전",
@@ -793,6 +797,7 @@ function Viewer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const microphoneRef = useRef<MediaStream | null>(null);
   const connectionRef = useRef<KvsConnection | null>(null);
+  const liveHlsConnectionRef = useRef<LiveHlsConnection | null>(null);
   const viewerClientIdRef = useRef("");
   const viewerMountedRef = useRef(true);
   const talkIntentRef = useRef(false);
@@ -822,6 +827,9 @@ function Viewer({
   const [talkLeasePending, setTalkLeasePending] = useState(false);
   const [speakerMuted, setSpeakerMuted] = useState(true);
   const [soundBlocked, setSoundBlocked] = useState(false);
+  const [viewerTransport, setViewerTransport] = useState<"webrtc" | "hls">(
+    "webrtc",
+  );
   const [viewerClockMs, setViewerClockMs] = useState(() => Date.now());
   const expectedStorageMode =
     deviceId && typeof device?.activeSession?.storageMode === "boolean"
@@ -984,6 +992,8 @@ function Viewer({
         releaseTalkLease();
         connectionRef.current?.close();
         connectionRef.current = null;
+        liveHlsConnectionRef.current?.close();
+        liveHlsConnectionRef.current = null;
         microphoneRef.current?.getTracks().forEach((track) => track.stop());
         microphoneRef.current = null;
         if (videoRef.current) videoRef.current.srcObject = null;
@@ -1030,6 +1040,75 @@ function Viewer({
 
     const isCurrentGeneration = () =>
       active && viewerGenerationRef.current === generation;
+
+    if (
+      deviceId &&
+      expectedStorageMode === true &&
+      storageViewerTransport(navigator.userAgent) === "hls"
+    ) {
+      storageModeRef.current = true;
+      window.queueMicrotask(() => {
+        if (!isCurrentGeneration()) return;
+        setStorageMode(true);
+        setViewerTransport("hls");
+        setError("");
+        setMicrophoneNotice(
+          "이 브라우저에서는 저장 영상을 안전한 HLS로 재생합니다. 말하기는 Chrome 실시간 보기에서 사용할 수 있습니다.",
+        );
+      });
+      releaseTalkLease();
+      if (videoElement) videoElement.srcObject = null;
+      void (async () => {
+        if (!videoElement) return;
+        const connection = await connectDeviceLiveHls({
+          deviceId,
+          video: videoElement,
+          signal: setupController?.signal,
+          onState: (next) => {
+            if (!isCurrentGeneration()) return;
+            viewerStateRef.current = next;
+            setState(next);
+            if (next === "live") setError("");
+          },
+          onError: (reason) => {
+            if (!isCurrentGeneration()) return;
+            setError(reason.message || "저장 영상을 재생하지 못했습니다.");
+          },
+        });
+        if (!isCurrentGeneration()) {
+          connection.close();
+          return;
+        }
+        liveHlsConnectionRef.current = connection;
+      })().catch((reason: unknown) => {
+        if (!isCurrentGeneration()) return;
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "저장 영상을 재생하지 못했습니다.",
+        );
+        viewerStateRef.current = "error";
+        setState("error");
+      });
+
+      return () => {
+        active = false;
+        setupController?.abort();
+        releaseTalkLease(true, false);
+        liveHlsConnectionRef.current?.close();
+        liveHlsConnectionRef.current = null;
+        if (videoElement) {
+          videoElement.pause();
+          videoElement.srcObject = null;
+          videoElement.removeAttribute("src");
+          videoElement.load();
+        }
+      };
+    }
+
+    window.queueMicrotask(() => {
+      if (isCurrentGeneration()) setViewerTransport("webrtc");
+    });
 
     const clearSetupTimer = () => {
       if (setupTimer !== null) window.clearTimeout(setupTimer);
@@ -1452,7 +1531,7 @@ function Viewer({
   ]);
 
   const prepareMicrophone = async () => {
-    if (microphonePending || state !== "live") return;
+    if (microphonePending || state !== "live" || viewerTransport === "hls") return;
     setMicrophonePending(true);
     setMicrophoneNotice("");
 
@@ -1764,7 +1843,12 @@ function Viewer({
                 <button
                   type="button"
                   className={`homecam-stream-control-button ${talking ? "is-talking" : ""}`}
-                  disabled={microphonePending || talkLeasePending || state !== "live"}
+                  disabled={
+                    microphonePending ||
+                    talkLeasePending ||
+                    state !== "live" ||
+                    viewerTransport === "hls"
+                  }
                   onClick={() => {
                     if (!microphoneAvailable) void prepareMicrophone();
                   }}
@@ -1801,6 +1885,8 @@ function Viewer({
                     ? "권한 확인 중"
                     : talkLeasePending
                       ? "말하기 준비 중"
+                      : viewerTransport === "hls"
+                        ? "Chrome에서 말하기"
                       : !microphoneAvailable
                         ? "마이크 연결"
                         : talking

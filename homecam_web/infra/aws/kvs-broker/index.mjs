@@ -76,12 +76,37 @@ export async function handler(event) {
       "JOIN_STORAGE",
       "HLS_PLAYBACK",
       "EVENT_PLAYBACK",
+      "LIVE_PLAYBACK",
       "DEVICE_CREDENTIALS",
     ].includes(
       action,
     )
   ) {
     return response(400, { error: "Invalid action" });
+  }
+
+  if (action === "LIVE_PLAYBACK") {
+    const input = validateLiveHlsPlaybackInput(payload);
+    if (!input) return response(400, { error: "Invalid live HLS playback request" });
+    const resources = resolveDeviceResources(
+      deviceResourceConfiguration,
+      input.deviceId,
+    );
+    if (!resources?.streamArn || input.streamArn !== resources.streamArn) {
+      return response(403, { error: "Stream is not allowed" });
+    }
+    try {
+      return response(200, await createLiveHlsPlayback(input));
+    } catch (error) {
+      console.error(
+        "KVS live HLS playback failed",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      if (error instanceof Error && error.name === "ResourceNotFoundException") {
+        return response(404, { error: "No live media was found" });
+      }
+      return response(502, { error: "Live HLS playback could not be created" });
+    }
   }
 
   if (action === "HLS_PLAYBACK" || action === "EVENT_PLAYBACK") {
@@ -399,6 +424,46 @@ async function createHlsPlayback({ streamArn, startAt, endAt, expiresSeconds }) 
   };
 }
 
+async function createLiveHlsPlayback({ streamArn, expiresSeconds }) {
+  const endpointResult = await kinesisVideo.send(
+    new GetDataEndpointCommand({
+      APIName: "GET_HLS_STREAMING_SESSION_URL",
+      StreamARN: streamArn,
+    }),
+  );
+  if (!endpointResult.DataEndpoint) {
+    throw new Error("Missing KVS archived media endpoint");
+  }
+  const endpoint = new URL(endpointResult.DataEndpoint);
+  if (endpoint.protocol !== "https:" || endpoint.search || endpoint.hash) {
+    throw new Error("Invalid KVS archived media endpoint");
+  }
+  const archivedMedia = new KinesisVideoArchivedMediaClient({
+    region,
+    endpoint: endpointResult.DataEndpoint,
+  });
+  const expiresAt = new Date(Date.now() + expiresSeconds * 1000).toISOString();
+  const playback = await archivedMedia.send(
+    new GetHLSStreamingSessionURLCommand({
+      StreamARN: streamArn,
+      PlaybackMode: "LIVE",
+      HLSFragmentSelector: { FragmentSelectorType: "SERVER_TIMESTAMP" },
+      DiscontinuityMode: "ON_DISCONTINUITY",
+      ContainerFormat: "FRAGMENTED_MP4",
+      Expires: expiresSeconds,
+      MaxMediaPlaylistFragmentResults: 5,
+    }),
+  );
+  if (!playback.HLSStreamingSessionURL) {
+    throw new Error("Missing live HLS playback URL");
+  }
+  return {
+    playbackUrl: playback.HLSStreamingSessionURL,
+    expiresAt,
+    streamArn,
+  };
+}
+
 async function createEventPlayback(input) {
   const listEndpoint = await kinesisVideo.send(
     new GetDataEndpointCommand({
@@ -568,6 +633,30 @@ function validateHlsPlaybackInput(payload) {
     streamArn: payload.streamArn,
     startAt: payload.startAt,
     endAt: payload.endAt,
+    expiresSeconds: payload.expiresSeconds,
+  };
+}
+
+function validateLiveHlsPlaybackInput(payload) {
+  if (
+    !hasOnlyKeys(payload, [
+      "action",
+      "deviceId",
+      "streamArn",
+      "expiresSeconds",
+    ]) ||
+    typeof payload.deviceId !== "string" ||
+    !deviceIdPattern.test(payload.deviceId) ||
+    typeof payload.streamArn !== "string" ||
+    !Number.isInteger(payload.expiresSeconds) ||
+    payload.expiresSeconds < 300 ||
+    payload.expiresSeconds > 43_200
+  ) {
+    return null;
+  }
+  return {
+    deviceId: payload.deviceId,
+    streamArn: payload.streamArn,
     expiresSeconds: payload.expiresSeconds,
   };
 }

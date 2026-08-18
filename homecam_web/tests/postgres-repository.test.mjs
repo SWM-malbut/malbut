@@ -213,6 +213,31 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         endedClip.event.id,
       );
       assert.equal(playbackInfo?.streamArn, "arn:test:kvs:archive");
+      assert.equal(
+        await homecam.softDeleteHomecamEvent({
+          deviceId: "living-room",
+          eventId: endedClip.event.id,
+          userEmail: "owner@example.com",
+        }),
+        true,
+      );
+      assert.equal(
+        await homecam.softDeleteHomecamEvent({
+          deviceId: "living-room",
+          eventId: endedClip.event.id,
+          userEmail: "owner@example.com",
+        }),
+        false,
+      );
+      const eventsAfterDeletion = await homecam.listHomecamEvents({
+        deviceId: "living-room",
+        eventTypes: ["person"],
+        limit: 10,
+      });
+      assert.equal(
+        eventsAfterDeletion.some((event) => event.id === endedClip.event.id),
+        false,
+      );
 
       const rateLimitInput = {
         userEmail: "owner@example.com",

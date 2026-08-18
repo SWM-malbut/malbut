@@ -153,3 +153,51 @@ test("rewrites AWS playlists to token-free same-origin relative resources", asyn
     /PLAYBACK_PLAYLIST_INVALID/,
   );
 });
+
+test("live playback grants are device-scoped and cannot cross device boundaries", async () => {
+  const helper = await loadHelper();
+  const upstream = `https://${AWS_HOST}/hls/v1/getHLSMasterPlaylist.m3u8?SessionToken=${encodeURIComponent(SESSION_TOKEN)}`;
+  const proxy = await helper.createDeviceLivePlaybackProxy(
+    {
+      requestUrl: "https://petcam.example.com/api/devices/gazebo-homecam/live-playback",
+      playbackUrl: upstream,
+      deviceId: "gazebo-homecam",
+      userEmail: "owner@example.com",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    },
+    SECRET,
+  );
+  assert.match(
+    new URL(proxy.playbackUrl).pathname,
+    /^\/api\/devices\/gazebo-homecam\/live-hls\/[0-9a-f]{32}\/getHLSMasterPlaylist\.m3u8$/,
+  );
+  const playbackId = new URL(proxy.playbackUrl).pathname.split("/").at(-2);
+  const cookie = proxy.setCookie.split(";", 1)[0];
+  assert.ok(
+    await helper.resolveDeviceLivePlaybackProxy(
+      {
+        requestUrl: proxy.playbackUrl,
+        deviceId: "gazebo-homecam",
+        playbackId,
+        resource: "getHLSMasterPlaylist.m3u8",
+        userEmail: "owner@example.com",
+        cookieHeader: cookie,
+      },
+      SECRET,
+    ),
+  );
+  assert.equal(
+    await helper.resolveDeviceLivePlaybackProxy(
+      {
+        requestUrl: proxy.playbackUrl,
+        deviceId: "other-homecam",
+        playbackId,
+        resource: "getHLSMasterPlaylist.m3u8",
+        userEmail: "owner@example.com",
+        cookieHeader: cookie,
+      },
+      SECRET,
+    ),
+    null,
+  );
+});
