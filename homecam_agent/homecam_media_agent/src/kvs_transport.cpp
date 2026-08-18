@@ -145,6 +145,11 @@ bool storage_session_hard_expired(
          active_age_ms >= std::max<std::int64_t>(hard_age_ms, 0);
 }
 
+bool use_explicit_signaling_channel_arn(const SessionMode mode)
+{
+  return mode == SessionMode::kPeerToPeer;
+}
+
 SessionRefreshDecision decide_session_refresh(
   const SessionMode mode,
   const bool peer_connected,
@@ -401,7 +406,14 @@ public:
     }
 
     configuration_->channelInfo.pChannelName = channel_name_.data();
-    configuration_->channelInfo.pChannelArn = channel_arn_.data();
+    // Supplying pChannelArn makes the pinned KVS C SDK skip both channel
+    // description and media-storage description. That leaves storageStatus
+    // at its default DISABLED value even when AWS reports ENABLED, so the SDK
+    // connects ordinary signaling but never calls JoinStorageSession. Resolve
+    // storage channels by name; keep the P2P fast path on the explicit ARN.
+    configuration_->channelInfo.pChannelArn =
+      use_explicit_signaling_channel_arn(lease.mode) ?
+      channel_arn_.data() : nullptr;
     configuration_->channelInfo.pRegion = region_.data();
     // The systemd sandbox exposes no writable working directory. Avoid the
     // upstream sample's default ./.SignalingCache_v1 file entirely.

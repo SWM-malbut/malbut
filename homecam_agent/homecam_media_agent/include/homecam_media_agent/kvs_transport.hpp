@@ -57,6 +57,11 @@ bool storage_session_hard_expired(
   std::int64_t active_age_ms,
   std::int64_t hard_age_ms);
 
+// KVS WebRTC C SDK v1.19.1 skips DescribeMediaStorageConfiguration when a
+// channel ARN is supplied. Storage sessions must therefore resolve the
+// signaling channel by name so the SDK can discover that storage is enabled.
+bool use_explicit_signaling_channel_arn(SessionMode mode);
+
 // Routine P2P credential renewal must not tear down a healthy peer. Defer it
 // until that peer disconnects, but retain a bounded safety window for a final
 // fail-closed replacement before the current lease expires.
