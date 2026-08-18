@@ -463,6 +463,12 @@ std::string session_close_request_json(const std::string & session_id)
   return nlohmann::json{{"sessionId", session_id}}.dump();
 }
 
+std::string session_create_request_json(const SessionMode mode)
+{
+  return nlohmann::json{{
+    "mode", mode == SessionMode::kStorage ? "storage" : "p2p"}}.dump();
+}
+
 bool parse_device_session_response(
   const std::string & response_body,
   const std::string & expected_device_id,
@@ -582,8 +588,7 @@ bool parse_device_session_response(
   bool monitoring_enabled = false;
   if (!required_bool(desired, "cameraEnabled", &camera_enabled) ||
     !required_bool(desired, "microphoneEnabled", &microphone_enabled) ||
-    !required_bool(desired, "monitoringEnabled", &monitoring_enabled) ||
-    monitoring_enabled != (mode == "storage"))
+    !required_bool(desired, "monitoringEnabled", &monitoring_enabled))
   {
     return fail(error, "desiredState is invalid or inconsistent with mode");
   }
@@ -672,6 +677,7 @@ bool DeviceSessionClient::available() const
 }
 
 bool DeviceSessionClient::create(
+  const SessionMode mode,
   const std::int64_t now_unix_ms,
   DeviceSessionResult * const result,
   std::string * const error,
@@ -686,9 +692,10 @@ bool DeviceSessionClient::create(
   }
   std::string response_body;
   long response_status = 0;
+  const std::string request_body = session_create_request_json(mode);
   if (!perform_request(
       backend_url_ + "/api/device/v1/session",
-      bearer_token_, "POST", "{}", 15000L, &response_body,
+      bearer_token_, "POST", request_body.c_str(), 15000L, &response_body,
       &response_status, nullptr, error))
   {
     return false;
@@ -700,8 +707,19 @@ bool DeviceSessionClient::create(
     return fail(
       error, "backend returned HTTP " + std::to_string(response_status));
   }
-  return parse_device_session_response(
-    response_body, device_id_, now_unix_ms, result, error);
+  DeviceSessionResult parsed;
+  if (!parse_device_session_response(
+      response_body, device_id_, now_unix_ms, &parsed, error))
+  {
+    return false;
+  }
+  if (parsed.lease.mode != mode) {
+    return fail(error, "backend returned the wrong session mode");
+  }
+  if (result != nullptr) {
+    *result = std::move(parsed);
+  }
+  return true;
 #else
   (void)now_unix_ms;
   (void)result;

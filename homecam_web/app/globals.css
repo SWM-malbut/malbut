@@ -7024,6 +7024,58 @@ a:focus-visible {
   color: rgb(251 248 243 / .65);
 }
 
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: rgb(251 248 243 / .65);
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span::before {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #8c8378;
+  content: "";
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span.is-ready {
+  color: #78d6a0;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span.is-ready::before {
+  background: #78d6a0;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span.is-pending {
+  color: #efbb70;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span.is-pending::before {
+  background: #efbb70;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span.is-error {
+  color: #ff9588;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span.is-error::before {
+  background: #ff7064;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > b {
+  color: rgb(251 248 243 / .36);
+  font-weight: 500;
+}
+
 .homecam-dashboard-shell.tab-live .homecam-live-view {
   min-height: 0;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 392px);
@@ -7152,6 +7204,8 @@ a:focus-visible {
 }
 
 .homecam-dashboard-shell.tab-live .homecam-live-state-list i.is-good { background: #78d6a0; }
+.homecam-dashboard-shell.tab-live .homecam-live-state-list i.is-pending { background: #efbb70; }
+.homecam-dashboard-shell.tab-live .homecam-live-state-list i.is-error { background: #ff7064; }
 .homecam-dashboard-shell.tab-live .homecam-live-state-list span { min-width: 0; }
 .homecam-dashboard-shell.tab-live .homecam-live-state-list strong {
   color: rgb(251 248 243 / .62);
@@ -7418,6 +7472,56 @@ a:focus-visible {
 .homecam-dashboard-shell.theme-light.tab-live .homecam-device-selector select,
 .homecam-dashboard-shell.theme-light.tab-live .homecam-device-bar-meta {
   color: var(--homecam-muted);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-connection-pill.is-online {
+  color: #1f6641;
+  border-color: #bedcc9;
+  background: #e6f2ea;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-connection-pill.is-online i {
+  background: var(--homecam-success);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-ready {
+  color: #1f6641;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-ready::before {
+  background: var(--homecam-success);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-pending {
+  color: #a0521a;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-pending::before {
+  background: #d98232;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-error {
+  color: #ad3026;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-error::before {
+  background: #d14b40;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > b {
+  color: #b0aaa0;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-state-list i.is-good {
+  background: var(--homecam-success);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-state-list i.is-pending {
+  background: #d98232;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-state-list i.is-error {
+  background: #d14b40;
 }
 
 .homecam-dashboard-shell.theme-light.tab-live .homecam-live-state-card,

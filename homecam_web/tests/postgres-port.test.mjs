@@ -35,7 +35,7 @@ test("D1 placeholders become PostgreSQL parameters without touching literals", a
 });
 
 test("PostgreSQL migration creates the homecam schema and durable event outbox", async () => {
-  const [initialMigration, authMigration, eventClipsMigration] = await Promise.all([
+  const [initialMigration, authMigration, eventClipsMigration, dualMediaMigration] = await Promise.all([
     readFile(new URL("../db/migrations/0001_initial.sql", import.meta.url), "utf8"),
     readFile(
       new URL("../db/migrations/0002_web_auth_sessions.sql", import.meta.url),
@@ -45,12 +45,17 @@ test("PostgreSQL migration creates the homecam schema and durable event outbox",
       new URL("../db/migrations/0005_event_clips.sql", import.meta.url),
       "utf8",
     ),
+    readFile(
+      new URL("../db/migrations/0006_dual_media_sessions.sql", import.meta.url),
+      "utf8",
+    ),
   ]);
   const database = new PGlite();
   try {
     await database.exec(initialMigration);
     await database.exec(authMigration);
     await database.exec(eventClipsMigration);
+    await database.exec(dualMediaMigration);
     const now = "2026-08-12T04:00:00.000Z";
     await database.query(
       `INSERT INTO devices (id, display_name, kvs_channel_arn, created_at)

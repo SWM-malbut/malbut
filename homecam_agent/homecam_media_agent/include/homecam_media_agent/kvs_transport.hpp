@@ -120,6 +120,7 @@ public:
   virtual ~KvsTransport() = default;
   virtual bool implemented() const = 0;
   virtual bool running() const = 0;
+  virtual bool media_flowing() const = 0;
   virtual bool peer_connected() const = 0;
   virtual bool restart_required() const = 0;
   virtual std::string status() const = 0;

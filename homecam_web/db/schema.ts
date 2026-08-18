@@ -50,6 +50,7 @@ export const streamSessions = pgTable(
       .notNull()
       .references(() => devices.id, { onDelete: "cascade" }),
     startedBy: text("started_by").notNull(),
+    mode: text("mode").notNull().default("p2p"),
     status: text("status").notNull().default("active"),
     startedAt: timestampText("started_at").notNull(),
     expiresAt: timestampText("expires_at").notNull(),
@@ -58,6 +59,9 @@ export const streamSessions = pgTable(
   (table) => [
     uniqueIndex("stream_sessions_room_code_idx").on(table.roomCode),
     index("stream_sessions_device_status_idx").on(table.deviceId, table.status),
+    uniqueIndex("stream_sessions_device_active_mode_idx")
+      .on(table.deviceId, table.mode)
+      .where(sql`${table.status} = 'active'`),
   ],
 );
 
@@ -125,6 +129,15 @@ export const deviceState = pgTable("device_state", {
     onDelete: "set null",
   }),
   mediaHealthy: integer("media_healthy").notNull().default(0),
+  p2pSessionId: text("p2p_session_id").references(() => streamSessions.id, {
+    onDelete: "set null",
+  }),
+  storageSessionId: text("storage_session_id").references(
+    () => streamSessions.id,
+    { onDelete: "set null" },
+  ),
+  p2pHealthy: integer("p2p_healthy").notNull().default(0),
+  storageHealthy: integer("storage_healthy").notNull().default(0),
   detectorHealthy: integer("detector_healthy").notNull().default(0),
   lastSeenAt: timestampText("last_seen_at"),
   updatedAt: timestampText("updated_at").notNull().defaultNow(),

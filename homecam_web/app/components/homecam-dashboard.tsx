@@ -48,6 +48,9 @@ export type HomecamDevice = {
   cameraEnabled: boolean;
   microphoneEnabled: boolean;
   mediaHealthy: boolean;
+  p2pHealthy: boolean;
+  storageHealthy: boolean;
+  storageSessionActive: boolean;
   detectorHealthy: boolean | null;
   activeSession: {
     roomCode: string;
@@ -278,6 +281,8 @@ function normalizeDevice(value: unknown): HomecamDevice | null {
   const state = asRecord(raw.state ?? raw.status);
   const settings = asRecord(raw.settings);
   const session = asRecord(raw.activeSession ?? raw.active_session ?? raw.session);
+  const sessions = asRecord(raw.activeSessions ?? raw.active_sessions);
+  const storageSession = asRecord(sessions.storage);
   const id = stringValue(raw.id, raw.deviceId, raw.device_id);
   if (!id) return null;
 
@@ -321,6 +326,26 @@ function normalizeDevice(value: unknown): HomecamDevice | null {
       state.media_healthy,
       raw.mediaHealthy,
       raw.media_healthy,
+    ),
+    p2pHealthy: booleanValue(
+      false,
+      state.p2pHealthy,
+      state.p2p_healthy,
+      raw.p2pHealthy,
+      raw.p2p_healthy,
+      state.mediaHealthy,
+    ),
+    storageHealthy: booleanValue(
+      false,
+      state.storageHealthy,
+      state.storage_healthy,
+      raw.storageHealthy,
+      raw.storage_healthy,
+      state.mediaHealthy,
+    ),
+    storageSessionActive: Boolean(
+      stringValue(storageSession.id) ||
+      (roomCode && booleanValue(false, session.storageMode, session.storage_mode)),
     ),
     detectorHealthy:
       typeof state.detectorHealthy === "boolean"
@@ -714,7 +739,9 @@ export function HomecamDashboard({
   const [legacyPassword, setLegacyPassword] = useState("");
   const [colorMode, setColorMode] = useState<HomecamColorMode>("dark");
   const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
+  const [storageGraceUntilMs, setStorageGraceUntilMs] = useState(0);
   const deepLinkedEventIdRef = useRef("");
+  const navigationStateReadyRef = useRef(false);
   const openMap = useCallback((mode: MapMode) => {
     setMapEntryMode(mode);
     setTab("map");
@@ -740,7 +767,7 @@ export function HomecamDashboard({
   );
   const displayedMediaReady = liveViewer
     ? liveMediaReady
-    : Boolean(selectedDevice?.online && selectedDevice.mediaHealthy);
+    : Boolean(selectedDevice?.online && selectedDevice.p2pHealthy);
   const visibleEvents = useMemo(() => events.filter((event) =>
     eventFilter === "all" || event.type === eventFilter ||
       (eventFilter === "pet" && (event.type === "dog" || event.type === "cat"))), [eventFilter, events]);
@@ -795,14 +822,46 @@ export function HomecamDashboard({
     const requestedView = params.get("view");
     const requestedDevice = params.get("device")?.trim() ?? "";
     const requestedEvent = params.get("event")?.trim() ?? "";
+    const requestedMapMode = params.get("mapMode");
     if (requestedEvent) deepLinkedEventIdRef.current = requestedEvent;
     window.queueMicrotask(() => {
       if (requestedDevice) setSelectedDeviceId(requestedDevice);
-      if (requestedView === "events" || requestedEvent) setTab("events");
-      if (requestedView === "map") setTab("map");
-      if (requestedView === "settings") setTab("settings");
+      if (
+        requestedMapMode === "view" ||
+        requestedMapMode === "navigate" ||
+        requestedMapMode === "rooms" ||
+        requestedMapMode === "zones"
+      ) {
+        setMapEntryMode(requestedMapMode);
+      }
+      if (requestedEvent) setTab("events");
+      else if (
+        requestedView === "home" ||
+        requestedView === "live" ||
+        requestedView === "map" ||
+        requestedView === "events" ||
+        requestedView === "settings"
+      ) {
+        setTab(requestedView);
+      }
+      navigationStateReadyRef.current = true;
     });
   }, []);
+
+  useEffect(() => {
+    if (!navigationStateReadyRef.current) return;
+    const url = new URL(window.location.href);
+    if (tab === "home") url.searchParams.delete("view");
+    else url.searchParams.set("view", tab);
+    if (tab === "map") url.searchParams.set("mapMode", mapEntryMode);
+    else url.searchParams.delete("mapMode");
+    if (tab !== "events") url.searchParams.delete("event");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, [mapEntryMode, tab]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(display-mode: standalone)");
@@ -1035,6 +1094,9 @@ export function HomecamDashboard({
     value: boolean,
   ) => {
     if (!selectedDevice || busy) return;
+    if (key === "monitoringEnabled") {
+      setStorageGraceUntilMs(value ? Date.now() + 15_000 : 0);
+    }
     setBusy(key);
     setNotice("");
     try {
@@ -1076,6 +1138,7 @@ export function HomecamDashboard({
       );
       setNotice("홈캠 설정을 저장했습니다.");
     } catch (reason) {
+      if (key === "monitoringEnabled") setStorageGraceUntilMs(0);
       setNotice(reason instanceof Error ? reason.message : "설정을 저장하지 못했습니다.");
     } finally {
       setBusy("");
@@ -1239,6 +1302,39 @@ export function HomecamDashboard({
   };
 
   const isOwner = selectedDevice?.role === "owner";
+  const storageEnabled = Boolean(selectedDevice?.monitoringEnabled);
+  const storageCanRun = Boolean(storageEnabled && selectedDevice?.cameraEnabled);
+  const storageReady = Boolean(
+    selectedDevice?.online &&
+    storageCanRun &&
+    selectedDevice.storageHealthy,
+  );
+  const storageConnecting = Boolean(
+    selectedDevice?.online &&
+    storageCanRun &&
+    !storageReady &&
+    (selectedDevice.storageSessionActive || liveClockMs < storageGraceUntilMs),
+  );
+  const storageError = Boolean(
+    storageCanRun &&
+    !storageReady &&
+    !storageConnecting,
+  );
+  const detectorReady = Boolean(
+    selectedDevice?.online &&
+    selectedDevice?.cameraEnabled &&
+    selectedDevice?.monitoringEnabled &&
+    selectedDevice.detectorHealthy === true,
+  );
+  const storageStateLabel = !storageEnabled
+    ? "저장 안 함"
+    : !selectedDevice?.cameraEnabled
+      ? "카메라 꺼짐 · 저장 대기"
+    : storageReady
+      ? "이벤트 영상 저장 중"
+      : storageConnecting
+        ? "이벤트 영상 준비 중"
+        : "이벤트 영상 저장 오류";
   return (
     <div className={`homecam-shell homecam-dashboard-shell tab-${tab} theme-${colorMode}`}>
       <HomecamHeader
@@ -1301,9 +1397,24 @@ export function HomecamDashboard({
               : "오프라인"}
           </span>}
           {tab === "live" && (
-            <span className="homecam-device-bar-meta">
-              {displayedMediaReady ? "보안 영상 채널 연결됨" : "영상 채널 연결 중"}
-              {` · ${selectedDevice?.monitoringEnabled ? "이벤트 영상만 저장" : "영상 저장 안 함"}`}
+            <span className="homecam-device-bar-meta homecam-live-channel-summary" aria-live="polite">
+              <span className={displayedMediaReady ? "is-ready" : "is-pending"}>
+                {displayedMediaReady ? "보안 영상 채널 연결됨" : "영상 채널 연결 중"}
+              </span>
+              <b aria-hidden="true">·</b>
+              <span
+                className={
+                  storageReady
+                    ? "is-ready"
+                    : storageConnecting
+                      ? "is-pending"
+                      : storageError
+                        ? "is-error"
+                        : ""
+                }
+              >
+                {storageStateLabel}
+              </span>
             </span>
           )}
           {tab === "settings" && <span className="homecam-device-bar-meta">{selectedDevice?.role === "owner" ? "소유자 설정" : "읽기 전용"}</span>}
@@ -1330,7 +1441,7 @@ export function HomecamDashboard({
                     </h1>
                     <div className="homecam-home-chips">
                       <span>{selectedDevice?.online ? "기기 연결됨" : "기기 오프라인"}</span>
-                      <span>{selectedDevice?.mediaHealthy ? "영상 상태 정상" : "영상 확인 필요"}</span>
+                      <span>{selectedDevice?.p2pHealthy ? "실시간 영상 준비됨" : "영상 연결 준비 중"}</span>
                       <span>{selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"} · {selectedDevice?.microphoneEnabled ? "마이크 켜짐" : "마이크 꺼짐"}</span>
                     </div>
                   </div>
@@ -1462,9 +1573,30 @@ export function HomecamDashboard({
                     <strong>{selectedDevice?.microphoneEnabled ? "사용 가능" : "꺼짐"}</strong>
                   </div>
                   <div>
-                    <i aria-hidden="true" />
+                    <i
+                      className={
+                        storageReady
+                          ? "is-good"
+                          : storageConnecting
+                            ? "is-pending"
+                            : storageError
+                              ? "is-error"
+                              : ""
+                      }
+                      aria-hidden="true"
+                    />
                     <span>영상 저장</span>
-                    <strong>{selectedDevice?.monitoringEnabled ? "이벤트만" : "안 함"}</strong>
+                    <strong aria-live="polite">
+                      {!storageEnabled
+                        ? "안 함"
+                        : !selectedDevice?.cameraEnabled
+                          ? "카메라 꺼짐"
+                        : storageReady
+                          ? "저장 중"
+                          : storageConnecting
+                            ? "준비 중"
+                            : "저장 오류"}
+                    </strong>
                     {selectedDevice && (
                       <Switch
                         checked={selectedDevice.monitoringEnabled}
@@ -1473,6 +1605,26 @@ export function HomecamDashboard({
                         onChange={(value) => void updateSetting("monitoringEnabled", value)}
                       />
                     )}
+                  </div>
+                  <div>
+                    <i
+                      className={
+                        detectorReady
+                          ? "is-good"
+                          : storageCanRun
+                            ? "is-pending"
+                            : ""
+                      }
+                      aria-hidden="true"
+                    />
+                    <span>이벤트 감지</span>
+                    <strong>
+                      {!storageCanRun
+                        ? "꺼짐"
+                        : detectorReady
+                          ? "정상"
+                          : "확인 필요"}
+                    </strong>
                   </div>
                 </div>
               </article>

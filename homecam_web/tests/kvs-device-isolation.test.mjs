@@ -202,7 +202,8 @@ test("all broker actions carry deviceId and validate the selected resource", asy
   );
   assert.match(deviceRoute, /resolveDeviceKvsResources\(runtime,\s*device\.deviceId\)/);
   assert.match(viewerRoute, /requestBrokerSession\(\{[\s\S]*deviceId,/);
-  assert.match(viewerRoute, /requestBrokerJoinStorage\(\{[\s\S]*deviceId,/);
+  assert.doesNotMatch(viewerRoute, /requestBrokerJoinStorage/);
+  assert.match(viewerRoute, /channelMode:\s*mode/);
   assert.match(playbackRoute, /deviceId:\s*recording\.deviceId/);
   assert.match(livePlaybackRoute, /userCanViewDevice\(deviceId,\s*userEmail\)/);
   assert.match(livePlaybackRoute, /resolveDeviceKvsResources\(runtime,\s*deviceId\)/);

@@ -13,6 +13,7 @@ using homecam_media_agent::is_valid_session_id;
 using homecam_media_agent::parse_device_session_response;
 using homecam_media_agent::parse_device_session_close_response;
 using homecam_media_agent::session_close_request_json;
+using homecam_media_agent::session_create_request_json;
 using homecam_media_agent::session_create_requires_fail_closed;
 
 namespace
@@ -88,6 +89,12 @@ TEST(DeviceSessionResponse, ParsesPeerToPeerLease)
     parse_device_session_response(
       valid_response("p2p"), "robot-01", kNow, &result, &error)) << error;
   EXPECT_EQ(result.lease.mode, SessionMode::kPeerToPeer);
+}
+
+TEST(DeviceSessionResponse, CreateRequestSelectsAnIndependentMode)
+{
+  EXPECT_EQ(session_create_request_json(SessionMode::kPeerToPeer), R"({"mode":"p2p"})");
+  EXPECT_EQ(session_create_request_json(SessionMode::kStorage), R"({"mode":"storage"})");
 }
 
 TEST(DeviceSessionResponse, RejectsDuplicateCredentialKey)

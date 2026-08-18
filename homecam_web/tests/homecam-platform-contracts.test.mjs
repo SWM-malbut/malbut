@@ -62,7 +62,8 @@ test("settings, event pagination, idempotency, push, and viewer grants stay hard
     /targets\.slice\(offset, offset \+ PUSH_BROKER_BATCH_SIZE\)/,
   );
   assert.match(liveRoute, /homecam-viewer-credentials/);
-  assert.match(liveRoute, /homecam-storage-join/);
+  assert.doesNotMatch(liveRoute, /homecam-storage-join/);
+  assert.match(liveRoute, /getActiveMediaSession\(deviceId, "p2p"\)/);
   assert.ok(
     liveRoute.lastIndexOf("userCanViewDevice(deviceId, userEmail)") >
       liveRoute.indexOf("requestBrokerSession"),

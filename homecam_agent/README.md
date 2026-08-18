@@ -261,7 +261,8 @@ token 안의 credential UUID는 장치 ID가 아니며 서로 바꿔 쓰면 sess
 검증 단계에서 거부된다.
 
 에이전트는 `POST /api/device/v1/heartbeat`에 `sourceProfile`,
-`imageTopic`, `streamMode`, `mediaHealthy`, `detectorHealthy`를 보낸다.
+`imageTopic`, `streamMode`, `mediaHealthy`, `p2pHealthy`,
+`storageHealthy`, `detectorHealthy`를 보낸다.
 응답의 `desiredState.monitoringEnabled`, `cameraEnabled`,
 `microphoneEnabled`를 적용한다.
 
@@ -313,13 +314,19 @@ worker에서 시작 2회, 종료 3회까지 재시도한다.
 ## KVS 세션 동작
 
 카메라의 최근 프레임과 H.264/Opus 파이프라인이 모두 준비된 뒤에만 장치
-token으로 `POST /api/device/v1/session`을 호출한다. 응답의 장치 ID, mode,
+token으로 `POST /api/device/v1/session`을 모드별로 호출한다. 요청은
+`{"mode":"p2p"}` 또는 `{"mode":"storage"}`를 명시하며, 응답의 장치 ID, mode,
 region, channel ARN, session/credential 만료 시각을 엄격히 검증하고
 백엔드 session과 STS credential 중 더 이른 만료 시각을 사용한다.
 
-- 모니터링 OFF: P2P master session
-- 모니터링 ON: `useMediaStorage=true`인 Storage Session
-- 만료 5분 전 또는 mode 변경: 새 단기 session credential로 교체
+- 카메라 ON: 저장 설정과 무관하게 P2P master session을 준비
+- 카메라 ON + 모니터링 ON: P2P와 별도로 `useMediaStorage=true`인
+  Storage Session을 동시에 실행
+- P2P와 Storage는 세션 ID, 상태, 재시도, bounded sender queue와 transport
+  lock을 독립 관리하며 H.264/Opus encoder 출력만 공유
+- AWS sample configuration은 두 개지만 process-wide WebRTC runtime은 참조
+  계수로 공유해 한쪽 재연결이 다른 쪽 runtime을 deinit하지 않음
+- 각 lease 만료 5분 전: 해당 모드의 단기 session credential만 교체
   - Storage Session은 AWS 1시간 상한과 backend 만료 시각이 어긋나도
     50분에 선제 갱신하고 55분에는 fail-closed로 교체한다.
   - P2P viewer가 연결되어 있으면 routine 교체를 유예하고, peer 종료 직후
@@ -348,5 +355,30 @@ runtime working directory에 비밀·상태 파일을 만들지 않는다.
 PoC 이후 보강 항목이다.
 
 실제 token, AWS credential, 모델 파일은 Git에 커밋하지 않는다. Jetson
-상시 실행을 위한 systemd 배포는 실물 장비의 사용자·설치 경로·로그 보존
-정책이 확정된 뒤 별도 PR로 추가한다.
+실물 장비는 빌드 후 다음처럼 systemd 서비스를 설치합니다. Gazebo 프로필에는
+적용하지 않습니다.
+
+```bash
+sudo ./homecam_agent/scripts/install_homecam_systemd.sh \
+  --workspace /opt/malbut \
+  --environment-file /etc/malbut-homecam-device.env \
+  --user malbut
+sudo systemctl start malbut-homecam.service
+```
+
+환경 파일에는 다음 필수값을 넣고, 토큰 파일은 서비스 사용자만 읽을 수 있게
+`0600`으로 둡니다. 전체 예시는 `config/device.env.example`에 있습니다.
+
+```text
+HOMECAM_DEVICE_TOKEN_FILE=/etc/malbut-homecam.token
+HOMECAM_BACKEND_URL=https://malbut.example.com
+HOMECAM_DEVICE_ID=registered-device-id
+HOMECAM_IMAGE_TOPIC=/discovered/rgb/image_raw
+HOMECAM_CAMERA_INFO_TOPIC=/discovered/rgb/camera_info
+HOMECAM_MODEL_PATH=/opt/homecam/models/yolov8n.onnx
+```
+
+서비스는 부팅 시
+자동 시작하고 장애 종료 시 재시작합니다. 첫 heartbeat의 desired state를 받기
+전에는 기존 fail-closed 계약에 따라 이벤트 감지와 Storage 업로드를 시작하지
+않습니다.

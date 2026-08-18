@@ -20,6 +20,15 @@
 extern "C"
 {
 #include "Samples.h"
+
+// samples/common/Common.c normally deinitializes the process-wide WebRTC
+// runtime whenever one SampleConfiguration is freed. The build renames that
+// call to this no-op; AwsKvsTransport below owns a reference-counted process
+// lifetime so two independent configurations can coexist safely.
+STATUS homecam_defer_deinit_kvs_webrtc()
+{
+  return STATUS_SUCCESS;
+}
 }
 #endif
 
@@ -207,6 +216,45 @@ bool set_error(std::string * const error, const std::string & message)
   return false;
 }
 
+std::mutex & process_kvs_runtime_mutex()
+{
+  static std::mutex mutex;
+  return mutex;
+}
+
+std::size_t & process_kvs_runtime_references()
+{
+  static std::size_t references = 0U;
+  return references;
+}
+
+bool acquire_process_kvs_runtime(std::string * const error)
+{
+  std::lock_guard<std::mutex> lock(process_kvs_runtime_mutex());
+  std::size_t & references = process_kvs_runtime_references();
+  if (references == 0U) {
+    const STATUS status = initKvsWebRtc();
+    if (STATUS_FAILED(status)) {
+      return set_error(error, sdk_error("initKvsWebRtc", status));
+    }
+  }
+  ++references;
+  return true;
+}
+
+void release_process_kvs_runtime()
+{
+  std::lock_guard<std::mutex> lock(process_kvs_runtime_mutex());
+  std::size_t & references = process_kvs_runtime_references();
+  if (references == 0U) {return;}
+  --references;
+  if (references == 0U) {
+    // Cleanup has already released every peer/configuration. There is no
+    // useful recovery if SDK teardown itself reports a failure.
+    (void)deinitKvsWebRtc();
+  }
+}
+
 std::optional<std::string> channel_name_from_arn(const std::string & arn)
 {
   constexpr std::string_view marker = ":channel/";
@@ -284,6 +332,15 @@ public:
            !cleanup_thread_exited_.load() &&
            lease_.valid_at(unix_now_ms()) &&
            media_connected_locked();
+  }
+
+  bool media_flowing() const override
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return configuration_ != nullptr &&
+           !cleanup_thread_exited_.load() &&
+           lease_.valid_at(unix_now_ms()) &&
+           recent_write_locked();
   }
 
   bool peer_connected() const override
@@ -377,14 +434,14 @@ public:
       return set_error(error, status_);
     }
 
-    status = initKvsWebRtc();
-    if (STATUS_FAILED(status)) {
-      const std::string detail = sdk_error("initKvsWebRtc", status);
+    std::string runtime_error;
+    if (!acquire_process_kvs_runtime(&runtime_error)) {
       quiesce_configuration_locked();
       cleanup_locked();
-      status_ = detail;
-      return set_error(error, detail);
+      status_ = runtime_error;
+      return set_error(error, runtime_error);
     }
+    runtime_acquired_ = true;
 
     status = freeStaticCredentialProvider(&configuration_->pCredentialProvider);
     if (STATUS_SUCCEEDED(status)) {
@@ -677,16 +734,19 @@ private:
 
   void cleanup_locked()
   {
-    if (configuration_ == nullptr) {
-      return;
+    if (configuration_ != nullptr) {
+      if (IS_VALID_SIGNALING_CLIENT_HANDLE(
+          configuration_->signalingClientHandle))
+      {
+        freeSignalingClient(&configuration_->signalingClientHandle);
+      }
+      freeSampleConfiguration(&configuration_);
+      configuration_ = nullptr;
     }
-    if (IS_VALID_SIGNALING_CLIENT_HANDLE(
-        configuration_->signalingClientHandle))
-    {
-      freeSignalingClient(&configuration_->signalingClientHandle);
+    if (runtime_acquired_) {
+      runtime_acquired_ = false;
+      release_process_kvs_runtime();
     }
-    freeSampleConfiguration(&configuration_);
-    configuration_ = nullptr;
   }
 
   void quiesce_configuration_locked()
@@ -723,6 +783,11 @@ private:
     if (ATOMIC_LOAD_BOOL(&configuration_->connected)) {
       return true;
     }
+    return recent_write_locked();
+  }
+
+  bool recent_write_locked() const
+  {
     const std::int64_t last_write = last_successful_write_ns_.load();
     constexpr std::int64_t recent_write_window_ns = 5'000'000'000;
     return last_write > 0 &&
@@ -752,6 +817,7 @@ private:
   std::thread cleanup_thread_;
   std::atomic<bool> cleanup_thread_exited_{false};
   std::atomic<STATUS> cleanup_thread_status_{STATUS_SUCCESS};
+  bool runtime_acquired_{false};
   SessionLease lease_;
   std::string channel_name_;
   std::string channel_arn_;
@@ -773,6 +839,11 @@ public:
   }
 
   bool running() const override
+  {
+    return false;
+  }
+
+  bool media_flowing() const override
   {
     return false;
   }

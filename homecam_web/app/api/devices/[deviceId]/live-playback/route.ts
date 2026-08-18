@@ -35,15 +35,14 @@ export async function POST(
 
   const [state, session] = await Promise.all([
     getDeviceSettings(deviceId),
-    getActiveMediaSession(deviceId),
+    getActiveMediaSession(deviceId, "storage"),
   ]);
   if (!state.cameraEnabled || !session) {
     return noStore({ error: "홈캠이 현재 송출 중이 아닙니다." }, 409);
   }
   if (
     session.mode !== "storage" ||
-    state.streamMode !== "storage" ||
-    !state.mediaHealthy
+    !state.storageHealthy
   ) {
     return noStore(
       { error: "AWS 저장 영상을 준비하고 있습니다." },
@@ -85,7 +84,7 @@ export async function POST(
     });
     if (
       !(await userCanViewDevice(deviceId, userEmail)) ||
-      (await getActiveMediaSession(deviceId))?.id !== session.id
+      (await getActiveMediaSession(deviceId, "storage"))?.id !== session.id
     ) {
       return noStore({ error: "홈캠 접근 권한 또는 활성 세션이 변경되었습니다." }, 403);
     }

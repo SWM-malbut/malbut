@@ -32,6 +32,10 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     new URL("../db/migrations/0005_event_clips.sql", import.meta.url),
     "utf8",
   );
+  const dualMediaSessionsMigration = await readFile(
+    new URL("../db/migrations/0006_dual_media_sessions.sql", import.meta.url),
+    "utf8",
+  );
   const database = new PGlite();
   try {
     await database.exec(initialMigration);
@@ -39,6 +43,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     await database.exec(robotMigration);
     await database.exec(robotSemanticsMigration);
     await database.exec(eventClipsMigration);
+    await database.exec(dualMediaSessionsMigration);
     await database.exec(`
       CREATE TABLE homecam_schema_migrations (
         version TEXT PRIMARY KEY,
@@ -50,7 +55,8 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         ('0002_web_auth_sessions'),
         ('0003_robot_map'),
         ('0004_robot_map_semantics'),
-        ('0005_event_clips');
+        ('0005_event_clips'),
+        ('0006_dual_media_sessions');
     `);
     await seedDevice(database);
 
@@ -99,6 +105,11 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       assert.equal(cameraAndMonitoringOn.cameraEnabled, true);
       assert.equal(cameraAndMonitoringOn.monitoringEnabled, true);
 
+      const p2pSession = await homecam.prepareDeviceMediaSession({
+        deviceId: "living-room",
+        mode: "p2p",
+        channelArn: "arn:test:kvs:p2p",
+      });
       const session = await homecam.prepareDeviceMediaSession({
         deviceId: "living-room",
         mode: "storage",
@@ -113,6 +124,8 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         imageTopic: "/camera/color/image_raw",
         streamMode: "storage",
         mediaHealthy: true,
+        p2pHealthy: true,
+        storageHealthy: true,
         detectorHealthy: true,
       });
       assert.equal(heartbeat.streamMode, "storage");
@@ -121,6 +134,10 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       assert.equal(heartbeat.activeSessionId, session.id);
       assert.equal(heartbeat.activeSession?.id, session.id);
       assert.equal(heartbeat.activeSession?.mode, "storage");
+      assert.equal(heartbeat.activeSessions.p2p?.id, p2pSession.id);
+      assert.equal(heartbeat.activeSessions.storage?.id, session.id);
+      assert.equal(heartbeat.p2pHealthy, true);
+      assert.equal(heartbeat.storageHealthy, true);
       assert.ok(
         Date.parse(heartbeat.activeSession?.expiresAt) >=
           Date.parse(session.expiresAt),
@@ -194,11 +211,34 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       assert.equal(duplicateClip.created, false);
       assert.equal(startedClip.event.clipState, "recording");
 
+      const refreshedStorageSession = await homecam.prepareDeviceMediaSession({
+        deviceId: "living-room",
+        mode: "storage",
+        channelArn: "arn:test:kvs:storage",
+        streamArn: "arn:test:kvs:archive",
+      });
+      assert.notEqual(refreshedStorageSession.id, session.id);
+      assert.equal(
+        (await homecam.getActiveMediaSession("living-room", "p2p"))?.id,
+        p2pSession.id,
+      );
+      await homecam.updateDeviceHeartbeat({
+        deviceId: "living-room",
+        sourceProfile: "sim",
+        imageTopic: "/camera/color/image_raw",
+        streamMode: "p2p",
+        mediaHealthy: true,
+        p2pHealthy: true,
+        storageHealthy: true,
+        detectorHealthy: true,
+      });
+
       const endedClip = await homecam.upsertHomecamEventClip(
         "living-room",
         "ended",
         {
           ...clipStarted,
+          sessionIds: [session.id, refreshedStorageSession.id],
           confidence: 0.97,
           endAt: new Date(Date.parse(clipStartAt) + 15_000).toISOString(),
           monotonicDurationMs: 15_000,
@@ -274,7 +314,23 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         await homecam.stopDeviceMediaSession(
           "living-room",
           "integration_test_complete",
-          session.id,
+          refreshedStorageSession.id,
+        ),
+        true,
+      );
+      assert.equal(
+        (await homecam.getActiveMediaSession("living-room", "p2p"))?.id,
+        p2pSession.id,
+      );
+      assert.equal(
+        await homecam.getActiveMediaSession("living-room", "storage"),
+        null,
+      );
+      assert.equal(
+        await homecam.stopDeviceMediaSession(
+          "living-room",
+          "integration_test_complete",
+          p2pSession.id,
         ),
         true,
       );

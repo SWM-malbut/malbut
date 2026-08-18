@@ -54,6 +54,7 @@ SessionCloseResult classify_session_close_response(
   const std::string & response_body);
 bool is_valid_session_id(const std::string & session_id);
 std::string session_close_request_json(const std::string & session_id);
+std::string session_create_request_json(SessionMode mode);
 
 class DeviceSessionClient
 {
@@ -65,6 +66,7 @@ public:
 
   bool available() const;
   bool create(
+    SessionMode mode,
     std::int64_t now_unix_ms,
     DeviceSessionResult * result,
     std::string * error,
