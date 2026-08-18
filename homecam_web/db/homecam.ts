@@ -17,7 +17,11 @@ import { recordingPlaybackPosition } from "../app/recording-segments";
 import { ensureDatabaseSchema } from "./migration-state";
 
 const HEARTBEAT_ONLINE_MS = 30_000;
-const MEDIA_SESSION_TTL_MS = 10 * 60 * 1000;
+// KVS storage sessions have a one-hour service boundary. A one-hour backend
+// lease lets the device perform its own 50-minute soft refresh and 55-minute
+// hard cutover instead of replacing both signaling credentials every five
+// minutes. Heartbeats still extend a healthy session as a sliding lease.
+const MEDIA_SESSION_TTL_MS = 60 * 60 * 1000;
 const EVENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const AUDIT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const TALK_LEASE_MS = 15_000;
@@ -42,6 +46,10 @@ type StateRow = {
   active_stream_mode: string;
   active_session_id: string | null;
   media_healthy: number;
+  p2p_session_id: string | null;
+  storage_session_id: string | null;
+  p2p_healthy: number;
+  storage_healthy: number;
   detector_healthy: number;
   last_seen_at: string | null;
   updated_at: string;
@@ -98,25 +106,48 @@ export async function listHomecamDevices(userEmail: string) {
          device_state.image_topic,
          device_state.active_stream_mode,
          device_state.media_healthy,
+         device_state.p2p_session_id,
+         device_state.storage_session_id,
+         device_state.p2p_healthy,
+         device_state.storage_healthy,
          device_state.detector_healthy,
          device_state.last_seen_at,
          device_state.updated_at,
-         stream_sessions.id AS session_id,
-         stream_sessions.room_code,
-         stream_sessions.started_at,
-         stream_sessions.expires_at
+         legacy_session.id AS session_id,
+         legacy_session.room_code,
+         legacy_session.started_at,
+         legacy_session.expires_at,
+         p2p_session.room_code AS p2p_room_code,
+         p2p_session.started_at AS p2p_started_at,
+         p2p_session.expires_at AS p2p_expires_at,
+         storage_session.room_code AS storage_room_code,
+         storage_session.started_at AS storage_started_at,
+         storage_session.expires_at AS storage_expires_at
        FROM device_memberships
        INNER JOIN devices ON devices.id = device_memberships.device_id
        INNER JOIN device_state ON device_state.device_id = devices.id
-       LEFT JOIN stream_sessions
-         ON stream_sessions.id = device_state.active_session_id
-        AND stream_sessions.status = 'active'
-        AND stream_sessions.expires_at > ?
+       LEFT JOIN stream_sessions AS legacy_session
+         ON legacy_session.id = device_state.active_session_id
+        AND legacy_session.status = 'active'
+        AND legacy_session.expires_at > ?
+       LEFT JOIN stream_sessions AS p2p_session
+         ON p2p_session.id = device_state.p2p_session_id
+        AND p2p_session.status = 'active'
+        AND p2p_session.expires_at > ?
+       LEFT JOIN stream_sessions AS storage_session
+         ON storage_session.id = device_state.storage_session_id
+        AND storage_session.status = 'active'
+        AND storage_session.expires_at > ?
        WHERE device_memberships.user_email = ?
          AND device_memberships.role IN ('owner', 'family', 'broadcaster')
        ORDER BY devices.created_at ASC`,
     )
-    .bind(new Date().toISOString(), userEmail)
+    .bind(
+      new Date().toISOString(),
+      new Date().toISOString(),
+      new Date().toISOString(),
+      userEmail,
+    )
     .all<{
       id: string;
       display_name: string;
@@ -128,6 +159,10 @@ export async function listHomecamDevices(userEmail: string) {
       image_topic: string | null;
       active_stream_mode: string;
       media_healthy: number;
+      p2p_session_id: string | null;
+      storage_session_id: string | null;
+      p2p_healthy: number;
+      storage_healthy: number;
       detector_healthy: number;
       last_seen_at: string | null;
       updated_at: string;
@@ -135,6 +170,12 @@ export async function listHomecamDevices(userEmail: string) {
       room_code: string | null;
       started_at: string | null;
       expires_at: string | null;
+      p2p_room_code: string | null;
+      p2p_started_at: string | null;
+      p2p_expires_at: string | null;
+      storage_room_code: string | null;
+      storage_started_at: string | null;
+      storage_expires_at: string | null;
     }>();
 
   const onlineCutoff = Date.now() - HEARTBEAT_ONLINE_MS;
@@ -149,6 +190,10 @@ export async function listHomecamDevices(userEmail: string) {
     image_topic: string | null;
     active_stream_mode: string;
     media_healthy: number;
+    p2p_session_id: string | null;
+    storage_session_id: string | null;
+    p2p_healthy: number;
+    storage_healthy: number;
     detector_healthy: number;
     last_seen_at: string | null;
     updated_at: string;
@@ -156,6 +201,12 @@ export async function listHomecamDevices(userEmail: string) {
     room_code: string | null;
     started_at: string | null;
     expires_at: string | null;
+    p2p_room_code: string | null;
+    p2p_started_at: string | null;
+    p2p_expires_at: string | null;
+    storage_room_code: string | null;
+    storage_started_at: string | null;
+    storage_expires_at: string | null;
   }) => ({
     id: row.id,
     displayName: row.display_name,
@@ -173,6 +224,8 @@ export async function listHomecamDevices(userEmail: string) {
       imageTopic: row.image_topic,
       streamMode: normalizeStreamMode(row.active_stream_mode),
       mediaHealthy: Boolean(row.media_healthy),
+      p2pHealthy: Boolean(row.p2p_healthy),
+      storageHealthy: Boolean(row.storage_healthy),
       detectorHealthy: Boolean(row.detector_healthy),
       lastSeenAt: row.last_seen_at,
       updatedAt: row.updated_at,
@@ -187,6 +240,34 @@ export async function listHomecamDevices(userEmail: string) {
             expiresAt: row.expires_at,
           }
         : null,
+    activeSessions: {
+      p2p:
+        row.p2p_session_id &&
+        row.p2p_room_code &&
+        row.p2p_started_at &&
+        row.p2p_expires_at
+          ? {
+              id: row.p2p_session_id,
+              roomCode: row.p2p_room_code,
+              mode: "p2p" as const,
+              startedAt: row.p2p_started_at,
+              expiresAt: row.p2p_expires_at,
+            }
+          : null,
+      storage:
+        row.storage_session_id &&
+        row.storage_room_code &&
+        row.storage_started_at &&
+        row.storage_expires_at
+          ? {
+              id: row.storage_session_id,
+              roomCode: row.storage_room_code,
+              mode: "storage" as const,
+              startedAt: row.storage_started_at,
+              expiresAt: row.storage_expires_at,
+            }
+          : null,
+    },
   }));
 }
 
@@ -196,7 +277,9 @@ export async function getDeviceSettings(deviceId: string) {
     .prepare(
       `SELECT monitoring_enabled, camera_enabled, microphone_enabled,
               source_profile, image_topic, active_stream_mode, active_session_id,
-              media_healthy, detector_healthy, last_seen_at, updated_at
+              media_healthy, p2p_session_id, storage_session_id,
+              p2p_healthy, storage_healthy, detector_healthy,
+              last_seen_at, updated_at
        FROM device_state WHERE device_id = ?`,
     )
     .bind(deviceId)
@@ -254,6 +337,10 @@ export async function updateDeviceSettings(input: {
            microphone_enabled =
              CASE WHEN CAST(? AS INTEGER) IS NULL THEN microphone_enabled ELSE ? END,
            media_healthy = CASE WHEN ? = 1 THEN 0 ELSE media_healthy END,
+           p2p_healthy = CASE WHEN CAST(? AS INTEGER) IS NULL
+             THEN p2p_healthy ELSE 0 END,
+           storage_healthy = CASE WHEN ? = 1
+             THEN 0 ELSE storage_healthy END,
            updated_at = ?
        WHERE device_id = ?
          AND NOT (COALESCE(?, 0) = 1 AND COALESCE(?, camera_enabled) = 0)`,
@@ -267,6 +354,8 @@ export async function updateDeviceSettings(input: {
       microphonePatch,
       microphonePatch,
       mediaModeMayChange ? 1 : 0,
+      cameraPatch,
+      mediaModeMayChange ? 1 : 0,
       nowIso,
       input.deviceId,
       monitoringPatch,
@@ -277,20 +366,25 @@ export async function updateDeviceSettings(input: {
     throw new Error("CAMERA_DISABLED");
   }
   const updated = await getDeviceSettings(input.deviceId);
-  const activeSession = mediaModeMayChange
-    ? await getActiveMediaSession(input.deviceId)
-    : null;
-  if (
-    activeSession &&
-    (!updated.cameraEnabled ||
-      activeSession.mode !==
-        (updated.monitoringEnabled ? "storage" : "p2p"))
-  ) {
-    await stopDeviceMediaSession(
-      input.deviceId,
-      "settings_changed",
-      activeSession.id,
-    );
+  if (mediaModeMayChange) {
+    const [p2pSession, storageSession] = await Promise.all([
+      getActiveMediaSession(input.deviceId, "p2p"),
+      getActiveMediaSession(input.deviceId, "storage"),
+    ]);
+    if (!updated.cameraEnabled && p2pSession) {
+      await stopDeviceMediaSession(
+        input.deviceId,
+        "camera_disabled",
+        p2pSession.id,
+      );
+    }
+    if ((!updated.cameraEnabled || !updated.monitoringEnabled) && storageSession) {
+      await stopDeviceMediaSession(
+        input.deviceId,
+        updated.cameraEnabled ? "storage_disabled" : "camera_disabled",
+        storageSession.id,
+      );
+    }
   }
   await writeAuditLog({
     deviceId: input.deviceId,
@@ -465,21 +559,33 @@ export async function updateDeviceHeartbeat(input: {
   imageTopic?: string | null;
   streamMode?: HomecamStreamMode;
   mediaHealthy?: boolean;
+  p2pHealthy?: boolean;
+  storageHealthy?: boolean;
   detectorHealthy?: boolean;
 }) {
   await ensureDeviceState(input.deviceId);
   const current = await getDeviceSettings(input.deviceId);
-  const activeSession = await getActiveMediaSession(input.deviceId);
+  const [p2pSession, storageSession] = await Promise.all([
+    getActiveMediaSession(input.deviceId, "p2p"),
+    getActiveMediaSession(input.deviceId, "storage"),
+  ]);
   // A provisioned P2P/storage session can legitimately be idle while the
   // master waits for a viewer or the storage service's offer. Session
   // lifecycle is therefore controlled by the authenticated session endpoint
   // (DELETE), settings changes, and expiry—not inferred from one heartbeat.
-  let activeSessionExpiresAt = activeSession?.expiresAt ?? null;
-  if (
-    activeSession &&
-    input.streamMode === activeSession.mode &&
-    input.mediaHealthy === true
-  ) {
+  const reportedP2pHealthy =
+    input.p2pHealthy ??
+    (input.streamMode === "p2p" ? input.mediaHealthy : undefined);
+  const reportedStorageHealthy =
+    input.storageHealthy ??
+    (input.streamMode === "storage" ? input.mediaHealthy : undefined);
+  let p2pExpiresAt = p2pSession?.expiresAt ?? null;
+  let storageExpiresAt = storageSession?.expiresAt ?? null;
+  for (const [session, healthy] of [
+    [p2pSession, reportedP2pHealthy],
+    [storageSession, reportedStorageHealthy],
+  ] as const) {
+    if (!session || healthy !== true) continue;
     const nextExpiresAt = new Date(
       Date.now() + MEDIA_SESSION_TTL_MS,
     ).toISOString();
@@ -488,23 +594,25 @@ export async function updateDeviceHeartbeat(input: {
         `UPDATE stream_sessions SET expires_at = ?
          WHERE id = ? AND status = 'active'`,
       )
-      .bind(nextExpiresAt, activeSession.id)
+      .bind(nextExpiresAt, session.id)
       .run();
     if (result.meta.changes > 0) {
-      activeSessionExpiresAt = nextExpiresAt;
+      if (session.mode === "p2p") p2pExpiresAt = nextExpiresAt;
+      else storageExpiresAt = nextExpiresAt;
     }
   }
   const refreshed = await getDeviceSettings(input.deviceId);
-  const activeSessionId = activeSession?.id ?? null;
-  const reportedMode =
-    activeSession && input.streamMode !== "idle"
-      ? activeSession.mode
-      : refreshed.streamMode;
-  const mediaHealthy =
-    Boolean(activeSession) &&
+  const p2pHealthy =
+    Boolean(p2pSession) &&
     refreshed.cameraEnabled &&
-    input.streamMode === activeSession?.mode &&
-    input.mediaHealthy === true;
+    reportedP2pHealthy === true;
+  const storageHealthy =
+    Boolean(storageSession) &&
+    refreshed.cameraEnabled &&
+    refreshed.monitoringEnabled &&
+    reportedStorageHealthy === true;
+  const legacySession = storageSession ?? p2pSession;
+  const legacyHealthy = storageSession ? storageHealthy : p2pHealthy;
   const detectorHealthy =
     refreshed.cameraEnabled &&
     refreshed.monitoringEnabled &&
@@ -515,14 +623,9 @@ export async function updateDeviceHeartbeat(input: {
       `UPDATE device_state SET
          source_profile = ?,
          image_topic = ?,
-         active_stream_mode = CASE
-           WHEN active_session_id IS NULL THEN 'idle'
-           WHEN active_session_id = ? THEN ?
-           ELSE active_stream_mode
-         END,
-         media_healthy = CASE
-           WHEN active_session_id = ? THEN ? ELSE 0
-         END,
+         p2p_session_id = ?, storage_session_id = ?,
+         p2p_healthy = ?, storage_healthy = ?,
+         active_stream_mode = ?, active_session_id = ?, media_healthy = ?,
          detector_healthy = ?,
          last_seen_at = ?,
          updated_at = ?
@@ -531,10 +634,13 @@ export async function updateDeviceHeartbeat(input: {
     .bind(
       input.sourceProfile ?? refreshed.sourceProfile,
       input.imageTopic === undefined ? refreshed.imageTopic : input.imageTopic,
-      activeSessionId,
-      reportedMode,
-      activeSessionId,
-      mediaHealthy ? 1 : 0,
+      p2pSession?.id ?? null,
+      storageSession?.id ?? null,
+      p2pHealthy ? 1 : 0,
+      storageHealthy ? 1 : 0,
+      legacySession?.mode ?? "idle",
+      legacySession?.id ?? null,
+      legacyHealthy ? 1 : 0,
       detectorHealthy ? 1 : 0,
       nowIso,
       nowIso,
@@ -542,8 +648,7 @@ export async function updateDeviceHeartbeat(input: {
     )
     .run();
   if (
-    activeSession?.mode === "storage" &&
-    mediaHealthy
+    storageSession && storageHealthy
   ) {
     await getD1()
       .prepare(
@@ -554,28 +659,33 @@ export async function updateDeviceHeartbeat(input: {
            WHERE device_id = ?
              AND monitoring_enabled = 1
              AND camera_enabled = 1
-             AND media_healthy = 1
-             AND active_stream_mode = 'storage'
-             AND active_session_id = ?
+             AND storage_healthy = 1
+             AND storage_session_id = ?
          )`,
       )
-      .bind(nowIso, activeSession.id, input.deviceId, activeSession.id)
+      .bind(nowIso, storageSession.id, input.deviceId, storageSession.id)
       .run();
   }
   const state = await getDeviceSettings(input.deviceId);
+  const activeSessions = {
+    p2p:
+      p2pSession && p2pExpiresAt && state.p2pSessionId === p2pSession.id
+        ? { ...p2pSession, expiresAt: p2pExpiresAt }
+        : null,
+    storage:
+      storageSession &&
+      storageExpiresAt &&
+      state.storageSessionId === storageSession.id
+        ? { ...storageSession, expiresAt: storageExpiresAt }
+        : null,
+  };
   return {
     ...state,
     // Reuse the session snapshot already read for the heartbeat. This avoids
     // another global expiry sweep and SELECT in the 2-second polling route,
     // while rejecting a stale snapshot after a concurrent stop/replacement.
-    activeSession:
-      activeSession &&
-      activeSessionExpiresAt &&
-      state.activeSessionId === activeSession.id &&
-      state.streamMode === activeSession.mode &&
-      Date.parse(activeSessionExpiresAt) > Date.now()
-      ? { ...activeSession, expiresAt: activeSessionExpiresAt }
-      : null,
+    activeSession: activeSessions.storage ?? activeSessions.p2p,
+    activeSessions,
   };
 }
 
@@ -594,7 +704,7 @@ export async function prepareDeviceMediaSession(input: {
   const now = new Date();
   const nowIso = now.toISOString();
   const expiresAt = new Date(now.getTime() + MEDIA_SESSION_TTL_MS).toISOString();
-  const current = await getActiveMediaSession(input.deviceId);
+  const current = await getActiveMediaSession(input.deviceId, input.mode);
 
   const currentStorageMatches =
     current?.mode !== "storage" ||
@@ -603,6 +713,7 @@ export async function prepareDeviceMediaSession(input: {
   if (
     current &&
     current.mode === input.mode &&
+    input.mode === "p2p" &&
     currentStorageMatches
   ) {
     await d1
@@ -614,10 +725,10 @@ export async function prepareDeviceMediaSession(input: {
       .run();
     return { ...current, expiresAt };
   }
-  if (current) {
+  if (current && !currentStorageMatches) {
     await stopDeviceMediaSession(
       input.deviceId,
-      current.mode === input.mode ? "channel_changed" : "mode_changed",
+      "channel_changed",
       current.id,
     );
   }
@@ -631,27 +742,28 @@ export async function prepareDeviceMediaSession(input: {
           `UPDATE recording_sessions SET ended_at = COALESCE(ended_at, ?)
            WHERE session_id IN (
              SELECT id FROM stream_sessions
-             WHERE device_id = ? AND status = 'active'
+             WHERE device_id = ? AND mode = ? AND status = 'active'
            )`,
         )
-        .bind(nowIso, input.deviceId),
+        .bind(nowIso, input.deviceId, input.mode),
       d1
         .prepare(
           `UPDATE stream_sessions SET status = 'ended', ended_at = ?
-           WHERE device_id = ? AND status = 'active'`,
+           WHERE device_id = ? AND mode = ? AND status = 'active'`,
         )
-        .bind(nowIso, input.deviceId),
+        .bind(nowIso, input.deviceId, input.mode),
       d1
         .prepare(
           `INSERT INTO stream_sessions
-           (id, room_code, device_id, started_by, status, started_at, expires_at)
-           VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+           (id, room_code, device_id, started_by, mode, status, started_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`,
         )
         .bind(
           sessionId,
           roomCode,
           input.deviceId,
           `device:${input.deviceId}`,
+          input.mode,
           nowIso,
           expiresAt,
         ),
@@ -671,11 +783,42 @@ export async function prepareDeviceMediaSession(input: {
       d1
         .prepare(
           `UPDATE device_state
-           SET active_stream_mode = ?, active_session_id = ?, media_healthy = 0,
+           SET p2p_session_id = CASE WHEN ? = 'p2p' THEN ? ELSE p2p_session_id END,
+               storage_session_id = CASE WHEN ? = 'storage' THEN ? ELSE storage_session_id END,
+               p2p_healthy = CASE WHEN ? = 'p2p' THEN 0 ELSE p2p_healthy END,
+               storage_healthy = CASE WHEN ? = 'storage' THEN 0 ELSE storage_healthy END,
+               active_stream_mode = CASE
+                 WHEN ? = 'storage' THEN 'storage'
+                 WHEN storage_session_id IS NULL THEN 'p2p'
+                 ELSE active_stream_mode
+               END,
+               active_session_id = CASE
+                 WHEN ? = 'storage' THEN ?
+                 WHEN storage_session_id IS NULL THEN ?
+                 ELSE active_session_id
+               END,
+               media_healthy = CASE
+                 WHEN ? = 'storage' OR storage_session_id IS NULL THEN 0
+                 ELSE storage_healthy
+               END,
                updated_at = ?
            WHERE device_id = ?`,
         )
-        .bind(input.mode, sessionId, nowIso, input.deviceId),
+        .bind(
+          input.mode,
+          sessionId,
+          input.mode,
+          sessionId,
+          input.mode,
+          input.mode,
+          input.mode,
+          input.mode,
+          sessionId,
+          sessionId,
+          input.mode,
+          nowIso,
+          input.deviceId,
+        ),
     );
 
     try {
@@ -702,18 +845,22 @@ export async function stopDeviceMediaSession(
   await ensureHomecamSchema();
   const d1 = getD1();
   const nowIso = new Date().toISOString();
-  const state = await d1
-    .prepare("SELECT active_session_id FROM device_state WHERE device_id = ?")
-    .bind(deviceId)
-    .first<{ active_session_id: string | null }>();
-  if (!state?.active_session_id) return false;
-  if (
-    expectedSessionId !== undefined &&
-    state.active_session_id !== expectedSessionId
-  ) {
+  const session = await d1
+    .prepare(
+      `SELECT stream_sessions.id, stream_sessions.mode
+       FROM stream_sessions
+       INNER JOIN device_state ON device_state.device_id = stream_sessions.device_id
+       WHERE stream_sessions.device_id = ?
+         AND stream_sessions.status = 'active'
+         AND stream_sessions.id = COALESCE(?, device_state.active_session_id)`,
+    )
+    .bind(deviceId, expectedSessionId ?? null)
+    .first<{ id: string; mode: string }>();
+  if (!session || (session.mode !== "p2p" && session.mode !== "storage")) {
     return false;
   }
-  const sessionId = state.active_session_id;
+  const sessionId = session.id;
+  const mode = session.mode as "p2p" | "storage";
   const results = await d1.batch([
     d1
       .prepare(
@@ -729,11 +876,40 @@ export async function stopDeviceMediaSession(
     d1
       .prepare(
         `UPDATE device_state
-         SET active_stream_mode = 'idle', active_session_id = NULL,
-             media_healthy = 0, updated_at = ?
-         WHERE device_id = ? AND active_session_id = ?`,
+         SET p2p_session_id = CASE WHEN ? = 'p2p' THEN NULL ELSE p2p_session_id END,
+             storage_session_id = CASE WHEN ? = 'storage' THEN NULL ELSE storage_session_id END,
+             p2p_healthy = CASE WHEN ? = 'p2p' THEN 0 ELSE p2p_healthy END,
+             storage_healthy = CASE WHEN ? = 'storage' THEN 0 ELSE storage_healthy END,
+             active_stream_mode = CASE
+               WHEN ? = 'storage' THEN CASE WHEN p2p_session_id IS NULL THEN 'idle' ELSE 'p2p' END
+               ELSE CASE WHEN storage_session_id IS NULL THEN 'idle' ELSE 'storage' END
+             END,
+             active_session_id = CASE
+               WHEN ? = 'storage' THEN p2p_session_id ELSE storage_session_id
+             END,
+             media_healthy = CASE
+               WHEN ? = 'storage' THEN p2p_healthy ELSE storage_healthy
+             END,
+             updated_at = ?
+         WHERE device_id = ?
+           AND ((? = 'p2p' AND p2p_session_id = ?)
+             OR (? = 'storage' AND storage_session_id = ?))`,
       )
-      .bind(nowIso, deviceId, sessionId),
+      .bind(
+        mode,
+        mode,
+        mode,
+        mode,
+        mode,
+        mode,
+        mode,
+        nowIso,
+        deviceId,
+        mode,
+        sessionId,
+        mode,
+        sessionId,
+      ),
   ]);
   if (results[1].meta.changes > 0) {
     await writeAuditLog({
@@ -747,38 +923,48 @@ export async function stopDeviceMediaSession(
   return results[1].meta.changes > 0;
 }
 
-export async function getActiveMediaSession(deviceId: string) {
+export async function getActiveMediaSession(
+  deviceId: string,
+  requestedMode?: Exclude<HomecamStreamMode, "idle">,
+) {
   await ensureHomecamSchema();
   await expireMediaSessions();
   const row = await getD1()
     .prepare(
       `SELECT stream_sessions.id, stream_sessions.room_code,
               stream_sessions.started_at, stream_sessions.expires_at,
-              device_state.active_stream_mode,
+              stream_sessions.mode,
               recording_sessions.kvs_channel_arn,
               recording_sessions.kvs_stream_arn,
               recording_sessions.started_at AS recording_started_at
-       FROM device_state
-       INNER JOIN stream_sessions ON stream_sessions.id = device_state.active_session_id
+       FROM stream_sessions
        LEFT JOIN recording_sessions
          ON recording_sessions.session_id = stream_sessions.id
-       WHERE device_state.device_id = ?
+       WHERE stream_sessions.device_id = ?
          AND stream_sessions.status = 'active'
-         AND stream_sessions.expires_at > ?`,
+         AND stream_sessions.expires_at > ?
+         AND (CAST(? AS TEXT) IS NULL OR stream_sessions.mode = ?)
+       ORDER BY CASE WHEN stream_sessions.mode = 'storage' THEN 0 ELSE 1 END
+       LIMIT 1`,
     )
-    .bind(deviceId, new Date().toISOString())
+    .bind(
+      deviceId,
+      new Date().toISOString(),
+      requestedMode ?? null,
+      requestedMode ?? null,
+    )
     .first<{
       id: string;
       room_code: string;
       started_at: string;
       expires_at: string;
-      active_stream_mode: string;
+      mode: string;
       kvs_channel_arn: string | null;
       kvs_stream_arn: string | null;
       recording_started_at: string | null;
     }>();
   if (!row) return null;
-  const mode = normalizeStreamMode(row.active_stream_mode);
+  const mode = normalizeStreamMode(row.mode);
   if (mode === "idle") return null;
   return {
     id: row.id,
@@ -817,7 +1003,7 @@ export async function insertHomecamEvent(
   if (!state.monitoringEnabled || !state.cameraEnabled) {
     throw new Error("MONITORING_DISABLED");
   }
-  const session = await getActiveMediaSession(deviceId);
+  const session = await getActiveMediaSession(deviceId, "storage");
   if (
     !session ||
     session.mode !== "storage" ||
@@ -848,9 +1034,8 @@ export async function insertHomecamEvent(
        WHERE device_id = ?
          AND monitoring_enabled = 1
          AND camera_enabled = 1
-         AND media_healthy = 1
-         AND active_stream_mode = 'storage'
-         AND active_session_id = ?
+         AND storage_healthy = 1
+         AND storage_session_id = ?
          AND EXISTS (
            SELECT 1 FROM stream_sessions
            WHERE id = ? AND status = 'active' AND expires_at > ?
@@ -1828,11 +2013,45 @@ async function expireMediaSessions() {
       .bind(nowIso),
     d1.prepare(
       `UPDATE device_state
-       SET active_stream_mode = 'idle', active_session_id = NULL,
-           media_healthy = 0, updated_at = ?
-       WHERE active_session_id IS NOT NULL AND active_session_id IN (
-         SELECT id FROM stream_sessions WHERE status != 'active'
-       )`,
+       SET p2p_healthy = CASE WHEN p2p_session_id IN (
+             SELECT id FROM stream_sessions WHERE status != 'active'
+           ) THEN 0 ELSE p2p_healthy END,
+           storage_healthy = CASE WHEN storage_session_id IN (
+             SELECT id FROM stream_sessions WHERE status != 'active'
+           ) THEN 0 ELSE storage_healthy END,
+           p2p_session_id = CASE WHEN p2p_session_id IN (
+             SELECT id FROM stream_sessions WHERE status != 'active'
+           ) THEN NULL ELSE p2p_session_id END,
+           storage_session_id = CASE WHEN storage_session_id IN (
+             SELECT id FROM stream_sessions WHERE status != 'active'
+           ) THEN NULL ELSE storage_session_id END,
+           updated_at = ?
+       WHERE (p2p_session_id IS NOT NULL AND p2p_session_id IN (
+           SELECT id FROM stream_sessions WHERE status != 'active'
+         )) OR (storage_session_id IS NOT NULL AND storage_session_id IN (
+           SELECT id FROM stream_sessions WHERE status != 'active'
+         ))`,
+    ).bind(nowIso),
+    d1.prepare(
+      `UPDATE device_state
+       SET active_stream_mode = CASE
+             WHEN storage_session_id IS NOT NULL THEN 'storage'
+             WHEN p2p_session_id IS NOT NULL THEN 'p2p'
+             ELSE 'idle'
+           END,
+           active_session_id = COALESCE(storage_session_id, p2p_session_id),
+           media_healthy = CASE
+             WHEN storage_session_id IS NOT NULL THEN storage_healthy
+             WHEN p2p_session_id IS NOT NULL THEN p2p_healthy
+             ELSE 0
+           END,
+           updated_at = ?
+       WHERE active_session_id IS DISTINCT FROM COALESCE(storage_session_id, p2p_session_id)
+          OR active_stream_mode IS DISTINCT FROM CASE
+            WHEN storage_session_id IS NOT NULL THEN 'storage'
+            WHEN p2p_session_id IS NOT NULL THEN 'p2p'
+            ELSE 'idle'
+          END`,
     ).bind(nowIso),
   ]);
 }
@@ -1866,6 +2085,10 @@ function mapState(row: StateRow) {
     streamMode: normalizeStreamMode(row.active_stream_mode),
     activeSessionId: row.active_session_id,
     mediaHealthy: Boolean(row.media_healthy),
+    p2pSessionId: row.p2p_session_id,
+    storageSessionId: row.storage_session_id,
+    p2pHealthy: Boolean(row.p2p_healthy),
+    storageHealthy: Boolean(row.storage_healthy),
     detectorHealthy: Boolean(row.detector_healthy),
     lastSeenAt: row.last_seen_at,
     updatedAt: row.updated_at,

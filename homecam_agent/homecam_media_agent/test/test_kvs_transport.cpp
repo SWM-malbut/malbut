@@ -113,6 +113,7 @@ TEST(KvsTransport, FailsClosedWithoutAReviewedAdapter)
 {
   auto transport = make_kvs_transport();
   EXPECT_FALSE(transport->peer_connected());
+  EXPECT_FALSE(transport->media_flowing());
   EXPECT_FALSE(transport->restart_required());
 #if HOMECAM_HAVE_KVS
   EXPECT_TRUE(transport->implemented());

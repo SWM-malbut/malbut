@@ -17,6 +17,8 @@ struct HeartbeatStatus
   bool monitoring_enabled{false};
   bool camera_healthy{false};
   bool media_healthy{false};
+  bool p2p_healthy{false};
+  bool storage_healthy{false};
   bool detector_healthy{false};
   std::string stream_mode{"idle"};
   std::string source_profile{"unknown"};

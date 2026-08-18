@@ -1,6 +1,6 @@
 import { getPostgresPool } from "./postgres";
 
-const REQUIRED_MIGRATION = "0005_event_clips";
+const REQUIRED_MIGRATION = "0006_dual_media_sessions";
 const schemaReadiness = new WeakMap<object, Promise<void>>();
 
 export function ensureDatabaseSchema() {
