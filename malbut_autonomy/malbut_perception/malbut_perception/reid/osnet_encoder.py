@@ -8,6 +8,7 @@ import numpy as np
 
 from malbut_perception.detector.base import ImageDetection
 from malbut_perception.dnn import configure_network_target
+from malbut_perception.onnx_runtime import load_onnx_network
 
 from .base import AppearanceFeature, PersonAppearanceEncoder, normalized_feature
 from .crop import person_crop
@@ -20,25 +21,23 @@ class OsNetPersonEncoder(PersonAppearanceEncoder):
         self,
         model_path: str,
         dnn_target: str = 'auto',
+        inference_backend: str = 'auto',
         minimum_width: int = 16,
         minimum_height: int = 32,
         network: Optional[object] = None,
     ) -> None:
-        """Load an OSNet x0.25-compatible ONNX feature extractor."""
+        """Load an OSNet-compatible ONNX feature extractor."""
         if network is None:
             path = Path(model_path).expanduser()
             if not path.is_file():
                 raise FileNotFoundError(f'OSNet model not found: {path}')
-            try:
-                network = cv2.dnn.readNetFromONNX(str(path))
-            except cv2.error as error:
-                raise RuntimeError(
-                    f'cannot load OSNet ONNX model: {error}'
-                ) from error
+            network, resolved_target = load_onnx_network(
+                path, inference_backend, dnn_target
+            )
+        else:
+            resolved_target = configure_network_target(network, dnn_target)
         self._network = network
-        self._resolved_target = configure_network_target(
-            self._network, dnn_target
-        )
+        self._resolved_target = resolved_target
         self._minimum_width = minimum_width
         self._minimum_height = minimum_height
 

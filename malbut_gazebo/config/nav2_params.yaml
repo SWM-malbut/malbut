@@ -142,7 +142,7 @@ controller_server:
 
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"] 
-    controller_plugins: ["FollowPath", "FollowPerson"]
+    controller_plugins: ["FollowPath"]
 
     # Progress checker parameters
     progress_checker:
@@ -242,63 +242,6 @@ controller_server:
         enabled: true
         cost_power: 1
         cost_weight: 8.0
-    # Tracking-only translation controller. Its angular search space is
-    # intentionally negligible: the tracking Twist mixer owns target-facing
-    # yaw independently, while this controller owns collision-aware vx/vy.
-    FollowPerson:
-      plugin: "nav2_mppi_controller::MPPIController"
-      motion_model: "Omni"
-      time_steps: 56
-      model_dt: 0.05
-      batch_size: 2000
-      iteration_count: 1
-      vx_std: 0.20
-      vy_std: 0.10
-      wz_std: 0.001
-      vx_max: 0.40
-      vx_min: -0.10
-      vy_max: 0.10
-      wz_max: 0.001
-      prune_distance: 1.5
-      transform_tolerance: 0.2
-      temperature: 0.3
-      gamma: 0.015
-      visualize: false
-      retry_attempt_limit: 2
-      regenerate_noises: false
-      critics: ["ConstraintCritic", "CostCritic", "GoalCritic", "PathAlignCritic", "PathFollowCritic"]
-      ConstraintCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 4.0
-      CostCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 3.81
-        critical_cost: 300.0
-        consider_footprint: true
-        collision_cost: 1000000.0
-        near_goal_distance: 0.5
-      GoalCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 5.0
-        threshold_to_consider: 1.4
-      PathAlignCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 10.0
-        max_path_occupancy_ratio: 0.07
-        trajectory_point_step: 4
-        threshold_to_consider: 0.5
-        offset_from_furthest: 20
-        use_path_orientations: false
-      PathFollowCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 5.0
-        offset_from_furthest: 6
-        threshold_to_consider: 1.4
 controller_server_rclcpp_node:
   ros__parameters:
     use_sim_time: True
@@ -349,6 +292,10 @@ local_costmap:
           clearing: True
           marking: True
           data_type: "LaserScan"
+          # Treat +Inf as a clear ray up to range_max. Without this, an object
+          # that leaves a beam can remain marked until another finite return
+          # crosses the same cell.
+          inf_is_valid: True
           raytrace_max_range: 3.0
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
@@ -449,6 +396,7 @@ global_costmap:
           clearing: True
           marking: True
           data_type: "LaserScan"
+          inf_is_valid: True
           raytrace_max_range: 3.0
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5

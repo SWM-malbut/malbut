@@ -22,7 +22,10 @@ and maintains every dynamic obstacle with a planar constant-velocity Kalman
 filter. Mahalanobis gating and globally optimal Hungarian assignment preserve
 track identity between costmap updates. New tracks remain tentative until they
 receive repeated measurements, and confirmed tracks coast for a bounded time
-through short occlusion.
+through short occlusion. Camera-to-costmap association considers only obstacle
+tracks measured in the latest grid. A small rebind margin prevents nearby
+clusters from swapping labels on noise, while a clearly closer RGB-D match
+removes a stale label and corrects the selected track.
 
 The tracking package only consumes the standard Nav2 raw costmap contract; it
 does not depend on Gazebo or on a particular costmap plugin. The simulation
@@ -33,10 +36,13 @@ default. The Gazebo demonstration explicitly enables simulation time.
 
 RGB-D is the primary long-range position source, so a visible person remains
 followable even outside the LiDAR/costmap observation area. Camera-only motion
-continuously derives standoff poses from current sensor observations. Each
-accepted sensor update asks Nav2 for an ordinary global path. The follower
-passes an unchanged bounded prefix of that path to Controller Server and only
-sets its terminal camera orientation. A newer path directly preempts the
+continuously derives targets from current sensor observations. Each accepted
+sensor update asks Nav2 for a global path toward the observed person, using the
+nearest admissible costmap cell when the person's cell is occupied. The
+follower passes the existing bounded prefix of that path to Controller Server;
+the measured distance band still decides when to advance or hold. Nav2 owns
+both translation and body rotation; there is no downstream camera-yaw mixer.
+A newer path directly preempts the
 running `FollowPath` goal without an explicit cancel/stop gap.
 A failed individual path is discarded so the next camera observation can try a
 better goal while the outer follow action remains active. A confirmed costmap
@@ -75,23 +81,32 @@ ros2 action send_goal \
 
 Cancel the command with `Ctrl-C`, or use an action client to cancel its goal.
 Before the first person is acquired, the action remains active and the robot
-waits stationary. The target-loss timer and bounded Nav2 search rotation start
-only after an RGB-D target has actually been acquired. A brief detection gap
-does not cancel the bounded movement already selected. Search starts promptly
-at the predicted absolute direction of the last camera observation, then
-expands toward the side on which the target was moving instead of starting a
-generic alternating scan. A spatially continuous
-camera observation preserves the person even if its detector ID changed.
+waits stationary. Loss recovery starts only after an RGB-D target has actually
+been acquired. A confirmed LiDAR obstacle that was labeled by RGB-D continues
+the same target for a bounded three-second camera gap; LiDAR never selects a
+new person by itself. While camera observations are current, only the camera
+callback updates Nav2; LiDAR takes over after camera loss instead of
+alternating and canceling camera goals. If both sensors lose the target, the
+follower finishes
+the frozen waypoint (or accepts it within the recovery-only 0.08 m tolerance),
+turns toward the motion-predicted exit direction, and
+then requests one complete Nav2 path to the last safe standoff position. It
+finally performs one collision-checked 270-degree `Spin` in the direction of
+the person's last camera bearing. A spatially continuous camera observation
+preserves the person even if its detector ID changed.
 The robot advances when the person is beyond the configured distance band and
 holds inside it. When the person approaches too closely, the same Nav2 planner
-computes a safe short retreat path. The tracking-specific holonomic controller
-follows those planner-produced positions while independently aiming the fixed
-forward camera at the target; it can therefore move forward, laterally, or
-backward without changing the planned route. While stationary, bounded Nav2
-`Spin` goals correct residual camera bearing error.
+computes a safe short retreat path. The normal holonomic `FollowPath`
+controller follows all planner-produced positions and orientations, including
+forward, lateral, reverse, and turning motion, without an independent command
+overriding its angular velocity.
 Navigation failures are retried with fresh sensor goals instead of invoking
-Nav2's generic fixed-direction recovery sequence. The follower cancels Nav2
-and ends in `TARGET_LOST` only when the visibility timeout expires.
+Nav2's generic fixed-direction recovery sequence. Every recovery step remains
+preemptible: a new RGB-D observation immediately resumes normal tracking. The
+follower cancels Nav2 and waits stationary in `TARGET_LOST` after the
+last-position recovery and directional scan complete without reacquisition.
+The follow Action remains active until explicitly canceled, and a later RGB-D
+observation immediately resumes `TRACKING` without a new Action goal.
 
 ## Algorithm basis
 

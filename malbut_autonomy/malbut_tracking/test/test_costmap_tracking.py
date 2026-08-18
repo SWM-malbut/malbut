@@ -64,6 +64,7 @@ def _tracker(**overrides):
         'maximum_missed_updates': 3,
         'maximum_coast_time_s': 3.0,
         'camera_label_gate_m': 0.5,
+        'camera_rebind_margin_m': 0.15,
     }
     parameters.update(overrides)
     return CostmapTargetTracker(**parameters)
@@ -123,6 +124,15 @@ def test_static_exclusion_margin_rejects_localization_edge_noise():
         static_exclusion_radius_m=0.11,
     )
     assert clusters == []
+
+
+def test_camera_label_gate_rejects_nearby_unrelated_obstacle():
+    """Nearby furniture cannot steal a visible camera person's label."""
+    tracker = _tracker(confirmation_hits=1, camera_label_gate_m=0.40)
+    _step(tracker, {(10, 10)}, 1.0)
+    target = tracker.bind('person', Point2D(1.50, 1.05), 'detector-1')
+    assert target is None
+    assert tracker.target is None
 
 
 def test_person_label_requires_confirmed_repeated_costmap_track():
@@ -199,6 +209,48 @@ def test_camera_rebinds_label_when_person_enters_a_new_costmap_track():
     assert rebound is not None
     assert rebound.track.track_id != first.track.track_id
     assert rebound.track.position.x == pytest.approx(2.55)
+
+
+def test_camera_hysteresis_prevents_noisy_nearby_label_swap():
+    """A marginally closer obstacle cannot steal a stable person label."""
+    tracker = _tracker(confirmation_hits=1)
+    _step(tracker, {(10, 10), (13, 10)}, 1.0)
+    first = tracker.bind('person', Point2D(1.08, 1.05), 'detector-1')
+    assert first is not None
+    first_id = first.track.track_id
+
+    _step(tracker, {(10, 10), (13, 10)}, 2.0)
+    retained = tracker.bind('person', Point2D(1.20, 1.05), 'detector-1')
+    assert retained is not None
+    assert retained.track.track_id == first_id
+
+
+def test_camera_corrects_label_to_clearly_better_observed_track():
+    """Fresh RGB-D corrects a label that drifted onto nearby geometry."""
+    tracker = _tracker(confirmation_hits=1)
+    _step(tracker, {(10, 10), (15, 10)}, 1.0)
+    first = tracker.bind('person', Point2D(1.05, 1.05), 'detector-1')
+    assert first is not None
+
+    _step(tracker, {(10, 10), (15, 10)}, 2.0)
+    corrected = tracker.bind('person', Point2D(1.52, 1.05), 'detector-1')
+    assert corrected is not None
+    assert corrected.track.track_id != first.track.track_id
+    assert corrected.track.position.x == pytest.approx(1.55)
+
+
+def test_visible_camera_clears_inconsistent_unobserved_lidar_label():
+    """A stale obstacle cannot remain the person while RGB-D sees elsewhere."""
+    tracker = _tracker(confirmation_hits=1)
+    _step(tracker, {(5, 5)}, 1.0)
+    selected = tracker.bind('person', Point2D(0.55, 0.55), 'detector-1')
+    assert selected is not None
+
+    _step(tracker, set(), 2.0)
+    assert tracker.bind(
+        'person', Point2D(2.0, 2.0), 'detector-1'
+    ) is None
+    assert tracker.target is None
 
 
 def test_large_unmapped_wall_component_is_not_an_object_track():

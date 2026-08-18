@@ -82,8 +82,8 @@ def truncate_path(
 
     Every planner-produced position is preserved. If the lookahead falls
     inside a segment, only the same interpolation already used for bounded
-    tracking is appended. Camera control is deliberately handled downstream
-    and cannot alter either the global path geometry or its orientation.
+    tracking is appended. The controller receives both the geometry and its
+    orientation unchanged, so one Nav2 command owns translation and body yaw.
     """
     if not path.poses:
         return None

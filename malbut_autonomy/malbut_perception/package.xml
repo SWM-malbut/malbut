@@ -22,6 +22,7 @@
   <exec_depend>message_filters</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-pip</exec_depend>
   <exec_depend>python3-venv</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
 

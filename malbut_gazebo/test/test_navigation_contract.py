@@ -185,6 +185,7 @@ def test_navigation_prefers_clearance_and_keeps_close_obstacles_visible():
     """Planning and control must preserve a safety margin around obstacles."""
     config = yaml.safe_load(NAV2_PARAMS.read_text(encoding='utf-8'))
     controller = config['controller_server']['ros__parameters']
+    assert controller['controller_plugins'] == ['FollowPath']
     progress = controller['progress_checker']
     assert progress['required_movement_radius'] <= 0.15
     assert progress['movement_time_allowance'] >= 30.0
@@ -201,17 +202,6 @@ def test_navigation_prefers_clearance_and_keeps_close_obstacles_visible():
     assert follow_path['PathAngleCritic']['forward_preference'] is True
     assert follow_path['PreferForwardCritic']['enabled'] is True
     assert follow_path['TwirlingCritic']['enabled'] is True
-    person_controller = controller['FollowPerson']
-    assert person_controller['plugin'] == (
-        'nav2_mppi_controller::MPPIController'
-    )
-    assert person_controller['motion_model'] == 'Omni'
-    assert person_controller['vx_min'] == follow_path['vx_min']
-    assert person_controller['wz_max'] <= 0.001
-    assert person_controller['wz_std'] <= 0.001
-    assert 'GoalAngleCritic' not in person_controller['critics']
-    assert 'PreferForwardCritic' not in person_controller['critics']
-    assert 'TwirlingCritic' not in person_controller['critics']
     assert controller['general_goal_checker']['xy_goal_tolerance'] <= 0.05
     assert controller['general_goal_checker']['yaw_goal_tolerance'] >= 3.14
 
@@ -249,6 +239,7 @@ def test_navigation_prefers_clearance_and_keeps_close_obstacles_visible():
         scan = scan_layer['scan']
         assert 0.19 <= scan['obstacle_min_range'] <= 0.21
         assert scan['raytrace_min_range'] == 0.0
+        assert scan['inf_is_valid'] is True
 
         depth_layer = costmap['depth_voxel_layer']
         assert depth_layer['plugin'] == (

@@ -23,7 +23,6 @@ def settings():
         goal_update_period_s=0.75,
         maximum_linear_speed_mps=0.30,
         temporary_lost_timeout_s=0.75,
-        search_start_timeout_s=1.5,
         target_lost_timeout_s=8.0,
     )
 
@@ -83,6 +82,36 @@ def test_target_below_distance_band_triggers_retreat(settings):
     )
     assert decision.command == FollowCommand.RETREAT
     assert decision.goal.position.x == pytest.approx(-0.2)
+
+
+def test_approaching_target_triggers_predictive_retreat(settings):
+    """A person walking closer should trigger reverse before crossing limit."""
+    decision = decide_follow_motion(
+        Point2D(0.0, 0.0),
+        Point2D(1.2, 0.0),
+        settings,
+        target_velocity=Point2D(-0.4, 0.0),
+        approach_prediction_horizon_s=0.75,
+        approach_speed_threshold_mps=0.10,
+    )
+    assert decision.command == FollowCommand.RETREAT
+    assert decision.goal.position.x == pytest.approx(-0.3)
+    assert decision.reason == (
+        'approaching target predicted inside distance band'
+    )
+
+
+def test_non_approaching_target_does_not_trigger_predictive_retreat(settings):
+    """Sideways or receding motion must not cause unnecessary backing."""
+    decision = decide_follow_motion(
+        Point2D(0.0, 0.0),
+        Point2D(1.2, 0.0),
+        settings,
+        target_velocity=Point2D(0.2, 0.2),
+        approach_prediction_horizon_s=0.75,
+        approach_speed_threshold_mps=0.10,
+    )
+    assert decision.command == FollowCommand.ALIGN
 
 
 @pytest.mark.parametrize('target_x', [1.2, 1.34])

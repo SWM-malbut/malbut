@@ -18,6 +18,37 @@ class SafeNavigationGoal:
     openness: float
 
 
+def first_admissible_point_on_ray(
+    grid: CostmapGrid,
+    origin: Point2D,
+    lower_bound: Point2D,
+    maximum_cost: int,
+) -> Point2D | None:
+    """Return the first free point at or beyond a camera range bound."""
+    grid.validate()
+    if not 0 <= maximum_cost < 255:
+        raise ValueError('maximum goal cost must be in [0, 254]')
+    lower_bound_distance = distance(origin, lower_bound)
+    if lower_bound_distance <= 1e-9:
+        return None
+    direction_x = (lower_bound.x - origin.x) / lower_bound_distance
+    direction_y = (lower_bound.y - origin.y) / lower_bound_distance
+    step_m = max(0.01, grid.resolution * 0.5)
+    maximum_steps = 2 * (grid.width + grid.height) + 1
+    for step in range(maximum_steps):
+        range_m = lower_bound_distance + step * step_m
+        point = Point2D(
+            origin.x + direction_x * range_m,
+            origin.y + direction_y * range_m,
+        )
+        cell = grid.world_to_cell(point)
+        if cell is None:
+            break
+        if _cell_is_admissible(grid, cell[0], cell[1], maximum_cost):
+            return point
+    return None
+
+
 def project_navigation_goal(
     grid: CostmapGrid,
     requested_position: Point2D,
@@ -28,6 +59,7 @@ def project_navigation_goal(
     openness_preference_m: float,
     heading_probe_distance_m: float,
     minimum_heading_clearance_m: float,
+    approach_origin: Point2D | None = None,
 ) -> SafeNavigationGoal | None:
     """Move an unsafe planning goal to open space and avoid a wall."""
     grid.validate()
@@ -47,8 +79,23 @@ def project_navigation_goal(
     requested_cell = grid.world_to_cell(requested_position)
     if requested_cell is None:
         return None
+    approach_distance = (
+        distance(approach_origin, requested_position)
+        if approach_origin is not None
+        else 0.0
+    )
+    if approach_distance > 1e-9:
+        approach_x = (
+            requested_position.x - approach_origin.x
+        ) / approach_distance
+        approach_y = (
+            requested_position.y - approach_origin.y
+        ) / approach_distance
+    else:
+        approach_x = approach_y = 0.0
     radius_cells = max(1, math.ceil(search_radius_m / grid.resolution))
     candidates = []
+    approach_candidates = []
     nearest_shift = math.inf
     for offset_y in range(-radius_cells, radius_cells + 1):
         for offset_x in range(-radius_cells, radius_cells + 1):
@@ -61,11 +108,36 @@ def project_navigation_goal(
             if not _cell_is_admissible(grid, cell_x, cell_y, maximum_cost):
                 continue
             point = grid.cell_center(cell_x, cell_y)
+            follows_approach = False
+            if approach_distance > 1e-9:
+                relative_x = point.x - approach_origin.x
+                relative_y = point.y - approach_origin.y
+                progress = (
+                    relative_x * approach_x + relative_y * approach_y
+                )
+                lateral_offset = abs(
+                    relative_x * approach_y - relative_y * approach_x
+                )
+                cell_tolerance = grid.resolution * math.sqrt(0.5)
+                follows_approach = not (
+                    progress < -cell_tolerance
+                    or progress > approach_distance + cell_tolerance
+                    or lateral_offset > cell_tolerance
+                )
             shift = distance(requested_position, point)
-            candidates.append((shift, cell_x, cell_y, point))
+            candidate = (shift, cell_x, cell_y, point)
+            candidates.append(candidate)
+            if follows_approach:
+                approach_candidates.append(candidate)
             nearest_shift = min(nearest_shift, shift)
     if not candidates:
         return None
+    if approach_candidates:
+        # Tracking first approaches the person from the robot-facing side.
+        # If that corridor has no admissible cell, retain the existing
+        # surrounding open-space fallback rather than refusing to move.
+        candidates = approach_candidates
+        nearest_shift = min(candidate[0] for candidate in candidates)
 
     best = None
     # A cell farther than this bound cannot beat the nearest cell even with

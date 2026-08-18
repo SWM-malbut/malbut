@@ -62,13 +62,13 @@ def generate_launch_description():
         get_package_share_directory("malbut_perception")
     )
     default_model = (
-        Path.home() / ".cache" / "malbut_perception" / "yolov5n.onnx"
+        Path.home() / ".cache" / "malbut_perception" / "yolo26n.onnx"
     )
     default_reid_model = (
         Path.home()
         / ".cache"
         / "malbut_perception"
-        / "osnet_x0_25_msmt17.onnx"
+        / "osnet_x0_5_msmt17.onnx"
     )
     spawn_helper = (
         Path(get_package_prefix(GAZEBO_PACKAGE))
@@ -120,6 +120,9 @@ def generate_launch_description():
                 "use_sim_time": LaunchConfiguration("use_sim_time"),
                 "detector_backend": LaunchConfiguration("detector_backend"),
                 "model_path": LaunchConfiguration("model_path"),
+                "inference_backend": LaunchConfiguration(
+                    "inference_backend"
+                ),
                 "dnn_target": LaunchConfiguration("dnn_target"),
                 "opencv_num_threads": LaunchConfiguration(
                     "opencv_num_threads"
@@ -190,6 +193,9 @@ def generate_launch_description():
             DeclareLaunchArgument("detector_backend", default_value="auto"),
             DeclareLaunchArgument(
                 "model_path", default_value=str(default_model)
+            ),
+            DeclareLaunchArgument(
+                "inference_backend", default_value="auto"
             ),
             DeclareLaunchArgument("dnn_target", default_value="auto"),
             DeclareLaunchArgument(

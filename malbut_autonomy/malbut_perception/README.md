@@ -40,27 +40,29 @@ ros2 launch malbut_perception person_detection.launch.py
 ```
 
 The launch looks for
-`~/.cache/malbut_perception/yolov5n.onnx`. When the file is absent,
+`~/.cache/malbut_perception/yolo26n.onnx`. When the file is absent,
 `detector_backend:=auto` uses OpenCV's built-in HOG pedestrian detector. HOG
 is useful for wiring checks, but the prepared YOLO model is required for the
 animated humanoid and recommended for the real robot.
 
-## YOLO model
+## Models and inference runtime
 
-The repository does not commit a model binary. Prepare the tested FP32
-YOLOv5n ONNX file in an isolated cache environment:
+The repository does not commit model binaries. Prepare the tested FP32
+YOLO26n and OSNet x0.5 ONNX files in isolated cache environments, then install
+the inference runtime used by the ROS process:
 
 ```bash
 cd ~/ros2_ws/src/malbut
-./malbut_autonomy/malbut_perception/scripts/prepare_yolov5_model.sh
+./malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh
 ./malbut_autonomy/malbut_perception/scripts/prepare_osnet_model.sh
+./malbut_autonomy/malbut_perception/scripts/prepare_inference_runtime.sh
 ```
 
-The one-time export installs its Python dependencies only under
-`~/.cache/malbut_perception/yolov5-export-env`. It pins the official YOLOv5
-v7.0 source, exports opset 12 FP32, simplifies constant operations, and checks
-a forward pass with the system OpenCV before installing the model. The same
-model file may also be passed to `homecam_detector`.
+The YOLO export dependencies stay under
+`~/.cache/malbut_perception/yolo26-export-env`. The script pins Ultralytics
+8.4.55 and the official YOLO26n weights, exports the end-to-end one-to-one
+opset 12 head, and validates its `(1, 300, 6)` output with ONNX Runtime. This
+head returns final detections without external NMS.
 
 The standard launch selects the cached model automatically. To require YOLO
 and reject a missing or incompatible model explicitly:
@@ -68,25 +70,48 @@ and reject a missing or incompatible model explicitly:
 ```bash
 ros2 launch malbut_perception person_detection.launch.py \
   detector_backend:=yolo \
-  model_path:=$HOME/.cache/malbut_perception/yolov5n.onnx
+  inference_backend:=onnxruntime \
+  model_path:=$HOME/.cache/malbut_perception/yolo26n.onnx
 ```
 
 The OSNet preparation script pins the official Torchreid source and the
-official OSNet x0.25 checkpoint trained on MSMT17, exports a 512-dimensional
-opset 12 descriptor, and validates it with the system OpenCV. The model is only
-0.08 GFLOPs at its 256x128 input size and runs only for detected people.
+official OSNet x0.5 checkpoint trained on MSMT17, exports a 512-dimensional
+opset 12 descriptor, and validates it with the system OpenCV. It is 0.27
+GFLOPs at 256x128 and runs only for detected people. Compared with x0.25, the
+official MSMT17 same-domain result improves from 61.4/29.5 to 69.7/37.5
+Rank-1/mAP while staying small relative to YOLO26n's 5.4 GFLOPs.
 
-`dnn_target:=auto` is the default. It uses OpenCV CUDA DNN when CUDA is actually
-available and otherwise uses CPU. OpenCL is explicit-only because device
-discovery does not guarantee that a particular model compiles successfully.
-Explicit `cuda`, `cuda_fp16`, `opencl`, and `opencl_fp16` modes fail at startup
-instead of silently falling back.
+`inference_backend:=auto dnn_target:=auto` is the default. When ONNX Runtime is
+installed, an Orin NX selects TensorRT FP16 first, CUDA second, and CPU only as
+a final fallback. TensorRT engines are cached locally after the first load and
+are never committed or copied between devices. An x86_64 NVIDIA development
+PC also selects TensorRT FP16 when the preparation script has installed its
+pinned TensorRT runtime, then falls back to CUDA. The legacy OpenCV backend
+remains available for older compatible models, but Ubuntu 22.04's OpenCV
+4.5.4 cannot execute YOLO26.
+
+The physical target is the ROSOrin Jetson Orin NX Super on Ubuntu 22.04 and
+JetPack 6/L4T R36. `prepare_inference_runtime.sh` installs the official ARM64
+ONNX Runtime GPU wheel documented for JetPack 6 and verifies that TensorRT or
+CUDA is exposed. Check the robot before deployment:
+
+```bash
+cat /etc/nv_tegra_release
+python3 -c 'import onnxruntime as o; print(o.get_available_providers())'
+```
+
+The result must contain `TensorrtExecutionProvider` or
+`CUDAExecutionProvider`; otherwise the robot is not using its GPU. Do not build
+or distribute a TensorRT cache from the desktop because engines depend on the
+target GPU and TensorRT/CUDA versions.
 
 The main tracking and Re-ID controls are:
 
+- `max_inference_rate_hz`: maximum RGB-D inference cadence; `0` is unlimited
 - `reid_cosine_threshold`: maximum OSNet cosine distance for restoring an ID
 - `reid_max_inactive_frames`: how long retired IDs stay in the gallery
 - `reid_feature_budget`: maximum descriptors retained per ID
+- `reid_refresh_interval_frames`: periodic OSNet refresh cadence for stable IDs
 - `tracker_appearance_weight`: appearance contribution to active association
 
 Lower cosine thresholds are stricter. Similar clothing can still be ambiguous,
@@ -120,5 +145,6 @@ cloud; the Nav2 PointCloud frame itself is unchanged.
 
 - ByteTrack, ECCV 2022: low-score detection association
 - Deep SORT, ICIP 2017: motion and deep appearance association
-- OSNet, ICCV 2019: lightweight omni-scale person Re-ID descriptors
-- OpenCV DNN: CPU and CUDA execution backends for the ONNX models
+- [Torchreid OSNet model zoo](https://github.com/KaiyangZhou/deep-person-reid/blob/master/docs/MODEL_ZOO.md): lightweight Re-ID descriptors
+- [Ultralytics Jetson guide](https://docs.ultralytics.com/guides/nvidia-jetson): YOLO26 and JetPack deployment
+- [ONNX Runtime TensorRT provider](https://onnxruntime.ai/docs/execution-providers/TensorRT-ExecutionProvider.html): Orin NX GPU execution

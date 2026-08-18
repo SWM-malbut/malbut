@@ -31,62 +31,6 @@ def normalize_angle(angle: float) -> float:
     return math.atan2(math.sin(angle), math.cos(angle))
 
 
-def predict_search_heading(
-    last_target_yaw: float,
-    target_yaw_rate_rps: float,
-    observation_age_s: float,
-    maximum_horizon_s: float,
-) -> float:
-    """Predict a bounded absolute bearing for the first recovery turn."""
-    if observation_age_s < 0.0:
-        raise ValueError('observation age must be non-negative')
-    if maximum_horizon_s < 0.0:
-        raise ValueError('prediction horizon must be non-negative')
-    horizon_s = min(observation_age_s, maximum_horizon_s)
-    return normalize_angle(last_target_yaw + target_yaw_rate_rps * horizon_s)
-
-
-def directed_search_offsets(
-    last_bearing: float,
-    base_angle: float,
-    maximum_angle: float,
-    maximum_steps: int,
-) -> tuple[float, ...]:
-    """
-    Build a bounded scan around the predicted target heading.
-
-    The caller owns the absolute search center.  Zero is deliberately the
-    first offset so the robot looks at that sensor-backed heading before it
-    starts a wider alternating scan.  ``last_bearing`` is used only as the
-    preferred expansion direction after that first look.
-    """
-    if base_angle <= 0.0:
-        raise ValueError('base angle must be positive')
-    if maximum_angle <= 0.0:
-        raise ValueError('maximum angle must be positive')
-    if maximum_steps <= 0:
-        raise ValueError('maximum steps must be positive')
-
-    direction = -1.0 if last_bearing < 0.0 else 1.0
-    base_magnitude = min(base_angle, maximum_angle)
-    candidates = [0.0]
-    magnitude = base_magnitude
-    while magnitude < maximum_angle - 1e-6:
-        candidates.extend((direction * magnitude, -direction * magnitude))
-        magnitude += base_angle
-    candidates.extend(
-        (direction * maximum_angle, -direction * maximum_angle)
-    )
-    offsets = []
-    for candidate in candidates:
-        if any(abs(candidate - existing) < 1e-6 for existing in offsets):
-            continue
-        offsets.append(candidate)
-        if len(offsets) >= maximum_steps:
-            break
-    return tuple(offsets)
-
-
 def yaw_to_quaternion(yaw: float) -> tuple[float, float, float, float]:
     """Convert a planar yaw to an x, y, z, w quaternion."""
     half = yaw * 0.5
