@@ -55,6 +55,10 @@ test("live dashboard uses rendered media state and exposes one camera control", 
   assert.match(styles, /homecam-live-channel-summary > span\.is-ready/);
   assert.match(styles, /homecam-live-channel-summary > span\.is-error/);
   assert.match(styles, /homecam-live-state-list i\.is-error/);
+  assert.match(
+    styles,
+    /\.homecam-stream-placeholder \{[\s\S]*display: flex;[\s\S]*align-items: center;[\s\S]*flex-direction: column;/,
+  );
   assert.match(dashboard, /label="카메라 전원"/);
   assert.match(dashboard, /updateSetting\("cameraEnabled", value\)/);
   assert.doesNotMatch(dashboard, /카메라 끄기/);

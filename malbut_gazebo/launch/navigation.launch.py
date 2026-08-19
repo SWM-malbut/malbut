@@ -62,6 +62,12 @@ def generate_launch_description():
     robot_web = LaunchConfiguration('robot_web')
     robot_web_port = LaunchConfiguration('robot_web_port')
     user_map = LaunchConfiguration('user_map')
+    pose_checkpoint_store = LaunchConfiguration('pose_checkpoint_store')
+    pose_checkpoint_map_id = LaunchConfiguration('pose_checkpoint_map_id')
+    pose_checkpoint_map_revision = LaunchConfiguration(
+        'pose_checkpoint_map_revision'
+    )
+    boot_pose_trusted = LaunchConfiguration('boot_pose_trusted')
     use_active_slam = EqualsSubstitution(localization_source, 'slam')
     use_static_map = NotEqualsSubstitution(localization_source, 'slam')
     zone_filter_enabled = NotEqualsSubstitution(zone_mask, '')
@@ -208,6 +214,24 @@ def generate_launch_description():
             'state_path': localization_state,
         }],
     )
+    pose_checkpoint = Node(
+        package='malbut_gazebo',
+        executable='pose_checkpoint',
+        name='pose_checkpoint',
+        namespace=namespace,
+        condition=IfCondition(PythonExpression([
+            "'", localization_source, "' != 'slam' and '",
+            pose_checkpoint_store, "' != ''",
+        ])),
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'map_store': pose_checkpoint_store,
+            'map_id': pose_checkpoint_map_id,
+            'map_revision': pose_checkpoint_map_revision,
+            'initially_trusted': boot_pose_trusted,
+        }],
+    )
     robot_web_server = Node(
         package='malbut_gazebo',
         executable='robot_web_server',
@@ -222,7 +246,13 @@ def generate_launch_description():
             '--map', user_map,
             '--slam-map', map_file,
         ],
-        parameters=[{'use_sim_time': use_sim_time}],
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'boot_validation_state': PythonExpression([
+                "'verifying' if '", boot_pose_trusted,
+                "' == 'true' else 'revalidation_required'",
+            ]),
+        }],
     )
 
     return LaunchDescription(
@@ -291,6 +321,20 @@ def generate_launch_description():
                 ),
                 description='SLAM-to-Nav2 localization handoff state.',
             ),
+            DeclareLaunchArgument('pose_checkpoint_store', default_value=''),
+            DeclareLaunchArgument('pose_checkpoint_map_id', default_value=''),
+            DeclareLaunchArgument(
+                'pose_checkpoint_map_revision', default_value=''
+            ),
+            DeclareLaunchArgument(
+                'boot_pose_trusted',
+                default_value='false',
+                description=(
+                    'Skip the explicit initialpose proposal only when the '
+                    'runtime controls the simulator spawn or verified '
+                    'same-boot localization handoff.'
+                ),
+            ),
             DeclareLaunchArgument(
                 'rviz',
                 default_value='true',
@@ -323,6 +367,7 @@ def generate_launch_description():
             zone_filter_info_server,
             zone_filter_lifecycle_manager,
             localization_restorer,
+            pose_checkpoint,
             robot_web_server,
             rviz,
         ]

@@ -22,6 +22,7 @@ from urllib.request import (
 )
 
 from nav_msgs.msg import OccupancyGrid
+from std_msgs.msg import String
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import (
@@ -38,6 +39,7 @@ from malbut_gazebo.map_lifecycle import (
     map_grid_from_message,
     render_map_png,
 )
+from malbut_gazebo.pose_checkpoint import VALIDATION_TOPIC
 from malbut_gazebo.runtime_control import write_runtime_request
 
 
@@ -75,7 +77,19 @@ class CloudRobotSync(Node):
         self.grid: MapGrid | None = None
         self.map_counter = 0
         self.pose: dict | None = None
-        self.localization = {"state": "uninitialized", "tfAgeS": None}
+        initial_validation = (
+            str(self.get_parameter("boot_validation_state").value).strip()
+            if self.has_parameter("boot_validation_state")
+            else "revalidation_required"
+        )
+        self.validation_state = (
+            initial_validation
+            if initial_validation in {"revalidation_required", "verifying"}
+            else "ok"
+        )
+        self.localization = {
+            "state": self.validation_state, "tfAgeS": None
+        }
         self.last_uploaded_map = ""
         self.last_map_upload_monotonic = 0.0
         self.last_warning = ""
@@ -96,6 +110,12 @@ class CloudRobotSync(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
         )
         self.create_subscription(OccupancyGrid, "/map", self._receive_map, qos)
+        self.create_subscription(
+            String,
+            VALIDATION_TOPIC,
+            self._receive_validation,
+            qos,
+        )
         self.create_timer(0.2, self._refresh_pose)
         self.create_timer(1.0, self._schedule_sync)
         self.get_logger().info(
@@ -132,6 +152,13 @@ class CloudRobotSync(Node):
             self.grid = grid
             self.map_counter += 1
 
+    def _receive_validation(self, message: String) -> None:
+        value = message.data.strip()
+        if value not in {"revalidation_required", "verifying", "ok"}:
+            return
+        with self.lock:
+            self.validation_state = value
+
     def _refresh_pose(self) -> None:
         try:
             transform = self.tf_buffer.lookup_transform(
@@ -144,7 +171,11 @@ class CloudRobotSync(Node):
         ):
             with self.lock:
                 self.pose = None
-                self.localization = {"state": "lost", "tfAgeS": None}
+                state = (
+                    self.validation_state
+                    if self.validation_state != "ok" else "lost"
+                )
+                self.localization = {"state": state, "tfAgeS": None}
             return
         rotation = transform.transform.rotation
         yaw = math.atan2(
@@ -155,6 +186,8 @@ class CloudRobotSync(Node):
         stamp_ns = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
         age = (self.get_clock().now().nanoseconds - stamp_ns) / 1e9
         state = "ok" if -2.0 <= age <= 1.0 else "stale"
+        if self.validation_state != "ok":
+            state = self.validation_state
         with self.lock:
             self.pose = None if state != "ok" else {
                 "x": round(float(transform.transform.translation.x), 4),

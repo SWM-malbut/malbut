@@ -952,7 +952,7 @@ export function RobotMapPanel({
         </div>
         <span className={`robot-map-top-status ${snapshot?.online ? "is-online" : ""}`}>
           <i aria-hidden="true" />
-          {snapshot?.online ? "연결됨" : "오프라인"} · {snapshot?.state?.localization.state === "ok" ? "위치 확인됨" : "위치 확인 필요"}
+          {snapshot?.online ? "연결됨" : "오프라인"} · {localizationCopy(snapshot?.state?.localization.state)}
         </span>
         <button type="button" className="robot-map-refresh" onClick={() => void load()} disabled={loading} aria-label="지도 새로고침">
           <ArrowClockwise size={18} weight="bold" aria-hidden="true" />
@@ -1362,7 +1362,7 @@ export function RobotMapPanel({
                 <div className="robot-map-progress"><i style={{ width: "62%" }} /></div>
                 <div className="robot-map-summary-grid">
                   <div><span>로봇 연결</span><strong>{snapshot?.online ? "정상" : "오프라인"}</strong></div>
-                  <div><span>현재 위치</span><strong>{snapshot?.state?.localization.state === "ok" ? "확인됨" : "확인 필요"}</strong></div>
+                  <div><span>현재 위치</span><strong>{localizationShortCopy(snapshot?.state?.localization.state)}</strong></div>
                   <div><span>지도 상태</span><strong>생성 중</strong></div>
                   <div><span>현재 단계</span><strong>{snapshot?.state?.state === "review" ? "검토" : "탐색"}</strong></div>
                 </div>
@@ -1706,13 +1706,13 @@ export function RobotMapPanel({
                     <>
                       <div><span>{navigationDriving || navigationSucceeded ? "남은 거리" : "거리"}</span><strong>{navigationSucceeded ? "0.0m" : formatMeters(navigationDriving ? navigation?.distance_remaining_m : isRecord(navigationPreview?.path) ? navigationPreview.path.length_m : null)}</strong></div>
                       <div><span>{navigationDriving || navigationSucceeded ? "도착까지" : "예상 시간"}</span><strong>{navigationSucceeded ? "도착" : formatEta(navigationDriving ? navigation?.estimated_time_remaining_s : estimateSeconds(navigationPreview))}</strong></div>
-                      <div><span>현재 위치</span><strong>{snapshot?.state?.localization.state === "ok" ? "확인됨" : "확인 필요"}</strong></div>
+                      <div><span>현재 위치</span><strong>{localizationShortCopy(snapshot?.state?.localization.state)}</strong></div>
                       <div><span>구역 확인</span><strong>{previewToken || navigationDriving || navigationSucceeded ? "문제 없음" : "선택 전"}</strong></div>
                     </>
                   ) : (
                     <>
                       <div><span>로봇 연결</span><strong>{snapshot?.online ? "정상" : "오프라인"}</strong></div>
-                      <div><span>현재 위치</span><strong>{snapshot?.state?.localization.state === "ok" ? "확인됨" : "확인 필요"}</strong></div>
+                      <div><span>현재 위치</span><strong>{localizationShortCopy(snapshot?.state?.localization.state)}</strong></div>
                       <div><span>지도 상태</span><strong>{snapshot?.map?.finalized ? "저장됨" : "생성 중"}</strong></div>
                       <div><span>주행 상태</span><strong>{navigationDriving ? "이동 중" : "대기"}</strong></div>
                     </>
@@ -2841,6 +2841,20 @@ function zoneBehaviorOf(feature: GeoFeature): ZoneBehavior {
 
 function zoneBehaviorLabel(behavior: ZoneBehavior) {
   return behavior === "restricted" ? "진입 금지" : behavior === "avoid" ? "우회 권장" : "통행 허용";
+}
+
+function localizationCopy(state: string | undefined) {
+  if (state === "ok") return "위치 확인됨";
+  if (state === "verifying") return "위치 재확인 중";
+  if (state === "revalidation_required") return "부팅 후 위치 확인 필요";
+  return "위치 확인 필요";
+}
+
+function localizationShortCopy(state: string | undefined) {
+  if (state === "ok") return "확인됨";
+  if (state === "verifying") return "재확인 중";
+  if (state === "revalidation_required") return "부팅 후 확인 필요";
+  return "확인 필요";
 }
 
 function numberValue(value: unknown) {

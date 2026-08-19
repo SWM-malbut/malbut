@@ -291,12 +291,16 @@ inflation 그림자가 아닌 SLAM 원본 지도, 현재 위치, 다음 탐색 �
 - 선택적 SLAM Toolbox pose graph(`save_posegraph:=true`, 지도 이어 만들기용)
 - 웹·앱용 `user-map.geojson`과 미리보기
 - 현재 활성 버전을 가리키는 `active.json`
+- 지도와 분리된 마지막 정상 위치 `last-localized-pose.json`
 
 기본 저장소는 `~/.local/share/malbut/maps`입니다. 새 버전은 임시 디렉터리에서
 전부 생성된 뒤 원자적으로 활성화됩니다. 저장 실패·탐색 중단 시 기존 활성
 지도는 바뀌지 않고, 이전 버전도 `versions/`에 유지됩니다. 다음 부팅에는
 `active.json`의 지도를 자동으로 사용합니다. 지도 다시 만들기 검증에는 기존
-지도를 유지한 채 `force_mapping:=true`를 사용할 수 있습니다.
+지도를 유지한 채 `force_mapping:=true`를 사용할 수 있습니다. 지도 생성 완료
+위치는 지도 버전의 초기 기준일 뿐 이후 로봇 위치로 갱신하지 않습니다. 정상
+AMCL과 최신 TF가 연속 확인된 위치는 별도 체크포인트 파일에 원자적으로
+기록합니다.
 pose graph에는 원본 스캔이 누적되어 수백 MB가 될 수 있고 다음 부팅의 AMCL
 주행에는 필요하지 않으므로 기본적으로 저장하지 않습니다.
 

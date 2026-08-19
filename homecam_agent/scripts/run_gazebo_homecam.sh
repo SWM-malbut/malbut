@@ -186,16 +186,25 @@ homecam_source_runtime "$repo_root"
 homecam_prepare_media_runtime "$HOMECAM_WORKSPACE"
 if ! "$check_only" && homecam_is_true "$HOMECAM_START_GAZEBO"; then
   saved_pose_line="$(
-    homecam_saved_map_pose "$HOMECAM_MAP_STORE" 2>/dev/null || true
+    homecam_simulation_bootstrap_pose \
+      "$HOMECAM_MAP_STORE" 2>/dev/null || true
   )"
   if [[ -n "$saved_pose_line" ]]; then
-    read -r -a simulation_bootstrap_pose <<< "$saved_pose_line"
-    if ((${#simulation_bootstrap_pose[@]} != 3)); then
+    pose_source=""
+    pose_x=""
+    pose_y=""
+    pose_yaw=""
+    read -r pose_source pose_x pose_y pose_yaw <<< "$saved_pose_line"
+    simulation_bootstrap_pose=("$pose_x" "$pose_y" "$pose_yaw")
+    if [[ -z "$pose_source" || -z "$pose_x" || -z "$pose_y" || -z "$pose_yaw" ]]; then
       homecam_die "saved map pose is malformed"
       exit 1
     fi
-    homecam_log \
-      "restoring simulator spawn from the active map revision"
+    if [[ "$pose_source" == "checkpoint" ]]; then
+      homecam_log "restoring simulator spawn from the last verified pose"
+    else
+      homecam_log "no pose checkpoint; using the map creation pose"
+    fi
   fi
 fi
 command -v setsid >/dev/null 2>&1 || {

@@ -22,6 +22,12 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import (
+    DurabilityPolicy,
+    HistoryPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+)
 from rclpy.utilities import remove_ros_args
 import tf2_ros
 
@@ -31,7 +37,9 @@ from lifecycle_msgs.srv import GetState
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.srv import GetCostmap
 from nav_msgs.msg import Path as NavPath
+from std_msgs.msg import String
 
+from malbut_gazebo.pose_checkpoint import VALIDATION_TOPIC
 from malbut_gazebo.user_map_editor import (
     EditorRequestHandler,
     RequestError,
@@ -59,6 +67,11 @@ NAVIGATION_TIMEOUT_BASE_S = 45.0
 NAVIGATION_TIMEOUT_PER_M_S = 15.0
 NAVIGATION_STALL_TIMEOUT_S = 45.0
 NAVIGATION_PROGRESS_M = 0.10
+
+VALIDATION_MESSAGES = {
+    "revalidation_required": "부팅 후 현재 위치를 다시 확인해 주세요.",
+    "verifying": "현재 위치를 다시 확인하고 있습니다.",
+}
 
 
 class NavigationError(RuntimeError):
@@ -397,10 +410,19 @@ class RobotWebBridge(Node):
         self.operation_lock = Lock()
         self.seq = 0
         self.pose: dict | None = None
+        initial_validation = (
+            str(self.get_parameter("boot_validation_state").value).strip()
+            if self.has_parameter("boot_validation_state")
+            else "revalidation_required"
+        )
+        self.validation_state = (
+            initial_validation
+            if initial_validation in VALIDATION_MESSAGES else "verifying"
+        )
         self.localization = {
-            "state": "uninitialized",
+            "state": self.validation_state,
             "tf_age_s": None,
-            "message": "초기 위치를 기다리는 중입니다.",
+            "message": VALIDATION_MESSAGES[self.validation_state],
         }
         self.lifecycle = {name: "unknown" for name in lifecycle_names}
         self.navigation_state = self._idle_navigation()
@@ -411,6 +433,18 @@ class RobotWebBridge(Node):
         self.auto_cancel_message: str | None = None
         self.navigation_watchdog: NavigationWatchdog | None = None
         self.previews: dict[str, PreviewRecord] = {}
+        validation_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(
+            String,
+            VALIDATION_TOPIC,
+            self._receive_validation,
+            validation_qos,
+        )
         self.create_timer(0.1, self._refresh_pose)
         self.create_timer(1.0, self._refresh_lifecycle)
         self.create_timer(1.0, self._monitor_navigation)
@@ -452,6 +486,14 @@ class RobotWebBridge(Node):
                 "path_length_m": payload["length_m"],
             })
 
+    def _receive_validation(self, message: String) -> None:
+        """Apply the independent boot-localization validation gate."""
+        value = message.data.strip()
+        if value not in {*VALIDATION_MESSAGES, "ok"}:
+            return
+        with self.lock:
+            self.validation_state = value
+
     def _refresh_pose(self) -> None:
         try:
             transform = self.tf_buffer.lookup_transform(
@@ -483,8 +525,15 @@ class RobotWebBridge(Node):
             else:
                 state = "ok"
                 message = None
+            validation_state = self.validation_state
+            if validation_state != "ok":
+                state = validation_state
+                message = VALIDATION_MESSAGES.get(
+                    validation_state,
+                    "부팅 후 현재 위치를 다시 확인해 주세요.",
+                )
             with self.lock:
-                self.pose = pose
+                self.pose = pose if state == "ok" else None
                 self.localization = {
                     "state": state,
                     "tf_age_s": round(age, 3),
@@ -497,11 +546,19 @@ class RobotWebBridge(Node):
                 )
         except Exception as error:  # tf2 exception types vary by distro
             with self.lock:
-                state = "lost" if self.pose is not None else "uninitialized"
+                if self.validation_state != "ok":
+                    state = self.validation_state
+                else:
+                    state = (
+                        "lost" if self.pose is not None else "uninitialized"
+                    )
                 self.localization = {
                     "state": state,
                     "tf_age_s": None,
                     "message": (
+                        VALIDATION_MESSAGES.get(state)
+                        if state in VALIDATION_MESSAGES
+                        else
                         "로봇 위치가 끊겼습니다."
                         if state == "lost"
                         else "초기 위치를 기다리는 중입니다."
