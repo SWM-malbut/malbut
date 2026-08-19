@@ -412,6 +412,7 @@ export class HomecamDevStack extends Stack {
           "kinesisvideo:GetDataEndpoint",
           "kinesisvideo:DescribeStream",
           "kinesisvideo:GetHLSStreamingSessionURL",
+          "kinesisvideo:ListFragments",
         ],
         resources: streamArns,
       }),
@@ -789,6 +790,7 @@ export class HomecamDevStack extends Stack {
           ["/favicon.ico", "/favicon.svg", "/homecam-icon.svg"],
         ],
         ["PublicMediaAssets", 10, ["/og.png", "/vendor/kvs-webrtc.min.js"]],
+        ["DeviceEventClipsApi", 12, ["/api/device/v1/event-clips/*"]],
       ] as const) {
         service.listener.addAction(ruleId, {
           priority,

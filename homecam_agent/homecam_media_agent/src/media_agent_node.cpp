@@ -1,14 +1,18 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <functional>
 #include <future>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -23,6 +27,7 @@
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/string.hpp"
 
 #if HOMECAM_HAVE_GSTREAMER
 #include <gst/app/gstappsrc.h>
@@ -34,6 +39,103 @@ namespace homecam_media_agent
 {
 
 using namespace std::chrono_literals;
+
+namespace
+{
+
+struct QueuedEncodedFrame
+{
+  EncodedFrame frame;
+  bool video{false};
+  std::uint64_t generation{0U};
+};
+
+// A transport owns its own bounded sender queue and worker. The GStreamer
+// appsink therefore never waits for KVS signaling/writeFrame on either path,
+// and a stalled Storage session cannot reduce P2P frame delivery.
+class TransportSender final
+{
+public:
+  using Callback = std::function<void (QueuedEncodedFrame)>;
+
+  explicit TransportSender(Callback callback)
+  : callback_(std::move(callback)), worker_([this]() {run();})
+  {
+  }
+
+  ~TransportSender()
+  {
+    stop();
+  }
+
+  TransportSender(const TransportSender &) = delete;
+  TransportSender & operator=(const TransportSender &) = delete;
+
+  bool enqueue(
+    const EncodedFrame & frame, const bool video,
+    const std::uint64_t generation)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopping_) {return false;}
+    bool retained_all_frames = true;
+    if (queue_.size() >= kMaximumQueuedFrames) {
+      queue_.pop_front();
+      retained_all_frames = false;
+    }
+    queue_.push_back(QueuedEncodedFrame{frame, video, generation});
+    condition_.notify_one();
+    return retained_all_frames;
+  }
+
+  void clear()
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    queue_.clear();
+  }
+
+  void stop()
+  {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopping_) {return;}
+      stopping_ = true;
+      queue_.clear();
+    }
+    condition_.notify_all();
+    if (worker_.joinable()) {worker_.join();}
+  }
+
+private:
+  void run()
+  {
+    while (true) {
+      QueuedEncodedFrame queued;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        condition_.wait(lock, [this]() {return stopping_ || !queue_.empty();});
+        if (stopping_) {return;}
+        queued = std::move(queue_.front());
+        queue_.pop_front();
+      }
+      try {
+        callback_(std::move(queued));
+      } catch (...) {
+        // A transport adapter failure must not terminate the shared encoder
+        // process or the other transport's sender worker.
+      }
+    }
+  }
+
+  static constexpr std::size_t kMaximumQueuedFrames = 256U;
+  Callback callback_;
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  std::deque<QueuedEncodedFrame> queue_;
+  bool stopping_{false};
+  std::thread worker_;
+};
+
+}  // namespace
 
 class MediaAgentNode final : public rclcpp::Node
 {
@@ -64,6 +166,15 @@ public:
       trim_trailing_slashes(config_.backend_url), config_.device_id, token);
     desired_state_confirmed_ = config_.backend_url.empty();
     transport_ = make_kvs_transport();
+    storage_transport_ = make_kvs_transport();
+    p2p_sender_ = std::make_unique<TransportSender>(
+      [this](QueuedEncodedFrame queued) {
+        send_queued_frame(std::move(queued), false);
+      });
+    storage_sender_ = std::make_unique<TransportSender>(
+      [this](QueuedEncodedFrame queued) {
+        send_queued_frame(std::move(queued), true);
+      });
     transport_->set_ptt_audio_callback(
       [this](const EncodedFrame & frame) {
         if (
@@ -103,6 +214,9 @@ public:
     monitoring_publisher_ = create_publisher<std_msgs::msg::Bool>(
       "/homecam/monitoring_enabled",
       rclcpp::QoS(1).reliable().transient_local());
+    storage_session_publisher_ = create_publisher<std_msgs::msg::String>(
+      "/homecam/storage_session_id",
+      rclcpp::QoS(1).reliable().transient_local());
     detector_health_subscription_ = create_subscription<std_msgs::msg::Bool>(
       "/homecam/detector_healthy",
       rclcpp::QoS(1).reliable().transient_local(),
@@ -111,6 +225,7 @@ public:
         detector_health_received_at_ns_.store(steady_now_ns());
       });
     publish_monitoring_state();
+    publish_storage_session_id();
 
     heartbeat_timer_ = create_wall_timer(
       std::chrono::milliseconds(config_.heartbeat_interval_ms),
@@ -153,6 +268,9 @@ public:
       "are health-checked but are not encoded or sent.");
 #endif
     RCLCPP_INFO(get_logger(), "%s", transport_->status().c_str());
+    RCLCPP_INFO(
+      get_logger(), "Storage transport: %s",
+      storage_transport_->status().c_str());
 
     if (!heartbeat_client_->available()) {
       RCLCPP_WARN(
@@ -180,10 +298,20 @@ public:
       session_future_.wait();
       collect_session_result();
     }
+    if (storage_session_future_.valid()) {
+      storage_session_future_.wait();
+      collect_storage_session_result();
+    }
+    p2p_sender_->stop();
+    storage_sender_->stop();
     {
       std::lock_guard<std::mutex> lock(transport_mutex_);
       transport_->set_ptt_audio_callback({});
       transport_->stop();
+    }
+    {
+      std::lock_guard<std::mutex> lock(storage_transport_mutex_);
+      storage_transport_->stop();
     }
     const std::string session_to_close =
       !cleanup_session_id_.empty() ?
@@ -196,6 +324,17 @@ public:
       if (!result.terminal()) {
         RCLCPP_WARN(
           get_logger(), "Could not close backend device session: %s",
+          result.error.c_str());
+      }
+    }
+    if (session_client_->available() &&
+      is_valid_session_id(storage_session_id_))
+    {
+      const SessionCloseResult result =
+        session_client_->close(storage_session_id_);
+      if (!result.terminal()) {
+        RCLCPP_WARN(
+          get_logger(), "Could not close backend storage session: %s",
           result.error.c_str());
       }
     }
@@ -461,52 +600,83 @@ private:
     if (shutting_down_.load()) {
       return GST_FLOW_FLUSHING;
     }
-    if (!media_generation_allows_io(
-        active_transport_generation_.load(),
-        session_generation_.load(),
-        media_permitted_.load()))
-    {
+    const bool p2p_allowed = media_generation_allows_io(
+      active_transport_generation_.load(),
+      session_generation_.load(), media_permitted_.load());
+    const bool storage_allowed = media_generation_allows_io(
+      storage_transport_generation_.load(),
+      storage_generation_.load(), media_permitted_.load());
+    if (!p2p_allowed && !storage_allowed) {
       return GST_FLOW_OK;
     }
+    if (
+      p2p_allowed &&
+      !p2p_sender_->enqueue(frame, is_video, session_generation_.load()))
+    {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "P2P sender queue is saturated; dropping its oldest encoded frame");
+    }
+    if (
+      storage_allowed &&
+      !storage_sender_->enqueue(frame, is_video, storage_generation_.load()))
+    {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "Storage sender queue is saturated; dropping its oldest encoded frame");
+    }
+    return GST_FLOW_OK;
+  }
+
+  void send_queued_frame(QueuedEncodedFrame queued, const bool storage)
+  {
+    if (shutting_down_.load()) {return;}
+    const bool allowed = storage ?
+      media_generation_allows_io(
+      storage_transport_generation_.load(), queued.generation,
+      media_permitted_.load()) :
+      media_generation_allows_io(
+      active_transport_generation_.load(), queued.generation,
+      media_permitted_.load());
+    if (!allowed) {return;}
+
+    KvsTransport * const target =
+      storage ? storage_transport_.get() : transport_.get();
+    std::mutex & target_mutex =
+      storage ? storage_transport_mutex_ : transport_mutex_;
     std::string error;
     bool accepted = false;
     {
-      std::unique_lock<std::mutex> lock(
-        transport_mutex_, std::try_to_lock);
-      if (!lock.owns_lock()) {
-        return GST_FLOW_OK;
-      }
-      if (shutting_down_.load()) {
-        return GST_FLOW_FLUSHING;
-      }
-      if (!media_generation_allows_io(
-          active_transport_generation_.load(),
-          session_generation_.load(),
-          media_permitted_.load()))
-      {
-        return GST_FLOW_OK;
-      }
-      accepted = is_video ?
-        transport_->push_h264(frame, &error) :
-        transport_->push_opus(frame, &error);
+      std::lock_guard<std::mutex> lock(target_mutex);
+      if (shutting_down_.load()) {return;}
+      const bool still_allowed = storage ?
+        media_generation_allows_io(
+        storage_transport_generation_.load(), queued.generation,
+        media_permitted_.load()) :
+        media_generation_allows_io(
+        active_transport_generation_.load(), queued.generation,
+        media_permitted_.load());
+      if (!still_allowed) {return;}
+      accepted = queued.video ?
+        target->push_h264(queued.frame, &error) :
+        target->push_opus(queued.frame, &error);
     }
-    if (!accepted) {
-      if (
-        error == "KVS signaling is ready but no peer is connected" ||
-        error == "KVS peer exists but SRTP is not ready")
-      {
-        RCLCPP_DEBUG_THROTTLE(
-          get_logger(), *get_clock(), 30000,
-          "Encoded %s is waiting for a remote peer: %s",
-          is_video ? "H.264" : "Opus", error.c_str());
-      } else {
-        RCLCPP_WARN_THROTTLE(
-          get_logger(), *get_clock(), 10000,
-          "Encoded %s was not accepted by the transport: %s",
-          is_video ? "H.264" : "Opus", error.c_str());
-      }
+    if (accepted) {return;}
+    const char * const label = storage ? "storage" : "P2P";
+    if (
+      error == "KVS signaling is ready but no peer is connected" ||
+      error == "KVS peer exists but SRTP is not ready")
+    {
+      RCLCPP_DEBUG_THROTTLE(
+        get_logger(), *get_clock(), 30000,
+        "Encoded %s is waiting for the %s peer: %s",
+        queued.video ? "H.264" : "Opus", label, error.c_str());
+    } else {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "Encoded %s was not accepted by the %s transport: %s",
+        queued.video ? "H.264" : "Opus", label, error.c_str());
     }
-    return GST_FLOW_OK;
   }
 
   bool start_audio_capture()
@@ -811,9 +981,28 @@ private:
     bool permanent_failure{false};
     bool fail_closed{false};
     std::uint64_t request_generation{0};
+    std::chrono::steady_clock::time_point transport_started_at{
+      std::chrono::steady_clock::time_point::min()};
     DeviceSessionResult session;
     std::string cleanup_session_id;
     std::string closed_session_id;
+    std::string error;
+  };
+
+  struct StorageSessionOutcome
+  {
+    SessionOperation operation{SessionOperation::kStartOrRefresh};
+    bool success{false};
+    bool desired_available{false};
+    bool session_created{false};
+    bool backend_session_open{false};
+    bool permanent_failure{false};
+    std::uint64_t request_generation{0};
+    std::chrono::steady_clock::time_point transport_started_at{
+      std::chrono::steady_clock::time_point::min()};
+    DeviceSessionResult session;
+    std::string closed_session_id;
+    std::string cleanup_session_id;
     std::string error;
   };
 
@@ -853,13 +1042,17 @@ private:
     active_transport_generation_.store(0U);
     active_stream_mode_ = "idle";
     active_session_expires_at_ms_ = 0;
+    active_transport_started_at_ =
+      std::chrono::steady_clock::time_point::min();
     active_session_id_.clear();
     cleanup_session_id_.clear();
     backend_session_may_be_open_ = false;
+    publish_storage_session_id();
   }
 
   void fail_closed_active_session(const std::string & reason)
   {
+    const std::string session_to_cleanup = active_session_id_;
     session_generation_.fetch_add(1U);
     active_transport_generation_.store(0U);
     {
@@ -867,6 +1060,10 @@ private:
       transport_->stop();
     }
     clear_local_session_state();
+    if (is_valid_session_id(session_to_cleanup)) {
+      cleanup_session_id_ = session_to_cleanup;
+      backend_session_may_be_open_ = true;
+    }
     RCLCPP_ERROR(
       get_logger(), "Device media session stopped fail-closed: %s",
       reason.c_str());
@@ -967,7 +1164,10 @@ private:
     if (outcome.operation == SessionOperation::kStop) {
       active_stream_mode_ = "idle";
       active_session_expires_at_ms_ = 0;
+      active_transport_started_at_ =
+        std::chrono::steady_clock::time_point::min();
       active_transport_generation_.store(0U);
+      publish_storage_session_id();
       if (!outcome.success) {
         if (outcome.permanent_failure) {
           RCLCPP_ERROR(
@@ -1001,7 +1201,10 @@ private:
       if (outcome.transport_replaced) {
         active_stream_mode_ = "idle";
         active_session_expires_at_ms_ = 0;
+        active_transport_started_at_ =
+          std::chrono::steady_clock::time_point::min();
         active_transport_generation_.store(0U);
+        publish_storage_session_id();
       }
       if (outcome.permanent_failure) {
         RCLCPP_ERROR(
@@ -1035,7 +1238,9 @@ private:
       "storage" : "p2p";
     active_session_expires_at_ms_ =
       outcome.session.lease.credentials.expires_at_unix_ms;
+    active_transport_started_at_ = outcome.transport_started_at;
     active_transport_generation_.store(session_generation_.load());
+    publish_storage_session_id();
     RCLCPP_INFO(
       get_logger(),
       "Device media session %s started (refresh before %ld)",
@@ -1077,6 +1282,7 @@ private:
           try {
             long http_status = 0;
             if (!client->create(
+              SessionMode::kPeerToPeer,
               MediaAgentNode::unix_now_ms(),
               &outcome.session, &outcome.error, &http_status))
             {
@@ -1147,6 +1353,10 @@ private:
                   outcome.transport_replaced = true;
                   outcome.success =
                   transport->start(outcome.session.lease, &outcome.error);
+                  if (outcome.success) {
+                    outcome.transport_started_at =
+                    std::chrono::steady_clock::now();
+                  }
                   if (outcome.success && !request_is_current()) {
                     transport->stop();
                     active_transport_generation->store(0U);
@@ -1264,6 +1474,315 @@ private:
     }
   }
 
+  void schedule_storage_session_retry(const std::string & error)
+  {
+    ++storage_session_failure_count_;
+    const int exponent = std::min(storage_session_failure_count_ - 1, 5);
+    const int delay_seconds = std::min(1 << exponent, 30);
+    next_storage_session_attempt_ =
+      std::chrono::steady_clock::now() + std::chrono::seconds(delay_seconds);
+    RCLCPP_WARN(
+      get_logger(),
+      "Storage session failed; retrying independently in %d s: %s",
+      delay_seconds, error.c_str());
+  }
+
+  void stop_storage_transport()
+  {
+    storage_transport_generation_.store(0U);
+    std::lock_guard<std::mutex> lock(storage_transport_mutex_);
+    storage_transport_->stop();
+  }
+
+  void launch_storage_session_start_or_refresh()
+  {
+    DeviceSessionClient * const client = session_client_.get();
+    KvsTransport * const transport = storage_transport_.get();
+    std::mutex * const transport_mutex = &storage_transport_mutex_;
+    std::atomic<bool> * const shutting_down = &shutting_down_;
+    std::atomic<bool> * const media_permitted = &media_permitted_;
+    std::atomic<std::uint64_t> * const desired_generation = &storage_generation_;
+    std::atomic<std::uint64_t> * const transport_generation =
+      &storage_transport_generation_;
+    const std::uint64_t request_generation = storage_generation_.load();
+    const bool expected_camera_enabled = config_.camera_enabled;
+    const bool expected_microphone_enabled = config_.microphone_enabled;
+    const bool expected_monitoring_enabled = config_.monitoring_enabled;
+    try {
+      storage_session_future_ = std::async(
+        std::launch::async,
+        [
+          client, transport, transport_mutex, shutting_down, media_permitted,
+          desired_generation, transport_generation, request_generation,
+          expected_camera_enabled, expected_microphone_enabled,
+          expected_monitoring_enabled
+        ]() {
+          StorageSessionOutcome outcome;
+          outcome.request_generation = request_generation;
+          try {
+            long http_status = 0;
+            if (!client->create(
+              SessionMode::kStorage, MediaAgentNode::unix_now_ms(),
+              &outcome.session, &outcome.error, &http_status))
+            {
+              outcome.permanent_failure =
+              session_create_requires_fail_closed(http_status);
+              return outcome;
+            }
+            outcome.session_created = true;
+            outcome.desired_available = true;
+            outcome.backend_session_open = true;
+            const bool desired_matches_request =
+            outcome.session.desired.camera_enabled == expected_camera_enabled &&
+            outcome.session.desired.microphone_enabled == expected_microphone_enabled &&
+            outcome.session.desired.monitoring_enabled == expected_monitoring_enabled;
+            const bool request_is_current =
+            !shutting_down->load() &&
+            media_permitted->load() &&
+            expected_camera_enabled && expected_monitoring_enabled &&
+            desired_matches_request &&
+            request_generation == desired_generation->load();
+            if (!request_is_current) {
+              outcome.error =
+              "storage session cancelled by a newer desired state";
+            } else {
+              std::lock_guard<std::mutex> lock(*transport_mutex);
+              if (
+                !shutting_down->load() && media_permitted->load() &&
+                request_generation == desired_generation->load())
+              {
+                transport_generation->store(0U);
+                transport->stop();
+                outcome.success =
+                transport->start(outcome.session.lease, &outcome.error);
+                if (outcome.success) {
+                  outcome.transport_started_at =
+                  std::chrono::steady_clock::now();
+                  transport_generation->store(request_generation);
+                }
+              }
+            }
+          } catch (const std::exception & exception) {
+            outcome.error =
+            std::string("storage session worker exception: ") +
+            exception.what();
+          }
+          if (outcome.backend_session_open && !outcome.success) {
+            const SessionCloseResult close_result =
+            client->close(outcome.session.session_id);
+            if (close_result.terminal()) {
+              outcome.backend_session_open = false;
+              outcome.closed_session_id = outcome.session.session_id;
+            } else if (
+              close_result.disposition ==
+              SessionCloseDisposition::kRetryableFailure)
+            {
+              outcome.cleanup_session_id = outcome.session.session_id;
+              append_session_error(
+                &outcome.error,
+                "storage backend cleanup failed: " + close_result.error);
+            } else {
+              outcome.permanent_failure = true;
+              append_session_error(
+                &outcome.error,
+                "storage backend cleanup failed permanently: " +
+                close_result.error);
+            }
+          }
+          return outcome;
+        });
+    } catch (const std::exception & exception) {
+      schedule_storage_session_retry(
+        std::string("cannot start storage session worker: ") +
+        exception.what());
+    }
+  }
+
+  void launch_storage_session_stop(const std::string & session_id)
+  {
+    DeviceSessionClient * const client = session_client_.get();
+    try {
+      storage_session_future_ = std::async(
+        std::launch::async,
+        [client, session_id]() {
+          StorageSessionOutcome outcome;
+          outcome.operation = SessionOperation::kStop;
+          outcome.closed_session_id = session_id;
+          if (!is_valid_session_id(session_id)) {
+            outcome.permanent_failure = true;
+            outcome.error = "refusing to close a storage session without a UUIDv4";
+            return outcome;
+          }
+          const SessionCloseResult close_result = client->close(session_id);
+          outcome.success = close_result.terminal();
+          outcome.error = close_result.error;
+          outcome.backend_session_open = !close_result.terminal();
+          if (!close_result.terminal()) {
+            outcome.cleanup_session_id = session_id;
+            outcome.permanent_failure =
+            close_result.disposition ==
+            SessionCloseDisposition::kPermanentFailure;
+          }
+          return outcome;
+        });
+    } catch (const std::exception & exception) {
+      schedule_storage_session_retry(
+        std::string("cannot start storage stop worker: ") + exception.what());
+    }
+  }
+
+  void collect_storage_session_result()
+  {
+    if (!storage_session_future_.valid() ||
+      storage_session_future_.wait_for(0ms) != std::future_status::ready)
+    {
+      return;
+    }
+    StorageSessionOutcome outcome;
+    try {
+      outcome = storage_session_future_.get();
+    } catch (const std::exception & exception) {
+      schedule_storage_session_retry(
+        std::string("storage session future failed: ") + exception.what());
+      return;
+    }
+    if (
+      outcome.desired_available &&
+      outcome.request_generation == storage_generation_.load() &&
+      !shutting_down_.load())
+    {
+      apply_desired_settings(outcome.session.desired, outcome.success);
+    }
+    if (outcome.operation == SessionOperation::kStop) {
+      storage_backend_session_may_be_open_ = outcome.backend_session_open;
+      storage_cleanup_session_id_ = outcome.cleanup_session_id;
+      if (!outcome.success) {
+        if (outcome.permanent_failure) {
+          storage_session_permanent_failure_ = true;
+          RCLCPP_ERROR(
+            get_logger(), "Storage cleanup failed permanently: %s",
+            outcome.error.c_str());
+        } else {
+          schedule_storage_session_retry(outcome.error);
+        }
+      }
+      return;
+    }
+    if (
+      outcome.success &&
+      outcome.request_generation == storage_generation_.load() &&
+      config_.camera_enabled && config_.monitoring_enabled)
+    {
+      storage_session_id_ = outcome.session.session_id;
+      storage_cleanup_session_id_.clear();
+      storage_backend_session_may_be_open_ = true;
+      storage_session_expires_at_ms_ =
+        outcome.session.lease.credentials.expires_at_unix_ms;
+      storage_transport_started_at_ = outcome.transport_started_at;
+      storage_session_failure_count_ = 0;
+      next_storage_session_attempt_ =
+        std::chrono::steady_clock::time_point::min();
+      clear_session_credentials(&outcome.session.lease.credentials);
+      publish_storage_session_id();
+      RCLCPP_INFO(
+        get_logger(), "Independent KVS storage session started: %s",
+        storage_session_id_.c_str());
+      return;
+    }
+    storage_transport_generation_.store(0U);
+    if (outcome.session_created || outcome.permanent_failure) {
+      stop_storage_transport();
+      storage_session_id_.clear();
+      storage_session_expires_at_ms_ = 0;
+      storage_transport_started_at_ =
+        std::chrono::steady_clock::time_point::min();
+      publish_storage_session_id();
+    }
+    if (outcome.session_created && outcome.backend_session_open) {
+      storage_cleanup_session_id_ = outcome.cleanup_session_id.empty() ?
+        outcome.session.session_id : outcome.cleanup_session_id;
+      storage_backend_session_may_be_open_ = true;
+    }
+    if (outcome.permanent_failure) {
+      storage_session_permanent_failure_ = true;
+      RCLCPP_ERROR(
+        get_logger(), "Storage session failed permanently: %s",
+        outcome.error.c_str());
+    } else {
+      schedule_storage_session_retry(outcome.error);
+    }
+    clear_session_credentials(&outcome.session.lease.credentials);
+  }
+
+  void maintain_storage_session()
+  {
+    collect_storage_session_result();
+#if !(HOMECAM_HAVE_KVS && HOMECAM_HAVE_GSTREAMER)
+    return;
+#else
+    if (!storage_transport_->implemented() || !session_client_->available() ||
+      shutting_down_.load() || storage_session_future_.valid() ||
+      storage_session_permanent_failure_)
+    {
+      return;
+    }
+    const auto now_steady = std::chrono::steady_clock::now();
+    if (now_steady < next_storage_session_attempt_) {return;}
+    if (!storage_cleanup_session_id_.empty()) {
+      launch_storage_session_stop(storage_cleanup_session_id_);
+      return;
+    }
+    const bool storage_wanted =
+      desired_state_confirmed_ && config_.camera_enabled &&
+      config_.monitoring_enabled && media_inputs_ready();
+    if (!storage_wanted) {
+      if (!storage_session_id_.empty()) {
+        const std::string session_id = storage_session_id_;
+        storage_generation_.fetch_add(1U);
+        stop_storage_transport();
+        storage_session_id_.clear();
+        storage_session_expires_at_ms_ = 0;
+        storage_transport_started_at_ =
+          std::chrono::steady_clock::time_point::min();
+        publish_storage_session_id();
+        launch_storage_session_stop(session_id);
+      }
+      return;
+    }
+    const std::int64_t now = unix_now_ms();
+    std::int64_t age_ms = -1;
+    if (storage_transport_started_at_ !=
+      std::chrono::steady_clock::time_point::min())
+    {
+      age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now_steady - storage_transport_started_at_).count();
+    }
+    constexpr std::int64_t refresh_age_ms = 50LL * 60LL * 1000LL;
+    constexpr std::int64_t hard_age_ms = 55LL * 60LL * 1000LL;
+    constexpr std::int64_t refresh_margin_ms = 300'000;
+    bool restart_required = false;
+    if (!storage_session_id_.empty()) {
+      std::lock_guard<std::mutex> lock(storage_transport_mutex_);
+      restart_required = storage_transport_->restart_required();
+    }
+    if (
+      storage_session_id_.empty() || restart_required ||
+      storage_session_refresh_due(age_ms, refresh_age_ms) ||
+      storage_session_hard_expired(age_ms, hard_age_ms) ||
+      session_lease_expired(
+        now + refresh_margin_ms,
+        storage_session_expires_at_ms_))
+    {
+      if (storage_session_hard_expired(age_ms, hard_age_ms) ||
+        session_lease_expired(now, storage_session_expires_at_ms_))
+      {
+        stop_storage_transport();
+      }
+      launch_storage_session_start_or_refresh();
+    }
+#endif
+  }
+
   bool media_inputs_ready() const
   {
 #if HOMECAM_HAVE_KVS && HOMECAM_HAVE_GSTREAMER
@@ -1283,6 +1802,25 @@ private:
     return;
 #else
     const std::int64_t now = unix_now_ms();
+    const auto now_steady = std::chrono::steady_clock::now();
+    constexpr std::int64_t storage_refresh_age_ms = 50LL * 60LL * 1000LL;
+    constexpr std::int64_t storage_hard_age_ms = 55LL * 60LL * 1000LL;
+    std::int64_t active_transport_age_ms = -1;
+    if (
+      active_stream_mode_ == "storage" &&
+      active_transport_started_at_ !=
+      std::chrono::steady_clock::time_point::min())
+    {
+      active_transport_age_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+        now_steady - active_transport_started_at_).count();
+    }
+    if (storage_session_hard_expired(
+        active_transport_age_ms, storage_hard_age_ms))
+    {
+      fail_closed_active_session(
+        "KVS storage session exceeded the 55 minute hard lifetime");
+    }
     if (
       active_stream_mode_ != "idle" &&
       session_lease_expired(now, active_session_expires_at_ms_))
@@ -1297,7 +1835,6 @@ private:
       return;
     }
 
-    const auto now_steady = std::chrono::steady_clock::now();
     if (now_steady < next_session_attempt_) {
       return;
     }
@@ -1339,8 +1876,7 @@ private:
       }
     }
 
-    const std::string wanted_mode =
-      config_.monitoring_enabled ? "storage" : "p2p";
+    const std::string wanted_mode = "p2p";
     constexpr std::int64_t refresh_margin_ms = 300'000;
     constexpr std::int64_t connected_peer_safety_margin_ms = 60'000;
     const bool no_session = active_stream_mode_ == "idle";
@@ -1353,6 +1889,18 @@ private:
     const SessionMode session_mode =
       active_stream_mode_ == "storage" ?
       SessionMode::kStorage : SessionMode::kPeerToPeer;
+    if (
+      session_mode == SessionMode::kStorage &&
+      storage_session_refresh_due(
+        active_transport_age_ms, storage_refresh_age_ms))
+    {
+      RCLCPP_INFO(
+        get_logger(),
+        "Refreshing KVS storage session after %ld ms of active lifetime",
+        static_cast<long>(active_transport_age_ms));
+      launch_session_start_or_refresh();
+      return;
+    }
     const SessionRefreshDecision refresh_decision = decide_session_refresh(
       session_mode,
       peer_connected,
@@ -1405,11 +1953,13 @@ private:
     maintain_gstreamer_pipelines();
 #endif
     maintain_device_session();
+    maintain_storage_session();
   }
 
   void publish_heartbeat()
   {
     collect_heartbeat_result();
+    publish_storage_session_id();
     HeartbeatStatus status;
     status.device_id = config_.device_id;
     status.camera_enabled = config_.camera_enabled;
@@ -1417,6 +1967,7 @@ private:
     status.monitoring_enabled = config_.monitoring_enabled;
     status.camera_healthy = camera_is_healthy();
     bool transport_running = false;
+    bool storage_transport_running = false;
     {
       // initSignaling can block while the network retries. Heartbeat must
       // remain independent so a camera/privacy change can cancel that start.
@@ -1430,6 +1981,18 @@ private:
         transport_->implemented() &&
         transport_running;
     }
+    {
+      std::unique_lock<std::mutex> lock(
+        storage_transport_mutex_, std::try_to_lock);
+      if (lock.owns_lock()) {
+        storage_transport_running = storage_transport_->media_flowing();
+      }
+    }
+    status.p2p_healthy =
+      status.camera_healthy && transport_->implemented() && transport_running;
+    status.storage_healthy =
+      status.camera_healthy && config_.monitoring_enabled &&
+      storage_transport_->implemented() && storage_transport_running;
     status.detector_healthy = detector_is_healthy();
     status.source_profile = config_.source_profile;
     status.image_topic = config_.image_topic;
@@ -1529,12 +2092,19 @@ private:
     const bool monitoring_changed =
       desired.monitoring_enabled.has_value() &&
       *desired.monitoring_enabled != config_.monitoring_enabled;
-    const bool media_state_changed =
-      camera_changed || microphone_changed || monitoring_changed;
+    const bool media_state_changed = camera_changed || microphone_changed;
+    const bool storage_state_changed = camera_changed || monitoring_changed;
     if (media_state_changed) {
       // Invalidate both outbound frames and inbound PTT before changing any
       // pipeline. A session worker can only re-enable I/O for this generation.
       session_generation_.fetch_add(1U);
+    }
+    if (storage_state_changed) {
+      storage_generation_.fetch_add(1U);
+      storage_transport_generation_.store(0U);
+      if (!storage_session_id_.empty()) {
+        storage_session_expires_at_ms_ = 0;
+      }
     }
 
     bool detector_state_may_have_changed = first_confirmed_state;
@@ -1589,21 +2159,53 @@ private:
     monitoring_publisher_->publish(message);
   }
 
+  void publish_storage_session_id()
+  {
+    std_msgs::msg::String message;
+    if (
+      config_.camera_enabled &&
+      config_.monitoring_enabled &&
+      is_valid_session_id(storage_session_id_))
+    {
+      message.data = storage_session_id_;
+    }
+    storage_session_publisher_->publish(message);
+  }
+
   MediaConfig config_;
   std::unique_ptr<HeartbeatClient> heartbeat_client_;
   std::unique_ptr<DeviceSessionClient> session_client_;
   std::unique_ptr<KvsTransport> transport_;
+  std::unique_ptr<KvsTransport> storage_transport_;
+  std::unique_ptr<TransportSender> p2p_sender_;
+  std::unique_ptr<TransportSender> storage_sender_;
   std::future<HeartbeatOutcome> heartbeat_future_;
   std::future<SessionOutcome> session_future_;
+  std::future<StorageSessionOutcome> storage_session_future_;
   std::mutex transport_mutex_;
+  std::mutex storage_transport_mutex_;
   std::atomic<bool> shutting_down_{false};
   std::atomic<bool> media_permitted_{false};
   std::atomic<std::uint64_t> session_generation_{1U};
   std::atomic<std::uint64_t> active_transport_generation_{0U};
+  std::atomic<std::uint64_t> storage_generation_{1U};
+  std::atomic<std::uint64_t> storage_transport_generation_{0U};
   std::string active_stream_mode_{"idle"};
   std::string active_session_id_;
   std::string cleanup_session_id_;
+  std::string storage_session_id_;
+  std::string storage_cleanup_session_id_;
+  std::int64_t storage_session_expires_at_ms_{0};
+  std::chrono::steady_clock::time_point storage_transport_started_at_{
+    std::chrono::steady_clock::time_point::min()};
+  bool storage_backend_session_may_be_open_{false};
+  bool storage_session_permanent_failure_{false};
+  int storage_session_failure_count_{0};
+  std::chrono::steady_clock::time_point next_storage_session_attempt_{
+    std::chrono::steady_clock::time_point::min()};
   std::int64_t active_session_expires_at_ms_{0};
+  std::chrono::steady_clock::time_point active_transport_started_at_{
+    std::chrono::steady_clock::time_point::min()};
   bool backend_session_may_be_open_{false};
   bool desired_state_confirmed_{false};
   bool session_permanent_failure_{false};
@@ -1615,6 +2217,8 @@ private:
     camera_info_subscription_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr monitoring_publisher_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
+    storage_session_publisher_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr
     detector_health_subscription_;
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;

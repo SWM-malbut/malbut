@@ -1,0 +1,33 @@
+[Unit]
+Description=MALBUT homecam media and event detector
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=@HOMECAM_USER@
+Group=@HOMECAM_GROUP@
+EnvironmentFile=@ENV_FILE@
+Environment=ROS_DOMAIN_ID=0
+Environment=RCUTILS_COLORIZED_OUTPUT=0
+Environment=ROS_LOG_DIR=/run/malbut-homecam/log
+RuntimeDirectory=malbut-homecam
+RuntimeDirectoryMode=0750
+WorkingDirectory=@WORKSPACE@
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source @WORKSPACE@/install/setup.bash && exec ros2 launch homecam_media_agent homecam_aurora.launch.py image_topic:="${HOMECAM_IMAGE_TOPIC}" camera_info_topic:="${HOMECAM_CAMERA_INFO_TOPIC:-}" odom_topic:="${HOMECAM_ODOM_TOPIC:-/odom}" backend_url:="${HOMECAM_BACKEND_URL}" device_id:="${HOMECAM_DEVICE_ID}" model_path:="${HOMECAM_MODEL_PATH:-}" audio_source:="${HOMECAM_AUDIO_SOURCE:-default}" audio_sink:="${HOMECAM_AUDIO_SINK:-default}"'
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+KillSignal=SIGINT
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

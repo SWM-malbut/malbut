@@ -13,7 +13,7 @@ const HLS_RESOURCES = new Set([
 
 type PlaybackGrant = {
   version: 1;
-  recordingId: string;
+  subjectId: string;
   playbackId: string;
   userHash: string;
   hostname: string;
@@ -23,15 +23,17 @@ type PlaybackGrant = {
 
 type CreatePlaybackProxyInput = {
   requestUrl: string;
+  publicOrigin?: string;
   playbackUrl: string;
-  recordingId: string;
+  subjectId: string;
+  proxyPath: string;
   userEmail: string;
   expiresAt: string;
 };
 
 type ResolvePlaybackProxyInput = {
   requestUrl: string;
-  recordingId: string;
+  subjectId: string;
   playbackId: string;
   resource: string;
   userEmail: string;
@@ -46,6 +48,38 @@ export type ResolvedPlaybackProxy = {
 };
 
 export async function createRecordingPlaybackProxy(
+  input: Omit<CreatePlaybackProxyInput, "subjectId" | "proxyPath"> & {
+    recordingId: string;
+  },
+  secret: string,
+) {
+  return createPlaybackProxy(
+    {
+      ...input,
+      subjectId: input.recordingId,
+      proxyPath: `/api/recordings/${encodeURIComponent(input.recordingId)}/hls`,
+    },
+    secret,
+  );
+}
+
+export async function createDeviceLivePlaybackProxy(
+  input: Omit<CreatePlaybackProxyInput, "subjectId" | "proxyPath"> & {
+    deviceId: string;
+  },
+  secret: string,
+) {
+  return createPlaybackProxy(
+    {
+      ...input,
+      subjectId: `device-live:${input.deviceId}`,
+      proxyPath: `/api/devices/${encodeURIComponent(input.deviceId)}/live-hls`,
+    },
+    secret,
+  );
+}
+
+async function createPlaybackProxy(
   input: CreatePlaybackProxyInput,
   secret: string,
 ) {
@@ -74,7 +108,7 @@ export async function createRecordingPlaybackProxy(
   const playbackId = crypto.randomUUID().replace(/-/g, "");
   const grant: PlaybackGrant = {
     version: PLAYBACK_GRANT_VERSION,
-    recordingId: input.recordingId,
+    subjectId: input.subjectId,
     playbackId,
     userHash: await sha256(input.userEmail.trim().toLowerCase()),
     hostname: upstream.hostname,
@@ -83,7 +117,8 @@ export async function createRecordingPlaybackProxy(
   };
   const cookieValue = await encryptGrant(grant, secret);
   const request = new URL(input.requestUrl);
-  const path = `/api/recordings/${encodeURIComponent(input.recordingId)}/hls/${playbackId}/`;
+  const publicOrigin = playbackPublicOrigin(input.publicOrigin, request.origin);
+  const path = `${input.proxyPath}/${playbackId}/`;
   const maxAge = Math.max(1, expiresAt - Math.floor(Date.now() / 1000));
   const cookie = [
     `${PLAYBACK_COOKIE_PREFIX}${playbackId}=${cookieValue}`,
@@ -95,12 +130,52 @@ export async function createRecordingPlaybackProxy(
   ].join("; ");
 
   return {
-    playbackUrl: new URL(`${path}getHLSMasterPlaylist.m3u8`, request).toString(),
+    playbackUrl: new URL(
+      `${path}getHLSMasterPlaylist.m3u8`,
+      publicOrigin,
+    ).toString(),
     setCookie: cookie,
   };
 }
 
+function playbackPublicOrigin(configured: string | undefined, fallback: string) {
+  if (!configured) return fallback;
+  const origin = new URL(configured);
+  if (
+    origin.protocol !== "https:" ||
+    origin.username ||
+    origin.password ||
+    origin.port ||
+    origin.pathname !== "/" ||
+    origin.search ||
+    origin.hash
+  ) {
+    throw new Error("PLAYBACK_PUBLIC_ORIGIN_INVALID");
+  }
+  return origin.origin;
+}
+
 export async function resolveRecordingPlaybackProxy(
+  input: Omit<ResolvePlaybackProxyInput, "subjectId"> & { recordingId: string },
+  secret: string,
+): Promise<ResolvedPlaybackProxy | null> {
+  return resolvePlaybackProxy(
+    { ...input, subjectId: input.recordingId },
+    secret,
+  );
+}
+
+export async function resolveDeviceLivePlaybackProxy(
+  input: Omit<ResolvePlaybackProxyInput, "subjectId"> & { deviceId: string },
+  secret: string,
+): Promise<ResolvedPlaybackProxy | null> {
+  return resolvePlaybackProxy(
+    { ...input, subjectId: `device-live:${input.deviceId}` },
+    secret,
+  );
+}
+
+async function resolvePlaybackProxy(
   input: ResolvePlaybackProxyInput,
   secret: string,
 ): Promise<ResolvedPlaybackProxy | null> {
@@ -121,13 +196,13 @@ export async function resolveRecordingPlaybackProxy(
   const grant = await decryptGrant(
     cookie,
     secret,
-    input.recordingId,
+    input.subjectId,
     input.playbackId,
   );
   if (
     !grant ||
     grant.version !== PLAYBACK_GRANT_VERSION ||
-    grant.recordingId !== input.recordingId ||
+    grant.subjectId !== input.subjectId ||
     grant.playbackId !== input.playbackId ||
     grant.expiresAt <= Math.floor(Date.now() / 1000) ||
     !KVS_ARCHIVED_MEDIA_HOST.test(grant.hostname) ||
@@ -226,7 +301,7 @@ function validClientQuery(resource: string, params: URLSearchParams) {
 async function encryptGrant(grant: PlaybackGrant, secret: string) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveGrantKey(secret);
-  const additionalData = grantAdditionalData(grant.recordingId, grant.playbackId);
+  const additionalData = grantAdditionalData(grant.subjectId, grant.playbackId);
   const encrypted = new Uint8Array(
     await crypto.subtle.encrypt(
       { name: "AES-GCM", iv, additionalData },
@@ -243,7 +318,7 @@ async function encryptGrant(grant: PlaybackGrant, secret: string) {
 async function decryptGrant(
   value: string,
   secret: string,
-  recordingId: string,
+  subjectId: string,
   playbackId: string,
 ) {
   try {
@@ -252,7 +327,7 @@ async function decryptGrant(
     const iv = combined.slice(0, 12);
     const encrypted = combined.slice(12);
     const key = await deriveGrantKey(secret);
-    const additionalData = grantAdditionalData(recordingId, playbackId);
+    const additionalData = grantAdditionalData(subjectId, playbackId);
     const cleartext = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv, additionalData },
       key,
@@ -286,9 +361,9 @@ async function deriveGrantKey(secret: string) {
   );
 }
 
-function grantAdditionalData(recordingId: string, playbackId: string) {
+function grantAdditionalData(subjectId: string, playbackId: string) {
   return new TextEncoder().encode(
-    `${PLAYBACK_KEY_CONTEXT}:${recordingId}:${playbackId}`,
+    `${PLAYBACK_KEY_CONTEXT}:${subjectId}:${playbackId}`,
   );
 }
 

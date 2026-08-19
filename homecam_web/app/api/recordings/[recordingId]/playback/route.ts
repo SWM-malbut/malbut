@@ -17,6 +17,7 @@ export const dynamic = "force-dynamic";
 
 type PlaybackEnv = DeviceKvsEnvironment & {
   KVS_BROKER_SECRET?: string;
+  AUTH_PUBLIC_ORIGIN?: string;
 };
 
 const HLS_PLAYBACK_BUFFER_SECONDS = 60 * 60;
@@ -94,6 +95,7 @@ export async function POST(
     const proxy = await createRecordingPlaybackProxy(
       {
         requestUrl: request.url,
+        publicOrigin: runtime.AUTH_PUBLIC_ORIGIN,
         playbackUrl: playback.playbackUrl,
         recordingId,
         userEmail,

@@ -50,6 +50,7 @@ export const streamSessions = pgTable(
       .notNull()
       .references(() => devices.id, { onDelete: "cascade" }),
     startedBy: text("started_by").notNull(),
+    mode: text("mode").notNull().default("p2p"),
     status: text("status").notNull().default("active"),
     startedAt: timestampText("started_at").notNull(),
     expiresAt: timestampText("expires_at").notNull(),
@@ -58,6 +59,9 @@ export const streamSessions = pgTable(
   (table) => [
     uniqueIndex("stream_sessions_room_code_idx").on(table.roomCode),
     index("stream_sessions_device_status_idx").on(table.deviceId, table.status),
+    uniqueIndex("stream_sessions_device_active_mode_idx")
+      .on(table.deviceId, table.mode)
+      .where(sql`${table.status} = 'active'`),
   ],
 );
 
@@ -125,6 +129,15 @@ export const deviceState = pgTable("device_state", {
     onDelete: "set null",
   }),
   mediaHealthy: integer("media_healthy").notNull().default(0),
+  p2pSessionId: text("p2p_session_id").references(() => streamSessions.id, {
+    onDelete: "set null",
+  }),
+  storageSessionId: text("storage_session_id").references(
+    () => streamSessions.id,
+    { onDelete: "set null" },
+  ),
+  p2pHealthy: integer("p2p_healthy").notNull().default(0),
+  storageHealthy: integer("storage_healthy").notNull().default(0),
   detectorHealthy: integer("detector_healthy").notNull().default(0),
   lastSeenAt: timestampText("last_seen_at"),
   updatedAt: timestampText("updated_at").notNull().defaultNow(),
@@ -148,6 +161,33 @@ export const homecamEvents = pgTable(
       { onDelete: "set null" },
     ),
     recordingOffsetMs: integer("recording_offset_ms"),
+    eventGroupId: text("event_group_id"),
+    segmentIndex: integer("segment_index"),
+    labelsJson: text("labels_json"),
+    clipStartAt: timestampText("clip_start_at"),
+    clipEndAt: timestampText("clip_end_at"),
+    clipState: text("clip_state").notNull().default("detected"),
+    monotonicDurationMs: integer("monotonic_duration_ms"),
+    bootId: text("boot_id"),
+    sessionIdsJson: text("session_ids_json"),
+    clockStepped: integer("clock_stepped").notNull().default(0),
+    notificationSuppressed: integer("notification_suppressed").notNull().default(0),
+    startIdempotencyKey: text("start_idempotency_key"),
+    endIdempotencyKey: text("end_idempotency_key"),
+    startRequestFingerprint: text("start_request_fingerprint"),
+    endRequestFingerprint: text("end_request_fingerprint"),
+    deletedAt: timestampText("deleted_at"),
+    aiStatus: text("ai_status").notNull().default("not_requested"),
+    aiSummary: text("ai_summary"),
+    aiLabelsJson: text("ai_labels_json"),
+    aiSeverity: text("ai_severity"),
+    aiConfidence: real("ai_confidence"),
+    aiModelId: text("ai_model_id"),
+    aiModelVersion: text("ai_model_version"),
+    aiPromptVersion: text("ai_prompt_version"),
+    aiInputSpecJson: text("ai_input_spec_json"),
+    aiError: text("ai_error"),
+    aiAnalyzedAt: timestampText("ai_analyzed_at"),
   },
   (table) => [
     uniqueIndex("homecam_events_device_idempotency_idx").on(

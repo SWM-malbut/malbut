@@ -20,6 +20,7 @@ def generate_launch_description() -> LaunchDescription:
     device_id = LaunchConfiguration("device_id")
     model_path = LaunchConfiguration("model_path")
     monitoring_enabled = LaunchConfiguration("monitoring_enabled")
+    event_clips_enabled = LaunchConfiguration("event_clips_enabled")
     audio_source = LaunchConfiguration("audio_source")
     audio_sink = LaunchConfiguration("audio_sink")
     microphone_enabled = LaunchConfiguration("microphone_enabled")
@@ -63,7 +64,12 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[
             config,
             common_overrides,
-            {"model_path": ParameterValue(model_path, value_type=str)},
+            {
+                "model_path": ParameterValue(model_path, value_type=str),
+                "event_clips_enabled": ParameterValue(
+                    event_clips_enabled, value_type=bool
+                ),
+            },
         ],
     )
     return LaunchDescription(
@@ -76,6 +82,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("device_id", default_value="jetson-homecam"),
             DeclareLaunchArgument("model_path", default_value=""),
             DeclareLaunchArgument("monitoring_enabled", default_value="false"),
+            DeclareLaunchArgument("event_clips_enabled", default_value="true"),
             DeclareLaunchArgument("audio_source", default_value="default"),
             DeclareLaunchArgument("audio_sink", default_value="default"),
             DeclareLaunchArgument("microphone_enabled", default_value="true"),

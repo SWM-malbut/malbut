@@ -83,3 +83,59 @@ test("expired Web Push endpoints are pruned on 404 and 410", async () => {
   assert.equal(shouldPrunePushSubscription(410), true);
   assert.equal(shouldPrunePushSubscription(429), false);
 });
+
+test("event clip validation accepts bounded authoritative windows only", async () => {
+  const { parseHomecamEventClipInput } = await loadHelpers();
+  const now = new Date("2026-08-15T00:01:00.000Z");
+  const common = {
+    eventGroupId: "0198a0e8-5800-7000-8000-000000000001",
+    segmentIndex: 0,
+    primaryType: "person",
+    labels: ["person", "motion"],
+    confidence: 0.91,
+    detectedAt: "2026-08-15T00:00:05.000Z",
+    startAt: "2026-08-15T00:00:00.000Z",
+    bootId: "11111111-1111-4111-8111-111111111111",
+    sessionIds: ["22222222-2222-4222-8222-222222222222"],
+    clockSource: "wall",
+    clockSteppedDuringEvent: false,
+    notificationEligible: true,
+    idempotencyKey: "a".repeat(64),
+  };
+  assert.equal(
+    parseHomecamEventClipInput(common, "started", now)?.primaryType,
+    "person",
+  );
+  assert.equal(
+    parseHomecamEventClipInput(
+      {
+        ...common,
+        endAt: "2026-08-15T00:00:20.000Z",
+        monotonicDurationMs: 20_000,
+      },
+      "ended",
+      now,
+    )?.monotonicDurationMs,
+    20_000,
+  );
+  assert.equal(
+    parseHomecamEventClipInput(
+      { ...common, sessionIds: ["not-a-session"] },
+      "started",
+      now,
+    ),
+    null,
+  );
+  assert.equal(
+    parseHomecamEventClipInput(
+      {
+        ...common,
+        endAt: "2026-08-15T00:02:06.000Z",
+        monotonicDurationMs: 126_000,
+      },
+      "ended",
+      now,
+    ),
+    null,
+  );
+});

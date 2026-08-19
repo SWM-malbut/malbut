@@ -8,10 +8,7 @@ import {
 import { consumeRequestRateLimit } from "../../../../../db/petcam";
 import { isValidClientId } from "../../../../../db/homecam-validation";
 import { noStore } from "../../../../api-response";
-import {
-  requestBrokerJoinStorage,
-  requestBrokerSession,
-} from "../../../../kvs-broker";
+import { requestBrokerSession } from "../../../../kvs-broker";
 import {
   expectedKvsChannel,
   resolveDeviceKvsResources,
@@ -60,15 +57,11 @@ export async function POST(
     return noStore({ error: "올바른 viewer clientId가 필요합니다." }, 400);
   }
   const state = await getDeviceSettings(deviceId);
-  const activeSession = await getActiveMediaSession(deviceId);
+  const activeSession = await getActiveMediaSession(deviceId, "p2p");
   if (!state.cameraEnabled || !activeSession) {
     return noStore({ error: "홈캠이 현재 송출 중이 아닙니다." }, 409);
   }
-  const mode = activeSession.mode;
-  const joinStorage = payload.joinStorage === true;
-  if (joinStorage && mode !== "storage") {
-    return noStore({ error: "P2P 세션에는 Storage join을 사용할 수 없습니다." }, 409);
-  }
+  const mode = "p2p" as const;
   const canIssueCredentials = await consumeRequestRateLimit({
     userEmail,
     roomCode: activeSession.roomCode,
@@ -82,21 +75,6 @@ export async function POST(
       { "retry-after": "60" },
     );
   }
-  if (joinStorage) {
-    const canJoinStorage = await consumeRequestRateLimit({
-      userEmail,
-      roomCode: activeSession.roomCode,
-      scope: "homecam-storage-join",
-      limit: 10,
-    });
-    if (!canJoinStorage) {
-      return noStore(
-        { error: "연결 요청이 너무 많습니다. 1분 뒤 다시 시도해 주세요." },
-        429,
-        { "retry-after": "60" },
-      );
-    }
-  }
   const runtime = getRuntimeEnvironment() as DeviceKvsEnvironment;
   let resources;
   try {
@@ -108,7 +86,7 @@ export async function POST(
     return noStore({ error: "이 장치의 AWS 리소스가 설정되지 않았습니다." }, 503);
   }
   const expectedChannelArn = expectedKvsChannel(resources, mode);
-  if (!expectedChannelArn || (mode === "storage" && !resources.streamArn)) {
+  if (!expectedChannelArn) {
     return noStore({ error: "요청한 AWS 홈캠 리소스가 설정되지 않았습니다." }, 503);
   }
 
@@ -124,32 +102,12 @@ export async function POST(
     }
     if (
       !(await userCanViewDevice(deviceId, userEmail)) ||
-      (await getActiveMediaSession(deviceId))?.id !== activeSession.id
+      (await getActiveMediaSession(deviceId, "p2p"))?.id !== activeSession.id
     ) {
       return noStore(
         { error: "홈캠 접근 권한 또는 활성 세션이 변경되었습니다." },
         403,
       );
-    }
-    if (joinStorage) {
-      const joined = await requestBrokerJoinStorage({
-        deviceId,
-        role: "VIEWER",
-        clientId: payload.clientId,
-        channelMode: "storage",
-      });
-      if (joined.channelArn !== broker.channelArn) {
-        return noStore({ error: "AWS 저장 채널 설정이 일치하지 않습니다." }, 503);
-      }
-      if (
-        !(await userCanViewDevice(deviceId, userEmail)) ||
-        (await getActiveMediaSession(deviceId))?.id !== activeSession.id
-      ) {
-        return noStore(
-          { error: "홈캠 접근 권한 또는 활성 세션이 변경되었습니다." },
-          403,
-        );
-      }
     }
     await writeAuditLog({
       deviceId,
@@ -163,8 +121,8 @@ export async function POST(
         ...broker,
         deviceId,
         clientId: payload.clientId,
-        storageMode: mode === "storage",
-        storageJoined: joinStorage,
+        storageMode: false,
+        storageJoined: false,
         activeSession: {
           id: activeSession.id,
           roomCode: activeSession.roomCode,

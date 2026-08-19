@@ -7,6 +7,7 @@ import {
 import {
   GetHLSStreamingSessionURLCommand,
   KinesisVideoArchivedMediaClient,
+  ListFragmentsCommand,
 } from "@aws-sdk/client-kinesis-video-archived-media";
 import {
   GetIceServerConfigCommand,
@@ -70,14 +71,45 @@ export async function handler(event) {
 
   const action = payload.action ?? "SESSION";
   if (
-    !["SESSION", "JOIN_STORAGE", "HLS_PLAYBACK", "DEVICE_CREDENTIALS"].includes(
+    ![
+      "SESSION",
+      "JOIN_STORAGE",
+      "HLS_PLAYBACK",
+      "EVENT_PLAYBACK",
+      "LIVE_PLAYBACK",
+      "DEVICE_CREDENTIALS",
+    ].includes(
       action,
     )
   ) {
     return response(400, { error: "Invalid action" });
   }
 
-  if (action === "HLS_PLAYBACK") {
+  if (action === "LIVE_PLAYBACK") {
+    const input = validateLiveHlsPlaybackInput(payload);
+    if (!input) return response(400, { error: "Invalid live HLS playback request" });
+    const resources = resolveDeviceResources(
+      deviceResourceConfiguration,
+      input.deviceId,
+    );
+    if (!resources?.streamArn || input.streamArn !== resources.streamArn) {
+      return response(403, { error: "Stream is not allowed" });
+    }
+    try {
+      return response(200, await createLiveHlsPlayback(input));
+    } catch (error) {
+      console.error(
+        "KVS live HLS playback failed",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      if (error instanceof Error && error.name === "ResourceNotFoundException") {
+        return response(404, { error: "No live media was found" });
+      }
+      return response(502, { error: "Live HLS playback could not be created" });
+    }
+  }
+
+  if (action === "HLS_PLAYBACK" || action === "EVENT_PLAYBACK") {
     const input = validateHlsPlaybackInput(payload);
     if (!input) return response(400, { error: "Invalid HLS playback request" });
     const resources = resolveDeviceResources(
@@ -95,7 +127,12 @@ export async function handler(event) {
     }
 
     try {
-      return response(200, await createHlsPlayback(input));
+      return response(
+        200,
+        action === "EVENT_PLAYBACK"
+          ? await createEventPlayback(input)
+          : await createHlsPlayback(input),
+      );
     } catch (error) {
       console.error(
         "KVS HLS playback failed",
@@ -387,6 +424,103 @@ async function createHlsPlayback({ streamArn, startAt, endAt, expiresSeconds }) 
   };
 }
 
+async function createLiveHlsPlayback({ streamArn, expiresSeconds }) {
+  const endpointResult = await kinesisVideo.send(
+    new GetDataEndpointCommand({
+      APIName: "GET_HLS_STREAMING_SESSION_URL",
+      StreamARN: streamArn,
+    }),
+  );
+  if (!endpointResult.DataEndpoint) {
+    throw new Error("Missing KVS archived media endpoint");
+  }
+  const endpoint = new URL(endpointResult.DataEndpoint);
+  if (endpoint.protocol !== "https:" || endpoint.search || endpoint.hash) {
+    throw new Error("Invalid KVS archived media endpoint");
+  }
+  const archivedMedia = new KinesisVideoArchivedMediaClient({
+    region,
+    endpoint: endpointResult.DataEndpoint,
+  });
+  const expiresAt = new Date(Date.now() + expiresSeconds * 1000).toISOString();
+  const playback = await archivedMedia.send(
+    new GetHLSStreamingSessionURLCommand({
+      StreamARN: streamArn,
+      PlaybackMode: "LIVE",
+      HLSFragmentSelector: { FragmentSelectorType: "SERVER_TIMESTAMP" },
+      DiscontinuityMode: "ON_DISCONTINUITY",
+      ContainerFormat: "FRAGMENTED_MP4",
+      Expires: expiresSeconds,
+      MaxMediaPlaylistFragmentResults: 5,
+    }),
+  );
+  if (!playback.HLSStreamingSessionURL) {
+    throw new Error("Missing live HLS playback URL");
+  }
+  return {
+    playbackUrl: playback.HLSStreamingSessionURL,
+    expiresAt,
+    streamArn,
+  };
+}
+
+async function createEventPlayback(input) {
+  const listEndpoint = await kinesisVideo.send(
+    new GetDataEndpointCommand({
+      APIName: "LIST_FRAGMENTS",
+      StreamARN: input.streamArn,
+    }),
+  );
+  if (!listEndpoint.DataEndpoint) {
+    throw new Error("Missing KVS fragment endpoint");
+  }
+  const endpoint = new URL(listEndpoint.DataEndpoint);
+  if (endpoint.protocol !== "https:" || endpoint.search || endpoint.hash) {
+    throw new Error("Invalid KVS fragment endpoint");
+  }
+  const archivedMedia = new KinesisVideoArchivedMediaClient({
+    region,
+    endpoint: listEndpoint.DataEndpoint,
+  });
+  const requestedStartMs = Date.parse(input.startAt);
+  const result = await archivedMedia.send(
+    new ListFragmentsCommand({
+      StreamARN: input.streamArn,
+      FragmentSelector: {
+        FragmentSelectorType: "SERVER_TIMESTAMP",
+        TimestampRange: {
+          StartTimestamp: new Date(requestedStartMs - 20_000),
+          EndTimestamp: new Date(input.endAt),
+        },
+      },
+      MaxResults: 1000,
+    }),
+  );
+  const fragments = (result.Fragments ?? [])
+    .filter((fragment) => fragment.ServerTimestamp instanceof Date)
+    .sort(
+      (left, right) =>
+        left.ServerTimestamp.getTime() - right.ServerTimestamp.getTime(),
+    );
+  if (fragments.length === 0) {
+    const error = new Error("No fragments found for event");
+    error.name = "ResourceNotFoundException";
+    throw error;
+  }
+  const containing = [...fragments].reverse().find((fragment) => {
+    const fragmentStart = fragment.ServerTimestamp.getTime();
+    const duration = Number(fragment.FragmentLengthInMilliseconds ?? 0);
+    return fragmentStart <= requestedStartMs && fragmentStart + duration >= requestedStartMs;
+  });
+  const firstAfter = fragments.find(
+    (fragment) => fragment.ServerTimestamp.getTime() >= requestedStartMs,
+  );
+  const aligned = containing ?? firstAfter ?? fragments.at(-1);
+  const alignedStartAt = aligned.ServerTimestamp.toISOString();
+  const playback = await createHlsPlayback({ ...input, startAt: alignedStartAt });
+  return { ...playback, alignedStartAt };
+}
+
 async function getChannelEndpoints(role, protocols, channelArn) {
   const endpointResult = await kinesisVideo.send(
     new GetSignalingChannelEndpointCommand({
@@ -499,6 +633,30 @@ function validateHlsPlaybackInput(payload) {
     streamArn: payload.streamArn,
     startAt: payload.startAt,
     endAt: payload.endAt,
+    expiresSeconds: payload.expiresSeconds,
+  };
+}
+
+function validateLiveHlsPlaybackInput(payload) {
+  if (
+    !hasOnlyKeys(payload, [
+      "action",
+      "deviceId",
+      "streamArn",
+      "expiresSeconds",
+    ]) ||
+    typeof payload.deviceId !== "string" ||
+    !deviceIdPattern.test(payload.deviceId) ||
+    typeof payload.streamArn !== "string" ||
+    !Number.isInteger(payload.expiresSeconds) ||
+    payload.expiresSeconds < 300 ||
+    payload.expiresSeconds > 43_200
+  ) {
+    return null;
+  }
+  return {
+    deviceId: payload.deviceId,
+    streamArn: payload.streamArn,
     expiresSeconds: payload.expiresSeconds,
   };
 }

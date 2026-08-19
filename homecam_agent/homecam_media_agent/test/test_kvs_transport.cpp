@@ -15,6 +15,9 @@ using homecam_media_agent::SharedMediaTimeline;
 using homecam_media_agent::decide_session_refresh;
 using homecam_media_agent::make_kvs_transport;
 using homecam_media_agent::session_lease_expired;
+using homecam_media_agent::storage_session_hard_expired;
+using homecam_media_agent::storage_session_refresh_due;
+using homecam_media_agent::use_explicit_signaling_channel_arn;
 
 TEST(SessionLease, RefreshesBeforeShortLivedCredentialsExpire)
 {
@@ -89,10 +92,28 @@ TEST(SessionRefreshPolicy, StorageRenewalIsNeverDeferredForP2p)
     SessionRefreshDecision::kRefreshNow);
 }
 
+TEST(SessionRefreshPolicy, StorageLifetimeUsesMonotonicSoftAndHardBoundaries)
+{
+  constexpr std::int64_t refresh_age = 50LL * 60LL * 1000LL;
+  constexpr std::int64_t hard_age = 55LL * 60LL * 1000LL;
+  EXPECT_FALSE(storage_session_refresh_due(-1, refresh_age));
+  EXPECT_FALSE(storage_session_refresh_due(refresh_age - 1, refresh_age));
+  EXPECT_TRUE(storage_session_refresh_due(refresh_age, refresh_age));
+  EXPECT_FALSE(storage_session_hard_expired(hard_age - 1, hard_age));
+  EXPECT_TRUE(storage_session_hard_expired(hard_age, hard_age));
+}
+
+TEST(KvsTransport, StorageSessionLetsSdkDiscoverMediaStorageConfiguration)
+{
+  EXPECT_TRUE(use_explicit_signaling_channel_arn(SessionMode::kPeerToPeer));
+  EXPECT_FALSE(use_explicit_signaling_channel_arn(SessionMode::kStorage));
+}
+
 TEST(KvsTransport, FailsClosedWithoutAReviewedAdapter)
 {
   auto transport = make_kvs_transport();
   EXPECT_FALSE(transport->peer_connected());
+  EXPECT_FALSE(transport->media_flowing());
   EXPECT_FALSE(transport->restart_required());
 #if HOMECAM_HAVE_KVS
   EXPECT_TRUE(transport->implemented());

@@ -19,6 +19,7 @@ def generate_launch_description() -> LaunchDescription:
     device_id = LaunchConfiguration("device_id")
     model_path = LaunchConfiguration("model_path")
     monitoring_enabled = LaunchConfiguration("monitoring_enabled")
+    event_clips_enabled = LaunchConfiguration("event_clips_enabled")
     image_topic = LaunchConfiguration("image_topic")
     camera_info_topic = LaunchConfiguration("camera_info_topic")
     odom_topic = LaunchConfiguration("odom_topic")
@@ -63,7 +64,12 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[
             config,
             common_overrides,
-            {"model_path": ParameterValue(model_path, value_type=str)},
+            {
+                "model_path": ParameterValue(model_path, value_type=str),
+                "event_clips_enabled": ParameterValue(
+                    event_clips_enabled, value_type=bool
+                ),
+            },
         ],
     )
     return LaunchDescription(
@@ -72,6 +78,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("device_id", default_value="gazebo-homecam"),
             DeclareLaunchArgument("model_path", default_value=""),
             DeclareLaunchArgument("monitoring_enabled", default_value="false"),
+            DeclareLaunchArgument("event_clips_enabled", default_value="true"),
             DeclareLaunchArgument(
                 "image_topic", default_value="/camera/color/image_raw"
             ),

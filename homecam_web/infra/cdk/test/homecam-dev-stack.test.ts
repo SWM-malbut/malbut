@@ -241,7 +241,7 @@ test("prepare preserves the deployed ALB auth resources and task contract", () =
   assert.equal(initialOwner?.UpdateReplacePolicy, "Retain");
   template.resourceCountIs("AWS::Cognito::UserPoolClient", 2);
   template.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
-  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 12);
+  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 13);
   assert.ok(legacyClient, "the deployed HomecamWebClient logical ID must be stable");
   assert.equal(legacyClient.Properties?.GenerateSecret, true);
   assert.deepEqual(legacyClient.Properties?.ExplicitAuthFlows, [
@@ -270,6 +270,7 @@ test("prepare preserves the deployed ALB auth resources and task contract", () =
     "/api/device/v1/session",
     "/api/device/v1/heartbeat",
     "/api/device/v1/events",
+    "/api/device/v1/event-clips/*",
     "/api/device/v1/robot/state",
     "/api/device/v1/robot/map",
     "/api/device/v1/robot/commands",
@@ -297,7 +298,7 @@ test("dual exposes only auth endpoints and enables both server auth contracts", 
   assertLegacyAuthLogicalIds(template);
   template.resourceCountIs("AWS::Cognito::UserPoolClient", 2);
   template.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
-  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 13);
+  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 14);
 
   const serverClientId = clientLogicalIdByName(
     template,
@@ -331,7 +332,7 @@ test("cutover forwards the catch-all before retaining rollback auth rules", () =
   assertLegacyAuthLogicalIds(template);
   template.resourceCountIs("AWS::Cognito::UserPoolClient", 2);
   template.resourceCountIs("AWS::Cognito::UserPoolDomain", 1);
-  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 14);
+  template.resourceCountIs("AWS::ElasticLoadBalancingV2::ListenerRule", 15);
   assert.deepEqual(rulePaths(ruleAtPriority(template, 14)), ["/*"]);
   assert.deepEqual(ruleAtPriority(template, 14)?.Properties?.Actions?.map(
     (action: { Type: string }) => action.Type,

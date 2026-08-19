@@ -78,6 +78,7 @@ export async function createLiveSession(input: {
   const now = new Date();
   const nowIso = now.toISOString();
   const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
+  const sessionMode = input.streamArn ? "storage" : "p2p";
 
   const [existingDevice] = await db
     .select({ id: devices.id, channelArn: devices.kvsChannelArn })
@@ -123,25 +124,30 @@ export async function createLiveSession(input: {
         d1
           .prepare(
             `UPDATE recording_sessions SET ended_at = ?
-             WHERE ended_at IS NULL AND session_id IN (
-               SELECT id FROM stream_sessions WHERE device_id = ? AND status = 'active'
+           WHERE ended_at IS NULL AND session_id IN (
+               SELECT id FROM stream_sessions
+               WHERE device_id = ? AND mode = ? AND status = 'active'
              )`,
           )
-          .bind(nowIso, input.deviceId),
+          .bind(nowIso, input.deviceId, sessionMode),
         d1
           .prepare(
-            "UPDATE stream_sessions SET status = 'expired', ended_at = ? WHERE device_id = ? AND status = 'active'",
+            `UPDATE stream_sessions SET status = 'expired', ended_at = ?
+             WHERE device_id = ? AND mode = ? AND status = 'active'`,
           )
-          .bind(nowIso, input.deviceId),
+          .bind(nowIso, input.deviceId, sessionMode),
         d1
           .prepare(
-            "INSERT INTO stream_sessions (id, room_code, device_id, started_by, status, started_at, expires_at) VALUES (?, ?, ?, ?, 'active', ?, ?)",
+            `INSERT INTO stream_sessions
+             (id, room_code, device_id, started_by, mode, status, started_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`,
           )
           .bind(
             sessionId,
             roomCode,
             input.deviceId,
             input.ownerEmail,
+            sessionMode,
             nowIso,
             expiresAt,
           ),

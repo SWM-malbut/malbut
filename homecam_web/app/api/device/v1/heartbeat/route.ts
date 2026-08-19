@@ -35,6 +35,8 @@ export async function POST(request: Request) {
         imageTopic: reportedState.imageTopic,
         streamMode: reportedState.streamMode,
         mediaHealthy: reportedState.mediaHealthy,
+        p2pHealthy: reportedState.p2pHealthy,
+        storageHealthy: reportedState.storageHealthy,
         detectorHealthy: reportedState.detectorHealthy,
         lastSeenAt: reportedState.lastSeenAt,
         updatedAt: reportedState.updatedAt,
@@ -48,6 +50,26 @@ export async function POST(request: Request) {
             expiresAt: activeSession.expiresAt,
           }
         : null,
+      activeSessions: {
+        p2p: heartbeat.activeSessions.p2p
+          ? {
+              id: heartbeat.activeSessions.p2p.id,
+              roomCode: heartbeat.activeSessions.p2p.roomCode,
+              mode: "p2p",
+              startedAt: heartbeat.activeSessions.p2p.startedAt,
+              expiresAt: heartbeat.activeSessions.p2p.expiresAt,
+            }
+          : null,
+        storage: heartbeat.activeSessions.storage
+          ? {
+              id: heartbeat.activeSessions.storage.id,
+              roomCode: heartbeat.activeSessions.storage.roomCode,
+              mode: "storage",
+              startedAt: heartbeat.activeSessions.storage.startedAt,
+              expiresAt: heartbeat.activeSessions.storage.expiresAt,
+            }
+          : null,
+      },
     },
     200,
   );
@@ -60,6 +82,8 @@ function parseHeartbeat(value: Record<string, unknown> | null) {
     "imageTopic",
     "streamMode",
     "mediaHealthy",
+    "p2pHealthy",
+    "storageHealthy",
     "detectorHealthy",
   ];
   if (Object.keys(value).some((key) => !allowed.includes(key))) return null;
@@ -91,6 +115,18 @@ function parseHeartbeat(value: Record<string, unknown> | null) {
     return null;
   }
   if (
+    value.p2pHealthy !== undefined &&
+    typeof value.p2pHealthy !== "boolean"
+  ) {
+    return null;
+  }
+  if (
+    value.storageHealthy !== undefined &&
+    typeof value.storageHealthy !== "boolean"
+  ) {
+    return null;
+  }
+  if (
     value.detectorHealthy !== undefined &&
     typeof value.detectorHealthy !== "boolean"
   ) {
@@ -101,6 +137,8 @@ function parseHeartbeat(value: Record<string, unknown> | null) {
     imageTopic: value.imageTopic as string | null | undefined,
     streamMode: value.streamMode as HomecamStreamMode | undefined,
     mediaHealthy: value.mediaHealthy as boolean | undefined,
+    p2pHealthy: value.p2pHealthy as boolean | undefined,
+    storageHealthy: value.storageHealthy as boolean | undefined,
     detectorHealthy: value.detectorHealthy as boolean | undefined,
   };
 }

@@ -37,7 +37,7 @@ test("settings, event pagination, idempotency, push, and viewer grants stay hard
   );
   assert.match(
     database,
-    /AND NOT \(\? = 1 AND COALESCE\(\?, camera_enabled\) = 0\)/,
+    /AND NOT \(COALESCE\(\?, 0\) = 1 AND COALESCE\(\?, camera_enabled\) = 0\)/,
   );
   assert.match(
     database,
@@ -62,7 +62,8 @@ test("settings, event pagination, idempotency, push, and viewer grants stay hard
     /targets\.slice\(offset, offset \+ PUSH_BROKER_BATCH_SIZE\)/,
   );
   assert.match(liveRoute, /homecam-viewer-credentials/);
-  assert.match(liveRoute, /homecam-storage-join/);
+  assert.doesNotMatch(liveRoute, /homecam-storage-join/);
+  assert.match(liveRoute, /getActiveMediaSession\(deviceId, "p2p"\)/);
   assert.ok(
     liveRoute.lastIndexOf("userCanViewDevice(deviceId, userEmail)") >
       liveRoute.indexOf("requestBrokerSession"),
@@ -103,4 +104,40 @@ test("the container binds Next to loopback-safe all interfaces on Fargate", asyn
     3,
     "all image stages must use the pinned multi-architecture Node base",
   );
+});
+
+test("bounded event clips keep privacy deletion and direct destination navigation explicit", async () => {
+  const [dashboard, playbackRoute, clipRoute, deletionRoute, migration, broker, stack] =
+    await Promise.all([
+      readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
+      readFile(
+        new URL(
+          "../app/api/devices/[deviceId]/events/[eventId]/playback/route.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL("../app/api/device/v1/event-clips/[phase]/route.ts", import.meta.url),
+        "utf8",
+      ),
+      readFile(
+        new URL("../app/api/devices/[deviceId]/events/[eventId]/route.ts", import.meta.url),
+        "utf8",
+      ),
+      readFile(new URL("../db/migrations/0005_event_clips.sql", import.meta.url), "utf8"),
+      readFile(new URL("../infra/aws/kvs-broker/index.mjs", import.meta.url), "utf8"),
+      readFile(new URL("../infra/cdk/lib/homecam-dev-stack.ts", import.meta.url), "utf8"),
+    ]);
+  assert.match(dashboard, /onClick=\{\(\) => onOpenMap\("navigate"\)\}>목적지 선택/);
+  assert.match(dashboard, /목록에서 삭제/);
+  assert.match(dashboard, /response\.status !== 425/);
+  assert.match(dashboard, /homecam-event-delete-button/);
+  assert.match(playbackRoute, /"retry-after": "2"/);
+  assert.match(deletionRoute, /rawMediaDeletion:\s*"retention"/);
+  assert.match(clipRoute, /Idempotency-Key 헤더가 본문과 일치/);
+  assert.match(migration, /clip_state IN \('detected', 'recording', 'ready', 'incomplete'/);
+  assert.match(broker, /new ListFragmentsCommand/);
+  assert.match(broker, /FragmentSelectorType:\s*"SERVER_TIMESTAMP"/);
+  assert.match(stack, /"kinesisvideo:ListFragments"/);
 });

@@ -778,6 +778,7 @@ function Viewer({
   embedded = false,
   embeddedEventCount = 0,
   onOpenEmbeddedEvents,
+  onMediaReadyChange,
 }: {
   roomCode: string;
   viewerPassword: string;
@@ -787,6 +788,7 @@ function Viewer({
   embedded?: boolean;
   embeddedEventCount?: number;
   onOpenEmbeddedEvents?: () => void;
+  onMediaReadyChange?: (ready: boolean) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const microphoneRef = useRef<MediaStream | null>(null);
@@ -821,17 +823,27 @@ function Viewer({
   const [speakerMuted, setSpeakerMuted] = useState(true);
   const [soundBlocked, setSoundBlocked] = useState(false);
   const [viewerClockMs, setViewerClockMs] = useState(() => Date.now());
-  const expectedStorageMode =
-    deviceId && typeof device?.activeSession?.storageMode === "boolean"
+  const expectedStorageMode = deviceId
+    ? false
+    : typeof device?.activeSession?.storageMode === "boolean"
       ? device.activeSession.storageMode
       : null;
   const [storageMode, setStorageMode] = useState<boolean | null>(
     expectedStorageMode,
   );
+  const recordingEnabled = deviceId
+    ? Boolean(device?.monitoringEnabled)
+    : storageMode !== false;
 
   useEffect(() => {
     viewerStateRef.current = state;
-  }, [state]);
+    onMediaReadyChange?.(state === "live");
+  }, [onMediaReadyChange, state]);
+
+  useEffect(
+    () => () => onMediaReadyChange?.(false),
+    [onMediaReadyChange],
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => setViewerClockMs(Date.now()), 1_000);
@@ -1014,8 +1026,7 @@ function Viewer({
       track.enabled = false;
     });
     // P2P reconnects use a fresh identity so the master cannot confuse the
-    // new offer with a retiring peer. AWS Storage Session reconnects must
-    // retain the same client ID while the service keeps its viewer quota.
+    // new offer with a retiring peer. Storage is a separate device transport.
     if (storageModeRef.current !== true || !viewerClientIdRef.current) {
       viewerClientIdRef.current = `petcam-${crypto.randomUUID()}`;
     }
@@ -1148,8 +1159,9 @@ function Viewer({
         !videoElement ||
         !observedVideoTrack ||
         observedVideoTrack.readyState !== "live" ||
-        observedVideoTrack.muted ||
-        videoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+        videoElement.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+        videoElement.videoWidth <= 0 ||
+        videoElement.videoHeight <= 0
       ) {
         return;
       }
@@ -1173,7 +1185,17 @@ function Viewer({
         }, AUTHORIZED_P2P_STABLE_LIVE_MS);
       }
     };
-    videoElement?.addEventListener("loadeddata", markVideoReady);
+    const mediaReadyEvents = [
+      "loadedmetadata",
+      "loadeddata",
+      "canplay",
+      "playing",
+      "timeupdate",
+      "resize",
+    ] as const;
+    mediaReadyEvents.forEach((eventName) =>
+      videoElement?.addEventListener(eventName, markVideoReady),
+    );
 
     if (deviceId && expectedStorageMode === false) {
       setupTimer = window.setTimeout(() => {
@@ -1200,13 +1222,16 @@ function Viewer({
             if (!active || !videoElement) return;
             remoteStream = stream;
             videoElement.srcObject = stream;
-            void videoElement.play().catch(async () => {
+            void videoElement.play().then(markVideoReady).catch(async () => {
               if (!active) return;
               videoElement.muted = true;
               setSpeakerMuted(true);
               try {
                 await videoElement.play();
-                if (active) setSoundBlocked(false);
+                if (active) {
+                  setSoundBlocked(false);
+                  markVideoReady();
+                }
               } catch {
                 if (active) setSoundBlocked(true);
               }
@@ -1413,7 +1438,9 @@ function Viewer({
       localConnection?.close();
       if (connectionRef.current === localConnection) connectionRef.current = null;
       if (videoElement) {
-        videoElement.removeEventListener("loadeddata", markVideoReady);
+        mediaReadyEvents.forEach((eventName) =>
+          videoElement.removeEventListener(eventName, markVideoReady),
+        );
         videoElement.srcObject = null;
       }
       remoteStream?.getTracks().forEach((track) => track.stop());
@@ -1695,7 +1722,7 @@ function Viewer({
               )}
 
               <div className="homecam-video-bottom">
-                <span>{storageMode === false ? "녹화 꺼짐" : "7일 보관"}</span>
+                <span>{recordingEnabled ? "이벤트 영상 저장" : "저장 안 함"}</span>
                 <span>허용된 가족 계정만 볼 수 있어요</span>
               </div>
             </div>
@@ -1711,9 +1738,9 @@ function Viewer({
               <div className="homecam-stream-privacy">
                 <ShieldCheck size={17} weight="regular" aria-hidden="true" />
                 <span>
-                  {storageMode === false
-                    ? "P2P 실시간 영상은 저장하지 않습니다."
-                    : "영상과 양방향 음성은 7일간 저장되며 안전하게 보관됩니다."}
+                  {recordingEnabled
+                    ? "실시간 보기는 P2P로 연결되고 이벤트 영상은 별도로 저장됩니다."
+                    : "P2P 실시간 영상은 저장하지 않습니다."}
                 </span>
               </div>
               {embedded ? (
@@ -1740,7 +1767,11 @@ function Viewer({
                 <button
                   type="button"
                   className={`homecam-stream-control-button ${talking ? "is-talking" : ""}`}
-                  disabled={microphonePending || talkLeasePending || state !== "live"}
+                  disabled={
+                    microphonePending ||
+                    talkLeasePending ||
+                    state !== "live"
+                  }
                   onClick={() => {
                     if (!microphoneAvailable) void prepareMicrophone();
                   }}
@@ -1845,7 +1876,7 @@ function Viewer({
               </span>
               <div>
                 <span>영상 보관</span>
-                <strong>{storageMode === false ? "저장 안 함" : "7일 보관"}</strong>
+                <strong>{recordingEnabled ? "이벤트만 저장" : "저장 안 함"}</strong>
               </div>
             </article>
             <article className="homecam-summary-card">
@@ -1984,6 +2015,7 @@ export function HomecamApp() {
   const [viewerDeviceId, setViewerDeviceId] = useState("");
   const [viewerDevice, setViewerDevice] = useState<HomecamDevice | null>(null);
   const [inlineViewerDevice, setInlineViewerDevice] = useState<HomecamDevice | null>(null);
+  const [inlineViewerReady, setInlineViewerReady] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
   const [landingError, setLandingError] = useState("");
 
@@ -2010,6 +2042,7 @@ export function HomecamApp() {
     setViewerDeviceId("");
     setViewerDevice(null);
     setInlineViewerDevice(null);
+    setInlineViewerReady(false);
     setLandingError("");
   };
 
@@ -2057,6 +2090,7 @@ export function HomecamApp() {
 
   const openRegisteredDevice = async (device: HomecamDevice) => {
     setInlineViewerDevice(null);
+    setInlineViewerReady(false);
     await Promise.resolve();
     setInlineViewerDevice(device);
   };
@@ -2069,16 +2103,21 @@ export function HomecamApp() {
       onJoinLegacy={joinLegacyBroadcast}
       creatingLegacyBroadcast={creatingSession}
       externalError={landingError}
-      liveViewer={inlineViewerDevice ? ({ eventCount, openEvents }) => (
+      liveMediaReady={inlineViewerReady}
+      liveViewer={inlineViewerDevice ? ({ eventCount, openEvents, device }) => (
         <Viewer
           roomCode={inlineViewerDevice.activeSession?.roomCode ?? ""}
           viewerPassword=""
           deviceId={inlineViewerDevice.id}
-          device={inlineViewerDevice}
+          device={device ?? inlineViewerDevice}
           embedded
           embeddedEventCount={eventCount}
           onOpenEmbeddedEvents={openEvents}
-          onExit={() => setInlineViewerDevice(null)}
+          onMediaReadyChange={setInlineViewerReady}
+          onExit={() => {
+            setInlineViewerReady(false);
+            setInlineViewerDevice(null);
+          }}
         />
       ) : undefined}
       legacyArchive={

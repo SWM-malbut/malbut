@@ -159,7 +159,7 @@ TEST(HeartbeatContract, UsesCamelCaseAndParsesDesiredState)
   const auto json = heartbeat_to_json(status);
   EXPECT_EQ(
     json,
-    R"({"sourceProfile":"sim","imageTopic":"/camera","streamMode":"idle","mediaHealthy":false,"detectorHealthy":false})");
+    R"({"sourceProfile":"sim","imageTopic":"/camera","streamMode":"idle","mediaHealthy":false,"p2pHealthy":false,"storageHealthy":false,"detectorHealthy":false})");
 
   homecam_media_agent::DesiredDeviceSettings desired;
   std::string error;

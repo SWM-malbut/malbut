@@ -44,13 +44,13 @@ test("an idle heartbeat does not close a provisioned device session", async () =
   assert.match(sessionRoute, /desiredState:\s*desiredState\(confirmedState\)/);
   assert.match(
     sessionRoute,
-    /getActiveMediaSession\(device\.deviceId\)/,
+    /getActiveMediaSession\(device\.deviceId, mode\)/,
   );
   assert.match(sessionRoute, /confirmedSession\?\.id !== session\.id/);
-  assert.match(dashboard, /selectedDevice\?\.online\s*&&\s*selectedDevice\.mediaHealthy/);
+  assert.match(dashboard, /const displayedMediaReady = liveViewer[\s\S]*selectedDevice\?\.online && selectedDevice\.p2pHealthy/);
   assert.match(
     database,
-    /WHERE device_id = \? AND active_session_id = \?/,
+    /stream_sessions\.id = COALESCE\(\?, device_state\.active_session_id\)/,
   );
   assert.match(database, /expectedSessionId\?: string/);
   assert.match(database, /recording_sessions\.kvs_channel_arn/);
@@ -58,19 +58,88 @@ test("an idle heartbeat does not close a provisioned device session", async () =
   assert.match(database, /"channel_changed"/);
   assert.match(
     database,
-    /UPDATE stream_sessions SET status = 'ended', ended_at = \?[\s\S]*WHERE device_id = \? AND status = 'active'/,
+    /UPDATE stream_sessions SET status = 'ended', ended_at = \?[\s\S]*WHERE device_id = \? AND mode = \? AND status = 'active'/,
   );
   assert.match(
     database,
-    /SET active_stream_mode = \?, active_session_id = \?, media_healthy = 0/,
+    /SET p2p_session_id = CASE WHEN \? = 'p2p'/,
   );
   assert.match(
     database,
-    /monitoring_enabled = 1[\s\S]*camera_enabled = 1[\s\S]*media_healthy = 1[\s\S]*active_stream_mode = 'storage'[\s\S]*active_session_id = \?/,
+    /monitoring_enabled = 1[\s\S]*camera_enabled = 1[\s\S]*storage_healthy = 1[\s\S]*storage_session_id = \?/,
   );
+  assert.match(
+    liveRoute,
+    /getActiveMediaSession\(deviceId, "p2p"\)/,
+  );
+  assert.doesNotMatch(liveRoute, /requestBrokerJoinStorage/);
   assert.match(database, /SET started_at = COALESCE\(started_at, \?\)/);
   assert.match(database, /EVENT_OUTSIDE_RECORDING/);
   assert.doesNotMatch(liveRoute, /activeSession,\s*\n/);
   assert.doesNotMatch(liveRoute, /activeSession\.channelArn/);
   assert.doesNotMatch(liveRoute, /activeSession\.streamArn/);
+});
+
+test("P2P and Storage keep independent sessions, senders, and SDK lifetime", async () => {
+  const [
+    mediaAgent,
+    kvsTransport,
+    mediaCmake,
+    sessionClient,
+    viewer,
+    migration,
+  ] = await Promise.all([
+    readFile(
+      new URL(
+        "../../homecam_agent/homecam_media_agent/src/media_agent_node.cpp",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL(
+        "../../homecam_agent/homecam_media_agent/src/kvs_transport.cpp",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL(
+        "../../homecam_agent/homecam_media_agent/CMakeLists.txt",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL(
+        "../../homecam_agent/homecam_media_agent/src/session_client.cpp",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL("../app/components/homecam-app.tsx", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../db/migrations/0006_dual_media_sessions.sql", import.meta.url),
+      "utf8",
+    ),
+  ]);
+
+  assert.match(mediaAgent, /transport_ = make_kvs_transport\(\)/);
+  assert.match(mediaAgent, /storage_transport_ = make_kvs_transport\(\)/);
+  assert.match(mediaAgent, /p2p_sender_ = std::make_unique<TransportSender>/);
+  assert.match(mediaAgent, /storage_sender_ = std::make_unique<TransportSender>/);
+  assert.match(mediaAgent, /const std::string wanted_mode = "p2p"/);
+  assert.match(mediaAgent, /SessionMode::kStorage/);
+  assert.match(kvsTransport, /process_kvs_runtime_references/);
+  assert.match(mediaCmake, /deinitKvsWebRtc=homecam_defer_deinit_kvs_webrtc/);
+  assert.match(
+    sessionClient,
+    /mode == SessionMode::kStorage \? "storage" : "p2p"/,
+  );
+  assert.doesNotMatch(viewer, /connectDeviceLiveHls/);
+  assert.doesNotMatch(viewer, /storageViewerTransport/);
+  assert.match(migration, /stream_sessions_device_active_mode_idx/);
 });

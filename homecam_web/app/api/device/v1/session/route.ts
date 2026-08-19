@@ -25,16 +25,27 @@ export async function POST(request: Request) {
     !payload ||
     typeof payload !== "object" ||
     Array.isArray(payload) ||
-    Object.keys(payload).length > 0
+    Object.keys(payload).some((key) => key !== "mode") ||
+    ("mode" in payload && payload.mode !== "p2p" && payload.mode !== "storage")
   ) {
-    return noStore({ error: "세션 요청 본문은 비어 있어야 합니다." }, 400);
+    return noStore({ error: "세션 모드는 p2p 또는 storage여야 합니다." }, 400);
   }
 
   const state = await getDeviceSettings(device.deviceId);
   if (!state.cameraEnabled) {
     return noStore({ error: "카메라가 비활성화되어 있습니다." }, 409);
   }
-  const mode = state.monitoringEnabled ? "storage" : "p2p";
+  const requestedMode = "mode" in payload ? payload.mode : undefined;
+  const mode =
+    requestedMode === "p2p" || requestedMode === "storage"
+      ? requestedMode
+      : sessionMode(state);
+  if (!sessionModeAllowed(state, mode)) {
+    return noStore(
+      { error: mode === "storage" ? "영상 저장이 비활성화되어 있습니다." : "카메라가 비활성화되어 있습니다." },
+      409,
+    );
+  }
   const runtime = getRuntimeEnvironment() as DeviceKvsEnvironment;
   let resources;
   try {
@@ -68,7 +79,7 @@ export async function POST(request: Request) {
     const refreshedState = await getDeviceSettings(device.deviceId);
     if (
       !refreshedState.cameraEnabled ||
-      sessionMode(refreshedState) !== mode
+      !sessionModeAllowed(refreshedState, mode)
     ) {
       return noStore(
         { error: "세션을 준비하는 동안 홈캠 설정이 변경되었습니다." },
@@ -82,10 +93,10 @@ export async function POST(request: Request) {
       streamArn: kvs.streamArn ?? undefined,
     });
     const confirmedState = await getDeviceSettings(device.deviceId);
-    const confirmedSession = await getActiveMediaSession(device.deviceId);
+    const confirmedSession = await getActiveMediaSession(device.deviceId, mode);
     if (
       !confirmedState.cameraEnabled ||
-      sessionMode(confirmedState) !== mode ||
+      !sessionModeAllowed(confirmedState, mode) ||
       confirmedSession?.id !== session.id
     ) {
       await stopDeviceMediaSession(
@@ -160,4 +171,11 @@ function desiredState(state: {
 
 function sessionMode(state: { monitoringEnabled: boolean }) {
   return state.monitoringEnabled ? "storage" : "p2p";
+}
+
+function sessionModeAllowed(
+  state: { cameraEnabled: boolean; monitoringEnabled: boolean },
+  mode: "p2p" | "storage",
+) {
+  return state.cameraEnabled && (mode === "p2p" || state.monitoringEnabled);
 }

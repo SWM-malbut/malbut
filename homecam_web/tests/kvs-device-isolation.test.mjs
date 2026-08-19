@@ -171,6 +171,13 @@ test("all broker actions carry deviceId and validate the selected resource", asy
     ),
     "utf8",
   );
+  const livePlaybackRoute = await readFile(
+    new URL(
+      "../app/api/devices/[deviceId]/live-playback/route.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
   const lambda = await readFile(
     new URL("../infra/aws/kvs-broker/index.mjs", import.meta.url),
     "utf8",
@@ -189,10 +196,18 @@ test("all broker actions carry deviceId and validate the selected resource", asy
     brokerClient,
     /action:\s*"HLS_PLAYBACK"[\s\S]*deviceId:\s*input\.deviceId/,
   );
+  assert.match(
+    brokerClient,
+    /action:\s*"LIVE_PLAYBACK"[\s\S]*deviceId:\s*input\.deviceId/,
+  );
   assert.match(deviceRoute, /resolveDeviceKvsResources\(runtime,\s*device\.deviceId\)/);
   assert.match(viewerRoute, /requestBrokerSession\(\{[\s\S]*deviceId,/);
-  assert.match(viewerRoute, /requestBrokerJoinStorage\(\{[\s\S]*deviceId,/);
+  assert.doesNotMatch(viewerRoute, /requestBrokerJoinStorage/);
+  assert.match(viewerRoute, /channelMode:\s*mode/);
   assert.match(playbackRoute, /deviceId:\s*recording\.deviceId/);
+  assert.match(livePlaybackRoute, /userCanViewDevice\(deviceId,\s*userEmail\)/);
+  assert.match(livePlaybackRoute, /resolveDeviceKvsResources\(runtime,\s*deviceId\)/);
+  assert.match(livePlaybackRoute, /requestBrokerLivePlayback\(\{[\s\S]*deviceId,/);
   assert.match(lambda, /resolveDeviceResources\(\s*deviceResourceConfiguration,/);
   assert.match(lambda, /input\.streamArn !== resources\.streamArn/);
   assert.match(lambda, /selectChannelArn\(resources,\s*input\.channelMode\)/);

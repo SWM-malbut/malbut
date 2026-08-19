@@ -5751,6 +5751,7 @@ a:focus-visible {
 .homecam-dashboard-shell .robot-map-summary-grid strong { font-size: 20px; }
 
 .homecam-dashboard-shell .robot-map-progress {
+  flex: 1;
   height: 9px;
   overflow: hidden;
   border-radius: 999px;
@@ -5758,7 +5759,25 @@ a:focus-visible {
 }
 
 .homecam-dashboard-shell .robot-map-summary.is-driving .robot-map-progress { background: rgb(251 248 243 / .2); }
-.homecam-dashboard-shell .robot-map-progress i { display: block; height: 100%; border-radius: inherit; background: #e07a28; }
+.homecam-dashboard-shell .robot-map-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.homecam-dashboard-shell .robot-map-progress-row > strong {
+  min-width: 38px;
+  color: #8fd3dd;
+  font-size: 13px;
+  text-align: right;
+}
+.homecam-dashboard-shell .robot-map-summary.is-succeeded .robot-map-progress-row > strong { color: var(--homecam-teal); }
+.homecam-dashboard-shell .robot-map-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #e07a28;
+  transition: width 950ms linear;
+}
 
 .homecam-dashboard-shell .robot-map-panel-card p {
   margin: 0;
@@ -6888,6 +6907,22 @@ a:focus-visible {
 
 .homecam-dashboard-shell .homecam-event-detail-actions > button:disabled { cursor: not-allowed; opacity: .42; }
 
+.homecam-dashboard-shell .homecam-event-detail-actions > .homecam-event-delete-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, #c94a3a 42%, transparent);
+  color: #b5372a;
+  background: color-mix(in srgb, #fff7f4 92%, var(--homecam-paper));
+  white-space: nowrap;
+}
+
+.homecam-dashboard-shell .homecam-event-detail-actions > .homecam-event-delete-button:hover:not(:disabled) {
+  border-color: #b5372a;
+  background: #fff0eb;
+}
+
 @media (max-width: 1100px) {
   .homecam-dashboard-shell .homecam-events-workspace { grid-template-columns: 380px minmax(0, 1fr); gap: 18px; }
   .homecam-dashboard-shell .homecam-event-toolbar > span { display: none; }
@@ -6987,6 +7022,58 @@ a:focus-visible {
 
 .homecam-dashboard-shell.tab-live .homecam-device-bar-meta {
   color: rgb(251 248 243 / .65);
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: rgb(251 248 243 / .65);
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span::before {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #8c8378;
+  content: "";
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span.is-ready {
+  color: #78d6a0;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span.is-ready::before {
+  background: #78d6a0;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span.is-pending {
+  color: #efbb70;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span.is-pending::before {
+  background: #efbb70;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span.is-error {
+  color: #ff9588;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > span.is-error::before {
+  background: #ff7064;
+}
+
+.homecam-dashboard-shell.tab-live .homecam-live-channel-summary > b {
+  color: rgb(251 248 243 / .36);
+  font-weight: 500;
 }
 
 .homecam-dashboard-shell.tab-live .homecam-live-view {
@@ -7117,6 +7204,8 @@ a:focus-visible {
 }
 
 .homecam-dashboard-shell.tab-live .homecam-live-state-list i.is-good { background: #78d6a0; }
+.homecam-dashboard-shell.tab-live .homecam-live-state-list i.is-pending { background: #efbb70; }
+.homecam-dashboard-shell.tab-live .homecam-live-state-list i.is-error { background: #ff7064; }
 .homecam-dashboard-shell.tab-live .homecam-live-state-list span { min-width: 0; }
 .homecam-dashboard-shell.tab-live .homecam-live-state-list strong {
   color: rgb(251 248 243 / .62);
@@ -7133,7 +7222,7 @@ a:focus-visible {
 
 .homecam-dashboard-shell.tab-live .homecam-live-side-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 10px;
   margin-top: auto;
 }
@@ -7153,12 +7242,6 @@ a:focus-visible {
   font-size: 15px;
   font-weight: 700;
   cursor: pointer;
-}
-
-.homecam-dashboard-shell.tab-live .homecam-live-side-actions button:last-child {
-  color: #a6301f;
-  border-color: transparent;
-  background: #fdf3f1;
 }
 
 .homecam-dashboard-shell.tab-live .homecam-live-side-actions button:disabled {
@@ -7389,6 +7472,56 @@ a:focus-visible {
 .homecam-dashboard-shell.theme-light.tab-live .homecam-device-selector select,
 .homecam-dashboard-shell.theme-light.tab-live .homecam-device-bar-meta {
   color: var(--homecam-muted);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-connection-pill.is-online {
+  color: #1f6641;
+  border-color: #bedcc9;
+  background: #e6f2ea;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-connection-pill.is-online i {
+  background: var(--homecam-success);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-ready {
+  color: #1f6641;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-ready::before {
+  background: var(--homecam-success);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-pending {
+  color: #a0521a;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-pending::before {
+  background: #d98232;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-error {
+  color: #ad3026;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-error::before {
+  background: #d14b40;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > b {
+  color: #b0aaa0;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-state-list i.is-good {
+  background: var(--homecam-success);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-state-list i.is-pending {
+  background: #d98232;
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-state-list i.is-error {
+  background: #d14b40;
 }
 
 .homecam-dashboard-shell.theme-light.tab-live .homecam-live-state-card,
@@ -7755,6 +7888,12 @@ a:focus-visible {
   color: #fbf8f3;
   border-color: #14606e;
   background: #0b3c45;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-detail-actions > .homecam-event-delete-button {
+  color: #ffaaa0;
+  border-color: #8e4139;
+  background: #422b28;
 }
 
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-row.is-focused {

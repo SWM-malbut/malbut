@@ -128,6 +128,20 @@ test("the cloud robot marker interpolates one-second pose updates while driving"
   assert.match(styles, /\.robot-map-marker\.is-driving\s*\{[^}]*transition-timing-function:\s*linear/s);
 });
 
+test("navigation progress survives missing cloud ratios and remains visible at arrival", async () => {
+  const [panel, styles] = await Promise.all([
+    readFile(new URL("../app/components/robot-map-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(panel, /function navigationProgressPercent/);
+  assert.match(panel, /1 - Math\.max\(0, remaining\) \/ pathLength/);
+  assert.match(panel, /navigationSucceeded \? 100 : navigationProgressPercent\(navigation\)/);
+  assert.match(panel, /선택한 목적지에 도착했어요/);
+  assert.match(panel, /aria-valuenow=\{navigationProgress\}/);
+  assert.match(styles, /\.robot-map-progress i\s*\{[^}]*transition:\s*width 950ms linear/s);
+});
+
 test("the home map summary reuses rooms, zones, and the live localized robot pose", async () => {
   const [dashboard, panel, styles] = await Promise.all([
     readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),

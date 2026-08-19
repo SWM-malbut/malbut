@@ -25,6 +25,12 @@ export type KvsBrokerPlayback = {
   streamArn: string;
 };
 
+export type KvsBrokerLivePlayback = KvsBrokerPlayback;
+
+export type KvsBrokerEventPlayback = KvsBrokerPlayback & {
+  alignedStartAt: string;
+};
+
 export type KvsBrokerDeviceCredentials = {
   role: "MASTER";
   region: string;
@@ -146,6 +152,52 @@ export async function requestBrokerPlayback(input: {
     throw new Error("KVS_BROKER_RESPONSE_INVALID");
   }
   return payload as KvsBrokerPlayback;
+}
+
+export async function requestBrokerEventPlayback(input: {
+  deviceId: string;
+  streamArn: string;
+  startAt: string;
+  endAt: string;
+  expiresSeconds: number;
+}): Promise<KvsBrokerEventPlayback> {
+  const payload = (await requestBroker({
+    action: "EVENT_PLAYBACK",
+    ...input,
+  })) as Partial<KvsBrokerEventPlayback>;
+  if (
+    typeof payload.playbackUrl !== "string" ||
+    !payload.playbackUrl.startsWith("https://") ||
+    typeof payload.expiresAt !== "string" ||
+    payload.streamArn !== input.streamArn ||
+    typeof payload.alignedStartAt !== "string" ||
+    !Number.isFinite(Date.parse(payload.alignedStartAt))
+  ) {
+    throw new Error("KVS_BROKER_RESPONSE_INVALID");
+  }
+  return payload as KvsBrokerEventPlayback;
+}
+
+export async function requestBrokerLivePlayback(input: {
+  deviceId: string;
+  streamArn: string;
+  expiresSeconds: number;
+}): Promise<KvsBrokerLivePlayback> {
+  const payload = (await requestBroker({
+    action: "LIVE_PLAYBACK",
+    deviceId: input.deviceId,
+    streamArn: input.streamArn,
+    expiresSeconds: input.expiresSeconds,
+  })) as Partial<KvsBrokerLivePlayback>;
+  if (
+    typeof payload.playbackUrl !== "string" ||
+    !payload.playbackUrl.startsWith("https://") ||
+    typeof payload.expiresAt !== "string" ||
+    payload.streamArn !== input.streamArn
+  ) {
+    throw new Error("KVS_BROKER_RESPONSE_INVALID");
+  }
+  return payload as KvsBrokerLivePlayback;
 }
 
 async function requestBroker(input: object) {
