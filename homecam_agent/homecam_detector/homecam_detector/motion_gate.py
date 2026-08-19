@@ -7,14 +7,23 @@ from typing import Optional
 
 @dataclass
 class MotionGate:
-    """Allow generic motion only after fresh odometry reports a stable stop."""
+    """Allow generic motion only after navigation and odometry are stable."""
 
-    stationary_after_sec: float = 1.0
+    stationary_after_sec: float = 2.0
     odom_timeout_sec: float = 2.0
     linear_threshold: float = 0.03
     angular_threshold: float = 0.05
     last_odom_at: Optional[float] = None
     stationary_since: Optional[float] = None
+    navigation_active: bool = False
+
+    def set_navigation_active(self, active: bool) -> bool:
+        """Apply Nav2 state and require a new stable period after every run."""
+        changed = self.navigation_active != active
+        self.navigation_active = active
+        if active or changed:
+            self.stationary_since = None
+        return changed
 
     def update(self, linear_speed: float, angular_speed: float, now: float) -> None:
         """Record a read-only odometry sample."""
@@ -33,6 +42,8 @@ class MotionGate:
 
     def generic_motion_allowed(self, now: float) -> bool:
         """Return false for absent, stale, moving, or not-yet-stable odometry."""
+        if self.navigation_active:
+            return False
         if self.last_odom_at is None or self.stationary_since is None:
             return False
         if now - self.last_odom_at > self.odom_timeout_sec:

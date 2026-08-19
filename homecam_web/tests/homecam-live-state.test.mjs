@@ -33,11 +33,18 @@ test("live dashboard uses rendered media state and exposes one camera control", 
   );
   assert.match(dashboard, /storageReady[\s\S]*\? "is-good"[\s\S]*storageConnecting[\s\S]*\? "is-pending"[\s\S]*storageError[\s\S]*\? "is-error"/);
   assert.match(dashboard, /"저장 오류"/);
+  assert.match(dashboard, /const devicePollIntervalMs = Boolean\(/);
+  assert.match(dashboard, /\? 1_000 : 15_000/);
   assert.match(
     dashboard,
     /const detectorReady = Boolean\([\s\S]*monitoringEnabled[\s\S]*detectorHealthy/,
   );
-  assert.match(dashboard, /<span>이벤트 감지<\/span>[\s\S]*"확인 필요"/);
+  assert.match(dashboard, /<span>이벤트 감지<\/span>[\s\S]*"움직임만"/);
+  assert.match(dashboard, /AI가 사람을 인식한 이벤트/);
+  assert.match(
+    dashboard,
+    /말벗이 정지한 상태에서 확인된 일반 화면 변화/,
+  );
   assert.match(dashboard, /requestedView === "live"/);
   assert.match(dashboard, /url\.searchParams\.set\("view", tab\)/);
   assert.match(dashboard, /url\.searchParams\.set\("mapMode", mapEntryMode\)/);

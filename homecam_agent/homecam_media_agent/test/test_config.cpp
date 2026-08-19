@@ -22,7 +22,7 @@ using homecam_media_agent::parse_desired_settings;
 TEST(MediaConfig, AcceptsSafeSimulationDefaults)
 {
   MediaConfig config;
-  EXPECT_EQ(config.heartbeat_interval_ms, 2000);
+  EXPECT_EQ(config.heartbeat_interval_ms, 1000);
   config.device_id = "gazebo-poc";
   config.backend_url = "https://homecam.example.test";
   EXPECT_TRUE(validate_config(config).empty());

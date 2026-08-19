@@ -40,3 +40,21 @@ def test_non_finite_odometry_is_never_treated_as_stationary() -> None:
     assert not gate.generic_motion_allowed(2.1)
     gate.update(0.0, float("inf"), 2.2)
     assert not gate.generic_motion_allowed(2.2)
+
+
+def test_navigation_suppresses_motion_and_requires_post_run_stabilization() -> None:
+    gate = MotionGate(stationary_after_sec=2.0, odom_timeout_sec=3.0)
+    gate.update(0.0, 0.0, 1.0)
+    gate.update(0.0, 0.0, 3.0)
+    assert gate.generic_motion_allowed(3.0)
+
+    assert gate.set_navigation_active(True)
+    gate.update(0.0, 0.0, 4.0)
+    assert not gate.generic_motion_allowed(4.0)
+    assert not gate.set_navigation_active(True)
+
+    assert gate.set_navigation_active(False)
+    gate.update(0.0, 0.0, 5.1)
+    assert not gate.generic_motion_allowed(7.0)
+    gate.update(0.0, 0.0, 7.1)
+    assert gate.generic_motion_allowed(7.1)

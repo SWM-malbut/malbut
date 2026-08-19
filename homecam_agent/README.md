@@ -37,17 +37,36 @@ fail-closed로 막고 로컬 파이프라인·감지 개발만 허용한다. 실
 - `homecam_detector`: Python, OpenCV DNN YOLO, frame motion, odometry gate,
   이벤트 중복 제거 및 HTTPS 전달
 
-YOLO 모델 파일은 저장소에 포함하지 않는다. PoC 기본 예시는 Ultralytics
-YOLOv8n COCO ONNX지만 `model_path`로 다른 호환 ONNX를 교체할 수 있다.
+YOLO 모델 파일은 저장소에 포함하지 않는다. 현재 시뮬레이션 기본 모델은
+Ultralytics YOLO26n COCO end-to-end ONNX이며, 기존 YOLOv5/v8 호환 ONNX도
+`model_path`로 교체할 수 있다. 사람 자세는 일반 모델이 사람을 감지한 경우에만
+YOLO26n-pose를 최대 5 FPS로 실행하는 2단계 구조다. 모델 준비 스크립트를 한 번
+실행하면 `~/.cache/malbut_perception/yolo26n.onnx`와
+`~/.cache/malbut_perception/yolo26n-pose.onnx`를 실행 스크립트가 자동으로 찾는다.
+
+```bash
+./malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh
+```
+
+YOLO26의 end-to-end `TopK` 연산은 Ubuntu 22.04 기본 OpenCV 4.5.4 DNN에서
+로드되지 않으므로 detector는 준비 스크립트가 설치한 ONNX Runtime을 사용한다.
+Gazebo 실행 스크립트와 실제품 systemd 서비스는 해당 사용자 캐시 환경을 자동
+연결하며, 별도 위치를 쓰면 `HOMECAM_ONNX_RUNTIME_SITE_PACKAGES`로 지정한다.
+
 Ultralytics 모델·코드의 상용 이용 조건은 배포 전에 별도로 검토해야 한다.
 모니터링 중 `detectorHealthy`는 단순 모델 로드 여부가 아니라 최근 10초 내
 성공한 inference가 있는지를 나타낸다. 연속 세 번 inference가 실패하면 즉시
 false가 되고, 다음 성공 시 복구된다.
+pose 모델은 일반 사람·반려동물 이벤트와 독립적으로 동작한다.
+`/homecam/pose_healthy`는 pose 모델 준비와 연속 실패 상태를,
+`/homecam/person_pose`는 정규화된 COCO 17개 사람 관절 관측 JSON을 제공한다.
+이 값은 자세 특징이지 낙상 판정이 아니다. 낙상 이벤트를 만들려면 시간 축
+분류기와 실제 카메라 데이터셋 기반 임계값 검증이 별도로 필요하다.
 카메라 또는 모니터링을 끄면 detector의 유효 monitoring 상태도 즉시 false가
 되며 대기 중 이벤트와 재시도를 폐기한다. 카메라 privacy 상태에서는 신규
 추론·이벤트 POST가 수행되지 않는다.
-desired state heartbeat 기본 주기는 2초이며 응답 완료 후 250ms 주기로
-수집한다. 따라서 정상 네트워크에서 OFF 반영은 최악 약 2.25초이고, 여기에
+desired state heartbeat 기본 주기는 1초이며 응답 완료 후 250ms 주기로
+수집한다. 따라서 정상 네트워크에서 OFF 반영은 최악 약 1.25초이고, 여기에
 진행 중인 backend 요청 시간이 더해질 수 있다. 반영 즉시 세대가 바뀌어
 기존 세션의 송수신과 PTT는 fail-closed된다.
 backend URL을 설정한 장치는 재부팅 후 첫 desired state가 확인될 때까지
@@ -205,16 +224,37 @@ colcon build \
 SDK 저작권·라이선스 고지는 `THIRD_PARTY_NOTICES.md`에 기록되어 있다.
 
 `model_path`가 비어 있거나 파일을 읽지 못하면 노드는 종료하지 않고
-motion-only 모드로 내려간다. generic motion은 다음 조건을 모두 만족할 때만
-이벤트가 된다.
+motion-only 모드로 내려간다. 이벤트 탭의 분류 의미는 다음과 같다.
+
+- `사람`: YOLO가 COCO person 클래스를 인식
+- `반려동물`: YOLO가 COCO dog 또는 cat 클래스를 인식
+- `움직임`: 객체 종류를 특정하지 못했지만 프레임 차이가 확인됨
+
+한 구간에서 사람과 일반 움직임이 함께 확인되면 클립은 중복 생성하지 않고
+`사람`을 대표 유형으로 표시하며 두 라벨은 모두 보존한다. generic motion은
+다음 조건을 모두 만족할 때만 이벤트가 된다.
 
 - 최근 2초 이내 `/odom`을 받음
 - 선속도와 각속도가 threshold 이하
-- 1초 이상 정지
+- 활성 Nav2 목적지 주행이 없음
+- 2초 이상 정지
 - 여러 연속 프레임에서 움직임 확인
 
-`/odom`이 없거나 오래되거나 로봇이 이동 중이면 generic motion은 억제된다.
-사람·개·고양이 YOLO 감지는 계속 수행된다.
+`/odom`이 없거나 오래되거나 로봇이 이동 중이거나 Nav2 goal이 실행 중이면
+generic motion은 억제된다. 주행 종료 후 2초 동안 배경을 다시 잡으므로 카메라
+시점 변화 자체가 `움직임` 클립이 되지 않는다. 사람·개·고양이 YOLO 감지는
+로봇 주행 중에도 계속 수행된다.
+
+Gazebo 이벤트 검증에서는 아래 고정 스크립트를 사용한다. 이 스크립트는
+`small_house`에서 로봇 카메라 앞의 열린 바닥만 왕복하며, 사람의 팔 너비까지
+포함한 0.8m 여유를 실제 벽·가구 형상에 대해 검사한다. 집 전체를 순회하는
+perception demo actor는 이벤트 검증에 사용하지 않는다. Gazebo actor는 물리
+충돌체가 아닌 kinematic 대상이므로 별도 `set_pose` 반복 명령으로 이동시키면
+가구를 통과할 수 있으며 검증으로 인정하지 않는다.
+
+```bash
+./homecam_agent/scripts/spawn_event_test_person.sh
+```
 
 ## Aurora / Jetson 실행
 
@@ -237,7 +277,8 @@ ros2 launch homecam_media_agent homecam_aurora.launch.py \
   camera_info_topic:='/DISCOVERED_CAMERA_INFO_TOPIC' \
   backend_url:='https://YOUR_BACKEND' \
   device_id:='REGISTERED_DEVICE_ID' \
-  model_path:='/opt/homecam/models/yolov8n.onnx'
+  model_path:='/opt/homecam/models/yolo26n.onnx' \
+  pose_model_path:='/opt/homecam/models/yolo26n-pose.onnx'
 unset HOMECAM_DEVICE_TOKEN
 ```
 
@@ -375,7 +416,8 @@ HOMECAM_BACKEND_URL=https://malbut.example.com
 HOMECAM_DEVICE_ID=registered-device-id
 HOMECAM_IMAGE_TOPIC=/discovered/rgb/image_raw
 HOMECAM_CAMERA_INFO_TOPIC=/discovered/rgb/camera_info
-HOMECAM_MODEL_PATH=/opt/homecam/models/yolov8n.onnx
+HOMECAM_MODEL_PATH=/opt/homecam/models/yolo26n.onnx
+HOMECAM_POSE_MODEL_PATH=/opt/homecam/models/yolo26n-pose.onnx
 ```
 
 서비스는 부팅 시

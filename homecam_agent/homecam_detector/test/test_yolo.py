@@ -18,9 +18,21 @@ class _FakeNet:
         return self._output
 
 
+class _FakeOrtSession:
+    def __init__(self, output: np.ndarray) -> None:
+        self._output = output
+        self.inputs = []
+
+    def run(self, outputs, inputs):
+        self.inputs.append((outputs, inputs))
+        return [self._output]
+
+
 def _detector_with_output(output: np.ndarray) -> YoloOnnxDetector:
     detector = YoloOnnxDetector.__new__(YoloOnnxDetector)
     detector._net = _FakeNet(output)
+    detector._ort_session = None
+    detector._ort_input_name = ""
     detector._confidence = 0.45
     detector._input_size = 640
     return detector
@@ -74,3 +86,39 @@ def test_detect_skips_non_finite_predictions() -> None:
     detector = _detector_with_output(predictions)
     frame = np.zeros((16, 16, 3), dtype=np.uint8)
     assert detector.detect(frame) == {}
+
+
+def test_detect_supports_yolo26_end_to_end_person_and_pet_classes() -> None:
+    predictions = np.array(
+        [[
+            [10.0, 20.0, 110.0, 220.0, 0.91, 0.0],
+            [20.0, 30.0, 100.0, 120.0, 0.82, 15.0],
+            [30.0, 40.0, 130.0, 140.0, 0.73, 16.0],
+            [0.0, 0.0, 10.0, 10.0, 0.99, 2.0],
+            [0.0, 0.0, 10.0, 10.0, np.nan, 0.0],
+        ]],
+        dtype=np.float32,
+    )
+    detector = _detector_with_output(predictions)
+    frame = np.zeros((16, 16, 3), dtype=np.uint8)
+    assert detector.detect(frame) == pytest.approx(
+        {"person": 0.91, "cat": 0.82, "dog": 0.73}
+    )
+
+
+def test_detect_runs_yolo26_through_onnx_runtime_session() -> None:
+    predictions = np.array(
+        [[[10.0, 20.0, 110.0, 220.0, 0.91, 0.0]]],
+        dtype=np.float32,
+    )
+    detector = _detector_with_output(np.empty((0, 6), dtype=np.float32))
+    session = _FakeOrtSession(predictions)
+    detector._ort_session = session
+    detector._ort_input_name = "images"
+
+    result = detector.detect(np.zeros((16, 16, 3), dtype=np.uint8))
+
+    assert result == pytest.approx({"person": 0.91})
+    assert len(session.inputs) == 1
+    assert session.inputs[0][0] is None
+    assert session.inputs[0][1]["images"].shape == (1, 3, 640, 640)

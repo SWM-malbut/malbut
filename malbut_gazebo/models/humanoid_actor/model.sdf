@@ -14,9 +14,9 @@
     </animation>
 
     <!--
-      A deterministic 0.45 m/s Small House circuit generated from all world
-      collision and visual geometry, including mesh and sphere shapes. Straight
-      segments retain at least 0.30 m clearance from walls and furniture.
+      A deterministic 0.45 m/s Small House perception-demo circuit. Its
+      centerline retains at least 0.25 m clearance from scene geometry, but the
+      actor has no physics collision and is not suitable for event E2E tests.
       Repeated poses turn the actor before each segment, and the final pose
       matches the first so looping has no teleport discontinuity.
     -->

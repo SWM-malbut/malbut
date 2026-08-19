@@ -13,7 +13,7 @@ homecam_media_agent:
     source_profile: aurora
     fps: 15
     bitrate_kbps: 700
-    heartbeat_interval_ms: 2000
+    heartbeat_interval_ms: 1000
     frame_timeout_ms: 2000
     monitoring_enabled: false
     camera_enabled: true
@@ -22,10 +22,15 @@ homecam_media_agent:
 homecam_detector:
   ros__parameters:
     odom_topic: /odom
+    navigation_status_topic: /navigate_to_pose/_action/status
     model_path: ""
+    pose_model_path: ""
     device_id: jetson-homecam
     backend_url: ""
     confidence_threshold: 0.45
+    pose_confidence_threshold: 0.45
+    pose_keypoint_threshold: 0.5
+    pose_inference_fps: 5.0
     consecutive_frames: 3
     event_cooldown_sec: 30.0
     event_confirmation_window_frames: 5
@@ -35,7 +40,7 @@ homecam_detector:
     max_event_clip_sec: 120.0
     event_clips_enabled: true
     max_frame_gap_sec: 1.0
-    stationary_after_sec: 1.0
+    stationary_after_sec: 2.0
     odom_timeout_sec: 2.0
     linear_motion_threshold: 0.03
     angular_motion_threshold: 0.05

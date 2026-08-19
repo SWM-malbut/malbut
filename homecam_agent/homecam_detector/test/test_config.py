@@ -14,6 +14,15 @@ def test_default_config_is_valid() -> None:
     assert validate_config(DetectorConfig()) == []
 
 
+def test_navigation_status_topic_must_be_absolute_or_disabled() -> None:
+    assert validate_config(
+        DetectorConfig(navigation_status_topic="navigate_to_pose/_action/status")
+    ) == [
+        "navigation_status_topic must be empty or an absolute ROS topic"
+    ]
+    assert validate_config(DetectorConfig(navigation_status_topic="")) == []
+
+
 def test_rejects_unsafe_backend_and_bad_thresholds() -> None:
     config = DetectorConfig(
         image_topic="relative",
@@ -30,6 +39,9 @@ def test_rejects_unsafe_backend_and_bad_thresholds() -> None:
 def test_rejects_nan_and_infinite_motion_parameters() -> None:
     float_fields = [
         "confidence_threshold",
+        "pose_confidence_threshold",
+        "pose_keypoint_threshold",
+        "pose_inference_fps",
         "event_cooldown_sec",
         "max_frame_gap_sec",
         "stationary_after_sec",
@@ -42,6 +54,15 @@ def test_rejects_nan_and_infinite_motion_parameters() -> None:
     for field in float_fields:
         assert validate_config(replace(defaults, **{field: float("nan")}))
         assert validate_config(replace(defaults, **{field: float("inf")}))
+
+
+def test_pose_rate_is_bounded() -> None:
+    assert validate_config(DetectorConfig(pose_inference_fps=0.0)) == [
+        "pose_inference_fps must be in (0, 30]"
+    ]
+    assert validate_config(DetectorConfig(pose_inference_fps=30.1)) == [
+        "pose_inference_fps must be in (0, 30]"
+    ]
 
 
 def test_allows_local_development_http() -> None:

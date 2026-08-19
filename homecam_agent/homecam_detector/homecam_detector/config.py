@@ -13,10 +13,15 @@ class DetectorConfig:
 
     image_topic: str = "/depth_cam/depth_cam"
     odom_topic: str = "/odom"
+    navigation_status_topic: str = "/navigate_to_pose/_action/status"
     model_path: str = ""
+    pose_model_path: str = ""
     device_id: str = ""
     backend_url: str = ""
     confidence_threshold: float = 0.45
+    pose_confidence_threshold: float = 0.45
+    pose_keypoint_threshold: float = 0.5
+    pose_inference_fps: float = 5.0
     consecutive_frames: int = 3
     event_cooldown_sec: float = 30.0
     event_confirmation_window_frames: int = 5
@@ -26,7 +31,7 @@ class DetectorConfig:
     max_event_clip_sec: float = 120.0
     event_clips_enabled: bool = False
     max_frame_gap_sec: float = 1.0
-    stationary_after_sec: float = 1.0
+    stationary_after_sec: float = 2.0
     odom_timeout_sec: float = 2.0
     linear_motion_threshold: float = 0.03
     angular_motion_threshold: float = 0.05
@@ -77,10 +82,28 @@ def validate_config(config: DetectorConfig) -> List[str]:
     if config.odom_topic and not config.odom_topic.startswith("/"):
         errors.append("odom_topic must be empty or an absolute ROS topic")
     if (
+        config.navigation_status_topic
+        and not config.navigation_status_topic.startswith("/")
+    ):
+        errors.append(
+            "navigation_status_topic must be empty or an absolute ROS topic"
+        )
+    if (
         not math.isfinite(config.confidence_threshold)
         or not 0.0 < config.confidence_threshold <= 1.0
     ):
         errors.append("confidence_threshold must be in (0, 1]")
+    for name, value in (
+        ("pose_confidence_threshold", config.pose_confidence_threshold),
+        ("pose_keypoint_threshold", config.pose_keypoint_threshold),
+    ):
+        if not math.isfinite(value) or not 0.0 < value <= 1.0:
+            errors.append(f"{name} must be in (0, 1]")
+    if (
+        not math.isfinite(config.pose_inference_fps)
+        or not 0.0 < config.pose_inference_fps <= 30.0
+    ):
+        errors.append("pose_inference_fps must be in (0, 30]")
     if config.consecutive_frames < 1:
         errors.append("consecutive_frames must be at least 1")
     if (

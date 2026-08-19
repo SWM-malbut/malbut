@@ -18,11 +18,13 @@ def generate_launch_description() -> LaunchDescription:
     backend_url = LaunchConfiguration("backend_url")
     device_id = LaunchConfiguration("device_id")
     model_path = LaunchConfiguration("model_path")
+    pose_model_path = LaunchConfiguration("pose_model_path")
     monitoring_enabled = LaunchConfiguration("monitoring_enabled")
     event_clips_enabled = LaunchConfiguration("event_clips_enabled")
     image_topic = LaunchConfiguration("image_topic")
     camera_info_topic = LaunchConfiguration("camera_info_topic")
     odom_topic = LaunchConfiguration("odom_topic")
+    navigation_status_topic = LaunchConfiguration("navigation_status_topic")
     audio_source = LaunchConfiguration("audio_source")
     audio_sink = LaunchConfiguration("audio_sink")
     microphone_enabled = LaunchConfiguration("microphone_enabled")
@@ -66,6 +68,12 @@ def generate_launch_description() -> LaunchDescription:
             common_overrides,
             {
                 "model_path": ParameterValue(model_path, value_type=str),
+                "pose_model_path": ParameterValue(
+                    pose_model_path, value_type=str
+                ),
+                "navigation_status_topic": ParameterValue(
+                    navigation_status_topic, value_type=str
+                ),
                 "event_clips_enabled": ParameterValue(
                     event_clips_enabled, value_type=bool
                 ),
@@ -77,6 +85,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("backend_url", default_value=""),
             DeclareLaunchArgument("device_id", default_value="gazebo-homecam"),
             DeclareLaunchArgument("model_path", default_value=""),
+            DeclareLaunchArgument("pose_model_path", default_value=""),
             DeclareLaunchArgument("monitoring_enabled", default_value="false"),
             DeclareLaunchArgument("event_clips_enabled", default_value="true"),
             DeclareLaunchArgument(
@@ -87,6 +96,10 @@ def generate_launch_description() -> LaunchDescription:
                 default_value="/camera/color/camera_info",
             ),
             DeclareLaunchArgument("odom_topic", default_value="/odom"),
+            DeclareLaunchArgument(
+                "navigation_status_topic",
+                default_value="/navigate_to_pose/_action/status",
+            ),
             DeclareLaunchArgument("audio_source", default_value="default"),
             DeclareLaunchArgument("audio_sink", default_value="default"),
             DeclareLaunchArgument("microphone_enabled", default_value="true"),
