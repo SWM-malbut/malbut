@@ -161,18 +161,22 @@ headless 설정을 유지하는 것을 권장한다.
 다른 테스트 지도가 필요하면 보호된 `sim.env`에 별도의 절대 경로로
 `HOMECAM_MAP_STORE`를 지정한다. 이 값은 AWS 자격 증명과 무관하다.
 
-재기동 시 supervisor는 활성 지도에 저장된 마지막 위치를 Gazebo spawn과
-AMCL 초기 위치에 동시에 전달한다. 둘 중 한쪽에만 적용하지 않으므로 물리
-시뮬레이션 위치와 지도 마커가 갈라지지 않는다. 이 보장은
+재기동 시 supervisor는 활성 지도와 일치하는 마지막 정상 위치 체크포인트를
+Gazebo spawn과 AMCL 초기 위치에 동시에 전달한다. 체크포인트가 없을 때만 지도
+생성 완료 위치를 사용한다. 둘 중 한쪽에만 적용하지 않으므로 물리 시뮬레이션
+위치와 지도 마커가 갈라지지 않는다. 이 보장은
 `run_gazebo_homecam.sh`가 가진 단일 실행 lock과 독립 프로세스 그룹 수명주기를
 통해 제공되므로 제품 시뮬레이션은 `managed_home.launch.py`를 별도 터미널에서
 중복 실행하지 않는다.
 
 실제 로봇은 이 시뮬레이션 복원 정책을 사용하지 않는다. 전원이 꺼진 동안
-기기가 옮겨졌을 수 있으므로 기본값은 저장된 마지막 위치를 신뢰하지 않으며,
-동일 odometry 세션 또는 도킹 스테이션·fiducial 같은 검증된 위치 기준이 없으면
-`위치 확인 필요` 상태로 주행을 차단한다. 외부 supervisor가 물리 위치 기준도
-함께 소유할 때만 `trusted_initial_pose:=true`를 사용할 수 있다.
+기기가 옮겨졌을 수 있으므로 체크포인트는 후보일 뿐이다. 부팅 후 체크포인트가
+있으면 AMCL에 넓은 오차의 `/initialpose` 후보를 자동 제안하고,
+체크포인트가 없으면 사용자의 `/initialpose` 제안을 기다린다. 어느 경로든
+active AMCL·제한된 위치 불확실성·최신 TF가 연속 확인되기 전에는
+`부팅 후 위치 확인 필요` 상태로 주행을 차단한다. 동일 odometry 세션 또는
+도킹 스테이션·fiducial 같은 검증된 위치 기준을 소유한 외부 supervisor만
+`trusted_initial_pose:=true`를 사용할 수 있다.
 `trusted_localization_handoff:=true`도 Gazebo/바퀴 odometry가 중단되지 않은
 SLAM→Navigation 전환에서만 사용하며 제품 부팅 시에는 항상 false로 시작한다.
 

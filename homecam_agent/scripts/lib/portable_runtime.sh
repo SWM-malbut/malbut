@@ -151,6 +151,45 @@ print(*(format(value, ".17g") for value in values))
 PY
 }
 
+homecam_simulation_bootstrap_pose() {
+  local map_store="$1"
+  python3 - "$map_store/active.json" \
+    "$map_store/last-localized-pose.json" <<'PY'
+import json
+import math
+from pathlib import Path
+import sys
+
+active_path = Path(sys.argv[1])
+checkpoint_path = Path(sys.argv[2])
+try:
+    active = json.loads(active_path.read_text(encoding="utf-8"))
+except (OSError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+source = "map"
+pose = active.get("initial_pose")
+try:
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    if (
+        checkpoint.get("format") == "malbut-pose-checkpoint/v1"
+        and checkpoint.get("map_id") == active.get("map_id")
+        and checkpoint.get("map_revision") == active.get("map_revision")
+    ):
+        pose = checkpoint["pose"]
+        source = "checkpoint"
+except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError):
+    pass
+try:
+    values = [float(pose[name]) for name in ("x", "y", "yaw")]
+except (KeyError, TypeError, ValueError):
+    raise SystemExit(1)
+if not all(math.isfinite(value) for value in values):
+    raise SystemExit(1)
+print(source, *(format(value, ".17g") for value in values))
+PY
+}
+
 homecam_append_pose_arguments() {
   local target_name="$1"
   shift

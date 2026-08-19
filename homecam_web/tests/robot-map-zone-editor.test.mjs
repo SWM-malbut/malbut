@@ -156,6 +156,9 @@ test("the home map summary reuses rooms, zones, and the live localized robot pos
   assert.match(panel, /featuresOf\(semantics\?\.zones\)/);
   assert.match(panel, /roomInternalBoundaryPath/);
   assert.match(panel, /snapshot\?\.state\?\.localization\.state === "ok"/);
+  assert.match(panel, /function localizationCopy/);
+  assert.match(panel, /부팅 후 위치 확인 필요/);
+  assert.match(panel, /위치 재확인 중/);
   assert.match(panel, /robot-map-home-marker/);
   assert.match(styles, /\.homecam-home-map-preview \.robot-map-home-semantics/);
   assert.match(styles, /\.homecam-home-map-preview \.robot-map-home-marker/);

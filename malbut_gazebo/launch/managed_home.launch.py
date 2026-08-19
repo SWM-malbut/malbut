@@ -16,6 +16,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 from malbut_gazebo.map_lifecycle import load_active_revision
+from malbut_gazebo.pose_checkpoint import load_pose_checkpoint
 from malbut_gazebo.world_catalog import resolve_world
 
 
@@ -173,17 +174,22 @@ def _select_mode(context):
             ),
             launch_arguments=mapping_arguments.items(),
         )
-        return [mapping, _cloud_sync()]
+        return [mapping, _cloud_sync("ok")]
     map_yaml = str((store / active["map_yaml"]).resolve())
     user_map = str((store / active["user_map"]).resolve())
     revision = (store / active["map_yaml"]).resolve().parent
     zone_mask = revision / "zone-filter.yaml"
     saved_pose = _saved_initial_pose(active)
+    checkpoint = load_pose_checkpoint(store, active)
+    checkpoint_pose = (
+        _saved_initial_pose({"initial_pose": checkpoint["pose"]})
+        if checkpoint is not None else None
+    )
     simulation_pose = None
     actions = []
     if simulation_enabled:
         simulation_pose = _simulation_initial_pose(
-            context, share, saved_pose
+            context, share, checkpoint_pose or saved_pose
         )
         actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -205,6 +211,9 @@ def _select_mode(context):
     localization_arguments = _localization_arguments(
         simulation_pose, trusted_localization_handoff
     )
+    boot_pose_trusted = (
+        simulation_pose is not None or trusted_localization_handoff
+    )
     navigation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             str(share / "launch" / "navigation.launch.py")
@@ -218,13 +227,18 @@ def _select_mode(context):
             "rviz": LaunchConfiguration("rviz"),
             "robot_web": "true",
             "robot_web_port": LaunchConfiguration("web_port"),
+            "pose_checkpoint_store": str(store),
+            "pose_checkpoint_map_id": str(active["map_id"]),
+            "pose_checkpoint_map_revision": str(active["map_revision"]),
+            "boot_pose_trusted": "true" if boot_pose_trusted else "false",
             **localization_arguments,
         }.items(),
     )
-    return [*actions, navigation, _cloud_sync()]
+    boot_state = "verifying" if boot_pose_trusted else "revalidation_required"
+    return [*actions, navigation, _cloud_sync(boot_state)]
 
 
-def _cloud_sync() -> Node:
+def _cloud_sync(boot_validation_state: str) -> Node:
     """Create the optional outbound-only cloud map synchronization node."""
     return Node(
         package="malbut_gazebo",
@@ -242,6 +256,7 @@ def _cloud_sync() -> Node:
             "runtime_request_file": LaunchConfiguration(
                 "runtime_request_file"
             ),
+            "boot_validation_state": boot_validation_state,
         }],
     )
 

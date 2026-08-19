@@ -78,6 +78,19 @@ printf '%s\n' \
   > "$map_store/active.json"
 [[ "$(homecam_saved_map_pose "$map_store")" == '-1.25 2.5 0.75' ]]
 printf '%s\n' \
+  '{"format":"malbut-pose-checkpoint/v1","map_id":"home","map_revision":"r1","pose":{"x":3.25,"y":-4.5,"yaw":1.5}}' \
+  > "$map_store/last-localized-pose.json"
+printf '%s\n' \
+  '{"map_id":"home","map_revision":"r1","initial_pose":{"x":-1.25,"y":2.5,"yaw":0.75}}' \
+  > "$map_store/active.json"
+[[ "$(homecam_simulation_bootstrap_pose "$map_store")" == \
+  'checkpoint 3.25 -4.5 1.5' ]]
+printf '%s\n' \
+  '{"map_id":"home","map_revision":"r2","initial_pose":{"x":-1.25,"y":2.5,"yaw":0.75}}' \
+  > "$map_store/active.json"
+[[ "$(homecam_simulation_bootstrap_pose "$map_store")" == \
+  'map -1.25 2.5 0.75' ]]
+printf '%s\n' \
   '{"initial_pose":{"x":"NaN","y":2.5,"yaw":0.75}}' \
   > "$map_store/active.json"
 if homecam_saved_map_pose "$map_store" >/dev/null 2>&1; then

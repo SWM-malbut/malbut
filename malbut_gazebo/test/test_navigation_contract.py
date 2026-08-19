@@ -108,6 +108,10 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     assert 'initial_pose_x' in declared_arguments
     assert 'initial_pose_y' in declared_arguments
     assert 'initial_pose_yaw' in declared_arguments
+    assert 'pose_checkpoint_store' in declared_arguments
+    assert 'pose_checkpoint_map_id' in declared_arguments
+    assert 'pose_checkpoint_map_revision' in declared_arguments
+    assert 'boot_pose_trusted' in declared_arguments
 
     robot_web_nodes = [
         entity
@@ -116,6 +120,13 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
         and entity.node_executable == 'robot_web_server'
     ]
     assert len(robot_web_nodes) == 1
+    checkpoint_nodes = [
+        entity
+        for entity in description.entities
+        if isinstance(entity, Node)
+        and entity.node_executable == 'pose_checkpoint'
+    ]
+    assert len(checkpoint_nodes) == 1
 
     includes = [
         entity

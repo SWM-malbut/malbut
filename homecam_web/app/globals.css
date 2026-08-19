@@ -4139,13 +4139,18 @@ a:focus-visible {
   top: 50%;
   left: 50%;
   z-index: 1;
+  display: flex;
   width: min(460px, calc(100% - 48px));
+  align-items: center;
+  flex-direction: column;
   color: #fff;
   text-align: center;
   transform: translate(-50%, -45%);
 }
 
 .homecam-stream-placeholder > svg {
+  display: block;
+  flex: 0 0 auto;
   margin-bottom: 20px;
   color: rgb(255 255 255 / 0.72);
 }

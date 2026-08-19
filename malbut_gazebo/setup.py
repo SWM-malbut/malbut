@@ -78,6 +78,7 @@ setup(
             'malbut_gazebo.localization_handoff:record_main',
             'restore_localization_state = '
             'malbut_gazebo.localization_handoff:restore_main',
+            'pose_checkpoint = malbut_gazebo.pose_checkpoint:main',
         ],
     },
 )
