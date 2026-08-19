@@ -46,6 +46,9 @@ homecam_config_key_allowed HOMECAM_MAP_STORE
 homecam_config_key_allowed HOMECAM_MAP_WEB_HOST
 homecam_config_key_allowed HOMECAM_MAP_WEB_PORT
 homecam_config_key_allowed HOMECAM_MAP_RVIZ
+homecam_config_key_allowed HOMECAM_EVENT_CLIPS_ENABLED
+homecam_config_key_allowed HOMECAM_NAVIGATION_STATUS_TOPIC
+homecam_config_key_allowed HOMECAM_POSE_MODEL_PATH
 if homecam_config_key_allowed HOMECAM_MAP_DELETE_ON_START; then
   printf 'destructive map configuration key should be rejected\n' >&2
   exit 1
@@ -100,6 +103,11 @@ generated_config="$temporary_dir/generated/sim.env"
 grep -Fqx 'HOMECAM_GAZEBO_GUI=false' "$generated_config"
 grep -Fqx 'HOMECAM_GAZEBO_HEADLESS=true' "$generated_config"
 grep -Fqx 'HOMECAM_FORCE_MAPPING=false' "$generated_config"
+grep -Fqx 'HOMECAM_EVENT_CLIPS_ENABLED=true' "$generated_config"
+grep -Fqx 'HOMECAM_POSE_MODEL_PATH=' "$generated_config"
+grep -Fqx \
+  'HOMECAM_NAVIGATION_STATUS_TOPIC=/navigate_to_pose/_action/status' \
+  "$generated_config"
 
 runner="$repo_root/scripts/run_gazebo_homecam.sh"
 grep -Fq 'ros2 launch malbut_gazebo worlds.launch.py' "$runner"
@@ -109,6 +117,27 @@ grep -Fq '"trusted_initial_pose:=true"' "$runner"
 grep -Fq '"trusted_localization_handoff:=$trust_localization_handoff"' \
   "$runner"
 grep -Fq 'start_robot_stack true true' "$runner"
+grep -Fq \
+  '"navigation_status_topic:=$HOMECAM_NAVIGATION_STATUS_TOPIC"' \
+  "$runner"
+grep -Fq '"pose_model_path:=$HOMECAM_POSE_MODEL_PATH"' "$runner"
+
+event_person="$repo_root/scripts/spawn_event_test_person.sh"
+grep -Fq -- '--world small_house' "$event_person"
+grep -Fq -- '--x 2.5' "$event_person"
+grep -Fq -- '--y -3.6' "$event_person"
+if grep -Eq '^[[:space:]]*(exec[[:space:]]+)?ros2.*set_pose' "$event_person"; then
+  printf 'event person fixture must not teleport the actor\n' >&2
+  exit 1
+fi
+
+dependencies="$repo_root/scripts/install_dependencies.sh"
+grep -Fq 'python3-venv' "$dependencies"
+grep -Fq 'ros-humble-action-msgs' "$dependencies"
+
+model_preparer="$repo_root/../malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh"
+grep -Fq '! -x "$export_env/bin/pip"' "$model_preparer"
+grep -Fq 'rm -rf -- "$export_env"' "$model_preparer"
 
 standalone_workspace="$temporary_dir/standalone_workspace"
 mkdir -p "$standalone_workspace/src/homecam_agent"

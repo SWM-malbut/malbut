@@ -20,7 +20,7 @@ struct MediaConfig
   std::string source_profile{"unknown"};
   int fps{15};
   int bitrate_kbps{700};
-  int heartbeat_interval_ms{2000};
+  int heartbeat_interval_ms{1000};
   int frame_timeout_ms{2000};
   bool monitoring_enabled{false};
   bool camera_enabled{true};

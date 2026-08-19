@@ -73,6 +73,7 @@ type HomecamEvent = {
   recordingStartedAt: string | null;
   eventGroupId: string | null;
   segmentIndex: number | null;
+  segmentCount: number;
   labels: HomecamEventType[];
   clipStartAt: string | null;
   clipEndAt: string | null;
@@ -260,7 +261,7 @@ function eventBadgeLabel(type: HomecamEventType) {
 function eventTitle(event: HomecamEvent) {
   if (event.type === "person") return "사람이 감지됐어요";
   if (event.type === "dog" || event.type === "cat") return "반려동물 움직임이 감지됐어요";
-  return "작은 움직임이 감지됐어요";
+  return "움직임이 감지됐어요";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -422,6 +423,12 @@ function normalizeEvent(value: unknown): HomecamEvent | null {
       typeof raw.segmentIndex === "number" && Number.isSafeInteger(raw.segmentIndex)
         ? raw.segmentIndex
         : null,
+    segmentCount:
+      typeof raw.segmentCount === "number" &&
+      Number.isSafeInteger(raw.segmentCount) &&
+      raw.segmentCount > 0
+        ? raw.segmentCount
+        : 1,
     labels,
     clipStartAt: stringValue(raw.clipStartAt, raw.clip_start_at) ?? null,
     clipEndAt: stringValue(raw.clipEndAt, raw.clip_end_at) ?? null,
@@ -765,6 +772,12 @@ export function HomecamDashboard({
     () => devices.find((device) => device.id === selectedDeviceId) ?? devices[0] ?? null,
     [devices, selectedDeviceId],
   );
+  const devicePollIntervalMs = Boolean(
+    selectedDevice?.online &&
+    selectedDevice.monitoringEnabled &&
+    selectedDevice.cameraEnabled &&
+    !selectedDevice.storageHealthy
+  ) ? 1_000 : 15_000;
   const displayedMediaReady = liveViewer
     ? liveMediaReady
     : Boolean(selectedDevice?.online && selectedDevice.p2pHealthy);
@@ -813,9 +826,12 @@ export function HomecamDashboard({
 
   useEffect(() => {
     window.queueMicrotask(() => void loadDevices());
-    const interval = window.setInterval(() => void loadDevices(true), 15_000);
+    const interval = window.setInterval(
+      () => void loadDevices(true),
+      devicePollIntervalMs,
+    );
     return () => window.clearInterval(interval);
-  }, [loadDevices]);
+  }, [devicePollIntervalMs, loadDevices]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1623,7 +1639,7 @@ export function HomecamDashboard({
                         ? "꺼짐"
                         : detectorReady
                           ? "정상"
-                          : "확인 필요"}
+                          : "움직임만"}
                     </strong>
                   </div>
                 </div>
@@ -1654,6 +1670,11 @@ export function HomecamDashboard({
         {tab === "events" && (
           <section className="homecam-section" aria-labelledby="homecam-events-title">
             <h1 id="homecam-events-title" className="sr-only">이벤트</h1>
+            <div className="homecam-event-kind-guide" aria-label="이벤트 종류 안내">
+              <span><b>사람</b> AI가 사람을 인식한 이벤트</span>
+              <span><b>반려동물</b> AI가 강아지나 고양이를 인식한 이벤트</span>
+              <span><b>움직임</b> 말벗이 정지한 상태에서 확인된 일반 화면 변화</span>
+            </div>
             <div className="homecam-events-workspace">
               <div className="homecam-event-list">
                 {visibleEvents.length > 0 && <h2>최근 이벤트</h2>}

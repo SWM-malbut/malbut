@@ -14,7 +14,7 @@ Environment=ROS_LOG_DIR=/run/malbut-homecam/log
 RuntimeDirectory=malbut-homecam
 RuntimeDirectoryMode=0750
 WorkingDirectory=@WORKSPACE@
-ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source @WORKSPACE@/install/setup.bash && exec ros2 launch homecam_media_agent homecam_aurora.launch.py image_topic:="${HOMECAM_IMAGE_TOPIC}" camera_info_topic:="${HOMECAM_CAMERA_INFO_TOPIC:-}" odom_topic:="${HOMECAM_ODOM_TOPIC:-/odom}" backend_url:="${HOMECAM_BACKEND_URL}" device_id:="${HOMECAM_DEVICE_ID}" model_path:="${HOMECAM_MODEL_PATH:-}" audio_source:="${HOMECAM_AUDIO_SOURCE:-default}" audio_sink:="${HOMECAM_AUDIO_SINK:-default}"'
+ExecStart=/bin/bash -lc 'runtime_site="${HOMECAM_ONNX_RUNTIME_SITE_PACKAGES:-$HOME/.cache/malbut_perception/yolo26-runtime/site-packages}"; if [[ -d "$runtime_site/onnxruntime" ]]; then export PYTHONPATH="$runtime_site${PYTHONPATH:+:$PYTHONPATH}"; fi; source /opt/ros/humble/setup.bash && source @WORKSPACE@/install/setup.bash && exec ros2 launch homecam_media_agent homecam_aurora.launch.py image_topic:="${HOMECAM_IMAGE_TOPIC}" camera_info_topic:="${HOMECAM_CAMERA_INFO_TOPIC:-}" odom_topic:="${HOMECAM_ODOM_TOPIC:-/odom}" navigation_status_topic:="${HOMECAM_NAVIGATION_STATUS_TOPIC:-/navigate_to_pose/_action/status}" backend_url:="${HOMECAM_BACKEND_URL}" device_id:="${HOMECAM_DEVICE_ID}" model_path:="${HOMECAM_MODEL_PATH:-}" pose_model_path:="${HOMECAM_POSE_MODEL_PATH:-}" audio_source:="${HOMECAM_AUDIO_SOURCE:-default}" audio_sink:="${HOMECAM_AUDIO_SINK:-default}"'
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=20s

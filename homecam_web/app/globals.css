@@ -6711,6 +6711,30 @@ a:focus-visible {
   min-height: calc(100svh - 166px);
 }
 
+.homecam-dashboard-shell .homecam-event-kind-guide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: -12px 0 20px;
+}
+
+.homecam-dashboard-shell .homecam-event-kind-guide span {
+  padding: 10px 12px;
+  border: 1px solid var(--homecam-line);
+  border-radius: 12px;
+  color: var(--homecam-muted);
+  background: var(--homecam-paper);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.homecam-dashboard-shell .homecam-event-kind-guide b {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--homecam-ink);
+  font-size: 13px;
+}
+
 .homecam-dashboard-shell.tab-events .homecam-event-list {
   display: flex;
   overflow: visible;
@@ -7761,6 +7785,10 @@ a:focus-visible {
   .homecam-dashboard-shell.tab-events .homecam-device-bar > .homecam-event-period { display: none; }
   .homecam-dashboard-shell.tab-events .homecam-device-bar .homecam-refresh-button { display: none; }
   .homecam-dashboard-shell.tab-events .homecam-events-workspace { min-height: 0; }
+  .homecam-dashboard-shell .homecam-event-kind-guide {
+    grid-template-columns: 1fr;
+    margin-top: 0;
+  }
 }
 
 /* Color mode applies to the complete authenticated product shell. The camera

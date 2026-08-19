@@ -6,6 +6,7 @@
   <maintainer email="maintainers@example.com">SWM Malbut contributors</maintainer>
   <license>Apache-2.0</license>
 
+  <exec_depend>action_msgs</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>python3-opencv</exec_depend>

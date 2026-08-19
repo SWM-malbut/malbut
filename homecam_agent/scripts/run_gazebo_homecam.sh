@@ -88,14 +88,50 @@ fi
 : "${HOMECAM_IMAGE_TOPIC:=}"
 : "${HOMECAM_CAMERA_INFO_TOPIC:=}"
 : "${HOMECAM_ODOM_TOPIC:=/odom}"
+: "${HOMECAM_NAVIGATION_STATUS_TOPIC:=/navigate_to_pose/_action/status}"
 : "${HOMECAM_AUDIO_SOURCE:=default}"
 : "${HOMECAM_AUDIO_SINK:=default}"
 : "${HOMECAM_MICROPHONE_ENABLED:=false}"
 : "${HOMECAM_MODEL_PATH:=}"
+: "${HOMECAM_POSE_MODEL_PATH:=}"
 : "${HOMECAM_MONITORING_ENABLED:=false}"
 : "${HOMECAM_EVENT_CLIPS_ENABLED:=true}"
 : "${HOMECAM_FORCE_MAPPING:=false}"
 : "${HOMECAM_TOPIC_TIMEOUT_SECONDS:=90}"
+
+if [[ -z "$HOMECAM_MODEL_PATH" ]]; then
+  homecam_model_cache_root="${XDG_CACHE_HOME:-${HOME}/.cache}/malbut_perception"
+  homecam_cached_model="$homecam_model_cache_root/yolo26n.onnx"
+  if [[ -f "$homecam_cached_model" ]]; then
+    HOMECAM_MODEL_PATH="$homecam_cached_model"
+    homecam_log "using cached YOLO model: $HOMECAM_MODEL_PATH"
+  else
+    homecam_warn \
+      "YOLO model not found; person and pet labels are disabled. Run "\
+      "malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh once."
+  fi
+fi
+
+if [[ -z "$HOMECAM_POSE_MODEL_PATH" ]]; then
+  homecam_pose_cache_root="${XDG_CACHE_HOME:-${HOME}/.cache}/malbut_perception"
+  homecam_cached_pose_model="$homecam_pose_cache_root/yolo26n-pose.onnx"
+  if [[ -f "$homecam_cached_pose_model" ]]; then
+    HOMECAM_POSE_MODEL_PATH="$homecam_cached_pose_model"
+    homecam_log "using cached person pose model: $HOMECAM_POSE_MODEL_PATH"
+  else
+    homecam_warn \
+      "YOLO pose model not found; secondary person pose is disabled. Run "\
+      "malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh once."
+  fi
+fi
+
+if [[ -n "$HOMECAM_MODEL_PATH" || -n "$HOMECAM_POSE_MODEL_PATH" ]]; then
+  homecam_onnx_runtime_site="${HOMECAM_ONNX_RUNTIME_SITE_PACKAGES:-${XDG_CACHE_HOME:-${HOME}/.cache}/malbut_perception/yolo26-runtime/site-packages}"
+  if [[ -d "$homecam_onnx_runtime_site/onnxruntime" ]]; then
+    export PYTHONPATH="$homecam_onnx_runtime_site${PYTHONPATH:+:$PYTHONPATH}"
+    homecam_log "using ONNX Runtime from the local model environment"
+  fi
+fi
 
 if ! "$check_only"; then
   homecam_validate_device_config "$config_path"
@@ -458,6 +494,7 @@ homecam_command=(
   "event_clips_enabled:=$HOMECAM_EVENT_CLIPS_ENABLED"
   "image_topic:=$image_topic"
   "odom_topic:=$HOMECAM_ODOM_TOPIC"
+  "navigation_status_topic:=$HOMECAM_NAVIGATION_STATUS_TOPIC"
   "audio_source:=$HOMECAM_AUDIO_SOURCE"
   "audio_sink:=$HOMECAM_AUDIO_SINK"
   "microphone_enabled:=$HOMECAM_MICROPHONE_ENABLED"
@@ -467,6 +504,9 @@ if [[ -n "$camera_info_topic" ]]; then
 fi
 if [[ -n "$HOMECAM_MODEL_PATH" ]]; then
   homecam_command+=("model_path:=$HOMECAM_MODEL_PATH")
+fi
+if [[ -n "$HOMECAM_POSE_MODEL_PATH" ]]; then
+  homecam_command+=("pose_model_path:=$HOMECAM_POSE_MODEL_PATH")
 fi
 homecam_log \
   "starting stream for device $HOMECAM_DEVICE_ID (token is not printed)"

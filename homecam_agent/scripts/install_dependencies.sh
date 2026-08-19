@@ -39,6 +39,7 @@ fi
   python3-opencv \
   python3-pytest \
   python3-rosdep \
+  python3-venv \
   libcurl4-openssl-dev \
   libgstreamer1.0-dev \
   libgstreamer-plugins-base1.0-dev \
@@ -54,6 +55,7 @@ fi
   gstreamer1.0-plugins-ugly \
   gstreamer1.0-tools \
   ros-humble-ament-cmake-gtest \
+  ros-humble-action-msgs \
   ros-humble-cv-bridge \
   ros-humble-nav-msgs \
   ros-humble-rcl-interfaces \

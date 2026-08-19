@@ -240,19 +240,78 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
           ...clipStarted,
           sessionIds: [session.id, refreshedStorageSession.id],
           confidence: 0.97,
-          endAt: new Date(Date.parse(clipStartAt) + 15_000).toISOString(),
-          monotonicDurationMs: 15_000,
+          endAt: new Date(Date.parse(clipStartAt) + 120_000).toISOString(),
+          monotonicDurationMs: 120_000,
           idempotencyKey: "b".repeat(64),
         },
       );
       assert.equal(endedClip.event.clipState, "ready");
-      assert.equal(endedClip.event.monotonicDurationMs, 15_000);
+      assert.equal(endedClip.event.monotonicDurationMs, 120_000);
       assert.deepEqual(endedClip.event.labels, ["person", "motion"]);
+      const segmentEnds = [240_000, 300_000];
+      const segmentDurations = [120_000, 60_000];
+      const segmentEvents = [];
+      for (const [offset, segmentIndex] of [120_000, 240_000].map(
+        (value, index) => [value, index + 1],
+      )) {
+        const startAt = new Date(Date.parse(clipStartAt) + offset).toISOString();
+        const segmentInput = {
+          ...clipStarted,
+          segmentIndex,
+          detectedAt: startAt,
+          startAt,
+          sessionIds: [refreshedStorageSession.id],
+          notificationEligible: false,
+          idempotencyKey: (segmentIndex === 1 ? "c" : "e").repeat(64),
+        };
+        await homecam.upsertHomecamEventClip(
+          "living-room",
+          "started",
+          segmentInput,
+        );
+        segmentEvents.push(
+          await homecam.upsertHomecamEventClip(
+            "living-room",
+            "ended",
+            {
+              ...segmentInput,
+              endAt: new Date(
+                Date.parse(clipStartAt) + segmentEnds[segmentIndex - 1],
+              ).toISOString(),
+              monotonicDurationMs: segmentDurations[segmentIndex - 1],
+              idempotencyKey: (segmentIndex === 1 ? "d" : "f").repeat(64),
+            },
+          ),
+        );
+      }
+      const groupedEvents = await homecam.listHomecamEvents({
+        deviceId: "living-room",
+        eventTypes: [],
+        limit: 10,
+      });
+      const groupedClipEvents = groupedEvents.filter(
+        (event) => event.eventGroupId === clipStarted.eventGroupId,
+      );
+      assert.equal(groupedClipEvents.length, 1);
+      assert.equal(groupedClipEvents[0].id, startedClip.event.id);
+      assert.equal(groupedClipEvents[0].segmentCount, 3);
+      assert.equal(groupedClipEvents[0].clipStartAt, clipStartAt);
+      assert.equal(
+        groupedClipEvents[0].clipEndAt,
+        new Date(Date.parse(clipStartAt) + 300_000).toISOString(),
+      );
+      assert.equal(groupedClipEvents[0].monotonicDurationMs, 300_000);
       const playbackInfo = await homecam.getEventClipPlayback(
         "living-room",
         endedClip.event.id,
       );
       assert.equal(playbackInfo?.streamArn, "arn:test:kvs:archive");
+      assert.equal(playbackInfo?.event.segmentCount, 3);
+      assert.equal(playbackInfo?.event.clipStartAt, clipStartAt);
+      assert.equal(
+        playbackInfo?.event.clipEndAt,
+        new Date(Date.parse(clipStartAt) + 300_000).toISOString(),
+      );
       assert.equal(
         await homecam.softDeleteHomecamEvent({
           deviceId: "living-room",
@@ -260,6 +319,13 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
           userEmail: "owner@example.com",
         }),
         true,
+      );
+      assert.equal(
+        await homecam.getHomecamEvent(
+          "living-room",
+          segmentEvents[1].event.id,
+        ),
+        null,
       );
       assert.equal(
         await homecam.softDeleteHomecamEvent({
@@ -536,7 +602,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     `);
     assert.deepEqual(plain(persisted.rows[0]), {
       credentials: 1,
-      events: 2,
+      events: 4,
       outbox: 1,
       session_status: "ended",
       recording_ended: true,
