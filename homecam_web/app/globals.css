@@ -5812,7 +5812,7 @@ a:focus-visible {
   background: var(--homecam-canvas);
 }
 
-/* 블랙 모드: 모드 배너 제목(charcoal)과 help 본문(리터럴 회색)이
+/* 다크 모드: 모드 배너 제목(charcoal)과 help 본문(리터럴 회색)이
    다크 배경에서 묻히므로 다크 팔레트 토큰으로 명시한다. */
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner:not(.mode-navigate) strong {
   color: var(--homecam-ink);
@@ -5831,7 +5831,7 @@ a:focus-visible {
   color: var(--homecam-muted);
 }
 
-/* 블랙 모드: 타일과 카드 대비가 낮아 모서리가 안 보이므로 밝기를 살짝 올린다. */
+/* 다크 모드: 타일과 카드 대비가 낮아 모서리가 안 보이므로 밝기를 살짝 올린다. */
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-summary-grid > div {
   background: rgb(251 248 243 / .08);
 }
@@ -6626,7 +6626,7 @@ a:focus-visible {
   background: #1e2422;
 }
 
-/* 화이트 버전과 동일하게 기기명 주위 알약 배경 없이 텍스트만 표시한다. */
+/* 라이트 모드와 동일하게 기기명 주위 알약 배경 없이 텍스트만 표시한다. */
 .homecam-dashboard-shell.tab-live .homecam-device-bar strong,
 .homecam-dashboard-shell.tab-live .homecam-device-bar select { color: var(--homecam-paper); }
 
@@ -7685,7 +7685,30 @@ a:focus-visible {
   background: var(--homecam-charcoal);
 }
 
-/* 블랙 모드에서도 라이브 탭 로고가 다른 탭과 같은 팔레트를 쓰게 한다. */
+/* 라이트: 홈캠 헤더의 기기 알약·아바타·연결 상태는 다크 팔레트 리터럴이라
+   밝은 배경에서 배경색과 같아진다(패턴 ②). 홈·설정 탭과 같은 값으로 맞춘다. */
+.homecam-dashboard-shell.theme-light.tab-live .homecam-device-selector {
+  border-color: var(--homecam-line);
+  background: var(--homecam-canvas);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-device-selector strong,
+.homecam-dashboard-shell.theme-light.tab-live .homecam-device-selector select {
+  color: var(--homecam-ink);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-device-avatar {
+  color: var(--homecam-charcoal);
+  background: var(--homecam-teal-light);
+}
+
+.homecam-dashboard-shell.theme-light.tab-live .homecam-connection-pill {
+  color: var(--homecam-muted);
+  border-color: #d7d1c6;
+  background: #f0ece5;
+}
+
+/* 다크 모드에서도 라이브 탭 로고가 다른 탭과 같은 팔레트를 쓰게 한다. */
 .homecam-dashboard-shell.theme-dark.tab-live .homecam-brand > strong {
   color: #fbf8f3;
   background: var(--homecam-charcoal);
@@ -7710,8 +7733,7 @@ a:focus-visible {
   border-color: var(--homecam-line);
 }
 
-.homecam-dashboard-shell.theme-light.tab-live .homecam-device-selector strong,
-.homecam-dashboard-shell.theme-light.tab-live .homecam-device-selector select,
+/* 기기명은 홈·설정 탭과 같이 ink 로 둔다. 보조 문구만 muted. */
 .homecam-dashboard-shell.theme-light.tab-live .homecam-device-bar-meta {
   color: var(--homecam-muted);
 }
@@ -7724,6 +7746,13 @@ a:focus-visible {
 
 .homecam-dashboard-shell.theme-light.tab-live .homecam-connection-pill.is-online i {
   background: var(--homecam-success);
+}
+
+/* 라이트: 상태 클래스가 없는 항목(예: 저장 안 함)은 다크용 아이보리 글자가
+   그대로 남아 밝은 헤더에서 사라진다(패턴 ②). muted 는 3.7:1 로 AA 미달이라
+   한 단계 더 어두운 값을 쓴다. */
+.homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span {
+  color: #5a625e;
 }
 
 .homecam-dashboard-shell.theme-light.tab-live .homecam-live-channel-summary > span.is-ready {
@@ -8038,13 +8067,18 @@ a:focus-visible {
   background: #141a19;
 }
 
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-nav button,
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-link,
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-account-link,
+/* 기기명은 보조 요소가 아니라 헤더의 주 라벨이므로 홈캠 탭·라이트 모드와
+   같이 ink 를 쓴다. 아래 흐린 색은 비활성 메뉴·필터용이다. */
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-bar strong,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-bar select,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-selector strong,
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-selector select,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-selector select {
+  color: var(--homecam-ink);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-nav button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-link,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-account-link,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-filter-row button,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-nav button,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-tabs button,
@@ -8118,32 +8152,32 @@ a:focus-visible {
   background: var(--homecam-paper);
 }
 
-/* 블랙 모드: 사이드바는 라이트와 동일하게 투명 배경 — 카드(summary·panel-card)만
-   paper 색으로 떠 보이게 해 화이트 모드와 같은 카드 구조를 유지한다. */
+/* 다크 모드: 사이드바는 라이트와 동일하게 투명 배경 — 카드(summary·panel-card)만
+   paper 색으로 떠 보이게 해 라이트 모드와 같은 카드 구조를 유지한다. */
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-sidebar {
   color: var(--homecam-ink);
   background: transparent;
 }
 
-/* 블랙 모드: 빈 상태 아이콘(charcoal)이 다크 배경에 묻히므로 teal로 명시한다. */
+/* 다크 모드: 빈 상태 아이콘(charcoal)이 다크 배경에 묻히므로 teal로 명시한다. */
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-empty-state > svg {
   color: var(--homecam-teal);
 }
 
-/* 블랙 모드: 설정 카드 헤딩 아이콘도 charcoal 테두리·글자라 묻힌다(패턴 ①). */
+/* 다크 모드: 설정 카드 헤딩 아이콘도 charcoal 테두리·글자라 묻힌다(패턴 ①). */
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .settings-heading-icon {
   color: var(--homecam-teal);
 }
 
-/* 블랙 모드: 모바일 하단 탭 바가 리터럴 흰색이라 헤더만 어둡고 바는 밝게 남는다(패턴 ②).
-   헤더와 같은 색으로 맞춘다. 홈캠 탭도 블랙 모드에서는 같은 색이어야 하므로
+/* 다크 모드: 모바일 하단 탭 바가 리터럴 흰색이라 헤더만 어둡고 바는 밝게 남는다(패턴 ②).
+   헤더와 같은 색으로 맞춘다. 홈캠 탭도 다크 모드에서는 같은 색이어야 하므로
    여기서는 :not(.tab-live)로 좁히지 않는다. */
 .homecam-dashboard-shell.theme-dark .homecam-nav {
   border-top-color: rgb(251 248 243 / .1);
   background: rgb(20 26 25 / .96);
 }
 
-/* 블랙 모드: 알림 배너와 iOS 안내가 charcoal 글자라 어두운 배경에서 사라진다(패턴 ①). */
+/* 다크 모드: 알림 배너와 iOS 안내가 charcoal 글자라 어두운 배경에서 사라진다(패턴 ①). */
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-notice,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-notice {
   color: var(--homecam-ink);
@@ -8312,7 +8346,7 @@ a:focus-visible {
   color: #fbf8f3;
 }
 
-/* 블랙 모드: 보조 버튼 테두리가 다크 paper 색으로 사라지므로 윤곽을 살린다. */
+/* 다크 모드: 보조 버튼 테두리가 다크 paper 색으로 사라지므로 윤곽을 살린다. */
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-actions button.is-secondary {
   border-color: rgb(251 248 243 / .55);
 }
