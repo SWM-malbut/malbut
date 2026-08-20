@@ -5,6 +5,24 @@ const REVISION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export type RobotPose = { x: number; y: number; yaw: number };
 
+export const ROBOT_DRIVE_MODES = [
+  "destination", "patrol", "roaming", "person_following",
+] as const;
+export type RobotDriveMode = (typeof ROBOT_DRIVE_MODES)[number];
+const ROBOT_AUTONOMOUS_DRIVE_MODES = [
+  "patrol", "roaming", "person_following",
+] as const;
+
+export const ROBOT_DRIVE_MODE_STATES = [
+  "idle", "starting", "active", "pausing", "paused", "stopping", "failed",
+] as const;
+export type RobotDriveModeState = {
+  mode: "idle" | RobotDriveMode;
+  state: (typeof ROBOT_DRIVE_MODE_STATES)[number];
+  sessionId: string | null;
+  message: string | null;
+};
+
 export type RobotStateUpload = {
   state: string;
   message: string;
@@ -12,6 +30,7 @@ export type RobotStateUpload = {
   localization: { state: string; tfAgeS: number | null };
   nav2: Record<string, string>;
   target: Record<string, unknown> | null;
+  driveMode?: RobotDriveModeState;
   mapRevision: number;
   observedAt: string;
 };
@@ -37,6 +56,7 @@ export type RobotMapUpload = {
 
 export type RobotOperation = "start" | "finish" | "cancel" |
   "navigation_preview" | "navigation_start" | "navigation_cancel" |
+  "drive_mode_start" | "drive_mode_pause" | "drive_mode_resume" | "drive_mode_stop" |
   "room_split" | "room_merge" | "rooms_save" | "zones_apply";
 
 export function parseRobotCommand(value: unknown): {
@@ -65,6 +85,16 @@ export function parseRobotCommand(value: unknown): {
   if (operation === "navigation_cancel") {
     return Object.keys(payload).length === 1 && safeToken(payload.sessionId)
       ? { operation, payload: { sessionId: payload.sessionId } }
+      : null;
+  }
+  if (operation === "drive_mode_start") {
+    return Object.keys(payload).length === 1 && autonomousDriveMode(payload.mode)
+      ? { operation, payload: { mode: payload.mode } }
+      : null;
+  }
+  if (["drive_mode_pause", "drive_mode_resume", "drive_mode_stop"].includes(String(operation))) {
+    return Object.keys(payload).length === 2 && autonomousDriveMode(payload.mode) && safeToken(payload.sessionId)
+      ? { operation: operation as RobotOperation, payload: { mode: payload.mode, sessionId: payload.sessionId } }
       : null;
   }
   if (["room_split", "room_merge", "rooms_save", "zones_apply"].includes(String(operation))) {
@@ -104,6 +134,9 @@ export function parseRobotState(value: unknown, nowMs = Date.now()): RobotStateU
   if (!isObject(value)) return null;
   const pose = value.pose === null ? null : parsePose(value.pose);
   const localization = value.localization;
+  const driveMode = value.driveMode === undefined
+    ? idleDriveMode()
+    : parseDriveMode(value.driveMode);
   if (
     !shortString(value.state, 32) ||
     !shortString(value.message, 512) ||
@@ -113,6 +146,7 @@ export function parseRobotState(value: unknown, nowMs = Date.now()): RobotStateU
     !(localization.tfAgeS === null || finiteNumber(localization.tfAgeS)) ||
     !isStringRecord(value.nav2, 32, 64, 32) ||
     !(value.target === null || isObject(value.target)) ||
+    !driveMode ||
     !integerInRange(value.mapRevision, 0, Number.MAX_SAFE_INTEGER) ||
     !validObservedAt(value.observedAt, nowMs)
   ) return null;
@@ -123,9 +157,35 @@ export function parseRobotState(value: unknown, nowMs = Date.now()): RobotStateU
     localization: { state: localization.state, tfAgeS: localization.tfAgeS },
     nav2: value.nav2,
     target: value.target,
+    driveMode,
     mapRevision: value.mapRevision,
     observedAt: value.observedAt,
   };
+}
+
+function idleDriveMode(): RobotDriveModeState {
+  return { mode: "idle", state: "idle", sessionId: null, message: null };
+}
+
+function parseDriveMode(value: unknown): RobotDriveModeState | null {
+  if (!isObject(value) || Object.keys(value).some((key) => ![
+    "mode", "state", "sessionId", "message",
+  ].includes(key))) return null;
+  const mode = value.mode;
+  const state = value.state;
+  const sessionId = value.sessionId;
+  const message = value.message;
+  if (
+    !(mode === "idle" || robotDriveMode(mode)) ||
+    typeof state !== "string" || !ROBOT_DRIVE_MODE_STATES.includes(state as RobotDriveModeState["state"]) ||
+    !(sessionId === null || safeToken(sessionId)) ||
+    !(message === null || (typeof message === "string" && message.length <= 512))
+  ) return null;
+  if (mode === "idle") {
+    return state === "idle" && sessionId === null ? idleDriveMode() : null;
+  }
+  if (state === "idle" || sessionId === null) return null;
+  return { mode, state: state as RobotDriveModeState["state"], sessionId, message };
 }
 
 export function parseRobotMap(value: unknown): RobotMapUpload | null {
@@ -286,6 +346,18 @@ function finiteCoordinate(value: unknown): value is number {
 
 function safeToken(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(value);
+}
+
+function robotDriveMode(value: unknown): value is RobotDriveMode {
+  return typeof value === "string" && ROBOT_DRIVE_MODES.includes(value as RobotDriveMode);
+}
+
+function autonomousDriveMode(
+  value: unknown,
+): value is (typeof ROBOT_AUTONOMOUS_DRIVE_MODES)[number] {
+  return typeof value === "string" && ROBOT_AUTONOMOUS_DRIVE_MODES.includes(
+    value as (typeof ROBOT_AUTONOMOUS_DRIVE_MODES)[number],
+  );
 }
 
 function isStringRecord(value: unknown, maxKeys: number, maxKey: number, maxValue: number): value is Record<string, string> {

@@ -36,6 +36,10 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     new URL("../db/migrations/0006_dual_media_sessions.sql", import.meta.url),
     "utf8",
   );
+  const robotDriveModesMigration = await readFile(
+    new URL("../db/migrations/0007_robot_drive_modes.sql", import.meta.url),
+    "utf8",
+  );
   const database = new PGlite();
   try {
     await database.exec(initialMigration);
@@ -44,6 +48,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     await database.exec(robotSemanticsMigration);
     await database.exec(eventClipsMigration);
     await database.exec(dualMediaSessionsMigration);
+    await database.exec(robotDriveModesMigration);
     await database.exec(`
       CREATE TABLE homecam_schema_migrations (
         version TEXT PRIMARY KEY,
@@ -56,7 +61,8 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         ('0003_robot_map'),
         ('0004_robot_map_semantics'),
         ('0005_event_clips'),
-        ('0006_dual_media_sessions');
+        ('0006_dual_media_sessions'),
+        ('0007_robot_drive_modes');
     `);
     await seedDevice(database);
 
@@ -411,7 +417,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         message: "저장된 지도를 사용하고 있습니다.",
         pose: { x: 1.25, y: -0.5, yaw: 0.75 },
         localization: { state: "ok", tfAgeS: 0.02 },
-        nav2: { navigator: "active" },
+        nav2: { navigator: "active", runtime_mode: "navigation" },
         target: null,
         mapRevision: 8,
         observedAt: new Date().toISOString(),
@@ -440,6 +446,9 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       );
       assert.equal(snapshot.online, true);
       assert.deepEqual(plain(snapshot.state.pose), { x: 1.25, y: -0.5, yaw: 0.75 });
+      assert.deepEqual(plain(snapshot.state.driveMode), {
+        mode: "idle", state: "idle", sessionId: null, message: null,
+      });
       assert.equal(snapshot.map.revision, "revision-1");
       const semantics = await robotMap.getRobotMapSemantics(
         "living-room",
@@ -474,7 +483,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         message: "새 지도를 만들고 있습니다.",
         pose: { x: 1.5, y: -0.25, yaw: 0.5 },
         localization: { state: "ok", tfAgeS: 0.02 },
-        nav2: { navigator: "active" },
+        nav2: { navigator: "active", runtime_mode: "mapping" },
         target: null,
         mapRevision: 9,
         observedAt: new Date().toISOString(),
@@ -489,7 +498,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         message: "기존 지도를 유지합니다.",
         pose: { x: 1.5, y: -0.25, yaw: 0.5 },
         localization: { state: "ok", tfAgeS: 0.02 },
-        nav2: { navigator: "active" },
+        nav2: { navigator: "active", runtime_mode: "navigation" },
         target: null,
         mapRevision: 10,
         observedAt: new Date().toISOString(),
@@ -536,6 +545,12 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       const claimedPreview = await robotMap.claimRobotCommands("living-room");
       assert.equal(claimedPreview[0].id, previewCommand.id);
       assert.deepEqual(plain(claimedPreview[0].payload), { x: 2.5, y: -1.25 });
+      await robotMap.completeRobotCommand({
+        deviceId: "living-room",
+        commandId: claimedPreview[0].id,
+        ok: true,
+        result: { previewToken: "preview_token_123" },
+      });
       assert.deepEqual(
         plain(robotContract.parseRobotCommand({
           operation: "navigation_start",
@@ -552,6 +567,83 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
           payload: { x: Number.NaN, y: 0 },
         }),
         null,
+      );
+      assert.deepEqual(
+        plain(robotContract.parseRobotCommand({
+          operation: "drive_mode_start",
+          payload: { mode: "patrol" },
+        })),
+        { operation: "drive_mode_start", payload: { mode: "patrol" } },
+      );
+      assert.deepEqual(
+        plain(robotContract.parseRobotCommand({
+          operation: "drive_mode_pause",
+          payload: { mode: "roaming", sessionId: "roaming_session_1" },
+        })),
+        {
+          operation: "drive_mode_pause",
+          payload: { mode: "roaming", sessionId: "roaming_session_1" },
+        },
+      );
+      assert.equal(robotContract.parseRobotCommand({
+        operation: "drive_mode_start",
+        payload: { mode: "destination" },
+      }), null);
+
+      await assert.rejects(
+        robotMap.createRobotCommand({
+          deviceId: "living-room",
+          userEmail: "family@example.com",
+          operation: "drive_mode_start",
+          payload: { mode: "patrol" },
+        }),
+        /FORBIDDEN/,
+      );
+      const modeCommand = await robotMap.createRobotCommand({
+        deviceId: "living-room",
+        userEmail: "owner@example.com",
+        operation: "drive_mode_start",
+        payload: { mode: "patrol" },
+      });
+      const claimedMode = await robotMap.claimRobotCommands("living-room");
+      assert.equal(claimedMode[0].id, modeCommand.id);
+      await robotMap.completeRobotCommand({
+        deviceId: "living-room",
+        commandId: modeCommand.id,
+        ok: true,
+        result: { sessionId: "patrol_session_1" },
+      });
+      await robotMap.storeRobotState("living-room", {
+        state: "ready",
+        message: "순찰 중입니다.",
+        pose: { x: 1.5, y: -0.25, yaw: 0.5 },
+        localization: { state: "ok", tfAgeS: 0.02 },
+        nav2: { navigator: "active", runtime_mode: "navigation" },
+        target: null,
+        driveMode: {
+          mode: "patrol", state: "active",
+          sessionId: "patrol_session_1", message: "순찰 중입니다.",
+        },
+        mapRevision: 11,
+        observedAt: new Date().toISOString(),
+      });
+      await assert.rejects(
+        robotMap.createRobotCommand({
+          deviceId: "living-room",
+          userEmail: "owner@example.com",
+          operation: "navigation_preview",
+          payload: { x: 1, y: 1 },
+        }),
+        /DRIVE_MODE_IN_PROGRESS/,
+      );
+      await assert.rejects(
+        robotMap.createRobotCommand({
+          deviceId: "living-room",
+          userEmail: "owner@example.com",
+          operation: "drive_mode_stop",
+          payload: { mode: "patrol", sessionId: "stale_session_1" },
+        }),
+        /DRIVE_MODE_SESSION_MISMATCH/,
       );
       const room = (id, minimumX = 0) => ({
         type: "Feature",
@@ -652,7 +744,7 @@ async function seedDevice(database) {
   );
   await database.query(
     `INSERT INTO device_memberships (device_id, user_email, role, created_at)
-     VALUES ($1, $2, 'owner', $3)`,
+     VALUES ($1, $2, 'owner', $3), ($1, 'family@example.com', 'family', $3)`,
     ["living-room", "owner@example.com", createdAt],
   );
   await database.query(

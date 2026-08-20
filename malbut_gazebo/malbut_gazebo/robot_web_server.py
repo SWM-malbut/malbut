@@ -286,6 +286,23 @@ def _navigation_progress_ratio(
     return round(max(previous, derived), 3)
 
 
+def _drive_mode_from_navigation(navigation: dict) -> dict:
+    """Map direct Nav2 navigation onto the common cloud drive-mode state."""
+    state = navigation.get("state")
+    session_id = navigation.get("session_id")
+    if state in {"driving", "canceling"} and isinstance(session_id, str):
+        return {
+            "mode": "destination",
+            "state": "stopping" if state == "canceling" else "active",
+            "session_id": session_id,
+            "message": navigation.get("message"),
+        }
+    return {
+        "mode": "idle", "state": "idle",
+        "session_id": None, "message": None,
+    }
+
+
 def _path_max_cost(path: object, grid: CostmapGrid) -> int:
     """Return the greatest cost touched by a path, including between poses."""
     cells = _path_cells(path, grid)
@@ -682,6 +699,7 @@ class RobotWebBridge(Node):
         """Return the latest immutable browser state."""
         with self.lock:
             self.seq += 1
+            navigation = dict(self.navigation_state)
             return {
                 "seq": self.seq,
                 "server_time": datetime.now(timezone.utc).isoformat(),
@@ -690,7 +708,8 @@ class RobotWebBridge(Node):
                 "pose": dict(self.pose) if self.pose else None,
                 "localization": dict(self.localization),
                 "nav2": dict(self.lifecycle),
-                "navigation": dict(self.navigation_state),
+                "navigation": navigation,
+                "drive_mode": _drive_mode_from_navigation(navigation),
             }
 
     def _wait(self, future: object, timeout: float, operation: str) -> object:

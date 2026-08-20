@@ -144,6 +144,20 @@ test("navigation progress survives missing cloud ratios and remains visible at a
   assert.match(styles, /\.robot-map-progress i\s*\{[^}]*transition:\s*width 950ms linear/s);
 });
 
+test("common drive mode blocks conflicting destination commands and stays owner-only", async () => {
+  const panel = await readFile(
+    new URL("../app/components/robot-map-panel.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(panel, /type RobotDriveModeSnapshot/);
+  assert.match(panel, /const autonomousModeActive/);
+  assert.match(panel, /autonomousModeActive\) return/);
+  assert.match(panel, /disabled=\{!isOwner \|\| !snapshot\?\.online \|\| autonomousModeActive/);
+  assert.match(panel, /주행 모드 제어는 소유자 계정에서만/);
+  assert.match(panel, /function driveModeCopy/);
+});
+
 test("the home map summary reuses rooms, zones, and the live localized robot pose", async () => {
   const [dashboard, panel, styles] = await Promise.all([
     readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),

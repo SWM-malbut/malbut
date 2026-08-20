@@ -256,6 +256,7 @@ class CloudRobotSync(Node):
             "localization": self._normal_localization(status, localization),
             "nav2": nav2,
             "target": target,
+            "driveMode": self._normal_drive_mode(status, navigation),
             "mapRevision": self._normal_map_counter(status, counter),
             "observedAt": datetime.now(timezone.utc).isoformat().replace(
                 "+00:00", "Z"
@@ -292,6 +293,49 @@ class CloudRobotSync(Node):
             ):
                 return value
         return max(0, int(fallback))
+
+    @staticmethod
+    def _normal_drive_mode(status: dict, navigation: dict) -> dict:
+        """Return one bounded common mode state, including legacy navigation."""
+        value = status.get("drive_mode")
+        if isinstance(value, dict):
+            mode = value.get("mode")
+            state = value.get("state")
+            session_id = value.get("session_id")
+            message = value.get("message")
+            if (
+                mode in {"destination", "patrol", "roaming", "person_following"}
+                and state in {
+                    "starting", "active", "pausing", "paused", "stopping", "failed"
+                }
+                and isinstance(session_id, str)
+                and 8 <= len(session_id) <= 128
+            ):
+                return {
+                    "mode": mode,
+                    "state": state,
+                    "sessionId": session_id,
+                    "message": str(message)[:512] if message else None,
+                }
+        navigation_state = navigation.get("state")
+        navigation_session = navigation.get("session_id")
+        if (
+            navigation_state in {"driving", "canceling"}
+            and isinstance(navigation_session, str)
+            and navigation_session
+        ):
+            return {
+                "mode": "destination",
+                "state": (
+                    "stopping" if navigation_state == "canceling" else "active"
+                ),
+                "sessionId": navigation_session,
+                "message": navigation.get("message"),
+            }
+        return {
+            "mode": "idle", "state": "idle",
+            "sessionId": None, "message": None,
+        }
 
     def _semantic_zone_bytes(self, active: dict | None) -> bytes:
         if not active:
@@ -409,6 +453,8 @@ class CloudRobotSync(Node):
                     "start", "finish", "cancel",
                     "navigation_preview", "navigation_start",
                     "navigation_cancel",
+                    "drive_mode_start", "drive_mode_pause",
+                    "drive_mode_resume", "drive_mode_stop",
                     "room_split", "room_merge", "rooms_save",
                     "zones_apply",
                 }
@@ -484,6 +530,15 @@ class CloudRobotSync(Node):
         if operation in {"start", "finish", "cancel"}:
             path = f"api/mapping/{operation}"
             body = {"replace": True} if operation == "start" else {}
+        elif operation in {
+            "drive_mode_start", "drive_mode_pause",
+            "drive_mode_resume", "drive_mode_stop",
+        }:
+            action = operation.removeprefix("drive_mode_").replace("_", "-")
+            path = f"api/drive-mode/{action}"
+            body = {"mode": payload.get("mode")}
+            if operation != "drive_mode_start":
+                body["session_id"] = payload.get("sessionId")
         else:
             active = load_active_revision(self.map_store)
             if not active:

@@ -45,6 +45,29 @@ def test_cloud_map_counter_prefers_navigation_sequence_over_stable_hash():
     }, 3) == 3
 
 
+def test_cloud_normalizes_one_common_drive_mode_and_legacy_navigation():
+    active = CloudRobotSync._normal_drive_mode({
+        "drive_mode": {
+            "mode": "patrol", "state": "active",
+            "session_id": "patrol_session_1", "message": "patrolling",
+        },
+    }, {})
+    assert active == {
+        "mode": "patrol", "state": "active",
+        "sessionId": "patrol_session_1", "message": "patrolling",
+    }
+    assert CloudRobotSync._normal_drive_mode({}, {
+        "state": "driving", "session_id": "navigation_session_1",
+    }) == {
+        "mode": "destination", "state": "active",
+        "sessionId": "navigation_session_1", "message": None,
+    }
+    assert CloudRobotSync._normal_drive_mode({}, {}) == {
+        "mode": "idle", "state": "idle",
+        "sessionId": None, "message": None,
+    }
+
+
 def test_cloud_remap_command_requests_supervised_runtime_switch(
     tmp_path: Path,
 ):
@@ -125,6 +148,10 @@ def test_cloud_navigation_command_uses_saved_map_and_one_local_session(
         sync._local_command(
             "navigation_start", {"previewToken": preview["preview_token"]}
         )
+        sync._local_command("drive_mode_start", {"mode": "patrol"})
+        sync._local_command("drive_mode_stop", {
+            "mode": "patrol", "sessionId": "patrol_session_1",
+        })
         zones = {
             "type": "FeatureCollection",
             "format": "malbut-semantic-zones-v1",
@@ -147,6 +174,16 @@ def test_cloud_navigation_command_uses_saved_map_and_one_local_session(
             (
                 "/api/navigation/start",
                 {"preview_token": "preview_token_123"},
+                "session=test-session",
+            ),
+            (
+                "/api/drive-mode/start",
+                {"mode": "patrol"},
+                "session=test-session",
+            ),
+            (
+                "/api/drive-mode/stop",
+                {"mode": "patrol", "session_id": "patrol_session_1"},
                 "session=test-session",
             ),
             (

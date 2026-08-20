@@ -18,6 +18,7 @@ from malbut_gazebo.robot_web_server import (
     NavigationError,
     REQUIRED_PATH_CLEARANCE_M,
     RobotRequestHandler,
+    _drive_mode_from_navigation,
     _navigation_progress_ratio,
     _path_min_clearance,
     _path_max_cost,
@@ -31,6 +32,21 @@ def test_navigation_progress_uses_start_route_and_is_monotonic():
     assert _navigation_progress_ratio(10.0, 6.0, 0.01) == 0.4
     assert _navigation_progress_ratio(10.0, 7.0, 0.4) == 0.4
     assert _navigation_progress_ratio(10.0, 0.0, 0.4) == 0.99
+
+
+def test_destination_navigation_reports_one_common_drive_mode():
+    """Direct destination travel must participate in common arbitration."""
+    assert _drive_mode_from_navigation({
+        "state": "driving", "session_id": "navigation_session_1",
+    }) == {
+        "mode": "destination", "state": "active",
+        "session_id": "navigation_session_1", "message": None,
+    }
+    assert _drive_mode_from_navigation({
+        "state": "canceling", "session_id": "navigation_session_1",
+        "message": "stopping",
+    })["state"] == "stopping"
+    assert _drive_mode_from_navigation({"state": "succeeded"})["mode"] == "idle"
 
 
 class FakeBridge:

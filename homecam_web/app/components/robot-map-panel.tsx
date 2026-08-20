@@ -9,6 +9,13 @@ import {
 } from "@phosphor-icons/react";
 import type { HomecamDevice } from "./homecam-dashboard";
 
+type RobotDriveModeSnapshot = {
+  mode: "idle" | "destination" | "patrol" | "roaming" | "person_following";
+  state: "idle" | "starting" | "active" | "pausing" | "paused" | "stopping" | "failed";
+  sessionId: string | null;
+  message: string | null;
+};
+
 export type RobotSnapshot = {
   online: boolean;
   state: {
@@ -18,6 +25,7 @@ export type RobotSnapshot = {
     localization: { state: string; tfAgeS: number | null };
     nav2: Record<string, string>;
     target: Record<string, unknown> | null;
+    driveMode?: RobotDriveModeSnapshot;
     observedAt: string;
   } | null;
   map: {
@@ -45,6 +53,7 @@ export type RobotSnapshot = {
 
 type RobotOperation = "start" | "finish" | "cancel" |
   "navigation_preview" | "navigation_start" | "navigation_cancel" |
+  "drive_mode_start" | "drive_mode_pause" | "drive_mode_resume" | "drive_mode_stop" |
   "room_split" | "room_merge" | "rooms_save" | "zones_apply";
 export type MapMode = "view" | "navigate" | "rooms" | "zones";
 type RoomTool = "select" | "split" | "merge";
@@ -379,6 +388,10 @@ export function RobotMapPanel({
   const isOwner = device?.role === "owner";
   const runtimeMode = snapshot?.state?.nav2.runtime_mode;
   const navigation = snapshot?.state?.target;
+  const driveMode = snapshot?.state?.driveMode;
+  const autonomousModeActive = Boolean(driveMode && ![
+    "idle", "destination",
+  ].includes(driveMode.mode) && !["idle", "failed"].includes(driveMode.state));
   const navigationDriving = navigation?.state === "driving" || navigation?.state === "canceling";
   const navigationSession = typeof navigation?.session_id === "string" ? navigation.session_id : "";
   const previewToken = previewExpiresAt > clockNow && typeof navigationPreview?.preview_token === "string"
@@ -548,7 +561,7 @@ export function RobotMapPanel({
       }
       return;
     }
-    if (runtimeMode !== "navigation" || mapMode !== "navigate") return;
+    if (runtimeMode !== "navigation" || mapMode !== "navigate" || autonomousModeActive) return;
     setNavigationPreview(null);
     setPreviewExpiresAt(0);
     void sendCommand("navigation_preview", { x, y });
@@ -1714,7 +1727,7 @@ export function RobotMapPanel({
                       <div><span>로봇 연결</span><strong>{snapshot?.online ? "정상" : "오프라인"}</strong></div>
                       <div><span>현재 위치</span><strong>{localizationShortCopy(snapshot?.state?.localization.state)}</strong></div>
                       <div><span>지도 상태</span><strong>{snapshot?.map?.finalized ? "저장됨" : "생성 중"}</strong></div>
-                      <div><span>주행 상태</span><strong>{navigationDriving ? "이동 중" : "대기"}</strong></div>
+                      <div><span>주행 모드</span><strong>{driveModeCopy(driveMode)}</strong></div>
                     </>
                   )}
                 </div>
@@ -1725,7 +1738,7 @@ export function RobotMapPanel({
                   {mapMode === "navigate" && previewToken && !navigationDriving && (
                     <>
                       <button type="button" className="is-secondary" onClick={() => { setNavigationPreview(null); setPreviewExpiresAt(0); }}>다시 선택</button>
-                      <button type="button" onClick={() => void sendCommand("navigation_start", { previewToken })} disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}>이 위치로 이동</button>
+                      <button type="button" onClick={() => void sendCommand("navigation_start", { previewToken })} disabled={!isOwner || !snapshot?.online || autonomousModeActive || Boolean(activeCommand) || busy}>이 위치로 이동</button>
                     </>
                   )}
                   {navigationDriving && typeof navigation?.session_id === "string" && (
@@ -1762,7 +1775,7 @@ export function RobotMapPanel({
               </div>
             </>
           )}
-          {!isOwner && <small className="robot-map-owner-note">지도 생성과 공간 편집, 목적지 이동은 소유자 계정에서만 할 수 있습니다.</small>}
+          {!isOwner && <small className="robot-map-owner-note">지도 생성과 공간 편집, 주행 모드 제어는 소유자 계정에서만 할 수 있습니다.</small>}
           {notice && <p className="robot-map-notice" role="status">{notice}</p>}
         </aside>
       </div>
@@ -2855,6 +2868,25 @@ function localizationShortCopy(state: string | undefined) {
   if (state === "verifying") return "재확인 중";
   if (state === "revalidation_required") return "부팅 후 확인 필요";
   return "확인 필요";
+}
+
+function driveModeCopy(value: RobotDriveModeSnapshot | undefined) {
+  if (!value || value.mode === "idle" || value.state === "idle") return "대기";
+  const modes = {
+    destination: "목적지 이동",
+    patrol: "순찰",
+    roaming: "자율 배회",
+    person_following: "사람 따라가기",
+  } as const;
+  const states = {
+    starting: "준비 중",
+    active: "실행 중",
+    pausing: "일시정지 중",
+    paused: "일시정지",
+    stopping: "중지 중",
+    failed: "확인 필요",
+  } as const;
+  return `${modes[value.mode]} · ${states[value.state] ?? "확인 필요"}`;
 }
 
 function numberValue(value: unknown) {

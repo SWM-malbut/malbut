@@ -333,6 +333,9 @@ export const robotRuntimeState = pgTable("robot_runtime_state", {
   tfAgeS: real("tf_age_s"),
   nav2Json: text("nav2_json").notNull(),
   targetJson: text("target_json"),
+  driveModeJson: text("drive_mode_json")
+    .notNull()
+    .default('{"mode":"idle","state":"idle","sessionId":null,"message":null}'),
   mapRevisionCounter: integer("map_revision_counter").notNull(),
   observedAt: timestampText("observed_at").notNull(),
   updatedAt: timestampText("updated_at").notNull().defaultNow(),
