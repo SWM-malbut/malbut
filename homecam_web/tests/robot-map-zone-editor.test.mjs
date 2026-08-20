@@ -135,7 +135,9 @@ test("navigation progress survives missing cloud ratios and remains visible at a
   ]);
 
   assert.match(panel, /function navigationProgressPercent/);
+  assert.match(panel, /initial_path_length_m/);
   assert.match(panel, /1 - Math\.max\(0, remaining\) \/ pathLength/);
+  assert.match(panel, /value\.state === "succeeded" \? 1 : 0\.99/);
   assert.match(panel, /navigationSucceeded \? 100 : navigationProgressPercent\(navigation\)/);
   assert.match(panel, /선택한 목적지에 도착했어요/);
   assert.match(panel, /aria-valuenow=\{navigationProgress\}/);

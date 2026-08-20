@@ -258,6 +258,34 @@ def _path_length(path: object) -> float:
     return total
 
 
+def _navigation_progress_ratio(
+    initial_path_length_m: float,
+    distance_remaining_m: float,
+    previous_ratio: float = 0.0,
+) -> float:
+    """
+    Return monotonic progress against the route accepted at start.
+
+    Nav2 republishes a shorter global path while driving. That live path is
+    useful for drawing the route, but using it as the denominator makes the
+    percentage stall because both the numerator and denominator shrink
+    together. Keep the accepted route length as the baseline, never move
+    progress backwards after a detour, and reserve 100% for success.
+    """
+    values = (
+        initial_path_length_m,
+        distance_remaining_m,
+        previous_ratio,
+    )
+    if not all(math.isfinite(float(value)) for value in values):
+        return 0.0
+    baseline = max(float(initial_path_length_m), 1e-6)
+    remaining = max(0.0, float(distance_remaining_m))
+    previous = max(0.0, min(0.99, float(previous_ratio)))
+    derived = max(0.0, min(0.99, 1.0 - remaining / baseline))
+    return round(max(previous, derived), 3)
+
+
 def _path_max_cost(path: object, grid: CostmapGrid) -> int:
     """Return the greatest cost touched by a path, including between poses."""
     cells = _path_cells(path, grid)
@@ -465,6 +493,7 @@ class RobotWebBridge(Node):
             "path": None,
             "path_revision": 0,
             "path_source": None,
+            "initial_path_length_m": None,
         }
 
     def _receive_navigation_path(self, path: NavPath) -> None:
@@ -1195,6 +1224,9 @@ class RobotWebBridge(Node):
                         record.response["path"]["length_m"]
                     ),
                     "progress_ratio": 0.0,
+                    "initial_path_length_m": (
+                        record.response["path"]["length_m"]
+                    ),
                     "path_length_m": record.response["path"]["length_m"],
                     "path": refreshed_payload,
                     "path_revision": self.path_revision,
@@ -1223,11 +1255,15 @@ class RobotWebBridge(Node):
         with self.lock:
             if self.navigation_state["state"] != "driving":
                 return
-            path_length = max(
-                float(self.navigation_state.get("path_length_m") or 0.0),
-                1e-6,
+            initial_path_length = float(
+                self.navigation_state.get("initial_path_length_m")
+                or self.navigation_state.get("path_length_m")
+                or 0.0
             )
             distance = float(feedback.distance_remaining)
+            previous_progress = float(
+                self.navigation_state.get("progress_ratio") or 0.0
+            )
             if self.navigation_watchdog is not None:
                 self.navigation_watchdog.observe(distance)
             self.navigation_state.update({
@@ -1237,8 +1273,10 @@ class RobotWebBridge(Node):
                 ),
                 "navigation_time_s": round(nav_time, 1),
                 "number_of_recoveries": int(feedback.number_of_recoveries),
-                "progress_ratio": round(
-                    max(0.0, min(1.0, 1.0 - distance / path_length)), 3
+                "progress_ratio": _navigation_progress_ratio(
+                    initial_path_length,
+                    distance,
+                    previous_progress,
                 ),
             })
 

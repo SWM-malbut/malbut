@@ -183,6 +183,8 @@ if "$reuse_gazebo"; then
 fi
 
 homecam_source_runtime "$repo_root"
+homecam_validate_detector_runtime \
+  "$HOMECAM_MODEL_PATH" "$HOMECAM_POSE_MODEL_PATH"
 homecam_prepare_media_runtime "$HOMECAM_WORKSPACE"
 if ! "$check_only" && homecam_is_true "$HOMECAM_START_GAZEBO"; then
   saved_pose_line="$(

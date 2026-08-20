@@ -2864,13 +2864,17 @@ function numberValue(value: unknown) {
 function navigationProgressPercent(value: unknown) {
   if (!isRecord(value)) return 0;
   const reported = numberValue(value.progress_ratio);
-  const pathLength = numberValue(value.path_length_m);
+  const initialPathLength = numberValue(value.initial_path_length_m);
+  const pathLength = initialPathLength > 0
+    ? initialPathLength
+    : numberValue(value.path_length_m);
   const remaining = numberValue(value.distance_remaining_m);
   const derived = pathLength > 0
     ? 1 - Math.max(0, remaining) / pathLength
     : 0;
   const ratio = Math.max(reported, derived);
-  return Math.round(Math.max(0, Math.min(1, ratio)) * 100);
+  const upperBound = value.state === "succeeded" ? 1 : 0.99;
+  return Math.round(Math.max(0, Math.min(upperBound, ratio)) * 100);
 }
 
 function formatMeters(value: unknown) {

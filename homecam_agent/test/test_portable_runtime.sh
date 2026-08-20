@@ -134,6 +134,7 @@ grep -Fq \
   '"navigation_status_topic:=$HOMECAM_NAVIGATION_STATUS_TOPIC"' \
   "$runner"
 grep -Fq '"pose_model_path:=$HOMECAM_POSE_MODEL_PATH"' "$runner"
+grep -Fq 'homecam_validate_detector_runtime' "$runner"
 
 event_person="$repo_root/scripts/spawn_event_test_person.sh"
 grep -Fq -- '--world small_house' "$event_person"
