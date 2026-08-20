@@ -20,7 +20,16 @@ from tf2_msgs.msg import TFMessage
 import yaml
 
 
-FORMAT = "malbut-localization-handoff-v2"
+FORMAT = "malbut-localization-handoff-v3"
+# 지도마다 기록을 따로 둔다. 하나만 두면 재매핑 중 SLAM 지도의 기록이
+# 저장된 지도의 기록을 덮어써, 매핑을 중지하고 돌아올 때 복원이
+# 거부되고 AMCL 이 초기 위치를 영영 받지 못한다.
+#
+# SLAM 지도는 탐색하며 자라기 때문에 갱신마다 digest 가 달라진다. 그대로
+# 두면 매핑 한 세션이 기록을 수십 개 만들어 저장된 지도 기록을 밀어낸다.
+# 그래서 저장된 지도로 주행할 때의 기록만 고정하고, 고정되지 않은 기록은
+# 항상 최신 하나만 남긴다.
+MAX_PINNED_RECORDS = 4
 BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 MAP_QOS = QoSProfile(
     depth=1,
@@ -176,13 +185,32 @@ def _write_state(
     map_message: OccupancyGrid,
     map_to_odom: TransformStamped,
     boot_id: str | None = None,
+    pinned: bool = False,
 ) -> None:
-    """Atomically write the latest map identity and frame transform."""
+    """Atomically write this map's identity and frame transform."""
+    session = boot_id or _boot_id()
+    digest = _map_digest(map_message)
+    kept = []
+    try:
+        previous = _load_state(path)
+    except (OSError, ValueError, yaml.YAMLError):
+        previous = None
+    if previous is not None and previous["boot_id"] == session:
+        # 같은 부팅 안에서만 다른 지도의 기록이 유효하다.
+        kept = [
+            record for record in previous["records"]
+            if record["map_digest"] != digest and record["pinned"]
+        ]
+    records = kept[-MAX_PINNED_RECORDS:]
+    records.append({
+        "map_digest": digest,
+        "pinned": bool(pinned),
+        "map_to_odom": _transform_value(map_to_odom),
+    })
     state = {
         "format": FORMAT,
-        "boot_id": boot_id or _boot_id(),
-        "map_digest": _map_digest(map_message),
-        "map_to_odom": _transform_value(map_to_odom),
+        "boot_id": session,
+        "records": records,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
@@ -201,12 +229,28 @@ def _load_state(path: Path) -> dict:
         value["boot_id"] = str(uuid.UUID(value["boot_id"]))
     except (KeyError, TypeError, ValueError, AttributeError) as error:
         raise ValueError("localization handoff has no valid boot id") from error
-    if not isinstance(value.get("map_digest"), str):
-        raise ValueError("localization handoff has no map digest")
-    transform = value.get("map_to_odom")
-    if not isinstance(transform, dict):
-        raise ValueError("localization handoff has no map-to-odom transform")
+    records = value.get("records")
+    if not isinstance(records, list) or not records:
+        raise ValueError("localization handoff has no map records")
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("localization handoff record is malformed")
+        if not isinstance(record.get("map_digest"), str):
+            raise ValueError("localization handoff has no map digest")
+        if not isinstance(record.get("map_to_odom"), dict):
+            raise ValueError(
+                "localization handoff has no map-to-odom transform"
+            )
+        record["pinned"] = bool(record.get("pinned", False))
     return value
+
+
+def select_record(state: dict, map_digest: str) -> dict | None:
+    """Return the transform recorded for one specific map, if any."""
+    for record in reversed(state.get("records", [])):
+        if record["map_digest"] == map_digest:
+            return record
+    return None
 
 
 class LocalizationRecorder(Node):
@@ -223,6 +267,9 @@ class LocalizationRecorder(Node):
         ).expanduser()
         self.map_frame = self.declare_parameter("map_frame", "map").value
         self.odom_frame = self.declare_parameter("odom_frame", "odom").value
+        # 저장된 지도로 주행할 때의 기록만 고정한다. SLAM 지도는 갱신마다
+        # digest 가 바뀌므로 고정하면 기록이 무한히 늘어난다.
+        self.pinned = bool(self.declare_parameter("pinned", False).value)
         self.map_message = None
         self.last_write = 0.0
         self.create_subscription(
@@ -244,7 +291,12 @@ class LocalizationRecorder(Node):
                 transform.header.frame_id == self.map_frame
                 and transform.child_frame_id == self.odom_frame
             ):
-                _write_state(self.state_path, self.map_message, transform)
+                _write_state(
+                    self.state_path,
+                    self.map_message,
+                    transform,
+                    pinned=self.pinned,
+                )
                 self.last_write = now
                 return
 
@@ -279,14 +331,7 @@ class LocalizationRestorer(Node):
             self.finished = True
             self.state = None
             return
-        transform = self.state["map_to_odom"]
-        if (
-            transform.get("parent_frame") != self.map_frame
-            or transform.get("child_frame") != self.odom_frame
-        ):
-            self.get_logger().error("localization state frame mismatch")
-            self.finished = True
-            return
+        self.record = None
         try:
             self.boot_id = _boot_id()
         except (OSError, ValueError) as error:
@@ -308,12 +353,24 @@ class LocalizationRestorer(Node):
         self.create_subscription(TFMessage, "/tf", self._receive_tf, TF_QOS)
 
     def _receive_map(self, message):
-        self.map_matches = _map_digest(message) == self.state["map_digest"]
-        if not self.map_matches:
+        # 재매핑 중에도 기록이 쌓이므로 지금 서빙 중인 지도의 기록을 고른다.
+        record = select_record(self.state, _map_digest(message))
+        if record is None:
             self.get_logger().error(
                 "saved localization belongs to a different map"
             )
             self.finished = True
+            return
+        transform = record["map_to_odom"]
+        if (
+            transform.get("parent_frame") != self.map_frame
+            or transform.get("child_frame") != self.odom_frame
+        ):
+            self.get_logger().error("localization state frame mismatch")
+            self.finished = True
+            return
+        self.record = record
+        self.map_matches = True
 
     def _receive_tf(self, message):
         if self.finished or self.request_sent or not self.map_matches:
@@ -327,7 +384,7 @@ class LocalizationRestorer(Node):
                 return
 
     def _restore(self, odom_to_base):
-        saved = self.state["map_to_odom"]
+        saved = self.record["map_to_odom"]
         if not _same_odom_session(
             int(saved["stamp_nanoseconds"]),
             _stamp_nanoseconds(odom_to_base),

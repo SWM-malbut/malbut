@@ -76,6 +76,8 @@ setup(
             'cloud_robot_sync = malbut_gazebo.cloud_robot_sync:main',
             'demo_actor_manager = '
             'malbut_gazebo.demo_actor_manager:main',
+            'inscribed_escape = '
+            'malbut_gazebo.inscribed_escape:main',
             'record_localization_state = '
             'malbut_gazebo.localization_handoff:record_main',
             'restore_localization_state = '
