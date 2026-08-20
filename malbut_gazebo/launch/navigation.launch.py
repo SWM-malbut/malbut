@@ -311,6 +311,19 @@ def generate_launch_description():
             ],
         }],
     )
+    inscribed_escape = Node(
+        package='malbut_gazebo',
+        executable='inscribed_escape',
+        name='inscribed_escape',
+        namespace=namespace,
+        # 로봇이 벽에 붙어 멈추면 그 셀이 내접 장애물이 되어 어떤 계획도
+        # 시작하지 못하고, collision monitor 가 탈출용 후진까지 막아 Nav2
+        # 복구가 제자리에서 반복된다. 그때만 짧게 빠져나오게 한다.
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+        }],
+    )
     localization_recorder = Node(
         package='malbut_gazebo',
         executable='record_localization_state',
@@ -644,6 +657,7 @@ def generate_launch_description():
             zone_filter_mask_server,
             zone_filter_info_server,
             zone_filter_lifecycle_manager,
+            inscribed_escape,
             localization_recorder,
             localization_restorer,
             pose_checkpoint,
