@@ -5973,7 +5973,8 @@ a:focus-visible {
 }
 
 /* 다크 모드: 타일과 카드 대비가 낮아 모서리가 안 보이므로 밝기를 살짝 올린다. */
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-summary-grid > div {
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-summary-grid > div,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-drive-mode-status {
   background: rgb(251 248 243 / .08);
 }
 
@@ -6026,10 +6027,8 @@ a:focus-visible {
   line-height: 1.6;
 }
 
-.homecam-dashboard-shell .robot-drive-mode-card {
-  border: 1px solid #d8e5e3;
-  background: #f5faf9;
-}
+/* 다른 패널 카드와 같은 배경·테두리를 쓴다. 이 카드만 리터럴 색을 두면
+   라이트에서 혼자 푸른기가 돌고 다크에서 따로 덮어야 한다. */
 
 .homecam-dashboard-shell .robot-drive-mode-status {
   display: flex;
@@ -6037,7 +6036,7 @@ a:focus-visible {
   gap: 6px;
   padding: 15px;
   border-radius: 14px;
-  background: rgb(11 60 69 / .07);
+  background: var(--homecam-canvas);
 }
 
 .homecam-dashboard-shell .robot-drive-mode-status strong {
@@ -8338,11 +8337,6 @@ a:focus-visible {
   background: rgb(251 248 243 / .07);
 }
 
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-drive-mode-card {
-  border-color: var(--homecam-line);
-  background: var(--homecam-paper);
-}
-
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-map-preview,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-card,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-canvas {
@@ -9176,4 +9170,20 @@ a:focus-visible {
   .homecam-dashboard-shell .homecam-setting-row > div > span {
     font-size: 0.8125rem;
   }
+}
+
+/* 주행 모드 표시는 모드와 상태를 각각 한 줄로 둔다. */
+.homecam-dashboard-shell .robot-drive-mode-status > strong,
+.homecam-dashboard-shell .robot-map-summary-grid > div > strong {
+  white-space: pre-line;
+}
+
+/* 자율주행 카드 버튼은 같은 화면의 지도 다시 만들기 버튼과 같은 치수를 쓴다.
+   기본 액션 버튼 치수(56px)를 그대로 두면 옆 카드보다 눈에 띄게 커 보인다. */
+.homecam-dashboard-shell .robot-drive-mode-card .robot-map-actions button,
+.homecam-dashboard-shell .robot-drive-mode-card .robot-map-actions.is-inline button {
+  min-height: 48px;
+  border-radius: 14px;
+  font-size: 1rem;
+  font-weight: 700;
 }

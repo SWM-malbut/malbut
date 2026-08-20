@@ -1819,7 +1819,6 @@ export function RobotMapPanel({
                       <div className="robot-map-actions is-inline">
                         <button
                           type="button"
-                          className="is-secondary"
                           onClick={() => void sendCommand("drive_mode_start", { mode: "patrol" })}
                           disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("patrol") || Boolean(activeCommand) || busy}
                         >방 순찰 시작</button>
@@ -2970,7 +2969,7 @@ function driveModeCopy(value: RobotDriveModeSnapshot | undefined) {
     stopping: "중지 중",
     failed: "확인 필요",
   } as const;
-  return `${modes[value.mode]} · ${states[value.state] ?? "확인 필요"}`;
+  return `${modes[value.mode]}\n${states[value.state] ?? "확인 필요"}`;
 }
 
 function driveModeAvailableModes(value: RobotDriveModeSnapshot | undefined) {
