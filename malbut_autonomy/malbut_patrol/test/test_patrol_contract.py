@@ -4,8 +4,11 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import yaml
+import pytest
 
 from malbut_patrol.geometry import yaw_to_quaternion
+from malbut_patrol.patrol_manager import PatrolManager
+from malbut_patrol.patrol_state import PatrolProgress
 from malbut_patrol.route_loader import load_route
 
 
@@ -65,3 +68,24 @@ def test_launch_exposes_safe_manual_start_and_relative_nav2_action():
     assert "default_value='navigate_to_pose'" in launch_text
     assert "package='malbut_patrol'" in launch_text
     assert 'malbut_gazebo' not in launch_text
+
+
+def test_route_reload_cannot_reset_an_active_patrol():
+    """Refreshing Room-derived points must not bypass single-run ownership."""
+    route_file = (
+        PACKAGE_ROOT
+        / 'config'
+        / 'routes'
+        / 'small_house_patrol.yaml'
+    )
+    route = load_route(route_file)
+    manager = object.__new__(PatrolManager)
+    manager._route_file = route_file
+    manager._route = route
+    manager._progress = PatrolProgress(route)
+    manager._progress.start()
+
+    with pytest.raises(RuntimeError, match='cannot start while state'):
+        manager._reload_route()
+
+    assert manager._progress.is_active

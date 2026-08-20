@@ -4,8 +4,13 @@ import importlib.util
 import math
 from pathlib import Path
 
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchContext
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    GroupAction,
+    IncludeLaunchDescription,
+)
 from launch.substitutions import LaunchConfiguration
 from launch.utilities import perform_substitutions
 from launch_ros.actions import Node
@@ -27,6 +32,24 @@ ROBOT_PROFILE = (
 
 def _parameters(config, node_name):
     return config[node_name]['ros__parameters']
+
+
+def _all_entities(description):
+    """Flatten scoped launch groups for static topology assertions."""
+    entities = []
+    for entity in description.entities:
+        entities.append(entity)
+        if isinstance(entity, GroupAction):
+            entities.extend(entity.get_sub_entities())
+    return entities
+
+
+def _includes(description):
+    return [
+        entity
+        for entity in _all_entities(description)
+        if isinstance(entity, IncludeLaunchDescription)
+    ]
 
 
 def test_nav2_uses_omnidirectional_motion_limits():
@@ -112,6 +135,10 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     assert 'pose_checkpoint_map_id' in declared_arguments
     assert 'pose_checkpoint_map_revision' in declared_arguments
     assert 'boot_pose_trusted' in declared_arguments
+    assert 'autonomous_modes' in declared_arguments
+    assert 'patrol_route_file' in declared_arguments
+    assert 'person_following' in declared_arguments
+    assert 'person_projection_frame' in declared_arguments
 
     robot_web_nodes = [
         entity
@@ -127,12 +154,51 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
         and entity.node_executable == 'pose_checkpoint'
     ]
     assert len(checkpoint_nodes) == 1
+    mode_nodes = {
+        entity.node_executable
+        for entity in description.entities
+        if isinstance(entity, Node)
+        and entity.node_executable in {'patrol_manager', 'roaming_manager'}
+    }
+    assert mode_nodes == {'patrol_manager', 'roaming_manager'}
 
-    includes = [
+    collision_nodes = [
         entity
         for entity in description.entities
-        if isinstance(entity, IncludeLaunchDescription)
+        if isinstance(entity, Node)
+        and entity.node_package == 'nav2_collision_monitor'
+        and entity.node_executable == 'collision_monitor'
     ]
+    assert len(collision_nodes) == 1
+    perception_nodes = {
+        entity.node_executable
+        for entity in description.entities
+        if isinstance(entity, Node)
+        and entity.node_executable in {'person_localizer', 'person_follower'}
+    }
+    assert perception_nodes == {'person_localizer', 'person_follower'}
+
+    launch_source = launch_file.read_text(encoding='utf-8')
+    assert "('cmd_vel_smoothed', 'cmd_vel_pre_collision')" in launch_source
+    assert 'Unsupported Nav2 launch' in launch_source
+    assert "'cmd_vel_in_topic': '/cmd_vel_pre_collision'" in launch_source
+    assert "'cmd_vel_out_topic': '/cmd_vel'" in launch_source
+
+    safe_navigation, safe_bringup = module._safe_nav2_launch_sources(
+        get_package_share_directory('nav2_bringup')
+    )
+    safe_navigation_source = Path(safe_navigation).read_text(
+        encoding='utf-8'
+    )
+    assert safe_navigation_source.count(
+        "('cmd_vel_smoothed', 'cmd_vel_pre_collision')"
+    ) == 2
+    assert safe_navigation_source.count(
+        "('cmd_vel', 'cmd_vel_pre_collision')"
+    ) == 2
+    assert safe_navigation in Path(safe_bringup).read_text(encoding='utf-8')
+
+    includes = _includes(description)
     context = LaunchContext()
     for include in includes:
         include.launch_description_source.get_launch_description(context)
@@ -140,9 +206,7 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     bringup = next(
         include
         for include in includes
-        if include.launch_description_source.location.endswith(
-            '/nav2_bringup/launch/bringup_launch.py'
-        )
+        if 'map' in dict(include.launch_arguments)
     )
     launch_arguments = dict(bringup.launch_arguments)
     composition_argument = launch_arguments['use_composition']
@@ -151,9 +215,7 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
         context, composition_argument.variable_name
     ) == 'use_composition'
     assert any(
-        include.launch_description_source.location.endswith(
-            '/nav2_bringup/launch/navigation_launch.py'
-        )
+        'map' not in dict(include.launch_arguments)
         for include in includes
     )
 
@@ -303,11 +365,7 @@ def test_zone_filter_is_disabled_without_a_mask_and_enabled_with_one():
     spec.loader.exec_module(module)
     description = module.generate_launch_description()
     location_context = LaunchContext()
-    includes = [
-        entity
-        for entity in description.entities
-        if isinstance(entity, IncludeLaunchDescription)
-    ]
+    includes = _includes(description)
     for include in includes:
         include.launch_description_source.get_launch_description(
             location_context
@@ -315,9 +373,7 @@ def test_zone_filter_is_disabled_without_a_mask_and_enabled_with_one():
     bringup = next(
         entity
         for entity in includes
-        if entity.launch_description_source.location.endswith(
-            '/nav2_bringup/launch/bringup_launch.py'
-        )
+        if 'map' in dict(entity.launch_arguments)
     )
     configured_params = dict(bringup.launch_arguments)['params_file']
 
@@ -353,11 +409,7 @@ def test_zone_filter_topics_follow_the_navigation_namespace():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     description = module.generate_launch_description()
-    includes = [
-        entity
-        for entity in description.entities
-        if isinstance(entity, IncludeLaunchDescription)
-    ]
+    includes = _includes(description)
     location_context = LaunchContext()
     for include in includes:
         include.launch_description_source.get_launch_description(
@@ -366,9 +418,7 @@ def test_zone_filter_topics_follow_the_navigation_namespace():
     bringup = next(
         entity
         for entity in includes
-        if entity.launch_description_source.location.endswith(
-            '/nav2_bringup/launch/bringup_launch.py'
-        )
+        if 'map' in dict(entity.launch_arguments)
     )
     configured_params = dict(bringup.launch_arguments)['params_file']
     context = LaunchContext()

@@ -70,11 +70,12 @@ def test_humanoid_route_is_continuous_and_indoor_speed():
         distance = math.hypot(end[0] - start[0], end[1] - start[1])
         route_length += distance
         translation_speeds.append(distance / (end_time - start_time))
-    assert 53.5 <= route_length <= 54.5
+    assert 57.0 <= route_length <= 58.0
     assert max(translation_speeds) <= 0.45 + 2e-3
-    assert 140.0 <= times[-1] <= 142.0
+    assert 145.0 <= times[-1] <= 146.0
     assert actor.findtext('script/loop') == 'true'
     assert actor.findtext('script/auto_start') == 'true'
+    assert actor.find('script/trajectory').get('tension') == '1.0'
 
 
 def test_humanoid_is_a_camera_target_without_ground_truth_plugins():
@@ -95,10 +96,13 @@ def test_default_route_covers_the_full_small_house():
     ]
     points = [(offset_x + pose[0], offset_y + pose[1]) for pose in poses]
     assert min(x for x, _ in points) < -7.5
-    assert max(x for x, _ in points) > 8.0
-    assert min(y for _, y in points) < -4.4
+    assert max(x for x, _ in points) > 7.6
+    assert min(y for _, y in points) <= -4.4
     assert max(y for _, y in points) > 4.1
-    assert any(x < -7.0 and y > 2.0 for x, y in points)
+    # The upper-left room narrows below the actor's 0.55 m map-clearance
+    # envelope above y=1.1, so the route reaches the furthest safe aisle
+    # instead of cutting through the doorway or wall.
+    assert any(x < -7.0 and y >= 1.0 for x, y in points)
     assert any(abs(x) < 0.6 and y < -4.2 for x, y in points)
     assert any(x > 7.8 and y > 0.8 for x, y in points)
 

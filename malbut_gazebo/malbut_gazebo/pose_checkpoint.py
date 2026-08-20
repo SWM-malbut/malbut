@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import math
@@ -9,9 +10,11 @@ import os
 from pathlib import Path
 import tempfile
 
+import cv2
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import (
@@ -24,6 +27,7 @@ from std_msgs.msg import String
 import tf2_ros
 
 from malbut_gazebo.map_lifecycle import load_active_revision
+from malbut_gazebo.user_map_builder import load_slam_map
 
 
 POSE_CHECKPOINT_FORMAT = "malbut-pose-checkpoint/v1"
@@ -36,6 +40,70 @@ CHECKPOINT_DISTANCE_M = 0.05
 CHECKPOINT_YAW_RAD = 0.05
 MAX_POSITION_VARIANCE_M2 = 0.25
 MAX_YAW_VARIANCE_RAD2 = 0.275
+MIN_SAFE_CHECKPOINT_CLEARANCE_M = 0.30
+TRINARY_UNKNOWN_VALUE = 205
+
+
+@dataclass(frozen=True)
+class PoseSafetyGrid:
+    """Provide saved-map obstacle clearance for boot pose validation."""
+
+    resolution: float
+    origin_x: float
+    origin_y: float
+    clearance: np.ndarray
+
+    @classmethod
+    def load(cls, map_yaml: Path) -> "PoseSafetyGrid":
+        """Load one non-rotated ROS map as a bottom-up clearance grid."""
+        slam_map = load_slam_map(map_yaml)
+        transform = slam_map.transform
+        if abs(transform.origin_yaw) > 1e-6:
+            raise ValueError(
+                "pose checkpoints do not support a rotated map origin"
+            )
+        normalized = slam_map.image.astype(np.float32) / 255.0
+        occupancy = (
+            normalized if slam_map.negate else 1.0 - normalized
+        )
+        free = occupancy <= slam_map.free_threshold
+        if slam_map.mode == "trinary":
+            free &= slam_map.image != TRINARY_UNKNOWN_VALUE
+        bottom_up = np.flipud(free.astype(np.uint8))
+        clearance = cv2.distanceTransform(
+            bottom_up, cv2.DIST_L2, 5
+        ) * transform.resolution
+        clearance.setflags(write=False)
+        return cls(
+            transform.resolution,
+            transform.origin_x,
+            transform.origin_y,
+            clearance,
+        )
+
+    def clearance_at(self, pose: object) -> float:
+        """Return physical obstacle clearance or zero outside known free map."""
+        normalized = _finite_pose(pose)
+        if normalized is None:
+            return 0.0
+        column = math.floor(
+            (normalized["x"] - self.origin_x) / self.resolution
+        )
+        row = math.floor(
+            (normalized["y"] - self.origin_y) / self.resolution
+        )
+        height, width = self.clearance.shape
+        if not (0 <= column < width and 0 <= row < height):
+            return 0.0
+        return float(self.clearance[row, column])
+
+    def accepts(
+        self,
+        pose: object,
+        minimum_clearance_m: float = MIN_SAFE_CHECKPOINT_CLEARANCE_M,
+    ) -> bool:
+        """Return whether a pose is safe enough for a future robot spawn."""
+        return self.clearance_at(pose) >= minimum_clearance_m
 
 
 def _finite_pose(value: object) -> dict[str, float] | None:
@@ -157,6 +225,8 @@ class PoseCheckpointNode(Node):
         self.active = load_active_revision(self.map_store)
         if self.active is None:
             raise ValueError("pose checkpoint requires an active map revision")
+        map_yaml = self.map_store / str(self.active.get("map_yaml", ""))
+        self.pose_safety = PoseSafetyGrid.load(map_yaml)
         expected_map_id = str(self.get_parameter("map_id").value).strip()
         expected_revision = str(
             self.get_parameter("map_revision").value
@@ -186,6 +256,18 @@ class PoseCheckpointNode(Node):
         )
         self.proposal_received = self.initially_trusted
         self.checkpoint = load_pose_checkpoint(self.map_store, self.active)
+        if (
+            self.checkpoint is not None
+            and not self.pose_safety.accepts(self.checkpoint.get("pose"))
+        ):
+            clearance = self.pose_safety.clearance_at(
+                self.checkpoint.get("pose")
+            )
+            self.get_logger().warning(
+                "ignoring an unsafe pose checkpoint "
+                f"(clearance={clearance:.3f} m)"
+            )
+            self.checkpoint = None
         self.checkpoint_proposed = False
         self.ignore_initial_pose_count = 0
         self.proposal_stamp_ns = 0
@@ -390,6 +472,8 @@ class PoseCheckpointNode(Node):
         if self.stable_samples < STABLE_SAMPLE_COUNT:
             return
         self._set_validation("ok")
+        if not self.pose_safety.accepts(pose):
+            return
         self.latest_verified_pose = dict(pose)
         self._write_if_due(pose)
 

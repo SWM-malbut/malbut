@@ -1,5 +1,9 @@
 import { getD1 } from ".";
-import type { RobotMapUpload, RobotStateUpload } from "../app/robot-contract";
+import type {
+  RobotMapUpload,
+  RobotOperation,
+  RobotStateUpload,
+} from "../app/robot-contract";
 import {
   ensureHomecamSchema,
   userCanManageDevice,
@@ -23,6 +27,7 @@ type StateRow = {
   tf_age_s: number | null;
   nav2_json: string;
   target_json: string | null;
+  drive_mode_json: string;
   map_revision_counter: number;
   observed_at: string;
   updated_at: string;
@@ -64,9 +69,9 @@ export async function storeRobotState(deviceId: string, state: RobotStateUpload)
     .prepare(
       `INSERT INTO robot_runtime_state
        (device_id, state, message, pose_x, pose_y, pose_yaw,
-        localization_state, tf_age_s, nav2_json, target_json,
+        localization_state, tf_age_s, nav2_json, target_json, drive_mode_json,
         map_revision_counter, observed_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(device_id) DO UPDATE SET
          state = excluded.state,
          message = excluded.message,
@@ -77,6 +82,7 @@ export async function storeRobotState(deviceId: string, state: RobotStateUpload)
          tf_age_s = excluded.tf_age_s,
          nav2_json = excluded.nav2_json,
          target_json = excluded.target_json,
+         drive_mode_json = excluded.drive_mode_json,
          map_revision_counter = excluded.map_revision_counter,
          observed_at = excluded.observed_at,
          updated_at = excluded.updated_at`,
@@ -92,6 +98,9 @@ export async function storeRobotState(deviceId: string, state: RobotStateUpload)
       state.localization.tfAgeS,
       JSON.stringify(state.nav2),
       state.target ? JSON.stringify(state.target) : null,
+      JSON.stringify(state.driveMode ?? {
+        mode: "idle", state: "idle", sessionId: null, message: null,
+      }),
       state.mapRevision,
       state.observedAt,
       now,
@@ -238,14 +247,14 @@ export async function getRobotMapSemantics(deviceId: string, userEmail: string) 
 export async function createRobotCommand(input: {
   deviceId: string;
   userEmail: string;
-  operation: "start" | "finish" | "cancel" | "navigation_preview" | "navigation_start" | "navigation_cancel" |
-    "room_split" | "room_merge" | "rooms_save" | "zones_apply";
+  operation: RobotOperation;
   payload?: Record<string, unknown>;
 }) {
   await ensureHomecamSchema();
   if (!(await userCanManageDevice(input.deviceId, input.userEmail))) {
     throw new Error("FORBIDDEN");
   }
+  await assertDriveCommandAllowed(input);
   await expireStaleRobotCommands(input.deviceId);
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
@@ -287,6 +296,55 @@ export async function createRobotCommand(input: {
     metadata: { commandId: id },
   });
   return mapCommand(result);
+}
+
+async function assertDriveCommandAllowed(input: {
+  deviceId: string;
+  operation: RobotOperation;
+  payload?: Record<string, unknown>;
+}) {
+  const driveOperations = new Set<RobotOperation>([
+    "navigation_preview", "navigation_start", "navigation_cancel",
+    "drive_mode_start", "drive_mode_pause", "drive_mode_resume", "drive_mode_stop",
+  ]);
+  if (!driveOperations.has(input.operation)) return;
+  const state = await getD1()
+    .prepare(
+      `SELECT localization_state, nav2_json, drive_mode_json, observed_at
+       FROM robot_runtime_state WHERE device_id = ?`,
+    )
+    .bind(input.deviceId)
+    .first<Pick<StateRow, "localization_state" | "nav2_json" | "drive_mode_json" | "observed_at">>();
+  if (!state || Date.parse(state.observed_at) < Date.now() - ROBOT_ONLINE_MS) {
+    throw new Error("ROBOT_OFFLINE");
+  }
+  const nav2 = parseObject(state.nav2_json);
+  if (
+    input.operation !== "navigation_cancel" &&
+    input.operation !== "drive_mode_pause" &&
+    input.operation !== "drive_mode_stop" &&
+    (state.localization_state !== "ok" || nav2.runtime_mode !== "navigation")
+  ) {
+    throw new Error("ROBOT_NOT_READY");
+  }
+  const driveMode = parseObject(state.drive_mode_json);
+  const currentMode = typeof driveMode.mode === "string" ? driveMode.mode : "idle";
+  const currentState = typeof driveMode.state === "string" ? driveMode.state : "idle";
+  const currentSession = typeof driveMode.sessionId === "string" ? driveMode.sessionId : null;
+  if (["navigation_preview", "navigation_start", "drive_mode_start"].includes(input.operation)) {
+    if (currentMode !== "idle" || currentState !== "idle") {
+      throw new Error("DRIVE_MODE_IN_PROGRESS");
+    }
+    return;
+  }
+  if (input.operation.startsWith("drive_mode_")) {
+    if (
+      currentMode !== input.payload?.mode ||
+      currentSession !== input.payload?.sessionId
+    ) {
+      throw new Error("DRIVE_MODE_SESSION_MISMATCH");
+    }
+  }
 }
 
 export async function claimRobotCommands(deviceId: string) {
@@ -367,6 +425,7 @@ function mapState(row: StateRow) {
     localization: { state: row.localization_state, tfAgeS: row.tf_age_s },
     nav2: parseObject(row.nav2_json),
     target: row.target_json ? parseObject(row.target_json) : null,
+    driveMode: parseObject(row.drive_mode_json),
     mapRevision: row.map_revision_counter,
     observedAt: row.observed_at,
     updatedAt: row.updated_at,

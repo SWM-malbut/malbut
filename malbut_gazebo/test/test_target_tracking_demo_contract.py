@@ -6,11 +6,10 @@ from pathlib import Path
 from launch import LaunchContext
 from launch.actions import (
     DeclareLaunchArgument,
-    GroupAction,
     IncludeLaunchDescription,
 )
 from launch.utilities import perform_substitutions
-from launch_ros.actions import Node, SetRemap
+from launch_ros.actions import Node
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -62,15 +61,11 @@ def test_demo_composes_sensor_perception_nav2_and_tracking():
         '/perception/person/debug_image'
     ]
 
-    simulation_group = next(
-        entity
-        for entity in description.entities
-        if isinstance(entity, GroupAction)
-    )
     humanoid = next(
         entity
-        for entity in simulation_group.get_sub_entities()
+        for entity in description.entities
         if isinstance(entity, IncludeLaunchDescription)
+        and _source_name(entity) == 'humanoid_demo.launch.py'
     )
     assert _source_name(humanoid) == 'humanoid_demo.launch.py'
     humanoid_arguments = dict(humanoid.launch_arguments)
@@ -84,13 +79,6 @@ def test_demo_composes_sensor_perception_nav2_and_tracking():
         == 'camera_depth_optical_frame'
     )
     assert 'debug_image_transport' in humanoid_arguments
-    remap = next(
-        entity
-        for entity in simulation_group.get_sub_entities()
-        if isinstance(entity, SetRemap)
-    )
-    assert remap is not None
-
     includes = [
         entity
         for entity in description.entities
@@ -98,6 +86,7 @@ def test_demo_composes_sensor_perception_nav2_and_tracking():
     ]
     by_source = {_source_name(include): include for include in includes}
     assert set(by_source) == {
+        'humanoid_demo.launch.py',
         'navigation.launch.py',
         'person_following.launch.py',
     }
@@ -108,21 +97,18 @@ def test_demo_composes_sensor_perception_nav2_and_tracking():
     tracking = dict(by_source['person_following.launch.py'].launch_arguments)
     assert set(tracking) == {'use_sim_time'}
 
-    collision_nodes = [
+    duplicate_collision_nodes = [
         entity
         for entity in description.entities
         if isinstance(entity, Node)
         and entity.node_package == 'nav2_collision_monitor'
     ]
-    assert len(collision_nodes) == 1
+    assert duplicate_collision_nodes == []
     launch_source = (
         PACKAGE_ROOT / 'launch' / 'target_tracking_demo.launch.py'
     ).read_text(encoding='utf-8')
-    assert "'cmd_vel_in_topic': '/cmd_vel'" in launch_source
-    assert "'cmd_vel_out_topic': '/cmd_vel_tracking_output'" in (
-        launch_source
-    )
-    assert '/cmd_vel_tracking_raw' not in launch_source
+    assert 'nav2_collision_monitor' not in launch_source
+    assert 'SetRemap' not in launch_source
 
 
 def test_demo_uses_optical_sensor_coordinates_without_ground_truth():

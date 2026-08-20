@@ -5881,6 +5881,31 @@ a:focus-visible {
   line-height: 1.6;
 }
 
+.homecam-dashboard-shell .robot-drive-mode-card {
+  border: 1px solid #d8e5e3;
+  background: #f5faf9;
+}
+
+.homecam-dashboard-shell .robot-drive-mode-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 15px;
+  border-radius: 14px;
+  background: rgb(11 60 69 / .07);
+}
+
+.homecam-dashboard-shell .robot-drive-mode-status strong {
+  color: var(--homecam-teal);
+  font-size: 17px;
+}
+
+.homecam-dashboard-shell .robot-drive-mode-status span {
+  color: var(--homecam-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 .homecam-dashboard-shell .robot-map-steps {
   display: flex;
   flex-direction: column;
@@ -8111,6 +8136,11 @@ a:focus-visible {
 /* 블랙 모드: 설정 카드 헤딩 아이콘도 charcoal 테두리·글자라 묻힌다(패턴 ①). */
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .settings-heading-icon {
   color: var(--homecam-teal);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-drive-mode-card {
+  border-color: var(--homecam-line);
+  background: var(--homecam-paper);
 }
 
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-map-preview,
