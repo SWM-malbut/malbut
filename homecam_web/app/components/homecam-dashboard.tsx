@@ -1907,14 +1907,14 @@ export function HomecamDashboard({
                     setColorMode("light");
                   }}>
                     <Sun size={19} weight="regular" aria-hidden="true" />
-                    화이트 모드
+                    라이트 모드
                   </button>
                   <button type="button" className={colorMode === "dark" ? "is-active" : ""} onClick={() => {
                     window.localStorage.setItem("malbut-color-mode", "dark");
                     setColorMode("dark");
                   }}>
                     <Moon size={19} weight="regular" aria-hidden="true" />
-                    블랙 모드
+                    다크 모드
                   </button>
                 </div>
                 <div className="homecam-setting-row homecam-text-size-row">
