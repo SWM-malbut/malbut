@@ -2725,7 +2725,7 @@ a:focus-visible {
 
 .robot-map-empty {
   display: flex;
-  max-width: 390px;
+  max-width: 640px; /* 안내 문장이 데스크톱에서 한 줄로 들어가는 폭 */
   align-items: center;
   flex-direction: column;
   color: var(--homecam-muted);
@@ -2742,6 +2742,8 @@ a:focus-visible {
   margin: 8px 0 0;
   font-size: 0.75rem;
   line-height: 1.6;
+  word-break: keep-all;
+  text-wrap: pretty;
 }
 
 .robot-map-sidebar {
@@ -5037,6 +5039,7 @@ a:focus-visible {
 .homecam-home-hero h1 {
   margin: 9px 0 14px;
   font-size: clamp(26px, 3vw, 36px);
+  font-weight: 700;
   letter-spacing: -.035em;
 }
 
@@ -5098,7 +5101,8 @@ a:focus-visible {
   padding: 24px;
   border: 0;
   border-radius: 24px;
-  color: var(--homecam-paper);
+  /* 배경이 리터럴 다크 그라디언트이므로 글자도 테마 불변 토큰을 쓴다. */
+  color: var(--surface-base);
   background: linear-gradient(145deg, #42504d, #25302e);
   font: inherit;
   cursor: pointer;
@@ -5157,7 +5161,7 @@ a:focus-visible {
   gap: 9px;
 }
 
-.homecam-home-events h2 { margin: 0; font-size: 1.1875rem; }
+.homecam-home-events h2 { margin: 0; font-size: 1.1875rem; font-weight: 700; }
 .homecam-home-events header > div > span {
   padding: 4px 9px;
   border-radius: 999px;
@@ -5207,7 +5211,7 @@ a:focus-visible {
 .homecam-home-shortcut > div,
 .homecam-home-privacy > div { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 4px; }
 .homecam-home-shortcut span,
-.homecam-home-privacy span { color: var(--homecam-muted); font-size: 0.8125rem; }
+.homecam-home-privacy span { color: var(--homecam-muted); font-size: 0.8125rem; font-weight: 700; }
 .homecam-home-shortcut strong,
 .homecam-home-privacy strong { font-size: 0.9375rem; }
 .homecam-home-shortcut button,
@@ -5365,13 +5369,13 @@ a:focus-visible {
   letter-spacing: -.02em;
 }
 
+/* 이벤트 탭 필터와 같은 모양: 상자 배경 없이 칩 버튼만 나열한다. */
 .homecam-dashboard-shell .robot-map-mode-tabs {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px;
-  border-radius: 14px;
-  background: var(--homecam-canvas);
+  padding: 0;
+  background: transparent;
 }
 
 .homecam-dashboard-shell .robot-map-mode-tabs button {
@@ -5382,7 +5386,7 @@ a:focus-visible {
   color: #4a524e;
   background: transparent;
   font: inherit;
-  font-size: 1rem;
+  font-size: 0.9375rem;
   font-weight: 600;
   cursor: pointer;
 }
@@ -5391,12 +5395,6 @@ a:focus-visible {
   color: var(--homecam-charcoal);
   background: var(--homecam-teal-light);
   font-weight: 700;
-}
-
-.homecam-dashboard-shell .robot-map-mode-tabs button:nth-child(2).is-active {
-  color: #a0521a;
-  border: 1px solid #f0d3b8;
-  background: #fbebdc;
 }
 
 .homecam-dashboard-shell .robot-map-mode-tabs button:disabled {
@@ -5749,6 +5747,7 @@ a:focus-visible {
 }
 
 .homecam-dashboard-shell .robot-map-sidebar {
+  word-break: keep-all;
   display: flex;
   min-width: 0;
   gap: 18px;
@@ -5809,8 +5808,28 @@ a:focus-visible {
   flex-direction: column;
   gap: 5px;
   padding: 14px;
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--homecam-canvas);
+}
+
+/* 블랙 모드: 모드 배너 제목(charcoal)과 help 본문(리터럴 회색)이
+   다크 배경에서 묻히므로 다크 팔레트 토큰으로 명시한다. */
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner:not(.mode-navigate) strong {
+  color: var(--homecam-ink);
+}
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-rooms,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-zones,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-view,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-mapping {
+  color: var(--homecam-muted);
+}
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-help {
+  color: var(--homecam-muted);
+}
+
+/* 블랙 모드: 타일과 카드 대비가 낮아 모서리가 안 보이므로 밝기를 살짝 올린다. */
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-summary-grid > div {
+  background: rgb(251 248 243 / .08);
 }
 
 .homecam-dashboard-shell .robot-map-summary.is-driving .robot-map-summary-grid > div {
@@ -5883,7 +5902,7 @@ a:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-top: auto;
+  margin-top: 4px;
   padding: 18px;
   border: 1px solid var(--homecam-line);
   border-radius: 18px;
@@ -6155,7 +6174,8 @@ a:focus-visible {
   gap: 7px;
   border: 0;
   border-radius: 14px;
-  color: var(--homecam-paper);
+  /* 배경이 brand-900 고정이므로 글자도 테마 불변 토큰을 쓴다. */
+  color: var(--surface-base);
   background: var(--homecam-charcoal);
   font: inherit;
   font-size: 1rem;
@@ -6453,7 +6473,8 @@ a:focus-visible {
   min-height: 52px;
   padding: 16px;
   border-radius: 16px;
-  color: var(--homecam-ink);
+  /* 배경이 리터럴 아이보리이므로 글자도 테마 불변 토큰을 쓴다. */
+  color: var(--text-strong);
   background: rgb(251 248 243 / .94);
   font-size: 1.0625rem;
   font-weight: 700;
@@ -6471,10 +6492,12 @@ a:focus-visible {
   background: var(--homecam-paper);
 }
 
+/* Tailwind preflight가 h2 굵기를 400으로 리셋하므로 명시한다. */
 .homecam-dashboard-shell .homecam-home-map-card h2,
 .homecam-dashboard-shell .homecam-home-favorites h2 {
   margin: 0;
   font-size: 1.1875rem;
+  font-weight: 700;
 }
 
 .homecam-dashboard-shell .homecam-home-map-preview {
@@ -6574,7 +6597,7 @@ a:focus-visible {
   background: #1e2422;
 }
 
-.homecam-dashboard-shell.tab-live .homecam-device-bar > div { border-color: rgb(251 248 243 / .18); background: rgb(251 248 243 / .07); }
+/* 화이트 버전과 동일하게 기기명 주위 알약 배경 없이 텍스트만 표시한다. */
 .homecam-dashboard-shell.tab-live .homecam-device-bar strong,
 .homecam-dashboard-shell.tab-live .homecam-device-bar select { color: var(--homecam-paper); }
 
@@ -6639,6 +6662,7 @@ a:focus-visible {
   margin: 0;
   color: var(--homecam-paper);
   font-size: 1.125rem;
+  font-weight: 700;
 }
 
 .homecam-dashboard-shell.tab-live .homecam-live-recent-card > div button {
@@ -6795,24 +6819,29 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+/* 지도 탭의 모드 탭과 동일한 세그먼트 컨트롤 형태로 통일한다.
+   컨테이너 상자는 device-bar 하위 규칙이 항상 제거하므로 간격만 정의한다. */
 .homecam-dashboard-shell.tab-events .homecam-filter-row {
-  gap: 8px;
+  gap: 6px;
   margin: 0;
 }
 
 .homecam-dashboard-shell.tab-events .homecam-filter-row button {
-  min-height: 36px;
-  padding: 0 14px;
-  border-width: 1.5px;
+  min-height: 38px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 11px;
   color: #4a524e;
   background: transparent;
   font-size: 0.9375rem;
+  font-weight: 600;
 }
 
 .homecam-dashboard-shell.tab-events .homecam-filter-row button.is-selected {
-  color: var(--homecam-paper);
-  border-color: var(--homecam-charcoal);
-  background: var(--homecam-charcoal);
+  color: var(--homecam-charcoal);
+  border-color: transparent;
+  background: var(--homecam-teal-light);
+  font-weight: 700;
 }
 
 .homecam-dashboard-shell .homecam-events-workspace {
@@ -7136,23 +7165,36 @@ a:focus-visible {
 }
 
 /* Live homecam: keep the approved 16:10 camera composition at every width. */
+/* 홈·설정 다크 pill과 동일한 상자로 통일한다 (라이브 탭은 변수 대신 다크 리터럴). */
 .homecam-dashboard-shell.tab-live .homecam-device-selector {
-  padding: 0;
-  border: 0;
-  background: transparent;
+  border-color: rgb(251 248 243 / .15);
+  background: rgb(251 248 243 / .07);
 }
 
-.homecam-dashboard-shell.tab-live .homecam-device-avatar { display: none; }
+
+/* 라이브 탭은 항상 다크이므로 아바타를 다크 팔레트로 그린다. */
+.homecam-dashboard-shell.tab-live .homecam-device-avatar {
+  color: #8fd3dd;
+  background: #344947;
+}
+
 .homecam-dashboard-shell.tab-live .homecam-device-selector strong,
 .homecam-dashboard-shell.tab-live .homecam-device-selector select {
-  color: rgb(251 248 243 / .68);
-  font-weight: 600;
+  color: var(--homecam-paper);
+  font-weight: 700;
+}
+
+/* 홈 탭 다크 pill과 동일한 표현으로 통일한다 (같은 상태 = 같은 모양). */
+.homecam-dashboard-shell.tab-live .homecam-connection-pill {
+  color: #abb3ae;
+  border-color: rgb(251 248 243 / .2);
+  background: rgb(251 248 243 / .07);
 }
 
 .homecam-dashboard-shell.tab-live .homecam-connection-pill.is-online {
   color: #78d6a0;
-  border-color: transparent;
-  background: rgb(120 214 160 / .14);
+  border-color: rgb(120 214 160 / .24);
+  background: rgb(120 214 160 / .12);
 }
 
 .homecam-dashboard-shell.tab-live .homecam-device-bar-meta {
@@ -7314,6 +7356,7 @@ a:focus-visible {
 .homecam-dashboard-shell.tab-live .homecam-live-state-card h2 {
   margin: 0 0 16px;
   font-size: 1.1875rem;
+  font-weight: 700;
 }
 
 .homecam-dashboard-shell.tab-live .homecam-live-state-list {
@@ -7513,6 +7556,42 @@ a:focus-visible {
 @media (max-width: 520px) {
   .homecam-dashboard-shell .homecam-theme-options { grid-template-columns: 1fr; }
   .homecam-dashboard-shell .homecam-theme-options button { min-height: 64px; }
+
+  /* 좁은 화면: 설명이 버튼 옆에서 눌리므로 라벨 아래로 버튼을 내린다. */
+  .homecam-dashboard-shell .homecam-text-size-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .homecam-dashboard-shell .homecam-text-size-row .homecam-theme-options button {
+    min-height: 46px;
+    flex: 1;
+  }
+}
+
+/* 큰 글자 토글: 다른 설정 행과 같이 라벨은 왼쪽, 선택 버튼은 오른쪽에 둔다.
+   화면 모드의 큰 카드형 버튼을 그대로 쓰면 행 안에서 과하게 커진다. */
+.homecam-dashboard-shell .homecam-text-size-row > div:first-child {
+  align-items: flex-start;
+  text-align: left;
+}
+
+.homecam-dashboard-shell .homecam-text-size-row .homecam-theme-options {
+  display: flex;
+  /* .homecam-setting-row > div 의 column 방향을 되돌린다. */
+  flex-direction: row;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-top: 0;
+}
+
+.homecam-dashboard-shell .homecam-text-size-row .homecam-theme-options button {
+  min-height: 46px;
+  padding: 0 16px;
+  gap: 7px;
+  border-radius: 13px;
+  font-size: 0.9375rem;
+  white-space: nowrap;
 }
 
 /* Theme control is shared by the live and event workspaces. */
@@ -7581,6 +7660,12 @@ a:focus-visible {
 
 .homecam-dashboard-shell.theme-light.tab-live .homecam-brand > strong {
   color: var(--homecam-paper);
+  background: var(--homecam-charcoal);
+}
+
+/* 블랙 모드에서도 라이브 탭 로고가 다른 탭과 같은 팔레트를 쓰게 한다. */
+.homecam-dashboard-shell.theme-dark.tab-live .homecam-brand > strong {
+  color: #fbf8f3;
   background: var(--homecam-charcoal);
 }
 
@@ -7949,6 +8034,7 @@ a:focus-visible {
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-nav button.is-active,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-link.is-active,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-nav button.is-active,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-filter-row button.is-selected,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-tabs button.is-active {
   color: #fbf8f3;
   background: rgb(143 211 221 / .16);
@@ -7962,12 +8048,22 @@ a:focus-visible {
   background: transparent;
 }
 
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-bar > div,
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-period,
+/* 다크: 이벤트 필터처럼 모드 탭도 버튼 그룹을 감싸는 상자를 그린다. */
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-tabs {
+  border-radius: 14px;
+  background: rgb(251 248 243 / .07);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-bar > div,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-period {
   color: var(--homecam-ink);
   border-color: var(--homecam-line);
   background: rgb(251 248 243 / .07);
+}
+
+/* [말] 아바타: 다크에서는 charcoal 글자가 배경에 묻히므로 밝은 틸로 뒤집는다(패턴 ①). */
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-device-avatar {
+  color: var(--homecam-teal);
 }
 
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-connection-pill {
@@ -7991,7 +8087,6 @@ a:focus-visible {
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-detail-copy,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-nav,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-settings-card,
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-sidebar,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-mapping,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-view,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-list-card,
@@ -7999,6 +8094,23 @@ a:focus-visible {
   color: var(--homecam-ink);
   border-color: var(--homecam-line);
   background: var(--homecam-paper);
+}
+
+/* 블랙 모드: 사이드바는 라이트와 동일하게 투명 배경 — 카드(summary·panel-card)만
+   paper 색으로 떠 보이게 해 화이트 모드와 같은 카드 구조를 유지한다. */
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-sidebar {
+  color: var(--homecam-ink);
+  background: transparent;
+}
+
+/* 블랙 모드: 빈 상태 아이콘(charcoal)이 다크 배경에 묻히므로 teal로 명시한다. */
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-empty-state > svg {
+  color: var(--homecam-teal);
+}
+
+/* 블랙 모드: 설정 카드 헤딩 아이콘도 charcoal 테두리·글자라 묻힌다(패턴 ①). */
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .settings-heading-icon {
+  color: var(--homecam-teal);
 }
 
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-map-preview,
@@ -8020,7 +8132,6 @@ a:focus-visible {
 }
 
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-map-actions button:first-child,
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-filter-row button.is-selected,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-event-detail-actions > button,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-theme-options button.is-active,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-actions button:not(.is-secondary) {
@@ -8095,6 +8206,23 @@ a:focus-visible {
   border-color: rgb(145 171 176 / .32);
   background: rgb(32 38 36 / .78);
 }
+/* 다크: charcoal 글자·테두리는 재정의되지 않아 어두운 배경에 묻힌다(패턴 ①). */
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-add,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-goal-setting button {
+  color: var(--homecam-ink);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-delete {
+  color: #ff9e90;
+  border-color: rgb(223 117 103 / .5);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-tool-grid button.is-active,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-choice-chips button.is-active {
+  color: #fbf8f3;
+  border-color: var(--homecam-teal);
+}
+
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-zone-add.is-active {
   color: #fbf8f3;
   border-color: #2b7885;
@@ -8129,7 +8257,14 @@ a:focus-visible {
   color: #fbf8f3;
 }
 
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-actions button:not(.is-secondary) {
+/* 블랙 모드: 보조 버튼 테두리가 다크 paper 색으로 사라지므로 윤곽을 살린다. */
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-actions button.is-secondary {
+  border-color: rgb(251 248 243 / .55);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-actions button:not(.is-secondary),
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-privacy button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-home-shortcut button {
   color: #1e2422;
   border-color: #fbf8f3;
   background: #fbf8f3;
@@ -8692,7 +8827,7 @@ a:focus-visible {
     grid-row: 2;
     grid-column: 1 / -1;
     overflow-x: auto;
-    padding: 4px;
+    padding: 0;
     scrollbar-width: none;
   }
 

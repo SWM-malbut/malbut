@@ -197,7 +197,7 @@ function HomeMapSummary({
   return (
     <>
       <article className="homecam-home-map-card">
-        <h2>우리 집 지도</h2>
+        <h2>지도</h2>
         <button type="button" className="homecam-home-map-preview" onClick={() => onOpenMap("view")}>
           {device && revision ? (
             <>
@@ -220,7 +220,7 @@ function HomeMapSummary({
         </div>
       </article>
       <article className="homecam-home-favorites">
-        <h2>자주 보내는 곳</h2>
+        <h2>주요 목적지</h2>
         <div>
           {rooms.length === 0 && <p>방을 나누고 이름을 정하면 여기에 표시됩니다.</p>}
           {rooms.slice(0, 4).map((room) => (
@@ -1420,7 +1420,7 @@ export function HomecamDashboard({
 
       <main className="homecam-main">
         {tab !== "map" && <div className="homecam-device-bar">
-          {tab !== "home" && <h1>{tab === "live" ? "홈캠" : tab === "events" ? "이벤트" : "설정"}</h1>}
+          <h1>{tab === "home" ? "홈" : tab === "live" ? "홈캠" : tab === "events" ? "이벤트" : "설정"}</h1>
           {tab === "events" && (
             <>
               <div className="homecam-event-period" aria-label="이벤트 날짜 선택">
@@ -1647,7 +1647,7 @@ export function HomecamDashboard({
 
             <div className="homecam-quick-grid">
               <article className="homecam-live-state-card">
-                <h2>지금 상태</h2>
+                <h2>현재 상태</h2>
                 <div className="homecam-live-state-list">
                   <div>
                     <i className={displayedMediaReady ? "is-good" : ""} aria-hidden="true" />
