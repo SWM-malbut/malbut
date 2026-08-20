@@ -57,6 +57,26 @@ type RobotOperation = "start" | "finish" | "cancel" |
   "drive_mode_start" | "drive_mode_pause" | "drive_mode_resume" | "drive_mode_stop" |
   "room_split" | "room_merge" | "rooms_save" | "zones_apply" |
   "demo_person_show" | "demo_person_hide";
+// 지도 만들기 진행 표시는 장치가 보내는 state 를 그대로 따라간다.
+// 예전에는 제목·진행바·단계 목록이 모두 리터럴이라, 장치가 review 로
+// 넘어가도 화면은 "이동하고 있어요" 3단계에 붙박여 있었다.
+const MAPPING_STEPS: Array<{ label: string; states: string[] }> = [
+  { label: "주변을 인식하고 있어요", states: ["waiting_for_map"] },
+  { label: "자율주행을 준비하고 있어요", states: ["waiting_for_navigation"] },
+  { label: "새로운 공간을 확인하러 이동하고 있어요", states: ["navigating"] },
+  { label: "더 확인할 공간이 있는지 찾고 있어요", states: ["exploring", "review"] },
+  { label: "지도를 안전하게 저장하고 있어요", states: ["saving"] },
+];
+
+const MAPPING_PROGRESS: Record<string, number> = {
+  waiting_for_map: 12,
+  waiting_for_navigation: 30,
+  navigating: 62,
+  exploring: 78,
+  review: 92,
+  saving: 98,
+};
+
 export type MapMode = "view" | "navigate" | "rooms" | "zones";
 type RoomTool = "select" | "split" | "merge";
 type SplitLine = Array<[number, number]>;
@@ -403,6 +423,10 @@ export function RobotMapPanel({
   const roomCommandPending = Boolean(activeCommand && snapshot?.command &&
     ["room_split", "room_merge", "rooms_save"].includes(snapshot.command.operation));
   const zoneCommandPending = Boolean(activeCommand && snapshot?.command?.operation === "zones_apply");
+  const mappingStep = MAPPING_STEPS.findIndex(
+    (step) => step.states.includes(snapshot?.state?.state ?? ""),
+  );
+  const mappingProgress = MAPPING_PROGRESS[snapshot?.state?.state ?? ""] ?? 62;
   const mapping = snapshot?.state && [
     "waiting_for_map", "waiting_for_navigation", "exploring", "navigating", "review", "saving",
   ].includes(snapshot.state.state);
@@ -1403,8 +1427,8 @@ export function RobotMapPanel({
           {mapping ? (
             <>
               <div className="robot-map-summary">
-                <h2>새로운 공간을 확인하러 이동하고 있어요</h2>
-                <div className="robot-map-progress"><i style={{ width: "62%" }} /></div>
+                <h2>{snapshot?.state?.message ?? MAPPING_STEPS[Math.max(0, mappingStep)].label}</h2>
+                <div className="robot-map-progress"><i style={{ width: `${mappingProgress}%` }} /></div>
                 <div className="robot-map-summary-grid">
                   <div><span>로봇 연결</span><strong>{snapshot?.online ? "정상" : "오프라인"}</strong></div>
                   <div><span>현재 위치</span><strong>{localizationShortCopy(snapshot?.state?.localization.state)}</strong></div>
@@ -1415,11 +1439,16 @@ export function RobotMapPanel({
               <div className="robot-map-panel-card">
                 <h3>지금까지의 단계</h3>
                 <ol className="robot-map-steps">
-                  <li className="is-done">주변을 인식하고 있어요</li>
-                  <li className="is-done">자율주행을 준비하고 있어요</li>
-                  <li className="is-current">새로운 공간을 확인하러 이동하고 있어요</li>
-                  <li>더 확인할 공간이 있는지 찾고 있어요</li>
-                  <li>지도를 안전하게 저장하고 있어요</li>
+                  {MAPPING_STEPS.map((step, index) => (
+                    <li
+                      key={step.label}
+                      className={
+                        index < mappingStep ? "is-done"
+                          : index === mappingStep ? "is-current"
+                            : undefined
+                      }
+                    >{step.label}</li>
+                  ))}
                 </ol>
               </div>
               <div className="robot-map-help">

@@ -6,7 +6,7 @@ from http.server import ThreadingHTTPServer
 import importlib.util
 import json
 from pathlib import Path
-from threading import Thread
+from threading import Lock, Thread
 
 import numpy as np
 import pytest
@@ -22,6 +22,8 @@ from launch_ros.actions import Node
 
 from malbut_gazebo.map_lifecycle import (
     FREE_THRESHOLD,
+    FRONTIER_CELL_CAP,
+    FRONTIER_DISTANCE_PENALTY_CELLS_PER_M,
     MapGrid,
     find_frontiers,
     load_active_revision,
@@ -414,3 +416,115 @@ def test_managed_trusted_pose_requires_finite_explicit_coordinates():
     context.launch_configurations["x"] = ""
     with pytest.raises(RuntimeError, match="finite x"):
         module._explicit_initial_pose(context)
+
+
+class _Frontier:
+    def __init__(self, x: float, y: float):
+        self.x = x
+        self.y = y
+        self.yaw = 0.0
+
+
+def _stub_onboarding_server():
+    from malbut_gazebo.map_onboarding_server import MapOnboardingBridge
+
+    server = MapOnboardingBridge.__new__(MapOnboardingBridge)
+    server.lock = Lock()
+    server.blacklisted = []
+    server.completed_target = None
+    server.unproductive_visits = 0
+    server.state = "exploring"
+    server.message = ""
+    return server
+
+
+def test_exploration_keeps_a_frontier_that_still_reveals_new_space():
+    """A visit that moves the frontier onward must not be discarded."""
+    server = _stub_onboarding_server()
+    server.completed_target = (7.98, -0.90)
+
+    assert server._discard_unproductive_frontier(_Frontier(5.0, -0.90)) is False
+    assert server.blacklisted == []
+    assert server.unproductive_visits == 0
+
+
+def test_exploration_discards_a_frontier_two_visits_failed_to_resolve():
+    """
+    Reaching the same frontier twice reveals nothing, so stop retrying.
+
+    Only failed goals used to be blacklisted, so two reachable-but-blind
+    approach points made exploration ping-pong between them forever.
+    """
+    server = _stub_onboarding_server()
+    server.completed_target = (7.98, -0.90)
+
+    # 첫 근접 재선정은 정상적인 점진 탐색일 수 있으므로 통과시킨다.
+    assert server._discard_unproductive_frontier(_Frontier(7.93, -1.41)) is False
+    assert server.blacklisted == []
+
+    server.completed_target = (7.93, -1.41)
+    assert server._discard_unproductive_frontier(_Frontier(7.98, -0.90)) is True
+    assert server.blacklisted == [(7.93, -1.41)]
+    assert server.completed_target is None
+    assert server.unproductive_visits == 0
+    assert server.state == "exploring"
+
+
+def test_exploration_ignores_repeat_checks_without_a_completed_visit():
+    server = _stub_onboarding_server()
+
+    assert server._discard_unproductive_frontier(_Frontier(1.0, 1.0)) is False
+    assert server.blacklisted == []
+
+
+def test_frontier_order_prefers_nearby_work_over_a_house_crossing():
+    """
+    Exploration must not cross the house for a marginally larger cluster.
+
+    Cluster size alone used to decide the order, so the robot drove from
+    one end of the house to the other and straight back.
+    """
+    from malbut_gazebo.map_lifecycle import Frontier
+
+    near = Frontier(
+        x=1.0, y=0.0, yaw=0.0,
+        cell_count=120, clearance_m=0.5, distance_m=1.0,
+    )
+    far = Frontier(
+        x=9.0, y=0.0, yaw=0.0,
+        cell_count=160, clearance_m=0.5, distance_m=9.0,
+    )
+    ordered = sorted(
+        [far, near],
+        key=lambda item: (
+            -(
+                min(item.cell_count, FRONTIER_CELL_CAP)
+                - FRONTIER_DISTANCE_PENALTY_CELLS_PER_M * item.distance_m
+            ),
+            item.distance_m,
+        ),
+    )
+
+    assert ordered[0] is near
+
+    # 이동 비용을 덮을 만큼 큰 공간이면 멀어도 먼저 간다.
+    huge = Frontier(
+        x=9.0, y=0.0, yaw=0.0,
+        cell_count=400, clearance_m=0.5, distance_m=9.0,
+    )
+    small_near = Frontier(
+        x=1.0, y=0.0, yaw=0.0,
+        cell_count=40, clearance_m=0.5, distance_m=1.0,
+    )
+    ordered = sorted(
+        [small_near, huge],
+        key=lambda item: (
+            -(
+                min(item.cell_count, FRONTIER_CELL_CAP)
+                - FRONTIER_DISTANCE_PENALTY_CELLS_PER_M * item.distance_m
+            ),
+            item.distance_m,
+        ),
+    )
+
+    assert ordered[0] is huge

@@ -53,6 +53,11 @@ MAX_SSE_CLIENTS = 16
 GOAL_RESPONSE_TIMEOUT_S = 5.0
 GOAL_EXECUTION_TIMEOUT_S = 90.0
 NO_FRONTIER_REVIEW_DELAY_S = 12.0
+# 도달에 성공한 프론티어가 이 거리 안에서 다시 뽑히면 그 방문이 새 공간을
+# 드러내지 못했다는 뜻이다. 블랙리스트 근접 판정과 같은 값을 쓴다.
+UNPRODUCTIVE_FRONTIER_RADIUS_M = 0.75
+# 한 번의 근접 재선정은 정상적인 점진 탐색일 수 있으므로 두 번째부터 버린다.
+UNPRODUCTIVE_FRONTIER_VISITS = 2
 
 
 def _path_length(path: NavPath) -> float:
@@ -143,6 +148,8 @@ class MapOnboardingBridge(Node):
         self.goal_requested_at: float | None = None
         self.goal_started_at: float | None = None
         self.no_frontier_since: float | None = None
+        self.completed_target: tuple[float, float] | None = None
+        self.unproductive_visits = 0
         self.save_thread: Thread | None = None
         self.active_revision = load_active_revision(self.store)
         self.previous_revision = self.active_revision
@@ -386,7 +393,41 @@ class MapOnboardingBridge(Node):
                 )
             return
         self.no_frontier_since = None
+        if self._discard_unproductive_frontier(candidates[0]):
+            return
         self._send_goal(candidates[0])
+
+    def _discard_unproductive_frontier(self, frontier: object) -> bool:
+        """
+        Blacklist a frontier that a completed visit failed to resolve.
+
+        Only failed goals were blacklisted before, so a frontier the robot
+        reaches without revealing new space is selected again forever and
+        exploration ping-pongs between two approach points.
+        """
+        with self.lock:
+            completed = self.completed_target
+            if completed is None:
+                return False
+            distance = math.hypot(
+                float(frontier.x) - completed[0],
+                float(frontier.y) - completed[1],
+            )
+            if distance >= UNPRODUCTIVE_FRONTIER_RADIUS_M:
+                self.completed_target = None
+                self.unproductive_visits = 0
+                return False
+            self.unproductive_visits += 1
+            if self.unproductive_visits < UNPRODUCTIVE_FRONTIER_VISITS:
+                self.completed_target = None
+                return False
+            self.blacklisted.append(completed)
+            self.blacklisted = self.blacklisted[-32:]
+            self.completed_target = None
+            self.unproductive_visits = 0
+            self.state = "exploring"
+            self.message = "이미 확인한 구역이라 다음 공간을 찾습니다."
+        return True
 
     def _set_state(self, state: str, message: str) -> None:
         with self.lock:
@@ -455,6 +496,12 @@ class MapOnboardingBridge(Node):
             return
         if status == GoalStatus.STATUS_SUCCEEDED:
             with self.lock:
+                # 도달한 지점을 기억해 둔다. 다음 선정이 이 근처로 돌아오면
+                # 그 방문이 아무 공간도 드러내지 못한 것이므로 버려야 한다.
+                if self.target is not None:
+                    self.completed_target = (
+                        float(self.target["x"]), float(self.target["y"])
+                    )
                 self.goal_handle = None
                 self.goal_requested_at = None
                 self.goal_started_at = None

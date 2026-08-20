@@ -115,6 +115,13 @@ def map_statistics(grid: MapGrid) -> dict:
     }
 
 
+# 아주 큰 군집끼리는 크기 차이가 의미 없으므로 여기서 잘라 비교한다.
+FRONTIER_CELL_CAP = 200
+# 1 m 이동을 이만큼의 미탐색 셀과 맞바꾼다. 200셀 상한과 함께 보면,
+# 8 m 떨어진 최대 군집이 바로 옆 104셀 군집과 비슷한 값이 된다.
+FRONTIER_DISTANCE_PENALTY_CELLS_PER_M = 12.0
+
+
 def find_frontiers(
     grid: MapGrid,
     robot_xy: tuple[float, float] | None,
@@ -221,9 +228,18 @@ def find_frontiers(
             clearance_m=float(clearance[row, column]),
             distance_m=distance,
         ))
+    # 군집 크기만 1순위로 두면 거리는 동점일 때만 쓰이므로, 집 반대편의
+    # 조금 더 큰 군집을 먼저 고르며 온 집을 횡단해 왕복한다. 크기와 이동
+    # 비용을 한 점수로 합쳐 큰 공간을 선호하되 가까운 곳부터 정리한다.
     return sorted(
         candidates,
-        key=lambda item: (-min(item.cell_count, 200), item.distance_m),
+        key=lambda item: (
+            -(
+                min(item.cell_count, FRONTIER_CELL_CAP)
+                - FRONTIER_DISTANCE_PENALTY_CELLS_PER_M * item.distance_m
+            ),
+            item.distance_m,
+        ),
     )
 
 
