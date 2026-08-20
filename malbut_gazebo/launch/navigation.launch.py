@@ -311,6 +311,22 @@ def generate_launch_description():
             ],
         }],
     )
+    localization_recorder = Node(
+        package='malbut_gazebo',
+        executable='record_localization_state',
+        name='localization_state_recorder',
+        namespace=namespace,
+        # 기록기는 그동안 SLAM 계열 런치에만 있었다. 그래서 저장된 지도의
+        # map->odom 이 한 번도 기록되지 않았고, 재매핑을 중지하고 돌아올 때
+        # 복원할 근거가 없어 AMCL 이 초기 위치를 받지 못했다.
+        condition=IfCondition(use_static_map),
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'state_path': localization_state,
+            'pinned': True,
+        }],
+    )
     localization_restorer = Node(
         package='malbut_gazebo',
         executable='restore_localization_state',
@@ -628,6 +644,7 @@ def generate_launch_description():
             zone_filter_mask_server,
             zone_filter_info_server,
             zone_filter_lifecycle_manager,
+            localization_recorder,
             localization_restorer,
             pose_checkpoint,
             collision_monitor,
