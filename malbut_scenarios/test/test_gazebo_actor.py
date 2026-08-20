@@ -3,7 +3,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from malbut_scenarios.gazebo_actor import GazeboActorController
+from malbut_gazebo.gazebo_actor import GazeboActorController
 
 
 class FakeGazeboRunner:

@@ -55,7 +55,8 @@ export type RobotSnapshot = {
 type RobotOperation = "start" | "finish" | "cancel" |
   "navigation_preview" | "navigation_start" | "navigation_cancel" |
   "drive_mode_start" | "drive_mode_pause" | "drive_mode_resume" | "drive_mode_stop" |
-  "room_split" | "room_merge" | "rooms_save" | "zones_apply";
+  "room_split" | "room_merge" | "rooms_save" | "zones_apply" |
+  "demo_person_show" | "demo_person_hide";
 export type MapMode = "view" | "navigate" | "rooms" | "zones";
 type RoomTool = "select" | "split" | "merge";
 type SplitLine = Array<[number, number]>;
@@ -1843,6 +1844,12 @@ export function RobotMapPanel({
                   <button type="button" className="robot-map-apply-tool" onClick={() => void sendCommand("start")} disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}>
                     <MapTrifold size={17} weight="bold" /> 지도 다시 만들기
                   </button>
+                  {isOwner && device && (
+                    <a
+                      className="robot-map-admin-link"
+                      href={`/scenario-admin?device=${encodeURIComponent(device.id)}`}
+                    >시연 관리자 열기</a>
+                  )}
                 </div>
               )}
               <div className="robot-map-help">

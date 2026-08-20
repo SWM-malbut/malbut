@@ -17,8 +17,16 @@ test("live dashboard uses rendered media state and exposes one camera control", 
 
   assert.match(app, /onMediaReadyChange\?\.\(state === "live"\)/);
   assert.match(app, /onMediaReadyChange=\{setInlineViewerReady\}/);
+  assert.match(app, /onReleaseLive=\{closeInlineViewer\}/);
+  assert.match(app, /device\?\.id === inlineViewerDevice\.id/);
   assert.match(app, /"playing",[\s\S]*"timeupdate",[\s\S]*"resize"/);
   assert.match(dashboard, /const displayedMediaReady = liveViewer/);
+  assert.match(dashboard, /const liveViewerActive = Boolean\(liveViewer\)/);
+  assert.match(dashboard, /AUTHORIZED_P2P_VIEWER_REUSE_GRACE_MS/);
+  assert.match(
+    dashboard,
+    /\(tab === "live" \|\| liveViewerActive\)[\s\S]*hidden=\{tab !== "live"\}/,
+  );
   assert.match(
     dashboard,
     /const storageReady = Boolean\([\s\S]*storageCanRun[\s\S]*storageHealthy/,

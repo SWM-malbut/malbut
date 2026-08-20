@@ -466,7 +466,8 @@ class CloudRobotSync(Node):
                     "drive_mode_start", "drive_mode_pause",
                     "drive_mode_resume", "drive_mode_stop",
                     "room_split", "room_merge", "rooms_save",
-                    "zones_apply",
+                    "zones_apply", "demo_person_show",
+                    "demo_person_hide",
                 }
                 or not isinstance(payload, dict)
             ):
@@ -549,6 +550,10 @@ class CloudRobotSync(Node):
             body = {"mode": payload.get("mode")}
             if operation != "drive_mode_start":
                 body["session_id"] = payload.get("sessionId")
+        elif operation in {"demo_person_show", "demo_person_hide"}:
+            action = operation.removeprefix("demo_person_")
+            path = f"api/demo/person/{action}"
+            body = {}
         else:
             active = load_active_revision(self.map_store)
             if not active:

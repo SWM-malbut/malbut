@@ -2033,6 +2033,11 @@ export function HomecamApp() {
     }
   }, []);
 
+  const closeInlineViewer = useCallback(() => {
+    setInlineViewerReady(false);
+    setInlineViewerDevice(null);
+  }, []);
+
   const reset = (tab: HomecamTab = "home") => {
     window.history.replaceState({}, "", window.location.pathname);
     setDashboardTab(tab);
@@ -2104,21 +2109,21 @@ export function HomecamApp() {
       creatingLegacyBroadcast={creatingSession}
       externalError={landingError}
       liveMediaReady={inlineViewerReady}
+      onReleaseLive={closeInlineViewer}
       liveViewer={inlineViewerDevice ? ({ eventCount, openEvents, device }) => (
-        <Viewer
-          roomCode={inlineViewerDevice.activeSession?.roomCode ?? ""}
-          viewerPassword=""
-          deviceId={inlineViewerDevice.id}
-          device={device ?? inlineViewerDevice}
-          embedded
-          embeddedEventCount={eventCount}
-          onOpenEmbeddedEvents={openEvents}
-          onMediaReadyChange={setInlineViewerReady}
-          onExit={() => {
-            setInlineViewerReady(false);
-            setInlineViewerDevice(null);
-          }}
-        />
+        device?.id === inlineViewerDevice.id ? (
+          <Viewer
+            roomCode={inlineViewerDevice.activeSession?.roomCode ?? ""}
+            viewerPassword=""
+            deviceId={inlineViewerDevice.id}
+            device={device}
+            embedded
+            embeddedEventCount={eventCount}
+            onOpenEmbeddedEvents={openEvents}
+            onMediaReadyChange={setInlineViewerReady}
+            onExit={closeInlineViewer}
+          />
+        ) : null
       ) : undefined}
       legacyArchive={
         <>
