@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { ArrowLeft, PersonSimpleWalk, StopCircle } from '@phosphor-icons/react';
 
@@ -115,9 +116,9 @@ export function ScenarioAdminPanel({
   return (
     <main className="scenario-admin-page">
       <section className="scenario-admin-card">
-        <a className="scenario-admin-back" href="/">
+        <Link className="scenario-admin-back" href="/">
           <ArrowLeft size={18} /> 홈캠으로 돌아가기
-        </a>
+        </Link>
         <div className="scenario-admin-heading">
           <span>SIMULATION ADMIN</span>
           <h1>시연 관리자</h1>
