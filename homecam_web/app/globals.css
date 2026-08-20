@@ -5817,11 +5817,15 @@ a:focus-visible {
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner:not(.mode-navigate) strong {
   color: var(--homecam-ink);
 }
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-rooms,
-.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-zones,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-view,
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-mapping {
   color: var(--homecam-muted);
+}
+
+/* 방·구역 편집 배너는 밝은 틸 배경이라 muted를 쓰면 대비가 4.5:1에 못 미친다. */
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-rooms,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-mode-banner.mode-zones {
+  color: rgb(251 248 243 / .84);
 }
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-help {
   color: var(--homecam-muted);
@@ -5897,12 +5901,12 @@ a:focus-visible {
 
 .homecam-dashboard-shell .robot-drive-mode-status strong {
   color: var(--homecam-teal);
-  font-size: 17px;
+  font-size: 1.0625rem;
 }
 
 .homecam-dashboard-shell .robot-drive-mode-status span {
   color: var(--homecam-muted);
-  font-size: 14px;
+  font-size: var(--fs-label);
   line-height: 1.5;
 }
 
@@ -8136,6 +8140,34 @@ a:focus-visible {
 /* 블랙 모드: 설정 카드 헤딩 아이콘도 charcoal 테두리·글자라 묻힌다(패턴 ①). */
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .settings-heading-icon {
   color: var(--homecam-teal);
+}
+
+/* 블랙 모드: 모바일 하단 탭 바가 리터럴 흰색이라 헤더만 어둡고 바는 밝게 남는다(패턴 ②).
+   헤더와 같은 색으로 맞춘다. 홈캠 탭도 블랙 모드에서는 같은 색이어야 하므로
+   여기서는 :not(.tab-live)로 좁히지 않는다. */
+.homecam-dashboard-shell.theme-dark .homecam-nav {
+  border-top-color: rgb(251 248 243 / .1);
+  background: rgb(20 26 25 / .96);
+}
+
+/* 블랙 모드: 알림 배너와 iOS 안내가 charcoal 글자라 어두운 배경에서 사라진다(패턴 ①). */
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-notice,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-notice {
+  color: var(--homecam-ink);
+  border-color: var(--homecam-line);
+  background: var(--homecam-paper);
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-notice button,
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-map-notice button {
+  color: var(--homecam-ink);
+  border-color: var(--homecam-line);
+  background: transparent;
+}
+
+.homecam-dashboard-shell.theme-dark:not(.tab-live) .homecam-ios-note {
+  color: var(--homecam-muted);
+  background: rgb(251 248 243 / .07);
 }
 
 .homecam-dashboard-shell.theme-dark:not(.tab-live) .robot-drive-mode-card {
