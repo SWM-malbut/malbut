@@ -25,7 +25,7 @@ class GazeboActorController:
         z: float,
         yaw: float,
         timeout_s: float = 10.0,
-        runner: RunCommand = subprocess.run,
+        runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     ) -> None:
         if not world or not entity_name or not service_prefix:
             raise ValueError(

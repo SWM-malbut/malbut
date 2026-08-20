@@ -303,11 +303,12 @@ async function assertDriveCommandAllowed(input: {
   operation: RobotOperation;
   payload?: Record<string, unknown>;
 }) {
-  const driveOperations = new Set<RobotOperation>([
+  const onlineRobotOperations = new Set<RobotOperation>([
     "navigation_preview", "navigation_start", "navigation_cancel",
     "drive_mode_start", "drive_mode_pause", "drive_mode_resume", "drive_mode_stop",
+    "demo_person_show", "demo_person_hide",
   ]);
-  if (!driveOperations.has(input.operation)) return;
+  if (!onlineRobotOperations.has(input.operation)) return;
   const state = await getD1()
     .prepare(
       `SELECT localization_state, nav2_json, drive_mode_json, observed_at
@@ -318,6 +319,7 @@ async function assertDriveCommandAllowed(input: {
   if (!state || Date.parse(state.observed_at) < Date.now() - ROBOT_ONLINE_MS) {
     throw new Error("ROBOT_OFFLINE");
   }
+  if (input.operation.startsWith("demo_person_")) return;
   const nav2 = parseObject(state.nav2_json);
   if (
     input.operation !== "navigation_cancel" &&

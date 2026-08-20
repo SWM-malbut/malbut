@@ -31,7 +31,7 @@ from malbut_scenarios.scenario_config import (
     load_room_routes,
     room_for_goal,
 )
-from malbut_scenarios.gazebo_actor import GazeboActorController
+from malbut_gazebo.gazebo_actor import GazeboActorController
 
 
 class ScenarioMode(Enum):

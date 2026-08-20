@@ -469,6 +469,10 @@ class RobotWebBridge(Node):
             ),
             "stop": self.create_client(Trigger, "/scenario/stop"),
         }
+        self.demo_person_clients = {
+            "show": self.create_client(Trigger, "/demo/person/show"),
+            "hide": self.create_client(Trigger, "/demo/person/hide"),
+        }
         self.create_subscription(
             NavPath, "/plan", self._receive_navigation_path, 10
         )
@@ -504,6 +508,18 @@ class RobotWebBridge(Node):
             String,
             "/scenario/status",
             self._receive_scenario_status,
+            scenario_qos,
+        )
+        self.demo_person_state = {
+            "visible": False,
+            "entity_name": None,
+            "route": None,
+            "error": None,
+        }
+        self.create_subscription(
+            String,
+            "/demo/person/status",
+            self._receive_demo_person_status,
             scenario_qos,
         )
         self.seq = 0
@@ -824,6 +840,22 @@ class RobotWebBridge(Node):
                 "active_room": value.get("active_room"),
                 "manual_control": bool(value.get("manual_control", False)),
                 "actor_visible": bool(value.get("actor_visible", False)),
+            }
+
+    def _receive_demo_person_status(self, message: String) -> None:
+        """Mirror the explicit Gazebo demo actor state for admin clients."""
+        try:
+            value = json.loads(message.data)
+        except (TypeError, json.JSONDecodeError):
+            return
+        if not isinstance(value, dict):
+            return
+        with self.lock:
+            self.demo_person_state = {
+                "visible": bool(value.get("visible", False)),
+                "entity_name": value.get("entity_name"),
+                "route": value.get("route"),
+                "error": value.get("error"),
             }
 
     def _refresh_pose(self) -> None:
@@ -2091,6 +2123,38 @@ class RobotWebBridge(Node):
             "scenario": scenario,
         }
 
+    def run_demo_person_command(self, command: str) -> dict:
+        """Show or hide the simulation person through an idempotent service."""
+        client = self.demo_person_clients.get(command)
+        if client is None:
+            raise NavigationError(
+                404, "DEMO_COMMAND_UNKNOWN", "알 수 없는 시연 명령입니다."
+            )
+        if not client.service_is_ready():
+            raise NavigationError(
+                503,
+                "DEMO_NOT_READY",
+                "시뮬레이션 사람 제어가 아직 준비되지 않았습니다.",
+            )
+        response = self._wait(
+            client.call_async(Trigger.Request()),
+            SCENARIO_SERVICE_TIMEOUT_S,
+            "시뮬레이션 사람 제어",
+        )
+        if not response.success:
+            raise NavigationError(
+                409,
+                "DEMO_COMMAND_REJECTED",
+                response.message or "시연 명령이 거절됐습니다.",
+            )
+        with self.lock:
+            state = dict(self.demo_person_state)
+        return {
+            "accepted": True,
+            "message": response.message,
+            "person": state,
+        }
+
 
 class RobotRequestHandler(EditorRequestHandler):
     """Add robot state streaming and navigation commands to the editor."""
@@ -2179,7 +2243,15 @@ class RobotRequestHandler(EditorRequestHandler):
             "/api/scenario/toggle-person": "toggle-person",
             "/api/scenario/stop": "stop",
         }
-        if path not in navigation_paths and path not in scenario_paths:
+        demo_paths = {
+            "/api/demo/person/show": "show",
+            "/api/demo/person/hide": "hide",
+        }
+        if (
+            path not in navigation_paths
+            and path not in scenario_paths
+            and path not in demo_paths
+        ):
             super().do_POST()
             return
         if self.bridge is None:
@@ -2188,7 +2260,17 @@ class RobotRequestHandler(EditorRequestHandler):
         try:
             request = self._read_json_request()
             session_id = self._session_id()
-            if path in scenario_paths:
+            if path in demo_paths:
+                if request:
+                    raise RequestError(
+                        422,
+                        "demo person command body must be empty",
+                    )
+                response = self.bridge.run_demo_person_command(
+                    demo_paths[path]
+                )
+                status = 200
+            elif path in scenario_paths:
                 if request:
                     raise RequestError(
                         422,

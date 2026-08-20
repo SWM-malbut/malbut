@@ -38,6 +38,7 @@ import {
   type RobotSemantics,
   type RobotSnapshot,
 } from "./robot-map-panel";
+import { AUTHORIZED_P2P_VIEWER_REUSE_GRACE_MS } from "../lib/viewer-reconnect";
 
 export type { HomecamTab } from "./homecam-header";
 
@@ -106,6 +107,7 @@ type HomecamDashboardProps = {
   externalError?: string;
   legacyArchive?: React.ReactNode;
   liveMediaReady?: boolean;
+  onReleaseLive?: () => void;
   liveViewer?: (context: {
     eventCount: number;
     openEvents: () => void;
@@ -747,6 +749,7 @@ export function HomecamDashboard({
   externalError = "",
   legacyArchive,
   liveMediaReady = false,
+  onReleaseLive,
   liveViewer,
 }: HomecamDashboardProps) {
   const [devices, setDevices] = useState<HomecamDevice[]>([]);
@@ -830,6 +833,17 @@ export function HomecamDashboard({
   const displayedMediaReady = liveViewer
     ? liveMediaReady
     : Boolean(selectedDevice?.online && selectedDevice.p2pHealthy);
+  const liveViewerActive = Boolean(liveViewer);
+
+  useEffect(() => {
+    if (tab === "live" || !liveViewerActive || !onReleaseLive) return;
+    const timer = window.setTimeout(
+      onReleaseLive,
+      AUTHORIZED_P2P_VIEWER_REUSE_GRACE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [liveViewerActive, onReleaseLive, tab]);
+
   const todayEventDate = eventDateKey(new Date());
   const eventsForDate = useMemo(() => events.filter(
     (event) => eventDateKey(event.occurredAt) === eventDate,
@@ -1594,8 +1608,12 @@ export function HomecamDashboard({
           </section>
         )}
 
-        {tab === "live" && (
-          <section className="homecam-live-view" aria-label="실시간 홈캠">
+        {(tab === "live" || liveViewerActive) && (
+          <section
+            className="homecam-live-view"
+            aria-label="실시간 홈캠"
+            hidden={tab !== "live"}
+          >
             {liveViewer?.({
               eventCount: events.length,
               openEvents: () => setTab("events"),

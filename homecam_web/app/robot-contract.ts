@@ -58,7 +58,8 @@ export type RobotMapUpload = {
 export type RobotOperation = "start" | "finish" | "cancel" |
   "navigation_preview" | "navigation_start" | "navigation_cancel" |
   "drive_mode_start" | "drive_mode_pause" | "drive_mode_resume" | "drive_mode_stop" |
-  "room_split" | "room_merge" | "rooms_save" | "zones_apply";
+  "room_split" | "room_merge" | "rooms_save" | "zones_apply" |
+  "demo_person_show" | "demo_person_hide";
 
 export function parseRobotCommand(value: unknown): {
   operation: RobotOperation;
@@ -69,6 +70,11 @@ export function parseRobotCommand(value: unknown): {
   const payload = value.payload === undefined ? {} : value.payload;
   if (!isObject(payload)) return null;
   if (["start", "finish", "cancel"].includes(String(operation))) {
+    return Object.keys(payload).length === 0
+      ? { operation: operation as RobotOperation, payload }
+      : null;
+  }
+  if (["demo_person_show", "demo_person_hide"].includes(String(operation))) {
     return Object.keys(payload).length === 0
       ? { operation: operation as RobotOperation, payload }
       : null;

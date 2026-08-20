@@ -357,6 +357,15 @@ class FakeBridge:
             },
         }
 
+    def run_demo_person_command(self, command: str) -> dict:
+        """Record one explicit simulation-person command."""
+        self.calls.append(("demo-person", command, None))
+        return {
+            "accepted": True,
+            "message": f"person {command}",
+            "person": {"visible": command == "show"},
+        }
+
 
 class QuietRobotHandler(RobotRequestHandler):
     """Disable request logs during contract tests."""
@@ -604,6 +613,28 @@ def test_navigation_endpoints_are_same_origin_and_session_bound(tmp_path):
         assert status == 200
         assert value["accepted"] is True
         assert bridge.calls[-1] == ("scenario", "toggle-person", None)
+
+        status, _, value = _request(
+            address,
+            "POST",
+            "/api/demo/person/show",
+            "{}",
+            headers,
+        )
+        assert status == 200
+        assert value["accepted"] is True
+        assert bridge.calls[-1] == ("demo-person", "show", None)
+
+        status, _, value = _request(
+            address,
+            "POST",
+            "/api/demo/person/hide",
+            "{}",
+            headers,
+        )
+        assert status == 200
+        assert value["person"]["visible"] is False
+        assert bridge.calls[-1] == ("demo-person", "hide", None)
 
         status, _, value = _request(
             address,

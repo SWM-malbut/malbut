@@ -353,6 +353,19 @@ def test_managed_launch_uses_one_pose_for_simulation_spawn_and_amcl():
     }
 
 
+def test_managed_simulation_exposes_one_explicit_demo_actor_manager():
+    """The cloud web may show or hide one actor without a scenario runtime."""
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "launch"
+        / "managed_home.launch.py"
+    ).read_text(encoding="utf-8")
+
+    assert source.count('executable="demo_actor_manager"') == 1
+    assert 'perform(context) == "small_house"' in source
+    assert "actor_spawn_delay" not in source
+
+
 def test_managed_hardware_restart_does_not_trust_map_last_pose():
     """Hardware remains unlocalized when safe state restoration is rejected."""
     path = (

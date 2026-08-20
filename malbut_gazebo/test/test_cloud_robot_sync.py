@@ -159,6 +159,8 @@ def test_cloud_navigation_command_uses_saved_map_and_one_local_session(
         sync._local_command("drive_mode_stop", {
             "mode": "patrol", "sessionId": "patrol_session_1",
         })
+        sync._local_command("demo_person_show", {})
+        sync._local_command("demo_person_hide", {})
         zones = {
             "type": "FeatureCollection",
             "format": "malbut-semantic-zones-v1",
@@ -191,6 +193,16 @@ def test_cloud_navigation_command_uses_saved_map_and_one_local_session(
             (
                 "/api/drive-mode/stop",
                 {"mode": "patrol", "session_id": "patrol_session_1"},
+                "session=test-session",
+            ),
+            (
+                "/api/demo/person/show",
+                {},
+                "session=test-session",
+            ),
+            (
+                "/api/demo/person/hide",
+                {},
                 "session=test-session",
             ),
             (

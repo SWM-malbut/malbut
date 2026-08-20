@@ -2844,6 +2844,147 @@ a:focus-visible {
   line-height: 1.5;
 }
 
+.robot-map-admin-link {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 10px;
+  color: var(--homecam-muted);
+  font-size: 0.6875rem;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.scenario-admin-page {
+  min-height: 100vh;
+  padding: 48px 20px;
+  color: #222723;
+  background: #f1f0eb;
+}
+
+.scenario-admin-card {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 30px;
+  border: 1px solid #d5d3cb;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgb(30 35 31 / 0.08);
+}
+
+.scenario-admin-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #59635c;
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.scenario-admin-heading {
+  margin: 34px 0 28px;
+}
+
+.scenario-admin-heading > span {
+  color: #71806f;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.scenario-admin-heading h1 {
+  margin: 8px 0;
+  font-size: clamp(2rem, 6vw, 3rem);
+}
+
+.scenario-admin-heading p,
+.scenario-admin-actions small {
+  color: #69716b;
+  line-height: 1.6;
+}
+
+.scenario-admin-device {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.scenario-admin-device select {
+  min-height: 46px;
+  padding: 0 14px;
+  border: 1px solid #cfcec8;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.scenario-admin-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.scenario-admin-actions button {
+  display: grid;
+  min-height: 150px;
+  justify-items: start;
+  padding: 20px;
+  border: 1px solid #c9d2c8;
+  border-radius: 14px;
+  color: #243126;
+  background: #edf3eb;
+  text-align: left;
+  cursor: pointer;
+}
+
+.scenario-admin-actions button.is-danger {
+  border-color: #decac5;
+  color: #6f3028;
+  background: #f7edeb;
+}
+
+.scenario-admin-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.scenario-admin-actions strong {
+  font-size: 1rem;
+}
+
+.scenario-admin-actions small {
+  font-size: 0.75rem;
+}
+
+.scenario-admin-notice,
+.scenario-admin-error {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 0.8125rem;
+}
+
+.scenario-admin-notice {
+  color: #355838;
+  background: #e8f2e7;
+}
+
+.scenario-admin-error {
+  color: #7a332b;
+  background: #f8e9e7;
+}
+
+@media (max-width: 620px) {
+  .scenario-admin-card {
+    padding: 22px;
+  }
+
+  .scenario-admin-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
 .robot-map-notice {
   padding: 10px 12px;
   border-radius: 8px;

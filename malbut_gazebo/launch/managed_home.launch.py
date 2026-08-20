@@ -224,6 +224,16 @@ def _select_mode(context):
                 "bridge": "true",
             }.items(),
         ))
+        if LaunchConfiguration("world_name").perform(context) == "small_house":
+            actions.append(Node(
+                package="malbut_gazebo",
+                executable="demo_actor_manager",
+                name="demo_actor_manager",
+                output="screen",
+                parameters=[{
+                    "use_sim_time": LaunchConfiguration("use_sim_time"),
+                }],
+            ))
     elif trusted_initial_pose:
         simulation_pose = _explicit_initial_pose(context)
     localization_arguments = _localization_arguments(
