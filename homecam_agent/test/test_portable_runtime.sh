@@ -186,3 +186,23 @@ if homecam_load_config "$config_path" 2>/dev/null; then
 fi
 
 printf 'portable runtime helper tests passed\n'
+
+# FastDDS 가 stdout 으로 전송 오류를 찍어도 인코딩을 정확히 골라야 한다.
+# 이 줄을 인코딩으로 오독하면 런타임 전체가 내려간다.
+noisy_encoding=$'2026-08-20 20:20:17.726 [RTPS_TRANSPORT_SHM Error] Failed init_port fastrtps_port7411: open_and_lock_file failed\nrgb8\n---'
+[[ "$(homecam_select_image_encoding "$noisy_encoding")" == rgb8 ]]
+
+clean_encoding=$'rgb8\n---'
+[[ "$(homecam_select_image_encoding "$clean_encoding")" == rgb8 ]]
+
+quoted_encoding=$'"bgra8"\n---'
+[[ "$(homecam_select_image_encoding "$quoted_encoding")" == bgra8 ]]
+
+# 프레임이 오지 않으면 빈 값이어야 "12초 안에 프레임 없음" 진단이 유지된다.
+[[ -z "$(homecam_select_image_encoding '')" ]]
+noise_only=$'2026-08-20 20:20:17.726 [RTPS_TRANSPORT_SHM Error] Failed init_port'
+[[ -z "$(homecam_select_image_encoding "$noise_only")" ]]
+
+# 실제로 지원하지 않는 인코딩은 그대로 돌려줘야 원래 오류 메시지가 뜬다.
+unsupported_encoding=$'mono8\n---'
+[[ "$(homecam_select_image_encoding "$unsupported_encoding")" == mono8 ]]

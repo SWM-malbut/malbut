@@ -1,15 +1,18 @@
 from pathlib import Path
 import base64
+import os
 from http.cookiejar import CookieJar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from threading import Thread
+import time
 from urllib.request import HTTPCookieProcessor, build_opener
 
 import pytest
 import numpy as np
 
 from malbut_gazebo.cloud_robot_sync import CloudRobotSync, TOKEN_PATTERN
+from malbut_gazebo.runtime_control import supervisor_path
 from malbut_gazebo.map_lifecycle import MapGrid
 
 
@@ -80,6 +83,9 @@ def test_cloud_remap_command_requests_supervised_runtime_switch(
 ):
     sync = CloudRobotSync.__new__(CloudRobotSync)
     sync.runtime_request_file = tmp_path / "mode-request"
+    supervisor_path(sync.runtime_request_file).write_text(
+        f"{os.getpid()} {time.time()}\n", encoding="ascii"
+    )
     sync._local_status = lambda: {"_runtime_mode": "navigation"}
 
     result = sync._local_command("start", {})
@@ -89,6 +95,20 @@ def test_cloud_remap_command_requests_supervised_runtime_switch(
         "message": "지도 생성 모드로 전환합니다.",
         "_runtime_request": "mapping",
     }
+
+
+def test_cloud_remap_command_refuses_without_a_live_supervisor(
+    tmp_path: Path,
+):
+    """A request nobody consumes must fail instead of reporting success."""
+    sync = CloudRobotSync.__new__(CloudRobotSync)
+    sync.runtime_request_file = tmp_path / "mode-request"
+    sync._local_status = lambda: {"_runtime_mode": "navigation"}
+
+    with pytest.raises(RuntimeError, match="감독자"):
+        sync._local_command("start", {})
+
+    assert not sync.runtime_request_file.exists()
 
 
 def test_cloud_navigation_command_uses_saved_map_and_one_local_session(
