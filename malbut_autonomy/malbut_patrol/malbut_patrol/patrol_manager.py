@@ -39,7 +39,8 @@ class PatrolManager(Node):
         route_file = str(self.get_parameter('route_file').value).strip()
         if not route_file:
             raise ValueError('route_file parameter must not be empty')
-        self._route = load_route(Path(route_file))
+        self._route_file = Path(route_file).expanduser().resolve()
+        self._route = load_route(self._route_file)
         self._progress = PatrolProgress(self._route)
         self._action_name = str(
             self.get_parameter('nav2_action_name').value
@@ -113,12 +114,25 @@ class PatrolManager(Node):
                 'wait for the previous Nav2 goal to finish cancelling',
             )
         try:
+            self._reload_route()
             transition = self._progress.start()
-        except RuntimeError as error:
+        except (RuntimeError, ValueError) as error:
             return self._response(response, False, str(error))
         self._paused_phase_remaining = None
         self._apply(transition)
         return self._response(response, True, transition.message)
+
+    def _reload_route(self) -> None:
+        """Reload an idle route so Room edits apply to the next patrol run."""
+        if self._progress.is_active:
+            raise RuntimeError(
+                f'cannot start while state is {self._progress.state.value}'
+            )
+        route = load_route(self._route_file)
+        if route.map_id != self._route.map_id:
+            raise RuntimeError('patrol route map_id changed while running')
+        self._route = route
+        self._progress = PatrolProgress(route)
 
     def _pause_callback(self, _request, response):
         remaining = self._remaining_phase_seconds()

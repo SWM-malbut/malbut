@@ -17,14 +17,14 @@
       in one open floor area instead of touring the house.  With the spawn
       offset used by spawn_event_test_person.sh, the complete route retains
       at least 0.8 m clearance from Small House walls and furniture. Repeated
-      poses add varied pauses, turn the actor in place, and prevent curved
-      corner interpolation.
+      poses add varied pauses and turn the actor in place. Tension 1.0 keeps
+      every interpolated pose on the verified straight route segments.
     -->
     <script>
       <loop>true</loop>
       <delay_start>1.0</delay_start>
       <auto_start>true</auto_start>
-      <trajectory id="0" type="walking" tension="0.0">
+      <trajectory id="0" type="walking" tension="1.0">
         <waypoint>
           <time>0.000</time>
           <pose>0.000 0.000 1.0 0 0 -0.876058</pose>

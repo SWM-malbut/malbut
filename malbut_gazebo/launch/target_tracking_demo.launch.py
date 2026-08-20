@@ -6,13 +6,12 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    GroupAction,
     IncludeLaunchDescription,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node, SetRemap
+from launch_ros.actions import Node
 
 
 def generate_launch_description():
@@ -58,18 +57,7 @@ def generate_launch_description():
             'projection_frame': 'camera_depth_optical_frame',
         }.items(),
     )
-    # Only this demo reroutes the simulated drivetrain. Normal Nav2 demos and
-    # the canonical robot interface remain unchanged.
-    simulation = GroupAction(
-        actions=[
-            SetRemap(
-                src='/cmd_vel',
-                dst='/cmd_vel_tracking_output',
-            ),
-            humanoid_launch,
-        ],
-        scoped=True,
-    )
+    simulation = humanoid_launch
     navigation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             str(gazebo_share / 'launch' / 'navigation.launch.py')
@@ -93,49 +81,6 @@ def generate_launch_description():
         launch_arguments={
             'use_sim_time': use_sim_time,
         }.items(),
-    )
-    collision_monitor = Node(
-        package='nav2_collision_monitor',
-        executable='collision_monitor',
-        name='tracking_collision_monitor',
-        output='screen',
-        parameters=[{
-            'use_sim_time': use_sim_time,
-            'base_frame_id': 'base_footprint',
-            'odom_frame_id': 'odom',
-            'cmd_vel_in_topic': '/cmd_vel',
-            'cmd_vel_out_topic': '/cmd_vel_tracking_output',
-            'transform_tolerance': 0.2,
-            'source_timeout': 0.5,
-            'base_shift_correction': True,
-            'stop_pub_timeout': 0.2,
-            'polygons': ['FootprintApproach'],
-            'FootprintApproach.type': 'polygon',
-            'FootprintApproach.action_type': 'approach',
-            'FootprintApproach.footprint_topic': (
-                '/local_costmap/published_footprint'
-            ),
-            'FootprintApproach.time_before_collision': 1.0,
-            'FootprintApproach.simulation_time_step': 0.05,
-            'FootprintApproach.max_points': 3,
-            'FootprintApproach.visualize': False,
-            'FootprintApproach.enabled': True,
-            'observation_sources': ['scan'],
-            'scan.type': 'scan',
-            'scan.topic': '/scan',
-            'scan.enabled': True,
-        }],
-    )
-    collision_lifecycle = Node(
-        package='nav2_lifecycle_manager',
-        executable='lifecycle_manager',
-        name='tracking_collision_lifecycle_manager',
-        output='screen',
-        parameters=[{
-            'use_sim_time': use_sim_time,
-            'autostart': True,
-            'node_names': ['tracking_collision_monitor'],
-        }],
     )
     image_view = Node(
         package='rqt_image_view',
@@ -172,7 +117,5 @@ def generate_launch_description():
         simulation,
         navigation,
         tracking,
-        collision_monitor,
-        collision_lifecycle,
         image_view,
     ])

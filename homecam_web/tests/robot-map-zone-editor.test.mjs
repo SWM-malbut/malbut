@@ -144,6 +144,41 @@ test("navigation progress survives missing cloud ratios and remains visible at a
   assert.match(styles, /\.robot-map-progress i\s*\{[^}]*transition:\s*width 950ms linear/s);
 });
 
+test("common drive mode blocks conflicting destination commands and stays owner-only", async () => {
+  const panel = await readFile(
+    new URL("../app/components/robot-map-panel.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(panel, /type RobotDriveModeSnapshot/);
+  assert.match(panel, /const autonomousModeActive/);
+  assert.match(panel, /autonomousModeActive\) return/);
+  assert.match(panel, /disabled=\{!isOwner \|\| !snapshot\?\.online \|\| autonomousModeActive/);
+  assert.match(panel, /주행 모드 제어는 소유자 계정에서만/);
+  assert.match(panel, /function driveModeCopy/);
+});
+
+test("autonomous controls share one owner-only drive session", async () => {
+  const panel = await readFile(
+    new URL("../app/components/robot-map-panel.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(panel, /sendCommand\("drive_mode_start", \{ mode: "patrol" \}\)/);
+  assert.match(panel, /sendCommand\("drive_mode_start", \{ mode: "roaming" \}\)/);
+  assert.match(panel, /sendCommand\("drive_mode_start", \{ mode: "person_following" \}\)/);
+  assert.match(panel, /sendCommand\("drive_mode_pause"/);
+  assert.match(panel, /sendCommand\("drive_mode_resume"/);
+  assert.match(panel, /sendCommand\("drive_mode_stop"/);
+  assert.match(panel, /!availableAutonomousModes\.includes\("patrol"\)/);
+  assert.match(panel, /!availableAutonomousModes\.includes\("roaming"\)/);
+  assert.match(panel, /!availableAutonomousModes\.includes\("person_following"\)/);
+  assert.match(panel, /activeAutonomousMode !== "person_following"/);
+  assert.match(panel, /방 순찰 시작/);
+  assert.match(panel, /자율 배회 시작/);
+  assert.match(panel, /사람 따라가기/);
+});
+
 test("the home map summary reuses rooms, zones, and the live localized robot pose", async () => {
   const [dashboard, panel, styles] = await Promise.all([
     readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),

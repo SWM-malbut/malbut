@@ -8,7 +8,9 @@ import numpy as np
 import pytest
 
 from malbut_gazebo.pose_checkpoint import (
+    MIN_SAFE_CHECKPOINT_CLEARANCE_M,
     POSE_CHECKPOINT_FILE,
+    PoseSafetyGrid,
     acceptable_amcl_covariance,
     load_pose_checkpoint,
     persist_pose_checkpoint,
@@ -69,6 +71,41 @@ def test_checkpoint_writer_rejects_non_finite_pose(tmp_path: Path):
             {"x": float("nan"), "y": 0.0, "yaw": 0.0},
             boot_id="boot-a",
         )
+
+
+def test_pose_safety_grid_rejects_obstacle_adjacent_boot_pose(
+    tmp_path: Path,
+):
+    """A valid checkpoint coordinate still needs robot-sized map clearance."""
+    image = np.full((20, 20), 254, dtype=np.uint8)
+    image[[0, -1], :] = 0
+    image[:, [0, -1]] = 0
+    image[10, 10] = 205
+    pgm = tmp_path / "map.pgm"
+    pgm.write_bytes(
+        b"P5\n20 20\n255\n" + image.tobytes()
+    )
+    yaml_path = tmp_path / "map.yaml"
+    yaml_path.write_text(
+        "\n".join((
+            "image: map.pgm",
+            "mode: trinary",
+            "resolution: 0.1",
+            "origin: [0.0, 0.0, 0.0]",
+            "negate: 0",
+            "occupied_thresh: 0.65",
+            "free_thresh: 0.196",
+        )),
+        encoding="utf-8",
+    )
+
+    safety = PoseSafetyGrid.load(yaml_path)
+
+    assert safety.accepts({"x": 0.55, "y": 0.55, "yaw": 0.0})
+    assert not safety.accepts({"x": 0.15, "y": 0.95, "yaw": 0.0})
+    assert not safety.accepts({"x": 1.05, "y": 0.95, "yaw": 0.0})
+    assert not safety.accepts({"x": -1.0, "y": 0.0, "yaw": 0.0})
+    assert MIN_SAFE_CHECKPOINT_CLEARANCE_M == 0.30
 
 
 def test_boot_revalidation_requires_bounded_amcl_uncertainty():
