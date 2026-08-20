@@ -20,6 +20,7 @@ import {
   Play,
   ShieldCheck,
   Sun,
+  TextAa,
   Trash,
   UsersThree,
   VideoCamera,
@@ -775,6 +776,7 @@ export function HomecamDashboard({
   const [legacyCode, setLegacyCode] = useState("");
   const [legacyPassword, setLegacyPassword] = useState("");
   const [colorMode, setColorMode] = useState<HomecamColorMode>("dark");
+  const [textSize, setTextSize] = useState<"default" | "large">("default");
   const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
   const [storageGraceUntilMs, setStorageGraceUntilMs] = useState(0);
   const deepLinkedEventIdRef = useRef("");
@@ -791,6 +793,23 @@ export function HomecamDashboard({
       : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     window.queueMicrotask(() => setColorMode(preferred));
   }, []);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("malbut-text-size");
+    if (stored === "large") window.queueMicrotask(() => setTextSize("large"));
+  }, []);
+
+  useEffect(() => {
+    // 큰 글자 모드는 토큰(--fs-*)을 문서 단위로 확대한다. 지도·영상은 영향 없음.
+    if (textSize === "large") {
+      document.documentElement.dataset.textSize = "large";
+    } else {
+      delete document.documentElement.dataset.textSize;
+    }
+    return () => {
+      delete document.documentElement.dataset.textSize;
+    };
+  }, [textSize]);
 
   useEffect(() => {
     if (tab !== "live") return;
@@ -1897,6 +1916,28 @@ export function HomecamDashboard({
                     <Moon size={19} weight="regular" aria-hidden="true" />
                     블랙 모드
                   </button>
+                </div>
+                <div className="homecam-setting-row homecam-text-size-row">
+                  <div>
+                    <strong>큰 글자</strong>
+                    <span>화면 전체 글자를 키웁니다 · 본문 16→18px</span>
+                  </div>
+                  <div className="homecam-theme-options" role="group" aria-label="글자 크기 선택">
+                    <button type="button" className={textSize === "default" ? "is-active" : ""} onClick={() => {
+                      window.localStorage.setItem("malbut-text-size", "default");
+                      setTextSize("default");
+                    }}>
+                      <TextAa size={19} weight="regular" aria-hidden="true" />
+                      기본
+                    </button>
+                    <button type="button" className={textSize === "large" ? "is-active" : ""} onClick={() => {
+                      window.localStorage.setItem("malbut-text-size", "large");
+                      setTextSize("large");
+                    }}>
+                      <TextAa size={22} weight="bold" aria-hidden="true" />
+                      크게
+                    </button>
+                  </div>
                 </div>
               </section>
 
