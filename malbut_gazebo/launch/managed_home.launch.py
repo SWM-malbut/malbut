@@ -15,7 +15,12 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from malbut_gazebo.drive_modes import write_room_patrol_route
 from malbut_gazebo.map_lifecycle import load_active_revision
+from malbut_gazebo.pose_checkpoint import (
+    PoseSafetyGrid,
+    load_pose_checkpoint,
+)
 from malbut_gazebo.world_catalog import resolve_world
 
 
@@ -173,18 +178,37 @@ def _select_mode(context):
             ),
             launch_arguments=mapping_arguments.items(),
         )
-        return [mapping, _cloud_sync()]
+        return [mapping, _cloud_sync("ok")]
     map_yaml = str((store / active["map_yaml"]).resolve())
     user_map = str((store / active["user_map"]).resolve())
     revision = (store / active["map_yaml"]).resolve().parent
+    patrol_route = write_room_patrol_route(
+        Path(user_map), revision / "room-patrol.yaml", str(active["map_id"])
+    )
     zone_mask = revision / "zone-filter.yaml"
     saved_pose = _saved_initial_pose(active)
+    checkpoint = load_pose_checkpoint(store, active)
+    checkpoint_pose = (
+        _saved_initial_pose({"initial_pose": checkpoint["pose"]})
+        if checkpoint is not None else None
+    )
+    pose_safety = PoseSafetyGrid.load(Path(map_yaml))
+    if checkpoint_pose is not None and not pose_safety.accepts(
+        checkpoint_pose
+    ):
+        checkpoint_pose = None
+    if saved_pose is not None and not pose_safety.accepts(saved_pose):
+        saved_pose = None
     simulation_pose = None
     actions = []
     if simulation_enabled:
         simulation_pose = _simulation_initial_pose(
-            context, share, saved_pose
+            context, share, checkpoint_pose or saved_pose
         )
+        if not pose_safety.accepts(simulation_pose):
+            raise RuntimeError(
+                "simulator spawn pose is not safe in the active map"
+            )
         actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 str(share / "launch" / "worlds.launch.py")
@@ -205,6 +229,9 @@ def _select_mode(context):
     localization_arguments = _localization_arguments(
         simulation_pose, trusted_localization_handoff
     )
+    boot_pose_trusted = (
+        simulation_pose is not None or trusted_localization_handoff
+    )
     navigation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             str(share / "launch" / "navigation.launch.py")
@@ -218,13 +245,24 @@ def _select_mode(context):
             "rviz": LaunchConfiguration("rviz"),
             "robot_web": "true",
             "robot_web_port": LaunchConfiguration("web_port"),
+            "autonomous_modes": "true",
+            "patrol_route_file": str(patrol_route),
+            "person_following": "true",
+            "person_projection_frame": (
+                "camera_depth_optical_frame" if simulation_enabled else ""
+            ),
+            "pose_checkpoint_store": str(store),
+            "pose_checkpoint_map_id": str(active["map_id"]),
+            "pose_checkpoint_map_revision": str(active["map_revision"]),
+            "boot_pose_trusted": "true" if boot_pose_trusted else "false",
             **localization_arguments,
         }.items(),
     )
-    return [*actions, navigation, _cloud_sync()]
+    boot_state = "verifying" if boot_pose_trusted else "revalidation_required"
+    return [*actions, navigation, _cloud_sync(boot_state)]
 
 
-def _cloud_sync() -> Node:
+def _cloud_sync(boot_validation_state: str) -> Node:
     """Create the optional outbound-only cloud map synchronization node."""
     return Node(
         package="malbut_gazebo",
@@ -242,6 +280,7 @@ def _cloud_sync() -> Node:
             "runtime_request_file": LaunchConfiguration(
                 "runtime_request_file"
             ),
+            "boot_validation_state": boot_validation_state,
         }],
     )
 

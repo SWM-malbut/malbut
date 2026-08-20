@@ -2,16 +2,29 @@
 
 import ast
 import math
+import re
 from pathlib import Path
 from xml.etree import ElementTree
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 ACTOR_FILE = PACKAGE_ROOT / 'models' / 'humanoid_actor' / 'model.sdf'
+EVENT_ACTOR_FILE = (
+    PACKAGE_ROOT / 'models' / 'event_test_humanoid' / 'model.sdf'
+)
 WORLD_FILE = PACKAGE_ROOT / 'worlds' / 'small_house.sdf'
 AWS_MODELS = PACKAGE_ROOT / 'models' / 'aws_small_house'
 LAUNCH_FILE = PACKAGE_ROOT / 'launch' / 'humanoid_demo.launch.py'
-NON_BLOCKING_NAMES = ('Floor', 'Carpet')
+EVENT_SPAWN_SCRIPT = (
+    PACKAGE_ROOT.parent
+    / 'homecam_agent'
+    / 'scripts'
+    / 'spawn_event_test_person.sh'
+)
+# Ceiling fixtures can overlap the XY centerline while remaining above the
+# walking actor. They are not floor-plan obstacles.
+NON_BLOCKING_NAMES = ('Floor', 'Carpet', 'Chandelier')
+EVENT_ACTOR_BODY_ENVELOPE = 0.8
 
 
 def _launch_offsets():
@@ -35,9 +48,8 @@ def _launch_offsets():
     return float(defaults['actor_x']), float(defaults['actor_y'])
 
 
-def _route_points():
-    offset_x, offset_y = _launch_offsets()
-    root = ElementTree.parse(ACTOR_FILE).getroot()
+def _actor_route_points(actor_file, offset_x, offset_y):
+    root = ElementTree.parse(actor_file).getroot()
     points = []
     for waypoint in root.findall('actor/script/trajectory/waypoint'):
         pose = [float(value) for value in waypoint.findtext('pose').split()]
@@ -45,6 +57,24 @@ def _route_points():
         if not points or point != points[-1]:
             points.append(point)
     return points
+
+
+def _route_points():
+    offset_x, offset_y = _launch_offsets()
+    return _actor_route_points(ACTOR_FILE, offset_x, offset_y)
+
+
+def _event_spawn_offsets():
+    script = EVENT_SPAWN_SCRIPT.read_text(encoding='utf-8')
+    matches = []
+    for argument in ('x', 'y'):
+        match = re.search(
+            rf'--{argument}\s+([+-]?\d+(?:\.\d+)?)',
+            script,
+        )
+        assert match is not None, argument
+        matches.append(float(match.group(1)))
+    return tuple(matches)
 
 
 def _matrix_transform(values, point):
@@ -404,7 +434,7 @@ def _route_to_triangle_distance(start, end, triangle):
     )
 
 
-def test_route_clears_actual_small_house_scene_geometry():
+def test_demo_route_centerline_clears_small_house_scene_geometry():
     route = _route_points()
     triangles = _scene_triangles()
     spheres = _scene_spheres()
@@ -428,3 +458,44 @@ def test_route_clears_actual_small_house_scene_geometry():
             for start, end in zip(route, route[1:])
         )
         assert clearance >= 0.25, (name, clearance)
+
+
+def test_event_route_clears_scene_with_full_body_envelope():
+    spawn_offset = _event_spawn_offsets()
+    assert spawn_offset == (2.5, -3.6)
+    route = _actor_route_points(EVENT_ACTOR_FILE, *spawn_offset)
+    event_actor = ElementTree.parse(EVENT_ACTOR_FILE).getroot().find(
+        'actor/script/trajectory'
+    )
+    assert event_actor.get('tension') == '1.0'
+    assert route[0] == route[-1]
+    assert len(route) == 5
+    route_segments = list(zip(route, route[1:]))
+    assert sum(
+        math.dist(start, end) for start, end in route_segments
+    ) >= 3.0
+    assert len(
+        {
+            tuple(sorted((start, end)))
+            for start, end in route_segments
+        }
+    ) == len(route_segments)
+
+    for name, triangle in _scene_triangles():
+        clearance = min(
+            _route_to_triangle_distance(start, end, triangle)
+            for start, end in route_segments
+        )
+        assert clearance >= EVENT_ACTOR_BODY_ENVELOPE, (
+            name,
+            clearance,
+        )
+    for name, center, radius in _scene_spheres():
+        clearance = min(
+            _point_segment_distance(center, start, end) - radius
+            for start, end in route_segments
+        )
+        assert clearance >= EVENT_ACTOR_BODY_ENVELOPE, (
+            name,
+            clearance,
+        )

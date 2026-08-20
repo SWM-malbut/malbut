@@ -36,6 +36,10 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     new URL("../db/migrations/0006_dual_media_sessions.sql", import.meta.url),
     "utf8",
   );
+  const robotDriveModesMigration = await readFile(
+    new URL("../db/migrations/0007_robot_drive_modes.sql", import.meta.url),
+    "utf8",
+  );
   const database = new PGlite();
   try {
     await database.exec(initialMigration);
@@ -44,6 +48,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     await database.exec(robotSemanticsMigration);
     await database.exec(eventClipsMigration);
     await database.exec(dualMediaSessionsMigration);
+    await database.exec(robotDriveModesMigration);
     await database.exec(`
       CREATE TABLE homecam_schema_migrations (
         version TEXT PRIMARY KEY,
@@ -56,7 +61,8 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         ('0003_robot_map'),
         ('0004_robot_map_semantics'),
         ('0005_event_clips'),
-        ('0006_dual_media_sessions');
+        ('0006_dual_media_sessions'),
+        ('0007_robot_drive_modes');
     `);
     await seedDevice(database);
 
@@ -240,19 +246,78 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
           ...clipStarted,
           sessionIds: [session.id, refreshedStorageSession.id],
           confidence: 0.97,
-          endAt: new Date(Date.parse(clipStartAt) + 15_000).toISOString(),
-          monotonicDurationMs: 15_000,
+          endAt: new Date(Date.parse(clipStartAt) + 120_000).toISOString(),
+          monotonicDurationMs: 120_000,
           idempotencyKey: "b".repeat(64),
         },
       );
       assert.equal(endedClip.event.clipState, "ready");
-      assert.equal(endedClip.event.monotonicDurationMs, 15_000);
+      assert.equal(endedClip.event.monotonicDurationMs, 120_000);
       assert.deepEqual(endedClip.event.labels, ["person", "motion"]);
+      const segmentEnds = [240_000, 300_000];
+      const segmentDurations = [120_000, 60_000];
+      const segmentEvents = [];
+      for (const [offset, segmentIndex] of [120_000, 240_000].map(
+        (value, index) => [value, index + 1],
+      )) {
+        const startAt = new Date(Date.parse(clipStartAt) + offset).toISOString();
+        const segmentInput = {
+          ...clipStarted,
+          segmentIndex,
+          detectedAt: startAt,
+          startAt,
+          sessionIds: [refreshedStorageSession.id],
+          notificationEligible: false,
+          idempotencyKey: (segmentIndex === 1 ? "c" : "e").repeat(64),
+        };
+        await homecam.upsertHomecamEventClip(
+          "living-room",
+          "started",
+          segmentInput,
+        );
+        segmentEvents.push(
+          await homecam.upsertHomecamEventClip(
+            "living-room",
+            "ended",
+            {
+              ...segmentInput,
+              endAt: new Date(
+                Date.parse(clipStartAt) + segmentEnds[segmentIndex - 1],
+              ).toISOString(),
+              monotonicDurationMs: segmentDurations[segmentIndex - 1],
+              idempotencyKey: (segmentIndex === 1 ? "d" : "f").repeat(64),
+            },
+          ),
+        );
+      }
+      const groupedEvents = await homecam.listHomecamEvents({
+        deviceId: "living-room",
+        eventTypes: [],
+        limit: 10,
+      });
+      const groupedClipEvents = groupedEvents.filter(
+        (event) => event.eventGroupId === clipStarted.eventGroupId,
+      );
+      assert.equal(groupedClipEvents.length, 1);
+      assert.equal(groupedClipEvents[0].id, startedClip.event.id);
+      assert.equal(groupedClipEvents[0].segmentCount, 3);
+      assert.equal(groupedClipEvents[0].clipStartAt, clipStartAt);
+      assert.equal(
+        groupedClipEvents[0].clipEndAt,
+        new Date(Date.parse(clipStartAt) + 300_000).toISOString(),
+      );
+      assert.equal(groupedClipEvents[0].monotonicDurationMs, 300_000);
       const playbackInfo = await homecam.getEventClipPlayback(
         "living-room",
         endedClip.event.id,
       );
       assert.equal(playbackInfo?.streamArn, "arn:test:kvs:archive");
+      assert.equal(playbackInfo?.event.segmentCount, 3);
+      assert.equal(playbackInfo?.event.clipStartAt, clipStartAt);
+      assert.equal(
+        playbackInfo?.event.clipEndAt,
+        new Date(Date.parse(clipStartAt) + 300_000).toISOString(),
+      );
       assert.equal(
         await homecam.softDeleteHomecamEvent({
           deviceId: "living-room",
@@ -260,6 +325,13 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
           userEmail: "owner@example.com",
         }),
         true,
+      );
+      assert.equal(
+        await homecam.getHomecamEvent(
+          "living-room",
+          segmentEvents[1].event.id,
+        ),
+        null,
       );
       assert.equal(
         await homecam.softDeleteHomecamEvent({
@@ -345,7 +417,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         message: "저장된 지도를 사용하고 있습니다.",
         pose: { x: 1.25, y: -0.5, yaw: 0.75 },
         localization: { state: "ok", tfAgeS: 0.02 },
-        nav2: { navigator: "active" },
+        nav2: { navigator: "active", runtime_mode: "navigation" },
         target: null,
         mapRevision: 8,
         observedAt: new Date().toISOString(),
@@ -374,6 +446,9 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       );
       assert.equal(snapshot.online, true);
       assert.deepEqual(plain(snapshot.state.pose), { x: 1.25, y: -0.5, yaw: 0.75 });
+      assert.deepEqual(plain(snapshot.state.driveMode), {
+        mode: "idle", state: "idle", sessionId: null, message: null,
+      });
       assert.equal(snapshot.map.revision, "revision-1");
       const semantics = await robotMap.getRobotMapSemantics(
         "living-room",
@@ -408,7 +483,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         message: "새 지도를 만들고 있습니다.",
         pose: { x: 1.5, y: -0.25, yaw: 0.5 },
         localization: { state: "ok", tfAgeS: 0.02 },
-        nav2: { navigator: "active" },
+        nav2: { navigator: "active", runtime_mode: "mapping" },
         target: null,
         mapRevision: 9,
         observedAt: new Date().toISOString(),
@@ -423,7 +498,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         message: "기존 지도를 유지합니다.",
         pose: { x: 1.5, y: -0.25, yaw: 0.5 },
         localization: { state: "ok", tfAgeS: 0.02 },
-        nav2: { navigator: "active" },
+        nav2: { navigator: "active", runtime_mode: "navigation" },
         target: null,
         mapRevision: 10,
         observedAt: new Date().toISOString(),
@@ -470,6 +545,12 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       const claimedPreview = await robotMap.claimRobotCommands("living-room");
       assert.equal(claimedPreview[0].id, previewCommand.id);
       assert.deepEqual(plain(claimedPreview[0].payload), { x: 2.5, y: -1.25 });
+      await robotMap.completeRobotCommand({
+        deviceId: "living-room",
+        commandId: claimedPreview[0].id,
+        ok: true,
+        result: { previewToken: "preview_token_123" },
+      });
       assert.deepEqual(
         plain(robotContract.parseRobotCommand({
           operation: "navigation_start",
@@ -486,6 +567,132 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
           payload: { x: Number.NaN, y: 0 },
         }),
         null,
+      );
+      assert.deepEqual(
+        plain(robotContract.parseRobotCommand({
+          operation: "drive_mode_start",
+          payload: { mode: "patrol" },
+        })),
+        { operation: "drive_mode_start", payload: { mode: "patrol" } },
+      );
+      assert.deepEqual(
+        plain(robotContract.parseRobotCommand({
+          operation: "drive_mode_pause",
+          payload: { mode: "roaming", sessionId: "roaming_session_1" },
+        })),
+        {
+          operation: "drive_mode_pause",
+          payload: { mode: "roaming", sessionId: "roaming_session_1" },
+        },
+      );
+      assert.deepEqual(
+        plain(robotContract.parseRobotCommand({
+          operation: "drive_mode_start",
+          payload: { mode: "person_following" },
+        })),
+        {
+          operation: "drive_mode_start",
+          payload: { mode: "person_following" },
+        },
+      );
+      assert.deepEqual(
+        plain(robotContract.parseRobotCommand({
+          operation: "drive_mode_stop",
+          payload: {
+            mode: "person_following",
+            sessionId: "person_following_session_1",
+          },
+        })),
+        {
+          operation: "drive_mode_stop",
+          payload: {
+            mode: "person_following",
+            sessionId: "person_following_session_1",
+          },
+        },
+      );
+      assert.equal(robotContract.parseRobotCommand({
+        operation: "drive_mode_pause",
+        payload: {
+          mode: "person_following",
+          sessionId: "person_following_session_1",
+        },
+      }), null);
+      assert.equal(robotContract.parseRobotCommand({
+        operation: "drive_mode_start",
+        payload: { mode: "destination" },
+      }), null);
+
+      await assert.rejects(
+        robotMap.createRobotCommand({
+          deviceId: "living-room",
+          userEmail: "family@example.com",
+          operation: "drive_mode_start",
+          payload: { mode: "patrol" },
+        }),
+        /FORBIDDEN/,
+      );
+      const modeCommand = await robotMap.createRobotCommand({
+        deviceId: "living-room",
+        userEmail: "owner@example.com",
+        operation: "drive_mode_start",
+        payload: { mode: "patrol" },
+      });
+      const claimedMode = await robotMap.claimRobotCommands("living-room");
+      assert.equal(claimedMode[0].id, modeCommand.id);
+      await robotMap.completeRobotCommand({
+        deviceId: "living-room",
+        commandId: modeCommand.id,
+        ok: true,
+        result: { sessionId: "patrol_session_1" },
+      });
+      await robotMap.storeRobotState("living-room", {
+        state: "ready",
+        message: "순찰 중입니다.",
+        pose: { x: 1.5, y: -0.25, yaw: 0.5 },
+        localization: { state: "ok", tfAgeS: 0.02 },
+        nav2: { navigator: "active", runtime_mode: "navigation" },
+        target: null,
+        driveMode: {
+          mode: "patrol", state: "active",
+          sessionId: "patrol_session_1", message: "순찰 중입니다.",
+          detail: {
+            waypoint_name: "거실",
+            waypoint_index: 0,
+            waypoint_count: 3,
+            available_modes: ["patrol", "roaming"],
+          },
+        },
+        mapRevision: 11,
+        observedAt: new Date().toISOString(),
+      });
+      const patrolSnapshot = await robotMap.getRobotSnapshot(
+        "living-room",
+        "owner@example.com",
+      );
+      assert.deepEqual(plain(patrolSnapshot.state.driveMode.detail), {
+        waypoint_name: "거실",
+        waypoint_index: 0,
+        waypoint_count: 3,
+        available_modes: ["patrol", "roaming"],
+      });
+      await assert.rejects(
+        robotMap.createRobotCommand({
+          deviceId: "living-room",
+          userEmail: "owner@example.com",
+          operation: "navigation_preview",
+          payload: { x: 1, y: 1 },
+        }),
+        /DRIVE_MODE_IN_PROGRESS/,
+      );
+      await assert.rejects(
+        robotMap.createRobotCommand({
+          deviceId: "living-room",
+          userEmail: "owner@example.com",
+          operation: "drive_mode_stop",
+          payload: { mode: "patrol", sessionId: "stale_session_1" },
+        }),
+        /DRIVE_MODE_SESSION_MISMATCH/,
       );
       const room = (id, minimumX = 0) => ({
         type: "Feature",
@@ -536,7 +743,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     `);
     assert.deepEqual(plain(persisted.rows[0]), {
       credentials: 1,
-      events: 2,
+      events: 4,
       outbox: 1,
       session_status: "ended",
       recording_ended: true,
@@ -586,7 +793,7 @@ async function seedDevice(database) {
   );
   await database.query(
     `INSERT INTO device_memberships (device_id, user_email, role, created_at)
-     VALUES ($1, $2, 'owner', $3)`,
+     VALUES ($1, $2, 'owner', $3), ($1, 'family@example.com', 'family', $3)`,
     ["living-room", "owner@example.com", createdAt],
   );
   await database.query(

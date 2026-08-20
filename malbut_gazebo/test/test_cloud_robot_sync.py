@@ -45,6 +45,36 @@ def test_cloud_map_counter_prefers_navigation_sequence_over_stable_hash():
     }, 3) == 3
 
 
+def test_cloud_normalizes_one_common_drive_mode_and_legacy_navigation():
+    active = CloudRobotSync._normal_drive_mode({
+        "drive_mode": {
+            "mode": "patrol", "state": "active",
+            "session_id": "patrol_session_1", "message": "patrolling",
+        },
+    }, {})
+    assert active == {
+        "mode": "patrol", "state": "active",
+        "sessionId": "patrol_session_1", "message": "patrolling",
+    }
+    assert CloudRobotSync._normal_drive_mode({
+        "drive_mode": {
+            "mode": "roaming", "state": "active",
+            "session_id": "roaming_session_1", "message": "roaming",
+            "detail": {"candidate_count": 12},
+        },
+    }, {})["detail"] == {"candidate_count": 12}
+    assert CloudRobotSync._normal_drive_mode({}, {
+        "state": "driving", "session_id": "navigation_session_1",
+    }) == {
+        "mode": "destination", "state": "active",
+        "sessionId": "navigation_session_1", "message": None,
+    }
+    assert CloudRobotSync._normal_drive_mode({}, {}) == {
+        "mode": "idle", "state": "idle",
+        "sessionId": None, "message": None,
+    }
+
+
 def test_cloud_remap_command_requests_supervised_runtime_switch(
     tmp_path: Path,
 ):
@@ -125,6 +155,10 @@ def test_cloud_navigation_command_uses_saved_map_and_one_local_session(
         sync._local_command(
             "navigation_start", {"previewToken": preview["preview_token"]}
         )
+        sync._local_command("drive_mode_start", {"mode": "patrol"})
+        sync._local_command("drive_mode_stop", {
+            "mode": "patrol", "sessionId": "patrol_session_1",
+        })
         zones = {
             "type": "FeatureCollection",
             "format": "malbut-semantic-zones-v1",
@@ -150,11 +184,84 @@ def test_cloud_navigation_command_uses_saved_map_and_one_local_session(
                 "session=test-session",
             ),
             (
+                "/api/drive-mode/start",
+                {"mode": "patrol"},
+                "session=test-session",
+            ),
+            (
+                "/api/drive-mode/stop",
+                {"mode": "patrol", "session_id": "patrol_session_1"},
+                "session=test-session",
+            ),
+            (
                 "/api/apply-zones",
                 zones,
                 "session=test-session",
             ),
         ]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_cloud_command_preserves_structured_local_safety_error(
+    tmp_path: Path,
+):
+    """AWS UI must show the local safety reason instead of a generic 409."""
+    revision = tmp_path / "versions" / "rev-1"
+    revision.mkdir(parents=True)
+    for name in ("map.yaml", "map.pgm", "user-map.geojson"):
+        (revision / name).write_text("{}", encoding="utf-8")
+    (tmp_path / "active.json").write_text(json.dumps({
+        "format": "malbut-map-store/v1",
+        "revision": "rev-1",
+        "map_id": "map-home",
+        "map_revision": "revision-home",
+        "map_yaml": "versions/rev-1/map.yaml",
+        "map_image": "versions/rev-1/map.pgm",
+        "user_map": "versions/rev-1/user-map.geojson",
+    }), encoding="utf-8")
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, _format, *_args):
+            pass
+
+        def do_GET(self):
+            payload = json.dumps({"csrf_token": "csrf-test"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_POST(self):
+            payload = json.dumps({
+                "error_code": "ROBOT_OUTSIDE_COSTMAP",
+                "message": "로봇의 현재 위치가 주행 가능 공간이 아닙니다.",
+            }).encode()
+            self.send_response(409)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        sync = CloudRobotSync.__new__(CloudRobotSync)
+        sync.map_store = tmp_path
+        sync.local_url = f"http://127.0.0.1:{server.server_port}/"
+        sync.local_opener = build_opener(HTTPCookieProcessor(CookieJar()))
+
+        with pytest.raises(RuntimeError, match=(
+            "ROBOT_OUTSIDE_COSTMAP: 로봇의 현재 위치가 "
+            "주행 가능 공간이 아닙니다"
+        )):
+            sync._local_command(
+                "navigation_preview", {"x": 1.0, "y": 2.0}
+            )
     finally:
         server.shutdown()
         server.server_close()

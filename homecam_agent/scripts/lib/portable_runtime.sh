@@ -48,6 +48,7 @@ homecam_config_key_allowed() {
     HOMECAM_CLOUD_MAP_ENABLED|\
     HOMECAM_DEVICE_ID|\
     HOMECAM_DEVICE_TOKEN_FILE|\
+    HOMECAM_EVENT_CLIPS_ENABLED|\
     HOMECAM_FORCE_MAPPING|\
     HOMECAM_GAZEBO_GUI|\
     HOMECAM_GAZEBO_HEADLESS|\
@@ -61,8 +62,11 @@ homecam_config_key_allowed() {
     HOMECAM_MAP_WEB_PORT|\
     HOMECAM_MICROPHONE_ENABLED|\
     HOMECAM_MODEL_PATH|\
+    HOMECAM_POSE_MODEL_PATH|\
     HOMECAM_MONITORING_ENABLED|\
+    HOMECAM_NAVIGATION_STATUS_TOPIC|\
     HOMECAM_ODOM_TOPIC|\
+    HOMECAM_ONNX_RUNTIME_SITE_PACKAGES|\
     HOMECAM_ROS_SETUP|\
     HOMECAM_START_GAZEBO|\
     HOMECAM_TOPIC_TIMEOUT_SECONDS|\
@@ -144,6 +148,45 @@ except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
 if not all(math.isfinite(value) for value in values):
     raise SystemExit(1)
 print(*(format(value, ".17g") for value in values))
+PY
+}
+
+homecam_simulation_bootstrap_pose() {
+  local map_store="$1"
+  python3 - "$map_store/active.json" \
+    "$map_store/last-localized-pose.json" <<'PY'
+import json
+import math
+from pathlib import Path
+import sys
+
+active_path = Path(sys.argv[1])
+checkpoint_path = Path(sys.argv[2])
+try:
+    active = json.loads(active_path.read_text(encoding="utf-8"))
+except (OSError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+source = "map"
+pose = active.get("initial_pose")
+try:
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    if (
+        checkpoint.get("format") == "malbut-pose-checkpoint/v1"
+        and checkpoint.get("map_id") == active.get("map_id")
+        and checkpoint.get("map_revision") == active.get("map_revision")
+    ):
+        pose = checkpoint["pose"]
+        source = "checkpoint"
+except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError):
+    pass
+try:
+    values = [float(pose[name]) for name in ("x", "y", "yaw")]
+except (KeyError, TypeError, ValueError):
+    raise SystemExit(1)
+if not all(math.isfinite(value) for value in values):
+    raise SystemExit(1)
+print(source, *(format(value, ".17g") for value in values))
 PY
 }
 
@@ -356,6 +399,40 @@ homecam_source_runtime() {
         return 1
     fi
   done
+}
+
+homecam_validate_detector_runtime() {
+  local model_path="$1"
+  local pose_model_path="$2"
+  local result=""
+
+  if [[ -z "$model_path" && -z "$pose_model_path" ]]; then
+    return 0
+  fi
+  if ! result="$(python3 - "$model_path" "$pose_model_path" <<'PY'
+import sys
+
+from homecam_detector.pose import PersonPoseEstimator
+from homecam_detector.yolo import YoloOnnxDetector
+
+
+model_path, pose_model_path = sys.argv[1:]
+if model_path:
+    detector = YoloOnnxDetector(model_path)
+    if detector._ort_session is None:
+        raise RuntimeError("YOLO26 detection is not using ONNX Runtime")
+if pose_model_path:
+    estimator = PersonPoseEstimator(pose_model_path)
+    if estimator._session is None:
+        raise RuntimeError("YOLO26 pose is not using ONNX Runtime")
+print("YOLO26 ONNX Runtime preflight passed")
+PY
+)"; then
+    homecam_die \
+      "detector model preflight failed; rebuild homecam_detector with setup_portable_sim.sh" ||
+      return 1
+  fi
+  homecam_log "$result"
 }
 
 homecam_find_kvs_sdk_root() {

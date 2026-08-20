@@ -46,6 +46,9 @@ homecam_config_key_allowed HOMECAM_MAP_STORE
 homecam_config_key_allowed HOMECAM_MAP_WEB_HOST
 homecam_config_key_allowed HOMECAM_MAP_WEB_PORT
 homecam_config_key_allowed HOMECAM_MAP_RVIZ
+homecam_config_key_allowed HOMECAM_EVENT_CLIPS_ENABLED
+homecam_config_key_allowed HOMECAM_NAVIGATION_STATUS_TOPIC
+homecam_config_key_allowed HOMECAM_POSE_MODEL_PATH
 if homecam_config_key_allowed HOMECAM_MAP_DELETE_ON_START; then
   printf 'destructive map configuration key should be rejected\n' >&2
   exit 1
@@ -75,6 +78,19 @@ printf '%s\n' \
   > "$map_store/active.json"
 [[ "$(homecam_saved_map_pose "$map_store")" == '-1.25 2.5 0.75' ]]
 printf '%s\n' \
+  '{"format":"malbut-pose-checkpoint/v1","map_id":"home","map_revision":"r1","pose":{"x":3.25,"y":-4.5,"yaw":1.5}}' \
+  > "$map_store/last-localized-pose.json"
+printf '%s\n' \
+  '{"map_id":"home","map_revision":"r1","initial_pose":{"x":-1.25,"y":2.5,"yaw":0.75}}' \
+  > "$map_store/active.json"
+[[ "$(homecam_simulation_bootstrap_pose "$map_store")" == \
+  'checkpoint 3.25 -4.5 1.5' ]]
+printf '%s\n' \
+  '{"map_id":"home","map_revision":"r2","initial_pose":{"x":-1.25,"y":2.5,"yaw":0.75}}' \
+  > "$map_store/active.json"
+[[ "$(homecam_simulation_bootstrap_pose "$map_store")" == \
+  'map -1.25 2.5 0.75' ]]
+printf '%s\n' \
   '{"initial_pose":{"x":"NaN","y":2.5,"yaw":0.75}}' \
   > "$map_store/active.json"
 if homecam_saved_map_pose "$map_store" >/dev/null 2>&1; then
@@ -100,6 +116,11 @@ generated_config="$temporary_dir/generated/sim.env"
 grep -Fqx 'HOMECAM_GAZEBO_GUI=false' "$generated_config"
 grep -Fqx 'HOMECAM_GAZEBO_HEADLESS=true' "$generated_config"
 grep -Fqx 'HOMECAM_FORCE_MAPPING=false' "$generated_config"
+grep -Fqx 'HOMECAM_EVENT_CLIPS_ENABLED=true' "$generated_config"
+grep -Fqx 'HOMECAM_POSE_MODEL_PATH=' "$generated_config"
+grep -Fqx \
+  'HOMECAM_NAVIGATION_STATUS_TOPIC=/navigate_to_pose/_action/status' \
+  "$generated_config"
 
 runner="$repo_root/scripts/run_gazebo_homecam.sh"
 grep -Fq 'ros2 launch malbut_gazebo worlds.launch.py' "$runner"
@@ -109,6 +130,28 @@ grep -Fq '"trusted_initial_pose:=true"' "$runner"
 grep -Fq '"trusted_localization_handoff:=$trust_localization_handoff"' \
   "$runner"
 grep -Fq 'start_robot_stack true true' "$runner"
+grep -Fq \
+  '"navigation_status_topic:=$HOMECAM_NAVIGATION_STATUS_TOPIC"' \
+  "$runner"
+grep -Fq '"pose_model_path:=$HOMECAM_POSE_MODEL_PATH"' "$runner"
+grep -Fq 'homecam_validate_detector_runtime' "$runner"
+
+event_person="$repo_root/scripts/spawn_event_test_person.sh"
+grep -Fq -- '--world small_house' "$event_person"
+grep -Fq -- '--x 2.5' "$event_person"
+grep -Fq -- '--y -3.6' "$event_person"
+if grep -Eq '^[[:space:]]*(exec[[:space:]]+)?ros2.*set_pose' "$event_person"; then
+  printf 'event person fixture must not teleport the actor\n' >&2
+  exit 1
+fi
+
+dependencies="$repo_root/scripts/install_dependencies.sh"
+grep -Fq 'python3-venv' "$dependencies"
+grep -Fq 'ros-humble-action-msgs' "$dependencies"
+
+model_preparer="$repo_root/../malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh"
+grep -Fq '! -x "$export_env/bin/pip"' "$model_preparer"
+grep -Fq 'rm -rf -- "$export_env"' "$model_preparer"
 
 standalone_workspace="$temporary_dir/standalone_workspace"
 mkdir -p "$standalone_workspace/src/homecam_agent"

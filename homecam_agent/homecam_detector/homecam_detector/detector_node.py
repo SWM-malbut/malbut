@@ -1,10 +1,12 @@
 """ROS 2 node for privacy-aware home-camera event detection."""
 
+import json
 import math
 import sys
 import time
 from typing import Dict, Optional
 
+from action_msgs.msg import GoalStatus, GoalStatusArray
 from cv_bridge import CvBridge, CvBridgeError
 from nav_msgs.msg import Odometry
 import rclpy
@@ -24,6 +26,7 @@ from .event_segmenter import EventSegmenter
 from .inference_health import InferenceHealth
 from .motion_detector import FrameMotionDetector
 from .motion_gate import MotionGate
+from .pose import PersonPoseEstimator, PersonPoseGate
 from .yolo import YoloOnnxDetector
 
 
@@ -90,6 +93,32 @@ class HomecamDetectorNode(Node):
             self.get_logger().warning(
                 "model_path is empty; person, dog, and cat detection is disabled"
             )
+        self._pose_estimator: Optional[PersonPoseEstimator] = None
+        if self._config.pose_model_path:
+            try:
+                self._pose_estimator = PersonPoseEstimator(
+                    self._config.pose_model_path,
+                    confidence_threshold=(
+                        self._config.pose_confidence_threshold
+                    ),
+                    keypoint_threshold=self._config.pose_keypoint_threshold,
+                )
+                self.get_logger().info(
+                    "Loaded person-gated YOLO pose ONNX model: "
+                    f"{self._config.pose_model_path}"
+                )
+            except (FileNotFoundError, RuntimeError, ValueError) as error:
+                self.get_logger().error(
+                    "YOLO pose unavailable; person and pet events remain "
+                    f"enabled without pose enrichment: {error}"
+                )
+        else:
+            self.get_logger().info(
+                "pose_model_path is empty; secondary person pose is disabled"
+            )
+        self._pose_gate = PersonPoseGate(self._config.pose_inference_fps)
+        self._pose_failure_count = 0
+        self._pose_present = False
         self._inference_health = InferenceHealth(
             model_available=self._model is not None,
             active=self._config.monitoring_enabled,
@@ -134,6 +163,14 @@ class HomecamDetectorNode(Node):
                 self._on_odom,
                 rclpy.qos.qos_profile_sensor_data,
             )
+        self._navigation_subscription = None
+        if self._config.navigation_status_topic:
+            self._navigation_subscription = self.create_subscription(
+                GoalStatusArray,
+                self._config.navigation_status_topic,
+                self._on_navigation_status,
+                10,
+            )
         monitoring_qos = rclpy.qos.QoSProfile(
             depth=1,
             reliability=rclpy.qos.ReliabilityPolicy.RELIABLE,
@@ -154,6 +191,14 @@ class HomecamDetectorNode(Node):
         self._health_publisher = self.create_publisher(
             Bool, "/homecam/detector_healthy", monitoring_qos
         )
+        self._pose_health_publisher = self.create_publisher(
+            Bool, "/homecam/pose_healthy", monitoring_qos
+        )
+        self._pose_publisher = self.create_publisher(
+            String,
+            "/homecam/person_pose",
+            rclpy.qos.qos_profile_sensor_data,
+        )
         self._health_timer = self.create_timer(1.0, self._publish_health)
         self._publish_health()
         self.add_on_set_parameters_callback(self._on_parameter_update)
@@ -166,10 +211,17 @@ class HomecamDetectorNode(Node):
     def _declare_parameters(self) -> None:
         self.declare_parameter("image_topic", "/depth_cam/depth_cam")
         self.declare_parameter("odom_topic", "/odom")
+        self.declare_parameter(
+            "navigation_status_topic", "/navigate_to_pose/_action/status"
+        )
         self.declare_parameter("model_path", "")
+        self.declare_parameter("pose_model_path", "")
         self.declare_parameter("device_id", "")
         self.declare_parameter("backend_url", "")
         self.declare_parameter("confidence_threshold", 0.45)
+        self.declare_parameter("pose_confidence_threshold", 0.45)
+        self.declare_parameter("pose_keypoint_threshold", 0.5)
+        self.declare_parameter("pose_inference_fps", 5.0)
         self.declare_parameter("consecutive_frames", 3)
         self.declare_parameter("event_cooldown_sec", 30.0)
         self.declare_parameter("event_confirmation_window_frames", 5)
@@ -179,7 +231,7 @@ class HomecamDetectorNode(Node):
         self.declare_parameter("max_event_clip_sec", 120.0)
         self.declare_parameter("event_clips_enabled", False)
         self.declare_parameter("max_frame_gap_sec", 1.0)
-        self.declare_parameter("stationary_after_sec", 1.0)
+        self.declare_parameter("stationary_after_sec", 2.0)
         self.declare_parameter("odom_timeout_sec", 2.0)
         self.declare_parameter("linear_motion_threshold", 0.03)
         self.declare_parameter("angular_motion_threshold", 0.05)
@@ -190,11 +242,24 @@ class HomecamDetectorNode(Node):
         return DetectorConfig(
             image_topic=self.get_parameter("image_topic").value,
             odom_topic=self.get_parameter("odom_topic").value,
+            navigation_status_topic=self.get_parameter(
+                "navigation_status_topic"
+            ).value,
             model_path=self.get_parameter("model_path").value,
+            pose_model_path=self.get_parameter("pose_model_path").value,
             device_id=self.get_parameter("device_id").value,
             backend_url=self.get_parameter("backend_url").value,
             confidence_threshold=float(
                 self.get_parameter("confidence_threshold").value
+            ),
+            pose_confidence_threshold=float(
+                self.get_parameter("pose_confidence_threshold").value
+            ),
+            pose_keypoint_threshold=float(
+                self.get_parameter("pose_keypoint_threshold").value
+            ),
+            pose_inference_fps=float(
+                self.get_parameter("pose_inference_fps").value
             ),
             consecutive_frames=int(self.get_parameter("consecutive_frames").value),
             event_cooldown_sec=float(
@@ -258,6 +323,7 @@ class HomecamDetectorNode(Node):
             self._motion_detector.reset()
             self._dedupe.reset()
             self._segmenter.discard()
+            self._reset_pose_state()
             self.get_logger().info(
                 f"Monitoring changed to {'on' if enabled else 'off'}"
             )
@@ -269,6 +335,24 @@ class HomecamDetectorNode(Node):
         linear_speed = math.sqrt(linear.x**2 + linear.y**2 + linear.z**2)
         angular_speed = math.sqrt(angular.x**2 + angular.y**2 + angular.z**2)
         self._motion_gate.update(linear_speed, angular_speed, time.monotonic())
+
+    def _on_navigation_status(self, message: GoalStatusArray) -> None:
+        active_statuses = {
+            GoalStatus.STATUS_ACCEPTED,
+            GoalStatus.STATUS_EXECUTING,
+            GoalStatus.STATUS_CANCELING,
+        }
+        active = any(
+            status.status in active_statuses for status in message.status_list
+        )
+        if self._motion_gate.set_navigation_active(active):
+            # Never compare a post-navigation frame with a pre-navigation
+            # background. Semantic YOLO candidates remain available.
+            self._motion_detector.reset()
+            state = "paused" if active else "stabilizing"
+            self.get_logger().info(
+                f"Generic motion detection {state} for robot navigation"
+            )
 
     def _on_monitoring_state(self, message: Bool) -> None:
         enabled = bool(message.data)
@@ -284,6 +368,7 @@ class HomecamDetectorNode(Node):
         self._motion_detector.reset()
         self._dedupe.reset()
         self._segmenter.discard()
+        self._reset_pose_state()
         self.get_logger().info(
             f"Monitoring state received from media agent: "
             f"{'on' if enabled else 'off'}"
@@ -304,6 +389,63 @@ class HomecamDetectorNode(Node):
         # becomes false immediately after three consecutive inference errors.
         message.data = self._inference_health.healthy(time.monotonic())
         self._health_publisher.publish(message)
+        pose_health = Bool()
+        pose_health.data = (
+            self._pose_estimator is not None
+            and self._pose_failure_count < 3
+        )
+        self._pose_health_publisher.publish(pose_health)
+
+    def _reset_pose_state(self) -> None:
+        self._pose_gate.reset()
+        self._pose_failure_count = 0
+        if self._pose_present:
+            self._publish_pose_absent()
+
+    def _publish_pose_absent(self) -> None:
+        message = String()
+        message.data = '{"present":false}'
+        self._pose_publisher.publish(message)
+        self._pose_present = False
+
+    def _observe_person_pose(
+        self, frame, person_present: bool, image_message: Image, now: float
+    ) -> None:
+        if self._pose_estimator is None:
+            return
+        if not person_present:
+            if self._pose_present:
+                self._publish_pose_absent()
+            return
+        if not self._pose_gate.should_infer(True, now):
+            return
+        try:
+            pose = self._pose_estimator.estimate(frame)
+            self._pose_failure_count = 0
+        except (RuntimeError, ValueError) as error:
+            self._pose_failure_count += 1
+            self.get_logger().error(f"YOLO pose inference failed: {error}")
+            if self._pose_present:
+                self._publish_pose_absent()
+            return
+        if pose is None:
+            if self._pose_present:
+                self._publish_pose_absent()
+            return
+        payload = pose.as_dict()
+        payload["captureStamp"] = {
+            "sec": int(image_message.header.stamp.sec),
+            "nanosec": int(image_message.header.stamp.nanosec),
+        }
+        output = String()
+        output.data = json.dumps(
+            payload,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+        )
+        self._pose_publisher.publish(output)
+        self._pose_present = True
 
     def _on_image(self, message: Image) -> None:
         if (
@@ -319,9 +461,13 @@ class HomecamDetectorNode(Node):
 
         candidates: Dict[str, float] = {}
         now_monotonic = time.monotonic()
-        has_motion = self._motion_detector.detect(frame)
-        if has_motion and self._motion_gate.generic_motion_allowed(now_monotonic):
-            candidates["motion"] = 1.0
+        if self._motion_gate.generic_motion_allowed(now_monotonic):
+            if self._motion_detector.detect(frame):
+                candidates["motion"] = 1.0
+        else:
+            # Reset on every suppressed frame so the first frame after the
+            # stable-stop window becomes a fresh background, not an event.
+            self._motion_detector.reset()
 
         if self._model is not None:
             try:
@@ -330,6 +476,13 @@ class HomecamDetectorNode(Node):
             except (RuntimeError, ValueError) as error:
                 self._inference_health.record_failure()
                 self.get_logger().error(f"YOLO inference failed: {error}")
+
+        self._observe_person_pose(
+            frame,
+            person_present="person" in candidates,
+            image_message=message,
+            now=now_monotonic,
+        )
 
         now_wall = time.time()
         if self._config.event_clips_enabled:

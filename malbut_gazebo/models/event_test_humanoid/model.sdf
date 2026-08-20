@@ -1,0 +1,67 @@
+<?xml version="1.0"?>
+<sdf version="1.8">
+  <actor name="event_test_humanoid">
+    <skin>
+      <filename>model://humanoid_actor/meshes/walk.dae</filename>
+      <scale>1.0</scale>
+    </skin>
+
+    <animation name="walking">
+      <filename>model://humanoid_actor/meshes/walk.dae</filename>
+      <scale>1.0</scale>
+      <interpolate_x>true</interpolate_x>
+    </animation>
+
+    <!--
+      The actor is kinematic, so this deliberately follows a closed circuit
+      in one open floor area instead of touring the house.  With the spawn
+      offset used by spawn_event_test_person.sh, the complete route retains
+      at least 0.8 m clearance from Small House walls and furniture. Repeated
+      poses add varied pauses and turn the actor in place. Tension 1.0 keeps
+      every interpolated pose on the verified straight route segments.
+    -->
+    <script>
+      <loop>true</loop>
+      <delay_start>1.0</delay_start>
+      <auto_start>true</auto_start>
+      <trajectory id="0" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>0.000 0.000 1.0 0 0 -0.876058</pose>
+        </waypoint>
+        <waypoint>
+          <time>2.232</time>
+          <pose>0.500 -0.600 1.0 0 0 -0.876058</pose>
+        </waypoint>
+        <waypoint>
+          <time>3.032</time>
+          <pose>0.500 -0.600 1.0 0 0 0.950547</pose>
+        </waypoint>
+        <waypoint>
+          <time>5.490</time>
+          <pose>1.000 0.100 1.0 0 0 0.950547</pose>
+        </waypoint>
+        <waypoint>
+          <time>6.690</time>
+          <pose>1.000 0.100 1.0 0 0 2.356194</pose>
+        </waypoint>
+        <waypoint>
+          <time>8.710</time>
+          <pose>0.500 0.600 1.0 0 0 2.356194</pose>
+        </waypoint>
+        <waypoint>
+          <time>9.310</time>
+          <pose>0.500 0.600 1.0 0 0 -2.265535</pose>
+        </waypoint>
+        <waypoint>
+          <time>11.542</time>
+          <pose>0.000 0.000 1.0 0 0 -2.265535</pose>
+        </waypoint>
+        <waypoint>
+          <time>12.942</time>
+          <pose>0.000 0.000 1.0 0 0 -0.876058</pose>
+        </waypoint>
+      </trajectory>
+    </script>
+  </actor>
+</sdf>

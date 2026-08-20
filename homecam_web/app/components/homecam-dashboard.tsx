@@ -4,8 +4,10 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
+  ArrowLeft,
   Bell,
   Camera,
+  CaretLeft,
   CaretRight,
   Cat,
   CheckCircle,
@@ -18,6 +20,7 @@ import {
   Play,
   ShieldCheck,
   Sun,
+  TextAa,
   Trash,
   UsersThree,
   VideoCamera,
@@ -73,6 +76,7 @@ type HomecamEvent = {
   recordingStartedAt: string | null;
   eventGroupId: string | null;
   segmentIndex: number | null;
+  segmentCount: number;
   labels: HomecamEventType[];
   clipStartAt: string | null;
   clipEndAt: string | null;
@@ -193,7 +197,7 @@ function HomeMapSummary({
   return (
     <>
       <article className="homecam-home-map-card">
-        <h2>우리 집 지도</h2>
+        <h2>지도</h2>
         <button type="button" className="homecam-home-map-preview" onClick={() => onOpenMap("view")}>
           {device && revision ? (
             <>
@@ -216,7 +220,7 @@ function HomeMapSummary({
         </div>
       </article>
       <article className="homecam-home-favorites">
-        <h2>자주 보내는 곳</h2>
+        <h2>주요 목적지</h2>
         <div>
           {rooms.length === 0 && <p>방을 나누고 이름을 정하면 여기에 표시됩니다.</p>}
           {rooms.slice(0, 4).map((room) => (
@@ -260,7 +264,7 @@ function eventBadgeLabel(type: HomecamEventType) {
 function eventTitle(event: HomecamEvent) {
   if (event.type === "person") return "사람이 감지됐어요";
   if (event.type === "dog" || event.type === "cat") return "반려동물 움직임이 감지됐어요";
-  return "작은 움직임이 감지됐어요";
+  return "움직임이 감지됐어요";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -422,6 +426,12 @@ function normalizeEvent(value: unknown): HomecamEvent | null {
       typeof raw.segmentIndex === "number" && Number.isSafeInteger(raw.segmentIndex)
         ? raw.segmentIndex
         : null,
+    segmentCount:
+      typeof raw.segmentCount === "number" &&
+      Number.isSafeInteger(raw.segmentCount) &&
+      raw.segmentCount > 0
+        ? raw.segmentCount
+        : 1,
     labels,
     clipStartAt: stringValue(raw.clipStartAt, raw.clip_start_at) ?? null,
     clipEndAt: stringValue(raw.clipEndAt, raw.clip_end_at) ?? null,
@@ -463,6 +473,32 @@ function formatEventTime(value: string) {
     minute: "2-digit",
     second: "2-digit",
   }).format(new Date(value));
+}
+
+function eventDateKey(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function shiftEventDateKey(value: string, amount: number) {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(year, month - 1, day, 12);
+  date.setDate(date.getDate() + amount);
+  return eventDateKey(date);
+}
+
+function formatEventDate(value: string, today: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(year, month - 1, day, 12);
+  const label = new Intl.DateTimeFormat("ko-KR", {
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  }).format(date);
+  return value === today ? `${label} · 오늘` : label;
 }
 
 function formatLiveClock(value: number) {
@@ -724,8 +760,10 @@ export function HomecamDashboard({
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventCursor, setEventCursor] = useState<EventCursor | null>(null);
   const [eventFilter, setEventFilter] = useState<HomecamEventFilter>("all");
+  const [eventDate, setEventDate] = useState(() => eventDateKey(new Date()));
   const [selectedEvent, setSelectedEvent] = useState<HomecamEvent | null>(null);
   const [focusedEventId, setFocusedEventId] = useState("");
+  const [mobileEventDetailOpen, setMobileEventDetailOpen] = useState(false);
   const [family, setFamily] = useState<FamilyMember[]>([]);
   const [familyLoading, setFamilyLoading] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -738,6 +776,7 @@ export function HomecamDashboard({
   const [legacyCode, setLegacyCode] = useState("");
   const [legacyPassword, setLegacyPassword] = useState("");
   const [colorMode, setColorMode] = useState<HomecamColorMode>("dark");
+  const [textSize, setTextSize] = useState<"default" | "large">("default");
   const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
   const [storageGraceUntilMs, setStorageGraceUntilMs] = useState(0);
   const deepLinkedEventIdRef = useRef("");
@@ -756,6 +795,23 @@ export function HomecamDashboard({
   }, []);
 
   useEffect(() => {
+    const stored = window.localStorage.getItem("malbut-text-size");
+    if (stored === "large") window.queueMicrotask(() => setTextSize("large"));
+  }, []);
+
+  useEffect(() => {
+    // 큰 글자 모드는 토큰(--fs-*)을 문서 단위로 확대한다. 지도·영상은 영향 없음.
+    if (textSize === "large") {
+      document.documentElement.dataset.textSize = "large";
+    } else {
+      delete document.documentElement.dataset.textSize;
+    }
+    return () => {
+      delete document.documentElement.dataset.textSize;
+    };
+  }, [textSize]);
+
+  useEffect(() => {
     if (tab !== "live") return;
     const timer = window.setInterval(() => setLiveClockMs(Date.now()), 1_000);
     return () => window.clearInterval(timer);
@@ -765,19 +821,29 @@ export function HomecamDashboard({
     () => devices.find((device) => device.id === selectedDeviceId) ?? devices[0] ?? null,
     [devices, selectedDeviceId],
   );
+  const devicePollIntervalMs = Boolean(
+    selectedDevice?.online &&
+    selectedDevice.monitoringEnabled &&
+    selectedDevice.cameraEnabled &&
+    !selectedDevice.storageHealthy
+  ) ? 1_000 : 15_000;
   const displayedMediaReady = liveViewer
     ? liveMediaReady
     : Boolean(selectedDevice?.online && selectedDevice.p2pHealthy);
-  const visibleEvents = useMemo(() => events.filter((event) =>
+  const todayEventDate = eventDateKey(new Date());
+  const eventsForDate = useMemo(() => events.filter(
+    (event) => eventDateKey(event.occurredAt) === eventDate,
+  ), [eventDate, events]);
+  const visibleEvents = useMemo(() => eventsForDate.filter((event) =>
     eventFilter === "all" || event.type === eventFilter ||
-      (eventFilter === "pet" && (event.type === "dog" || event.type === "cat"))), [eventFilter, events]);
+      (eventFilter === "pet" && (event.type === "dog" || event.type === "cat"))), [eventFilter, eventsForDate]);
   const focusedEvent = visibleEvents.find((event) => event.id === focusedEventId) ?? visibleEvents[0] ?? null;
   const eventCounts = useMemo(() => ({
-    all: events.length,
-    motion: events.filter((event) => event.type === "motion").length,
-    person: events.filter((event) => event.type === "person").length,
-    pet: events.filter((event) => event.type === "dog" || event.type === "cat").length,
-  }), [events]);
+    all: eventsForDate.length,
+    motion: eventsForDate.filter((event) => event.type === "motion").length,
+    person: eventsForDate.filter((event) => event.type === "person").length,
+    pet: eventsForDate.filter((event) => event.type === "dog" || event.type === "cat").length,
+  }), [eventsForDate]);
 
   const loadDevices = useCallback(async (quiet = false) => {
     if (!quiet) setAvailability("loading");
@@ -813,9 +879,12 @@ export function HomecamDashboard({
 
   useEffect(() => {
     window.queueMicrotask(() => void loadDevices());
-    const interval = window.setInterval(() => void loadDevices(true), 15_000);
+    const interval = window.setInterval(
+      () => void loadDevices(true),
+      devicePollIntervalMs,
+    );
     return () => window.clearInterval(interval);
-  }, [loadDevices]);
+  }, [devicePollIntervalMs, loadDevices]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -943,6 +1012,7 @@ export function HomecamDashboard({
       }
       setEvents((current) => current.filter((item) => item.id !== event.id));
       setFocusedEventId("");
+      setMobileEventDetailOpen(false);
       setSelectedEvent((current) => current?.id === event.id ? null : current);
       setNotice(
         stringValue(payload.message) ??
@@ -1340,6 +1410,7 @@ export function HomecamDashboard({
       <HomecamHeader
         activeTab={tab}
         onNavigate={(nextTab) => {
+          setMobileEventDetailOpen(false);
           if (nextTab === "map") openMap("view");
           else setTab(nextTab);
         }}
@@ -1349,10 +1420,35 @@ export function HomecamDashboard({
 
       <main className="homecam-main">
         {tab !== "map" && <div className="homecam-device-bar">
-          {tab !== "home" && <h1>{tab === "live" ? "홈캠" : tab === "events" ? "이벤트" : "설정"}</h1>}
+          <h1>{tab === "home" ? "홈" : tab === "live" ? "홈캠" : tab === "events" ? "이벤트" : "설정"}</h1>
           {tab === "events" && (
             <>
-              <div className="homecam-event-period">최근 7일</div>
+              <div className="homecam-event-period" aria-label="이벤트 날짜 선택">
+                <button
+                  type="button"
+                  aria-label="이전 날짜"
+                  onClick={() => {
+                    setEventDate((current) => shiftEventDateKey(current, -1));
+                    setFocusedEventId("");
+                    setMobileEventDetailOpen(false);
+                  }}
+                >
+                  <CaretLeft size={17} weight="bold" aria-hidden="true" />
+                </button>
+                <strong>{formatEventDate(eventDate, todayEventDate)}</strong>
+                <button
+                  type="button"
+                  aria-label="다음 날짜"
+                  disabled={eventDate >= todayEventDate}
+                  onClick={() => {
+                    setEventDate((current) => shiftEventDateKey(current, 1));
+                    setFocusedEventId("");
+                    setMobileEventDetailOpen(false);
+                  }}
+                >
+                  <CaretRight size={17} weight="bold" aria-hidden="true" />
+                </button>
+              </div>
               <div className="homecam-filter-row" aria-label="이벤트 종류 필터">
                 {(["all", "person", "pet", "motion"] as const).map((filter) => (
                   <button
@@ -1360,7 +1456,11 @@ export function HomecamDashboard({
                     type="button"
                     className={eventFilter === filter ? "is-selected" : ""}
                     aria-pressed={eventFilter === filter}
-                    onClick={() => { setEventFilter(filter); setFocusedEventId(""); }}
+                    onClick={() => {
+                      setEventFilter(filter);
+                      setFocusedEventId("");
+                      setMobileEventDetailOpen(false);
+                    }}
                   >
                     {eventFilterLabel(filter)} {eventCounts[filter]}
                   </button>
@@ -1471,7 +1571,7 @@ export function HomecamDashboard({
                         <p className="is-safe"><CheckCircle size={24} weight="fill" /> 지금 상태는 안전해요</p>
                       )}
                       {events.slice(0, 3).map((event) => (
-                        <button type="button" key={event.id} onClick={() => { setFocusedEventId(event.id); setTab("events"); }}>
+                        <button type="button" key={event.id} onClick={() => { setFocusedEventId(event.id); setMobileEventDetailOpen(true); setTab("events"); }}>
                           <span className={`event-kind-icon kind-${event.type}`}><EventKindIcon type={event.type} /></span>
                           <span><strong>{EVENT_LABELS[event.type]} 감지</strong><small>{formatEventTime(event.occurredAt)}</small></span>
                           <CaretRight size={17} weight="bold" />
@@ -1547,7 +1647,7 @@ export function HomecamDashboard({
 
             <div className="homecam-quick-grid">
               <article className="homecam-live-state-card">
-                <h2>지금 상태</h2>
+                <h2>현재 상태</h2>
                 <div className="homecam-live-state-list">
                   <div>
                     <i className={displayedMediaReady ? "is-good" : ""} aria-hidden="true" />
@@ -1623,7 +1723,7 @@ export function HomecamDashboard({
                         ? "꺼짐"
                         : detectorReady
                           ? "정상"
-                          : "확인 필요"}
+                          : "움직임만"}
                     </strong>
                   </div>
                 </div>
@@ -1632,7 +1732,7 @@ export function HomecamDashboard({
                 <div><h2>최근 이벤트 클립</h2><button type="button" onClick={() => setTab("events")}>전체 보기</button></div>
                 <section>
                   {events.slice(0, 2).map((event) => (
-                    <button type="button" key={event.id} onClick={() => { setFocusedEventId(event.id); setTab("events"); }}>
+                    <button type="button" key={event.id} onClick={() => { setFocusedEventId(event.id); setMobileEventDetailOpen(true); setTab("events"); }}>
                       <span className={`kind-${event.type}`}><EventKindIcon type={event.type} /></span>
                       <small>{formatEventTime(event.occurredAt)}</small>
                       <strong>{eventBadgeLabel(event.type)}</strong>
@@ -1654,7 +1754,12 @@ export function HomecamDashboard({
         {tab === "events" && (
           <section className="homecam-section" aria-labelledby="homecam-events-title">
             <h1 id="homecam-events-title" className="sr-only">이벤트</h1>
-            <div className="homecam-events-workspace">
+            <div className="homecam-event-kind-guide" aria-label="이벤트 종류 안내">
+              <span><b>사람</b> AI가 사람을 인식한 이벤트</span>
+              <span><b>반려동물</b> AI가 강아지나 고양이를 인식한 이벤트</span>
+              <span><b>움직임</b> 말벗이 정지한 상태에서 확인된 일반 화면 변화</span>
+            </div>
+            <div className={`homecam-events-workspace ${mobileEventDetailOpen ? "is-mobile-detail-open" : ""}`}>
               <div className="homecam-event-list">
                 {visibleEvents.length > 0 && <h2>최근 이벤트</h2>}
                 {eventsLoading && events.length === 0 && (
@@ -1664,7 +1769,7 @@ export function HomecamDashboard({
                   <div className="homecam-empty-state">
                     <CheckCircle size={34} weight="light" aria-hidden="true" />
                     <strong>확인할 이벤트가 없어요</strong>
-                    <p>{eventFilter === "all" ? "모니터링을 켜면 감지 기록이 시간순으로 표시됩니다." : "선택한 종류의 이벤트가 없습니다."}</p>
+                    <p>{eventFilter === "all" ? "선택한 날짜에 감지된 이벤트가 없습니다." : "선택한 종류의 이벤트가 없습니다."}</p>
                   </div>
                 )}
                 {visibleEvents.map((event) => (
@@ -1672,7 +1777,10 @@ export function HomecamDashboard({
                     type="button"
                     className={`homecam-event-row ${focusedEvent?.id === event.id ? "is-focused" : ""}`}
                     key={event.id}
-                    onClick={() => setFocusedEventId(event.id)}
+                    onClick={() => {
+                      setFocusedEventId(event.id);
+                      setMobileEventDetailOpen(true);
+                    }}
                   >
                     <span className={`homecam-event-thumbnail kind-${event.type}`} aria-hidden="true">
                       <EventKindIcon type={event.type} />
@@ -1697,6 +1805,14 @@ export function HomecamDashboard({
                 )}
               </div>
               <aside className="homecam-event-detail">
+                <button
+                  type="button"
+                  className="homecam-mobile-event-back"
+                  onClick={() => setMobileEventDetailOpen(false)}
+                >
+                  <ArrowLeft size={18} weight="bold" aria-hidden="true" />
+                  이벤트 목록
+                </button>
                 {focusedEvent ? (
                   <>
                     <div className="homecam-event-detail-video">
@@ -1800,6 +1916,28 @@ export function HomecamDashboard({
                     <Moon size={19} weight="regular" aria-hidden="true" />
                     블랙 모드
                   </button>
+                </div>
+                <div className="homecam-setting-row homecam-text-size-row">
+                  <div>
+                    <strong>큰 글자</strong>
+                    <span>화면 전체 글자를 키웁니다 · 본문 16→18px</span>
+                  </div>
+                  <div className="homecam-theme-options" role="group" aria-label="글자 크기 선택">
+                    <button type="button" className={textSize === "default" ? "is-active" : ""} onClick={() => {
+                      window.localStorage.setItem("malbut-text-size", "default");
+                      setTextSize("default");
+                    }}>
+                      <TextAa size={19} weight="regular" aria-hidden="true" />
+                      기본
+                    </button>
+                    <button type="button" className={textSize === "large" ? "is-active" : ""} onClick={() => {
+                      window.localStorage.setItem("malbut-text-size", "large");
+                      setTextSize("large");
+                    }}>
+                      <TextAa size={22} weight="bold" aria-hidden="true" />
+                      크게
+                    </button>
+                  </div>
                 </div>
               </section>
 

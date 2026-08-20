@@ -360,7 +360,7 @@ private:
     declare_parameter<std::string>("source_profile", "unknown");
     declare_parameter<int>("fps", 15);
     declare_parameter<int>("bitrate_kbps", 700);
-    declare_parameter<int>("heartbeat_interval_ms", 2000);
+    declare_parameter<int>("heartbeat_interval_ms", 1000);
     declare_parameter<int>("frame_timeout_ms", 2000);
     declare_parameter<bool>("monitoring_enabled", false);
     declare_parameter<bool>("camera_enabled", true);
@@ -1684,6 +1684,19 @@ private:
         std::chrono::steady_clock::time_point::min();
       clear_session_credentials(&outcome.session.lease.credentials);
       publish_storage_session_id();
+      if (
+        storage_requested_at_ !=
+        std::chrono::steady_clock::time_point::min())
+      {
+        const auto startup_ms =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - storage_requested_at_).count();
+        RCLCPP_INFO(
+          get_logger(), "Storage transport became ready after %ld ms",
+          static_cast<long>(startup_ms));
+        storage_requested_at_ =
+          std::chrono::steady_clock::time_point::min();
+      }
       RCLCPP_INFO(
         get_logger(), "Independent KVS storage session started: %s",
         storage_session_id_.c_str());
@@ -2094,6 +2107,21 @@ private:
       *desired.monitoring_enabled != config_.monitoring_enabled;
     const bool media_state_changed = camera_changed || microphone_changed;
     const bool storage_state_changed = camera_changed || monitoring_changed;
+    const bool next_camera_enabled =
+      desired.camera_enabled.value_or(config_.camera_enabled);
+    const bool next_monitoring_enabled =
+      desired.monitoring_enabled.value_or(config_.monitoring_enabled);
+    if (storage_state_changed || first_confirmed_state) {
+      if (next_camera_enabled && next_monitoring_enabled) {
+        storage_requested_at_ = std::chrono::steady_clock::now();
+        RCLCPP_INFO(
+          get_logger(),
+          "Storage requested; waiting for an authenticated KVS transport");
+      } else {
+        storage_requested_at_ =
+          std::chrono::steady_clock::time_point::min();
+      }
+    }
     if (media_state_changed) {
       // Invalidate both outbound frames and inbound PTT before changing any
       // pipeline. A session worker can only re-enable I/O for this generation.
@@ -2197,6 +2225,8 @@ private:
   std::string storage_cleanup_session_id_;
   std::int64_t storage_session_expires_at_ms_{0};
   std::chrono::steady_clock::time_point storage_transport_started_at_{
+    std::chrono::steady_clock::time_point::min()};
+  std::chrono::steady_clock::time_point storage_requested_at_{
     std::chrono::steady_clock::time_point::min()};
   bool storage_backend_session_may_be_open_{false};
   bool storage_session_permanent_failure_{false};

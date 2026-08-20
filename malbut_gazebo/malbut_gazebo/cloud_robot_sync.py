@@ -22,6 +22,7 @@ from urllib.request import (
 )
 
 from nav_msgs.msg import OccupancyGrid
+from std_msgs.msg import String
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import (
@@ -38,6 +39,7 @@ from malbut_gazebo.map_lifecycle import (
     map_grid_from_message,
     render_map_png,
 )
+from malbut_gazebo.pose_checkpoint import VALIDATION_TOPIC
 from malbut_gazebo.runtime_control import write_runtime_request
 
 
@@ -75,7 +77,19 @@ class CloudRobotSync(Node):
         self.grid: MapGrid | None = None
         self.map_counter = 0
         self.pose: dict | None = None
-        self.localization = {"state": "uninitialized", "tfAgeS": None}
+        initial_validation = (
+            str(self.get_parameter("boot_validation_state").value).strip()
+            if self.has_parameter("boot_validation_state")
+            else "revalidation_required"
+        )
+        self.validation_state = (
+            initial_validation
+            if initial_validation in {"revalidation_required", "verifying"}
+            else "ok"
+        )
+        self.localization = {
+            "state": self.validation_state, "tfAgeS": None
+        }
         self.last_uploaded_map = ""
         self.last_map_upload_monotonic = 0.0
         self.last_warning = ""
@@ -96,6 +110,12 @@ class CloudRobotSync(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
         )
         self.create_subscription(OccupancyGrid, "/map", self._receive_map, qos)
+        self.create_subscription(
+            String,
+            VALIDATION_TOPIC,
+            self._receive_validation,
+            qos,
+        )
         self.create_timer(0.2, self._refresh_pose)
         self.create_timer(1.0, self._schedule_sync)
         self.get_logger().info(
@@ -132,6 +152,13 @@ class CloudRobotSync(Node):
             self.grid = grid
             self.map_counter += 1
 
+    def _receive_validation(self, message: String) -> None:
+        value = message.data.strip()
+        if value not in {"revalidation_required", "verifying", "ok"}:
+            return
+        with self.lock:
+            self.validation_state = value
+
     def _refresh_pose(self) -> None:
         try:
             transform = self.tf_buffer.lookup_transform(
@@ -144,7 +171,11 @@ class CloudRobotSync(Node):
         ):
             with self.lock:
                 self.pose = None
-                self.localization = {"state": "lost", "tfAgeS": None}
+                state = (
+                    self.validation_state
+                    if self.validation_state != "ok" else "lost"
+                )
+                self.localization = {"state": state, "tfAgeS": None}
             return
         rotation = transform.transform.rotation
         yaw = math.atan2(
@@ -155,6 +186,8 @@ class CloudRobotSync(Node):
         stamp_ns = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
         age = (self.get_clock().now().nanoseconds - stamp_ns) / 1e9
         state = "ok" if -2.0 <= age <= 1.0 else "stale"
+        if self.validation_state != "ok":
+            state = self.validation_state
         with self.lock:
             self.pose = None if state != "ok" else {
                 "x": round(float(transform.transform.translation.x), 4),
@@ -223,6 +256,7 @@ class CloudRobotSync(Node):
             "localization": self._normal_localization(status, localization),
             "nav2": nav2,
             "target": target,
+            "driveMode": self._normal_drive_mode(status, navigation),
             "mapRevision": self._normal_map_counter(status, counter),
             "observedAt": datetime.now(timezone.utc).isoformat().replace(
                 "+00:00", "Z"
@@ -259,6 +293,59 @@ class CloudRobotSync(Node):
             ):
                 return value
         return max(0, int(fallback))
+
+    @staticmethod
+    def _normal_drive_mode(status: dict, navigation: dict) -> dict:
+        """Return one bounded common mode state, including legacy navigation."""
+        value = status.get("drive_mode")
+        if isinstance(value, dict):
+            mode = value.get("mode")
+            state = value.get("state")
+            session_id = value.get("session_id")
+            message = value.get("message")
+            detail = value.get("detail")
+            if (
+                mode in {"destination", "patrol", "roaming", "person_following"}
+                and state in {
+                    "starting", "active", "pausing", "paused", "stopping", "failed"
+                }
+                and isinstance(session_id, str)
+                and 8 <= len(session_id) <= 128
+            ):
+                normalized = {
+                    "mode": mode,
+                    "state": state,
+                    "sessionId": session_id,
+                    "message": str(message)[:512] if message else None,
+                }
+                if isinstance(detail, dict):
+                    normalized["detail"] = detail
+                return normalized
+        navigation_state = navigation.get("state")
+        navigation_session = navigation.get("session_id")
+        if (
+            navigation_state in {"driving", "canceling"}
+            and isinstance(navigation_session, str)
+            and navigation_session
+        ):
+            return {
+                "mode": "destination",
+                "state": (
+                    "stopping" if navigation_state == "canceling" else "active"
+                ),
+                "sessionId": navigation_session,
+                "message": navigation.get("message"),
+            }
+        normalized = {
+            "mode": "idle", "state": "idle",
+            "sessionId": None, "message": None,
+        }
+        if (
+            isinstance(value, dict)
+            and isinstance(value.get("detail"), dict)
+        ):
+            normalized["detail"] = value["detail"]
+        return normalized
 
     def _semantic_zone_bytes(self, active: dict | None) -> bytes:
         if not active:
@@ -376,6 +463,8 @@ class CloudRobotSync(Node):
                     "start", "finish", "cancel",
                     "navigation_preview", "navigation_start",
                     "navigation_cancel",
+                    "drive_mode_start", "drive_mode_pause",
+                    "drive_mode_resume", "drive_mode_stop",
                     "room_split", "room_merge", "rooms_save",
                     "zones_apply",
                 }
@@ -451,6 +540,15 @@ class CloudRobotSync(Node):
         if operation in {"start", "finish", "cancel"}:
             path = f"api/mapping/{operation}"
             body = {"replace": True} if operation == "start" else {}
+        elif operation in {
+            "drive_mode_start", "drive_mode_pause",
+            "drive_mode_resume", "drive_mode_stop",
+        }:
+            action = operation.removeprefix("drive_mode_").replace("_", "-")
+            path = f"api/drive-mode/{action}"
+            body = {"mode": payload.get("mode")}
+            if operation != "drive_mode_start":
+                body["session_id"] = payload.get("sessionId")
         else:
             active = load_active_revision(self.map_store)
             if not active:
@@ -500,12 +598,23 @@ class CloudRobotSync(Node):
             try:
                 value = json.loads(error.read())
                 message = (
-                    value.get("error") if isinstance(value, dict) else None
+                    (value.get("message") or value.get("error"))
+                    if isinstance(value, dict) else None
+                )
+                code = (
+                    value.get("error_code")
+                    if isinstance(value, dict) else None
                 )
             except (json.JSONDecodeError, OSError):
                 message = None
+                code = None
             raise RuntimeError(
-                message or f"local mapping command failed ({error.code})"
+                (
+                    f"{code}: {message}"
+                    if isinstance(code, str) and code and message
+                    else message
+                )
+                or f"local robot command failed ({error.code})"
             ) from error
 
     def _cloud_json(

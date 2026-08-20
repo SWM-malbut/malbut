@@ -88,14 +88,50 @@ fi
 : "${HOMECAM_IMAGE_TOPIC:=}"
 : "${HOMECAM_CAMERA_INFO_TOPIC:=}"
 : "${HOMECAM_ODOM_TOPIC:=/odom}"
+: "${HOMECAM_NAVIGATION_STATUS_TOPIC:=/navigate_to_pose/_action/status}"
 : "${HOMECAM_AUDIO_SOURCE:=default}"
 : "${HOMECAM_AUDIO_SINK:=default}"
 : "${HOMECAM_MICROPHONE_ENABLED:=false}"
 : "${HOMECAM_MODEL_PATH:=}"
+: "${HOMECAM_POSE_MODEL_PATH:=}"
 : "${HOMECAM_MONITORING_ENABLED:=false}"
 : "${HOMECAM_EVENT_CLIPS_ENABLED:=true}"
 : "${HOMECAM_FORCE_MAPPING:=false}"
 : "${HOMECAM_TOPIC_TIMEOUT_SECONDS:=90}"
+
+if [[ -z "$HOMECAM_MODEL_PATH" ]]; then
+  homecam_model_cache_root="${XDG_CACHE_HOME:-${HOME}/.cache}/malbut_perception"
+  homecam_cached_model="$homecam_model_cache_root/yolo26n.onnx"
+  if [[ -f "$homecam_cached_model" ]]; then
+    HOMECAM_MODEL_PATH="$homecam_cached_model"
+    homecam_log "using cached YOLO model: $HOMECAM_MODEL_PATH"
+  else
+    homecam_warn \
+      "YOLO model not found; person and pet labels are disabled. Run "\
+      "malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh once."
+  fi
+fi
+
+if [[ -z "$HOMECAM_POSE_MODEL_PATH" ]]; then
+  homecam_pose_cache_root="${XDG_CACHE_HOME:-${HOME}/.cache}/malbut_perception"
+  homecam_cached_pose_model="$homecam_pose_cache_root/yolo26n-pose.onnx"
+  if [[ -f "$homecam_cached_pose_model" ]]; then
+    HOMECAM_POSE_MODEL_PATH="$homecam_cached_pose_model"
+    homecam_log "using cached person pose model: $HOMECAM_POSE_MODEL_PATH"
+  else
+    homecam_warn \
+      "YOLO pose model not found; secondary person pose is disabled. Run "\
+      "malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh once."
+  fi
+fi
+
+if [[ -n "$HOMECAM_MODEL_PATH" || -n "$HOMECAM_POSE_MODEL_PATH" ]]; then
+  homecam_onnx_runtime_site="${HOMECAM_ONNX_RUNTIME_SITE_PACKAGES:-${XDG_CACHE_HOME:-${HOME}/.cache}/malbut_perception/yolo26-runtime/site-packages}"
+  if [[ -d "$homecam_onnx_runtime_site/onnxruntime" ]]; then
+    export PYTHONPATH="$homecam_onnx_runtime_site${PYTHONPATH:+:$PYTHONPATH}"
+    homecam_log "using ONNX Runtime from the local model environment"
+  fi
+fi
 
 if ! "$check_only"; then
   homecam_validate_device_config "$config_path"
@@ -147,19 +183,30 @@ if "$reuse_gazebo"; then
 fi
 
 homecam_source_runtime "$repo_root"
+homecam_validate_detector_runtime \
+  "$HOMECAM_MODEL_PATH" "$HOMECAM_POSE_MODEL_PATH"
 homecam_prepare_media_runtime "$HOMECAM_WORKSPACE"
 if ! "$check_only" && homecam_is_true "$HOMECAM_START_GAZEBO"; then
   saved_pose_line="$(
-    homecam_saved_map_pose "$HOMECAM_MAP_STORE" 2>/dev/null || true
+    homecam_simulation_bootstrap_pose \
+      "$HOMECAM_MAP_STORE" 2>/dev/null || true
   )"
   if [[ -n "$saved_pose_line" ]]; then
-    read -r -a simulation_bootstrap_pose <<< "$saved_pose_line"
-    if ((${#simulation_bootstrap_pose[@]} != 3)); then
+    pose_source=""
+    pose_x=""
+    pose_y=""
+    pose_yaw=""
+    read -r pose_source pose_x pose_y pose_yaw <<< "$saved_pose_line"
+    simulation_bootstrap_pose=("$pose_x" "$pose_y" "$pose_yaw")
+    if [[ -z "$pose_source" || -z "$pose_x" || -z "$pose_y" || -z "$pose_yaw" ]]; then
       homecam_die "saved map pose is malformed"
       exit 1
     fi
-    homecam_log \
-      "restoring simulator spawn from the active map revision"
+    if [[ "$pose_source" == "checkpoint" ]]; then
+      homecam_log "restoring simulator spawn from the last verified pose"
+    else
+      homecam_log "no pose checkpoint; using the map creation pose"
+    fi
   fi
 fi
 command -v setsid >/dev/null 2>&1 || {
@@ -458,6 +505,7 @@ homecam_command=(
   "event_clips_enabled:=$HOMECAM_EVENT_CLIPS_ENABLED"
   "image_topic:=$image_topic"
   "odom_topic:=$HOMECAM_ODOM_TOPIC"
+  "navigation_status_topic:=$HOMECAM_NAVIGATION_STATUS_TOPIC"
   "audio_source:=$HOMECAM_AUDIO_SOURCE"
   "audio_sink:=$HOMECAM_AUDIO_SINK"
   "microphone_enabled:=$HOMECAM_MICROPHONE_ENABLED"
@@ -467,6 +515,9 @@ if [[ -n "$camera_info_topic" ]]; then
 fi
 if [[ -n "$HOMECAM_MODEL_PATH" ]]; then
   homecam_command+=("model_path:=$HOMECAM_MODEL_PATH")
+fi
+if [[ -n "$HOMECAM_POSE_MODEL_PATH" ]]; then
+  homecam_command+=("pose_model_path:=$HOMECAM_POSE_MODEL_PATH")
 fi
 homecam_log \
   "starting stream for device $HOMECAM_DEVICE_ID (token is not printed)"

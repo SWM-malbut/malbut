@@ -1,4 +1,4 @@
-"""OpenCV-DNN adapter for COCO YOLO ONNX models."""
+"""ONNX Runtime / OpenCV-DNN adapter for COCO YOLO models."""
 
 from pathlib import Path
 from typing import Dict, List
@@ -44,10 +44,29 @@ class YoloOnnxDetector:
         path = Path(model_path).expanduser()
         if not model_path or not path.is_file():
             raise FileNotFoundError(f"YOLO ONNX model not found: {model_path!r}")
+        self._ort_session = None
+        self._ort_input_name = ""
         try:
-            self._net = cv2.dnn.readNetFromONNX(str(path))
-        except cv2.error as error:
-            raise RuntimeError(f"cannot load YOLO ONNX model: {error}") from error
+            import onnxruntime as ort
+        except ImportError as error:
+            raise RuntimeError(
+                "ONNX Runtime is required for YOLO26; run "
+                "prepare_yolo26_model.sh and rebuild homecam_detector"
+            ) from error
+        try:
+            self._ort_session = ort.InferenceSession(
+                str(path),
+                providers=["CPUExecutionProvider"],
+            )
+            self._ort_input_name = self._ort_session.get_inputs()[0].name
+        except Exception as error:
+            raise RuntimeError(
+                f"cannot load YOLO ONNX model with ONNX Runtime: {error}"
+            ) from error
+        # Ubuntu 22.04 ships OpenCV 4.5, whose DNN importer cannot parse the
+        # TopK node in the exported YOLO26 end-to-end graph.  Do not silently
+        # fall back to that incompatible runtime.
+        self._net = None
         self._confidence = confidence_threshold
         self._input_size = input_size
 
@@ -68,15 +87,50 @@ class YoloOnnxDetector:
                 swapRB=True,
                 crop=False,
             )
-            self._net.setInput(blob)
-            output = self._net.forward()
+            if getattr(self, "_ort_session", None) is not None:
+                output = self._ort_session.run(
+                    None,
+                    {self._ort_input_name: blob},
+                )[0]
+            else:
+                self._net.setInput(blob)
+                output = self._net.forward()
         except cv2.error as error:
             raise RuntimeError(f"YOLO ONNX inference failed: {error}") from error
+        except Exception as error:
+            raise RuntimeError(f"YOLO ONNX inference failed: {error}") from error
         predictions = np.squeeze(output)
+        if predictions.ndim == 1 and predictions.shape[0] in (6, 84, 85):
+            predictions = predictions.reshape(1, -1)
         if predictions.ndim != 2:
             return {}
-        if predictions.shape[0] in (84, 85) and predictions.shape[0] < predictions.shape[1]:
+        if (
+            predictions.shape[0] in (6, 84, 85)
+            and predictions.shape[0] < predictions.shape[1]
+        ):
             predictions = predictions.T
+
+        # Current Malbut perception setup exports YOLO26 end-to-end models as
+        # [x1, y1, x2, y2, score, COCO class]. NMS is already inside that
+        # graph, and event classification only needs the best class score.
+        if predictions.shape[1] == 6:
+            result: Dict[str, float] = {}
+            for row in predictions:
+                if not np.all(np.isfinite(row)):
+                    continue
+                class_value = float(row[5])
+                class_id = int(round(class_value))
+                confidence = float(row[4])
+                if (
+                    abs(class_value - class_id) > 1e-6
+                    or class_id not in self.COCO_TARGETS
+                    or confidence < self._confidence
+                    or confidence > 1.0
+                ):
+                    continue
+                label = self.COCO_TARGETS[class_id]
+                result[label] = max(result.get(label, 0.0), confidence)
+            return result
 
         boxes: List[List[int]] = []
         confidences: List[float] = []

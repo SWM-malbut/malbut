@@ -142,6 +142,15 @@ export function HomecamHeader({
           />
           <span>이벤트</span>
         </button>
+        <button
+          type="button"
+          className={`homecam-mobile-settings-tab ${activeTab === "settings" ? "is-active" : ""}`}
+          onClick={() => onNavigate("settings")}
+          aria-current={activeTab === "settings" ? "page" : undefined}
+        >
+          <GearSix size={20} weight={activeTab === "settings" ? "fill" : "regular"} />
+          <span>설정</span>
+        </button>
       </nav>
       <div className="homecam-header-actions">
         {showInstall && onInstall && (

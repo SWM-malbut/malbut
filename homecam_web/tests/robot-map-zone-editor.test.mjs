@@ -135,11 +135,48 @@ test("navigation progress survives missing cloud ratios and remains visible at a
   ]);
 
   assert.match(panel, /function navigationProgressPercent/);
+  assert.match(panel, /initial_path_length_m/);
   assert.match(panel, /1 - Math\.max\(0, remaining\) \/ pathLength/);
+  assert.match(panel, /value\.state === "succeeded" \? 1 : 0\.99/);
   assert.match(panel, /navigationSucceeded \? 100 : navigationProgressPercent\(navigation\)/);
   assert.match(panel, /선택한 목적지에 도착했어요/);
   assert.match(panel, /aria-valuenow=\{navigationProgress\}/);
   assert.match(styles, /\.robot-map-progress i\s*\{[^}]*transition:\s*width 950ms linear/s);
+});
+
+test("common drive mode blocks conflicting destination commands and stays owner-only", async () => {
+  const panel = await readFile(
+    new URL("../app/components/robot-map-panel.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(panel, /type RobotDriveModeSnapshot/);
+  assert.match(panel, /const autonomousModeActive/);
+  assert.match(panel, /autonomousModeActive\) return/);
+  assert.match(panel, /disabled=\{!isOwner \|\| !snapshot\?\.online \|\| autonomousModeActive/);
+  assert.match(panel, /주행 모드 제어는 소유자 계정에서만/);
+  assert.match(panel, /function driveModeCopy/);
+});
+
+test("autonomous controls share one owner-only drive session", async () => {
+  const panel = await readFile(
+    new URL("../app/components/robot-map-panel.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(panel, /sendCommand\("drive_mode_start", \{ mode: "patrol" \}\)/);
+  assert.match(panel, /sendCommand\("drive_mode_start", \{ mode: "roaming" \}\)/);
+  assert.match(panel, /sendCommand\("drive_mode_start", \{ mode: "person_following" \}\)/);
+  assert.match(panel, /sendCommand\("drive_mode_pause"/);
+  assert.match(panel, /sendCommand\("drive_mode_resume"/);
+  assert.match(panel, /sendCommand\("drive_mode_stop"/);
+  assert.match(panel, /!availableAutonomousModes\.includes\("patrol"\)/);
+  assert.match(panel, /!availableAutonomousModes\.includes\("roaming"\)/);
+  assert.match(panel, /!availableAutonomousModes\.includes\("person_following"\)/);
+  assert.match(panel, /activeAutonomousMode !== "person_following"/);
+  assert.match(panel, /방 순찰 시작/);
+  assert.match(panel, /자율 배회 시작/);
+  assert.match(panel, /사람 따라가기/);
 });
 
 test("the home map summary reuses rooms, zones, and the live localized robot pose", async () => {
@@ -156,6 +193,9 @@ test("the home map summary reuses rooms, zones, and the live localized robot pos
   assert.match(panel, /featuresOf\(semantics\?\.zones\)/);
   assert.match(panel, /roomInternalBoundaryPath/);
   assert.match(panel, /snapshot\?\.state\?\.localization\.state === "ok"/);
+  assert.match(panel, /function localizationCopy/);
+  assert.match(panel, /부팅 후 위치 확인 필요/);
+  assert.match(panel, /위치 재확인 중/);
   assert.match(panel, /robot-map-home-marker/);
   assert.match(styles, /\.homecam-home-map-preview \.robot-map-home-semantics/);
   assert.match(styles, /\.homecam-home-map-preview \.robot-map-home-marker/);
