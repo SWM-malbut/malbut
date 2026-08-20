@@ -20,7 +20,20 @@ gazebo_pid=""
 robot_pid=""
 homecam_pid=""
 runtime_control_file=""
+runtime_supervisor_file=""
+runtime_supervisor_refreshed_at=0
 simulation_bootstrap_pose=()
+
+refresh_runtime_supervisor() {
+  # 요청 파일을 실제로 소비하는 감독자가 살아 있음을 남긴다. 이 표식이
+  # 없으면 cloud_robot_sync 가 모드 전환 요청을 수락하지 않는다.
+  [[ -n "$runtime_supervisor_file" ]] || return 0
+  local temporary="$runtime_supervisor_file.$$.tmp"
+  printf '%s %s\n' "$$" "$(date +%s)" > "$temporary" 2>/dev/null || return 0
+  chmod 600 -- "$temporary" 2>/dev/null || true
+  mv -f -- "$temporary" "$runtime_supervisor_file" 2>/dev/null || true
+  runtime_supervisor_refreshed_at=$SECONDS
+}
 
 usage() {
   cat <<'EOF'
@@ -241,6 +254,8 @@ if ! "$check_only"; then
   fi
   runtime_control_file="$runtime_base/sim-${ROS_DOMAIN_ID:-0}.mode-request"
   rm -f -- "$runtime_control_file"
+  runtime_supervisor_file="$runtime_control_file.supervisor"
+  refresh_runtime_supervisor
 fi
 
 cleanup_process_group() {
@@ -254,13 +269,21 @@ cleanup_process_group() {
 
 process_group_alive() {
   local child_pid="$1"
-  [[ -n "$child_pid" ]] &&
-    kill -0 -- "-$child_pid" >/dev/null 2>&1
+  [[ -n "$child_pid" ]] || return 1
+  if kill -0 -- "-$child_pid" >/dev/null 2>&1; then
+    return 0
+  fi
+  # setsid 가 새 프로세스 그룹을 만들기 전까지는 자식이 아직 이 셸의
+  # 그룹에 속한다. 그 짧은 구간에 그룹만 보고 죽었다고 판정하면 감독
+  # 루프가 첫 회차에 wait 로 빠지고, 대상이 멀쩡히 살아 있으므로 영영
+  # 돌아오지 않는다. 그러면 런타임 모드 요청을 아무도 소비하지 못한다.
+  kill -0 -- "$child_pid" >/dev/null 2>&1
 }
 
 cleanup() {
   local exit_status=$?
   trap - EXIT INT TERM
+  [[ -z "$runtime_supervisor_file" ]] || rm -f -- "$runtime_supervisor_file"
   cleanup_process_group "$homecam_pid" INT
   cleanup_process_group "$robot_pid" INT
   cleanup_process_group "$gazebo_pid" INT
@@ -472,12 +495,7 @@ encoding_output="$(
   timeout 12 ros2 topic echo --once "$image_topic" --field encoding \
     2>/dev/null || true
 )"
-image_encoding="$(
-  printf '%s\n' "$encoding_output" |
-    awk 'NF > 0 && $1 != "---" {print $1; exit}'
-)"
-image_encoding="${image_encoding#\"}"
-image_encoding="${image_encoding%\"}"
+image_encoding="$(homecam_select_image_encoding "$encoding_output")"
 case "$image_encoding" in
   rgb8|bgr8|rgba8|bgra8) ;;
   "")
@@ -572,6 +590,9 @@ while true; do
           ;;
       esac
     fi
+  fi
+  if ((SECONDS - runtime_supervisor_refreshed_at >= 5)); then
+    refresh_runtime_supervisor
   fi
   sleep 0.5
 done

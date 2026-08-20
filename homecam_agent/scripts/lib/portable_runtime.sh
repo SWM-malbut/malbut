@@ -583,6 +583,45 @@ homecam_topics_of_type() {
   done <<< "$snapshot"
 }
 
+homecam_select_image_encoding() {
+  # `ros2 topic echo --field encoding` 출력에서 실제 인코딩만 고른다.
+  # FastDDS 는 전송 오류를 stderr 뿐 아니라 stdout 으로도 찍기 때문에
+  # 첫 토큰을 그대로 믿으면 로그 줄의 날짜를 인코딩으로 읽어버린다.
+  local output="$1"
+  local cleaned=""
+  local encoding=""
+
+  cleaned="$(
+    printf '%s\n' "$output" | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g'
+  )"
+  encoding="$(
+    printf '%s\n' "$cleaned" |
+      awk '{
+        token = $1
+        gsub(/^"|"$/, "", token)
+        if (token == "rgb8" || token == "bgr8" ||
+            token == "rgba8" || token == "bgra8") {
+          print token
+          exit
+        }
+      }'
+  )"
+  if [[ -n "$encoding" ]]; then
+    printf '%s\n' "$encoding"
+    return 0
+  fi
+
+  # 지원 인코딩이 하나도 없을 때만 남은 값을 돌려준다. 실제로 지원하지
+  # 않는 인코딩이 왔을 때의 진단 메시지를 그대로 유지하기 위해서다.
+  printf '%s\n' "$cleaned" |
+    awk 'NF > 0 && $1 != "---" && $0 !~ /\[RTPS|\[SHM|Error\]|Warning\]/ {
+      token = $1
+      gsub(/^"|"$/, "", token)
+      print token
+      exit
+    }'
+}
+
 homecam_discover_image_topic() {
   local snapshot="$1"
   local explicit="${2:-}"
