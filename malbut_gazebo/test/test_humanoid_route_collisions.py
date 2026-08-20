@@ -21,7 +21,9 @@ EVENT_SPAWN_SCRIPT = (
     / 'scripts'
     / 'spawn_event_test_person.sh'
 )
-NON_BLOCKING_NAMES = ('Floor', 'Carpet')
+# Ceiling fixtures can overlap the XY centerline while remaining above the
+# walking actor. They are not floor-plan obstacles.
+NON_BLOCKING_NAMES = ('Floor', 'Carpet', 'Chandelier')
 EVENT_ACTOR_BODY_ENVELOPE = 0.8
 
 
@@ -462,6 +464,10 @@ def test_event_route_clears_scene_with_full_body_envelope():
     spawn_offset = _event_spawn_offsets()
     assert spawn_offset == (2.5, -3.6)
     route = _actor_route_points(EVENT_ACTOR_FILE, *spawn_offset)
+    event_actor = ElementTree.parse(EVENT_ACTOR_FILE).getroot().find(
+        'actor/script/trajectory'
+    )
+    assert event_actor.get('tension') == '1.0'
     assert route[0] == route[-1]
     assert len(route) == 5
     route_segments = list(zip(route, route[1:]))

@@ -11,7 +11,8 @@ import tempfile
 import yaml
 
 
-AUTONOMOUS_MODES = {"patrol", "roaming"}
+AUTONOMOUS_MODES = {"patrol", "person_following", "roaming"}
+TRIGGER_DRIVE_MODES = {"patrol", "roaming"}
 
 
 def build_room_patrol_route(user_map: dict, map_id: str) -> dict:

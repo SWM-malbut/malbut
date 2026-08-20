@@ -598,12 +598,23 @@ class CloudRobotSync(Node):
             try:
                 value = json.loads(error.read())
                 message = (
-                    value.get("error") if isinstance(value, dict) else None
+                    (value.get("message") or value.get("error"))
+                    if isinstance(value, dict) else None
+                )
+                code = (
+                    value.get("error_code")
+                    if isinstance(value, dict) else None
                 )
             except (json.JSONDecodeError, OSError):
                 message = None
+                code = None
             raise RuntimeError(
-                message or f"local mapping command failed ({error.code})"
+                (
+                    f"{code}: {message}"
+                    if isinstance(code, str) and code and message
+                    else message
+                )
+                or f"local robot command failed ({error.code})"
             ) from error
 
     def _cloud_json(

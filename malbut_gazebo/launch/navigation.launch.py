@@ -15,10 +15,14 @@
 
 import os
 from pathlib import Path
+import tempfile
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
@@ -32,10 +36,116 @@ from launch_ros.actions import Node
 from nav2_common.launch import RewrittenYaml
 
 
+def _replace_exact(
+    source: str,
+    old: str,
+    new: str,
+    expected_count: int,
+    label: str,
+) -> str:
+    """Patch a pinned upstream launch contract or fail closed."""
+    count = source.count(old)
+    if count != expected_count:
+        raise RuntimeError(
+            f'Unsupported Nav2 launch ({label}: expected '
+            f'{expected_count}, found {count}); cannot enforce the '
+            'collision-monitor velocity chain.'
+        )
+    return source.replace(old, new)
+
+
+def _temporary_launch(source: str, prefix: str) -> str:
+    """Write one private launch source consumed by this launch process."""
+    with tempfile.NamedTemporaryFile(
+        mode='w', encoding='utf-8', prefix=prefix,
+        suffix='.launch.py', delete=False,
+    ) as stream:
+        stream.write(source)
+        return stream.name
+
+
+def _safe_nav2_launch_sources(nav2_share: str) -> tuple[str, str]:
+    """Route every Nav2 motion command through Collision Monitor."""
+    launch_root = Path(nav2_share, 'launch')
+    navigation_source = Path(
+        launch_root, 'navigation_launch.py'
+    ).read_text(encoding='utf-8')
+    navigation_source = _replace_exact(
+        navigation_source,
+        "('cmd_vel_smoothed', 'cmd_vel')",
+        "('cmd_vel_smoothed', 'cmd_vel_pre_collision')",
+        2,
+        'velocity smoother output',
+    )
+    behavior_node = """            Node(
+                package='nav2_behaviors',
+                executable='behavior_server',
+                name='behavior_server',
+                output='screen',
+                respawn=use_respawn,
+                respawn_delay=2.0,
+                parameters=[configured_params],
+                arguments=['--ros-args', '--log-level', log_level],
+                remappings=remappings),"""
+    safe_behavior_node = behavior_node.replace(
+        'remappings=remappings),',
+        "remappings=remappings + [('cmd_vel', "
+        "'cmd_vel_pre_collision')]),",
+    )
+    navigation_source = _replace_exact(
+        navigation_source,
+        behavior_node,
+        safe_behavior_node,
+        1,
+        'behavior server output',
+    )
+    behavior_component = """            ComposableNode(
+                package='nav2_behaviors',
+                plugin='behavior_server::BehaviorServer',
+                name='behavior_server',
+                parameters=[configured_params],
+                remappings=remappings),"""
+    safe_behavior_component = behavior_component.replace(
+        'remappings=remappings),',
+        "remappings=remappings + [('cmd_vel', "
+        "'cmd_vel_pre_collision')]),",
+    )
+    navigation_source = _replace_exact(
+        navigation_source,
+        behavior_component,
+        safe_behavior_component,
+        1,
+        'composed behavior server output',
+    )
+    safe_navigation = _temporary_launch(
+        navigation_source, 'malbut-nav2-navigation-'
+    )
+
+    bringup_source = Path(
+        launch_root, 'bringup_launch.py'
+    ).read_text(encoding='utf-8')
+    bringup_source = _replace_exact(
+        bringup_source,
+        "'navigation_launch.py'",
+        repr(safe_navigation),
+        1,
+        'bringup navigation include',
+    )
+    safe_bringup = _temporary_launch(
+        bringup_source, 'malbut-nav2-bringup-'
+    )
+    return safe_navigation, safe_bringup
+
+
 def generate_launch_description():
     """Start localization, navigation, and the project Nav2 RViz view."""
     gazebo_share = get_package_share_directory('malbut_gazebo')
     nav2_share = get_package_share_directory('nav2_bringup')
+    perception_share = get_package_share_directory('malbut_perception')
+    tracking_share = get_package_share_directory('malbut_tracking')
+    safe_navigation_source, safe_bringup_source = (
+        _safe_nav2_launch_sources(nav2_share)
+    )
 
     namespace = LaunchConfiguration('namespace')
     use_namespace = LaunchConfiguration('use_namespace')
@@ -70,6 +180,8 @@ def generate_launch_description():
     boot_pose_trusted = LaunchConfiguration('boot_pose_trusted')
     autonomous_modes = LaunchConfiguration('autonomous_modes')
     patrol_route_file = LaunchConfiguration('patrol_route_file')
+    person_following = LaunchConfiguration('person_following')
+    person_projection_frame = LaunchConfiguration('person_projection_frame')
     use_active_slam = EqualsSubstitution(localization_source, 'slam')
     use_static_map = NotEqualsSubstitution(localization_source, 'slam')
     zone_filter_enabled = NotEqualsSubstitution(zone_mask, '')
@@ -107,9 +219,7 @@ def generate_launch_description():
     )
 
     bringup = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(nav2_share, 'launch', 'bringup_launch.py')
-        ),
+        PythonLaunchDescriptionSource(safe_bringup_source),
         condition=IfCondition(use_static_map),
         launch_arguments={
             'namespace': namespace,
@@ -125,9 +235,7 @@ def generate_launch_description():
         }.items(),
     )
     navigation_with_active_slam = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(nav2_share, 'launch', 'navigation_launch.py')
-        ),
+        PythonLaunchDescriptionSource(safe_navigation_source),
         condition=IfCondition(use_active_slam),
         launch_arguments={
             'namespace': namespace,
@@ -140,7 +248,6 @@ def generate_launch_description():
             'log_level': log_level,
         }.items(),
     )
-
     rviz = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(nav2_share, 'launch', 'rviz_launch.py')
@@ -285,6 +392,96 @@ def generate_launch_description():
             'autostart': False,
         }],
     )
+    collision_monitor = Node(
+        package='nav2_collision_monitor',
+        executable='collision_monitor',
+        name='collision_monitor',
+        namespace=namespace,
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'base_frame_id': 'base_footprint',
+            'odom_frame_id': 'odom',
+            'cmd_vel_in_topic': '/cmd_vel_pre_collision',
+            'cmd_vel_out_topic': '/cmd_vel',
+            'state_topic': '/collision_monitor_state',
+            'transform_tolerance': 0.2,
+            'source_timeout': 0.5,
+            'base_shift_correction': True,
+            'stop_pub_timeout': 0.2,
+            'polygons': ['FootprintApproach'],
+            'FootprintApproach.type': 'polygon',
+            'FootprintApproach.action_type': 'approach',
+            'FootprintApproach.footprint_topic': (
+                '/local_costmap/published_footprint'
+            ),
+            'FootprintApproach.time_before_collision': 1.0,
+            'FootprintApproach.simulation_time_step': 0.05,
+            'FootprintApproach.max_points': 3,
+            'FootprintApproach.visualize': False,
+            'FootprintApproach.enabled': True,
+            'observation_sources': ['scan'],
+            'scan.type': 'scan',
+            'scan.topic': '/scan',
+            'scan.enabled': True,
+        }],
+    )
+    collision_lifecycle = Node(
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='collision_lifecycle_manager',
+        namespace=namespace,
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'autostart': autostart,
+            'node_names': ['collision_monitor'],
+        }],
+    )
+    person_detector = Node(
+        package='malbut_perception',
+        executable='person_localizer',
+        name='person_localizer',
+        namespace=namespace,
+        condition=IfCondition(person_following),
+        output='screen',
+        parameters=[
+            os.path.join(
+                perception_share, 'config', 'person_detection.yaml'
+            ),
+            {
+                'use_sim_time': use_sim_time,
+                'model_path': str(
+                    Path.home()
+                    / '.cache'
+                    / 'malbut_perception'
+                    / 'yolo26n.onnx'
+                ),
+                'reid_model_path': str(
+                    Path.home()
+                    / '.cache'
+                    / 'malbut_perception'
+                    / 'osnet_x0_5_msmt17.onnx'
+                ),
+                'projection_frame': person_projection_frame,
+                'publish_debug_image': False,
+            },
+        ],
+    )
+    person_follower = Node(
+        package='malbut_tracking',
+        executable='person_follower',
+        name='person_follower',
+        namespace=namespace,
+        condition=IfCondition(person_following),
+        output='screen',
+        parameters=[
+            os.path.join(
+                tracking_share, 'config', 'person_following.yaml'
+            ),
+            {'use_sim_time': use_sim_time},
+        ],
+    )
 
     return LaunchDescription(
         [
@@ -395,6 +592,18 @@ def generate_launch_description():
                 description='Room-derived patrol route paired with this map.',
             ),
             DeclareLaunchArgument(
+                'person_following',
+                default_value='false',
+                description='Start RGB-D person perception and following.',
+            ),
+            DeclareLaunchArgument(
+                'person_projection_frame',
+                default_value='',
+                description=(
+                    'Optional optical frame override for simulated RGB-D.'
+                ),
+            ),
+            DeclareLaunchArgument(
                 'user_map',
                 default_value='',
                 description=(
@@ -409,8 +618,12 @@ def generate_launch_description():
             zone_filter_lifecycle_manager,
             localization_restorer,
             pose_checkpoint,
+            collision_monitor,
+            collision_lifecycle,
             patrol_manager,
             roaming_manager,
+            person_detector,
+            person_follower,
             robot_web_server,
             rviz,
         ]

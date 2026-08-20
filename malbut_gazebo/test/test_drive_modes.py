@@ -5,6 +5,8 @@ import json
 import pytest
 
 from malbut_gazebo.drive_modes import (
+    AUTONOMOUS_MODES,
+    TRIGGER_DRIVE_MODES,
     build_room_patrol_route,
     common_mode_state,
     write_room_patrol_route,
@@ -39,6 +41,13 @@ def _user_map():
             },
         ],
     }
+
+
+def test_common_modes_separate_service_and_action_transports():
+    assert AUTONOMOUS_MODES == {
+        "patrol", "person_following", "roaming",
+    }
+    assert TRIGGER_DRIVE_MODES == {"patrol", "roaming"}
 
 
 def test_room_patrol_uses_safe_room_points_and_faces_the_next_room():

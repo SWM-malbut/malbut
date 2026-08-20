@@ -8,11 +8,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from threading import Lock
 from threading import Thread
+import time
 
 import cv2
 import numpy as np
 import pytest
 
+from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path as NavPath
 from std_msgs.msg import String
@@ -52,6 +54,52 @@ class _DriveClient:
 
     def call_async(self, _request):
         return _ImmediateFuture(SimpleNamespace(success=True, message="ok"))
+
+
+class _PendingFuture:
+    def __init__(self):
+        self.callbacks = []
+        self.value = None
+
+    def add_done_callback(self, callback):
+        self.callbacks.append(callback)
+
+    def result(self):
+        return self.value
+
+    def complete(self, value):
+        self.value = value
+        for callback in self.callbacks:
+            callback(self)
+
+
+class _FollowGoalHandle:
+    accepted = True
+
+    def __init__(self):
+        self.result_future = _PendingFuture()
+        self.cancel_calls = 0
+
+    def get_result_async(self):
+        return self.result_future
+
+    def cancel_goal_async(self):
+        self.cancel_calls += 1
+        return _ImmediateFuture(SimpleNamespace(goals_canceling=[self]))
+
+
+class _FollowClient:
+    def __init__(self):
+        self.goal_handle = _FollowGoalHandle()
+
+    def server_is_ready(self):
+        return True
+
+    def wait_for_server(self, timeout_sec):
+        return timeout_sec > 0
+
+    def send_goal_async(self, _goal):
+        return _ImmediateFuture(self.goal_handle)
 
 
 def test_navigation_progress_uses_start_route_and_is_monotonic():
@@ -103,7 +151,11 @@ def test_autonomous_drive_mode_owns_one_session_and_rejects_conflicts(tmp_path):
     bridge.autonomous_drive = bridge._idle_autonomous_drive()
     bridge.drive_seen_active = False
     bridge.drive_started_monotonic = 0.0
+    bridge.drive_emergency_stop_pending = False
     bridge.drive_status = {"patrol": {}, "roaming": {}}
+    bridge.follow_person = _FollowClient()
+    bridge.follow_goal_handle = None
+    bridge.follow_cancel_requested = False
     bridge.drive_clients = {
         mode: {action: _DriveClient() for action in (
             "start", "pause", "resume", "stop",
@@ -159,6 +211,76 @@ def test_autonomous_drive_mode_owns_one_session_and_rejects_conflicts(tmp_path):
     status.data = json.dumps({"state": "idle", "detail": "stopped"})
     bridge._receive_drive_status("patrol", status)
     assert bridge.autonomous_drive["mode"] == "idle"
+
+
+def test_person_following_reports_recovery_and_stops_on_safety_loss(tmp_path):
+    """One person action must expose recovery and cancel on safety loss."""
+    bridge = object.__new__(RobotWebBridge)
+    bridge.lock = Lock()
+    bridge.operation_lock = Lock()
+    bridge.map_path = tmp_path / "user-map.geojson"
+    bridge.map_id = "home"
+    bridge.patrol_route_file = None
+    bridge.navigation_state = {"state": "idle"}
+    bridge.autonomous_drive = bridge._idle_autonomous_drive()
+    bridge.drive_seen_active = False
+    bridge.drive_started_monotonic = 0.0
+    bridge.drive_emergency_stop_pending = False
+    bridge.drive_status = {"patrol": {}, "roaming": {}}
+    bridge.drive_clients = {
+        mode: {action: _DriveClient() for action in (
+            "start", "pause", "resume", "stop",
+        )}
+        for mode in ("patrol", "roaming")
+    }
+    bridge.follow_person = _FollowClient()
+    bridge.follow_goal_handle = None
+    bridge.follow_cancel_requested = False
+    bridge._require_ready = lambda: {"x": 0.0, "y": 0.0, "yaw": 0.0}
+
+    started = bridge.drive_mode_command(
+        "start", {"mode": "person_following"}
+    )
+    session_id = started["session_id"]
+    assert started["state"] == "starting"
+    waiting = String()
+    waiting.data = json.dumps({
+        "state": "IDLE", "target_visible": False,
+    })
+    bridge._receive_person_status(waiting)
+    assert bridge.autonomous_drive["state"] == "active"
+    assert "찾고" in bridge.autonomous_drive["message"]
+
+    tracking = String()
+    tracking.data = json.dumps({
+        "state": "TRACKING", "target_visible": True,
+        "current_distance_m": 1.2,
+    })
+    bridge._receive_person_status(tracking)
+    assert bridge.autonomous_drive["detail"]["tracking_state"] == "TRACKING"
+    with pytest.raises(NavigationError) as conflict:
+        bridge.drive_mode_command("start", {"mode": "patrol"})
+    assert conflict.value.code == "DRIVE_MODE_IN_PROGRESS"
+
+    bridge._request_autonomous_stop(
+        "LOCALIZATION_LOST", "위치가 끊겨 안전 중지합니다."
+    )
+    deadline = time.monotonic() + 1.0
+    while bridge.drive_emergency_stop_pending and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert bridge.follow_person.goal_handle.cancel_calls == 1
+    assert bridge.autonomous_drive["state"] == "stopping"
+    assert bridge.autonomous_drive["detail"]["stop_code"] == (
+        "LOCALIZATION_LOST"
+    )
+
+    bridge.follow_person.goal_handle.result_future.complete(SimpleNamespace(
+        status=GoalStatus.STATUS_CANCELED,
+        result=SimpleNamespace(success=False, message="canceled"),
+    ))
+    assert bridge.autonomous_drive["mode"] == "idle"
+    assert bridge.follow_goal_handle is None
+    assert session_id
 
 
 class FakeBridge:

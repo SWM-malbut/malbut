@@ -398,9 +398,9 @@ export function RobotMapPanel({
   const runtimeMode = snapshot?.state?.nav2.runtime_mode;
   const navigation = snapshot?.state?.target;
   const driveMode = snapshot?.state?.driveMode;
-  const activeAutonomousMode = driveMode?.mode === "patrol" || driveMode?.mode === "roaming"
-    ? driveMode.mode
-    : null;
+  const activeAutonomousMode = driveMode && ![
+    "idle", "destination",
+  ].includes(driveMode.mode) ? driveMode.mode : null;
   const autonomousSession = activeAutonomousMode && typeof driveMode?.sessionId === "string"
     ? driveMode.sessionId
     : "";
@@ -1790,13 +1790,13 @@ export function RobotMapPanel({
                         <span>{driveModeDetailCopy(driveMode)}</span>
                       </div>
                       <div className="robot-map-actions is-inline">
-                        {driveMode?.state === "paused" ? (
+                        {activeAutonomousMode !== "person_following" && driveMode?.state === "paused" ? (
                           <button
                             type="button"
                             onClick={() => void sendCommand("drive_mode_resume", { mode: activeAutonomousMode, sessionId: autonomousSession })}
                             disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}
                           >다시 시작</button>
-                        ) : driveMode?.state !== "failed" ? (
+                        ) : activeAutonomousMode !== "person_following" && driveMode?.state !== "failed" ? (
                           <button
                             type="button"
                             className="is-secondary"
@@ -1814,7 +1814,7 @@ export function RobotMapPanel({
                     </>
                   ) : (
                     <>
-                      <p>순찰은 각 방의 안전 대표점을 한 번씩 방문하고, 자율 배회는 현재 지도에서 안전한 목적지를 계속 선택합니다.</p>
+                      <p>방 순찰·자율 배회 또는 카메라로 확인한 사람 따라가기를 시작할 수 있습니다.</p>
                       <div className="robot-map-actions is-inline">
                         <button
                           type="button"
@@ -1827,6 +1827,11 @@ export function RobotMapPanel({
                           onClick={() => void sendCommand("drive_mode_start", { mode: "roaming" })}
                           disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("roaming") || Boolean(activeCommand) || busy}
                         >자율 배회 시작</button>
+                        <button
+                          type="button"
+                          onClick={() => void sendCommand("drive_mode_start", { mode: "person_following" })}
+                          disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("person_following") || Boolean(activeCommand) || busy}
+                        >사람 따라가기</button>
                       </div>
                     </>
                   )}
@@ -2964,15 +2969,33 @@ function driveModeCopy(value: RobotDriveModeSnapshot | undefined) {
 function driveModeAvailableModes(value: RobotDriveModeSnapshot | undefined) {
   const available = value?.detail?.available_modes;
   if (!Array.isArray(available)) return [];
-  return available.filter((mode): mode is "patrol" | "roaming" => (
-    mode === "patrol" || mode === "roaming"
+  return available.filter((mode): mode is "patrol" | "roaming" | "person_following" => (
+    mode === "patrol" || mode === "roaming" || mode === "person_following"
   ));
 }
 
 function driveModeDetailCopy(value: RobotDriveModeSnapshot | undefined) {
   if (!value) return "상태를 확인하고 있습니다.";
-  if (value.message) return value.message;
   const detail = value.detail;
+  if (value.mode === "person_following" && detail) {
+    const visible = detail.target_visible === true;
+    const distance = numberValue(detail.current_distance_m);
+    if (visible && distance > 0) return `사람 확인됨 · ${distance.toFixed(1)}m`;
+    const trackingState = typeof detail.tracking_state === "string"
+      ? detail.tracking_state
+      : "IDLE";
+    const states: Record<string, string> = {
+      IDLE: "따라갈 사람을 찾는 중",
+      TRACKING: "사람을 따라가는 중",
+      REACHING_WAYPOINT: "마지막 방향으로 이동 중",
+      TURNING_TO_TARGET: "사라진 방향 확인 중",
+      REACHING_LAST_POSITION: "마지막 위치 확인 중",
+      SEARCHING: "주변에서 다시 찾는 중",
+      TARGET_LOST: "사람을 놓쳐 제자리 대기 중",
+    };
+    return states[trackingState] ?? "사람 추적 상태 확인 중";
+  }
+  if (value.message) return value.message;
   if (value.mode === "patrol" && detail) {
     const index = numberValue(detail.waypoint_index);
     const count = numberValue(detail.waypoint_count);

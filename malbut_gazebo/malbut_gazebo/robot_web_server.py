@@ -34,6 +34,7 @@ import tf2_ros
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from lifecycle_msgs.srv import GetState
+from malbut_interfaces.action import FollowPerson
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.srv import GetCostmap
 from nav_msgs.msg import Path as NavPath
@@ -42,6 +43,7 @@ from std_srvs.srv import Trigger
 
 from malbut_gazebo.drive_modes import (
     AUTONOMOUS_MODES,
+    TRIGGER_DRIVE_MODES,
     common_mode_state,
     write_room_patrol_route,
 )
@@ -439,6 +441,9 @@ class RobotWebBridge(Node):
         self.navigate = ActionClient(
             self, NavigateToPose, "/navigate_to_pose"
         )
+        self.follow_person = ActionClient(
+            self, FollowPerson, "follow_person"
+        )
         self.get_costmap = self.create_client(
             GetCostmap, "/global_costmap/get_costmap"
         )
@@ -499,7 +504,7 @@ class RobotWebBridge(Node):
                 )
                 for action in ("start", "pause", "resume", "stop")
             }
-            for mode in sorted(AUTONOMOUS_MODES)
+            for mode in sorted(TRIGGER_DRIVE_MODES)
         }
         self.drive_status: dict[str, dict] = {
             mode: {} for mode in AUTONOMOUS_MODES
@@ -507,6 +512,9 @@ class RobotWebBridge(Node):
         self.autonomous_drive = self._idle_autonomous_drive()
         self.drive_seen_active = False
         self.drive_started_monotonic = 0.0
+        self.follow_goal_handle = None
+        self.follow_cancel_requested = False
+        self.drive_emergency_stop_pending = False
         validation_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
@@ -530,6 +538,12 @@ class RobotWebBridge(Node):
             "roaming/status",
             partial(self._receive_drive_status, "roaming"),
             validation_qos,
+        )
+        self.create_subscription(
+            String,
+            "/tracking/person/status",
+            self._receive_person_status,
+            10,
         )
         self.create_timer(0.1, self._refresh_pose)
         self.create_timer(1.0, self._refresh_lifecycle)
@@ -591,6 +605,13 @@ class RobotWebBridge(Node):
                     "detail": {"active_modes": sorted(active_modes)},
                 }
                 self.drive_seen_active = True
+                if not self.drive_emergency_stop_pending:
+                    self.drive_emergency_stop_pending = True
+                    Thread(
+                        target=self._conflicting_stop_worker,
+                        args=(tuple(sorted(active_modes)),),
+                        daemon=True,
+                    ).start()
                 return
             if active_modes:
                 active_mode = active_modes[0]
@@ -640,6 +661,79 @@ class RobotWebBridge(Node):
                 return
             self.autonomous_drive = self._idle_autonomous_drive()
             self.drive_seen_active = False
+
+    def _receive_person_status(self, message: String) -> None:
+        """Expose acquisition, tracking, and bounded recovery to the web."""
+        try:
+            status = json.loads(message.data)
+        except (TypeError, json.JSONDecodeError):
+            return
+        if not isinstance(status, dict):
+            return
+        tracking_state = str(status.get("state") or "IDLE").upper()
+        messages = {
+            "IDLE": "따라갈 사람을 찾고 있습니다.",
+            "TRACKING": "사람을 안전거리에서 따라가고 있습니다.",
+            "REACHING_WAYPOINT": "마지막으로 확인한 방향으로 이동합니다.",
+            "TURNING_TO_TARGET": "사람이 사라진 방향을 확인하고 있습니다.",
+            "REACHING_LAST_POSITION": "마지막으로 확인한 위치를 확인합니다.",
+            "SEARCHING": "주변에서 사람을 다시 찾고 있습니다.",
+            "TARGET_LOST": "사람을 찾지 못해 제자리에서 기다립니다.",
+        }
+        with self.lock:
+            current = self.autonomous_drive
+            if current.get("mode") != "person_following":
+                return
+            if tracking_state == "STOPPED":
+                if current.get("state") == "stopping":
+                    self.autonomous_drive = self._idle_autonomous_drive()
+                    self.drive_seen_active = False
+                else:
+                    self.autonomous_drive = {
+                        **current,
+                        "state": "failed",
+                        "message": "사람 따라가기가 예기치 않게 중단됐습니다.",
+                        "detail": status,
+                    }
+                return
+            self.autonomous_drive = {
+                **current,
+                "state": "active",
+                "message": messages.get(
+                    tracking_state, "사람 추적 상태를 확인하고 있습니다."
+                ),
+                "detail": {**status, "tracking_state": tracking_state},
+            }
+            self.drive_seen_active = True
+
+    def _follow_result(self, future: object) -> None:
+        """Finish the common lease when the FollowPerson action settles."""
+        try:
+            wrapped = future.result()
+            result = wrapped.result
+            canceled = wrapped.status == GoalStatus.STATUS_CANCELED
+            success = bool(result.success)
+            message = str(result.message or "")[:512] or None
+        except Exception as error:
+            canceled = False
+            success = False
+            message = f"사람 따라가기 결과를 확인하지 못했습니다: {error}"[:512]
+        with self.lock:
+            requested = self.follow_cancel_requested
+            self.follow_goal_handle = None
+            self.follow_cancel_requested = False
+            current = self.autonomous_drive
+            if current.get("mode") != "person_following":
+                return
+            if canceled or requested or success:
+                self.autonomous_drive = self._idle_autonomous_drive()
+                self.drive_seen_active = False
+                return
+            self.autonomous_drive = {
+                **current,
+                "state": "failed",
+                "message": message or "사람 따라가기가 중단됐습니다.",
+            }
 
     def _receive_navigation_path(self, path: NavPath) -> None:
         """Publish Nav2's latest global-costmap route to web clients."""
@@ -718,6 +812,10 @@ class RobotWebBridge(Node):
                     "LOCALIZATION_LOST",
                     "로봇 위치가 끊겨 주행을 자동 취소합니다.",
                 )
+                self._request_autonomous_stop(
+                    "LOCALIZATION_LOST",
+                    "로봇 위치가 끊겨 자율주행을 자동 중지합니다.",
+                )
         except Exception as error:  # tf2 exception types vary by distro
             with self.lock:
                 if self.validation_state != "ok":
@@ -743,6 +841,10 @@ class RobotWebBridge(Node):
                 self._request_auto_cancel(
                     "LOCALIZATION_LOST",
                     "로봇 위치가 끊겨 주행을 자동 취소합니다.",
+                )
+                self._request_autonomous_stop(
+                    "LOCALIZATION_LOST",
+                    "로봇 위치가 끊겨 자율주행을 자동 중지합니다.",
                 )
 
     def _request_auto_cancel(self, code: str, message: str) -> None:
@@ -785,6 +887,120 @@ class RobotWebBridge(Node):
         finally:
             with self.lock:
                 self.auto_cancel_pending = False
+
+    def _request_autonomous_stop(self, code: str, message: str) -> None:
+        """Stop the active autonomous owner after a safety invariant fails."""
+        with self.lock:
+            current = self.autonomous_drive
+            mode = current.get("mode")
+            if (
+                self.drive_emergency_stop_pending
+                or mode not in AUTONOMOUS_MODES
+                or current.get("state") == "idle"
+            ):
+                return
+            self.drive_emergency_stop_pending = True
+            self.autonomous_drive = {
+                **current,
+                "state": "stopping",
+                "message": message,
+                "detail": {
+                    **(
+                        current.get("detail")
+                        if isinstance(current.get("detail"), dict) else {}
+                    ),
+                    "stop_code": code,
+                },
+            }
+        Thread(
+            target=self._autonomous_stop_worker,
+            args=(str(mode), message),
+            daemon=True,
+        ).start()
+
+    def _autonomous_stop_worker(self, mode: str, message: str) -> None:
+        """Cancel one action or manager service outside the ROS callback."""
+        try:
+            with self.operation_lock:
+                self._stop_mode_transport(mode, message)
+        except NavigationError as error:
+            with self.lock:
+                current = self.autonomous_drive
+                if current.get("mode") == mode:
+                    self.autonomous_drive = {
+                        **current,
+                        "state": "failed",
+                        "message": str(error),
+                    }
+        finally:
+            with self.lock:
+                self.drive_emergency_stop_pending = False
+
+    def _conflicting_stop_worker(self, modes: tuple[str, ...]) -> None:
+        """Fail closed by stopping every independently active mode owner."""
+        errors = []
+        try:
+            with self.operation_lock:
+                for mode in modes:
+                    try:
+                        self._stop_mode_transport(
+                            mode,
+                            "충돌한 자율주행 모드를 안전 중지합니다.",
+                        )
+                    except NavigationError as error:
+                        errors.append(str(error))
+        finally:
+            with self.lock:
+                self.drive_emergency_stop_pending = False
+                if errors:
+                    self.autonomous_drive = {
+                        **self.autonomous_drive,
+                        "state": "failed",
+                        "message": errors[0][:512],
+                    }
+
+    def _stop_mode_transport(self, mode: str, message: str) -> None:
+        """Issue one bounded stop without acquiring the operation lock."""
+        if mode == "person_following":
+            with self.lock:
+                goal_handle = self.follow_goal_handle
+                self.follow_cancel_requested = True
+            if goal_handle is None:
+                raise NavigationError(
+                    409,
+                    "PERSON_FOLLOWING_NOT_ACTIVE",
+                    "진행 중인 사람 따라가기를 찾을 수 없습니다.",
+                )
+            response = self._wait(
+                goal_handle.cancel_goal_async(),
+                CANCEL_TIMEOUT_S,
+                "사람 따라가기 안전 중지",
+            )
+            if not response.goals_canceling:
+                raise NavigationError(
+                    409,
+                    "PERSON_FOLLOWING_CANCEL_REJECTED",
+                    "사람 따라가기 취소가 거절됐습니다.",
+                )
+            return
+        client = self.drive_clients[mode]["stop"]
+        if not client.wait_for_service(timeout_sec=1.0):
+            raise NavigationError(
+                503,
+                "DRIVE_MODE_UNAVAILABLE",
+                "주행 모드 서비스가 아직 준비되지 않았습니다.",
+            )
+        response = self._wait(
+            client.call_async(Trigger.Request()),
+            SERVICE_TIMEOUT_S,
+            f"{mode} safety stop",
+        )
+        if not response.success:
+            raise NavigationError(
+                409,
+                "DRIVE_MODE_REJECTED",
+                response.message or message,
+            )
 
     def _monitor_navigation(self) -> None:
         """Cancel a navigation that exceeds its time or progress bounds."""
@@ -833,6 +1049,8 @@ class RobotWebBridge(Node):
                 mode for mode, clients in self.drive_clients.items()
                 if all(client.service_is_ready() for client in clients.values())
             ]
+            if self.follow_person.server_is_ready():
+                available.append("person_following")
             if autonomous["mode"] == "idle":
                 drive_mode = _drive_mode_from_navigation(navigation)
             else:
@@ -901,6 +1119,132 @@ class RobotWebBridge(Node):
                 "다른 주행 모드를 먼저 중지해 주세요.",
             )
 
+    def _person_follow_command(self, action: str, request: dict) -> dict:
+        """Start or cancel one sensor-backed FollowPerson action lease."""
+        if action not in {"start", "stop"}:
+            raise NavigationError(
+                422,
+                "INVALID_DRIVE_MODE_ACTION",
+                "사람 따라가기는 시작과 중지만 지원합니다.",
+            )
+        with self.operation_lock:
+            with self.lock:
+                previous = dict(self.autonomous_drive)
+                navigation = dict(self.navigation_state)
+            if action == "start":
+                self._require_ready()
+                if navigation.get("state") in {"driving", "canceling"}:
+                    raise NavigationError(
+                        409,
+                        "NAVIGATION_IN_PROGRESS",
+                        "목적지 이동을 먼저 중지해 주세요.",
+                    )
+                self._require_autonomous_idle()
+                if not self.follow_person.wait_for_server(timeout_sec=1.0):
+                    raise NavigationError(
+                        503,
+                        "PERSON_FOLLOWING_UNAVAILABLE",
+                        "사람 추적 서비스가 아직 준비되지 않았습니다.",
+                    )
+                session_id = secrets.token_hex(8)
+                with self.lock:
+                    self.autonomous_drive = {
+                        "mode": "person_following",
+                        "state": "starting",
+                        "session_id": session_id,
+                        "message": "따라갈 사람을 찾고 있습니다.",
+                    }
+                    self.drive_seen_active = False
+                    self.drive_started_monotonic = time.monotonic()
+                    self.follow_cancel_requested = False
+                try:
+                    goal_handle = self._wait(
+                        self.follow_person.send_goal_async(FollowPerson.Goal()),
+                        SEND_GOAL_TIMEOUT_S,
+                        "사람 따라가기 시작",
+                    )
+                except NavigationError:
+                    with self.lock:
+                        self.autonomous_drive = previous
+                    raise
+                if not goal_handle.accepted:
+                    with self.lock:
+                        self.autonomous_drive = previous
+                    raise NavigationError(
+                        409,
+                        "PERSON_FOLLOWING_REJECTED",
+                        "사람 따라가기 요청이 거절됐습니다.",
+                    )
+                with self.lock:
+                    self.follow_goal_handle = goal_handle
+                goal_handle.get_result_async().add_done_callback(
+                    self._follow_result
+                )
+                return {
+                    "mode": "person_following",
+                    "state": "starting",
+                    "session_id": session_id,
+                    "message": "따라갈 사람을 찾고 있습니다.",
+                }
+
+            session_id = request.get("session_id")
+            if (
+                not isinstance(session_id, str)
+                or previous.get("mode") != "person_following"
+                or previous.get("session_id") != session_id
+            ):
+                raise NavigationError(
+                    404,
+                    "DRIVE_MODE_NOT_FOUND",
+                    "해당 주행 세션을 찾을 수 없습니다.",
+                )
+            with self.lock:
+                goal_handle = self.follow_goal_handle
+                self.autonomous_drive = {
+                    **previous,
+                    "state": "stopping",
+                    "message": "사람 따라가기를 중지하고 있습니다.",
+                }
+                self.follow_cancel_requested = True
+            if goal_handle is None:
+                with self.lock:
+                    self.autonomous_drive = previous
+                    self.follow_cancel_requested = False
+                raise NavigationError(
+                    409,
+                    "PERSON_FOLLOWING_NOT_ACTIVE",
+                    "진행 중인 사람 따라가기를 찾을 수 없습니다.",
+                )
+            try:
+                response = self._wait(
+                    goal_handle.cancel_goal_async(),
+                    CANCEL_TIMEOUT_S,
+                    "사람 따라가기 중지",
+                )
+            except NavigationError:
+                with self.lock:
+                    self.autonomous_drive = previous
+                    self.follow_cancel_requested = False
+                raise
+            if not response.goals_canceling:
+                with self.lock:
+                    current = self.autonomous_drive
+                    if current.get("mode") == "person_following":
+                        current["state"] = "failed"
+                        current["message"] = "사람 따라가기 취소가 거절됐습니다."
+                    self.follow_cancel_requested = False
+                raise NavigationError(
+                    409,
+                    "PERSON_FOLLOWING_CANCEL_REJECTED",
+                    "사람 따라가기 취소가 거절됐습니다.",
+                )
+            return {
+                "mode": "person_following",
+                "state": "stopping",
+                "session_id": session_id,
+                "message": "사람 따라가기를 중지하고 있습니다.",
+            }
+
     def drive_mode_command(self, action: str, request: dict) -> dict:
         """Invoke one patrol or roaming lifecycle service under one lease."""
         mode = request.get("mode")
@@ -910,6 +1254,8 @@ class RobotWebBridge(Node):
             raise NavigationError(
                 422, "INVALID_DRIVE_MODE", "지원하지 않는 주행 모드입니다."
             )
+        if mode == "person_following":
+            return self._person_follow_command(action, request)
         with self.operation_lock:
             with self.lock:
                 previous = dict(self.autonomous_drive)

@@ -93,9 +93,16 @@ export function parseRobotCommand(value: unknown): {
       ? { operation, payload: { mode: payload.mode } }
       : null;
   }
-  if (["drive_mode_pause", "drive_mode_resume", "drive_mode_stop"].includes(String(operation))) {
-    return Object.keys(payload).length === 2 && autonomousDriveMode(payload.mode) && safeToken(payload.sessionId)
+  if (["drive_mode_pause", "drive_mode_resume"].includes(String(operation))) {
+    return Object.keys(payload).length === 2 && (
+      payload.mode === "patrol" || payload.mode === "roaming"
+    ) && safeToken(payload.sessionId)
       ? { operation: operation as RobotOperation, payload: { mode: payload.mode, sessionId: payload.sessionId } }
+      : null;
+  }
+  if (operation === "drive_mode_stop") {
+    return Object.keys(payload).length === 2 && autonomousDriveMode(payload.mode) && safeToken(payload.sessionId)
+      ? { operation, payload: { mode: payload.mode, sessionId: payload.sessionId } }
       : null;
   }
   if (["room_split", "room_merge", "rooms_save", "zones_apply"].includes(String(operation))) {

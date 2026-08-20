@@ -585,6 +585,39 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
           payload: { mode: "roaming", sessionId: "roaming_session_1" },
         },
       );
+      assert.deepEqual(
+        plain(robotContract.parseRobotCommand({
+          operation: "drive_mode_start",
+          payload: { mode: "person_following" },
+        })),
+        {
+          operation: "drive_mode_start",
+          payload: { mode: "person_following" },
+        },
+      );
+      assert.deepEqual(
+        plain(robotContract.parseRobotCommand({
+          operation: "drive_mode_stop",
+          payload: {
+            mode: "person_following",
+            sessionId: "person_following_session_1",
+          },
+        })),
+        {
+          operation: "drive_mode_stop",
+          payload: {
+            mode: "person_following",
+            sessionId: "person_following_session_1",
+          },
+        },
+      );
+      assert.equal(robotContract.parseRobotCommand({
+        operation: "drive_mode_pause",
+        payload: {
+          mode: "person_following",
+          sessionId: "person_following_session_1",
+        },
+      }), null);
       assert.equal(robotContract.parseRobotCommand({
         operation: "drive_mode_start",
         payload: { mode: "destination" },

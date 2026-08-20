@@ -17,7 +17,10 @@ from launch_ros.actions import Node
 
 from malbut_gazebo.drive_modes import write_room_patrol_route
 from malbut_gazebo.map_lifecycle import load_active_revision
-from malbut_gazebo.pose_checkpoint import load_pose_checkpoint
+from malbut_gazebo.pose_checkpoint import (
+    PoseSafetyGrid,
+    load_pose_checkpoint,
+)
 from malbut_gazebo.world_catalog import resolve_world
 
 
@@ -189,12 +192,23 @@ def _select_mode(context):
         _saved_initial_pose({"initial_pose": checkpoint["pose"]})
         if checkpoint is not None else None
     )
+    pose_safety = PoseSafetyGrid.load(Path(map_yaml))
+    if checkpoint_pose is not None and not pose_safety.accepts(
+        checkpoint_pose
+    ):
+        checkpoint_pose = None
+    if saved_pose is not None and not pose_safety.accepts(saved_pose):
+        saved_pose = None
     simulation_pose = None
     actions = []
     if simulation_enabled:
         simulation_pose = _simulation_initial_pose(
             context, share, checkpoint_pose or saved_pose
         )
+        if not pose_safety.accepts(simulation_pose):
+            raise RuntimeError(
+                "simulator spawn pose is not safe in the active map"
+            )
         actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 str(share / "launch" / "worlds.launch.py")
@@ -233,6 +247,10 @@ def _select_mode(context):
             "robot_web_port": LaunchConfiguration("web_port"),
             "autonomous_modes": "true",
             "patrol_route_file": str(patrol_route),
+            "person_following": "true",
+            "person_projection_frame": (
+                "camera_depth_optical_frame" if simulation_enabled else ""
+            ),
             "pose_checkpoint_store": str(store),
             "pose_checkpoint_map_id": str(active["map_id"]),
             "pose_checkpoint_map_revision": str(active["map_revision"]),
