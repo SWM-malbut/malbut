@@ -955,7 +955,7 @@ export function RobotMapPanel({
   return (
     <section className="homecam-section robot-map-section" aria-labelledby="robot-map-title">
       <div className="robot-map-topbar">
-        <h1 id="robot-map-title">{mapping ? "집 둘러보는 중" : navigationDriving ? "이동 중" : navigationSucceeded ? "이동 완료" : "우리 집 지도"}</h1>
+        <h1 id="robot-map-title">{mapping ? "집 둘러보는 중" : navigationDriving ? "이동 중" : navigationSucceeded ? "이동 완료" : "우리 집"}</h1>
         <div className="robot-map-mode-tabs" aria-label="지도 모드">
           {([
             ["view", "보기"],
@@ -1706,7 +1706,7 @@ export function RobotMapPanel({
                 }} disabled={!zonesDirty || zoneCommandPending || busy}>저장 전 변경 취소</button>
                 <button type="button" onClick={saveZones} disabled={!isOwner || !zonesDirty || zoneCommandPending || busy}>구역 설정 저장</button>
               </div>
-              <div className="robot-map-help"><span>구역은 방 이름이 아니라 말벗의 이동 규칙입니다. 진입 금지를 해제하면 해당 공간으로 들어갈 수 있어요.</span></div>
+              <div className="robot-map-help"><span>구역은 방 이름이 아니라 말벗의 이동 규칙입니다.<br />진입 금지를 해제하면 해당 공간으로 들어갈 수 있어요.</span></div>
             </>
           ) : (
             <>

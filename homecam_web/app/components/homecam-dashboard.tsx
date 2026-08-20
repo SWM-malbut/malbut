@@ -20,6 +20,7 @@ import {
   Play,
   ShieldCheck,
   Sun,
+  TextAa,
   Trash,
   UsersThree,
   VideoCamera,
@@ -196,7 +197,7 @@ function HomeMapSummary({
   return (
     <>
       <article className="homecam-home-map-card">
-        <h2>우리 집 지도</h2>
+        <h2>지도</h2>
         <button type="button" className="homecam-home-map-preview" onClick={() => onOpenMap("view")}>
           {device && revision ? (
             <>
@@ -219,7 +220,7 @@ function HomeMapSummary({
         </div>
       </article>
       <article className="homecam-home-favorites">
-        <h2>자주 보내는 곳</h2>
+        <h2>주요 목적지</h2>
         <div>
           {rooms.length === 0 && <p>방을 나누고 이름을 정하면 여기에 표시됩니다.</p>}
           {rooms.slice(0, 4).map((room) => (
@@ -775,6 +776,7 @@ export function HomecamDashboard({
   const [legacyCode, setLegacyCode] = useState("");
   const [legacyPassword, setLegacyPassword] = useState("");
   const [colorMode, setColorMode] = useState<HomecamColorMode>("dark");
+  const [textSize, setTextSize] = useState<"default" | "large">("default");
   const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
   const [storageGraceUntilMs, setStorageGraceUntilMs] = useState(0);
   const deepLinkedEventIdRef = useRef("");
@@ -791,6 +793,23 @@ export function HomecamDashboard({
       : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     window.queueMicrotask(() => setColorMode(preferred));
   }, []);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("malbut-text-size");
+    if (stored === "large") window.queueMicrotask(() => setTextSize("large"));
+  }, []);
+
+  useEffect(() => {
+    // 큰 글자 모드는 토큰(--fs-*)을 문서 단위로 확대한다. 지도·영상은 영향 없음.
+    if (textSize === "large") {
+      document.documentElement.dataset.textSize = "large";
+    } else {
+      delete document.documentElement.dataset.textSize;
+    }
+    return () => {
+      delete document.documentElement.dataset.textSize;
+    };
+  }, [textSize]);
 
   useEffect(() => {
     if (tab !== "live") return;
@@ -1401,7 +1420,7 @@ export function HomecamDashboard({
 
       <main className="homecam-main">
         {tab !== "map" && <div className="homecam-device-bar">
-          {tab !== "home" && <h1>{tab === "live" ? "홈캠" : tab === "events" ? "이벤트" : "설정"}</h1>}
+          <h1>{tab === "home" ? "홈" : tab === "live" ? "홈캠" : tab === "events" ? "이벤트" : "설정"}</h1>
           {tab === "events" && (
             <>
               <div className="homecam-event-period" aria-label="이벤트 날짜 선택">
@@ -1628,7 +1647,7 @@ export function HomecamDashboard({
 
             <div className="homecam-quick-grid">
               <article className="homecam-live-state-card">
-                <h2>지금 상태</h2>
+                <h2>현재 상태</h2>
                 <div className="homecam-live-state-list">
                   <div>
                     <i className={displayedMediaReady ? "is-good" : ""} aria-hidden="true" />
@@ -1897,6 +1916,28 @@ export function HomecamDashboard({
                     <Moon size={19} weight="regular" aria-hidden="true" />
                     블랙 모드
                   </button>
+                </div>
+                <div className="homecam-setting-row homecam-text-size-row">
+                  <div>
+                    <strong>큰 글자</strong>
+                    <span>화면 전체 글자를 키웁니다 · 본문 16→18px</span>
+                  </div>
+                  <div className="homecam-theme-options" role="group" aria-label="글자 크기 선택">
+                    <button type="button" className={textSize === "default" ? "is-active" : ""} onClick={() => {
+                      window.localStorage.setItem("malbut-text-size", "default");
+                      setTextSize("default");
+                    }}>
+                      <TextAa size={19} weight="regular" aria-hidden="true" />
+                      기본
+                    </button>
+                    <button type="button" className={textSize === "large" ? "is-active" : ""} onClick={() => {
+                      window.localStorage.setItem("malbut-text-size", "large");
+                      setTextSize("large");
+                    }}>
+                      <TextAa size={22} weight="bold" aria-hidden="true" />
+                      크게
+                    </button>
+                  </div>
                 </div>
               </section>
 
