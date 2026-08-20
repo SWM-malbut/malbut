@@ -4,13 +4,18 @@ from functools import partial
 import http.client
 from http.server import ThreadingHTTPServer
 import json
+from pathlib import Path
+from types import SimpleNamespace
+from threading import Lock
 from threading import Thread
 
 import cv2
 import numpy as np
+import pytest
 
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path as NavPath
+from std_msgs.msg import String
 
 from malbut_gazebo.robot_web_server import (
     CostmapGrid,
@@ -18,12 +23,35 @@ from malbut_gazebo.robot_web_server import (
     NavigationError,
     REQUIRED_PATH_CLEARANCE_M,
     RobotRequestHandler,
+    RobotWebBridge,
     _drive_mode_from_navigation,
     _navigation_progress_ratio,
     _path_min_clearance,
     _path_max_cost,
     _point_in_geometry,
 )
+
+
+class _ImmediateFuture:
+    def __init__(self, value):
+        self.value = value
+
+    def add_done_callback(self, callback):
+        callback(self)
+
+    def result(self):
+        return self.value
+
+
+class _DriveClient:
+    def service_is_ready(self):
+        return True
+
+    def wait_for_service(self, timeout_sec):
+        return timeout_sec > 0
+
+    def call_async(self, _request):
+        return _ImmediateFuture(SimpleNamespace(success=True, message="ok"))
 
 
 def test_navigation_progress_uses_start_route_and_is_monotonic():
@@ -47,6 +75,90 @@ def test_destination_navigation_reports_one_common_drive_mode():
         "message": "stopping",
     })["state"] == "stopping"
     assert _drive_mode_from_navigation({"state": "succeeded"})["mode"] == "idle"
+
+
+def test_autonomous_drive_mode_owns_one_session_and_rejects_conflicts(tmp_path):
+    """Patrol and roaming must never own Nav2 at the same time."""
+    user_map = tmp_path / "user-map.geojson"
+    user_map.write_text(json.dumps({
+        "type": "FeatureCollection",
+        "map_id": "home",
+        "features": [{
+            "type": "Feature",
+            "id": "room-1",
+            "properties": {
+                "role": "room", "name": "거실",
+                "representative_point": [1.0, 2.0],
+            },
+            "geometry": {"type": "Polygon", "coordinates": []},
+        }],
+    }), encoding="utf-8")
+    bridge = object.__new__(RobotWebBridge)
+    bridge.lock = Lock()
+    bridge.operation_lock = Lock()
+    bridge.map_path = user_map
+    bridge.map_id = "home"
+    bridge.patrol_route_file = tmp_path / "room-patrol.yaml"
+    bridge.navigation_state = {"state": "idle"}
+    bridge.autonomous_drive = bridge._idle_autonomous_drive()
+    bridge.drive_seen_active = False
+    bridge.drive_started_monotonic = 0.0
+    bridge.drive_status = {"patrol": {}, "roaming": {}}
+    bridge.drive_clients = {
+        mode: {action: _DriveClient() for action in (
+            "start", "pause", "resume", "stop",
+        )}
+        for mode in ("patrol", "roaming")
+    }
+    bridge._require_ready = lambda: {"x": 0.0, "y": 0.0, "yaw": 0.0}
+
+    started = bridge.drive_mode_command("start", {"mode": "patrol"})
+    session_id = started["session_id"]
+    assert session_id
+    assert Path(bridge.patrol_route_file).is_file()
+    status = String()
+    status.data = json.dumps({
+        "state": "navigating", "detail": "moving",
+        "waypoint_index": 0, "waypoint_count": 1,
+    })
+    bridge._receive_drive_status("patrol", status)
+    assert bridge.autonomous_drive["state"] == "active"
+    assert bridge.autonomous_drive["session_id"] == session_id
+
+    with pytest.raises(NavigationError) as conflict:
+        bridge.drive_mode_command("start", {"mode": "roaming"})
+    assert conflict.value.code == "DRIVE_MODE_IN_PROGRESS"
+    conflicting_status = String()
+    conflicting_status.data = json.dumps({
+        "state": "navigating", "detail": "unexpected roaming",
+    })
+    bridge._receive_drive_status("roaming", conflicting_status)
+    assert bridge.autonomous_drive["state"] == "failed"
+    assert bridge.autonomous_drive["detail"] == {
+        "active_modes": ["patrol", "roaming"],
+    }
+    conflicting_status.data = json.dumps({"state": "idle"})
+    bridge._receive_drive_status("roaming", conflicting_status)
+    assert bridge.autonomous_drive["mode"] == "patrol"
+    assert bridge.autonomous_drive["state"] == "active"
+    with pytest.raises(NavigationError) as stale:
+        bridge.drive_mode_command("pause", {
+            "mode": "patrol", "session_id": "wrong-session",
+        })
+    assert stale.value.code == "DRIVE_MODE_NOT_FOUND"
+
+    bridge.drive_mode_command("pause", {
+        "mode": "patrol", "session_id": session_id,
+    })
+    status.data = json.dumps({"state": "paused", "detail": "paused"})
+    bridge._receive_drive_status("patrol", status)
+    assert bridge.autonomous_drive["state"] == "paused"
+    bridge.drive_mode_command("stop", {
+        "mode": "patrol", "session_id": session_id,
+    })
+    status.data = json.dumps({"state": "idle", "detail": "stopped"})
+    bridge._receive_drive_status("patrol", status)
+    assert bridge.autonomous_drive["mode"] == "idle"
 
 
 class FakeBridge:
@@ -93,6 +205,15 @@ class FakeBridge:
             "session_id": request["session_id"],
             "state": "canceled",
             "already_terminal": False,
+        }
+
+    def drive_mode_command(self, action: str, request: dict) -> dict:
+        """Record and accept one common autonomous-mode command."""
+        self.calls.append((f"drive-{action}", request, None))
+        return {
+            "mode": request["mode"],
+            "state": "active" if action == "start" else action,
+            "session_id": request.get("session_id", "drive-1"),
         }
 
 
@@ -294,6 +415,27 @@ def test_navigation_endpoints_are_same_origin_and_session_bound(tmp_path):
         )
         assert status == 200
         assert value["state"] == "canceled"
+
+        status, _, value = _request(
+            address,
+            "POST",
+            "/api/drive-mode/start",
+            json.dumps({"mode": "patrol"}),
+            headers,
+        )
+        assert status == 202
+        assert value["session_id"] == "drive-1"
+        assert bridge.calls[-1][0] == "drive-start"
+
+        status, _, value = _request(
+            address,
+            "POST",
+            "/api/drive-mode/stop",
+            json.dumps({"mode": "patrol", "session_id": "drive-1"}),
+            headers,
+        )
+        assert status == 200
+        assert value["state"] == "stop"
 
         status, _, value = _request(
             address,

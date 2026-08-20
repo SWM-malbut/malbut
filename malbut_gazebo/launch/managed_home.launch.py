@@ -15,6 +15,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from malbut_gazebo.drive_modes import write_room_patrol_route
 from malbut_gazebo.map_lifecycle import load_active_revision
 from malbut_gazebo.pose_checkpoint import load_pose_checkpoint
 from malbut_gazebo.world_catalog import resolve_world
@@ -178,6 +179,9 @@ def _select_mode(context):
     map_yaml = str((store / active["map_yaml"]).resolve())
     user_map = str((store / active["user_map"]).resolve())
     revision = (store / active["map_yaml"]).resolve().parent
+    patrol_route = write_room_patrol_route(
+        Path(user_map), revision / "room-patrol.yaml", str(active["map_id"])
+    )
     zone_mask = revision / "zone-filter.yaml"
     saved_pose = _saved_initial_pose(active)
     checkpoint = load_pose_checkpoint(store, active)
@@ -227,6 +231,8 @@ def _select_mode(context):
             "rviz": LaunchConfiguration("rviz"),
             "robot_web": "true",
             "robot_web_port": LaunchConfiguration("web_port"),
+            "autonomous_modes": "true",
+            "patrol_route_file": str(patrol_route),
             "pose_checkpoint_store": str(store),
             "pose_checkpoint_map_id": str(active["map_id"]),
             "pose_checkpoint_map_revision": str(active["map_revision"]),

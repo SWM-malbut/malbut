@@ -14,6 +14,7 @@ type RobotDriveModeSnapshot = {
   state: "idle" | "starting" | "active" | "pausing" | "paused" | "stopping" | "failed";
   sessionId: string | null;
   message: string | null;
+  detail?: Record<string, unknown> | null;
 };
 
 export type RobotSnapshot = {
@@ -207,6 +208,14 @@ export function RobotMapPanel({
           setNavigationPreview(null);
           setPreviewExpiresAt(0);
           setNotice("선택한 목적지로 이동을 시작했습니다.");
+        } else if (command.operation === "drive_mode_start") {
+          setNotice("자율주행을 시작했습니다.");
+        } else if (command.operation === "drive_mode_pause") {
+          setNotice("자율주행을 일시정지했습니다.");
+        } else if (command.operation === "drive_mode_resume") {
+          setNotice("자율주행을 다시 시작했습니다.");
+        } else if (command.operation === "drive_mode_stop") {
+          setNotice("자율주행을 중지했습니다.");
         } else if (command.operation === "room_split" && isRecord(command.result)) {
           const splitRooms = Array.isArray(command.result.rooms)
             ? command.result.rooms.filter(isGeoFeature)
@@ -389,6 +398,13 @@ export function RobotMapPanel({
   const runtimeMode = snapshot?.state?.nav2.runtime_mode;
   const navigation = snapshot?.state?.target;
   const driveMode = snapshot?.state?.driveMode;
+  const activeAutonomousMode = driveMode?.mode === "patrol" || driveMode?.mode === "roaming"
+    ? driveMode.mode
+    : null;
+  const autonomousSession = activeAutonomousMode && typeof driveMode?.sessionId === "string"
+    ? driveMode.sessionId
+    : "";
+  const availableAutonomousModes = driveModeAvailableModes(driveMode);
   const autonomousModeActive = Boolean(driveMode && ![
     "idle", "destination",
   ].includes(driveMode.mode) && !["idle", "failed"].includes(driveMode.state));
@@ -468,7 +484,11 @@ export function RobotMapPanel({
               : operation === "navigation_preview" ? "현재 costmap으로 안전한 경로를 확인하고 있습니다."
                 : operation === "navigation_start" ? "출발 전에 경로를 다시 확인하고 있습니다."
                   : operation === "navigation_cancel" ? "주행 취소를 요청했습니다."
-                    : operation === "room_split" ? "로봇에서 분할 가능 여부를 확인하고 있습니다."
+                    : operation === "drive_mode_start" ? "자율주행 시작을 요청했습니다."
+                      : operation === "drive_mode_pause" ? "자율주행 일시정지를 요청했습니다."
+                        : operation === "drive_mode_resume" ? "자율주행 재개를 요청했습니다."
+                          : operation === "drive_mode_stop" ? "자율주행 중지를 요청했습니다."
+                            : operation === "room_split" ? "로봇에서 분할 가능 여부를 확인하고 있습니다."
                       : operation === "room_merge" ? "로봇에서 두 방의 인접 여부를 확인하고 있습니다."
                         : operation === "rooms_save" ? "방 설정을 말벗에 저장하고 있습니다."
                           : "구역 설정을 말벗에 적용하고 있습니다.",
@@ -1761,6 +1781,58 @@ export function RobotMapPanel({
                 </div>
               )}
               {mapMode === "view" && (
+                <div className="robot-map-panel-card robot-drive-mode-card">
+                  <h3>자율주행</h3>
+                  {activeAutonomousMode && autonomousSession ? (
+                    <>
+                      <div className="robot-drive-mode-status">
+                        <strong>{driveModeCopy(driveMode)}</strong>
+                        <span>{driveModeDetailCopy(driveMode)}</span>
+                      </div>
+                      <div className="robot-map-actions is-inline">
+                        {driveMode?.state === "paused" ? (
+                          <button
+                            type="button"
+                            onClick={() => void sendCommand("drive_mode_resume", { mode: activeAutonomousMode, sessionId: autonomousSession })}
+                            disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}
+                          >다시 시작</button>
+                        ) : driveMode?.state !== "failed" ? (
+                          <button
+                            type="button"
+                            className="is-secondary"
+                            onClick={() => void sendCommand("drive_mode_pause", { mode: activeAutonomousMode, sessionId: autonomousSession })}
+                            disabled={!isOwner || !snapshot?.online || !["active"].includes(driveMode?.state ?? "") || Boolean(activeCommand) || busy}
+                          >일시정지</button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="is-danger"
+                          onClick={() => void sendCommand("drive_mode_stop", { mode: activeAutonomousMode, sessionId: autonomousSession })}
+                          disabled={!isOwner || !snapshot?.online || driveMode?.state === "stopping" || Boolean(activeCommand) || busy}
+                        >중지</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p>순찰은 각 방의 안전 대표점을 한 번씩 방문하고, 자율 배회는 현재 지도에서 안전한 목적지를 계속 선택합니다.</p>
+                      <div className="robot-map-actions is-inline">
+                        <button
+                          type="button"
+                          className="is-secondary"
+                          onClick={() => void sendCommand("drive_mode_start", { mode: "patrol" })}
+                          disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("patrol") || Boolean(activeCommand) || busy}
+                        >방 순찰 시작</button>
+                        <button
+                          type="button"
+                          onClick={() => void sendCommand("drive_mode_start", { mode: "roaming" })}
+                          disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("roaming") || Boolean(activeCommand) || busy}
+                        >자율 배회 시작</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              {mapMode === "view" && (
                 <div className="robot-map-panel-card">
                   <h3>지도 관리</h3>
                   <p>{snapshot?.state?.message ?? "말벗의 현재 위치와 저장된 공간을 실시간으로 확인합니다."}</p>
@@ -2887,6 +2959,32 @@ function driveModeCopy(value: RobotDriveModeSnapshot | undefined) {
     failed: "확인 필요",
   } as const;
   return `${modes[value.mode]} · ${states[value.state] ?? "확인 필요"}`;
+}
+
+function driveModeAvailableModes(value: RobotDriveModeSnapshot | undefined) {
+  const available = value?.detail?.available_modes;
+  if (!Array.isArray(available)) return [];
+  return available.filter((mode): mode is "patrol" | "roaming" => (
+    mode === "patrol" || mode === "roaming"
+  ));
+}
+
+function driveModeDetailCopy(value: RobotDriveModeSnapshot | undefined) {
+  if (!value) return "상태를 확인하고 있습니다.";
+  if (value.message) return value.message;
+  const detail = value.detail;
+  if (value.mode === "patrol" && detail) {
+    const index = numberValue(detail.waypoint_index);
+    const count = numberValue(detail.waypoint_count);
+    const name = typeof detail.waypoint_name === "string" ? detail.waypoint_name : "다음 방";
+    if (count > 0) return `${name} · ${Math.min(count, index + 1)}/${count}`;
+  }
+  if (value.mode === "roaming" && detail) {
+    const state = typeof detail.state === "string" ? detail.state : "이동 준비";
+    const remaining = numberValue(detail.distance_remaining);
+    return remaining > 0 ? `${state} · ${remaining.toFixed(1)}m 남음` : state;
+  }
+  return value.state === "failed" ? "중지한 뒤 상태를 다시 확인해 주세요." : "안전 상태를 확인하고 있습니다.";
 }
 
 function numberValue(value: unknown) {

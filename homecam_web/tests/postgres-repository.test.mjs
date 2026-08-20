@@ -623,9 +623,25 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         driveMode: {
           mode: "patrol", state: "active",
           sessionId: "patrol_session_1", message: "순찰 중입니다.",
+          detail: {
+            waypoint_name: "거실",
+            waypoint_index: 0,
+            waypoint_count: 3,
+            available_modes: ["patrol", "roaming"],
+          },
         },
         mapRevision: 11,
         observedAt: new Date().toISOString(),
+      });
+      const patrolSnapshot = await robotMap.getRobotSnapshot(
+        "living-room",
+        "owner@example.com",
+      );
+      assert.deepEqual(plain(patrolSnapshot.state.driveMode.detail), {
+        waypoint_name: "거실",
+        waypoint_index: 0,
+        waypoint_count: 3,
+        available_modes: ["patrol", "roaming"],
       });
       await assert.rejects(
         robotMap.createRobotCommand({

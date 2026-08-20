@@ -21,6 +21,7 @@ export type RobotDriveModeState = {
   state: (typeof ROBOT_DRIVE_MODE_STATES)[number];
   sessionId: string | null;
   message: string | null;
+  detail?: Record<string, unknown> | null;
 };
 
 export type RobotStateUpload = {
@@ -169,23 +170,35 @@ function idleDriveMode(): RobotDriveModeState {
 
 function parseDriveMode(value: unknown): RobotDriveModeState | null {
   if (!isObject(value) || Object.keys(value).some((key) => ![
-    "mode", "state", "sessionId", "message",
+    "mode", "state", "sessionId", "message", "detail",
   ].includes(key))) return null;
   const mode = value.mode;
   const state = value.state;
   const sessionId = value.sessionId;
   const message = value.message;
+  const detail = value.detail;
   if (
     !(mode === "idle" || robotDriveMode(mode)) ||
     typeof state !== "string" || !ROBOT_DRIVE_MODE_STATES.includes(state as RobotDriveModeState["state"]) ||
     !(sessionId === null || safeToken(sessionId)) ||
-    !(message === null || (typeof message === "string" && message.length <= 512))
+    !(message === null || (typeof message === "string" && message.length <= 512)) ||
+    !(detail === undefined || detail === null || (
+      isObject(detail) && new TextEncoder().encode(JSON.stringify(detail)).byteLength <= 16 * 1024
+    ))
   ) return null;
   if (mode === "idle") {
-    return state === "idle" && sessionId === null ? idleDriveMode() : null;
+    return state === "idle" && sessionId === null
+      ? { ...idleDriveMode(), detail: isObject(detail) ? detail : null }
+      : null;
   }
   if (state === "idle" || sessionId === null) return null;
-  return { mode, state: state as RobotDriveModeState["state"], sessionId, message };
+  return {
+    mode,
+    state: state as RobotDriveModeState["state"],
+    sessionId,
+    message,
+    detail: isObject(detail) ? detail : null,
+  };
 }
 
 export function parseRobotMap(value: unknown): RobotMapUpload | null {

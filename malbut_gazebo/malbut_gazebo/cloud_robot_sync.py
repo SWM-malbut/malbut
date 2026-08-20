@@ -303,6 +303,7 @@ class CloudRobotSync(Node):
             state = value.get("state")
             session_id = value.get("session_id")
             message = value.get("message")
+            detail = value.get("detail")
             if (
                 mode in {"destination", "patrol", "roaming", "person_following"}
                 and state in {
@@ -311,12 +312,15 @@ class CloudRobotSync(Node):
                 and isinstance(session_id, str)
                 and 8 <= len(session_id) <= 128
             ):
-                return {
+                normalized = {
                     "mode": mode,
                     "state": state,
                     "sessionId": session_id,
                     "message": str(message)[:512] if message else None,
                 }
+                if isinstance(detail, dict):
+                    normalized["detail"] = detail
+                return normalized
         navigation_state = navigation.get("state")
         navigation_session = navigation.get("session_id")
         if (
@@ -332,10 +336,16 @@ class CloudRobotSync(Node):
                 "sessionId": navigation_session,
                 "message": navigation.get("message"),
             }
-        return {
+        normalized = {
             "mode": "idle", "state": "idle",
             "sessionId": None, "message": None,
         }
+        if (
+            isinstance(value, dict)
+            and isinstance(value.get("detail"), dict)
+        ):
+            normalized["detail"] = value["detail"]
+        return normalized
 
     def _semantic_zone_bytes(self, active: dict | None) -> bytes:
         if not active:

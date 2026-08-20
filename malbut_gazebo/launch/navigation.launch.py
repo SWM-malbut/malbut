@@ -68,6 +68,8 @@ def generate_launch_description():
         'pose_checkpoint_map_revision'
     )
     boot_pose_trusted = LaunchConfiguration('boot_pose_trusted')
+    autonomous_modes = LaunchConfiguration('autonomous_modes')
+    patrol_route_file = LaunchConfiguration('patrol_route_file')
     use_active_slam = EqualsSubstitution(localization_source, 'slam')
     use_static_map = NotEqualsSubstitution(localization_source, 'slam')
     zone_filter_enabled = NotEqualsSubstitution(zone_mask, '')
@@ -252,6 +254,35 @@ def generate_launch_description():
                 "'verifying' if '", boot_pose_trusted,
                 "' == 'true' else 'revalidation_required'",
             ]),
+            'patrol_route_file': patrol_route_file,
+        }],
+    )
+    patrol_manager = Node(
+        package='malbut_patrol',
+        executable='patrol_manager',
+        name='patrol_manager',
+        namespace=namespace,
+        condition=IfCondition(PythonExpression([
+            "'", autonomous_modes, "' == 'true' and '",
+            patrol_route_file, "' != ''",
+        ])),
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'autostart': False,
+            'route_file': patrol_route_file,
+        }],
+    )
+    roaming_manager = Node(
+        package='malbut_roaming',
+        executable='roaming_manager',
+        name='roaming_manager',
+        namespace=namespace,
+        condition=IfCondition(autonomous_modes),
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'autostart': False,
         }],
     )
 
@@ -354,6 +385,16 @@ def generate_launch_description():
                 description='TCP port for the robot map web server.',
             ),
             DeclareLaunchArgument(
+                'autonomous_modes',
+                default_value='false',
+                description='Start patrol and roaming managers for the web.',
+            ),
+            DeclareLaunchArgument(
+                'patrol_route_file',
+                default_value='',
+                description='Room-derived patrol route paired with this map.',
+            ),
+            DeclareLaunchArgument(
                 'user_map',
                 default_value='',
                 description=(
@@ -368,6 +409,8 @@ def generate_launch_description():
             zone_filter_lifecycle_manager,
             localization_restorer,
             pose_checkpoint,
+            patrol_manager,
+            roaming_manager,
             robot_web_server,
             rviz,
         ]

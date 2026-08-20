@@ -112,6 +112,8 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     assert 'pose_checkpoint_map_id' in declared_arguments
     assert 'pose_checkpoint_map_revision' in declared_arguments
     assert 'boot_pose_trusted' in declared_arguments
+    assert 'autonomous_modes' in declared_arguments
+    assert 'patrol_route_file' in declared_arguments
 
     robot_web_nodes = [
         entity
@@ -127,6 +129,13 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
         and entity.node_executable == 'pose_checkpoint'
     ]
     assert len(checkpoint_nodes) == 1
+    mode_nodes = {
+        entity.node_executable
+        for entity in description.entities
+        if isinstance(entity, Node)
+        and entity.node_executable in {'patrol_manager', 'roaming_manager'}
+    }
+    assert mode_nodes == {'patrol_manager', 'roaming_manager'}
 
     includes = [
         entity

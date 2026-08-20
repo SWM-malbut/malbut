@@ -56,6 +56,13 @@ def test_cloud_normalizes_one_common_drive_mode_and_legacy_navigation():
         "mode": "patrol", "state": "active",
         "sessionId": "patrol_session_1", "message": "patrolling",
     }
+    assert CloudRobotSync._normal_drive_mode({
+        "drive_mode": {
+            "mode": "roaming", "state": "active",
+            "session_id": "roaming_session_1", "message": "roaming",
+            "detail": {"candidate_count": 12},
+        },
+    }, {})["detail"] == {"candidate_count": 12}
     assert CloudRobotSync._normal_drive_mode({}, {
         "state": "driving", "session_id": "navigation_session_1",
     }) == {

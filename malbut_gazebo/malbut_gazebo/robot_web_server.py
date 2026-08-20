@@ -38,7 +38,13 @@ from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.srv import GetCostmap
 from nav_msgs.msg import Path as NavPath
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
+from malbut_gazebo.drive_modes import (
+    AUTONOMOUS_MODES,
+    common_mode_state,
+    write_room_patrol_route,
+)
 from malbut_gazebo.pose_checkpoint import VALIDATION_TOPIC
 from malbut_gazebo.user_map_editor import (
     EditorRequestHandler,
@@ -478,6 +484,29 @@ class RobotWebBridge(Node):
         self.auto_cancel_message: str | None = None
         self.navigation_watchdog: NavigationWatchdog | None = None
         self.previews: dict[str, PreviewRecord] = {}
+        patrol_route = (
+            str(self.get_parameter("patrol_route_file").value).strip()
+            if self.has_parameter("patrol_route_file") else ""
+        )
+        self.patrol_route_file = (
+            Path(patrol_route).expanduser().resolve()
+            if patrol_route else None
+        )
+        self.drive_clients = {
+            mode: {
+                action: self.create_client(
+                    Trigger, f"{mode}/{action}"
+                )
+                for action in ("start", "pause", "resume", "stop")
+            }
+            for mode in sorted(AUTONOMOUS_MODES)
+        }
+        self.drive_status: dict[str, dict] = {
+            mode: {} for mode in AUTONOMOUS_MODES
+        }
+        self.autonomous_drive = self._idle_autonomous_drive()
+        self.drive_seen_active = False
+        self.drive_started_monotonic = 0.0
         validation_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
@@ -488,6 +517,18 @@ class RobotWebBridge(Node):
             String,
             VALIDATION_TOPIC,
             self._receive_validation,
+            validation_qos,
+        )
+        self.create_subscription(
+            String,
+            "patrol/status",
+            partial(self._receive_drive_status, "patrol"),
+            validation_qos,
+        )
+        self.create_subscription(
+            String,
+            "roaming/status",
+            partial(self._receive_drive_status, "roaming"),
             validation_qos,
         )
         self.create_timer(0.1, self._refresh_pose)
@@ -512,6 +553,93 @@ class RobotWebBridge(Node):
             "path_source": None,
             "initial_path_length_m": None,
         }
+
+    @staticmethod
+    def _idle_autonomous_drive() -> dict:
+        return {
+            "mode": "idle", "state": "idle",
+            "session_id": None, "message": None,
+        }
+
+    def _receive_drive_status(self, mode: str, message: String) -> None:
+        """Normalize one manager status while preserving its useful detail."""
+        try:
+            status = json.loads(message.data)
+        except (TypeError, json.JSONDecodeError):
+            return
+        if not isinstance(status, dict):
+            return
+        with self.lock:
+            self.drive_status[mode] = status
+            current = self.autonomous_drive
+            active_modes = [
+                candidate
+                for candidate, candidate_status in self.drive_status.items()
+                if common_mode_state(candidate, candidate_status) in {
+                    "starting", "active", "pausing", "paused", "stopping"
+                }
+            ]
+            if len(active_modes) > 1:
+                self.autonomous_drive = {
+                    "mode": (
+                        current["mode"]
+                        if current["mode"] in AUTONOMOUS_MODES else mode
+                    ),
+                    "state": "failed",
+                    "session_id": current.get("session_id") or secrets.token_hex(8),
+                    "message": "둘 이상의 자율주행 모드가 동시에 감지됐습니다.",
+                    "detail": {"active_modes": sorted(active_modes)},
+                }
+                self.drive_seen_active = True
+                return
+            if active_modes:
+                active_mode = active_modes[0]
+                active_status = self.drive_status[active_mode]
+                state = common_mode_state(active_mode, active_status)
+                detail = {
+                    str(key)[:64]: value
+                    for key, value in active_status.items()
+                    if key != "detail"
+                }
+                message_text = (
+                    str(active_status.get("detail") or "")[:512] or None
+                )
+                session_id = current.get("session_id")
+                if current["mode"] != active_mode or not session_id:
+                    session_id = secrets.token_hex(8)
+                self.autonomous_drive = {
+                    "mode": active_mode,
+                    "state": state,
+                    "session_id": session_id,
+                    "message": message_text,
+                    "detail": detail,
+                }
+                self.drive_seen_active = True
+                return
+            if common_mode_state(mode, status) == "failed":
+                self.autonomous_drive = {
+                    "mode": mode,
+                    "state": "failed",
+                    "session_id": (
+                        current.get("session_id") or secrets.token_hex(8)
+                    ),
+                    "message": str(status.get("detail") or "")[:512] or None,
+                    "detail": {
+                        str(key)[:64]: value
+                        for key, value in status.items()
+                        if key != "detail"
+                    },
+                }
+                self.drive_seen_active = True
+                return
+            if (
+                current["state"] == "starting"
+                and not self.drive_seen_active
+                and time.monotonic() - self.drive_started_monotonic < 2.0
+            ):
+                return
+            self.autonomous_drive = self._idle_autonomous_drive()
+            self.drive_seen_active = False
 
     def _receive_navigation_path(self, path: NavPath) -> None:
         """Publish Nav2's latest global-costmap route to web clients."""
@@ -700,6 +828,20 @@ class RobotWebBridge(Node):
         with self.lock:
             self.seq += 1
             navigation = dict(self.navigation_state)
+            autonomous = dict(self.autonomous_drive)
+            available = [
+                mode for mode, clients in self.drive_clients.items()
+                if all(client.service_is_ready() for client in clients.values())
+            ]
+            if autonomous["mode"] == "idle":
+                drive_mode = _drive_mode_from_navigation(navigation)
+            else:
+                drive_mode = autonomous
+            detail = drive_mode.get("detail")
+            drive_mode["detail"] = {
+                **(detail if isinstance(detail, dict) else {}),
+                "available_modes": available,
+            }
             return {
                 "seq": self.seq,
                 "server_time": datetime.now(timezone.utc).isoformat(),
@@ -709,7 +851,7 @@ class RobotWebBridge(Node):
                 "localization": dict(self.localization),
                 "nav2": dict(self.lifecycle),
                 "navigation": navigation,
-                "drive_mode": _drive_mode_from_navigation(navigation),
+                "drive_mode": drive_mode,
             }
 
     def _wait(self, future: object, timeout: float, operation: str) -> object:
@@ -746,6 +888,128 @@ class RobotWebBridge(Node):
                 localization=localization,
             )
         return pose
+
+    def _require_autonomous_idle(self) -> None:
+        with self.lock:
+            mode = dict(self.autonomous_drive)
+        if mode.get("state") in {
+            "starting", "active", "pausing", "paused", "stopping"
+        }:
+            raise NavigationError(
+                409,
+                "DRIVE_MODE_IN_PROGRESS",
+                "다른 주행 모드를 먼저 중지해 주세요.",
+            )
+
+    def drive_mode_command(self, action: str, request: dict) -> dict:
+        """Invoke one patrol or roaming lifecycle service under one lease."""
+        mode = request.get("mode")
+        if mode not in AUTONOMOUS_MODES or action not in {
+            "start", "pause", "resume", "stop"
+        }:
+            raise NavigationError(
+                422, "INVALID_DRIVE_MODE", "지원하지 않는 주행 모드입니다."
+            )
+        with self.operation_lock:
+            with self.lock:
+                previous = dict(self.autonomous_drive)
+                navigation = dict(self.navigation_state)
+            if action == "start":
+                self._require_ready()
+                if navigation.get("state") in {"driving", "canceling"}:
+                    raise NavigationError(
+                        409,
+                        "NAVIGATION_IN_PROGRESS",
+                        "목적지 이동을 먼저 중지해 주세요.",
+                    )
+                self._require_autonomous_idle()
+                if mode == "patrol":
+                    if self.patrol_route_file is None:
+                        raise NavigationError(
+                            503,
+                            "PATROL_ROUTE_UNAVAILABLE",
+                            "현재 지도에 맞는 순찰 경로가 없습니다.",
+                        )
+                    try:
+                        write_room_patrol_route(
+                            self.map_path,
+                            self.patrol_route_file,
+                            self.map_id,
+                        )
+                    except ValueError as error:
+                        raise NavigationError(
+                            409, "PATROL_ROUTE_INVALID", str(error)
+                        ) from error
+                session_id = secrets.token_hex(8)
+                with self.lock:
+                    self.autonomous_drive = {
+                        "mode": mode,
+                        "state": "starting",
+                        "session_id": session_id,
+                        "message": "주행 모드를 준비하고 있습니다.",
+                    }
+                    self.drive_seen_active = False
+                    self.drive_started_monotonic = time.monotonic()
+            else:
+                session_id = request.get("session_id")
+                if (
+                    not isinstance(session_id, str)
+                    or previous.get("mode") != mode
+                    or previous.get("session_id") != session_id
+                ):
+                    raise NavigationError(
+                        404,
+                        "DRIVE_MODE_NOT_FOUND",
+                        "해당 주행 세션을 찾을 수 없습니다.",
+                    )
+                transitional = {
+                    "pause": "pausing",
+                    "resume": "starting",
+                    "stop": "stopping",
+                }[action]
+                with self.lock:
+                    self.autonomous_drive = {
+                        **previous,
+                        "state": transitional,
+                    }
+            client = self.drive_clients[mode][action]
+            if not client.wait_for_service(timeout_sec=1.0):
+                with self.lock:
+                    self.autonomous_drive = previous
+                raise NavigationError(
+                    503,
+                    "DRIVE_MODE_UNAVAILABLE",
+                    "주행 모드 서비스가 아직 준비되지 않았습니다.",
+                )
+            try:
+                response = self._wait(
+                    client.call_async(Trigger.Request()),
+                    SERVICE_TIMEOUT_S,
+                    f"{mode} {action}",
+                )
+            except NavigationError:
+                with self.lock:
+                    self.autonomous_drive = previous
+                raise
+            if not response.success:
+                with self.lock:
+                    self.autonomous_drive = previous
+                raise NavigationError(
+                    409,
+                    "DRIVE_MODE_REJECTED",
+                    response.message or "주행 모드 요청이 거절됐습니다.",
+                )
+            with self.lock:
+                current = self.autonomous_drive
+                if current.get("mode") == mode:
+                    current["message"] = response.message or current.get("message")
+                result_state = current.get("state")
+            return {
+                "mode": mode,
+                "state": result_state,
+                "session_id": session_id,
+                "message": response.message,
+            }
 
     def _load_user_map(self) -> dict:
         try:
@@ -963,6 +1227,7 @@ class RobotWebBridge(Node):
         """Validate, optionally snap, and plan one clicked destination."""
         with self.operation_lock:
             pose = self._require_ready()
+            self._require_autonomous_idle()
             with self.lock:
                 if self.navigation_state["state"] in {
                     "driving", "canceling"
@@ -1124,6 +1389,7 @@ class RobotWebBridge(Node):
         """Start one previously validated preview, after revalidation."""
         with self.operation_lock:
             pose = self._require_ready()
+            self._require_autonomous_idle()
             token = request.get("preview_token")
             record = self.previews.get(token)
             if (
@@ -1453,6 +1719,10 @@ class RobotRequestHandler(EditorRequestHandler):
             "/api/navigation/preview",
             "/api/navigation/start",
             "/api/navigation/cancel",
+            "/api/drive-mode/start",
+            "/api/drive-mode/pause",
+            "/api/drive-mode/resume",
+            "/api/drive-mode/stop",
         }:
             super().do_POST()
             return
@@ -1468,9 +1738,13 @@ class RobotRequestHandler(EditorRequestHandler):
             elif path == "/api/navigation/start":
                 response = self.bridge.start(request, session_id)
                 status = 202
-            else:
+            elif path == "/api/navigation/cancel":
                 response = self.bridge.cancel(request)
                 status = 200
+            else:
+                action = path.rsplit("/", 1)[-1]
+                response = self.bridge.drive_mode_command(action, request)
+                status = 202 if action in {"start", "resume"} else 200
         except RequestError as error:
             self._json_response(error.status, {"error": str(error)})
             return
