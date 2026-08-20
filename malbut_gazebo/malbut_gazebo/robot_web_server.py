@@ -61,6 +61,8 @@ from malbut_gazebo.user_map_builder import _free_mask, load_slam_map
 SEND_GOAL_TIMEOUT_S = 5.0
 PLAN_RESULT_TIMEOUT_S = 8.0
 SERVICE_TIMEOUT_S = 5.0
+# 라이프사이클 조회 응답을 이 시간까지 기다린 뒤 다시 묻는다.
+LIFECYCLE_QUERY_TIMEOUT_S = 5.0
 SCENARIO_SERVICE_TIMEOUT_S = 15.0
 CANCEL_TIMEOUT_S = 2.0
 PREVIEW_TTL_S = 30.0
@@ -494,6 +496,7 @@ class RobotWebBridge(Node):
             for name, service in lifecycle_names.items()
         }
         self.lifecycle_futures: dict[str, object] = {}
+        self.lifecycle_future_deadlines: dict[str, float] = {}
         self.lock = Lock()
         self.operation_lock = Lock()
         self.scenario_state = {
@@ -1120,13 +1123,22 @@ class RobotWebBridge(Node):
         for name, client in self.lifecycle_clients.items():
             pending = self.lifecycle_futures.get(name)
             if pending is not None and not pending.done():
-                continue
+                # 응답이 끝내 오지 않는 요청을 그대로 두면 이 노드의 상태가
+                # 영원히 unknown 으로 남아 웹 지도가 위치를 감춘다.
+                # 기한을 넘긴 요청은 취소하고 다음 주기에 다시 묻는다.
+                deadline = self.lifecycle_future_deadlines.get(name, 0.0)
+                if time.monotonic() < deadline:
+                    continue
+                client.remove_pending_request(pending)
             if not client.service_is_ready():
                 with self.lock:
                     self.lifecycle[name] = "unavailable"
                 continue
             future = client.call_async(GetState.Request())
             self.lifecycle_futures[name] = future
+            self.lifecycle_future_deadlines[name] = (
+                time.monotonic() + LIFECYCLE_QUERY_TIMEOUT_S
+            )
             future.add_done_callback(
                 lambda completed, node_name=name: self._lifecycle_result(
                     node_name, completed
