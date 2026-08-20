@@ -298,6 +298,30 @@ def write_filter_mask(
     return output_yaml, image_path
 
 
+def ensure_filter_mask(
+    map_yaml: Path,
+    output_yaml: Path,
+    map_id: str | None = None,
+) -> Path:
+    """
+    Guarantee one saved revision has a Nav2 filter mask.
+
+    The launch starts the keepout filter servers only when this file
+    already exists, and it decides once at start-up. Without a baseline
+    mask those servers never run, so the first Zone an owner draws is
+    saved and drawn on the map but never reaches the costmap, and the
+    robot drives straight through a restricted area.
+    """
+    output_yaml = Path(output_yaml).expanduser()
+    if output_yaml.is_file():
+        return output_yaml
+    slam_map = load_slam_map(Path(map_yaml).expanduser(), map_id)
+    written, _image = write_filter_mask(
+        output_yaml, build_filter_mask(slam_map, []), slam_map
+    )
+    return written
+
+
 def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build a Nav2 filter mask from Malbut semantic Zones."

@@ -12,6 +12,7 @@ from malbut_gazebo.user_map_editor import apply_zone_configuration
 from malbut_gazebo.user_map_builder import load_slam_map
 from malbut_gazebo.zone_filter_mask import (
     build_filter_mask,
+    ensure_filter_mask,
     load_zones,
     write_filter_mask,
 )
@@ -338,3 +339,46 @@ def test_filter_mask_rejects_non_soft_avoid_cost(tmp_path, avoid_cost):
 
     with pytest.raises(ValueError, match="between 1 and 99"):
         build_filter_mask(slam_map, [], avoid_cost)
+
+
+def test_saved_revision_always_gets_a_baseline_filter_mask(tmp_path):
+    """
+    The keepout servers only start when this mask already exists.
+
+    The launch checks once at start-up, so a revision without a mask
+    leaves the filter servers down and the first restricted Zone an
+    owner draws is saved and rendered but never reaches the costmap.
+    """
+    map_path = _write_map(tmp_path)
+    output = tmp_path / "revision" / "zone-filter.yaml"
+
+    written = ensure_filter_mask(map_path, output, "home")
+
+    assert written == output
+    assert output.is_file()
+    assert output.with_suffix(".pgm").is_file()
+    metadata = yaml.safe_load(output.read_text(encoding="utf-8"))
+    slam_map = load_slam_map(map_path, "home")
+    assert metadata["mode"] == "raw"
+    assert metadata["resolution"] == slam_map.transform.resolution
+    assert metadata["origin"] == [
+        slam_map.transform.origin_x, slam_map.transform.origin_y, 0.0
+    ]
+
+
+def test_baseline_filter_mask_never_overwrites_saved_zones(tmp_path):
+    """An owner's applied Zones must survive every later start-up."""
+    map_path = _write_map(tmp_path)
+    slam_map = load_slam_map(map_path, "home")
+    output = tmp_path / "revision" / "zone-filter.yaml"
+    applied = build_filter_mask(
+        slam_map, [_zone("restricted", "restricted", 2.0, 4.0)]
+    )
+    write_filter_mask(output, applied, slam_map)
+
+    ensure_filter_mask(map_path, output, "home")
+
+    kept = cv2.imread(
+        str(output.with_suffix(".pgm")), cv2.IMREAD_GRAYSCALE
+    )
+    assert np.array_equal(kept, applied)

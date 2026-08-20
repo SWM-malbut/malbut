@@ -22,6 +22,7 @@ from malbut_gazebo.pose_checkpoint import (
     load_pose_checkpoint,
 )
 from malbut_gazebo.world_catalog import resolve_world
+from malbut_gazebo.zone_filter_mask import ensure_filter_mask
 
 
 SIMULATION_ARGUMENTS = (
@@ -186,6 +187,17 @@ def _select_mode(context):
         Path(user_map), revision / "room-patrol.yaml", str(active["map_id"])
     )
     zone_mask = revision / "zone-filter.yaml"
+    # 마스크가 없으면 진입 금지 필터 서버가 아예 뜨지 않고, 이 판단은
+    # 기동 때 한 번뿐이다. 그러면 소유자가 처음 그린 진입 금지 구역이
+    # 저장·표시만 되고 코스트맵에는 닿지 않는다. 기준 마스크를 만들어
+    # 필터가 항상 살아 있게 한다.
+    try:
+        ensure_filter_mask(
+            Path(map_yaml), zone_mask, str(active["map_id"])
+        )
+    except (OSError, ValueError):
+        # 마스크를 만들지 못하면 기존과 같이 필터 없이 진행한다.
+        pass
     saved_pose = _saved_initial_pose(active)
     checkpoint = load_pose_checkpoint(store, active)
     checkpoint_pose = (
