@@ -48,28 +48,25 @@ class YoloOnnxDetector:
         self._ort_input_name = ""
         try:
             import onnxruntime as ort
-        except ImportError:
-            ort = None
-        if ort is not None:
-            try:
-                self._ort_session = ort.InferenceSession(
-                    str(path),
-                    providers=["CPUExecutionProvider"],
-                )
-                self._ort_input_name = self._ort_session.get_inputs()[0].name
-            except Exception as error:
-                raise RuntimeError(
-                    f"cannot load YOLO ONNX model with ONNX Runtime: {error}"
-                ) from error
-            self._net = None
-        else:
-            try:
-                self._net = cv2.dnn.readNetFromONNX(str(path))
-            except cv2.error as error:
-                raise RuntimeError(
-                    "cannot load YOLO ONNX model; install ONNX Runtime for "
-                    f"YOLO26 models: {error}"
-                ) from error
+        except ImportError as error:
+            raise RuntimeError(
+                "ONNX Runtime is required for YOLO26; run "
+                "prepare_yolo26_model.sh and rebuild homecam_detector"
+            ) from error
+        try:
+            self._ort_session = ort.InferenceSession(
+                str(path),
+                providers=["CPUExecutionProvider"],
+            )
+            self._ort_input_name = self._ort_session.get_inputs()[0].name
+        except Exception as error:
+            raise RuntimeError(
+                f"cannot load YOLO ONNX model with ONNX Runtime: {error}"
+            ) from error
+        # Ubuntu 22.04 ships OpenCV 4.5, whose DNN importer cannot parse the
+        # TopK node in the exported YOLO26 end-to-end graph.  Do not silently
+        # fall back to that incompatible runtime.
+        self._net = None
         self._confidence = confidence_threshold
         self._input_size = input_size
 

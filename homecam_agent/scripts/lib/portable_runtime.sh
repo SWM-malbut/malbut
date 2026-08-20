@@ -401,6 +401,40 @@ homecam_source_runtime() {
   done
 }
 
+homecam_validate_detector_runtime() {
+  local model_path="$1"
+  local pose_model_path="$2"
+  local result=""
+
+  if [[ -z "$model_path" && -z "$pose_model_path" ]]; then
+    return 0
+  fi
+  if ! result="$(python3 - "$model_path" "$pose_model_path" <<'PY'
+import sys
+
+from homecam_detector.pose import PersonPoseEstimator
+from homecam_detector.yolo import YoloOnnxDetector
+
+
+model_path, pose_model_path = sys.argv[1:]
+if model_path:
+    detector = YoloOnnxDetector(model_path)
+    if detector._ort_session is None:
+        raise RuntimeError("YOLO26 detection is not using ONNX Runtime")
+if pose_model_path:
+    estimator = PersonPoseEstimator(pose_model_path)
+    if estimator._session is None:
+        raise RuntimeError("YOLO26 pose is not using ONNX Runtime")
+print("YOLO26 ONNX Runtime preflight passed")
+PY
+)"; then
+    homecam_die \
+      "detector model preflight failed; rebuild homecam_detector with setup_portable_sim.sh" ||
+      return 1
+  fi
+  homecam_log "$result"
+}
+
 homecam_find_kvs_sdk_root() {
   local workspace="$1"
   local configured="${HOMECAM_KVS_SDK_ROOT:-}"

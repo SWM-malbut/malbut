@@ -18,10 +18,19 @@ from malbut_gazebo.robot_web_server import (
     NavigationError,
     REQUIRED_PATH_CLEARANCE_M,
     RobotRequestHandler,
+    _navigation_progress_ratio,
     _path_min_clearance,
     _path_max_cost,
     _point_in_geometry,
 )
+
+
+def test_navigation_progress_uses_start_route_and_is_monotonic():
+    """Live replans must not reset progress or claim arrival early."""
+    assert _navigation_progress_ratio(10.0, 9.9) == 0.01
+    assert _navigation_progress_ratio(10.0, 6.0, 0.01) == 0.4
+    assert _navigation_progress_ratio(10.0, 7.0, 0.4) == 0.4
+    assert _navigation_progress_ratio(10.0, 0.0, 0.4) == 0.99
 
 
 class FakeBridge:

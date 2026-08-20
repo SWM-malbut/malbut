@@ -1,5 +1,7 @@
 """Tests for detector post-processing that do not require a model file."""
 
+import sys
+
 import cv2
 import numpy as np
 import pytest
@@ -122,3 +124,14 @@ def test_detect_runs_yolo26_through_onnx_runtime_session() -> None:
     assert len(session.inputs) == 1
     assert session.inputs[0][0] is None
     assert session.inputs[0][1]["images"].shape == (1, 3, 640, 640)
+
+
+def test_yolo26_requires_onnx_runtime_instead_of_opencv_fallback(
+    tmp_path, monkeypatch
+) -> None:
+    model = tmp_path / "yolo26.onnx"
+    model.write_bytes(b"model placeholder")
+    monkeypatch.setitem(sys.modules, "onnxruntime", None)
+
+    with pytest.raises(RuntimeError, match="ONNX Runtime is required"):
+        YoloOnnxDetector(str(model))
