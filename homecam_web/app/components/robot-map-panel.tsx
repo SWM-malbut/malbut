@@ -286,7 +286,18 @@ export function RobotMapPanel({
             completedRoomEdit.current = null;
           }
           setSemanticRefresh((value) => value + 1);
-          setNotice("공간 설정을 저장하고 말벗에 반영했습니다.");
+          // 구역은 저장돼 지도에도 그려지지만, 주행 중인 Nav2 가 마스크를
+          // 다시 읽지 못하면 진입 금지가 실제로는 적용되지 않는다. 알리지
+          // 않으면 이미 막힌 줄 알고 그대로 두게 된다.
+          if (
+            command.operation === "zones_apply"
+            && isRecord(command.result)
+            && command.result.nav2_reloaded === false
+          ) {
+            setNotice("공간 설정을 저장했지만 주행에 아직 반영하지 못했습니다. 말벗을 다시 시작해 주세요.");
+          } else {
+            setNotice("공간 설정을 저장하고 말벗에 반영했습니다.");
+          }
         }
         if (command.operation === "room_split" || command.operation === "room_merge") {
           pendingRoomAction.current = null;
