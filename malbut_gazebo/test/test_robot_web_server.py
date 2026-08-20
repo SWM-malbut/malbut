@@ -110,6 +110,17 @@ def test_navigation_progress_uses_start_route_and_is_monotonic():
     assert _navigation_progress_ratio(10.0, 0.0, 0.4) == 0.99
 
 
+def test_navigation_progress_ignores_the_first_unknown_distance():
+    """
+    Nav2 sends distance_remaining 0 before it has computed one.
+
+    Reading that as arrival pinned the bar at 99% for the whole trip,
+    because progress may never move backwards afterwards.
+    """
+    assert _navigation_progress_ratio(13.198, 0.0, 0.0) == 0.0
+    assert _navigation_progress_ratio(13.198, 12.095, 0.0) == 0.084
+
+
 def test_destination_navigation_reports_one_common_drive_mode():
     """Direct destination travel must participate in common arbitration."""
     assert _drive_mode_from_navigation({

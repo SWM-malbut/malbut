@@ -291,6 +291,12 @@ def _navigation_progress_ratio(
     baseline = max(float(initial_path_length_m), 1e-6)
     remaining = max(0.0, float(distance_remaining_m))
     previous = max(0.0, min(0.99, float(previous_ratio)))
+    if remaining <= 0.0 and previous <= 0.0:
+        # Nav2 는 거리를 아직 못 구한 첫 피드백도 0 으로 보낸다. 아무 진행도
+        # 없는 상태의 0 을 도착으로 읽으면 단조 규칙에 걸려 출발하자마자
+        # 99% 로 고정되고 주행 내내 그대로 남는다. 실제 도착은 결과 콜백이
+        # 100% 로 따로 처리한다.
+        return 0.0
     derived = max(0.0, min(0.99, 1.0 - remaining / baseline))
     return round(max(previous, derived), 3)
 
