@@ -9036,3 +9036,13 @@ a:focus-visible {
 .homecam-dashboard-shell .robot-map-summary-grid > div > strong {
   white-space: pre-line;
 }
+
+/* 자율주행 카드 버튼은 같은 화면의 지도 다시 만들기 버튼과 같은 치수를 쓴다.
+   기본 액션 버튼 치수(56px)를 그대로 두면 옆 카드보다 눈에 띄게 커 보인다. */
+.homecam-dashboard-shell .robot-drive-mode-card .robot-map-actions button,
+.homecam-dashboard-shell .robot-drive-mode-card .robot-map-actions.is-inline button {
+  min-height: 48px;
+  border-radius: 14px;
+  font-size: 1rem;
+  font-weight: 700;
+}
