@@ -40,7 +40,10 @@ from malbut_gazebo.map_lifecycle import (
     render_map_png,
 )
 from malbut_gazebo.pose_checkpoint import VALIDATION_TOPIC
-from malbut_gazebo.runtime_control import write_runtime_request
+from malbut_gazebo.runtime_control import (
+    supervisor_available,
+    write_runtime_request,
+)
 
 
 TOKEN_PATTERN = re.compile(
@@ -522,8 +525,14 @@ class CloudRobotSync(Node):
         if operation == "start":
             status = self._local_status()
             if status.get("_runtime_mode") == "navigation":
-                if self.runtime_request_file is None:
-                    raise RuntimeError("runtime supervisor is unavailable")
+                # 주행 중에는 매핑 서버가 없으므로 감독자가 스택을 매핑
+                # 모드로 재기동해야 한다. 감독자가 없는데 수락하면 요청
+                # 파일만 남고 화면에는 전환한다고 표시되므로 여기서 막는다.
+                if not supervisor_available(self.runtime_request_file):
+                    raise RuntimeError(
+                        "지도 생성 모드로 전환할 수 없습니다. "
+                        "장치 런타임 감독자가 실행 중이 아닙니다."
+                    )
                 return {
                     "accepted": True,
                     "message": "지도 생성 모드로 전환합니다.",
