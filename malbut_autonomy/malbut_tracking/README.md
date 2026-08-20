@@ -1,38 +1,46 @@
 # Malbut Target Tracking
 
 `malbut_tracking` uses RGB-D detections to identify and follow one person.
-When the same person appears as a dynamic obstacle in Nav2's global costmap,
-the costmap track refines the camera estimate. Gazebo entity poses are never
-read, and the package never publishes velocity commands directly.
+A map-subtracted 2-D LiDAR tracker briefly supports the same person through
+camera occlusion. Gazebo entity poses are never read, and the package never
+publishes velocity commands directly.
 
 ## Runtime contract
 
 - Input detections: `/perception/person/detections_3d`
-- Global obstacle grid: `/global_costmap/costmap_raw`
+- Raw 2-D LiDAR: `/scan`
 - Saved static map: `/map`
+- Global navigation grid: `/global_costmap/costmap_raw` (goal safety only)
 - Follow action: `/follow_person` (`malbut_interfaces/action/FollowPerson`)
 - State: `/tracking/person/status`
 - Estimated map pose: `/tracking/person/estimated_target_pose`
-- RViz costmap track labels: `/tracking/person/costmap_tracks`
+- RViz LiDAR track labels: `/tracking/person/lidar_tracks`
 - Motion: Nav2 `ComputePathToPose`, `FollowPath`, `Spin`, and `SpeedLimit`
 
-The first visible person is acquired automatically. The tracker subtracts the
-saved static map from lethal global-costmap cells, groups sparse LiDAR returns,
-and maintains every dynamic obstacle with a planar constant-velocity Kalman
-filter. Mahalanobis gating and globally optimal Hungarian assignment preserve
-track identity between costmap updates. New tracks remain tentative until they
-receive repeated measurements, and confirmed tracks coast for a bounded time
-through short occlusion. Camera-to-costmap association considers only obstacle
-tracks measured in the latest grid. A small rebind margin prevents nearby
-clusters from swapping labels on noise, while a clearly closer RGB-D match
-removes a stale label and corrects the selected track.
+The first visible person is acquired automatically. On receipt of `/map`, the
+node builds one static-obstacle distance field in memory. Each `/scan` return
+is queued until its measurement-time `odom` transform exists; the latest
+`map -> odom` localization correction is composed through TF's fixed-frame
+lookup. This preserves exact fast ego motion without requiring AMCL to publish
+at the LiDAR rate. A physical scan with a nonzero `time_increment` is deskewed
+by interpolating the scan-start and scan-end poses. Each endpoint is then
+rejected by one cached lookup when it
+belongs to saved geometry and clustered with adjacent angular returns. A
+compact cluster requires multiple sufficiently dense rays, so one jittering
+wall return cannot become an object. This avoids searching Nav2's merged
+master costmap, where static walls, inflation, keepout zones, and current
+observations share the same cell.
 
-The tracking package only consumes the standard Nav2 raw costmap contract; it
-does not depend on Gazebo or on a particular costmap plugin. The simulation
-uses STVL to age moving RGB-D obstacles, while a physical robot may use its
-existing Nav2 obstacle stack as long as it publishes the configured raw
-costmap topic. Generic perception and tracking launches use wall time by
-default. The Gazebo demonstration explicitly enables simulation time.
+Map subtraction produces foreground *candidates*, not dynamic-object labels.
+Only clusters inside a bounded gate around the camera-confirmed person or its
+short prediction enter the planar constant-velocity tracker. Mahalanobis
+gating and globally optimal Hungarian assignment preserve that target between
+scan updates. New tracks remain tentative until repeated measurements confirm
+them, and confirmed tracks coast for a bounded time through short occlusion.
+The follower therefore does not misrepresent every scene residual as a moving
+object, and LiDAR can never select a person before RGB-D establishes identity.
+The global costmap remains an input only for selecting safe Nav2 goals and
+paths.
 
 RGB-D is the primary long-range position source, so a visible person remains
 followable even outside the LiDAR/costmap observation area. Camera-only motion
@@ -45,11 +53,11 @@ both translation and body rotation; there is no downstream camera-yaw mixer.
 A newer path directly preempts the
 running `FollowPath` goal without an explicit cancel/stop gap.
 A failed individual path is discarded so the next camera observation can try a
-better goal while the outer follow action remains active. A confirmed costmap
-match only refines a fresh near-range measurement; RGB-D remains the continuous
-source between costmap updates. Inflation cells, saved walls and furniture,
-localization noise beside static geometry, and wall-sized components are
-excluded. A zero numeric action setting uses the value from
+better goal while the outer follow action remains active. A confirmed LiDAR
+match supports only a short camera gap; RGB-D remains authoritative whenever
+it is visible. Saved walls and furniture, localization noise beside static
+geometry, and wall-sized components are excluded before association. A zero
+numeric action setting uses the value from
 `config/person_following.yaml`.
 
 ## Run on a robot
@@ -68,14 +76,15 @@ ros2 launch malbut_tracking person_following.launch.py
 
 Neither launch uses Gazebo time by default. The camera driver must publish
 aligned depth and CameraInfo with a valid optical TF, while the robot's Nav2
-stack must publish `/map`, TF, and `/global_costmap/costmap_raw`.
+stack must publish `/scan`, `/map`, TF, and
+`/global_costmap/costmap_raw`.
 
 ## Start automatic person following
 
 ```bash
 ros2 action send_goal \
   /follow_person malbut_interfaces/action/FollowPerson \
-  "{desired_distance_m: 1.2, minimum_distance_m: 0.65, maximum_linear_speed_mps: 0.30, target_lost_timeout: {sec: 8, nanosec: 0}}" \
+  "{desired_distance_m: 1.0, minimum_distance_m: 0.65, maximum_linear_speed_mps: 0.30, target_lost_timeout: {sec: 8, nanosec: 0}}" \
   --feedback
 ```
 
@@ -84,9 +93,10 @@ Before the first person is acquired, the action remains active and the robot
 waits stationary. Loss recovery starts only after an RGB-D target has actually
 been acquired. A confirmed LiDAR obstacle that was labeled by RGB-D continues
 the same target for a bounded three-second camera gap; LiDAR never selects a
-new person by itself. While camera observations are current, only the camera
-callback updates Nav2; LiDAR takes over after camera loss instead of
-alternating and canceling camera goals. If both sensors lose the target, the
+new person by itself. While camera observations are current, LiDAR only
+provides fast near-range ALIGN/RETREAT decisions from distance and radial
+velocity. RGB-D continues to own identity, visible map position, and forward
+tracking. If both sensors lose the target, the
 follower finishes
 the frozen waypoint (or accepts it within the recovery-only 0.08 m tolerance),
 turns toward the motion-predicted exit direction, and
@@ -110,8 +120,11 @@ observation immediately resumes `TRACKING` without a new Action goal.
 
 ## Algorithm basis
 
-- Nav2 Humble `Costmap2DPublisher`: the raw master costmap is a full grid and
-  contains costs, not object IDs or velocities.
+- Nav2 Humble `ObstacleLayer`: range observations are transformed into the
+  costmap frame internally; the merged master grid contains costs, not the
+  original measurements, identities, or velocities.
+- Static distance transform: the invariant map is preprocessed once so each
+  LiDAR endpoint needs only a cached lookup.
 - Bewley et al. SORT / Wojke et al. DeepSORT: constant-velocity Kalman tracks,
   tentative/confirmed lifecycle, Mahalanobis gating, and Hungarian assignment.
 - Rexin et al., *Fusion of Object Tracking and Dynamic Occupancy Grid Map*:

@@ -157,6 +157,7 @@ def _reidentification_matches(
     features: Sequence[AppearanceFeature],
     threshold: float,
 ) -> Tuple[List[Tuple[int, int]], List[int]]:
+    """Match unmatched detections to inactive appearance galleries."""
     candidates = []
     for retired_index, track in enumerate(retired):
         for detection_index in detection_indices:

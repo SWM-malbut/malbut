@@ -1,0 +1,24 @@
+scenario_collision_monitor:
+  ros__parameters:
+    use_sim_time: true
+    base_frame_id: base_footprint
+    odom_frame_id: odom
+    cmd_vel_in_topic: /scenario/safety_input
+    cmd_vel_out_topic: /cmd_vel
+    transform_tolerance: 0.2
+    source_timeout: 0.5
+    base_shift_correction: true
+    stop_pub_timeout: 0.2
+    polygons: [FootprintApproach]
+    FootprintApproach.type: polygon
+    FootprintApproach.action_type: approach
+    FootprintApproach.footprint_topic: /local_costmap/published_footprint
+    FootprintApproach.time_before_collision: 1.0
+    FootprintApproach.simulation_time_step: 0.05
+    FootprintApproach.max_points: 3
+    FootprintApproach.visualize: false
+    FootprintApproach.enabled: true
+    observation_sources: [scan]
+    scan.type: scan
+    scan.topic: /scan
+    scan.enabled: true

@@ -177,6 +177,20 @@ class GridMap:
             self.origin_y + sine * local_x + cosine * local_y,
         )
 
+    def occupancy_at(self, point: Point2D) -> int | None:
+        """Return the occupancy value at a world point, if it is in bounds."""
+        delta_x = point.x - self.origin_x
+        delta_y = point.y - self.origin_y
+        cosine = math.cos(self.origin_yaw)
+        sine = math.sin(self.origin_yaw)
+        local_x = cosine * delta_x + sine * delta_y
+        local_y = -sine * delta_x + cosine * delta_y
+        cell_x = math.floor(local_x / self.resolution)
+        cell_y = math.floor(local_y / self.resolution)
+        if not 0 <= cell_x < self.width or not 0 <= cell_y < self.height:
+            return None
+        return self.occupancy[cell_y * self.width + cell_x]
+
     def _build_clearance_field(self) -> array:
         distances = array(
             'H',

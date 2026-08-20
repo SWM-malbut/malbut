@@ -105,6 +105,22 @@ def test_rotated_map_origin_is_applied_to_coordinates_and_messages():
     )
 
 
+def test_occupancy_at_resolves_world_points_and_rejects_outside_points():
+    grid = GridMap(
+        width=2,
+        height=2,
+        resolution=0.5,
+        origin_x=-1.0,
+        origin_y=2.0,
+        origin_yaw=0.0,
+        occupancy=(0, 50, 75, 100),
+    )
+
+    assert grid.occupancy_at(Point2D(-0.75, 2.25)) == 0
+    assert grid.occupancy_at(Point2D(-0.25, 2.75)) == 100
+    assert grid.occupancy_at(Point2D(-1.01, 2.25)) is None
+
+
 def test_nearest_candidate_honors_the_snap_distance():
     """A target goal may not teleport across an occupied room."""
     grid = _room_grid()

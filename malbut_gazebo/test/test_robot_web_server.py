@@ -300,6 +300,12 @@ class FakeBridge:
             "localization": {"state": "ok", "tf_age_s": 0.02},
             "nav2": {"amcl": "active"},
             "navigation": {"state": "idle"},
+            "scenario": {
+                "mode": "idle",
+                "active": False,
+                "target_mode": None,
+                "actor_visible": False,
+            },
         }
 
     def preview(self, request: dict, session_id: str) -> dict:
@@ -336,6 +342,19 @@ class FakeBridge:
             "mode": request["mode"],
             "state": "active" if action == "start" else action,
             "session_id": request.get("session_id", "drive-1"),
+        }
+
+    def run_scenario_command(self, command: str) -> dict:
+        """Record one exclusive scenario command."""
+        self.calls.append(("scenario", command, None))
+        return {
+            "accepted": True,
+            "message": "scenario command accepted",
+            "scenario": {
+                "mode": "transitioning",
+                "active": False,
+                "target_mode": "patrolling",
+            },
         }
 
 
@@ -501,6 +520,7 @@ def test_navigation_endpoints_are_same_origin_and_session_bound(tmp_path):
         assert status == 200
         assert response_headers["Cache-Control"] == "no-store"
         assert value["pose"] == {"x": 1.0, "y": 2.0, "yaw": 0.5}
+        assert value["scenario"]["mode"] == "idle"
         preview = {
             "map_id": "home", "map_revision": "rev-current",
             "x": 1.0, "y": 2.0,
@@ -552,12 +572,38 @@ def test_navigation_endpoints_are_same_origin_and_session_bound(tmp_path):
         status, _, value = _request(
             address,
             "POST",
+            "/api/scenario/start-patrol",
+            "{}",
+            headers,
+        )
+        assert status == 200
+        assert value["scenario"] == {
+            "mode": "transitioning",
+            "active": False,
+            "target_mode": "patrolling",
+        }
+        assert bridge.calls[-1] == ("scenario", "start-patrol", None)
+
+        status, _, value = _request(
+            address,
+            "POST",
             "/api/drive-mode/stop",
             json.dumps({"mode": "patrol", "session_id": "drive-1"}),
             headers,
         )
         assert status == 200
         assert value["state"] == "stop"
+
+        status, _, value = _request(
+            address,
+            "POST",
+            "/api/scenario/toggle-person",
+            "{}",
+            headers,
+        )
+        assert status == 200
+        assert value["accepted"] is True
+        assert bridge.calls[-1] == ("scenario", "toggle-person", None)
 
         status, _, value = _request(
             address,

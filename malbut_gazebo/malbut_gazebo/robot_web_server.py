@@ -61,6 +61,7 @@ from malbut_gazebo.user_map_builder import _free_mask, load_slam_map
 SEND_GOAL_TIMEOUT_S = 5.0
 PLAN_RESULT_TIMEOUT_S = 8.0
 SERVICE_TIMEOUT_S = 5.0
+SCENARIO_SERVICE_TIMEOUT_S = 15.0
 CANCEL_TIMEOUT_S = 2.0
 PREVIEW_TTL_S = 30.0
 MAX_SSE_CLIENTS = 4
@@ -438,8 +439,14 @@ class RobotWebBridge(Node):
         self.compute_path = ActionClient(
             self, ComputePathToPose, "/compute_path_to_pose"
         )
+        if not self.has_parameter("navigation_action_name"):
+            self.declare_parameter(
+                "navigation_action_name", "/navigate_to_pose"
+            )
         self.navigate = ActionClient(
-            self, NavigateToPose, "/navigate_to_pose"
+            self,
+            NavigateToPose,
+            str(self.get_parameter("navigation_action_name").value),
         )
         self.follow_person = ActionClient(
             self, FollowPerson, "follow_person"
@@ -447,6 +454,21 @@ class RobotWebBridge(Node):
         self.get_costmap = self.create_client(
             GetCostmap, "/global_costmap/get_costmap"
         )
+        self.scenario_clients = {
+            "start-patrol": self.create_client(
+                Trigger, "/scenario/start_patrol"
+            ),
+            "start-person-tracking": self.create_client(
+                Trigger, "/scenario/start_person_tracking"
+            ),
+            "stop-person-tracking": self.create_client(
+                Trigger, "/scenario/stop_person_tracking"
+            ),
+            "toggle-person": self.create_client(
+                Trigger, "/scenario/toggle_person"
+            ),
+            "stop": self.create_client(Trigger, "/scenario/stop"),
+        }
         self.create_subscription(
             NavPath, "/plan", self._receive_navigation_path, 10
         )
@@ -464,6 +486,26 @@ class RobotWebBridge(Node):
         self.lifecycle_futures: dict[str, object] = {}
         self.lock = Lock()
         self.operation_lock = Lock()
+        self.scenario_state = {
+            "mode": "unavailable",
+            "active": False,
+            "target_mode": None,
+            "detail": "시나리오 상태를 기다리는 중입니다.",
+            "active_room": None,
+            "manual_control": False,
+            "actor_visible": False,
+        }
+        scenario_qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+        self.create_subscription(
+            String,
+            "/scenario/status",
+            self._receive_scenario_status,
+            scenario_qos,
+        )
         self.seq = 0
         self.pose: dict | None = None
         initial_validation = (
@@ -761,6 +803,28 @@ class RobotWebBridge(Node):
             return
         with self.lock:
             self.validation_state = value
+
+    def _receive_scenario_status(self, message: String) -> None:
+        """Mirror the authoritative scenario state into the web stream."""
+        try:
+            value = json.loads(message.data)
+            if not isinstance(value, dict) or not isinstance(
+                value.get("mode"), str
+            ):
+                raise ValueError("scenario status must contain a mode")
+        except (json.JSONDecodeError, ValueError) as error:
+            self.get_logger().warning(f"invalid scenario status: {error}")
+            return
+        with self.lock:
+            self.scenario_state = {
+                "mode": value["mode"],
+                "active": bool(value.get("active", False)),
+                "target_mode": value.get("target_mode"),
+                "detail": value.get("detail"),
+                "active_room": value.get("active_room"),
+                "manual_control": bool(value.get("manual_control", False)),
+                "actor_visible": bool(value.get("actor_visible", False)),
+            }
 
     def _refresh_pose(self) -> None:
         try:
@@ -1070,6 +1134,7 @@ class RobotWebBridge(Node):
                 "nav2": dict(self.lifecycle),
                 "navigation": navigation,
                 "drive_mode": drive_mode,
+                "scenario": dict(self.scenario_state),
             }
 
     def _wait(self, future: object, timeout: float, operation: str) -> object:
@@ -1939,6 +2004,7 @@ class RobotWebBridge(Node):
                 state = "failed"
                 message = self.auto_cancel_message
                 code = self.auto_cancel_code
+            self.path_revision += 1
             self.navigation_state.update({
                 "state": state,
                 "message": message,
@@ -1951,6 +2017,10 @@ class RobotWebBridge(Node):
                     0.0 if state == "succeeded"
                     else self.navigation_state.get("distance_remaining_m")
                 ),
+                "goal": None,
+                "path": None,
+                "path_revision": self.path_revision,
+                "path_source": None,
             })
             self.navigation_goal_handle = None
             self.navigation_watchdog = None
@@ -1988,6 +2058,38 @@ class RobotWebBridge(Node):
                 "state": "canceling",
                 "already_terminal": return_code == 3,
             }
+
+    def run_scenario_command(self, command: str) -> dict:
+        """Call one local-only scenario Trigger service."""
+        client = self.scenario_clients.get(command)
+        if client is None:
+            raise NavigationError(
+                404, "SCENARIO_COMMAND_UNKNOWN", "알 수 없는 시나리오 명령입니다."
+            )
+        if not client.service_is_ready():
+            raise NavigationError(
+                503,
+                "SCENARIO_NOT_READY",
+                "자율주행 시나리오가 아직 준비되지 않았습니다.",
+            )
+        response = self._wait(
+            client.call_async(Trigger.Request()),
+            SCENARIO_SERVICE_TIMEOUT_S,
+            "시나리오 명령",
+        )
+        if not response.success:
+            raise NavigationError(
+                409,
+                "SCENARIO_COMMAND_REJECTED",
+                response.message or "시나리오 명령이 거절됐습니다.",
+            )
+        with self.lock:
+            scenario = dict(self.scenario_state)
+        return {
+            "accepted": True,
+            "message": response.message or "시나리오 명령을 실행했습니다.",
+            "scenario": scenario,
+        }
 
 
 class RobotRequestHandler(EditorRequestHandler):
@@ -2061,7 +2163,7 @@ class RobotRequestHandler(EditorRequestHandler):
     def do_POST(self) -> None:
         """Handle bounded navigation commands or editor mutations."""
         path = urlparse(self.path).path
-        if path not in {
+        navigation_paths = {
             "/api/navigation/preview",
             "/api/navigation/start",
             "/api/navigation/cancel",
@@ -2069,7 +2171,15 @@ class RobotRequestHandler(EditorRequestHandler):
             "/api/drive-mode/pause",
             "/api/drive-mode/resume",
             "/api/drive-mode/stop",
-        }:
+        }
+        scenario_paths = {
+            "/api/scenario/start-patrol": "start-patrol",
+            "/api/scenario/start-person-tracking": "start-person-tracking",
+            "/api/scenario/stop-person-tracking": "stop-person-tracking",
+            "/api/scenario/toggle-person": "toggle-person",
+            "/api/scenario/stop": "stop",
+        }
+        if path not in navigation_paths and path not in scenario_paths:
             super().do_POST()
             return
         if self.bridge is None:
@@ -2078,7 +2188,17 @@ class RobotRequestHandler(EditorRequestHandler):
         try:
             request = self._read_json_request()
             session_id = self._session_id()
-            if path == "/api/navigation/preview":
+            if path in scenario_paths:
+                if request:
+                    raise RequestError(
+                        422,
+                        "scenario command body must be empty",
+                    )
+                response = self.bridge.run_scenario_command(
+                    scenario_paths[path]
+                )
+                status = 200
+            elif path == "/api/navigation/preview":
                 response = self.bridge.preview(request, session_id)
                 status = 200
             elif path == "/api/navigation/start":

@@ -1,4 +1,4 @@
-"""Tests for dynamic-grid extraction and statistically gated tracking."""
+"""Tests for map geometry and statistically gated obstacle tracking."""
 
 import math
 
@@ -6,8 +6,8 @@ import pytest
 
 from malbut_tracking.costmap_tracking import (
     CostmapGrid,
-    CostmapTargetTracker,
-    find_obstacle_clusters,
+    ObstacleCluster,
+    ObstacleTargetTracker,
 )
 from malbut_tracking.geometry import Point2D
 
@@ -32,31 +32,8 @@ def _grid(lethal_cells, other_costs=None, stamp=1.0):
     )
 
 
-def _static_grid(occupied_cells):
-    grid = _grid(set())
-    costs = list(grid.costs)
-    for cell_x, cell_y in occupied_cells:
-        costs[cell_y * grid.width + cell_x] = 100
-    return CostmapGrid(
-        frame_id=grid.frame_id,
-        stamp_seconds=grid.stamp_seconds,
-        resolution=grid.resolution,
-        width=grid.width,
-        height=grid.height,
-        origin=grid.origin,
-        origin_yaw=grid.origin_yaw,
-        costs=tuple(costs),
-    )
-
-
 def _tracker(**overrides):
     parameters = {
-        'cluster_radius_m': 0.10,
-        'obstacle_cost_threshold': 254,
-        'minimum_cluster_cells': 1,
-        'maximum_cluster_cells': 40,
-        'maximum_cluster_extent_m': 0.8,
-        'static_exclusion_radius_m': 0.0,
         'process_variance': 0.5,
         'measurement_variance': 0.01,
         'mahalanobis_gate': 9.21,
@@ -67,63 +44,19 @@ def _tracker(**overrides):
         'camera_rebind_margin_m': 0.15,
     }
     parameters.update(overrides)
-    return CostmapTargetTracker(**parameters)
+    return ObstacleTargetTracker(**parameters)
 
 
-def _step(tracker, cells, stamp, static_map=None):
-    return tracker.update(
-        _grid(cells, stamp=stamp),
-        static_map or _static_grid(set()),
-    )
-
-
-def test_dynamic_extraction_excludes_inflation_and_saved_geometry():
-    """Only lethal cells absent from the saved map become measurements."""
-    clusters = find_obstacle_clusters(
-        _grid({(5, 5), (5, 6), (6, 5), (6, 6), (20, 20)},
-              other_costs=[(7, 5, 253)]),
-        obstacle_cost_threshold=254,
-        cluster_radius_m=0.15,
-        minimum_cluster_cells=1,
-        maximum_cluster_cells=40,
-        maximum_cluster_extent_m=0.8,
-        static_map=_static_grid({(20, 20)}),
-        static_exclusion_radius_m=0.0,
-    )
-    assert len(clusters) == 1
-    assert clusters[0].cell_count == 4
-    assert clusters[0].position.x == pytest.approx(0.6)
-    assert clusters[0].position.y == pytest.approx(0.6)
-
-
-def test_dynamic_extraction_never_treats_unknown_space_as_obstacle():
-    """Nav2 value 255 is NO_INFORMATION, not a lethal measurement."""
-    clusters = find_obstacle_clusters(
-        _grid({(5, 5)}, other_costs=[(10, 10, 255), (11, 10, 255)]),
-        obstacle_cost_threshold=254,
-        cluster_radius_m=0.1,
-        minimum_cluster_cells=1,
-        maximum_cluster_cells=40,
-        maximum_cluster_extent_m=0.8,
-    )
-    assert len(clusters) == 1
-    assert clusters[0].cell_count == 1
-    assert clusters[0].position == Point2D(0.55, 0.55)
-
-
-def test_static_exclusion_margin_rejects_localization_edge_noise():
-    """A lethal cell beside a mapped wall is not a dynamic object."""
-    clusters = find_obstacle_clusters(
-        _grid({(11, 10)}),
-        obstacle_cost_threshold=254,
-        cluster_radius_m=0.1,
-        minimum_cluster_cells=1,
-        maximum_cluster_cells=40,
-        maximum_cluster_extent_m=0.8,
-        static_map=_static_grid({(10, 10)}),
-        static_exclusion_radius_m=0.11,
-    )
-    assert clusters == []
+def _step(tracker, cells, stamp):
+    measurements = [
+        ObstacleCluster(
+            Point2D(cell_x * 0.1 + 0.05, cell_y * 0.1 + 0.05),
+            1,
+            0.1,
+        )
+        for cell_x, cell_y in sorted(cells)
+    ]
+    return tracker.update(measurements, stamp)
 
 
 def test_camera_label_gate_rejects_nearby_unrelated_obstacle():
@@ -135,8 +68,8 @@ def test_camera_label_gate_rejects_nearby_unrelated_obstacle():
     assert tracker.target is None
 
 
-def test_person_label_requires_confirmed_repeated_costmap_track():
-    """A one-frame costmap artifact may be labeled but never drive motion."""
+def test_person_label_requires_confirmed_repeated_lidar_track():
+    """A one-frame LiDAR artifact may be labeled but never drive motion."""
     tracker = _tracker()
     _step(tracker, {(5, 5)}, 1.0)
     target = tracker.bind('person', Point2D(0.55, 0.55), 'detector-4')
@@ -198,8 +131,8 @@ def test_tracker_never_jumps_to_distant_unrelated_obstacle():
     assert tracker.target.track.misses == 1
 
 
-def test_camera_rebinds_label_when_person_enters_a_new_costmap_track():
-    """A far camera target may gain precise costmap tracking when nearer."""
+def test_camera_rebinds_label_when_person_enters_a_new_lidar_track():
+    """A far camera target may gain precise LiDAR tracking when nearer."""
     tracker = _tracker(confirmation_hits=1)
     _step(tracker, {(5, 5)}, 1.0)
     first = tracker.bind('person', Point2D(0.55, 0.55), 'detector-1')
@@ -253,18 +186,33 @@ def test_visible_camera_clears_inconsistent_unobserved_lidar_label():
     assert tracker.target is None
 
 
-def test_large_unmapped_wall_component_is_not_an_object_track():
-    """Long geometry absent from the saved map is still rejected by shape."""
-    wall = {(10, cell_y) for cell_y in range(4, 17)}
-    clusters = find_obstacle_clusters(
-        _grid(wall),
-        obstacle_cost_threshold=254,
-        cluster_radius_m=0.1,
-        minimum_cluster_cells=1,
-        maximum_cluster_cells=40,
-        maximum_cluster_extent_m=0.8,
+def test_camera_negative_evidence_can_bind_one_confirmed_moving_track():
+    """Only an observed confirmed track may receive a recovery label."""
+    tracker = _tracker(confirmation_hits=2)
+    _step(tracker, {(5, 5)}, 1.0)
+    _step(tracker, {(7, 5)}, 2.0)
+    moving_track = tracker.tracks[0]
+
+    rebound = tracker.bind_observed_track(
+        'person',
+        moving_track.track_id,
+        'detector-2',
     )
-    assert clusters == []
+
+    assert rebound is not None
+    assert rebound.track.track_id == moving_track.track_id
+
+
+def test_camera_negative_evidence_rejects_unconfirmed_track():
+    """One LiDAR artifact cannot inherit the semantic person label."""
+    tracker = _tracker(confirmation_hits=2)
+    _step(tracker, {(5, 5)}, 1.0)
+
+    assert tracker.bind_observed_track(
+        'person',
+        tracker.tracks[0].track_id,
+        'detector-2',
+    ) is None
 
 
 def test_rotated_costmap_coordinates_preserve_world_position():

@@ -9,7 +9,7 @@ ground-truth source.
 
 ```text
 /camera/color/image_raw ──> person detector ──> ByteTrack association
-                         └─> OSNet appearance ─> re-entry ID restoration
+                         └─> OSNet-AIN appearance ─> persistent ID restoration
 /camera/depth/image_raw ──> robust ROI median ──> 3D position
 /camera/color/camera_info ─> pinhole projection ─┘
 ```
@@ -22,11 +22,11 @@ Outputs:
 - `/perception/person/healthy`: whether the latest synchronized frame ran
 
 The ID is a session-local visual track ID. ByteTrack-style IoU and low-score
-association preserve it in view, while an OSNet appearance gallery can restore
-it after the person leaves and re-enters the image. It does not perform face
-recognition or assign a real-world identity. This package does not choose whom
-to follow and never publishes `/cmd_vel`; SWM25-83 can consume the standard 3D
-detections without changing perception.
+association preserve it in view, while an OSNet-AIN appearance gallery can
+restore it after the person leaves and re-enters the image. It does not perform
+face recognition or assign a real-world identity. This package does not choose
+whom to follow and never publishes `/cmd_vel`; SWM25-83 can consume the
+standard 3D detections without changing perception.
 
 ## Run
 
@@ -48,7 +48,7 @@ animated humanoid and recommended for the real robot.
 ## Models and inference runtime
 
 The repository does not commit model binaries. Prepare the tested FP32
-YOLO26n and OSNet x0.5 ONNX files in isolated cache environments, then install
+YOLO26n and OSNet-AIN x1.0 ONNX files in isolated cache environments, then install
 the inference runtime used by the ROS process:
 
 ```bash
@@ -75,11 +75,12 @@ ros2 launch malbut_perception person_detection.launch.py \
 ```
 
 The OSNet preparation script pins the official Torchreid source and the
-official OSNet x0.5 checkpoint trained on MSMT17, exports a 512-dimensional
-opset 12 descriptor, and validates it with the system OpenCV. It is 0.27
-GFLOPs at 256x128 and runs only for detected people. Compared with x0.25, the
-official MSMT17 same-domain result improves from 61.4/29.5 to 69.7/37.5
-Rank-1/mAP while staying small relative to YOLO26n's 5.4 GFLOPs.
+official OSNet-AIN x1.0 checkpoint trained on MSMT17, exports a 512-dimensional
+opset 12 descriptor, and validates it with the system OpenCV. It has 2.2M
+parameters and costs 0.98 GFLOPs at 256x128. The official cross-domain results
+for MSMT17 to Market1501 improve from OSNet x0.5's 64.3/34.9 to 70.1/43.3
+Rank-1/mAP. Re-ID runs only for detected people and is refreshed periodically,
+so this remains appropriate for TensorRT FP16 on Jetson Orin NX.
 
 `inference_backend:=auto dnn_target:=auto` is the default. When ONNX Runtime is
 installed, an Orin NX selects TensorRT FP16 first, CUDA second, and CPU only as

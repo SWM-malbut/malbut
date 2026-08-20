@@ -1,0 +1,17 @@
+roaming_manager:
+  ros__parameters:
+    use_sim_time: true
+    autostart: false
+    filter_mask_topic: /keepout_filter_mask
+    filter_restricted_threshold: 100
+
+    # Repeatable, coverage-oriented patrol behavior for the demonstration.
+    random_seed: 94
+    revisit_horizon_seconds: 300.0
+    recent_memory_size: 12
+    recent_goal_radius: 2.5
+    idleness_weight: 5.0
+    novelty_weight: 3.0
+    peripheral_probability: 0.30
+    dwell_min_seconds: 1.0
+    dwell_max_seconds: 2.5

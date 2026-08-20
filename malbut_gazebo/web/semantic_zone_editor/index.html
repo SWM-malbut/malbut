@@ -102,6 +102,19 @@
           </div>
         </section>
 
+        <section>
+          <div class="sidebar-divider"></div>
+          <span class="eyebrow">LOCAL SCENARIO TEST</span>
+          <div class="zone-file-actions">
+            <button id="startPatrol" class="button primary" data-scenario-command="start-patrol" aria-pressed="false" disabled>자율 순찰 시작</button>
+            <button id="startPersonTracking" class="button primary" data-scenario-command="start-person-tracking" aria-pressed="false" disabled>사람 추적 시작</button>
+            <button id="stopPersonTracking" class="button secondary" data-scenario-command="stop-person-tracking" disabled>사람 추적 중지</button>
+            <button id="toggleScenarioPerson" class="button secondary" data-scenario-command="toggle-person" aria-pressed="false" disabled>사람 모델 등장</button>
+            <button id="stopScenario" class="button danger" data-scenario-command="stop" disabled>전체 정지</button>
+          </div>
+          <p id="scenarioCommandStatus" class="help">시나리오 상태를 연결하고 있습니다.</p>
+        </section>
+
         <section class="import-section">
           <span class="eyebrow">ZONE FILE</span>
           <div class="zone-file-actions">
@@ -160,5 +173,6 @@
     </main>
 
   <script src="app.js?v=swm25-85-nav-4"></script>
+  <script src="scenario_controls.js?v=swm25-94-local-3"></script>
   </body>
 </html>

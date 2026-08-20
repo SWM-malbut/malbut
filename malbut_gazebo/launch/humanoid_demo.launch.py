@@ -68,7 +68,7 @@ def generate_launch_description():
         Path.home()
         / ".cache"
         / "malbut_perception"
-        / "osnet_x0_5_msmt17.onnx"
+        / "osnet_ain_x1_0_msmt17.onnx"
     )
     spawn_helper = (
         Path(get_package_prefix(GAZEBO_PACKAGE))

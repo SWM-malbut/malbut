@@ -94,8 +94,11 @@ def test_default_config_has_safe_loss_recovery_and_distance():
         )
     )['person_follower']['ros__parameters']
     assert raw['minimum_distance_m'] < raw['desired_distance_m']
+    assert raw['desired_distance_m'] == pytest.approx(1.0)
+    assert raw['distance_tolerance_m'] == pytest.approx(0.10)
+    assert raw['alignment_angle_tolerance_rad'] > 0.0
     assert raw['maximum_linear_speed_mps'] == 0.30
-    assert raw['retreat_maximum_travel_m'] > 0.0
+    assert 0.0 < raw['retreat_maximum_travel_m'] <= 0.15
     assert raw['approach_prediction_horizon_s'] > 0.0
     assert raw['approach_speed_threshold_mps'] > 0.0
     assert raw['retreat_goal_update_distance_m'] < raw[
@@ -104,14 +107,22 @@ def test_default_config_has_safe_loss_recovery_and_distance():
     assert raw['retreat_goal_update_period_s'] < raw[
         'goal_update_period_s'
     ]
+    assert raw['retreat_goal_update_period_s'] <= 0.20
     assert raw['temporary_lost_timeout_s'] < 1.0
     assert raw['lidar_continuation_max_distance_m'] > 0.0
+    assert raw['lidar_proximity_control_distance_m'] > raw[
+        'desired_distance_m'
+    ]
+    assert 0.0 < raw['lidar_proximity_camera_guard_s'] < 0.5
     assert raw['global_costmap_topic'] == '/global_costmap/costmap_raw'
     assert raw['static_map_topic'] == '/map'
-    assert raw['obstacle_cost_threshold'] == 254
+    assert raw['scan_topic'] == '/scan'
+    assert raw['odometry_frame'] == 'odom'
     assert raw['static_occupied_threshold'] == 65
     assert raw['static_exclusion_radius_m'] == pytest.approx(0.20)
-    assert raw['cluster_radius_m'] > 0.0
+    assert raw['cluster_gap_m'] > 0.0
+    assert raw['minimum_cluster_points'] >= 3
+    assert raw['minimum_cluster_density_points_per_m'] > 0.0
     assert raw['tracker_process_variance'] > 0.0
     assert raw['tracker_measurement_variance'] > 0.0
     assert raw['mahalanobis_gate'] == 9.21
@@ -121,6 +132,21 @@ def test_default_config_has_safe_loss_recovery_and_distance():
         'camera_label_gate_m'
     ]
     assert raw['camera_label_gate_m'] == pytest.approx(0.40)
+    assert raw['lidar_candidate_gate_m'] > raw['camera_label_gate_m']
+    assert 0.0 < raw['camera_lidar_fusion_freshness_s'] < raw[
+        'temporary_lost_timeout_s'
+    ]
+    assert 0.0 <= raw['camera_lidar_extent_padding_m'] < raw[
+        'camera_label_gate_m'
+    ]
+    assert raw['camera_jump_confirmation_hits'] >= 2
+    assert raw['camera_jump_base_gate_m'] > raw['camera_label_gate_m']
+    assert raw['lidar_reassociation_max_distance_m'] > raw[
+        'lidar_candidate_gate_m'
+    ]
+    assert raw['dynamic_rebind_minimum_speed_mps'] > 0.0
+    assert raw['camera_negative_evidence_frames'] >= 2
+    assert 0.0 < raw['camera_horizontal_fov_rad'] < 3.14159265
     assert raw['lidar_continuation_timeout_s'] <= raw[
         'maximum_coast_time_s'
     ]
@@ -154,11 +180,14 @@ def test_target_selection_uses_sensor_position_not_exact_detection_id():
         '    def _select_target_observation(', 1
     )[1].split('    def _target_in_global_frame(', 1)[0]
     assert 'lidar_continuation_max_distance_m' not in selection_source
-    assert '_costmap_tracker.predict_target' not in selection_source
+    assert '_obstacle_tracker.predict_target' not in selection_source
     assert 'Detection3DArray' in node_source
-    assert 'CostmapTargetTracker' in node_source
+    assert 'ObstacleTargetTracker' in node_source
     assert 'TargetMotionEstimator' in node_source
     assert '_on_global_costmap' in node_source
+    assert '_on_scan' in node_source
+    assert 'extract_foreground_clusters' in node_source
+    assert 'StaticDistanceField.build' in node_source
     assert 'Continue a camera-labeled target' in node_source
     assert 'labeled.track.position' in node_source
     assert '_accept_map_target' in node_source
@@ -167,6 +196,8 @@ def test_target_selection_uses_sensor_position_not_exact_detection_id():
     assert '_request_last_seen_recovery' in node_source
     assert 'recovery=True' in node_source
     assert '_accept_lidar_continuation' in node_source
+    assert '_accept_lidar_proximity' in node_source
+    assert "self._tracking_source = 'lidar_proximity'" in node_source
     assert 'self._last_seen_s = now_s' in node_source
     assert 'camera_age_s <= settings.temporary_lost_timeout_s' in node_source
     assert '_start_recovery_scan' in node_source
@@ -175,8 +206,34 @@ def test_target_selection_uses_sensor_position_not_exact_detection_id():
     assert 'coarse_maximum_travel_m' in node_source
     assert 'should_update_goal' in node_source
     assert 'self._nav2.follow_path(' in node_source
-    assert 'Exact detection-time TF unavailable' in node_source
+    assert 'def _align_with_target' in node_source
+    assert 'self._nav2.spin(turn_angle, allowance)' in node_source
+    assert 'using latest localization TF' not in node_source
+    assert 'spin_thread=True' in node_source
+    assert 'lookup_transform_full' in node_source
     assert 'model_pose' not in node_source
+
+
+def test_master_costmap_is_not_used_as_dynamic_object_measurement():
+    """Merged static, keepout, and inflation costs stay out of tracking."""
+    node_source = (
+        PACKAGE_ROOT
+        / 'malbut_tracking'
+        / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    costmap_callback = node_source.split(
+        '    def _on_global_costmap(', 1
+    )[1].split('    def _on_scan(', 1)[0]
+    scan_callback = node_source.split(
+        '    def _on_scan(', 1
+    )[1].split('    def _scan_transform(', 1)[0]
+
+    assert '_latest_global_costmap = grid' in costmap_callback
+    assert '_obstacle_tracker' not in costmap_callback
+    assert 'extract_foreground_clusters' not in costmap_callback
+    assert 'extract_foreground_clusters' in scan_callback
+    assert 'distance(cluster.position, gate_center)' in scan_callback
+    assert '_obstacle_tracker.update(clusters' in scan_callback
 
 
 def test_nav2_owns_path_geometry_and_body_rotation():

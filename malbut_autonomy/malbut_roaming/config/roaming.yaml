@@ -7,6 +7,9 @@ roaming_manager:
     map_frame: map
     base_frame: base_footprint
     map_topic: map
+    # Optional Nav2 keepout mask. Empty leaves ordinary deployments unchanged.
+    filter_mask_topic: ""
+    filter_restricted_threshold: 100
     planner_action_name: compute_path_to_pose
     navigation_action_name: navigate_to_pose
     navigator_lifecycle_node: bt_navigator

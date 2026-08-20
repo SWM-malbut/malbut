@@ -72,6 +72,7 @@ class RoamingManager(Node):
         self._enabled = False
         self._detail = 'roaming manager ready'
         self._grid = None
+        self._filter_grid = None
         self._candidates: tuple[Candidate, ...] = ()
         self._current_pose = None
         self._current_candidate = None
@@ -108,6 +109,14 @@ class RoamingManager(Node):
             self._map_callback,
             transient_qos,
         )
+        filter_mask_topic = self._string_parameter('filter_mask_topic')
+        if filter_mask_topic:
+            self.create_subscription(
+                OccupancyGrid,
+                filter_mask_topic,
+                self._filter_mask_callback,
+                transient_qos,
+            )
         self.create_subscription(
             PoseStamped,
             self._string_parameter('interest_target_topic'),
@@ -162,6 +171,8 @@ class RoamingManager(Node):
             'map_frame': 'map',
             'base_frame': 'base_footprint',
             'map_topic': 'map',
+            'filter_mask_topic': '',
+            'filter_restricted_threshold': 100,
             'interest_target_topic': 'roaming/interest_target',
             'external_goal_topic': 'roaming/goal',
             'planner_action_name': 'compute_path_to_pose',
@@ -228,6 +239,12 @@ class RoamingManager(Node):
                 raise ValueError(f'{name} must be positive')
         if self._float_parameter('minimum_clearance') < 0.0:
             raise ValueError('minimum_clearance must be non-negative')
+        if not 1 <= self._integer_parameter(
+            'filter_restricted_threshold'
+        ) <= 100:
+            raise ValueError(
+                'filter_restricted_threshold must be in [1, 100]'
+            )
         if (
             self._float_parameter('peripheral_clearance')
             < self._float_parameter('minimum_clearance')
@@ -313,11 +330,60 @@ class RoamingManager(Node):
             self.get_logger().error(f'invalid occupancy map: {error}')
             return
         self._grid = grid
-        self._candidates = candidates
+        self._candidates = self._apply_filter_mask(candidates)
         self._last_map_refresh_seconds = now
-        self._detail = f'loaded {len(candidates)} safe roaming candidates'
+        self._detail = (
+            f'loaded {len(self._candidates)} safe roaming candidates'
+        )
         self.get_logger().info(self._detail)
         self._publish_status()
+
+    def _filter_mask_callback(self, message: OccupancyGrid) -> None:
+        """Exclude hard keepout cells from destination sampling."""
+        if message.header.frame_id and message.header.frame_id != self._map_frame:
+            self.get_logger().error(
+                f'ignoring filter mask in {message.header.frame_id!r}; '
+                f'expected {self._map_frame!r}'
+            )
+            return
+        try:
+            self._filter_grid = GridMap.from_message(message)
+        except ValueError as error:
+            self.get_logger().error(f'invalid filter mask: {error}')
+            return
+        if self._grid is None:
+            return
+        candidates = self._grid.candidates(
+            spacing_m=self._float_parameter('candidate_spacing'),
+            minimum_clearance_m=self._float_parameter(
+                'minimum_clearance'
+            ),
+            maximum_free_occupancy=self._integer_parameter(
+                'maximum_free_occupancy'
+            ),
+        )
+        self._candidates = self._apply_filter_mask(candidates)
+        self._detail = (
+            f'loaded {len(self._candidates)} keepout-aware candidates'
+        )
+        self.get_logger().info(self._detail)
+        self._publish_status()
+
+    def _apply_filter_mask(
+        self,
+        candidates: tuple[Candidate, ...],
+    ) -> tuple[Candidate, ...]:
+        if self._filter_grid is None:
+            return candidates
+        threshold = self._integer_parameter(
+            'filter_restricted_threshold'
+        )
+        accepted = []
+        for candidate in candidates:
+            value = self._filter_grid.occupancy_at(candidate.point)
+            if value is not None and 0 <= value < threshold:
+                accepted.append(candidate)
+        return tuple(accepted)
 
     def _target_callback(self, message: PoseStamped) -> None:
         if message.header.frame_id != self._map_frame:
