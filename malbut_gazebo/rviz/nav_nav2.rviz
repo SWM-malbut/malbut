@@ -302,7 +302,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /tracking/person/costmap_tracks
+        Value: /tracking/person/lidar_tracks
       Value: true
   Enabled: true
   Global Options:

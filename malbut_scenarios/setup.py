@@ -54,6 +54,8 @@ setup(
         'console_scripts': [
             'autonomous_driving_manager = '
             'malbut_scenarios.autonomous_driving_manager:main',
+            'wait_for_simulation = '
+            'malbut_scenarios.wait_for_simulation:main',
         ],
     },
 )

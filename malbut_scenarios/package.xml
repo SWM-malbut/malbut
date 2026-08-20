@@ -10,8 +10,10 @@
   <depend>action_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>malbut_interfaces</depend>
+  <depend>nav_msgs</depend>
   <depend>nav2_msgs</depend>
   <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
 
@@ -19,6 +21,7 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>malbut_gazebo</exec_depend>
+  <exec_depend>malbut_gazebo_plugins</exec_depend>
   <exec_depend>malbut_perception</exec_depend>
   <exec_depend>malbut_roaming</exec_depend>
   <exec_depend>malbut_tracking</exec_depend>
@@ -26,6 +29,7 @@
   <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>rqt_image_view</exec_depend>
+  <exec_depend>rviz2</exec_depend>
 
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

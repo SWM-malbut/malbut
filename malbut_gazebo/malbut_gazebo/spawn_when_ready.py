@@ -4,14 +4,75 @@
 from __future__ import annotations
 
 import argparse
+import json
+import math
+import re
 import subprocess
 import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from xml.etree import ElementTree
 
 
 Probe = Callable[[], tuple[bool, str]]
+
+
+def _simulation_time(world: str, deadline: float) -> float:
+    """Read the current time of one Gazebo world in seconds."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("spawn deadline expired before reading sim time")
+    try:
+        result = subprocess.run(
+            [
+                "ign",
+                "topic",
+                "-e",
+                "-t",
+                f"/world/{world}/stats",
+                "-n",
+                "1",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=min(remaining, 10.0),
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(
+            f"cannot read Gazebo simulation time: {error}"
+        ) from error
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"cannot read Gazebo simulation time: {detail}")
+    match = re.search(
+        r"sim_time\s*\{\s*sec:\s*(-?\d+)\s+nsec:\s*(\d+)",
+        result.stdout,
+    )
+    if match is None:
+        raise RuntimeError("Gazebo stats did not contain sim_time")
+    return int(match.group(1)) + int(match.group(2)) / 1_000_000_000
+
+
+def _actor_sdf_starting_now(
+    path: str, world: str, deadline: float
+) -> str:
+    """Return actor SDF whose script begins just after entity creation."""
+    tree = ElementTree.parse(path)
+    root = tree.getroot()
+    actor = root.find("actor") if root.tag != "actor" else root
+    if actor is None:
+        raise ValueError("script alignment requires an SDF actor")
+    delay_start = actor.find("script/delay_start")
+    if delay_start is None:
+        raise ValueError("actor script is missing delay_start")
+
+    # Fortress evaluates scripted actor trajectories against absolute world
+    # simulation time, including actors inserted at runtime. A short lead gives
+    # the create service time to insert the entity while preserving waypoint 0.
+    delay_start.text = f"{_simulation_time(world, deadline) + 1.0:.9f}"
+    return ElementTree.tostring(root, encoding="unicode")
 
 
 def _wait_for(probe: Probe, description: str, deadline: float) -> None:
@@ -51,16 +112,26 @@ def _parse_arguments() -> argparse.Namespace:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--topic")
     source.add_argument("--file")
-    parser.add_argument("--x", required=True)
-    parser.add_argument("--y", required=True)
-    parser.add_argument("--z", required=True)
-    parser.add_argument("--yaw", required=True)
+    parser.add_argument(
+        "--align-actor-script",
+        action="store_true",
+        help=(
+            "start an SDF actor script at insertion instead of absolute "
+            "world time"
+        ),
+    )
+    parser.add_argument("--x", required=True, type=float)
+    parser.add_argument("--y", required=True, type=float)
+    parser.add_argument("--z", required=True, type=float)
+    parser.add_argument("--yaw", required=True, type=float)
     parser.add_argument("--timeout", type=float, default=60.0)
     arguments = parser.parse_args()
     if arguments.timeout <= 0:
         parser.error("--timeout must be positive")
     if arguments.file and not Path(arguments.file).is_file():
         parser.error(f"--file does not exist: {arguments.file}")
+    if arguments.align_actor_script and not arguments.file:
+        parser.error("--align-actor-script requires --file")
     return arguments
 
 
@@ -75,22 +146,6 @@ def main() -> int:
             f"Gazebo service {create_service}",
             deadline,
         )
-        if arguments.topic:
-            _wait_for(
-                lambda: _listed(
-                    [
-                        "ros2",
-                        "topic",
-                        "list",
-                        "--no-daemon",
-                        "--spin-time",
-                        "1",
-                    ],
-                    arguments.topic,
-                ),
-                f"ROS topic {arguments.topic}",
-                deadline,
-            )
     except TimeoutError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
@@ -98,38 +153,76 @@ def main() -> int:
     source_kind = "topic" if arguments.topic else "file"
     source_value = arguments.topic or arguments.file
     print(
-        f"Gazebo and {source_kind} {source_value} are ready; spawning "
-        f"{arguments.entity_name!r}."
+        f"Gazebo is ready; spawning {arguments.entity_name!r} from "
+        f"{source_kind} {source_value}."
     )
-    source_arguments = [
-        "-topic" if arguments.topic else "-file",
-        source_value,
-    ]
-    command = [
-        "ros2",
-        "run",
-        "ros_gz_sim",
-        "create",
-        "-world",
-        arguments.world,
-        "-name",
-        arguments.entity_name,
-        *source_arguments,
-        "-allow_renaming",
-        "false",
-        "-x",
-        arguments.x,
-        "-y",
-        arguments.y,
-        "-z",
-        arguments.z,
-        "-Y",
-        arguments.yaw,
-    ]
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         print("ERROR: spawn deadline expired before create.", file=sys.stderr)
         return 1
+    if arguments.file:
+        half_yaw = arguments.yaw / 2.0
+        try:
+            actor_sdf = (
+                _actor_sdf_starting_now(
+                    arguments.file, arguments.world, deadline
+                )
+                if arguments.align_actor_script
+                else None
+            )
+        except (OSError, RuntimeError, TimeoutError, ValueError) as error:
+            print(f"ERROR: {error}", file=sys.stderr)
+            return 1
+        source_field = (
+            f"sdf: {json.dumps(actor_sdf)}, "
+            if actor_sdf is not None
+            else f"sdf_filename: {json.dumps(arguments.file)}, "
+        )
+        request = (
+            source_field + f"name: {json.dumps(arguments.entity_name)}, "
+            "allow_renaming: false, "
+            "pose: {position: "
+            f"{{x: {arguments.x}, y: {arguments.y}, z: {arguments.z}}}, "
+            "orientation: "
+            f"{{z: {math.sin(half_yaw)}, w: {math.cos(half_yaw)}}}}}"
+        )
+        command = [
+            "ign",
+            "service",
+            "-s",
+            create_service,
+            "--reqtype",
+            "ignition.msgs.EntityFactory",
+            "--reptype",
+            "ignition.msgs.Boolean",
+            "--timeout",
+            str(math.ceil(remaining * 1000.0)),
+            "--req",
+            request,
+        ]
+    else:
+        command = [
+            "ros2",
+            "run",
+            "ros_gz_sim",
+            "create",
+            "-world",
+            arguments.world,
+            "-name",
+            arguments.entity_name,
+            "-topic",
+            arguments.topic,
+            "-allow_renaming",
+            "false",
+            "-x",
+            str(arguments.x),
+            "-y",
+            str(arguments.y),
+            "-z",
+            str(arguments.z),
+            "-Y",
+            str(arguments.yaw),
+        ]
     try:
         result = subprocess.run(
             command,
@@ -140,22 +233,25 @@ def main() -> int:
         )
     except subprocess.TimeoutExpired as error:
         print(
-            f"ERROR: ros_gz_sim create timed out after {error.timeout:.1f}s.",
+            f"ERROR: entity creation timed out after {error.timeout:.1f}s.",
             file=sys.stderr,
         )
         return 1
     except OSError as error:
-        print(f"ERROR: cannot start ros_gz_sim create: {error}", file=sys.stderr)
+        print(f"ERROR: cannot start entity creation: {error}", file=sys.stderr)
         return 1
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
-    if (
-        result.returncode != 0
-        or "Requested creation of entity."
-        not in result.stdout + result.stderr
+    confirmation = (
+        "data: true"
+        if arguments.file
+        else "Requested creation of entity."
+    )
+    if result.returncode != 0 or confirmation not in (
+        result.stdout + result.stderr
     ):
         print(
-            "ERROR: ros_gz_sim create did not confirm entity creation.",
+            "ERROR: Gazebo did not confirm entity creation.",
             file=sys.stderr,
         )
         return 1

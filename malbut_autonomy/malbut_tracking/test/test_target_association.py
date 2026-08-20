@@ -2,6 +2,7 @@
 
 from malbut_tracking.geometry import Point2D
 from malbut_tracking.target_association import (
+    CameraObservationGate,
     TargetCandidate,
     select_target_candidate,
 )
@@ -66,3 +67,33 @@ def test_id_change_still_selects_the_nearest_visible_camera_person():
     )
     assert selected is not None
     assert selected.observed_track_id == 'person-8'
+
+
+def test_camera_jump_requires_two_consistent_observations():
+    """One distant false detection cannot replace a continuous target."""
+    gate = CameraObservationGate(2, 0.50)
+
+    assert not gate.accept(
+        Point2D(5.0, 0.0),
+        Point2D(1.0, 0.0),
+        continuity_radius_m=1.0,
+        lidar_supported=False,
+    )
+    assert gate.accept(
+        Point2D(5.1, 0.0),
+        Point2D(1.0, 0.0),
+        continuity_radius_m=1.0,
+        lidar_supported=False,
+    )
+
+
+def test_lidar_support_accepts_a_discontinuous_camera_reacquisition():
+    """A separated person cluster lets RGB-D reacquire without extra delay."""
+    gate = CameraObservationGate(2, 0.50)
+
+    assert gate.accept(
+        Point2D(3.0, 0.0),
+        Point2D(1.0, 0.0),
+        continuity_radius_m=1.0,
+        lidar_supported=True,
+    )

@@ -1,0 +1,685 @@
+<?xml version="1.0"?>
+<sdf version="1.8">
+  <actor name="scenario_humanoid">
+    <skin>
+      <filename>model://humanoid_actor/meshes/walk.dae</filename>
+      <scale>1.0</scale>
+    </skin>
+
+    <animation name="walking">
+      <filename>model://humanoid_actor/meshes/walk.dae</filename>
+      <scale>1.0</scale>
+      <interpolate_x>true</interpolate_x>
+    </animation>
+
+    <animation name="stand">
+      <filename>model://humanoid_actor/meshes/stand.dae</filename>
+      <scale>1.0</scale>
+      <interpolate_x>true</interpolate_x>
+    </animation>
+
+    <!--
+      SWM25-94 demonstration route designed specifically for the scenario.
+      The actor starts outside Door_01 at map (6.0, -6.2), then follows the
+      entrance, kitchen aisle, dining aisle, gym threshold, central living
+      room, bedroom threshold, south living room, and entrance in that order.
+      It does not enter the narrow bedside or the inner gym area. Translation
+      is 0.45 m/s and turns use 1.20 rad/s.
+
+      The walking animation name matches the trajectory type and interpolate_x
+      synchronizes the skeleton with translation, as required by the upstream
+      Gazebo actor. Every translation and in-place turn is kept in a separate
+      trajectory so interpolation cannot blend a turn into diagonal walking.
+      Translation yaw is atan2(dy, dx) and remains fixed for the whole segment.
+      Moving segments use the upstream walk animation with interpolate_x, while
+      in-place turns use the upstream stand animation. Tension 1.0 prevents
+      spline overshoot at walls and doors. The final pose
+      exactly matches the first pose for a continuous loop.
+    -->
+    <script>
+      <loop>true</loop>
+      <delay_start>0.0</delay_start>
+      <auto_start>true</auto_start>
+      <trajectory id="0" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>0.000 0.000 1.000 0.000 0.000 1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>3.111</time>
+          <pose>0.000 1.400 1.000 0.000 0.000 1.570796</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="1" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>0.000 1.400 1.000 0.000 0.000 1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.546</time>
+          <pose>0.000 1.400 1.000 0.000 0.000 0.915101</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="2" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>0.000 1.400 1.000 0.000 0.000 0.915101</pose>
+        </waypoint>
+        <waypoint>
+          <time>3.645</time>
+          <pose>1.000 2.700 1.000 0.000 0.000 0.915101</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="3" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.000 2.700 1.000 0.000 0.000 0.915101</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.507</time>
+          <pose>1.000 2.700 1.000 0.000 0.000 1.523956</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="4" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.000 2.700 1.000 0.000 0.000 1.523956</pose>
+        </waypoint>
+        <waypoint>
+          <time>2.848</time>
+          <pose>1.060 3.980 1.000 0.000 0.000 1.523956</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="5" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.060 3.980 1.000 0.000 0.000 1.523956</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.350</time>
+          <pose>1.060 3.980 1.000 0.000 0.000 1.570796</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="6" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.060 3.980 1.000 0.000 0.000 1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>2.778</time>
+          <pose>1.060 5.230 1.000 0.000 0.000 1.570796</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="7" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.060 5.230 1.000 0.000 0.000 1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.654</time>
+          <pose>1.060 5.230 1.000 0.000 0.000 0.785398</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="8" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.060 5.230 1.000 0.000 0.000 0.785398</pose>
+        </waypoint>
+        <waypoint>
+          <time>1.414</time>
+          <pose>1.510 5.680 1.000 0.000 0.000 0.785398</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="9" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.510 5.680 1.000 0.000 0.000 0.785398</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.386</time>
+          <pose>1.510 5.680 1.000 0.000 0.000 1.249046</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="10" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.510 5.680 1.000 0.000 0.000 1.249046</pose>
+        </waypoint>
+        <waypoint>
+          <time>3.514</time>
+          <pose>2.010 7.180 1.000 0.000 0.000 1.249046</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="11" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>2.010 7.180 1.000 0.000 0.000 1.249046</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.606</time>
+          <pose>2.010 7.180 1.000 0.000 0.000 1.975688</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="12" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>2.010 7.180 1.000 0.000 0.000 1.975688</pose>
+        </waypoint>
+        <waypoint>
+          <time>2.539</time>
+          <pose>1.560 8.230 1.000 0.000 0.000 1.975688</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="13" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.560 8.230 1.000 0.000 0.000 1.975688</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.350</time>
+          <pose>1.560 8.230 1.000 0.000 0.000 2.356194</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="14" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.560 8.230 1.000 0.000 0.000 2.356194</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.471</time>
+          <pose>1.410 8.380 1.000 0.000 0.000 2.356194</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="15" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.410 8.380 1.000 0.000 0.000 2.356194</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.490</time>
+          <pose>1.410 8.380 1.000 0.000 0.000 2.944197</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="16" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.410 8.380 1.000 0.000 0.000 2.944197</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.567</time>
+          <pose>1.160 8.430 1.000 0.000 0.000 2.944197</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="17" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.160 8.430 1.000 0.000 0.000 2.944197</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.350</time>
+          <pose>1.160 8.430 1.000 0.000 0.000 3.141593</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="18" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.160 8.430 1.000 0.000 0.000 3.141593</pose>
+        </waypoint>
+        <waypoint>
+          <time>3.222</time>
+          <pose>-0.290 8.430 1.000 0.000 0.000 3.141593</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="19" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-0.290 8.430 1.000 0.000 0.000 3.141593</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.527</time>
+          <pose>-0.290 8.430 1.000 0.000 0.000 -2.508844</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="20" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-0.290 8.430 1.000 0.000 0.000 -2.508844</pose>
+        </waypoint>
+        <waypoint>
+          <time>2.067</time>
+          <pose>-1.040 7.880 1.000 0.000 0.000 -2.508844</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="21" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-1.040 7.880 1.000 0.000 0.000 -2.508844</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.527</time>
+          <pose>-1.040 7.880 1.000 0.000 0.000 3.141593</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="22" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-1.040 7.880 1.000 0.000 0.000 3.141593</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.889</time>
+          <pose>-1.440 7.880 1.000 0.000 0.000 3.141593</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="23" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-1.440 7.880 1.000 0.000 0.000 3.141593</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.350</time>
+          <pose>-1.440 7.880 1.000 0.000 0.000 -2.963996</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="24" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-1.440 7.880 1.000 0.000 0.000 -2.963996</pose>
+        </waypoint>
+        <waypoint>
+          <time>3.522</time>
+          <pose>-3.000 7.600 1.000 0.000 0.000 -2.963996</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="25" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-3.000 7.600 1.000 0.000 0.000 -2.963996</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.863</time>
+          <pose>-3.000 7.600 1.000 0.000 0.000 2.283407</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="26" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-3.000 7.600 1.000 0.000 0.000 2.283407</pose>
+        </waypoint>
+        <waypoint>
+          <time>3.025</time>
+          <pose>-3.890 8.630 1.000 0.000 0.000 2.283407</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="27" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-3.890 8.630 1.000 0.000 0.000 2.283407</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.350</time>
+          <pose>-3.890 8.630 1.000 0.000 0.000 2.356194</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="28" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-3.890 8.630 1.000 0.000 0.000 2.356194</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.471</time>
+          <pose>-4.040 8.780 1.000 0.000 0.000 2.356194</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="29" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-4.040 8.780 1.000 0.000 0.000 2.356194</pose>
+        </waypoint>
+        <waypoint>
+          <time>2.618</time>
+          <pose>-4.040 8.780 1.000 0.000 0.000 -0.785398</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="30" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-4.040 8.780 1.000 0.000 0.000 -0.785398</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.471</time>
+          <pose>-3.890 8.630 1.000 0.000 0.000 -0.785398</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="31" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-3.890 8.630 1.000 0.000 0.000 -0.785398</pose>
+        </waypoint>
+        <waypoint>
+          <time>1.382</time>
+          <pose>-3.890 8.630 1.000 0.000 0.000 -2.444202</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="32" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-3.890 8.630 1.000 0.000 0.000 -2.444202</pose>
+        </waypoint>
+        <waypoint>
+          <time>3.218</time>
+          <pose>-5.000 7.700 1.000 0.000 0.000 -2.444202</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="33" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-5.000 7.700 1.000 0.000 0.000 -2.444202</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.350</time>
+          <pose>-5.000 7.700 1.000 0.000 0.000 -2.761086</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="34" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-5.000 7.700 1.000 0.000 0.000 -2.761086</pose>
+        </waypoint>
+        <waypoint>
+          <time>4.787</time>
+          <pose>-7.000 6.900 1.000 0.000 0.000 -2.761086</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="35" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-7.000 6.900 1.000 0.000 0.000 -2.761086</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.350</time>
+          <pose>-7.000 6.900 1.000 0.000 0.000 -2.826835</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="36" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-7.000 6.900 1.000 0.000 0.000 -2.826835</pose>
+        </waypoint>
+        <waypoint>
+          <time>3.015</time>
+          <pose>-8.290 6.480 1.000 0.000 0.000 -2.826835</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="37" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-8.290 6.480 1.000 0.000 0.000 -2.826835</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.350</time>
+          <pose>-8.290 6.480 1.000 0.000 0.000 3.050013</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="38" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-8.290 6.480 1.000 0.000 0.000 3.050013</pose>
+        </waypoint>
+        <waypoint>
+          <time>10.935</time>
+          <pose>-13.190 6.930 1.000 0.000 0.000 3.050013</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="39" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-13.190 6.930 1.000 0.000 0.000 3.050013</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.350</time>
+          <pose>-13.190 6.930 1.000 0.000 0.000 2.819842</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="40" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-13.190 6.930 1.000 0.000 0.000 2.819842</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.351</time>
+          <pose>-13.340 6.980 1.000 0.000 0.000 2.819842</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="41" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-13.340 6.980 1.000 0.000 0.000 2.819842</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.386</time>
+          <pose>-13.340 6.980 1.000 0.000 0.000 2.356194</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="42" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-13.340 6.980 1.000 0.000 0.000 2.356194</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.471</time>
+          <pose>-13.490 7.130 1.000 0.000 0.000 2.356194</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="43" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-13.490 7.130 1.000 0.000 0.000 2.356194</pose>
+        </waypoint>
+        <waypoint>
+          <time>2.618</time>
+          <pose>-13.490 7.130 1.000 0.000 0.000 -0.785398</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="44" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-13.490 7.130 1.000 0.000 0.000 -0.785398</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.471</time>
+          <pose>-13.340 6.980 1.000 0.000 0.000 -0.785398</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="45" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-13.340 6.980 1.000 0.000 0.000 -0.785398</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.386</time>
+          <pose>-13.340 6.980 1.000 0.000 0.000 -0.321751</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="46" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-13.340 6.980 1.000 0.000 0.000 -0.321751</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.351</time>
+          <pose>-13.190 6.930 1.000 0.000 0.000 -0.321751</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="47" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-13.190 6.930 1.000 0.000 0.000 -0.321751</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.350</time>
+          <pose>-13.190 6.930 1.000 0.000 0.000 -0.091580</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="48" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-13.190 6.930 1.000 0.000 0.000 -0.091580</pose>
+        </waypoint>
+        <waypoint>
+          <time>10.935</time>
+          <pose>-8.290 6.480 1.000 0.000 0.000 -0.091580</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="49" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-8.290 6.480 1.000 0.000 0.000 -0.091580</pose>
+        </waypoint>
+        <waypoint>
+          <time>1.175</time>
+          <pose>-8.290 6.480 1.000 0.000 0.000 -1.501940</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="50" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-8.290 6.480 1.000 0.000 0.000 -1.501940</pose>
+        </waypoint>
+        <waypoint>
+          <time>3.230</time>
+          <pose>-8.190 5.030 1.000 0.000 0.000 -1.501940</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="51" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-8.190 5.030 1.000 0.000 0.000 -1.501940</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.350</time>
+          <pose>-8.190 5.030 1.000 0.000 0.000 -1.146602</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="52" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-8.190 5.030 1.000 0.000 0.000 -1.146602</pose>
+        </waypoint>
+        <waypoint>
+          <time>3.779</time>
+          <pose>-7.490 3.480 1.000 0.000 0.000 -1.146602</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="53" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-7.490 3.480 1.000 0.000 0.000 -1.146602</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.350</time>
+          <pose>-7.490 3.480 1.000 0.000 0.000 -0.876058</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="54" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-7.490 3.480 1.000 0.000 0.000 -0.876058</pose>
+        </waypoint>
+        <waypoint>
+          <time>5.207</time>
+          <pose>-5.990 1.680 1.000 0.000 0.000 -0.876058</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="55" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-5.990 1.680 1.000 0.000 0.000 -0.876058</pose>
+        </waypoint>
+        <waypoint>
+          <time>1.116</time>
+          <pose>-5.990 1.680 1.000 0.000 0.000 0.463648</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="56" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-5.990 1.680 1.000 0.000 0.000 0.463648</pose>
+        </waypoint>
+        <waypoint>
+          <time>1.242</time>
+          <pose>-5.490 1.930 1.000 0.000 0.000 0.463648</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="57" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-5.490 1.930 1.000 0.000 0.000 0.463648</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.352</time>
+          <pose>-5.490 1.930 1.000 0.000 0.000 0.041578</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="58" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>-5.490 1.930 1.000 0.000 0.000 0.041578</pose>
+        </waypoint>
+        <waypoint>
+          <time>14.435</time>
+          <pose>1.000 2.200 1.000 0.000 0.000 0.041578</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="59" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.000 2.200 1.000 0.000 0.000 0.041578</pose>
+        </waypoint>
+        <waypoint>
+          <time>2.090</time>
+          <pose>1.000 2.200 1.000 0.000 0.000 -2.466852</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="60" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>1.000 2.200 1.000 0.000 0.000 -2.466852</pose>
+        </waypoint>
+        <waypoint>
+          <time>2.846</time>
+          <pose>0.000 1.400 1.000 0.000 0.000 -2.466852</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="61" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>0.000 1.400 1.000 0.000 0.000 -2.466852</pose>
+        </waypoint>
+        <waypoint>
+          <time>0.747</time>
+          <pose>0.000 1.400 1.000 0.000 0.000 -1.570796</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="62" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>0.000 1.400 1.000 0.000 0.000 -1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>3.111</time>
+          <pose>0.000 0.000 1.000 0.000 0.000 -1.570796</pose>
+        </waypoint>
+      </trajectory>
+      <trajectory id="63" type="stand" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>0.000 0.000 1.000 0.000 0.000 -1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>2.618</time>
+          <pose>0.000 0.000 1.000 0.000 0.000 1.570796</pose>
+        </waypoint>
+      </trajectory>
+    </script>
+  </actor>
+</sdf>

@@ -2,14 +2,21 @@
 
 from pathlib import Path
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import (
+    get_package_prefix,
+    get_package_share_directory,
+)
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    EmitEvent,
     GroupAction,
     IncludeLaunchDescription,
+    RegisterEventHandler,
 )
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node, SetRemap
@@ -21,30 +28,59 @@ def generate_launch_description():
         get_package_share_directory('malbut_scenarios')
     )
     gazebo_share = Path(get_package_share_directory('malbut_gazebo'))
+    perception_share = Path(
+        get_package_share_directory('malbut_perception')
+    )
     roaming_share = Path(get_package_share_directory('malbut_roaming'))
     tracking_share = Path(get_package_share_directory('malbut_tracking'))
     use_sim_time = LaunchConfiguration('use_sim_time')
     spawn_x = LaunchConfiguration('x')
     spawn_y = LaunchConfiguration('y')
     spawn_yaw = LaunchConfiguration('yaw')
+    zone_mask = LaunchConfiguration('zone_mask')
+    spawn_helper = (
+        Path(get_package_prefix('malbut_gazebo'))
+        / 'lib'
+        / 'malbut_gazebo'
+        / 'spawn_when_ready'
+    )
+    actor_file = (
+        gazebo_share
+        / 'models'
+        / 'humanoid_actor'
+        / 'scenarios'
+        / 'front_door_entry.sdf'
+    )
 
-    simulation = IncludeLaunchDescription(
+    simulation = GroupAction(
+        scoped=True,
+        actions=[
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    str(gazebo_share / 'launch' / 'worlds.launch.py')
+                ),
+                launch_arguments={
+                    'world_name': 'small_house',
+                    'x': spawn_x,
+                    'y': spawn_y,
+                    'z': '0.002',
+                    'yaw': spawn_yaw,
+                    'gui': LaunchConfiguration('gui'),
+                    'headless': LaunchConfiguration('headless'),
+                    'paused': 'false',
+                    'rviz': 'false',
+                    'use_sim_time': use_sim_time,
+                }.items(),
+            )
+        ],
+    )
+    perception = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            str(gazebo_share / 'launch' / 'humanoid_demo.launch.py')
+            str(perception_share / 'launch' / 'person_detection.launch.py')
         ),
         launch_arguments={
-            'world_name': 'small_house',
-            'x': spawn_x,
-            'y': spawn_y,
-            'z': '0.002',
-            'yaw': spawn_yaw,
-            'gui': LaunchConfiguration('gui'),
-            'headless': LaunchConfiguration('headless'),
-            'paused': 'false',
-            'rviz': 'false',
             'use_sim_time': use_sim_time,
-            'perception': 'true',
-            'actor_spawn_delay': LaunchConfiguration('actor_spawn_delay'),
+            'projection_frame': 'camera_depth_optical_frame',
             'publish_debug_image': 'true',
             'debug_image_transport': 'raw',
             'inference_backend': LaunchConfiguration('inference_backend'),
@@ -66,16 +102,15 @@ def generate_launch_description():
                     'params_file': str(
                         gazebo_share / 'config' / 'nav2_params.yaml'
                     ),
-                    'zone_mask': str(
-                        scenario_share / 'maps' / 'zone-filter.yaml'
-                    ),
+                    'zone_mask': zone_mask,
                     'user_map': str(
                         scenario_share
                         / 'maps'
                         / 'small_house_user_map.geojson'
                     ),
                     'use_sim_time': use_sim_time,
-                    'rviz': LaunchConfiguration('rviz'),
+                    'use_composition': 'True',
+                    'rviz': 'false',
                     'robot_web': 'true',
                     'robot_web_port': LaunchConfiguration('web_port'),
                     'robot_web_navigation_action': (
@@ -127,6 +162,17 @@ def generate_launch_description():
                 'room_routes_file': str(
                     scenario_share / 'config' / 'room_routes.yaml'
                 ),
+                'actor_world': 'small_house',
+                'actor_entity_name': 'scenario_humanoid',
+                'actor_file': str(actor_file),
+                'actor_spawn_helper': str(spawn_helper),
+                'actor_service_prefix': (
+                    '/world/small_house/scenario_actor'
+                ),
+                'actor_x': 6.0,
+                'actor_y': -6.2,
+                'actor_z': 0.0,
+                'actor_yaw': 0.0,
             },
         ],
     )
@@ -176,6 +222,51 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('image_view')),
         output='screen',
     )
+    rviz = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        arguments=[
+            '-d',
+            str(gazebo_share / 'rviz' / 'nav_nav2.rviz'),
+        ],
+        parameters=[{'use_sim_time': use_sim_time}],
+        condition=IfCondition(LaunchConfiguration('rviz')),
+        output='screen',
+    )
+    simulation_readiness = Node(
+        package='malbut_scenarios',
+        executable='wait_for_simulation',
+        name='scenario_simulation_readiness',
+        output='screen',
+        parameters=[{
+            'timeout_s': LaunchConfiguration('readiness_timeout'),
+        }],
+    )
+
+    runtime_actions = [
+        perception,
+        navigation,
+        roaming,
+        tracking,
+        manager,
+        cloud_sync,
+        collision_monitor,
+        collision_lifecycle,
+        rviz,
+        image_view,
+    ]
+
+    def _start_runtime(event, _context):
+        if event.returncode == 0:
+            return runtime_actions
+        return [
+            EmitEvent(
+                event=Shutdown(
+                    reason='simulation did not publish required topics'
+                )
+            )
+        ]
 
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
@@ -200,19 +291,19 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument('runtime_request_file', default_value=''),
         DeclareLaunchArgument('patrol_autostart', default_value='false'),
-        DeclareLaunchArgument('actor_spawn_delay', default_value='180.0'),
+        DeclareLaunchArgument('readiness_timeout', default_value='90.0'),
         DeclareLaunchArgument('inference_backend', default_value='auto'),
         DeclareLaunchArgument('dnn_target', default_value='auto'),
+        DeclareLaunchArgument('zone_mask', default_value=''),
         DeclareLaunchArgument('x', default_value='-3.665503'),
         DeclareLaunchArgument('y', default_value='-0.4874'),
         DeclareLaunchArgument('yaw', default_value='0.0'),
         simulation,
-        navigation,
-        roaming,
-        tracking,
-        manager,
-        cloud_sync,
-        collision_monitor,
-        collision_lifecycle,
-        image_view,
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=simulation_readiness,
+                on_exit=_start_runtime,
+            )
+        ),
+        simulation_readiness,
     ])

@@ -21,7 +21,8 @@
   },
   "room_segmentation": {
     "method": "single_initial_room",
-    "room_count": 1
+    "room_count": 1,
+    "edited": true
   },
   "features": [
     {
@@ -2104,10 +2105,10 @@
           -1.975
         ],
         "representative_point": [
-          4.675,
-          -1.975
+          5.35,
+          -1.8
         ],
-        "clearance_m": 2.407,
+        "clearance_m": 2.648,
         "generated": true
       },
       "geometry": {

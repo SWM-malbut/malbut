@@ -11,6 +11,10 @@
     <plugin filename="ignition-gazebo-physics-system" name="ignition::gazebo::systems::Physics"/>
     <plugin filename="ignition-gazebo-user-commands-system" name="ignition::gazebo::systems::UserCommands"/>
     <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="libactor_control_system.so" name="malbut::gazebo::ActorControlSystem">
+      <actor_name>scenario_humanoid</actor_name>
+      <service_prefix>/world/small_house/scenario_actor</service_prefix>
+    </plugin>
     <plugin filename="ignition-gazebo-sensors-system" name="ignition::gazebo::systems::Sensors">
       <render_engine>ogre2</render_engine>
     </plugin>

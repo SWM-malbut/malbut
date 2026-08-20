@@ -293,6 +293,30 @@ def _launch_setup(context):
         output="screen",
     )
 
+    # Images use the dedicated one-way bridge recommended by Gazebo. Keep
+    # RGB and depth in separate processes so conversion of either large frame
+    # cannot delay the other camera stream.
+    rgb_image_bridge = Node(
+        package="ros_gz_image",
+        executable="image_bridge",
+        name="malbut_rgb_image_bridge",
+        arguments=["/rgbd_camera/image"],
+        remappings=[
+            ("/rgbd_camera/image", "/camera/color/image_raw"),
+        ],
+        output="screen",
+    )
+    depth_image_bridge = Node(
+        package="ros_gz_image",
+        executable="image_bridge",
+        name="malbut_depth_image_bridge",
+        arguments=["/rgbd_camera/depth_image"],
+        remappings=[
+            ("/rgbd_camera/depth_image", "/camera/depth/image_raw"),
+        ],
+        output="screen",
+    )
+
     rviz = Node(
         package="rviz2",
         executable="rviz2",
@@ -341,7 +365,7 @@ def _launch_setup(context):
     if spawn_robot:
         actions.extend([state_publisher, spawn])
     if bridge_enabled:
-        actions.append(bridge)
+        actions.extend([bridge, rgb_image_bridge, depth_image_bridge])
     actions.append(rviz)
     return actions
 

@@ -1,9 +1,14 @@
 """Generated-model contracts for Gazebo Fortress and the ROS bridge."""
 
+import importlib.util
 import math
 from pathlib import Path
 from xml.etree import ElementTree
 
+from launch import LaunchContext
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.utilities import perform_substitutions
+from launch_ros.actions import Node
 import pytest
 import xacro
 import yaml
@@ -252,7 +257,7 @@ def test_lidar_scan_plane_is_above_the_chassis_envelope():
 
 
 def test_bridge_defines_the_complete_ros_gazebo_interface():
-    """Every public topic must retain its transport names, types, QoS, and flow."""
+    """Non-image topics retain their transport names, types, QoS, and flow."""
     bridge = yaml.safe_load(
         (GAZEBO_ROOT / 'config' / 'bridge.yaml').read_text(encoding='utf-8')
     )
@@ -272,17 +277,9 @@ def test_bridge_defines_the_complete_ros_gazebo_interface():
             'gz.msgs.LaserScan', 'GZ_TO_ROS', 'SENSOR_DATA',
         ),
         '/imu/data': ('/imu', 'sensor_msgs/msg/Imu', 'gz.msgs.IMU', 'GZ_TO_ROS', 'SENSOR_DATA'),
-        '/camera/color/image_raw': (
-            '/rgbd_camera/image', 'sensor_msgs/msg/Image',
-            'gz.msgs.Image', 'GZ_TO_ROS', 'SENSOR_DATA',
-        ),
         '/camera/color/camera_info': (
             '/rgbd_camera/camera_info', 'sensor_msgs/msg/CameraInfo',
             'gz.msgs.CameraInfo', 'GZ_TO_ROS', 'SENSOR_DATA',
-        ),
-        '/camera/depth/image_raw': (
-            '/rgbd_camera/depth_image', 'sensor_msgs/msg/Image',
-            'gz.msgs.Image', 'GZ_TO_ROS', 'SENSOR_DATA',
         ),
         '/camera/depth/points': (
             '/rgbd_camera/points', 'sensor_msgs/msg/PointCloud2',
@@ -301,6 +298,75 @@ def test_bridge_defines_the_complete_ros_gazebo_interface():
         )
         assert actual == values
     assert mappings['/camera/depth/points']['lazy'] is True
+
+
+def test_simulation_uses_independent_dedicated_image_bridges():
+    """RGB and depth must not share the generic or one image bridge process."""
+    launch_path = GAZEBO_ROOT / 'launch' / 'simulation.launch.py'
+    spec = importlib.util.spec_from_file_location(
+        'malbut_simulation_launch', launch_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    description = module.generate_launch_description()
+    context = LaunchContext()
+    defaults = {
+        entity.name: perform_substitutions(context, entity.default_value)
+        for entity in description.entities
+        if isinstance(entity, DeclareLaunchArgument)
+    }
+    defaults.update({
+        'world': 'empty',
+        'gui': 'false',
+        'spawn_robot': 'false',
+    })
+    context.launch_configurations.update(defaults)
+    setup = next(
+        entity
+        for entity in description.entities
+        if isinstance(entity, OpaqueFunction)
+    )
+    actions = setup.execute(context)
+    nodes = [action for action in actions if isinstance(action, Node)]
+
+    generic = next(
+        node
+        for node in nodes
+        if node._Node__node_name == 'malbut_bridge'
+    )
+    assert generic.node_package == 'ros_gz_bridge'
+
+    image_bridges = [
+        node for node in nodes if node.node_package == 'ros_gz_image'
+    ]
+    assert len(image_bridges) == 2
+    by_name = {node._Node__node_name: node for node in image_bridges}
+    assert set(by_name) == {
+        'malbut_rgb_image_bridge',
+        'malbut_depth_image_bridge',
+    }
+    rgb_remappings = [
+        (
+            perform_substitutions(context, source),
+            perform_substitutions(context, destination),
+        )
+        for source, destination
+        in by_name['malbut_rgb_image_bridge']._Node__remappings
+    ]
+    depth_remappings = [
+        (
+            perform_substitutions(context, source),
+            perform_substitutions(context, destination),
+        )
+        for source, destination
+        in by_name['malbut_depth_image_bridge']._Node__remappings
+    ]
+    assert rgb_remappings == [
+        ('/rgbd_camera/image', '/camera/color/image_raw'),
+    ]
+    assert depth_remappings == [
+        ('/rgbd_camera/depth_image', '/camera/depth/image_raw'),
+    ]
 
 
 def test_world_guis_expose_camera_controls_and_mecanum_teleop():

@@ -397,6 +397,9 @@ def test_editor_loads_maps_dynamically_and_has_no_fixed_house_geometry():
     editor_root = GAZEBO_ROOT / "web" / "semantic_zone_editor"
     html = (editor_root / "index.html").read_text(encoding="utf-8")
     script = (editor_root / "app.js").read_text(encoding="utf-8")
+    scenario_script = (editor_root / "scenario_controls.js").read_text(
+        encoding="utf-8"
+    )
 
     assert 'id="mapFile"' in html
     assert 'id="zoneFile"' in html
@@ -421,9 +424,16 @@ def test_editor_loads_maps_dynamically_and_has_no_fixed_house_geometry():
     assert 'postJson("/api/apply-zones"' in script
     assert 'postJson("/api/rooms"' in script
     assert 'id="navigateMode"' in html
+    assert 'id="startPatrol"' in html
+    assert 'id="startPersonTracking"' in html
+    assert 'id="stopScenario"' in html
     assert 'id="navigationPanel"' in html
     assert 'id="robotLayer"' in html
     assert 'new EventSource("/api/robot/stream")' in script
+    assert 'new EventSource("/api/robot/stream")' in scenario_script
+    assert 'mode === "transitioning"' in scenario_script
+    assert 'mode === "person_tracking"' in scenario_script
+    assert 'navigateMode.click()' in scenario_script
     assert 'postJson("/api/navigation/preview"' in script
     assert 'postJson("/api/navigation/start"' in script
     assert 'postJson("/api/navigation/cancel"' in script

@@ -40,16 +40,19 @@ person_localizer:
     tracker_iou_threshold: 0.30
     tracker_max_missed_frames: 15
     tracker_min_confirmed_hits: 2
-    tracker_appearance_threshold: 0.30
+    tracker_appearance_threshold: 0.35
     tracker_appearance_weight: 0.65
 
     # Long-term ID restoration uses only cropped RGB pixels. The lightweight
-    # OSNet x0.5 improves re-entry matching while remaining lightweight.
+    # OSNet-AIN x1.0 improves cross-domain re-entry matching while remaining
+    # small enough for periodic TensorRT inference on Jetson Orin NX.
     # HSV is retained only as a fallback when the model is unavailable.
     reid_backend: auto
     reid_model_path: ''
-    reid_cosine_threshold: 0.25
-    reid_max_inactive_frames: 300
+    reid_cosine_threshold: 0.35
+    # At the configured 8 Hz this retains an identity for about five minutes,
+    # longer than one complete Small House actor circuit.
+    reid_max_inactive_frames: 2400
     reid_feature_budget: 30
     # Refresh stable tracks periodically; new, displaced, and returning people
     # still request an appearance embedding immediately.
@@ -73,7 +76,7 @@ person_localizer:
     sync_slop_sec: 0.08
     # Eight hertz is sustainable with YOLO26n plus periodic OSNet on the
     # development GPU while leaving headroom for Gazebo and Nav2.
-    max_inference_rate_hz: 8.0
+    max_inference_rate_hz: 12.0
     publish_debug_image: true
     # compressed avoids dropping large raw debug frames over ROS middleware.
     # Select raw or both only when an uncompressed consumer requires it.

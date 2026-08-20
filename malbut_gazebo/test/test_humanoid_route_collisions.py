@@ -12,6 +12,13 @@ ACTOR_FILE = PACKAGE_ROOT / 'models' / 'humanoid_actor' / 'model.sdf'
 EVENT_ACTOR_FILE = (
     PACKAGE_ROOT / 'models' / 'event_test_humanoid' / 'model.sdf'
 )
+SCENARIO_ACTOR_FILE = (
+    PACKAGE_ROOT
+    / 'models'
+    / 'humanoid_actor'
+    / 'scenarios'
+    / 'front_door_entry.sdf'
+)
 WORLD_FILE = PACKAGE_ROOT / 'worlds' / 'small_house.sdf'
 AWS_MODELS = PACKAGE_ROOT / 'models' / 'aws_small_house'
 LAUNCH_FILE = PACKAGE_ROOT / 'launch' / 'humanoid_demo.launch.py'
@@ -59,9 +66,9 @@ def _actor_route_points(actor_file, offset_x, offset_y):
     return points
 
 
-def _route_points():
-    offset_x, offset_y = _launch_offsets()
-    return _actor_route_points(ACTOR_FILE, offset_x, offset_y)
+def _route_points(actor_file=ACTOR_FILE, offset=None):
+    offset_x, offset_y = offset or _launch_offsets()
+    return _actor_route_points(actor_file, offset_x, offset_y)
 
 
 def _event_spawn_offsets():
@@ -222,12 +229,19 @@ def _dae_triangles(path):
                         polygon = indices[cursor:cursor + vertex_count]
                         cursor += vertex_count
                         for index in range(1, vertex_count - 1):
-                            face = (polygon[0], polygon[index], polygon[index + 1])
+                            face = (
+                                polygon[0],
+                                polygon[index],
+                                polygon[index + 1],
+                            )
                             triangles.append(
                                 tuple(
                                     _matrix_transform(
                                         matrix,
-                                        tuple(value * unit for value in positions[i]),
+                                        tuple(
+                                            value * unit
+                                            for value in positions[i]
+                                        ),
                                     )
                                     for i in face
                                 )
@@ -434,8 +448,10 @@ def _route_to_triangle_distance(start, end, triangle):
     )
 
 
-def test_demo_route_centerline_clears_small_house_scene_geometry():
-    route = _route_points()
+def _assert_route_clears_actual_small_house_scene_geometry(
+    route, ignored_models=(), model_clearances=None
+):
+    model_clearances = model_clearances or {}
     triangles = _scene_triangles()
     spheres = _scene_spheres()
     names = {name for name, _ in triangles}
@@ -445,19 +461,28 @@ def test_demo_route_centerline_clears_small_house_scene_geometry():
     assert any('BalconyTable' in name for name in names)
     assert any('FitnessEquipment' in name for name in names)
     for name, triangle in triangles:
+        if name in ignored_models:
+            continue
         clearance = min(
             _route_to_triangle_distance(start, end, triangle)
             for start, end in zip(route, route[1:])
         )
-        assert clearance >= 0.25, (name, clearance)
+        required_clearance = model_clearances.get(name, 0.25)
+        assert clearance >= required_clearance, (name, clearance)
     sphere_names = {name for name, _, _ in spheres}
     assert any('Ball' in name for name in sphere_names)
     for name, center, radius in spheres:
+        if name in ignored_models:
+            continue
         clearance = min(
             _point_segment_distance(center, start, end) - radius
             for start, end in zip(route, route[1:])
         )
         assert clearance >= 0.25, (name, clearance)
+
+
+def test_demo_route_centerline_clears_small_house_scene_geometry():
+    _assert_route_clears_actual_small_house_scene_geometry(_route_points())
 
 
 def test_event_route_clears_scene_with_full_body_envelope():
@@ -499,3 +524,19 @@ def test_event_route_clears_scene_with_full_body_envelope():
             name,
             clearance,
         )
+
+
+def test_scenario_route_clears_actual_small_house_scene_geometry():
+    route = _route_points(
+        actor_file=SCENARIO_ACTOR_FILE,
+        offset=(6.0, -6.2),
+    )
+    assert route[0] == route[-1] == (6.0, -6.2)
+    _assert_route_clears_actual_small_house_scene_geometry(
+        route,
+        ignored_models=('Door_01_001', 'Handle_01_001'),
+        # This model's center post is not represented reliably in the
+        # navigation costmap. Keep a body-and-arm sweep margin against its
+        # actual visual / collision mesh instead of trusting the costmap.
+        model_clearances={'FitnessEquipment_01_001': 0.50},
+    )

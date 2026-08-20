@@ -7,9 +7,10 @@ person_follower:
     detections_topic: /perception/person/detections_3d
     global_costmap_topic: /global_costmap/costmap_raw
     static_map_topic: /map
+    scan_topic: /scan
     status_topic: /tracking/person/status
     target_pose_topic: /tracking/person/estimated_target_pose
-    track_markers_topic: /tracking/person/costmap_tracks
+    track_markers_topic: /tracking/person/lidar_tracks
 
     # Standard Nav2 endpoints. The follower never publishes /cmd_vel.
     follow_path_action: follow_path
@@ -21,6 +22,7 @@ person_follower:
     navigation_retry_delay_s: 0.75
     speed_limit_topic: speed_limit
     global_frame: map
+    odometry_frame: odom
     robot_frame: base_footprint
 
     minimum_confidence: 0.20
@@ -31,16 +33,18 @@ person_follower:
     camera_position_alpha: 0.55
     camera_velocity_alpha: 0.35
     maximum_person_speed_mps: 2.0
-    # Nav2 lethal obstacle cost. Inflation costs are deliberately excluded.
-    obstacle_cost_threshold: 254
-    # Merge sparse LiDAR returns belonging to the same physical obstacle.
-    cluster_radius_m: 0.25
-    minimum_cluster_cells: 1
-    maximum_cluster_cells: 120
-    maximum_cluster_extent_m: 1.00
+    # Map-subtracted scan points are only foreground candidates. Requiring a
+    # compact multi-ray cluster prevents one jittering wall return from being
+    # promoted to an object while preserving nearby human legs.
+    cluster_gap_m: 0.20
+    minimum_cluster_points: 3
+    minimum_cluster_density_points_per_m: 5.0
+    maximum_cluster_points: 120
+    maximum_cluster_extent_m: 0.80
     static_occupied_threshold: 65
-    # Suppress saved walls and furniture plus localization/map-edge error.
-    # Camera tracking remains available when a person passes near furniture.
+    # The static map is distance-transformed once. Each scan endpoint then
+    # performs one cached lookup to suppress walls, furniture, and map error.
+    # Camera tracking remains authoritative when a person is near furniture.
     static_exclusion_radius_m: 0.20
 
     # Constant-velocity Kalman filter and global nearest-neighbor assignment.
@@ -51,30 +55,59 @@ person_follower:
     track_confirmation_hits: 3
     maximum_missed_updates: 4
     maximum_coast_time_s: 3.0
-    # RGB-D is authoritative while visible. A costmap obstacle receives its
+    # RGB-D is authoritative while visible. A LiDAR obstacle receives its
     # label only when its centroid is tightly consistent with that map point.
     camera_label_gate_m: 0.40
+    # Only clusters near the camera-confirmed person (or its short prediction)
+    # enter the tracker. This follower is not a general scene-wide DATMO node.
+    lidar_candidate_gate_m: 0.70
+    # While metric RGB-D is fresh, it narrows the wider prediction gate. A
+    # small bounded extent allowance covers the torso/leg centroid offset;
+    # neighboring furniture is negative evidence and loses the person label.
+    camera_lidar_fusion_freshness_s: 0.40
+    camera_lidar_extent_padding_m: 0.15
+    # A large one-frame RGB-D jump cannot replace the current person by
+    # itself. Normal continuous motion or a confirmed LiDAR track is accepted
+    # immediately; otherwise the new region must repeat on two camera frames.
+    camera_jump_base_gate_m: 0.75
+    camera_jump_confirmation_hits: 2
+    camera_jump_pending_consistency_m: 0.50
     # Keep a current LiDAR label through small centroid noise, but let a
     # clearly closer RGB-D match correct an obstacle-label mix-up.
     camera_rebind_margin_m: 0.15
     # After RGB-D labels a confirmed obstacle, current LiDAR measurements may
     # continue that same track briefly after camera loss. While RGB-D remains
-    # current, its callback alone owns Nav2 goal updates to prevent churn.
+    # current, LiDAR may only make fast near-range ALIGN/RETREAT decisions;
+    # camera observations continue to own forward tracking.
     lidar_continuation_timeout_s: 3.0
-    desired_distance_m: 1.20
+    # After camera loss, grow the 0.70 m local gate only as far as a person
+    # could move. If the camera is looking at the stale point and sees nobody,
+    # exactly one confirmed nearby moving track may inherit the person label.
+    lidar_reassociation_max_distance_m: 1.50
+    dynamic_rebind_minimum_speed_mps: 0.10
+    camera_negative_evidence_frames: 2
+    camera_horizontal_fov_rad: 1.291543646
+    lidar_proximity_control_distance_m: 1.50
+    lidar_proximity_camera_guard_s: 0.30
+    # Nominal one-metre standoff. The robot holds in the 0.90--1.10 m band.
+    desired_distance_m: 1.00
     minimum_distance_m: 0.65
-    distance_tolerance_m: 0.15
+    distance_tolerance_m: 0.10
+    # Once translation is unnecessary, rotate only enough to center the
+    # fixed forward camera. Translation and rotation are never commanded by
+    # separate controllers at the same time.
+    alignment_angle_tolerance_rad: 0.10
     # Hiwonder's physical ROSOrin course demonstrates 0.30 m/s chassis
     # motion. Translation, including reverse, remains collision checked by
     # Nav2 ComputePathToPose and the configured holonomic controller.
     maximum_linear_speed_mps: 0.30
-    retreat_maximum_travel_m: 0.25
+    retreat_maximum_travel_m: 0.12
     # Start backing away before an approaching person crosses the lower
     # distance bound, then refresh the short collision-checked retreat path.
     approach_prediction_horizon_s: 0.75
     approach_speed_threshold_mps: 0.10
-    retreat_goal_update_distance_m: 0.10
-    retreat_goal_update_period_s: 0.25
+    retreat_goal_update_distance_m: 0.04
+    retreat_goal_update_period_s: 0.15
 
     # Nav2 plans toward the observed person or its nearest admissible costmap
     # cell. These existing per-update lookaheads bound that global path.
@@ -131,3 +164,6 @@ person_follower:
     # Bounded prediction supports identity association and display only.
     prediction_horizon_s: 0.60
     transform_timeout_s: 0.10
+    # Sensor callbacks never block perception waiting for TF. The newest scan
+    # is queued briefly and processed only when its exact transform arrives.
+    sensor_transform_queue_timeout_s: 0.30

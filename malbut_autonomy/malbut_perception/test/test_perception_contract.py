@@ -23,12 +23,13 @@ def test_config_uses_only_rgbd_inputs_and_standard_outputs():
     assert config['debug_image_transport'] == 'compressed'
     assert config['compressed_debug_image_topic'].endswith('/compressed')
     assert 1 <= config['debug_jpeg_quality'] <= 100
-    assert config['max_inference_rate_hz'] == 8.0
+    assert config['max_inference_rate_hz'] == 12.0
     assert config['inference_backend'] == 'auto'
     assert config['dnn_target'] == 'auto'
     assert config['opencv_num_threads'] == 4
     assert config['reid_backend'] == 'auto'
     assert config['reid_refresh_interval_frames'] == 3
+    assert config['reid_max_inactive_frames'] >= 2400
     assert config['projection_frame'] == ''
     assert config['use_sim_time'] is False
 
@@ -83,7 +84,7 @@ def test_model_preparation_is_pinned_and_machine_independent():
     reid_source = reid_script.read_text(encoding='utf-8')
     assert reid_script.stat().st_mode & 0o111
     assert 'f8cd150fdf77e8d9e1ed143b7f308c2c609ded50' in reid_source
-    assert 'd80f5b7913076ae1ca89c3ed02eb93133f3114ff6e51cadc5e3cb0aa33f2bf38' in reid_source
-    assert 'osnet_x0_5' in reid_source
+    assert '8a07e8da38946f7cee37f4561617bf8b6d2fe8f3a4027852893ea092e46d919f' in reid_source
+    assert 'osnet_ain_x1_0' in reid_source
     assert '/home/' not in reid_source
     assert '/Users/' not in reid_source

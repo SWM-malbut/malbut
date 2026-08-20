@@ -14,9 +14,10 @@ ros2 launch malbut_scenarios autonomous_driving.launch.py
 ```
 
 실행하면 Small House, 로봇, Nav2/RViz, 기존 웹 지도, 사람 인식과 시나리오
-조정 노드가 함께 시작됩니다. 사람 모델은 기본적으로 실행 180초 뒤
-현관 경로에서 나타나 고정된 가정집 경로를 순회합니다. 웹 지도는
-`http://127.0.0.1:8765`에서 확인합니다.
+조정 노드가 함께 시작됩니다. 사람 모델은 자동으로 등장하지 않습니다.
+웹 지도의 `사람 모델 등장` 버튼을 누르면 현관 밖에서 들어와 각 방을
+포함한 고정 경로를 반복 이동하고, 같은 버튼을 다시 누르면 월드에서
+제거됩니다. 웹 지도는 `http://127.0.0.1:8765`에서 확인합니다.
 
 기존 홈캠 웹과 연결된 장치에서는 이미 발급된 장치 설정을 그대로 넘겨
 기존 `cloud_robot_sync`도 같은 실행에 포함할 수 있습니다. 웹·백엔드 코드는
@@ -32,6 +33,14 @@ ros2 launch malbut_scenarios autonomous_driving.launch.py \
 ```
 
 ## 시연 명령
+
+사람 모델은 웹 버튼 또는 다음 서비스로 등장·퇴장시킵니다. 생성과 삭제
+후에는 Gazebo 월드의 실제 상태를 확인하므로 같은 이름의 모델이 겹쳐
+남지 않습니다.
+
+```bash
+ros2 service call /scenario/toggle_person std_srvs/srv/Trigger '{}'
+```
 
 미방문 구역을 우선하는 자율 순찰을 시작합니다.
 
@@ -75,6 +84,6 @@ ros2 topic echo /scenario/status
 - 사람 추적: `malbut_tracking`의 `FollowPerson` Action
 - 실제 이동과 충돌 회피: ROS 2 Humble Nav2
 
-시뮬레이션 전용 사람 등장 시점 외의 조정 로직은 Gazebo 모델 좌표를 읽지
-않습니다. 실제 로봇에서도 같은 Nav2 Action, 센서 토픽, 수동 속도 입력
-인터페이스를 사용할 수 있습니다.
+시뮬레이션 전용 사람 모델의 생성·삭제 외의 조정 로직은 Gazebo 모델
+좌표를 읽지 않습니다. 실제 로봇에서도 같은 Nav2 Action, 센서 토픽,
+수동 속도 입력 인터페이스를 사용할 수 있습니다.

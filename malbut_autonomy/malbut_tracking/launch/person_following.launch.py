@@ -25,6 +25,7 @@ def generate_launch_description():
             default_value='/global_costmap/costmap_raw',
         ),
         DeclareLaunchArgument('static_map_topic', default_value='/map'),
+        DeclareLaunchArgument('scan_topic', default_value='/scan'),
         DeclareLaunchArgument('global_frame', default_value='map'),
         DeclareLaunchArgument('robot_frame', default_value='base_footprint'),
     ]
@@ -42,6 +43,7 @@ def generate_launch_description():
                     'global_costmap_topic'
                 ),
                 'static_map_topic': LaunchConfiguration('static_map_topic'),
+                'scan_topic': LaunchConfiguration('scan_topic'),
                 'global_frame': LaunchConfiguration('global_frame'),
                 'robot_frame': LaunchConfiguration('robot_frame'),
             },

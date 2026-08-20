@@ -1,4 +1,4 @@
-"""Track dynamic global-costmap obstacles with stable object identities."""
+"""Represent navigation grids and track sensor obstacle measurements."""
 
 from dataclasses import dataclass
 import math
@@ -7,11 +7,6 @@ from typing import Sequence
 import numpy as np
 
 from .geometry import Point2D, distance
-
-
-# nav2_costmap_2d/cost_values.hpp. Unknown space is not an obstacle
-# measurement and must never enter dynamic-object clustering.
-NAV2_NO_INFORMATION = 255
 
 
 @dataclass(frozen=True)
@@ -70,21 +65,21 @@ class CostmapGrid:
 
 @dataclass(frozen=True)
 class ObstacleCluster:
-    """One compact dynamic obstacle measurement extracted from a grid."""
+    """One compact dynamic obstacle measurement extracted from a sensor."""
 
     position: Point2D
-    cell_count: int
+    point_count: int
     extent_m: float
 
 
 @dataclass(frozen=True)
 class TrackedObstacle:
-    """Public snapshot of one constant-velocity costmap track."""
+    """Public snapshot of one constant-velocity obstacle track."""
 
     track_id: int
     position: Point2D
     velocity: Point2D
-    cell_count: int
+    point_count: int
     extent_m: float
     hits: int
     misses: int
@@ -94,7 +89,7 @@ class TrackedObstacle:
 
 @dataclass(frozen=True)
 class LabeledObstacle:
-    """A stable semantic person label attached to a costmap track."""
+    """A stable semantic person label attached to an obstacle track."""
 
     label: str
     track: TrackedObstacle
@@ -105,13 +100,13 @@ class LabeledObstacle:
         """Expose the latest obstacle measurement for follow policy code."""
         return ObstacleCluster(
             self.track.position,
-            self.track.cell_count,
+            self.track.point_count,
             self.track.extent_m,
         )
 
     @property
     def stamp_seconds(self) -> float:
-        """Return the costmap time represented by this labeled track."""
+        """Return the sensor time represented by this labeled track."""
         return self.track.stamp_seconds
 
 
@@ -136,7 +131,7 @@ class _KalmanTrack:
         )
         self.stamp_seconds = stamp_seconds
         self.last_measurement_seconds = stamp_seconds
-        self.cell_count = measurement.cell_count
+        self.point_count = measurement.point_count
         self.extent_m = measurement.extent_m
         self.hits = 1
         self.misses = 0
@@ -228,7 +223,7 @@ class _KalmanTrack:
             + gain @ measurement_covariance @ gain.T
         )
         self.last_measurement_seconds = self.stamp_seconds
-        self.cell_count = measurement.cell_count
+        self.point_count = measurement.point_count
         self.extent_m = measurement.extent_m
         self.hits += 1
         self.misses = 0
@@ -244,7 +239,7 @@ class _KalmanTrack:
             track_id=self.track_id,
             position=Point2D(float(self.state[0]), float(self.state[1])),
             velocity=Point2D(float(self.state[2]), float(self.state[3])),
-            cell_count=self.cell_count,
+            point_count=self.point_count,
             extent_m=self.extent_m,
             hits=self.hits,
             misses=self.misses,
@@ -253,88 +248,11 @@ class _KalmanTrack:
         )
 
 
-def find_obstacle_clusters(
-    grid: CostmapGrid,
-    obstacle_cost_threshold: int,
-    cluster_radius_m: float,
-    minimum_cluster_cells: int,
-    maximum_cluster_cells: int,
-    maximum_cluster_extent_m: float,
-    static_map: CostmapGrid | None = None,
-    static_occupied_threshold: int = 65,
-    static_exclusion_radius_m: float = 0.20,
-) -> list[ObstacleCluster]:
-    """Extract compact non-static obstacles from the complete costmap."""
-    grid.validate()
-    if static_map is not None:
-        static_map.validate()
-    _validate_cluster_parameters(
-        obstacle_cost_threshold,
-        cluster_radius_m,
-        minimum_cluster_cells,
-        maximum_cluster_cells,
-        maximum_cluster_extent_m,
-        static_occupied_threshold,
-        static_exclusion_radius_m,
-    )
-    dynamic_cells = set()
-    for index, raw_cost in enumerate(grid.costs):
-        cost = int(raw_cost)
-        if cost == NAV2_NO_INFORMATION or cost < obstacle_cost_threshold:
-            continue
-        cell_x = index % grid.width
-        cell_y = index // grid.width
-        if not _is_static_obstacle(
-            static_map,
-            grid.cell_center(cell_x, cell_y),
-            static_occupied_threshold,
-            static_exclusion_radius_m,
-        ):
-            dynamic_cells.add((cell_x, cell_y))
-    neighbor_radius = max(1, math.ceil(cluster_radius_m / grid.resolution))
-    clusters = []
-    while dynamic_cells:
-        seed = dynamic_cells.pop()
-        component = [seed]
-        pending = [seed]
-        while pending:
-            cell_x, cell_y = pending.pop()
-            for offset_y in range(-neighbor_radius, neighbor_radius + 1):
-                for offset_x in range(-neighbor_radius, neighbor_radius + 1):
-                    if offset_x == 0 and offset_y == 0:
-                        continue
-                    if math.hypot(offset_x, offset_y) > neighbor_radius:
-                        continue
-                    neighbor = cell_x + offset_x, cell_y + offset_y
-                    if neighbor in dynamic_cells:
-                        dynamic_cells.remove(neighbor)
-                        component.append(neighbor)
-                        pending.append(neighbor)
-        cluster = _make_cluster(
-            grid,
-            component,
-            minimum_cluster_cells,
-            maximum_cluster_cells,
-            maximum_cluster_extent_m,
-        )
-        if cluster is not None:
-            clusters.append(cluster)
-    clusters.sort(key=lambda cluster: (cluster.position.x, cluster.position.y))
-    return clusters
-
-
-class CostmapTargetTracker:
-    """Track all dynamic obstacles and attach one persistent person label."""
+class ObstacleTargetTracker:
+    """Track sensor obstacle clusters and attach one persistent person label."""
 
     def __init__(
         self,
-        cluster_radius_m: float,
-        obstacle_cost_threshold: int,
-        minimum_cluster_cells: int,
-        maximum_cluster_cells: int,
-        maximum_cluster_extent_m: float,
-        static_occupied_threshold: int = 65,
-        static_exclusion_radius_m: float = 0.20,
         process_variance: float = 1.0,
         measurement_variance: float = 0.04,
         mahalanobis_gate: float = 9.21,
@@ -344,16 +262,7 @@ class CostmapTargetTracker:
         camera_label_gate_m: float = 0.40,
         camera_rebind_margin_m: float = 0.15,
     ) -> None:
-        """Configure extraction, estimation, association, and track aging."""
-        _validate_cluster_parameters(
-            obstacle_cost_threshold,
-            cluster_radius_m,
-            minimum_cluster_cells,
-            maximum_cluster_cells,
-            maximum_cluster_extent_m,
-            static_occupied_threshold,
-            static_exclusion_radius_m,
-        )
+        """Configure estimation, association, and track aging."""
         if process_variance <= 0.0:
             raise ValueError('process variance must be positive')
         if measurement_variance <= 0.0:
@@ -370,13 +279,6 @@ class CostmapTargetTracker:
             raise ValueError('camera label gate must be positive')
         if camera_rebind_margin_m < 0.0:
             raise ValueError('camera rebind margin must be non-negative')
-        self._cluster_radius_m = cluster_radius_m
-        self._threshold = obstacle_cost_threshold
-        self._minimum_cells = minimum_cluster_cells
-        self._maximum_cells = maximum_cluster_cells
-        self._maximum_extent = maximum_cluster_extent_m
-        self._static_threshold = static_occupied_threshold
-        self._static_exclusion_radius_m = static_exclusion_radius_m
         self._process_variance = process_variance
         self._measurement_variance = measurement_variance
         self._mahalanobis_gate = mahalanobis_gate
@@ -416,11 +318,11 @@ class CostmapTargetTracker:
 
     @property
     def target_observed(self) -> bool:
-        """Return whether this grid update measured the selected target."""
+        """Return whether this sensor update measured the selected target."""
         return self._last_target_observed
 
     def reset(self) -> None:
-        """Clear every costmap track and semantic selection."""
+        """Clear every obstacle track and semantic selection."""
         self._tracks.clear()
         self._observed_track_ids.clear()
         self._next_track_id = 1
@@ -436,24 +338,13 @@ class CostmapTargetTracker:
 
     def update(
         self,
-        grid: CostmapGrid,
-        static_map: CostmapGrid | None,
+        measurements: Sequence[ObstacleCluster],
+        stamp_seconds: float,
     ) -> LabeledObstacle | None:
-        """Extract, globally associate, and update all obstacle tracks."""
-        measurements = find_obstacle_clusters(
-            grid,
-            self._threshold,
-            self._cluster_radius_m,
-            self._minimum_cells,
-            self._maximum_cells,
-            self._maximum_extent,
-            static_map,
-            self._static_threshold,
-            self._static_exclusion_radius_m,
-        )
+        """Globally associate sensor measurements and update all tracks."""
         tracks = [self._tracks[key] for key in sorted(self._tracks)]
         for track in tracks:
-            track.predict(grid.stamp_seconds, self._process_variance)
+            track.predict(stamp_seconds, self._process_variance)
         associations = self._associate(tracks, measurements)
         matched_tracks = set()
         matched_measurements = set()
@@ -479,10 +370,10 @@ class CostmapTargetTracker:
             if measurement_index not in matched_measurements:
                 track_id = self._create_track(
                     measurement,
-                    grid.stamp_seconds,
+                    stamp_seconds,
                 )
                 self._observed_track_ids.add(track_id)
-        self._delete_expired_tracks(grid.stamp_seconds)
+        self._delete_expired_tracks(stamp_seconds)
         target = self.target
         return target if target is not None and self._last_target_observed else None
 
@@ -549,12 +440,35 @@ class CostmapTargetTracker:
         self._last_target_observed = True
         return self.target
 
+    def bind_observed_track(
+        self,
+        label: str,
+        track_id: int,
+        detector_track_id: str = '',
+    ) -> LabeledObstacle | None:
+        """Bind a confirmed track measured in the current sensor update."""
+        if not label:
+            raise ValueError('target label is required')
+        track = self._tracks.get(track_id)
+        if (
+            track is None
+            or track_id not in self._observed_track_ids
+            or not track.confirmed
+        ):
+            return None
+        self._selected_label = label
+        self._selected_detector_id = detector_track_id
+        self._selected_track_id = track_id
+        self._last_selected_snapshot = track.snapshot()
+        self._last_target_observed = True
+        return self.target
+
     def predict_target(
         self,
         stamp_seconds: float,
         maximum_horizon_s: float,
     ) -> Point2D | None:
-        """Predict the selected costmap track for bounded display/search use."""
+        """Predict the selected obstacle track for bounded display/search."""
         target = self.target
         snapshot = target.track if target is not None else self._last_selected_snapshot
         if snapshot is None:
@@ -576,8 +490,8 @@ class CostmapTargetTracker:
                     measurement, self._measurement_variance
                 )
                 shape_ratio = max(
-                    track.cell_count, measurement.cell_count
-                ) / max(1, min(track.cell_count, measurement.cell_count))
+                    track.point_count, measurement.point_count
+                ) / max(1, min(track.point_count, measurement.point_count))
                 shape_penalty = min(2.0, 0.25 * abs(math.log(shape_ratio)))
                 row.append(statistical_cost + shape_penalty)
             costs.append(row)
@@ -618,65 +532,6 @@ class CostmapTargetTracker:
         if self._selected_track_id is None:
             return None
         return self._tracks.get(self._selected_track_id)
-
-
-def _make_cluster(
-    grid: CostmapGrid,
-    component: list[tuple[int, int]],
-    minimum_cluster_cells: int,
-    maximum_cluster_cells: int,
-    maximum_cluster_extent_m: float,
-) -> ObstacleCluster | None:
-    cell_count = len(component)
-    if not minimum_cluster_cells <= cell_count <= maximum_cluster_cells:
-        return None
-    xs = [cell[0] for cell in component]
-    ys = [cell[1] for cell in component]
-    extent = grid.resolution * math.hypot(
-        max(xs) - min(xs) + 1,
-        max(ys) - min(ys) + 1,
-    )
-    if extent > maximum_cluster_extent_m:
-        return None
-    centers = [grid.cell_center(*cell) for cell in component]
-    return ObstacleCluster(
-        Point2D(
-            sum(point.x for point in centers) / cell_count,
-            sum(point.y for point in centers) / cell_count,
-        ),
-        cell_count,
-        extent,
-    )
-
-
-def _is_static_obstacle(
-    static_map: CostmapGrid | None,
-    point: Point2D,
-    occupied_threshold: int,
-    exclusion_radius_m: float,
-) -> bool:
-    """Test whether a cell belongs to saved static geometry plus margin."""
-    if static_map is None:
-        return False
-    center = static_map.world_to_cell(point)
-    if center is None:
-        return False
-    radius_cells = math.ceil(exclusion_radius_m / static_map.resolution)
-    for offset_y in range(-radius_cells, radius_cells + 1):
-        for offset_x in range(-radius_cells, radius_cells + 1):
-            if math.hypot(offset_x, offset_y) * static_map.resolution > (
-                exclusion_radius_m + 1e-9
-            ):
-                continue
-            cell_x = center[0] + offset_x
-            cell_y = center[1] + offset_y
-            if not 0 <= cell_x < static_map.width:
-                continue
-            if not 0 <= cell_y < static_map.height:
-                continue
-            if static_map.cost(cell_x, cell_y) >= occupied_threshold:
-                return True
-    return False
 
 
 def _predict_snapshot(
@@ -778,28 +633,3 @@ def _hungarian(costs: list[list[float]]) -> list[int]:
         if matching[column] != 0:
             result[matching[column] - 1] = column - 1
     return result
-
-
-def _validate_cluster_parameters(
-    obstacle_cost_threshold: int,
-    cluster_radius_m: float,
-    minimum_cluster_cells: int,
-    maximum_cluster_cells: int,
-    maximum_cluster_extent_m: float,
-    static_occupied_threshold: int,
-    static_exclusion_radius_m: float,
-) -> None:
-    if not 0 <= obstacle_cost_threshold <= 255:
-        raise ValueError('obstacle cost threshold must be in [0, 255]')
-    if cluster_radius_m <= 0.0:
-        raise ValueError('cluster radius must be positive')
-    if minimum_cluster_cells <= 0:
-        raise ValueError('minimum cluster cells must be positive')
-    if maximum_cluster_cells < minimum_cluster_cells:
-        raise ValueError('maximum cluster cells must cover the minimum')
-    if maximum_cluster_extent_m <= 0.0:
-        raise ValueError('maximum cluster extent must be positive')
-    if not 0 <= static_occupied_threshold <= 100:
-        raise ValueError('static occupied threshold must be in [0, 100]')
-    if static_exclusion_radius_m < 0.0:
-        raise ValueError('static exclusion radius must be non-negative')
