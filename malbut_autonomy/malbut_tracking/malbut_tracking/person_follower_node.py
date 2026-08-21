@@ -97,6 +97,16 @@ def _stamp_seconds(stamp) -> float:
     return float(stamp.sec) + float(stamp.nanosec) * 1e-9
 
 
+# 카메라만으로 사람을 되찾으려 애쓰는 구간. 이 동안에도 라이다는 사람을
+# 보고 있으므로, 후보가 있으면 남은 절차보다 그쪽을 먼저 본다.
+_RECOVERY_STATES = (
+    FollowState.REACHING_WAYPOINT,
+    FollowState.TURNING_TO_TARGET,
+    FollowState.REACHING_LAST_POSITION,
+    FollowState.SEARCHING,
+)
+
+
 class PersonFollowerNode(Node):
     """Resolve one map-frame person position and follow it through Nav2."""
 
@@ -405,7 +415,10 @@ class PersonFollowerNode(Node):
         self.declare_parameter('background_forget_seconds', 20.0)
         # 카메라가 사람을 확인하지 못한 동안, 라이다 후보 쪽으로 돌아본다.
         self.declare_parameter('lidar_acquisition_enabled', True)
-        self.declare_parameter('lidar_acquisition_interval_s', 8.0)
+        # 회전 한 번이 대략 3초다. 그보다 짧게 두면 이전 회전이 끝나기도
+        # 전에 다음 회전을 걸어 제자리에서 흔들린다. 사람이 스쳐 지나가는
+        # 2~3초를 놓치지 않으려면 그 정도까지만 줄인다.
+        self.declare_parameter('lidar_acquisition_interval_s', 3.0)
         self.declare_parameter('lidar_acquisition_max_distance_m', 6.0)
         self.declare_parameter('lidar_acquisition_spin_allowance_s', 12.0)
         self.declare_parameter('prediction_horizon_s', 0.60)
@@ -2084,6 +2097,18 @@ class PersonFollowerNode(Node):
             # 로봇 뒤로 지나가는 사람을 다시 잡을 길이 없다. 여기서도
             # 라이다 후보 쪽으로 돌아보되, 확인은 카메라가 한다.
             self._try_lidar_acquisition_turn(now_s)
+            self._publish_feedback()
+            return
+        if (
+            self._state in _RECOVERY_STATES
+            and self._try_lidar_acquisition_turn(now_s)
+        ):
+            # 복구 절차는 마지막으로 본 자리로 가서 270도를 훑는, 카메라만
+            # 있을 때 설계된 순서다. 그 사이 라이다에는 사람이 보이는데도
+            # 엉뚱한 데를 본다. 후보가 있으면 그쪽이 더 나은 근거이므로
+            # 남은 절차보다 먼저 돌아본다. 확인은 그대로 카메라가 한다.
+            self._path_planner.cancel()
+            self._reset_recovery()
             self._publish_feedback()
             return
         lost_for = max(0.0, now_s - self._last_seen_s)

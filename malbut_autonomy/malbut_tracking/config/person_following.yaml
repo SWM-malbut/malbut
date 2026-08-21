@@ -171,7 +171,7 @@ person_follower:
     # 확인하지 못한 동안, 화각 밖 라이다 후보 쪽으로 한 번 돌아본다.
     # 사람인지 아닌지는 여전히 카메라가 판단한다.
     lidar_acquisition_enabled: true
-    lidar_acquisition_interval_s: 8.0
+    lidar_acquisition_interval_s: 3.0
     lidar_acquisition_max_distance_m: 6.0
     lidar_acquisition_spin_allowance_s: 12.0
     recovery_spin_allowance_s: 12.0

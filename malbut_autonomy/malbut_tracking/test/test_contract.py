@@ -402,18 +402,31 @@ def test_declare_parameters_only_declares_parameters():
             )
 
 
-def test_lidar_acquisition_turn_covers_both_blind_waits():
+def test_lidar_acquisition_turn_covers_every_camera_blind_wait():
     """
     Try the acquisition turn wherever the follower waits on the camera.
 
     The camera wedge is narrower than the LiDAR, so a person outside it can
     never be confirmed while the robot faces elsewhere. That blind wait
-    happens twice: before the first acquisition, and again after a target is
-    lost. Handling only the first leaves the same defect in the second.
+    happens three ways: before the first acquisition, during the recovery
+    sequence, and after a target is finally declared lost. Covering only one
+    leaves the same defect in the others.
     """
     node_source = (
         PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
     ).read_text(encoding='utf-8')
+    assert '_RECOVERY_STATES = (' in node_source
+    recovery_states = node_source[
+        node_source.index('_RECOVERY_STATES = ('):
+        node_source.index(')', node_source.index('_RECOVERY_STATES = ('))
+    ]
+    for state in (
+        'REACHING_WAYPOINT',
+        'TURNING_TO_TARGET',
+        'REACHING_LAST_POSITION',
+        'SEARCHING',
+    ):
+        assert f'FollowState.{state}' in recovery_states
     tick = node_source[
         node_source.index('def _tick'):
         node_source.index('def _reset_recovery')
@@ -427,4 +440,11 @@ def test_lidar_acquisition_turn_covers_both_blind_waits():
     assert (
         tick.index('self._try_lidar_acquisition_turn(now_s)', lost) > lost
     )
-    assert tick.count('self._try_lidar_acquisition_turn(now_s)') == 2
+    recovery = tick.index('self._state in _RECOVERY_STATES')
+    assert (
+        tick.index('self._try_lidar_acquisition_turn(now_s)', recovery)
+        > recovery
+    )
+    # 복구를 가로챘으면 진행하던 복구 상태를 남겨 두면 안 된다.
+    assert tick.index('self._reset_recovery()', recovery) > recovery
+    assert tick.count('self._try_lidar_acquisition_turn(now_s)') == 3
