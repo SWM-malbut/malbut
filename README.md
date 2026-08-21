@@ -203,6 +203,14 @@ ros2 launch malbut_description display.launch.py
 최초 한 번 호환 YOLO와 OSNet 모델을 준비한 뒤 휴머노이드와 센서 기반
 사람 인식·재식별을 함께 실행합니다.
 
+준비 스크립트는 격리된 Python 가상환경에서 모델을 내보냅니다. 배포판에
+`python3-venv`가 없으면 `ensurepip is not available` 오류로 중단되므로 먼저
+설치합니다.
+
+```bash
+sudo apt install python3.10-venv
+```
+
 ```bash
 cd ~/ros2_ws/src/malbut
 ./malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh

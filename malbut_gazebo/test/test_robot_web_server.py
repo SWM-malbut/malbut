@@ -6,8 +6,7 @@ from http.server import ThreadingHTTPServer
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from threading import Lock
-from threading import Thread
+from threading import Lock, Thread
 import time
 
 import cv2
@@ -25,6 +24,7 @@ from malbut_gazebo.robot_web_server import (
     NavigationError,
     REQUIRED_PATH_CLEARANCE_M,
     RobotRequestHandler,
+    LIFECYCLE_QUERY_TIMEOUT_S,
     RobotWebBridge,
     _drive_mode_from_navigation,
     _navigation_progress_ratio,
@@ -698,3 +698,81 @@ def test_navigation_error_returns_stable_code(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+class _StuckFuture:
+    """A service call whose reply never arrives."""
+
+    def __init__(self):
+        self.removed = False
+
+    def done(self) -> bool:
+        return False
+
+    def add_done_callback(self, _callback) -> None:
+        return None
+
+
+class _RecordingClient:
+    def __init__(self, ready: bool = True):
+        self.ready = ready
+        self.calls = 0
+        self.removed = []
+
+    def service_is_ready(self) -> bool:
+        return self.ready
+
+    def call_async(self, _request):
+        self.calls += 1
+        return _StuckFuture()
+
+    def remove_pending_request(self, future) -> None:
+        future.removed = True
+        self.removed.append(future)
+
+
+def _lifecycle_bridge(client):
+    bridge = RobotWebBridge.__new__(RobotWebBridge)
+    bridge.lifecycle_clients = {"amcl": client}
+    bridge.lifecycle_futures = {}
+    bridge.lifecycle_future_deadlines = {}
+    bridge.lifecycle = {"amcl": "unknown"}
+    bridge.lock = Lock()
+    return bridge
+
+
+def test_lifecycle_query_retries_after_a_reply_never_arrives():
+    """
+    A dropped reply used to pin one node's state at "unknown" forever.
+
+    The pose view treats anything but "active" as degraded and hides the
+    robot, so one lost service reply removed the robot from the map for
+    the rest of the session.
+    """
+    client = _RecordingClient()
+    bridge = _lifecycle_bridge(client)
+
+    bridge._refresh_lifecycle()
+    first = bridge.lifecycle_futures["amcl"]
+    bridge._refresh_lifecycle()
+
+    assert client.calls == 1, "기한 안에는 다시 묻지 않는다"
+
+    bridge.lifecycle_future_deadlines["amcl"] = 0.0
+    bridge._refresh_lifecycle()
+
+    assert first.removed is True
+    assert client.calls == 2
+    assert bridge.lifecycle_futures["amcl"] is not first
+
+
+def test_lifecycle_query_marks_an_absent_service_unavailable():
+    bridge = _lifecycle_bridge(_RecordingClient(ready=False))
+
+    bridge._refresh_lifecycle()
+
+    assert bridge.lifecycle["amcl"] == "unavailable"
+
+
+def test_lifecycle_query_timeout_is_bounded():
+    assert 0.0 < LIFECYCLE_QUERY_TIMEOUT_S <= 30.0

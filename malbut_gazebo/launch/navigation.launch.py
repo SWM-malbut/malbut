@@ -494,7 +494,7 @@ def generate_launch_description():
                     Path.home()
                     / '.cache'
                     / 'malbut_perception'
-                    / 'osnet_x0_5_msmt17.onnx'
+                    / 'osnet_ain_x1_0_msmt17.onnx'
                 ),
                 'projection_frame': person_projection_frame,
                 'publish_debug_image': False,
