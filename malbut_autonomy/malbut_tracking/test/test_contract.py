@@ -514,3 +514,86 @@ def test_bearing_only_range_comes_from_lidar_before_the_map():
     moving = lookup.index('self._background.filter_moving(')
     loop = lookup.index('for candidates in (moving, self._latest_clusters):')
     assert moving < loop
+
+
+def test_a_walking_target_is_led_instead_of_aimed_at_from_a_standstill():
+    """
+    Turn and translate together while the person is walking.
+
+    Once the range is satisfied the policy asks to ALIGN, and aiming a fixed
+    forward camera from a standstill takes longer than a walking person stays
+    inside the camera wedge. Leading the target keeps a moving goal, so Nav2
+    owns both the heading and the travel. A person who is standing still has
+    nothing to lead, and aiming in place is then correct.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    motion = node_source[
+        node_source.index('def _apply_tracking_motion'):
+        node_source.index('def _led_target')
+    ]
+    assert 'planned_target = self._led_target(' in motion
+    align = motion[motion.index('if decision.command == FollowCommand.ALIGN:'):]
+    lead = align.index('lead_decision')
+    spin = align.index('self._align_with_target(')
+    assert lead < spin, (
+        'a walking target must be led before falling back to a spin'
+    )
+    assert 'FollowCommand.NAVIGATE' in align[:spin]
+    lead_helper = node_source[
+        node_source.index('def _led_target'):
+        node_source.index('def _align_with_target')
+    ]
+    # 서 있는 사람에게는 앞지를 것이 없다.
+    assert "'target_lead_minimum_speed_mps'" in lead_helper
+    # 속도 추정이 튀어도 사람 걸음 이상 앞지르지 않는다.
+    assert "'maximum_person_speed_mps'" in lead_helper
+    # Nav2 는 경로 쪽을 향하므로, 앞지른 목표가 사람의 방위에서 크게
+    # 벗어나면 카메라가 정작 사람을 놓친다. 시간이 아니라 각도로 묶는다.
+    bounded = node_source[
+        node_source.index('def _bounded_lead'):
+        node_source.index('def _align_with_target')
+    ]
+    assert "'target_lead_max_offset_rad'" in bounded
+    assert 'range_m * math.tan(' in bounded
+    # 안전 거리 판정은 예측이 아니라 실제 위치로 해야 한다.
+    decision = motion[
+        motion.index('decision = decide_follow_motion('):
+    ]
+    assert decision.index('target_position') < decision.index('settings')
+
+
+def test_camera_loss_pursues_the_prediction_before_the_last_observation():
+    """
+    Go where the person went, not to where the camera last saw them.
+
+    Driving to the last observation and sweeping there only finds someone
+    who stopped. A person who kept walking is metres away by then. The last
+    observed velocity, already trusted for prediction, carries the target
+    forward over the time actually lost, and the existing goal projection
+    moves the result into open space.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    recovery = node_source[
+        node_source.index('def _request_last_seen_recovery'):
+        node_source.index('def _try_lidar_acquisition_turn')
+    ]
+    predicted = recovery.index('self._predicted_pursuit_target(now_s)')
+    motion = recovery.index('self._apply_tracking_motion(')
+    assert predicted < motion
+    assert 'predicted if predicted is not None' in recovery
+    assert "'predicted_pursuit'" in recovery
+    pursuit = node_source[
+        node_source.index('def _predicted_pursuit_target'):
+        node_source.index('def _request_last_seen_recovery')
+    ]
+    # 추정은 오래될수록 근거를 잃는다. 기한을 넘기면 마지막 관측으로 돌아간다.
+    assert "'predicted_pursuit_timeout_s'" in pursuit
+    assert 'if not 0.0 < elapsed_s <= timeout_s:' in pursuit
+    # 서 있던 사람은 외삽할 것이 없다.
+    assert "'target_lead_minimum_speed_mps'" in pursuit
+    # 속도 추정이 튀어도 사람 걸음 이상 가지 않는다.
+    assert "'maximum_person_speed_mps'" in pursuit

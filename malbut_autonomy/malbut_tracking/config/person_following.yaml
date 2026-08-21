@@ -184,6 +184,19 @@ person_follower:
 
     # Bounded prediction supports identity association and display only.
     prediction_horizon_s: 0.60
+    # 사람이 유지 거리 안에 있으면 정책이 ALIGN 을 내고 제자리 회전만 하다가
+    # 대상이 시야를 벗어난다. 갈 곳을 앞질러 목표로 삼아 회전과 병진이 함께
+    # 일어나게 한다. 멈춰 있는 사람에게는 앞지를 것이 없어 그대로 조준한다.
+    target_lead_time_s: 1.00
+    target_lead_minimum_speed_mps: 0.15
+    # 앞지른 목표가 사람의 방위에서 이 각도 이상 벗어나면 Nav2 가 경로
+    # 쪽을 향해 카메라가 정작 사람을 놓친다. 카메라 반시야(약 37도)의
+    # 절반 아래로 묶는다.
+    target_lead_max_offset_rad: 0.25
+    # 마지막 관측 자리로 가서 훑는 것은 멈춰 선 사람만 찾는다. 계속
+    # 걸어간 사람은 그때 이미 몇 미터 밖이다. 이 시간까지는 마지막
+    # 속도로 외삽한 지점을 쫓는다.
+    predicted_pursuit_timeout_s: 3.00
     transform_timeout_s: 0.10
     # Sensor callbacks never block perception waiting for TF. The newest scan
     # is queued briefly and processed only when its exact transform arrives.

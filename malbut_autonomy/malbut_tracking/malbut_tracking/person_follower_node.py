@@ -444,6 +444,18 @@ class PersonFollowerNode(Node):
         self.declare_parameter('lidar_acquisition_max_distance_m', 6.0)
         self.declare_parameter('lidar_acquisition_spin_allowance_s', 12.0)
         self.declare_parameter('prediction_horizon_s', 0.60)
+        # 사람이 유지 거리 안에 들어오면 정책이 ALIGN 을 내고, 그러면 제자리
+        # 회전만 하다가 대상이 시야를 벗어난다. 갈 곳을 앞질러 목표로 삼으면
+        # 목표가 계속 움직여 회전과 병진이 함께 일어난다. 실제품(Astro)도
+        # 멈춰서 돌지 않고 통합 경로로 움직인다.
+        self.declare_parameter('target_lead_time_s', 1.00)
+        self.declare_parameter('target_lead_minimum_speed_mps', 0.15)
+        # 앞지른 목표가 사람의 방위에서 이 각도 이상 벗어나면
+        # Nav2 가 경로 쪽을 향해 카메라가 사람을 벗어난다.
+        self.declare_parameter('target_lead_max_offset_rad', 0.25)
+        # 놓친 뒤 이 시간까지는 마지막 속도로 외삽한 지점을 쫓는다.
+        # 그보다 오래되면 추정이 근거를 잃어 마지막 관측으로 돌아간다.
+        self.declare_parameter('predicted_pursuit_timeout_s', 3.00)
         self.declare_parameter('recovery_spin_allowance_s', 12.0)
         self.declare_parameter('transform_timeout_s', 0.10)
         self.declare_parameter('sensor_transform_queue_timeout_s', 0.30)
@@ -1866,6 +1878,9 @@ class PersonFollowerNode(Node):
         self._last_motion_velocity = target_velocity
         self._last_motion_precise = precise
         self._last_motion_bearing_only = bearing_only
+        # 거리 판정은 실제 위치로 한다. 안전 거리는 지금 어디 있느냐의
+        # 문제이지 어디로 갈 것이냐의 문제가 아니다. 접근 목표만 앞지른다.
+        planned_target = self._led_target(target_position, target_velocity)
         travel_parameter = (
             'precise_maximum_travel_m'
             if precise
@@ -1928,11 +1943,29 @@ class PersonFollowerNode(Node):
                 self._start_recovery_scan()
             return
         if decision.command == FollowCommand.ALIGN:
-            self._align_with_target(decision.goal.yaw)
-            self._publish_track_markers()
-            if recovery:
-                self._start_recovery_scan()
-            return
+            lead_decision = (
+                decide_follow_motion(
+                    robot_position,
+                    planned_target,
+                    settings,
+                    maximum_travel_m=None,
+                )
+                if planned_target is not target_position
+                else None
+            )
+            if (
+                lead_decision is not None
+                and lead_decision.command == FollowCommand.NAVIGATE
+            ):
+                # 사람이 걷고 있으면 멈춰서 돌지 않는다. 갈 곳으로 주행하면
+                # Nav2 가 방향과 이동을 같이 맡아 카메라도 따라 돈다.
+                decision = lead_decision
+            else:
+                self._align_with_target(decision.goal.yaw)
+                self._publish_track_markers()
+                if recovery:
+                    self._start_recovery_scan()
+                return
         if now_s < self._navigation_retry_not_before_s:
             return
         if decision.command == FollowCommand.RETREAT:
@@ -2153,6 +2186,73 @@ class PersonFollowerNode(Node):
             )
             if recovery:
                 self._start_recovery_scan()
+
+    def _led_target(
+        self,
+        target_position: Point2D,
+        target_velocity: Point2D | None,
+    ) -> Point2D:
+        """
+        Aim where the person is going, not where they were.
+
+        Standing still to rotate loses a walking person: the camera wedge is
+        narrow and the aim takes longer than the person stays inside it. A
+        goal that leads the target keeps translating, so Nav2 turns and moves
+        at once instead of handing the two to separate controllers.
+        """
+        if target_velocity is None:
+            return target_position
+        lead_s = float(self.get_parameter('target_lead_time_s').value)
+        if lead_s <= 0.0:
+            return target_position
+        speed = math.hypot(target_velocity.x, target_velocity.y)
+        if speed < float(
+            self.get_parameter('target_lead_minimum_speed_mps').value
+        ):
+            return target_position
+        # 속도 추정이 튀어도 사람 걸음 이상으로는 앞지르지 않는다.
+        lead_m = min(
+            speed * lead_s,
+            float(self.get_parameter('maximum_person_speed_mps').value)
+            * lead_s,
+        )
+        return self._bounded_lead(target_position, target_velocity, speed,
+                                  lead_m)
+
+    def _bounded_lead(
+        self,
+        target_position: Point2D,
+        target_velocity: Point2D,
+        speed: float,
+        lead_m: float,
+    ) -> Point2D:
+        """
+        Keep the led goal inside the camera's view of the actual person.
+
+        Nav2 aims along the path, so a goal far off the person's bearing
+        turns the camera away from them. Leading in time alone does that:
+        the same lead is a wide angle up close and a narrow one far away.
+        Bound the offset by angle instead, well inside the camera half-wedge.
+        """
+        try:
+            robot_position, _ = self._robot_pose()
+        except TransformException:
+            return target_position
+        unit_x = target_velocity.x / speed
+        unit_y = target_velocity.y / speed
+        range_m = math.hypot(
+            target_position.x - robot_position.x,
+            target_position.y - robot_position.y,
+        )
+        if range_m > 1e-6:
+            maximum_offset_rad = float(
+                self.get_parameter('target_lead_max_offset_rad').value
+            )
+            lead_m = min(lead_m, range_m * math.tan(maximum_offset_rad))
+        return Point2D(
+            target_position.x + unit_x * lead_m,
+            target_position.y + unit_y * lead_m,
+        )
 
     def _align_with_target(self, target_yaw: float) -> None:
         """Use Nav2 Spin only after translational standoff is satisfied."""
@@ -2420,6 +2520,43 @@ class PersonFollowerNode(Node):
         )
         self._request_last_seen_recovery(self._now_seconds())
 
+    def _predicted_pursuit_target(self, now_s: float) -> Point2D | None:
+        """
+        Move to where the person went, not to where they were last seen.
+
+        Driving to the last observation and sweeping the camera there only
+        finds someone who stopped. A person who kept walking is already
+        metres away by the time the sweep runs. Carry the last observed
+        velocity forward over the time actually lost, which is the same
+        estimate the tracker already trusts for prediction, and let the
+        normal goal projection move it to open space.
+        """
+        if self._last_motion_target is None or self._last_seen_s is None:
+            return None
+        velocity = self._last_motion_velocity
+        if velocity is None:
+            return None
+        elapsed_s = now_s - self._last_seen_s
+        timeout_s = float(
+            self.get_parameter('predicted_pursuit_timeout_s').value
+        )
+        if not 0.0 < elapsed_s <= timeout_s:
+            return None
+        speed = math.hypot(velocity.x, velocity.y)
+        if speed < float(
+            self.get_parameter('target_lead_minimum_speed_mps').value
+        ):
+            return None
+        travel_m = min(
+            speed * elapsed_s,
+            float(self.get_parameter('maximum_person_speed_mps').value)
+            * timeout_s,
+        )
+        return Point2D(
+            self._last_motion_target.x + velocity.x / speed * travel_m,
+            self._last_motion_target.y + velocity.y / speed * travel_m,
+        )
+
     def _request_last_seen_recovery(self, now_s: float) -> None:
         """Follow one complete Nav2 path to the last safe target standoff."""
         self._set_state(FollowState.REACHING_LAST_POSITION)
@@ -2433,10 +2570,19 @@ class PersonFollowerNode(Node):
                 'recovery_tf', f'Recovery TF unavailable: {error}'
             )
             return
-        self._tracking_source = 'last_seen_recovery'
+        predicted = self._predicted_pursuit_target(now_s)
+        if predicted is not None:
+            self._tracking_source = 'predicted_pursuit'
+            self.get_logger().info(
+                'Person left the camera; moving to where they should be '
+                f'({predicted.x:.2f}, {predicted.y:.2f}) instead of the '
+                'last observation'
+            )
+        else:
+            self._tracking_source = 'last_seen_recovery'
         self._apply_tracking_motion(
             robot_position,
-            self._last_motion_target,
+            predicted if predicted is not None else self._last_motion_target,
             now_s,
             precise=self._last_motion_precise,
             bearing_only=self._last_motion_bearing_only,
