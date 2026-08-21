@@ -78,10 +78,21 @@ def test_humanoid_route_is_continuous_and_indoor_speed():
     assert actor.find('script/trajectory').get('tension') == '1.0'
 
 
-def test_humanoid_is_a_camera_target_without_ground_truth_plugins():
+def test_humanoid_is_perceived_without_ground_truth_plugins():
+    """
+    Perception must come from sensors, never from a Gazebo pose feed.
+
+    The humanoid carries a torso collision so LiDAR and the costmap see it
+    the way they see a real person, but it must still publish no pose of
+    its own for the tracker to shortcut with.
+    """
     actor = _actor()
-    assert actor.find('link') is None
+
     assert actor.find('plugin') is None
+    links = actor.findall('link')
+    assert len(links) == 1
+    assert links[0].find('collision/geometry/cylinder') is not None
+    assert links[0].find('visual') is None
 
 
 def test_default_route_covers_the_full_small_house():

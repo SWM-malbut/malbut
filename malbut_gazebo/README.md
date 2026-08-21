@@ -59,9 +59,11 @@ ros2 launch malbut_gazebo humanoid_demo.launch.py \
 ```
 
 No Gazebo ground-truth pose is bridged to ROS; later perception code must
-locate the target from `/camera/color/image_raw` and
-`/camera/depth/image_raw`. The humanoid is a kinematic camera target, not a
-physics obstacle.
+locate the target from `/camera/color/image_raw`,
+`/camera/depth/image_raw`, and `/scan`. The humanoid carries a torso
+collision cylinder so LiDAR and the Nav2 costmap see it the way they see a
+real person, which the follower's camera/LiDAR fusion depends on. Its
+motion still comes from the animation script, so physics never pushes it.
 
 ## SLAM mapping
 

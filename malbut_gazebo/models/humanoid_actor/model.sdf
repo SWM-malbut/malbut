@@ -1,6 +1,22 @@
 <?xml version="1.0"?>
 <sdf version="1.8">
   <actor name="humanoid_target">
+    <!-- 사람은 실기에서 라이다와 코스트맵에 잡힌다. 추적 코드도 그것을
+         전제하므로(camera_label_gate_m, require_global_costmap_for_goal)
+         시뮬레이터 액터에도 몸통 충돌 형상을 둔다. 애니메이션은 그대로
+         스크립트가 움직이므로 물리로 밀리지 않는다. -->
+    <link name="torso_collision">
+      <pose>0 0 0.9 0 0 0</pose>
+      <collision name="torso">
+        <geometry>
+          <cylinder>
+            <radius>0.18</radius>
+            <length>1.6</length>
+          </cylinder>
+        </geometry>
+      </collision>
+    </link>
+
     <!-- The skeleton origin is at the hips, one metre above the floor. -->
     <skin>
       <filename>model://humanoid_actor/meshes/walk.dae</filename>
