@@ -8110,6 +8110,325 @@ a:focus-visible {
   border-radius: 0 0 14px 14px;
 }
 
+/* Keep the authorized P2P viewer alive while another Homecam tab is open. */
+.homecam-live-view.is-pip {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 80;
+  display: block;
+  width: clamp(440px, 42vw, 580px);
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / .18);
+  border-radius: 18px;
+  color: #fff;
+  background: var(--homecam-charcoal);
+  box-shadow: 0 18px 48px rgb(15 20 18 / .32);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.homecam-live-view.is-pip:active { cursor: grabbing; }
+
+.homecam-live-view.is-pip[style] {
+  right: auto;
+  bottom: auto;
+}
+
+.homecam-live-pip-actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid rgb(255 255 255 / .12);
+  border-radius: 12px;
+  background: rgb(28 32 31 / .72);
+  backdrop-filter: blur(7px);
+}
+
+.homecam-live-pip-actions button {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  color: rgb(255 255 255 / .82);
+  background: transparent;
+  cursor: pointer;
+}
+
+.homecam-live-pip-actions button:hover,
+.homecam-live-pip-actions button:focus-visible {
+  color: #fff;
+  background: rgb(255 255 255 / .12);
+}
+
+.homecam-live-view.is-pip .homecam-stream-video-card {
+  display: block;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: var(--homecam-charcoal);
+}
+
+.homecam-live-view.is-pip .homecam-stream-shell.is-embedded .homecam-stream-video-frame {
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 16 / 9;
+  border-radius: 0;
+}
+
+.homecam-live-view.is-pip .homecam-stream-controls,
+.homecam-live-view.is-pip .homecam-video-topbar,
+.homecam-live-view.is-pip .homecam-video-bottom,
+.homecam-live-view.is-pip .homecam-stream-notice {
+  display: none;
+}
+
+.homecam-live-view.is-pip .homecam-quick-grid {
+  display: none !important;
+}
+
+.homecam-live-view.is-pip .homecam-stream-placeholder {
+  width: calc(100% - 28px);
+}
+
+.homecam-live-view.is-pip .homecam-stream-placeholder > svg {
+  width: 25px;
+  height: 25px;
+  margin-bottom: 8px;
+}
+
+.homecam-live-view.is-pip .homecam-stream-placeholder h1 {
+  font-size: 1rem;
+}
+
+.homecam-live-view.is-pip .homecam-stream-placeholder p { display: none; }
+
+.homecam-local-demo-map-canvas {
+  position: relative;
+  aspect-ratio: 5 / 3;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #edf2f8;
+}
+
+.homecam-local-demo-map-canvas > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.homecam-local-demo-floor {
+  fill: #dce8fb;
+  stroke: #4b433c;
+  stroke-width: 9;
+  stroke-linejoin: round;
+}
+
+.homecam-local-demo-wall {
+  fill: none;
+  stroke: #4b433c;
+  stroke-width: 9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.homecam-local-demo-furniture {
+  fill: #f7f3ed;
+  stroke: #756b61;
+  stroke-width: 6;
+}
+
+.homecam-local-demo-zone {
+  fill: url(#local-demo-zone-hatch);
+  stroke: #c4493d;
+  stroke-width: 3;
+  stroke-dasharray: 9 6;
+}
+
+.homecam-local-demo-virtual-wall {
+  stroke: #c4493d;
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+
+.homecam-local-demo-route {
+  fill: none;
+  stroke: #3f8fd7;
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-dasharray: 14 10;
+}
+
+.homecam-local-demo-goal {
+  fill: #fff;
+  stroke: #ef7f32;
+  stroke-width: 6;
+}
+
+.homecam-local-demo-room,
+.homecam-local-demo-zone-label,
+.homecam-local-demo-robot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+
+.homecam-local-demo-room {
+  padding: 6px 12px;
+  border: 1px solid rgba(75, 67, 60, .18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .88);
+  color: #39332d;
+  font-size: .82rem;
+  font-weight: 750;
+  box-shadow: 0 4px 14px rgba(53, 60, 70, .08);
+}
+
+.homecam-local-demo-room.is-living { left: 50%; top: 61%; }
+.homecam-local-demo-room.is-bedroom { left: 21%; top: 28%; }
+.homecam-local-demo-room.is-kitchen { left: 78%; top: 30%; }
+.homecam-local-demo-room.is-study { left: 22%; top: 76%; }
+
+.homecam-local-demo-zone-label {
+  left: 75%;
+  top: 73%;
+  padding: 6px 10px;
+  border-radius: 9px;
+  background: rgba(255, 250, 248, .94);
+  color: #b8382e;
+  font-size: .76rem;
+  font-weight: 800;
+}
+
+.homecam-local-demo-robot {
+  left: 49%;
+  top: 69%;
+  width: 26px;
+  height: 26px;
+  border: 4px solid #fff;
+  border-radius: 50%;
+  background: #3f8fd7;
+  box-shadow: 0 2px 9px rgba(36, 76, 115, .35);
+}
+
+.homecam-local-demo-robot > i {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  width: 4px;
+  height: 14px;
+  border-radius: 999px;
+  background: #3f8fd7;
+  transform: translateX(-50%);
+}
+
+.homecam-local-demo-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.homecam-local-demo-note strong { display: block; }
+
+.homecam-local-demo-note p {
+  margin: 6px 0 0;
+  color: var(--hc-muted);
+  font-size: .875rem;
+  line-height: 1.55;
+}
+
+.homecam-home-map-demo {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  border: 4px solid #5c544c;
+  border-radius: 14px;
+  background: #dce8fb;
+}
+
+.homecam-home-map-demo::before,
+.homecam-home-map-demo::after,
+.homecam-home-map-demo > i {
+  position: absolute;
+  content: "";
+}
+
+.homecam-home-map-demo::before {
+  top: 0;
+  bottom: 44%;
+  left: 38%;
+  width: 4px;
+  background: #5c544c;
+}
+
+.homecam-home-map-demo::after {
+  top: 56%;
+  right: 0;
+  left: 38%;
+  height: 4px;
+  background: #5c544c;
+}
+
+.homecam-home-map-demo > i.is-room-one {
+  top: 18%;
+  left: 8%;
+  width: 22%;
+  height: 18%;
+  border: 3px solid #81766c;
+  background: #f7f3ed;
+}
+
+.homecam-home-map-demo > i.is-room-two {
+  right: 10%;
+  bottom: 12%;
+  width: 24%;
+  height: 22%;
+  border: 3px solid #81766c;
+  background: #f7f3ed;
+}
+
+.homecam-home-map-demo > i.is-zone {
+  right: 8%;
+  bottom: 10%;
+  width: 34%;
+  height: 34%;
+  border: 2px dashed #c4493d;
+  background: rgb(196 73 61 / .1);
+}
+
+.homecam-home-map-demo > b {
+  position: absolute;
+  top: 66%;
+  left: 48%;
+  width: 18px;
+  height: 18px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #3f8fd7;
+  box-shadow: 0 2px 7px rgb(36 76 115 / .35);
+}
+
+@media (max-width: 680px) {
+  .homecam-live-view.is-pip {
+    right: 12px;
+    bottom: calc(76px + env(safe-area-inset-bottom));
+    width: min(360px, calc(100vw - 24px));
+    border-radius: 16px;
+  }
+
+}
+
 @media (max-width: 680px) {
   .homecam-stream-shell.is-embedded .homecam-stream-controls { margin: 0 10px 10px; }
   .homecam-stream-shell.is-embedded .homecam-stream-control-buttons { width: 100%; }

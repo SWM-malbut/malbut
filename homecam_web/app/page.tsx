@@ -9,7 +9,10 @@ type HomePageProps = {
 
 export default async function HomePage({ searchParams }: HomePageProps) {
   const returnTo = homeReturnPath(await searchParams);
-  await requireChatGPTUser(returnTo);
+  const localUiDemo =
+    process.env.NODE_ENV !== "production" &&
+    process.env.NEXT_PUBLIC_HOMECAM_UI_DEMO === "1";
+  if (!localUiDemo) await requireChatGPTUser(returnTo);
   return <HomecamApp />;
 }
 
