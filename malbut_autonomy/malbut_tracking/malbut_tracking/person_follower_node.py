@@ -2079,6 +2079,13 @@ class PersonFollowerNode(Node):
             self._try_lidar_acquisition_turn(now_s)
             self._publish_feedback()
             return
+        if self._state == FollowState.TARGET_LOST:
+            # 놓친 뒤에도 사각은 그대로다. 카메라 감지만 서서 기다리면
+            # 로봇 뒤로 지나가는 사람을 다시 잡을 길이 없다. 여기서도
+            # 라이다 후보 쪽으로 돌아보되, 확인은 카메라가 한다.
+            self._try_lidar_acquisition_turn(now_s)
+            self._publish_feedback()
+            return
         lost_for = max(0.0, now_s - self._last_seen_s)
         if lost_for >= settings.temporary_lost_timeout_s:
             if (

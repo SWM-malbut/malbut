@@ -400,3 +400,31 @@ def test_declare_parameters_only_declares_parameters():
                 f'_declare_parameters assigns self.{target.attr}; '
                 '__init__ overwrites it afterwards'
             )
+
+
+def test_lidar_acquisition_turn_covers_both_blind_waits():
+    """
+    Try the acquisition turn wherever the follower waits on the camera.
+
+    The camera wedge is narrower than the LiDAR, so a person outside it can
+    never be confirmed while the robot faces elsewhere. That blind wait
+    happens twice: before the first acquisition, and again after a target is
+    lost. Handling only the first leaves the same defect in the second.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    tick = node_source[
+        node_source.index('def _tick'):
+        node_source.index('def _reset_recovery')
+    ]
+    waiting_first = tick.index('if self._last_seen_s is None:')
+    assert (
+        tick.index('self._try_lidar_acquisition_turn(now_s)', waiting_first)
+        > waiting_first
+    )
+    lost = tick.index('if self._state == FollowState.TARGET_LOST:')
+    assert (
+        tick.index('self._try_lidar_acquisition_turn(now_s)', lost) > lost
+    )
+    assert tick.count('self._try_lidar_acquisition_turn(now_s)') == 2
