@@ -33,6 +33,10 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from vision_msgs.msg import Detection3D, Detection3DArray
 from visualization_msgs.msg import Marker, MarkerArray
 
+from .background_memory import (
+    BackgroundMemory,
+    select_acquisition_turn,
+)
 from .costmap_tracking import (
     CostmapGrid,
     LabeledObstacle,
@@ -234,6 +238,20 @@ class PersonFollowerNode(Node):
         self._observed_track_id = ''
         self._detector_track_id = ''
         self._state = FollowState.IDLE
+        self._background = BackgroundMemory(
+            settle_seconds=float(
+                self.get_parameter('background_settle_seconds').value
+            ),
+            settle_radius_m=float(
+                self.get_parameter('background_settle_radius_m').value
+            ),
+            forget_seconds=float(
+                self.get_parameter('background_forget_seconds').value
+            ),
+        )
+        self._acquisition_candidates: list = []
+        self._raw_foreground_count = 0
+        self._last_acquisition_turn_s: float | None = None
         self._last_seen_s: float | None = None
         self._last_camera_seen_s: float | None = None
         self._last_camera_frame_s: float | None = None
@@ -268,6 +286,9 @@ class PersonFollowerNode(Node):
         self._last_speed_publish_s = -math.inf
         self._last_warning_s: dict[str, float] = {}
         self._pending_scan: LaserScan | None = None
+        self._pending_scan_queued_s = 0.0
+        self._scan_transform_drops = 0
+        self._scan_processed_count = 0
         self._timer = self.create_timer(0.1, self._tick)
         self._scan_transform_timer = self.create_timer(
             0.02,
@@ -378,10 +399,23 @@ class PersonFollowerNode(Node):
         self.declare_parameter('recovery_direction_minimum_turn_rad', 0.70)
         self.declare_parameter('recovery_waypoint_tolerance_m', 0.08)
         self.declare_parameter('recovery_scan_angle_rad', 4.71238898)
+        # 지도를 만든 뒤 들어온 정적 물체를 후보에서 제외하기 위한 값들이다.
+        self.declare_parameter('background_settle_seconds', 8.0)
+        self.declare_parameter('background_settle_radius_m', 0.25)
+        self.declare_parameter('background_forget_seconds', 20.0)
+        # 카메라가 사람을 확인하지 못한 동안, 라이다 후보 쪽으로 돌아본다.
+        self.declare_parameter('lidar_acquisition_enabled', True)
+        self.declare_parameter('lidar_acquisition_interval_s', 8.0)
+        self.declare_parameter('lidar_acquisition_max_distance_m', 6.0)
+        self.declare_parameter('lidar_acquisition_spin_allowance_s', 12.0)
         self.declare_parameter('prediction_horizon_s', 0.60)
         self.declare_parameter('recovery_spin_allowance_s', 12.0)
         self.declare_parameter('transform_timeout_s', 0.10)
         self.declare_parameter('sensor_transform_queue_timeout_s', 0.30)
+        # TF 가 스캔보다 뒤처지면 정확 시각 변환이 존재하지 않아 모든 스캔이
+        # 버려진다. 이 값보다 지연이 작으면 최신 변환으로 대체한다. 자기 운동
+        # 보정을 포기하는 절충이므로 기본은 0(사용 안 함)이다.
+        self.declare_parameter('scan_transform_max_tf_lag_s', 0.0)
 
     def _validate_parameters(self) -> None:
         detections_topic = str(
@@ -824,6 +858,8 @@ class PersonFollowerNode(Node):
         """Queue only the newest scan until its exact TF becomes available."""
         if self._static_distance_field is None or not message.header.frame_id:
             return
+        if self._pending_scan is None:
+            self._pending_scan_queued_s = self._now_seconds()
         self._pending_scan = message
         self._process_pending_scan()
 
@@ -835,17 +871,33 @@ class PersonFollowerNode(Node):
         try:
             transform = self._scan_transform(message)
         except TransformException as error:
-            stamp_s = _stamp_seconds(message.header.stamp)
-            age_s = self._now_seconds() - stamp_s if stamp_s > 0.0 else 0.0
-            if age_s > float(
+            # 스캔 스탬프가 TF 최신값보다 앞서면 스탬프로 잰 경과 시간이
+            # 음수라 아래 조건이 영원히 성립하지 않는다. 그러면 모든 스캔이
+            # 경고 하나 없이 버려지고 LiDAR 추적이 통째로 멈춘 채 지나간다.
+            # 그래서 대기 시간은 스탬프가 아니라 큐에 들어온 시점으로 잰다.
+            waited_s = self._now_seconds() - self._pending_scan_queued_s
+            if waited_s > float(
                 self.get_parameter(
                     'sensor_transform_queue_timeout_s'
                 ).value
             ):
+                fallback = self._degraded_scan_transform(message)
+                if fallback is not None:
+                    self._pending_scan = None
+                    self._warn_periodically(
+                        'lidar_transform_degraded',
+                        'Using the newest TF for a scan whose exact-time TF '
+                        'never arrived; ego-motion compensation is off',
+                    )
+                    self._process_scan(message, fallback)
+                    return
                 self._pending_scan = None
+                self._scan_transform_drops += 1
                 self._warn_periodically(
                     'lidar_transform_timeout',
-                    f'Dropping LiDAR scan without exact-time TF: {error}',
+                    'Dropping LiDAR scan after waiting '
+                    f'{waited_s:.2f}s for its exact-time TF '
+                    f'({self._scan_transform_drops} dropped so far): {error}',
                 )
             return
         self._pending_scan = None
@@ -860,6 +912,7 @@ class PersonFollowerNode(Node):
         static_field = self._static_distance_field
         if static_field is None:
             return
+        self._scan_processed_count += 1
         try:
             clusters = extract_foreground_clusters(
                 message.ranges,
@@ -898,9 +951,21 @@ class PersonFollowerNode(Node):
             if fresh_camera_position is not None
             else self._lidar_candidate_center(stamp_s)
         )
+        # 확인 여부와 무관하게 자리를 학습한다. 지도를 만든 뒤 들어온
+        # 가구가 계속 후보로 떠오르는 것을 막기 위해서다.
+        self._background.observe(clusters, stamp_s)
         if gate_center is None:
+            # 카메라가 아직 사람을 확인하지 못한 구간이다. 트래커에는 넣지
+            # 않되, 어디를 돌아볼지 정하는 단서로만 남긴다. 확인은 여전히
+            # 카메라가 한다.
+            self._raw_foreground_count = len(clusters)
+            self._acquisition_candidates = self._background.filter_moving(
+                clusters, stamp_s
+            )
             clusters = []
         elif fresh_camera_position is not None:
+            self._raw_foreground_count = len(clusters)
+            self._acquisition_candidates = []
             # A current RGB-D detection is positive evidence for its own
             # region and negative evidence for neighboring LiDAR geometry.
             # Keep a small bounded extent allowance for torso/leg centroid
@@ -962,6 +1027,43 @@ class PersonFollowerNode(Node):
                     labeled,
                     allow_camera_negative_rebind=reassociated is not None,
                 )
+
+    def _degraded_scan_transform(
+        self, message: LaserScan
+    ) -> ScanTransform2D | None:
+        """
+        Fall back to the newest TF when the exact-time one never arrives.
+
+        Simulation and loaded hardware can publish odometry TF seconds
+        behind the scans, and an exact-time lookup can then never succeed.
+        Dropping every scan silently disables LiDAR tracking, so allow a
+        bounded substitution instead. It is off by default because it
+        trades away the ego-motion compensation the exact lookup provides.
+        """
+        allowance_s = float(
+            self.get_parameter('scan_transform_max_tf_lag_s').value
+        )
+        if allowance_s <= 0.0:
+            return None
+        try:
+            latest = self._tf_buffer.lookup_transform(
+                self._global_frame, message.header.frame_id, Time()
+            )
+        except TransformException:
+            return None
+        lag_s = self._now_seconds() - _stamp_seconds(latest.header.stamp)
+        if lag_s > allowance_s:
+            return None
+        pose = latest.transform
+        return ScanTransform2D(
+            translation=Point2D(pose.translation.x, pose.translation.y),
+            yaw=quaternion_to_yaw(
+                pose.rotation.x,
+                pose.rotation.y,
+                pose.rotation.z,
+                pose.rotation.w,
+            ),
+        )
 
     def _scan_transform(self, message: LaserScan) -> ScanTransform2D:
         """Resolve exact start/end transforms for ego-motion compensation."""
@@ -1970,8 +2072,11 @@ class PersonFollowerNode(Node):
         now_s = self._now_seconds()
         self._publish_speed_limit()
         if self._last_seen_s is None:
-            # A follow request waits stationary for sensor-backed acquisition.
-            # Search rotation is valid only after a real target was acquired.
+            # Waiting stationary means a person crossing behind the robot is
+            # never acquired: LiDAR spans every bearing while the camera sees
+            # only its own wedge. Turn toward one unconfirmed LiDAR candidate
+            # so the detector gets a look; the camera still decides.
+            self._try_lidar_acquisition_turn(now_s)
             self._publish_feedback()
             return
         lost_for = max(0.0, now_s - self._last_seen_s)
@@ -2181,6 +2286,66 @@ class PersonFollowerNode(Node):
             target_velocity=self._last_motion_velocity,
         )
 
+    def _try_lidar_acquisition_turn(self, now_s: float) -> bool:
+        """
+        Point the camera at one LiDAR candidate the detector cannot see.
+
+        Nothing here claims the candidate is a person. It only chooses where
+        to look, because a target outside the camera wedge can never be
+        confirmed while the robot waits facing elsewhere.
+        """
+        if not bool(
+            self.get_parameter('lidar_acquisition_enabled').value
+        ):
+            return False
+        if not self._acquisition_candidates:
+            return False
+        interval_s = float(
+            self.get_parameter('lidar_acquisition_interval_s').value
+        )
+        if (
+            self._last_acquisition_turn_s is not None
+            and now_s - self._last_acquisition_turn_s < interval_s
+        ):
+            return False
+        try:
+            robot_position, robot_yaw = self._robot_pose()
+        except TransformException:
+            return False
+        turn = select_acquisition_turn(
+            self._acquisition_candidates,
+            robot_position,
+            robot_yaw,
+            camera_half_fov_rad=0.5 * float(
+                self.get_parameter('camera_horizontal_fov_rad').value
+            ),
+            maximum_distance_m=float(
+                self.get_parameter('lidar_acquisition_max_distance_m').value
+            ),
+        )
+        if turn is None:
+            return False
+        if not self._nav2.spin(
+            turn,
+            float(
+                self.get_parameter(
+                    'lidar_acquisition_spin_allowance_s'
+                ).value
+            ),
+        ):
+            self._warn_periodically(
+                'acquisition_spin_unavailable',
+                'Nav2 Spin action is not ready; cannot look at the LiDAR '
+                'candidate',
+            )
+            return False
+        self._last_acquisition_turn_s = now_s
+        self.get_logger().info(
+            'Turning %.0f deg toward an unconfirmed LiDAR candidate so the '
+            'camera can check it' % math.degrees(turn)
+        )
+        return True
+
     def _start_recovery_scan(self) -> None:
         """Scan 270 degrees toward the side where the target disappeared."""
         if self._active_goal is None or self._recovery_scan_started:
@@ -2343,6 +2508,12 @@ class PersonFollowerNode(Node):
                     else False
                 ),
                 'lidar_track_count': len(self._obstacle_tracker.tracks),
+                'acquisition_candidate_count': len(
+                    self._acquisition_candidates
+                ),
+                'raw_foreground_count': self._raw_foreground_count,
+                'scan_processed_count': self._scan_processed_count,
+                'scan_transform_drops': self._scan_transform_drops,
                 'static_distance_field_available': (
                     self._static_distance_field is not None
                 ),

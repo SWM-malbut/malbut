@@ -159,6 +159,21 @@ person_follower:
     # Search 270 degrees in the sign of the last observed camera bearing,
     # rather than always rotating counter-clockwise through a full circle.
     recovery_scan_angle_rad: 4.71238898
+    # 지도를 만든 뒤 들어온 정적 물체는 저장된 지도에 없어 계속 전경으로
+    # 남는다. 한자리를 이만큼 지키면 배경으로 보고 후보에서 뺀다. 확인된
+    # 사람에게는 적용하지 않으므로 가만히 서 있어도 놓치지 않는다.
+    background_settle_seconds: 8.0
+    background_settle_radius_m: 0.25
+    # 치워진 물체의 자리는 다시 열어 둔다. 그러지 않으면 그 자리를 지나는
+    # 사람까지 계속 무시하게 된다.
+    background_forget_seconds: 20.0
+    # 카메라는 자기 화각만 보고 라이다는 모든 방위를 본다. 아직 사람을
+    # 확인하지 못한 동안, 화각 밖 라이다 후보 쪽으로 한 번 돌아본다.
+    # 사람인지 아닌지는 여전히 카메라가 판단한다.
+    lidar_acquisition_enabled: true
+    lidar_acquisition_interval_s: 8.0
+    lidar_acquisition_max_distance_m: 6.0
+    lidar_acquisition_spin_allowance_s: 12.0
     recovery_spin_allowance_s: 12.0
 
     # Bounded prediction supports identity association and display only.
@@ -167,3 +182,7 @@ person_follower:
     # Sensor callbacks never block perception waiting for TF. The newest scan
     # is queued briefly and processed only when its exact transform arrives.
     sensor_transform_queue_timeout_s: 0.30
+    # TF 가 스캔보다 뒤처지면 정확 시각 변환이 존재하지 않아 모든 스캔이
+    # 버려지고 LiDAR 추적이 통째로 멈춘다. 이 값보다 지연이 작으면 최신
+    # 변환으로 대체한다. 자기 운동 보정을 포기하는 절충이므로 기본은 0 이다.
+    scan_transform_max_tf_lag_s: 0.0

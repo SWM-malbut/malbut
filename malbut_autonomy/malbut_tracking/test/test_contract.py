@@ -307,3 +307,96 @@ def test_loss_recovery_is_a_small_ordered_nav2_state_machine():
     assert 'self._recovery_turn_sign' in node_source
     assert 'search_step' not in node_source
     assert 'search_offsets' not in node_source
+
+
+def test_dropped_lidar_scans_are_never_silent():
+    """
+    Discard a scan only after a warning that says how long it waited.
+
+    The exact-time lookup fails whenever the scan stamp runs ahead of TF, and
+    the elapsed time is then measured from the queue, not from the stamp: a
+    future stamp makes the stamp-based age negative, so a stamp-based guard
+    would discard every scan without ever warning.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    handler = node_source[
+        node_source.index('def _process_pending_scan'):
+        node_source.index('def _process_scan')
+    ]
+    assert 'self._now_seconds() - self._pending_scan_queued_s' in handler
+    assert '_stamp_seconds(message' not in handler
+    drop = handler[handler.index('self._scan_transform_drops += 1'):]
+    assert "'lidar_transform_timeout'" in drop
+    assert 'self._warn_periodically(' in drop
+    assert 'self._pending_scan_queued_s = self._now_seconds()' in node_source
+
+
+def test_degraded_scan_transform_is_bounded_and_off_by_default():
+    """
+    Bound the newest-TF substitution, which drops ego-motion compensation.
+
+    It stays available for a runtime whose TF lags behind its scans, but only
+    within an explicit lag allowance, and never without the operator asking.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    assert (
+        "self.declare_parameter('scan_transform_max_tf_lag_s', 0.0)"
+        in node_source
+    )
+    fallback = node_source[
+        node_source.index('def _degraded_scan_transform'):
+        node_source.index('def _scan_transform')
+    ]
+    assert 'if allowance_s <= 0.0:' in fallback
+    assert 'return None' in fallback
+    assert 'if lag_s > allowance_s:' in fallback
+    handler = node_source[
+        node_source.index('def _process_pending_scan'):
+        node_source.index('def _process_scan')
+    ]
+    assert "'lidar_transform_degraded'" in handler
+
+
+def test_declare_parameters_only_declares_parameters():
+    """
+    Keep runtime state out of the parameter-declaration pass.
+
+    ``__init__`` calls ``_declare_parameters`` first and then assigns its
+    attributes, so an object built inside that pass is silently overwritten
+    by the later assignment. That is invisible at import time and disables
+    whatever depends on the object for the entire run.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    tree = ast.parse(node_source)
+    node_class = next(
+        item for item in ast.walk(tree)
+        if isinstance(item, ast.ClassDef) and item.name == 'PersonFollowerNode'
+    )
+    declare = next(
+        item for item in node_class.body
+        if isinstance(item, ast.FunctionDef)
+        and item.name == '_declare_parameters'
+    )
+    for statement in ast.walk(declare):
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else [statement.target]
+        )
+        for target in targets:
+            assert not (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == 'self'
+            ), (
+                f'_declare_parameters assigns self.{target.attr}; '
+                '__init__ overwrites it afterwards'
+            )
