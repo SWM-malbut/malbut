@@ -49,7 +49,15 @@ animated humanoid and recommended for the real robot.
 
 The repository does not commit model binaries. Prepare the tested FP32
 YOLO26n and OSNet-AIN x1.0 ONNX files in isolated cache environments, then install
-the inference runtime used by the ROS process:
+the inference runtime used by the ROS process.
+
+Each export runs in its own virtual environment, so the distribution needs
+`python3-venv`. Without it the scripts stop at `ensurepip is not available`
+and leave a partial environment behind:
+
+```bash
+sudo apt install python3.10-venv
+```
 
 ```bash
 cd ~/ros2_ws/src/malbut
