@@ -7,6 +7,8 @@ person_follower:
     detections_topic: /perception/person/detections_3d
     global_costmap_topic: /global_costmap/costmap_raw
     static_map_topic: /map
+    # 래치된 지도가 늦게 붙은 구독자에게 오지 않으면 여기로 직접 물어본다.
+    static_map_service: /map_server/map
     scan_topic: /scan
     status_topic: /tracking/person/status
     target_pose_topic: /tracking/person/estimated_target_pose

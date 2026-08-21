@@ -9,6 +9,7 @@ from geometry_msgs.msg import Pose, PoseStamped
 from malbut_interfaces.action import FollowPerson
 from nav2_msgs.msg import Costmap, SpeedLimit
 from nav_msgs.msg import OccupancyGrid
+from nav_msgs.srv import GetMap
 import rclpy
 from rclpy.action import (
     ActionServer,
@@ -232,6 +233,17 @@ class PersonFollowerNode(Node):
             self._on_static_map,
             map_qos,
         )
+        # 래치된 지도는 늦게 붙은 구독자에게 항상 다시 오지는 않는다.
+        # 그러면 _on_scan 이 매번 조기 반환해 라이다 융합이 그 세션 내내
+        # 조용히 죽는다. 안 오면 직접 물어본다.
+        self._static_map_client = self.create_client(
+            GetMap,
+            str(self.get_parameter('static_map_service').value),
+        )
+        self._static_map_request_pending = False
+        self._static_map_retry_timer = self.create_timer(
+            2.0, self._request_static_map
+        )
         self._action_server = ActionServer(
             self,
             FollowPerson,
@@ -318,6 +330,8 @@ class PersonFollowerNode(Node):
             'global_costmap_topic', '/global_costmap/costmap_raw'
         )
         self.declare_parameter('static_map_topic', '/map')
+        self.declare_parameter('static_map_service',
+                               '/map_server/map')
         self.declare_parameter('scan_topic', '/scan')
         self.declare_parameter('status_topic', '/tracking/person/status')
         self.declare_parameter(
@@ -869,7 +883,16 @@ class PersonFollowerNode(Node):
 
     def _on_scan(self, message: LaserScan) -> None:
         """Queue only the newest scan until its exact TF becomes available."""
-        if self._static_distance_field is None or not message.header.frame_id:
+        if self._static_distance_field is None:
+            # 정적 지도가 없으면 전경을 뺄 기준이 없어 스캔을 통째로 버린다.
+            # 예전에는 말없이 버려서 라이다 융합이 죽은 줄도 몰랐다.
+            self._warn_periodically(
+                'static_map_missing',
+                'Dropping LiDAR scans: the static map has not arrived, so '
+                'LiDAR person tracking is disabled',
+            )
+            return
+        if not message.header.frame_id:
             return
         if self._pending_scan is None:
             self._pending_scan_queued_s = self._now_seconds()
@@ -1483,6 +1506,35 @@ class PersonFollowerNode(Node):
         self._publish_track_markers()
         self._publish_feedback()
         return True
+
+    def _request_static_map(self) -> None:
+        """Ask the map server directly when the latched map never arrived."""
+        if self._static_distance_field is not None:
+            self._static_map_retry_timer.cancel()
+            return
+        if self._static_map_request_pending:
+            return
+        if not self._static_map_client.service_is_ready():
+            return
+        self._static_map_request_pending = True
+        future = self._static_map_client.call_async(GetMap.Request())
+        future.add_done_callback(self._on_static_map_response)
+
+    def _on_static_map_response(self, future) -> None:
+        self._static_map_request_pending = False
+        try:
+            response = future.result()
+        except Exception as error:  # noqa: B902 - rclpy future boundary
+            self._warn_periodically(
+                'static_map_request',
+                f'Static map request failed: {error}',
+            )
+            return
+        self.get_logger().info(
+            'Static map was requested directly; the latched publication never '
+            'reached this node'
+        )
+        self._on_static_map(response.map)
 
     def _on_static_map(self, message: OccupancyGrid) -> None:
         try:

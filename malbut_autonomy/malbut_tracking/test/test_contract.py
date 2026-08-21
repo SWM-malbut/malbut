@@ -448,3 +448,33 @@ def test_lidar_acquisition_turn_covers_every_camera_blind_wait():
     # 복구를 가로챘으면 진행하던 복구 상태를 남겨 두면 안 된다.
     assert tick.index('self._reset_recovery()', recovery) > recovery
     assert tick.count('self._try_lidar_acquisition_turn(now_s)') == 3
+
+
+def test_missing_static_map_is_never_silent():
+    """
+    Say so, and ask for the map, when scans are dropped for lack of one.
+
+    A transient-local map is not always redelivered to a late subscriber. The
+    scan callback then returns on every scan and LiDAR person tracking is off
+    for the whole session with nothing in the log to show it.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    scan_callback = node_source[
+        node_source.index('def _on_scan'):
+        node_source.index('def _process_pending_scan')
+    ]
+    guard = scan_callback.index('if self._static_distance_field is None:')
+    warning = scan_callback.index("'static_map_missing'", guard)
+    assert warning > guard
+    assert (
+        scan_callback.index('return', warning)
+        > scan_callback.index('self._warn_periodically(', guard)
+    )
+    request = node_source[
+        node_source.index('def _request_static_map'):
+        node_source.index('def _on_static_map_response')
+    ]
+    assert 'self._static_map_client.call_async(GetMap.Request())' in request
+    assert 'self._static_map_retry_timer.cancel()' in request
