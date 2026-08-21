@@ -127,6 +127,10 @@ person_follower:
     bearing_goal_update_distance_m: 0.20
     bearing_goal_update_period_s: 0.50
     bearing_only_variance_threshold_m2: 1.0
+    # 깊이가 못 미치는 근거리에서는 카메라가 방위를, 라이다가 거리를 맡는다.
+    # 방위선에서 이 각도 안에 있는 가장 가까운 전경 군집의 거리를 쓴다.
+    bearing_lidar_gate_rad: 0.20
+    bearing_lidar_max_age_s: 0.50
     bearing_maximum_travel_m: 1.20
 
     # Accept destinations only beyond the global inflation gradient. With the

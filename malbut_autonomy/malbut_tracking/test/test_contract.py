@@ -478,3 +478,39 @@ def test_missing_static_map_is_never_silent():
     ]
     assert 'self._static_map_client.call_async(GetMap.Request())' in request
     assert 'self._static_map_retry_timer.cancel()' in request
+
+
+def test_bearing_only_range_comes_from_lidar_before_the_map():
+    """
+    Measure the range with LiDAR when depth cannot, and guess only after.
+
+    A person close enough to fill the frame has no usable depth, which is
+    the range LiDAR measures best. Projecting along the camera ray to the
+    first free map cell instead puts the position past the person, and the
+    LiDAR gate built around it then discards the very cluster that measures
+    them.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    handler = node_source[
+        node_source.index('bearing_only = self._is_bearing_only(detection)'):
+        node_source.index('def _lidar_range_on_bearing')
+    ]
+    measured = handler.index('self._lidar_range_on_bearing(')
+    projected = handler.index('first_admissible_point_on_ray(')
+    assert measured < projected, (
+        'the map guess must only run when LiDAR has no cluster on the bearing'
+    )
+    lookup = node_source[
+        node_source.index('def _lidar_range_on_bearing'):
+        node_source.index('def _is_bearing_only')
+    ]
+    assert "'bearing_lidar_gate_rad'" in lookup
+    assert "'bearing_lidar_max_age_s'" in lookup
+    assert 'if range_m < nearest_range:' in lookup
+    # 지도를 만든 뒤 들어온 가구도 전경으로 잡힌다. 사람보다 앞에 있으면
+    # 더 가까워서 대신 집히므로, 자리를 지키지 않는 군집을 먼저 본다.
+    moving = lookup.index('self._background.filter_moving(')
+    loop = lookup.index('for candidates in (moving, self._latest_clusters):')
+    assert moving < loop

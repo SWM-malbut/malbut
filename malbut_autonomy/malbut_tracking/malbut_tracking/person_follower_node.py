@@ -308,6 +308,9 @@ class PersonFollowerNode(Node):
         self._last_speed_publish_s = -math.inf
         self._last_warning_s: dict[str, float] = {}
         self._pending_scan: LaserScan | None = None
+        self._latest_clusters: list = []
+        self._latest_clusters_s = 0.0
+        self._bearing_range_from_lidar = 0
         self._pending_scan_queued_s = 0.0
         self._scan_transform_drops = 0
         self._scan_processed_count = 0
@@ -405,6 +408,11 @@ class PersonFollowerNode(Node):
         self.declare_parameter('bearing_goal_update_distance_m', 0.20)
         self.declare_parameter('bearing_goal_update_period_s', 0.50)
         self.declare_parameter('bearing_only_variance_threshold_m2', 1.0)
+        # 깊이가 못 미치는 근거리에서 라이다가 대신 거리를 준다. 카메라는
+        # 방위를, 라이다는 거리를 맡는다. 방위선에서 이 각도 안에 있는
+        # 가장 가까운 전경 군집을 쓴다.
+        self.declare_parameter('bearing_lidar_gate_rad', 0.20)
+        self.declare_parameter('bearing_lidar_max_age_s', 0.50)
         self.declare_parameter('precise_maximum_travel_m', 0.50)
         self.declare_parameter('coarse_maximum_travel_m', 0.80)
         self.declare_parameter('bearing_maximum_travel_m', 1.20)
@@ -746,25 +754,37 @@ class PersonFollowerNode(Node):
             )
             return
         if bearing_only:
-            grid = self._latest_global_costmap
-            projected = (
-                first_admissible_point_on_ray(
-                    grid,
-                    robot_position,
-                    camera_position,
-                    int(self.get_parameter('goal_maximum_cost').value),
-                )
-                if grid is not None
-                else None
+            observed_yaw = math.atan2(
+                camera_position.y - robot_position.y,
+                camera_position.x - robot_position.x,
             )
-            if projected is None:
-                self._warn_periodically(
-                    'bearing_goal_unavailable',
-                    'No free global-costmap point exists on the camera ray '
-                    'at or beyond the depth range',
+            measured = self._lidar_range_on_bearing(
+                robot_position, observed_yaw, now_s
+            )
+            if measured is not None:
+                self._bearing_range_from_lidar += 1
+                camera_position = measured
+            else:
+                # 라이다에 방위선 위 군집이 없을 때만 지도로 추측한다.
+                grid = self._latest_global_costmap
+                projected = (
+                    first_admissible_point_on_ray(
+                        grid,
+                        robot_position,
+                        camera_position,
+                        int(self.get_parameter('goal_maximum_cost').value),
+                    )
+                    if grid is not None
+                    else None
                 )
-                return
-            camera_position = projected
+                if projected is None:
+                    self._warn_periodically(
+                        'bearing_goal_unavailable',
+                        'No free global-costmap point exists on the camera '
+                        'ray at or beyond the depth range',
+                    )
+                    return
+                camera_position = projected
         if not self._camera_observation_is_acceptable(
             camera_position,
             now_s,
@@ -855,6 +875,56 @@ class PersonFollowerNode(Node):
                 None if bearing_only else camera_estimate.velocity
             ),
         )
+
+    def _lidar_range_on_bearing(
+        self,
+        robot_position: Point2D,
+        observed_yaw: float,
+        now_s: float,
+    ) -> Point2D | None:
+        """
+        Take the range from LiDAR when the camera can only give a bearing.
+
+        The two sensors fail in opposite places. A person close enough to
+        fill the frame has no usable depth, which is exactly the range LiDAR
+        measures best. Guessing the range from the map instead puts the gate
+        centre past the person, so the cluster that does measure them is
+        discarded. Keep the camera's bearing and take the range from the
+        nearest foreground cluster along it.
+        """
+        if not self._latest_clusters:
+            return None
+        if now_s - self._latest_clusters_s > float(
+            self.get_parameter('bearing_lidar_max_age_s').value
+        ):
+            return None
+        gate_rad = float(
+            self.get_parameter('bearing_lidar_gate_rad').value
+        )
+        # 지도를 만든 뒤 들어온 가구도 전경으로 잡힌다. 로봇과 사람 사이에
+        # 의자가 있으면 그쪽이 더 가까워 사람 대신 집힌다. 그래서 자리를
+        # 지키지 않는 군집을 먼저 본다.
+        moving = self._background.filter_moving(
+            self._latest_clusters, self._latest_clusters_s
+        )
+        for candidates in (moving, self._latest_clusters):
+            nearest = None
+            nearest_range = math.inf
+            for cluster in candidates:
+                offset_x = cluster.position.x - robot_position.x
+                offset_y = cluster.position.y - robot_position.y
+                range_m = math.hypot(offset_x, offset_y)
+                if range_m <= 1e-6:
+                    continue
+                bearing = math.atan2(offset_y, offset_x)
+                if abs(normalize_angle(bearing - observed_yaw)) > gate_rad:
+                    continue
+                if range_m < nearest_range:
+                    nearest_range = range_m
+                    nearest = cluster.position
+            if nearest is not None:
+                return nearest
+        return None
 
     def _is_bearing_only(self, detection: Detection3D) -> bool:
         """Return whether range is a high-variance depth lower bound."""
@@ -990,6 +1060,10 @@ class PersonFollowerNode(Node):
         # 확인 여부와 무관하게 자리를 학습한다. 지도를 만든 뒤 들어온
         # 가구가 계속 후보로 떠오르는 것을 막기 위해서다.
         self._background.observe(clusters, stamp_s)
+        # 깊이가 없을 때 방위선 위의 거리를 여기서 받아 간다. 게이트로
+        # 걸러지기 전 원본이어야 한다.
+        self._latest_clusters = list(clusters)
+        self._latest_clusters_s = stamp_s
         if gate_center is None:
             # 카메라가 아직 사람을 확인하지 못한 구간이다. 트래커에는 넣지
             # 않되, 어디를 돌아볼지 정하는 단서로만 남긴다. 확인은 여전히
@@ -2597,6 +2671,7 @@ class PersonFollowerNode(Node):
                 ),
                 'raw_foreground_count': self._raw_foreground_count,
                 'scan_processed_count': self._scan_processed_count,
+                'bearing_range_from_lidar': self._bearing_range_from_lidar,
                 'scan_transform_drops': self._scan_transform_drops,
                 'static_distance_field_available': (
                     self._static_distance_field is not None
