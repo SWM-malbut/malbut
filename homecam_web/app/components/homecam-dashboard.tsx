@@ -15,6 +15,7 @@ import {
   CornersOut,
   Dog,
   Info,
+  MapTrifold,
   Moon,
   Person,
   Play,
@@ -38,7 +39,6 @@ import {
   type RobotSemantics,
   type RobotSnapshot,
 } from "./robot-map-panel";
-import { AUTHORIZED_P2P_VIEWER_REUSE_GRACE_MS } from "../lib/viewer-reconnect";
 
 export type { HomecamTab } from "./homecam-header";
 
@@ -60,6 +60,29 @@ export type HomecamDevice = {
     roomCode: string;
     storageMode: boolean;
   } | null;
+};
+
+const LOCAL_DEMO_DEVICE_ID = "local-demo-homecam";
+const LOCAL_HOME_CAM_DEMO =
+  process.env.NEXT_PUBLIC_HOMECAM_UI_DEMO === "1";
+const LOCAL_DEMO_DEVICE: HomecamDevice = {
+  id: LOCAL_DEMO_DEVICE_ID,
+  displayName: "로컬 데모 홈캠",
+  online: true,
+  lastSeenAt: new Date(0).toISOString(),
+  role: "owner",
+  monitoringEnabled: true,
+  cameraEnabled: true,
+  microphoneEnabled: false,
+  mediaHealthy: true,
+  p2pHealthy: true,
+  storageHealthy: true,
+  storageSessionActive: true,
+  detectorHealthy: true,
+  activeSession: {
+    roomCode: "LOCAL1",
+    storageMode: false,
+  },
 };
 
 type HomecamEventType = "motion" | "person" | "dog" | "cat";
@@ -135,12 +158,14 @@ function HomeMapSummary({
   onOpenMap: (mode: MapMode) => void;
 }) {
   const deviceId = device?.id ?? "";
+  const localDemo = LOCAL_HOME_CAM_DEMO && deviceId === LOCAL_DEMO_DEVICE_ID;
   const [robotSnapshot, setRobotSnapshot] = useState<RobotSnapshot | null>(null);
   const [semantics, setSemantics] = useState<RobotSemantics | null>(null);
   const [rooms, setRooms] = useState<Array<{ id: string; name: string; color: string }>>([]);
   const revision = robotSnapshot?.map?.revision ?? "";
 
   useEffect(() => {
+    if (localDemo) return;
     if (!deviceId) {
       const timer = window.setTimeout(() => {
         setRobotSnapshot(null);
@@ -162,9 +187,10 @@ function HomeMapSummary({
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [deviceId]);
+  }, [deviceId, localDemo]);
 
   useEffect(() => {
+    if (localDemo) return;
     if (!deviceId || !revision) {
       const timer = window.setTimeout(() => {
         setSemantics(null);
@@ -194,14 +220,29 @@ function HomeMapSummary({
       }));
     }).catch(() => undefined);
     return () => controller.abort();
-  }, [deviceId, revision]);
+  }, [deviceId, localDemo, revision]);
+
+  const visibleRooms = localDemo
+    ? [
+        { id: "demo-living", name: "거실", color: "#DDE9E8" },
+        { id: "demo-bedroom", name: "침실", color: "#E3E7EE" },
+        { id: "demo-kitchen", name: "주방", color: "#EFE7DE" },
+      ]
+    : rooms;
 
   return (
     <>
       <article className="homecam-home-map-card">
         <h2>지도</h2>
         <button type="button" className="homecam-home-map-preview" onClick={() => onOpenMap("view")}>
-          {device && revision ? (
+          {localDemo ? (
+            <span className="homecam-home-map-demo" aria-label="로컬 데모 우리 집 지도">
+              <i className="is-room-one" />
+              <i className="is-room-two" />
+              <i className="is-zone" />
+              <b aria-label="말벗 현재 위치" />
+            </span>
+          ) : device && revision ? (
             <>
               <Image
                 src={`/api/devices/${encodeURIComponent(device.id)}/robot/map?revision=${encodeURIComponent(revision)}`}
@@ -224,8 +265,8 @@ function HomeMapSummary({
       <article className="homecam-home-favorites">
         <h2>주요 목적지</h2>
         <div>
-          {rooms.length === 0 && <p>방을 나누고 이름을 정하면 여기에 표시됩니다.</p>}
-          {rooms.slice(0, 4).map((room) => (
+          {visibleRooms.length === 0 && <p>방을 나누고 이름을 정하면 여기에 표시됩니다.</p>}
+          {visibleRooms.slice(0, 4).map((room) => (
             <button type="button" key={room.id} onClick={() => onOpenMap("navigate")}>
               <i style={{ background: room.color }} />
               <strong>{room.name}</strong>
@@ -740,6 +781,110 @@ function EventPlayback({
   );
 }
 
+function LocalDemoMapPanel({
+  mode,
+  onModeChange,
+}: {
+  mode: MapMode;
+  onModeChange: (mode: MapMode) => void;
+}) {
+  const modeCopy = mode === "navigate"
+    ? ["목적지 선택 모드", "지도에서 보낼 곳을 눌러 이동 화면과 PiP 배치를 확인하세요."]
+    : mode === "rooms"
+      ? ["방 편집 모드", "저장된 방 경계와 이름이 홈캠 화면 위에서도 읽히는지 확인하세요."]
+      : mode === "zones"
+        ? ["구역 편집 모드", "진입 금지 구역과 가상 벽이 PiP에 가리지 않는지 확인하세요."]
+        : ["지도 보기 모드", "저장된 공간과 말벗의 현재 위치를 확인하세요."];
+
+  return (
+    <section className="homecam-section robot-map-section homecam-local-demo-map" aria-labelledby="robot-map-title">
+      <div className="robot-map-topbar">
+        <h1 id="robot-map-title">우리 집</h1>
+        <div className="robot-map-mode-tabs" aria-label="지도 모드">
+          {([
+            ["view", "보기"],
+            ["navigate", "목적지 선택"],
+            ["rooms", "방 편집"],
+            ["zones", "구역 편집"],
+          ] as Array<[MapMode, string]>).map(([candidate, label]) => (
+            <button
+              key={candidate}
+              type="button"
+              className={mode === candidate ? "is-active" : ""}
+              onClick={() => onModeChange(candidate)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <span className="robot-map-top-status is-online">
+          <i aria-hidden="true" />
+          연결됨 · 위치 확인됨
+        </span>
+      </div>
+
+      <div className="robot-map-layout">
+        <div className="robot-map-primary">
+          <div className={`robot-map-mode-banner mode-${mode}`}>
+            <strong>{modeCopy[0]}</strong>
+            <span>{modeCopy[1]}</span>
+          </div>
+          <div className={`robot-map-card mode-${mode}`}>
+            <div className="homecam-local-demo-map-canvas" aria-label="로컬 데모 우리 집 지도">
+              <svg viewBox="0 0 800 480" role="img" aria-label="방과 구역이 표시된 로컬 데모 지도">
+                <defs>
+                  <pattern id="local-demo-zone-hatch" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
+                    <rect width="12" height="12" fill="rgba(192,64,47,.08)" />
+                    <line x1="0" y1="0" x2="0" y2="12" stroke="rgba(192,64,47,.5)" strokeWidth="3" />
+                  </pattern>
+                </defs>
+                <path className="homecam-local-demo-floor" d="M35 35H765V445H35z" />
+                <path className="homecam-local-demo-wall" d="M35 35H765V445H35V35M310 35V225H35M310 225H495V445M495 225H765M310 345H495" />
+                <path className="homecam-local-demo-furniture" d="M82 78h128v52H82zM560 72h140v82H560zM93 310h150v78H93zM555 300h120v82H555z" />
+                <rect className="homecam-local-demo-zone" x="525" y="260" width="155" height="145" rx="8" />
+                <line className="homecam-local-demo-virtual-wall" x1="310" y1="225" x2="495" y2="225" />
+                {mode === "navigate" && <path className="homecam-local-demo-route" d="M390 330C425 302 457 296 520 245S625 205 670 190" />}
+                {mode === "navigate" && <circle className="homecam-local-demo-goal" cx="670" cy="190" r="12" />}
+              </svg>
+              <span className="homecam-local-demo-room is-living">거실</span>
+              <span className="homecam-local-demo-room is-bedroom">침실</span>
+              <span className="homecam-local-demo-room is-kitchen">주방</span>
+              <span className="homecam-local-demo-room is-study">작업실</span>
+              <span className="homecam-local-demo-zone-label">진입 금지</span>
+              <span className="homecam-local-demo-robot" aria-label="말벗 현재 위치"><i /></span>
+            </div>
+          </div>
+          <div className="robot-map-legend">
+            <span><i className="is-robot" />말벗 위치와 방향</span>
+            <span><i className="is-room" />방 경계·이름</span>
+            <span><i className="is-zone is-restricted" />진입 금지</span>
+            <span><i className="is-virtual-wall" />가상 벽</span>
+          </div>
+        </div>
+
+        <aside className="robot-map-sidebar">
+          <div className="robot-map-summary">
+            <h2>말벗이 집 안에서 대기하고 있어요</h2>
+            <div className="robot-map-summary-grid">
+              <div><span>로봇 연결</span><strong>정상</strong></div>
+              <div><span>현재 위치</span><strong>확인됨</strong></div>
+              <div><span>현재 공간</span><strong>거실</strong></div>
+              <div><span>구역 확인</span><strong>문제 없음</strong></div>
+            </div>
+          </div>
+          <div className="robot-map-panel-card homecam-local-demo-note">
+            <MapTrifold size={26} weight="light" aria-hidden="true" />
+            <div>
+              <strong>로컬 UI 데모</strong>
+              <p>실제 로봇 명령은 전송하지 않습니다. 홈캠 PiP의 크기와 위치만 확인할 수 있어요.</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
 export function HomecamDashboard({
   initialTab = "home",
   onOpenLive,
@@ -782,6 +927,14 @@ export function HomecamDashboard({
   const [textSize, setTextSize] = useState<"default" | "large">("default");
   const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
   const [storageGraceUntilMs, setStorageGraceUntilMs] = useState(0);
+  const [livePipPosition, setLivePipPosition] = useState<{ x: number; y: number } | null>(null);
+  const livePipRef = useRef<HTMLElement>(null);
+  const livePipDragRef = useRef<{
+    pointerId: number;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
+  const localDemoAutoplayRef = useRef(false);
   const deepLinkedEventIdRef = useRef("");
   const navigationStateReadyRef = useRef(false);
   const openMap = useCallback((mode: MapMode) => {
@@ -834,15 +987,64 @@ export function HomecamDashboard({
     ? liveMediaReady
     : Boolean(selectedDevice?.online && selectedDevice.p2pHealthy);
   const liveViewerActive = Boolean(liveViewer);
+  const livePipActive = tab !== "live" && liveViewerActive;
+
+  const moveLivePip = useCallback((clientX: number, clientY: number) => {
+    const element = livePipRef.current;
+    const drag = livePipDragRef.current;
+    if (!element || !drag) return;
+    const margin = 12;
+    const bounds = element.getBoundingClientRect();
+    const maxX = Math.max(margin, window.innerWidth - bounds.width - margin);
+    const maxY = Math.max(margin, window.innerHeight - bounds.height - margin);
+    setLivePipPosition({
+      x: Math.min(maxX, Math.max(margin, clientX - drag.offsetX)),
+      y: Math.min(maxY, Math.max(margin, clientY - drag.offsetY)),
+    });
+  }, []);
+
+  const beginLivePipDrag = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
+    const bounds = livePipRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    livePipDragRef.current = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - bounds.left,
+      offsetY: event.clientY - bounds.top,
+    };
+    setLivePipPosition({ x: bounds.left, y: bounds.top });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }, []);
+
+  const endLivePipDrag = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (livePipDragRef.current?.pointerId !== event.pointerId) return;
+    livePipDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
 
   useEffect(() => {
-    if (tab === "live" || !liveViewerActive || !onReleaseLive) return;
-    const timer = window.setTimeout(
-      onReleaseLive,
-      AUTHORIZED_P2P_VIEWER_REUSE_GRACE_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [liveViewerActive, onReleaseLive, tab]);
+    if (!livePipActive || !livePipPosition) return;
+    const keepInsideViewport = () => {
+      const bounds = livePipRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const margin = 12;
+      setLivePipPosition((current) => current && ({
+        x: Math.min(
+          Math.max(margin, window.innerWidth - bounds.width - margin),
+          Math.max(margin, current.x),
+        ),
+        y: Math.min(
+          Math.max(margin, window.innerHeight - bounds.height - margin),
+          Math.max(margin, current.y),
+        ),
+      }));
+    };
+    window.addEventListener("resize", keepInsideViewport);
+    return () => window.removeEventListener("resize", keepInsideViewport);
+  }, [livePipActive, livePipPosition]);
 
   const todayEventDate = eventDateKey(new Date());
   const eventsForDate = useMemo(() => events.filter(
@@ -860,6 +1062,13 @@ export function HomecamDashboard({
   }), [eventsForDate]);
 
   const loadDevices = useCallback(async (quiet = false) => {
+    if (LOCAL_HOME_CAM_DEMO) {
+      setDevices([LOCAL_DEMO_DEVICE]);
+      setSelectedDeviceId(LOCAL_DEMO_DEVICE_ID);
+      setAvailability("ready");
+      if (!quiet) setNotice("");
+      return;
+    }
     if (!quiet) setAvailability("loading");
     try {
       const response = await fetch("/api/devices", { cache: "no-store" });
@@ -1044,6 +1253,12 @@ export function HomecamDashboard({
     before?: EventCursor | null;
   }) => {
     if (!selectedDevice) return;
+    if (LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID) {
+      setEvents([]);
+      setEventCursor(null);
+      setEventsLoading(false);
+      return;
+    }
     const append = options?.append === true;
     setEventsLoading(true);
     setNotice("");
@@ -1245,6 +1460,25 @@ export function HomecamDashboard({
       setBusy("");
     }
   };
+
+  useEffect(() => {
+    if (
+      !LOCAL_HOME_CAM_DEMO ||
+      selectedDevice?.id !== LOCAL_DEMO_DEVICE_ID ||
+      liveViewerActive ||
+      localDemoAutoplayRef.current
+    ) return;
+
+    localDemoAutoplayRef.current = true;
+    void onOpenLive(selectedDevice).catch((reason) => {
+      localDemoAutoplayRef.current = false;
+      setNotice(
+        reason instanceof Error
+          ? reason.message
+          : "로컬 데모 영상을 시작하지 못했습니다.",
+      );
+    });
+  }, [liveViewerActive, onOpenLive, selectedDevice]);
 
   const togglePush = async () => {
     if (busy) return;
@@ -1610,10 +1844,41 @@ export function HomecamDashboard({
 
         {(tab === "live" || liveViewerActive) && (
           <section
-            className="homecam-live-view"
-            aria-label="실시간 홈캠"
-            hidden={tab !== "live"}
+            ref={livePipRef}
+            className={`homecam-live-view ${livePipActive ? "is-pip" : ""}`}
+            aria-label={livePipActive ? "실시간 홈캠 미니 화면" : "실시간 홈캠"}
+            style={livePipActive && livePipPosition ? {
+              left: livePipPosition.x,
+              top: livePipPosition.y,
+            } : undefined}
+            onPointerDown={livePipActive ? beginLivePipDrag : undefined}
+            onPointerMove={livePipActive ? (event) => {
+              if (livePipDragRef.current?.pointerId === event.pointerId) {
+                moveLivePip(event.clientX, event.clientY);
+              }
+            } : undefined}
+            onPointerUp={livePipActive ? endLivePipDrag : undefined}
+            onPointerCancel={livePipActive ? endLivePipDrag : undefined}
           >
+            {livePipActive && (
+              <div className="homecam-live-pip-actions">
+                  <button type="button" onClick={() => setTab("live")} aria-label="홈캠 크게 보기">
+                    <CornersOut size={17} weight="bold" aria-hidden="true" />
+                  </button>
+                  {onReleaseLive && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLivePipPosition(null);
+                        onReleaseLive();
+                      }}
+                      aria-label="미니 영상 닫기. 카메라와 영상 저장은 계속 유지됩니다."
+                    >
+                      <X size={17} weight="bold" aria-hidden="true" />
+                    </button>
+                  )}
+              </div>
+            )}
             {liveViewer?.({
               eventCount: events.length,
               openEvents: () => setTab("events"),
@@ -1875,7 +2140,11 @@ export function HomecamDashboard({
           </section>
         )}
 
-        {tab === "map" && <RobotMapPanel key={mapEntryMode} device={selectedDevice} initialMode={mapEntryMode} />}
+        {tab === "map" && (
+          LOCAL_HOME_CAM_DEMO && selectedDevice?.id === LOCAL_DEMO_DEVICE_ID
+            ? <LocalDemoMapPanel mode={mapEntryMode} onModeChange={setMapEntryMode} />
+            : <RobotMapPanel key={mapEntryMode} device={selectedDevice} initialMode={mapEntryMode} />
+        )}
 
         {tab === "settings" && (
           <section className="homecam-section" aria-labelledby="homecam-settings-title">

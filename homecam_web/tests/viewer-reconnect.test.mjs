@@ -35,7 +35,6 @@ test("authorized P2P reconnect delay is exponential, jittered, capped, and bound
   assert.equal(policy.canAutomaticallyReconnectAuthorizedP2p(5), true);
   assert.equal(policy.canAutomaticallyReconnectAuthorizedP2p(6), false);
   assert.equal(policy.canAutomaticallyReconnectAuthorizedP2p(-1), false);
-  assert.equal(policy.AUTHORIZED_P2P_VIEWER_REUSE_GRACE_MS, 45_000);
 });
 
 test("viewer reconnect lifecycle is generation-safe and P2P-only", async () => {

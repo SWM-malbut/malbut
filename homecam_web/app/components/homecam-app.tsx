@@ -72,6 +72,97 @@ const VIEWER_AUDIO_CONSTRAINTS: MediaStreamConstraints = {
   },
 };
 
+const LOCAL_DEMO_DEVICE_ID = "local-demo-homecam";
+const LOCAL_HOME_CAM_DEMO =
+  process.env.NEXT_PUBLIC_HOMECAM_UI_DEMO === "1";
+
+function drawLocalHomecamDemo(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  elapsedSeconds: number,
+) {
+  const floorTop = height * 0.57;
+  const personX = width * (0.52 + Math.sin(elapsedSeconds * 0.55) * 0.18);
+  const robotX = width * (0.46 + Math.sin(elapsedSeconds * 0.32) * 0.08);
+
+  context.fillStyle = "#cbd3cc";
+  context.fillRect(0, 0, width, floorTop);
+  context.fillStyle = "#8f8066";
+  context.fillRect(0, floorTop, width, height - floorTop);
+
+  context.fillStyle = "#e9eee9";
+  context.fillRect(width * 0.08, height * 0.1, width * 0.3, height * 0.36);
+  context.strokeStyle = "#98a49d";
+  context.lineWidth = 4;
+  context.strokeRect(width * 0.08, height * 0.1, width * 0.3, height * 0.36);
+  context.beginPath();
+  context.moveTo(width * 0.23, height * 0.1);
+  context.lineTo(width * 0.23, height * 0.46);
+  context.moveTo(width * 0.08, height * 0.28);
+  context.lineTo(width * 0.38, height * 0.28);
+  context.stroke();
+
+  context.fillStyle = "#667269";
+  context.fillRect(width * 0.67, height * 0.35, width * 0.25, height * 0.2);
+  context.fillStyle = "#4b544e";
+  context.fillRect(width * 0.7, height * 0.31, width * 0.19, height * 0.08);
+
+  context.strokeStyle = "rgb(255 255 255 / .18)";
+  context.lineWidth = 2;
+  for (let index = 0; index < 7; index += 1) {
+    const ratio = index / 6;
+    context.beginPath();
+    context.moveTo(width * ratio, height);
+    context.lineTo(width * (0.5 + (ratio - 0.5) * 0.32), floorTop);
+    context.stroke();
+  }
+
+  context.fillStyle = "#303633";
+  context.beginPath();
+  context.arc(personX, height * 0.36, 17, 0, Math.PI * 2);
+  context.fill();
+  context.fillRect(personX - 15, height * 0.4, 30, height * 0.23);
+  context.strokeStyle = "#303633";
+  context.lineWidth = 12;
+  context.beginPath();
+  context.moveTo(personX - 7, height * 0.62);
+  context.lineTo(personX - 18, height * 0.77);
+  context.moveTo(personX + 7, height * 0.62);
+  context.lineTo(personX + 18, height * 0.77);
+  context.stroke();
+
+  context.fillStyle = "#3b7778";
+  context.beginPath();
+  context.arc(robotX, height * 0.78, 31, Math.PI, 0);
+  context.lineTo(robotX + 31, height * 0.84);
+  context.lineTo(robotX - 31, height * 0.84);
+  context.closePath();
+  context.fill();
+  context.fillStyle = "#171b19";
+  context.beginPath();
+  context.arc(robotX - 22, height * 0.84, 9, 0, Math.PI * 2);
+  context.arc(robotX + 22, height * 0.84, 9, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = "rgb(17 24 21 / .72)";
+  context.fillRect(14, 14, 126, 32);
+  context.fillStyle = "#fff";
+  context.font = "600 14px sans-serif";
+  context.fillText("LOCAL DEMO · LIVE", 25, 35);
+  context.fillStyle = "rgb(255 255 255 / .82)";
+  context.font = "500 13px sans-serif";
+  context.fillText(
+    new Intl.DateTimeFormat("ko-KR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(new Date()),
+    width - 96,
+    34,
+  );
+}
+
 type Recording = {
   id: string;
   segment: number;
@@ -834,6 +925,9 @@ function Viewer({
   const recordingEnabled = deviceId
     ? Boolean(device?.monitoringEnabled)
     : storageMode !== false;
+  const localDemoViewer = Boolean(
+    LOCAL_HOME_CAM_DEMO && deviceId === LOCAL_DEMO_DEVICE_ID,
+  );
 
   useEffect(() => {
     viewerStateRef.current = state;
@@ -963,7 +1057,7 @@ function Viewer({
   }, [deviceId, releaseTalkLease]);
 
   useEffect(() => {
-    if (!deviceId) return;
+    if (!deviceId || localDemoViewer) return;
     let active = true;
     const verifyAccess = async () => {
       try {
@@ -1004,13 +1098,49 @@ function Viewer({
       active = false;
       window.clearInterval(interval);
     };
-  }, [deviceId, releaseTalkLease]);
+  }, [deviceId, localDemoViewer, releaseTalkLease]);
 
   useEffect(() => {
     let active = true;
     const generation = viewerGenerationRef.current + 1;
     viewerGenerationRef.current = generation;
     const videoElement = videoRef.current;
+    if (localDemoViewer && videoElement) {
+      let demoActive = true;
+      const canvas = document.createElement("canvas");
+      canvas.width = 640;
+      canvas.height = 360;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      const startedAt = performance.now();
+      const draw = () => drawLocalHomecamDemo(
+        context,
+        canvas.width,
+        canvas.height,
+        (performance.now() - startedAt) / 1_000,
+      );
+      draw();
+      const drawTimer = window.setInterval(draw, 1000 / 15);
+      const stream = canvas.captureStream(15);
+      videoElement.srcObject = stream;
+      videoElement.muted = true;
+      storageModeRef.current = false;
+      viewerStateRef.current = "live";
+      window.queueMicrotask(() => {
+        if (!demoActive) return;
+        setSpeakerMuted(true);
+        setStorageMode(false);
+        setError("");
+        setState("live");
+      });
+      void videoElement.play().catch(() => undefined);
+      return () => {
+        demoActive = false;
+        window.clearInterval(drawTimer);
+        stream.getTracks().forEach((track) => track.stop());
+        if (videoElement.srcObject === stream) videoElement.srcObject = null;
+      };
+    }
     let remoteStream: MediaStream | null = null;
     let localConnection: KvsConnection | null = null;
     let observedVideoTrack: MediaStreamTrack | null = null;
@@ -1449,6 +1579,7 @@ function Viewer({
     attempt,
     deviceId,
     expectedStorageMode,
+    localDemoViewer,
     releaseTalkLease,
     roomCode,
     viewerPassword,
