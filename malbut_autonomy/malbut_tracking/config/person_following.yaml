@@ -7,6 +7,8 @@ person_follower:
     detections_topic: /perception/person/detections_3d
     global_costmap_topic: /global_costmap/costmap_raw
     static_map_topic: /map
+    # 래치된 지도가 늦게 붙은 구독자에게 오지 않으면 여기로 직접 물어본다.
+    static_map_service: /map_server/map
     scan_topic: /scan
     status_topic: /tracking/person/status
     target_pose_topic: /tracking/person/estimated_target_pose
@@ -125,6 +127,10 @@ person_follower:
     bearing_goal_update_distance_m: 0.20
     bearing_goal_update_period_s: 0.50
     bearing_only_variance_threshold_m2: 1.0
+    # 깊이가 못 미치는 근거리에서는 카메라가 방위를, 라이다가 거리를 맡는다.
+    # 방위선에서 이 각도 안에 있는 가장 가까운 전경 군집의 거리를 쓴다.
+    bearing_lidar_gate_rad: 0.20
+    bearing_lidar_max_age_s: 0.50
     bearing_maximum_travel_m: 1.20
 
     # Accept destinations only beyond the global inflation gradient. With the
@@ -159,11 +165,43 @@ person_follower:
     # Search 270 degrees in the sign of the last observed camera bearing,
     # rather than always rotating counter-clockwise through a full circle.
     recovery_scan_angle_rad: 4.71238898
+    # 지도를 만든 뒤 들어온 정적 물체는 저장된 지도에 없어 계속 전경으로
+    # 남는다. 한자리를 이만큼 지키면 배경으로 보고 후보에서 뺀다. 확인된
+    # 사람에게는 적용하지 않으므로 가만히 서 있어도 놓치지 않는다.
+    background_settle_seconds: 8.0
+    background_settle_radius_m: 0.25
+    # 치워진 물체의 자리는 다시 열어 둔다. 그러지 않으면 그 자리를 지나는
+    # 사람까지 계속 무시하게 된다.
+    background_forget_seconds: 20.0
+    # 카메라는 자기 화각만 보고 라이다는 모든 방위를 본다. 아직 사람을
+    # 확인하지 못한 동안, 화각 밖 라이다 후보 쪽으로 한 번 돌아본다.
+    # 사람인지 아닌지는 여전히 카메라가 판단한다.
+    lidar_acquisition_enabled: true
+    lidar_acquisition_interval_s: 3.0
+    lidar_acquisition_max_distance_m: 6.0
+    lidar_acquisition_spin_allowance_s: 12.0
     recovery_spin_allowance_s: 12.0
 
     # Bounded prediction supports identity association and display only.
     prediction_horizon_s: 0.60
+    # 사람이 유지 거리 안에 있으면 정책이 ALIGN 을 내고 제자리 회전만 하다가
+    # 대상이 시야를 벗어난다. 갈 곳을 앞질러 목표로 삼아 회전과 병진이 함께
+    # 일어나게 한다. 멈춰 있는 사람에게는 앞지를 것이 없어 그대로 조준한다.
+    target_lead_time_s: 1.00
+    target_lead_minimum_speed_mps: 0.15
+    # 앞지른 목표가 사람의 방위에서 이 각도 이상 벗어나면 Nav2 가 경로
+    # 쪽을 향해 카메라가 정작 사람을 놓친다. 카메라 반시야(약 37도)의
+    # 절반 아래로 묶는다.
+    target_lead_max_offset_rad: 0.25
+    # 마지막 관측 자리로 가서 훑는 것은 멈춰 선 사람만 찾는다. 계속
+    # 걸어간 사람은 그때 이미 몇 미터 밖이다. 이 시간까지는 마지막
+    # 속도로 외삽한 지점을 쫓는다.
+    predicted_pursuit_timeout_s: 3.00
     transform_timeout_s: 0.10
     # Sensor callbacks never block perception waiting for TF. The newest scan
     # is queued briefly and processed only when its exact transform arrives.
     sensor_transform_queue_timeout_s: 0.30
+    # TF 가 스캔보다 뒤처지면 정확 시각 변환이 존재하지 않아 모든 스캔이
+    # 버려지고 LiDAR 추적이 통째로 멈춘다. 이 값보다 지연이 작으면 최신
+    # 변환으로 대체한다. 자기 운동 보정을 포기하는 절충이므로 기본은 0 이다.
+    scan_transform_max_tf_lag_s: 0.0

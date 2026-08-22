@@ -307,3 +307,293 @@ def test_loss_recovery_is_a_small_ordered_nav2_state_machine():
     assert 'self._recovery_turn_sign' in node_source
     assert 'search_step' not in node_source
     assert 'search_offsets' not in node_source
+
+
+def test_dropped_lidar_scans_are_never_silent():
+    """
+    Discard a scan only after a warning that says how long it waited.
+
+    The exact-time lookup fails whenever the scan stamp runs ahead of TF, and
+    the elapsed time is then measured from the queue, not from the stamp: a
+    future stamp makes the stamp-based age negative, so a stamp-based guard
+    would discard every scan without ever warning.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    handler = node_source[
+        node_source.index('def _process_pending_scan'):
+        node_source.index('def _process_scan')
+    ]
+    assert 'self._now_seconds() - self._pending_scan_queued_s' in handler
+    assert '_stamp_seconds(message' not in handler
+    drop = handler[handler.index('self._scan_transform_drops += 1'):]
+    assert "'lidar_transform_timeout'" in drop
+    assert 'self._warn_periodically(' in drop
+    assert 'self._pending_scan_queued_s = self._now_seconds()' in node_source
+
+
+def test_degraded_scan_transform_is_bounded_and_off_by_default():
+    """
+    Bound the newest-TF substitution, which drops ego-motion compensation.
+
+    It stays available for a runtime whose TF lags behind its scans, but only
+    within an explicit lag allowance, and never without the operator asking.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    assert (
+        "self.declare_parameter('scan_transform_max_tf_lag_s', 0.0)"
+        in node_source
+    )
+    fallback = node_source[
+        node_source.index('def _degraded_scan_transform'):
+        node_source.index('def _scan_transform')
+    ]
+    assert 'if allowance_s <= 0.0:' in fallback
+    assert 'return None' in fallback
+    assert 'if lag_s > allowance_s:' in fallback
+    handler = node_source[
+        node_source.index('def _process_pending_scan'):
+        node_source.index('def _process_scan')
+    ]
+    assert "'lidar_transform_degraded'" in handler
+
+
+def test_declare_parameters_only_declares_parameters():
+    """
+    Keep runtime state out of the parameter-declaration pass.
+
+    ``__init__`` calls ``_declare_parameters`` first and then assigns its
+    attributes, so an object built inside that pass is silently overwritten
+    by the later assignment. That is invisible at import time and disables
+    whatever depends on the object for the entire run.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    tree = ast.parse(node_source)
+    node_class = next(
+        item for item in ast.walk(tree)
+        if isinstance(item, ast.ClassDef) and item.name == 'PersonFollowerNode'
+    )
+    declare = next(
+        item for item in node_class.body
+        if isinstance(item, ast.FunctionDef)
+        and item.name == '_declare_parameters'
+    )
+    for statement in ast.walk(declare):
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else [statement.target]
+        )
+        for target in targets:
+            assert not (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == 'self'
+            ), (
+                f'_declare_parameters assigns self.{target.attr}; '
+                '__init__ overwrites it afterwards'
+            )
+
+
+def test_lidar_acquisition_turn_covers_every_camera_blind_wait():
+    """
+    Try the acquisition turn wherever the follower waits on the camera.
+
+    The camera wedge is narrower than the LiDAR, so a person outside it can
+    never be confirmed while the robot faces elsewhere. That blind wait
+    happens three ways: before the first acquisition, during the recovery
+    sequence, and after a target is finally declared lost. Covering only one
+    leaves the same defect in the others.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    assert '_RECOVERY_STATES = (' in node_source
+    recovery_states = node_source[
+        node_source.index('_RECOVERY_STATES = ('):
+        node_source.index(')', node_source.index('_RECOVERY_STATES = ('))
+    ]
+    for state in (
+        'REACHING_WAYPOINT',
+        'TURNING_TO_TARGET',
+        'REACHING_LAST_POSITION',
+        'SEARCHING',
+    ):
+        assert f'FollowState.{state}' in recovery_states
+    tick = node_source[
+        node_source.index('def _tick'):
+        node_source.index('def _reset_recovery')
+    ]
+    waiting_first = tick.index('if self._last_seen_s is None:')
+    assert (
+        tick.index('self._try_lidar_acquisition_turn(now_s)', waiting_first)
+        > waiting_first
+    )
+    lost = tick.index('if self._state == FollowState.TARGET_LOST:')
+    assert (
+        tick.index('self._try_lidar_acquisition_turn(now_s)', lost) > lost
+    )
+    recovery = tick.index('self._state in _RECOVERY_STATES')
+    assert (
+        tick.index('self._try_lidar_acquisition_turn(now_s)', recovery)
+        > recovery
+    )
+    # 복구를 가로챘으면 진행하던 복구 상태를 남겨 두면 안 된다.
+    assert tick.index('self._reset_recovery()', recovery) > recovery
+    assert tick.count('self._try_lidar_acquisition_turn(now_s)') == 3
+
+
+def test_missing_static_map_is_never_silent():
+    """
+    Say so, and ask for the map, when scans are dropped for lack of one.
+
+    A transient-local map is not always redelivered to a late subscriber. The
+    scan callback then returns on every scan and LiDAR person tracking is off
+    for the whole session with nothing in the log to show it.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    scan_callback = node_source[
+        node_source.index('def _on_scan'):
+        node_source.index('def _process_pending_scan')
+    ]
+    guard = scan_callback.index('if self._static_distance_field is None:')
+    warning = scan_callback.index("'static_map_missing'", guard)
+    assert warning > guard
+    assert (
+        scan_callback.index('return', warning)
+        > scan_callback.index('self._warn_periodically(', guard)
+    )
+    request = node_source[
+        node_source.index('def _request_static_map'):
+        node_source.index('def _on_static_map_response')
+    ]
+    assert 'self._static_map_client.call_async(GetMap.Request())' in request
+    assert 'self._static_map_retry_timer.cancel()' in request
+
+
+def test_bearing_only_range_comes_from_lidar_before_the_map():
+    """
+    Measure the range with LiDAR when depth cannot, and guess only after.
+
+    A person close enough to fill the frame has no usable depth, which is
+    the range LiDAR measures best. Projecting along the camera ray to the
+    first free map cell instead puts the position past the person, and the
+    LiDAR gate built around it then discards the very cluster that measures
+    them.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    handler = node_source[
+        node_source.index('bearing_only = self._is_bearing_only(detection)'):
+        node_source.index('def _lidar_range_on_bearing')
+    ]
+    measured = handler.index('self._lidar_range_on_bearing(')
+    projected = handler.index('first_admissible_point_on_ray(')
+    assert measured < projected, (
+        'the map guess must only run when LiDAR has no cluster on the bearing'
+    )
+    lookup = node_source[
+        node_source.index('def _lidar_range_on_bearing'):
+        node_source.index('def _is_bearing_only')
+    ]
+    assert "'bearing_lidar_gate_rad'" in lookup
+    assert "'bearing_lidar_max_age_s'" in lookup
+    assert 'if range_m < nearest_range:' in lookup
+    # 지도를 만든 뒤 들어온 가구도 전경으로 잡힌다. 사람보다 앞에 있으면
+    # 더 가까워서 대신 집히므로, 자리를 지키지 않는 군집을 먼저 본다.
+    moving = lookup.index('self._background.filter_moving(')
+    loop = lookup.index('for candidates in (moving, self._latest_clusters):')
+    assert moving < loop
+
+
+def test_a_walking_target_is_led_instead_of_aimed_at_from_a_standstill():
+    """
+    Turn and translate together while the person is walking.
+
+    Once the range is satisfied the policy asks to ALIGN, and aiming a fixed
+    forward camera from a standstill takes longer than a walking person stays
+    inside the camera wedge. Leading the target keeps a moving goal, so Nav2
+    owns both the heading and the travel. A person who is standing still has
+    nothing to lead, and aiming in place is then correct.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    motion = node_source[
+        node_source.index('def _apply_tracking_motion'):
+        node_source.index('def _led_target')
+    ]
+    assert 'planned_target = self._led_target(' in motion
+    align = motion[motion.index('if decision.command == FollowCommand.ALIGN:'):]
+    lead = align.index('lead_decision')
+    spin = align.index('self._align_with_target(')
+    assert lead < spin, (
+        'a walking target must be led before falling back to a spin'
+    )
+    assert 'FollowCommand.NAVIGATE' in align[:spin]
+    lead_helper = node_source[
+        node_source.index('def _led_target'):
+        node_source.index('def _align_with_target')
+    ]
+    # 서 있는 사람에게는 앞지를 것이 없다.
+    assert "'target_lead_minimum_speed_mps'" in lead_helper
+    # 속도 추정이 튀어도 사람 걸음 이상 앞지르지 않는다.
+    assert "'maximum_person_speed_mps'" in lead_helper
+    # Nav2 는 경로 쪽을 향하므로, 앞지른 목표가 사람의 방위에서 크게
+    # 벗어나면 카메라가 정작 사람을 놓친다. 시간이 아니라 각도로 묶는다.
+    bounded = node_source[
+        node_source.index('def _bounded_lead'):
+        node_source.index('def _align_with_target')
+    ]
+    assert "'target_lead_max_offset_rad'" in bounded
+    assert 'range_m * math.tan(' in bounded
+    # 안전 거리 판정은 예측이 아니라 실제 위치로 해야 한다.
+    decision = motion[
+        motion.index('decision = decide_follow_motion('):
+    ]
+    assert decision.index('target_position') < decision.index('settings')
+
+
+def test_camera_loss_pursues_the_prediction_before_the_last_observation():
+    """
+    Go where the person went, not to where the camera last saw them.
+
+    Driving to the last observation and sweeping there only finds someone
+    who stopped. A person who kept walking is metres away by then. The last
+    observed velocity, already trusted for prediction, carries the target
+    forward over the time actually lost, and the existing goal projection
+    moves the result into open space.
+    """
+    node_source = (
+        PACKAGE_ROOT / 'malbut_tracking' / 'person_follower_node.py'
+    ).read_text(encoding='utf-8')
+    recovery = node_source[
+        node_source.index('def _request_last_seen_recovery'):
+        node_source.index('def _try_lidar_acquisition_turn')
+    ]
+    predicted = recovery.index('self._predicted_pursuit_target(now_s)')
+    motion = recovery.index('self._apply_tracking_motion(')
+    assert predicted < motion
+    assert 'predicted if predicted is not None' in recovery
+    assert "'predicted_pursuit'" in recovery
+    pursuit = node_source[
+        node_source.index('def _predicted_pursuit_target'):
+        node_source.index('def _request_last_seen_recovery')
+    ]
+    # 추정은 오래될수록 근거를 잃는다. 기한을 넘기면 마지막 관측으로 돌아간다.
+    assert "'predicted_pursuit_timeout_s'" in pursuit
+    assert 'if not 0.0 < elapsed_s <= timeout_s:' in pursuit
+    # 서 있던 사람은 외삽할 것이 없다.
+    assert "'target_lead_minimum_speed_mps'" in pursuit
+    # 속도 추정이 튀어도 사람 걸음 이상 가지 않는다.
+    assert "'maximum_person_speed_mps'" in pursuit
