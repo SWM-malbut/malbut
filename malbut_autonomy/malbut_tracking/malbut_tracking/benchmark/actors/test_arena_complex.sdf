@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<sdf version="1.8">
+  <actor name="benchmark_person">
+    <skin>
+      <filename>model://humanoid_actor/meshes/walk.dae</filename>
+      <scale>1.0</scale>
+    </skin>
+    <animation name="walking">
+      <filename>model://humanoid_actor/meshes/walk.dae</filename>
+      <scale>1.0</scale>
+      <interpolate_x>true</interpolate_x>
+    </animation>
+    <script>
+      <loop>true</loop>
+      <delay_start>0.0</delay_start>
+      <auto_start>true</auto_start>
+      <trajectory id="0" type="walking" tension="1.0">
+        <waypoint><time>0.000000</time><pose>2.300 1.500 1.000 0 0 3.141593</pose></waypoint>
+        <waypoint><time>8.400000</time><pose>0.200 1.500 1.000 0 0 3.141593</pose></waypoint>
+        <waypoint><time>9.708997</time><pose>0.200 1.500 1.000 0 0 -1.570796</pose></waypoint>
+        <waypoint><time>13.308997</time><pose>0.200 0.600 1.000 0 0 -1.570796</pose></waypoint>
+        <waypoint><time>13.963495</time><pose>0.200 0.600 1.000 0 0 -2.356194</pose></waypoint>
+        <waypoint><time>17.357608</time><pose>-0.400 0.000 1.000 0 0 -2.356194</pose></waypoint>
+        <waypoint><time>18.666605</time><pose>-0.400 0.000 1.000 0 0 -0.785398</pose></waypoint>
+        <waypoint><time>22.060717</time><pose>0.200 -0.600 1.000 0 0 -0.785398</pose></waypoint>
+        <waypoint><time>22.715216</time><pose>0.200 -0.600 1.000 0 0 -1.570796</pose></waypoint>
+        <waypoint><time>26.315216</time><pose>0.200 -1.500 1.000 0 0 -1.570796</pose></waypoint>
+        <waypoint><time>27.624213</time><pose>0.200 -1.500 1.000 0 0 3.141593</pose></waypoint>
+        <waypoint><time>37.624213</time><pose>-2.300 -1.500 1.000 0 0 3.141593</pose></waypoint>
+        <waypoint><time>38.933210</time><pose>-2.300 -1.500 1.000 0 0 1.570796</pose></waypoint>
+        <waypoint><time>44.933210</time><pose>-2.300 0.000 1.000 0 0 1.570796</pose></waypoint>
+        <waypoint><time>50.933210</time><pose>-2.300 1.500 1.000 0 0 1.570796</pose></waypoint>
+        <waypoint><time>52.242207</time><pose>-2.300 1.500 1.000 0 0 0.000000</pose></waypoint>
+        <waypoint><time>70.642207</time><pose>2.300 1.500 1.000 0 0 0.000000</pose></waypoint>
+        <waypoint><time>73.260201</time><pose>2.300 1.500 1.000 0 0 3.141593</pose></waypoint>
+      </trajectory>
+    </script>
+  </actor>
+</sdf>

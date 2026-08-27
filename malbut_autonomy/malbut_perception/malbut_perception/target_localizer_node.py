@@ -292,7 +292,7 @@ class PersonLocalizerNode(Node):
         self.declare_parameter('reid_backend', 'auto')
         self.declare_parameter('reid_model_path', '')
         self.declare_parameter('reid_cosine_threshold', 0.35)
-        self.declare_parameter('reid_max_inactive_frames', 2400)
+        self.declare_parameter('reid_max_inactive_frames', 0)
         self.declare_parameter('reid_feature_budget', 30)
         self.declare_parameter('reid_refresh_interval_frames', 3)
         self.declare_parameter('reid_minimum_crop_width', 16)

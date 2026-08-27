@@ -741,11 +741,7 @@ class RobotWebBridge(Node):
         messages = {
             "IDLE": "따라갈 사람을 찾고 있습니다.",
             "TRACKING": "사람을 안전거리에서 따라가고 있습니다.",
-            "REACHING_WAYPOINT": "마지막으로 확인한 방향으로 이동합니다.",
-            "TURNING_TO_TARGET": "사람이 사라진 방향을 확인하고 있습니다.",
-            "REACHING_LAST_POSITION": "마지막으로 확인한 위치를 확인합니다.",
-            "SEARCHING": "주변에서 사람을 다시 찾고 있습니다.",
-            "TARGET_LOST": "사람을 찾지 못해 제자리에서 기다립니다.",
+            "RECOVERING": "마지막 관측을 기준으로 사람을 다시 찾습니다.",
         }
         with self.lock:
             current = self.autonomous_drive
@@ -1273,8 +1269,11 @@ class RobotWebBridge(Node):
                     self.drive_started_monotonic = time.monotonic()
                     self.follow_cancel_requested = False
                 try:
+                    goal = FollowPerson.Goal()
+                    goal.target_mode = FollowPerson.Goal.VISIBLE_PERSON
+                    goal.target_person_id = ""
                     goal_handle = self._wait(
-                        self.follow_person.send_goal_async(FollowPerson.Goal()),
+                        self.follow_person.send_goal_async(goal),
                         SEND_GOAL_TIMEOUT_S,
                         "사람 따라가기 시작",
                     )

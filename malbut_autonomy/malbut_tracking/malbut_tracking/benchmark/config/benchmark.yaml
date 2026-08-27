@@ -1,0 +1,24 @@
+person_tracking_benchmark:
+  ros__parameters:
+    use_sim_time: true
+    ground_truth_topic: /benchmark/ground_truth
+    target_pose_topic: /tracking/person/estimated_target_pose
+    tracking_status_topic: /tracking/person/status
+    command_trace_topic: /tracking/person/command_trace
+    follow_action: /follow_person
+    scenario_name: test_arena_perimeter
+    world_name: test_arena
+    trajectory_name: perimeter_loop
+    robot_entity_name: malbut
+    person_entity_name: benchmark_person
+    person_collision_radius_m: 0.18
+    robot_footprint_half_length_m: 0.1385
+    robot_footprint_half_width_m: 0.127
+    desired_distance_m: 1.0
+    sample_rate_hz: 20.0
+    movement_threshold_m: 0.002
+    tracking_position_tolerance_m: 0.75
+    prediction_position_tolerance_m: 0.75
+    maximum_estimate_age_s: 0.50
+    measurement_duration_s: 180.0
+    output_directory: ""

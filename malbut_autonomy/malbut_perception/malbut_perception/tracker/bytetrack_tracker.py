@@ -193,10 +193,10 @@ class ByteTrackTracker(PersonTracker):
         appearance_threshold: float = 0.30,
         appearance_weight: float = 0.65,
         reid_threshold: float = 0.25,
-        reid_max_inactive_frames: int = 300,
+        reid_max_inactive_frames: int = 0,
         feature_budget: int = 30,
     ) -> None:
-        """Configure confidence, motion, appearance, and gallery limits."""
+        """Configure association and the bounded appearance gallery."""
         if not 0.0 <= low_threshold <= high_threshold <= 1.0:
             raise ValueError(
                 'tracker thresholds must satisfy 0 <= low <= high <= 1'
@@ -249,6 +249,11 @@ class ByteTrackTracker(PersonTracker):
         return prepared
 
     def _prune_retired(self) -> None:
+        if self._reid_max_inactive_frames == 0:
+            # Zero means process-lifetime identity memory. A restarted node
+            # still starts from a clean gallery, but a temporarily absent
+            # person never loses their ID merely because time elapsed.
+            return
         self._retired = [
             track
             for track in self._retired
@@ -404,7 +409,6 @@ class ByteTrackTracker(PersonTracker):
             if (
                 track.hits >= self._min_confirmed_hits
                 and track.features
-                and self._reid_max_inactive_frames > 0
             ):
                 track.retired_frame = self._frame_index
                 self._retired.append(track)

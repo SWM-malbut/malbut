@@ -70,6 +70,29 @@ def test_reidentification_restores_id_after_track_expires():
     assert restored[0].track_id == 1
 
 
+def test_zero_inactive_limit_preserves_identity_for_process_lifetime():
+    """A zero inactive limit must retain a retired identity indefinitely."""
+    tracker = ByteTrackTracker(
+        max_missed_frames=0,
+        min_confirmed_hits=1,
+        reid_threshold=0.2,
+        reid_max_inactive_frames=0,
+        feature_budget=30,
+    )
+    first_feature = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    tracker.update([_detection(10.0, 0.9)], [first_feature])
+    tracker.update([])
+    for _ in range(500):
+        tracker.update([])
+
+    restored = tracker.update(
+        [_detection(300.0, 0.9)],
+        [first_feature],
+    )
+
+    assert restored[0].track_id == 1
+
+
 def test_reidentification_rejects_different_appearance():
     tracker = ByteTrackTracker(
         max_missed_frames=0,

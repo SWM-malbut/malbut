@@ -270,18 +270,24 @@ def test_navigation_prefers_clearance_and_keeps_close_obstacles_visible():
     assert follow_path['time_steps'] * follow_path['model_dt'] >= 2.5
     assert follow_path['batch_size'] >= 1000
     assert follow_path['vx_max'] > 0.0
-    assert abs(follow_path['vy_max']) <= 0.1
-    assert follow_path['wz_max'] <= 0.4
+    assert follow_path['vy_std'] == 0.2
+    assert follow_path['wz_std'] == 0.4
+    assert follow_path['vx_min'] == -0.4
+    assert follow_path['vy_max'] == 0.4
+    assert follow_path['wz_max'] == 1.0
     assert follow_path['CostCritic']['consider_footprint'] is True
     assert follow_path['PathAngleCritic']['forward_preference'] is True
     assert follow_path['PreferForwardCritic']['enabled'] is True
     assert follow_path['TwirlingCritic']['enabled'] is True
-    assert controller['general_goal_checker']['xy_goal_tolerance'] <= 0.05
+    assert follow_path['TwirlingCritic']['cost_weight'] == 2.0
+    assert 'TwirlingCritic' in follow_path['critics']
+    assert controller['general_goal_checker']['xy_goal_tolerance'] == 0.2
     assert controller['general_goal_checker']['yaw_goal_tolerance'] >= 3.14
 
     smoother = config['velocity_smoother']['ros__parameters']
     assert smoother['feedback'] == 'CLOSED_LOOP'
-    assert smoother['max_velocity'] == [0.4, 0.1, 0.4]
+    assert smoother['max_velocity'] == [0.4, 0.4, 1.0]
+    assert smoother['min_velocity'] == [-0.4, -0.4, -1.0]
 
     planner = config['planner_server']['ros__parameters']['GridBased']
     assert planner['plugin'] == 'nav2_smac_planner/SmacPlanner2D'
@@ -304,7 +310,7 @@ def test_navigation_prefers_clearance_and_keeps_close_obstacles_visible():
         costmap = config[costmap_name][costmap_name]['ros__parameters']
         assert 0.04 <= costmap['footprint_padding'] <= 0.06
         inflation = costmap['inflation_layer']
-        assert inflation['inflation_radius'] >= 0.55
+        assert inflation['inflation_radius'] == 0.35
         assert inflation['cost_scaling_factor'] <= 3.0
 
         scan_layer = costmap['obstacle_layer']

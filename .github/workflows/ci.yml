@@ -252,6 +252,7 @@ jobs:
               malbut_description \
               malbut_gazebo \
               malbut_interfaces \
+              malbut_lidar_preprocessor \
               malbut_roaming \
               malbut_patrol \
               malbut_agent_server \
@@ -277,6 +278,7 @@ jobs:
             --packages-select \
               malbut_description \
               malbut_gazebo \
+              malbut_lidar_preprocessor \
               malbut_roaming \
               malbut_agent_server \
               malbut_perception \

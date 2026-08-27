@@ -1,0 +1,4 @@
+builtin_interfaces/Time source_stamp
+builtin_interfaces/Time dispatch_stamp
+uint32 sequence
+string source

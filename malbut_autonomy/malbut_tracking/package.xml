@@ -8,15 +8,16 @@
   <license>Apache-2.0</license>
 
   <depend>action_msgs</depend>
+  <depend>ament_index_python</depend>
   <depend>geometry_msgs</depend>
   <depend>malbut_interfaces</depend>
+  <exec_depend>malbut_lidar_preprocessor</exec_depend>
   <depend>nav2_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>python3-numpy</depend>
-  <depend>python3-opencv</depend>
   <depend>rclpy</depend>
-  <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>tf2_msgs</depend>
   <depend>tf2_geometry_msgs</depend>
   <depend>tf2_ros</depend>
   <depend>vision_msgs</depend>
@@ -25,6 +26,7 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>nav2_collision_monitor</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
 
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

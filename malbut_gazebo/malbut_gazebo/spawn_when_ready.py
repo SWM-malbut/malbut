@@ -46,17 +46,28 @@ def _simulation_time(world: str, deadline: float) -> float:
     if result.returncode != 0:
         detail = result.stderr.strip() or f"exit {result.returncode}"
         raise RuntimeError(f"cannot read Gazebo simulation time: {detail}")
-    match = re.search(
-        r"sim_time\s*\{\s*sec:\s*(-?\d+)\s+nsec:\s*(\d+)",
-        result.stdout,
-    )
+    match = re.search(r"sim_time\s*\{([^}]*)\}", result.stdout, re.DOTALL)
     if match is None:
         raise RuntimeError("Gazebo stats did not contain sim_time")
-    return int(match.group(1)) + int(match.group(2)) / 1_000_000_000
+    fields = match.group(1)
+    seconds = re.search(r"\bsec:\s*(-?\d+)", fields)
+    nanoseconds = re.search(r"\bnsec:\s*(\d+)", fields)
+    # Protobuf text omits scalar fields whose value is zero. This is common
+    # while a fresh world is still in its first simulated second.
+    if seconds is None and nanoseconds is None:
+        return 0.0
+    return (
+        int(seconds.group(1)) if seconds is not None else 0
+    ) + (
+        int(nanoseconds.group(1)) if nanoseconds is not None else 0
+    ) / 1_000_000_000
 
 
 def _actor_sdf_starting_now(
-    path: str, world: str, deadline: float
+    path: str,
+    world: str,
+    deadline: float,
+    script_start_delay_s: float,
 ) -> str:
     """Return actor SDF whose script begins just after entity creation."""
     tree = ElementTree.parse(path)
@@ -68,10 +79,12 @@ def _actor_sdf_starting_now(
     if delay_start is None:
         raise ValueError("actor script is missing delay_start")
 
-    # Fortress evaluates scripted actor trajectories against absolute world
-    # simulation time, including actors inserted at runtime. A short lead gives
-    # the create service time to insert the entity while preserving waypoint 0.
-    delay_start.text = f"{_simulation_time(world, deadline) + 1.0:.9f}"
+    # Fortress evaluates runtime actor scripts against absolute world time.
+    # Keep the lead configurable so benchmarks can begin after a repeatable
+    # sensor warm-up while ordinary actor spawns retain the one-second lead.
+    delay_start.text = (
+        f"{_simulation_time(world, deadline) + script_start_delay_s:.9f}"
+    )
     return ElementTree.tostring(root, encoding="unicode")
 
 
@@ -120,6 +133,12 @@ def _parse_arguments() -> argparse.Namespace:
             "world time"
         ),
     )
+    parser.add_argument(
+        "--actor-script-start-delay",
+        type=float,
+        default=1.0,
+        help="seconds after creation before an aligned actor script starts",
+    )
     parser.add_argument("--x", required=True, type=float)
     parser.add_argument("--y", required=True, type=float)
     parser.add_argument("--z", required=True, type=float)
@@ -132,6 +151,8 @@ def _parse_arguments() -> argparse.Namespace:
         parser.error(f"--file does not exist: {arguments.file}")
     if arguments.align_actor_script and not arguments.file:
         parser.error("--align-actor-script requires --file")
+    if arguments.actor_script_start_delay <= 0.0:
+        parser.error("--actor-script-start-delay must be positive")
     return arguments
 
 
@@ -165,7 +186,10 @@ def main() -> int:
         try:
             actor_sdf = (
                 _actor_sdf_starting_now(
-                    arguments.file, arguments.world, deadline
+                    arguments.file,
+                    arguments.world,
+                    deadline,
+                    arguments.actor_script_start_delay,
                 )
                 if arguments.align_actor_script
                 else None

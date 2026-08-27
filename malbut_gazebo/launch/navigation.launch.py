@@ -143,6 +143,9 @@ def generate_launch_description():
     nav2_share = get_package_share_directory('nav2_bringup')
     perception_share = get_package_share_directory('malbut_perception')
     tracking_share = get_package_share_directory('malbut_tracking')
+    lidar_preprocessor_share = get_package_share_directory(
+        'malbut_lidar_preprocessor'
+    )
     safe_navigation_source, safe_bringup_source = (
         _safe_nav2_launch_sources(nav2_share)
     )
@@ -515,6 +518,22 @@ def generate_launch_description():
             {'use_sim_time': use_sim_time},
         ],
     )
+    person_lidar_preprocessor = Node(
+        package='malbut_lidar_preprocessor',
+        executable='lidar_foreground_preprocessor',
+        name='lidar_foreground_preprocessor',
+        namespace=namespace,
+        condition=IfCondition(person_following),
+        output='screen',
+        parameters=[
+            os.path.join(
+                lidar_preprocessor_share,
+                'config',
+                'lidar_foreground.yaml',
+            ),
+            {'use_sim_time': use_sim_time},
+        ],
+    )
 
     return LaunchDescription(
         [
@@ -666,6 +685,7 @@ def generate_launch_description():
             patrol_manager,
             roaming_manager,
             person_detector,
+            person_lidar_preprocessor,
             person_follower,
             robot_web_server,
             rviz,

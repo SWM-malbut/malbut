@@ -220,9 +220,6 @@ class AutonomousDrivingManager(Node):
             'output_cmd_vel_topic': '/scenario/safety_input',
             'manual_deadband': 0.01,
             'desired_distance_m': 1.0,
-            'minimum_distance_m': 0.65,
-            'maximum_linear_speed_mps': 0.30,
-            'target_lost_timeout_s': 8.0,
             'actor_world': 'small_house',
             'actor_entity_name': 'scenario_humanoid',
             'actor_file': '',
@@ -617,19 +614,10 @@ class AutonomousDrivingManager(Node):
         self._tracking_token += 1
         token = self._tracking_token
         goal = FollowPerson.Goal()
+        goal.target_mode = FollowPerson.Goal.VISIBLE_PERSON
+        goal.target_person_id = ''
         goal.desired_distance_m = float(
             self.get_parameter('desired_distance_m').value
-        )
-        goal.minimum_distance_m = float(
-            self.get_parameter('minimum_distance_m').value
-        )
-        goal.maximum_linear_speed_mps = float(
-            self.get_parameter('maximum_linear_speed_mps').value
-        )
-        timeout = float(self.get_parameter('target_lost_timeout_s').value)
-        goal.target_lost_timeout.sec = math.floor(timeout)
-        goal.target_lost_timeout.nanosec = round(
-            (timeout - math.floor(timeout)) * 1_000_000_000
         )
         self._detail = 'requesting person tracking action'
         self._publish_status()

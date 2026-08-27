@@ -9,6 +9,34 @@ from setuptools import find_packages, setup
 package_name = 'malbut_tracking'
 
 
+def benchmark_data_files():
+    """Install benchmark assets under the tracking package share tree."""
+    data_files = []
+    root = os.path.join(package_name, 'benchmark')
+    for directory in ('config', 'launch', 'actors'):
+        source_root = os.path.join(root, directory)
+        for current, dirnames, filenames in os.walk(source_root):
+            dirnames[:] = [
+                name for name in dirnames if name != '__pycache__'
+            ]
+            sources = [
+                os.path.join(current, name)
+                for name in filenames
+                if not name.startswith('.')
+            ]
+            if sources:
+                relative = os.path.relpath(current, root)
+                data_files.append(
+                    (
+                        os.path.join(
+                            'share', package_name, 'benchmark', relative
+                        ),
+                        sources,
+                    )
+                )
+    return data_files
+
+
 setup(
     name=package_name,
     version='0.1.0',
@@ -27,7 +55,7 @@ setup(
             os.path.join('share', package_name, 'launch'),
             glob('launch/*.launch.py'),
         ),
-    ],
+    ] + benchmark_data_files(),
     install_requires=['setuptools', 'numpy'],
     zip_safe=True,
     maintainer='SANGGEUN JI',
@@ -39,6 +67,8 @@ setup(
         'console_scripts': [
             'person_follower = '
             'malbut_tracking.person_follower_node:main',
+            'person_tracking_benchmark = '
+            'malbut_tracking.benchmark.evaluator:main',
         ],
     },
 )

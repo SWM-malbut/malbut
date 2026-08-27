@@ -35,6 +35,7 @@ from malbut_description.variant_config import (
 
 DESCRIPTION_PACKAGE = "malbut_description"
 GAZEBO_PACKAGE = "malbut_gazebo"
+GAZEBO_PLUGINS_PACKAGE = "malbut_gazebo_plugins"
 
 
 def _as_bool(value, name):
@@ -66,7 +67,9 @@ def _world_name(world_file):
             raise ValueError("missing <world name=...>")
         return _validate_transport_name(world.get("name"), "world name")
     except (ElementTree.ParseError, ValueError) as error:
-        raise RuntimeError(f"Invalid SDF world {world_file}: {error}") from error
+        raise RuntimeError(
+            f"Invalid SDF world {world_file}: {error}"
+        ) from error
 
 
 def _as_finite_number(value, name):
@@ -345,7 +348,13 @@ def _launch_setup(context):
         str(path)
         for path in dict.fromkeys(resource_candidates)
     )
+    system_plugin_path = str(
+        Path(get_package_prefix(GAZEBO_PLUGINS_PACKAGE)) / "lib"
+    )
     actions = [
+        AppendEnvironmentVariable(
+            "IGN_GAZEBO_SYSTEM_PLUGIN_PATH", system_plugin_path
+        ),
         AppendEnvironmentVariable(
             "IGN_GAZEBO_RESOURCE_PATH", resource_paths
         ),
@@ -390,7 +399,9 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "spawn_timeout",
                 default_value="60",
-                description="Seconds to wait for Gazebo and robot_description.",
+                description=(
+                    "Seconds to wait for Gazebo and robot_description."
+                ),
             ),
             DeclareLaunchArgument("x", default_value="0.0"),
             DeclareLaunchArgument("y", default_value="0.0"),

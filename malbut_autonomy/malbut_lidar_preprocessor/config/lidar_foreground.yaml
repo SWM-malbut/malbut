@@ -1,0 +1,17 @@
+lidar_foreground_preprocessor:
+  ros__parameters:
+    use_sim_time: false
+    scan_topic: /scan
+    static_map_topic: /map
+    clusters_topic: /perception/lidar/foreground_clusters
+    global_frame: map
+    static_occupied_threshold: 65
+    static_exclusion_radius_m: 0.20
+    cluster_gap_m: 0.20
+    minimum_cluster_points: 3
+    minimum_cluster_density_points_per_m: 5.0
+    maximum_cluster_points: 120
+    maximum_cluster_extent_m: 0.80
+    # Preserve the previous follower behavior: briefly queue the newest scan
+    # until its exact measurement-time TF becomes available.
+    sensor_transform_queue_timeout_s: 0.30
