@@ -161,7 +161,7 @@ def test_speed_limit_scales_with_remaining_path_length(settings):
 
 
 def test_recovery_turn_uses_the_last_camera_exit_side_first():
-    """LiDAR disagreement must not reverse the first camera-loss turn."""
+    """The first camera-loss turn must ignore LiDAR disagreement."""
     assert directed_recovery_turn(-0.20, 0.80, 0.70) == pytest.approx(-0.70)
     assert directed_recovery_turn(0.30, -0.90, 0.70) == pytest.approx(0.70)
     assert directed_recovery_turn(0.0, -0.90, 0.70) == pytest.approx(-0.90)
