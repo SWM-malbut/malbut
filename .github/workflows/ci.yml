@@ -250,6 +250,7 @@ jobs:
           colcon build --symlink-install \
             --packages-select \
               malbut_description \
+              malbut_gazebo_plugins \
               malbut_gazebo \
               malbut_interfaces \
               malbut_lidar_preprocessor \
