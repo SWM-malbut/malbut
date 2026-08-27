@@ -244,7 +244,7 @@ ros2 launch malbut_gazebo target_tracking_demo.launch.py
 ```bash
 ros2 action send_goal \
   /follow_person malbut_interfaces/action/FollowPerson \
-  "{desired_distance_m: 1.2, minimum_distance_m: 0.65, maximum_linear_speed_mps: 0.30, target_lost_timeout: {sec: 8, nanosec: 0}}" \
+  "{target_mode: 0, target_person_id: '', desired_distance_m: 1.0}" \
   --feedback
 ```
 
@@ -253,6 +253,34 @@ ros2 action send_goal \
 LiDAR 트랙으로 짧게 추적을 이어갑니다. 두 센서에서 모두 사라지면 중간 지점과
 마지막 안전 위치까지 이동한 뒤, 사람이 사라진 방향으로 한 번 270도 회전합니다. `Ctrl-C`로
 액션을 취소하면 진행 중인 Nav2 목표도 취소되고 정지합니다.
+
+### 사람 추적 성능 벤치마크
+
+`malbut_tracking/benchmark`가 `test_arena`와 `small_house`의 저장 지도를
+그대로 사용해 사람 추적 성능을 측정합니다. 로봇과 사람의 Gazebo 실제 위치는
+평가기에서만 사용하고 인식·추적 코드에는 입력하지 않습니다.
+
+```bash
+ros2 launch malbut_tracking person_tracking_benchmark.launch.py \
+  scenario:=test_arena_perimeter
+```
+
+GUI 없이 반복 측정할 수도 있습니다.
+
+```bash
+ros2 launch malbut_tracking person_tracking_benchmark.launch.py \
+  scenario:=small_house_living_room \
+  gui:=false headless:=true rviz:=false image_view:=false
+```
+
+`scenario`는 `test_arena_perimeter`, `test_arena_complex`,
+`small_house_front_door`, `small_house_living_room` 중에서 선택합니다.
+기본 180초 측정이 끝나면 `~/.ros/malbut/benchmarks/<시나리오-실행시각>/`에
+다음 파일을 저장합니다.
+
+- `samples.csv`: 20Hz 실제 위치, 추정 위치, 거리, 추적 상태
+- `events.jsonl`: 실행 수명주기, 충돌 진입, 이동 명령과 지연시간 이벤트
+- `summary.json`: 충돌 횟수, 거리 오차, 추적 비율, 위치 예측 오차와 지연시간 통계
 
 ### 키보드 조작
 

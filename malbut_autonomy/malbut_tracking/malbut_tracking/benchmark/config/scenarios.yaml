@@ -1,0 +1,63 @@
+schema_version: 1
+
+scenarios:
+  test_arena_perimeter:
+    world_name: test_arena
+    world_file:
+      package: malbut_gazebo
+      path: worlds/test_arena.sdf
+    map_file:
+      package: malbut_gazebo
+      path: maps/test_arena.yaml
+    actor_file:
+      package: malbut_tracking
+      path: benchmark/actors/test_arena_perimeter.sdf
+    trajectory: perimeter_loop
+    robot_pose: {x: 2.3, y: 0.4, z: 0.002, yaw: 1.5707963267948966}
+    actor_pose: {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0}
+
+  test_arena_complex:
+    world_name: test_arena
+    world_file:
+      package: malbut_gazebo
+      path: worlds/test_arena.sdf
+    map_file:
+      package: malbut_gazebo
+      path: maps/test_arena.yaml
+    actor_file:
+      package: malbut_tracking
+      path: benchmark/actors/test_arena_complex.sdf
+    trajectory: obstacle_weave
+    robot_pose: {x: 2.3, y: 0.4, z: 0.002, yaw: 1.5707963267948966}
+    actor_pose: {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0}
+
+  small_house_front_door:
+    world_name: small_house
+    world_file:
+      package: malbut_gazebo
+      path: worlds/small_house.sdf
+    map_file:
+      package: malbut_gazebo
+      path: maps/small_house.yaml
+    actor_file:
+      package: malbut_gazebo
+      path: models/humanoid_actor/scenarios/front_door_entry.sdf
+    trajectory: front_door_house_route
+    robot_pose: {x: 6.0, y: -4.55, z: 0.002, yaw: -1.5707963267948966}
+    actor_pose: {x: 6.0, y: -6.2, z: 0.0, yaw: 0.0}
+
+  small_house_living_room:
+    world_name: small_house
+    world_file:
+      package: malbut_gazebo
+      path: worlds/small_house.sdf
+    map_file:
+      package: malbut_gazebo
+      path: maps/small_house.yaml
+    actor_file:
+      package: malbut_tracking
+      path: benchmark/actors/small_house_living_room.sdf
+    trajectory: living_room_large_loop
+    robot_pose: {x: -1.5, y: 1.2, z: 0.002, yaw: -1.5707963267948966}
+    actor_pose: {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0}
+

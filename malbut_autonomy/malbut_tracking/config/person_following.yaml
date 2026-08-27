@@ -7,10 +7,11 @@ person_follower:
     detections_topic: /perception/person/detections_3d
     global_costmap_topic: /global_costmap/costmap_raw
     static_map_topic: /map
-    scan_topic: /scan
+    lidar_clusters_topic: /perception/lidar/foreground_clusters
     status_topic: /tracking/person/status
     target_pose_topic: /tracking/person/estimated_target_pose
     track_markers_topic: /tracking/person/lidar_tracks
+    command_trace_topic: /tracking/person/command_trace
 
     # Standard Nav2 endpoints. The follower never publishes /cmd_vel.
     follow_path_action: follow_path
@@ -26,27 +27,12 @@ person_follower:
     robot_frame: base_footprint
 
     minimum_confidence: 0.20
-    # RGB-D supplies the authoritative visible-person position and is never
-    # rejected by a stale-position distance gate. The 1.5 m continuity gate
-    # applies only after camera loss when LiDAR continues the labeled track.
-    lidar_continuation_max_distance_m: 1.50
+    # RGB-D supplies the authoritative visible-person identity and bearing.
+    # After association, continuously observed LiDAR supplies metric planar
+    # position without an unrelated camera-age cutoff.
     camera_position_alpha: 0.55
     camera_velocity_alpha: 0.35
     maximum_person_speed_mps: 2.0
-    # Map-subtracted scan points are only foreground candidates. Requiring a
-    # compact multi-ray cluster prevents one jittering wall return from being
-    # promoted to an object while preserving nearby human legs.
-    cluster_gap_m: 0.20
-    minimum_cluster_points: 3
-    minimum_cluster_density_points_per_m: 5.0
-    maximum_cluster_points: 120
-    maximum_cluster_extent_m: 0.80
-    static_occupied_threshold: 65
-    # The static map is distance-transformed once. Each scan endpoint then
-    # performs one cached lookup to suppress walls, furniture, and map error.
-    # Camera tracking remains authoritative when a person is near furniture.
-    static_exclusion_radius_m: 0.20
-
     # Constant-velocity Kalman filter and global nearest-neighbor assignment.
     # 9.21 is the 99 percent chi-square gate for a 2-D measurement.
     tracker_process_variance: 1.0
@@ -58,6 +44,9 @@ person_follower:
     # RGB-D is authoritative while visible. A LiDAR obstacle receives its
     # label only when its centroid is tightly consistent with that map point.
     camera_label_gate_m: 0.40
+    # Camera supplies identity/bearing; LiDAR supplies planar range only when
+    # the two observations remain within this bounded depth disagreement.
+    camera_lidar_range_gate_m: 1.00
     # Only clusters near the camera-confirmed person (or its short prediction)
     # enter the tracker. This follower is not a general scene-wide DATMO node.
     lidar_candidate_gate_m: 0.70
@@ -66,20 +55,13 @@ person_follower:
     # neighboring furniture is negative evidence and loses the person label.
     camera_lidar_fusion_freshness_s: 0.40
     camera_lidar_extent_padding_m: 0.15
-    # A large one-frame RGB-D jump cannot replace the current person by
-    # itself. Normal continuous motion or a confirmed LiDAR track is accepted
-    # immediately; otherwise the new region must repeat on two camera frames.
-    camera_jump_base_gate_m: 0.75
-    camera_jump_confirmation_hits: 2
-    camera_jump_pending_consistency_m: 0.50
     # Keep a current LiDAR label through small centroid noise, but let a
     # clearly closer RGB-D match correct an obstacle-label mix-up.
     camera_rebind_margin_m: 0.15
-    # After RGB-D labels a confirmed obstacle, current LiDAR measurements may
-    # continue that same track briefly after camera loss. While RGB-D remains
-    # current, LiDAR may only make fast near-range ALIGN/RETREAT decisions;
-    # camera observations continue to own forward tracking.
-    lidar_continuation_timeout_s: 3.0
+    # Once RGB-D labels a confirmed obstacle, current LiDAR measurements keep
+    # that same track while it remains continuously observed. A missing track
+    # is aged by the Kalman tracker's missed-update/coast rules instead of an
+    # unrelated camera-age timeout.
     # After camera loss, grow the 0.70 m local gate only as far as a person
     # could move. If the camera is looking at the stale point and sees nobody,
     # exactly one confirmed nearby moving track may inherit the person label.
@@ -94,43 +76,43 @@ person_follower:
     minimum_distance_m: 0.65
     distance_tolerance_m: 0.10
     # Once translation is unnecessary, rotate only enough to center the
-    # fixed forward camera. Translation and rotation are never commanded by
-    # separate controllers at the same time.
+    # fixed forward camera.
     alignment_angle_tolerance_rad: 0.10
-    # Hiwonder's physical ROSOrin course demonstrates 0.30 m/s chassis
-    # motion. Translation, including reverse, remains collision checked by
-    # Nav2 ComputePathToPose and the configured holonomic controller.
-    maximum_linear_speed_mps: 0.30
-    retreat_maximum_travel_m: 0.12
+    # Translation, including reverse, remains collision checked by Nav2
+    # ComputePathToPose and the configured holonomic controller.
+    # Nav2 receives a distance-dependent speed cap: short corrections stay
+    # near 0.10 m/s and paths of at least 1.5 m may use the full 0.40 m/s.
+    minimum_follow_speed_mps: 0.10
+    maximum_linear_speed_mps: 0.40
+    full_speed_travel_distance_m: 1.50
     # Start backing away before an approaching person crosses the lower
-    # distance bound, then refresh the short collision-checked retreat path.
+    # distance bound. Forward and reverse paths use the same refresh policy.
     approach_prediction_horizon_s: 0.75
     approach_speed_threshold_mps: 0.10
-    retreat_goal_update_distance_m: 0.04
-    retreat_goal_update_period_s: 0.15
 
-    # Nav2 plans toward the observed person or its nearest admissible costmap
-    # cell. These existing per-update lookaheads bound that global path.
-    goal_update_distance_m: 0.25
-    goal_update_period_s: 0.75
-    precise_maximum_travel_m: 0.50
+    # Re-evaluate a moving target at up to roughly 3 Hz.
+    goal_update_distance_m: 0.10
+    goal_update_minimum_period_s: 0.33
+    goal_update_period_s: 0.33
     # Camera-only targets outside the costmap remain followable through
-    # longer coarse segments. Large changes preempt immediately and the
-    # period forces refresh even while displacement remains small.
-    coarse_goal_update_distance_m: 0.50
-    coarse_goal_update_period_s: 0.75
-    coarse_maximum_travel_m: 0.80
+    # coarse map points. Large changes preempt immediately and the period
+    # forces refresh even while displacement remains small.
+    coarse_goal_update_distance_m: 0.20
+    coarse_goal_update_period_s: 0.33
     # Past the 3 m depth limit, RGB supplies direction and a minimum range.
-    # Repeated 1.2 m segments close that distance until metric depth returns.
+    # Repeated replanning closes that distance until metric depth returns.
     bearing_goal_update_distance_m: 0.20
-    bearing_goal_update_period_s: 0.50
+    bearing_goal_update_period_s: 0.33
     bearing_only_variance_threshold_m2: 1.0
-    bearing_maximum_travel_m: 1.20
 
     # Accept destinations only beyond the global inflation gradient. With the
     # current Nav2 inflation radius this preserves roughly the configured
     # 0.55 m wall margin, while the search chooses the room side of a corner.
     goal_maximum_cost: 80
+    # Match Nav2's global/local inflation radius before caching the static map.
+    # Fixed-map A* and live Nav2 therefore use the same obstacle clearance.
+    static_occupied_threshold: 65
+    static_padding_radius_m: 0.35
     goal_safe_search_radius_m: 1.00
     goal_openness_radius_m: 0.60
     goal_openness_preference_m: 0.30
@@ -138,17 +120,10 @@ person_follower:
     minimum_heading_clearance_m: 0.45
     require_global_costmap_for_goal: true
 
-    # RGB-D establishes identity. A confirmed, still-observed LiDAR track may
-    # keep the target alive for the bounded continuation window above. When
-    # both sensors lose it, freeze and finish the current waypoint, turn once
-    # toward the predicted exit direction, then travel to the last safe point.
-    # At the nominal 3 Hz perception contract this requires more than one
-    # missed frame, avoiding recovery churn from a single delayed inference.
-    # This timeout transitions to stationary TARGET_LOST; it does not finish
-    # the long-running FollowPerson action. Explicit client cancellation is
-    # the only normal way to end that action.
-    temporary_lost_timeout_s: 0.75
-    target_lost_timeout_s: 8.0
+    # RGB-D establishes identity and an observed LiDAR track may continue it.
+    # Brief delivery gaps are debounced before the ordered recovery begins.
+    # Once acquired, explicit client cancellation is the only normal stop.
+    observation_loss_debounce_s: 0.75
     # The camera's 74-degree horizontal field of view has a roughly
     # 37-degree half-angle. Turn at least 40 degrees toward the exit side so
     # a stale map estimate cannot reduce reacquisition to a tiny correction.
@@ -164,6 +139,7 @@ person_follower:
     # Bounded prediction supports identity association and display only.
     prediction_horizon_s: 0.60
     transform_timeout_s: 0.10
-    # Sensor callbacks never block perception waiting for TF. The newest scan
-    # is queued briefly and processed only when its exact transform arrives.
+    # ros_gz sensor messages can arrive just before their exact odom/TF
+    # sample. Retry only the newest detection briefly instead of treating
+    # transport skew as a lost person.
     sensor_transform_queue_timeout_s: 0.30

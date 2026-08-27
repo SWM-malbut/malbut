@@ -18,7 +18,6 @@
     </plugin>
     <plugin filename="ignition-gazebo-imu-system"
             name="ignition::gazebo::systems::Imu"/>
-
     <gui fullscreen="0">
       <plugin filename="MinimalScene" name="3D View">
         <gz-gui>
@@ -269,18 +268,5 @@
       </link>
     </model>
 
-    <model name="low_ramp">
-      <static>true</static>
-      <pose>0 -1.30 0.075 0 0.15 0</pose>
-      <link name="link">
-        <collision name="collision">
-          <geometry><box><size>1.0 0.70 0.08</size></box></geometry>
-        </collision>
-        <visual name="visual">
-          <geometry><box><size>1.0 0.70 0.08</size></box></geometry>
-          <material><diffuse>0.35 0.35 0.38 1</diffuse></material>
-        </visual>
-      </link>
-    </model>
   </world>
 </sdf>

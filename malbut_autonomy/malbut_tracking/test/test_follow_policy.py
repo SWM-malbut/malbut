@@ -3,11 +3,12 @@
 import pytest
 
 from malbut_tracking.follow_policy import (
+    directed_recovery_turn,
     FollowCommand,
     FollowSettings,
     decide_follow_motion,
     should_update_goal,
-    target_loss_timed_out,
+    speed_limit_for_travel_distance,
 )
 from malbut_tracking.geometry import Point2D
 
@@ -20,22 +21,13 @@ def settings():
         minimum_distance_m=0.65,
         distance_tolerance_m=0.15,
         goal_update_distance_m=0.25,
+        goal_update_minimum_period_s=0.33,
         goal_update_period_s=0.75,
-        maximum_linear_speed_mps=0.30,
-        temporary_lost_timeout_s=0.75,
-        target_lost_timeout_s=8.0,
+        minimum_follow_speed_mps=0.10,
+        maximum_linear_speed_mps=0.40,
+        full_speed_travel_distance_m=1.5,
+        observation_loss_debounce_s=0.75,
     )
-
-
-def test_loss_timeout_does_not_expire_before_first_acquisition():
-    """An action waiting for its first person must remain active."""
-    assert not target_loss_timed_out(None, now_s=100.0, timeout_s=8.0)
-
-
-def test_loss_timeout_starts_after_person_was_seen():
-    """The configured timeout applies only after an acquired person is lost."""
-    assert not target_loss_timed_out(10.0, now_s=17.9, timeout_s=8.0)
-    assert target_loss_timed_out(10.0, now_s=18.0, timeout_s=8.0)
 
 
 def test_far_target_creates_nav2_goal(settings):
@@ -145,6 +137,42 @@ def test_goal_update_uses_motion_or_maximum_refresh_age(settings):
         previous,
         Point2D(1.1, 1.0),
         0.5,
+        settings,
+    )
+
+
+def test_speed_limit_scales_with_remaining_path_length(settings):
+    """Short corrections slow down while long paths retain full speed."""
+    assert speed_limit_for_travel_distance(0.0, settings) == pytest.approx(
+        0.10
+    )
+    assert speed_limit_for_travel_distance(0.5, settings) == pytest.approx(
+        0.20
+    )
+    assert speed_limit_for_travel_distance(1.0, settings) == pytest.approx(
+        0.30
+    )
+    assert speed_limit_for_travel_distance(1.5, settings) == pytest.approx(
+        0.40
+    )
+    assert speed_limit_for_travel_distance(3.0, settings) == pytest.approx(
+        0.40
+    )
+
+
+def test_recovery_turn_uses_the_last_camera_exit_side_first():
+    """The first camera-loss turn must ignore LiDAR disagreement."""
+    assert directed_recovery_turn(-0.20, 0.80, 0.70) == pytest.approx(-0.70)
+    assert directed_recovery_turn(0.30, -0.90, 0.70) == pytest.approx(0.70)
+    assert directed_recovery_turn(0.0, -0.90, 0.70) == pytest.approx(-0.90)
+
+
+def test_goal_update_period_is_a_hard_rate_ceiling(settings):
+    """Target jumps must not preempt Nav2 above the configured rate."""
+    assert not should_update_goal(
+        Point2D(0.0, 0.0),
+        Point2D(2.0, 0.0),
+        settings.goal_update_minimum_period_s - 0.01,
         settings,
     )
 

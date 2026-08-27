@@ -15,88 +15,47 @@ class TargetCandidate:
     observed_track_id: str
 
 
-class CameraObservationGate:
-    """Require temporal or LiDAR support before accepting a large jump."""
-
-    def __init__(
-        self,
-        confirmation_hits: int,
-        pending_consistency_m: float,
-    ) -> None:
-        if confirmation_hits < 2:
-            raise ValueError('camera jump confirmation needs at least 2 hits')
-        if pending_consistency_m <= 0.0:
-            raise ValueError('pending consistency distance must be positive')
-        self._confirmation_hits = confirmation_hits
-        self._pending_consistency_m = pending_consistency_m
-        self.reset()
-
-    def reset(self) -> None:
-        """Forget a partially observed discontinuous camera candidate."""
-        self._pending_position: Point2D | None = None
-        self._pending_hits = 0
-
-    def accept(
-        self,
-        observed_position: Point2D,
-        predicted_position: Point2D | None,
-        continuity_radius_m: float,
-        lidar_supported: bool,
-    ) -> bool:
-        """Accept continuity immediately; otherwise require repeated support."""
-        if continuity_radius_m <= 0.0:
-            raise ValueError('camera continuity radius must be positive')
-        if (
-            predicted_position is None
-            or distance(observed_position, predicted_position)
-            <= continuity_radius_m
-            or lidar_supported
-        ):
-            self.reset()
-            return True
-        if (
-            self._pending_position is not None
-            and distance(observed_position, self._pending_position)
-            <= self._pending_consistency_m
-        ):
-            self._pending_hits += 1
-        else:
-            self._pending_hits = 1
-        self._pending_position = observed_position
-        if self._pending_hits < self._confirmation_hits:
-            return False
-        self.reset()
-        return True
+def fuse_camera_bearing_with_lidar_range(
+    robot_position: Point2D,
+    camera_position: Point2D,
+    lidar_position: Point2D,
+    maximum_lateral_error_m: float,
+    maximum_range_error_m: float,
+) -> Point2D | None:
+    """Fuse camera bearing with one geometrically consistent LiDAR range."""
+    if maximum_lateral_error_m <= 0.0 or maximum_range_error_m <= 0.0:
+        raise ValueError('camera-LiDAR fusion gates must be positive')
+    camera_dx = camera_position.x - robot_position.x
+    camera_dy = camera_position.y - robot_position.y
+    lidar_dx = lidar_position.x - robot_position.x
+    lidar_dy = lidar_position.y - robot_position.y
+    camera_range = (camera_dx * camera_dx + camera_dy * camera_dy) ** 0.5
+    lidar_range = (lidar_dx * lidar_dx + lidar_dy * lidar_dy) ** 0.5
+    if camera_range <= 1e-6 or lidar_range <= 1e-6:
+        return None
+    direction_x = camera_dx / camera_range
+    direction_y = camera_dy / camera_range
+    forward_projection = lidar_dx * direction_x + lidar_dy * direction_y
+    lateral_error = abs(lidar_dx * direction_y - lidar_dy * direction_x)
+    if (
+        forward_projection <= 0.0
+        or lateral_error > maximum_lateral_error_m
+        or abs(lidar_range - camera_range) > maximum_range_error_m
+    ):
+        return None
+    return Point2D(
+        robot_position.x + direction_x * lidar_range,
+        robot_position.y + direction_y * lidar_range,
+    )
 
 
 def select_target_candidate(
     candidates: list[TargetCandidate],
     predicted_position: Point2D | None,
-    preferred_track_id: str = '',
 ) -> TargetCandidate | None:
-    """Prefer Re-ID, then choose the visible camera person by continuity."""
+    """Choose the visible camera person by map-frame continuity."""
     if not candidates:
         return None
-    if preferred_track_id:
-        same_identity = [
-            candidate
-            for candidate in candidates
-            if candidate.observed_track_id == preferred_track_id
-        ]
-        if same_identity:
-            if predicted_position is None:
-                return max(
-                    same_identity,
-                    key=lambda candidate: candidate.confidence,
-                )
-            return min(
-                same_identity,
-                key=lambda candidate: (
-                    distance(candidate.position, predicted_position),
-                    -candidate.confidence,
-                    candidate.source_index,
-                ),
-            )
     if predicted_position is None:
         return max(candidates, key=lambda candidate: candidate.confidence)
 

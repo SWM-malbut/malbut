@@ -29,7 +29,8 @@ def test_config_uses_only_rgbd_inputs_and_standard_outputs():
     assert config['opencv_num_threads'] == 4
     assert config['reid_backend'] == 'auto'
     assert config['reid_refresh_interval_frames'] == 3
-    assert config['reid_max_inactive_frames'] >= 2400
+    assert config['reid_max_inactive_frames'] == 0
+    assert config['reid_feature_budget'] == 30
     assert config['projection_frame'] == ''
     assert config['use_sim_time'] is False
 

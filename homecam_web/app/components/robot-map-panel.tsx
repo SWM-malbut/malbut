@@ -3033,11 +3033,7 @@ function driveModeDetailCopy(value: RobotDriveModeSnapshot | undefined) {
     const states: Record<string, string> = {
       IDLE: "따라갈 사람을 찾는 중",
       TRACKING: "사람을 따라가는 중",
-      REACHING_WAYPOINT: "마지막 방향으로 이동 중",
-      TURNING_TO_TARGET: "사라진 방향 확인 중",
-      REACHING_LAST_POSITION: "마지막 위치 확인 중",
-      SEARCHING: "주변에서 다시 찾는 중",
-      TARGET_LOST: "사람을 놓쳐 제자리 대기 중",
+      RECOVERING: "마지막 관측을 기준으로 복구 중",
     };
     return states[trackingState] ?? "사람 추적 상태 확인 중";
   }

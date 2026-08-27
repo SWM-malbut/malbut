@@ -1,9 +1,9 @@
 """Unit tests for automatic person acquisition and continuous association."""
 
-from malbut_tracking.geometry import Point2D
+from malbut_tracking.geometry import Point2D, distance
 from malbut_tracking.target_association import (
-    CameraObservationGate,
     TargetCandidate,
+    fuse_camera_bearing_with_lidar_range,
     select_target_candidate,
 )
 
@@ -47,15 +47,17 @@ def test_visible_camera_person_is_not_rejected_by_stale_prediction():
     assert selected.observed_track_id == '7'
 
 
-def test_reidentified_person_is_restored_after_a_large_motion():
-    """A matching OSNet-backed ID may reacquire beyond the spatial gate."""
+def test_stale_id_cannot_override_nearest_current_camera_person():
+    """Detector IDs are diagnostic; map continuity owns visible selection."""
     selected = select_target_candidate(
-        [_candidate(0, 5.0, 0.80, 'person-7')],
+        [
+            _candidate(0, 5.0, 0.99, 'person-7'),
+            _candidate(1, 1.1, 0.80, 'person-8'),
+        ],
         predicted_position=Point2D(1.0, 0.0),
-        preferred_track_id='person-7',
     )
     assert selected is not None
-    assert selected.observed_track_id == 'person-7'
+    assert selected.observed_track_id == 'person-8'
 
 
 def test_id_change_still_selects_the_nearest_visible_camera_person():
@@ -63,37 +65,31 @@ def test_id_change_still_selects_the_nearest_visible_camera_person():
     selected = select_target_candidate(
         [_candidate(0, 5.0, 0.99, 'person-8')],
         predicted_position=Point2D(1.0, 0.0),
-        preferred_track_id='person-7',
     )
     assert selected is not None
     assert selected.observed_track_id == 'person-8'
 
 
-def test_camera_jump_requires_two_consistent_observations():
-    """One distant false detection cannot replace a continuous target."""
-    gate = CameraObservationGate(2, 0.50)
-
-    assert not gate.accept(
-        Point2D(5.0, 0.0),
-        Point2D(1.0, 0.0),
-        continuity_radius_m=1.0,
-        lidar_supported=False,
+def test_camera_lidar_fusion_uses_camera_bearing_and_lidar_range():
+    """Identity bearing and metric range should form one target position."""
+    fused = fuse_camera_bearing_with_lidar_range(
+        Point2D(0.0, 0.0),
+        Point2D(2.0, 0.2),
+        Point2D(2.5, 0.35),
+        maximum_lateral_error_m=0.20,
+        maximum_range_error_m=1.0,
     )
-    assert gate.accept(
-        Point2D(5.1, 0.0),
-        Point2D(1.0, 0.0),
-        continuity_radius_m=1.0,
-        lidar_supported=False,
-    )
+    assert fused is not None
+    assert abs(distance(fused, Point2D(0.0, 0.0)) - 2.5249) < 1e-3
+    assert abs(fused.y / fused.x - 0.1) < 1e-6
 
 
-def test_lidar_support_accepts_a_discontinuous_camera_reacquisition():
-    """A separated person cluster lets RGB-D reacquire without extra delay."""
-    gate = CameraObservationGate(2, 0.50)
-
-    assert gate.accept(
-        Point2D(3.0, 0.0),
-        Point2D(1.0, 0.0),
-        continuity_radius_m=1.0,
-        lidar_supported=True,
-    )
+def test_camera_lidar_fusion_rejects_a_neighboring_obstacle():
+    """A range-compatible object off the person's camera ray is not fused."""
+    assert fuse_camera_bearing_with_lidar_range(
+        Point2D(0.0, 0.0),
+        Point2D(2.0, 0.0),
+        Point2D(2.0, 0.8),
+        maximum_lateral_error_m=0.30,
+        maximum_range_error_m=1.0,
+    ) is None

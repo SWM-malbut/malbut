@@ -6,7 +6,7 @@ Malbut ROS 2 Humble simulation.
 | `world_name` | Purpose | Distribution status |
 | --- | --- | --- |
 | `empty` | Flat-floor robot physics baseline | Project-owned primitives |
-| `test_arena` | Repeatable collision, LiDAR, camera, and ramp checks | Project-owned primitives |
+| `test_arena` | Repeatable collision, LiDAR, and camera checks | Project-owned primitives |
 | `robocup_home` | Simple indoor floor plan paired with the bundled baseline map | Hiwonder feature package; adapted for Fortress |
 | `small_house` | Detailed multi-room household scenario | AWS assets; bundled license applies |
 

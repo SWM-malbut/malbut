@@ -1,7 +1,9 @@
 """Project tracking destinations into open global-costmap space."""
 
 from dataclasses import dataclass
+import heapq
 import math
+from typing import Sequence
 
 from .costmap_tracking import CostmapGrid
 from .geometry import Point2D, distance, normalize_angle
@@ -16,6 +18,140 @@ class SafeNavigationGoal:
     position_adjusted: bool
     heading_adjusted: bool
     openness: float
+
+
+def pad_static_map(
+    grid: CostmapGrid,
+    occupied_threshold: int,
+    padding_radius_m: float,
+) -> CostmapGrid:
+    """Return one cached static grid padded to the Nav2 inflation radius."""
+    grid.validate()
+    if not 0 <= occupied_threshold <= 100:
+        raise ValueError('occupied threshold must be in [0, 100]')
+    if padding_radius_m < 0.0:
+        raise ValueError('static-map padding radius must be non-negative')
+    if padding_radius_m == 0.0:
+        return grid
+
+    radius_cells = math.ceil(padding_radius_m / grid.resolution)
+    offsets = tuple(
+        (offset_x, offset_y)
+        for offset_y in range(-radius_cells, radius_cells + 1)
+        for offset_x in range(-radius_cells, radius_cells + 1)
+        if math.hypot(offset_x, offset_y) * grid.resolution
+        <= padding_radius_m + 1e-9
+    )
+    padded_costs = list(grid.costs)
+    occupied_cells = tuple(
+        (cell_x, cell_y)
+        for cell_y in range(grid.height)
+        for cell_x in range(grid.width)
+        if grid.cost(cell_x, cell_y) >= occupied_threshold
+    )
+    for occupied_x, occupied_y in occupied_cells:
+        for offset_x, offset_y in offsets:
+            cell_x = occupied_x + offset_x
+            cell_y = occupied_y + offset_y
+            if not 0 <= cell_x < grid.width or not 0 <= cell_y < grid.height:
+                continue
+            index = cell_y * grid.width + cell_x
+            # Preserve unknown cells. They are already non-traversable, while
+            # only real static obstacles seed padding just like Nav2.
+            if int(padded_costs[index]) >= 0:
+                padded_costs[index] = max(
+                    int(padded_costs[index]),
+                    occupied_threshold,
+                )
+    return CostmapGrid(
+        frame_id=grid.frame_id,
+        stamp_seconds=grid.stamp_seconds,
+        resolution=grid.resolution,
+        width=grid.width,
+        height=grid.height,
+        origin=grid.origin,
+        origin_yaw=grid.origin_yaw,
+        costs=tuple(padded_costs),
+    )
+
+
+def plan_static_path(
+    grid: CostmapGrid,
+    start: Point2D,
+    goal: Point2D,
+    occupied_threshold: int = 65,
+) -> tuple[Point2D, ...] | None:
+    """Plan an 8-connected route on one cached static SLAM grid."""
+    grid.validate()
+    if not 0 <= occupied_threshold <= 100:
+        raise ValueError('occupied threshold must be in [0, 100]')
+    start_cell = grid.world_to_cell(start)
+    goal_cell = grid.world_to_cell(goal)
+    if start_cell is None or goal_cell is None:
+        return None
+    if start_cell == goal_cell:
+        return (grid.cell_center(*start_cell),)
+
+    def traversable(cell_x: int, cell_y: int) -> bool:
+        if not 0 <= cell_x < grid.width or not 0 <= cell_y < grid.height:
+            return False
+        cost = grid.cost(cell_x, cell_y)
+        return 0 <= cost < occupied_threshold
+
+    if not traversable(*start_cell) or not traversable(*goal_cell):
+        return None
+
+    neighbors = (
+        (-1, -1),
+        (0, -1),
+        (1, -1),
+        (-1, 0),
+        (1, 0),
+        (-1, 1),
+        (0, 1),
+        (1, 1),
+    )
+    frontier = [(0.0, 0.0, start_cell)]
+    cost_to_cell = {start_cell: 0.0}
+    parent: dict[tuple[int, int], tuple[int, int]] = {}
+    visited = set()
+    while frontier:
+        _, current_cost, current = heapq.heappop(frontier)
+        if current in visited:
+            continue
+        visited.add(current)
+        if current == goal_cell:
+            route = [current]
+            while route[-1] != start_cell:
+                route.append(parent[route[-1]])
+            route.reverse()
+            return tuple(grid.cell_center(*cell) for cell in route)
+
+        for offset_x, offset_y in neighbors:
+            neighbor = (current[0] + offset_x, current[1] + offset_y)
+            if not traversable(*neighbor):
+                continue
+            if offset_x != 0 and offset_y != 0:
+                # Do not cut diagonally through the corner of fixed geometry.
+                if not traversable(current[0] + offset_x, current[1]):
+                    continue
+                if not traversable(current[0], current[1] + offset_y):
+                    continue
+            step_cost = math.hypot(offset_x, offset_y)
+            candidate_cost = current_cost + step_cost
+            if candidate_cost >= cost_to_cell.get(neighbor, math.inf):
+                continue
+            cost_to_cell[neighbor] = candidate_cost
+            parent[neighbor] = current
+            heuristic = math.hypot(
+                goal_cell[0] - neighbor[0],
+                goal_cell[1] - neighbor[1],
+            )
+            heapq.heappush(
+                frontier,
+                (candidate_cost + heuristic, candidate_cost, neighbor),
+            )
+    return None
 
 
 def first_admissible_point_on_ray(
@@ -60,6 +196,7 @@ def project_navigation_goal(
     heading_probe_distance_m: float,
     minimum_heading_clearance_m: float,
     approach_origin: Point2D | None = None,
+    static_path: Sequence[Point2D] | None = None,
 ) -> SafeNavigationGoal | None:
     """Move an unsafe planning goal to open space and avoid a wall."""
     grid.validate()
@@ -78,6 +215,43 @@ def project_navigation_goal(
 
     requested_cell = grid.world_to_cell(requested_position)
     if requested_cell is None:
+        return None
+    if static_path:
+        for path_point in reversed(static_path):
+            cell = grid.world_to_cell(path_point)
+            if cell is None:
+                continue
+            if not _cell_is_admissible(grid, cell[0], cell[1], maximum_cost):
+                continue
+            safe_position = grid.cell_center(*cell)
+            openness = _open_fraction(
+                grid,
+                cell[0],
+                cell[1],
+                maximum_cost,
+                openness_radius_m,
+            )
+            safe_yaw = _open_heading(
+                grid,
+                safe_position,
+                requested_yaw,
+                maximum_cost,
+                heading_probe_distance_m,
+                minimum_heading_clearance_m,
+            )
+            return SafeNavigationGoal(
+                position=safe_position,
+                yaw=safe_yaw,
+                position_adjusted=(
+                    distance(safe_position, requested_position)
+                    > grid.resolution * 0.75
+                ),
+                heading_adjusted=(
+                    abs(normalize_angle(safe_yaw - requested_yaw))
+                    > math.radians(1)
+                ),
+                openness=openness,
+            )
         return None
     approach_distance = (
         distance(approach_origin, requested_position)

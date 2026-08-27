@@ -118,7 +118,8 @@ The main tracking and Re-ID controls are:
 
 - `max_inference_rate_hz`: maximum RGB-D inference cadence; `0` is unlimited
 - `reid_cosine_threshold`: maximum OSNet cosine distance for restoring an ID
-- `reid_max_inactive_frames`: how long retired IDs stay in the gallery
+- `reid_max_inactive_frames`: how long retired IDs stay in the gallery;
+  `0` keeps them until the node stops
 - `reid_feature_budget`: maximum descriptors retained per ID
 - `reid_refresh_interval_frames`: periodic OSNet refresh cadence for stable IDs
 - `tracker_appearance_weight`: appearance contribution to active association

@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<sdf version="1.8">
+  <actor name="benchmark_person">
+    <skin>
+      <filename>model://humanoid_actor/meshes/walk.dae</filename>
+      <scale>1.0</scale>
+    </skin>
+    <animation name="walking">
+      <filename>model://humanoid_actor/meshes/walk.dae</filename>
+      <scale>1.0</scale>
+      <interpolate_x>true</interpolate_x>
+    </animation>
+    <!--
+      This scenario adds no benchmark-only obstacle. The launch file controls
+      the initial wait, then the actor walks its four clear perimeter vertices
+      at 0.25 m/s. Walking and in-place turns share one continuous trajectory.
+    -->
+    <script>
+      <!-- Keep the scripted actor alive; the evaluator stops at the first lap. -->
+      <loop>true</loop>
+      <delay_start>0.0</delay_start>
+      <auto_start>true</auto_start>
+      <trajectory id="0" type="walking" tension="1.0">
+        <waypoint>
+          <time>0.000</time>
+          <pose>2.300 1.500 1.000 0 0 3.141593</pose>
+        </waypoint>
+        <waypoint>
+          <time>18.400000</time>
+          <pose>-2.300 1.500 1.000 0 0 3.141593</pose>
+        </waypoint>
+        <waypoint>
+          <time>19.708997</time>
+          <pose>-2.300 1.500 1.000 0 0 -1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>31.708997</time>
+          <pose>-2.300 -1.500 1.000 0 0 -1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>33.017994</time>
+          <pose>-2.300 -1.500 1.000 0 0 0.000000</pose>
+        </waypoint>
+        <waypoint>
+          <time>51.417994</time>
+          <pose>2.300 -1.500 1.000 0 0 0.000000</pose>
+        </waypoint>
+        <waypoint>
+          <time>52.726991</time>
+          <pose>2.300 -1.500 1.000 0 0 1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>64.726991</time>
+          <pose>2.300 1.500 1.000 0 0 1.570796</pose>
+        </waypoint>
+        <waypoint>
+          <time>66.035988</time>
+          <pose>2.300 1.500 1.000 0 0 3.141593</pose>
+        </waypoint>
+      </trajectory>
+    </script>
+  </actor>
+</sdf>

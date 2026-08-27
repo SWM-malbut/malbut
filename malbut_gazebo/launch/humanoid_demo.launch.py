@@ -76,8 +76,6 @@ def generate_launch_description():
         / GAZEBO_PACKAGE
         / "spawn_when_ready"
     )
-    actor_file = gazebo_share / "models" / "humanoid_actor" / "model.sdf"
-
     simulation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             str(gazebo_share / "launch" / "worlds.launch.py")
@@ -94,7 +92,8 @@ def generate_launch_description():
             "--entity-name",
             LaunchConfiguration("actor_name"),
             "--file",
-            str(actor_file),
+            LaunchConfiguration("actor_file"),
+            "--align-actor-script",
             "--x",
             LaunchConfiguration("actor_x"),
             "--y",
@@ -175,6 +174,13 @@ def generate_launch_description():
             DeclareLaunchArgument("iterations", default_value=""),
             DeclareLaunchArgument(
                 "actor_name", default_value="humanoid_target"
+            ),
+            DeclareLaunchArgument(
+                "actor_file",
+                default_value=str(
+                    gazebo_share / "models" / "humanoid_actor" / "model.sdf"
+                ),
+                description="SDF actor used by this simulation run.",
             ),
             DeclareLaunchArgument(
                 "actor_spawn_delay",

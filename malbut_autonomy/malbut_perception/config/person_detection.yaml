@@ -50,9 +50,9 @@ person_localizer:
     reid_backend: auto
     reid_model_path: ''
     reid_cosine_threshold: 0.35
-    # At the configured 8 Hz this retains an identity for about five minutes,
-    # longer than one complete Small House actor circuit.
-    reid_max_inactive_frames: 2400
+    # Zero keeps retired identities for the lifetime of this node. Descriptor
+    # history remains bounded so noisy observations cannot grow indefinitely.
+    reid_max_inactive_frames: 0
     reid_feature_budget: 30
     # Refresh stable tracks periodically; new, displaced, and returning people
     # still request an appearance embedding immediately.

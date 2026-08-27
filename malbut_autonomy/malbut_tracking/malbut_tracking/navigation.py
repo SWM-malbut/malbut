@@ -27,7 +27,13 @@ class Nav2PathClient:
     def __init__(self, node, action_name: str) -> None:
         self._client = ActionClient(node, ComputePathToPose, action_name)
         self._token = 0
+        self._pending = False
         self._goal_handle = None
+
+    @property
+    def busy(self) -> bool:
+        """Return whether one path request is awaiting a result."""
+        return self._pending or self._goal_handle is not None
 
     def compute(
         self,
@@ -36,15 +42,15 @@ class Nav2PathClient:
         callback: PathResultCallback,
     ) -> bool:
         """Plan from the current robot pose to one safe target pose."""
-        if not self._client.server_is_ready():
+        if not self._client.server_is_ready() or self.busy:
             return False
-        self.cancel()
         self._token += 1
         token = self._token
         goal = ComputePathToPose.Goal()
         goal.goal = goal_pose
         goal.planner_id = planner_id
         goal.use_start = False
+        self._pending = True
         future = self._client.send_goal_async(goal)
         future.add_done_callback(
             lambda completed: self._goal_response(
@@ -56,6 +62,7 @@ class Nav2PathClient:
     def cancel(self) -> None:
         """Invalidate and cancel the currently relevant planning request."""
         self._token += 1
+        self._pending = False
         if self._goal_handle is not None:
             self._goal_handle.cancel_goal_async()
             self._goal_handle = None
@@ -74,6 +81,7 @@ class Nav2PathClient:
             goal_handle = future.result()
         except Exception as error:  # noqa: B902 - rclpy future boundary
             if token == self._token:
+                self._pending = False
                 callback(None, f'Nav2 path request failed: {error}')
             return
         if token != self._token:
@@ -81,8 +89,10 @@ class Nav2PathClient:
                 goal_handle.cancel_goal_async()
             return
         if not goal_handle.accepted:
+            self._pending = False
             callback(None, 'Nav2 rejected ComputePathToPose')
             return
+        self._pending = False
         self._goal_handle = goal_handle
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(

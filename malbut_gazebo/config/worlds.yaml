@@ -13,7 +13,7 @@ worlds:
 
   test_arena:
     file: test_arena.sdf
-    purpose: Controlled collision, LiDAR, camera, and ramp checks
+    purpose: Controlled collision, LiDAR, and camera checks
     release_status: ready
     spawn:
       x: 0.0

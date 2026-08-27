@@ -24,11 +24,13 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>malbut_description</exec_depend>
+  <exec_depend>malbut_gazebo_plugins</exec_depend>
   <exec_depend>malbut_interfaces</exec_depend>
   <exec_depend>malbut_perception</exec_depend>
   <exec_depend>malbut_patrol</exec_depend>
   <exec_depend>malbut_roaming</exec_depend>
   <exec_depend>malbut_tracking</exec_depend>
+  <exec_depend>malbut_lidar_preprocessor</exec_depend>
   <exec_depend>nav2_amcl</exec_depend>
   <exec_depend>nav2_behaviors</exec_depend>
   <exec_depend>nav2_bt_navigator</exec_depend>

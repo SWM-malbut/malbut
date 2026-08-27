@@ -24,10 +24,12 @@ class FollowSettings:
     minimum_distance_m: float
     distance_tolerance_m: float
     goal_update_distance_m: float
+    goal_update_minimum_period_s: float
     goal_update_period_s: float
+    minimum_follow_speed_mps: float
     maximum_linear_speed_mps: float
-    temporary_lost_timeout_s: float
-    target_lost_timeout_s: float
+    full_speed_travel_distance_m: float
+    observation_loss_debounce_s: float
 
     def validate(self) -> None:
         """Reject settings that could violate the standoff contract."""
@@ -47,13 +49,25 @@ class FollowSettings:
             raise ValueError('goal update distance must be positive')
         if self.goal_update_period_s <= 0.0:
             raise ValueError('goal update period must be positive')
+        if self.goal_update_minimum_period_s <= 0.0:
+            raise ValueError('goal update minimum period must be positive')
+        if self.goal_update_minimum_period_s > self.goal_update_period_s:
+            raise ValueError(
+                'goal update minimum period must not exceed refresh period'
+            )
+        if self.minimum_follow_speed_mps <= 0.0:
+            raise ValueError('minimum follow speed must be positive')
         if self.maximum_linear_speed_mps <= 0.0:
             raise ValueError('maximum linear speed must be positive')
-        if self.temporary_lost_timeout_s < 0.0:
-            raise ValueError('temporary lost timeout must be non-negative')
-        if self.target_lost_timeout_s <= self.temporary_lost_timeout_s:
+        if self.minimum_follow_speed_mps > self.maximum_linear_speed_mps:
             raise ValueError(
-                'target lost timeout must exceed temporary loss timeout'
+                'minimum follow speed must not exceed maximum speed'
+            )
+        if self.full_speed_travel_distance_m <= 0.0:
+            raise ValueError('full-speed travel distance must be positive')
+        if self.observation_loss_debounce_s < 0.0:
+            raise ValueError(
+                'observation loss debounce must be non-negative'
             )
 
 
@@ -66,15 +80,41 @@ class FollowDecision:
     reason: str
 
 
-def target_loss_timed_out(
-    last_seen_s: float | None,
-    now_s: float,
-    timeout_s: float,
-) -> bool:
-    """Expire only a target that was acquired and then disappeared."""
-    if last_seen_s is None:
-        return False
-    return max(0.0, now_s - last_seen_s) >= timeout_s
+def speed_limit_for_travel_distance(
+    travel_distance_m: float,
+    settings: FollowSettings,
+) -> float:
+    """Scale the Nav2 speed cap linearly with the remaining path length."""
+    settings.validate()
+    if travel_distance_m < 0.0:
+        raise ValueError('travel distance must be non-negative')
+    ratio = min(
+        1.0,
+        travel_distance_m / settings.full_speed_travel_distance_m,
+    )
+    speed_range = (
+        settings.maximum_linear_speed_mps
+        - settings.minimum_follow_speed_mps
+    )
+    return settings.minimum_follow_speed_mps + ratio * speed_range
+
+
+def directed_recovery_turn(
+    last_camera_bearing_rad: float,
+    last_sensor_bearing_rad: float,
+    minimum_turn_rad: float,
+) -> float | None:
+    """Choose the first recovery turn toward the camera exit side."""
+    if minimum_turn_rad <= 0.0:
+        raise ValueError('recovery minimum turn must be positive')
+    bearing = (
+        last_camera_bearing_rad
+        if abs(last_camera_bearing_rad) > 1e-3
+        else last_sensor_bearing_rad
+    )
+    if abs(bearing) <= 1e-3:
+        return None
+    return math.copysign(max(abs(bearing), minimum_turn_rad), bearing)
 
 
 def decide_follow_motion(
@@ -167,6 +207,7 @@ def should_update_goal(
     settings: FollowSettings,
     update_distance_m: float | None = None,
     update_period_s: float | None = None,
+    minimum_period_s: float | None = None,
 ) -> bool:
     """Rate-limit Nav2 preemption while still reacting to target motion."""
     distance_threshold = (
@@ -179,15 +220,28 @@ def should_update_goal(
         if update_period_s is None
         else update_period_s
     )
+    minimum_period = (
+        settings.goal_update_minimum_period_s
+        if minimum_period_s is None
+        else minimum_period_s
+    )
     if distance_threshold <= 0.0:
         raise ValueError('goal update distance must be positive')
     if period_threshold <= 0.0:
         raise ValueError('goal update period must be positive')
+    if minimum_period <= 0.0:
+        raise ValueError('goal update minimum period must be positive')
+    if minimum_period > period_threshold:
+        raise ValueError(
+            'goal update minimum period must not exceed refresh period'
+        )
     if previous_goal is None:
         return True
-    # A meaningful target jump must preempt immediately. Even when the
-    # filtered displacement is small, the period is a maximum refresh age so
-    # a running path can never remain tied to one stale camera observation.
+    # Never preempt above the hard rate ceiling. After that interval, target
+    # motion may refresh immediately; an unchanged path refreshes only when it
+    # reaches its longer maximum age.
+    if elapsed_seconds < minimum_period:
+        return False
     return (
         distance(previous_goal, candidate_goal) >= distance_threshold
         or elapsed_seconds >= period_threshold

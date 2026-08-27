@@ -3,6 +3,16 @@
 Each map is paired with one specific simulation world. Do not use a map with
 a different world even when both look like indoor environments.
 
+`test_arena.yaml` and `test_arena.pgm` belong only to
+`world_name:=test_arena`. The map was generated with the project's ROS 2
+Humble SLAM Toolbox configuration after observing the arena walls and fixed
+obstacles at 5 cm resolution. The person-tracking benchmark loads this saved
+map; it does not replace localization with an empty free-space canvas.
+
+`test_arena.pgm` SHA-256:
+
+`534a3324d7e7fab947caa0993aafe1c902c54d9f071959463f94c0d53eb07b30`
+
 `robocup_home.yaml` and `robocup_home.pgm` belong only to
 `world_name:=robocup_home`. The PGM is byte-identical to Hiwonder
 `simulations/robot_gazebo/maps/map_01.pgm`:
