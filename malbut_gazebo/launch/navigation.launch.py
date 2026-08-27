@@ -188,6 +188,9 @@ def generate_launch_description():
     patrol_route_file = LaunchConfiguration('patrol_route_file')
     person_following = LaunchConfiguration('person_following')
     person_projection_frame = LaunchConfiguration('person_projection_frame')
+    inscribed_escape_enabled = LaunchConfiguration(
+        'inscribed_escape_enabled'
+    )
     use_active_slam = EqualsSubstitution(localization_source, 'slam')
     use_static_map = NotEqualsSubstitution(localization_source, 'slam')
     zone_filter_enabled = NotEqualsSubstitution(zone_mask, '')
@@ -319,6 +322,7 @@ def generate_launch_description():
         executable='inscribed_escape',
         name='inscribed_escape',
         namespace=namespace,
+        condition=IfCondition(inscribed_escape_enabled),
         # 로봇이 벽에 붙어 멈추면 그 셀이 내접 장애물이 되어 어떤 계획도
         # 시작하지 못하고, collision monitor 가 탈출용 후진까지 막아 Nav2
         # 복구가 제자리에서 반복된다. 그때만 짧게 빠져나오게 한다.
@@ -661,6 +665,14 @@ def generate_launch_description():
                 default_value='',
                 description=(
                     'Optional optical frame override for simulated RGB-D.'
+                ),
+            ),
+            DeclareLaunchArgument(
+                'inscribed_escape_enabled',
+                default_value='true',
+                description=(
+                    'Allow the bounded recovery helper to publish velocity '
+                    'when the robot is trapped in an inscribed costmap cell.'
                 ),
             ),
             DeclareLaunchArgument(

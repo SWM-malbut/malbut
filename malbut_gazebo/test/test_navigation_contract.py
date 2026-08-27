@@ -140,6 +140,17 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     assert 'patrol_route_file' in declared_arguments
     assert 'person_following' in declared_arguments
     assert 'person_projection_frame' in declared_arguments
+    assert 'inscribed_escape_enabled' in declared_arguments
+
+    escape_argument = next(
+        entity
+        for entity in description.entities
+        if isinstance(entity, DeclareLaunchArgument)
+        and entity.name == 'inscribed_escape_enabled'
+    )
+    assert perform_substitutions(
+        LaunchContext(), escape_argument.default_value
+    ) == 'true'
 
     robot_web_nodes = [
         entity
@@ -162,6 +173,15 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
         and entity.node_executable in {'patrol_manager', 'roaming_manager'}
     }
     assert mode_nodes == {'patrol_manager', 'roaming_manager'}
+
+    escape_nodes = [
+        entity
+        for entity in description.entities
+        if isinstance(entity, Node)
+        and entity.node_executable == 'inscribed_escape'
+    ]
+    assert len(escape_nodes) == 1
+    assert escape_nodes[0].condition is not None
 
     collision_nodes = [
         entity

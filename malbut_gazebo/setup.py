@@ -83,6 +83,7 @@ setup(
             'restore_localization_state = '
             'malbut_gazebo.localization_handoff:restore_main',
             'pose_checkpoint = malbut_gazebo.pose_checkpoint:main',
+            'nav2_startup_gate = malbut_gazebo.nav2_startup_gate:main',
         ],
     },
 )

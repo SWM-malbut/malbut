@@ -129,6 +129,35 @@ ros2 launch malbut_gazebo roaming_demo.launch.py
 The demo starts at the catalogued upstream test pose, initializes AMCL at that
 same pose, and starts `malbut_roaming` only after Nav2 becomes active.
 
+For the SWM25-129 Agent integration foundation, start the dedicated no-goal
+testbed instead:
+
+```bash
+ROS_DOMAIN_ID=29 ROS_LOCALHOST_ONLY=1 \
+  ros2 launch malbut_gazebo small_house_nav2_testbed.launch.py
+```
+
+This launch defaults to headless execution and deliberately has no Agent,
+navigation client, patrol, roaming, robot web server, person follower, or
+automatic escape motion. It starts Small House and static localization with
+Nav2 autostart disabled, then a bounded one-shot gate activates localization,
+Collision Monitor, and the Nav2 lifecycle stack in that order. A failed or
+ambiguous lifecycle transition shuts the testbed down; it is never retried.
+The successful gate only proves that a later Agent executor has a ready Nav2
+server. It does not accept or send a navigation goal.
+
+Choose an otherwise unused `ROS_DOMAIN_ID` from 1 through 100. The launch
+rejects the default/shared domain, a domain outside that bounded range, and
+non-local discovery before it starts the simulation or any ROS process. The
+gate checks the same conditions again before it creates any lifecycle client.
+The navigation include also pins the empty namespace so an inherited launch
+configuration cannot silently separate it from the gate.
+
+Use `gui:=true headless:=false rviz:=true` for an operator-visible run. Keep
+the defaults for isolated CI and no-goal acceptance checks. Enabling RViz
+exposes its manual navigation-goal controls, so an RViz-enabled run is outside
+the no-client/no-goal acceptance boundary.
+
 ## AWS Small House
 
 The detailed home is adapted from
