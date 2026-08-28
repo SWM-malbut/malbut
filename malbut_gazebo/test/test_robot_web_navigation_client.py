@@ -33,6 +33,8 @@ class _State:
         self.redirect_start = False
         self.drop_start = False
         self.drop_cancel = False
+        self.partial_start = False
+        self.partial_cancel = False
         self.invalid_start_json = False
         self.invalid_start_shape = False
         self.invalid_cancel_shape = False
@@ -82,6 +84,19 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+    def _partial_chunked_json(self, status: int, payload: bytes) -> None:
+        """Close inside one declared chunk to exercise IncompleteRead."""
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        declared_size = len(payload) + 64
+        self.wfile.write(f"{declared_size:x}\r\n".encode("ascii"))
+        self.wfile.write(payload)
+        self.wfile.flush()
+        self.connection.shutdown(socket.SHUT_RDWR)
+        self.connection.close()
 
     def do_GET(self) -> None:
         self.state.calls.append(("GET", self.path, None, dict(self.headers)))
@@ -159,6 +174,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self.connection.shutdown(socket.SHUT_RDWR)
                 self.connection.close()
                 return
+            if self.state.partial_start:
+                self._partial_chunked_json(
+                    202,
+                    b'{"session_id":"navigation-session-secret"',
+                )
+                return
             if self.state.invalid_start_json:
                 self._raw_json(202, b'{"state":"driving","state":"failed"}')
                 return
@@ -181,6 +202,12 @@ class _Handler(BaseHTTPRequestHandler):
             if self.state.drop_cancel:
                 self.connection.shutdown(socket.SHUT_RDWR)
                 self.connection.close()
+                return
+            if self.state.partial_cancel:
+                self._partial_chunked_json(
+                    200,
+                    b'{"session_id":"navigation-session-secret"',
+                )
                 return
             if self.state.invalid_cancel_shape:
                 self._json(200, {
@@ -585,6 +612,30 @@ def test_cancel_has_zero_automatic_retries_and_reports_ambiguity():
     assert sum(
         call[1] == "/api/navigation/cancel" for call in state.calls
     ) == 1
+
+
+@pytest.mark.parametrize("operation", ["start", "cancel"])
+def test_partial_command_response_is_unknown_and_not_retried(operation):
+    """A processed command with an incomplete body must remain ambiguous."""
+    with _robot_web_server() as (origin, state):
+        client = _bootstrapped(origin)
+        preview = _preview(client)
+        if operation == "start":
+            state.partial_start = True
+            endpoint = "/api/navigation/start"
+            with pytest.raises(RobotWebOutcomeUnknown) as caught:
+                client.start(preview)
+        else:
+            session = client.start(preview)
+            state.partial_cancel = True
+            endpoint = "/api/navigation/cancel"
+            with pytest.raises(RobotWebOutcomeUnknown) as caught:
+                client.cancel(session)
+
+    assert caught.value.operation == operation
+    assert caught.value.cause_code == "TRANSPORT_ERROR"
+    assert "navigation-session-secret" not in str(caught.value)
+    assert sum(call[1] == endpoint for call in state.calls) == 1
 
 
 def test_cancel_invalid_success_shape_is_unknown_and_redacted():

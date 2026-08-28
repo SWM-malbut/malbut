@@ -10,6 +10,7 @@ unknown outcome which callers must reconcile through ``status()``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from http.client import HTTPException
 from http.cookiejar import CookieJar
 import hmac
 from ipaddress import ip_address
@@ -468,7 +469,12 @@ class RobotWebNavigationClient:
                 )
             ):
                 code = "HTTP_ERROR"
-        except (OSError, ValueError, RobotWebProtocolError):
+        except (
+            HTTPException,
+            OSError,
+            ValueError,
+            RobotWebProtocolError,
+        ):
             code = "HTTP_ERROR"
         return RobotWebHTTPError(int(error.code), code)
 
@@ -535,7 +541,7 @@ class RobotWebNavigationClient:
                     operation, cause_code=error.code
                 ) from error
             raise
-        except (TimeoutError, URLError, OSError) as error:
+        except (TimeoutError, URLError, OSError, HTTPException) as error:
             if ambiguous_command:
                 raise RobotWebOutcomeUnknown(
                     operation, cause_code="TRANSPORT_ERROR"
