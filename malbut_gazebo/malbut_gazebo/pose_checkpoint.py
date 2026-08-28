@@ -471,9 +471,10 @@ class PoseCheckpointNode(Node):
         self.stable_samples += 1
         if self.stable_samples < STABLE_SAMPLE_COUNT:
             return
-        self._set_validation("ok")
         if not self.pose_safety.accepts(pose):
+            self.stable_samples = 0
             return
+        self._set_validation("ok")
         self.latest_verified_pose = dict(pose)
         self._write_if_due(pose)
 

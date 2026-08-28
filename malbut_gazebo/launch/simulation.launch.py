@@ -374,7 +374,9 @@ def _launch_setup(context):
     if spawn_robot:
         actions.extend([state_publisher, spawn])
     if bridge_enabled:
-        actions.extend([bridge, rgb_image_bridge, depth_image_bridge])
+        actions.append(bridge)
+        if depth_camera_enabled:
+            actions.extend([rgb_image_bridge, depth_image_bridge])
     actions.append(rviz)
     return actions
 

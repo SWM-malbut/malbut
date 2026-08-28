@@ -145,6 +145,7 @@ class PreviewRecord:
     expires_at: float
     map_revision: str
     zone_revision: str
+    user_map_digest: str | None
     goal: PoseStamped
     path: object
     response: dict
@@ -435,6 +436,31 @@ class RobotWebBridge(Node):
             "robot_web_bridge",
             automatically_declare_parameters_from_overrides=True,
         )
+        device_id = (
+            str(self.get_parameter("runtime_device_id").value).strip()
+            if self.has_parameter("runtime_device_id")
+            else ""
+        )
+        if device_id and (
+            len(device_id) > 128
+            or not device_id[0].isascii()
+            or not device_id[0].isalnum()
+            or any(
+                not character.isascii()
+                or not (character.isalnum() or character in "._:-")
+                for character in device_id
+            )
+        ):
+            raise ValueError("runtime_device_id is invalid")
+        simulation = (
+            self.get_parameter("simulation").value
+            if self.has_parameter("simulation")
+            else False
+        )
+        if type(simulation) is not bool:
+            raise ValueError("simulation must be a boolean")
+        self.device_id = device_id
+        self.simulation = simulation
         self.map_path = map_path
         self.map_id = map_id
         self.map_revision = map_revision
@@ -487,6 +513,7 @@ class RobotWebBridge(Node):
         lifecycle_names = {
             "amcl": "/amcl/get_state",
             "bt_navigator": "/bt_navigator/get_state",
+            "collision_monitor": "/collision_monitor/get_state",
             "planner_server": "/planner_server/get_state",
             "controller_server": "/controller_server/get_state",
             "global_costmap": "/global_costmap/global_costmap/get_state",
@@ -1471,9 +1498,11 @@ class RobotWebBridge(Node):
                 "message": response.message,
             }
 
-    def _load_user_map(self) -> dict:
+    def _load_user_map_snapshot(self) -> tuple[dict, str]:
+        """Read one User Map snapshot and its exact content digest."""
         try:
-            value = json.loads(self.map_path.read_text(encoding="utf-8"))
+            payload = self.map_path.read_bytes()
+            value = json.loads(payload.decode("utf-8", errors="strict"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise NavigationError(
                 503, "MAP_UNAVAILABLE", "사용자 지도를 읽을 수 없습니다."
@@ -1482,7 +1511,43 @@ class RobotWebBridge(Node):
             raise NavigationError(
                 409, "MAP_REVISION_MISMATCH", "현재 지도 식별자가 변경됐습니다."
             )
-        return value
+        if value.get("map_revision") != self.map_revision:
+            raise NavigationError(
+                409,
+                "MAP_REVISION_MISMATCH",
+                "현재 지도 revision이 변경됐습니다.",
+            )
+        return value, hashlib.sha256(payload).hexdigest()
+
+    def _load_user_map(self) -> dict:
+        """Return the current validated User Map for legacy callers."""
+        return self._load_user_map_snapshot()[0]
+
+    @staticmethod
+    def _require_user_map_digest(
+        requested: object,
+        current: str,
+    ) -> str | None:
+        """Validate an optional semantic snapshot binding from a façade."""
+        if requested is None:
+            return None
+        if (
+            not isinstance(requested, str)
+            or len(requested) != 64
+            or any(character not in "0123456789abcdef" for character in requested)
+        ):
+            raise NavigationError(
+                422,
+                "INVALID_SEMANTIC_BINDING",
+                "목적지의 User Map binding이 올바르지 않습니다.",
+            )
+        if requested != current:
+            raise NavigationError(
+                409,
+                "SEMANTIC_REVISION_MISMATCH",
+                "목적지 이름 또는 User Map이 변경됐습니다.",
+            )
+        return requested
 
     def _load_zones(self) -> tuple[list[dict], str]:
         if self.zone_path is None or not self.zone_path.is_file():
@@ -1715,7 +1780,13 @@ class RobotWebBridge(Node):
                 raise NavigationError(
                     422, "INVALID_GOAL", "유효한 지도 좌표가 필요합니다."
                 )
-            user_map = self._load_user_map()
+            user_map, current_user_map_digest = (
+                self._load_user_map_snapshot()
+            )
+            user_map_digest = self._require_user_map_digest(
+                request.get("user_map_digest"),
+                current_user_map_digest,
+            )
             zones, zone_revision = self._load_zones()
             grid = self._costmap()
             floor = self._floor_geometry(user_map)
@@ -1834,6 +1905,7 @@ class RobotWebBridge(Node):
                 expires_at,
                 self.map_revision,
                 zone_revision,
+                user_map_digest,
                 goal,
                 path,
                 response,
@@ -1874,7 +1946,18 @@ class RobotWebBridge(Node):
                 raise NavigationError(
                     409, "MAP_REVISION_MISMATCH", "지도 또는 Zone이 변경됐습니다."
                 )
-            user_map = self._load_user_map()
+            user_map, current_user_map_digest = (
+                self._load_user_map_snapshot()
+            )
+            if (
+                record.user_map_digest is not None
+                and record.user_map_digest != current_user_map_digest
+            ):
+                raise NavigationError(
+                    409,
+                    "SEMANTIC_REVISION_MISMATCH",
+                    "목적지 이름 또는 User Map이 변경됐습니다.",
+                )
             grid = self._costmap()
             floor = self._floor_geometry(user_map)
             floor_clearance = self._static_clearance_for(grid)
@@ -2186,6 +2269,12 @@ class RobotRequestHandler(EditorRequestHandler):
             "robot_stream_enabled": self.bridge is not None,
             "navigation_enabled": (
                 self.bridge is not None and self.map_path is not None
+            ),
+            "device_id": (
+                self.bridge.device_id if self.bridge is not None else ""
+            ),
+            "simulation": (
+                self.bridge.simulation if self.bridge is not None else False
             ),
         })
         return config

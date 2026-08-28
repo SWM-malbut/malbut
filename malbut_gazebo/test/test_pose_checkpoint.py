@@ -3,6 +3,7 @@
 from array import array
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -10,6 +11,8 @@ import pytest
 from malbut_gazebo.pose_checkpoint import (
     MIN_SAFE_CHECKPOINT_CLEARANCE_M,
     POSE_CHECKPOINT_FILE,
+    STABLE_SAMPLE_COUNT,
+    PoseCheckpointNode,
     PoseSafetyGrid,
     acceptable_amcl_covariance,
     load_pose_checkpoint,
@@ -19,6 +22,67 @@ from malbut_gazebo.pose_checkpoint import (
 
 def _active() -> dict:
     return {"map_id": "home-map", "map_revision": "revision-7"}
+
+
+class _ControlledPoseSafety:
+    """Record sampled poses while allowing the test to change clearance."""
+
+    def __init__(self, accepts: bool) -> None:
+        self.accepts_pose = accepts
+        self.checked_poses: list[dict[str, float]] = []
+
+    def accepts(self, pose: dict[str, float]) -> bool:
+        self.checked_poses.append(dict(pose))
+        return self.accepts_pose
+
+
+class _ControlledTransformBuffer:
+    """Return one fresh, mutable map-to-base transform."""
+
+    def __init__(self) -> None:
+        self.x = 0.1
+        self.y = 0.1
+
+    def lookup_transform(self, *_arguments) -> SimpleNamespace:
+        return SimpleNamespace(
+            header=SimpleNamespace(
+                stamp=SimpleNamespace(sec=10, nanosec=0),
+            ),
+            transform=SimpleNamespace(
+                translation=SimpleNamespace(x=self.x, y=self.y),
+                rotation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+
+
+def _sampling_harness(*, accepts_pose: bool) -> tuple:
+    """Build only the state consumed by ``PoseCheckpointNode._sample``."""
+    safety = _ControlledPoseSafety(accepts_pose)
+    transforms = _ControlledTransformBuffer()
+    validation_events: list[str] = []
+    checkpoint_poses: list[dict[str, float]] = []
+    node = SimpleNamespace(
+        initially_trusted=True,
+        proposal_received=True,
+        amcl_active=True,
+        stable_samples=STABLE_SAMPLE_COUNT - 1,
+        validation_state="verifying",
+        latest_verified_pose=None,
+        pose_safety=safety,
+        tf_buffer=transforms,
+        get_clock=lambda: SimpleNamespace(
+            now=lambda: SimpleNamespace(nanoseconds=10_000_000_000),
+        ),
+    )
+
+    def set_validation(value: str) -> None:
+        if value != node.validation_state:
+            node.validation_state = value
+            validation_events.append(value)
+
+    node._set_validation = set_validation
+    node._write_if_due = lambda pose: checkpoint_poses.append(dict(pose))
+    return node, safety, transforms, validation_events, checkpoint_poses
 
 
 def test_checkpoint_is_separate_from_map_origin_and_round_trips(
@@ -122,3 +186,49 @@ def test_boot_revalidation_requires_bounded_amcl_uncertainty():
     assert not acceptable_amcl_covariance(covariance)
     covariance[0] = float("nan")
     assert not acceptable_amcl_covariance(covariance)
+
+
+def test_unsafe_stable_pose_never_becomes_verified_or_persisted():
+    """Clearance rejection must keep boot localization fail-closed."""
+    node, safety, _transforms, validations, checkpoints = (
+        _sampling_harness(accepts_pose=False)
+    )
+
+    PoseCheckpointNode._sample(node)
+
+    assert node.validation_state == "verifying"
+    assert node.stable_samples == 0
+    assert node.latest_verified_pose is None
+    assert validations == []
+    assert checkpoints == []
+    assert safety.checked_poses == [{"x": 0.1, "y": 0.1, "yaw": 0.0}]
+
+
+def test_safe_pose_requires_a_fresh_stable_window_after_unsafe_pose():
+    """An unsafe window resets the samples needed for a later safe pose."""
+    node, safety, transforms, validations, checkpoints = (
+        _sampling_harness(accepts_pose=False)
+    )
+    PoseCheckpointNode._sample(node)
+
+    safety.accepts_pose = True
+    transforms.x = 1.0
+    transforms.y = 2.0
+    for _index in range(STABLE_SAMPLE_COUNT - 1):
+        PoseCheckpointNode._sample(node)
+
+    assert node.validation_state == "verifying"
+    assert node.latest_verified_pose is None
+    assert checkpoints == []
+
+    PoseCheckpointNode._sample(node)
+
+    expected = {"x": 1.0, "y": 2.0, "yaw": 0.0}
+    assert node.validation_state == "ok"
+    assert node.latest_verified_pose == expected
+    assert validations == ["ok"]
+    assert checkpoints == [expected]
+    assert safety.checked_poses == [
+        {"x": 0.1, "y": 0.1, "yaw": 0.0},
+        expected,
+    ]

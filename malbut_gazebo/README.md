@@ -158,6 +158,65 @@ the defaults for isolated CI and no-goal acceptance checks. Enabling RViz
 exposes its manual navigation-goal controls, so an RViz-enabled run is outside
 the no-client/no-goal acceptance boundary.
 
+### SWM25-130 named navigation test
+
+SWM25-130 adds one narrow façade above the existing local Robot Web
+navigation API. Its caller supplies only a semantic room name such as
+`거실`; the façade privately resolves the representative point from the
+active User Map and calls the existing `preview`, `start`, `status`, and
+`cancel` endpoints. It does not add another ROS ActionClient. Preview is the
+default and cannot move the robot.
+
+Prepare a new private Small House fixture and start the opt-in test path:
+
+```bash
+run_root="$(mktemp -d /tmp/malbut-swm25-130.XXXXXX)"
+ros2 run malbut_scenarios prepare_named_navigation_fixture -- \
+  --destination "$run_root/map-store"
+user_map_path="$run_root/map-store/versions/swm25-130-small-house/user-map.geojson"
+printf 'run_root=%s\n' "$run_root"
+
+ROS_DOMAIN_ID=29 ROS_LOCALHOST_ONLY=1 \
+  ros2 launch malbut_gazebo small_house_nav2_testbed.launch.py \
+  enable_named_navigation:=true \
+  named_navigation_user_map:="$user_map_path" \
+  named_navigation_map_store:="$run_root/map-store" \
+  named_navigation_port:=18765
+```
+
+In another shell with the same built overlay sourced, set `run_root` to the
+printed path and first request a non-actuating preview:
+
+```bash
+run_root="<printed-run-root>"
+ros2 run malbut_gazebo navigate_named_location -- \
+  --map-store "$run_root/map-store" \
+  --location '거실' \
+  --robot-web-url http://127.0.0.1:18765
+```
+
+Only an explicit simulation flag may consume that preview and start one
+goal:
+
+```bash
+ros2 run malbut_gazebo navigate_named_location -- \
+  --map-store "$run_root/map-store" \
+  --location '거실' \
+  --robot-web-url http://127.0.0.1:18765 \
+  --execute-simulation --wait-timeout 180
+```
+
+The target is bound to `malbut-sim-01`, the exact map ID and revision, and
+the exact User Map content digest. The testbed also gives Robot Web its own
+fixed `malbut-sim-01`/simulation identity; the façade checks that server-owned
+identity both before preview and immediately before start. Unknown or
+duplicate names, changed map content, a cross-paired preview/session, an
+expired preview, or unavailable localization/Nav2/Collision Monitor fail
+closed before a new goal is sent. Start and cancel commands are never
+automatically retried after an ambiguous HTTP result. This command is
+simulation-only and always reports `physical_authorized=false`; durable
+approval and crash-window exactly-once execution belong to SWM25-132.
+
 ## AWS Small House
 
 The detailed home is adapted from
