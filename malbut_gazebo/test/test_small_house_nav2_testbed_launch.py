@@ -1,7 +1,9 @@
-"""Contracts for the non-actuating Small House Nav2 testbed."""
+"""Contracts for the default-off Small House Nav2 testbed."""
 
 import importlib.util
+import json
 from pathlib import Path
+import shutil
 
 import pytest
 from launch import LaunchContext
@@ -21,6 +23,9 @@ from launch.utilities import (
     perform_substitutions,
 )
 from launch_ros.actions import Node
+
+from malbut_gazebo.map_lifecycle import MAP_STORE_FORMAT
+from malbut_gazebo.user_map_builder import load_slam_map
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -76,6 +81,44 @@ def _defaults(description):
     }
 
 
+def _context_with_defaults(description, **overrides):
+    context = LaunchContext()
+    context.launch_configurations.update(_defaults(description))
+    context.launch_configurations.update(overrides)
+    return context
+
+
+def _runtime_map_store(tmp_path):
+    """Create one writable, exact Small House map-store fixture."""
+    map_store = tmp_path / 'map-store'
+    map_store.mkdir(mode=0o700)
+    source_map = PACKAGE_ROOT / 'maps' / 'small_house.yaml'
+    source_image = PACKAGE_ROOT / 'maps' / 'small_house.pgm'
+    map_yaml = map_store / source_map.name
+    map_image = map_store / source_image.name
+    shutil.copy2(source_map, map_yaml)
+    shutil.copy2(source_image, map_image)
+    slam_map = load_slam_map(map_yaml)
+    user_map = map_store / 'user-map.geojson'
+    user_map.write_text(json.dumps({
+        'type': 'FeatureCollection',
+        'format': 'malbut-user-map-v1',
+        'map_id': slam_map.map_id,
+        'map_revision': slam_map.map_revision,
+        'frame_id': 'map',
+        'features': [],
+    }), encoding='utf-8')
+    (map_store / 'active.json').write_text(json.dumps({
+        'format': MAP_STORE_FORMAT,
+        'map_id': slam_map.map_id,
+        'map_revision': slam_map.map_revision,
+        'map_yaml': map_yaml.name,
+        'map_image': map_image.name,
+        'user_map': user_map.name,
+    }), encoding='utf-8')
+    return map_store, user_map, slam_map
+
+
 def _process_exit(gate, returncode):
     return ProcessExited(
         action=gate,
@@ -120,6 +163,10 @@ def test_testbed_composes_only_small_house_and_static_navigation():
     assert defaults['x'] == '-3.665503'
     assert defaults['y'] == '-0.4874'
     assert defaults['yaw'] == '0.0'
+    assert defaults['enable_named_navigation'] == 'false'
+    assert defaults['named_navigation_user_map'] == ''
+    assert defaults['named_navigation_map_store'] == ''
+    assert defaults['named_navigation_port'] == '8765'
 
     context = LaunchContext()
     context.launch_configurations.update({
@@ -137,9 +184,12 @@ def test_testbed_composes_only_small_house_and_static_navigation():
     assert _resolve(context, world['world_name']) == 'small_house'
     assert _resolve(context, world['spawn_robot']) == 'true'
     assert _resolve(context, world['bridge']) == 'true'
+    assert _resolve(context, world['lidar_enabled']) == 'true'
+    assert _resolve(context, world['depth_camera_enabled']) == 'false'
     assert Path(_resolve(context, navigation['map'])).name == (
         'small_house.yaml'
     )
+    assert _resolve(context, navigation['depth_costmap_enabled']) == 'false'
     assert _resolve(context, navigation['localization_source']) == 'static'
     assert _resolve(context, navigation['namespace']) == ''
     assert _resolve(context, navigation['use_namespace']) == 'false'
@@ -162,19 +212,24 @@ def test_isolation_guard_precedes_every_process_creating_action(monkeypatch):
     module = _load_launch_module()
     description = module.generate_launch_description()
     entities = list(description.entities)
-    guard_index = next(
+    guard_indexes = [
         index
         for index, entity in enumerate(entities)
         if isinstance(entity, OpaqueFunction)
-    )
+    ]
     process_indexes = [
         index
         for index, entity in enumerate(entities)
         if isinstance(entity, (GroupAction, RegisterEventHandler, Node))
     ]
 
+    assert len(guard_indexes) == 2
     assert process_indexes
-    assert all(guard_index < index for index in process_indexes)
+    assert all(
+        guard_index < process_index
+        for guard_index in guard_indexes
+        for process_index in process_indexes
+    )
 
     monkeypatch.setenv('ROS_DOMAIN_ID', '0')
     monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
@@ -198,10 +253,10 @@ def test_testbed_defaults_off_and_hard_disables_automatic_motion_owners():
     navigation_include = by_source['navigation.launch.py']
     navigation = dict(navigation_include.launch_arguments)
 
-    context = LaunchContext()
-    context.launch_configurations.update({
+    context = _context_with_defaults(description, **{
         'autonomous_modes': 'true',
         'robot_web': 'true',
+        'robot_web_port': '9999',
         'person_following': 'true',
         'rviz': 'true',
         'inscribed_escape_enabled': 'true',
@@ -227,6 +282,12 @@ def test_testbed_defaults_off_and_hard_disables_automatic_motion_owners():
         'pose_checkpoint_map_revision',
     ):
         assert _resolve(context, navigation[name]) == ''
+    assert _resolve(context, navigation['boot_pose_trusted']) == 'false'
+    assert _resolve(context, navigation['robot_web_port']) == '8765'
+    assert _resolve(
+        context,
+        navigation['robot_web_navigation_action'],
+    ) == '/navigate_to_pose'
 
     defaults = _defaults(description)
     assert defaults['rviz'] == 'false'
@@ -244,6 +305,120 @@ def test_testbed_defaults_off_and_hard_disables_automatic_motion_owners():
         if isinstance(entity, DeclareLaunchArgument)
     }
     assert 'inscribed_escape_enabled' in declared
+
+
+def test_explicit_named_navigation_only_enables_web_and_pose_validation():
+    """The opt-in must not revive any autonomous motion owner."""
+    description = _load_launch()
+    navigation_include = next(
+        entity
+        for entity in _all_entities(description)
+        if isinstance(entity, IncludeLaunchDescription)
+        and _source_name(entity) == 'navigation.launch.py'
+    )
+    navigation = dict(navigation_include.launch_arguments)
+    context = _context_with_defaults(description, **{
+        'enable_named_navigation': 'true',
+        'named_navigation_user_map': '/runtime/user-map.geojson',
+        'named_navigation_map_store': '/runtime/map-store',
+        'named_navigation_port': '8876',
+        'autonomous_modes': 'true',
+        'person_following': 'true',
+        'inscribed_escape_enabled': 'true',
+        'patrol_route_file': '/unsafe/patrol.yaml',
+    })
+    slam_map = load_slam_map(PACKAGE_ROOT / 'maps' / 'small_house.yaml')
+
+    assert _resolve(context, navigation['robot_web']) == 'true'
+    assert _resolve(context, navigation['robot_web_port']) == '8876'
+    assert _resolve(
+        context,
+        navigation['robot_web_navigation_action'],
+    ) == '/navigate_to_pose'
+    assert _resolve(context, navigation['robot_web_device_id']) == (
+        'malbut-sim-01'
+    )
+    assert _resolve(context, navigation['robot_web_simulation']) == 'true'
+    assert _resolve(context, navigation['user_map']) == (
+        '/runtime/user-map.geojson'
+    )
+    assert _resolve(context, navigation['pose_checkpoint_store']) == (
+        '/runtime/map-store'
+    )
+    assert _resolve(context, navigation['pose_checkpoint_map_id']) == (
+        slam_map.map_id
+    )
+    assert _resolve(
+        context,
+        navigation['pose_checkpoint_map_revision'],
+    ) == slam_map.map_revision
+    assert _resolve(context, navigation['boot_pose_trusted']) == 'true'
+    assert _resolve(context, navigation['autonomous_modes']) == 'false'
+    assert _resolve(context, navigation['patrol_route_file']) == ''
+    assert _resolve(context, navigation['person_following']) == 'false'
+    assert _resolve(
+        context,
+        navigation['inscribed_escape_enabled'],
+    ) == 'false'
+
+
+def test_named_navigation_preflight_accepts_only_exact_runtime_binding(
+    tmp_path,
+):
+    """A writable exact map binding passes while the default stays inert."""
+    module = _load_launch_module()
+    description = module.generate_launch_description()
+    assert module._validate_named_navigation_configuration(
+        _context_with_defaults(description)
+    ) == []
+
+    map_store, user_map, _slam_map = _runtime_map_store(tmp_path)
+    context = _context_with_defaults(description, **{
+        'enable_named_navigation': 'true',
+        'named_navigation_user_map': str(user_map),
+        'named_navigation_map_store': str(map_store),
+        'named_navigation_port': '8876',
+    })
+    assert module._validate_named_navigation_configuration(context) == []
+
+
+def test_named_navigation_preflight_rejects_ambiguous_or_changed_input(
+    tmp_path,
+):
+    """Disabled, malformed, and revision-drifted inputs fail closed."""
+    module = _load_launch_module()
+    description = module.generate_launch_description()
+    map_store, user_map, slam_map = _runtime_map_store(tmp_path)
+
+    disabled = _context_with_defaults(description, **{
+        'named_navigation_user_map': str(user_map),
+        'named_navigation_map_store': str(map_store),
+    })
+    with pytest.raises(RuntimeError) as caught:
+        module._validate_named_navigation_configuration(disabled)
+    assert str(caught.value) == 'named_navigation_disabled_configuration'
+
+    malformed_port = _context_with_defaults(description, **{
+        'enable_named_navigation': 'true',
+        'named_navigation_user_map': str(user_map),
+        'named_navigation_map_store': str(map_store),
+        'named_navigation_port': '0',
+    })
+    with pytest.raises(RuntimeError) as caught:
+        module._validate_named_navigation_configuration(malformed_port)
+    assert str(caught.value) == 'named_navigation_port_invalid'
+
+    changed = json.loads(user_map.read_text(encoding='utf-8'))
+    changed['map_revision'] = f'{slam_map.map_revision}-changed'
+    user_map.write_text(json.dumps(changed), encoding='utf-8')
+    mismatch = _context_with_defaults(description, **{
+        'enable_named_navigation': 'true',
+        'named_navigation_user_map': str(user_map),
+        'named_navigation_map_store': str(map_store),
+    })
+    with pytest.raises(RuntimeError) as caught:
+        module._validate_named_navigation_configuration(mismatch)
+    assert str(caught.value) == 'named_navigation_user_map_mismatch'
 
 
 def test_testbed_has_one_non_actuating_gate_and_no_forbidden_route():

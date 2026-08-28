@@ -3,6 +3,7 @@
 import importlib.util
 import math
 from pathlib import Path
+import tempfile
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchContext
@@ -10,7 +11,9 @@ from launch.actions import (
     DeclareLaunchArgument,
     GroupAction,
     IncludeLaunchDescription,
+    RegisterEventHandler,
 )
+from launch.event_handlers import OnShutdown
 from launch.substitutions import LaunchConfiguration
 from launch.utilities import perform_substitutions
 from launch_ros.actions import Node
@@ -115,6 +118,14 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     spec.loader.exec_module(module)
     description = module.generate_launch_description()
 
+    shutdown_handlers = [
+        entity
+        for entity in description.entities
+        if isinstance(entity, RegisterEventHandler)
+        and isinstance(entity.event_handler, OnShutdown)
+    ]
+    assert len(shutdown_handlers) == 1
+
     declared_arguments = {
         entity.name
         for entity in description.entities
@@ -122,6 +133,7 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     }
     assert 'use_composition' in declared_arguments
     assert 'zone_mask' in declared_arguments
+    assert 'depth_costmap_enabled' in declared_arguments
     assert 'localization_source' in declared_arguments
     assert 'localization_state' in declared_arguments
     assert 'robot_web' in declared_arguments
@@ -141,6 +153,16 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     assert 'person_following' in declared_arguments
     assert 'person_projection_frame' in declared_arguments
     assert 'inscribed_escape_enabled' in declared_arguments
+
+    depth_argument = next(
+        entity
+        for entity in description.entities
+        if isinstance(entity, DeclareLaunchArgument)
+        and entity.name == 'depth_costmap_enabled'
+    )
+    assert perform_substitutions(
+        LaunchContext(), depth_argument.default_value
+    ) == 'true'
 
     escape_argument = next(
         entity
@@ -191,6 +213,15 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
         and entity.node_executable == 'collision_monitor'
     ]
     assert len(collision_nodes) == 1
+    collision_lifecycle_nodes = [
+        entity
+        for entity in description.entities
+        if isinstance(entity, Node)
+        and entity.node_package == 'nav2_lifecycle_manager'
+        and entity.node_executable == 'lifecycle_manager'
+        and entity._Node__node_name == 'collision_lifecycle_manager'
+    ]
+    assert len(collision_lifecycle_nodes) == 1
     perception_nodes = {
         entity.node_executable
         for entity in description.entities
@@ -204,6 +235,8 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     assert 'Unsupported Nav2 launch' in launch_source
     assert "'cmd_vel_in_topic': '/cmd_vel_pre_collision'" in launch_source
     assert "'cmd_vel_out_topic': '/cmd_vel'" in launch_source
+    assert "name='collision_lifecycle_manager'" in launch_source
+    assert "'node_names': ['collision_monitor']" in launch_source
 
     safe_navigation, safe_bringup = module._safe_nav2_launch_sources(
         get_package_share_directory('nav2_bringup')
@@ -463,6 +496,91 @@ def test_zone_filter_topics_follow_the_navigation_namespace():
         assert costmap['keepout_filter']['filter_info_topic'] == (
             '/robot_1/keepout_costmap_filter_info'
         )
+
+
+def test_lidar_only_rewrite_removes_only_the_depth_costmap_plugin():
+    """Keep static, scan, inflation, and filter safety without RGB-D."""
+    launch_file = GAZEBO_ROOT / 'launch' / 'navigation.launch.py'
+    spec = importlib.util.spec_from_file_location(
+        'malbut_navigation_lidar_only_params', launch_file
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    description = module.generate_launch_description()
+    includes = _includes(description)
+    context = LaunchContext()
+    for include in includes:
+        include.launch_description_source.get_launch_description(context)
+    bringup = next(
+        entity
+        for entity in includes
+        if 'map' in dict(entity.launch_arguments)
+    )
+    configured_params = dict(bringup.launch_arguments)['params_file']
+    context.launch_configurations.update({
+        'namespace': '',
+        'params_file': str(NAV2_PARAMS),
+        'zone_mask': '',
+        'depth_costmap_enabled': 'false',
+    })
+
+    depth_configuration = configured_params.name[0]
+    assert isinstance(depth_configuration, module._DepthCostmapConfiguration)
+    rewritten_path = None
+    try:
+        rewritten_path = perform_substitutions(context, [configured_params])
+        rewritten = yaml.safe_load(Path(rewritten_path).read_text())
+
+        local = _parameters(rewritten['local_costmap'], 'local_costmap')
+        global_map = _parameters(rewritten['global_costmap'], 'global_costmap')
+        assert local['plugins'] == ['obstacle_layer', 'inflation_layer']
+        assert global_map['plugins'] == [
+            'static_layer', 'obstacle_layer', 'inflation_layer'
+        ]
+        assert local['filters'] == global_map['filters'] == ['keepout_filter']
+    finally:
+        if rewritten_path is not None:
+            Path(rewritten_path).unlink(missing_ok=True)
+        depth_configuration.cleanup()
+
+
+def test_lidar_only_rewrite_cleanup_tracks_exact_duplicate_files_only():
+    """Shutdown cleanup is idempotent and never scans unrelated paths."""
+    launch_file = GAZEBO_ROOT / 'launch' / 'navigation.launch.py'
+    spec = importlib.util.spec_from_file_location(
+        'malbut_navigation_lidar_cleanup', launch_file
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    configuration = module._DepthCostmapConfiguration(
+        str(NAV2_PARAMS), 'false'
+    )
+    with tempfile.NamedTemporaryFile(
+        prefix='malbut-nav2-lidar-only-', suffix='.yaml', delete=False
+    ) as unrelated:
+        unrelated_path = Path(unrelated.name)
+    generated_paths = []
+    try:
+        generated_paths = [
+            Path(configuration.perform(LaunchContext()))
+            for _ in range(2)
+        ]
+        assert generated_paths[0] != generated_paths[1]
+        assert all(path.is_file() for path in generated_paths)
+
+        configuration.cleanup()
+
+        assert all(not path.exists() for path in generated_paths)
+        assert unrelated_path.is_file()
+        configuration.cleanup()
+        with pytest.raises(
+            RuntimeError,
+            match='nav2_depth_costmap_configuration_closed',
+        ):
+            configuration.perform(LaunchContext())
+    finally:
+        configuration.cleanup()
+        unrelated_path.unlink(missing_ok=True)
 
 
 def test_small_house_map_covers_the_full_aws_world():

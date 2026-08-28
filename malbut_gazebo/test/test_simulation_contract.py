@@ -369,6 +369,43 @@ def test_simulation_uses_independent_dedicated_image_bridges():
     ]
 
 
+def test_disabled_depth_camera_does_not_require_image_bridge_processes():
+    """A LiDAR-only testbed must not resolve the absent camera bridge."""
+    launch_path = GAZEBO_ROOT / 'launch' / 'simulation.launch.py'
+    spec = importlib.util.spec_from_file_location(
+        'malbut_lidar_only_simulation_launch', launch_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    description = module.generate_launch_description()
+    context = LaunchContext()
+    defaults = {
+        entity.name: perform_substitutions(context, entity.default_value)
+        for entity in description.entities
+        if isinstance(entity, DeclareLaunchArgument)
+    }
+    defaults.update({
+        'world': 'empty',
+        'gui': 'false',
+        'spawn_robot': 'false',
+        'depth_camera_enabled': 'false',
+    })
+    context.launch_configurations.update(defaults)
+    setup = next(
+        entity
+        for entity in description.entities
+        if isinstance(entity, OpaqueFunction)
+    )
+
+    nodes = [
+        action for action in setup.execute(context)
+        if isinstance(action, Node)
+    ]
+
+    assert any(node.node_package == 'ros_gz_bridge' for node in nodes)
+    assert not any(node.node_package == 'ros_gz_image' for node in nodes)
+
+
 def test_world_guis_expose_camera_controls_and_mecanum_teleop():
     """Every distributed world must remain operable from the Gazebo window."""
     required_plugins = {

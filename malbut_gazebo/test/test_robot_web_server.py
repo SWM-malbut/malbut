@@ -1,6 +1,7 @@
 """Tests for the same-origin robot web bridge contract."""
 
 from functools import partial
+import hashlib
 import http.client
 from http.server import ThreadingHTTPServer
 import json
@@ -22,6 +23,7 @@ from malbut_gazebo.robot_web_server import (
     CostmapGrid,
     NavigationWatchdog,
     NavigationError,
+    PreviewRecord,
     REQUIRED_PATH_CLEARANCE_M,
     RobotRequestHandler,
     LIFECYCLE_QUERY_TIMEOUT_S,
@@ -102,6 +104,19 @@ class _FollowClient:
         return _ImmediateFuture(self.goal_handle)
 
 
+class _CountingNavigationClient:
+    """Count forbidden physical goal attempts in fail-closed tests."""
+
+    def __init__(self):
+        """Create a client with no goal attempts."""
+        self.send_calls = 0
+
+    def send_goal_async(self, *_args, **_kwargs):
+        """Record an unexpected attempt without contacting ROS."""
+        self.send_calls += 1
+        raise AssertionError("navigation goal must not be sent")
+
+
 def test_navigation_progress_uses_start_route_and_is_monotonic():
     """Live replans must not reset progress or claim arrival early."""
     assert _navigation_progress_ratio(10.0, 9.9) == 0.01
@@ -119,6 +134,75 @@ def test_navigation_progress_ignores_the_first_unknown_distance():
     """
     assert _navigation_progress_ratio(13.198, 0.0, 0.0) == 0.0
     assert _navigation_progress_ratio(13.198, 12.095, 0.0) == 0.084
+
+
+@pytest.mark.parametrize(
+    ("lifecycle", "localization", "pose", "expected_code"),
+    [
+        (
+            {"amcl": "inactive"},
+            {"state": "ok"},
+            {"x": 0.0, "y": 0.0, "yaw": 0.0},
+            "NAV2_NOT_ACTIVE",
+        ),
+        (
+            {"amcl": "active", "collision_monitor": "inactive"},
+            {"state": "ok"},
+            {"x": 0.0, "y": 0.0, "yaw": 0.0},
+            "NAV2_NOT_ACTIVE",
+        ),
+        (
+            {"amcl": "active"},
+            {"state": "verifying"},
+            {"x": 0.0, "y": 0.0, "yaw": 0.0},
+            "LOCALIZATION_NOT_READY",
+        ),
+    ],
+)
+def test_start_checks_nav2_and_localization_before_any_goal_send(
+    lifecycle, localization, pose, expected_code
+):
+    """An unready runtime must fail before reading or sending a preview."""
+    bridge = object.__new__(RobotWebBridge)
+    bridge.lock = Lock()
+    bridge.operation_lock = Lock()
+    bridge.lifecycle = lifecycle
+    bridge.localization = localization
+    bridge.pose = pose
+    bridge.navigate = _CountingNavigationClient()
+
+    with pytest.raises(NavigationError) as caught:
+        bridge.start({"preview_token": "anything"}, "session")
+
+    assert caught.value.code == expected_code
+    assert bridge.navigate.send_calls == 0
+
+
+def test_expired_preview_stops_before_any_goal_send():
+    """Never turn an expired capability into a new NavigateToPose goal."""
+    bridge = object.__new__(RobotWebBridge)
+    bridge.operation_lock = Lock()
+    bridge._require_ready = lambda: {"x": 0.0, "y": 0.0, "yaw": 0.0}
+    bridge._require_autonomous_idle = lambda: None
+    bridge.navigate = _CountingNavigationClient()
+    bridge.previews = {
+        "expired": PreviewRecord(
+            session_id="session",
+            expires_at=time.monotonic() - 1.0,
+            map_revision="rev-current",
+            zone_revision="zone-current",
+            user_map_digest=None,
+            goal=PoseStamped(),
+            path=NavPath(),
+            response={},
+        )
+    }
+
+    with pytest.raises(NavigationError) as caught:
+        bridge.start({"preview_token": "expired"}, "session")
+
+    assert caught.value.code == "PREVIEW_EXPIRED"
+    assert bridge.navigate.send_calls == 0
 
 
 def test_destination_navigation_reports_one_common_drive_mode():
@@ -300,6 +384,8 @@ class FakeBridge:
     def __init__(self) -> None:
         """Create an empty call log."""
         self.calls = []
+        self.device_id = "malbut-sim-01"
+        self.simulation = True
 
     def snapshot(self) -> dict:
         """Return one healthy robot state event."""
@@ -383,6 +469,42 @@ class QuietRobotHandler(RobotRequestHandler):
 
     def log_message(self, _format, *_arguments) -> None:
         """Discard one request log line."""
+
+
+def test_user_map_digest_binds_preview_to_one_exact_semantic_snapshot(
+    tmp_path,
+):
+    """Reject malformed, stale, or post-preview User Map content."""
+    path = tmp_path / "user-map.geojson"
+    value = {
+        "type": "FeatureCollection",
+        "map_id": "home",
+        "map_revision": "rev-current",
+        "features": [],
+    }
+    payload = json.dumps(value, sort_keys=True).encode("utf-8")
+    path.write_bytes(payload)
+    bridge = RobotWebBridge.__new__(RobotWebBridge)
+    bridge.map_path = path
+    bridge.map_id = "home"
+    bridge.map_revision = "rev-current"
+
+    loaded, digest = bridge._load_user_map_snapshot()
+
+    assert loaded == value
+    assert digest == hashlib.sha256(payload).hexdigest()
+    assert bridge._require_user_map_digest(digest, digest) == digest
+    with pytest.raises(NavigationError) as invalid:
+        bridge._require_user_map_digest("not-a-digest", digest)
+    assert invalid.value.code == "INVALID_SEMANTIC_BINDING"
+    with pytest.raises(NavigationError) as stale:
+        bridge._require_user_map_digest("0" * 64, digest)
+    assert stale.value.code == "SEMANTIC_REVISION_MISMATCH"
+
+    value["features"].append({"changed": True})
+    path.write_text(json.dumps(value), encoding="utf-8")
+    _, changed_digest = bridge._load_user_map_snapshot()
+    assert changed_digest != digest
 
 
 def _request(address, method, path, body=None, headers=None):
@@ -533,6 +655,8 @@ def test_navigation_endpoints_are_same_origin_and_session_bound(tmp_path):
         cookie, config = _session(address)
         assert config["robot_stream_enabled"] is True
         assert config["navigation_enabled"] is True
+        assert config["device_id"] == "malbut-sim-01"
+        assert config["simulation"] is True
         headers = _headers(address, cookie, config["csrf_token"])
         status, response_headers, value = _request(
             address, "GET", "/api/robot/status"

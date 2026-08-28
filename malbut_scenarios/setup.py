@@ -54,6 +54,8 @@ setup(
         'console_scripts': [
             'autonomous_driving_manager = '
             'malbut_scenarios.autonomous_driving_manager:main',
+            'prepare_named_navigation_fixture = '
+            'malbut_scenarios.named_navigation_fixture:main',
             'wait_for_simulation = '
             'malbut_scenarios.wait_for_simulation:main',
         ],

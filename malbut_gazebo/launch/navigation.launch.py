@@ -16,14 +16,18 @@
 import os
 from pathlib import Path
 import tempfile
+import threading
 
 from ament_index_python.packages import get_package_share_directory
-from launch import LaunchDescription
+from launch import LaunchDescription, Substitution
 from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
+    OpaqueFunction,
+    RegisterEventHandler,
 )
 from launch.conditions import IfCondition
+from launch.event_handlers import OnShutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     EqualsSubstitution,
@@ -32,8 +36,97 @@ from launch.substitutions import (
     PathJoinSubstitution,
     PythonExpression,
 )
+from launch.utilities import (
+    normalize_to_list_of_substitutions,
+    perform_substitutions,
+)
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from nav2_common.launch import RewrittenYaml
+import yaml
+
+
+class _DepthCostmapConfiguration(Substitution):
+    """Remove only the optional RGB-D plugins for a LiDAR-only launch."""
+
+    def __init__(self, source_file, enabled) -> None:
+        """Store deferred source and boolean launch substitutions."""
+        super().__init__()
+        self._source_file = normalize_to_list_of_substitutions(source_file)
+        self._enabled = normalize_to_list_of_substitutions(enabled)
+        self._created_files: set[Path] = set()
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def perform(self, context) -> str:
+        """Return the source or a private exact LiDAR-only rewrite."""
+        source = perform_substitutions(context, self._source_file)
+        enabled = perform_substitutions(context, self._enabled).lower()
+        if enabled == 'true':
+            return source
+        if enabled != 'false':
+            raise RuntimeError('depth_costmap_enabled_invalid')
+        try:
+            value = yaml.safe_load(Path(source).read_text(encoding='utf-8'))
+            local = value['local_costmap']['local_costmap'][
+                'ros__parameters'
+            ]
+            global_map = value['global_costmap']['global_costmap'][
+                'ros__parameters'
+            ]
+        except (KeyError, OSError, TypeError, yaml.YAMLError) as error:
+            raise RuntimeError('nav2_costmap_params_invalid') from error
+        expected_local = [
+            'obstacle_layer', 'depth_voxel_layer', 'inflation_layer'
+        ]
+        expected_global = [
+            'static_layer', 'obstacle_layer', 'depth_voxel_layer',
+            'inflation_layer',
+        ]
+        if (
+            local.get('plugins') != expected_local
+            or global_map.get('plugins') != expected_global
+        ):
+            raise RuntimeError('nav2_depth_costmap_contract_changed')
+        local['plugins'] = ['obstacle_layer', 'inflation_layer']
+        global_map['plugins'] = [
+            'static_layer', 'obstacle_layer', 'inflation_layer'
+        ]
+        with self._lock:
+            if self._closed:
+                raise RuntimeError('nav2_depth_costmap_configuration_closed')
+            with tempfile.NamedTemporaryFile(
+                mode='w', encoding='utf-8',
+                prefix='malbut-nav2-lidar-only-', suffix='.yaml',
+                delete=False,
+            ) as stream:
+                output = Path(stream.name)
+                self._created_files.add(output)
+                try:
+                    yaml.safe_dump(value, stream, sort_keys=False)
+                except Exception:
+                    self._created_files.discard(output)
+                    output.unlink(missing_ok=True)
+                    raise
+                return str(output)
+
+    def cleanup(self) -> None:
+        """Best-effort remove only the exact files created by this instance."""
+        with self._lock:
+            self._closed = True
+            files = tuple(self._created_files)
+            self._created_files.clear()
+        for output in files:
+            try:
+                output.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _cleanup_depth_costmap_configuration(_context, configuration):
+    """Release this launch instance's LiDAR-only parameter rewrites."""
+    configuration.cleanup()
+    return []
 
 
 def _replace_exact(
@@ -154,6 +247,9 @@ def generate_launch_description():
     use_namespace = LaunchConfiguration('use_namespace')
     map_file = LaunchConfiguration('map')
     params_file = LaunchConfiguration('params_file')
+    depth_costmap_enabled = LaunchConfiguration(
+        'depth_costmap_enabled', default='true'
+    )
     zone_mask = LaunchConfiguration('zone_mask')
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
@@ -177,6 +273,8 @@ def generate_launch_description():
     robot_web_navigation_action = LaunchConfiguration(
         'robot_web_navigation_action'
     )
+    robot_web_device_id = LaunchConfiguration('robot_web_device_id')
+    robot_web_simulation = LaunchConfiguration('robot_web_simulation')
     user_map = LaunchConfiguration('user_map')
     pose_checkpoint_store = LaunchConfiguration('pose_checkpoint_store')
     pose_checkpoint_map_id = LaunchConfiguration('pose_checkpoint_map_id')
@@ -200,8 +298,11 @@ def generate_launch_description():
     zone_filter_mask_topic = PathJoinSubstitution([
         '/', namespace, 'keepout_filter_mask',
     ])
+    depth_costmap_configuration = _DepthCostmapConfiguration(
+        params_file, depth_costmap_enabled
+    )
     configured_params = RewrittenYaml(
-        source_file=params_file,
+        source_file=depth_costmap_configuration,
         param_rewrites={
             'amcl.ros__parameters.set_initial_pose': set_initial_pose,
             'amcl.ros__parameters.initial_pose.x': initial_pose_x,
@@ -397,6 +498,11 @@ def generate_launch_description():
         parameters=[{
             'use_sim_time': use_sim_time,
             'navigation_action_name': robot_web_navigation_action,
+            'runtime_device_id': robot_web_device_id,
+            'simulation': ParameterValue(
+                robot_web_simulation,
+                value_type=bool,
+            ),
             'boot_validation_state': PythonExpression([
                 "'verifying' if '", boot_pose_trusted,
                 "' == 'true' else 'revalidation_required'",
@@ -541,6 +647,16 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
+            RegisterEventHandler(
+                OnShutdown(
+                    on_shutdown=[
+                        OpaqueFunction(
+                            function=_cleanup_depth_costmap_configuration,
+                            args=[depth_costmap_configuration],
+                        )
+                    ]
+                )
+            ),
             DeclareLaunchArgument('namespace', default_value=''),
             DeclareLaunchArgument('use_namespace', default_value='false'),
             DeclareLaunchArgument(
@@ -556,6 +672,14 @@ def generate_launch_description():
                     gazebo_share, 'config', 'nav2_params.yaml'
                 ),
                 description='Full path to the Nav2 parameter file.',
+            ),
+            DeclareLaunchArgument(
+                'depth_costmap_enabled',
+                default_value='true',
+                description=(
+                    'Load the RGB-D temporal voxel layer. LiDAR-only '
+                    'testbeds can explicitly disable it.'
+                ),
             ),
             DeclareLaunchArgument(
                 'zone_mask',
@@ -643,6 +767,22 @@ def generate_launch_description():
                 description=(
                     'NavigateToPose action used by the robot web server. '
                     'A scenario coordinator may proxy this action.'
+                ),
+            ),
+            DeclareLaunchArgument(
+                'robot_web_device_id',
+                default_value='',
+                description=(
+                    'Server-owned robot identity advertised to trusted local '
+                    'navigation clients.'
+                ),
+            ),
+            DeclareLaunchArgument(
+                'robot_web_simulation',
+                default_value='false',
+                description=(
+                    'Advertise that this Robot Web process controls only a '
+                    'simulation runtime.'
                 ),
             ),
             DeclareLaunchArgument(

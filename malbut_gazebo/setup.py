@@ -84,6 +84,8 @@ setup(
             'malbut_gazebo.localization_handoff:restore_main',
             'pose_checkpoint = malbut_gazebo.pose_checkpoint:main',
             'nav2_startup_gate = malbut_gazebo.nav2_startup_gate:main',
+            'navigate_named_location = '
+            'malbut_gazebo.named_navigation_cli:main',
         ],
     },
 )
