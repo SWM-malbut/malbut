@@ -74,6 +74,28 @@ ros2 run malbut_gazebo teleop_key_control --ros-args \
 ros2 topic echo /scenario/status
 ```
 
+## SWM25-131 텍스트 요청과 승인 기록
+
+SWM25-131 전용 server는 SWM25-130 active map에서 `거실` 이름만 해석하고,
+LLM 행동 제안과 `네/아니요/취소` 확인 결과를 SQLite에 기록합니다. 이
+진입점은 `NamedNavigationFacade`, Robot Web, ROS ActionClient 또는 Nav2를
+호출하지 않습니다. `approved`도 사용자 동의 기록일 뿐 이동 권한이 아닙니다.
+
+private fixture와 Git에서 제외되는 `.env.local`을 준비한 뒤 먼저 구성을
+검사합니다.
+
+```bash
+ros2 run malbut_scenarios malbut_text_agent_server -- \
+  --env-file <private-path>/.env.local --check
+```
+
+필수 설정은 `MALBUT_AGENT_AUTH_TOKEN`, durable `MALBUT_AGENT_DB`,
+`MALBUT_NAMED_NAVIGATION_MAP_STORE`, `MALBUT_ROBOT_DEVICE_ID`이며 Tool mode는
+`proposal`이어야 합니다. `--check` 출력의
+`simulation=true, physical_authorized=false, nav2=off`는 의도된 경계입니다.
+전체 curl 예제와 RAI sidecar 설정은
+`malbut_agent_server/docs/jira/SWM25-131_TEXT_CONFIRMATION_RAI.md`에 있습니다.
+
 ## 기존 기능과의 연결
 
 - 웹 지도: `malbut_gazebo/robot_web_server.py`

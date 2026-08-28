@@ -10,10 +10,12 @@ from typing import Any, Dict, Iterator, Optional
 from malbut_agent_server.conversation import SQLiteConversationStore
 from malbut_agent_server.gateway import (
     CapabilityRegistry,
+    production_registry,
     simulation_registry,
 )
 from malbut_agent_server.http_server import make_server
 from malbut_agent_server.memory import SQLiteMemoryStore
+from malbut_agent_server.named_target import BoundNamedTarget
 from malbut_agent_server.orchestrator import AgentOrchestrator
 from malbut_agent_server.providers.base import AgentProvider
 from malbut_agent_server.providers.mock import MockProvider
@@ -21,7 +23,41 @@ from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
 )
 from malbut_agent_server.providers.reliable import ReliableProvider
+from malbut_agent_server.robot_state_source import (
+    StaticSimulationRobotStateSource,
+)
 from malbut_agent_server.safety import SafetyPolicy
+from malbut_agent_server.schemas import RobotState
+from malbut_agent_server.text_turn import TextTurnService
+
+
+class CountingMockProvider(MockProvider):
+    """Expose how often HTTP text turns reach model inference."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def complete(self, *args, **kwargs):
+        self.calls += 1
+        return super().complete(*args, **kwargs)
+
+
+class FixedTargetResolver:
+    """Resolve the one semantic target used by the HTTP regression."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def resolve(self, location: str) -> BoundNamedTarget:
+        self.calls += 1
+        if location != '거실':
+            raise ValueError('target unavailable')
+        return BoundNamedTarget(
+            room_name='거실',
+            room_category='living_room',
+            binding_digest='a' * 64,
+        )
 
 
 @contextmanager
@@ -30,17 +66,23 @@ def running_server(
     requests_per_minute: int = 60,
     provider: Optional[AgentProvider] = None,
     capability_registry: Optional[CapabilityRegistry] = None,
+    text_turn_service: Any = None,
+    orchestrator: Optional[AgentOrchestrator] = None,
 ) -> Iterator[str]:
     """Run one loopback-only ephemeral server."""
-    memory_store = SQLiteMemoryStore(':memory:')
-    conversation_store = SQLiteConversationStore(':memory:')
-    orchestrator = AgentOrchestrator(
-        provider=provider or MockProvider(),
-        memory_store=memory_store,
-        conversation_store=conversation_store,
-        safety_policy=SafetyPolicy(),
-        capability_registry=capability_registry,
-    )
+    if orchestrator is None:
+        memory_store = SQLiteMemoryStore(':memory:')
+        conversation_store = SQLiteConversationStore(':memory:')
+        orchestrator = AgentOrchestrator(
+            provider=provider or MockProvider(),
+            memory_store=memory_store,
+            conversation_store=conversation_store,
+            safety_policy=SafetyPolicy(),
+            capability_registry=capability_registry,
+        )
+    else:
+        memory_store = orchestrator.memory_store
+        conversation_store = orchestrator.conversation_store
     server = make_server(
         '127.0.0.1',
         0,
@@ -48,6 +90,7 @@ def running_server(
         auth_token=auth_token,
         allowed_user_id='http-user',
         requests_per_minute=requests_per_minute,
+        text_turn_service=text_turn_service,
     )
     thread = threading.Thread(
         target=server.serve_forever,
@@ -210,6 +253,129 @@ def test_auth_token_is_required_when_configured() -> None:
         )
         assert status == 400
         assert error['error']['code'] == 'validation_error'
+
+
+def test_authenticated_http_confirmation_is_non_actuating() -> None:
+    """Two HTTP turns create and resolve one non-authorizing proposal."""
+    memory_store = SQLiteMemoryStore(':memory:')
+    conversation_store = SQLiteConversationStore(':memory:')
+    provider = CountingMockProvider()
+    resolver = FixedTargetResolver()
+    registry = production_registry()
+    orchestrator = AgentOrchestrator(
+        provider=provider,
+        memory_store=memory_store,
+        conversation_store=conversation_store,
+        safety_policy=SafetyPolicy(),
+        capability_registry=registry,
+        robot_state_source=StaticSimulationRobotStateSource(
+            RobotState(
+                battery_percent=90.0,
+                navigation_available=True,
+                localization_ok=True,
+                emergency_stop=False,
+            )
+        ),
+    )
+    service = TextTurnService(orchestrator, resolver)
+    conversation_store.create(
+        'http-user',
+        'text-conversation-1',
+    )
+
+    with running_server(
+        auth_token='text-token',
+        text_turn_service=service,
+        orchestrator=orchestrator,
+    ) as base_url:
+        request = {
+            'request_id': 'text-request-1',
+            'conversation_id': 'text-conversation-1',
+            'turn_id': 'text-turn-1',
+            'text': '거실로 가줘',
+        }
+        status, proposal = post(
+            f'{base_url}/v1/text/turns',
+            request,
+            token='text-token',
+        )
+        assert status == 200
+        assert proposal['status'] == 'awaiting_confirmation'
+        assert proposal['result_code'] == 'confirmation_pending'
+        pending = conversation_store.pending_confirmation(
+            'http-user',
+            'text-conversation-1',
+        )
+        assert pending is not None
+        assert pending.request_id == request['request_id']
+        assert provider.calls == 1
+
+        status, approved = post(
+            f'{base_url}/v1/text/turns',
+            {
+                'request_id': 'text-approval-1',
+                'conversation_id': 'text-conversation-1',
+                'turn_id': 'text-turn-2',
+                'text': '네',
+            },
+            token='text-token',
+        )
+        assert status == 200
+        assert approved['status'] == 'approved'
+        assert approved['result_code'] == 'confirmation_approved'
+        assert conversation_store.pending_confirmation(
+            'http-user',
+            'text-conversation-1',
+        ) is None
+        resolved = conversation_store.confirmation_for_response(
+            'http-user',
+            'text-approval-1',
+        )
+        assert resolved is not None
+        assert resolved.confirmation_request_id == (
+            pending.confirmation_request_id
+        )
+        assert provider.calls == 1
+        assert resolver.calls == 2
+        assert registry.get('navigate').adapter is None
+        assert proposal['execution']['execution_authorized'] is False
+        assert proposal['execution']['physical_authorized'] is False
+        assert approved['execution'] == {
+            'authorized': False,
+            'execution_authorized': False,
+            'consume_once': False,
+            'tool_call_id': None,
+            'physical_authorized': False,
+            'nav2_start_count': 0,
+            'nav2_cancel_count': 0,
+        }
+
+
+def test_text_turn_service_requires_non_empty_server_authentication() -> None:
+    """Enabling confirmation on an unauthenticated server fails at bind."""
+    memory_store = SQLiteMemoryStore(':memory:')
+    conversation_store = SQLiteConversationStore(':memory:')
+    orchestrator = AgentOrchestrator(
+        provider=MockProvider(),
+        memory_store=memory_store,
+        conversation_store=conversation_store,
+        safety_policy=SafetyPolicy(),
+    )
+    try:
+        try:
+            make_server(
+                '127.0.0.1',
+                0,
+                orchestrator,
+                text_turn_service=object(),
+            )
+        except ValueError as error:
+            assert 'requires authentication' in str(error)
+        else:
+            raise AssertionError('unauthenticated text service was bound')
+    finally:
+        conversation_store.close()
+        memory_store.close()
 
 
 def test_user_identity_is_bound_and_requests_are_rate_limited() -> None:

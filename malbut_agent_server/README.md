@@ -28,11 +28,17 @@ SWM25-72에서 오프라인 `mock`과 OpenAI Responses API를 같은
 - 인증된 capability 조회와 비부작용 Tool query API
 - Tool 입력 schema, timeout, 결과 크기·상태 freshness 검증
 - 프로세스 내 Tool query 중복 억제와 오류 원문 비공개
+- LLM 호출 후 server-owned RobotState를 읽는 optional safety source
+- target·proposal·session revision에 묶인 durable text confirmation
+- `네/아니요/취소`의 LLM 없는 exact 판정과 terminal CAS
+- 별도 Python에서만 켜지는 optional RAI structured-proposal sidecar
 
 공개 장기 기억 CRUD API와 실제 ROS 부작용 Tool 실행기는 후속 스토리에서
-연결한다. 모델이 추론한 내용을 자동 저장하는 경로는 없다. 현재 서버는
-`trusted_robot_state=False`, `MALBUT_AGENT_TOOL_MODE=proposal`이 기본이라
-OpenAI 또는 Mock이 반환한 Tool 제안을 물리 실행하지 않는다.
+연결한다. 모델이 추론한 내용을 자동 저장하는 경로는 없다. 일반 Agent
+server는 `trusted_robot_state=False`, `MALBUT_AGENT_TOOL_MODE=proposal`이
+기본이다. SWM25-131의 별도 simulation composition에서 승인을 받아도
+`execution_authorized=false`, `physical_authorized=false`이며 Nav2를 호출하지
+않는다.
 
 ## 테스트
 
@@ -144,8 +150,9 @@ PYTHONPATH=. python3 -m malbut_agent_server.cli \
 
 시뮬레이션 adapter는 결과에 `simulated=true`를 남기며 Nav2 goal, 사진 파일,
 외부 알림을 만들지 않는다. `/v1/tools/query`는 읽기 전용 또는 이 Mock
-시뮬레이션만 처리한다. confirmation, 실제 행동, `tool_call_id`, 재시작 뒤에도
-유지되는 1회 소비와 취소·feedback은 SWM25-74 범위다.
+시뮬레이션만 처리한다. SWM25-131의 text confirmation은 별도 endpoint와
+SQLite 원장으로 구현됐지만 실행 권한, `tool_call_id`, 1회 소비와
+취소·feedback은 만들지 않는다. 실제 실행 결속은 SWM25-132 범위다.
 
 현재 query cache는 프로세스 내 최대 256건으로 제한된다. adapter 응답
 deadline이 지나도 이미 시작된 Python thread를 강제로 중단하지 못하므로,
@@ -187,6 +194,27 @@ PYTHONPATH=. python3 -m malbut_agent_server.cli \
 
 `/healthz`를 제외한 요청에는
 `Authorization: Bearer <MALBUT_AGENT_AUTH_TOKEN>` 헤더가 필요하다.
+
+## SWM25-131 텍스트 확인과 RAI sidecar
+
+`/v1/text/turns`는 일반 server에서 기본 OFF다. `malbut_scenarios`의 명시적
+Gazebo composition이 active map catalog, fresh simulation state와 인증을
+주입할 때만 켜진다. body는 `request_id`, `conversation_id`, `turn_id`,
+`text`만 받으며 user, robot state, approval 또는 goal ID를 받지 않는다.
+
+pending confirmation에서 `네/아니요/취소`는 Provider를 다시 호출하지 않는다.
+모호한 답은 같은 질문을 반환하며 일반 대화로 넘어가지 않는다. 승인 결과도
+이동을 시작하지 않는다. 실행법과 상태별 의미는
+[`SWM25-131 구현 문서`](docs/jira/SWM25-131_TEXT_CONFIRMATION_RAI.md)에 있다.
+
+RAI는 `MALBUT_AGENT_PROVIDER=rai-sidecar`를 명시했을 때만 사용한다. 별도
+Python 3.10 venv의 `bin/python`, 그 venv 밖의 isolated CWD,
+`OPENAI_API_KEY`, `MALBUT_RAI_MODEL`, HTTP Bearer token이 모두 필요하다.
+sidecar는 시작 시 설치 distribution이 정확히 `rai-core==2.12.1`인지 검사하고
+다르면 import 전에 종료한다. `rai-core`는 이 ROS package dependency에
+포함되지 않으며 sidecar는 neutral Tool proposal만 반환한다. RAI의 범용
+ROS·shell Tool은 등록하지 않는다. RAI mode에서는 모델 입력 상한도 sidecar
+protocol 한도인 65,536자를 넘길 수 없다.
 
 ## Provider 평가
 
@@ -243,6 +271,7 @@ PYTHONPATH=. python3 -m malbut_agent_server.eval_runner \
 | `MALBUT_AGENT_PROVIDER_TOTAL_TIMEOUT_SECONDS` | 11 | 1~300 |
 | `MALBUT_AGENT_PROVIDER_MAX_RETRIES` | 0 | 0~3 |
 | `MALBUT_AGENT_TOOL_MODE` | `proposal` | `proposal`, `simulation` |
+| `MALBUT_RAI_SIDECAR_TIMEOUT_SECONDS` | 5 | 1~120 |
 | `OPENAI_MODEL` | `gpt-5.6-terra` | 출력 가능한 공식 model ID |
 | `OPENAI_FALLBACK_MODEL` | 빈 값 | 선택, 주력과 다른 model ID |
 | `OPENAI_REASONING_EFFORT` | `none` | 지원 effort 값 |
@@ -256,6 +285,8 @@ PYTHONPATH=. python3 -m malbut_agent_server.eval_runner \
 - [SWM25-71 사용자 컨텍스트 통합](docs/jira/SWM25-71_USER_CONTEXT_INTEGRATION.md)
 - [SWM25-72 LLM provider 연결](docs/jira/SWM25-72_LLM_PROVIDER_INTEGRATION.md)
 - [SWM25-73 Agent Tool Gateway](docs/jira/SWM25-73_AGENT_TOOL_GATEWAY.md)
+- [SWM25-128 clean baseline과 RAI 책임 경계](docs/jira/SWM25-128_CLEAN_BASELINE.md)
+- [SWM25-131 텍스트 확인과 RAI sidecar](docs/jira/SWM25-131_TEXT_CONFIRMATION_RAI.md)
 - [SWM25-72 OpenAI baseline 평가](docs/evaluations/SWM25-72_OPENAI_EVALUATION_2026-08-05.md)
 - [SWM25-72 OpenAI post-fix parity 평가](docs/evaluations/SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md)
 

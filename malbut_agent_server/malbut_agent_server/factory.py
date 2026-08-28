@@ -15,7 +15,16 @@ from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
 )
 from malbut_agent_server.providers.reliable import ReliableProvider
+from malbut_agent_server.rai_sidecar_client import (
+    RaiSidecarClient,
+    RaiSidecarProvider,
+    SubprocessRaiSidecarTransport,
+)
+from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy
+
+
+RAI_SIDECAR_MODULE = 'malbut_agent_server.rai_sidecar_runtime'
 
 
 def _openai_adapter(
@@ -38,6 +47,34 @@ def build_provider(settings: Settings) -> AgentProvider:
     """Build the selected provider without making a network request."""
     if settings.provider == 'mock':
         return MockProvider(
+            max_model_input_chars=settings.max_model_input_chars,
+        )
+    if settings.provider == 'rai-sidecar':
+        settings.validate_rai_sidecar()
+        environment = {}
+        if settings.openai_api_key:
+            environment['OPENAI_API_KEY'] = settings.openai_api_key
+        if settings.rai_model:
+            environment['MALBUT_RAI_MODEL'] = settings.rai_model
+        transport = SubprocessRaiSidecarTransport(
+            (
+                settings.rai_sidecar_python,
+                '-I',
+                '-m',
+                RAI_SIDECAR_MODULE,
+            ),
+            environment=environment,
+            working_directory=(
+                settings.rai_sidecar_working_directory
+            ),
+        )
+        return RaiSidecarProvider(
+            RaiSidecarClient(
+                transport,
+                timeout_seconds=(
+                    settings.rai_sidecar_timeout_seconds
+                ),
+            ),
             max_model_input_chars=settings.max_model_input_chars,
         )
     if settings.provider != 'openai':
@@ -83,7 +120,11 @@ def build_capability_registry(
     raise ValueError('MALBUT_AGENT_TOOL_MODE is unsupported')
 
 
-def build_orchestrator(settings: Settings) -> AgentOrchestrator:
+def build_orchestrator(
+    settings: Settings,
+    *,
+    robot_state_source: RobotStateSource | None = None,
+) -> AgentOrchestrator:
     """Build one runtime while keeping model output non-actuating."""
     memory_store = SQLiteMemoryStore(settings.database_path)
     conversation_store = None
@@ -108,6 +149,7 @@ def build_orchestrator(settings: Settings) -> AgentOrchestrator:
             memory_limit=settings.memory_limit,
             trusted_robot_state=False,
             capability_registry=build_capability_registry(settings),
+            robot_state_source=robot_state_source,
         )
     except Exception:
         if conversation_store is not None:

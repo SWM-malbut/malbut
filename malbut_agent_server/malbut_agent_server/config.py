@@ -12,13 +12,17 @@ from malbut_agent_server.endpoint_policy import (
 from malbut_agent_server.providers.openai_responses import (
     REASONING_EFFORTS,
 )
+from malbut_agent_server.rai_sidecar_protocol import (
+    MAX_MODEL_INPUT_LENGTH as RAI_MAX_MODEL_INPUT_LENGTH,
+)
 
 
-SUPPORTED_PROVIDERS = frozenset({'mock', 'openai'})
+SUPPORTED_PROVIDERS = frozenset({'mock', 'openai', 'rai-sidecar'})
 SUPPORTED_TOOL_MODES = frozenset({'proposal', 'simulation'})
 DEFAULT_OPENAI_MODEL = 'gpt-5.6-terra'
 DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECONDS = 5
 DEFAULT_PROVIDER_TOTAL_TIMEOUT_SECONDS = 11
+DEFAULT_RAI_SIDECAR_TIMEOUT_SECONDS = 5
 
 
 def load_env_file(
@@ -120,6 +124,12 @@ class Settings:
     openai_max_output_tokens: int = 500
     auth_token: str = ''
     tool_mode: str = 'proposal'
+    rai_sidecar_python: str = ''
+    rai_sidecar_working_directory: str = ''
+    rai_sidecar_timeout_seconds: int = (
+        DEFAULT_RAI_SIDECAR_TIMEOUT_SECONDS
+    )
+    rai_model: str = ''
 
     def __repr__(self) -> str:
         """Return safe diagnostics with every credential redacted."""
@@ -160,7 +170,12 @@ class Settings:
             'openai_max_output_tokens='
             f'{self.openai_max_output_tokens!r}, '
             f'tool_mode={self.tool_mode!r}, '
-            'auth_token=<redacted>)'
+            'auth_token=<redacted>, '
+            'rai_sidecar_python=<redacted>, '
+            'rai_sidecar_working_directory=<redacted>, '
+            'rai_sidecar_timeout_seconds='
+            f'{self.rai_sidecar_timeout_seconds!r}, '
+            f'rai_model={self.rai_model!r})'
         )
 
     @classmethod
@@ -366,6 +381,25 @@ class Settings:
                 'MALBUT_AGENT_TOOL_MODE',
                 'proposal',
             ).strip().lower(),
+            rai_sidecar_python=source.get(
+                'MALBUT_RAI_SIDECAR_PYTHON',
+                '',
+            ).strip(),
+            rai_sidecar_working_directory=source.get(
+                'MALBUT_RAI_SIDECAR_CWD',
+                '',
+            ).strip(),
+            rai_sidecar_timeout_seconds=_env_int(
+                source,
+                'MALBUT_RAI_SIDECAR_TIMEOUT_SECONDS',
+                DEFAULT_RAI_SIDECAR_TIMEOUT_SECONDS,
+                1,
+                120,
+            ),
+            rai_model=source.get(
+                'MALBUT_RAI_MODEL',
+                '',
+            ).strip(),
         )
 
     def validate_for_server(self) -> None:
@@ -406,8 +440,11 @@ class Settings:
             return
         if not self.auth_token:
             raise ValueError(
-                'OpenAI mode requires MALBUT_AGENT_AUTH_TOKEN'
+                'Live provider mode requires MALBUT_AGENT_AUTH_TOKEN'
             )
+        if self.provider == 'rai-sidecar':
+            self.validate_rai_sidecar()
+            return
         if not self.openai_api_key:
             raise ValueError('OPENAI_API_KEY is required')
         if not _valid_model_id(self.openai_model):
@@ -426,4 +463,64 @@ class Settings:
         if self.openai_reasoning_effort not in REASONING_EFFORTS:
             raise ValueError(
                 'OPENAI_REASONING_EFFORT is unsupported'
+            )
+
+    def validate_rai_sidecar(self) -> None:
+        """Reject implicit process lookup and non-isolated RAI startup."""
+        if self.provider != 'rai-sidecar':
+            raise ValueError('RAI sidecar validation requires RAI mode')
+        if not self.auth_token:
+            raise ValueError(
+                'RAI sidecar mode requires MALBUT_AGENT_AUTH_TOKEN'
+            )
+        if type(self.rai_sidecar_timeout_seconds) is not int or not (
+            1 <= self.rai_sidecar_timeout_seconds <= 120
+        ):
+            raise ValueError(
+                'MALBUT_RAI_SIDECAR_TIMEOUT_SECONDS must be between '
+                '1 and 120'
+            )
+        executable = Path(self.rai_sidecar_python)
+        if not executable.is_absolute() or not executable.is_file() or (
+            not os.access(executable, os.X_OK)
+        ):
+            raise ValueError(
+                'MALBUT_RAI_SIDECAR_PYTHON must be an absolute '
+                'executable file'
+            )
+        venv_root = executable.parent.parent
+        if executable.parent.name not in {'bin', 'Scripts'} or not (
+            venv_root / 'pyvenv.cfg'
+        ).is_file():
+            raise ValueError(
+                'MALBUT_RAI_SIDECAR_PYTHON must be a Python virtual '
+                'environment interpreter'
+            )
+        directory = Path(self.rai_sidecar_working_directory)
+        if not directory.is_absolute() or not directory.is_dir() or (
+            directory.resolve() == Path('/')
+        ):
+            raise ValueError(
+                'MALBUT_RAI_SIDECAR_CWD must be an isolated absolute '
+                'directory'
+            )
+        try:
+            directory.resolve().relative_to(venv_root.resolve())
+        except ValueError:
+            pass
+        else:
+            raise ValueError(
+                'MALBUT_RAI_SIDECAR_CWD must be outside the Python '
+                'virtual environment'
+            )
+        if not self.openai_api_key:
+            raise ValueError(
+                'RAI sidecar mode requires OPENAI_API_KEY'
+            )
+        if not _valid_model_id(self.rai_model):
+            raise ValueError('MALBUT_RAI_MODEL is invalid')
+        if self.max_model_input_chars > RAI_MAX_MODEL_INPUT_LENGTH:
+            raise ValueError(
+                'MALBUT_AGENT_MAX_MODEL_INPUT_CHARS exceeds the RAI '
+                'sidecar protocol limit'
             )

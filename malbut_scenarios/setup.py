@@ -58,6 +58,8 @@ setup(
             'malbut_scenarios.named_navigation_fixture:main',
             'wait_for_simulation = '
             'malbut_scenarios.wait_for_simulation:main',
+            'malbut_text_agent_server = '
+            'malbut_scenarios.text_agent_server:main',
         ],
     },
 )

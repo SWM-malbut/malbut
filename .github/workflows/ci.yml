@@ -257,6 +257,7 @@ jobs:
               malbut_roaming \
               malbut_patrol \
               malbut_agent_server \
+              malbut_scenarios \
               malbut_perception \
               malbut_tracking
 
@@ -282,6 +283,7 @@ jobs:
               malbut_lidar_preprocessor \
               malbut_roaming \
               malbut_agent_server \
+              malbut_scenarios \
               malbut_perception \
               malbut_tracking
           colcon test-result --verbose

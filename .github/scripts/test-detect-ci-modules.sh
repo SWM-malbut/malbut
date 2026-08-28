@@ -8,6 +8,7 @@ scenarios=(
   "homecam_agent/homecam_media_agent/src/node.cpp|false,false,false,true"
   "malbut_gazebo/launch/navigation.launch.py|false,false,true,true"
   "malbut_autonomy/malbut_patrol/patrol.py|false,false,true,false"
+  "malbut_scenarios/malbut_scenarios/text_agent_server.py|false,false,true,false"
   "README.md|false,false,false,false"
   ".github/workflows/ci.yml|true,true,true,true"
 )

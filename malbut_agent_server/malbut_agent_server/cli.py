@@ -13,7 +13,10 @@ from malbut_agent_server.http_server import make_server
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description='Run the Malbut Mock or OpenAI agent service.',
+        description=(
+            'Run the Malbut Mock, OpenAI, or isolated RAI sidecar '
+            'agent service.'
+        ),
     )
     parser.add_argument(
         '--env-file',
@@ -22,8 +25,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         '--provider',
-        choices=('mock', 'openai'),
-        help='Select the offline Mock or official OpenAI Responses API.',
+        choices=('mock', 'openai', 'rai-sidecar'),
+        help=(
+            'Select offline Mock, official OpenAI Responses API, or '
+            'the explicitly configured isolated RAI sidecar.'
+        ),
     )
     parser.add_argument(
         '--model',
