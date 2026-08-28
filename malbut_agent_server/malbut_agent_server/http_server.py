@@ -10,13 +10,20 @@ from http.server import (
     BaseHTTPRequestHandler,
     ThreadingHTTPServer,
 )
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from malbut_agent_server.conversation import (
+    ConfirmationIntentAlreadyTerminalError,
+    ConfirmationIntentConflictError,
+    ConfirmationIntentNotFoundError,
     ConversationChangedError,
     ConversationConflictError,
     ConversationNotFoundError,
     ConversationStateError,
+)
+from malbut_agent_server.text_confirmation import (
+    ConfirmationAlreadyTerminalError,
+    ConfirmationDomainConflictError,
 )
 from malbut_agent_server.gateway import (
     GatewayConflictError,
@@ -36,6 +43,9 @@ from malbut_agent_server.schemas import (
     validate_user_id,
 )
 
+if TYPE_CHECKING:
+    from malbut_agent_server.text_turn import TextTurnService
+
 
 class AgentHTTPServer(ThreadingHTTPServer):
     """Threaded server carrying explicit service dependencies."""
@@ -53,6 +63,7 @@ class AgentHTTPServer(ThreadingHTTPServer):
         requests_per_minute: int = 60,
         socket_timeout_seconds: int = 10,
         tool_gateway: Optional[ToolGateway] = None,
+        text_turn_service: Optional['TextTurnService'] = None,
     ) -> None:
         """Attach runtime services before binding the HTTP listener."""
         if address[0] not in {'127.0.0.1', 'localhost', '::1'}:
@@ -72,6 +83,10 @@ class AgentHTTPServer(ThreadingHTTPServer):
         self.orchestrator = orchestrator
         self.memory_store = orchestrator.memory_store
         self.conversation_store = orchestrator.conversation_store
+        if text_turn_service is not None and not auth_token:
+            raise ValueError(
+                'Text confirmation endpoint requires authentication'
+            )
         if (
             tool_gateway is not None
             and (
@@ -85,6 +100,7 @@ class AgentHTTPServer(ThreadingHTTPServer):
         self.tool_gateway = tool_gateway or ToolGateway(
             orchestrator.capability_registry
         )
+        self.text_turn_service = text_turn_service
         self.max_request_bytes = max_request_bytes
         self.auth_token = auth_token
         self.allowed_user_id = validate_user_id(allowed_user_id)
@@ -243,6 +259,8 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             body = self._read_json_body()
             if self.path == '/v1/agent/respond':
                 self._handle_agent(body)
+            elif self.path == '/v1/text/turns':
+                self._handle_text_turn(body)
             elif self.path == '/v1/tools/query':
                 self._handle_tool_query(body)
             elif self.path == '/v1/conversations':
@@ -265,6 +283,30 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             self._send_error(
                 HTTPStatus.CONFLICT,
                 'request_conflict',
+                str(error),
+            )
+        except (
+            ConfirmationIntentAlreadyTerminalError,
+            ConfirmationAlreadyTerminalError,
+        ) as error:
+            self._send_error(
+                HTTPStatus.CONFLICT,
+                'confirmation_already_terminal',
+                str(error),
+            )
+        except (
+            ConfirmationIntentConflictError,
+            ConfirmationDomainConflictError,
+        ) as error:
+            self._send_error(
+                HTTPStatus.CONFLICT,
+                'confirmation_conflict',
+                str(error),
+            )
+        except ConfirmationIntentNotFoundError as error:
+            self._send_error(
+                HTTPStatus.CONFLICT,
+                'confirmation_not_pending',
                 str(error),
             )
         except ConversationNotFoundError as error:
@@ -410,6 +452,22 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         self._require_allowed_user(request.user_id)
         result = self.server.orchestrator.handle(request)
         self._send_json(HTTPStatus.OK, result.to_dict())
+
+    def _handle_text_turn(self, body: Dict[str, Any]) -> None:
+        """Route an authenticated text turn through the server-owned user."""
+        service = self.server.text_turn_service
+        if service is None:
+            self._send_error(
+                HTTPStatus.NOT_FOUND,
+                'not_found',
+                'Endpoint not found.',
+            )
+            return
+        result = service.handle(
+            user_id=self.server.allowed_user_id,
+            value=body,
+        )
+        self._send_json(HTTPStatus.OK, result)
 
     def _handle_tool_query(self, body: Dict[str, Any]) -> None:
         """Run only read-only or explicit side-effect-free simulations."""
@@ -663,6 +721,7 @@ def make_server(
     requests_per_minute: int = 60,
     socket_timeout_seconds: int = 10,
     tool_gateway: Optional[ToolGateway] = None,
+    text_turn_service: Optional['TextTurnService'] = None,
 ) -> AgentHTTPServer:
     """Build a server without starting its event loop."""
     return AgentHTTPServer(
@@ -675,4 +734,5 @@ def make_server(
         requests_per_minute=requests_per_minute,
         socket_timeout_seconds=socket_timeout_seconds,
         tool_gateway=tool_gateway,
+        text_turn_service=text_turn_service,
     )

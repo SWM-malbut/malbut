@@ -386,6 +386,13 @@ def test_request_id_is_idempotent_and_cannot_change_input() -> None:
         assert first.decision_id == second.decision_id
         persisted = first.to_persisted_dict()
         assert persisted['schema_version'] == 2
+        persisted['public']['execution']['expires_at'] = (
+            persisted['public']['execution']['issued_at']
+        )
+        equal_deadline = OrchestrationResult.from_persisted_dict(
+            persisted
+        )
+        assert equal_deadline.expires_at == equal_deadline.issued_at
         persisted['schema_version'] = 1
         legacy = OrchestrationResult.from_persisted_dict(persisted)
         assert legacy.to_dict()['execution']['authorized'] is False
@@ -464,6 +471,10 @@ def test_invalid_safety_thresholds_are_rejected() -> None:
         SafetyPolicy(maximum_action_ttl_ms=0)
     with pytest.raises(ValueError):
         SafetyPolicy(allowed_locations=[''])
+    with pytest.raises(ValueError):
+        SafetyPolicy(policy_revision='')
+    with pytest.raises(ValueError):
+        SafetyPolicy(policy_revision='unsafe\nrevision')
 
 
 def test_unverified_image_notification_is_blocked() -> None:

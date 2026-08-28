@@ -10,7 +10,15 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+)
 
 from malbut_agent_server.schemas import (
     MAX_UTTERANCE_LENGTH,
@@ -25,10 +33,221 @@ from malbut_agent_server.summarization import (
     SummarySourceTurn,
 )
 
+if TYPE_CHECKING:
+    from malbut_agent_server.text_confirmation import (
+        ConfirmationDraft,
+        ConfirmationRecord,
+        ConfirmationResolution,
+    )
+
 
 MAX_RESPONSE_JSON_LENGTH = 65536
 DEFAULT_SUMMARY_MAX_CHARS = 2000
 SUMMARY_UPDATE_BATCH_SIZE = 128
+CONFIRMATION_STORAGE_SCHEMA_VERSION = 1
+MAX_CONFIRMATION_JSON_LENGTH = 32768
+TEXT_TURN_CLAIM_SCHEMA_VERSION = 1
+TEXT_TURN_CLAIM_OUTCOMES = frozenset({
+    'confirmation_unrecognized',
+    'confirmation_not_pending',
+    'confirmation_resolved',
+    'confirmation_invalidated',
+})
+
+
+CONFIRMATION_SCHEMA_METADATA_SQL = '''
+CREATE TABLE confirmation_schema_metadata (
+    singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
+    schema_version INTEGER NOT NULL CHECK (schema_version = 1)
+)
+'''
+
+
+CONFIRMATION_INTENTS_SQL = '''
+CREATE TABLE confirmation_intents (
+    schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+    confirmation_request_id TEXT NOT NULL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    session_instance_id TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation >= 1),
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 1),
+    turn_id TEXT NOT NULL,
+    agent_request_id TEXT NOT NULL,
+    decision_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    arguments_digest TEXT NOT NULL,
+    target_binding_digest TEXT NOT NULL,
+    proposal_fingerprint TEXT NOT NULL,
+    issued_at REAL NOT NULL,
+    expires_at REAL NOT NULL CHECK (expires_at > issued_at),
+    state TEXT NOT NULL CHECK (
+        state IN ('pending', 'resolved', 'invalidated')
+    ),
+    disposition TEXT NOT NULL CHECK (
+        disposition IN (
+            'pending', 'approved', 'denied', 'canceled',
+            'expired', 'invalidated'
+        )
+    ),
+    requested_disposition TEXT CHECK (
+        requested_disposition IS NULL OR requested_disposition IN (
+            'approve', 'deny', 'cancel'
+        )
+    ),
+    result_code TEXT NOT NULL,
+    response_id TEXT,
+    response_turn_id TEXT,
+    response_fingerprint TEXT,
+    resolved_at REAL,
+    record_json TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    authority_kind TEXT NOT NULL DEFAULT 'none'
+        CHECK (authority_kind = 'none'),
+    execution_authorized INTEGER NOT NULL DEFAULT 0
+        CHECK (execution_authorized = 0),
+    consume_once INTEGER NOT NULL DEFAULT 0
+        CHECK (consume_once = 0),
+    tool_call_id TEXT CHECK (tool_call_id IS NULL),
+    mission_id TEXT CHECK (mission_id IS NULL),
+    UNIQUE (user_id, agent_request_id),
+    UNIQUE (user_id, decision_id),
+    UNIQUE (user_id, proposal_fingerprint),
+    FOREIGN KEY (user_id, conversation_id)
+        REFERENCES conversation_sessions (user_id, conversation_id)
+        ON DELETE CASCADE,
+    CHECK (
+        (state = 'pending'
+         AND disposition = 'pending'
+         AND requested_disposition IS NULL
+         AND result_code = 'confirmation_pending'
+         AND response_id IS NULL
+         AND response_turn_id IS NULL
+         AND response_fingerprint IS NULL
+         AND resolved_at IS NULL)
+        OR
+        (state = 'resolved'
+         AND disposition IN (
+             'approved', 'denied', 'canceled', 'expired'
+         )
+         AND result_code != 'confirmation_pending'
+         AND resolved_at IS NOT NULL
+         AND (
+             (response_id IS NULL
+              AND response_turn_id IS NULL
+              AND response_fingerprint IS NULL
+              AND requested_disposition IS NULL
+              AND disposition = 'expired')
+             OR
+             (response_id IS NOT NULL
+              AND response_turn_id IS NOT NULL
+              AND response_fingerprint IS NOT NULL
+              AND requested_disposition IS NOT NULL)
+         ))
+        OR
+        (state = 'invalidated'
+         AND disposition = 'invalidated'
+         AND requested_disposition IS NULL
+         AND result_code != 'confirmation_pending'
+         AND response_id IS NULL
+         AND response_turn_id IS NULL
+         AND response_fingerprint IS NULL
+         AND resolved_at IS NOT NULL)
+    )
+)
+'''
+
+
+CONFIRMATION_RESPONSE_OWNER_INDEX_SQL = '''
+CREATE UNIQUE INDEX confirmation_response_owner_idx
+ON confirmation_intents (user_id, response_id)
+WHERE response_id IS NOT NULL
+'''
+
+
+CONFIRMATION_ONE_PENDING_INDEX_SQL = '''
+CREATE UNIQUE INDEX confirmation_one_pending_session_idx
+ON confirmation_intents (
+    user_id, session_instance_id, generation
+)
+WHERE state = 'pending'
+'''
+
+
+TEXT_TURN_REQUEST_CLAIMS_SQL = '''
+CREATE TABLE text_turn_request_claims (
+    schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+    user_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    session_instance_id TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation >= 1),
+    revision INTEGER NOT NULL CHECK (revision >= 0),
+    turn_id TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK (
+        outcome IN (
+            'confirmation_unrecognized',
+            'confirmation_not_pending',
+            'confirmation_resolved',
+            'confirmation_invalidated'
+        )
+    ),
+    confirmation_request_id TEXT,
+    created_at REAL NOT NULL,
+    authority_kind TEXT NOT NULL DEFAULT 'none'
+        CHECK (authority_kind = 'none'),
+    execution_authorized INTEGER NOT NULL DEFAULT 0
+        CHECK (execution_authorized = 0),
+    consume_once INTEGER NOT NULL DEFAULT 0
+        CHECK (consume_once = 0),
+    tool_call_id TEXT CHECK (tool_call_id IS NULL),
+    mission_id TEXT CHECK (mission_id IS NULL),
+    PRIMARY KEY (user_id, request_id),
+    UNIQUE (
+        user_id, conversation_id, session_instance_id, generation, turn_id
+    ),
+    FOREIGN KEY (user_id, conversation_id)
+        REFERENCES conversation_sessions (user_id, conversation_id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (confirmation_request_id)
+        REFERENCES confirmation_intents (confirmation_request_id)
+        ON DELETE CASCADE,
+    CHECK (
+        (outcome = 'confirmation_not_pending'
+         AND confirmation_request_id IS NULL)
+        OR
+        (outcome != 'confirmation_not_pending'
+         AND confirmation_request_id IS NOT NULL)
+    )
+)
+'''
+
+
+_CONFIRMATION_SCHEMA_OBJECTS = {
+    'confirmation_schema_metadata': (
+        'table',
+        CONFIRMATION_SCHEMA_METADATA_SQL,
+    ),
+    'confirmation_intents': (
+        'table',
+        CONFIRMATION_INTENTS_SQL,
+    ),
+    'confirmation_response_owner_idx': (
+        'index',
+        CONFIRMATION_RESPONSE_OWNER_INDEX_SQL,
+    ),
+    'confirmation_one_pending_session_idx': (
+        'index',
+        CONFIRMATION_ONE_PENDING_INDEX_SQL,
+    ),
+    'text_turn_request_claims': (
+        'table',
+        TEXT_TURN_REQUEST_CLAIMS_SQL,
+    ),
+}
 
 
 class ConversationNotFoundError(ValidationError):
@@ -45,6 +264,22 @@ class ConversationConflictError(ValidationError):
 
 class ConversationChangedError(ValidationError):
     """Raised when a session changes while model inference is running."""
+
+
+class ConfirmationSchemaError(RuntimeError):
+    """Raised when confirmation persistence cannot be trusted."""
+
+
+class ConfirmationIntentNotFoundError(ValidationError):
+    """Raised when no owner-scoped confirmation can be selected."""
+
+
+class ConfirmationIntentConflictError(ValidationError):
+    """Raised when a confirmation identity is reused differently."""
+
+
+class ConfirmationIntentAlreadyTerminalError(ValidationError):
+    """Raised when another response already made the intent terminal."""
 
 
 @dataclass(frozen=True)
@@ -206,6 +441,23 @@ class ConversationSnapshot:
     session: ConversationSession
     turns: Tuple[ConversationTurn, ...]
     summary: Optional[ConversationSummary]
+
+
+@dataclass(frozen=True)
+class TextTurnRequestClaim:
+    """Durable, content-free claim in the unified text request namespace."""
+
+    user_id: str
+    request_id: str
+    conversation_id: str
+    session_instance_id: str
+    generation: int
+    revision: int
+    turn_id: str
+    request_fingerprint: str
+    outcome: str
+    confirmation_request_id: Optional[str]
+    created_at: float
 
 
 class SQLiteConversationStore:
@@ -399,7 +651,84 @@ class SQLiteConversationStore:
                 WHERE status = 'pending'
                 '''
             )
+            self._initialize_confirmation_schema()
             self._connection.commit()
+
+    def _initialize_confirmation_schema(self) -> None:
+        """Create or strictly validate the additive confirmation schema."""
+        object_names = tuple(_CONFIRMATION_SCHEMA_OBJECTS)
+        placeholders = ', '.join('?' for _name in object_names)
+        rows = self._connection.execute(
+            f'''
+            SELECT type, name, sql
+            FROM sqlite_master
+            WHERE name IN ({placeholders})
+            ''',
+            object_names,
+        ).fetchall()
+        found = {str(row['name']): row for row in rows}
+        expected_names = set(_CONFIRMATION_SCHEMA_OBJECTS)
+        if not found:
+            self._connection.execute(CONFIRMATION_SCHEMA_METADATA_SQL)
+            self._connection.execute(CONFIRMATION_INTENTS_SQL)
+            self._connection.execute(
+                CONFIRMATION_RESPONSE_OWNER_INDEX_SQL
+            )
+            self._connection.execute(
+                CONFIRMATION_ONE_PENDING_INDEX_SQL
+            )
+            self._connection.execute(TEXT_TURN_REQUEST_CLAIMS_SQL)
+            self._connection.execute(
+                '''
+                INSERT INTO confirmation_schema_metadata (
+                    singleton, schema_version
+                ) VALUES (1, ?)
+                ''',
+                (CONFIRMATION_STORAGE_SCHEMA_VERSION,),
+            )
+            return
+        if set(found) != expected_names:
+            raise ConfirmationSchemaError(
+                'confirmation persistence schema is incomplete'
+            )
+        for name, (object_type, expected_sql) in (
+            _CONFIRMATION_SCHEMA_OBJECTS.items()
+        ):
+            row = found[name]
+            if row['type'] != object_type:
+                raise ConfirmationSchemaError(
+                    'confirmation persistence schema object type '
+                    f'is invalid: {name}'
+                )
+            if self._normalized_schema_sql(row['sql']) != (
+                self._normalized_schema_sql(expected_sql)
+            ):
+                raise ConfirmationSchemaError(
+                    'confirmation persistence schema does not match '
+                    f'version {CONFIRMATION_STORAGE_SCHEMA_VERSION}: '
+                    f'{name}'
+                )
+        metadata_rows = self._connection.execute(
+            '''
+            SELECT singleton, schema_version
+            FROM confirmation_schema_metadata
+            '''
+        ).fetchall()
+        if (
+            len(metadata_rows) != 1
+            or int(metadata_rows[0]['singleton']) != 1
+            or int(metadata_rows[0]['schema_version'])
+            != CONFIRMATION_STORAGE_SCHEMA_VERSION
+        ):
+            raise ConfirmationSchemaError(
+                'confirmation persistence schema version is invalid'
+            )
+
+    @staticmethod
+    def _normalized_schema_sql(value: Optional[str]) -> str:
+        if value is None:
+            return ''
+        return ' '.join(value.strip().rstrip(';').split()).lower()
 
     def _ensure_session_instance_columns(self) -> None:
         """Add opaque session identities to databases from version 0.2."""
@@ -698,6 +1027,15 @@ class SQLiteConversationStore:
                     normalized_id,
                 )
                 session = self._require_active(row)
+                response_claim = self._select_text_turn_claim_locked(
+                    normalized_user,
+                    normalized_request,
+                )
+                if response_claim is not None:
+                    raise ConversationConflictError(
+                        'request_id is already owned by a confirmation '
+                        'response'
+                    )
                 existing = self._existing_request_locked(
                     normalized_user,
                     normalized_request,
@@ -734,6 +1072,28 @@ class SQLiteConversationStore:
                 if turn_row is not None:
                     raise ConversationConflictError(
                         'turn_id was already used in this conversation'
+                    )
+                claimed_turn = self._connection.execute(
+                    '''
+                    SELECT 1
+                    FROM text_turn_request_claims
+                    WHERE user_id = ?
+                      AND conversation_id = ?
+                      AND session_instance_id = ?
+                      AND generation = ?
+                      AND turn_id = ?
+                    ''',
+                    (
+                        normalized_user,
+                        normalized_id,
+                        session.session_instance_id,
+                        session.generation,
+                        normalized_turn,
+                    ),
+                ).fetchone()
+                if claimed_turn is not None:
+                    raise ConversationConflictError(
+                        'turn_id is already owned by a confirmation response'
                     )
                 pending = self._connection.execute(
                     '''
@@ -850,12 +1210,16 @@ class SQLiteConversationStore:
         token: BeginTurnToken,
         assistant_content: str,
         response: Dict[str, Any],
+        confirmation_draft: Optional['ConfirmationDraft'] = None,
     ) -> Tuple[ConversationSession, ConversationTurn]:
-        """Commit one assistant response if the session is unchanged."""
+        """Atomically commit one response and optional confirmation."""
         normalized_assistant = self._assistant_text(
             assistant_content
         )
         response_json = self._response_json(response)
+        confirmation_record = self._pending_confirmation_record(
+            confirmation_draft
+        )
         now = self._now()
         changed_error: Optional[ConversationChangedError] = None
         with self._lock:
@@ -926,6 +1290,12 @@ class SQLiteConversationStore:
                     self._connection.commit()
                     raise changed_error
                 self._advance_summary_locked(token, now)
+                self._invalidate_pending_confirmations_locked(
+                    token.user_id,
+                    token.conversation_id,
+                    'confirmation_conversation_changed',
+                    now,
+                )
                 self._connection.execute(
                     '''
                     UPDATE conversation_sessions
@@ -944,6 +1314,13 @@ class SQLiteConversationStore:
                         token.session_instance_id,
                     ),
                 )
+                if confirmation_record is not None:
+                    self._insert_confirmation_locked(
+                        confirmation_record,
+                        token,
+                        response,
+                        now,
+                    )
                 session_row = self._select_session_locked(
                     token.user_id,
                     token.conversation_id,
@@ -954,8 +1331,6 @@ class SQLiteConversationStore:
                     self._session_from_row(session_row),
                     self._turn_from_row(turn_row),
                 )
-            except ConversationChangedError:
-                raise
             except Exception:
                 self._connection.rollback()
                 raise
@@ -965,6 +1340,828 @@ class SQLiteConversationStore:
         with self._lock:
             self._delete_pending_locked(token)
             self._connection.commit()
+
+    def pending_confirmation(
+        self,
+        user_id: str,
+        conversation_id: str,
+    ) -> Optional['ConfirmationRecord']:
+        """Return the exact current pending intent, if one exists."""
+        normalized_user = validate_user_id(user_id)
+        normalized_id = validate_conversation_id(conversation_id)
+        with self._lock:
+            self._begin()
+            try:
+                now = self._now()
+                self._expire_due_locked(now)
+                session = self._require_active(
+                    self._select_session_locked(
+                        normalized_user,
+                        normalized_id,
+                    )
+                )
+                row = self._connection.execute(
+                    '''
+                    SELECT *
+                    FROM confirmation_intents
+                    WHERE user_id = ?
+                      AND conversation_id = ?
+                      AND session_instance_id = ?
+                      AND generation = ?
+                      AND state = 'pending'
+                    ''',
+                    (
+                        normalized_user,
+                        normalized_id,
+                        session.session_instance_id,
+                        session.generation,
+                    ),
+                ).fetchone()
+                if row is not None and (
+                    int(row['revision']) != session.revision
+                ):
+                    self._invalidate_confirmation_row_locked(
+                        row,
+                        'confirmation_conversation_changed',
+                        now,
+                    )
+                    row = None
+                record = (
+                    self._confirmation_record_from_row(row)
+                    if row is not None
+                    else None
+                )
+                self._connection.commit()
+                return record
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def confirmation_for_request(
+        self,
+        user_id: str,
+        agent_request_id: str,
+    ) -> 'ConfirmationRecord':
+        """Return one durable intent selected by owner and agent request."""
+        normalized_user = validate_user_id(user_id)
+        normalized_request = self._required_text(
+            agent_request_id,
+            'agent_request_id',
+            128,
+        )
+        with self._lock:
+            self._begin()
+            try:
+                self._expire_due_locked(self._now())
+                row = self._connection.execute(
+                    '''
+                    SELECT *
+                    FROM confirmation_intents
+                    WHERE user_id = ? AND agent_request_id = ?
+                    ''',
+                    (normalized_user, normalized_request),
+                ).fetchone()
+                if row is None:
+                    raise ConfirmationIntentNotFoundError(
+                        'confirmation intent was not found'
+                    )
+                record = self._confirmation_record_from_row(row)
+                self._connection.commit()
+                return record
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def confirmation_for_response(
+        self,
+        user_id: str,
+        response_id: str,
+    ) -> Optional['ConfirmationRecord']:
+        """Return an owner-scoped response only in its current context."""
+        normalized_user = validate_user_id(user_id)
+        normalized_response = self._required_text(
+            response_id,
+            'response_id',
+            128,
+        )
+        with self._lock:
+            self._begin()
+            try:
+                self._expire_due_locked(self._now())
+                row = self._connection.execute(
+                    '''
+                    SELECT *
+                    FROM confirmation_intents
+                    WHERE user_id = ? AND response_id = ?
+                    ''',
+                    (normalized_user, normalized_response),
+                ).fetchone()
+                record = None
+                if row is not None:
+                    session_row = self._select_session_locked(
+                        normalized_user,
+                        row['conversation_id'],
+                    )
+                    if session_row is not None:
+                        session = self._session_from_row(session_row)
+                        if (
+                            session.status == 'active'
+                            and row['session_instance_id']
+                            == session.session_instance_id
+                            and int(row['generation'])
+                            == session.generation
+                            and int(row['revision'])
+                            == session.revision
+                        ):
+                            record = self._confirmation_record_from_row(
+                                row
+                            )
+                self._connection.commit()
+                return record
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def text_turn_request_claim(
+        self,
+        user_id: str,
+        request_id: str,
+        request_fingerprint: str,
+    ) -> Optional[Tuple[
+        TextTurnRequestClaim,
+        Optional['ConfirmationRecord'],
+    ]]:
+        """Replay one exact confirmation-side text request claim."""
+        normalized_user = validate_user_id(user_id)
+        normalized_request = self._required_text(
+            request_id,
+            'request_id',
+            128,
+        )
+        normalized_fingerprint = self._required_digest(
+            request_fingerprint,
+            'request_fingerprint',
+        )
+        with self._lock:
+            self._begin()
+            try:
+                self._expire_due_locked(self._now())
+                claim = self._select_text_turn_claim_locked(
+                    normalized_user,
+                    normalized_request,
+                )
+                if claim is None:
+                    self._connection.commit()
+                    return None
+                if claim.request_fingerprint != normalized_fingerprint:
+                    raise ConfirmationIntentConflictError(
+                        'text turn request_id was reused with different '
+                        'payload'
+                    )
+                session = self._require_active(
+                    self._select_session_locked(
+                        normalized_user,
+                        claim.conversation_id,
+                    )
+                )
+                self._require_text_turn_claim_context(claim, session)
+                record = self._linked_confirmation_locked(claim)
+                self._connection.commit()
+                return claim, record
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def has_agent_request(self, user_id: str, request_id: str) -> bool:
+        """Return whether the user already owns an Agent request ID."""
+        normalized_user = validate_user_id(user_id)
+        normalized_request = self._required_text(
+            request_id,
+            'request_id',
+            128,
+        )
+        with self._lock:
+            self._begin()
+            try:
+                self._expire_due_locked(self._now())
+                exists = self._existing_request_locked(
+                    normalized_user,
+                    normalized_request,
+                ) is not None
+                self._connection.commit()
+                return exists
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def claim_text_turn_response(
+        self,
+        user_id: str,
+        conversation_id: str,
+        *,
+        request_id: str,
+        turn_id: str,
+        request_fingerprint: str,
+        outcome: str,
+        confirmation_request_id: Optional[str] = None,
+        now: float,
+    ) -> Tuple[
+        TextTurnRequestClaim,
+        Optional['ConfirmationRecord'],
+    ]:
+        """Atomically claim an ambiguous or no-pending text response."""
+        normalized_user = validate_user_id(user_id)
+        normalized_id = validate_conversation_id(conversation_id)
+        normalized_request = self._required_text(
+            request_id,
+            'request_id',
+            128,
+        )
+        normalized_turn = validate_turn_id(turn_id)
+        normalized_fingerprint = self._required_digest(
+            request_fingerprint,
+            'request_fingerprint',
+        )
+        if outcome not in {
+            'confirmation_unrecognized',
+            'confirmation_not_pending',
+        }:
+            raise ValidationError(
+                'text response claim outcome is unsupported'
+            )
+        normalized_confirmation = None
+        if confirmation_request_id is not None:
+            normalized_confirmation = self._required_text(
+                confirmation_request_id,
+                'confirmation_request_id',
+                128,
+            )
+        claimed_at = self._finite_timestamp(now, 'now')
+        with self._lock:
+            self._begin()
+            try:
+                self._expire_due_locked(claimed_at)
+                session = self._require_active(
+                    self._select_session_locked(
+                        normalized_user,
+                        normalized_id,
+                    )
+                )
+                existing = self._select_text_turn_claim_locked(
+                    normalized_user,
+                    normalized_request,
+                )
+                if existing is not None:
+                    self._require_text_turn_claim_match(
+                        existing,
+                        conversation_id=normalized_id,
+                        session=session,
+                        turn_id=normalized_turn,
+                        request_fingerprint=normalized_fingerprint,
+                        outcome=outcome,
+                        confirmation_request_id=normalized_confirmation,
+                    )
+                    record = self._linked_confirmation_locked(existing)
+                    self._connection.commit()
+                    return existing, record
+                self._require_text_turn_namespace_available_locked(
+                    normalized_user,
+                    normalized_id,
+                    session,
+                    normalized_request,
+                    normalized_turn,
+                )
+                pending_row = self._current_pending_confirmation_locked(
+                    session
+                )
+                if outcome == 'confirmation_unrecognized':
+                    if (
+                        pending_row is None
+                        or normalized_confirmation is None
+                        or pending_row['confirmation_request_id']
+                        != normalized_confirmation
+                    ):
+                        raise ConfirmationIntentConflictError(
+                            'ambiguous response no longer matches the '
+                            'pending confirmation'
+                        )
+                    record = self._confirmation_record_from_row(
+                        pending_row
+                    )
+                else:
+                    if normalized_confirmation is not None:
+                        raise ConfirmationIntentConflictError(
+                            'no-pending response cannot name a confirmation'
+                        )
+                    if pending_row is not None:
+                        raise ConfirmationIntentConflictError(
+                            'a confirmation is currently pending'
+                        )
+                    record = None
+                claim = TextTurnRequestClaim(
+                    user_id=normalized_user,
+                    request_id=normalized_request,
+                    conversation_id=normalized_id,
+                    session_instance_id=session.session_instance_id,
+                    generation=session.generation,
+                    revision=session.revision,
+                    turn_id=normalized_turn,
+                    request_fingerprint=normalized_fingerprint,
+                    outcome=outcome,
+                    confirmation_request_id=normalized_confirmation,
+                    created_at=claimed_at,
+                )
+                self._insert_text_turn_claim_locked(claim)
+                self._connection.commit()
+                return claim, record
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def invalidate_confirmation(
+        self,
+        user_id: str,
+        conversation_id: str,
+        *,
+        result_code: str,
+        now: float,
+        expected_target_binding_digest: Optional[str] = None,
+        response_id: Optional[str] = None,
+        response_turn_id: Optional[str] = None,
+        text_turn_request_fingerprint: Optional[str] = None,
+    ) -> 'ConfirmationRecord':
+        """CAS-invalidate the current ticket after target-state change."""
+        normalized_user = validate_user_id(user_id)
+        normalized_id = validate_conversation_id(conversation_id)
+        normalized_code = self._required_text(
+            result_code,
+            'result_code',
+            128,
+        )
+        if normalized_code == 'confirmation_pending':
+            raise ValidationError(
+                'invalidation result_code must be terminal'
+            )
+        invalidated_at = self._finite_timestamp(now, 'now')
+        expected_target = None
+        if expected_target_binding_digest is not None:
+            expected_target = self._required_text(
+                expected_target_binding_digest,
+                'expected_target_binding_digest',
+                128,
+            )
+        claim_values = (
+            response_id,
+            response_turn_id,
+            text_turn_request_fingerprint,
+        )
+        if any(value is not None for value in claim_values) and not all(
+            value is not None for value in claim_values
+        ):
+            raise ValidationError(
+                'target-change response claim must be complete'
+            )
+        normalized_response_id = None
+        normalized_response_turn = None
+        normalized_text_fingerprint = None
+        if response_id is not None:
+            normalized_response_id = self._required_text(
+                response_id,
+                'response_id',
+                128,
+            )
+            normalized_response_turn = validate_turn_id(
+                response_turn_id
+            )
+            normalized_text_fingerprint = self._required_digest(
+                text_turn_request_fingerprint,
+                'text_turn_request_fingerprint',
+            )
+        with self._lock:
+            self._begin()
+            try:
+                self._expire_due_locked(invalidated_at)
+                session = self._require_active(
+                    self._select_session_locked(
+                        normalized_user,
+                        normalized_id,
+                    )
+                )
+                if normalized_response_id is not None:
+                    existing_claim = self._select_text_turn_claim_locked(
+                        normalized_user,
+                        normalized_response_id,
+                    )
+                    if existing_claim is not None:
+                        self._require_text_turn_claim_match(
+                            existing_claim,
+                            conversation_id=normalized_id,
+                            session=session,
+                            turn_id=normalized_response_turn,
+                            request_fingerprint=(
+                                normalized_text_fingerprint
+                            ),
+                            outcome='confirmation_invalidated',
+                            confirmation_request_id=(
+                                existing_claim.confirmation_request_id
+                            ),
+                        )
+                        replay = self._linked_confirmation_locked(
+                            existing_claim
+                        )
+                        if (
+                            replay is None
+                            or replay.disposition != 'invalidated'
+                            or replay.result_code != normalized_code
+                        ):
+                            raise ConfirmationIntentConflictError(
+                                'target-change response claim does not '
+                                'match its terminal confirmation'
+                            )
+                        self._connection.commit()
+                        return replay
+                    self._require_text_turn_namespace_available_locked(
+                        normalized_user,
+                        normalized_id,
+                        session,
+                        normalized_response_id,
+                        normalized_response_turn,
+                    )
+                row = self._connection.execute(
+                    '''
+                    SELECT *
+                    FROM confirmation_intents
+                    WHERE user_id = ?
+                      AND conversation_id = ?
+                      AND session_instance_id = ?
+                      AND generation = ?
+                      AND state = 'pending'
+                    ''',
+                    (
+                        normalized_user,
+                        normalized_id,
+                        session.session_instance_id,
+                        session.generation,
+                    ),
+                ).fetchone()
+                if row is None:
+                    terminal = self._connection.execute(
+                        '''
+                        SELECT 1
+                        FROM confirmation_intents
+                        WHERE user_id = ?
+                          AND conversation_id = ?
+                          AND session_instance_id = ?
+                          AND generation = ?
+                        LIMIT 1
+                        ''',
+                        (
+                            normalized_user,
+                            normalized_id,
+                            session.session_instance_id,
+                            session.generation,
+                        ),
+                    ).fetchone()
+                    if terminal is not None:
+                        raise ConfirmationIntentAlreadyTerminalError(
+                            'confirmation intent is already terminal'
+                        )
+                    raise ConfirmationIntentNotFoundError(
+                        'pending confirmation intent was not found'
+                    )
+                target_digest = (
+                    row['target_binding_digest']
+                    if expected_target is None
+                    else expected_target
+                )
+                self._require_confirmation_context_locked(
+                    row,
+                    session,
+                    target_digest,
+                )
+                if invalidated_at < float(row['issued_at']):
+                    raise ConfirmationIntentConflictError(
+                        'confirmation invalidation predates proposal'
+                    )
+                record = self._confirmation_record_from_row(row)
+                invalidated = record.invalidate(
+                    normalized_code,
+                    resolved_at=invalidated_at,
+                )
+                cursor = self._write_confirmation_record_locked(
+                    row,
+                    invalidated,
+                    invalidated_at,
+                    expected_state='pending',
+                )
+                if cursor.rowcount != 1:
+                    raise ConfirmationIntentConflictError(
+                        'confirmation invalidation compare-and-swap failed'
+                    )
+                if normalized_response_id is not None:
+                    self._insert_text_turn_claim_locked(
+                        TextTurnRequestClaim(
+                            user_id=normalized_user,
+                            request_id=normalized_response_id,
+                            conversation_id=normalized_id,
+                            session_instance_id=(
+                                session.session_instance_id
+                            ),
+                            generation=session.generation,
+                            revision=session.revision,
+                            turn_id=normalized_response_turn,
+                            request_fingerprint=(
+                                normalized_text_fingerprint
+                            ),
+                            outcome='confirmation_invalidated',
+                            confirmation_request_id=(
+                                invalidated.confirmation_request_id
+                            ),
+                            created_at=invalidated_at,
+                        )
+                    )
+                self._connection.commit()
+                return invalidated
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def resolve_confirmation(
+        self,
+        user_id: str,
+        conversation_id: str,
+        *,
+        response_id: str,
+        response_fingerprint: str,
+        disposition: str,
+        now: float,
+        current_target_binding_digest: str,
+        response_turn_id: Optional[str] = None,
+        text_turn_request_fingerprint: Optional[str] = None,
+    ) -> 'ConfirmationRecord':
+        """Strict-CAS one verified response into a terminal record."""
+        normalized_user = validate_user_id(user_id)
+        normalized_id = validate_conversation_id(conversation_id)
+        normalized_response_id = self._required_text(
+            response_id,
+            'response_id',
+            128,
+        )
+        normalized_response_fingerprint = self._required_text(
+            response_fingerprint,
+            'response_fingerprint',
+            128,
+        )
+        if response_turn_id is None:
+            legacy_digest = hashlib.sha256(
+                normalized_response_id.encode('utf-8')
+            ).hexdigest()[:32]
+            normalized_response_turn = (
+                f'legacy-confirmation-response-{legacy_digest}'
+            )
+        else:
+            normalized_response_turn = validate_turn_id(
+                response_turn_id
+            )
+        normalized_text_fingerprint = None
+        if text_turn_request_fingerprint is not None:
+            if response_turn_id is None:
+                raise ValidationError(
+                    'text response claim requires response_turn_id'
+                )
+            normalized_text_fingerprint = self._required_digest(
+                text_turn_request_fingerprint,
+                'text_turn_request_fingerprint',
+            )
+        if disposition not in {'approve', 'deny', 'cancel'}:
+            raise ValidationError(
+                'confirmation disposition is unsupported'
+            )
+        resolved_at = self._finite_timestamp(now, 'now')
+        target_digest = self._required_text(
+            current_target_binding_digest,
+            'current_target_binding_digest',
+            128,
+        )
+        with self._lock:
+            self._begin()
+            try:
+                self._expire_due_locked(resolved_at)
+                session = self._require_active(
+                    self._select_session_locked(
+                        normalized_user,
+                        normalized_id,
+                    )
+                )
+                existing_claim = self._select_text_turn_claim_locked(
+                    normalized_user,
+                    normalized_response_id,
+                )
+                if existing_claim is not None:
+                    if normalized_text_fingerprint is None:
+                        raise ConfirmationIntentConflictError(
+                            'response_id is owned by a text turn claim'
+                        )
+                    self._require_text_turn_claim_match(
+                        existing_claim,
+                        conversation_id=normalized_id,
+                        session=session,
+                        turn_id=normalized_response_turn,
+                        request_fingerprint=normalized_text_fingerprint,
+                        outcome='confirmation_resolved',
+                        confirmation_request_id=(
+                            existing_claim.confirmation_request_id
+                        ),
+                    )
+                    replay = self._linked_confirmation_locked(
+                        existing_claim
+                    )
+                    if (
+                        replay is None
+                        or replay.response_id != normalized_response_id
+                        or replay.response_turn_id
+                        != normalized_response_turn
+                        or replay.response_fingerprint
+                        != normalized_response_fingerprint
+                        or replay.requested_disposition != disposition
+                    ):
+                        raise ConfirmationIntentConflictError(
+                            'confirmation response claim does not match '
+                            'its terminal record'
+                        )
+                    self._require_confirmation_context_locked(
+                        self._confirmation_row_for_record_locked(replay),
+                        session,
+                        target_digest,
+                    )
+                    self._connection.commit()
+                    return replay
+                self._require_text_turn_namespace_available_locked(
+                    normalized_user,
+                    normalized_id,
+                    session,
+                    normalized_response_id,
+                    normalized_response_turn,
+                )
+                response_owner = self._connection.execute(
+                    '''
+                    SELECT *
+                    FROM confirmation_intents
+                    WHERE user_id = ? AND response_id = ?
+                    ''',
+                    (normalized_user, normalized_response_id),
+                ).fetchone()
+                if response_owner is not None:
+                    self._require_confirmation_context_locked(
+                        response_owner,
+                        session,
+                        target_digest,
+                    )
+                    replay = self._confirmation_record_from_row(
+                        response_owner
+                    )
+                    if (
+                        replay.response_fingerprint
+                        != normalized_response_fingerprint
+                        or replay.response_turn_id
+                        != normalized_response_turn
+                        or replay.requested_disposition != disposition
+                    ):
+                        raise ConfirmationIntentConflictError(
+                            'confirmation response_id was reused with '
+                            'different payload'
+                        )
+                    if normalized_text_fingerprint is not None:
+                        self._insert_text_turn_claim_locked(
+                            TextTurnRequestClaim(
+                                user_id=normalized_user,
+                                request_id=normalized_response_id,
+                                conversation_id=normalized_id,
+                                session_instance_id=(
+                                    session.session_instance_id
+                                ),
+                                generation=session.generation,
+                                revision=session.revision,
+                                turn_id=normalized_response_turn,
+                                request_fingerprint=(
+                                    normalized_text_fingerprint
+                                ),
+                                outcome='confirmation_resolved',
+                                confirmation_request_id=(
+                                    replay.confirmation_request_id
+                                ),
+                                created_at=resolved_at,
+                            )
+                        )
+                    self._connection.commit()
+                    return replay
+                row = self._connection.execute(
+                    '''
+                    SELECT *
+                    FROM confirmation_intents
+                    WHERE user_id = ?
+                      AND conversation_id = ?
+                      AND session_instance_id = ?
+                      AND generation = ?
+                      AND state = 'pending'
+                    ''',
+                    (
+                        normalized_user,
+                        normalized_id,
+                        session.session_instance_id,
+                        session.generation,
+                    ),
+                ).fetchone()
+                if row is None:
+                    terminal = self._connection.execute(
+                        '''
+                        SELECT *
+                        FROM confirmation_intents
+                        WHERE user_id = ?
+                          AND conversation_id = ?
+                          AND session_instance_id = ?
+                          AND generation = ?
+                        ORDER BY revision DESC, updated_at DESC
+                        LIMIT 1
+                        ''',
+                        (
+                            normalized_user,
+                            normalized_id,
+                            session.session_instance_id,
+                            session.generation,
+                        ),
+                    ).fetchone()
+                    if terminal is not None:
+                        raise ConfirmationIntentAlreadyTerminalError(
+                            'confirmation intent is already terminal'
+                        )
+                    raise ConfirmationIntentNotFoundError(
+                        'pending confirmation intent was not found'
+                    )
+                self._require_confirmation_context_locked(
+                    row,
+                    session,
+                    target_digest,
+                )
+                record = self._confirmation_record_from_row(row)
+                resolution = self._verified_confirmation_resolution(
+                    record,
+                    user_id=normalized_user,
+                    conversation_id=normalized_id,
+                    session_instance_id=session.session_instance_id,
+                    generation=session.generation,
+                    response_id=normalized_response_id,
+                    response_turn_id=normalized_response_turn,
+                    response_fingerprint=(
+                        normalized_response_fingerprint
+                    ),
+                    disposition=disposition,
+                )
+                terminal_record = record.resolve(
+                    resolution,
+                    resolved_at=resolved_at,
+                )
+                if terminal_record.disposition == 'pending':
+                    raise ConfirmationIntentConflictError(
+                        'confirmation response did not resolve intent'
+                    )
+                cursor = self._write_confirmation_record_locked(
+                    row,
+                    terminal_record,
+                    resolved_at,
+                    expected_state='pending',
+                )
+                if cursor.rowcount != 1:
+                    raise ConfirmationIntentConflictError(
+                        'confirmation compare-and-swap failed'
+                    )
+                if normalized_text_fingerprint is not None:
+                    self._insert_text_turn_claim_locked(
+                        TextTurnRequestClaim(
+                            user_id=normalized_user,
+                            request_id=normalized_response_id,
+                            conversation_id=normalized_id,
+                            session_instance_id=(
+                                session.session_instance_id
+                            ),
+                            generation=session.generation,
+                            revision=session.revision,
+                            turn_id=normalized_response_turn,
+                            request_fingerprint=(
+                                normalized_text_fingerprint
+                            ),
+                            outcome='confirmation_resolved',
+                            confirmation_request_id=(
+                                terminal_record.confirmation_request_id
+                            ),
+                            created_at=resolved_at,
+                        )
+                    )
+                self._connection.commit()
+                return terminal_record
+            except Exception:
+                self._connection.rollback()
+                raise
 
     def list_turns(
         self,
@@ -1018,6 +2215,12 @@ class SQLiteConversationStore:
                     normalized_id,
                 )
                 session = self._require_active(row)
+                self._invalidate_pending_confirmations_locked(
+                    normalized_user,
+                    normalized_id,
+                    'confirmation_conversation_changed',
+                    now,
+                )
                 self._connection.execute(
                     '''
                     DELETE FROM conversation_turns
@@ -1091,6 +2294,12 @@ class SQLiteConversationStore:
                     raise ConversationStateError(
                         'conversation has expired'
                     )
+                self._invalidate_pending_confirmations_locked(
+                    normalized_user,
+                    normalized_id,
+                    'confirmation_session_closed',
+                    now,
+                )
                 self._connection.execute(
                     '''
                     DELETE FROM conversation_turns
@@ -1156,6 +2365,868 @@ class SQLiteConversationStore:
             except Exception:
                 self._connection.rollback()
                 raise
+
+    @staticmethod
+    def _pending_confirmation_record(
+        draft: Optional['ConfirmationDraft'],
+    ) -> Optional['ConfirmationRecord']:
+        if draft is None:
+            return None
+        from malbut_agent_server.text_confirmation import (
+            ConfirmationDraft,
+            ConfirmationRecord,
+        )
+
+        if not isinstance(draft, ConfirmationDraft):
+            raise TypeError(
+                'confirmation_draft must be a ConfirmationDraft'
+            )
+        return ConfirmationRecord.pending(draft)
+
+    @staticmethod
+    def _verified_confirmation_resolution(
+        record: 'ConfirmationRecord',
+        *,
+        user_id: str,
+        conversation_id: str,
+        session_instance_id: str,
+        generation: int,
+        response_id: str,
+        response_turn_id: str,
+        response_fingerprint: str,
+        disposition: str,
+    ) -> 'ConfirmationResolution':
+        from malbut_agent_server.text_confirmation import (
+            ConfirmationResolution,
+        )
+
+        return ConfirmationResolution.from_verified_response(
+            record,
+            caller_user_id=user_id,
+            caller_conversation_id=conversation_id,
+            caller_session_instance_id=session_instance_id,
+            caller_generation=generation,
+            response_id=response_id,
+            response_turn_id=response_turn_id,
+            response_fingerprint=response_fingerprint,
+            requested_disposition=disposition,
+        )
+
+    def _insert_confirmation_locked(
+        self,
+        record: 'ConfirmationRecord',
+        token: BeginTurnToken,
+        response: Dict[str, Any],
+        now: float,
+    ) -> None:
+        if record.disposition != 'pending':
+            raise ConfirmationIntentConflictError(
+                'new confirmation intent must be pending'
+            )
+        expected = (
+            record.user_id == token.user_id
+            and record.conversation_id == token.conversation_id
+            and record.session_instance_id
+            == token.session_instance_id
+            and record.generation == token.generation
+            and record.revision == token.revision + 1
+            and record.ordinal == token.ordinal
+            and record.turn_id == token.turn_id
+            and record.request_id == token.request_id
+        )
+        if not expected:
+            raise ConversationChangedError(
+                'confirmation draft does not match completed turn'
+            )
+        if float(record.issued_at) > now:
+            raise ConfirmationIntentConflictError(
+                'confirmation intent was issued in the future'
+            )
+        if float(record.expires_at) <= now:
+            raise ConfirmationIntentConflictError(
+                'confirmation intent has expired'
+            )
+        self._validate_confirmation_response(record, response)
+        values = self._confirmation_storage_values(record, now)
+        try:
+            self._connection.execute(
+                '''
+                INSERT INTO confirmation_intents (
+                    schema_version,
+                    confirmation_request_id,
+                    user_id,
+                    conversation_id,
+                    session_instance_id,
+                    generation,
+                    revision,
+                    ordinal,
+                    turn_id,
+                    agent_request_id,
+                    decision_id,
+                    tool_name,
+                    arguments_digest,
+                    target_binding_digest,
+                    proposal_fingerprint,
+                    issued_at,
+                    expires_at,
+                    state,
+                    disposition,
+                    requested_disposition,
+                    result_code,
+                    response_id,
+                    response_turn_id,
+                    response_fingerprint,
+                    resolved_at,
+                    record_json,
+                    created_at,
+                    updated_at,
+                    authority_kind,
+                    execution_authorized,
+                    consume_once,
+                    tool_call_id,
+                    mission_id
+                ) VALUES (
+                    :schema_version,
+                    :confirmation_request_id,
+                    :user_id,
+                    :conversation_id,
+                    :session_instance_id,
+                    :generation,
+                    :revision,
+                    :ordinal,
+                    :turn_id,
+                    :agent_request_id,
+                    :decision_id,
+                    :tool_name,
+                    :arguments_digest,
+                    :target_binding_digest,
+                    :proposal_fingerprint,
+                    :issued_at,
+                    :expires_at,
+                    :state,
+                    :disposition,
+                    :requested_disposition,
+                    :result_code,
+                    :response_id,
+                    :response_turn_id,
+                    :response_fingerprint,
+                    :resolved_at,
+                    :record_json,
+                    :created_at,
+                    :updated_at,
+                    'none', 0, 0, NULL, NULL
+                )
+                ''',
+                values,
+            )
+        except sqlite3.IntegrityError as error:
+            raise ConfirmationIntentConflictError(
+                'confirmation intent conflicts with durable state'
+            ) from error
+
+    def _select_text_turn_claim_locked(
+        self,
+        user_id: str,
+        request_id: str,
+    ) -> Optional[TextTurnRequestClaim]:
+        row = self._connection.execute(
+            '''
+            SELECT *
+            FROM text_turn_request_claims
+            WHERE user_id = ? AND request_id = ?
+            ''',
+            (user_id, request_id),
+        ).fetchone()
+        return (
+            self._text_turn_claim_from_row(row)
+            if row is not None
+            else None
+        )
+
+    def _text_turn_claim_from_row(
+        self,
+        row: sqlite3.Row,
+    ) -> TextTurnRequestClaim:
+        try:
+            if int(row['schema_version']) != TEXT_TURN_CLAIM_SCHEMA_VERSION:
+                raise ValueError('unsupported claim schema')
+            claim = TextTurnRequestClaim(
+                user_id=validate_user_id(row['user_id']),
+                request_id=self._required_text(
+                    row['request_id'],
+                    'request_id',
+                    128,
+                ),
+                conversation_id=validate_conversation_id(
+                    row['conversation_id']
+                ),
+                session_instance_id=self._required_text(
+                    row['session_instance_id'],
+                    'session_instance_id',
+                    128,
+                ),
+                generation=self._bounded_integer(
+                    row['generation'],
+                    'generation',
+                    1,
+                    2 ** 63 - 1,
+                ),
+                revision=self._bounded_integer(
+                    row['revision'],
+                    'revision',
+                    0,
+                    2 ** 63 - 1,
+                ),
+                turn_id=validate_turn_id(row['turn_id']),
+                request_fingerprint=self._required_digest(
+                    row['request_fingerprint'],
+                    'request_fingerprint',
+                ),
+                outcome=self._required_text(
+                    row['outcome'],
+                    'outcome',
+                    64,
+                ),
+                confirmation_request_id=(
+                    None
+                    if row['confirmation_request_id'] is None
+                    else self._required_text(
+                        row['confirmation_request_id'],
+                        'confirmation_request_id',
+                        128,
+                    )
+                ),
+                created_at=self._finite_timestamp(
+                    row['created_at'],
+                    'created_at',
+                ),
+            )
+        except Exception as error:
+            raise ConfirmationSchemaError(
+                'stored text turn claim cannot be trusted'
+            ) from error
+        if (
+            claim.outcome not in TEXT_TURN_CLAIM_OUTCOMES
+            or (
+                claim.outcome == 'confirmation_not_pending'
+                and claim.confirmation_request_id is not None
+            )
+            or (
+                claim.outcome != 'confirmation_not_pending'
+                and claim.confirmation_request_id is None
+            )
+            or row['authority_kind'] != 'none'
+            or int(row['execution_authorized']) != 0
+            or int(row['consume_once']) != 0
+            or row['tool_call_id'] is not None
+            or row['mission_id'] is not None
+        ):
+            raise ConfirmationSchemaError(
+                'stored text turn claim unexpectedly carries authority'
+            )
+        return claim
+
+    def _insert_text_turn_claim_locked(
+        self,
+        claim: TextTurnRequestClaim,
+    ) -> None:
+        if claim.outcome not in TEXT_TURN_CLAIM_OUTCOMES:
+            raise ValidationError('text turn claim outcome is unsupported')
+        try:
+            self._connection.execute(
+                '''
+                INSERT INTO text_turn_request_claims (
+                    schema_version,
+                    user_id,
+                    request_id,
+                    conversation_id,
+                    session_instance_id,
+                    generation,
+                    revision,
+                    turn_id,
+                    request_fingerprint,
+                    outcome,
+                    confirmation_request_id,
+                    created_at,
+                    authority_kind,
+                    execution_authorized,
+                    consume_once,
+                    tool_call_id,
+                    mission_id
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    'none', 0, 0, NULL, NULL
+                )
+                ''',
+                (
+                    TEXT_TURN_CLAIM_SCHEMA_VERSION,
+                    claim.user_id,
+                    claim.request_id,
+                    claim.conversation_id,
+                    claim.session_instance_id,
+                    claim.generation,
+                    claim.revision,
+                    claim.turn_id,
+                    claim.request_fingerprint,
+                    claim.outcome,
+                    claim.confirmation_request_id,
+                    claim.created_at,
+                ),
+            )
+        except sqlite3.IntegrityError as error:
+            raise ConfirmationIntentConflictError(
+                'text turn request claim conflicts with durable state'
+            ) from error
+
+    def _require_text_turn_namespace_available_locked(
+        self,
+        user_id: str,
+        conversation_id: str,
+        session: ConversationSession,
+        request_id: str,
+        turn_id: str,
+    ) -> None:
+        existing_claim = self._select_text_turn_claim_locked(
+            user_id,
+            request_id,
+        )
+        if existing_claim is not None:
+            raise ConfirmationIntentConflictError(
+                'text response request_id is already claimed'
+            )
+        if self._existing_request_locked(user_id, request_id) is not None:
+            raise ConfirmationIntentConflictError(
+                'request_id is already owned by an agent turn'
+            )
+        turn_owner = self._connection.execute(
+            '''
+            SELECT 1
+            FROM conversation_turns
+            WHERE user_id = ?
+              AND conversation_id = ?
+              AND session_instance_id = ?
+              AND generation = ?
+              AND turn_id = ?
+            LIMIT 1
+            ''',
+            (
+                user_id,
+                conversation_id,
+                session.session_instance_id,
+                session.generation,
+                turn_id,
+            ),
+        ).fetchone()
+        if turn_owner is not None:
+            raise ConfirmationIntentConflictError(
+                'turn_id is already owned by an agent turn'
+            )
+
+    @staticmethod
+    def _require_text_turn_claim_context(
+        claim: TextTurnRequestClaim,
+        session: ConversationSession,
+    ) -> None:
+        if (
+            claim.user_id != session.user_id
+            or claim.conversation_id != session.conversation_id
+            or claim.session_instance_id != session.session_instance_id
+            or claim.generation != session.generation
+            or claim.revision > session.revision
+        ):
+            raise ConversationChangedError(
+                'text turn response context changed'
+            )
+
+    def _require_text_turn_claim_match(
+        self,
+        claim: TextTurnRequestClaim,
+        *,
+        conversation_id: str,
+        session: ConversationSession,
+        turn_id: str,
+        request_fingerprint: str,
+        outcome: str,
+        confirmation_request_id: Optional[str],
+    ) -> None:
+        self._require_text_turn_claim_context(claim, session)
+        if (
+            claim.conversation_id != conversation_id
+            or claim.turn_id != turn_id
+            or claim.request_fingerprint != request_fingerprint
+            or claim.outcome != outcome
+            or claim.confirmation_request_id != confirmation_request_id
+        ):
+            raise ConfirmationIntentConflictError(
+                'text turn request claim was reused with different payload'
+            )
+
+    def _linked_confirmation_locked(
+        self,
+        claim: TextTurnRequestClaim,
+    ) -> Optional['ConfirmationRecord']:
+        if claim.confirmation_request_id is None:
+            return None
+        row = self._connection.execute(
+            '''
+            SELECT *
+            FROM confirmation_intents
+            WHERE confirmation_request_id = ?
+            ''',
+            (claim.confirmation_request_id,),
+        ).fetchone()
+        if row is None:
+            raise ConfirmationSchemaError(
+                'text turn claim lost its confirmation record'
+            )
+        record = self._confirmation_record_from_row(row)
+        if (
+            record.user_id != claim.user_id
+            or record.conversation_id != claim.conversation_id
+            or record.session_instance_id != claim.session_instance_id
+            or record.generation != claim.generation
+            or record.revision != claim.revision
+        ):
+            raise ConfirmationSchemaError(
+                'text turn claim confirmation binding is invalid'
+            )
+        return record
+
+    def _confirmation_row_for_record_locked(
+        self,
+        record: 'ConfirmationRecord',
+    ) -> sqlite3.Row:
+        row = self._connection.execute(
+            '''
+            SELECT *
+            FROM confirmation_intents
+            WHERE confirmation_request_id = ?
+            ''',
+            (record.confirmation_request_id,),
+        ).fetchone()
+        if row is None or self._confirmation_record_from_row(row) != record:
+            raise ConfirmationSchemaError(
+                'confirmation record is not durably bound'
+            )
+        return row
+
+    def _current_pending_confirmation_locked(
+        self,
+        session: ConversationSession,
+    ) -> Optional[sqlite3.Row]:
+        return self._connection.execute(
+            '''
+            SELECT *
+            FROM confirmation_intents
+            WHERE user_id = ?
+              AND conversation_id = ?
+              AND session_instance_id = ?
+              AND generation = ?
+              AND revision = ?
+              AND state = 'pending'
+            ''',
+            (
+                session.user_id,
+                session.conversation_id,
+                session.session_instance_id,
+                session.generation,
+                session.revision,
+            ),
+        ).fetchone()
+
+    @staticmethod
+    def _validate_confirmation_response(
+        record: 'ConfirmationRecord',
+        response: Dict[str, Any],
+    ) -> None:
+        try:
+            if response['schema_version'] != 3:
+                raise ValueError(
+                    'confirmation source response lacks provenance'
+                )
+            safety_binding = response['safety_binding']
+            if (
+                type(safety_binding) is not dict
+                or frozenset(safety_binding) != frozenset({
+                    'state_evidence_id',
+                    'state_observed_at',
+                    'safety_policy_revision',
+                })
+            ):
+                raise ValueError('confirmation safety binding is invalid')
+            if (
+                type(safety_binding['state_evidence_id']) is not str
+                or type(safety_binding['state_observed_at'])
+                not in {int, float}
+                or type(safety_binding['safety_policy_revision']) is not str
+                or not math.isfinite(
+                    float(safety_binding['state_observed_at'])
+                )
+            ):
+                raise ValueError('confirmation safety binding is invalid')
+            public = response['public']
+            conversation = public['conversation']
+            decision = public['decision']
+            safety = public['safety']
+            execution = public['execution']
+            arguments = decision['arguments']
+            arguments_json = json.dumps(
+                arguments,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(',', ':'),
+                allow_nan=False,
+            )
+            arguments_digest = hashlib.sha256(
+                arguments_json.encode('utf-8')
+            ).hexdigest()
+            session_instance = conversation.get(
+                'session_instance_id',
+                record.session_instance_id,
+            )
+            matches = (
+                isinstance(public, dict)
+                and public['request_id'] == record.request_id
+                and conversation['conversation_id']
+                == record.conversation_id
+                and session_instance == record.session_instance_id
+                and conversation['turn_id'] == record.turn_id
+                and conversation['generation'] == record.generation
+                and conversation['revision'] == record.revision
+                and conversation['ordinal'] == record.ordinal
+                and decision['type'] == 'tool_call'
+                and decision['tool_name'] == record.tool_name
+                and arguments_digest == record.arguments_digest
+                and safety['allowed'] is True
+                and execution['decision_id'] == record.decision_id
+                and float(execution['issued_at'])
+                == float(record.issued_at)
+                and math.isfinite(float(execution['expires_at']))
+                and float(execution['expires_at'])
+                > float(record.issued_at)
+                and safety_binding['state_evidence_id']
+                == record.state_evidence_id
+                and float(safety_binding['state_observed_at'])
+                == float(record.state_observed_at)
+                and safety_binding['safety_policy_revision']
+                == record.safety_policy_revision
+                and execution['proposal_authorized'] is True
+                and execution['state_trusted'] is True
+                and execution['authorized'] is False
+                and execution['consume_once'] is False
+                and execution['tool_call_id'] is None
+            )
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            OverflowError,
+        ) as error:
+            raise ConfirmationIntentConflictError(
+                'confirmation source response is invalid'
+            ) from error
+        if not matches:
+            raise ConfirmationIntentConflictError(
+                'confirmation draft does not match source response'
+            )
+
+    @staticmethod
+    def _confirmation_state(record: 'ConfirmationRecord') -> str:
+        if record.disposition == 'pending':
+            return 'pending'
+        if record.disposition == 'invalidated':
+            return 'invalidated'
+        return 'resolved'
+
+    def _confirmation_storage_values(
+        self,
+        record: 'ConfirmationRecord',
+        updated_at: float,
+        *,
+        created_at: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        private_value = record.to_private_dict()
+        if not isinstance(private_value, dict):
+            raise ConfirmationSchemaError(
+                'confirmation private record must be an object'
+            )
+        try:
+            record_json = json.dumps(
+                private_value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(',', ':'),
+                allow_nan=False,
+            )
+        except (TypeError, ValueError) as error:
+            raise ConfirmationSchemaError(
+                'confirmation record is not JSON-safe'
+            ) from error
+        if len(record_json) > MAX_CONFIRMATION_JSON_LENGTH:
+            raise ValidationError('confirmation record is too large')
+        return {
+            'schema_version': CONFIRMATION_STORAGE_SCHEMA_VERSION,
+            'confirmation_request_id': record.confirmation_request_id,
+            'user_id': record.user_id,
+            'conversation_id': record.conversation_id,
+            'session_instance_id': record.session_instance_id,
+            'generation': record.generation,
+            'revision': record.revision,
+            'ordinal': record.ordinal,
+            'turn_id': record.turn_id,
+            'agent_request_id': record.request_id,
+            'decision_id': record.decision_id,
+            'tool_name': record.tool_name,
+            'arguments_digest': record.arguments_digest,
+            'target_binding_digest': record.target_binding_digest,
+            'proposal_fingerprint': record.proposal_fingerprint,
+            'issued_at': record.issued_at,
+            'expires_at': record.expires_at,
+            'state': self._confirmation_state(record),
+            'disposition': record.disposition,
+            'requested_disposition': record.requested_disposition,
+            'result_code': record.result_code,
+            'response_id': record.response_id,
+            'response_turn_id': record.response_turn_id,
+            'response_fingerprint': record.response_fingerprint,
+            'resolved_at': record.resolved_at,
+            'record_json': record_json,
+            'created_at': (
+                updated_at if created_at is None else created_at
+            ),
+            'updated_at': updated_at,
+        }
+
+    def _confirmation_record_from_row(
+        self,
+        row: sqlite3.Row,
+    ) -> 'ConfirmationRecord':
+        from malbut_agent_server.text_confirmation import (
+            ConfirmationRecord,
+        )
+
+        stored_json = row['record_json']
+        if (
+            not isinstance(stored_json, str)
+            or len(stored_json) > MAX_CONFIRMATION_JSON_LENGTH
+        ):
+            raise ConfirmationSchemaError(
+                'stored confirmation record is invalid'
+            )
+        try:
+            private_value = json.loads(stored_json)
+            record = ConfirmationRecord.from_private_dict(
+                private_value
+            )
+        except Exception as error:
+            raise ConfirmationSchemaError(
+                'stored confirmation record cannot be trusted'
+            ) from error
+        expected = self._confirmation_storage_values(
+            record,
+            float(row['updated_at']),
+            created_at=float(row['created_at']),
+        )
+        indexed_fields = (
+            'confirmation_request_id',
+            'user_id',
+            'conversation_id',
+            'session_instance_id',
+            'generation',
+            'revision',
+            'ordinal',
+            'turn_id',
+            'agent_request_id',
+            'decision_id',
+            'tool_name',
+            'arguments_digest',
+            'target_binding_digest',
+            'proposal_fingerprint',
+            'issued_at',
+            'expires_at',
+            'state',
+            'disposition',
+            'requested_disposition',
+            'result_code',
+            'response_id',
+            'response_turn_id',
+            'response_fingerprint',
+            'resolved_at',
+            'record_json',
+        )
+        if any(row[name] != expected[name] for name in indexed_fields):
+            raise ConfirmationSchemaError(
+                'stored confirmation indexes do not match record'
+            )
+        if (
+            row['authority_kind'] != 'none'
+            or int(row['execution_authorized']) != 0
+            or int(row['consume_once']) != 0
+            or row['tool_call_id'] is not None
+            or row['mission_id'] is not None
+            or record.execution_authorized is not False
+            or record.consume_once is not False
+        ):
+            raise ConfirmationSchemaError(
+                'stored confirmation unexpectedly carries authority'
+            )
+        return record
+
+    def _write_confirmation_record_locked(
+        self,
+        old_row: sqlite3.Row,
+        record: 'ConfirmationRecord',
+        updated_at: float,
+        *,
+        expected_state: str,
+    ) -> sqlite3.Cursor:
+        values = self._confirmation_storage_values(
+            record,
+            updated_at,
+            created_at=float(old_row['created_at']),
+        )
+        values.update({
+            'expected_state': expected_state,
+            'old_record_json': old_row['record_json'],
+            'old_updated_at': old_row['updated_at'],
+        })
+        try:
+            return self._connection.execute(
+                '''
+                UPDATE confirmation_intents
+                SET state = :state,
+                    disposition = :disposition,
+                    requested_disposition = :requested_disposition,
+                    result_code = :result_code,
+                    response_id = :response_id,
+                    response_turn_id = :response_turn_id,
+                    response_fingerprint = :response_fingerprint,
+                    resolved_at = :resolved_at,
+                    record_json = :record_json,
+                    updated_at = :updated_at
+                WHERE confirmation_request_id =
+                          :confirmation_request_id
+                  AND user_id = :user_id
+                  AND conversation_id = :conversation_id
+                  AND session_instance_id = :session_instance_id
+                  AND generation = :generation
+                  AND revision = :revision
+                  AND proposal_fingerprint = :proposal_fingerprint
+                  AND target_binding_digest = :target_binding_digest
+                  AND state = :expected_state
+                  AND record_json = :old_record_json
+                  AND updated_at = :old_updated_at
+                ''',
+                values,
+            )
+        except sqlite3.IntegrityError as error:
+            raise ConfirmationIntentConflictError(
+                'confirmation terminal state conflicts with durable state'
+            ) from error
+
+    def _invalidate_confirmation_row_locked(
+        self,
+        row: sqlite3.Row,
+        result_code: str,
+        now: float,
+    ) -> None:
+        record = self._confirmation_record_from_row(row)
+        invalidated = record.invalidate(
+            result_code,
+            resolved_at=now,
+        )
+        cursor = self._write_confirmation_record_locked(
+            row,
+            invalidated,
+            now,
+            expected_state='pending',
+        )
+        if cursor.rowcount != 1:
+            raise ConfirmationIntentConflictError(
+                'confirmation invalidation compare-and-swap failed'
+            )
+
+    def _invalidate_pending_confirmations_locked(
+        self,
+        user_id: str,
+        conversation_id: str,
+        result_code: str,
+        now: float,
+    ) -> None:
+        rows = self._connection.execute(
+            '''
+            SELECT *
+            FROM confirmation_intents
+            WHERE user_id = ?
+              AND conversation_id = ?
+              AND state = 'pending'
+            ''',
+            (user_id, conversation_id),
+        ).fetchall()
+        for row in rows:
+            self._invalidate_confirmation_row_locked(
+                row,
+                result_code,
+                now,
+            )
+
+    def _expire_due_confirmations_locked(self, now: float) -> None:
+        rows = self._connection.execute(
+            '''
+            SELECT *
+            FROM confirmation_intents
+            WHERE state = 'pending' AND expires_at <= ?
+            ORDER BY expires_at, confirmation_request_id
+            ''',
+            (now,),
+        ).fetchall()
+        for row in rows:
+            record = self._confirmation_record_from_row(row)
+            expired = record.expire(resolved_at=now)
+            cursor = self._write_confirmation_record_locked(
+                row,
+                expired,
+                now,
+                expected_state='pending',
+            )
+            if cursor.rowcount != 1:
+                raise ConfirmationIntentConflictError(
+                    'confirmation expiry compare-and-swap failed'
+                )
+
+    @staticmethod
+    def _require_confirmation_context_locked(
+        row: sqlite3.Row,
+        session: ConversationSession,
+        target_binding_digest: str,
+    ) -> None:
+        if (
+            row['user_id'] != session.user_id
+            or row['conversation_id'] != session.conversation_id
+            or row['session_instance_id']
+            != session.session_instance_id
+            or int(row['generation']) != session.generation
+            or int(row['revision']) != session.revision
+        ):
+            raise ConversationChangedError(
+                'confirmation conversation context changed'
+            )
+        if row['target_binding_digest'] != target_binding_digest:
+            raise ConfirmationIntentConflictError(
+                'confirmation target binding changed'
+            )
+
+    @staticmethod
+    def _finite_timestamp(value: Any, name: str) -> float:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+        ):
+            raise ValidationError(f'{name} must be a timestamp')
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValidationError(f'{name} must be finite')
+        return result
 
     def _reuse_existing_locked(
         self,
@@ -1604,6 +3675,12 @@ class SQLiteConversationStore:
             (now,),
         ).fetchall()
         for row in due_rows:
+            self._invalidate_pending_confirmations_locked(
+                row['user_id'],
+                row['conversation_id'],
+                'confirmation_session_expired',
+                now,
+            )
             self._connection.execute(
                 '''
                 DELETE FROM conversation_turns
@@ -1642,6 +3719,7 @@ class SQLiteConversationStore:
             ''',
             (now, now),
         )
+        self._expire_due_confirmations_locked(now)
         return cursor.rowcount
 
     def _existing_request_locked(
@@ -1868,6 +3946,22 @@ class SQLiteConversationStore:
         if len(result) > maximum:
             raise ValidationError(
                 f'{name} must be at most {maximum} characters'
+            )
+        return result
+
+    @staticmethod
+    def _required_digest(value: Any, name: str) -> str:
+        result = SQLiteConversationStore._required_text(
+            value,
+            name,
+            64,
+        )
+        if len(result) != 64 or any(
+            character not in '0123456789abcdef'
+            for character in result
+        ):
+            raise ValidationError(
+                f'{name} must be a lowercase SHA-256 digest'
             )
         return result
 

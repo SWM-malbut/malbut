@@ -27,6 +27,8 @@ setup(
                 'docs/jira/SWM25-71_USER_CONTEXT_INTEGRATION.md',
                 'docs/jira/SWM25-72_LLM_PROVIDER_INTEGRATION.md',
                 'docs/jira/SWM25-73_AGENT_TOOL_GATEWAY.md',
+                'docs/jira/SWM25-128_CLEAN_BASELINE.md',
+                'docs/jira/SWM25-131_TEXT_CONFIRMATION_RAI.md',
             ],
         ),
         (

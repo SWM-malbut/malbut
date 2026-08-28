@@ -3,11 +3,12 @@
 import copy
 import hashlib
 import json
+import math
 import threading
 import time
 import uuid
-from dataclasses import dataclass
-from typing import Any, Dict, List, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Sequence
 
 from malbut_agent_server.conversation import (
     BeginTurnToken,
@@ -24,6 +25,7 @@ from malbut_agent_server.providers.base import (
     AgentProvider,
     ProviderError,
 )
+from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy, SafetyResult
 from malbut_agent_server.schemas import (
     AgentDecision,
@@ -31,6 +33,7 @@ from malbut_agent_server.schemas import (
     ContextMetrics,
     ProviderResult,
     ProviderUsage,
+    RobotState,
     ValidationError,
 )
 
@@ -63,13 +66,24 @@ class OrchestrationResult:
     expires_at: float
     state_trusted: bool
     memory_revision: int
+    state_evidence_id: str | None = None
+    state_observed_at: float | None = None
+    safety_policy_revision: str | None = None
+    clock: Callable[[], float] = field(
+        default=time.time,
+        repr=False,
+        compare=False,
+    )
 
     def to_dict(
         self,
         include_raw_decision: bool = False,
     ) -> Dict[str, Any]:
         """Return the stable HTTP response contract."""
-        decision_is_fresh = time.time() < self.expires_at
+        now = float(self.clock())
+        if not math.isfinite(now):
+            raise RuntimeError('orchestration clock is invalid')
+        decision_is_fresh = now < self.expires_at
         proposal_authorized = (
             self.state_trusted
             and self.safety.allowed
@@ -112,11 +126,35 @@ class OrchestrationResult:
 
     def to_persisted_dict(self) -> Dict[str, Any]:
         """Persist the final safe response and required metadata."""
-        return {
+        value = {
             'schema_version': 2,
             'public': self.to_dict(include_raw_decision=False),
             'memory_revision': self.memory_revision,
         }
+        provenance = (
+            self.state_evidence_id,
+            self.state_observed_at,
+            self.safety_policy_revision,
+        )
+        if all(item is None for item in provenance):
+            return value
+        if any(item is None for item in provenance):
+            raise RuntimeError('safety provenance is incomplete')
+        if (
+            not math.isfinite(float(self.issued_at))
+            or not math.isfinite(float(self.expires_at))
+            or not math.isfinite(float(self.state_observed_at))
+            or self.expires_at <= self.issued_at
+            or self.state_observed_at > self.issued_at
+        ):
+            raise RuntimeError('safety provenance timing is invalid')
+        value['schema_version'] = 3
+        value['safety_binding'] = {
+            'state_evidence_id': self.state_evidence_id,
+            'state_observed_at': self.state_observed_at,
+            'safety_policy_revision': self.safety_policy_revision,
+        }
+        return value
 
     @classmethod
     def from_persisted_dict(
@@ -125,8 +163,47 @@ class OrchestrationResult:
     ) -> 'OrchestrationResult':
         """Reconstruct an idempotent response without another model call."""
         try:
-            if value.get('schema_version') not in {1, 2}:
+            schema_version = value.get('schema_version')
+            if schema_version not in {1, 2, 3}:
                 raise ValueError('unsupported persisted response schema')
+            state_evidence_id = None
+            state_observed_at = None
+            safety_policy_revision = None
+            if schema_version == 3:
+                if frozenset(value) != frozenset({
+                    'schema_version',
+                    'public',
+                    'memory_revision',
+                    'safety_binding',
+                }):
+                    raise ValueError('invalid persisted response shape')
+                binding = value['safety_binding']
+                if type(binding) is not dict or frozenset(binding) != (
+                    frozenset({
+                        'state_evidence_id',
+                        'state_observed_at',
+                        'safety_policy_revision',
+                    })
+                ):
+                    raise ValueError('invalid safety binding shape')
+                state_evidence_id = cls._private_identifier(
+                    binding['state_evidence_id'],
+                    'state_evidence_id',
+                )
+                if type(binding['state_observed_at']) not in {int, float}:
+                    raise ValueError('invalid state_observed_at')
+                state_observed_at = float(
+                    binding['state_observed_at']
+                )
+                if (
+                    not math.isfinite(state_observed_at)
+                    or state_observed_at < 0
+                ):
+                    raise ValueError('invalid state_observed_at')
+                safety_policy_revision = cls._private_identifier(
+                    binding['safety_policy_revision'],
+                    'safety_policy_revision',
+                )
             public = value['public']
             conversation = public['conversation']
             decision = cls._decision_from_dict(public['decision'])
@@ -135,6 +212,15 @@ class OrchestrationResult:
             usage_value = provider_value['usage']
             execution = public['execution']
             memory = public['memory']
+            issued_at = float(execution['issued_at'])
+            expires_at = float(execution['expires_at'])
+            if schema_version == 3 and (
+                not math.isfinite(issued_at)
+                or not math.isfinite(expires_at)
+                or expires_at <= issued_at
+                or state_observed_at > issued_at
+            ):
+                raise ValueError('invalid persisted execution timing')
             provider_result = ProviderResult(
                 decision=decision,
                 provider=str(provider_value['provider']),
@@ -183,10 +269,13 @@ class OrchestrationResult:
                     for memory_id in memory['ids']
                 ],
                 decision_id=str(execution['decision_id']),
-                issued_at=float(execution['issued_at']),
-                expires_at=float(execution['expires_at']),
+                issued_at=issued_at,
+                expires_at=expires_at,
                 state_trusted=bool(execution['state_trusted']),
                 memory_revision=int(value['memory_revision']),
+                state_evidence_id=state_evidence_id,
+                state_observed_at=state_observed_at,
+                safety_policy_revision=safety_policy_revision,
             )
         except (
             KeyError,
@@ -211,6 +300,20 @@ class OrchestrationResult:
         decision.validate()
         return decision
 
+    @staticmethod
+    def _private_identifier(value: Any, field_name: str) -> str:
+        if (
+            type(value) is not str
+            or not value.strip()
+            or len(value.strip()) > 128
+            or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in value.strip()
+            )
+        ):
+            raise ValueError(f'invalid {field_name}')
+        return value.strip()
+
 
 class AgentOrchestrator:
     """Keep model selection separate from conversation and authorization."""
@@ -224,6 +327,9 @@ class AgentOrchestrator:
         memory_limit: int = 5,
         trusted_robot_state: bool = False,
         capability_registry: CapabilityRegistry | None = None,
+        robot_state_source: RobotStateSource | None = None,
+        robot_state_max_age_seconds: float = 2.0,
+        state_clock: Callable[[], float] = time.time,
     ) -> None:
         """Initialize provider, memory, session, and safety services."""
         if memory_limit < 1 or memory_limit > 10:
@@ -234,13 +340,41 @@ class AgentOrchestrator:
         self.safety_policy = safety_policy
         self.memory_limit = memory_limit
         self.trusted_robot_state = trusted_robot_state
+        if (
+            isinstance(robot_state_max_age_seconds, bool)
+            or not isinstance(robot_state_max_age_seconds, (int, float))
+            or robot_state_max_age_seconds <= 0
+            or robot_state_max_age_seconds > 60
+        ):
+            raise ValueError(
+                'robot_state_max_age_seconds must be from 0 to 60'
+            )
+        self.robot_state_source = robot_state_source
+        self.robot_state_max_age_seconds = float(
+            robot_state_max_age_seconds
+        )
+        if not callable(state_clock):
+            raise TypeError('state_clock must be callable')
+        self._state_clock = state_clock
         self.capability_registry = (
             capability_registry or production_registry()
         )
         self._handle_lock = threading.RLock()
 
-    def handle(self, request: AgentRequest) -> OrchestrationResult:
-        """Process one ordered turn with durable idempotency."""
+    def handle(
+        self,
+        request: AgentRequest,
+        *,
+        confirmation_factory: Callable[
+            [OrchestrationResult, BeginTurnToken], Any
+        ] | None = None,
+    ) -> OrchestrationResult:
+        """Process one turn and optionally bind a non-authorizing intent."""
+        if (
+            confirmation_factory is not None
+            and not callable(confirmation_factory)
+        ):
+            raise TypeError('confirmation_factory must be callable')
         fingerprint = self._request_fingerprint(request)
         with self._handle_lock:
             begin = self.conversation_store.begin_turn(
@@ -252,9 +386,11 @@ class AgentOrchestrator:
                 user_content=request.utterance,
             )
             if begin.cached_response is not None:
-                return OrchestrationResult.from_persisted_dict(
+                result = OrchestrationResult.from_persisted_dict(
                     begin.cached_response
                 )
+                result.clock = self._state_clock
+                return result
             token = begin.token
             if token is None:
                 raise RuntimeError(
@@ -267,12 +403,29 @@ class AgentOrchestrator:
                     begin.summary,
                     token,
                 )
-                session, _turn = (
-                    self.conversation_store.complete_turn(
-                        token,
-                        assistant_content=result.decision.message,
-                        response=result.to_persisted_dict(),
+                completion_arguments = {}
+                if confirmation_factory is not None:
+                    safety_provenance = (
+                        result.state_evidence_id,
+                        result.state_observed_at,
+                        result.safety_policy_revision,
                     )
+                    completion_arguments['confirmation_draft'] = (
+                        confirmation_factory(result, token)
+                    )
+                    if safety_provenance != (
+                        result.state_evidence_id,
+                        result.state_observed_at,
+                        result.safety_policy_revision,
+                    ):
+                        raise RuntimeError(
+                            'confirmation factory modified safety provenance'
+                        )
+                session, _turn = self.conversation_store.complete_turn(
+                    token,
+                    assistant_content=result.decision.message,
+                    response=result.to_persisted_dict(),
+                    **completion_arguments,
                 )
                 if (
                     session.generation
@@ -350,10 +503,16 @@ class AgentOrchestrator:
             raise ProviderError(
                 'provider returned an invalid decision'
             ) from error
+        (
+            safety_request,
+            state_trusted,
+            state_evidence_id,
+            state_observed_at,
+        ) = self._fresh_safety_request(safety_request)
         safety = self.safety_policy.evaluate(
             safety_request,
             raw_decision,
-            state_trusted=self.trusted_robot_state,
+            state_trusted=state_trusted,
         )
         decision = raw_decision
         if not safety.allowed:
@@ -364,7 +523,7 @@ class AgentOrchestrator:
                 confidence=1.0,
                 expires_in_ms=raw_decision.expires_in_ms,
             )
-        issued_at = time.time()
+        issued_at = float(self._state_clock())
         expires_at = (
             issued_at + decision.expires_in_ms / 1000.0
         )
@@ -393,8 +552,54 @@ class AgentOrchestrator:
             decision_id=str(uuid.uuid4()),
             issued_at=issued_at,
             expires_at=expires_at,
-            state_trusted=self.trusted_robot_state,
+            state_trusted=state_trusted,
             memory_revision=memory_revision,
+            state_evidence_id=state_evidence_id,
+            state_observed_at=state_observed_at,
+            safety_policy_revision=(
+                self.safety_policy.policy_revision
+                if state_evidence_id is not None
+                else None
+            ),
+            clock=self._state_clock,
+        )
+
+    def _fresh_safety_request(
+        self,
+        request: AgentRequest,
+    ) -> tuple[AgentRequest, bool, str | None, float | None]:
+        """Read server-owned state after the model, or preserve legacy mode."""
+        source = self.robot_state_source
+        if source is None:
+            return request, self.trusted_robot_state, None, None
+        try:
+            evidence = source.read()
+            now = float(self._state_clock())
+            age = now - float(evidence.observed_at)
+            trusted = (
+                evidence.trusted
+                and age >= 0
+                and age <= self.robot_state_max_age_seconds
+            )
+            state = evidence.state
+            if age < 0:
+                evidence_id = None
+                observed_at = None
+            else:
+                evidence_id = evidence.evidence_id
+                observed_at = float(evidence.observed_at)
+        except Exception:
+            trusted = False
+            state = RobotState()
+            evidence_id = None
+            observed_at = None
+        value = request.to_dict()
+        value['robot_state'] = state.to_dict()
+        return (
+            AgentRequest.from_dict(value),
+            trusted,
+            evidence_id,
+            observed_at,
         )
 
     @staticmethod

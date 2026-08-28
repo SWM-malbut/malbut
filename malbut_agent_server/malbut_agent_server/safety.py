@@ -22,6 +22,8 @@ DEFAULT_LOCATIONS = {
     'dock',
 }
 
+DEFAULT_SAFETY_POLICY_REVISION = 'malbut-safety-v1'
+
 NAVIGATION_LOCATION_ALIASES = {
     '거실': ('거실',),
     '주방': ('주방', '부엌'),
@@ -195,6 +197,7 @@ class SafetyPolicy:
         allowed_locations: Optional[Iterable[str]] = None,
         minimum_navigation_battery: float = 15.0,
         maximum_action_ttl_ms: int = 10000,
+        policy_revision: str = DEFAULT_SAFETY_POLICY_REVISION,
     ) -> None:
         """Initialize local allowlists and action limits."""
         location_source = (
@@ -234,6 +237,16 @@ class SafetyPolicy:
             raise ValueError(
                 'maximum_action_ttl_ms must be from 1 to 60000'
             )
+        if (
+            not isinstance(policy_revision, str)
+            or not policy_revision.strip()
+            or len(policy_revision.strip()) > 128
+            or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in policy_revision.strip()
+            )
+        ):
+            raise ValueError('policy_revision is invalid')
         self.allowed_locations: Set[str] = {
             location.strip()
             for location in locations
@@ -242,6 +255,7 @@ class SafetyPolicy:
             minimum_navigation_battery
         )
         self.maximum_action_ttl_ms = maximum_action_ttl_ms
+        self.policy_revision = policy_revision.strip()
 
     def evaluate(
         self,
