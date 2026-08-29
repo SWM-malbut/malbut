@@ -26,6 +26,7 @@ from malbut_scenarios.text_gazebo_evidence import (
     TextGazeboEvidenceReceipt,
     write_evidence_manifest,
 )
+from malbut_scenarios.text_gazebo_scenario import TextGazeboScenarioProfile
 
 
 _COMMIT = '1' * 40
@@ -211,6 +212,7 @@ def _request(evidence_parent, **changes):
     values = {
         'ros_domain_id': 71,
         'evidence_path': evidence_parent / 'case.json',
+        'scenario_profile': TextGazeboScenarioProfile.HAPPY_PATH,
         'gui': False,
     }
     values.update(changes)
@@ -225,6 +227,8 @@ def _manifest(**changes):
         'installed_digest': _INSTALLED_DIGEST,
         'goal_set_digest': '5' * 64,
         'runtime_binding_digest': '6' * 64,
+        'target_binding_digest': '7' * 64,
+        'scenario_profile': TextGazeboScenarioProfile.HAPPY_PATH,
         'states': StableStates(
             readiness=ReadinessState.READY,
             confirmation=ConfirmationState.APPROVED,
@@ -278,6 +282,7 @@ def _check_payload(**changes):
         'mode': 'check',
         'nav2_start_count': 0,
         'physical_authorized': False,
+        'scenario_profile': 'happy_path',
         'simulation': True,
         'source_tree_digest': _SOURCE_DIGEST,
         'status': 'ok',
@@ -391,6 +396,7 @@ def test_config_rejects_unbounded_or_ambiguous_values(tmp_path, changes):
         {'ros_domain_id': 101},
         {'ros_domain_id': True},
         {'evidence_path': Path('relative.json')},
+        {'scenario_profile': 'happy_path'},
         {'gui': 1},
     ),
 )
@@ -402,6 +408,19 @@ def test_request_requires_explicit_bounded_authority(tmp_path, changes):
         match='^campaign_runner_config_invalid$',
     ):
         _request(evidence, **changes)
+
+
+def test_request_preserves_legacy_positional_gui_argument(tmp_path):
+    """Keep the pre-profile third positional argument bound to GUI."""
+    evidence = (tmp_path / 'case.json').absolute()
+
+    request = runtime.TextGazeboCampaignRunRequest(71, evidence, True)
+
+    assert request.gui is True
+    assert (
+        request.scenario_profile
+        is TextGazeboScenarioProfile.HAPPY_PATH
+    )
 
 
 def test_success_uses_exact_installed_argv_sanitized_env_and_v2_evidence(
@@ -427,6 +446,8 @@ def test_success_uses_exact_installed_argv_sanitized_env_and_v2_evidence(
         ),
         '--run',
         '--execute-approved-simulation',
+        '--scenario-profile',
+        'happy_path',
         '--source-commit',
         _COMMIT,
         '--source-tree',
@@ -442,6 +463,8 @@ def test_success_uses_exact_installed_argv_sanitized_env_and_v2_evidence(
     assert 'OPENAI_API_KEY' not in owner.environment
     assert owner.started is True
     assert owner.stopped is True
+    assert result.scenario_profile is TextGazeboScenarioProfile.HAPPY_PATH
+    assert result.target_binding_digest == '7' * 64
     assert result.manifest_digest == manifest.digest()
     assert result.receipt_digest == manifest.receipt_digest
     assert result.commit == _COMMIT
@@ -457,6 +480,36 @@ def test_success_uses_exact_installed_argv_sanitized_env_and_v2_evidence(
     assert result.child_output_bytes == 17
     assert str(source) not in repr(result)
     assert str(request.evidence_path) not in repr(result)
+
+
+def test_child_profile_mismatch_is_fail_closed_after_cleanup(tmp_path):
+    """A successful child for another room cannot satisfy the request."""
+    prefix, source, evidence_parent = _layout(tmp_path)
+    config = _config(prefix, source)
+    request = _request(
+        evidence_parent,
+        scenario_profile=TextGazeboScenarioProfile.HAPPY_KITCHEN,
+    )
+    clock = _Clock()
+    manifest = _manifest(
+        scenario_profile=TextGazeboScenarioProfile.HAPPY_BEDROOM,
+    )
+    _FakePopenOwner.on_start = lambda _owner: write_evidence_manifest(
+        request.evidence_path,
+        manifest,
+    )
+
+    with pytest.raises(
+        runtime.TextGazeboCampaignRuntimeError,
+        match='^campaign_runner_evidence_invalid$',
+    ):
+        _runner(config, clock).run(request)
+
+    owner = _FakePopenOwner.instances[0]
+    assert owner.stopped is True
+    assert '--scenario-profile' in owner.argv
+    index = owner.argv.index('--scenario-profile')
+    assert owner.argv[index + 1] == 'happy_kitchen'
 
 
 def test_check_uses_exact_non_actuating_argv_and_strict_public_output(
@@ -592,6 +645,7 @@ def test_check_temp_lifecycle_failure_is_stable_and_content_free(
         b'private child traceback\n',
         _check_payload(status='failed'),
         _check_payload(nav2_start_count=1),
+        _check_payload(scenario_profile='happy_kitchen'),
         _check_payload(source_tree_digest='7' * 64),
         _check_payload(installed_digest='7' * 64),
         _check_payload(extra='not-allowed'),
@@ -932,6 +986,8 @@ def test_clean_not_started_cleanup_preserves_start_failure(
         {'simulation': False},
         {'physical_authorized': True},
         {'elapsed_seconds': 3.9},
+        {'target_binding_digest': '8' * 64},
+        {'scenario_profile': TextGazeboScenarioProfile.HAPPY_KITCHEN},
     ),
 )
 def test_run_result_cannot_construct_a_weakened_success(changes):
@@ -945,6 +1001,8 @@ def test_run_result_cannot_construct_a_weakened_success(changes):
         'installed_digest': child.installed_digest,
         'goal_set_digest': child.goal_set_digest,
         'runtime_binding_digest': child.runtime_binding_digest,
+        'target_binding_digest': child.target_binding_digest,
+        'scenario_profile': child.scenario_profile,
         'elapsed_seconds': 5.0,
         'child_output_digest': _EMPTY_DIGEST,
         'child_output_bytes': 0,

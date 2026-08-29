@@ -236,8 +236,11 @@ def test_execution_check_validates_full_composition_without_starting_it(
             events.append('dispatcher.join')
             return True
 
-    def checked_execution(_settings, _loader, *, robot_web_url):
+    def checked_execution(
+        _settings, _loader, *, robot_web_url, scenario_profile,
+    ):
         assert robot_web_url == 'http://127.0.0.1:8765'
+        assert scenario_profile.value == 'happy_path'
         events.append('approved_execution')
         return ApprovedSimulationTextRuntime(
             orchestrator=SimpleNamespace(
@@ -290,3 +293,66 @@ def test_execution_check_validates_full_composition_without_starting_it(
         'dispatcher.join',
     ]
     assert stores == ['action_repository', 'conversation', 'memory']
+
+
+def test_parser_defaults_to_legacy_living_room_profile() -> None:
+    assert _parser().parse_args([]).scenario_profile == 'happy_path'
+
+
+def test_unknown_profile_is_rejected_before_environment_io(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        text_agent_server,
+        'load_env_file',
+        lambda _path: (_ for _ in ()).throw(
+            AssertionError('invalid profile reached environment I/O')
+        ),
+    )
+
+    with pytest.raises(SystemExit):
+        text_agent_server.main(['--scenario-profile', '거실', '--check'])
+
+
+def test_approved_runtime_pins_selected_location_before_robot_web_io(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    locations = []
+
+    class MultiRoomCatalog(Catalog):
+        def resolve(self, location: str):
+            locations.append(location)
+            return SimpleNamespace(
+                room_name=location,
+                room_category='room',
+                binding_digest='a' * 64,
+            )
+
+    monkeypatch.setattr(
+        text_agent_server.RobotWebNavigationClient,
+        '_request',
+        lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError('composition performed Robot Web I/O')
+        ),
+    )
+    settings = Settings(
+        provider='mock',
+        auth_token='local-test-token',
+        database_path=str(tmp_path / 'runtime.sqlite3'),
+        tool_mode='proposal',
+        port=8877,
+    )
+
+    runtime = build_approved_simulation_text_runtime(
+        settings,
+        MultiRoomCatalog,
+        robot_web_url='http://127.0.0.1:8765',
+        scenario_profile='happy_kitchen',
+    )
+    try:
+        assert locations == ['주방']
+    finally:
+        runtime.action_repository.close()
+        runtime.orchestrator.conversation_store.close()
+        runtime.orchestrator.memory_store.close()

@@ -21,6 +21,7 @@ from malbut_scenarios.text_gazebo_campaign_runtime import (
     TextGazeboCampaignRunnerConfig,
     TextGazeboCampaignRuntimeError,
 )
+from malbut_scenarios.text_gazebo_scenario import TextGazeboScenarioProfile
 
 
 _COMMIT = '1' * 40
@@ -46,11 +47,15 @@ def _check_result() -> TextGazeboCampaignCheckResult:
     )
 
 
-def _run_result(ordinal: int) -> TextGazeboCampaignRunResult:
+def _run_result(
+    ordinal: int,
+    profile: TextGazeboScenarioProfile = TextGazeboScenarioProfile.HAPPY_PATH,
+) -> TextGazeboCampaignRunResult:
     manifest_digest = _digest(f'manifest-{ordinal}')
     receipt_digest = _digest(f'receipt-{ordinal}')
     goal_digest = _digest(f'goal-{ordinal}')
     binding_digest = _digest(f'binding-{ordinal}')
+    target_digest = _digest(f'target-{profile.value}')
     summary = ChildManifestSummary(
         manifest_digest=manifest_digest,
         receipt_digest=receipt_digest,
@@ -60,6 +65,8 @@ def _run_result(ordinal: int) -> TextGazeboCampaignRunResult:
         installed_digest=_INSTALL_DIGEST,
         goal_set_digest=goal_digest,
         runtime_binding_digest=binding_digest,
+        target_binding_digest=target_digest,
+        scenario_profile=profile,
         cleanup_complete=True,
         owned_processes_remaining=0,
         ros_nodes_remaining=0,
@@ -79,6 +86,8 @@ def _run_result(ordinal: int) -> TextGazeboCampaignRunResult:
         installed_digest=_INSTALL_DIGEST,
         goal_set_digest=goal_digest,
         runtime_binding_digest=binding_digest,
+        target_binding_digest=target_digest,
+        scenario_profile=profile,
         elapsed_seconds=0.0,
         child_output_digest=_digest(f'output-{ordinal}'),
         child_output_bytes=256,
@@ -95,6 +104,7 @@ class _FakeInstalledRunner:
     configs = []
     requests = []
     failure_code = None
+    result_profile = None
 
     def __init__(self, config) -> None:
         self.config = config
@@ -107,7 +117,10 @@ class _FakeInstalledRunner:
         type(self).requests.append(request)
         if self.failure_code is not None:
             raise TextGazeboCampaignRuntimeError(self.failure_code)
-        return _run_result(len(type(self).requests))
+        return _run_result(
+            len(type(self).requests),
+            self.result_profile or request.scenario_profile,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -115,6 +128,7 @@ def _reset_fake() -> None:
     _FakeInstalledRunner.configs = []
     _FakeInstalledRunner.requests = []
     _FakeInstalledRunner.failure_code = None
+    _FakeInstalledRunner.result_profile = None
 
 
 def _source_tree(tmp_path: Path) -> Path:
@@ -147,7 +161,12 @@ def _patch_installed(monkeypatch, tmp_path: Path) -> Path:
     return prefix
 
 
-def _run_arguments(source: Path, evidence: Path, count: int = 1):
+def _run_arguments(
+    source: Path,
+    evidence: Path,
+    count: int = 1,
+    profiles=None,
+):
     values = [
         '--run',
         '--execute-approved-simulation',
@@ -160,9 +179,9 @@ def _run_arguments(source: Path, evidence: Path, count: int = 1):
         '--ros-domain-id',
         '77',
     ]
-    for unused in range(count):
-        del unused
-        values.extend(('--case-profile', 'happy_path'))
+    selected = profiles or ['happy_path'] * count
+    for profile in selected:
+        values.extend(('--case-profile', profile))
     return values
 
 
@@ -294,7 +313,16 @@ def test_profiles_map_to_unique_ordered_cases_and_private_child_paths(
     evidence = _private_evidence(tmp_path)
     _patch_installed(monkeypatch, tmp_path)
 
-    result = campaign.main(_run_arguments(source, evidence, count=3))
+    profiles = [
+        'happy_living_room',
+        'happy_kitchen',
+        'happy_bedroom',
+    ]
+    result = campaign.main(_run_arguments(
+        source,
+        evidence,
+        profiles=profiles,
+    ))
 
     captured = capsys.readouterr()
     assert result == 0
@@ -323,6 +351,10 @@ def test_profiles_map_to_unique_ordered_cases_and_private_child_paths(
         request.ros_domain_id == 77
         for request in _FakeInstalledRunner.requests
     )
+    assert [
+        request.scenario_profile.value
+        for request in _FakeInstalledRunner.requests
+    ] == profiles
 
     payload = json.loads(evidence.read_text(encoding='utf-8'))
     receipt = payload['receipt']
@@ -335,9 +367,9 @@ def test_profiles_map_to_unique_ordered_cases_and_private_child_paths(
         'case-003',
     ]
     assert [item['profile'] for item in receipt['cases']] == [
-        'happy_path',
-        'happy_path',
-        'happy_path',
+        'happy_living_room',
+        'happy_kitchen',
+        'happy_bedroom',
     ]
     assert [item['expected_outcome'] for item in receipt['cases']] == [
         'succeeded',
@@ -403,6 +435,35 @@ def test_child_cleanup_failure_stops_and_publishes_failed_aggregate(
     assert response['error_code'] == 'campaign_failed'
     assert response['case_count'] == 3
     assert response['test_verdict'] == 'failed'
+
+
+def test_runner_result_for_another_profile_fails_closed(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    """A child result for another room cannot pass the campaign case."""
+    source = _source_tree(tmp_path)
+    evidence = _private_evidence(tmp_path)
+    _patch_installed(monkeypatch, tmp_path)
+    _FakeInstalledRunner.result_profile = (
+        TextGazeboScenarioProfile.HAPPY_BEDROOM
+    )
+
+    result = campaign.main(_run_arguments(
+        source,
+        evidence,
+        profiles=['happy_living_room'],
+    ))
+
+    assert result == 1
+    assert len(_FakeInstalledRunner.requests) == 1
+    payload = json.loads(evidence.read_text(encoding='utf-8'))
+    case = payload['receipt']['cases'][0]
+    assert case['profile'] == 'happy_living_room'
+    assert case['test_verdict'] == 'failed'
+    assert case['error_code'] == 'executor_exception'
+    assert json.loads(capsys.readouterr().err)['status'] == 'failed'
 
 
 def test_preexisting_aggregate_blocks_before_any_child(

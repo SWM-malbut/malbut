@@ -204,12 +204,15 @@ socket이 모두 0개여야 합니다.
 
 `--run`만으로는 실행되지 않으며 `--execute-approved-simulation`이 반드시
 필요합니다. timeout·불명 결과를 성공으로 보정하거나 재전송하지 않습니다.
-성공 evidence v2에는 원문, token, private ID, 좌표, fixture·DB·host 경로를
+SWM25-133 완료 당시 성공 evidence v2에는 원문, token, private ID, 좌표,
+fixture·DB·host 경로를
 넣지 않고 `source_tree_digest`, 다른 digest, 제한된 상태, count, duration과
 cleanup 결과만 기록합니다. evidence parent는 `0700`, 신규 파일은 `0600`이어야
 하며 기존 파일을 덮어쓰지 않습니다. 기존 run-2는 source provenance 봉인 전
 rehearsal이며 최종 인수 evidence가 아닙니다. 최종 provenance-sealed run은 이
 변경을 Git에 commit하고 동일 commit으로 overlay를 다시 build한 뒤 수행합니다.
+현재 SWM25-135 경로는 bounded profile과 target binding이 추가된 evidence v3을
+사용하며 과거 v2 파일을 현재 성공 증거로 변환하지 않습니다.
 SWM25-133 완료 당시 `malbut_scenarios/test` source suite는 298개가 통과했지만,
 이것만으로 최종 clean Gazebo run이 완료됐다고 판정하지 않습니다.
 상세 구조와 현재 검증 상태는
@@ -220,10 +223,11 @@ SWM25-133 완료 당시 `malbut_scenarios/test` source suite는 298개가 통과
 SWM25-134 campaign은 위 SWM25-133 runner를 case 단위의 installed child로
 재사용합니다. Agent, confirmation, RobotAction, Robot Web 또는 Nav2 실행 코드를
 다시 만들지 않고, case의 순서·기대 결과·격리·전체 합격 여부와 aggregate
-evidence만 관리합니다. 현재 허용하는 profile 종류는 `happy_path` 하나이며 같은
-profile을 최대 32회까지 반복 지정할 수 있습니다. SWM25-134의 실제 인수는 1회,
-SWM25-135는 같은 profile의 실제 3회 반복을 담당합니다. 장애 profile과 그에 맞는
-typed child evidence는 SWM25-136~139에서 기존 installed 경계에 확장합니다.
+evidence만 관리합니다. SWM25-134 완료 당시에는 legacy `happy_path` 한 종류만
+허용했습니다. SWM25-135에서 같은 경계를 거실·주방·침실의 세 server-owned 정상
+profile로 확장했습니다. 한 campaign에는 최대 32개의 허용 profile을 지정할 수
+있습니다. 장애 profile과 그에 맞는 typed child evidence는 SWM25-136~139에서
+기존 installed 경계에 확장합니다.
 
 Agent/Gazebo/Nav2 제품 실행 효과 없이 source/install 결속과 case plan을 먼저
 확인합니다. 이 검사는 provenance용 bounded child process 하나만 실행합니다.
@@ -266,6 +270,57 @@ ID·host path 대신 case 순서, 제한된 결과, digest, duration과 cleanup 
 overlay를 다시 build해야 source/install attestation을 통과할 수 있습니다. 자세한
 계약과 현재 검증 상태는
 `malbut_agent_server/docs/jira/SWM25-134_GAZEBO_CAMPAIGN.md`에 있습니다.
+
+## SWM25-135 거실·주방·침실 정상 campaign
+
+SWM25-135는 하나의 3-stop 경로를 만드는 기능이 아닙니다. 다음 세 profile을 각각
+새 SWM25-133 runtime·SQLite·Gazebo에서 한 번씩 실행하고, 세 case가 모두 실제
+Nav2 `SUCCEEDED`와 clean shutdown을 증명해야 전체를 합격시킵니다.
+
+```text
+happy_living_room -> 거실
+happy_kitchen     -> 주방
+happy_bedroom     -> 침실
+```
+
+profile은 요청 원문이나 좌표를 받는 자유 입력이 아니라 위와 같이 코드에 고정된
+allowlist입니다. 각 profile은 server-owned 요청 문장, semantic location과 현재
+map target을 하나로 결속합니다. legacy `happy_path`는 기존 거실 요청과 CLI 기본값
+호환을 위해 유지합니다.
+
+실행 효과 없이 세 case plan과 installed provenance를 검사합니다.
+
+```bash
+ros2 run malbut_scenarios run_text_gazebo_campaign -- \
+  --check \
+  --case-profile happy_living_room \
+  --case-profile happy_kitchen \
+  --case-profile happy_bedroom \
+  --source-commit "$source_commit" \
+  --source-tree "$source_tree"
+```
+
+실제 headless campaign은 owner-private 신규 evidence 경로와 비어 있는 ROS domain,
+`--run --execute-approved-simulation`을 함께 사용합니다. 각 child evidence v3에는
+bounded profile과 target binding digest가 추가되며, campaign evidence v2는 서로
+다른 semantic location이 같은 target binding을 재사용하면 fail-closed합니다.
+요청·승인 원문, 좌표, private ID와 host path는 evidence에 기록하지 않습니다.
+
+```bash
+ros2 run malbut_scenarios run_text_gazebo_campaign -- \
+  --run \
+  --execute-approved-simulation \
+  --case-profile happy_living_room \
+  --case-profile happy_kitchen \
+  --case-profile happy_bedroom \
+  --source-commit "$source_commit" \
+  --source-tree "$source_tree" \
+  --ros-domain-id "$ros_domain_id" \
+  --evidence "$campaign_evidence_root/swm25-135-three-spaces.json"
+```
+
+상세 범위와 완료 증거는
+`malbut_agent_server/docs/jira/SWM25-135_MULTI_SPACE_GAZEBO_REPEAT.md`에 있습니다.
 
 ## 기존 기능과의 연결
 

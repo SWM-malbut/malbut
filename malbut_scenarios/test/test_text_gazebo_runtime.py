@@ -25,6 +25,7 @@ from malbut_scenarios.text_gazebo_runtime import (
     runtime_binding_digest,
     sanitized_ros_environment,
 )
+from malbut_scenarios.text_gazebo_scenario import TextGazeboScenarioProfile
 
 
 _DIGEST = re.compile(r'[0-9a-f]{64}\Z')
@@ -224,6 +225,53 @@ def test_http_client_drives_exact_public_happy_path_contract() -> None:
 
 
 @pytest.mark.parametrize(
+    'profile,request_text,location',
+    (
+        (TextGazeboScenarioProfile.HAPPY_KITCHEN, '주방으로 가줘', '주방'),
+        (TextGazeboScenarioProfile.HAPPY_BEDROOM, '침실로 가줘', '침실'),
+    ),
+)
+def test_http_client_binds_request_and_proposal_to_profile(
+    profile, request_text, location,
+) -> None:
+    response = _HTTPResponse(value={
+        'status': 'awaiting_confirmation',
+        'result_code': 'confirmation_pending',
+        'cached': False,
+        'proposal': {
+            'tool_name': 'navigate',
+            'arguments': {'location': location},
+        },
+        'confirmation_request_id': _CONFIRMATION_ID,
+        'execution': _non_authorizing_execution(),
+    })
+    with _ScriptedLoopbackServer([response]) as server:
+        client = TextAgentHTTPClient(
+            server.port,
+            token='private-agent-token',
+            user_id='private-user',
+            run_nonce='0123456789abcdef0123456789abcdef',
+            timeout_seconds=1.0,
+            scenario_profile=profile,
+        )
+        client.request_navigation()
+
+    request = json.loads(server.requests[0]['body'].decode('utf-8'))
+    assert request['text'] == request_text
+
+
+def test_http_client_rejects_unknown_profile_before_io() -> None:
+    with pytest.raises(ValueError, match='not allowlisted'):
+        TextAgentHTTPClient(
+            8877,
+            token='token',
+            user_id='user',
+            run_nonce='nonce',
+            scenario_profile='거실',
+        )
+
+
+@pytest.mark.parametrize(
     'response,operation,code',
     (
         (
@@ -299,7 +347,8 @@ def test_http_client_fails_closed_on_invalid_response_contract(
     assert 'private-agent-token' not in repr(caught.value)
 
 
-def test_http_client_construction_has_zero_io_and_unavailable_is_bounded() -> None:
+def test_http_client_construction_has_zero_io_and_unavailable_is_bounded(
+) -> None:
     """Construct offline, then normalize one explicit connection failure."""
     with LoopbackPortReservation() as reservation:
         client = _client(reservation.port)
@@ -467,7 +516,10 @@ def test_sqlite_observer_accepts_only_exact_known_success(tmp_path) -> None:
     assert observer.quick_check() is True
 
 
-@pytest.mark.parametrize('action_state', ['FAILED', 'CANCELED', 'BLOCKED', 'UNKNOWN'])
+@pytest.mark.parametrize(
+    'action_state',
+    ['FAILED', 'CANCELED', 'BLOCKED', 'UNKNOWN'],
+)
 def test_sqlite_observer_rejects_known_terminal_failure(
     tmp_path,
     action_state,

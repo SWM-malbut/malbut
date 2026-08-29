@@ -32,6 +32,7 @@ from malbut_scenarios.text_gazebo_campaign_evidence import (
     ChildManifestSummary,
     parse_child_manifest,
 )
+from malbut_scenarios.text_gazebo_scenario import TextGazeboScenarioProfile
 from malbut_scenarios.text_gazebo_runtime import sanitized_ros_environment
 
 
@@ -168,6 +169,9 @@ class TextGazeboCampaignRunRequest:
     ros_domain_id: int
     evidence_path: Path
     gui: bool = False
+    scenario_profile: TextGazeboScenarioProfile = (
+        TextGazeboScenarioProfile.HAPPY_PATH
+    )
 
     def __post_init__(self) -> None:
         """Validate explicit authority fields without filesystem access."""
@@ -175,6 +179,10 @@ class TextGazeboCampaignRunRequest:
             type(self.ros_domain_id) is not int
             or not 1 <= self.ros_domain_id <= 100
             or not _absolute_path(self.evidence_path)
+            or not isinstance(
+                self.scenario_profile,
+                TextGazeboScenarioProfile,
+            )
             or type(self.gui) is not bool
         ):
             raise TextGazeboCampaignRuntimeError(
@@ -185,7 +193,9 @@ class TextGazeboCampaignRunRequest:
         """Avoid exposing the case evidence path in diagnostics."""
         return (
             'TextGazeboCampaignRunRequest('
-            f'ros_domain_id={self.ros_domain_id!r}, gui={self.gui!r})'
+            f'ros_domain_id={self.ros_domain_id!r}, '
+            f'scenario_profile={self.scenario_profile.value!r}, '
+            f'gui={self.gui!r})'
         )
 
 
@@ -201,6 +211,8 @@ class TextGazeboCampaignRunResult:
     installed_digest: str
     goal_set_digest: str
     runtime_binding_digest: str
+    target_binding_digest: str
+    scenario_profile: TextGazeboScenarioProfile
     elapsed_seconds: float
     child_output_digest: str
     child_output_bytes: int
@@ -220,6 +232,7 @@ class TextGazeboCampaignRunResult:
             'installed_digest',
             'goal_set_digest',
             'runtime_binding_digest',
+            'target_binding_digest',
             'child_output_digest',
         ):
             value = getattr(self, name)
@@ -248,6 +261,10 @@ class TextGazeboCampaignRunResult:
             or type(self.simulation) is not bool
             or type(self.physical_authorized) is not bool
             or not isinstance(
+                self.scenario_profile,
+                TextGazeboScenarioProfile,
+            )
+            or not isinstance(
                 self.child_manifest,
                 ChildManifestSummary,
             )
@@ -271,6 +288,8 @@ class TextGazeboCampaignRunResult:
             or child.goal_set_digest != self.goal_set_digest
             or child.runtime_binding_digest
             != self.runtime_binding_digest
+            or child.target_binding_digest != self.target_binding_digest
+            or child.scenario_profile is not self.scenario_profile
             or child.exact_success is not self.exact_success
             or child.cleanup_complete is not self.cleanup_complete
             or child.forced_termination_count
@@ -887,6 +906,7 @@ class InstalledTextGazeboAcceptanceRunner:
             or child.source_tree_digest
             != self._config.source_tree_digest
             or child.installed_digest != self._config.installed_digest
+            or child.scenario_profile is not request.scenario_profile
         ):
             raise TextGazeboCampaignRuntimeError(
                 'campaign_runner_evidence_invalid'
@@ -901,6 +921,8 @@ class InstalledTextGazeboAcceptanceRunner:
             installed_digest=child.installed_digest,
             goal_set_digest=child.goal_set_digest,
             runtime_binding_digest=child.runtime_binding_digest,
+            target_binding_digest=child.target_binding_digest,
+            scenario_profile=child.scenario_profile,
             elapsed_seconds=elapsed,
             child_output_digest=output.digest,
             child_output_bytes=output.bytes_observed,
@@ -1165,6 +1187,8 @@ class InstalledTextGazeboAcceptanceRunner:
             str(executable),
             '--run',
             '--execute-approved-simulation',
+            '--scenario-profile',
+            request.scenario_profile.value,
             '--source-commit',
             self._config.source_commit,
             '--source-tree',
@@ -1300,6 +1324,7 @@ def _strict_check_output(raw: bytes) -> dict[str, object]:
         'mode',
         'nav2_start_count',
         'physical_authorized',
+        'scenario_profile',
         'simulation',
         'source_tree_digest',
         'status',
@@ -1313,6 +1338,8 @@ def _strict_check_output(raw: bytes) -> dict[str, object]:
         or value['simulation'] is not True
         or type(value['physical_authorized']) is not bool
         or value['physical_authorized'] is not False
+        or value['scenario_profile']
+        != TextGazeboScenarioProfile.HAPPY_PATH.value
         or type(value['source_tree_digest']) is not str
         or _DIGEST.fullmatch(value['source_tree_digest']) is None
         or type(value['installed_digest']) is not str

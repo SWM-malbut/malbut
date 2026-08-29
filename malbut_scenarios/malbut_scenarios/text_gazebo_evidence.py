@@ -14,8 +14,12 @@ import stat
 import tempfile
 from typing import Any, Dict
 
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboScenarioProfile,
+)
 
-EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v2'
+
+EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v3'
 MAX_EVIDENCE_COUNT = 1_000_000
 MAX_EVIDENCE_DURATION_SECONDS = 86_400.0
 
@@ -234,6 +238,8 @@ class TextGazeboEvidenceReceipt:
     installed_digest: str
     goal_set_digest: str
     runtime_binding_digest: str
+    target_binding_digest: str
+    scenario_profile: TextGazeboScenarioProfile
     states: StableStates
     counts: EvidenceCounts
     durations: EvidenceDurations
@@ -258,10 +264,16 @@ class TextGazeboEvidenceReceipt:
             'source_tree_digest',
             'goal_set_digest',
             'runtime_binding_digest',
+            'target_binding_digest',
         ):
             value = getattr(self, name)
             if not isinstance(value, str) or not _SHA256.fullmatch(value):
                 raise ValueError(f'{name} must be a lowercase SHA-256')
+        _require_enum(
+            self.scenario_profile,
+            TextGazeboScenarioProfile,
+            'scenario_profile',
+        )
         for name, expected in (
             ('states', StableStates),
             ('counts', EvidenceCounts),
@@ -321,9 +333,11 @@ class TextGazeboEvidenceReceipt:
             'physical_authorized': self.physical_authorized,
             'run_id': self.run_id,
             'runtime_binding_digest': self.runtime_binding_digest,
+            'scenario_profile': self.scenario_profile.value,
             'simulation': self.simulation,
             'source_tree_digest': self.source_tree_digest,
             'states': self.states.as_dict(),
+            'target_binding_digest': self.target_binding_digest,
         }
 
     def canonical_json(self) -> str:

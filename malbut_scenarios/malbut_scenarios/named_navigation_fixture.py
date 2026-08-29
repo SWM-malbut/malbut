@@ -1,15 +1,18 @@
 """
 Prepare an isolated Small House map store for named-navigation tests.
 
-This helper never edits the checked-in User Map.  It creates a private copy in
-which the single synthetic Small House room has the explicit test name
-``거실``.  Production room naming remains a user-owned map-editing operation.
+This helper never edits the checked-in User Map.  It creates a private copy
+with three server-owned test target cells named ``거실``, ``주방``, and
+``침실``.  The cells are acceptance fixtures, not a claim about production
+room boundaries; production room naming remains a user-owned map-editing
+operation.
 """
 
 from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -21,6 +24,10 @@ from ament_index_python.packages import get_package_share_directory
 from malbut_gazebo.map_lifecycle import MAP_STORE_FORMAT
 from malbut_gazebo.room_editor import normalize_room_feature
 from malbut_gazebo.user_map_builder import load_slam_map
+from malbut_gazebo.zone_filter_mask import (
+    build_filter_mask,
+    validate_zone_collection,
+)
 
 
 FIXTURE_FORMAT = "malbut-named-navigation-fixture/v1"
@@ -28,6 +35,65 @@ FIXTURE_DEVICE_ID = "malbut-sim-01"
 FIXTURE_ROOM_ID = "room-1"
 FIXTURE_ROOM_NAME = "거실"
 FIXTURE_ROOM_CATEGORY = "living_room"
+_TARGET_CELL_HALF_EXTENT_M = 0.25
+
+
+@dataclass(frozen=True)
+class _FixtureRoomSpec:
+    """One deterministic semantic target used only by the private fixture."""
+
+    room_id: str
+    name: str
+    category: str
+    color: str
+    point: tuple[float, float]
+    target_route_room_id: str
+    anchor_route_room_id: str
+    world_anchor_models: tuple[str, ...]
+
+
+# SWM25-135 retains the legacy ``거실`` name/API but replaces the former
+# whole-house synthetic pole with a center-south Sofa/CoffeeTable waypoint.
+# Earlier SWM25-133/134 evidence stays commit-bound to its old target digest;
+# this three-room fixture intentionally produces a new semantic binding.  The
+# other targets use the right-side KitchenCabinet/CookingBench route and the
+# safe left-room stand-off for the Bed/NightStand region.  Preparation
+# revalidates each entire target cell against the occupancy map and Zone mask.
+_FIXTURE_ROOM_SPECS = (
+    _FixtureRoomSpec(
+        room_id=FIXTURE_ROOM_ID,
+        name=FIXTURE_ROOM_NAME,
+        category=FIXTURE_ROOM_CATEGORY,
+        color="#dce8ff",
+        point=(1.75, 0.75),
+        target_route_room_id="center_south",
+        anchor_route_room_id="center_south",
+        world_anchor_models=("SofaC_01_001", "CoffeeTable_01_001"),
+    ),
+    _FixtureRoomSpec(
+        room_id="room-kitchen",
+        name="주방",
+        category="kitchen",
+        color="#f9e1c7",
+        point=(7.0, -3.25),
+        target_route_room_id="right_room",
+        anchor_route_room_id="right_room",
+        world_anchor_models=(
+            "CookingBench_01_001",
+            "KitchenCabinet_01_001",
+        ),
+    ),
+    _FixtureRoomSpec(
+        room_id="room-bedroom",
+        name="침실",
+        category="bedroom",
+        color="#d9f0e3",
+        point=(-5.5, -0.25),
+        target_route_room_id="left_room",
+        anchor_route_room_id="left_room",
+        world_anchor_models=("Bed_01_001", "NightStand_01_001"),
+    ),
+)
 
 
 class NamedNavigationFixtureError(ValueError):
@@ -56,6 +122,35 @@ def _write_private_json(path: Path, value: dict) -> None:
     path.chmod(0o600)
 
 
+def _target_cell(spec: _FixtureRoomSpec) -> dict:
+    """Build one small, deterministic free-space cell around its target."""
+    x, y = spec.point
+    half = _TARGET_CELL_HALF_EXTENT_M
+    ring = [
+        [x - half, y - half],
+        [x + half, y - half],
+        [x + half, y + half],
+        [x - half, y + half],
+        [x - half, y - half],
+    ]
+    return {
+        "type": "Feature",
+        "id": spec.room_id,
+        "properties": {
+            "role": "room",
+            "room_id": spec.room_id,
+            "name": spec.name,
+            "category": spec.category,
+            "color": spec.color,
+            "generated": True,
+        },
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [ring],
+        },
+    }
+
+
 def _named_user_map(source: dict, *, resolution: float) -> dict:
     value = deepcopy(source)
     features = value.get("features")
@@ -79,16 +174,77 @@ def _named_user_map(source: dict, *, resolution: float) -> dict:
         raise NamedNavigationFixtureError(
             f"Small House fixture Room must be {FIXTURE_ROOM_ID}"
         )
-    properties["name"] = FIXTURE_ROOM_NAME
-    properties["category"] = FIXTURE_ROOM_CATEGORY
-    normalized = normalize_room_feature(room, resolution=resolution)
-    features[features.index(room)] = normalized
+    room_index = features.index(room)
+    normalized = [
+        normalize_room_feature(
+            _target_cell(spec),
+            resolution=resolution,
+        )
+        for spec in _FIXTURE_ROOM_SPECS
+    ]
+    features[room_index:room_index + 1] = normalized
+    value["room_segmentation"] = {
+        "method": "swm25_135_named_target_cells",
+        "room_count": len(normalized),
+        "edited": True,
+    }
     value["fixture"] = {
         "format": FIXTURE_FORMAT,
         "device_id": FIXTURE_DEVICE_ID,
-        "purpose": "SWM25-130 explicit Gazebo test only",
+        "purpose": "SWM25-130/135 explicit Gazebo test only",
     }
     return value
+
+
+def _validate_target_cells(slam_map, source_zones: dict) -> None:
+    """Fail closed unless every server-owned target cell is safe."""
+    try:
+        zones = validate_zone_collection(
+            source_zones,
+            slam_map.map_id,
+            slam_map.map_revision,
+            slam_map.legacy_map_ids,
+        )
+        filter_mask = build_filter_mask(slam_map, zones)
+    except ValueError as error:
+        raise NamedNavigationFixtureError(
+            "Small House fixture Zone mask is invalid"
+        ) from error
+
+    height, width = slam_map.image.shape[:2]
+    for spec in _FIXTURE_ROOM_SPECS:
+        x, y = spec.point
+        half = _TARGET_CELL_HALF_EXTENT_M
+        corner_pixels = (
+            slam_map.transform.pixel([x - half, y - half]),
+            slam_map.transform.pixel([x + half, y + half]),
+        )
+        minimum_x = min(pixel[0] for pixel in corner_pixels)
+        maximum_x = max(pixel[0] for pixel in corner_pixels)
+        minimum_y = min(pixel[1] for pixel in corner_pixels)
+        maximum_y = max(pixel[1] for pixel in corner_pixels)
+        if not (
+            0 <= minimum_x <= maximum_x < width
+            and 0 <= minimum_y <= maximum_y < height
+        ):
+            raise NamedNavigationFixtureError(
+                "Small House fixture target cell is outside the map: "
+                f"{spec.name}"
+            )
+        pixels = (
+            (pixel_x, pixel_y)
+            for pixel_y in range(minimum_y, maximum_y + 1)
+            for pixel_x in range(minimum_x, maximum_x + 1)
+        )
+        if any(
+            int(slam_map.image[pixel_y, pixel_x]) < 250
+            or int(filter_mask[pixel_y, pixel_x]) != 0
+            for pixel_x, pixel_y in pixels
+        ):
+            raise NamedNavigationFixtureError(
+                "Small House fixture target cell is not navigation-safe: "
+                f"{spec.name}"
+            )
 
 
 def prepare_small_house_named_navigation_fixture(
@@ -132,6 +288,7 @@ def prepare_small_house_named_navigation_fixture(
             raise NamedNavigationFixtureError(
                 f"{label} revision does not match the SLAM map"
             )
+    _validate_target_cells(slam_map, source_zones)
 
     image_value = str(slam_map.image_path)
     image_path = Path(image_value).resolve()

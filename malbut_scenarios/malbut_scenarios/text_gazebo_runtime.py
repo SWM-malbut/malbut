@@ -16,6 +16,11 @@ import time
 from typing import Any, Mapping, Optional
 from urllib.parse import quote
 
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboScenarioProfile,
+    scenario_spec,
+)
+
 
 _MAX_HTTP_BODY_BYTES = 1_000_000
 _MAX_FILE_BYTES = 16 * 1024 * 1024
@@ -121,8 +126,12 @@ class TextAgentHTTPClient:
         user_id: str,
         run_nonce: str,
         timeout_seconds: float = 5.0,
+        scenario_profile: TextGazeboScenarioProfile | str = (
+            TextGazeboScenarioProfile.HAPPY_PATH
+        ),
     ) -> None:
         """Validate private identity without opening a socket."""
+        scenario = scenario_spec(scenario_profile)
         if (
             isinstance(port, bool)
             or not isinstance(port, int)
@@ -158,7 +167,7 @@ class TextAgentHTTPClient:
             'request_id': 'request-' + run_nonce,
             'conversation_id': self._conversation_id,
             'turn_id': 'turn-request-' + run_nonce,
-            'text': '거실로 가줘',
+            'text': scenario.request_text,
         }
         self._approval_body = {
             'request_id': 'approval-' + run_nonce,
@@ -172,6 +181,7 @@ class TextAgentHTTPClient:
             'turn_id': 'turn-late-' + run_nonce,
             'text': '네',
         }
+        self._scenario = scenario
 
     def __repr__(self) -> str:
         """Do not render token, port, text, or private request identities."""
@@ -234,7 +244,9 @@ class TextAgentHTTPClient:
             and value.get('cached') is False
             and type(proposal) is dict
             and proposal.get('tool_name') == 'navigate'
-            and proposal.get('arguments') == {'location': '거실'}
+            and proposal.get('arguments') == {
+                'location': self._scenario.location,
+            }
             and _non_authorizing(execution)
             and _private_identifier(confirmation_id)
         ):
