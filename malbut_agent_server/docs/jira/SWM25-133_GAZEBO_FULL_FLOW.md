@@ -223,8 +223,9 @@ fail-closed한다. check mode에는 `--ros-domain-id`를 줄 수 없다.
 
 ## 7. content-free evidence
 
-evidence 형식은 `malbut.text-gazebo-e2e-evidence.v2`이다. 성공 receipt에는 다음
-정보만 들어간다.
+SWM25-133 완료 당시 evidence 형식은
+`malbut.text-gazebo-e2e-evidence.v2`였다. 성공 receipt에는 다음 정보만
+들어갔다.
 
 - exact clean HEAD와 Git tree를 SHA-256으로 결속한 `source_tree_digest`
 - build/source binding을 위한 commit과 installed artifact digest
@@ -235,6 +236,12 @@ evidence 형식은 `malbut.text-gazebo-e2e-evidence.v2`이다. 성공 receipt에
 - monotonic duration
 - cleanup 완료 여부와 잔류 process/node/socket 및 강제 종료 횟수
 - `simulation=true`, `physical_authorized=false`
+
+후속 SWM25-135는 서로 다른 semantic target을 구분하기 위해 child evidence를
+v3으로 올리고 bounded `scenario_profile`과 `target_binding_digest`를 추가했다.
+현재 strict parser는 과거 v2를 새 v3로 추정 변환하지 않는다. 과거 evidence는
+생성 당시 commit과 schema에 결속된 기록으로 남고, 현재 campaign 인수에는 현재
+commit에서 새로 생성한 v3 evidence만 사용한다.
 
 다음 내용은 evidence, stdout/stderr 또는 일반 로그에 넣지 않는다.
 

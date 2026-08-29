@@ -1,7 +1,9 @@
-"""Contracts for the isolated SWM25-130 Small House fixture."""
+"""Contracts for the isolated SWM25-130/135 Small House fixture."""
 
 import json
+from itertools import combinations
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
@@ -14,11 +16,13 @@ from malbut_gazebo.named_navigation_facade import (
 )
 from malbut_gazebo.room_editor import normalize_room_feature
 from malbut_gazebo.user_map_builder import load_slam_map
+from malbut_gazebo.zone_filter_mask import build_filter_mask, load_zones
 from malbut_scenarios.named_navigation_fixture import (
     FIXTURE_DEVICE_ID,
     NamedNavigationFixtureError,
     prepare_small_house_named_navigation_fixture,
 )
+from malbut_scenarios.scenario_config import load_room_routes
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +31,8 @@ SCENARIO_ROOT = REPOSITORY_ROOT / "malbut_scenarios"
 MAP_YAML = GAZEBO_ROOT / "maps" / "small_house.yaml"
 USER_MAP = SCENARIO_ROOT / "maps" / "small_house_user_map.geojson"
 ZONES = SCENARIO_ROOT / "maps" / "map-a0843f4df527-zones.geojson"
+ROOM_ROUTES = SCENARIO_ROOT / "config" / "room_routes.yaml"
+SMALL_HOUSE_WORLD = GAZEBO_ROOT / "worlds" / "small_house.sdf"
 
 
 def _prepare(destination: Path) -> dict:
@@ -38,8 +44,8 @@ def _prepare(destination: Path) -> dict:
     )
 
 
-def test_fixture_copies_exact_map_and_names_only_the_private_room(tmp_path):
-    """Keep canonical assets immutable while naming the private test Room."""
+def test_fixture_copies_map_and_builds_three_private_named_targets(tmp_path):
+    """Keep canonical assets immutable while adding three target cells."""
     original_bytes = USER_MAP.read_bytes()
     destination = tmp_path / "private-store"
 
@@ -61,26 +67,83 @@ def test_fixture_copies_exact_map_and_names_only_the_private_room(tmp_path):
         feature for feature in copied["features"]
         if feature.get("properties", {}).get("role") == "room"
     ]
-    assert len(rooms) == 1
-    room = rooms[0]
-    assert room["properties"]["name"] == "거실"
-    assert room["properties"]["category"] == "living_room"
-    normalized = normalize_room_feature(
-        room, resolution=copied_slam.transform.resolution
-    )
-    for field in ("area_m2", "representative_point", "clearance_m"):
-        assert room["properties"][field] == normalized["properties"][field]
+    assert len(rooms) == 3
+    assert copied["room_segmentation"] == {
+        "method": "swm25_135_named_target_cells",
+        "room_count": 3,
+        "edited": True,
+    }
+    rooms_by_name = {
+        room["properties"]["name"]: room for room in rooms
+    }
+    assert {
+        name: room["properties"]["category"]
+        for name, room in rooms_by_name.items()
+    } == {
+        "거실": "living_room",
+        "주방": "kitchen",
+        "침실": "bedroom",
+    }
+    assert {
+        room["properties"]["area_m2"] for room in rooms
+    } == {0.25}
+    for room in rooms:
+        normalized = normalize_room_feature(
+            room,
+            resolution=copied_slam.transform.resolution,
+        )
+        for field in ("area_m2", "representative_point", "clearance_m"):
+            assert (
+                room["properties"][field]
+                == normalized["properties"][field]
+            )
+
+    def bounds(room):
+        ring = room["geometry"]["coordinates"][0]
+        return (
+            min(point[0] for point in ring),
+            min(point[1] for point in ring),
+            max(point[0] for point in ring),
+            max(point[1] for point in ring),
+        )
+
+    for first, second in combinations(rooms, 2):
+        first_min_x, first_min_y, first_max_x, first_max_y = bounds(first)
+        second_min_x, second_min_y, second_max_x, second_max_y = bounds(
+            second
+        )
+        assert (
+            first_max_x <= second_min_x
+            or second_max_x <= first_min_x
+            or first_max_y <= second_min_y
+            or second_max_y <= first_min_y
+        )
 
     catalog = ActiveMapCatalogSource(
         destination,
         FIXTURE_DEVICE_ID,
     ).load()
-    target = catalog.resolve("거실")
-    assert target.room_id == "room-1"
-    assert (target.x, target.y) == (5.35, -1.8)
-    assert not {"device_id", "room_id", "x", "y"} & set(
-        target.to_public_dict()
-    )
+    assert catalog.room_count == 3
+    targets = {
+        name: catalog.resolve(name) for name in ("거실", "주방", "침실")
+    }
+    assert {
+        name: (target.room_id, target.x, target.y)
+        for name, target in targets.items()
+    } == {
+        "거실": ("room-1", 1.75, 0.75),
+        "주방": ("room-kitchen", 7.0, -3.25),
+        "침실": ("room-bedroom", -5.5, -0.25),
+    }
+    assert len({target.binding_digest for target in targets.values()}) == 3
+    assert len({(target.x, target.y) for target in targets.values()}) == 3
+    assert len({target.room_name for target in targets.values()}) == 3
+    for target in targets.values():
+        assert target.map_id == source_slam.map_id
+        assert target.map_revision == source_slam.map_revision
+        assert not {"device_id", "room_id", "x", "y"} & set(
+            target.to_public_dict()
+        )
 
     semantic_version = (destination / active["user_map"]).parent
     assert destination.stat().st_mode & 0o777 == 0o700
@@ -93,6 +156,103 @@ def test_fixture_copies_exact_map_and_names_only_the_private_room(tmp_path):
         result["zone_path"].removeprefix(f"{destination}/"),
     ):
         assert (destination / relative_path).stat().st_mode & 0o777 == 0o400
+
+
+def test_fixture_targets_have_model_anchors_and_safe_target_cells(tmp_path):
+    """Pin model regions, semantic targets, and vetted route points."""
+    destination = tmp_path / "private-store"
+    _prepare(destination)
+    slam_map = load_slam_map(MAP_YAML)
+    zones = load_zones(
+        ZONES,
+        slam_map.map_id,
+        slam_map.map_revision,
+        slam_map.legacy_map_ids,
+    )
+    filter_mask = build_filter_mask(slam_map, zones)
+    _, routes = load_room_routes(ROOM_ROUTES)
+    routes_by_id = {route.room_id: route for route in routes}
+    includes = ElementTree.parse(SMALL_HOUSE_WORLD).getroot().findall(
+        "world/include"
+    )
+    model_points = {
+        include.findtext("name"): tuple(
+            float(value)
+            for value in include.findtext("pose").split()[:2]
+        )
+        for include in includes
+    }
+    catalog = ActiveMapCatalogSource(
+        destination,
+        FIXTURE_DEVICE_ID,
+    ).load()
+
+    for spec in fixture_module._FIXTURE_ROOM_SPECS:
+        target = catalog.resolve(spec.name)
+        assert (target.x, target.y) == spec.point
+        half = fixture_module._TARGET_CELL_HALF_EXTENT_M
+        corner_pixels = (
+            slam_map.transform.pixel([
+                spec.point[0] - half,
+                spec.point[1] - half,
+            ]),
+            slam_map.transform.pixel([
+                spec.point[0] + half,
+                spec.point[1] + half,
+            ]),
+        )
+        for pixel_y in range(
+            min(pixel[1] for pixel in corner_pixels),
+            max(pixel[1] for pixel in corner_pixels) + 1,
+        ):
+            for pixel_x in range(
+                min(pixel[0] for pixel in corner_pixels),
+                max(pixel[0] for pixel in corner_pixels) + 1,
+            ):
+                assert slam_map.image[pixel_y, pixel_x] >= 250
+                assert filter_mask[pixel_y, pixel_x] == 0
+
+        anchor_route = routes_by_id[spec.anchor_route_room_id]
+        for model_name in spec.world_anchor_models:
+            model_x, model_y = model_points[model_name]
+            assert anchor_route.contains(model_x, model_y)
+
+        target_route = routes_by_id[spec.target_route_room_id]
+        assert any(
+            (waypoint.x, waypoint.y) == spec.point
+            for waypoint in target_route.waypoints
+        )
+
+
+def test_fixture_fails_closed_when_a_target_is_outside_the_map(
+    tmp_path,
+    monkeypatch,
+):
+    """Preparation must revalidate server-owned targets against the map."""
+    original = fixture_module._FIXTURE_ROOM_SPECS
+    invalid = fixture_module._FixtureRoomSpec(
+        room_id=original[1].room_id,
+        name=original[1].name,
+        category=original[1].category,
+        color=original[1].color,
+        point=(100.0, 100.0),
+        target_route_room_id=original[1].target_route_room_id,
+        anchor_route_room_id=original[1].anchor_route_room_id,
+        world_anchor_models=original[1].world_anchor_models,
+    )
+    monkeypatch.setattr(
+        fixture_module,
+        "_FIXTURE_ROOM_SPECS",
+        (original[0], invalid, original[2]),
+    )
+
+    with pytest.raises(
+        NamedNavigationFixtureError,
+        match="outside the map",
+    ):
+        _prepare(tmp_path / "rejected")
+
+    assert not (tmp_path / "rejected").exists()
 
 
 def test_fixture_never_overwrites_an_existing_destination(tmp_path):

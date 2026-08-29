@@ -42,6 +42,9 @@ class CampaignProfile(str, Enum):
     """Explicit allowlist of campaign case behavior profiles."""
 
     HAPPY_PATH = 'happy_path'
+    HAPPY_LIVING_ROOM = 'happy_living_room'
+    HAPPY_KITCHEN = 'happy_kitchen'
+    HAPPY_BEDROOM = 'happy_bedroom'
 
 
 class ExpectedProductOutcome(str, Enum):

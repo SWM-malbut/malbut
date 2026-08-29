@@ -208,14 +208,18 @@ campaign 시작 전에 빈 case 목록, 중복 ID, 지원하지 않는 profile�
 최대 32개까지 순서대로 반복 지정할 수 있다. SWM25-134 실제 인수는 그중 1개만
 실행한다. 한 case라도 campaign 계층을 통과시켜 보는 이유는 새로운 제품 경로를
 시험하는 것이 아니라, 상위 도구가 정말로 installed SWM25-133을 실행하고 child
-evidence를 검증·집계하는지 확인하기 위해서다. 동일 profile 실제 3회 반복은
-SWM25-135가 담당하고 fault profile과 typed evidence는 후속 Story에서 추가한다.
+evidence를 검증·집계하는지 확인하기 위해서다. SWM25-134 완료 당시 계획한 동일
+profile 반복은 후속 SWM25-135에서 범위를 구체화하면서 거실·주방·침실의 서로
+다른 정상 profile 3개를 순서대로 실행하는 인수 시험으로 확장했다. fault profile과
+typed failure evidence는 여전히 후속 Story에서 추가한다.
 
 ## 7. aggregate evidence 계약
 
 aggregate evidence는 campaign 실행 내용을 재현할 수 있는 입력 원문이 아니라,
-정해진 계약을 통과했는지 감사할 수 있는 제한된 영수증이다. 형식은
-`malbut.text-gazebo-campaign-evidence.v1`로 고정한다.
+정해진 계약을 통과했는지 감사할 수 있는 제한된 영수증이다. SWM25-134 완료
+당시 형식은 `malbut.text-gazebo-campaign-evidence.v1`이었다. 후속 SWM25-135는
+bounded scenario profile과 target binding을 결속하기 위해 campaign v2와 child
+evidence v3을 사용하며, 과거 파일을 새 형식으로 추정 변환하지 않는다.
 
 기록 대상은 다음과 같다.
 
@@ -343,7 +347,7 @@ digest는 tracked 문서를 다시 바꿔 attestation을 무효화하지 않도�
 
 | Jira | 같은 campaign 기반에 추가할 검증 | SWM25-134에서 하지 않는 것 |
 | --- | --- | --- |
-| SWM25-135 | 같은 `happy_path`를 실제 Gazebo에서 3회 연속 실행 | 이번 smoke를 3회 성공으로 확대 주장하지 않음 |
+| SWM25-135 | 거실·주방·침실 정상 profile을 실제 Gazebo에서 순서대로 실행 | 이번 단일 smoke를 다중 공간 3회 성공으로 확대 주장하지 않음 |
 | SWM25-136 | duplicate·동시성 전용 child scenario/evidence와 추가 goal 0 검증 | 새 중복 방지 제품 로직을 campaign에 구현하지 않음 |
 | SWM25-137 | typed `BLOCKED/no-goal` child evidence와 profile-aware adapter | Safety를 fake하거나 우회하지 않음 |
 | SWM25-138 | typed `UNKNOWN/reconcile/no-resend` evidence와 adapter | `UNKNOWN`을 성공·실패로 임의 보정하지 않음 |
@@ -351,8 +355,9 @@ digest는 tracked 문서를 다시 바꿔 attestation을 무효화하지 않도�
 
 후속 Story는 새로운 독립 campaign runner를 만들지 않는다. SWM25-134의 case plan,
 process/runtime 경계와 aggregate writer를 재사용한다. SWM25-135는 현
-`exact_success` 경로를 반복하고, SWM25-136~138은 각 Story가 소유한 typed child
-scenario·evidence 계약 및 profile-aware 해석을 기존 installed boundary에 확장한다.
+`exact_success` 경로를 세 semantic target으로 확장해 반복하고, SWM25-136~138은
+각 Story가 소유한 typed child scenario·evidence 계약 및 profile-aware 해석을
+기존 installed boundary에 확장한다.
 
 ## 11. Jira 결론 작성 기준
 

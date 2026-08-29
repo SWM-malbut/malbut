@@ -52,11 +52,15 @@ from malbut_scenarios.text_gazebo_campaign_runtime import (
     TextGazeboCampaignRunnerConfig,
     TextGazeboCampaignRuntimeError,
 )
+from malbut_scenarios.text_gazebo_scenario import TextGazeboScenarioProfile
 
 
 _FULL_COMMIT = re.compile(r'(?:[0-9a-f]{40}|[0-9a-f]{64})\Z')
 _PROFILE_OUTCOMES = {
     CampaignProfile.HAPPY_PATH: ExpectedProductOutcome.SUCCEEDED,
+    CampaignProfile.HAPPY_LIVING_ROOM: ExpectedProductOutcome.SUCCEEDED,
+    CampaignProfile.HAPPY_KITCHEN: ExpectedProductOutcome.SUCCEEDED,
+    CampaignProfile.HAPPY_BEDROOM: ExpectedProductOutcome.SUCCEEDED,
 }
 
 
@@ -140,13 +144,18 @@ class _InstalledCampaignExecutor:
         )
         started = self._monotonic()
         result: Optional[TextGazeboCampaignRunResult] = None
+        scenario_profile = TextGazeboScenarioProfile(case.profile.value)
         try:
             candidate = self._runner.run(TextGazeboCampaignRunRequest(
                 ros_domain_id=self._ros_domain_id,
                 evidence_path=evidence_path,
+                scenario_profile=scenario_profile,
                 gui=self._gui,
             ))
-            if not isinstance(candidate, TextGazeboCampaignRunResult):
+            if (
+                not isinstance(candidate, TextGazeboCampaignRunResult)
+                or candidate.scenario_profile is not scenario_profile
+            ):
                 raise TextGazeboCampaignCLIError(
                     'campaign_unexpected_failure'
                 )

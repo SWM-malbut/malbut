@@ -40,6 +40,10 @@ from malbut_scenarios.approved_named_navigation_executor import (
     ApprovedNamedNavigationExecutor,
     RobotWebSimulationStateSource,
 )
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboScenarioProfile,
+    scenario_spec,
+)
 
 
 DEFAULT_ROBOT_WEB_URL = 'http://127.0.0.1:8765'
@@ -97,6 +101,9 @@ def build_approved_simulation_text_runtime(
     catalog_loader: Callable[[], NamedNavigationCatalog],
     *,
     robot_web_url: str,
+    scenario_profile: TextGazeboScenarioProfile | str = (
+        TextGazeboScenarioProfile.HAPPY_PATH
+    ),
 ) -> ApprovedSimulationTextRuntime:
     """
     Compose the explicit SWM25-132 simulation execution boundary.
@@ -122,9 +129,10 @@ def build_approved_simulation_text_runtime(
             'Agent HTTP port conflicts with the Robot Web port'
         )
 
+    scenario = scenario_spec(scenario_profile)
     catalog = catalog_loader()
     # Pin the one MVP destination before constructing SQLite or HTTP owners.
-    catalog.resolve('거실')
+    catalog.resolve(scenario.location)
     resolver = CatalogNamedTargetResolver(catalog_loader)
     client = RobotWebNavigationClient(robot_web_url)
     state_source = RobotWebSimulationStateSource(
@@ -274,6 +282,12 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        '--scenario-profile',
+        choices=tuple(profile.value for profile in TextGazeboScenarioProfile),
+        default=TextGazeboScenarioProfile.HAPPY_PATH.value,
+        help='Allowlisted text/navigation scenario (default: happy_path).',
+    )
+    parser.add_argument(
         '--check',
         action='store_true',
         help='Validate composition and target binding, then exit.',
@@ -299,6 +313,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Start one loopback server whose confirmation is non-actuating."""
     args = _parser().parse_args(argv)
+    scenario = scenario_spec(args.scenario_profile)
     load_env_file(Path(args.env_file).expanduser())
     settings = Settings.from_env(os.environ)
     settings.validate_for_server()
@@ -325,7 +340,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         device_id,
     )
     # Fail before binding HTTP if the exact MVP target is unavailable.
-    source.load().resolve('거실')
+    source.load().resolve(scenario.location)
     runtime = None
     robot_web_url = None
     if args.execute_approved_simulation:
@@ -348,6 +363,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 settings,
                 source.load,
                 robot_web_url=str(robot_web_url),
+                scenario_profile=scenario.profile,
             )
             _close_execution_runtime(checked_runtime, None)
             checked_mode = 'approved-execution'
@@ -370,6 +386,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             settings,
             source.load,
             robot_web_url=str(robot_web_url),
+            scenario_profile=scenario.profile,
         )
         orchestrator = runtime.orchestrator
         text_turn_service = runtime.text_turn_service

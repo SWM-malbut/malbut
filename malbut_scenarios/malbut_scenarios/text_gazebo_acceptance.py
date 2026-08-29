@@ -61,6 +61,11 @@ from malbut_scenarios.text_gazebo_runtime import (
     runtime_binding_digest,
     sanitized_ros_environment,
 )
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboScenarioProfile,
+    coerce_scenario_profile,
+    scenario_spec,
+)
 
 
 _FULL_COMMIT = re.compile(r'^(?:[0-9a-f]{40}|[0-9a-f]{64})$')
@@ -191,10 +196,24 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         help='Optional isolated ROS domain in [1, 100].',
     )
+    parser.add_argument(
+        '--scenario-profile',
+        choices=tuple(
+            profile.value for profile in TextGazeboScenarioProfile
+        ),
+        default=TextGazeboScenarioProfile.HAPPY_PATH.value,
+        help='Select one server-owned named-location acceptance scenario.',
+    )
     return parser
 
 
 def _validate_arguments(args: argparse.Namespace) -> None:
+    try:
+        coerce_scenario_profile(args.scenario_profile)
+    except (TypeError, ValueError):
+        raise TextGazeboAcceptanceError(
+            'acceptance_arguments_invalid'
+        ) from None
     if _FULL_COMMIT.fullmatch(args.source_commit) is None:
         raise TextGazeboAcceptanceError('acceptance_arguments_invalid')
     if (
@@ -641,12 +660,16 @@ class _AcceptanceSupervisor:
         domain_id: int,
         gui: bool,
         nonce: str,
+        scenario_profile: TextGazeboScenarioProfile = (
+            TextGazeboScenarioProfile.HAPPY_PATH
+        ),
     ) -> None:
         self._layout = layout
         self._run_root = run_root
         self._domain_id = domain_id
         self._gui = gui
         self._nonce = nonce
+        self._scenario = scenario_spec(scenario_profile)
         self._private_runtime = run_root / 'runtime-home'
         self._private_runtime.mkdir(mode=0o700)
         for name in ('ros', 'cache', 'config'):
@@ -767,6 +790,9 @@ class _AcceptanceSupervisor:
                     'device_id': fixture['device_id'],
                     'map_id': fixture['map_id'],
                     'map_revision': fixture['map_revision'],
+                    'target_binding_digest': (
+                        fixture['target_binding_digest']
+                    ),
                 },
             )
         finally:
@@ -919,7 +945,7 @@ class _AcceptanceSupervisor:
             target = ActiveMapCatalogSource(
                 Path(selected['store']),
                 selected['device_id'],
-            ).load().resolve('거실')
+            ).load().resolve(self._scenario.location)
             preview_body = json.dumps(
                 {
                     'map_id': target.map_id,
@@ -935,6 +961,7 @@ class _AcceptanceSupervisor:
             selected['expected_preview_digest'] = request_body_digest(
                 preview_body
             )
+            selected['target_binding_digest'] = target.binding_digest
             return selected
         except Exception as error:
             raise TextGazeboAcceptanceError(
@@ -1016,6 +1043,8 @@ class _AcceptanceSupervisor:
                 '--device-id',
                 fixture['device_id'],
                 '--execute-approved-simulation',
+                '--scenario-profile',
+                self._scenario.profile.value,
                 '--robot-web-url',
                 self._proxy.origin,
             ),
@@ -1030,6 +1059,7 @@ class _AcceptanceSupervisor:
             token=token,
             user_id=user_id,
             run_nonce=self._nonce,
+            scenario_profile=self._scenario.profile,
         )
         client.await_health(30.0)
         process.require_running()
@@ -1100,7 +1130,15 @@ def _build_receipt(
         source_tree_digest=attestation.tree_digest,
         installed_digest=layout.installed_digest,
         goal_set_digest=_goal_set_digest(nav2),
-        runtime_binding_digest=runtime_binding_digest(**binding),
+        runtime_binding_digest=runtime_binding_digest(
+            device_id=binding['device_id'],
+            map_id=binding['map_id'],
+            map_revision=binding['map_revision'],
+        ),
+        target_binding_digest=binding['target_binding_digest'],
+        scenario_profile=coerce_scenario_profile(
+            args.scenario_profile
+        ),
         states=StableStates(
             readiness=ReadinessState.READY,
             confirmation=ConfirmationState.APPROVED,
@@ -1159,6 +1197,9 @@ def _run_acceptance(
             domain_id=domain_id,
             gui=args.gui,
             nonce=nonce,
+            scenario_profile=coerce_scenario_profile(
+                args.scenario_profile
+            ),
         )
         successful = None
         binding = None
@@ -1211,6 +1252,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 'mode': 'check',
                 'nav2_start_count': 0,
                 'physical_authorized': False,
+                'scenario_profile': coerce_scenario_profile(
+                    args.scenario_profile
+                ).value,
                 'simulation': True,
                 'source_tree_digest': attestation.tree_digest,
                 'status': 'ok',
@@ -1221,6 +1265,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             'manifest_digest': manifest.digest(),
             'mode': 'run',
             'physical_authorized': False,
+            'scenario_profile': coerce_scenario_profile(
+                args.scenario_profile
+            ).value,
             'simulation': True,
             'status': 'succeeded',
         }, ensure_ascii=True, sort_keys=True))

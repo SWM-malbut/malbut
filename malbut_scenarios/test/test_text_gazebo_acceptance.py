@@ -25,6 +25,9 @@ from malbut_scenarios.text_gazebo_runtime import (
     ProposalReceipt,
     TextGazeboRuntimeError,
 )
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboScenarioProfile,
+)
 
 
 _COMMIT = '1' * 40
@@ -32,6 +35,7 @@ _DIGEST = '2' * 64
 _TREE_DIGEST = '3' * 64
 _SOURCE_TREE = Path('/source/tree')
 _GOAL_DIGEST = hashlib.sha256(b'one-private-goal').hexdigest()
+_TARGET_DIGEST = hashlib.sha256(b'one-private-target').hexdigest()
 
 
 def _layout() -> acceptance.InstalledLayout:
@@ -61,6 +65,7 @@ def _args(**changes) -> argparse.Namespace:
         'source_tree': _SOURCE_TREE,
         'gui': False,
         'ros_domain_id': 77,
+        'scenario_profile': 'happy_path',
     }
     values.update(changes)
     return argparse.Namespace(**values)
@@ -182,6 +187,7 @@ def test_check_mode_is_default_safe_and_does_not_enter_runtime(
         'mode': 'check',
         'nav2_start_count': 0,
         'physical_authorized': False,
+        'scenario_profile': 'happy_path',
         'simulation': True,
         'source_tree_digest': _TREE_DIGEST,
         'status': 'ok',
@@ -225,6 +231,8 @@ def test_run_mode_prints_only_public_manifest_digest(
         evidence,
         '--ros-domain-id',
         '77',
+        '--scenario-profile',
+        'happy_kitchen',
     ])
 
     captured = capsys.readouterr()
@@ -234,12 +242,14 @@ def test_run_mode_prints_only_public_manifest_digest(
         'manifest_digest': '9' * 64,
         'mode': 'run',
         'physical_authorized': False,
+        'scenario_profile': 'happy_kitchen',
         'simulation': True,
         'status': 'succeeded',
     }
     assert evidence not in captured.out
     assert len(calls) == 1
     assert calls[0][0].ros_domain_id == 77
+    assert calls[0][0].scenario_profile == 'happy_kitchen'
     assert calls[0][1] == _layout()
     assert calls[0][2] == _attestation()
 
@@ -309,6 +319,15 @@ def test_run_mode_prints_only_public_manifest_digest(
             '/private/evidence.json',
             '--ros-domain-id',
             '0',
+        ],
+        [
+            '--check',
+            '--source-commit',
+            _COMMIT,
+            '--source-tree',
+            str(_SOURCE_TREE),
+            '--scenario-profile',
+            'raw_location_payload',
         ],
     ),
 )
@@ -683,6 +702,7 @@ def test_build_receipt_requires_and_projects_exact_once_evidence() -> None:
             'device_id': 'device-private',
             'map_id': 'map-private',
             'map_revision': 'revision-private',
+            'target_binding_digest': _TARGET_DIGEST,
         },
         cleanup=_cleanup(),
     )
@@ -690,6 +710,8 @@ def test_build_receipt_requires_and_projects_exact_once_evidence() -> None:
     assert receipt.simulation is True
     assert receipt.physical_authorized is False
     assert receipt.source_tree_digest == _TREE_DIGEST
+    assert receipt.scenario_profile is TextGazeboScenarioProfile.HAPPY_PATH
+    assert receipt.target_binding_digest == _TARGET_DIGEST
     assert receipt.counts.as_dict() == {
         'agent_proposal_count': 1,
         'confirmation_count': 1,
@@ -739,6 +761,7 @@ def test_build_receipt_rejects_non_exact_effect_counts(change) -> None:
                 'device_id': 'device',
                 'map_id': 'map',
                 'map_revision': 'revision',
+                'target_binding_digest': _TARGET_DIGEST,
             },
             cleanup=_cleanup(),
         )
@@ -829,6 +852,7 @@ def test_supervisor_orders_observation_before_runtime_and_effects(
             'store': '/private/store',
             'user_map_path': '/private/user-map.json',
             'expected_preview_digest': 'd' * 64,
+            'target_binding_digest': _TARGET_DIGEST,
         },
     )
 
@@ -892,6 +916,7 @@ def test_supervisor_orders_observation_before_runtime_and_effects(
         'device_id': 'device',
         'map_id': 'map',
         'map_revision': 'revision',
+        'target_binding_digest': _TARGET_DIGEST,
     }
 
 
@@ -992,6 +1017,7 @@ def test_supervisor_rejects_effect_that_appears_in_delayed_sample(
             'store': '/private/store',
             'user_map_path': '/private/user-map.json',
             'expected_preview_digest': 'e' * 64,
+            'target_binding_digest': _TARGET_DIGEST,
         },
     )
 

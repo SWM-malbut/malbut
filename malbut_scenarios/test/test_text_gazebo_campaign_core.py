@@ -46,10 +46,11 @@ def _provenance() -> CampaignProvenance:
 def _case(
     suffix: str,
     expected: ExpectedProductOutcome = ExpectedProductOutcome.SUCCEEDED,
+    profile: CampaignProfile = CampaignProfile.HAPPY_PATH,
 ) -> CampaignCase:
     return CampaignCase(
         case_id=CampaignCaseId(f'happy-{suffix}'),
-        profile=CampaignProfile.HAPPY_PATH,
+        profile=profile,
         expected_outcome=expected,
     )
 
@@ -92,7 +93,11 @@ class _FakeExecutor:
 
 def test_happy_cases_run_sequentially_and_pass() -> None:
     """All clean matching cases run in order and produce one overall pass."""
-    cases = [_case('one'), _case('two'), _case('three')]
+    cases = [
+        _case('living', profile=CampaignProfile.HAPPY_LIVING_ROOM),
+        _case('kitchen', profile=CampaignProfile.HAPPY_KITCHEN),
+        _case('bedroom', profile=CampaignProfile.HAPPY_BEDROOM),
+    ]
     provenance = _provenance()
     executor = _FakeExecutor([_execution(), _execution(), _execution()])
 

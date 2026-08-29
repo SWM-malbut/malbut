@@ -38,6 +38,9 @@ from malbut_scenarios.text_gazebo_evidence import (
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
 )
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboScenarioProfile,
+)
 
 
 COMMIT = '1' * 40
@@ -45,7 +48,14 @@ SOURCE_DIGEST = '2' * 64
 INSTALLED_DIGEST = '3' * 64
 
 
-def _child_manifest(*, run_digit='4', commit=COMMIT, goal_digit='5'):
+def _child_manifest(
+    *,
+    run_digit='4',
+    commit=COMMIT,
+    goal_digit='5',
+    target_digit='6',
+    profile=TextGazeboScenarioProfile.HAPPY_PATH,
+):
     receipt = TextGazeboEvidenceReceipt(
         run_id='run-' + run_digit * 32,
         commit=commit,
@@ -53,6 +63,8 @@ def _child_manifest(*, run_digit='4', commit=COMMIT, goal_digit='5'):
         installed_digest=INSTALLED_DIGEST,
         goal_set_digest=goal_digit * 64,
         runtime_binding_digest='6' * 64,
+        target_binding_digest=target_digit * 64,
+        scenario_profile=profile,
         states=StableStates(
             readiness=ReadinessState.READY,
             confirmation=ConfirmationState.APPROVED,
@@ -90,23 +102,44 @@ def _child_manifest(*, run_digit='4', commit=COMMIT, goal_digit='5'):
     return TextGazeboEvidenceManifest(receipt)
 
 
-def _child_summary(*, run_digit='4', commit=COMMIT, goal_digit='5'):
+def _child_summary(
+    *,
+    run_digit='4',
+    commit=COMMIT,
+    goal_digit='5',
+    target_digit='6',
+    profile=TextGazeboScenarioProfile.HAPPY_PATH,
+):
     manifest = _child_manifest(
         run_digit=run_digit,
         commit=commit,
         goal_digit=goal_digit,
+        target_digit=target_digit,
+        profile=profile,
     )
     payload = (manifest.canonical_json() + '\n').encode('utf-8')
     return parse_child_manifest(payload)
 
 
-def _case(*, ordinal=1, case_id='normal-smoke', child=None, **changes):
+def _case(
+    *,
+    ordinal=1,
+    case_id='normal-smoke',
+    profile='happy_path',
+    child=None,
+    **changes,
+):
     if child is None and 'child_manifest' not in changes:
-        child = _child_summary()
+        try:
+            typed_profile = TextGazeboScenarioProfile(profile)
+        except ValueError:
+            child = None
+        else:
+            child = _child_summary(profile=typed_profile)
     values = {
         'ordinal': ordinal,
         'case_id': case_id,
-        'profile': 'happy_path',
+        'profile': profile,
         'expected_outcome': ProductOutcome.SUCCEEDED,
         'observed_outcome': ProductOutcome.SUCCEEDED,
         'test_verdict': CaseTestVerdict.PASSED,
@@ -170,6 +203,10 @@ def test_child_parser_returns_strict_digest_only_success_summary():
     assert summary.installed_digest == INSTALLED_DIGEST
     assert summary.goal_set_digest == '5' * 64
     assert summary.runtime_binding_digest == '6' * 64
+    assert summary.target_binding_digest == '6' * 64
+    assert summary.scenario_profile is (
+        TextGazeboScenarioProfile.HAPPY_PATH
+    )
     assert summary.cleanup_complete is True
     assert summary.forced_termination_count == 0
     assert summary.simulation is True
@@ -244,7 +281,7 @@ def test_child_parser_rejects_wrong_format_extra_fields_and_digest():
 
 
 def test_child_parser_rejects_noncanonical_or_non_success_receipt():
-    """Only canonical exact-success v2 child evidence is accepted."""
+    """Only canonical exact-success v3 child evidence is accepted."""
     manifest = _child_manifest()
     noncanonical = json.dumps(json.loads(manifest.canonical_json()))
     with pytest.raises(CampaignEvidenceError) as caught:
@@ -302,6 +339,7 @@ def test_one_case_passed_campaign_schema_is_fixed_and_digest_bound():
         'observed_outcome': 'succeeded',
         'ordinal': 1,
         'profile': 'happy_path',
+        'target_binding_digest': '6' * 64,
         'test_verdict': 'passed',
     }
     assert manifest.receipt_digest == receipt.digest()
@@ -330,6 +368,83 @@ def test_campaign_preserves_explicit_order_and_requires_contiguous_ordinals():
     invalid = replace(cases[1], ordinal=3)
     with pytest.raises(ValueError, match='ordinals'):
         _receipt(cases=(cases[0], invalid))
+
+
+def test_three_space_campaign_binds_distinct_semantic_targets():
+    """A passed three-space receipt proves the selected target per case."""
+    profiles = (
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        TextGazeboScenarioProfile.HAPPY_KITCHEN,
+        TextGazeboScenarioProfile.HAPPY_BEDROOM,
+    )
+    cases = tuple(
+        _case(
+            ordinal=ordinal,
+            case_id=f'space-{ordinal}',
+            profile=profile.value,
+            child=_child_summary(
+                run_digit=run_digit,
+                goal_digit=goal_digit,
+                target_digit=target_digit,
+                profile=profile,
+            ),
+        )
+        for ordinal, profile, run_digit, goal_digit, target_digit in (
+            (1, profiles[0], 'a', '1', '4'),
+            (2, profiles[1], 'b', '2', '5'),
+            (3, profiles[2], 'c', '3', '6'),
+        )
+    )
+
+    receipt = _receipt(cases=cases)
+
+    assert receipt.test_verdict is CampaignTestVerdict.PASSED
+    assert [
+        case['profile'] for case in receipt.as_dict()['cases']
+    ] == [profile.value for profile in profiles]
+    assert len({
+        case['target_binding_digest']
+        for case in receipt.as_dict()['cases']
+    }) == 3
+
+
+def test_case_rejects_child_from_a_different_scenario_profile():
+    """A campaign label cannot relabel a living-room child as kitchen."""
+    with pytest.raises(ValueError, match='scenario profile'):
+        _case(
+            profile=TextGazeboScenarioProfile.HAPPY_KITCHEN.value,
+            child=_child_summary(
+                profile=TextGazeboScenarioProfile.HAPPY_PATH
+            ),
+        )
+
+
+def test_campaign_rejects_reused_binding_for_different_locations():
+    """Different semantic locations cannot silently resolve to one target."""
+    living = _case(
+        case_id='living',
+        profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM.value,
+        child=_child_summary(
+            run_digit='a',
+            goal_digit='1',
+            target_digit='7',
+            profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        ),
+    )
+    kitchen = _case(
+        ordinal=2,
+        case_id='kitchen',
+        profile=TextGazeboScenarioProfile.HAPPY_KITCHEN.value,
+        child=_child_summary(
+            run_digit='b',
+            goal_digit='2',
+            target_digit='7',
+            profile=TextGazeboScenarioProfile.HAPPY_KITCHEN,
+        ),
+    )
+
+    with pytest.raises(ValueError, match='different semantic targets'):
+        _receipt(cases=(living, kitchen))
 
 
 def test_campaign_rejects_empty_duplicate_and_reused_child_evidence():

@@ -28,17 +28,24 @@ from malbut_scenarios.text_gazebo_evidence import (
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
 )
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboScenarioProfile,
+    coerce_scenario_profile,
+    scenario_spec,
+)
 
 
 CAMPAIGN_EVIDENCE_FORMAT = (
-    'malbut.text-gazebo-campaign-evidence.v1'
+    'malbut.text-gazebo-campaign-evidence.v2'
 )
-CHILD_EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v2'
+CHILD_EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v3'
 MAX_CAMPAIGN_CASES = 32
 MAX_CHILD_MANIFEST_BYTES = 64 * 1024
 MAX_DURATION_SECONDS = 86_400.0
 MAX_EVIDENCE_COUNT = 1_000_000
-CAMPAIGN_PROFILE_ALLOWLIST = frozenset({'happy_path'})
+CAMPAIGN_PROFILE_ALLOWLIST = frozenset(
+    profile.value for profile in TextGazeboScenarioProfile
+)
 
 _CAMPAIGN_ID = re.compile(r'campaign-[0-9a-f]{32}\Z')
 _CASE_ID = re.compile(r'[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*\Z')
@@ -62,9 +69,11 @@ _CHILD_RECEIPT_KEYS = frozenset({
     'physical_authorized',
     'run_id',
     'runtime_binding_digest',
+    'scenario_profile',
     'simulation',
     'source_tree_digest',
     'states',
+    'target_binding_digest',
 })
 _CHILD_STATE_KEYS = frozenset({
     'confirmation',
@@ -233,6 +242,8 @@ class ChildManifestSummary:
     installed_digest: str
     goal_set_digest: str
     runtime_binding_digest: str
+    target_binding_digest: str
+    scenario_profile: TextGazeboScenarioProfile
     cleanup_complete: bool
     owned_processes_remaining: int
     ros_nodes_remaining: int
@@ -252,8 +263,14 @@ class ChildManifestSummary:
             'installed_digest',
             'goal_set_digest',
             'runtime_binding_digest',
+            'target_binding_digest',
         ):
             _require_digest(getattr(self, name), name)
+        _require_enum(
+            self.scenario_profile,
+            TextGazeboScenarioProfile,
+            'scenario_profile',
+        )
         if (
             not isinstance(self.run_id, str)
             or _RUN_ID.fullmatch(self.run_id) is None
@@ -373,6 +390,10 @@ class CampaignCaseEvidence:
             _duration(self.duration_seconds, 'duration_seconds'),
         )
         if self.child_manifest is not None:
+            if self.child_manifest.scenario_profile.value != self.profile:
+                raise ValueError(
+                    'child scenario profile must match the campaign case'
+                )
             if self.observed_outcome is not ProductOutcome.SUCCEEDED:
                 raise ValueError(
                     'exact-success child requires succeeded observation'
@@ -412,6 +433,13 @@ class CampaignCaseEvidence:
             return None
         return self.child_manifest.manifest_digest
 
+    @property
+    def target_binding_digest(self) -> Optional[str]:
+        """Return the content-bound semantic target without its identity."""
+        if self.child_manifest is None:
+            return None
+        return self.child_manifest.target_binding_digest
+
     def as_dict(self) -> Dict[str, object]:
         """Return the fixed, ordered, content-free case projection."""
         return {
@@ -424,6 +452,7 @@ class CampaignCaseEvidence:
             'observed_outcome': self.observed_outcome.value,
             'ordinal': self.ordinal,
             'profile': self.profile,
+            'target_binding_digest': self.target_binding_digest,
             'test_verdict': self.test_verdict.value,
         }
 
@@ -561,6 +590,8 @@ class TextGazeboCampaignReceipt:
         run_ids = []
         manifest_digests = []
         goal_set_digests = []
+        target_by_location: Dict[str, str] = {}
+        location_by_target: Dict[str, str] = {}
         for case in self.cases:
             child = case.child_manifest
             if child is None:
@@ -576,6 +607,25 @@ class TextGazeboCampaignReceipt:
             run_ids.append(child.run_id)
             manifest_digests.append(child.manifest_digest)
             goal_set_digests.append(child.goal_set_digest)
+            location = scenario_spec(
+                coerce_scenario_profile(case.profile)
+            ).location
+            previous_target = target_by_location.setdefault(
+                location,
+                child.target_binding_digest,
+            )
+            if previous_target != child.target_binding_digest:
+                raise ValueError(
+                    'one semantic target must keep one binding digest'
+                )
+            previous_location = location_by_target.setdefault(
+                child.target_binding_digest,
+                location,
+            )
+            if previous_location != location:
+                raise ValueError(
+                    'different semantic targets must use different bindings'
+                )
         if len(set(run_ids)) != len(run_ids):
             raise ValueError('child run identifiers must be unique')
         if len(set(manifest_digests)) != len(manifest_digests):
@@ -791,6 +841,10 @@ def _child_receipt(value: Dict[str, object]) -> TextGazeboEvidenceReceipt:
             installed_digest=value['installed_digest'],
             goal_set_digest=value['goal_set_digest'],
             runtime_binding_digest=value['runtime_binding_digest'],
+            target_binding_digest=value['target_binding_digest'],
+            scenario_profile=TextGazeboScenarioProfile(
+                value['scenario_profile']
+            ),
             states=states,
             counts=counts,
             durations=durations,
@@ -874,6 +928,8 @@ def parse_child_manifest(payload: bytes) -> ChildManifestSummary:
             installed_digest=receipt.installed_digest,
             goal_set_digest=receipt.goal_set_digest,
             runtime_binding_digest=receipt.runtime_binding_digest,
+            target_binding_digest=receipt.target_binding_digest,
+            scenario_profile=receipt.scenario_profile,
             cleanup_complete=cleanup.completed,
             owned_processes_remaining=(
                 cleanup.owned_processes_remaining

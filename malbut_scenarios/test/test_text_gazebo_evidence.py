@@ -25,6 +25,9 @@ from malbut_scenarios.text_gazebo_evidence import (
     TextGazeboEvidenceReceipt,
     write_evidence_manifest,
 )
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboScenarioProfile,
+)
 
 
 def _states() -> StableStates:
@@ -80,6 +83,8 @@ def _receipt(**changes) -> TextGazeboEvidenceReceipt:
         'installed_digest': '3' * 64,
         'goal_set_digest': '4' * 64,
         'runtime_binding_digest': '5' * 64,
+        'target_binding_digest': '7' * 64,
+        'scenario_profile': TextGazeboScenarioProfile.HAPPY_PATH,
         'states': _states(),
         'counts': _counts(),
         'durations': _durations(),
@@ -105,16 +110,18 @@ def test_receipt_schema_is_fixed_canonical_and_digest_bound() -> None:
         'physical_authorized',
         'run_id',
         'runtime_binding_digest',
+        'scenario_profile',
         'simulation',
         'source_tree_digest',
         'states',
+        'target_binding_digest',
     }
     assert receipt_value['simulation'] is True
     assert receipt_value['physical_authorized'] is False
     assert receipt_value['states']['navigation'] == 'succeeded'
     assert receipt_value['counts']['nav2_goal_count'] == 1
     assert manifest_value == {
-        'format': 'malbut.text-gazebo-e2e-evidence.v2',
+        'format': 'malbut.text-gazebo-e2e-evidence.v3',
         'receipt': receipt_value,
         'receipt_digest': receipt.digest(),
     }
@@ -191,6 +198,7 @@ def test_public_api_has_no_private_content_fields() -> None:
         ('source_tree_digest', 'g' * 64),
         ('goal_set_digest', '4' * 63),
         ('runtime_binding_digest', '5' * 65),
+        ('target_binding_digest', '7' * 63),
     ),
 )
 def test_receipt_rejects_unbounded_or_non_digest_identity(
@@ -219,6 +227,9 @@ def test_durations_reject_non_finite_negative_and_excess(value) -> None:
 def test_typed_states_reject_arbitrary_strings() -> None:
     with pytest.raises(TypeError, match='ReadinessState'):
         replace(_states(), readiness='ready')
+
+    with pytest.raises(TypeError, match='TextGazeboScenarioProfile'):
+        _receipt(scenario_profile='happy_path')
 
 
 @pytest.mark.parametrize(
