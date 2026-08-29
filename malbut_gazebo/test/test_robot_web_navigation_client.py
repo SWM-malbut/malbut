@@ -44,6 +44,27 @@ class _State:
         self.status_map_id = "map-home"
         self.status_map_revision = "map-revision-1"
         self.status_error = None
+        self.status_sequence = 17
+        self.status_server_time = "2026-08-29T12:00:00+00:00"
+        self.status_nav2 = {
+            "amcl": "active",
+            "bt_navigator": "active",
+            "collision_monitor": "active",
+            "controller_server": "active",
+            "global_costmap": "active",
+            "planner_server": "active",
+        }
+        self.status_localization = {
+            "state": "ok",
+            "tf_age_s": 0.1,
+        }
+        self.status_pose = {
+            "x": 1.25,
+            "y": -0.5,
+            "yaw": 0.75,
+            "stamp": 100.0,
+            "age_s": 0.1,
+        }
         self.status_navigation = {
             "state": "driving",
             "session_id": "navigation-session-secret",
@@ -127,8 +148,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self._raw_json(200, self.state.raw_status)
             else:
                 self._json(200, {
+                    "seq": self.state.status_sequence,
+                    "server_time": self.state.status_server_time,
                     "map_id": self.state.status_map_id,
                     "map_revision": self.state.status_map_revision,
+                    "pose": self.state.status_pose,
+                    "localization": self.state.status_localization,
+                    "nav2": self.state.status_nav2,
                     "navigation": self.state.status_navigation,
                 })
             return
@@ -374,6 +400,112 @@ def test_environment_proxies_are_disabled_even_when_hostile(monkeypatch):
 
     assert status.state == "driving"
     assert proxy_calls == []
+
+
+def test_readiness_combines_config_and_status_without_pose_disclosure():
+    """Expose typed readiness while retaining no raw coordinates publicly."""
+    with _robot_web_server() as (origin, state):
+        client = RobotWebNavigationClient(origin)
+        readiness = client.readiness()
+
+    assert readiness.matches_runtime(
+        device_id=DEVICE_ID,
+        map_id="map-home",
+        map_revision="map-revision-1",
+    )
+    assert readiness.simulation is True
+    assert readiness.navigation_enabled is True
+    assert readiness.nav2_all_active is True
+    assert readiness.localization_ok is True
+    assert readiness.ready_for_navigation is True
+    assert len(readiness.content_fingerprint()) == 64
+    assert readiness.to_public_dict() == {
+        "simulation": True,
+        "navigation_enabled": True,
+        "nav2_all_active": True,
+        "localization_ok": True,
+        "ready_for_navigation": True,
+        "physical_authorized": False,
+    }
+    rendered = repr(readiness)
+    for private in (
+        DEVICE_ID,
+        "map-home",
+        "map-revision-1",
+        "1.25",
+        "-0.5",
+        "0.75",
+        "collision_monitor",
+        state.status_server_time,
+    ):
+        assert private not in rendered
+    assert [call[1] for call in state.calls] == [
+        "/api/editor-config",
+        "/api/robot/status",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        ("missing_nav2", "INVALID_NAV2_STATUS"),
+        ("incomplete_nav2", "INCOMPLETE_NAV2_STATUS"),
+        ("malformed_nav2", "INVALID_AMCL"),
+        ("missing_localization", "INVALID_LOCALIZATION_STATUS"),
+        ("ok_without_pose", "LOCALIZATION_POSE_REQUIRED"),
+        ("ok_without_tf_age", "LOCALIZATION_TF_AGE_REQUIRED"),
+        ("stale_tf", "LOCALIZATION_TF_STALE"),
+        ("stale_pose", "LOCALIZATION_POSE_STALE"),
+        ("map_mismatch", "MAP_ID_MISMATCH"),
+    ],
+)
+def test_readiness_fails_closed_on_malformed_or_mismatched_status(
+    mutation,
+    expected_code,
+):
+    """Never turn an incomplete Robot Web snapshot into ready evidence."""
+    with _robot_web_server() as (origin, state):
+        if mutation == "missing_nav2":
+            state.status_nav2 = None
+        elif mutation == "incomplete_nav2":
+            state.status_nav2.pop("collision_monitor")
+        elif mutation == "malformed_nav2":
+            state.status_nav2["amcl"] = True
+        elif mutation == "missing_localization":
+            state.status_localization = None
+        elif mutation == "ok_without_pose":
+            state.status_pose = None
+        elif mutation == "ok_without_tf_age":
+            state.status_localization["tf_age_s"] = None
+        elif mutation == "stale_tf":
+            state.status_localization["tf_age_s"] = 2.001
+        elif mutation == "stale_pose":
+            state.status_pose["age_s"] = 2.001
+        else:
+            state.status_map_id = "other-map"
+        client = RobotWebNavigationClient(origin)
+        with pytest.raises(RobotWebProtocolError) as caught:
+            client.readiness()
+
+    assert caught.value.code == expected_code
+
+
+def test_readiness_reports_valid_not_ready_state_without_raw_details():
+    """Represent lifecycle/localization gates as false, not as authority."""
+    with _robot_web_server() as (origin, state):
+        state.status_nav2["collision_monitor"] = "inactive"
+        state.status_localization = {
+            "state": "verifying",
+            "tf_age_s": None,
+        }
+        state.status_pose = None
+        readiness = RobotWebNavigationClient(origin).readiness()
+
+    assert readiness.nav2_all_active is False
+    assert readiness.localization_ok is False
+    assert readiness.ready_for_navigation is False
+    assert "inactive" not in repr(readiness)
+    assert "verifying" not in repr(readiness)
 
 
 def test_happy_path_preserves_cookie_csrf_map_and_opaque_values():

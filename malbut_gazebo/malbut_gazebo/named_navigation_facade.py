@@ -29,6 +29,7 @@ from malbut_gazebo.robot_web_navigation_client import (
     NavigationSession,
     NavigationStatus,
     RobotWebNavigationClient,
+    RobotWebOutcomeUnknown,
 )
 from malbut_gazebo.user_map_builder import load_slam_map
 
@@ -380,10 +381,19 @@ class NamedNavigationFacade:
         ):
             _fail("map_binding_changed", "Robot Web map binding is stale")
         session = self._client.start(prepared.preview)
-        return NamedNavigationExecution(
-            target=current_target,
-            session=session,
-        )
+        try:
+            return NamedNavigationExecution(
+                target=current_target,
+                session=session,
+            )
+        except NamedNavigationFacadeError as error:
+            # The connector already crossed the external-effect boundary.  A
+            # malformed or mismatched accepted session can therefore never be
+            # reported as a definite rejection: the Nav2 goal may be live.
+            raise RobotWebOutcomeUnknown(
+                "start",
+                cause_code="INVALID_ACCEPTED_SESSION",
+            ) from error
 
     def navigate(self, location: str) -> NamedNavigationExecution:
         """Preview and explicitly start one simulation destination by name."""

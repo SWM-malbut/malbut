@@ -22,6 +22,7 @@ from malbut_gazebo.robot_web_navigation_client import (
     NavigationPreview,
     NavigationSession,
     NavigationStatus,
+    RobotWebOutcomeUnknown,
 )
 
 
@@ -219,6 +220,33 @@ def test_explicit_simulation_navigation_previews_revalidates_and_starts_once():
     assert execution.to_public_dict()["state"] == "driving"
     assert "private-session" not in repr(execution)
     assert "private-preview" not in repr(execution)
+
+
+def test_invalid_session_after_start_is_unknown_not_rejected():
+    """Treat a malformed post-accept handle as an ambiguous robot effect."""
+
+    class MismatchedSessionClient(FakeClient):
+        def start(self, preview):
+            self.calls.append(("start", preview))
+            return NavigationSession(
+                "private-session",
+                self.owner,
+                "driving",
+                "f" * 64,
+            )
+
+    client = MismatchedSessionClient()
+    facade = NamedNavigationFacade(
+        lambda: _catalog(), client, authority=_authority()
+    )
+    prepared = facade.preview("거실")
+
+    with pytest.raises(RobotWebOutcomeUnknown) as caught:
+        facade.start(prepared)
+
+    assert caught.value.operation == "start"
+    assert caught.value.cause_code == "INVALID_ACCEPTED_SESSION"
+    assert [call[0] for call in client.calls].count("start") == 1
 
 
 @pytest.mark.parametrize("mutation", ["name", "point", "revision"])

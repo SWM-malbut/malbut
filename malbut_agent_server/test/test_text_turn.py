@@ -1,9 +1,14 @@
 """End-to-end application tests for SWM25-131 text confirmation."""
 
 import time
+import sqlite3
 
 import pytest
 
+from malbut_agent_server.adapters.outbound import (
+    ActionConflictError,
+    SQLiteActionRepository,
+)
 from malbut_agent_server.conversation import (
     ConfirmationIntentConflictError,
     ConversationConflictError,
@@ -170,6 +175,10 @@ def test_request_ambiguous_confirmation_and_approval_call_llm_once(
         assert approved['execution']['tool_call_id'] is None
         assert approved['execution']['physical_authorized'] is False
         assert approved['execution']['nav2_start_count'] == 0
+        assert approved['message'] == (
+            '승인을 기록했습니다. 이 응답 자체는 이동 실행 권한이 '
+            '아니며, 이동 여부는 별도 안전 재검사에서 결정됩니다.'
+        )
         assert provider.calls == 1
 
         replay = service.handle(
@@ -177,9 +186,195 @@ def test_request_ambiguous_confirmation_and_approval_call_llm_once(
             value=_request('response-1', 'turn-3', '네'),
         )
         assert replay['status'] == 'approved'
+        assert replay['message'] == approved['message']
         assert replay['cached'] is True
         assert provider.calls == 1
     finally:
+        store.close()
+        memory.close()
+
+
+def test_execution_mode_approval_atomically_creates_one_robot_action(
+    tmp_path,
+) -> None:
+    """Bind one exact replayable approval to one durable server action."""
+    clock = Clock()
+    base, provider, resolver, store, memory, database = _runtime(
+        tmp_path,
+        clock=clock,
+    )
+    repository = SQLiteActionRepository(database)
+    service = TextTurnService(
+        base.orchestrator,
+        resolver,
+        clock=clock,
+        create_robot_actions=True,
+        action_dispatch_window_seconds=30.0,
+    )
+    try:
+        store.create('user-1', 'conversation-1')
+        proposal = service.handle(
+            user_id='user-1',
+            value=_request('action-request', 'turn-1', '거실로 가줘'),
+        )
+        approval_request = _request('action-approval', 'turn-2', '네')
+
+        approved = service.handle(
+            user_id='user-1',
+            value=approval_request,
+        )
+        replay = service.handle(
+            user_id='user-1',
+            value=approval_request,
+        )
+        action = repository.find_by_confirmation(
+            proposal['confirmation_request_id']
+        )
+
+        assert approved['status'] == replay['status'] == 'approved'
+        assert replay['cached'] is True
+        assert approved['message'] == replay['message']
+        assert approved['execution']['execution_authorized'] is False
+        assert action is not None
+        assert action.state.value == 'PENDING_PREFLIGHT'
+        assert action.binding.arguments_dict() == {'location': '거실'}
+        assert action.simulation is True
+        assert action.physical_authorized is False
+        with sqlite3.connect(database) as connection:
+            assert connection.execute(
+                'SELECT COUNT(*) FROM robot_actions WHERE '
+                'confirmation_request_id = ?',
+                (proposal['confirmation_request_id'],),
+            ).fetchone()[0] == 1
+        assert provider.calls == 1
+    finally:
+        repository.close()
+        store.close()
+        memory.close()
+
+
+def test_action_insert_failure_rolls_back_approval_and_can_retry(
+    tmp_path,
+) -> None:
+    """Keep confirmation pending when its same-transaction action fails."""
+    clock = Clock()
+    base, provider, resolver, store, memory, database = _runtime(
+        tmp_path,
+        clock=clock,
+    )
+    repository = SQLiteActionRepository(database)
+    service = TextTurnService(
+        base.orchestrator,
+        resolver,
+        clock=clock,
+        create_robot_actions=True,
+        action_dispatch_window_seconds=30.0,
+    )
+    try:
+        store.create('user-1', 'conversation-1')
+        proposal = service.handle(
+            user_id='user-1',
+            value=_request('rollback-request', 'turn-1', '거실로 가줘'),
+        )
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                '''
+                CREATE TRIGGER fail_text_turn_action_insert
+                BEFORE INSERT ON robot_actions
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced action failure');
+                END
+                '''
+            )
+
+        approval_request = _request('rollback-approval', 'turn-2', '네')
+        with pytest.raises(ActionConflictError):
+            service.handle(user_id='user-1', value=approval_request)
+
+        pending = store.pending_confirmation('user-1', 'conversation-1')
+        assert pending is not None
+        assert pending.confirmation_request_id == (
+            proposal['confirmation_request_id']
+        )
+        assert repository.find_by_confirmation(
+            proposal['confirmation_request_id']
+        ) is None
+
+        with sqlite3.connect(database) as connection:
+            connection.execute('DROP TRIGGER fail_text_turn_action_insert')
+
+        approved = service.handle(
+            user_id='user-1',
+            value=approval_request,
+        )
+        action = repository.find_by_confirmation(
+            proposal['confirmation_request_id']
+        )
+        assert approved['status'] == 'approved'
+        assert action is not None
+        assert provider.calls == 1
+    finally:
+        repository.close()
+        store.close()
+        memory.close()
+
+
+@pytest.mark.parametrize(
+    ('response_text', 'mutation'),
+    [
+        ('아니요', 'none'),
+        ('취소', 'none'),
+        ('글쎄', 'none'),
+        ('네', 'expire'),
+        ('네', 'target_change'),
+    ],
+)
+def test_nonapproved_execution_responses_create_no_robot_action(
+    tmp_path,
+    response_text,
+    mutation,
+) -> None:
+    """Keep every denied, stale, ambiguous, or changed ticket non-actuating."""
+    clock = Clock()
+    base, provider, resolver, store, memory, database = _runtime(
+        tmp_path,
+        clock=clock,
+    )
+    repository = SQLiteActionRepository(database)
+    service = TextTurnService(
+        base.orchestrator,
+        resolver,
+        clock=clock,
+        create_robot_actions=True,
+        action_dispatch_window_seconds=30.0,
+    )
+    try:
+        store.create('user-1', 'conversation-1')
+        proposal = service.handle(
+            user_id='user-1',
+            value=_request('negative-request', 'turn-1', '거실로 가줘'),
+        )
+        if mutation == 'expire':
+            clock.advance(31.0)
+        elif mutation == 'target_change':
+            resolver.binding_digest = 'b' * 64
+
+        result = service.handle(
+            user_id='user-1',
+            value=_request('negative-response', 'turn-2', response_text),
+        )
+
+        assert result['status'] != 'approved'
+        assert repository.find_by_confirmation(
+            proposal['confirmation_request_id']
+        ) is None
+        with sqlite3.connect(database) as connection:
+            assert connection.execute(
+                'SELECT COUNT(*) FROM robot_actions'
+            ).fetchone()[0] == 0
+        assert provider.calls == 1
+    finally:
+        repository.close()
         store.close()
         memory.close()
 

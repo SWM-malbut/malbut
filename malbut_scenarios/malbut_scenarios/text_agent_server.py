@@ -1,12 +1,21 @@
-"""Run the SWM25-131 text-confirmation server with simulation authority."""
+"""Run text confirmation, optionally dispatching approved Gazebo motion."""
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
+from ipaddress import ip_address
 import os
 from pathlib import Path
+import secrets
 from typing import Callable, Optional, Sequence
+from urllib.parse import urlsplit
 
+from malbut_agent_server.adapters.outbound import SQLiteActionRepository
+from malbut_agent_server.application.approved_action_worker import (
+    ApprovedActionWorker,
+    ApprovedActionWorkerRuntime,
+)
 from malbut_agent_server.config import Settings, load_env_file
 from malbut_agent_server.factory import build_orchestrator
 from malbut_agent_server.http_server import make_server
@@ -16,10 +25,39 @@ from malbut_agent_server.robot_state_source import (
 from malbut_agent_server.schemas import RobotState
 from malbut_agent_server.text_turn import TextTurnService
 from malbut_gazebo.named_navigation import NamedNavigationCatalog
-from malbut_gazebo.named_navigation_facade import ActiveMapCatalogSource
+from malbut_gazebo.named_navigation_facade import (
+    ActiveMapCatalogSource,
+    NamedNavigationFacade,
+    SimulationNavigationAuthority,
+)
+from malbut_gazebo.robot_web_navigation_client import (
+    RobotWebNavigationClient,
+)
 from malbut_scenarios.agent_named_target import (
     CatalogNamedTargetResolver,
 )
+from malbut_scenarios.approved_named_navigation_executor import (
+    ApprovedNamedNavigationExecutor,
+    RobotWebSimulationStateSource,
+)
+
+
+DEFAULT_ROBOT_WEB_URL = 'http://127.0.0.1:8765'
+SIMULATION_BATTERY_ASSUMPTION_PERCENT = 100.0
+DISPATCH_WINDOW_SECONDS = 30.0
+WORKER_LEASE_SECONDS = 240.0
+STATUS_DEADLINE_SECONDS = 120.0
+DISPATCHER_JOIN_TIMEOUT_SECONDS = 240.0
+
+
+@dataclass(frozen=True)
+class ApprovedSimulationTextRuntime:
+    """Dependencies owned by the explicitly actuating simulation mode."""
+
+    orchestrator: object
+    text_turn_service: TextTurnService
+    action_repository: SQLiteActionRepository
+    dispatcher: ApprovedActionWorkerRuntime
 
 
 def build_simulation_text_runtime(
@@ -54,11 +92,170 @@ def build_simulation_text_runtime(
     return orchestrator, TextTurnService(orchestrator, resolver)
 
 
+def build_approved_simulation_text_runtime(
+    settings: Settings,
+    catalog_loader: Callable[[], NamedNavigationCatalog],
+    *,
+    robot_web_url: str,
+) -> ApprovedSimulationTextRuntime:
+    """
+    Compose the explicit SWM25-132 simulation execution boundary.
+
+    Construction performs local SQLite initialization only.  Robot Web is
+    contacted later for the proposal-time read and the independently fresh
+    post-approval preflight; construction itself sends no HTTP request.
+    """
+    if settings.database_path == ':memory:':
+        raise ValueError(
+            'SWM25-132 execution requires a durable database path'
+        )
+    if settings.tool_mode != 'proposal':
+        raise ValueError(
+            'SWM25-132 execution requires proposal Tool mode'
+        )
+    if not settings.auth_token:
+        raise ValueError(
+            'SWM25-132 execution requires MALBUT_AGENT_AUTH_TOKEN'
+        )
+    if _loopback_port(robot_web_url) == settings.port:
+        raise ValueError(
+            'Agent HTTP port conflicts with the Robot Web port'
+        )
+
+    catalog = catalog_loader()
+    # Pin the one MVP destination before constructing SQLite or HTTP owners.
+    catalog.resolve('거실')
+    resolver = CatalogNamedTargetResolver(catalog_loader)
+    client = RobotWebNavigationClient(robot_web_url)
+    state_source = RobotWebSimulationStateSource(
+        client,
+        expected_device_id=catalog.device_id,
+        expected_map_id=catalog.map_id,
+        expected_map_revision=catalog.map_revision,
+        assumed_battery_percent=(
+            SIMULATION_BATTERY_ASSUMPTION_PERCENT
+        ),
+    )
+    facade = NamedNavigationFacade(
+        catalog_loader,
+        client,
+        authority=(
+            SimulationNavigationAuthority.explicit_test_authority()
+        ),
+    )
+    executor = ApprovedNamedNavigationExecutor(facade)
+
+    orchestrator = build_orchestrator(
+        settings,
+        robot_state_source=state_source,
+    )
+    action_repository = None
+    try:
+        # Construct this before HTTP starts accepting approvals.  This makes
+        # the action schema available to the confirmation/action transaction.
+        action_repository = SQLiteActionRepository(settings.database_path)
+        text_turn_service = TextTurnService(
+            orchestrator,
+            resolver,
+            create_robot_actions=True,
+            action_dispatch_window_seconds=DISPATCH_WINDOW_SECONDS,
+        )
+        worker = ApprovedActionWorker(
+            action_repository,
+            executor,
+            state_source,
+            orchestrator.safety_policy,
+            resolver,
+            worker_id='swm25-132-' + secrets.token_hex(16),
+            lease_for_seconds=WORKER_LEASE_SECONDS,
+            status_deadline_seconds=STATUS_DEADLINE_SECONDS,
+            status_poll_interval_seconds=0.25,
+        )
+        return ApprovedSimulationTextRuntime(
+            orchestrator=orchestrator,
+            text_turn_service=text_turn_service,
+            action_repository=action_repository,
+            dispatcher=ApprovedActionWorkerRuntime(worker),
+        )
+    except Exception:
+        if action_repository is not None:
+            action_repository.close()
+        orchestrator.conversation_store.close()
+        orchestrator.memory_store.close()
+        raise
+
+
+def _loopback_port(robot_web_url: str) -> int:
+    """Return the port of one strict literal loopback HTTP origin."""
+    try:
+        parsed = urlsplit(robot_web_url)
+        if (
+            parsed.scheme != 'http'
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {'', '/'}
+            or parsed.query
+            or parsed.fragment
+            or '%' in parsed.hostname
+            or not ip_address(parsed.hostname).is_loopback
+        ):
+            raise ValueError
+        port = 80 if parsed.port is None else parsed.port
+        if port == 0:
+            raise ValueError
+        return port
+    except (TypeError, ValueError) as error:
+        raise ValueError('Robot Web URL is invalid') from error
+
+
+def _close_execution_runtime(
+    runtime: ApprovedSimulationTextRuntime,
+    server: object | None,
+) -> None:
+    """Drain request and worker threads before closing their SQLite stores."""
+    first_error = None
+    try:
+        runtime.dispatcher.close()
+    except Exception as error:
+        first_error = error
+    if server is not None:
+        try:
+            server.server_close()
+        except Exception as error:
+            if first_error is None:
+                first_error = error
+    try:
+        joined = runtime.dispatcher.join(
+            timeout=DISPATCHER_JOIN_TIMEOUT_SECONDS
+        )
+    except Exception as error:
+        if first_error is None:
+            first_error = error
+        joined = False
+    if not joined:
+        # The worker may still own these connections.  Closing them beneath
+        # it would turn an orderly shutdown into a persistence race.
+        raise RuntimeError('approved action dispatcher did not stop')
+    for close in (
+        runtime.action_repository.close,
+        runtime.orchestrator.conversation_store.close,
+        runtime.orchestrator.memory_store.close,
+    ):
+        try:
+            close()
+        except Exception as error:
+            if first_error is None:
+                first_error = error
+    if first_error is not None:
+        raise first_error
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            'Run authenticated text proposal and confirmation only; '
-            'no Robot Web, ROS, or Nav2 command is sent.'
+            'Run authenticated text proposal and confirmation.  Gazebo '
+            'movement remains off unless explicitly enabled.'
         ),
     )
     parser.add_argument('--env-file', default='.env.local')
@@ -80,6 +277,21 @@ def _parser() -> argparse.ArgumentParser:
         '--check',
         action='store_true',
         help='Validate composition and target binding, then exit.',
+    )
+    parser.add_argument(
+        '--execute-approved-simulation',
+        action='store_true',
+        help=(
+            'Explicitly permit approved actions to start one Gazebo-only '
+            'Robot Web navigation; physical authority remains false.'
+        ),
+    )
+    parser.add_argument(
+        '--robot-web-url',
+        help=(
+            'Loopback Robot Web origin; defaults to MALBUT_ROBOT_WEB_URL '
+            f'or {DEFAULT_ROBOT_WEB_URL}.'
+        ),
     )
     return parser
 
@@ -114,44 +326,95 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     # Fail before binding HTTP if the exact MVP target is unavailable.
     source.load().resolve('거실')
-    orchestrator, text_turn_service = build_simulation_text_runtime(
-        settings,
-        source.load,
-    )
+    runtime = None
+    robot_web_url = None
+    if args.execute_approved_simulation:
+        robot_web_url = (
+            args.robot_web_url
+            or os.environ.get('MALBUT_ROBOT_WEB_URL', '')
+            or DEFAULT_ROBOT_WEB_URL
+        )
+        if _loopback_port(robot_web_url) == settings.port:
+            raise ValueError(
+                'Agent HTTP port conflicts with the Robot Web port'
+            )
     if args.check:
-        orchestrator.conversation_store.close()
-        orchestrator.memory_store.close()
+        # Construction is non-actuating: it performs no Robot Web request or
+        # Nav2 command.  When execution is requested, validate that complete
+        # composition (including schema and worker dependencies), then close
+        # every owner without starting its dispatcher.
+        if args.execute_approved_simulation:
+            checked_runtime = build_approved_simulation_text_runtime(
+                settings,
+                source.load,
+                robot_web_url=str(robot_web_url),
+            )
+            _close_execution_runtime(checked_runtime, None)
+            checked_mode = 'approved-execution'
+        else:
+            checked_orchestrator, _text_turn_service = (
+                build_simulation_text_runtime(settings, source.load)
+            )
+            checked_orchestrator.conversation_store.close()
+            checked_orchestrator.memory_store.close()
+            checked_mode = 'baseline'
         print(
             'text confirmation composition: ok '
-            '(simulation=true, physical_authorized=false, nav2=off)'
+            '(mode=' + checked_mode + ', simulation=true, '
+            'physical_authorized=false, nav2=off)'
         )
         return 0
 
-    server = make_server(
-        settings.host,
-        settings.port,
-        orchestrator,
-        max_request_bytes=settings.max_request_bytes,
-        auth_token=settings.auth_token,
-        allowed_user_id=settings.user_id,
-        max_concurrent_requests=settings.max_concurrent_requests,
-        requests_per_minute=settings.requests_per_minute,
-        socket_timeout_seconds=settings.socket_timeout_seconds,
-        text_turn_service=text_turn_service,
-    )
-    print(
-        'Malbut text confirmation listening on '
-        f'http://{settings.host}:{settings.port} '
-        '(simulation=true, physical_authorized=false, nav2=off)'
-    )
+    if args.execute_approved_simulation:
+        runtime = build_approved_simulation_text_runtime(
+            settings,
+            source.load,
+            robot_web_url=str(robot_web_url),
+        )
+        orchestrator = runtime.orchestrator
+        text_turn_service = runtime.text_turn_service
+    else:
+        orchestrator, text_turn_service = build_simulation_text_runtime(
+            settings,
+            source.load,
+        )
+
+    server = None
     try:
+        server = make_server(
+            settings.host,
+            settings.port,
+            orchestrator,
+            max_request_bytes=settings.max_request_bytes,
+            auth_token=settings.auth_token,
+            allowed_user_id=settings.user_id,
+            max_concurrent_requests=settings.max_concurrent_requests,
+            requests_per_minute=settings.requests_per_minute,
+            socket_timeout_seconds=settings.socket_timeout_seconds,
+            text_turn_service=text_turn_service,
+        )
+        if runtime is not None:
+            # HTTP handlers must drain before the stores they use are closed.
+            server.daemon_threads = False
+            server.block_on_close = True
+            runtime.dispatcher.start()
+        print(
+            'Malbut text confirmation listening on '
+            f'http://{settings.host}:{settings.port} '
+            '(simulation=true, physical_authorized=false, '
+            f"nav2={'approved-only' if runtime is not None else 'off'})"
+        )
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
-        orchestrator.conversation_store.close()
-        orchestrator.memory_store.close()
+        if runtime is None:
+            if server is not None:
+                server.server_close()
+            orchestrator.conversation_store.close()
+            orchestrator.memory_store.close()
+        else:
+            _close_execution_runtime(runtime, server)
     return 0
 
 

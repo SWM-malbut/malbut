@@ -10,6 +10,7 @@ unknown outcome which callers must reconcile through ``status()``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 from http.client import HTTPException
 from http.cookiejar import CookieJar
 import hmac
@@ -32,6 +33,15 @@ from urllib.request import (
 SESSION_COOKIE = "malbut_editor_session"
 DEFAULT_MAX_RESPONSE_BYTES = 1_000_000
 MAX_TIMEOUT_SECONDS = 60.0
+MAX_READINESS_STATE_AGE_SECONDS = 2.0
+REQUIRED_NAV2_LIFECYCLE_NODES = frozenset({
+    "amcl",
+    "bt_navigator",
+    "collision_monitor",
+    "controller_server",
+    "global_costmap",
+    "planner_server",
+})
 
 
 class RobotWebNavigationClientError(RuntimeError):
@@ -146,6 +156,125 @@ class EditorConfig:
             f"device_id={self.device_id!r}, "
             f"simulation={self.simulation!r})"
         )
+
+
+@dataclass(frozen=True, repr=False)
+class RobotWebReadiness:
+    """Bounded Robot Web identity and readiness without pose disclosure."""
+
+    device_id: str = field(repr=False)
+    map_id: str = field(repr=False)
+    map_revision: str = field(repr=False)
+    simulation: bool
+    navigation_enabled: bool
+    nav2_all_active: bool
+    localization_ok: bool
+    pose_available: bool = field(repr=False)
+    snapshot_sequence: int = field(repr=False)
+    _source_age_seconds: float = field(repr=False)
+    _content_fingerprint: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        """Reject a forged or unbounded readiness value."""
+        for name, value, maximum, allow_empty in (
+            ("device_id", self.device_id, 128, False),
+            ("map_id", self.map_id, 256, False),
+            ("map_revision", self.map_revision, 256, True),
+        ):
+            if (
+                not isinstance(value, str)
+                or len(value) > maximum
+                or (not allow_empty and not value)
+                or any(ord(character) < 32 for character in value)
+            ):
+                raise RobotWebProtocolError(f"INVALID_{name.upper()}")
+        for name in (
+            "simulation",
+            "navigation_enabled",
+            "nav2_all_active",
+            "localization_ok",
+            "pose_available",
+        ):
+            if not isinstance(getattr(self, name), bool):
+                raise RobotWebProtocolError(f"INVALID_{name.upper()}")
+        if (
+            isinstance(self.snapshot_sequence, bool)
+            or not isinstance(self.snapshot_sequence, int)
+            or self.snapshot_sequence < 0
+        ):
+            raise RobotWebProtocolError("INVALID_STATUS_SEQUENCE")
+        if (
+            isinstance(self._source_age_seconds, bool)
+            or not isinstance(self._source_age_seconds, (int, float))
+            or not math.isfinite(float(self._source_age_seconds))
+            or not 0.0 <= float(self._source_age_seconds)
+            <= MAX_READINESS_STATE_AGE_SECONDS
+        ):
+            raise RobotWebProtocolError("INVALID_READINESS_SOURCE_AGE")
+        try:
+            _required_digest(
+                self._content_fingerprint,
+                "readiness content fingerprint",
+            )
+        except RobotWebConfigurationError as error:
+            raise RobotWebProtocolError(
+                "INVALID_READINESS_FINGERPRINT"
+            ) from error
+        if self.localization_ok != self.pose_available:
+            raise RobotWebProtocolError("INCONSISTENT_LOCALIZATION_STATUS")
+
+    @property
+    def ready_for_navigation(self) -> bool:
+        """Return the complete non-authorizing readiness decision."""
+        return bool(
+            self.navigation_enabled
+            and self.nav2_all_active
+            and self.localization_ok
+        )
+
+    def matches_runtime(
+        self,
+        *,
+        device_id: str,
+        map_id: str,
+        map_revision: str,
+    ) -> bool:
+        """Compare the private runtime binding without rendering it."""
+        return bool(
+            isinstance(device_id, str)
+            and isinstance(map_id, str)
+            and isinstance(map_revision, str)
+            and _same_text(self.device_id, device_id)
+            and _same_text(self.map_id, map_id)
+            and _same_text(self.map_revision, map_revision)
+        )
+
+    def content_fingerprint(self) -> str:
+        """Return a digest for downstream evidence derivation."""
+        return self._content_fingerprint
+
+    def conservative_source_age_seconds(self) -> float:
+        """Return private upstream age for trusted freshness accounting."""
+        return float(self._source_age_seconds)
+
+    def to_public_dict(self) -> dict[str, bool]:
+        """Expose readiness flags, never identity, raw status, or pose."""
+        return {
+            "simulation": self.simulation,
+            "navigation_enabled": self.navigation_enabled,
+            "nav2_all_active": self.nav2_all_active,
+            "localization_ok": self.localization_ok,
+            "ready_for_navigation": self.ready_for_navigation,
+            "physical_authorized": False,
+        }
+
+    def __repr__(self) -> str:
+        """Render only the bounded public readiness flags."""
+        values = self.to_public_dict()
+        rendered = ", ".join(
+            f"{name}={value!r}" for name, value in values.items()
+        )
+        return f"RobotWebReadiness({rendered})"
 
 
 class NavigationPreview:
@@ -345,6 +474,128 @@ def _required_digest(value: Any, name: str) -> str:
     ):
         raise RobotWebConfigurationError(f"{name} is invalid")
     return value
+
+
+def _readiness_from_status(
+    config: EditorConfig,
+    value: dict,
+) -> RobotWebReadiness:
+    """Reduce one raw status snapshot to a bounded, pose-free value."""
+    status_map_id = _required_string(value, "map_id", maximum=256)
+    status_map_revision = _required_string(
+        value,
+        "map_revision",
+        maximum=256,
+        allow_empty=True,
+    )
+    if not _same_text(status_map_id, config.map_id):
+        raise RobotWebProtocolError("MAP_ID_MISMATCH")
+    if not _same_text(status_map_revision, config.map_revision):
+        raise RobotWebProtocolError("MAP_REVISION_MISMATCH")
+
+    sequence = value.get("seq")
+    if (
+        isinstance(sequence, bool)
+        or not isinstance(sequence, int)
+        or not 0 <= sequence <= 9_223_372_036_854_775_807
+    ):
+        raise RobotWebProtocolError("INVALID_STATUS_SEQUENCE")
+    server_time = _required_string(value, "server_time", maximum=128)
+
+    nav2 = value.get("nav2")
+    if not isinstance(nav2, dict):
+        raise RobotWebProtocolError("INVALID_NAV2_STATUS")
+    if set(nav2) != REQUIRED_NAV2_LIFECYCLE_NODES:
+        raise RobotWebProtocolError("INCOMPLETE_NAV2_STATUS")
+    bounded_nav2 = {}
+    for name in sorted(REQUIRED_NAV2_LIFECYCLE_NODES):
+        state = _required_string(nav2, name, maximum=64)
+        if any(ord(character) < 32 for character in state):
+            raise RobotWebProtocolError("INVALID_NAV2_STATE")
+        bounded_nav2[name] = state
+    nav2_all_active = all(
+        state == "active" for state in bounded_nav2.values()
+    )
+
+    localization = value.get("localization")
+    if not isinstance(localization, dict) or len(localization) > 16:
+        raise RobotWebProtocolError("INVALID_LOCALIZATION_STATUS")
+    localization_state = _required_string(
+        localization,
+        "state",
+        maximum=64,
+    )
+    if any(ord(character) < 32 for character in localization_state):
+        raise RobotWebProtocolError("INVALID_LOCALIZATION_STATE")
+    tf_age = localization.get("tf_age_s")
+    if tf_age is not None:
+        tf_age = _finite_number(tf_age, "localization_tf_age_s")
+        if tf_age < 0.0:
+            raise RobotWebProtocolError("INVALID_LOCALIZATION_TF_AGE_S")
+
+    pose = value.get("pose")
+    pose_available = False
+    pose_age = None
+    if localization_state == "ok":
+        if tf_age is None:
+            raise RobotWebProtocolError("LOCALIZATION_TF_AGE_REQUIRED")
+        if tf_age > MAX_READINESS_STATE_AGE_SECONDS:
+            raise RobotWebProtocolError("LOCALIZATION_TF_STALE")
+        if not isinstance(pose, dict) or not 5 <= len(pose) <= 16:
+            raise RobotWebProtocolError("LOCALIZATION_POSE_REQUIRED")
+        for name in ("x", "y", "yaw", "stamp", "age_s"):
+            number = _finite_number(pose.get(name), f"pose_{name}")
+            if name in {"stamp", "age_s"} and number < 0.0:
+                raise RobotWebProtocolError(f"INVALID_POSE_{name.upper()}")
+            if name == "age_s":
+                pose_age = number
+        if pose_age > MAX_READINESS_STATE_AGE_SECONDS:
+            raise RobotWebProtocolError("LOCALIZATION_POSE_STALE")
+        pose_available = True
+    elif pose is not None:
+        raise RobotWebProtocolError("INCONSISTENT_LOCALIZATION_POSE")
+
+    source_age = (
+        max(tf_age, pose_age)
+        if localization_state == "ok"
+        else 0.0
+    )
+
+    fingerprint_payload = json.dumps(
+        {
+            "device_id": config.device_id,
+            "map_id": config.map_id,
+            "map_revision": config.map_revision,
+            "simulation": config.simulation,
+            "navigation_enabled": config.navigation_enabled,
+            "seq": sequence,
+            "server_time": server_time,
+            "nav2": bounded_nav2,
+            "localization": {
+                "state": localization_state,
+                "tf_age_s": tf_age,
+                "pose_age_s": pose_age,
+                "pose_available": pose_available,
+            },
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return RobotWebReadiness(
+        device_id=config.device_id,
+        map_id=config.map_id,
+        map_revision=config.map_revision,
+        simulation=config.simulation,
+        navigation_enabled=config.navigation_enabled,
+        nav2_all_active=nav2_all_active,
+        localization_ok=localization_state == "ok",
+        pose_available=pose_available,
+        snapshot_sequence=sequence,
+        _source_age_seconds=source_age,
+        _content_fingerprint=hashlib.sha256(fingerprint_payload).hexdigest(),
+    )
 
 
 def _loopback_origin(base_url: str) -> str:
@@ -598,6 +849,18 @@ class RobotWebNavigationClient:
                 "Robot Web navigation is disabled"
             )
         return config
+
+    def readiness(self) -> RobotWebReadiness:
+        """Read fresh config and status as one bounded observation."""
+        with self._lock:
+            config = self.bootstrap()
+            value = self._request(
+                "/api/robot/status",
+                timeout=self._timeouts.status_s,
+                expected_status=200,
+                operation="readiness",
+            )
+            return _readiness_from_status(config, value)
 
     def preview(
         self,

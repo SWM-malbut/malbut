@@ -5,7 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional, Set
 
-from malbut_agent_server.schemas import AgentDecision, AgentRequest
+from malbut_agent_server.schemas import AgentDecision, AgentRequest, RobotState
 from malbut_agent_server.tools import TOOL_SPECS
 
 
@@ -322,6 +322,52 @@ class SafetyPolicy:
                 ),
             )
         return tool_result
+
+    def evaluate_confirmed_action(
+        self,
+        *,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        robot_state: RobotState,
+        state_trusted: bool = False,
+    ) -> SafetyResult:
+        """
+        Recheck one already-confirmed action against fresh local state.
+
+        The original user intent remains bound by the durable confirmation.
+        This dispatch-time gate deliberately does not reinterpret user text;
+        it only revalidates the fixed Tool payload and the newly sampled robot
+        state.  Passing this method is still not an execution side effect.
+        """
+        if not isinstance(robot_state, RobotState):
+            raise TypeError('robot_state must be RobotState')
+        if not isinstance(arguments, dict):
+            raise TypeError('arguments must be a dict')
+        if not state_trusted:
+            return SafetyResult(
+                False,
+                'untrusted_robot_state',
+                '신뢰된 로컬 ROS 상태가 없어 행동을 실행하지 않습니다.',
+            )
+        if robot_state.emergency_stop:
+            return SafetyResult(
+                False,
+                'emergency_stop',
+                '비상 정지 상태에서는 어떤 로봇 행동도 실행하지 않습니다.',
+            )
+        if tool_name not in TOOL_SPECS:
+            return SafetyResult(
+                False,
+                'unknown_tool',
+                '등록되지 않은 도구는 실행할 수 없습니다.',
+            )
+        if tool_name != 'navigate':
+            return SafetyResult(
+                False,
+                'tool_unavailable',
+                '확인된 Gazebo 실행 경로는 이동 도구만 지원합니다.',
+            )
+        return self._validate_navigate_state(robot_state, arguments)
 
     def _has_current_turn_intent(
         self,
@@ -816,6 +862,17 @@ class SafetyPolicy:
         request: AgentRequest,
         arguments: Dict[str, Any],
     ) -> SafetyResult:
+        return self._validate_navigate_state(
+            request.robot_state,
+            arguments,
+        )
+
+    def _validate_navigate_state(
+        self,
+        robot_state: RobotState,
+        arguments: Dict[str, Any],
+    ) -> SafetyResult:
+        """Apply deterministic navigation guards to one state snapshot."""
         if set(arguments) != {'location'}:
             return SafetyResult(
                 False,
@@ -836,25 +893,25 @@ class SafetyPolicy:
                 'location_not_allowed',
                 '허용 목록에 없는 목적지입니다.',
             )
-        if location in request.robot_state.forbidden_zones:
+        if location in robot_state.forbidden_zones:
             return SafetyResult(
                 False,
                 'forbidden_zone',
                 '현재 금지 구역으로 설정된 목적지입니다.',
             )
-        if not request.robot_state.navigation_available:
+        if not robot_state.navigation_available:
             return SafetyResult(
                 False,
                 'navigation_unavailable',
                 'Nav2 실행 상태가 확인되지 않았습니다.',
             )
-        if not request.robot_state.localization_ok:
+        if not robot_state.localization_ok:
             return SafetyResult(
                 False,
                 'localization_unavailable',
                 '로봇 위치가 신뢰 가능한 상태가 아닙니다.',
             )
-        battery = request.robot_state.battery_percent
+        battery = robot_state.battery_percent
         if battery is None:
             return SafetyResult(
                 False,
