@@ -14,6 +14,8 @@ import cv2
 import numpy as np
 import pytest
 
+import malbut_gazebo.robot_web_server as robot_web_server_module
+
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path as NavPath
@@ -178,6 +180,52 @@ def test_start_checks_nav2_and_localization_before_any_goal_send(
     assert bridge.navigate.send_calls == 0
 
 
+def test_future_dated_tf_fails_closed_before_any_goal_send():
+    """Reject a TF far ahead of ROS time instead of reporting age zero."""
+    bridge = object.__new__(RobotWebBridge)
+    bridge.lock = Lock()
+    bridge.operation_lock = Lock()
+    bridge.lifecycle = {"amcl": "active", "controller": "active"}
+    bridge.validation_state = "ok"
+    bridge.pose = {"x": 0.0, "y": 0.0, "yaw": 0.0}
+    bridge.localization = {"state": "ok", "tf_age_s": 0.0}
+    bridge.navigate = _CountingNavigationClient()
+    bridge.tf_buffer = SimpleNamespace(
+        lookup_transform=lambda *_args: SimpleNamespace(
+            header=SimpleNamespace(
+                stamp=SimpleNamespace(sec=103, nanosec=0)
+            ),
+            transform=SimpleNamespace(
+                translation=SimpleNamespace(x=1.0, y=2.0),
+                rotation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
+    bridge.get_clock = lambda: SimpleNamespace(
+        now=lambda: SimpleNamespace(nanoseconds=100_000_000_000)
+    )
+    cancel_codes = []
+    stop_codes = []
+    bridge._request_auto_cancel = (
+        lambda code, _message: cancel_codes.append(code)
+    )
+    bridge._request_autonomous_stop = (
+        lambda code, _message: stop_codes.append(code)
+    )
+
+    bridge._refresh_pose()
+
+    assert bridge.pose is None
+    assert bridge.localization["state"] == "lost"
+    assert bridge.localization["tf_age_s"] == 0.0
+    assert cancel_codes == ["LOCALIZATION_LOST"]
+    assert stop_codes == ["LOCALIZATION_LOST"]
+    with pytest.raises(NavigationError) as caught:
+        bridge.start({"preview_token": "anything"}, "session")
+    assert caught.value.code == "LOCALIZATION_NOT_READY"
+    assert bridge.navigate.send_calls == 0
+
+
 def test_expired_preview_stops_before_any_goal_send():
     """Never turn an expired capability into a new NavigateToPose goal."""
     bridge = object.__new__(RobotWebBridge)
@@ -203,6 +251,99 @@ def test_expired_preview_stops_before_any_goal_send():
 
     assert caught.value.code == "PREVIEW_EXPIRED"
     assert bridge.navigate.send_calls == 0
+
+
+def test_canceling_navigation_blocks_preview_start_race():
+    """Do not send a new goal while an earlier goal is still canceling."""
+    bridge = object.__new__(RobotWebBridge)
+    bridge.lock = Lock()
+    bridge.operation_lock = Lock()
+    bridge._require_ready = lambda: {"x": 0.0, "y": 0.0, "yaw": 0.0}
+    bridge._require_autonomous_idle = lambda: None
+    bridge.navigation_state = {"state": "canceling"}
+    bridge.navigate = _CountingNavigationClient()
+    bridge.previews = {
+        "valid": PreviewRecord(
+            session_id="session",
+            expires_at=time.monotonic() + 30.0,
+            map_revision="rev-current",
+            zone_revision="zone-current",
+            user_map_digest=None,
+            goal=PoseStamped(),
+            path=NavPath(),
+            response={},
+        )
+    }
+
+    with pytest.raises(NavigationError) as caught:
+        bridge.start({"preview_token": "valid"}, "session")
+
+    assert caught.value.code == "NAVIGATION_IN_PROGRESS"
+    assert bridge.navigate.send_calls == 0
+
+
+def test_planning_safety_loss_blocks_final_goal_send(monkeypatch):
+    """Recheck mutable lifecycle gates after planning and before Nav2."""
+    bridge = object.__new__(RobotWebBridge)
+    bridge.lock = Lock()
+    bridge.operation_lock = Lock()
+    bridge.lifecycle = {
+        "amcl": "active",
+        "collision_monitor": "active",
+        "controller_server": "active",
+    }
+    bridge.localization = {"state": "ok", "tf_age_s": 0.02}
+    bridge.pose = {"x": 0.0, "y": 0.0, "yaw": 0.0}
+    bridge.navigation_state = {"state": "idle"}
+    bridge._require_autonomous_idle = lambda: None
+    bridge.navigate = _CountingNavigationClient()
+    bridge.map_revision = "rev-current"
+    goal = PoseStamped()
+    path = NavPath()
+    path.poses = [PoseStamped()]
+    bridge.previews = {
+        "valid": PreviewRecord(
+            session_id="session",
+            expires_at=time.monotonic() + 30.0,
+            map_revision="rev-current",
+            zone_revision="zone-current",
+            user_map_digest=None,
+            goal=goal,
+            path=path,
+            response={"resolved": {"x": 0.0, "y": 0.0}},
+        )
+    }
+    bridge._load_zones = lambda: ([], "zone-current")
+    bridge._load_user_map_snapshot = lambda: ({}, None)
+    bridge._costmap = lambda: object()
+    bridge._floor_geometry = lambda _user_map: object()
+    bridge._static_clearance_for = lambda _grid: object()
+    bridge._resolve_goal = lambda *_args: ((0.0, 0.0), 0.0, 0)
+
+    def plan_then_lose_safety(_goal):
+        bridge.lifecycle["collision_monitor"] = "inactive"
+        return path
+
+    bridge._plan = plan_then_lose_safety
+    monkeypatch.setattr(
+        robot_web_server_module, "_path_max_cost", lambda *_args: 0
+    )
+    monkeypatch.setattr(
+        robot_web_server_module, "_path_min_clearance", lambda *_args: 1.0
+    )
+    monkeypatch.setattr(
+        robot_web_server_module, "_path_length", lambda *_args: 1.0
+    )
+    monkeypatch.setattr(
+        robot_web_server_module, "_decimate_path", lambda *_args: []
+    )
+
+    with pytest.raises(NavigationError) as caught:
+        bridge.start({"preview_token": "valid"}, "session")
+
+    assert caught.value.code == "NAV2_NOT_ACTIVE"
+    assert bridge.navigate.send_calls == 0
+    assert bridge.previews["valid"].used is False
 
 
 def test_destination_navigation_reports_one_common_drive_mode():

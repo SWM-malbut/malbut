@@ -29,6 +29,7 @@ setup(
                 'docs/jira/SWM25-73_AGENT_TOOL_GATEWAY.md',
                 'docs/jira/SWM25-128_CLEAN_BASELINE.md',
                 'docs/jira/SWM25-131_TEXT_CONFIRMATION_RAI.md',
+                'docs/jira/SWM25-132_APPROVED_NAV2_EXECUTION.md',
             ],
         ),
         (

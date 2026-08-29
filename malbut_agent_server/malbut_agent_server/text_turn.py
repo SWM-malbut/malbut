@@ -121,6 +121,8 @@ class TextTurnService:
         *,
         clock: Callable[[], float] = time.time,
         maximum_confirmation_seconds: float = 30.0,
+        create_robot_actions: bool = False,
+        action_dispatch_window_seconds: float = 30.0,
     ) -> None:
         """Bind proposal, state, target, and durable confirmation services."""
         if not isinstance(orchestrator, AgentOrchestrator):
@@ -135,12 +137,25 @@ class TextTurnService:
             raise ValueError(
                 'maximum_confirmation_seconds must be from 1 to 120'
             )
+        if type(create_robot_actions) is not bool:
+            raise TypeError('create_robot_actions must be a boolean')
+        if (
+            type(action_dispatch_window_seconds) not in {int, float}
+            or not 1.0 <= float(action_dispatch_window_seconds) <= 120.0
+        ):
+            raise ValueError(
+                'action_dispatch_window_seconds must be from 1 to 120'
+            )
         self.orchestrator = orchestrator
         self.store = orchestrator.conversation_store
         self.target_resolver = target_resolver
         self.clock = clock
         self.maximum_confirmation_seconds = float(
             maximum_confirmation_seconds
+        )
+        self.create_robot_actions = create_robot_actions
+        self.action_dispatch_window_seconds = float(
+            action_dispatch_window_seconds
         )
 
     def handle(self, *, user_id: str, value: Any) -> dict[str, Any]:
@@ -335,6 +350,10 @@ class TextTurnService:
             ),
             response_turn_id=resolution.response_turn_id,
             text_turn_request_fingerprint=request_fingerprint,
+            create_robot_action=self.create_robot_actions,
+            action_dispatch_window_seconds=(
+                self.action_dispatch_window_seconds
+            ),
         )
         return self._record_response(
             request,
@@ -458,8 +477,8 @@ class TextTurnService:
             expires_in_ms=result.decision.expires_in_ms,
         )
 
-    @staticmethod
     def _record_response(
+        self,
         request: TextTurnRequest,
         record: ConfirmationRecord,
         *,
@@ -478,8 +497,12 @@ class TextTurnService:
             'cached': cached,
         })
         if record.disposition == APPROVED:
+            # Keep this response independent from the current process mode.
+            # The same durable confirmation can be replayed after restart, so
+            # neither "queued" nor "not started" can be inferred here.
             value['message'] = (
-                '승인됐습니다. 아직 이동은 시작하지 않았습니다.'
+                '승인을 기록했습니다. 이 응답 자체는 이동 실행 권한이 '
+                '아니며, 이동 여부는 별도 안전 재검사에서 결정됩니다.'
             )
         elif record.disposition == DENIED:
             value['message'] = '요청을 거절했습니다.'

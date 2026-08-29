@@ -78,6 +78,7 @@ NAVIGATION_TIMEOUT_BASE_S = 45.0
 NAVIGATION_TIMEOUT_PER_M_S = 15.0
 NAVIGATION_STALL_TIMEOUT_S = 45.0
 NAVIGATION_PROGRESS_M = 0.10
+MAX_FUTURE_TF_SKEW_S = 2.0
 
 VALIDATION_MESSAGES = {
     "revalidation_required": "부팅 후 현재 위치를 다시 확인해 주세요.",
@@ -900,7 +901,8 @@ class RobotWebBridge(Node):
                 transform.header.stamp.sec * 1_000_000_000
                 + transform.header.stamp.nanosec
             )
-            age = max(0.0, (now_ns - stamp_ns) / 1_000_000_000.0)
+            raw_age = (now_ns - stamp_ns) / 1_000_000_000.0
+            age = max(0.0, raw_age)
             yaw = _quaternion_yaw(transform.transform.rotation)
             pose = {
                 "x": round(transform.transform.translation.x, 4),
@@ -910,9 +912,13 @@ class RobotWebBridge(Node):
                 "age_s": round(age, 3),
             }
             amcl_active = self.lifecycle.get("amcl") == "active"
-            if age > 2.0 or self.lifecycle.get("amcl") not in {
-                "active", "unknown"
-            }:
+            if (
+                raw_age < -MAX_FUTURE_TF_SKEW_S
+                or age > 2.0
+                or self.lifecycle.get("amcl") not in {
+                    "active", "unknown"
+                }
+            ):
                 state = "lost"
                 message = "로봇 위치를 확인할 수 없습니다."
             elif age > 0.5 or not amcl_active:
@@ -1934,7 +1940,9 @@ class RobotWebBridge(Node):
                     409, "PREVIEW_EXPIRED", "목적지를 다시 선택해 주세요."
                 )
             with self.lock:
-                if self.navigation_state["state"] == "driving":
+                if self.navigation_state["state"] in {
+                    "driving", "canceling"
+                }:
                     raise NavigationError(
                         409, "NAVIGATION_IN_PROGRESS", "이미 이동 중입니다."
                     )
@@ -2023,6 +2031,20 @@ class RobotWebBridge(Node):
             goal = NavigateToPose.Goal()
             goal.pose = record.goal
             session = secrets.token_hex(8)
+            # Planning and costmap checks can take several seconds.  Re-read
+            # every mutable runtime gate at the final effect boundary rather
+            # than relying on the snapshot taken when ``start`` began.
+            self._require_ready()
+            self._require_autonomous_idle()
+            with self.lock:
+                if self.navigation_state["state"] in {
+                    "driving", "canceling"
+                }:
+                    raise NavigationError(
+                        409,
+                        "NAVIGATION_IN_PROGRESS",
+                        "이미 이동 또는 취소 처리 중입니다.",
+                    )
             send_future = self.navigate.send_goal_async(
                 goal, feedback_callback=self._navigation_feedback
             )

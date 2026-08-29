@@ -1898,8 +1898,24 @@ class SQLiteConversationStore:
         current_target_binding_digest: str,
         response_turn_id: Optional[str] = None,
         text_turn_request_fingerprint: Optional[str] = None,
+        create_robot_action: bool = False,
+        action_dispatch_window_seconds: float = 30.0,
     ) -> 'ConfirmationRecord':
-        """Strict-CAS one verified response into a terminal record."""
+        """CAS a response and optionally create its action atomically."""
+        if type(create_robot_action) is not bool:
+            raise TypeError('create_robot_action must be a boolean')
+        if (
+            isinstance(action_dispatch_window_seconds, bool)
+            or not isinstance(
+                action_dispatch_window_seconds,
+                (int, float),
+            )
+            or not math.isfinite(float(action_dispatch_window_seconds))
+            or not 1.0 <= float(action_dispatch_window_seconds) <= 120.0
+        ):
+            raise ValueError(
+                'action_dispatch_window_seconds must be from 1 to 120'
+            )
         normalized_user = validate_user_id(user_id)
         normalized_id = validate_conversation_id(conversation_id)
         normalized_response_id = self._required_text(
@@ -2104,6 +2120,10 @@ class SQLiteConversationStore:
                     target_digest,
                 )
                 record = self._confirmation_record_from_row(row)
+                if resolved_at < record.issued_at:
+                    raise ConfirmationIntentConflictError(
+                        'confirmation response predates its proposal'
+                    )
                 resolution = self._verified_confirmation_resolution(
                     record,
                     user_id=normalized_user,
@@ -2134,6 +2154,22 @@ class SQLiteConversationStore:
                 if cursor.rowcount != 1:
                     raise ConfirmationIntentConflictError(
                         'confirmation compare-and-swap failed'
+                    )
+                if (
+                    create_robot_action
+                    and terminal_record.disposition == 'approved'
+                ):
+                    from malbut_agent_server.adapters.outbound import (
+                        insert_action_for_approved_confirmation,
+                    )
+
+                    insert_action_for_approved_confirmation(
+                        self._connection,
+                        terminal_record,
+                        now=resolved_at,
+                        dispatch_window=float(
+                            action_dispatch_window_seconds
+                        ),
                     )
                 if normalized_text_fingerprint is not None:
                     self._insert_text_turn_claim_locked(

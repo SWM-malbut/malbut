@@ -296,6 +296,38 @@ def test_restart_exact_response_replay_and_payload_conflict(
         second.close()
 
 
+def test_wall_clock_rollback_cannot_approve_confirmation(tmp_path) -> None:
+    """A response timestamp before proposal issue cannot mint an action."""
+    clock = MutableClock()
+    store = SQLiteConversationStore(
+        str(tmp_path / 'clock-rollback.sqlite3'),
+        clock=clock,
+    )
+    try:
+        draft, target = _commit(store, clock)
+        with pytest.raises(
+            ConfirmationIntentConflictError,
+            match='predates',
+        ):
+            store.resolve_confirmation(
+                draft.user_id,
+                draft.conversation_id,
+                response_id='rolled-back-response',
+                response_fingerprint=_digest('rolled-back-yes'),
+                disposition='approve',
+                now=draft.issued_at - 1.0,
+                current_target_binding_digest=target,
+            )
+        pending = store.pending_confirmation(
+            draft.user_id,
+            draft.conversation_id,
+        )
+        assert pending is not None
+        assert pending.disposition == 'pending'
+    finally:
+        store.close()
+
+
 def test_ambiguous_text_claim_survives_restart_with_zero_authority(
     tmp_path,
 ) -> None:

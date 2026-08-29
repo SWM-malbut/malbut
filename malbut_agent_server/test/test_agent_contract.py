@@ -8,6 +8,7 @@ from malbut_agent_server.safety import SafetyPolicy
 from malbut_agent_server.schemas import (
     AgentDecision,
     AgentRequest,
+    RobotState,
     ValidationError,
 )
 from malbut_agent_server.tools import TOOL_SPECS, select_tool_specs
@@ -183,6 +184,60 @@ def test_explicit_navigation_request_can_pass_policy_only() -> None:
     )
     assert result.allowed is True
     assert result.code == 'allowed'
+
+
+def test_confirmed_action_rechecks_state_without_reinterpreting_text() -> None:
+    """Dispatch checks the fixed proposal against a second state sample."""
+    state = RobotState.from_dict({
+        'battery_percent': 80,
+        'navigation_available': True,
+        'localization_ok': True,
+    })
+    result = SafetyPolicy().evaluate_confirmed_action(
+        tool_name='navigate',
+        arguments={'location': '거실'},
+        robot_state=state,
+        state_trusted=True,
+    )
+    assert result.allowed is True
+    assert result.code == 'allowed'
+
+
+@pytest.mark.parametrize(
+    ('state', 'trusted', 'expected_code'),
+    [
+        ({'battery_percent': 80}, False, 'untrusted_robot_state'),
+        ({'battery_percent': 80, 'emergency_stop': True}, True,
+         'emergency_stop'),
+        ({'battery_percent': 10}, True, 'battery_low'),
+        ({'battery_percent': 80, 'navigation_available': False}, True,
+         'navigation_unavailable'),
+        ({'battery_percent': 80, 'localization_ok': False}, True,
+         'localization_unavailable'),
+        ({'battery_percent': 80, 'forbidden_zones': ['거실']}, True,
+         'forbidden_zone'),
+    ],
+)
+def test_confirmed_action_fails_closed_on_dispatch_state(
+    state: dict,
+    trusted: bool,
+    expected_code: str,
+) -> None:
+    """A prior confirmation cannot override current local safety evidence."""
+    defaults = {
+        'battery_percent': 80,
+        'navigation_available': True,
+        'localization_ok': True,
+    }
+    defaults.update(state)
+    result = SafetyPolicy().evaluate_confirmed_action(
+        tool_name='navigate',
+        arguments={'location': '거실'},
+        robot_state=RobotState.from_dict(defaults),
+        state_trusted=trusted,
+    )
+    assert result.allowed is False
+    assert result.code == expected_code
 
 
 def test_camera_tool_respects_privacy_mode() -> None:

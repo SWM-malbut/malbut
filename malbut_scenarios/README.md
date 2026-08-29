@@ -78,8 +78,9 @@ ros2 topic echo /scenario/status
 
 SWM25-131 전용 server는 SWM25-130 active map에서 `거실` 이름만 해석하고,
 LLM 행동 제안과 `네/아니요/취소` 확인 결과를 SQLite에 기록합니다. 이
-진입점은 `NamedNavigationFacade`, Robot Web, ROS ActionClient 또는 Nav2를
-호출하지 않습니다. `approved`도 사용자 동의 기록일 뿐 이동 권한이 아닙니다.
+진입점의 기본 모드는 `NamedNavigationFacade`, Robot Web, ROS ActionClient
+또는 Nav2를 호출하지 않습니다. 이 기본 모드의 `approved`도 사용자 동의
+기록일 뿐 이동 권한이 아닙니다.
 
 private fixture와 Git에서 제외되는 `.env.local`을 준비한 뒤 먼저 구성을
 검사합니다.
@@ -95,6 +96,50 @@ ros2 run malbut_scenarios malbut_text_agent_server -- \
 `simulation=true, physical_authorized=false, nav2=off`는 의도된 경계입니다.
 전체 curl 예제와 RAI sidecar 설정은
 `malbut_agent_server/docs/jira/SWM25-131_TEXT_CONFIRMATION_RAI.md`에 있습니다.
+
+## SWM25-132 승인된 Gazebo 이동
+
+기본 실행은 계속 `nav2=off`입니다. 승인 결과를 실제 Small House Nav2와
+연결하려면 Gazebo testbed와 Robot Web을 먼저 실행한 뒤
+`--execute-approved-simulation`을 명시해야 합니다. 이 모드는 승인된
+`navigate(location="거실")`마다 별도 durable RobotAction을 만들고, 승인 후
+새 Robot Web readiness와 현재 Safety·지도 binding을 다시 검사한 다음에만
+SWM25-130 façade를 한 번 호출합니다.
+
+Agent HTTP server와 Robot Web은 같은 포트를 사용할 수 없습니다. 아래처럼
+Robot Web은 testbed 기본값 `8765`, Agent는 별도 loopback 포트 `8877`을
+사용합니다.
+
+```bash
+export MALBUT_AGENT_PORT=8877
+export MALBUT_ROBOT_WEB_URL=http://127.0.0.1:8765
+
+ros2 run malbut_scenarios malbut_text_agent_server -- \
+  --env-file <private-path>/.env.local \
+  --execute-approved-simulation
+```
+
+`--robot-web-url http://127.0.0.1:8765`로 환경변수를 덮어쓸 수도 있습니다.
+Robot Web URL은 literal loopback HTTP 주소만 허용합니다. 실행 중 사용하는
+battery `100%`는 센서 측정값이 아니라 SWM25-132 Gazebo 전용 가정이며,
+`simulation=true`, `physical_authorized=false`는 항상 유지됩니다.
+
+확인만 할 때는 다음 명령을 사용합니다. execution flag를 함께 준 `--check`는
+action schema, repository, worker와 executor 구성을 실제로 생성·검증한 뒤 즉시
+닫습니다. 이 과정에서도 Robot Web 요청, façade start 또는 Nav2 goal은 보내지
+않습니다.
+
+```bash
+ros2 run malbut_scenarios malbut_text_agent_server -- \
+  --env-file <private-path>/.env.local \
+  --execute-approved-simulation --check
+```
+
+재시작 시 dispatch intent 또는 started 상태였던 결과 불명 action은
+`UNKNOWN`으로 봉인하며 자동 재전송하지 않습니다. 종료할 때는 dispatcher를
+닫고 HTTP handler와 action worker를 join한 후 SQLite store를 닫습니다.
+이 단계는 단일 named destination 실행만 다루며 로밍, Homecam, 실제 로봇
+권한, 음성 입력·출력은 포함하지 않습니다.
 
 ## 기존 기능과의 연결
 
