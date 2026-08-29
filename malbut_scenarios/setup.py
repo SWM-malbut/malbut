@@ -62,6 +62,8 @@ setup(
             'malbut_scenarios.text_agent_server:main',
             'run_text_gazebo_acceptance = '
             'malbut_scenarios.text_gazebo_acceptance:main',
+            'run_text_gazebo_campaign = '
+            'malbut_scenarios.text_gazebo_campaign:main',
         ],
     },
 )

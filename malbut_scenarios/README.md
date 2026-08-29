@@ -210,10 +210,62 @@ cleanup 결과만 기록합니다. evidence parent는 `0700`, 신규 파일은 `
 하며 기존 파일을 덮어쓰지 않습니다. 기존 run-2는 source provenance 봉인 전
 rehearsal이며 최종 인수 evidence가 아닙니다. 최종 provenance-sealed run은 이
 변경을 Git에 commit하고 동일 commit으로 overlay를 다시 build한 뒤 수행합니다.
-현재 `malbut_scenarios/test` source suite는 298개가 통과했지만, 이것만으로 최종
-clean Gazebo run이 완료됐다고 판정하지 않습니다.
+SWM25-133 완료 당시 `malbut_scenarios/test` source suite는 298개가 통과했지만,
+이것만으로 최종 clean Gazebo run이 완료됐다고 판정하지 않습니다.
 상세 구조와 현재 검증 상태는
 `malbut_agent_server/docs/jira/SWM25-133_GAZEBO_FULL_FLOW.md`에 있습니다.
+
+## SWM25-134 Gazebo 반복 campaign
+
+SWM25-134 campaign은 위 SWM25-133 runner를 case 단위의 installed child로
+재사용합니다. Agent, confirmation, RobotAction, Robot Web 또는 Nav2 실행 코드를
+다시 만들지 않고, case의 순서·기대 결과·격리·전체 합격 여부와 aggregate
+evidence만 관리합니다. 현재 허용하는 profile 종류는 `happy_path` 하나이며 같은
+profile을 최대 32회까지 반복 지정할 수 있습니다. SWM25-134의 실제 인수는 1회,
+SWM25-135는 같은 profile의 실제 3회 반복을 담당합니다. 장애 profile과 그에 맞는
+typed child evidence는 SWM25-136~139에서 기존 installed 경계에 확장합니다.
+
+Agent/Gazebo/Nav2 제품 실행 효과 없이 source/install 결속과 case plan을 먼저
+확인합니다. 이 검사는 provenance용 bounded child process 하나만 실행합니다.
+
+```bash
+ros2 run malbut_scenarios run_text_gazebo_campaign -- \
+  --check \
+  --case-profile happy_path \
+  --source-commit "$source_commit" \
+  --source-tree "$source_tree"
+```
+
+실제 simulation case는 기본 OFF입니다. owner-only `0700` evidence directory와
+비어 있는 ROS domain을 준비하고 실행 승인을 명시해야 합니다.
+
+```bash
+campaign_evidence_root=<absolute-private-evidence-directory>
+ros_domain_id=86  # 현재 사용하지 않는 1~100 값
+install -d -m 0700 "$campaign_evidence_root"
+
+ros2 run malbut_scenarios run_text_gazebo_campaign -- \
+  --run \
+  --execute-approved-simulation \
+  --case-profile happy_path \
+  --source-commit "$source_commit" \
+  --source-tree "$source_tree" \
+  --ros-domain-id "$ros_domain_id" \
+  --evidence "$campaign_evidence_root/swm25-134-smoke.json"
+```
+
+case마다 별도 private child evidence를 만들고 SWM25-133의 독립 runtime·SQLite를
+사용합니다. child failure, timeout, evidence 누락·불일치 또는 cleanup 실패가
+하나라도 있으면 전체 campaign은 합격하지 않습니다. cleanup이 증명되지 않은
+경우에는 다음 case를 실행하지 않습니다. aggregate에는 원문·token·좌표·private
+ID·host path 대신 case 순서, 제한된 결과, digest, duration과 cleanup 집계만
+기록하며 기존 파일을 덮어쓰지 않습니다. `simulation=true`,
+`physical_authorized=false`는 항상 유지됩니다.
+
+실제 Gazebo 1/1 최종 smoke는 이 변경을 Git에 commit한 뒤 같은 commit으로 clean
+overlay를 다시 build해야 source/install attestation을 통과할 수 있습니다. 자세한
+계약과 현재 검증 상태는
+`malbut_agent_server/docs/jira/SWM25-134_GAZEBO_CAMPAIGN.md`에 있습니다.
 
 ## 기존 기능과의 연결
 

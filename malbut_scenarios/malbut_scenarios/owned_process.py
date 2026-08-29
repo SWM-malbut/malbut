@@ -247,8 +247,7 @@ class OwnedProcess:
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             raise OwnedProcessError('process_start_failed') from error
         if process.stdout is None:
-            process.kill()
-            process.wait(timeout=5)
+            self._record_unverified_start_cleanup(process)
             raise OwnedProcessError('process_start_failed')
         try:
             process_stat = _read_process_stat(process.pid)
@@ -257,12 +256,8 @@ class OwnedProcess:
                 or process_stat.session_id != process.pid
             ):
                 raise OwnedProcessError('process_identity_unavailable')
-        except Exception:
-            try:
-                os.kill(process.pid, signal.SIGKILL)
-                process.wait(timeout=5)
-            except (OSError, subprocess.SubprocessError):
-                pass
+        except BaseException:
+            self._record_unverified_start_cleanup(process)
             raise
         reader = _DigestingPipeReader(
             process.stdout,
@@ -273,6 +268,40 @@ class OwnedProcess:
         self._leader_start_ticks = process_stat.start_ticks
         self._reader = reader
         reader.start()
+
+    def _record_unverified_start_cleanup(
+        self,
+        process: subprocess.Popen,
+    ) -> None:
+        """Record incomplete cleanup when spawned identity is unavailable."""
+        self._process = process
+        forced = 0
+        remaining = 1
+        collector_stopped = process.stdout is None
+        try:
+            if process.poll() is None:
+                process.kill()
+                forced = 1
+            process.wait(timeout=5)
+            remaining = 0
+        except (OSError, subprocess.SubprocessError):
+            pass
+        try:
+            if process.stdout is not None:
+                process.stdout.close()
+                collector_stopped = True
+        except (OSError, ValueError):
+            collector_stopped = False
+        self._cleanup = ProcessCleanupEvidence(
+            process_started=True,
+            remaining_process_count=remaining,
+            forced_termination_count=forced,
+            output_collector_stopped=collector_stopped,
+            output_overflowed=False,
+            # Descendants may have escaped observation before /proc identity
+            # became available.  Never assert zero-residue in this state.
+            cleanup_complete=False,
+        )
 
     def require_running(self) -> None:
         """Fail when the exact owned session exited unexpectedly."""

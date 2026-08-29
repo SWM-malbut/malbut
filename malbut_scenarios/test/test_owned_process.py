@@ -17,6 +17,36 @@ from malbut_scenarios.owned_process import OwnedProcess, OwnedProcessError
 _PYTHON = Path(sys.executable).resolve(strict=True)
 
 
+class _FakePipe:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class _IdentityFailureProcess:
+    pid = 424242
+
+    def __init__(self):
+        self.stdout = _FakePipe()
+        self.returncode = None
+        self.killed = False
+        self.waited = False
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+    def wait(self, timeout):
+        assert timeout == 5
+        self.waited = True
+        return self.returncode
+
+
 def _wait_until(predicate, *, timeout=5.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -116,6 +146,45 @@ def test_constructor_is_side_effect_free_and_repr_hides_private_values(
     assert first_cleanup.process_started is False
     assert first_cleanup.cleanup_complete is True
     assert calls == []
+
+
+def test_spawned_identity_failure_is_started_but_never_proven_clean(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Popen success followed by identity failure remains fail-closed."""
+    process = _IdentityFailureProcess()
+    monkeypatch.setattr(
+        owned_process_module.subprocess,
+        'Popen',
+        lambda *_args, **_kwargs: process,
+    )
+
+    def identity_unavailable(_pid):
+        raise OwnedProcessError('process_identity_unavailable')
+
+    monkeypatch.setattr(
+        owned_process_module,
+        '_read_process_stat',
+        identity_unavailable,
+    )
+    owner = _python_owner(tmp_path, 'pass')
+
+    with pytest.raises(
+        OwnedProcessError,
+        match='^process_identity_unavailable$',
+    ):
+        owner.start()
+
+    cleanup = owner.stop()
+    assert process.killed is True
+    assert process.waited is True
+    assert process.stdout.closed is True
+    assert owner.started is True
+    assert cleanup.process_started is True
+    assert cleanup.remaining_process_count == 0
+    assert cleanup.output_collector_stopped is True
+    assert cleanup.cleanup_complete is False
 
 
 @pytest.mark.parametrize(
