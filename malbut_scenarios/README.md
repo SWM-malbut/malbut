@@ -141,6 +141,80 @@ ros2 run malbut_scenarios malbut_text_agent_server -- \
 이 단계는 단일 named destination 실행만 다루며 로밍, Homecam, 실제 로봇
 권한, 음성 입력·출력은 포함하지 않습니다.
 
+## SWM25-133 텍스트부터 Gazebo terminal까지 한 명령으로 검증
+
+SWM25-133 runner는 SWM25-131의 인증된 텍스트 요청·승인과 SWM25-132의
+RobotAction·Nav2 실행 경로를 clean installed overlay에서 한 번에 검증합니다.
+새 실행 경로를 만들지 않고 public Agent HTTP API, SQLite read-only observer,
+Robot Web counting proxy와 read-only Nav2 status observer의 증거를 교차
+확인합니다.
+
+먼저 설치 산출물과 clean source의 결속을 검사합니다. 아래 placeholder는
+검증할 환경에 맞게 바꿉니다.
+
+```bash
+cd <source-worktree>
+source_tree="$(pwd -P)"
+source_commit="$(git rev-parse HEAD)"
+source /opt/ros/humble/setup.bash
+source <isolated-overlay>/install/setup.bash
+
+ros2 run malbut_scenarios run_text_gazebo_acceptance -- \
+  --check \
+  --source-commit "$source_commit" \
+  --source-tree "$source_tree"
+```
+
+`--check`는 Gazebo, Agent server, HTTP listener, SQLite runtime과 Nav2 goal을
+시작하지 않으며 `nav2_start_count=0`, `simulation=true`,
+`physical_authorized=false`를 출력합니다. 이 검사는 source tree가 정확한 Git
+toplevel·HEAD이고 untracked 파일을 포함해 clean인지 확인한다. 또한 runner가
+선택한 tracked source와 installed overlay 파일이 symlink가 아닌 regular
+file이며 byte-for-byte 같은지 검증한 뒤 commit과 Git tree에 결속된
+`source_tree_digest`를 출력합니다.
+
+실제 headless Small House 인수 시험은 명시적인 simulation 실행 flag와 새
+owner-private evidence 파일을 함께 줘야 합니다.
+
+```bash
+evidence_root=<absolute-private-evidence-directory>
+ros_domain_id=85  # 현재 사용하지 않는 1~100 범위 값으로 변경
+install -d -m 0700 "$evidence_root"
+
+ros2 run malbut_scenarios run_text_gazebo_acceptance -- \
+  --run \
+  --execute-approved-simulation \
+  --source-commit "$source_commit" \
+  --source-tree "$source_tree" \
+  --ros-domain-id "$ros_domain_id" \
+  --evidence "$evidence_root/run-1.json"
+```
+
+화면을 보려면 `--gui`를 추가합니다. run mode의 `--ros-domain-id`는 선택값이
+아니며, 사용하지 않는 1~100 범위 값을 명시해야 합니다. runner는 mock
+Provider를 사용해 인증된
+`거실로 가줘 -> navigate(거실) -> 네` 입력을 결정적으로 수행합니다. 승인 전
+Nav2 goal 0개와 승인 후 proposal·confirmation·RobotAction·dispatch intent·
+Robot Web verified preview target·start·actual Nav2 goal·known terminal 각각
+1개를 요구합니다. 승인 replay 뒤 0.25초 간격 8개 sample, 총 2초 동안 모든
+effect count가 그대로인지 확인합니다. 종료는 주 실행의 성공·실패와 무관하게
+각 owner에 best-effort로 수행하고, proxy의 active upstream/downstream socket도
+bounded deadline 안에서 닫습니다. 성공하려면 최종 소유 process·ROS node·
+socket이 모두 0개여야 합니다.
+
+`--run`만으로는 실행되지 않으며 `--execute-approved-simulation`이 반드시
+필요합니다. timeout·불명 결과를 성공으로 보정하거나 재전송하지 않습니다.
+성공 evidence v2에는 원문, token, private ID, 좌표, fixture·DB·host 경로를
+넣지 않고 `source_tree_digest`, 다른 digest, 제한된 상태, count, duration과
+cleanup 결과만 기록합니다. evidence parent는 `0700`, 신규 파일은 `0600`이어야
+하며 기존 파일을 덮어쓰지 않습니다. 기존 run-2는 source provenance 봉인 전
+rehearsal이며 최종 인수 evidence가 아닙니다. 최종 provenance-sealed run은 이
+변경을 Git에 commit하고 동일 commit으로 overlay를 다시 build한 뒤 수행합니다.
+현재 `malbut_scenarios/test` source suite는 297개가 통과했지만, 이것만으로 최종
+clean Gazebo run이 완료됐다고 판정하지 않습니다.
+상세 구조와 현재 검증 상태는
+`malbut_agent_server/docs/jira/SWM25-133_GAZEBO_FULL_FLOW.md`에 있습니다.
+
 ## 기존 기능과의 연결
 
 - 웹 지도: `malbut_gazebo/robot_web_server.py`
