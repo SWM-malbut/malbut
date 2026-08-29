@@ -60,6 +60,8 @@ setup(
             'malbut_scenarios.wait_for_simulation:main',
             'malbut_text_agent_server = '
             'malbut_scenarios.text_agent_server:main',
+            'run_text_gazebo_acceptance = '
+            'malbut_scenarios.text_gazebo_acceptance:main',
         ],
     },
 )
