@@ -341,7 +341,7 @@ unit/contract test는 다음을 독립적으로 검증한다.
 - clean Git HEAD, tracked source와 installed byte equality, timeout/output bound,
   symlink·out-of-root·dirty/untracked 차단
 
-현재 `malbut_scenarios/test` 전체 결과는 **297 passed**다. 이는 runner와 위
+현재 `malbut_scenarios/test` 전체 결과는 **298 passed**다. 이는 runner와 위
 계약의 source test 결과이며, 아직 post-commit final provenance-sealed Gazebo
 run이 완료됐다는 뜻은 아니다.
 
@@ -355,7 +355,7 @@ campaign은 SWM25-122에서 이어간다.
 byte-exact attestation, evidence v2의 `source_tree_digest`, Robot Web verified
 preview target exact-once, replay 후 8 samples/2초 stability window와 실패 시에도
 이어지는 bounded best-effort cleanup을 추가했다. `malbut_scenarios/test`는
-297개가 통과했다. provenance 도입 전 run-2 rehearsal에서는
+298개가 통과했다. provenance 도입 전 run-2 rehearsal에서는
 `거실로 가줘 -> navigate(거실) -> 네 -> RobotAction -> Robot Web -> actual Nav2
 SUCCEEDED` 제품 흐름과 zero-residue cleanup을 1/1 확인했지만 최종 evidence로
 간주하지 않는다. 최종 완료 판정은 이 변경을 Git에 commit하고 동일 commit으로

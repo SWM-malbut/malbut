@@ -210,7 +210,7 @@ cleanup 결과만 기록합니다. evidence parent는 `0700`, 신규 파일은 `
 하며 기존 파일을 덮어쓰지 않습니다. 기존 run-2는 source provenance 봉인 전
 rehearsal이며 최종 인수 evidence가 아닙니다. 최종 provenance-sealed run은 이
 변경을 Git에 commit하고 동일 commit으로 overlay를 다시 build한 뒤 수행합니다.
-현재 `malbut_scenarios/test` source suite는 297개가 통과했지만, 이것만으로 최종
+현재 `malbut_scenarios/test` source suite는 298개가 통과했지만, 이것만으로 최종
 clean Gazebo run이 완료됐다고 판정하지 않습니다.
 상세 구조와 현재 검증 상태는
 `malbut_agent_server/docs/jira/SWM25-133_GAZEBO_FULL_FLOW.md`에 있습니다.

@@ -387,7 +387,19 @@ class OwnedProcess:
         session_id = self._session_id
         if session_id is None:
             return
-        if not self._owned_pids():
+        owned = []
+        for pid in self._owned_pids():
+            try:
+                observed = _read_process_stat(pid)
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            except (OSError, OwnedProcessError) as error:
+                raise OwnedProcessError(
+                    'process_cleanup_incomplete'
+                ) from error
+            if observed.session_id == session_id:
+                owned.append((pid, observed))
+        if not owned:
             return
         try:
             os.killpg(session_id, selected_signal)
@@ -395,12 +407,31 @@ class OwnedProcess:
             pass
         except PermissionError as error:
             raise OwnedProcessError('process_cleanup_incomplete') from error
-        for pid in self._owned_pids():
-            try:
-                os.kill(pid, selected_signal)
-            except ProcessLookupError:
+
+        # ``killpg(session_id, ...)`` already reaches every process in the
+        # leader's process group.  Sending the same signal to those PIDs a
+        # second time can interrupt cooperative shutdown and turn a clean
+        # exit into ``-SIGINT``.  Processes may create another process group
+        # without leaving the owned session, so signal only those members
+        # individually and revalidate their identity immediately beforehand.
+        for pid, before_signal in owned:
+            if before_signal.process_group_id == session_id:
                 continue
-            except PermissionError as error:
+            try:
+                if _process_uid(pid) != os.getuid():
+                    continue
+                current = _read_process_stat(pid)
+                if (
+                    current.session_id != session_id
+                    or current.process_group_id
+                    != before_signal.process_group_id
+                    or current.start_ticks != before_signal.start_ticks
+                ):
+                    continue
+                os.kill(pid, selected_signal)
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            except (OSError, OwnedProcessError) as error:
                 raise OwnedProcessError(
                     'process_cleanup_incomplete'
                 ) from error

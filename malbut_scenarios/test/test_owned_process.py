@@ -428,6 +428,73 @@ def test_recycled_session_leader_fails_before_group_signal(
     assert killpg_calls == []
 
 
+def test_signal_owned_delivers_once_per_process_group(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Do not duplicate a group signal while covering detached members."""
+    owner = _python_owner(tmp_path, 'pass')
+    session_id = 4242
+    leader_group_child = 4243
+    detached_group_child = 4244
+    owner._session_id = session_id
+    owner._leader_start_ticks = 100
+    stats = {
+        session_id: owned_process_module._ProcessStat(
+            process_group_id=session_id,
+            session_id=session_id,
+            start_ticks=100,
+        ),
+        leader_group_child: owned_process_module._ProcessStat(
+            process_group_id=session_id,
+            session_id=session_id,
+            start_ticks=101,
+        ),
+        detached_group_child: owned_process_module._ProcessStat(
+            process_group_id=detached_group_child,
+            session_id=session_id,
+            start_ticks=102,
+        ),
+    }
+    killpg_calls = []
+    kill_calls = []
+
+    monkeypatch.setattr(
+        owner,
+        '_owned_pids',
+        lambda: (
+            session_id,
+            leader_group_child,
+            detached_group_child,
+        ),
+    )
+    monkeypatch.setattr(
+        owned_process_module,
+        '_read_process_stat',
+        lambda pid: stats[pid],
+    )
+    monkeypatch.setattr(
+        owned_process_module,
+        '_process_uid',
+        lambda _pid: os.getuid(),
+    )
+    monkeypatch.setattr(
+        owned_process_module.os,
+        'killpg',
+        lambda *args: killpg_calls.append(args),
+    )
+    monkeypatch.setattr(
+        owned_process_module.os,
+        'kill',
+        lambda *args: kill_calls.append(args),
+    )
+
+    owner._signal_owned(signal.SIGINT)
+
+    assert killpg_calls == [(session_id, signal.SIGINT)]
+    assert kill_calls == [(detached_group_child, signal.SIGINT)]
+
+
 def test_stop_is_idempotent_after_a_started_process(
     tmp_path,
     process_owners,
