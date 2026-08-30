@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import os
@@ -37,6 +37,12 @@ from malbut_scenarios.source_install_attestation import (
     SourceInstallAttestationError,
     attest_source_install,
 )
+from malbut_scenarios.concurrent_approval_resolver import (
+    ConcurrentApprovalGateError,
+    ConcurrentApprovalGateObservation,
+    concurrent_approval_observation_path,
+    read_concurrent_approval_observation,
+)
 from malbut_scenarios.text_gazebo_evidence import (
     CleanupEvidence,
     ConfirmationState,
@@ -44,14 +50,18 @@ from malbut_scenarios.text_gazebo_evidence import (
     EvidenceCounts,
     EvidenceDurations,
     NavigationState,
+    PressureEvidence,
     ReadinessState,
     RobotActionState,
     StableStates,
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
+    pressure_evidence_for,
     write_evidence_manifest,
 )
 from malbut_scenarios.text_gazebo_runtime import (
+    ConcurrentApprovalResult,
+    DuplicateRequestResult,
     LoopbackPortReservation,
     SQLiteAcceptanceObserver,
     TextAgentHTTPClient,
@@ -62,9 +72,17 @@ from malbut_scenarios.text_gazebo_runtime import (
     sanitized_ros_environment,
 )
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
     TextGazeboScenarioProfile,
+    coerce_fault_profile,
     coerce_scenario_profile,
     scenario_spec,
+)
+from malbut_scenarios.worker_competition import (
+    WorkerCompetitionError,
+    WorkerCompetitionObservation,
+    read_worker_competition_observation,
+    worker_competition_observation_path,
 )
 
 
@@ -90,6 +108,7 @@ class TextGazeboAcceptanceError(RuntimeError):
         'preapproval_effect_detected',
         'terminal_evidence_invalid',
         'replay_effect_detected',
+        'pressure_evidence_invalid',
         'cleanup_incomplete',
         'evidence_publish_failed',
         'unexpected_failure',
@@ -138,6 +157,11 @@ class _SuccessfulRun:
     preapproval_goal_count: int
     final_ledger: object
     proxy_counts: RobotWebProxyCounts
+    pressure: PressureEvidence = field(
+        default_factory=lambda: pressure_evidence_for(
+            TextGazeboFaultProfile.NONE
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,12 +228,21 @@ def _parser() -> argparse.ArgumentParser:
         default=TextGazeboScenarioProfile.HAPPY_PATH.value,
         help='Select one server-owned named-location acceptance scenario.',
     )
+    parser.add_argument(
+        '--fault-profile',
+        choices=tuple(
+            profile.value for profile in TextGazeboFaultProfile
+        ),
+        default=TextGazeboFaultProfile.NONE.value,
+        help='Select one bounded exactly-once pressure profile.',
+    )
     return parser
 
 
 def _validate_arguments(args: argparse.Namespace) -> None:
     try:
         coerce_scenario_profile(args.scenario_profile)
+        coerce_fault_profile(args.fault_profile)
     except (TypeError, ValueError):
         raise TextGazeboAcceptanceError(
             'acceptance_arguments_invalid'
@@ -663,6 +696,9 @@ class _AcceptanceSupervisor:
         scenario_profile: TextGazeboScenarioProfile = (
             TextGazeboScenarioProfile.HAPPY_PATH
         ),
+        fault_profile: TextGazeboFaultProfile = (
+            TextGazeboFaultProfile.NONE
+        ),
     ) -> None:
         self._layout = layout
         self._run_root = run_root
@@ -670,6 +706,7 @@ class _AcceptanceSupervisor:
         self._gui = gui
         self._nonce = nonce
         self._scenario = scenario_spec(scenario_profile)
+        self._fault_profile = coerce_fault_profile(fault_profile)
         self._private_runtime = run_root / 'runtime-home'
         self._private_runtime.mkdir(mode=0o700)
         for name in ('ros', 'cache', 'config'):
@@ -726,6 +763,14 @@ class _AcceptanceSupervisor:
             execution_started = time.monotonic()
             client.create_conversation()
             proposal = client.request_navigation()
+            duplicate_result = None
+            if (
+                self._fault_profile
+                is TextGazeboFaultProfile.DUPLICATE_REQUEST
+            ):
+                duplicate_result = client.replay_navigation_request(
+                    proposal
+                )
             self._confirmation_request_id = (
                 proposal.confirmation_request_id
             )
@@ -746,14 +791,30 @@ class _AcceptanceSupervisor:
                 raise TextGazeboAcceptanceError(
                     'preapproval_effect_detected'
                 )
-            client.approve_navigation()
+            concurrent_result = None
+            if (
+                self._fault_profile
+                is TextGazeboFaultProfile.CONCURRENT_APPROVAL
+            ):
+                concurrent_result = (
+                    client.approve_navigation_concurrently()
+                )
+            else:
+                client.approve_navigation()
             final = self._ledger.await_known_success(
                 proposal.confirmation_request_id,
                 timeout_seconds=_EXECUTION_TIMEOUT_SECONDS,
             )
             self._await_nav2_success()
+            approval_observation = (
+                self._concurrent_approval_pressure_observation()
+            )
+            worker_observation = self._worker_pressure_observation()
             before_replay = self._effect_counts()
-            client.replay_approval()
+            if concurrent_result is None:
+                client.replay_approval()
+            else:
+                client.replay_winning_approval(concurrent_result)
             client.send_late_approval()
             for _sample in range(_REPLAY_STABILITY_SAMPLES):
                 time.sleep(_REPLAY_SAMPLE_SECONDS)
@@ -776,6 +837,12 @@ class _AcceptanceSupervisor:
                 raise TextGazeboAcceptanceError(
                     'terminal_evidence_invalid'
                 )
+            pressure = self._pressure_evidence(
+                duplicate_result=duplicate_result,
+                concurrent_result=concurrent_result,
+                approval_observation=approval_observation,
+                worker_observation=worker_observation,
+            )
             return (
                 _SuccessfulRun(
                     readiness_seconds=readiness_seconds,
@@ -785,6 +852,7 @@ class _AcceptanceSupervisor:
                     preapproval_goal_count=pre_goal_count,
                     final_ledger=final_after,
                     proxy_counts=proxy_counts,
+                    pressure=pressure,
                 ),
                 {
                     'device_id': fixture['device_id'],
@@ -799,6 +867,105 @@ class _AcceptanceSupervisor:
             robot_web.release()
             agent_port.release()
             proxy_port.release()
+
+    def _worker_pressure_observation(
+        self,
+    ) -> WorkerCompetitionObservation | None:
+        """Read the private worker-race proof only for its exact profile."""
+        database = str((self._run_root / 'agent.sqlite3').resolve())
+        try:
+            path = worker_competition_observation_path(database)
+            if (
+                self._fault_profile
+                is TextGazeboFaultProfile.COMPETING_WORKERS
+            ):
+                return read_worker_competition_observation(path)
+            if path.exists() or path.is_symlink():
+                raise WorkerCompetitionError(
+                    'worker_competition_observation_invalid'
+                )
+            return None
+        except (OSError, ValueError, WorkerCompetitionError):
+            raise TextGazeboAcceptanceError(
+                'pressure_evidence_invalid'
+            ) from None
+
+    def _concurrent_approval_pressure_observation(
+        self,
+    ) -> ConcurrentApprovalGateObservation | None:
+        """Read server-owned proof only for concurrent approval pressure."""
+        database = str((self._run_root / 'agent.sqlite3').resolve())
+        try:
+            path = concurrent_approval_observation_path(database)
+            if (
+                self._fault_profile
+                is TextGazeboFaultProfile.CONCURRENT_APPROVAL
+            ):
+                return read_concurrent_approval_observation(path)
+            if path.exists() or path.is_symlink():
+                raise ConcurrentApprovalGateError(
+                    'concurrent approval observation is invalid'
+                )
+            return None
+        except (OSError, ValueError, ConcurrentApprovalGateError):
+            raise TextGazeboAcceptanceError(
+                'pressure_evidence_invalid'
+            ) from None
+
+    def _pressure_evidence(
+        self,
+        *,
+        duplicate_result: DuplicateRequestResult | None,
+        concurrent_result: ConcurrentApprovalResult | None,
+        approval_observation: (
+            ConcurrentApprovalGateObservation | None
+        ),
+        worker_observation: WorkerCompetitionObservation | None,
+    ) -> PressureEvidence:
+        """Derive exact public counters from the pressure actually observed."""
+        profile = self._fault_profile
+        if profile is TextGazeboFaultProfile.NONE:
+            valid = bool(
+                duplicate_result is None
+                and concurrent_result is None
+                and approval_observation is None
+                and worker_observation is None
+            )
+            pressure = PressureEvidence(1, 3, 1, 1, 1, 0)
+        elif profile is TextGazeboFaultProfile.DUPLICATE_REQUEST:
+            valid = bool(
+                duplicate_result == DuplicateRequestResult(2, 2, 0)
+                and concurrent_result is None
+                and approval_observation is None
+                and worker_observation is None
+            )
+            pressure = PressureEvidence(2, 3, 1, 2, 1, 1)
+        elif profile is TextGazeboFaultProfile.CONCURRENT_APPROVAL:
+            valid = bool(
+                duplicate_result is None
+                and concurrent_result
+                == ConcurrentApprovalResult(2, 1, 1)
+                and approval_observation
+                == ConcurrentApprovalGateObservation()
+                and worker_observation is None
+            )
+            pressure = PressureEvidence(1, 4, 1, 2, 1, 1)
+        elif profile is TextGazeboFaultProfile.COMPETING_WORKERS:
+            valid = bool(
+                duplicate_result is None
+                and concurrent_result is None
+                and approval_observation is None
+                and worker_observation == WorkerCompetitionObservation()
+            )
+            pressure = PressureEvidence(1, 3, 2, 2, 1, 1)
+        else:  # pragma: no cover - enum exhaustiveness guard
+            valid = False
+            pressure = PressureEvidence(1, 3, 1, 1, 1, 0)
+        if not valid:
+            raise TextGazeboAcceptanceError(
+                'pressure_evidence_invalid'
+            )
+        return pressure
 
     def cleanup(self) -> _CleanupResult:
         """Stop all exact owners and verify zero residue."""
@@ -1045,6 +1212,8 @@ class _AcceptanceSupervisor:
                 '--execute-approved-simulation',
                 '--scenario-profile',
                 self._scenario.profile.value,
+                '--fault-profile',
+                self._fault_profile.value,
                 '--robot-web-url',
                 self._proxy.origin,
             ),
@@ -1091,6 +1260,7 @@ class _AcceptanceSupervisor:
         proxy = self._proxy.snapshot()
         nav2 = self._observer.snapshot()
         return (
+            ledger.durable_agent_turn_count,
             ledger.confirmation_count,
             ledger.approved_confirmation_count,
             ledger.robot_action_count,
@@ -1139,6 +1309,8 @@ def _build_receipt(
         scenario_profile=coerce_scenario_profile(
             args.scenario_profile
         ),
+        fault_profile=coerce_fault_profile(args.fault_profile),
+        pressure=successful.pressure,
         states=StableStates(
             readiness=ReadinessState.READY,
             confirmation=ConfirmationState.APPROVED,
@@ -1147,7 +1319,7 @@ def _build_receipt(
             navigation=NavigationState.SUCCEEDED,
         ),
         counts=EvidenceCounts(
-            agent_proposal_count=1,
+            agent_proposal_count=final.durable_agent_turn_count,
             confirmation_count=final.confirmation_count,
             approved_confirmation_count=(
                 final.approved_confirmation_count
@@ -1200,6 +1372,7 @@ def _run_acceptance(
             scenario_profile=coerce_scenario_profile(
                 args.scenario_profile
             ),
+            fault_profile=coerce_fault_profile(args.fault_profile),
         )
         successful = None
         binding = None
@@ -1252,6 +1425,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 'mode': 'check',
                 'nav2_start_count': 0,
                 'physical_authorized': False,
+                'fault_profile': coerce_fault_profile(
+                    args.fault_profile
+                ).value,
                 'scenario_profile': coerce_scenario_profile(
                     args.scenario_profile
                 ).value,
@@ -1265,6 +1441,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             'manifest_digest': manifest.digest(),
             'mode': 'run',
             'physical_authorized': False,
+            'fault_profile': coerce_fault_profile(
+                args.fault_profile
+            ).value,
             'scenario_profile': coerce_scenario_profile(
                 args.scenario_profile
             ).value,

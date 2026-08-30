@@ -12,6 +12,7 @@ import re
 import socket
 import sqlite3
 import stat
+import threading
 import time
 from typing import Any, Mapping, Optional
 from urllib.parse import quote
@@ -34,7 +35,9 @@ class TextGazeboRuntimeError(RuntimeError):
         'agent_http_unavailable',
         'agent_http_response_invalid',
         'agent_proposal_invalid',
+        'agent_duplicate_request_invalid',
         'agent_approval_invalid',
+        'agent_concurrent_approval_invalid',
         'agent_replay_invalid',
         'agent_late_approval_invalid',
         'ledger_unavailable',
@@ -63,6 +66,24 @@ class ProposalReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class DuplicateRequestResult:
+    """Content-free proof that one exact request replay reused its binding."""
+
+    request_attempt_count: int
+    matching_confirmation_count: int
+    additional_confirmation_binding_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ConcurrentApprovalResult:
+    """Content-free proof of one winner from two concurrent approvals."""
+
+    approval_attempt_count: int
+    approved_count: int
+    non_authorizing_loser_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class LedgerSnapshot:
     """Content-free projection of the fresh acceptance database."""
 
@@ -79,11 +100,13 @@ class LedgerSnapshot:
     dispatch_result_code: Optional[str]
     simulation: Optional[bool]
     physical_authorized: Optional[bool]
+    durable_agent_turn_count: int = 1
 
     def is_preapproval(self) -> bool:
         """Return the exact no-action state after proposal creation."""
         return bool(
-            self.confirmation_count == 1
+            self.durable_agent_turn_count == 1
+            and self.confirmation_count == 1
             and self.approved_confirmation_count == 0
             and self.confirmation_state == 'pending'
             and self.confirmation_disposition == 'pending'
@@ -99,7 +122,8 @@ class LedgerSnapshot:
     def is_known_success(self) -> bool:
         """Return true only for the exact sealed success projection."""
         return bool(
-            self.confirmation_count == 1
+            self.durable_agent_turn_count == 1
+            and self.confirmation_count == 1
             and self.approved_confirmation_count == 1
             and self.confirmation_state == 'resolved'
             and self.confirmation_disposition == 'approved'
@@ -181,6 +205,22 @@ class TextAgentHTTPClient:
             'turn_id': 'turn-late-' + run_nonce,
             'text': '네',
         }
+        self._concurrent_approval_bodies = (
+            {
+                'request_id': 'approval-race-a-' + run_nonce,
+                'conversation_id': self._conversation_id,
+                'turn_id': 'turn-approval-race-a-' + run_nonce,
+                'text': '네',
+            },
+            {
+                'request_id': 'approval-race-b-' + run_nonce,
+                'conversation_id': self._conversation_id,
+                'turn_id': 'turn-approval-race-b-' + run_nonce,
+                'text': '네',
+            },
+        )
+        self._concurrent_result: ConcurrentApprovalResult | None = None
+        self._concurrent_winning_body_index: int | None = None
         self._scenario = scenario
 
     def __repr__(self) -> str:
@@ -253,6 +293,51 @@ class TextAgentHTTPClient:
             raise TextGazeboRuntimeError('agent_proposal_invalid')
         return ProposalReceipt(str(confirmation_id))
 
+    def replay_navigation_request(
+        self,
+        receipt: ProposalReceipt,
+    ) -> DuplicateRequestResult:
+        """Replay the exact request and require its original binding."""
+        if not isinstance(receipt, ProposalReceipt):
+            raise TypeError('receipt must be a ProposalReceipt')
+        try:
+            status, value = self._request(
+                'POST', '/v1/text/turns', self._request_body
+            )
+            execution = value.get('execution')
+            proposal = value.get('proposal')
+            confirmation_id = value.get('confirmation_request_id')
+            valid = bool(
+                status == 200
+                and value.get('status') == 'awaiting_confirmation'
+                and value.get('result_code') == 'confirmation_pending'
+                # The current text service projects proposal replays with
+                # cached=false, while a future projection may expose the
+                # underlying provider cache. Binding identity is authoritative.
+                and type(value.get('cached')) is bool
+                and type(proposal) is dict
+                and proposal.get('tool_name') == 'navigate'
+                and proposal.get('arguments') == {
+                    'location': self._scenario.location,
+                }
+                and _non_authorizing(execution)
+                and _private_identifier(confirmation_id)
+                and confirmation_id == receipt.confirmation_request_id
+            )
+        except TextGazeboRuntimeError:
+            raise TextGazeboRuntimeError(
+                'agent_duplicate_request_invalid'
+            ) from None
+        if not valid:
+            raise TextGazeboRuntimeError(
+                'agent_duplicate_request_invalid'
+            )
+        return DuplicateRequestResult(
+            request_attempt_count=2,
+            matching_confirmation_count=2,
+            additional_confirmation_binding_count=0,
+        )
+
     def approve_navigation(self) -> None:
         """Resolve the pending confirmation without claiming execution."""
         status, value = self._request(
@@ -266,6 +351,114 @@ class TextAgentHTTPClient:
             and _non_authorizing(value.get('execution'))
         ):
             raise TextGazeboRuntimeError('agent_approval_invalid')
+
+    def approve_navigation_concurrently(
+        self,
+    ) -> ConcurrentApprovalResult:
+        """Race two approvals and require one non-authorizing loser."""
+        self._concurrent_result = None
+        self._concurrent_winning_body_index = None
+        barrier = threading.Barrier(3)
+        lock = threading.Lock()
+        responses: list[tuple[int, int, dict[str, Any]]] = []
+        failed = [False]
+
+        def submit(index: int, body: dict[str, Any]) -> None:
+            try:
+                barrier.wait(timeout=self._timeout_seconds)
+                response = self._request(
+                    'POST', '/v1/text/turns', body
+                )
+            except Exception:
+                with lock:
+                    failed[0] = True
+                return
+            with lock:
+                responses.append((index, *response))
+
+        threads = tuple(
+            threading.Thread(
+                target=submit,
+                args=(index, body),
+                name=f'swm25-136-approval-{index + 1}',
+                daemon=False,
+            )
+            for index, body in enumerate(
+                self._concurrent_approval_bodies,
+            )
+        )
+        for thread in threads:
+            thread.start()
+        try:
+            barrier.wait(timeout=self._timeout_seconds)
+        except threading.BrokenBarrierError:
+            failed[0] = True
+            barrier.abort()
+
+        deadline = time.monotonic() + self._timeout_seconds + 1.0
+        for thread in threads:
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        if any(thread.is_alive() for thread in threads):
+            barrier.abort()
+            raise TextGazeboRuntimeError(
+                'agent_concurrent_approval_invalid'
+            )
+        if failed[0] or len(responses) != 2:
+            raise TextGazeboRuntimeError(
+                'agent_concurrent_approval_invalid'
+            )
+
+        approved_count = sum(
+            _fresh_non_authorizing_approval(status, value)
+            for _index, status, value in responses
+        )
+        loser_count = sum(
+            _non_authorizing_approval_loser(status, value)
+            for _index, status, value in responses
+        )
+        if approved_count != 1 or loser_count != 1:
+            raise TextGazeboRuntimeError(
+                'agent_concurrent_approval_invalid'
+            )
+        winning_body_index = next(
+            index
+            for index, status, value in responses
+            if _fresh_non_authorizing_approval(status, value)
+        )
+        result = ConcurrentApprovalResult(
+            approval_attempt_count=2,
+            approved_count=approved_count,
+            non_authorizing_loser_count=loser_count,
+        )
+        self._concurrent_result = result
+        self._concurrent_winning_body_index = winning_body_index
+        return result
+
+    def replay_winning_approval(
+        self,
+        result: ConcurrentApprovalResult,
+    ) -> None:
+        """Replay only this client's exact winning approval identity."""
+        if (
+            not isinstance(result, ConcurrentApprovalResult)
+            or result is not self._concurrent_result
+            or self._concurrent_winning_body_index not in {0, 1}
+        ):
+            raise ValueError('concurrent approval result is invalid')
+        winning_body_index = self._concurrent_winning_body_index
+        assert winning_body_index is not None
+        try:
+            status, value = self._request(
+                'POST',
+                '/v1/text/turns',
+                self._concurrent_approval_bodies[
+                    winning_body_index
+                ],
+            )
+        except TextGazeboRuntimeError:
+            raise TextGazeboRuntimeError('agent_replay_invalid') from None
+        if not _cached_non_authorizing_approval(status, value):
+            raise TextGazeboRuntimeError('agent_replay_invalid')
 
     def replay_approval(self) -> None:
         """Replay the exact approval and require the cached result."""
@@ -380,6 +573,10 @@ class SQLiteAcceptanceObserver:
             raise TextGazeboRuntimeError('ledger_snapshot_invalid')
         try:
             with self._connect() as connection:
+                durable_agent_turn_count = _scalar_count(
+                    connection,
+                    'SELECT COUNT(*) FROM conversation_turns',
+                )
                 confirmation_count = _scalar_count(
                     connection,
                     'SELECT COUNT(*) FROM confirmation_intents',
@@ -449,6 +646,7 @@ class SQLiteAcceptanceObserver:
             ),
             simulation=simulation,
             physical_authorized=physical,
+            durable_agent_turn_count=durable_agent_turn_count,
         )
 
     def await_known_success(
@@ -720,6 +918,47 @@ def _non_authorizing(value: object) -> bool:
     )
 
 
+def _fresh_non_authorizing_approval(
+    status: int,
+    value: dict[str, Any],
+) -> bool:
+    return bool(
+        status == 200
+        and value.get('status') == 'approved'
+        and value.get('result_code') == 'confirmation_approved'
+        and value.get('cached') is False
+        and _non_authorizing(value.get('execution'))
+    )
+
+
+def _cached_non_authorizing_approval(
+    status: int,
+    value: dict[str, Any],
+) -> bool:
+    return bool(
+        status == 200
+        and value.get('status') == 'approved'
+        and value.get('result_code') == 'confirmation_approved'
+        and value.get('cached') is True
+        and _non_authorizing(value.get('execution'))
+    )
+
+
+def _non_authorizing_approval_loser(
+    status: int,
+    value: dict[str, Any],
+) -> bool:
+    if status != 409 or set(value) != {'error'}:
+        return False
+    error = value.get('error')
+    return bool(
+        type(error) is dict
+        and error.get('code') == 'confirmation_already_terminal'
+        and type(error.get('message')) is str
+        and set(error) == {'code', 'message'}
+    )
+
+
 def _private_identifier(value: object) -> bool:
     return bool(
         type(value) is str
@@ -767,6 +1006,8 @@ def _canonical_digest(contract: str, value: object) -> str:
 
 
 __all__ = [
+    'ConcurrentApprovalResult',
+    'DuplicateRequestResult',
     'LedgerSnapshot',
     'LoopbackPortReservation',
     'ProposalReceipt',

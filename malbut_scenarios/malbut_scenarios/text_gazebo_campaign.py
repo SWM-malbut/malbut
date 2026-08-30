@@ -30,6 +30,7 @@ from malbut_scenarios.text_gazebo_campaign_core import (
     ExpectedProductOutcome,
     ObservedProductOutcome,
     TextGazeboCampaignError,
+    campaign_profile_binding,
     run_campaign,
 )
 from malbut_scenarios.text_gazebo_campaign_evidence import (
@@ -52,15 +53,9 @@ from malbut_scenarios.text_gazebo_campaign_runtime import (
     TextGazeboCampaignRunnerConfig,
     TextGazeboCampaignRuntimeError,
 )
-from malbut_scenarios.text_gazebo_scenario import TextGazeboScenarioProfile
-
-
 _FULL_COMMIT = re.compile(r'(?:[0-9a-f]{40}|[0-9a-f]{64})\Z')
 _PROFILE_OUTCOMES = {
-    CampaignProfile.HAPPY_PATH: ExpectedProductOutcome.SUCCEEDED,
-    CampaignProfile.HAPPY_LIVING_ROOM: ExpectedProductOutcome.SUCCEEDED,
-    CampaignProfile.HAPPY_KITCHEN: ExpectedProductOutcome.SUCCEEDED,
-    CampaignProfile.HAPPY_BEDROOM: ExpectedProductOutcome.SUCCEEDED,
+    profile: ExpectedProductOutcome.SUCCEEDED for profile in CampaignProfile
 }
 
 
@@ -144,17 +139,21 @@ class _InstalledCampaignExecutor:
         )
         started = self._monotonic()
         result: Optional[TextGazeboCampaignRunResult] = None
-        scenario_profile = TextGazeboScenarioProfile(case.profile.value)
+        binding = campaign_profile_binding(case.profile)
+        scenario_profile = binding.scenario_profile
+        fault_profile = binding.fault_profile
         try:
             candidate = self._runner.run(TextGazeboCampaignRunRequest(
                 ros_domain_id=self._ros_domain_id,
                 evidence_path=evidence_path,
                 scenario_profile=scenario_profile,
+                fault_profile=fault_profile,
                 gui=self._gui,
             ))
             if (
                 not isinstance(candidate, TextGazeboCampaignRunResult)
                 or candidate.scenario_profile is not scenario_profile
+                or candidate.fault_profile is not fault_profile
             ):
                 raise TextGazeboCampaignCLIError(
                     'campaign_unexpected_failure'

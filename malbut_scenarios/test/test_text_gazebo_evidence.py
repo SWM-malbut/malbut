@@ -18,14 +18,17 @@ from malbut_scenarios.text_gazebo_evidence import (
     EvidenceCounts,
     EvidenceDurations,
     NavigationState,
+    PressureEvidence,
     ReadinessState,
     RobotActionState,
     StableStates,
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
+    pressure_evidence_for,
     write_evidence_manifest,
 )
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
     TextGazeboScenarioProfile,
 )
 
@@ -105,9 +108,11 @@ def test_receipt_schema_is_fixed_canonical_and_digest_bound() -> None:
         'commit',
         'counts',
         'durations',
+        'fault_profile',
         'goal_set_digest',
         'installed_digest',
         'physical_authorized',
+        'pressure',
         'run_id',
         'runtime_binding_digest',
         'scenario_profile',
@@ -121,7 +126,7 @@ def test_receipt_schema_is_fixed_canonical_and_digest_bound() -> None:
     assert receipt_value['states']['navigation'] == 'succeeded'
     assert receipt_value['counts']['nav2_goal_count'] == 1
     assert manifest_value == {
-        'format': 'malbut.text-gazebo-e2e-evidence.v3',
+        'format': 'malbut.text-gazebo-e2e-evidence.v4',
         'receipt': receipt_value,
         'receipt_digest': receipt.digest(),
     }
@@ -152,6 +157,7 @@ def test_public_api_has_no_private_content_fields() -> None:
         TextGazeboEvidenceReceipt,
         StableStates,
         EvidenceCounts,
+        PressureEvidence,
         EvidenceDurations,
         CleanupEvidence,
     )
@@ -259,6 +265,48 @@ def test_typed_states_reject_arbitrary_strings() -> None:
 def test_success_receipt_rejects_non_success_evidence(changes) -> None:
     with pytest.raises(ValueError, match='success receipt'):
         _receipt(**changes)
+
+
+@pytest.mark.parametrize(
+    'profile,expected',
+    (
+        (TextGazeboFaultProfile.NONE, (1, 3, 1, 1, 1, 0)),
+        (TextGazeboFaultProfile.DUPLICATE_REQUEST, (2, 3, 1, 2, 1, 1)),
+        (TextGazeboFaultProfile.CONCURRENT_APPROVAL, (1, 4, 1, 2, 1, 1)),
+        (TextGazeboFaultProfile.COMPETING_WORKERS, (1, 3, 2, 2, 1, 1)),
+    ),
+)
+def test_fault_profile_requires_exact_content_free_pressure_counts(
+    profile,
+    expected,
+) -> None:
+    pressure = pressure_evidence_for(profile)
+
+    assert tuple(pressure.as_dict().values()) == expected
+    receipt = _receipt(fault_profile=profile, pressure=pressure)
+    assert receipt.fault_profile is profile
+    assert receipt.as_dict()['pressure'] == pressure.as_dict()
+
+    with pytest.raises(ValueError, match='exact pressure evidence'):
+        _receipt(
+            fault_profile=profile,
+            pressure=replace(
+                pressure,
+                approval_attempt_count=pressure.approval_attempt_count + 1,
+            ),
+        )
+
+
+def test_pressure_rejects_unbalanced_winner_accounting() -> None:
+    with pytest.raises(ValueError, match='winners plus non-winners'):
+        PressureEvidence(
+            request_attempt_count=2,
+            approval_attempt_count=3,
+            worker_contender_count=1,
+            pressure_contender_count=2,
+            pressure_winner_count=1,
+            pressure_nonwinner_count=0,
+        )
 
 
 def test_writer_creates_private_parent_and_atomic_owner_only_file(

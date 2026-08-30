@@ -25,7 +25,12 @@ from malbut_scenarios.text_gazebo_campaign_core import (
     ExpectedProductOutcome,
     ObservedProductOutcome,
     TextGazeboCampaignError,
+    campaign_profile_binding,
     run_campaign,
+)
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
+    TextGazeboScenarioProfile,
 )
 
 
@@ -33,6 +38,35 @@ _COMMIT = '1' * 40
 _SOURCE_DIGEST = '2' * 64
 _INSTALLED_DIGEST = '3' * 64
 _EVIDENCE_DIGEST = '4' * 64
+
+
+@pytest.mark.parametrize(
+    'profile,fault',
+    (
+        (
+            CampaignProfile.DUPLICATE_REQUEST,
+            TextGazeboFaultProfile.DUPLICATE_REQUEST,
+        ),
+        (
+            CampaignProfile.CONCURRENT_APPROVAL,
+            TextGazeboFaultProfile.CONCURRENT_APPROVAL,
+        ),
+        (
+            CampaignProfile.COMPETING_WORKERS,
+            TextGazeboFaultProfile.COMPETING_WORKERS,
+        ),
+    ),
+)
+def test_exactly_once_case_tokens_keep_semantics_separate_from_faults(
+    profile,
+    fault,
+) -> None:
+    binding = campaign_profile_binding(profile)
+
+    assert binding.scenario_profile is (
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM
+    )
+    assert binding.fault_profile is fault
 
 
 def _provenance() -> CampaignProvenance:

@@ -322,6 +322,58 @@ ros2 run malbut_scenarios run_text_gazebo_campaign -- \
 상세 범위와 완료 증거는
 `malbut_agent_server/docs/jira/SWM25-135_MULTI_SPACE_GAZEBO_REPEAT.md`에 있습니다.
 
+## SWM25-136 중복·동시성 exact-once campaign
+
+SWM25-136은 새 runner나 이동 경로를 만들지 않습니다. 기존 actual Gazebo runner에
+다음 세 bounded pressure profile을 각각 fresh living-room case로 적용합니다.
+
+```text
+duplicate_request    -> 동일 request envelope을 승인 전에 2회 전송
+concurrent_approval  -> 같은 pending confirmation에 승인 2개를 동시 전송
+competing_workers    -> 독립 SQLite connection의 worker 2개가 같은 Action claim
+```
+
+동시 승인은 client와 server barrier를 함께 통과하고 production confirmation CAS가
+HTTP 200 winner 1개와 HTTP 409 terminal conflict 1개를 결정해야 합니다. worker
+경쟁은 production `claim_next()` 결과가 winner 1개와 non-winner 1개로 확정되기
+전에는 외부 start로 진행할 수 없습니다. barrier는 승자를 선택하거나 production
+원장을 수정하지 않습니다.
+
+실행 효과 없이 case plan과 installed provenance를 먼저 검사합니다.
+
+```bash
+ros2 run malbut_scenarios run_text_gazebo_campaign -- \
+  --check \
+  --case-profile duplicate_request \
+  --case-profile concurrent_approval \
+  --case-profile competing_workers \
+  --source-commit "$source_commit" \
+  --source-tree "$source_tree"
+```
+
+실제 headless campaign은 명시적인 simulation 승인과 owner-private 신규 evidence
+경로에서만 실행합니다.
+
+```bash
+ros2 run malbut_scenarios run_text_gazebo_campaign -- \
+  --run \
+  --execute-approved-simulation \
+  --case-profile duplicate_request \
+  --case-profile concurrent_approval \
+  --case-profile competing_workers \
+  --source-commit "$source_commit" \
+  --source-tree "$source_tree" \
+  --ros-domain-id "$ros_domain_id" \
+  --evidence "$campaign_evidence_root/swm25-136-exactly-once.json"
+```
+
+각 child는 durable Agent turn, confirmation, RobotAction, outbox, Robot Web start,
+distinct actual Nav2 goal과 known terminal을 각각 정확히 1개만 증명해야 합니다.
+child evidence v4와 campaign evidence v3에는 fault profile과 content-free pressure
+counter가 포함되지만 요청 원문, 좌표, private ID, claim token과 host path는 포함하지
+않습니다. 상세 범위와 검증 결과는
+`malbut_agent_server/docs/jira/SWM25-136_EXACTLY_ONCE_DUPLICATE_RACES.md`에 있습니다.
+
 ## 기존 기능과의 연결
 
 - 웹 지도: `malbut_gazebo/robot_web_server.py`

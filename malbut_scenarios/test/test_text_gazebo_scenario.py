@@ -5,8 +5,11 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
     TextGazeboScenarioProfile,
+    coerce_fault_profile,
     coerce_scenario_profile,
+    pressure_contract,
     scenario_spec,
 )
 
@@ -47,3 +50,36 @@ def test_scenario_specs_are_immutable_and_stable() -> None:
     assert '주방' not in repr(first)
     with pytest.raises(FrozenInstanceError):
         first.location = '침실'
+
+
+@pytest.mark.parametrize(
+    'profile,counts',
+    (
+        ('none', (1, 3, 1, 1, 1, 0)),
+        ('duplicate_request', (2, 3, 1, 2, 1, 1)),
+        ('concurrent_approval', (1, 4, 1, 2, 1, 1)),
+        ('competing_workers', (1, 3, 2, 2, 1, 1)),
+    ),
+)
+def test_fault_profiles_have_exact_pressure_contracts(
+    profile,
+    counts,
+) -> None:
+    selected = coerce_fault_profile(profile)
+    contract = pressure_contract(selected)
+
+    assert selected is TextGazeboFaultProfile(profile)
+    assert (
+        contract.request_attempt_count,
+        contract.approval_attempt_count,
+        contract.worker_contender_count,
+        contract.pressure_contender_count,
+        contract.pressure_winner_count,
+        contract.pressure_nonwinner_count,
+    ) == counts
+
+
+@pytest.mark.parametrize('value', ('duplicate', 'shell', '', 1))
+def test_unknown_fault_profile_is_rejected(value) -> None:
+    with pytest.raises(ValueError):
+        coerce_fault_profile(value)
