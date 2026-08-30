@@ -19,6 +19,8 @@ from pathlib import Path
 import shutil
 import tempfile
 
+import yaml
+
 from ament_index_python.packages import get_package_share_directory
 
 from malbut_gazebo.map_lifecycle import MAP_STORE_FORMAT
@@ -35,6 +37,10 @@ FIXTURE_DEVICE_ID = "malbut-sim-01"
 FIXTURE_ROOM_ID = "room-1"
 FIXTURE_ROOM_NAME = "거실"
 FIXTURE_ROOM_CATEGORY = "living_room"
+SWM25_137_ALTERNATE_ACTIVE_FILENAME = (
+    "swm25-137-alternate-active.json"
+)
+SWM25_137_ALTERNATE_REVISION_NAME = "swm25-137-alternate"
 _TARGET_CELL_HALF_EXTENT_M = 0.25
 
 
@@ -120,6 +126,48 @@ def _write_private_json(path: Path, value: dict) -> None:
         encoding="utf-8",
     )
     path.chmod(0o600)
+
+
+def _write_private_yaml(path: Path, value: dict) -> None:
+    path.write_text(
+        yaml.safe_dump(value, sort_keys=False),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+
+def _atomic_replace_private_json(path: Path, value: dict) -> None:
+    """Publish one private authority file without an observable partial write."""
+    payload = (
+        json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+    ).encode("utf-8")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        offset = 0
+        while offset < len(payload):
+            offset += os.write(descriptor, payload[offset:])
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(temporary, path)
+        path.chmod(0o400)
+        directory_descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _target_cell(spec: _FixtureRoomSpec) -> dict:
@@ -342,6 +390,71 @@ def prepare_small_house_named_navigation_fixture(
         }
         _write_private_json(staging / "active.json", manifest)
 
+        # SWM25-137 needs a second *valid* semantic authority so the
+        # production worker can observe a real revision change after its
+        # read-only preview.  Keep the spatial map and stable map_id intact;
+        # changing one occupancy threshold changes only map_revision.
+        alternate_version = (
+            staging / "versions" / SWM25_137_ALTERNATE_REVISION_NAME
+        )
+        alternate_version.mkdir(parents=True)
+        alternate_version.chmod(0o700)
+        alternate_yaml = alternate_version / "small_house.yaml"
+        alternate_image = alternate_version / "small_house.pgm"
+        alternate_user_map = alternate_version / "user-map.geojson"
+        alternate_zones_path = (
+            alternate_version / f"{slam_map.map_id}-zones.geojson"
+        )
+        try:
+            alternate_metadata = yaml.safe_load(
+                map_yaml.read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
+            raise NamedNavigationFixtureError(
+                "Small House map YAML cannot build alternate revision"
+            ) from error
+        if not isinstance(alternate_metadata, dict):
+            raise NamedNavigationFixtureError(
+                "Small House map YAML must contain a mapping"
+            )
+        alternate_metadata["image"] = alternate_image.name
+        alternate_metadata["occupied_thresh"] = 0.66
+        _write_private_yaml(alternate_yaml, alternate_metadata)
+        shutil.copyfile(image_path, alternate_image)
+        alternate_slam = load_slam_map(alternate_yaml)
+        if (
+            alternate_slam.map_id != slam_map.map_id
+            or alternate_slam.map_revision == slam_map.map_revision
+        ):
+            raise NamedNavigationFixtureError(
+                "alternate fixture must preserve map_id and change revision"
+            )
+        alternate_named_map = deepcopy(named_map)
+        alternate_named_map["map_revision"] = (
+            alternate_slam.map_revision
+        )
+        alternate_zones = deepcopy(source_zones)
+        alternate_zones["map_revision"] = alternate_slam.map_revision
+        _validate_target_cells(alternate_slam, alternate_zones)
+        _write_private_json(alternate_user_map, alternate_named_map)
+        _write_private_json(alternate_zones_path, alternate_zones)
+        alternate_relative = alternate_version.relative_to(staging)
+        alternate_manifest = {
+            "format": MAP_STORE_FORMAT,
+            "revision": SWM25_137_ALTERNATE_REVISION_NAME,
+            "map_id": alternate_slam.map_id,
+            "map_revision": alternate_slam.map_revision,
+            "map_yaml": str(alternate_relative / alternate_yaml.name),
+            "map_image": str(alternate_relative / alternate_image.name),
+            "user_map": str(alternate_relative / alternate_user_map.name),
+            "device_id": FIXTURE_DEVICE_ID,
+            "fixture": FIXTURE_FORMAT,
+        }
+        alternate_active = (
+            staging / SWM25_137_ALTERNATE_ACTIVE_FILENAME
+        )
+        _write_private_json(alternate_active, alternate_manifest)
+
         # The semantic revision is immutable after construction.  The map
         # store root and staging directory remain writable so operational
         # lifecycle files can still be maintained separately.
@@ -352,9 +465,15 @@ def prepare_small_house_named_navigation_fixture(
             copied_user_map,
             copied_zones,
             copied_active,
+            alternate_yaml,
+            alternate_image,
+            alternate_user_map,
+            alternate_zones_path,
+            alternate_active,
         ):
             path.chmod(0o400)
         version.chmod(0o500)
+        alternate_version.chmod(0o500)
         os.replace(staging, destination)
         return {
             **manifest,
@@ -363,10 +482,136 @@ def prepare_small_house_named_navigation_fixture(
                 destination / manifest["user_map"]
             ),
             "zone_path": str(destination / relative / copied_zones.name),
+            "alternate_active_path": str(
+                destination / SWM25_137_ALTERNATE_ACTIVE_FILENAME
+            ),
         }
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+
+
+def _private_fixture_member(store: Path, relative: object) -> Path:
+    if not isinstance(relative, str) or not relative:
+        raise NamedNavigationFixtureError(
+            "alternate fixture member is invalid"
+        )
+    candidate = store / relative
+    if candidate.is_symlink():
+        raise NamedNavigationFixtureError(
+            "alternate fixture member cannot be a symlink"
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(store)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise NamedNavigationFixtureError(
+            "alternate fixture member escapes its store"
+        ) from error
+    metadata = resolved.stat()
+    if (
+        not resolved.is_file()
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_mode & 0o777 != 0o400
+    ):
+        raise NamedNavigationFixtureError(
+            "alternate fixture member is not immutable"
+        )
+    return resolved
+
+
+def activate_swm25_137_alternate_revision(map_store: Path) -> None:
+    """Atomically select the prebuilt valid revision in a private fixture."""
+    if not isinstance(map_store, Path):
+        raise TypeError("map_store must be a pathlib.Path")
+    raw_store = map_store.expanduser()
+    if raw_store.is_symlink():
+        raise NamedNavigationFixtureError(
+            "map store cannot be a symlink"
+        )
+    try:
+        store = raw_store.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise NamedNavigationFixtureError(
+            "map store is unavailable"
+        ) from error
+    metadata = store.stat()
+    if (
+        not store.is_dir()
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_mode & 0o777 != 0o700
+    ):
+        raise NamedNavigationFixtureError(
+            "map store must be owner-private"
+        )
+
+    active_path = store / "active.json"
+    alternate_path = store / SWM25_137_ALTERNATE_ACTIVE_FILENAME
+    for path in (active_path, alternate_path):
+        if path.is_symlink() or not path.is_file():
+            raise NamedNavigationFixtureError(
+                "fixture authority file is unavailable"
+            )
+        file_metadata = path.stat()
+        if (
+            file_metadata.st_uid != os.geteuid()
+            or file_metadata.st_mode & 0o777 != 0o400
+        ):
+            raise NamedNavigationFixtureError(
+                "fixture authority file is not immutable"
+            )
+
+    current = _read_json_object(active_path)
+    alternate = _read_json_object(alternate_path)
+    manifest_keys = {
+        "format", "revision", "map_id", "map_revision", "map_yaml",
+        "map_image", "user_map", "device_id", "fixture",
+    }
+    if set(current) != manifest_keys or set(alternate) != manifest_keys:
+        raise NamedNavigationFixtureError(
+            "fixture authority manifest is malformed"
+        )
+    if (
+        current.get("format") != MAP_STORE_FORMAT
+        or alternate.get("format") != MAP_STORE_FORMAT
+        or current.get("fixture") != FIXTURE_FORMAT
+        or alternate.get("fixture") != FIXTURE_FORMAT
+        or current.get("device_id") != FIXTURE_DEVICE_ID
+        or alternate.get("device_id") != FIXTURE_DEVICE_ID
+        or alternate.get("revision")
+        != SWM25_137_ALTERNATE_REVISION_NAME
+        or alternate.get("map_id") != current.get("map_id")
+        or alternate.get("map_revision") == current.get("map_revision")
+    ):
+        raise NamedNavigationFixtureError(
+            "alternate fixture binding is invalid"
+        )
+
+    alternate_yaml = _private_fixture_member(
+        store, alternate.get("map_yaml")
+    )
+    _private_fixture_member(store, alternate.get("map_image"))
+    alternate_user_map = _private_fixture_member(
+        store, alternate.get("user_map")
+    )
+    alternate_slam = load_slam_map(alternate_yaml)
+    alternate_semantics = _read_json_object(alternate_user_map)
+    if (
+        alternate_slam.map_id != alternate.get("map_id")
+        or alternate_slam.map_revision != alternate.get("map_revision")
+        or alternate_semantics.get("map_id") != alternate.get("map_id")
+        or alternate_semantics.get("map_revision")
+        != alternate.get("map_revision")
+    ):
+        raise NamedNavigationFixtureError(
+            "alternate fixture sources do not match their manifest"
+        )
+
+    _atomic_replace_private_json(active_path, alternate)
+    if _read_json_object(active_path) != alternate:
+        raise NamedNavigationFixtureError(
+            "alternate fixture activation was not durable"
+        )
 
 
 def _package_sources() -> tuple[Path, Path, Path]:

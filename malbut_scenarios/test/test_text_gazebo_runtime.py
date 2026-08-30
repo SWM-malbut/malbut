@@ -14,6 +14,7 @@ import threading
 import pytest
 
 from malbut_scenarios import text_gazebo_runtime as runtime_module
+from malbut_scenarios.text_gazebo_evidence import ProductOutcome
 from malbut_scenarios.text_gazebo_runtime import (
     ConcurrentApprovalResult,
     DuplicateRequestResult,
@@ -700,6 +701,111 @@ def test_sqlite_observer_accepts_only_exact_known_success(tmp_path) -> None:
     assert snapshot.simulation is True
     assert snapshot.physical_authorized is False
     assert observer.quick_check() is True
+
+
+@pytest.mark.parametrize(
+    'result_code',
+    (
+        'robot_state_stale',
+        'safety_emergency_stop',
+        'target_binding_changed',
+    ),
+)
+def test_sqlite_observer_accepts_exact_block_without_dispatch(
+    tmp_path,
+    result_code,
+) -> None:
+    database = (tmp_path / f'{result_code}.sqlite3').resolve()
+    _create_ledger(
+        database,
+        confirmation_state='resolved',
+        confirmation_disposition='approved',
+        confirmation_result='confirmation_approved',
+        action_state='BLOCKED',
+        action_result=result_code,
+    )
+    observer = SQLiteAcceptanceObserver(database)
+
+    snapshot = observer.await_expected_blocked(
+        _CONFIRMATION_ID,
+        result_code=result_code,
+        timeout_seconds=0.1,
+        poll_seconds=0.01,
+    )
+
+    assert snapshot.is_expected_blocked(result_code) is True
+    assert snapshot.robot_action_count == 1
+    assert snapshot.dispatch_intent_count == 0
+    assert snapshot.dispatch_state is None
+    assert snapshot.simulation is True
+    assert snapshot.physical_authorized is False
+
+
+def test_sqlite_observer_does_not_accept_wrong_block_or_outbox(
+    tmp_path,
+) -> None:
+    wrong = (tmp_path / 'wrong-code.sqlite3').resolve()
+    _create_ledger(
+        wrong,
+        confirmation_state='resolved',
+        confirmation_disposition='approved',
+        confirmation_result='confirmation_approved',
+        action_state='BLOCKED',
+        action_result='safety_emergency_stop',
+    )
+    with pytest.raises(TextGazeboRuntimeError) as mismatch:
+        SQLiteAcceptanceObserver(wrong).await_expected_blocked(
+            _CONFIRMATION_ID,
+            result_code='robot_state_stale',
+            timeout_seconds=0.1,
+            poll_seconds=0.01,
+        )
+    assert mismatch.value.code == 'ledger_terminal_failed'
+
+    dispatched = (tmp_path / 'dispatched.sqlite3').resolve()
+    _create_ledger(
+        dispatched,
+        confirmation_state='resolved',
+        confirmation_disposition='approved',
+        confirmation_result='confirmation_approved',
+        action_state='BLOCKED',
+        action_result='robot_state_stale',
+        outbox_state='PENDING',
+    )
+    snapshot = SQLiteAcceptanceObserver(dispatched).snapshot(
+        _CONFIRMATION_ID
+    )
+    assert snapshot.is_expected_blocked('robot_state_stale') is False
+
+
+def test_sqlite_observer_requires_typed_outcome_and_exact_block_code(
+    tmp_path,
+) -> None:
+    database = (tmp_path / 'pending.sqlite3').resolve()
+    _create_ledger(database)
+    observer = SQLiteAcceptanceObserver(database)
+
+    with pytest.raises(TypeError, match='ProductOutcome'):
+        observer.await_product_outcome(
+            _CONFIRMATION_ID,
+            expected_product_outcome='blocked',
+            expected_block_result_code='robot_state_stale',
+            timeout_seconds=0.1,
+        )
+    with pytest.raises(ValueError, match='block result code'):
+        observer.await_product_outcome(
+            _CONFIRMATION_ID,
+            expected_product_outcome=ProductOutcome.BLOCKED,
+            expected_block_result_code='private/value',
+            timeout_seconds=0.1,
+        )
+    with pytest.raises(ValueError, match='cannot require'):
+        observer.await_product_outcome(
+            _CONFIRMATION_ID,
+            expected_product_outcome=ProductOutcome.SUCCEEDED,
+            expected_block_result_code='robot_state_stale',
+            timeout_seconds=0.1,
+        )
 
 
 @pytest.mark.parametrize(

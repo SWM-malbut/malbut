@@ -14,6 +14,7 @@ from malbut_scenarios.text_gazebo_campaign_core import (
     CampaignCaseId,
     CampaignCaseResult,
     CampaignProfile,
+    CampaignProfileBinding,
     CampaignProvenance,
     CampaignResult,
     CampaignVerdict,
@@ -24,12 +25,14 @@ from malbut_scenarios.text_gazebo_campaign_core import (
     CleanupOutcome,
     ExpectedProductOutcome,
     ObservedProductOutcome,
+    SafetyBlockCode,
     TextGazeboCampaignError,
     campaign_profile_binding,
     run_campaign,
 )
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
 )
 
@@ -69,6 +72,18 @@ def test_exactly_once_case_tokens_keep_semantics_separate_from_faults(
     assert binding.fault_profile is fault
 
 
+def test_legacy_two_field_profile_binding_keeps_success_defaults() -> None:
+    """Adding Safety metadata does not break existing binding constructors."""
+    binding = CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_PATH,
+        TextGazeboFaultProfile.NONE,
+    )
+
+    assert binding.safety_profile is TextGazeboSafetyProfile.NONE
+    assert binding.expected_outcome is ExpectedProductOutcome.SUCCEEDED
+    assert binding.expected_block_code is SafetyBlockCode.NONE
+
+
 def _provenance() -> CampaignProvenance:
     return CampaignProvenance(
         commit=_COMMIT,
@@ -79,13 +94,16 @@ def _provenance() -> CampaignProvenance:
 
 def _case(
     suffix: str,
-    expected: ExpectedProductOutcome = ExpectedProductOutcome.SUCCEEDED,
+    expected: ExpectedProductOutcome | None = None,
     profile: CampaignProfile = CampaignProfile.HAPPY_PATH,
+    block_code: SafetyBlockCode | None = None,
 ) -> CampaignCase:
+    binding = campaign_profile_binding(profile)
     return CampaignCase(
         case_id=CampaignCaseId(f'happy-{suffix}'),
         profile=profile,
-        expected_outcome=expected,
+        expected_outcome=expected or binding.expected_outcome,
+        expected_block_code=block_code or binding.expected_block_code,
     )
 
 
@@ -95,6 +113,7 @@ def _execution(
     status: CaseExecutionStatus = CaseExecutionStatus.COMPLETED,
     cleanup: CleanupOutcome = CleanupOutcome.CLEAN,
     provenance: CampaignProvenance | None = None,
+    block_code: SafetyBlockCode = SafetyBlockCode.NONE,
 ) -> CaseExecution:
     return CaseExecution(
         status=status,
@@ -102,6 +121,7 @@ def _execution(
         cleanup=cleanup,
         provenance=provenance or _provenance(),
         evidence_digest=_EVIDENCE_DIGEST,
+        observed_block_code=block_code,
     )
 
 
@@ -295,9 +315,12 @@ def test_provenance_rejects_noncanonical_values(
 
 def test_expected_block_is_a_product_success_for_that_test() -> None:
     """A blocked product outcome can correctly yield a passed test verdict."""
-    case = _case('blocked', ExpectedProductOutcome.BLOCKED)
+    case = _case('blocked', profile=CampaignProfile.STALE_STATE)
     executor = _FakeExecutor([
-        _execution(observed=ObservedProductOutcome.BLOCKED),
+        _execution(
+            observed=ObservedProductOutcome.BLOCKED,
+            block_code=SafetyBlockCode.ROBOT_STATE_STALE,
+        ),
     ])
 
     result = run_campaign([case], _provenance(), executor)
@@ -307,9 +330,112 @@ def test_expected_block_is_a_product_success_for_that_test() -> None:
     assert result.cases[0].observed_outcome is ObservedProductOutcome.BLOCKED
     assert result.cases[0].verdict is CaseVerdict.PASSED
     assert result.cases[0].as_dict()['product'] == {
+        'expected_block_code': 'robot_state_stale',
         'expected': 'blocked',
+        'observed_block_code': 'robot_state_stale',
         'observed': 'blocked',
     }
+
+
+def test_core_case_expectation_is_independent_from_profile_label() -> None:
+    """The pure port accepts caller-defined outcomes; CLI owns profiles."""
+    case = CampaignCase(
+        case_id=CampaignCaseId('generic-block'),
+        profile=CampaignProfile.HAPPY_PATH,
+        expected_outcome=ExpectedProductOutcome.BLOCKED,
+        expected_block_code=SafetyBlockCode.ROBOT_STATE_STALE,
+    )
+
+    result = run_campaign(
+        [case],
+        _provenance(),
+        _FakeExecutor([_execution(
+            observed=ObservedProductOutcome.BLOCKED,
+            block_code=SafetyBlockCode.ROBOT_STATE_STALE,
+        )]),
+    )
+
+    assert result.verdict is CampaignVerdict.PASSED
+    assert result.cases[0].expected_block_code is (
+        SafetyBlockCode.ROBOT_STATE_STALE
+    )
+
+
+def test_legacy_generic_blocked_case_needs_no_safety_code() -> None:
+    """Pre-SWM137 public constructors keep NONE as an unspecified code."""
+    case = CampaignCase(
+        case_id=CampaignCaseId('legacy-block'),
+        profile=CampaignProfile.HAPPY_PATH,
+        expected_outcome=ExpectedProductOutcome.BLOCKED,
+    )
+    execution = CaseExecution(
+        status=CaseExecutionStatus.COMPLETED,
+        observed_outcome=ObservedProductOutcome.BLOCKED,
+        cleanup=CleanupOutcome.CLEAN,
+        provenance=_provenance(),
+        evidence_digest=_EVIDENCE_DIGEST,
+    )
+
+    result = run_campaign(
+        [case],
+        _provenance(),
+        _FakeExecutor([execution]),
+    )
+
+    assert result.verdict is CampaignVerdict.PASSED
+    assert result.cases[0].expected_block_code is SafetyBlockCode.NONE
+    assert result.cases[0].observed_block_code is SafetyBlockCode.NONE
+
+
+@pytest.mark.parametrize(
+    ('profile', 'safety_profile', 'block_code'),
+    (
+        (
+            CampaignProfile.STALE_STATE,
+            TextGazeboSafetyProfile.STALE_STATE,
+            SafetyBlockCode.ROBOT_STATE_STALE,
+        ),
+        (
+            CampaignProfile.EMERGENCY_STOP,
+            TextGazeboSafetyProfile.EMERGENCY_STOP,
+            SafetyBlockCode.SAFETY_EMERGENCY_STOP,
+        ),
+        (
+            CampaignProfile.MAP_REVISION_CHANGED,
+            TextGazeboSafetyProfile.MAP_REVISION_CHANGED,
+            SafetyBlockCode.TARGET_BINDING_CHANGED,
+        ),
+    ),
+)
+def test_safety_profiles_bind_exact_block_contracts(
+    profile,
+    safety_profile,
+    block_code,
+) -> None:
+    binding = campaign_profile_binding(profile)
+
+    assert binding.scenario_profile is (
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM
+    )
+    assert binding.fault_profile is TextGazeboFaultProfile.NONE
+    assert binding.safety_profile is safety_profile
+    assert binding.expected_outcome is ExpectedProductOutcome.BLOCKED
+    assert binding.expected_block_code is block_code
+
+
+def test_wrong_block_code_fails_the_case_without_stopping_clean_campaign():
+    case = _case('blocked', profile=CampaignProfile.STALE_STATE)
+    executor = _FakeExecutor([_execution(
+        observed=ObservedProductOutcome.BLOCKED,
+        block_code=SafetyBlockCode.SAFETY_EMERGENCY_STOP,
+    )])
+
+    result = run_campaign([case], _provenance(), executor)
+
+    assert result.verdict is CampaignVerdict.FAILED
+    assert result.cases[0].error_code is (
+        CaseErrorCode.PRODUCT_OUTCOME_MISMATCH
+    )
 
 
 def test_product_mismatch_fails_test_but_clean_campaign_continues() -> None:

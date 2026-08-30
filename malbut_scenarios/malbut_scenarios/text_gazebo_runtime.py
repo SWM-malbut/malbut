@@ -17,6 +17,7 @@ import time
 from typing import Any, Mapping, Optional
 from urllib.parse import quote
 
+from malbut_scenarios.text_gazebo_evidence import ProductOutcome
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboScenarioProfile,
     scenario_spec,
@@ -134,6 +135,26 @@ class LedgerSnapshot:
             and self.dispatch_intent_count == 1
             and self.dispatch_state == 'TERMINAL'
             and self.dispatch_result_code == 'NAVIGATION_SUCCEEDED'
+            and self.simulation is True
+            and self.physical_authorized is False
+        )
+
+    def is_expected_blocked(self, result_code: str) -> bool:
+        """Return true only for one approved Action blocked before intent."""
+        expected = _result_code(result_code)
+        return bool(
+            self.durable_agent_turn_count == 1
+            and self.confirmation_count == 1
+            and self.approved_confirmation_count == 1
+            and self.confirmation_state == 'resolved'
+            and self.confirmation_disposition == 'approved'
+            and self.confirmation_result_code == 'confirmation_approved'
+            and self.robot_action_count == 1
+            and self.action_state == 'BLOCKED'
+            and self.action_result_code == expected
+            and self.dispatch_intent_count == 0
+            and self.dispatch_state is None
+            and self.dispatch_result_code is None
             and self.simulation is True
             and self.physical_authorized is False
         )
@@ -657,6 +678,53 @@ class SQLiteAcceptanceObserver:
         poll_seconds: float = 0.25,
     ) -> LedgerSnapshot:
         """Poll until exact known success, never converting UNKNOWN to pass."""
+        return self.await_product_outcome(
+            confirmation_request_id,
+            expected_product_outcome=ProductOutcome.SUCCEEDED,
+            timeout_seconds=timeout_seconds,
+            poll_seconds=poll_seconds,
+        )
+
+    def await_expected_blocked(
+        self,
+        confirmation_request_id: str,
+        *,
+        result_code: str,
+        timeout_seconds: float,
+        poll_seconds: float = 0.25,
+    ) -> LedgerSnapshot:
+        """Poll for one exact pre-dispatch BLOCKED result."""
+        return self.await_product_outcome(
+            confirmation_request_id,
+            expected_product_outcome=ProductOutcome.BLOCKED,
+            expected_block_result_code=result_code,
+            timeout_seconds=timeout_seconds,
+            poll_seconds=poll_seconds,
+        )
+
+    def await_product_outcome(
+        self,
+        confirmation_request_id: str,
+        *,
+        expected_product_outcome: ProductOutcome,
+        timeout_seconds: float,
+        expected_block_result_code: str | None = None,
+        poll_seconds: float = 0.25,
+    ) -> LedgerSnapshot:
+        """Poll for exact success or an exact pre-dispatch Safety block."""
+        if not isinstance(expected_product_outcome, ProductOutcome):
+            raise TypeError(
+                'expected_product_outcome must be a ProductOutcome'
+            )
+        if expected_product_outcome is ProductOutcome.SUCCEEDED:
+            if expected_block_result_code is not None:
+                raise ValueError(
+                    'success cannot require a block result code'
+                )
+        else:
+            expected_block_result_code = _result_code(
+                expected_block_result_code
+            )
         deadline = time.monotonic() + _bounded_seconds(timeout_seconds)
         poll = _bounded_seconds(poll_seconds)
         terminal_failures = {
@@ -664,7 +732,14 @@ class SQLiteAcceptanceObserver:
         }
         while True:
             snapshot = self.snapshot(confirmation_request_id)
-            if snapshot.is_known_success():
+            matched = (
+                snapshot.is_known_success()
+                if expected_product_outcome is ProductOutcome.SUCCEEDED
+                else snapshot.is_expected_blocked(
+                    expected_block_result_code
+                )
+            )
+            if matched:
                 return snapshot
             if snapshot.action_state in terminal_failures:
                 raise TextGazeboRuntimeError('ledger_terminal_failed')
@@ -966,6 +1041,15 @@ def _private_identifier(value: object) -> bool:
         and not any(ord(character) < 32 or ord(character) == 127
                     for character in value)
     )
+
+
+def _result_code(value: object) -> str:
+    if (
+        type(value) is not str
+        or re.fullmatch(r'[a-z][a-z0-9_]{0,127}', value) is None
+    ):
+        raise ValueError('block result code is invalid')
+    return value
 
 
 def _scalar_count(connection: sqlite3.Connection, statement: str) -> int:

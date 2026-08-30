@@ -10,6 +10,7 @@ from typing import Dict, Protocol, Sequence, Tuple
 
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
 )
 
@@ -54,44 +55,112 @@ class CampaignProfile(str, Enum):
     DUPLICATE_REQUEST = 'duplicate_request'
     CONCURRENT_APPROVAL = 'concurrent_approval'
     COMPETING_WORKERS = 'competing_workers'
+    STALE_STATE = 'stale_state'
+    EMERGENCY_STOP = 'emergency_stop'
+    MAP_REVISION_CHANGED = 'map_revision_changed'
+
+
+class ExpectedProductOutcome(str, Enum):
+    """Product outcome a campaign case is designed to demonstrate."""
+
+    SUCCEEDED = 'succeeded'
+    FAILED = 'failed'
+    BLOCKED = 'blocked'
+    UNKNOWN = 'unknown'
+
+
+class SafetyBlockCode(str, Enum):
+    """Allowlisted dispatch-time block result, or no block at all."""
+
+    NONE = 'none'
+    ROBOT_STATE_STALE = 'robot_state_stale'
+    SAFETY_EMERGENCY_STOP = 'safety_emergency_stop'
+    TARGET_BINDING_CHANGED = 'target_binding_changed'
 
 
 @dataclass(frozen=True, slots=True)
 class CampaignProfileBinding:
-    """Bind one public case token to semantic target and fault behavior."""
+    """Bind one public token to semantic, pressure, and safety behavior."""
 
     scenario_profile: TextGazeboScenarioProfile
     fault_profile: TextGazeboFaultProfile
+    safety_profile: TextGazeboSafetyProfile = TextGazeboSafetyProfile.NONE
+    expected_outcome: ExpectedProductOutcome = (
+        ExpectedProductOutcome.SUCCEEDED
+    )
+    expected_block_code: SafetyBlockCode = SafetyBlockCode.NONE
 
 
 _PROFILE_BINDINGS = MappingProxyType({
     CampaignProfile.HAPPY_PATH: CampaignProfileBinding(
         TextGazeboScenarioProfile.HAPPY_PATH,
         TextGazeboFaultProfile.NONE,
+        TextGazeboSafetyProfile.NONE,
+        ExpectedProductOutcome.SUCCEEDED,
+        SafetyBlockCode.NONE,
     ),
     CampaignProfile.HAPPY_LIVING_ROOM: CampaignProfileBinding(
         TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
         TextGazeboFaultProfile.NONE,
+        TextGazeboSafetyProfile.NONE,
+        ExpectedProductOutcome.SUCCEEDED,
+        SafetyBlockCode.NONE,
     ),
     CampaignProfile.HAPPY_KITCHEN: CampaignProfileBinding(
         TextGazeboScenarioProfile.HAPPY_KITCHEN,
         TextGazeboFaultProfile.NONE,
+        TextGazeboSafetyProfile.NONE,
+        ExpectedProductOutcome.SUCCEEDED,
+        SafetyBlockCode.NONE,
     ),
     CampaignProfile.HAPPY_BEDROOM: CampaignProfileBinding(
         TextGazeboScenarioProfile.HAPPY_BEDROOM,
         TextGazeboFaultProfile.NONE,
+        TextGazeboSafetyProfile.NONE,
+        ExpectedProductOutcome.SUCCEEDED,
+        SafetyBlockCode.NONE,
     ),
     CampaignProfile.DUPLICATE_REQUEST: CampaignProfileBinding(
         TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
         TextGazeboFaultProfile.DUPLICATE_REQUEST,
+        TextGazeboSafetyProfile.NONE,
+        ExpectedProductOutcome.SUCCEEDED,
+        SafetyBlockCode.NONE,
     ),
     CampaignProfile.CONCURRENT_APPROVAL: CampaignProfileBinding(
         TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
         TextGazeboFaultProfile.CONCURRENT_APPROVAL,
+        TextGazeboSafetyProfile.NONE,
+        ExpectedProductOutcome.SUCCEEDED,
+        SafetyBlockCode.NONE,
     ),
     CampaignProfile.COMPETING_WORKERS: CampaignProfileBinding(
         TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
         TextGazeboFaultProfile.COMPETING_WORKERS,
+        TextGazeboSafetyProfile.NONE,
+        ExpectedProductOutcome.SUCCEEDED,
+        SafetyBlockCode.NONE,
+    ),
+    CampaignProfile.STALE_STATE: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        TextGazeboFaultProfile.NONE,
+        TextGazeboSafetyProfile.STALE_STATE,
+        ExpectedProductOutcome.BLOCKED,
+        SafetyBlockCode.ROBOT_STATE_STALE,
+    ),
+    CampaignProfile.EMERGENCY_STOP: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        TextGazeboFaultProfile.NONE,
+        TextGazeboSafetyProfile.EMERGENCY_STOP,
+        ExpectedProductOutcome.BLOCKED,
+        SafetyBlockCode.SAFETY_EMERGENCY_STOP,
+    ),
+    CampaignProfile.MAP_REVISION_CHANGED: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        TextGazeboFaultProfile.NONE,
+        TextGazeboSafetyProfile.MAP_REVISION_CHANGED,
+        ExpectedProductOutcome.BLOCKED,
+        SafetyBlockCode.TARGET_BINDING_CHANGED,
     ),
 })
 
@@ -103,15 +172,6 @@ def campaign_profile_binding(
     if not isinstance(profile, CampaignProfile):
         raise TypeError('profile must be a CampaignProfile')
     return _PROFILE_BINDINGS[profile]
-
-
-class ExpectedProductOutcome(str, Enum):
-    """Product outcome a campaign case is designed to demonstrate."""
-
-    SUCCEEDED = 'succeeded'
-    FAILED = 'failed'
-    BLOCKED = 'blocked'
-    UNKNOWN = 'unknown'
 
 
 class ObservedProductOutcome(str, Enum):
@@ -235,6 +295,7 @@ class CampaignCase:
     case_id: CampaignCaseId
     profile: CampaignProfile
     expected_outcome: ExpectedProductOutcome
+    expected_block_code: SafetyBlockCode = SafetyBlockCode.NONE
 
     def __post_init__(self) -> None:
         """Require strongly typed identifiers, profiles, and expectations."""
@@ -246,13 +307,26 @@ class CampaignCase:
             ExpectedProductOutcome,
             'expected_outcome',
         )
+        _require_enum(
+            self.expected_block_code,
+            SafetyBlockCode,
+            'expected_block_code',
+        )
+        if (
+            self.expected_outcome is not ExpectedProductOutcome.BLOCKED
+            and self.expected_block_code is not SafetyBlockCode.NONE
+        ):
+            raise ValueError(
+                'expected block code must match the product outcome'
+            )
 
     def __repr__(self) -> str:
         """Show only allowlisted control values, never the case identifier."""
         return (
             'CampaignCase('
             f'profile={self.profile.value!r}, '
-            f'expected_outcome={self.expected_outcome.value!r})'
+            f'expected_outcome={self.expected_outcome.value!r}, '
+            f'expected_block_code={self.expected_block_code.value!r})'
         )
 
 
@@ -265,6 +339,7 @@ class CaseExecution:
     cleanup: CleanupOutcome
     provenance: CampaignProvenance
     evidence_digest: str
+    observed_block_code: SafetyBlockCode = SafetyBlockCode.NONE
 
     def __post_init__(self) -> None:
         """Reject loosely typed or non-content-addressed execution facts."""
@@ -278,6 +353,18 @@ class CaseExecution:
         if not isinstance(self.provenance, CampaignProvenance):
             raise TypeError('provenance must be a CampaignProvenance')
         _require_digest(self.evidence_digest, 'evidence_digest')
+        _require_enum(
+            self.observed_block_code,
+            SafetyBlockCode,
+            'observed_block_code',
+        )
+        if (
+            self.observed_outcome is not ObservedProductOutcome.BLOCKED
+            and self.observed_block_code is not SafetyBlockCode.NONE
+        ):
+            raise ValueError(
+                'observed block code must match the product outcome'
+            )
 
     def __repr__(self) -> str:
         """Render only bounded states, not provenance or evidence values."""
@@ -285,6 +372,7 @@ class CaseExecution:
             'CaseExecution('
             f'status={self.status.value!r}, '
             f'observed_outcome={self.observed_outcome.value!r}, '
+            f'observed_block_code={self.observed_block_code.value!r}, '
             f'cleanup={self.cleanup.value!r})'
         )
 
@@ -313,6 +401,8 @@ class CampaignCaseResult:
     verdict: CaseVerdict
     error_code: CaseErrorCode
     evidence_digest: str | None
+    expected_block_code: SafetyBlockCode = SafetyBlockCode.NONE
+    observed_block_code: SafetyBlockCode = SafetyBlockCode.NONE
 
     def __post_init__(self) -> None:
         """Keep every result value bounded and structurally typed."""
@@ -325,8 +415,24 @@ class CampaignCaseResult:
             ('cleanup', CleanupOutcome),
             ('verdict', CaseVerdict),
             ('error_code', CaseErrorCode),
+            ('expected_block_code', SafetyBlockCode),
+            ('observed_block_code', SafetyBlockCode),
         ):
             _require_enum(getattr(self, name), expected, name)
+        if (
+            self.expected_outcome is not ExpectedProductOutcome.BLOCKED
+            and self.expected_block_code is not SafetyBlockCode.NONE
+        ):
+            raise ValueError(
+                'expected block code must match the product outcome'
+            )
+        if (
+            self.observed_outcome is not ObservedProductOutcome.BLOCKED
+            and self.observed_block_code is not SafetyBlockCode.NONE
+        ):
+            raise ValueError(
+                'observed block code must match the product outcome'
+            )
         if self.evidence_digest is not None:
             _require_digest(self.evidence_digest, 'evidence_digest')
         if self.verdict is CaseVerdict.PASSED:
@@ -336,6 +442,11 @@ class CampaignCaseResult:
                 or self.evidence_digest is None
                 or self.observed_outcome.value
                 != self.expected_outcome.value
+                or (
+                    self.expected_block_code is not SafetyBlockCode.NONE
+                    and self.observed_block_code
+                    is not self.expected_block_code
+                )
             ):
                 raise ValueError('passed case result is inconsistent')
         elif self.verdict is CaseVerdict.NOT_RUN:
@@ -363,6 +474,11 @@ class CampaignCaseResult:
                     is ObservedProductOutcome.NOT_OBSERVED
                     or self.observed_outcome.value
                     == self.expected_outcome.value
+                    and (
+                        self.expected_block_code is SafetyBlockCode.NONE
+                        or self.observed_block_code
+                        is self.expected_block_code
+                    )
                 ):
                     raise ValueError(
                         'product mismatch result is inconsistent'
@@ -407,7 +523,9 @@ class CampaignCaseResult:
             'error_code': self.error_code.value,
             'evidence_digest': self.evidence_digest,
             'product': {
+                'expected_block_code': self.expected_block_code.value,
                 'expected': self.expected_outcome.value,
+                'observed_block_code': self.observed_block_code.value,
                 'observed': self.observed_outcome.value,
             },
             'profile': self.profile.value,
@@ -539,6 +657,8 @@ def _not_run(case: CampaignCase) -> CampaignCaseResult:
         verdict=CaseVerdict.NOT_RUN,
         error_code=CaseErrorCode.PREVIOUS_CASE_UNSAFE,
         evidence_digest=None,
+        expected_block_code=case.expected_block_code,
+        observed_block_code=SafetyBlockCode.NONE,
     )
 
 
@@ -555,6 +675,8 @@ def _failed_execution(
         verdict=CaseVerdict.FAILED,
         error_code=error_code,
         evidence_digest=None,
+        expected_block_code=case.expected_block_code,
+        observed_block_code=SafetyBlockCode.NONE,
     )
 
 
@@ -573,6 +695,8 @@ def _evaluate_execution(
             verdict=CaseVerdict.FAILED,
             error_code=CaseErrorCode.PROVENANCE_MISMATCH,
             evidence_digest=execution.evidence_digest,
+            expected_block_code=case.expected_block_code,
+            observed_block_code=execution.observed_block_code,
         )
     if execution.cleanup is not CleanupOutcome.CLEAN:
         return CampaignCaseResult(
@@ -584,6 +708,8 @@ def _evaluate_execution(
             verdict=CaseVerdict.FAILED,
             error_code=CaseErrorCode.CLEANUP_INCOMPLETE,
             evidence_digest=execution.evidence_digest,
+            expected_block_code=case.expected_block_code,
+            observed_block_code=execution.observed_block_code,
         )
     if execution.status is not CaseExecutionStatus.COMPLETED:
         return CampaignCaseResult(
@@ -595,9 +721,18 @@ def _evaluate_execution(
             verdict=CaseVerdict.FAILED,
             error_code=CaseErrorCode.EXECUTOR_FAILED,
             evidence_digest=execution.evidence_digest,
+            expected_block_code=case.expected_block_code,
+            observed_block_code=execution.observed_block_code,
         )
     expected = case.expected_outcome.value
-    if execution.observed_outcome.value != expected:
+    if (
+        execution.observed_outcome.value != expected
+        or (
+            case.expected_block_code is not SafetyBlockCode.NONE
+            and execution.observed_block_code
+            is not case.expected_block_code
+        )
+    ):
         return CampaignCaseResult(
             case_id=case.case_id,
             profile=case.profile,
@@ -607,6 +742,8 @@ def _evaluate_execution(
             verdict=CaseVerdict.FAILED,
             error_code=CaseErrorCode.PRODUCT_OUTCOME_MISMATCH,
             evidence_digest=execution.evidence_digest,
+            expected_block_code=case.expected_block_code,
+            observed_block_code=execution.observed_block_code,
         )
     return CampaignCaseResult(
         case_id=case.case_id,
@@ -617,6 +754,8 @@ def _evaluate_execution(
         verdict=CaseVerdict.PASSED,
         error_code=CaseErrorCode.NONE,
         evidence_digest=execution.evidence_digest,
+        expected_block_code=case.expected_block_code,
+        observed_block_code=execution.observed_block_code,
     )
 
 
@@ -702,6 +841,7 @@ __all__ = [
     'CleanupOutcome',
     'ExpectedProductOutcome',
     'ObservedProductOutcome',
+    'SafetyBlockCode',
     'TextGazeboCampaignError',
     'campaign_profile_binding',
     'run_campaign',

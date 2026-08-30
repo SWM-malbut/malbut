@@ -43,6 +43,11 @@ from malbut_scenarios.concurrent_approval_resolver import (
     concurrent_approval_observation_path,
     read_concurrent_approval_observation,
 )
+from malbut_scenarios.dispatch_safety_fault import (
+    DispatchSafetyFaultError,
+    dispatch_safety_observation_path,
+    read_dispatch_safety_observation,
+)
 from malbut_scenarios.text_gazebo_evidence import (
     CleanupEvidence,
     ConfirmationState,
@@ -51,17 +56,22 @@ from malbut_scenarios.text_gazebo_evidence import (
     EvidenceDurations,
     NavigationState,
     PressureEvidence,
+    ProductOutcome,
     ReadinessState,
     RobotActionState,
+    SafetyFaultObservation,
     StableStates,
+    TestStatus,
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
     pressure_evidence_for,
+    safety_fault_observation_for,
     write_evidence_manifest,
 )
 from malbut_scenarios.text_gazebo_runtime import (
     ConcurrentApprovalResult,
     DuplicateRequestResult,
+    LedgerSnapshot,
     LoopbackPortReservation,
     SQLiteAcceptanceObserver,
     TextAgentHTTPClient,
@@ -73,9 +83,12 @@ from malbut_scenarios.text_gazebo_runtime import (
 )
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
     coerce_fault_profile,
+    coerce_safety_profile,
     coerce_scenario_profile,
+    safety_contract,
     scenario_spec,
 )
 from malbut_scenarios.worker_competition import (
@@ -109,6 +122,7 @@ class TextGazeboAcceptanceError(RuntimeError):
         'terminal_evidence_invalid',
         'replay_effect_detected',
         'pressure_evidence_invalid',
+        'safety_evidence_invalid',
         'cleanup_incomplete',
         'evidence_publish_failed',
         'unexpected_failure',
@@ -160,6 +174,13 @@ class _SuccessfulRun:
     pressure: PressureEvidence = field(
         default_factory=lambda: pressure_evidence_for(
             TextGazeboFaultProfile.NONE
+        )
+    )
+    product_outcome: ProductOutcome = ProductOutcome.SUCCEEDED
+    block_result_code: str | None = None
+    fault_observation: SafetyFaultObservation = field(
+        default_factory=lambda: safety_fault_observation_for(
+            TextGazeboSafetyProfile.NONE
         )
     )
 
@@ -236,6 +257,14 @@ def _parser() -> argparse.ArgumentParser:
         default=TextGazeboFaultProfile.NONE.value,
         help='Select one bounded exactly-once pressure profile.',
     )
+    parser.add_argument(
+        '--safety-profile',
+        choices=tuple(
+            profile.value for profile in TextGazeboSafetyProfile
+        ),
+        default=TextGazeboSafetyProfile.NONE.value,
+        help='Select one dispatch-time Safety condition.',
+    )
     return parser
 
 
@@ -243,11 +272,19 @@ def _validate_arguments(args: argparse.Namespace) -> None:
     try:
         coerce_scenario_profile(args.scenario_profile)
         coerce_fault_profile(args.fault_profile)
+        coerce_safety_profile(args.safety_profile)
     except (TypeError, ValueError):
         raise TextGazeboAcceptanceError(
             'acceptance_arguments_invalid'
         ) from None
     if _FULL_COMMIT.fullmatch(args.source_commit) is None:
+        raise TextGazeboAcceptanceError('acceptance_arguments_invalid')
+    if (
+        coerce_fault_profile(args.fault_profile)
+        is not TextGazeboFaultProfile.NONE
+        and coerce_safety_profile(args.safety_profile)
+        is not TextGazeboSafetyProfile.NONE
+    ):
         raise TextGazeboAcceptanceError('acceptance_arguments_invalid')
     if (
         not isinstance(args.source_tree, Path)
@@ -699,6 +736,9 @@ class _AcceptanceSupervisor:
         fault_profile: TextGazeboFaultProfile = (
             TextGazeboFaultProfile.NONE
         ),
+        safety_profile: TextGazeboSafetyProfile = (
+            TextGazeboSafetyProfile.NONE
+        ),
     ) -> None:
         self._layout = layout
         self._run_root = run_root
@@ -707,6 +747,7 @@ class _AcceptanceSupervisor:
         self._nonce = nonce
         self._scenario = scenario_spec(scenario_profile)
         self._fault_profile = coerce_fault_profile(fault_profile)
+        self._safety_profile = coerce_safety_profile(safety_profile)
         self._private_runtime = run_root / 'runtime-home'
         self._private_runtime.mkdir(mode=0o700)
         for name in ('ros', 'cache', 'config'):
@@ -801,11 +842,31 @@ class _AcceptanceSupervisor:
                 )
             else:
                 client.approve_navigation()
-            final = self._ledger.await_known_success(
-                proposal.confirmation_request_id,
-                timeout_seconds=_EXECUTION_TIMEOUT_SECONDS,
+            safety_contract_value = safety_contract(
+                self._safety_profile
             )
-            self._await_nav2_success()
+            if self._safety_profile is TextGazeboSafetyProfile.NONE:
+                product_outcome = ProductOutcome.SUCCEEDED
+                final = self._ledger.await_known_success(
+                    proposal.confirmation_request_id,
+                    timeout_seconds=_EXECUTION_TIMEOUT_SECONDS,
+                )
+                self._await_nav2_success()
+                fault_observation = safety_fault_observation_for(
+                    TextGazeboSafetyProfile.NONE
+                )
+            else:
+                product_outcome = ProductOutcome.BLOCKED
+                if safety_contract_value.result_code is None:
+                    raise TextGazeboAcceptanceError(
+                        'safety_evidence_invalid'
+                    )
+                final = self._ledger.await_expected_blocked(
+                    proposal.confirmation_request_id,
+                    result_code=safety_contract_value.result_code,
+                    timeout_seconds=_EXECUTION_TIMEOUT_SECONDS,
+                )
+                fault_observation = self._safety_fault_observation()
             approval_observation = (
                 self._concurrent_approval_pressure_observation()
             )
@@ -826,14 +887,14 @@ class _AcceptanceSupervisor:
                 proposal.confirmation_request_id
             )
             proxy_counts = self._proxy.snapshot()
-            if not (
-                final == final_after
-                and final_after.is_known_success()
-                and proxy_counts.preview_count == 1
-                and proxy_counts.verified_preview_count == 1
-                and proxy_counts.start_count == 1
-                and proxy_counts.cancel_count == 0
-            ):
+            terminal_valid = self._terminal_evidence_valid(
+                final=final,
+                final_after=final_after,
+                proxy_counts=proxy_counts,
+                product_outcome=product_outcome,
+                block_result_code=safety_contract_value.result_code,
+            )
+            if not terminal_valid:
                 raise TextGazeboAcceptanceError(
                     'terminal_evidence_invalid'
                 )
@@ -853,6 +914,11 @@ class _AcceptanceSupervisor:
                     final_ledger=final_after,
                     proxy_counts=proxy_counts,
                     pressure=pressure,
+                    product_outcome=product_outcome,
+                    block_result_code=(
+                        safety_contract_value.result_code
+                    ),
+                    fault_observation=fault_observation,
                 ),
                 {
                     'device_id': fixture['device_id'],
@@ -867,6 +933,40 @@ class _AcceptanceSupervisor:
             robot_web.release()
             agent_port.release()
             proxy_port.release()
+
+    def _terminal_evidence_valid(
+        self,
+        *,
+        final: LedgerSnapshot,
+        final_after: LedgerSnapshot,
+        proxy_counts: RobotWebProxyCounts,
+        product_outcome: ProductOutcome,
+        block_result_code: str | None,
+    ) -> bool:
+        """Validate exact success or exact pre-dispatch zero effects."""
+        if final != final_after:
+            return False
+        if product_outcome is ProductOutcome.SUCCEEDED:
+            return bool(
+                final_after.is_known_success()
+                and proxy_counts.preview_count == 1
+                and proxy_counts.verified_preview_count == 1
+                and proxy_counts.start_count == 1
+                and proxy_counts.cancel_count == 0
+            )
+        nav2 = self._observer.snapshot()
+        return bool(
+            block_result_code is not None
+            and final_after.is_expected_blocked(block_result_code)
+            and proxy_counts.preview_count == 1
+            and proxy_counts.verified_preview_count == 1
+            and proxy_counts.start_count == 0
+            and proxy_counts.cancel_count == 0
+            and nav2.distinct_goal_count == 0
+            and nav2.terminal_goal_count == 0
+            and nav2.rejected_status_entry_count == 0
+            and not nav2.goals
+        )
 
     def _worker_pressure_observation(
         self,
@@ -889,6 +989,37 @@ class _AcceptanceSupervisor:
             raise TextGazeboAcceptanceError(
                 'pressure_evidence_invalid'
             ) from None
+
+    def _safety_fault_observation(self) -> SafetyFaultObservation:
+        """Project one strict private post-claim fault observation."""
+        database = str((self._run_root / 'agent.sqlite3').resolve())
+        contract = safety_contract(self._safety_profile)
+        try:
+            observation = read_dispatch_safety_observation(
+                dispatch_safety_observation_path(database)
+            )
+        except (OSError, ValueError, DispatchSafetyFaultError):
+            raise TextGazeboAcceptanceError(
+                'safety_evidence_invalid'
+            ) from None
+        if (
+            observation.safety_profile is not self._safety_profile
+            or observation.result_code != contract.result_code
+            or observation.claim_arm_count != 1
+            or observation.preclaim_read_count != 1
+            or observation.postclaim_read_count != 1
+            or observation.fault_application_count
+            != contract.fault_application_count
+            or observation.map_switch_count != contract.map_switch_count
+        ):
+            raise TextGazeboAcceptanceError('safety_evidence_invalid')
+        return SafetyFaultObservation(
+            observed=True,
+            fault_application_count=(
+                observation.fault_application_count
+            ),
+            map_switch_count=observation.map_switch_count,
+        )
 
     def _concurrent_approval_pressure_observation(
         self,
@@ -1214,6 +1345,8 @@ class _AcceptanceSupervisor:
                 self._scenario.profile.value,
                 '--fault-profile',
                 self._fault_profile.value,
+                '--safety-profile',
+                self._safety_profile.value,
                 '--robot-web-url',
                 self._proxy.origin,
             ),
@@ -1285,13 +1418,36 @@ def _build_receipt(
     cleanup: _CleanupResult,
 ) -> TextGazeboEvidenceReceipt:
     nav2 = cleanup.nav2
-    if not (
-        nav2.distinct_goal_count == 1
-        and nav2.terminal_goal_count == 1
-        and len(nav2.goals) == 1
-        and nav2.goals[0].latest_status == 'succeeded'
-        and nav2.rejected_status_entry_count == 0
-    ):
+    if successful.product_outcome is ProductOutcome.SUCCEEDED:
+        nav2_valid = bool(
+            nav2.distinct_goal_count == 1
+            and nav2.terminal_goal_count == 1
+            and len(nav2.goals) == 1
+            and nav2.goals[0].latest_status == 'succeeded'
+            and nav2.rejected_status_entry_count == 0
+        )
+        states = StableStates(
+            readiness=ReadinessState.READY,
+            confirmation=ConfirmationState.APPROVED,
+            robot_action=RobotActionState.SUCCEEDED,
+            dispatch=DispatchState.TERMINAL,
+            navigation=NavigationState.SUCCEEDED,
+        )
+    else:
+        nav2_valid = bool(
+            nav2.distinct_goal_count == 0
+            and nav2.terminal_goal_count == 0
+            and not nav2.goals
+            and nav2.rejected_status_entry_count == 0
+        )
+        states = StableStates(
+            readiness=ReadinessState.READY,
+            confirmation=ConfirmationState.APPROVED,
+            robot_action=RobotActionState.BLOCKED,
+            dispatch=DispatchState.NOT_CREATED,
+            navigation=NavigationState.NOT_STARTED,
+        )
+    if not nav2_valid:
         raise TextGazeboAcceptanceError('terminal_evidence_invalid')
     final = successful.final_ledger
     return TextGazeboEvidenceReceipt(
@@ -1311,13 +1467,12 @@ def _build_receipt(
         ),
         fault_profile=coerce_fault_profile(args.fault_profile),
         pressure=successful.pressure,
-        states=StableStates(
-            readiness=ReadinessState.READY,
-            confirmation=ConfirmationState.APPROVED,
-            robot_action=RobotActionState.SUCCEEDED,
-            dispatch=DispatchState.TERMINAL,
-            navigation=NavigationState.SUCCEEDED,
-        ),
+        safety_profile=coerce_safety_profile(args.safety_profile),
+        product_outcome=successful.product_outcome,
+        test_status=TestStatus.PASSED,
+        block_result_code=successful.block_result_code,
+        fault_observation=successful.fault_observation,
+        states=states,
         counts=EvidenceCounts(
             agent_proposal_count=final.durable_agent_turn_count,
             confirmation_count=final.confirmation_count,
@@ -1373,6 +1528,7 @@ def _run_acceptance(
                 args.scenario_profile
             ),
             fault_profile=coerce_fault_profile(args.fault_profile),
+            safety_profile=coerce_safety_profile(args.safety_profile),
         )
         successful = None
         binding = None
@@ -1431,6 +1587,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 'scenario_profile': coerce_scenario_profile(
                     args.scenario_profile
                 ).value,
+                'safety_profile': coerce_safety_profile(
+                    args.safety_profile
+                ).value,
                 'simulation': True,
                 'source_tree_digest': attestation.tree_digest,
                 'status': 'ok',
@@ -1447,7 +1606,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             'scenario_profile': coerce_scenario_profile(
                 args.scenario_profile
             ).value,
+            'safety_profile': coerce_safety_profile(
+                args.safety_profile
+            ).value,
             'simulation': True,
+            'product_outcome': (
+                manifest.receipt.product_outcome.value
+            ),
+            'test_status': manifest.receipt.test_status.value,
             'status': 'succeeded',
         }, ensure_ascii=True, sort_keys=True))
         return 0

@@ -11,8 +11,13 @@ import stat
 import pytest
 
 from malbut_scenarios import text_gazebo_campaign as campaign
+from malbut_scenarios.text_gazebo_campaign_core import (
+    ExpectedProductOutcome,
+    SafetyBlockCode,
+)
 from malbut_scenarios.text_gazebo_campaign_evidence import (
     ChildManifestSummary,
+    ProductOutcome,
 )
 from malbut_scenarios.text_gazebo_campaign_runtime import (
     TextGazeboCampaignCheckConfig,
@@ -21,10 +26,15 @@ from malbut_scenarios.text_gazebo_campaign_runtime import (
     TextGazeboCampaignRunnerConfig,
     TextGazeboCampaignRuntimeError,
 )
-from malbut_scenarios.text_gazebo_evidence import pressure_evidence_for
+from malbut_scenarios.text_gazebo_evidence import (
+    pressure_evidence_for,
+    safety_fault_observation_for,
+)
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
+    safety_contract,
 )
 
 
@@ -55,10 +65,25 @@ def _run_result(
     ordinal: int,
     profile: TextGazeboScenarioProfile = TextGazeboScenarioProfile.HAPPY_PATH,
     fault_profile: TextGazeboFaultProfile = TextGazeboFaultProfile.NONE,
+    safety_profile: TextGazeboSafetyProfile = TextGazeboSafetyProfile.NONE,
 ) -> TextGazeboCampaignRunResult:
+    blocked = safety_profile is not TextGazeboSafetyProfile.NONE
+    contract = safety_contract(safety_profile)
+    product_outcome = (
+        ProductOutcome.BLOCKED if blocked else ProductOutcome.SUCCEEDED
+    )
+    block_result_code = (
+        SafetyBlockCode.NONE
+        if contract.result_code is None
+        else SafetyBlockCode(contract.result_code)
+    )
     manifest_digest = _digest(f'manifest-{ordinal}')
     receipt_digest = _digest(f'receipt-{ordinal}')
-    goal_digest = _digest(f'goal-{ordinal}')
+    goal_digest = (
+        hashlib.sha256(b'[]').hexdigest()
+        if blocked
+        else _digest(f'goal-{ordinal}')
+    )
     binding_digest = _digest(f'binding-{ordinal}')
     target_digest = _digest(f'target-{profile.value}')
     summary = ChildManifestSummary(
@@ -79,10 +104,14 @@ def _run_result(
         forced_termination_count=0,
         simulation=True,
         physical_authorized=False,
-        exact_success=True,
+        exact_success=not blocked,
         total_duration_seconds=0.0,
         fault_profile=fault_profile,
         pressure=pressure_evidence_for(fault_profile),
+        safety_profile=safety_profile,
+        product_outcome=product_outcome,
+        block_result_code=block_result_code,
+        fault_observation=safety_fault_observation_for(safety_profile),
     )
     return TextGazeboCampaignRunResult(
         manifest_digest=manifest_digest,
@@ -98,7 +127,7 @@ def _run_result(
         elapsed_seconds=0.0,
         child_output_digest=_digest(f'output-{ordinal}'),
         child_output_bytes=256,
-        exact_success=True,
+        exact_success=not blocked,
         cleanup_complete=True,
         forced_termination_count=0,
         simulation=True,
@@ -106,6 +135,9 @@ def _run_result(
         child_manifest=summary,
         fault_profile=fault_profile,
         pressure=summary.pressure,
+        safety_profile=safety_profile,
+        product_outcome=product_outcome,
+        block_result_code=block_result_code,
     )
 
 
@@ -130,6 +162,7 @@ class _FakeInstalledRunner:
             len(type(self).requests),
             self.result_profile or request.scenario_profile,
             request.fault_profile,
+            request.safety_profile,
         )
 
 
@@ -313,6 +346,16 @@ def test_check_requires_a_bounded_allowlisted_plan_before_child_io(
     }
 
 
+def test_cli_case_factory_keeps_canonical_profile_expectations() -> None:
+    """CLI callers cannot override the allowlisted Safety expectation."""
+    happy, stale = campaign._cases(('happy_path', 'stale_state'))
+
+    assert happy.expected_outcome is ExpectedProductOutcome.SUCCEEDED
+    assert happy.expected_block_code is SafetyBlockCode.NONE
+    assert stale.expected_outcome is ExpectedProductOutcome.BLOCKED
+    assert stale.expected_block_code is SafetyBlockCode.ROBOT_STATE_STALE
+
+
 def test_profiles_map_to_unique_ordered_cases_and_private_child_paths(
     monkeypatch,
     tmp_path,
@@ -443,6 +486,68 @@ def test_exactly_once_tokens_map_to_living_room_and_distinct_faults(
     ]
     assert receipt['cleanup']['completed'] is True
     assert receipt['cleanup']['clean_case_count'] == 3
+
+
+def test_swm137_profiles_pass_only_as_exact_zero_effect_blocks(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    """One CLI campaign reuses the runner for all three Safety gates."""
+    source = _source_tree(tmp_path)
+    evidence = _private_evidence(tmp_path)
+    _patch_installed(monkeypatch, tmp_path)
+    profiles = [
+        'stale_state',
+        'emergency_stop',
+        'map_revision_changed',
+    ]
+
+    result = campaign.main(_run_arguments(
+        source,
+        evidence,
+        profiles=profiles,
+    ))
+
+    assert result == 0
+    assert capsys.readouterr().err == ''
+    requests = _FakeInstalledRunner.requests
+    assert [item.scenario_profile.value for item in requests] == [
+        'happy_living_room',
+        'happy_living_room',
+        'happy_living_room',
+    ]
+    assert [item.fault_profile.value for item in requests] == [
+        'none',
+        'none',
+        'none',
+    ]
+    assert [item.safety_profile.value for item in requests] == profiles
+
+    receipt = json.loads(evidence.read_text(encoding='utf-8'))['receipt']
+    assert receipt['test_verdict'] == 'passed'
+    assert [item['expected_outcome'] for item in receipt['cases']] == [
+        'blocked',
+        'blocked',
+        'blocked',
+    ]
+    assert [item['observed_outcome'] for item in receipt['cases']] == [
+        'blocked',
+        'blocked',
+        'blocked',
+    ]
+    assert [item['expected_block_code'] for item in receipt['cases']] == [
+        'robot_state_stale',
+        'safety_emergency_stop',
+        'target_binding_changed',
+    ]
+    assert [item['observed_block_code'] for item in receipt['cases']] == [
+        'robot_state_stale',
+        'safety_emergency_stop',
+        'target_binding_changed',
+    ]
+    assert [item['safety_profile'] for item in receipt['cases']] == profiles
+    assert receipt['cleanup']['completed'] is True
 
 
 def test_child_cleanup_failure_stops_and_publishes_failed_aggregate(

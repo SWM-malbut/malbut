@@ -374,6 +374,59 @@ counter가 포함되지만 요청 원문, 좌표, private ID, claim token과 hos
 않습니다. 상세 범위와 검증 결과는
 `malbut_agent_server/docs/jira/SWM25-136_EXACTLY_ONCE_DUPLICATE_RACES.md`에 있습니다.
 
+## SWM25-137 승인 후 Safety 차단 campaign
+
+SWM25-137은 Safety 정책을 새로 만들거나 테스트 코드가 차단 여부를 대신 판단하지
+않습니다. 기존 SWM25-133 actual Gazebo runner와 SWM25-134 campaign을 재사용하고,
+정상 제안·confirmation 승인·RobotAction 생성 뒤 dispatch 직전에만 다음 세 조건을
+결정적으로 재현합니다.
+
+```text
+stale_state          -> 승인 뒤 실제 Robot Web sample의 허용 나이 2초 초과
+emergency_stop       -> 승인 뒤 dispatch RobotState에 simulation E-stop 활성화
+map_revision_changed -> old revision preview 뒤 유효한 alternate revision 활성화
+```
+
+각 제품 결과는 `BLOCKED`여야 하지만 시험 결과는 `PASSED`입니다. exact result code는
+각각 `robot_state_stale`, `safety_emergency_stop`, `target_binding_changed`이며,
+read-only verified preview 1회만 허용합니다. dispatch intent, Robot Web start/cancel,
+actual Nav2 goal과 terminal은 모두 0개여야 합니다.
+
+실행 효과 없이 profile binding과 installed provenance를 먼저 검사합니다.
+
+```bash
+ros2 run malbut_scenarios run_text_gazebo_campaign -- \
+  --check \
+  --case-profile stale_state \
+  --case-profile emergency_stop \
+  --case-profile map_revision_changed \
+  --source-commit "$source_commit" \
+  --source-tree "$source_tree"
+```
+
+실제 headless Gazebo campaign은 simulation 승인을 명시하고 owner-private 신규 evidence
+경로에서만 실행합니다.
+
+```bash
+ros2 run malbut_scenarios run_text_gazebo_campaign -- \
+  --run \
+  --execute-approved-simulation \
+  --case-profile stale_state \
+  --case-profile emergency_stop \
+  --case-profile map_revision_changed \
+  --source-commit "$source_commit" \
+  --source-tree "$source_tree" \
+  --ros-domain-id "$ros_domain_id" \
+  --evidence "$campaign_evidence_root/swm25-137-safety-blocking.json"
+```
+
+child evidence v5와 campaign evidence v4는 제품 결과와 시험 판정을 분리하고, exact
+block code, content-free fault observation, zero-effect count, source/install provenance와
+cleanup을 결속합니다. E-stop은 실제 하드웨어 센서 증거가 아닌 bounded Gazebo
+simulation fault입니다. 실제 RobotState provenance는 SWM25-123 범위입니다. 상세
+설계와 검증 결과는
+`malbut_agent_server/docs/jira/SWM25-137_SAFETY_BLOCKING.md`에 있습니다.
+
 ## 기존 기능과의 연결
 
 - 웹 지도: `malbut_gazebo/robot_web_server.py`

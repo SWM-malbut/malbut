@@ -9,6 +9,10 @@ from threading import Barrier, Thread
 
 import pytest
 
+from malbut_scenarios.text_gazebo_campaign_core import (
+    CampaignProfile,
+    campaign_profile_binding,
+)
 from malbut_scenarios.text_gazebo_campaign_evidence import (
     CAMPAIGN_EVIDENCE_FORMAT,
     MAX_CHILD_MANIFEST_BYTES,
@@ -20,6 +24,7 @@ from malbut_scenarios.text_gazebo_campaign_evidence import (
     CaseErrorCode,
     CaseTestVerdict,
     ProductOutcome,
+    SafetyBlockCode,
     TextGazeboCampaignManifest,
     TextGazeboCampaignReceipt,
     parse_child_manifest,
@@ -32,22 +37,28 @@ from malbut_scenarios.text_gazebo_evidence import (
     EvidenceCounts,
     EvidenceDurations,
     NavigationState,
+    ProductOutcome as ChildProductOutcome,
     pressure_evidence_for,
     ReadinessState,
     RobotActionState,
     StableStates,
+    TestStatus,
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
+    safety_fault_observation_for,
 )
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
+    safety_contract,
 )
 
 
 COMMIT = '1' * 40
 SOURCE_DIGEST = '2' * 64
 INSTALLED_DIGEST = '3' * 64
+EMPTY_GOAL_SET_DIGEST = hashlib.sha256(b'[]').hexdigest()
 
 
 def _child_manifest(
@@ -58,36 +69,62 @@ def _child_manifest(
     target_digit='6',
     profile=TextGazeboScenarioProfile.HAPPY_PATH,
     fault_profile=TextGazeboFaultProfile.NONE,
+    safety_profile=TextGazeboSafetyProfile.NONE,
 ):
+    blocked = safety_profile is not TextGazeboSafetyProfile.NONE
+    contract = safety_contract(safety_profile)
     receipt = TextGazeboEvidenceReceipt(
         run_id='run-' + run_digit * 32,
         commit=commit,
         source_tree_digest=SOURCE_DIGEST,
         installed_digest=INSTALLED_DIGEST,
-        goal_set_digest=goal_digit * 64,
+        goal_set_digest=(
+            EMPTY_GOAL_SET_DIGEST if blocked else goal_digit * 64
+        ),
         runtime_binding_digest='6' * 64,
         target_binding_digest=target_digit * 64,
         scenario_profile=profile,
         fault_profile=fault_profile,
         pressure=pressure_evidence_for(fault_profile),
+        safety_profile=safety_profile,
+        product_outcome=(
+            ChildProductOutcome.BLOCKED
+            if blocked
+            else ChildProductOutcome.SUCCEEDED
+        ),
+        test_status=TestStatus.PASSED,
+        block_result_code=contract.result_code,
+        fault_observation=safety_fault_observation_for(safety_profile),
         states=StableStates(
             readiness=ReadinessState.READY,
             confirmation=ConfirmationState.APPROVED,
-            robot_action=RobotActionState.SUCCEEDED,
-            dispatch=DispatchState.TERMINAL,
-            navigation=NavigationState.SUCCEEDED,
+            robot_action=(
+                RobotActionState.BLOCKED
+                if blocked
+                else RobotActionState.SUCCEEDED
+            ),
+            dispatch=(
+                DispatchState.NOT_CREATED
+                if blocked
+                else DispatchState.TERMINAL
+            ),
+            navigation=(
+                NavigationState.NOT_STARTED
+                if blocked
+                else NavigationState.SUCCEEDED
+            ),
         ),
         counts=EvidenceCounts(
             agent_proposal_count=1,
             confirmation_count=1,
             approved_confirmation_count=1,
             robot_action_count=1,
-            dispatch_intent_count=1,
-            robot_web_start_count=1,
+            dispatch_intent_count=0 if blocked else 1,
+            robot_web_start_count=0 if blocked else 1,
             robot_web_verified_target_count=1,
-            nav2_goal_count=1,
+            nav2_goal_count=0 if blocked else 1,
             preapproval_nav2_goal_count=0,
-            terminal_result_count=1,
+            terminal_result_count=0 if blocked else 1,
             replay_additional_effect_count=0,
         ),
         durations=EvidenceDurations(
@@ -115,6 +152,7 @@ def _child_summary(
     target_digit='6',
     profile=TextGazeboScenarioProfile.HAPPY_PATH,
     fault_profile=TextGazeboFaultProfile.NONE,
+    safety_profile=TextGazeboSafetyProfile.NONE,
 ):
     manifest = _child_manifest(
         run_digit=run_digit,
@@ -123,6 +161,7 @@ def _child_summary(
         target_digit=target_digit,
         profile=profile,
         fault_profile=fault_profile,
+        safety_profile=safety_profile,
     )
     payload = (manifest.canonical_json() + '\n').encode('utf-8')
     return parse_child_manifest(payload)
@@ -136,24 +175,41 @@ def _case(
     child=None,
     **changes,
 ):
+    binding = None
+    try:
+        binding = campaign_profile_binding(CampaignProfile(profile))
+    except ValueError:
+        pass
     if child is None and 'child_manifest' not in changes:
-        try:
-            typed_profile = TextGazeboScenarioProfile(profile)
-        except ValueError:
-            child = None
-        else:
-            child = _child_summary(profile=typed_profile)
+        if binding is not None:
+            child = _child_summary(
+                profile=binding.scenario_profile,
+                fault_profile=binding.fault_profile,
+                safety_profile=binding.safety_profile,
+            )
+    expected = (
+        ProductOutcome.SUCCEEDED
+        if binding is None
+        else ProductOutcome(binding.expected_outcome.value)
+    )
+    block_code = (
+        SafetyBlockCode.NONE
+        if binding is None
+        else binding.expected_block_code
+    )
     values = {
         'ordinal': ordinal,
         'case_id': case_id,
         'profile': profile,
-        'expected_outcome': ProductOutcome.SUCCEEDED,
-        'observed_outcome': ProductOutcome.SUCCEEDED,
+        'expected_outcome': expected,
+        'observed_outcome': expected,
         'test_verdict': CaseTestVerdict.PASSED,
         'error_code': CaseErrorCode.NONE,
         'child_manifest': child,
         'duration_seconds': 5,
         'cleanup': CaseCleanupState.CLEAN,
+        'expected_block_code': block_code,
+        'observed_block_code': block_code,
     }
     values.update(changes)
     return CampaignCaseEvidence(**values)
@@ -224,6 +280,95 @@ def test_child_parser_returns_strict_digest_only_success_summary():
     assert summary.physical_authorized is False
     assert summary.exact_success is True
     assert summary.total_duration_seconds == 4.0
+
+
+@pytest.mark.parametrize(
+    'profile,block_code,map_switch_count',
+    (
+        (
+            TextGazeboSafetyProfile.STALE_STATE,
+            SafetyBlockCode.ROBOT_STATE_STALE,
+            0,
+        ),
+        (
+            TextGazeboSafetyProfile.EMERGENCY_STOP,
+            SafetyBlockCode.SAFETY_EMERGENCY_STOP,
+            0,
+        ),
+        (
+            TextGazeboSafetyProfile.MAP_REVISION_CHANGED,
+            SafetyBlockCode.TARGET_BINDING_CHANGED,
+            1,
+        ),
+    ),
+)
+def test_child_parser_accepts_exact_zero_effect_safety_block(
+    profile,
+    block_code,
+    map_switch_count,
+):
+    """A typed BLOCKED product is a passing test only on exact evidence."""
+    summary = _child_summary(
+        profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        safety_profile=profile,
+    )
+
+    assert summary.product_outcome is ProductOutcome.BLOCKED
+    assert summary.exact_success is False
+    assert summary.safety_profile is profile
+    assert summary.block_result_code is block_code
+    assert summary.goal_set_digest == EMPTY_GOAL_SET_DIGEST
+    assert summary.test_status is TestStatus.PASSED
+    assert summary.fault_observation.fault_application_count == 1
+    assert summary.fault_observation.map_switch_count == map_switch_count
+
+
+def test_child_parser_rejects_wrong_safety_block_code():
+    """A different reason code cannot be relabelled as the expected block."""
+    value = json.loads(_child_manifest(
+        profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        safety_profile=TextGazeboSafetyProfile.STALE_STATE,
+    ).canonical_json())
+    value['receipt']['block_result_code'] = 'safety_emergency_stop'
+    receipt = json.dumps(
+        value['receipt'],
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(',', ':'),
+    )
+    value['receipt_digest'] = hashlib.sha256(
+        receipt.encode('utf-8')
+    ).hexdigest()
+    payload = (
+        json.dumps(
+            value,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(',', ':'),
+        ) + '\n'
+    ).encode('utf-8')
+
+    with pytest.raises(CampaignEvidenceError) as caught:
+        parse_child_manifest(payload)
+
+    assert caught.value.code == 'child_manifest_success_invalid'
+
+
+def test_child_parser_rejects_blocked_receipt_with_nonempty_goal_set():
+    """Zero public goal counts cannot accompany a non-empty goal digest."""
+    manifest = _child_manifest(
+        profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        safety_profile=TextGazeboSafetyProfile.STALE_STATE,
+    )
+    receipt = replace(manifest.receipt, goal_set_digest='9' * 64)
+    invalid = TextGazeboEvidenceManifest(receipt)
+
+    with pytest.raises(CampaignEvidenceError) as caught:
+        parse_child_manifest(
+            (invalid.canonical_json() + '\n').encode('utf-8')
+        )
+
+    assert caught.value.code == 'child_manifest_success_invalid'
 
 
 @pytest.mark.parametrize(
@@ -346,8 +491,10 @@ def test_one_case_passed_campaign_schema_is_fixed_and_digest_bound():
         'cleanup': 'clean',
         'duration_seconds': 5.0,
         'error_code': 'none',
+        'expected_block_code': 'none',
         'expected_outcome': 'succeeded',
         'fault_profile': 'none',
+        'observed_block_code': 'none',
         'observed_outcome': 'succeeded',
         'ordinal': 1,
         'pressure': pressure_evidence_for(
@@ -355,6 +502,7 @@ def test_one_case_passed_campaign_schema_is_fixed_and_digest_bound():
         ).as_dict(),
         'profile': 'happy_path',
         'scenario_profile': 'happy_path',
+        'safety_profile': 'none',
         'target_binding_digest': '6' * 64,
         'test_verdict': 'passed',
     }
@@ -422,6 +570,54 @@ def test_three_space_campaign_binds_distinct_semantic_targets():
         case['target_binding_digest']
         for case in receipt.as_dict()['cases']
     }) == 3
+
+
+def test_three_safety_blocks_share_empty_goal_digest_and_campaign_passes():
+    """Zero-effect cases may repeat the canonical empty Nav2 goal set."""
+    profiles = (
+        CampaignProfile.STALE_STATE,
+        CampaignProfile.EMERGENCY_STOP,
+        CampaignProfile.MAP_REVISION_CHANGED,
+    )
+    cases = tuple(
+        _case(
+            ordinal=ordinal,
+            case_id=f'safety-{ordinal}',
+            profile=profile.value,
+            child=_child_summary(
+                run_digit=run_digit,
+                profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+                safety_profile=(
+                    campaign_profile_binding(profile).safety_profile
+                ),
+            ),
+        )
+        for ordinal, profile, run_digit in (
+            (1, profiles[0], 'a'),
+            (2, profiles[1], 'b'),
+            (3, profiles[2], 'c'),
+        )
+    )
+
+    receipt = _receipt(cases=cases)
+
+    assert receipt.test_verdict is CampaignTestVerdict.PASSED
+    public_cases = receipt.as_dict()['cases']
+    assert [case['expected_outcome'] for case in public_cases] == [
+        'blocked',
+        'blocked',
+        'blocked',
+    ]
+    assert [case['observed_block_code'] for case in public_cases] == [
+        'robot_state_stale',
+        'safety_emergency_stop',
+        'target_binding_changed',
+    ]
+    assert [case['safety_profile'] for case in public_cases] == [
+        'stale_state',
+        'emergency_stop',
+        'map_revision_changed',
+    ]
 
 
 def test_case_rejects_child_from_a_different_scenario_profile():
@@ -580,8 +776,10 @@ def test_partial_mismatch_and_failed_cases_cannot_claim_campaign_passed():
         )
 
     mismatch = _case(
-        expected_outcome=ProductOutcome.BLOCKED,
-        observed_outcome=ProductOutcome.SUCCEEDED,
+        child_manifest=None,
+        expected_outcome=ProductOutcome.SUCCEEDED,
+        observed_outcome=ProductOutcome.BLOCKED,
+        observed_block_code=SafetyBlockCode.ROBOT_STATE_STALE,
         test_verdict=CaseTestVerdict.FAILED,
         error_code=CaseErrorCode.PRODUCT_OUTCOME_MISMATCH,
     )
