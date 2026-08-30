@@ -90,8 +90,19 @@ def _validate_named_navigation_configuration(context):
     map_store_value = LaunchConfiguration(
         'named_navigation_map_store'
     ).perform(context).strip()
+    unavailable_value = LaunchConfiguration(
+        'named_navigation_test_unavailable_action'
+    ).perform(context).strip().lower()
+    if unavailable_value not in {'true', 'false'}:
+        _named_navigation_error(
+            'named_navigation_test_unavailable_action_invalid'
+        )
     if enabled_value == 'false':
-        if user_map_value or map_store_value:
+        if (
+            user_map_value
+            or map_store_value
+            or unavailable_value != 'false'
+        ):
             _named_navigation_error(
                 'named_navigation_disabled_configuration'
             )
@@ -191,6 +202,9 @@ def generate_launch_description():
     named_user_map = LaunchConfiguration('named_navigation_user_map')
     named_map_store = LaunchConfiguration('named_navigation_map_store')
     named_port = LaunchConfiguration('named_navigation_port')
+    unavailable_navigation_action = LaunchConfiguration(
+        'named_navigation_test_unavailable_action'
+    )
     small_house_map_path = gazebo_share / 'maps' / 'small_house.yaml'
     small_house_map = load_slam_map(small_house_map_path)
     enabled_user_map = IfElseSubstitution(
@@ -267,7 +281,15 @@ def generate_launch_description():
                 'zone_mask': '',
                 'robot_web': enable_named_navigation,
                 'robot_web_port': named_port,
-                'robot_web_navigation_action': '/navigate_to_pose',
+                # This fixed, simulation-only unavailable endpoint lets the
+                # SWM25-138 acceptance runner exercise the ambiguous start
+                # boundary without stopping lifecycle/localization services
+                # needed by preview and fresh-state validation.
+                'robot_web_navigation_action': IfElseSubstitution(
+                    unavailable_navigation_action,
+                    if_value='/swm25_138_unavailable_navigate_to_pose',
+                    else_value='/navigate_to_pose',
+                ),
                 'robot_web_device_id': 'malbut-sim-01',
                 'robot_web_simulation': 'true',
                 'user_map': enabled_user_map,
@@ -340,6 +362,15 @@ def generate_launch_description():
             'named_navigation_port',
             default_value='8765',
             description='Loopback Robot Web port for the explicit opt-in.',
+        ),
+        DeclareLaunchArgument(
+            'named_navigation_test_unavailable_action',
+            default_value='false',
+            description=(
+                'Gazebo acceptance-only fixed unavailable navigation action '
+                'endpoint. It is default-off and never accepts an arbitrary '
+                'ROS action name.'
+            ),
         ),
         DeclareLaunchArgument(
             'nav2_discovery_stability',

@@ -29,6 +29,7 @@ from malbut_scenarios.nav2_goal_status_observer import (
 )
 from malbut_scenarios.text_gazebo_evidence import (
     CleanupEvidence,
+    ExecutionFaultObservation,
     PressureEvidence,
     ProductOutcome,
     SafetyFaultObservation,
@@ -44,6 +45,7 @@ from malbut_scenarios.text_gazebo_runtime import (
 )
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboExecutionProfile,
     TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
 )
@@ -91,6 +93,7 @@ def _args(**changes) -> argparse.Namespace:
         'scenario_profile': 'happy_path',
         'fault_profile': 'none',
         'safety_profile': 'none',
+        'execution_profile': 'none',
     }
     values.update(changes)
     return argparse.Namespace(**values)
@@ -173,6 +176,44 @@ def _known_blocked(result_code: str) -> LedgerSnapshot:
     )
 
 
+def _known_unknown(result_code: str) -> LedgerSnapshot:
+    return LedgerSnapshot(
+        confirmation_count=1,
+        approved_confirmation_count=1,
+        confirmation_state='resolved',
+        confirmation_disposition='approved',
+        confirmation_result_code='confirmation_approved',
+        robot_action_count=1,
+        action_state='UNKNOWN',
+        action_result_code=result_code,
+        dispatch_intent_count=1,
+        dispatch_state='UNKNOWN',
+        dispatch_result_code=result_code,
+        simulation=True,
+        physical_authorized=False,
+    )
+
+
+def _unknown_proxy_counts(
+    *,
+    start_drop: int = 0,
+    terminal_drop: int = 0,
+    unavailable_count: int = 0,
+) -> RobotWebProxyCounts:
+    return RobotWebProxyCounts(
+        bootstrap_count=1,
+        status_count=2,
+        preview_count=1,
+        start_count=1,
+        cancel_count=0,
+        verified_preview_count=1,
+        start_forward_count=1,
+        start_response_drop_count=start_drop,
+        terminal_status_response_drop_count=terminal_drop,
+        unavailable_endpoint_count=unavailable_count,
+    )
+
+
 def _nav2_success(*goal_digests: str) -> Nav2GoalStatusEvidence:
     goals = tuple(
         GoalStatusEvidence(
@@ -248,6 +289,7 @@ def test_check_mode_is_default_safe_and_does_not_enter_runtime(
     assert captured.err == ''
     assert json.loads(captured.out) == {
         'installed_digest': _DIGEST,
+        'execution_profile': 'none',
         'fault_profile': 'none',
         'mode': 'check',
         'nav2_start_count': 0,
@@ -310,6 +352,7 @@ def test_run_mode_prints_only_public_manifest_digest(
     assert result == 0
     assert captured.err == ''
     assert json.loads(captured.out) == {
+        'execution_profile': 'none',
         'fault_profile': 'none',
         'manifest_digest': '9' * 64,
         'mode': 'run',
@@ -898,6 +941,203 @@ def test_build_receipt_projects_blocked_as_pass_with_zero_effects(
     assert receipt.counts.robot_web_start_count == 0
     assert receipt.counts.nav2_goal_count == 0
     assert receipt.counts.terminal_result_count == 0
+
+
+@pytest.mark.parametrize(
+    (
+        'profile',
+        'result_code',
+        'start_drop',
+        'terminal_drop',
+        'unavailable_count',
+        'nav2',
+    ),
+    (
+        (
+            TextGazeboExecutionProfile.NAV2_UNAVAILABLE,
+            'navigation_start_outcome_unknown',
+            0,
+            0,
+            1,
+            _nav2_not_started(),
+        ),
+        (
+            TextGazeboExecutionProfile.START_RESPONSE_LOST,
+            'navigation_start_outcome_unknown',
+            1,
+            0,
+            0,
+            _nav2_success(_GOAL_DIGEST),
+        ),
+        (
+            TextGazeboExecutionProfile.TERMINAL_STATUS_RESPONSE_LOST,
+            'navigation_status_outcome_unknown',
+            0,
+            1,
+            0,
+            _nav2_success(_GOAL_DIGEST),
+        ),
+    ),
+)
+def test_build_receipt_keeps_unknown_separate_from_ros_observation(
+    profile,
+    result_code,
+    start_drop,
+    terminal_drop,
+    unavailable_count,
+    nav2,
+) -> None:
+    proxy = _unknown_proxy_counts(
+        start_drop=start_drop,
+        terminal_drop=terminal_drop,
+        unavailable_count=unavailable_count,
+    )
+    receipt = acceptance._build_receipt(
+        args=_args(execution_profile=profile.value),
+        layout=_layout(),
+        attestation=_attestation(),
+        run_id='run-' + '7' * 32,
+        total_seconds=7.0,
+        successful=acceptance._SuccessfulRun(
+            readiness_seconds=2.0,
+            execution_seconds=4.0,
+            preapproval_goal_count=0,
+            final_ledger=_known_unknown(result_code),
+            proxy_counts=proxy,
+            product_outcome=ProductOutcome.UNKNOWN,
+            unknown_result_code=result_code,
+            execution_fault_observation=ExecutionFaultObservation(
+                observed=True,
+                fault_application_count=1,
+                start_forward_count=1,
+                start_response_drop_count=start_drop,
+                terminal_status_response_drop_count=terminal_drop,
+                unavailable_endpoint_count=unavailable_count,
+            ),
+        ),
+        binding={
+            'device_id': 'device-private',
+            'map_id': 'map-private',
+            'map_revision': 'revision-private',
+            'target_binding_digest': _TARGET_DIGEST,
+        },
+        cleanup=_cleanup(nav2),
+    )
+
+    assert receipt.product_outcome is ProductOutcome.UNKNOWN
+    assert receipt.execution_profile is profile
+    assert receipt.unknown_result_code == result_code
+    assert receipt.states.robot_action.value == 'unknown'
+    assert receipt.states.dispatch.value == 'unknown'
+    assert receipt.counts.robot_web_start_count == 1
+    assert receipt.counts.nav2_goal_count == nav2.distinct_goal_count
+    assert receipt.counts.terminal_result_count == (
+        nav2.terminal_goal_count
+    )
+
+
+@pytest.mark.parametrize(
+    'profile,counts,expected',
+    (
+        (
+            TextGazeboExecutionProfile.NAV2_UNAVAILABLE,
+            _unknown_proxy_counts(unavailable_count=1),
+            ExecutionFaultObservation(True, 1, 1, 0, 0, 1),
+        ),
+        (
+            TextGazeboExecutionProfile.START_RESPONSE_LOST,
+            _unknown_proxy_counts(start_drop=1),
+            ExecutionFaultObservation(True, 1, 1, 1, 0, 0),
+        ),
+        (
+            TextGazeboExecutionProfile.TERMINAL_STATUS_RESPONSE_LOST,
+            _unknown_proxy_counts(terminal_drop=1),
+            ExecutionFaultObservation(True, 1, 1, 0, 1, 0),
+        ),
+    ),
+)
+def test_execution_fault_observation_comes_from_proxy_counts(
+    profile,
+    counts,
+    expected,
+) -> None:
+    """Never turn the requested profile itself into observed evidence."""
+    supervisor = object.__new__(acceptance._AcceptanceSupervisor)
+    supervisor._execution_profile = profile
+    supervisor._proxy = SimpleNamespace(snapshot=lambda: counts)
+
+    assert supervisor._execution_fault_observation() == expected
+
+
+def test_unobserved_nav2_unavailable_fault_cannot_match_contract() -> None:
+    """Selecting the profile without its exact 503 observation is not proof."""
+    supervisor = object.__new__(acceptance._AcceptanceSupervisor)
+    supervisor._execution_profile = (
+        TextGazeboExecutionProfile.NAV2_UNAVAILABLE
+    )
+    supervisor._proxy = SimpleNamespace(
+        snapshot=lambda: _unknown_proxy_counts(unavailable_count=0)
+    )
+
+    observation = supervisor._execution_fault_observation()
+
+    assert observation.observed is False
+    assert observation.fault_application_count == 0
+    assert observation.unavailable_endpoint_count == 0
+    assert observation != acceptance.execution_fault_observation_for(
+        TextGazeboExecutionProfile.NAV2_UNAVAILABLE
+    )
+
+
+def test_multiple_proxy_faults_cannot_match_one_profile_contract() -> None:
+    """A second observed fault cannot be hidden by profile selection."""
+    supervisor = object.__new__(acceptance._AcceptanceSupervisor)
+    supervisor._execution_profile = (
+        TextGazeboExecutionProfile.NAV2_UNAVAILABLE
+    )
+    supervisor._proxy = SimpleNamespace(
+        snapshot=lambda: _unknown_proxy_counts(
+            start_drop=1,
+            unavailable_count=1,
+        )
+    )
+
+    observation = supervisor._execution_fault_observation()
+
+    assert observation.fault_application_count == 2
+    assert observation != acceptance.execution_fault_observation_for(
+        TextGazeboExecutionProfile.NAV2_UNAVAILABLE
+    )
+
+
+@pytest.mark.parametrize(
+    'counts',
+    (
+        _unknown_proxy_counts(unavailable_count=0),
+        _unknown_proxy_counts(start_drop=1, unavailable_count=1),
+    ),
+)
+def test_unknown_terminal_rejects_missing_or_mixed_proxy_evidence(
+    counts,
+) -> None:
+    """UNKNOWN passes only with the one exact observed proxy fault shape."""
+    supervisor = object.__new__(acceptance._AcceptanceSupervisor)
+    supervisor._execution_profile = (
+        TextGazeboExecutionProfile.NAV2_UNAVAILABLE
+    )
+    supervisor._observer = SimpleNamespace(
+        snapshot=_nav2_not_started,
+    )
+    final = _known_unknown('navigation_start_outcome_unknown')
+
+    assert supervisor._terminal_evidence_valid(
+        final=final,
+        final_after=final,
+        proxy_counts=counts,
+        product_outcome=ProductOutcome.UNKNOWN,
+        block_result_code=None,
+        unknown_result_code='navigation_start_outcome_unknown',
+    ) is False
 
 
 @pytest.mark.parametrize(

@@ -18,10 +18,12 @@ from typing import Any, Dict, Optional, Tuple
 from malbut_scenarios.text_gazebo_campaign_core import (
     CampaignProfile,
     SafetyBlockCode,
+    UnknownResultCode,
     campaign_profile_binding,
 )
 from malbut_scenarios.text_gazebo_evidence import (
     ProductOutcome as ChildProductOutcome,
+    ExecutionFaultObservation,
     SafetyFaultObservation,
     CleanupEvidence,
     ConfirmationState,
@@ -36,21 +38,24 @@ from malbut_scenarios.text_gazebo_evidence import (
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
     TestStatus,
+    execution_fault_observation_for,
     pressure_evidence_for,
 )
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboExecutionProfile,
     TextGazeboFaultProfile,
     TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
+    execution_contract,
     safety_contract,
     scenario_spec,
 )
 
 
 CAMPAIGN_EVIDENCE_FORMAT = (
-    'malbut.text-gazebo-campaign-evidence.v4'
+    'malbut.text-gazebo-campaign-evidence.v5'
 )
-CHILD_EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v5'
+CHILD_EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v6'
 MAX_CAMPAIGN_CASES = 32
 MAX_CHILD_MANIFEST_BYTES = 64 * 1024
 MAX_DURATION_SECONDS = 86_400.0
@@ -78,6 +83,8 @@ _CHILD_RECEIPT_KEYS = frozenset({
     'commit',
     'counts',
     'durations',
+    'execution_fault_observation',
+    'execution_profile',
     'fault_profile',
     'fault_observation',
     'goal_set_digest',
@@ -94,6 +101,7 @@ _CHILD_RECEIPT_KEYS = frozenset({
     'states',
     'target_binding_digest',
     'test_status',
+    'unknown_result_code',
 })
 _CHILD_STATE_KEYS = frozenset({
     'confirmation',
@@ -140,6 +148,14 @@ _CHILD_FAULT_OBSERVATION_KEYS = frozenset({
     'fault_application_count',
     'map_switch_count',
     'observed',
+})
+_CHILD_EXECUTION_FAULT_OBSERVATION_KEYS = frozenset({
+    'fault_application_count',
+    'observed',
+    'start_forward_count',
+    'start_response_drop_count',
+    'terminal_status_response_drop_count',
+    'unavailable_endpoint_count',
 })
 
 
@@ -293,14 +309,23 @@ class ChildManifestSummary:
         )
     )
     safety_profile: TextGazeboSafetyProfile = TextGazeboSafetyProfile.NONE
+    execution_profile: TextGazeboExecutionProfile = (
+        TextGazeboExecutionProfile.NONE
+    )
     product_outcome: ProductOutcome = ProductOutcome.SUCCEEDED
     block_result_code: SafetyBlockCode = SafetyBlockCode.NONE
+    unknown_result_code: UnknownResultCode = UnknownResultCode.NONE
     test_status: TestStatus = TestStatus.PASSED
     fault_observation: SafetyFaultObservation = field(
         default_factory=lambda: SafetyFaultObservation(
             observed=False,
             fault_application_count=0,
             map_switch_count=0,
+        )
+    )
+    execution_fault_observation: ExecutionFaultObservation = field(
+        default_factory=lambda: execution_fault_observation_for(
+            TextGazeboExecutionProfile.NONE
         )
     )
 
@@ -332,6 +357,11 @@ class ChildManifestSummary:
             'safety_profile',
         )
         _require_enum(
+            self.execution_profile,
+            TextGazeboExecutionProfile,
+            'execution_profile',
+        )
+        _require_enum(
             self.product_outcome,
             ProductOutcome,
             'product_outcome',
@@ -341,6 +371,11 @@ class ChildManifestSummary:
             SafetyBlockCode,
             'block_result_code',
         )
+        _require_enum(
+            self.unknown_result_code,
+            UnknownResultCode,
+            'unknown_result_code',
+        )
         _require_enum(self.test_status, TestStatus, 'test_status')
         if not isinstance(
             self.fault_observation,
@@ -348,6 +383,14 @@ class ChildManifestSummary:
         ):
             raise TypeError(
                 'fault_observation must be a SafetyFaultObservation'
+            )
+        if not isinstance(
+            self.execution_fault_observation,
+            ExecutionFaultObservation,
+        ):
+            raise TypeError(
+                'execution_fault_observation must be an '
+                'ExecutionFaultObservation'
             )
         if not isinstance(self.pressure, PressureEvidence):
             raise TypeError('pressure must be a PressureEvidence')
@@ -401,25 +444,45 @@ class ChildManifestSummary:
                 'child summary must prove clean simulation completion'
             )
         contract = safety_contract(self.safety_profile)
+        execution = execution_contract(self.execution_profile)
         expected_block_code = (
             SafetyBlockCode.NONE
             if contract.result_code is None
             else SafetyBlockCode(contract.result_code)
         )
-        expected_outcome = (
-            ProductOutcome.SUCCEEDED
-            if self.safety_profile is TextGazeboSafetyProfile.NONE
-            else ProductOutcome.BLOCKED
+        expected_outcome = ProductOutcome.SUCCEEDED
+        if self.safety_profile is not TextGazeboSafetyProfile.NONE:
+            expected_outcome = ProductOutcome.BLOCKED
+        if self.execution_profile is not TextGazeboExecutionProfile.NONE:
+            expected_outcome = ProductOutcome.UNKNOWN
+        expected_unknown_code = (
+            UnknownResultCode.NONE
+            if execution.result_code is None
+            else UnknownResultCode(execution.result_code)
         )
         if (
             self.test_status is not TestStatus.PASSED
             or self.product_outcome is not expected_outcome
             or self.block_result_code is not expected_block_code
+            or self.unknown_result_code is not expected_unknown_code
             or self.exact_success
             is not (self.product_outcome is ProductOutcome.SUCCEEDED)
             or (
                 self.safety_profile is not TextGazeboSafetyProfile.NONE
-                and self.fault_profile is not TextGazeboFaultProfile.NONE
+                and (
+                    self.fault_profile is not TextGazeboFaultProfile.NONE
+                    or self.execution_profile
+                    is not TextGazeboExecutionProfile.NONE
+                )
+            )
+            or (
+                self.execution_profile
+                is not TextGazeboExecutionProfile.NONE
+                and (
+                    self.fault_profile is not TextGazeboFaultProfile.NONE
+                    or self.safety_profile
+                    is not TextGazeboSafetyProfile.NONE
+                )
             )
             or self.fault_observation.observed
             is not (
@@ -429,6 +492,8 @@ class ChildManifestSummary:
             != contract.fault_application_count
             or self.fault_observation.map_switch_count
             != contract.map_switch_count
+            or self.execution_fault_observation
+            != execution_fault_observation_for(self.execution_profile)
             or (
                 self.product_outcome is ProductOutcome.SUCCEEDED
                 and self.goal_set_digest == _EMPTY_GOAL_SET_DIGEST
@@ -436,6 +501,19 @@ class ChildManifestSummary:
             or (
                 self.product_outcome is ProductOutcome.BLOCKED
                 and self.goal_set_digest != _EMPTY_GOAL_SET_DIGEST
+            )
+            or (
+                self.product_outcome is ProductOutcome.UNKNOWN
+                and (
+                    (
+                        execution.expected_nav2_goal_count == 0
+                        and self.goal_set_digest != _EMPTY_GOAL_SET_DIGEST
+                    )
+                    or (
+                        execution.expected_nav2_goal_count > 0
+                        and self.goal_set_digest == _EMPTY_GOAL_SET_DIGEST
+                    )
+                )
             )
         ):
             raise ValueError(
@@ -467,6 +545,8 @@ class CampaignCaseEvidence:
     cleanup: CaseCleanupState
     expected_block_code: SafetyBlockCode = SafetyBlockCode.NONE
     observed_block_code: SafetyBlockCode = SafetyBlockCode.NONE
+    expected_unknown_result_code: UnknownResultCode = UnknownResultCode.NONE
+    observed_unknown_result_code: UnknownResultCode = UnknownResultCode.NONE
 
     def __post_init__(self) -> None:
         """Require bounded public labels and internally consistent facts."""
@@ -513,6 +593,16 @@ class CampaignCaseEvidence:
             SafetyBlockCode,
             'observed_block_code',
         )
+        _require_enum(
+            self.expected_unknown_result_code,
+            UnknownResultCode,
+            'expected_unknown_result_code',
+        )
+        _require_enum(
+            self.observed_unknown_result_code,
+            UnknownResultCode,
+            'observed_unknown_result_code',
+        )
         if (
             self.expected_outcome is ProductOutcome.BLOCKED
         ) is (self.expected_block_code is SafetyBlockCode.NONE):
@@ -529,6 +619,27 @@ class CampaignCaseEvidence:
         ) is (self.observed_block_code is SafetyBlockCode.NONE):
             raise ValueError(
                 'observed block code must match the product outcome'
+            )
+        if (
+            self.expected_outcome is ProductOutcome.UNKNOWN
+        ) is (
+            self.expected_unknown_result_code is UnknownResultCode.NONE
+        ):
+            raise ValueError(
+                'expected unknown code must match the product outcome'
+            )
+        if self.observed_outcome is ProductOutcome.NOT_OBSERVED:
+            if self.observed_unknown_result_code is not UnknownResultCode.NONE:
+                raise ValueError(
+                    'an unobserved product cannot claim an unknown code'
+                )
+        elif (
+            self.observed_outcome is ProductOutcome.UNKNOWN
+        ) is (
+            self.observed_unknown_result_code is UnknownResultCode.NONE
+        ):
+            raise ValueError(
+                'observed unknown code must match the product outcome'
             )
         if (
             self.child_manifest is not None
@@ -551,10 +662,12 @@ class CampaignCaseEvidence:
                 is not binding.fault_profile
                 or self.child_manifest.safety_profile
                 is not binding.safety_profile
+                or self.child_manifest.execution_profile
+                is not binding.execution_profile
             ):
                 raise ValueError(
-                    'child scenario profile, fault profile, and safety '
-                    'profile must match '
+                    'child scenario profile, fault profile, safety profile, '
+                    'and execution profile must match '
                     'the campaign case binding'
                 )
             if (
@@ -562,10 +675,14 @@ class CampaignCaseEvidence:
                 != binding.expected_outcome.value
                 or self.expected_block_code
                 is not binding.expected_block_code
+                or self.expected_unknown_result_code
+                is not binding.expected_unknown_result_code
                 or self.observed_outcome
                 is not self.child_manifest.product_outcome
                 or self.observed_block_code
                 is not self.child_manifest.block_result_code
+                or self.observed_unknown_result_code
+                is not self.child_manifest.unknown_result_code
             ):
                 raise ValueError(
                     'case outcome and block code must match child evidence'
@@ -582,6 +699,8 @@ class CampaignCaseEvidence:
                 self.observed_outcome is not self.expected_outcome
                 or self.observed_block_code
                 is not self.expected_block_code
+                or self.observed_unknown_result_code
+                is not self.expected_unknown_result_code
                 or self.observed_outcome is ProductOutcome.NOT_OBSERVED
                 or self.error_code is not CaseErrorCode.NONE
                 or self.child_manifest is None
@@ -636,6 +755,20 @@ class CampaignCaseEvidence:
         return self.child_manifest.safety_profile.value
 
     @property
+    def execution_profile(self) -> Optional[str]:
+        """Return the bounded execution profile proven by the child."""
+        if self.child_manifest is None:
+            return None
+        return self.child_manifest.execution_profile.value
+
+    @property
+    def execution_fault_observation(self) -> Optional[Dict[str, object]]:
+        """Return exact content-free execution fault counters."""
+        if self.child_manifest is None:
+            return None
+        return self.child_manifest.execution_fault_observation.as_dict()
+
+    @property
     def pressure(self) -> Optional[Dict[str, int]]:
         """Return exact content-free contention counters when observed."""
         if self.child_manifest is None:
@@ -651,9 +784,17 @@ class CampaignCaseEvidence:
             'duration_seconds': self.duration_seconds,
             'error_code': self.error_code.value,
             'expected_block_code': self.expected_block_code.value,
+            'expected_unknown_result_code': (
+                self.expected_unknown_result_code.value
+            ),
             'expected_outcome': self.expected_outcome.value,
+            'execution_fault_observation': self.execution_fault_observation,
+            'execution_profile': self.execution_profile,
             'fault_profile': self.fault_profile,
             'observed_block_code': self.observed_block_code.value,
+            'observed_unknown_result_code': (
+                self.observed_unknown_result_code.value
+            ),
             'observed_outcome': self.observed_outcome.value,
             'ordinal': self.ordinal,
             'pressure': self.pressure,
@@ -820,6 +961,19 @@ class TextGazeboCampaignReceipt:
                         'a successful child requires a non-empty goal set'
                     )
                 goal_set_digests.append(child.goal_set_digest)
+            elif child.product_outcome is ProductOutcome.UNKNOWN:
+                contract = execution_contract(child.execution_profile)
+                if contract.expected_nav2_goal_count == 0:
+                    if child.goal_set_digest != _EMPTY_GOAL_SET_DIGEST:
+                        raise ValueError(
+                            'a zero-goal child requires the empty goal set'
+                        )
+                else:
+                    if child.goal_set_digest == _EMPTY_GOAL_SET_DIGEST:
+                        raise ValueError(
+                            'an observed goal requires a non-empty goal set'
+                        )
+                    goal_set_digests.append(child.goal_set_digest)
             elif child.goal_set_digest != _EMPTY_GOAL_SET_DIGEST:
                 raise ValueError(
                     'a blocked child requires the empty goal-set digest'
@@ -1058,6 +1212,10 @@ def _child_receipt(value: Dict[str, object]) -> TextGazeboEvidenceReceipt:
             value['fault_observation'],
             _CHILD_FAULT_OBSERVATION_KEYS,
         )
+        execution_fault_observation_value = _exact_keys(
+            value['execution_fault_observation'],
+            _CHILD_EXECUTION_FAULT_OBSERVATION_KEYS,
+        )
         states = StableStates(
             readiness=ReadinessState(states_value['readiness']),
             confirmation=ConfirmationState(states_value['confirmation']),
@@ -1071,6 +1229,9 @@ def _child_receipt(value: Dict[str, object]) -> TextGazeboEvidenceReceipt:
         pressure = PressureEvidence(**pressure_value)
         fault_observation = SafetyFaultObservation(
             **fault_observation_value
+        )
+        execution_fault_observation = ExecutionFaultObservation(
+            **execution_fault_observation_value
         )
         return TextGazeboEvidenceReceipt(
             run_id=value['run_id'],
@@ -1089,12 +1250,17 @@ def _child_receipt(value: Dict[str, object]) -> TextGazeboEvidenceReceipt:
             safety_profile=TextGazeboSafetyProfile(
                 value['safety_profile']
             ),
+            execution_profile=TextGazeboExecutionProfile(
+                value['execution_profile']
+            ),
             product_outcome=ChildProductOutcome(
                 value['product_outcome']
             ),
             test_status=TestStatus(value['test_status']),
             block_result_code=value['block_result_code'],
+            unknown_result_code=value['unknown_result_code'],
             fault_observation=fault_observation,
+            execution_fault_observation=execution_fault_observation,
             states=states,
             counts=counts,
             durations=durations,
@@ -1193,6 +1359,7 @@ def parse_child_manifest(payload: bytes) -> ChildManifestSummary:
             scenario_profile=receipt.scenario_profile,
             fault_profile=receipt.fault_profile,
             safety_profile=receipt.safety_profile,
+            execution_profile=receipt.execution_profile,
             product_outcome=ProductOutcome(
                 receipt.product_outcome.value
             ),
@@ -1201,8 +1368,16 @@ def parse_child_manifest(payload: bytes) -> ChildManifestSummary:
                 if receipt.block_result_code is None
                 else SafetyBlockCode(receipt.block_result_code)
             ),
+            unknown_result_code=(
+                UnknownResultCode.NONE
+                if receipt.unknown_result_code is None
+                else UnknownResultCode(receipt.unknown_result_code)
+            ),
             test_status=receipt.test_status,
             fault_observation=receipt.fault_observation,
+            execution_fault_observation=(
+                receipt.execution_fault_observation
+            ),
             pressure=receipt.pressure,
             cleanup_complete=cleanup.completed,
             owned_processes_remaining=(

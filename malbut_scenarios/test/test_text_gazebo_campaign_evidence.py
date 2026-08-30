@@ -11,6 +11,7 @@ import pytest
 
 from malbut_scenarios.text_gazebo_campaign_core import (
     CampaignProfile,
+    UnknownResultCode,
     campaign_profile_binding,
 )
 from malbut_scenarios.text_gazebo_campaign_evidence import (
@@ -45,12 +46,15 @@ from malbut_scenarios.text_gazebo_evidence import (
     TestStatus,
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
+    execution_fault_observation_for,
     safety_fault_observation_for,
 )
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboExecutionProfile,
     TextGazeboFaultProfile,
     TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
+    execution_contract,
     safety_contract,
 )
 
@@ -70,16 +74,20 @@ def _child_manifest(
     profile=TextGazeboScenarioProfile.HAPPY_PATH,
     fault_profile=TextGazeboFaultProfile.NONE,
     safety_profile=TextGazeboSafetyProfile.NONE,
+    execution_profile=TextGazeboExecutionProfile.NONE,
 ):
     blocked = safety_profile is not TextGazeboSafetyProfile.NONE
     contract = safety_contract(safety_profile)
+    execution = execution_contract(execution_profile)
+    unknown = execution_profile is not TextGazeboExecutionProfile.NONE
+    expected_goals = 0 if blocked else execution.expected_nav2_goal_count
     receipt = TextGazeboEvidenceReceipt(
         run_id='run-' + run_digit * 32,
         commit=commit,
         source_tree_digest=SOURCE_DIGEST,
         installed_digest=INSTALLED_DIGEST,
         goal_set_digest=(
-            EMPTY_GOAL_SET_DIGEST if blocked else goal_digit * 64
+            EMPTY_GOAL_SET_DIGEST if expected_goals == 0 else goal_digit * 64
         ),
         runtime_binding_digest='6' * 64,
         target_binding_digest=target_digit * 64,
@@ -87,30 +95,47 @@ def _child_manifest(
         fault_profile=fault_profile,
         pressure=pressure_evidence_for(fault_profile),
         safety_profile=safety_profile,
+        execution_profile=execution_profile,
         product_outcome=(
             ChildProductOutcome.BLOCKED
             if blocked
-            else ChildProductOutcome.SUCCEEDED
+            else (
+                ChildProductOutcome.UNKNOWN
+                if unknown
+                else ChildProductOutcome.SUCCEEDED
+            )
         ),
         test_status=TestStatus.PASSED,
         block_result_code=contract.result_code,
+        unknown_result_code=execution.result_code,
         fault_observation=safety_fault_observation_for(safety_profile),
+        execution_fault_observation=(
+            execution_fault_observation_for(execution_profile)
+        ),
         states=StableStates(
             readiness=ReadinessState.READY,
             confirmation=ConfirmationState.APPROVED,
             robot_action=(
                 RobotActionState.BLOCKED
                 if blocked
-                else RobotActionState.SUCCEEDED
+                else (
+                    RobotActionState.UNKNOWN
+                    if unknown
+                    else RobotActionState.SUCCEEDED
+                )
             ),
             dispatch=(
                 DispatchState.NOT_CREATED
                 if blocked
-                else DispatchState.TERMINAL
+                else (
+                    DispatchState.UNKNOWN
+                    if unknown
+                    else DispatchState.TERMINAL
+                )
             ),
             navigation=(
                 NavigationState.NOT_STARTED
-                if blocked
+                if expected_goals == 0
                 else NavigationState.SUCCEEDED
             ),
         ),
@@ -122,9 +147,11 @@ def _child_manifest(
             dispatch_intent_count=0 if blocked else 1,
             robot_web_start_count=0 if blocked else 1,
             robot_web_verified_target_count=1,
-            nav2_goal_count=0 if blocked else 1,
+            nav2_goal_count=expected_goals,
             preapproval_nav2_goal_count=0,
-            terminal_result_count=0 if blocked else 1,
+            terminal_result_count=(
+                0 if blocked else execution.expected_nav2_terminal_count
+            ),
             replay_additional_effect_count=0,
         ),
         durations=EvidenceDurations(
@@ -153,6 +180,7 @@ def _child_summary(
     profile=TextGazeboScenarioProfile.HAPPY_PATH,
     fault_profile=TextGazeboFaultProfile.NONE,
     safety_profile=TextGazeboSafetyProfile.NONE,
+    execution_profile=TextGazeboExecutionProfile.NONE,
 ):
     manifest = _child_manifest(
         run_digit=run_digit,
@@ -162,6 +190,7 @@ def _child_summary(
         profile=profile,
         fault_profile=fault_profile,
         safety_profile=safety_profile,
+        execution_profile=execution_profile,
     )
     payload = (manifest.canonical_json() + '\n').encode('utf-8')
     return parse_child_manifest(payload)
@@ -186,6 +215,7 @@ def _case(
                 profile=binding.scenario_profile,
                 fault_profile=binding.fault_profile,
                 safety_profile=binding.safety_profile,
+                execution_profile=binding.execution_profile,
             )
     expected = (
         ProductOutcome.SUCCEEDED
@@ -196,6 +226,11 @@ def _case(
         SafetyBlockCode.NONE
         if binding is None
         else binding.expected_block_code
+    )
+    unknown_code = (
+        UnknownResultCode.NONE
+        if binding is None
+        else binding.expected_unknown_result_code
     )
     values = {
         'ordinal': ordinal,
@@ -210,6 +245,8 @@ def _case(
         'cleanup': CaseCleanupState.CLEAN,
         'expected_block_code': block_code,
         'observed_block_code': block_code,
+        'expected_unknown_result_code': unknown_code,
+        'observed_unknown_result_code': unknown_code,
     }
     values.update(changes)
     return CampaignCaseEvidence(**values)
@@ -228,6 +265,56 @@ def _cleanup(case_count=1, **changes):
     }
     values.update(changes)
     return CampaignCleanupAggregate(**values)
+
+
+@pytest.mark.parametrize(
+    'profile,execution_profile,result_code,goal_count',
+    (
+        (
+            'nav2_unavailable',
+            TextGazeboExecutionProfile.NAV2_UNAVAILABLE,
+            UnknownResultCode.NAVIGATION_START_OUTCOME_UNKNOWN,
+            0,
+        ),
+        (
+            'start_response_lost',
+            TextGazeboExecutionProfile.START_RESPONSE_LOST,
+            UnknownResultCode.NAVIGATION_START_OUTCOME_UNKNOWN,
+            1,
+        ),
+        (
+            'terminal_status_response_lost',
+            TextGazeboExecutionProfile.TERMINAL_STATUS_RESPONSE_LOST,
+            UnknownResultCode.NAVIGATION_STATUS_OUTCOME_UNKNOWN,
+            1,
+        ),
+    ),
+)
+def test_v6_unknown_children_carry_exact_execution_fault_evidence(
+    profile,
+    execution_profile,
+    result_code,
+    goal_count,
+) -> None:
+    child = _child_summary(
+        profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        execution_profile=execution_profile,
+    )
+    case = _case(profile=profile, child=child)
+    value = case.as_dict()
+
+    assert child.product_outcome is ProductOutcome.UNKNOWN
+    assert child.execution_profile is execution_profile
+    assert child.unknown_result_code is result_code
+    assert value['execution_profile'] == execution_profile.value
+    assert value['expected_unknown_result_code'] == result_code.value
+    assert value['observed_unknown_result_code'] == result_code.value
+    assert value['execution_fault_observation'] == (
+        execution_fault_observation_for(execution_profile).as_dict()
+    )
+    assert (child.goal_set_digest != EMPTY_GOAL_SET_DIGEST) is (
+        goal_count == 1
+    )
 
 
 def _receipt(*, cases=None, **changes):
@@ -492,9 +579,20 @@ def test_one_case_passed_campaign_schema_is_fixed_and_digest_bound():
         'duration_seconds': 5.0,
         'error_code': 'none',
         'expected_block_code': 'none',
+        'expected_unknown_result_code': 'none',
         'expected_outcome': 'succeeded',
+        'execution_fault_observation': {
+            'fault_application_count': 0,
+            'observed': False,
+            'start_forward_count': 0,
+            'start_response_drop_count': 0,
+            'terminal_status_response_drop_count': 0,
+            'unavailable_endpoint_count': 0,
+        },
+        'execution_profile': 'none',
         'fault_profile': 'none',
         'observed_block_code': 'none',
+        'observed_unknown_result_code': 'none',
         'observed_outcome': 'succeeded',
         'ordinal': 1,
         'pressure': pressure_evidence_for(

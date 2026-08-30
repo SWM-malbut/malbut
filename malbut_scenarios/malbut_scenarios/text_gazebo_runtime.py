@@ -159,6 +159,26 @@ class LedgerSnapshot:
             and self.physical_authorized is False
         )
 
+    def is_expected_unknown(self, result_code: str) -> bool:
+        """Return true only when Action and outbox seal one ambiguity."""
+        expected = _result_code(result_code)
+        return bool(
+            self.durable_agent_turn_count == 1
+            and self.confirmation_count == 1
+            and self.approved_confirmation_count == 1
+            and self.confirmation_state == 'resolved'
+            and self.confirmation_disposition == 'approved'
+            and self.confirmation_result_code == 'confirmation_approved'
+            and self.robot_action_count == 1
+            and self.action_state == 'UNKNOWN'
+            and self.action_result_code == expected
+            and self.dispatch_intent_count == 1
+            and self.dispatch_state == 'UNKNOWN'
+            and self.dispatch_result_code == expected
+            and self.simulation is True
+            and self.physical_authorized is False
+        )
+
 
 class TextAgentHTTPClient:
     """Drive only the authenticated conversation and text-turn endpoints."""
@@ -702,6 +722,23 @@ class SQLiteAcceptanceObserver:
             poll_seconds=poll_seconds,
         )
 
+    def await_expected_unknown(
+        self,
+        confirmation_request_id: str,
+        *,
+        result_code: str,
+        timeout_seconds: float,
+        poll_seconds: float = 0.25,
+    ) -> LedgerSnapshot:
+        """Poll for one exact UNKNOWN without reinterpreting it as success."""
+        return self.await_product_outcome(
+            confirmation_request_id,
+            expected_product_outcome=ProductOutcome.UNKNOWN,
+            expected_unknown_result_code=result_code,
+            timeout_seconds=timeout_seconds,
+            poll_seconds=poll_seconds,
+        )
+
     def await_product_outcome(
         self,
         confirmation_request_id: str,
@@ -709,22 +746,40 @@ class SQLiteAcceptanceObserver:
         expected_product_outcome: ProductOutcome,
         timeout_seconds: float,
         expected_block_result_code: str | None = None,
+        expected_unknown_result_code: str | None = None,
         poll_seconds: float = 0.25,
     ) -> LedgerSnapshot:
-        """Poll for exact success or an exact pre-dispatch Safety block."""
+        """Poll for one exact terminal product outcome and result code."""
         if not isinstance(expected_product_outcome, ProductOutcome):
             raise TypeError(
                 'expected_product_outcome must be a ProductOutcome'
             )
         if expected_product_outcome is ProductOutcome.SUCCEEDED:
-            if expected_block_result_code is not None:
+            if (
+                expected_block_result_code is not None
+                or expected_unknown_result_code is not None
+            ):
                 raise ValueError(
-                    'success cannot require a block result code'
+                    'success cannot require a terminal result code'
                 )
-        else:
+        elif expected_product_outcome is ProductOutcome.BLOCKED:
+            if expected_unknown_result_code is not None:
+                raise ValueError(
+                    'blocked cannot require an unknown result code'
+                )
             expected_block_result_code = _result_code(
                 expected_block_result_code
             )
+        elif expected_product_outcome is ProductOutcome.UNKNOWN:
+            if expected_block_result_code is not None:
+                raise ValueError(
+                    'unknown cannot require a block result code'
+                )
+            expected_unknown_result_code = _result_code(
+                expected_unknown_result_code
+            )
+        else:
+            raise ValueError('product outcome is unsupported')
         deadline = time.monotonic() + _bounded_seconds(timeout_seconds)
         poll = _bounded_seconds(poll_seconds)
         terminal_failures = {
@@ -732,13 +787,16 @@ class SQLiteAcceptanceObserver:
         }
         while True:
             snapshot = self.snapshot(confirmation_request_id)
-            matched = (
-                snapshot.is_known_success()
-                if expected_product_outcome is ProductOutcome.SUCCEEDED
-                else snapshot.is_expected_blocked(
+            if expected_product_outcome is ProductOutcome.SUCCEEDED:
+                matched = snapshot.is_known_success()
+            elif expected_product_outcome is ProductOutcome.BLOCKED:
+                matched = snapshot.is_expected_blocked(
                     expected_block_result_code
                 )
-            )
+            else:
+                matched = snapshot.is_expected_unknown(
+                    expected_unknown_result_code
+                )
             if matched:
                 return snapshot
             if snapshot.action_state in terminal_failures:

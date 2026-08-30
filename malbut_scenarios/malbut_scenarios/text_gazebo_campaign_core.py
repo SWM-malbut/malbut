@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import Dict, Protocol, Sequence, Tuple
 
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboExecutionProfile,
     TextGazeboFaultProfile,
     TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
@@ -58,6 +59,9 @@ class CampaignProfile(str, Enum):
     STALE_STATE = 'stale_state'
     EMERGENCY_STOP = 'emergency_stop'
     MAP_REVISION_CHANGED = 'map_revision_changed'
+    NAV2_UNAVAILABLE = 'nav2_unavailable'
+    START_RESPONSE_LOST = 'start_response_lost'
+    TERMINAL_STATUS_RESPONSE_LOST = 'terminal_status_response_lost'
 
 
 class ExpectedProductOutcome(str, Enum):
@@ -78,6 +82,14 @@ class SafetyBlockCode(str, Enum):
     TARGET_BINDING_CHANGED = 'target_binding_changed'
 
 
+class UnknownResultCode(str, Enum):
+    """Allowlisted outcome-unknown result, or no unknown result at all."""
+
+    NONE = 'none'
+    NAVIGATION_START_OUTCOME_UNKNOWN = 'navigation_start_outcome_unknown'
+    NAVIGATION_STATUS_OUTCOME_UNKNOWN = 'navigation_status_outcome_unknown'
+
+
 @dataclass(frozen=True, slots=True)
 class CampaignProfileBinding:
     """Bind one public token to semantic, pressure, and safety behavior."""
@@ -89,6 +101,10 @@ class CampaignProfileBinding:
         ExpectedProductOutcome.SUCCEEDED
     )
     expected_block_code: SafetyBlockCode = SafetyBlockCode.NONE
+    execution_profile: TextGazeboExecutionProfile = (
+        TextGazeboExecutionProfile.NONE
+    )
+    expected_unknown_result_code: UnknownResultCode = UnknownResultCode.NONE
 
 
 _PROFILE_BINDINGS = MappingProxyType({
@@ -161,6 +177,33 @@ _PROFILE_BINDINGS = MappingProxyType({
         TextGazeboSafetyProfile.MAP_REVISION_CHANGED,
         ExpectedProductOutcome.BLOCKED,
         SafetyBlockCode.TARGET_BINDING_CHANGED,
+    ),
+    CampaignProfile.NAV2_UNAVAILABLE: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        TextGazeboFaultProfile.NONE,
+        TextGazeboSafetyProfile.NONE,
+        ExpectedProductOutcome.UNKNOWN,
+        SafetyBlockCode.NONE,
+        TextGazeboExecutionProfile.NAV2_UNAVAILABLE,
+        UnknownResultCode.NAVIGATION_START_OUTCOME_UNKNOWN,
+    ),
+    CampaignProfile.START_RESPONSE_LOST: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        TextGazeboFaultProfile.NONE,
+        TextGazeboSafetyProfile.NONE,
+        ExpectedProductOutcome.UNKNOWN,
+        SafetyBlockCode.NONE,
+        TextGazeboExecutionProfile.START_RESPONSE_LOST,
+        UnknownResultCode.NAVIGATION_START_OUTCOME_UNKNOWN,
+    ),
+    CampaignProfile.TERMINAL_STATUS_RESPONSE_LOST: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        TextGazeboFaultProfile.NONE,
+        TextGazeboSafetyProfile.NONE,
+        ExpectedProductOutcome.UNKNOWN,
+        SafetyBlockCode.NONE,
+        TextGazeboExecutionProfile.TERMINAL_STATUS_RESPONSE_LOST,
+        UnknownResultCode.NAVIGATION_STATUS_OUTCOME_UNKNOWN,
     ),
 })
 
@@ -296,6 +339,7 @@ class CampaignCase:
     profile: CampaignProfile
     expected_outcome: ExpectedProductOutcome
     expected_block_code: SafetyBlockCode = SafetyBlockCode.NONE
+    expected_unknown_result_code: UnknownResultCode = UnknownResultCode.NONE
 
     def __post_init__(self) -> None:
         """Require strongly typed identifiers, profiles, and expectations."""
@@ -312,12 +356,25 @@ class CampaignCase:
             SafetyBlockCode,
             'expected_block_code',
         )
+        _require_enum(
+            self.expected_unknown_result_code,
+            UnknownResultCode,
+            'expected_unknown_result_code',
+        )
         if (
             self.expected_outcome is not ExpectedProductOutcome.BLOCKED
             and self.expected_block_code is not SafetyBlockCode.NONE
         ):
             raise ValueError(
                 'expected block code must match the product outcome'
+            )
+        if (
+            self.expected_outcome is ExpectedProductOutcome.UNKNOWN
+        ) is (
+            self.expected_unknown_result_code is UnknownResultCode.NONE
+        ):
+            raise ValueError(
+                'expected unknown code must match the product outcome'
             )
 
     def __repr__(self) -> str:
@@ -340,6 +397,7 @@ class CaseExecution:
     provenance: CampaignProvenance
     evidence_digest: str
     observed_block_code: SafetyBlockCode = SafetyBlockCode.NONE
+    observed_unknown_result_code: UnknownResultCode = UnknownResultCode.NONE
 
     def __post_init__(self) -> None:
         """Reject loosely typed or non-content-addressed execution facts."""
@@ -358,12 +416,25 @@ class CaseExecution:
             SafetyBlockCode,
             'observed_block_code',
         )
+        _require_enum(
+            self.observed_unknown_result_code,
+            UnknownResultCode,
+            'observed_unknown_result_code',
+        )
         if (
             self.observed_outcome is not ObservedProductOutcome.BLOCKED
             and self.observed_block_code is not SafetyBlockCode.NONE
         ):
             raise ValueError(
                 'observed block code must match the product outcome'
+            )
+        if (
+            self.observed_outcome is ObservedProductOutcome.UNKNOWN
+        ) is (
+            self.observed_unknown_result_code is UnknownResultCode.NONE
+        ):
+            raise ValueError(
+                'observed unknown code must match the product outcome'
             )
 
     def __repr__(self) -> str:
@@ -373,6 +444,8 @@ class CaseExecution:
             f'status={self.status.value!r}, '
             f'observed_outcome={self.observed_outcome.value!r}, '
             f'observed_block_code={self.observed_block_code.value!r}, '
+            'observed_unknown_result_code='
+            f'{self.observed_unknown_result_code.value!r}, '
             f'cleanup={self.cleanup.value!r})'
         )
 
@@ -403,6 +476,8 @@ class CampaignCaseResult:
     evidence_digest: str | None
     expected_block_code: SafetyBlockCode = SafetyBlockCode.NONE
     observed_block_code: SafetyBlockCode = SafetyBlockCode.NONE
+    expected_unknown_result_code: UnknownResultCode = UnknownResultCode.NONE
+    observed_unknown_result_code: UnknownResultCode = UnknownResultCode.NONE
 
     def __post_init__(self) -> None:
         """Keep every result value bounded and structurally typed."""
@@ -417,6 +492,8 @@ class CampaignCaseResult:
             ('error_code', CaseErrorCode),
             ('expected_block_code', SafetyBlockCode),
             ('observed_block_code', SafetyBlockCode),
+            ('expected_unknown_result_code', UnknownResultCode),
+            ('observed_unknown_result_code', UnknownResultCode),
         ):
             _require_enum(getattr(self, name), expected, name)
         if (
@@ -433,6 +510,22 @@ class CampaignCaseResult:
             raise ValueError(
                 'observed block code must match the product outcome'
             )
+        if (
+            self.expected_outcome is ExpectedProductOutcome.UNKNOWN
+        ) is (
+            self.expected_unknown_result_code is UnknownResultCode.NONE
+        ):
+            raise ValueError(
+                'expected unknown code must match the product outcome'
+            )
+        if (
+            self.observed_outcome is ObservedProductOutcome.UNKNOWN
+        ) is (
+            self.observed_unknown_result_code is UnknownResultCode.NONE
+        ):
+            raise ValueError(
+                'observed unknown code must match the product outcome'
+            )
         if self.evidence_digest is not None:
             _require_digest(self.evidence_digest, 'evidence_digest')
         if self.verdict is CaseVerdict.PASSED:
@@ -446,6 +539,12 @@ class CampaignCaseResult:
                     self.expected_block_code is not SafetyBlockCode.NONE
                     and self.observed_block_code
                     is not self.expected_block_code
+                )
+                or (
+                    self.expected_unknown_result_code
+                    is not UnknownResultCode.NONE
+                    and self.observed_unknown_result_code
+                    is not self.expected_unknown_result_code
                 )
             ):
                 raise ValueError('passed case result is inconsistent')
@@ -478,6 +577,12 @@ class CampaignCaseResult:
                         self.expected_block_code is SafetyBlockCode.NONE
                         or self.observed_block_code
                         is self.expected_block_code
+                    )
+                    and (
+                        self.expected_unknown_result_code
+                        is UnknownResultCode.NONE
+                        or self.observed_unknown_result_code
+                        is self.expected_unknown_result_code
                     )
                 ):
                     raise ValueError(
@@ -526,6 +631,12 @@ class CampaignCaseResult:
                 'expected_block_code': self.expected_block_code.value,
                 'expected': self.expected_outcome.value,
                 'observed_block_code': self.observed_block_code.value,
+                'expected_unknown_result_code': (
+                    self.expected_unknown_result_code.value
+                ),
+                'observed_unknown_result_code': (
+                    self.observed_unknown_result_code.value
+                ),
                 'observed': self.observed_outcome.value,
             },
             'profile': self.profile.value,
@@ -659,6 +770,8 @@ def _not_run(case: CampaignCase) -> CampaignCaseResult:
         evidence_digest=None,
         expected_block_code=case.expected_block_code,
         observed_block_code=SafetyBlockCode.NONE,
+        expected_unknown_result_code=case.expected_unknown_result_code,
+        observed_unknown_result_code=UnknownResultCode.NONE,
     )
 
 
@@ -677,6 +790,8 @@ def _failed_execution(
         evidence_digest=None,
         expected_block_code=case.expected_block_code,
         observed_block_code=SafetyBlockCode.NONE,
+        expected_unknown_result_code=case.expected_unknown_result_code,
+        observed_unknown_result_code=UnknownResultCode.NONE,
     )
 
 
@@ -697,6 +812,10 @@ def _evaluate_execution(
             evidence_digest=execution.evidence_digest,
             expected_block_code=case.expected_block_code,
             observed_block_code=execution.observed_block_code,
+            expected_unknown_result_code=case.expected_unknown_result_code,
+            observed_unknown_result_code=(
+                execution.observed_unknown_result_code
+            ),
         )
     if execution.cleanup is not CleanupOutcome.CLEAN:
         return CampaignCaseResult(
@@ -710,6 +829,10 @@ def _evaluate_execution(
             evidence_digest=execution.evidence_digest,
             expected_block_code=case.expected_block_code,
             observed_block_code=execution.observed_block_code,
+            expected_unknown_result_code=case.expected_unknown_result_code,
+            observed_unknown_result_code=(
+                execution.observed_unknown_result_code
+            ),
         )
     if execution.status is not CaseExecutionStatus.COMPLETED:
         return CampaignCaseResult(
@@ -723,6 +846,10 @@ def _evaluate_execution(
             evidence_digest=execution.evidence_digest,
             expected_block_code=case.expected_block_code,
             observed_block_code=execution.observed_block_code,
+            expected_unknown_result_code=case.expected_unknown_result_code,
+            observed_unknown_result_code=(
+                execution.observed_unknown_result_code
+            ),
         )
     expected = case.expected_outcome.value
     if (
@@ -731,6 +858,11 @@ def _evaluate_execution(
             case.expected_block_code is not SafetyBlockCode.NONE
             and execution.observed_block_code
             is not case.expected_block_code
+        )
+        or (
+            case.expected_unknown_result_code is not UnknownResultCode.NONE
+            and execution.observed_unknown_result_code
+            is not case.expected_unknown_result_code
         )
     ):
         return CampaignCaseResult(
@@ -744,6 +876,10 @@ def _evaluate_execution(
             evidence_digest=execution.evidence_digest,
             expected_block_code=case.expected_block_code,
             observed_block_code=execution.observed_block_code,
+            expected_unknown_result_code=case.expected_unknown_result_code,
+            observed_unknown_result_code=(
+                execution.observed_unknown_result_code
+            ),
         )
     return CampaignCaseResult(
         case_id=case.case_id,
@@ -756,6 +892,8 @@ def _evaluate_execution(
         evidence_digest=execution.evidence_digest,
         expected_block_code=case.expected_block_code,
         observed_block_code=execution.observed_block_code,
+        expected_unknown_result_code=case.expected_unknown_result_code,
+        observed_unknown_result_code=execution.observed_unknown_result_code,
     )
 
 
@@ -842,6 +980,7 @@ __all__ = [
     'ExpectedProductOutcome',
     'ObservedProductOutcome',
     'SafetyBlockCode',
+    'UnknownResultCode',
     'TextGazeboCampaignError',
     'campaign_profile_binding',
     'run_campaign',

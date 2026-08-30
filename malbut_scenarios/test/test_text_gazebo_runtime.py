@@ -741,6 +741,70 @@ def test_sqlite_observer_accepts_exact_block_without_dispatch(
     assert snapshot.physical_authorized is False
 
 
+@pytest.mark.parametrize(
+    'result_code',
+    (
+        'navigation_start_outcome_unknown',
+        'navigation_status_outcome_unknown',
+        'dispatch_outcome_unknown_after_restart',
+    ),
+)
+def test_sqlite_observer_accepts_only_matching_action_outbox_unknown(
+    tmp_path,
+    result_code,
+) -> None:
+    database = (tmp_path / f'{result_code}.sqlite3').resolve()
+    _create_ledger(
+        database,
+        confirmation_state='resolved',
+        confirmation_disposition='approved',
+        confirmation_result='confirmation_approved',
+        action_state='UNKNOWN',
+        action_result=result_code,
+        outbox_state='UNKNOWN',
+        outbox_result=result_code,
+    )
+    observer = SQLiteAcceptanceObserver(database)
+
+    snapshot = observer.await_expected_unknown(
+        _CONFIRMATION_ID,
+        result_code=result_code,
+        timeout_seconds=0.1,
+        poll_seconds=0.01,
+    )
+
+    assert snapshot.is_expected_unknown(result_code) is True
+    assert snapshot.robot_action_count == 1
+    assert snapshot.dispatch_intent_count == 1
+    assert snapshot.dispatch_state == 'UNKNOWN'
+    assert snapshot.simulation is True
+    assert snapshot.physical_authorized is False
+
+
+def test_sqlite_observer_rejects_divergent_unknown_action_and_outbox(
+    tmp_path,
+) -> None:
+    database = (tmp_path / 'divergent-unknown.sqlite3').resolve()
+    _create_ledger(
+        database,
+        confirmation_state='resolved',
+        confirmation_disposition='approved',
+        confirmation_result='confirmation_approved',
+        action_state='UNKNOWN',
+        action_result='navigation_start_outcome_unknown',
+        outbox_state='UNKNOWN',
+        outbox_result='navigation_status_outcome_unknown',
+    )
+
+    snapshot = SQLiteAcceptanceObserver(database).snapshot(
+        _CONFIRMATION_ID
+    )
+
+    assert snapshot.is_expected_unknown(
+        'navigation_start_outcome_unknown'
+    ) is False
+
+
 def test_sqlite_observer_does_not_accept_wrong_block_or_outbox(
     tmp_path,
 ) -> None:
@@ -804,6 +868,23 @@ def test_sqlite_observer_requires_typed_outcome_and_exact_block_code(
             _CONFIRMATION_ID,
             expected_product_outcome=ProductOutcome.SUCCEEDED,
             expected_block_result_code='robot_state_stale',
+            timeout_seconds=0.1,
+        )
+    with pytest.raises(ValueError, match='result code'):
+        observer.await_product_outcome(
+            _CONFIRMATION_ID,
+            expected_product_outcome=ProductOutcome.UNKNOWN,
+            expected_unknown_result_code='private/value',
+            timeout_seconds=0.1,
+        )
+    with pytest.raises(ValueError, match='cannot require'):
+        observer.await_product_outcome(
+            _CONFIRMATION_ID,
+            expected_product_outcome=ProductOutcome.UNKNOWN,
+            expected_block_result_code='robot_state_stale',
+            expected_unknown_result_code=(
+                'navigation_start_outcome_unknown'
+            ),
             timeout_seconds=0.1,
         )
 

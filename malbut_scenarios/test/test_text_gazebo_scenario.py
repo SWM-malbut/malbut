@@ -5,12 +5,15 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboExecutionProfile,
     TextGazeboFaultProfile,
     TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
+    coerce_execution_profile,
     coerce_fault_profile,
     coerce_safety_profile,
     coerce_scenario_profile,
+    execution_contract,
     pressure_contract,
     safety_contract,
     scenario_spec,
@@ -116,3 +119,60 @@ def test_safety_profiles_have_exact_blocking_contracts(
 def test_unknown_safety_profile_is_rejected(value) -> None:
     with pytest.raises(ValueError):
         coerce_safety_profile(value)
+
+
+@pytest.mark.parametrize(
+    'profile,result_code,fault_count,start_drop,status_drop,goals,'
+    'terminals,unavailable_count',
+    (
+        ('none', None, 0, 0, 0, 1, 1, 0),
+        (
+            'nav2_unavailable',
+            'navigation_start_outcome_unknown',
+            1, 0, 0, 0, 0, 1,
+        ),
+        (
+            'start_response_lost',
+            'navigation_start_outcome_unknown',
+            1, 1, 0, 1, 1, 0,
+        ),
+        (
+            'terminal_status_response_lost',
+            'navigation_status_outcome_unknown',
+            1, 0, 1, 1, 1, 0,
+        ),
+    ),
+)
+def test_execution_profiles_have_exact_unknown_result_contracts(
+    profile,
+    result_code,
+    fault_count,
+    start_drop,
+    status_drop,
+    goals,
+    terminals,
+    unavailable_count,
+) -> None:
+    selected = coerce_execution_profile(profile)
+    contract = execution_contract(selected)
+
+    assert selected is TextGazeboExecutionProfile(profile)
+    assert contract.result_code == result_code
+    assert contract.fault_application_count == fault_count
+    assert contract.start_forward_count == (
+        0 if selected is TextGazeboExecutionProfile.NONE else 1
+    )
+    assert contract.start_response_drop_count == start_drop
+    assert contract.terminal_status_response_drop_count == status_drop
+    assert contract.expected_nav2_goal_count == goals
+    assert contract.expected_nav2_terminal_count == terminals
+    assert contract.unavailable_endpoint_count == unavailable_count
+
+
+@pytest.mark.parametrize(
+    'value',
+    ('start_timeout', 'drop_all', 'status_error', '', 1, True),
+)
+def test_unknown_execution_profile_is_rejected(value) -> None:
+    with pytest.raises(ValueError):
+        coerce_execution_profile(value)

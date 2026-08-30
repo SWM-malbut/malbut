@@ -27,10 +27,12 @@ from malbut_scenarios.text_gazebo_campaign_core import (
     ObservedProductOutcome,
     SafetyBlockCode,
     TextGazeboCampaignError,
+    UnknownResultCode,
     campaign_profile_binding,
     run_campaign,
 )
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboExecutionProfile,
     TextGazeboFaultProfile,
     TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
@@ -97,6 +99,7 @@ def _case(
     expected: ExpectedProductOutcome | None = None,
     profile: CampaignProfile = CampaignProfile.HAPPY_PATH,
     block_code: SafetyBlockCode | None = None,
+    unknown_code: UnknownResultCode | None = None,
 ) -> CampaignCase:
     binding = campaign_profile_binding(profile)
     return CampaignCase(
@@ -104,6 +107,9 @@ def _case(
         profile=profile,
         expected_outcome=expected or binding.expected_outcome,
         expected_block_code=block_code or binding.expected_block_code,
+        expected_unknown_result_code=(
+            unknown_code or binding.expected_unknown_result_code
+        ),
     )
 
 
@@ -114,6 +120,7 @@ def _execution(
     cleanup: CleanupOutcome = CleanupOutcome.CLEAN,
     provenance: CampaignProvenance | None = None,
     block_code: SafetyBlockCode = SafetyBlockCode.NONE,
+    unknown_code: UnknownResultCode = UnknownResultCode.NONE,
 ) -> CaseExecution:
     return CaseExecution(
         status=status,
@@ -122,7 +129,164 @@ def _execution(
         provenance=provenance or _provenance(),
         evidence_digest=_EVIDENCE_DIGEST,
         observed_block_code=block_code,
+        observed_unknown_result_code=unknown_code,
     )
+
+
+@pytest.mark.parametrize(
+    'profile,execution_profile,result_code',
+    (
+        (
+            CampaignProfile.NAV2_UNAVAILABLE,
+            TextGazeboExecutionProfile.NAV2_UNAVAILABLE,
+            UnknownResultCode.NAVIGATION_START_OUTCOME_UNKNOWN,
+        ),
+        (
+            CampaignProfile.START_RESPONSE_LOST,
+            TextGazeboExecutionProfile.START_RESPONSE_LOST,
+            UnknownResultCode.NAVIGATION_START_OUTCOME_UNKNOWN,
+        ),
+        (
+            CampaignProfile.TERMINAL_STATUS_RESPONSE_LOST,
+            TextGazeboExecutionProfile.TERMINAL_STATUS_RESPONSE_LOST,
+            UnknownResultCode.NAVIGATION_STATUS_OUTCOME_UNKNOWN,
+        ),
+    ),
+)
+def test_execution_profiles_bind_exact_unknown_contracts(
+    profile,
+    execution_profile,
+    result_code,
+) -> None:
+    binding = campaign_profile_binding(profile)
+
+    assert binding.scenario_profile is (
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM
+    )
+    assert binding.fault_profile is TextGazeboFaultProfile.NONE
+    assert binding.safety_profile is TextGazeboSafetyProfile.NONE
+    assert binding.execution_profile is execution_profile
+    assert binding.expected_outcome is ExpectedProductOutcome.UNKNOWN
+    assert binding.expected_block_code is SafetyBlockCode.NONE
+    assert binding.expected_unknown_result_code is result_code
+
+
+def test_expected_unknown_passes_only_with_the_exact_result_code() -> None:
+    case = _case('unknown', profile=CampaignProfile.START_RESPONSE_LOST)
+    passed = run_campaign(
+        [case],
+        _provenance(),
+        _FakeExecutor([_execution(
+            observed=ObservedProductOutcome.UNKNOWN,
+            unknown_code=UnknownResultCode.NAVIGATION_START_OUTCOME_UNKNOWN,
+        )]),
+    )
+    failed = run_campaign(
+        [case],
+        _provenance(),
+        _FakeExecutor([_execution(
+            observed=ObservedProductOutcome.UNKNOWN,
+            unknown_code=UnknownResultCode.NAVIGATION_STATUS_OUTCOME_UNKNOWN,
+        )]),
+    )
+
+    assert passed.verdict is CampaignVerdict.PASSED
+    assert failed.verdict is CampaignVerdict.FAILED
+    assert failed.cases[0].error_code is (
+        CaseErrorCode.PRODUCT_OUTCOME_MISMATCH
+    )
+
+
+def test_campaign_case_rejects_unknown_without_a_result_code() -> None:
+    """UNKNOWN expectations must name the exact bounded ambiguity."""
+    with pytest.raises(
+        ValueError,
+        match='^expected unknown code must match the product outcome$',
+    ):
+        CampaignCase(
+            case_id=CampaignCaseId('unknown-without-code'),
+            profile=CampaignProfile.NAV2_UNAVAILABLE,
+            expected_outcome=ExpectedProductOutcome.UNKNOWN,
+        )
+
+
+def test_case_execution_rejects_unknown_without_a_result_code() -> None:
+    """An executor cannot emit an unclassified UNKNOWN observation."""
+    with pytest.raises(
+        ValueError,
+        match='^observed unknown code must match the product outcome$',
+    ):
+        CaseExecution(
+            status=CaseExecutionStatus.COMPLETED,
+            observed_outcome=ObservedProductOutcome.UNKNOWN,
+            cleanup=CleanupOutcome.CLEAN,
+            provenance=_provenance(),
+            evidence_digest=_EVIDENCE_DIGEST,
+        )
+
+
+@pytest.mark.parametrize(
+    ('expected_code', 'observed_code', 'message'),
+    (
+        (
+            UnknownResultCode.NONE,
+            UnknownResultCode.NAVIGATION_START_OUTCOME_UNKNOWN,
+            'expected unknown code must match the product outcome',
+        ),
+        (
+            UnknownResultCode.NAVIGATION_START_OUTCOME_UNKNOWN,
+            UnknownResultCode.NONE,
+            'observed unknown code must match the product outcome',
+        ),
+    ),
+)
+def test_case_result_rejects_unknown_without_a_result_code(
+    expected_code,
+    observed_code,
+    message,
+) -> None:
+    """A result cannot erase either side of an UNKNOWN code comparison."""
+    with pytest.raises(ValueError, match=f'^{message}$'):
+        CampaignCaseResult(
+            case_id=CampaignCaseId('unknown-result-without-code'),
+            profile=CampaignProfile.NAV2_UNAVAILABLE,
+            expected_outcome=ExpectedProductOutcome.UNKNOWN,
+            observed_outcome=ObservedProductOutcome.UNKNOWN,
+            cleanup=CleanupOutcome.CLEAN,
+            verdict=CaseVerdict.PASSED,
+            error_code=CaseErrorCode.NONE,
+            evidence_digest=_EVIDENCE_DIGEST,
+            expected_unknown_result_code=expected_code,
+            observed_unknown_result_code=observed_code,
+        )
+
+
+def test_run_campaign_cannot_pass_unknown_without_a_result_code() -> None:
+    """A custom executor's unclassified UNKNOWN fails before aggregation."""
+    case = _case(
+        'unknown-code-required',
+        profile=CampaignProfile.NAV2_UNAVAILABLE,
+    )
+
+    class MissingUnknownCodeExecutor:
+        def execute(self, _case_value, _provenance_value):
+            return CaseExecution(
+                status=CaseExecutionStatus.COMPLETED,
+                observed_outcome=ObservedProductOutcome.UNKNOWN,
+                cleanup=CleanupOutcome.CLEAN,
+                provenance=_provenance(),
+                evidence_digest=_EVIDENCE_DIGEST,
+            )
+
+    result = run_campaign(
+        [case],
+        _provenance(),
+        MissingUnknownCodeExecutor(),
+    )
+
+    assert result.verdict is CampaignVerdict.FAILED
+    assert result.cases[0].verdict is CaseVerdict.FAILED
+    assert result.cases[0].error_code is CaseErrorCode.EXECUTOR_EXCEPTION
 
 
 class _FakeExecutor:
@@ -331,8 +495,10 @@ def test_expected_block_is_a_product_success_for_that_test() -> None:
     assert result.cases[0].verdict is CaseVerdict.PASSED
     assert result.cases[0].as_dict()['product'] == {
         'expected_block_code': 'robot_state_stale',
+        'expected_unknown_result_code': 'none',
         'expected': 'blocked',
         'observed_block_code': 'robot_state_stale',
+        'observed_unknown_result_code': 'none',
         'observed': 'blocked',
     }
 

@@ -167,6 +167,7 @@ def test_testbed_composes_only_small_house_and_static_navigation():
     assert defaults['named_navigation_user_map'] == ''
     assert defaults['named_navigation_map_store'] == ''
     assert defaults['named_navigation_port'] == '8765'
+    assert defaults['named_navigation_test_unavailable_action'] == 'false'
 
     context = LaunchContext()
     context.launch_configurations.update({
@@ -196,6 +197,10 @@ def test_testbed_composes_only_small_house_and_static_navigation():
     assert _resolve(context, navigation['autostart']) == 'false'
     assert _resolve(context, navigation['restore_localization']) == 'false'
     assert _resolve(context, navigation['set_initial_pose']) == 'true'
+    assert _resolve(
+        context,
+        navigation['robot_web_navigation_action'],
+    ) == '/navigate_to_pose'
 
     for world_name, navigation_name in (
         ('x', 'initial_pose_x'),
@@ -206,6 +211,31 @@ def test_testbed_composes_only_small_house_and_static_navigation():
             context,
             navigation[navigation_name],
         )
+
+
+def test_unavailable_navigation_action_is_fixed_default_off_and_opt_in():
+    description = _load_launch()
+    navigation = dict(next(
+        entity
+        for entity in _all_entities(description)
+        if isinstance(entity, IncludeLaunchDescription)
+        and _source_name(entity) == 'navigation.launch.py'
+    ).launch_arguments)
+
+    normal = _context_with_defaults(description)
+    injected = _context_with_defaults(description, **{
+        'enable_named_navigation': 'true',
+        'named_navigation_test_unavailable_action': 'true',
+    })
+
+    assert _resolve(
+        normal,
+        navigation['robot_web_navigation_action'],
+    ) == '/navigate_to_pose'
+    assert _resolve(
+        injected,
+        navigation['robot_web_navigation_action'],
+    ) == '/swm25_138_unavailable_navigate_to_pose'
 
 
 def test_isolation_guard_precedes_every_process_creating_action(monkeypatch):
@@ -397,6 +427,22 @@ def test_named_navigation_preflight_rejects_ambiguous_or_changed_input(
     with pytest.raises(RuntimeError) as caught:
         module._validate_named_navigation_configuration(disabled)
     assert str(caught.value) == 'named_navigation_disabled_configuration'
+
+    disabled_fault = _context_with_defaults(description, **{
+        'named_navigation_test_unavailable_action': 'true',
+    })
+    with pytest.raises(RuntimeError) as caught:
+        module._validate_named_navigation_configuration(disabled_fault)
+    assert str(caught.value) == 'named_navigation_disabled_configuration'
+
+    malformed_fault = _context_with_defaults(description, **{
+        'named_navigation_test_unavailable_action': 'sometimes',
+    })
+    with pytest.raises(RuntimeError) as caught:
+        module._validate_named_navigation_configuration(malformed_fault)
+    assert str(caught.value) == (
+        'named_navigation_test_unavailable_action_invalid'
+    )
 
     malformed_port = _context_with_defaults(description, **{
         'enable_named_navigation': 'true',

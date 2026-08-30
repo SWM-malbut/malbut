@@ -15,15 +15,17 @@ import tempfile
 from typing import Any, Dict
 
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboExecutionProfile,
     TextGazeboFaultProfile,
     TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
+    execution_contract,
     pressure_contract,
     safety_contract,
 )
 
 
-EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v5'
+EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v6'
 MAX_EVIDENCE_COUNT = 1_000_000
 MAX_EVIDENCE_DURATION_SECONDS = 86_400.0
 
@@ -53,6 +55,7 @@ class ProductOutcome(str, Enum):
 
     SUCCEEDED = 'succeeded'
     BLOCKED = 'blocked'
+    UNKNOWN = 'unknown'
 
 
 class TestStatus(str, Enum):
@@ -169,7 +172,13 @@ class StableStates:
 
 @dataclass(frozen=True, slots=True)
 class EvidenceCounts:
-    """Effect and ledger counts without their private identifiers."""
+    """
+    Record run-wide effect and ledger totals without private identifiers.
+
+    ``robot_web_start_count`` is the actual product start total for normal
+    and faulted runs.  Profile-specific fault observations are kept in
+    ``ExecutionFaultObservation`` and do not replace this total.
+    """
 
     agent_proposal_count: int
     confirmation_count: int
@@ -282,6 +291,66 @@ def safety_fault_observation_for(
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutionFaultObservation:
+    """
+    Prove the fault axis without retaining content or run-wide totals.
+
+    The ``NONE`` projection intentionally contains zero counters, including
+    ``start_forward_count``.  A normal run can still have an actual Robot Web
+    start recorded by ``EvidenceCounts.robot_web_start_count``.
+    """
+
+    observed: bool
+    fault_application_count: int
+    start_forward_count: int
+    start_response_drop_count: int
+    terminal_status_response_drop_count: int
+    unavailable_endpoint_count: int
+
+    def __post_init__(self) -> None:
+        """Reject truthy substitutes and unbounded observation counters."""
+        if type(self.observed) is not bool:
+            raise TypeError('observed must be a bool')
+        for name in self.__dataclass_fields__:
+            if name != 'observed':
+                _require_count(getattr(self, name), name)
+
+    def as_dict(self) -> Dict[str, object]:
+        """Return the fixed fault-observation projection for aggregation."""
+        return {
+            'fault_application_count': self.fault_application_count,
+            'observed': self.observed,
+            'start_forward_count': self.start_forward_count,
+            'start_response_drop_count': (
+                self.start_response_drop_count
+            ),
+            'terminal_status_response_drop_count': (
+                self.terminal_status_response_drop_count
+            ),
+            'unavailable_endpoint_count': (
+                self.unavailable_endpoint_count
+            ),
+        }
+
+
+def execution_fault_observation_for(
+    profile: TextGazeboExecutionProfile,
+) -> ExecutionFaultObservation:
+    """Return the exact fault observation, never the total start count."""
+    contract = execution_contract(profile)
+    return ExecutionFaultObservation(
+        observed=profile is not TextGazeboExecutionProfile.NONE,
+        fault_application_count=contract.fault_application_count,
+        start_forward_count=contract.start_forward_count,
+        start_response_drop_count=contract.start_response_drop_count,
+        terminal_status_response_drop_count=(
+            contract.terminal_status_response_drop_count
+        ),
+        unavailable_endpoint_count=contract.unavailable_endpoint_count,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceDurations:
     """Bounded monotonic durations; wall-clock timestamps are excluded."""
 
@@ -361,12 +430,21 @@ class TextGazeboEvidenceReceipt:
     safety_profile: TextGazeboSafetyProfile = (
         TextGazeboSafetyProfile.NONE
     )
+    execution_profile: TextGazeboExecutionProfile = (
+        TextGazeboExecutionProfile.NONE
+    )
     product_outcome: ProductOutcome = ProductOutcome.SUCCEEDED
     test_status: TestStatus = TestStatus.PASSED
     block_result_code: str | None = None
+    unknown_result_code: str | None = None
     fault_observation: SafetyFaultObservation = field(
         default_factory=lambda: safety_fault_observation_for(
             TextGazeboSafetyProfile.NONE
+        )
+    )
+    execution_fault_observation: ExecutionFaultObservation = field(
+        default_factory=lambda: execution_fault_observation_for(
+            TextGazeboExecutionProfile.NONE
         )
     )
     simulation: bool = field(default=True, init=False)
@@ -410,6 +488,11 @@ class TextGazeboEvidenceReceipt:
             'safety_profile',
         )
         _require_enum(
+            self.execution_profile,
+            TextGazeboExecutionProfile,
+            'execution_profile',
+        )
+        _require_enum(
             self.product_outcome,
             ProductOutcome,
             'product_outcome',
@@ -422,6 +505,10 @@ class TextGazeboEvidenceReceipt:
             ('cleanup', CleanupEvidence),
             ('pressure', PressureEvidence),
             ('fault_observation', SafetyFaultObservation),
+            (
+                'execution_fault_observation',
+                ExecutionFaultObservation,
+            ),
         ):
             if not isinstance(getattr(self, name), expected):
                 raise TypeError(f'{name} must be a {expected.__name__}')
@@ -442,6 +529,14 @@ class TextGazeboEvidenceReceipt:
             raise ValueError(
                 'fault observation must match the exact Safety contract'
             )
+        if (
+            self.execution_fault_observation
+            != execution_fault_observation_for(self.execution_profile)
+        ):
+            raise ValueError(
+                'execution fault observation must match the exact '
+                'execution contract'
+            )
         if self.pressure != pressure_evidence_for(self.fault_profile):
             raise ValueError(
                 'an evidence receipt requires exact pressure evidence'
@@ -460,11 +555,21 @@ class TextGazeboEvidenceReceipt:
         if self.product_outcome is ProductOutcome.BLOCKED:
             self._validate_blocked_claim()
             return
+        if self.product_outcome is ProductOutcome.UNKNOWN:
+            self._validate_unknown_claim()
+            return
         raise ValueError('product outcome is unsupported')
 
     def _validate_success_claim(self) -> None:
-        if self.safety_profile is not TextGazeboSafetyProfile.NONE:
-            raise ValueError('a success receipt cannot claim a Safety fault')
+        if (
+            self.safety_profile is not TextGazeboSafetyProfile.NONE
+            or self.execution_profile
+            is not TextGazeboExecutionProfile.NONE
+            or self.unknown_result_code is not None
+        ):
+            raise ValueError(
+                'a success receipt cannot claim a Safety or execution fault'
+            )
         expected_states = StableStates(
             readiness=ReadinessState.READY,
             confirmation=ConfirmationState.APPROVED,
@@ -497,6 +602,9 @@ class TextGazeboEvidenceReceipt:
         if (
             self.safety_profile is TextGazeboSafetyProfile.NONE
             or self.fault_profile is not TextGazeboFaultProfile.NONE
+            or self.execution_profile
+            is not TextGazeboExecutionProfile.NONE
+            or self.unknown_result_code is not None
         ):
             raise ValueError(
                 'a blocked receipt requires one Safety profile only'
@@ -531,6 +639,59 @@ class TextGazeboEvidenceReceipt:
                 'a blocked receipt requires exact zero-effect counts'
             )
 
+    def _validate_unknown_claim(self) -> None:
+        contract = execution_contract(self.execution_profile)
+        if (
+            self.execution_profile is TextGazeboExecutionProfile.NONE
+            or self.safety_profile is not TextGazeboSafetyProfile.NONE
+            or self.fault_profile is not TextGazeboFaultProfile.NONE
+            or self.block_result_code is not None
+        ):
+            raise ValueError(
+                'an unknown receipt requires one execution profile only'
+            )
+        if self.unknown_result_code != contract.result_code:
+            raise ValueError(
+                'unknown result code must match the exact execution contract'
+            )
+        expected_navigation = (
+            NavigationState.NOT_STARTED
+            if contract.expected_nav2_goal_count == 0
+            else NavigationState.SUCCEEDED
+        )
+        expected_states = StableStates(
+            readiness=ReadinessState.READY,
+            confirmation=ConfirmationState.APPROVED,
+            robot_action=RobotActionState.UNKNOWN,
+            dispatch=DispatchState.UNKNOWN,
+            navigation=expected_navigation,
+        )
+        if self.states != expected_states:
+            raise ValueError(
+                'an unknown receipt requires exact product and independent '
+                'navigation states'
+            )
+        exact_counts = {
+            'agent_proposal_count': 1,
+            'confirmation_count': 1,
+            'approved_confirmation_count': 1,
+            'robot_action_count': 1,
+            'dispatch_intent_count': 1,
+            'robot_web_start_count': 1,
+            'robot_web_verified_target_count': 1,
+            'nav2_goal_count': contract.expected_nav2_goal_count,
+            'preapproval_nav2_goal_count': 0,
+            'terminal_result_count': contract.expected_nav2_terminal_count,
+            'replay_additional_effect_count': 0,
+        }
+        if any(
+            getattr(self.counts, name) != expected
+            for name, expected in exact_counts.items()
+        ):
+            raise ValueError(
+                'an unknown receipt requires exact no-resend counts'
+            )
+
     def as_dict(self) -> Dict[str, object]:
         """Return the fixed, content-free receipt schema."""
         return {
@@ -539,6 +700,10 @@ class TextGazeboEvidenceReceipt:
             'commit': self.commit,
             'counts': self.counts.as_dict(),
             'durations': self.durations.as_dict(),
+            'execution_fault_observation': (
+                self.execution_fault_observation.as_dict()
+            ),
+            'execution_profile': self.execution_profile.value,
             'fault_profile': self.fault_profile.value,
             'fault_observation': self.fault_observation.as_dict(),
             'goal_set_digest': self.goal_set_digest,
@@ -555,6 +720,7 @@ class TextGazeboEvidenceReceipt:
             'states': self.states.as_dict(),
             'target_binding_digest': self.target_binding_digest,
             'test_status': self.test_status.value,
+            'unknown_result_code': self.unknown_result_code,
         }
 
     def canonical_json(self) -> str:

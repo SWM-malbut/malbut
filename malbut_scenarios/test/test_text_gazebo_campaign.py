@@ -14,6 +14,7 @@ from malbut_scenarios import text_gazebo_campaign as campaign
 from malbut_scenarios.text_gazebo_campaign_core import (
     ExpectedProductOutcome,
     SafetyBlockCode,
+    UnknownResultCode,
 )
 from malbut_scenarios.text_gazebo_campaign_evidence import (
     ChildManifestSummary,
@@ -27,13 +28,16 @@ from malbut_scenarios.text_gazebo_campaign_runtime import (
     TextGazeboCampaignRuntimeError,
 )
 from malbut_scenarios.text_gazebo_evidence import (
+    execution_fault_observation_for,
     pressure_evidence_for,
     safety_fault_observation_for,
 )
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboExecutionProfile,
     TextGazeboFaultProfile,
     TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
+    execution_contract,
     safety_contract,
 )
 
@@ -66,11 +70,18 @@ def _run_result(
     profile: TextGazeboScenarioProfile = TextGazeboScenarioProfile.HAPPY_PATH,
     fault_profile: TextGazeboFaultProfile = TextGazeboFaultProfile.NONE,
     safety_profile: TextGazeboSafetyProfile = TextGazeboSafetyProfile.NONE,
+    execution_profile: TextGazeboExecutionProfile = (
+        TextGazeboExecutionProfile.NONE
+    ),
 ) -> TextGazeboCampaignRunResult:
     blocked = safety_profile is not TextGazeboSafetyProfile.NONE
+    unknown = execution_profile is not TextGazeboExecutionProfile.NONE
     contract = safety_contract(safety_profile)
+    execution = execution_contract(execution_profile)
     product_outcome = (
-        ProductOutcome.BLOCKED if blocked else ProductOutcome.SUCCEEDED
+        ProductOutcome.BLOCKED
+        if blocked
+        else (ProductOutcome.UNKNOWN if unknown else ProductOutcome.SUCCEEDED)
     )
     block_result_code = (
         SafetyBlockCode.NONE
@@ -81,7 +92,7 @@ def _run_result(
     receipt_digest = _digest(f'receipt-{ordinal}')
     goal_digest = (
         hashlib.sha256(b'[]').hexdigest()
-        if blocked
+        if blocked or execution.expected_nav2_goal_count == 0
         else _digest(f'goal-{ordinal}')
     )
     binding_digest = _digest(f'binding-{ordinal}')
@@ -104,14 +115,23 @@ def _run_result(
         forced_termination_count=0,
         simulation=True,
         physical_authorized=False,
-        exact_success=not blocked,
+        exact_success=not blocked and not unknown,
         total_duration_seconds=0.0,
         fault_profile=fault_profile,
         pressure=pressure_evidence_for(fault_profile),
         safety_profile=safety_profile,
+        execution_profile=execution_profile,
         product_outcome=product_outcome,
         block_result_code=block_result_code,
+        unknown_result_code=(
+            UnknownResultCode.NONE
+            if execution.result_code is None
+            else UnknownResultCode(execution.result_code)
+        ),
         fault_observation=safety_fault_observation_for(safety_profile),
+        execution_fault_observation=(
+            execution_fault_observation_for(execution_profile)
+        ),
     )
     return TextGazeboCampaignRunResult(
         manifest_digest=manifest_digest,
@@ -127,7 +147,7 @@ def _run_result(
         elapsed_seconds=0.0,
         child_output_digest=_digest(f'output-{ordinal}'),
         child_output_bytes=256,
-        exact_success=not blocked,
+        exact_success=not blocked and not unknown,
         cleanup_complete=True,
         forced_termination_count=0,
         simulation=True,
@@ -136,8 +156,13 @@ def _run_result(
         fault_profile=fault_profile,
         pressure=summary.pressure,
         safety_profile=safety_profile,
+        execution_profile=execution_profile,
         product_outcome=product_outcome,
         block_result_code=block_result_code,
+        unknown_result_code=summary.unknown_result_code,
+        execution_fault_observation=(
+            summary.execution_fault_observation
+        ),
     )
 
 
@@ -163,6 +188,7 @@ class _FakeInstalledRunner:
             self.result_profile or request.scenario_profile,
             request.fault_profile,
             request.safety_profile,
+            request.execution_profile,
         )
 
 
@@ -548,6 +574,77 @@ def test_swm137_profiles_pass_only_as_exact_zero_effect_blocks(
     ]
     assert [item['safety_profile'] for item in receipt['cases']] == profiles
     assert receipt['cleanup']['completed'] is True
+
+
+def test_swm138_five_case_campaign_preserves_exact_unknown_contracts(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    """Normal controls and all execution faults pass in explicit order."""
+    source = _source_tree(tmp_path)
+    evidence = _private_evidence(tmp_path)
+    _patch_installed(monkeypatch, tmp_path)
+    profiles = [
+        'happy_living_room',
+        'nav2_unavailable',
+        'start_response_lost',
+        'terminal_status_response_lost',
+        'happy_living_room',
+    ]
+
+    result = campaign.main(_run_arguments(
+        source,
+        evidence,
+        profiles=profiles,
+    ))
+
+    assert result == 0
+    assert capsys.readouterr().err == ''
+    requests = _FakeInstalledRunner.requests
+    assert [item.execution_profile.value for item in requests] == [
+        'none',
+        'nav2_unavailable',
+        'start_response_lost',
+        'terminal_status_response_lost',
+        'none',
+    ]
+    receipt = json.loads(evidence.read_text(encoding='utf-8'))['receipt']
+    assert receipt['test_verdict'] == 'passed'
+    assert [item['profile'] for item in receipt['cases']] == profiles
+    assert [item['expected_outcome'] for item in receipt['cases']] == [
+        'succeeded',
+        'unknown',
+        'unknown',
+        'unknown',
+        'succeeded',
+    ]
+    assert [
+        item['expected_unknown_result_code']
+        for item in receipt['cases']
+    ] == [
+        'none',
+        'navigation_start_outcome_unknown',
+        'navigation_start_outcome_unknown',
+        'navigation_status_outcome_unknown',
+        'none',
+    ]
+    assert [
+        item['observed_unknown_result_code']
+        for item in receipt['cases']
+    ] == [
+        'none',
+        'navigation_start_outcome_unknown',
+        'navigation_start_outcome_unknown',
+        'navigation_status_outcome_unknown',
+        'none',
+    ]
+    assert [
+        item['execution_fault_observation']['observed']
+        for item in receipt['cases']
+    ] == [False, True, True, True, False]
+    assert receipt['cleanup']['completed'] is True
+    assert receipt['cleanup']['clean_case_count'] == 5
 
 
 def test_child_cleanup_failure_stops_and_publishes_failed_aggregate(

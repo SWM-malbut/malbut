@@ -15,6 +15,11 @@ import time
 from typing import Optional
 import re
 
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboExecutionProfile,
+    coerce_execution_profile,
+)
+
 
 _MAX_BODY_BYTES = 1_000_000
 _MAX_TIMEOUT_SECONDS = 60.0
@@ -34,6 +39,11 @@ _FORWARDED_RESPONSE_HEADERS = frozenset({
     'set-cookie',
     'x-content-type-options',
 })
+_TERMINAL_NAVIGATION_STATES = frozenset({
+    'succeeded',
+    'canceled',
+    'failed',
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +56,10 @@ class RobotWebProxyCounts:
     start_count: int
     cancel_count: int
     verified_preview_count: int = 0
+    start_forward_count: int = 0
+    start_response_drop_count: int = 0
+    terminal_status_response_drop_count: int = 0
+    unavailable_endpoint_count: int = 0
 
 
 class CountingRobotWebProxy:
@@ -58,6 +72,9 @@ class CountingRobotWebProxy:
         *,
         timeout_seconds: float = 30.0,
         expected_preview_digest: Optional[str] = None,
+        execution_profile: TextGazeboExecutionProfile | str = (
+            TextGazeboExecutionProfile.NONE
+        ),
     ) -> None:
         """Validate two distinct literal-loopback ports without binding."""
         for value in (listen_port, upstream_port):
@@ -85,6 +102,9 @@ class CountingRobotWebProxy:
         self._upstream_port = upstream_port
         self._timeout_seconds = float(timeout_seconds)
         self._expected_preview_digest = expected_preview_digest
+        self._execution_profile = coerce_execution_profile(
+            execution_profile
+        )
         self._lock = threading.Lock()
         self._handler_condition = threading.Condition()
         self._active_handler_count = 0
@@ -99,7 +119,12 @@ class CountingRobotWebProxy:
             '/api/navigation/start': 0,
             '/api/navigation/cancel': 0,
             'verified-preview': 0,
+            'start-forward': 0,
+            'start-response-drop': 0,
+            'terminal-status-response-drop': 0,
+            'unavailable-endpoint': 0,
         }
+        self._accepted_start_observed = False
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -149,6 +174,16 @@ class CountingRobotWebProxy:
                 start_count=self._counts['/api/navigation/start'],
                 cancel_count=self._counts['/api/navigation/cancel'],
                 verified_preview_count=self._counts['verified-preview'],
+                start_forward_count=self._counts['start-forward'],
+                start_response_drop_count=(
+                    self._counts['start-response-drop']
+                ),
+                terminal_status_response_drop_count=(
+                    self._counts['terminal-status-response-drop']
+                ),
+                unavailable_endpoint_count=(
+                    self._counts['unavailable-endpoint']
+                ),
             )
 
     def close(self, timeout_seconds: float = 10.0) -> bool:
@@ -206,13 +241,66 @@ class CountingRobotWebProxy:
         with self._lock:
             self._counts[path] += 1
 
+    def _observe_response(
+        self,
+        path: str,
+        status: int,
+        payload: bytes,
+    ) -> bool:
+        """Record bounded fault observations and claim one response drop."""
+        terminal_status = bool(
+            path == '/api/robot/status'
+            and status == 200
+            and _is_terminal_status_payload(payload)
+        )
+        unavailable_endpoint = bool(
+            path == '/api/navigation/start'
+            and status == 503
+            and _has_error_code(
+                payload,
+                'NAV2_ACTION_UNAVAILABLE',
+            )
+        )
+        with self._lock:
+            if (
+                unavailable_endpoint
+                and self._execution_profile
+                is TextGazeboExecutionProfile.NAV2_UNAVAILABLE
+                and self._counts['unavailable-endpoint'] == 0
+            ):
+                # Preserve the exact upstream rejection as independent
+                # evidence, but make the product-side outcome ambiguous.  A
+                # caller must reconcile rather than turn this observed 503
+                # into a deterministic FAILED result or resend the command.
+                self._counts['unavailable-endpoint'] = 1
+                return True
+            if path == '/api/navigation/start' and status == 202:
+                self._accepted_start_observed = True
+                if (
+                    self._execution_profile
+                    is TextGazeboExecutionProfile.START_RESPONSE_LOST
+                    and self._counts['start-response-drop'] == 0
+                ):
+                    self._counts['start-response-drop'] = 1
+                    return True
+            if (
+                terminal_status
+                and self._accepted_start_observed
+                and self._execution_profile
+                is TextGazeboExecutionProfile.TERMINAL_STATUS_RESPONSE_LOST
+                and self._counts['terminal-status-response-drop'] == 0
+            ):
+                self._counts['terminal-status-response-drop'] = 1
+                return True
+        return False
+
     def _forward(
         self,
         method: str,
         path: str,
         body: bytes | None,
         incoming_headers,
-    ) -> tuple[int, list[tuple[str, str]], bytes]:
+    ) -> tuple[int, list[tuple[str, str]], bytes, bool]:
         preview_verified = False
         if (
             path == '/api/navigation/preview'
@@ -245,6 +333,8 @@ class CountingRobotWebProxy:
             self._active_upstream_connections.add(connection)
         try:
             connection.request(method, path, body=body, headers=headers)
+            if path == '/api/navigation/start':
+                self._increment('start-forward')
             response = connection.getresponse()
             declared = response.getheader('Content-Length')
             if declared is not None:
@@ -266,7 +356,12 @@ class CountingRobotWebProxy:
             ]
             if preview_verified and response.status == 200:
                 self._increment('verified-preview')
-            return response.status, selected_headers, payload
+            drop_response = self._observe_response(
+                path,
+                response.status,
+                payload,
+            )
+            return response.status, selected_headers, payload, drop_response
         finally:
             connection.close()
             with self._handler_condition:
@@ -328,11 +423,13 @@ class _RobotWebProxyHandler(BaseHTTPRequestHandler):
 
     def _relay(self, method: str, body: bytes | None) -> None:
         try:
-            status, headers, payload = self.proxy_owner._forward(
-                method,
-                self.path,
-                body,
-                self.headers,
+            status, headers, payload, drop_response = (
+                self.proxy_owner._forward(
+                    method,
+                    self.path,
+                    body,
+                    self.headers,
+                )
             )
         except (
             ConnectionError,
@@ -342,6 +439,9 @@ class _RobotWebProxyHandler(BaseHTTPRequestHandler):
             RuntimeError,
         ):
             self._safe_error(502, 'PROXY_UPSTREAM_UNAVAILABLE')
+            return
+        if drop_response:
+            self.close_connection = True
             return
         self.send_response(status)
         for name, value in headers:
@@ -421,6 +521,87 @@ def request_body_digest(body: bytes) -> str:
     ) as error:
         raise ValueError('request body is invalid') from error
     return hashlib.sha256(canonical).hexdigest()
+
+
+def _is_terminal_status_payload(payload: bytes) -> bool:
+    """Inspect one bounded status response without retaining its content."""
+    if not isinstance(payload, bytes) or not 1 <= len(payload) <= (
+        _MAX_BODY_BYTES
+    ):
+        return False
+
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if type(key) is not str or key in value:
+                raise ValueError('status response is ambiguous')
+            value[key] = item
+        return value
+
+    def reject_constant(_value):
+        raise ValueError('status response is ambiguous')
+
+    try:
+        value = json.loads(
+            payload.decode('utf-8', errors='strict'),
+            object_pairs_hook=unique_object,
+            parse_constant=reject_constant,
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ):
+        return False
+    if type(value) is not dict:
+        return False
+    navigation = value.get('navigation')
+    if type(navigation) is not dict:
+        return False
+    state = navigation.get('state')
+    return type(state) is str and state in _TERMINAL_NAVIGATION_STATES
+
+
+def _has_error_code(payload: bytes, expected_code: str) -> bool:
+    """Recognize one exact bounded Robot Web error without retaining it."""
+    if (
+        not isinstance(payload, bytes)
+        or not 1 <= len(payload) <= _MAX_BODY_BYTES
+        or type(expected_code) is not str
+        or not expected_code
+    ):
+        return False
+
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if type(key) is not str or key in value:
+                raise ValueError('error response is ambiguous')
+            value[key] = item
+        return value
+
+    def reject_constant(_value):
+        raise ValueError('error response is ambiguous')
+
+    try:
+        value = json.loads(
+            payload.decode('utf-8', errors='strict'),
+            object_pairs_hook=unique_object,
+            parse_constant=reject_constant,
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ):
+        return False
+    return bool(
+        type(value) is dict
+        and type(value.get('error_code')) is str
+        and value['error_code'] == expected_code
+    )
 
 
 __all__ = [

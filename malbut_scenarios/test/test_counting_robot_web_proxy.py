@@ -17,6 +17,9 @@ from malbut_scenarios.counting_robot_web_proxy import (
     is_literal_loopback_origin,
     request_body_digest,
 )
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboExecutionProfile,
+)
 
 
 class _UpstreamRecorder:
@@ -123,12 +126,14 @@ def _running_proxy(
     *,
     timeout_seconds=1.0,
     expected_preview_digest=None,
+    execution_profile=TextGazeboExecutionProfile.NONE,
 ):
     proxy = CountingRobotWebProxy(
         _unused_loopback_port(),
         upstream_port,
         timeout_seconds=timeout_seconds,
         expected_preview_digest=expected_preview_digest,
+        execution_profile=execution_profile,
     )
     proxy.start()
     try:
@@ -219,6 +224,7 @@ def test_fixed_surface_forwards_and_counts_every_allowed_path_once() -> None:
                 preview_count=1,
                 start_count=1,
                 cancel_count=1,
+                start_forward_count=1,
             )
         assert [(call[0], call[1]) for call in recorder.calls] == [
             ('GET', '/api/editor-config'),
@@ -751,6 +757,215 @@ def test_exact_preview_is_verified_only_after_upstream_200() -> None:
     assert after_acceptance.preview_count == 2
     assert after_acceptance.verified_preview_count == 1
     assert [call[3] for call in recorder.calls] == [body, body]
+
+
+@pytest.mark.parametrize(
+    'profile',
+    ('start_timeout', 'drop_all', '', 1, True),
+)
+def test_constructor_rejects_unknown_execution_profile(profile) -> None:
+    """Only exact allowlisted execution profiles can arm a proxy fault."""
+    with pytest.raises(ValueError, match='execution profile'):
+        CountingRobotWebProxy(
+            18080,
+            18081,
+            execution_profile=profile,
+        )
+
+
+def test_nav2_unavailable_profile_observes_and_drops_exact_error() -> None:
+    """Observe one exact upstream 503 while leaving Agent outcome unknown."""
+    with _fake_upstream() as (upstream_port, recorder):
+        recorder.status = 503
+        recorder.body = b'{"error_code":"NAV2_ACTION_UNAVAILABLE"}'
+        with _running_proxy(
+            upstream_port,
+            execution_profile=TextGazeboExecutionProfile.NAV2_UNAVAILABLE,
+        ) as proxy:
+            with pytest.raises(http.client.RemoteDisconnected):
+                _request(
+                    proxy,
+                    'POST',
+                    '/api/navigation/start',
+                    body=b'{}',
+                )
+
+            # The evidence/drop is one-shot.  A prohibited caller retry is
+            # still forwarded and counted, so acceptance cannot fabricate a
+            # pass from repeated attempts.
+            status, _, payload = _request(
+                proxy,
+                'POST',
+                '/api/navigation/start',
+                body=b'{}',
+            )
+            counts = proxy.snapshot()
+
+    assert status == 503
+    assert json.loads(payload) == {
+        'error_code': 'NAV2_ACTION_UNAVAILABLE',
+    }
+    assert counts.start_count == 2
+    assert counts.start_forward_count == 2
+    assert counts.start_response_drop_count == 0
+    assert counts.terminal_status_response_drop_count == 0
+    assert counts.unavailable_endpoint_count == 1
+
+
+@pytest.mark.parametrize(
+    'profile,status,body',
+    (
+        (
+            TextGazeboExecutionProfile.NONE,
+            503,
+            b'{"error_code":"NAV2_ACTION_UNAVAILABLE"}',
+        ),
+        (
+            TextGazeboExecutionProfile.NAV2_UNAVAILABLE,
+            504,
+            b'{"error_code":"NAV2_ACTION_UNAVAILABLE"}',
+        ),
+        (
+            TextGazeboExecutionProfile.NAV2_UNAVAILABLE,
+            503,
+            b'{"error_code":"NAV2_NOT_ACTIVE"}',
+        ),
+        (
+            TextGazeboExecutionProfile.NAV2_UNAVAILABLE,
+            503,
+            b'{"error_code":"NAV2_ACTION_UNAVAILABLE",'
+            b'"error_code":"NAV2_ACTION_UNAVAILABLE"}',
+        ),
+    ),
+)
+def test_unavailable_endpoint_count_rejects_inexact_observations(
+    profile,
+    status,
+    body,
+) -> None:
+    """Wrong profile, status, code, or ambiguous JSON cannot seal a fault."""
+    with _fake_upstream() as (upstream_port, recorder):
+        recorder.status = status
+        recorder.body = body
+        with _running_proxy(
+            upstream_port,
+            execution_profile=profile,
+        ) as proxy:
+            observed_status, _, observed_body = _request(
+                proxy,
+                'POST',
+                '/api/navigation/start',
+                body=b'{}',
+            )
+            counts = proxy.snapshot()
+
+    assert observed_status == status
+    assert observed_body == body
+    assert counts.start_count == 1
+    assert counts.start_forward_count == 1
+    assert counts.unavailable_endpoint_count == 0
+
+
+def test_start_response_loss_requires_202_and_is_one_shot() -> None:
+    """Drop only one downstream reply after upstream accepted the start."""
+    with _fake_upstream() as (upstream_port, recorder):
+        with _running_proxy(
+            upstream_port,
+            execution_profile=(
+                TextGazeboExecutionProfile.START_RESPONSE_LOST
+            ),
+        ) as proxy:
+            recorder.status = 200
+            ordinary_status, _, _ = _request(
+                proxy,
+                'POST',
+                '/api/navigation/start',
+                body=b'{}',
+            )
+
+            recorder.status = 202
+            recorder.body = b'{"state":"driving"}'
+            with pytest.raises(http.client.RemoteDisconnected):
+                _request(
+                    proxy,
+                    'POST',
+                    '/api/navigation/start',
+                    body=b'{}',
+                )
+
+            repeated_status, _, repeated_payload = _request(
+                proxy,
+                'POST',
+                '/api/navigation/start',
+                body=b'{}',
+            )
+            counts = proxy.snapshot()
+
+    assert ordinary_status == 200
+    assert repeated_status == 202
+    assert json.loads(repeated_payload) == {'state': 'driving'}
+    assert counts.start_count == 3
+    assert counts.start_forward_count == 3
+    assert counts.start_response_drop_count == 1
+    assert counts.terminal_status_response_drop_count == 0
+
+
+def test_terminal_loss_requires_start_and_is_one_shot() -> None:
+    """Drop one exact terminal status only after an accepted start."""
+    with _fake_upstream() as (upstream_port, recorder):
+        with _running_proxy(
+            upstream_port,
+            execution_profile=(
+                TextGazeboExecutionProfile.TERMINAL_STATUS_RESPONSE_LOST
+            ),
+        ) as proxy:
+            recorder.status = 200
+            recorder.body = b'{"navigation":{"state":"succeeded"}}'
+            before_start, _, _ = _request(
+                proxy,
+                'GET',
+                '/api/robot/status',
+            )
+
+            recorder.status = 202
+            recorder.body = b'{"state":"driving"}'
+            start_status, _, _ = _request(
+                proxy,
+                'POST',
+                '/api/navigation/start',
+                body=b'{}',
+            )
+
+            recorder.status = 200
+            recorder.body = b'{"navigation":{"state":"driving"}}'
+            driving_status, _, _ = _request(
+                proxy,
+                'GET',
+                '/api/robot/status',
+            )
+
+            recorder.body = b'{"navigation":{"state":"succeeded"}}'
+            with pytest.raises(http.client.RemoteDisconnected):
+                _request(proxy, 'GET', '/api/robot/status')
+            repeated_status, _, repeated_payload = _request(
+                proxy,
+                'GET',
+                '/api/robot/status',
+            )
+            counts = proxy.snapshot()
+
+    assert before_start == 200
+    assert start_status == 202
+    assert driving_status == 200
+    assert repeated_status == 200
+    assert json.loads(repeated_payload) == {
+        'navigation': {'state': 'succeeded'},
+    }
+    assert counts.status_count == 4
+    assert counts.start_count == 1
+    assert counts.start_forward_count == 1
+    assert counts.start_response_drop_count == 0
+    assert counts.terminal_status_response_drop_count == 1
 
 
 @pytest.mark.parametrize(
