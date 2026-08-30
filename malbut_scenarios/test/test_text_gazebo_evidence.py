@@ -17,6 +17,7 @@ from malbut_scenarios.text_gazebo_evidence import (
     DispatchState,
     EvidenceCounts,
     EvidenceDurations,
+    ExecutionFaultObservation,
     NavigationState,
     PressureEvidence,
     ProductOutcome,
@@ -27,11 +28,13 @@ from malbut_scenarios.text_gazebo_evidence import (
     TestStatus,
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
+    execution_fault_observation_for,
     pressure_evidence_for,
     safety_fault_observation_for,
     write_evidence_manifest,
 )
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboExecutionProfile,
     TextGazeboFaultProfile,
     TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
@@ -114,6 +117,8 @@ def test_receipt_schema_is_fixed_canonical_and_digest_bound() -> None:
         'commit',
         'counts',
         'durations',
+        'execution_fault_observation',
+        'execution_profile',
         'fault_profile',
         'fault_observation',
         'goal_set_digest',
@@ -130,13 +135,23 @@ def test_receipt_schema_is_fixed_canonical_and_digest_bound() -> None:
         'states',
         'target_binding_digest',
         'test_status',
+        'unknown_result_code',
     }
     assert receipt_value['simulation'] is True
     assert receipt_value['physical_authorized'] is False
     assert receipt_value['states']['navigation'] == 'succeeded'
+    assert receipt_value['counts']['robot_web_start_count'] == 1
     assert receipt_value['counts']['nav2_goal_count'] == 1
+    assert receipt_value['execution_fault_observation'] == {
+        'fault_application_count': 0,
+        'observed': False,
+        'start_forward_count': 0,
+        'start_response_drop_count': 0,
+        'terminal_status_response_drop_count': 0,
+        'unavailable_endpoint_count': 0,
+    }
     assert manifest_value == {
-        'format': 'malbut.text-gazebo-e2e-evidence.v5',
+        'format': 'malbut.text-gazebo-e2e-evidence.v6',
         'receipt': receipt_value,
         'receipt_digest': receipt.digest(),
     }
@@ -169,6 +184,7 @@ def test_public_api_has_no_private_content_fields() -> None:
         EvidenceCounts,
         PressureEvidence,
         SafetyFaultObservation,
+        ExecutionFaultObservation,
         EvidenceDurations,
         CleanupEvidence,
     )
@@ -247,6 +263,9 @@ def test_typed_states_reject_arbitrary_strings() -> None:
 
     with pytest.raises(TypeError, match='TextGazeboScenarioProfile'):
         _receipt(scenario_profile='happy_path')
+
+    with pytest.raises(TypeError, match='TextGazeboExecutionProfile'):
+        _receipt(execution_profile='none')
 
 
 @pytest.mark.parametrize(
@@ -421,6 +440,196 @@ def test_blocked_receipt_rejects_mismatched_or_effectful_claims(
 
     with pytest.raises(ValueError, match=match):
         _receipt(**values)
+
+
+def _unknown_states(navigation: NavigationState) -> StableStates:
+    return StableStates(
+        readiness=ReadinessState.READY,
+        confirmation=ConfirmationState.APPROVED,
+        robot_action=RobotActionState.UNKNOWN,
+        dispatch=DispatchState.UNKNOWN,
+        navigation=navigation,
+    )
+
+
+def _unknown_counts(goal_count: int, terminal_count: int) -> EvidenceCounts:
+    return EvidenceCounts(
+        agent_proposal_count=1,
+        confirmation_count=1,
+        approved_confirmation_count=1,
+        robot_action_count=1,
+        dispatch_intent_count=1,
+        robot_web_start_count=1,
+        robot_web_verified_target_count=1,
+        nav2_goal_count=goal_count,
+        preapproval_nav2_goal_count=0,
+        terminal_result_count=terminal_count,
+        replay_additional_effect_count=0,
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        'profile,result_code,navigation,goal_count,terminal_count,'
+        'start_drop,status_drop,unavailable'
+    ),
+    (
+        (
+            TextGazeboExecutionProfile.NAV2_UNAVAILABLE,
+            'navigation_start_outcome_unknown',
+            NavigationState.NOT_STARTED,
+            0,
+            0,
+            0,
+            0,
+            1,
+        ),
+        (
+            TextGazeboExecutionProfile.START_RESPONSE_LOST,
+            'navigation_start_outcome_unknown',
+            NavigationState.SUCCEEDED,
+            1,
+            1,
+            1,
+            0,
+            0,
+        ),
+        (
+            TextGazeboExecutionProfile.TERMINAL_STATUS_RESPONSE_LOST,
+            'navigation_status_outcome_unknown',
+            NavigationState.SUCCEEDED,
+            1,
+            1,
+            0,
+            1,
+            0,
+        ),
+    ),
+)
+def test_unknown_product_is_separate_from_independent_navigation(
+    profile,
+    result_code,
+    navigation,
+    goal_count,
+    terminal_count,
+    start_drop,
+    status_drop,
+    unavailable,
+) -> None:
+    observation = execution_fault_observation_for(profile)
+    receipt = _receipt(
+        execution_profile=profile,
+        product_outcome=ProductOutcome.UNKNOWN,
+        unknown_result_code=result_code,
+        execution_fault_observation=observation,
+        states=_unknown_states(navigation),
+        counts=_unknown_counts(goal_count, terminal_count),
+    )
+
+    value = receipt.as_dict()
+    assert value['product_outcome'] == 'unknown'
+    assert value['unknown_result_code'] == result_code
+    assert value['execution_profile'] == profile.value
+    assert value['states']['robot_action'] == 'unknown'
+    assert value['states']['dispatch'] == 'unknown'
+    assert value['states']['navigation'] == navigation.value
+    assert value['counts']['robot_web_start_count'] == 1
+    assert value['counts']['nav2_goal_count'] == goal_count
+    assert value['counts']['terminal_result_count'] == terminal_count
+    assert value['counts']['replay_additional_effect_count'] == 0
+    assert value['execution_fault_observation'] == observation.as_dict()
+    assert observation.as_dict() == {
+        'fault_application_count': 1,
+        'observed': True,
+        'start_forward_count': 1,
+        'start_response_drop_count': start_drop,
+        'terminal_status_response_drop_count': status_drop,
+        'unavailable_endpoint_count': unavailable,
+    }
+
+
+@pytest.mark.parametrize(
+    'changes,match',
+    (
+        (
+            {'unknown_result_code': 'wrong_result'},
+            'unknown result code',
+        ),
+        (
+            {
+                'execution_fault_observation': ExecutionFaultObservation(
+                    observed=False,
+                    fault_application_count=1,
+                    start_forward_count=1,
+                    start_response_drop_count=1,
+                    terminal_status_response_drop_count=0,
+                    unavailable_endpoint_count=0,
+                ),
+            },
+            'execution fault observation',
+        ),
+        (
+            {'counts': _unknown_counts(0, 0)},
+            'no-resend counts',
+        ),
+        (
+            {'states': _unknown_states(NavigationState.UNKNOWN)},
+            'independent navigation states',
+        ),
+        (
+            {
+                'safety_profile': TextGazeboSafetyProfile.STALE_STATE,
+                'block_result_code': 'robot_state_stale',
+                'fault_observation': safety_fault_observation_for(
+                    TextGazeboSafetyProfile.STALE_STATE
+                ),
+            },
+            'one execution profile only',
+        ),
+        (
+            {
+                'fault_profile': TextGazeboFaultProfile.DUPLICATE_REQUEST,
+                'pressure': pressure_evidence_for(
+                    TextGazeboFaultProfile.DUPLICATE_REQUEST
+                ),
+            },
+            'one execution profile only',
+        ),
+        (
+            {'product_outcome': ProductOutcome.SUCCEEDED},
+            'Safety or execution fault',
+        ),
+    ),
+)
+def test_unknown_receipt_rejects_malformed_or_mixed_claims(
+    changes,
+    match,
+) -> None:
+    values = {
+        'execution_profile': TextGazeboExecutionProfile.START_RESPONSE_LOST,
+        'product_outcome': ProductOutcome.UNKNOWN,
+        'unknown_result_code': 'navigation_start_outcome_unknown',
+        'execution_fault_observation': execution_fault_observation_for(
+            TextGazeboExecutionProfile.START_RESPONSE_LOST
+        ),
+        'states': _unknown_states(NavigationState.SUCCEEDED),
+        'counts': _unknown_counts(1, 1),
+    }
+    values.update(changes)
+
+    with pytest.raises(ValueError, match=match):
+        _receipt(**values)
+
+
+@pytest.mark.parametrize('value', (True, -1, 1.5, 1_000_001))
+def test_execution_fault_observation_rejects_invalid_counts(value) -> None:
+    with pytest.raises(ValueError, match='bounded non-negative integer'):
+        replace(
+            execution_fault_observation_for(
+                TextGazeboExecutionProfile.START_RESPONSE_LOST
+            ),
+            start_response_drop_count=value,
+        )
 
 
 @pytest.mark.parametrize(

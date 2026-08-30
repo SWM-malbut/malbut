@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from malbut_scenarios import text_gazebo_campaign_runtime as runtime
-from malbut_scenarios.text_gazebo_campaign_core import SafetyBlockCode
+from malbut_scenarios.text_gazebo_campaign_core import (
+    SafetyBlockCode,
+    UnknownResultCode,
+)
 from malbut_scenarios.owned_process import (
     ProcessCleanupEvidence,
     ProcessOutputEvidence,
@@ -27,14 +30,17 @@ from malbut_scenarios.text_gazebo_evidence import (
     TestStatus,
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
+    execution_fault_observation_for,
     pressure_evidence_for,
     safety_fault_observation_for,
     write_evidence_manifest,
 )
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboExecutionProfile,
     TextGazeboFaultProfile,
     TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
+    execution_contract,
     safety_contract,
 )
 
@@ -313,6 +319,48 @@ def _blocked_manifest(safety_profile):
     )
 
 
+def _unknown_manifest(execution_profile):
+    contract = execution_contract(execution_profile)
+    goal_count = contract.expected_nav2_goal_count
+    return _manifest(
+        scenario_profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        execution_profile=execution_profile,
+        product_outcome=ChildProductOutcome.UNKNOWN,
+        test_status=TestStatus.PASSED,
+        unknown_result_code=contract.result_code,
+        execution_fault_observation=(
+            execution_fault_observation_for(execution_profile)
+        ),
+        goal_set_digest=(
+            _EMPTY_GOAL_SET_DIGEST if goal_count == 0 else '5' * 64
+        ),
+        states=StableStates(
+            readiness=ReadinessState.READY,
+            confirmation=ConfirmationState.APPROVED,
+            robot_action=RobotActionState.UNKNOWN,
+            dispatch=DispatchState.UNKNOWN,
+            navigation=(
+                NavigationState.NOT_STARTED
+                if goal_count == 0
+                else NavigationState.SUCCEEDED
+            ),
+        ),
+        counts=EvidenceCounts(
+            agent_proposal_count=1,
+            confirmation_count=1,
+            approved_confirmation_count=1,
+            robot_action_count=1,
+            dispatch_intent_count=1,
+            robot_web_start_count=1,
+            robot_web_verified_target_count=1,
+            nav2_goal_count=goal_count,
+            preapproval_nav2_goal_count=0,
+            terminal_result_count=contract.expected_nav2_terminal_count,
+            replay_additional_effect_count=0,
+        ),
+    )
+
+
 def _summary(manifest=None):
     selected = manifest if manifest is not None else _manifest()
     return runtime.parse_child_manifest(
@@ -322,6 +370,7 @@ def _summary(manifest=None):
 
 def _check_payload(**changes):
     value = {
+        'execution_profile': 'none',
         'fault_profile': 'none',
         'installed_digest': _INSTALLED_DIGEST,
         'mode': 'check',
@@ -499,6 +548,8 @@ def test_success_uses_exact_installed_argv_sanitized_env_and_v5_evidence(
         'none',
         '--safety-profile',
         'none',
+        '--execution-profile',
+        'none',
         '--source-commit',
         _COMMIT,
         '--source-tree',
@@ -602,6 +653,53 @@ def test_child_safety_profile_mismatch_is_fail_closed_after_cleanup(
         _runner(_config(prefix, source), _Clock()).run(request)
 
     assert _FakePopenOwner.instances[0].stopped is True
+
+
+@pytest.mark.parametrize(
+    'execution_profile,result_code',
+    (
+        (
+            TextGazeboExecutionProfile.NAV2_UNAVAILABLE,
+            UnknownResultCode.NAVIGATION_START_OUTCOME_UNKNOWN,
+        ),
+        (
+            TextGazeboExecutionProfile.START_RESPONSE_LOST,
+            UnknownResultCode.NAVIGATION_START_OUTCOME_UNKNOWN,
+        ),
+        (
+            TextGazeboExecutionProfile.TERMINAL_STATUS_RESPONSE_LOST,
+            UnknownResultCode.NAVIGATION_STATUS_OUTCOME_UNKNOWN,
+        ),
+    ),
+)
+def test_unknown_execution_result_is_forwarded_and_preserved(
+    tmp_path,
+    execution_profile,
+    result_code,
+) -> None:
+    prefix, source, evidence_parent = _layout(tmp_path)
+    request = _request(
+        evidence_parent,
+        scenario_profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        execution_profile=execution_profile,
+    )
+    manifest = _unknown_manifest(execution_profile)
+    _FakePopenOwner.on_start = lambda _owner: write_evidence_manifest(
+        request.evidence_path,
+        manifest,
+    )
+
+    result = _runner(_config(prefix, source), _Clock()).run(request)
+    owner = _FakePopenOwner.instances[0]
+
+    index = owner.argv.index('--execution-profile')
+    assert owner.argv[index + 1] == execution_profile.value
+    assert result.product_outcome is runtime.ProductOutcome.UNKNOWN
+    assert result.unknown_result_code is result_code
+    assert result.exact_success is False
+    assert result.execution_fault_observation == (
+        execution_fault_observation_for(execution_profile)
+    )
 
 
 def test_child_profile_mismatch_is_fail_closed_after_cleanup(tmp_path):

@@ -109,9 +109,16 @@ class _FollowClient:
 class _CountingNavigationClient:
     """Count forbidden physical goal attempts in fail-closed tests."""
 
-    def __init__(self):
+    def __init__(self, *, ready=True):
         """Create a client with no goal attempts."""
+        self.ready = ready
+        self.readiness_calls = 0
         self.send_calls = 0
+
+    def server_is_ready(self):
+        """Expose one explicit action-server readiness observation."""
+        self.readiness_calls += 1
+        return self.ready
 
     def send_goal_async(self, *_args, **_kwargs):
         """Record an unexpected attempt without contacting ROS."""
@@ -342,6 +349,67 @@ def test_planning_safety_loss_blocks_final_goal_send(monkeypatch):
         bridge.start({"preview_token": "valid"}, "session")
 
     assert caught.value.code == "NAV2_NOT_ACTIVE"
+    assert bridge.navigate.send_calls == 0
+    assert bridge.previews["valid"].used is False
+
+
+def test_unavailable_navigation_action_fails_before_goal_send(monkeypatch):
+    """Return exact 503 evidence without attempting an unavailable action."""
+    bridge = object.__new__(RobotWebBridge)
+    bridge.lock = Lock()
+    bridge.operation_lock = Lock()
+    bridge.lifecycle = {
+        "amcl": "active",
+        "collision_monitor": "active",
+        "controller_server": "active",
+    }
+    bridge.localization = {"state": "ok", "tf_age_s": 0.02}
+    bridge.pose = {"x": 0.0, "y": 0.0, "yaw": 0.0}
+    bridge.navigation_state = {"state": "idle"}
+    bridge._require_autonomous_idle = lambda: None
+    bridge.navigate = _CountingNavigationClient(ready=False)
+    bridge.map_revision = "rev-current"
+    goal = PoseStamped()
+    path = NavPath()
+    path.poses = [PoseStamped()]
+    bridge.previews = {
+        "valid": PreviewRecord(
+            session_id="session",
+            expires_at=time.monotonic() + 30.0,
+            map_revision="rev-current",
+            zone_revision="zone-current",
+            user_map_digest=None,
+            goal=goal,
+            path=path,
+            response={"resolved": {"x": 0.0, "y": 0.0}},
+        )
+    }
+    bridge._load_zones = lambda: ([], "zone-current")
+    bridge._load_user_map_snapshot = lambda: ({}, None)
+    bridge._costmap = lambda: object()
+    bridge._floor_geometry = lambda _user_map: object()
+    bridge._static_clearance_for = lambda _grid: object()
+    bridge._resolve_goal = lambda *_args: ((0.0, 0.0), 0.0, 0)
+    bridge._plan = lambda _goal: path
+    monkeypatch.setattr(
+        robot_web_server_module, "_path_max_cost", lambda *_args: 0
+    )
+    monkeypatch.setattr(
+        robot_web_server_module, "_path_min_clearance", lambda *_args: 1.0
+    )
+    monkeypatch.setattr(
+        robot_web_server_module, "_path_length", lambda *_args: 1.0
+    )
+    monkeypatch.setattr(
+        robot_web_server_module, "_decimate_path", lambda *_args: []
+    )
+
+    with pytest.raises(NavigationError) as caught:
+        bridge.start({"preview_token": "valid"}, "session")
+
+    assert caught.value.status == 503
+    assert caught.value.code == "NAV2_ACTION_UNAVAILABLE"
+    assert bridge.navigate.readiness_calls == 1
     assert bridge.navigate.send_calls == 0
     assert bridge.previews["valid"].used is False
 

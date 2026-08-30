@@ -139,6 +139,7 @@ class _InstalledCampaignExecutor:
         scenario_profile = binding.scenario_profile
         fault_profile = binding.fault_profile
         safety_profile = binding.safety_profile
+        execution_profile = binding.execution_profile
         try:
             candidate = self._runner.run(TextGazeboCampaignRunRequest(
                 ros_domain_id=self._ros_domain_id,
@@ -146,6 +147,7 @@ class _InstalledCampaignExecutor:
                 scenario_profile=scenario_profile,
                 fault_profile=fault_profile,
                 safety_profile=safety_profile,
+                execution_profile=execution_profile,
                 gui=self._gui,
             ))
             if (
@@ -153,10 +155,13 @@ class _InstalledCampaignExecutor:
                 or candidate.scenario_profile is not scenario_profile
                 or candidate.fault_profile is not fault_profile
                 or candidate.safety_profile is not safety_profile
+                or candidate.execution_profile is not execution_profile
                 or candidate.product_outcome.value
                 != binding.expected_outcome.value
                 or candidate.block_result_code
                 is not binding.expected_block_code
+                or candidate.unknown_result_code
+                is not binding.expected_unknown_result_code
             ):
                 raise TextGazeboCampaignCLIError(
                     'campaign_unexpected_failure'
@@ -175,6 +180,7 @@ class _InstalledCampaignExecutor:
                 ),
                 evidence_digest=result.manifest_digest,
                 observed_block_code=result.block_result_code,
+                observed_unknown_result_code=result.unknown_result_code,
             )
         finally:
             elapsed = max(0.0, self._monotonic() - started)
@@ -336,6 +342,9 @@ def _cases(profile_values: Sequence[str]) -> tuple[CampaignCase, ...]:
                 profile=profile,
                 expected_outcome=binding.expected_outcome,
                 expected_block_code=binding.expected_block_code,
+                expected_unknown_result_code=(
+                    binding.expected_unknown_result_code
+                ),
             ))
     except (KeyError, TypeError, ValueError):
         raise TextGazeboCampaignCLIError(
@@ -445,6 +454,12 @@ def _case_evidence(
         cleanup=CaseCleanupState(result.cleanup.value),
         expected_block_code=result.expected_block_code,
         observed_block_code=result.observed_block_code,
+        expected_unknown_result_code=(
+            result.expected_unknown_result_code
+        ),
+        observed_unknown_result_code=(
+            result.observed_unknown_result_code
+        ),
     )
 
 

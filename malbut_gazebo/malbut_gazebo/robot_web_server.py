@@ -2045,6 +2045,16 @@ class RobotWebBridge(Node):
                         "NAVIGATION_IN_PROGRESS",
                         "이미 이동 또는 취소 처리 중입니다.",
                     )
+            # The action endpoint is mutable runtime state too.  Check it at
+            # the final effect boundary so an unavailable server produces an
+            # exact, observable rejection before ``send_goal_async`` can
+            # create an ambiguous ROS goal attempt.
+            if not self.navigate.server_is_ready():
+                raise NavigationError(
+                    503,
+                    "NAV2_ACTION_UNAVAILABLE",
+                    "Nav2 주행 action server가 준비되지 않았습니다.",
+                )
             send_future = self.navigate.send_goal_async(
                 goal, feedback_callback=self._navigation_feedback
             )
