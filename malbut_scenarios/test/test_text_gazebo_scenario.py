@@ -6,10 +6,13 @@ import pytest
 
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
     coerce_fault_profile,
+    coerce_safety_profile,
     coerce_scenario_profile,
     pressure_contract,
+    safety_contract,
     scenario_spec,
 )
 
@@ -83,3 +86,33 @@ def test_fault_profiles_have_exact_pressure_contracts(
 def test_unknown_fault_profile_is_rejected(value) -> None:
     with pytest.raises(ValueError):
         coerce_fault_profile(value)
+
+
+@pytest.mark.parametrize(
+    'profile,result_code,fault_count,map_switch_count',
+    (
+        ('none', None, 0, 0),
+        ('stale_state', 'robot_state_stale', 1, 0),
+        ('emergency_stop', 'safety_emergency_stop', 1, 0),
+        ('map_revision_changed', 'target_binding_changed', 1, 1),
+    ),
+)
+def test_safety_profiles_have_exact_blocking_contracts(
+    profile,
+    result_code,
+    fault_count,
+    map_switch_count,
+) -> None:
+    selected = coerce_safety_profile(profile)
+    contract = safety_contract(selected)
+
+    assert selected is TextGazeboSafetyProfile(profile)
+    assert contract.result_code == result_code
+    assert contract.fault_application_count == fault_count
+    assert contract.map_switch_count == map_switch_count
+
+
+@pytest.mark.parametrize('value', ('stale', 'e_stop', 'map', '', 1))
+def test_unknown_safety_profile_is_rejected(value) -> None:
+    with pytest.raises(ValueError):
+        coerce_safety_profile(value)

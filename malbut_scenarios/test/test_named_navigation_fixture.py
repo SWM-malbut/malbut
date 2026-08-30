@@ -20,6 +20,8 @@ from malbut_gazebo.zone_filter_mask import build_filter_mask, load_zones
 from malbut_scenarios.named_navigation_fixture import (
     FIXTURE_DEVICE_ID,
     NamedNavigationFixtureError,
+    SWM25_137_ALTERNATE_ACTIVE_FILENAME,
+    activate_swm25_137_alternate_revision,
     prepare_small_house_named_navigation_fixture,
 )
 from malbut_scenarios.scenario_config import load_room_routes
@@ -222,6 +224,42 @@ def test_fixture_targets_have_model_anchors_and_safe_target_cells(tmp_path):
             (waypoint.x, waypoint.y) == spec.point
             for waypoint in target_route.waypoints
         )
+
+
+def test_fixture_has_one_valid_atomic_map_revision_change(tmp_path):
+    """Provide a real alternate binding without editing checked-in assets."""
+    destination = tmp_path / "private-store"
+    result = _prepare(destination)
+    source = ActiveMapCatalogSource(destination, FIXTURE_DEVICE_ID)
+    before_catalog = source.load()
+    before_target = before_catalog.resolve("거실")
+    alternate_authority = (
+        destination / SWM25_137_ALTERNATE_ACTIVE_FILENAME
+    )
+
+    assert Path(result["alternate_active_path"]) == alternate_authority
+    assert alternate_authority.stat().st_mode & 0o777 == 0o400
+
+    activate_swm25_137_alternate_revision(destination)
+
+    after_catalog = source.load()
+    after_target = after_catalog.resolve("거실")
+    assert after_catalog.map_id == before_catalog.map_id
+    assert after_catalog.map_revision != before_catalog.map_revision
+    assert after_target.binding_digest != before_target.binding_digest
+    assert after_target.room_name == before_target.room_name == "거실"
+    assert after_target.room_category == before_target.room_category
+    assert (after_target.x, after_target.y) == (
+        before_target.x,
+        before_target.y,
+    )
+    assert (destination / "active.json").stat().st_mode & 0o777 == 0o400
+
+    with pytest.raises(
+        NamedNavigationFixtureError,
+        match="alternate fixture binding is invalid",
+    ):
+        activate_swm25_137_alternate_revision(destination)
 
 
 def test_fixture_fails_closed_when_a_target_is_outside_the_map(

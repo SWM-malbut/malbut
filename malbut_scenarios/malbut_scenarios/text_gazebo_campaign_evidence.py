@@ -17,9 +17,12 @@ from typing import Any, Dict, Optional, Tuple
 
 from malbut_scenarios.text_gazebo_campaign_core import (
     CampaignProfile,
+    SafetyBlockCode,
     campaign_profile_binding,
 )
 from malbut_scenarios.text_gazebo_evidence import (
+    ProductOutcome as ChildProductOutcome,
+    SafetyFaultObservation,
     CleanupEvidence,
     ConfirmationState,
     DispatchState,
@@ -32,19 +35,22 @@ from malbut_scenarios.text_gazebo_evidence import (
     StableStates,
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
+    TestStatus,
     pressure_evidence_for,
 )
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
+    safety_contract,
     scenario_spec,
 )
 
 
 CAMPAIGN_EVIDENCE_FORMAT = (
-    'malbut.text-gazebo-campaign-evidence.v3'
+    'malbut.text-gazebo-campaign-evidence.v4'
 )
-CHILD_EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v4'
+CHILD_EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v5'
 MAX_CAMPAIGN_CASES = 32
 MAX_CHILD_MANIFEST_BYTES = 64 * 1024
 MAX_DURATION_SECONDS = 86_400.0
@@ -59,6 +65,7 @@ _PROFILE = re.compile(r'[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*\Z')
 _RUN_ID = re.compile(r'run-[0-9a-f]{32}\Z')
 _GIT_COMMIT = re.compile(r'(?:[0-9a-f]{40}|[0-9a-f]{64})\Z')
 _SHA256 = re.compile(r'[0-9a-f]{64}\Z')
+_EMPTY_GOAL_SET_DIGEST = hashlib.sha256(b'[]').hexdigest()
 
 _CHILD_MANIFEST_KEYS = frozenset({
     'format',
@@ -67,21 +74,26 @@ _CHILD_MANIFEST_KEYS = frozenset({
 })
 _CHILD_RECEIPT_KEYS = frozenset({
     'cleanup',
+    'block_result_code',
     'commit',
     'counts',
     'durations',
     'fault_profile',
+    'fault_observation',
     'goal_set_digest',
     'installed_digest',
     'physical_authorized',
     'pressure',
+    'product_outcome',
     'run_id',
     'runtime_binding_digest',
     'scenario_profile',
+    'safety_profile',
     'simulation',
     'source_tree_digest',
     'states',
     'target_binding_digest',
+    'test_status',
 })
 _CHILD_STATE_KEYS = frozenset({
     'confirmation',
@@ -123,6 +135,11 @@ _CHILD_PRESSURE_KEYS = frozenset({
     'pressure_winner_count',
     'request_attempt_count',
     'worker_contender_count',
+})
+_CHILD_FAULT_OBSERVATION_KEYS = frozenset({
+    'fault_application_count',
+    'map_switch_count',
+    'observed',
 })
 
 
@@ -275,6 +292,17 @@ class ChildManifestSummary:
             TextGazeboFaultProfile.NONE
         )
     )
+    safety_profile: TextGazeboSafetyProfile = TextGazeboSafetyProfile.NONE
+    product_outcome: ProductOutcome = ProductOutcome.SUCCEEDED
+    block_result_code: SafetyBlockCode = SafetyBlockCode.NONE
+    test_status: TestStatus = TestStatus.PASSED
+    fault_observation: SafetyFaultObservation = field(
+        default_factory=lambda: SafetyFaultObservation(
+            observed=False,
+            fault_application_count=0,
+            map_switch_count=0,
+        )
+    )
 
     def __post_init__(self) -> None:
         """Reject summaries that could support an unproven success claim."""
@@ -298,6 +326,29 @@ class ChildManifestSummary:
             TextGazeboFaultProfile,
             'fault_profile',
         )
+        _require_enum(
+            self.safety_profile,
+            TextGazeboSafetyProfile,
+            'safety_profile',
+        )
+        _require_enum(
+            self.product_outcome,
+            ProductOutcome,
+            'product_outcome',
+        )
+        _require_enum(
+            self.block_result_code,
+            SafetyBlockCode,
+            'block_result_code',
+        )
+        _require_enum(self.test_status, TestStatus, 'test_status')
+        if not isinstance(
+            self.fault_observation,
+            SafetyFaultObservation,
+        ):
+            raise TypeError(
+                'fault_observation must be a SafetyFaultObservation'
+            )
         if not isinstance(self.pressure, PressureEvidence):
             raise TypeError('pressure must be a PressureEvidence')
         if self.pressure != pressure_evidence_for(self.fault_profile):
@@ -345,10 +396,50 @@ class ChildManifestSummary:
             and self.forced_termination_count == 0
             and self.simulation
             and not self.physical_authorized
-            and self.exact_success
         ):
             raise ValueError(
-                'child summary must prove exact simulation success'
+                'child summary must prove clean simulation completion'
+            )
+        contract = safety_contract(self.safety_profile)
+        expected_block_code = (
+            SafetyBlockCode.NONE
+            if contract.result_code is None
+            else SafetyBlockCode(contract.result_code)
+        )
+        expected_outcome = (
+            ProductOutcome.SUCCEEDED
+            if self.safety_profile is TextGazeboSafetyProfile.NONE
+            else ProductOutcome.BLOCKED
+        )
+        if (
+            self.test_status is not TestStatus.PASSED
+            or self.product_outcome is not expected_outcome
+            or self.block_result_code is not expected_block_code
+            or self.exact_success
+            is not (self.product_outcome is ProductOutcome.SUCCEEDED)
+            or (
+                self.safety_profile is not TextGazeboSafetyProfile.NONE
+                and self.fault_profile is not TextGazeboFaultProfile.NONE
+            )
+            or self.fault_observation.observed
+            is not (
+                self.safety_profile is not TextGazeboSafetyProfile.NONE
+            )
+            or self.fault_observation.fault_application_count
+            != contract.fault_application_count
+            or self.fault_observation.map_switch_count
+            != contract.map_switch_count
+            or (
+                self.product_outcome is ProductOutcome.SUCCEEDED
+                and self.goal_set_digest == _EMPTY_GOAL_SET_DIGEST
+            )
+            or (
+                self.product_outcome is ProductOutcome.BLOCKED
+                and self.goal_set_digest != _EMPTY_GOAL_SET_DIGEST
+            )
+        ):
+            raise ValueError(
+                'child summary product and safety contract is invalid'
             )
 
     def __repr__(self) -> str:
@@ -356,7 +447,7 @@ class ChildManifestSummary:
         return (
             'ChildManifestSummary('
             f'manifest_digest={self.manifest_digest!r}, '
-            f'exact_success={self.exact_success!r})'
+            f'product_outcome={self.product_outcome.value!r})'
         )
 
 
@@ -374,6 +465,8 @@ class CampaignCaseEvidence:
     child_manifest: Optional[ChildManifestSummary]
     duration_seconds: float
     cleanup: CaseCleanupState
+    expected_block_code: SafetyBlockCode = SafetyBlockCode.NONE
+    observed_block_code: SafetyBlockCode = SafetyBlockCode.NONE
 
     def __post_init__(self) -> None:
         """Require bounded public labels and internally consistent facts."""
@@ -410,6 +503,33 @@ class CampaignCaseEvidence:
         _require_enum(self.test_verdict, CaseTestVerdict, 'test_verdict')
         _require_enum(self.error_code, CaseErrorCode, 'error_code')
         _require_enum(self.cleanup, CaseCleanupState, 'cleanup')
+        _require_enum(
+            self.expected_block_code,
+            SafetyBlockCode,
+            'expected_block_code',
+        )
+        _require_enum(
+            self.observed_block_code,
+            SafetyBlockCode,
+            'observed_block_code',
+        )
+        if (
+            self.expected_outcome is ProductOutcome.BLOCKED
+        ) is (self.expected_block_code is SafetyBlockCode.NONE):
+            raise ValueError(
+                'expected block code must match the product outcome'
+            )
+        if self.observed_outcome is ProductOutcome.NOT_OBSERVED:
+            if self.observed_block_code is not SafetyBlockCode.NONE:
+                raise ValueError(
+                    'an unobserved product cannot claim a block code'
+                )
+        elif (
+            self.observed_outcome is ProductOutcome.BLOCKED
+        ) is (self.observed_block_code is SafetyBlockCode.NONE):
+            raise ValueError(
+                'observed block code must match the product outcome'
+            )
         if (
             self.child_manifest is not None
             and not isinstance(self.child_manifest, ChildManifestSummary)
@@ -429,14 +549,26 @@ class CampaignCaseEvidence:
                 is not binding.scenario_profile
                 or self.child_manifest.fault_profile
                 is not binding.fault_profile
+                or self.child_manifest.safety_profile
+                is not binding.safety_profile
             ):
                 raise ValueError(
-                    'child scenario profile and fault profile must match '
+                    'child scenario profile, fault profile, and safety '
+                    'profile must match '
                     'the campaign case binding'
                 )
-            if self.observed_outcome is not ProductOutcome.SUCCEEDED:
+            if (
+                self.expected_outcome.value
+                != binding.expected_outcome.value
+                or self.expected_block_code
+                is not binding.expected_block_code
+                or self.observed_outcome
+                is not self.child_manifest.product_outcome
+                or self.observed_block_code
+                is not self.child_manifest.block_result_code
+            ):
                 raise ValueError(
-                    'exact-success child requires succeeded observation'
+                    'case outcome and block code must match child evidence'
                 )
             if (
                 Decimal(str(self.duration_seconds))
@@ -448,6 +580,8 @@ class CampaignCaseEvidence:
         if self.test_verdict is CaseTestVerdict.PASSED:
             if (
                 self.observed_outcome is not self.expected_outcome
+                or self.observed_block_code
+                is not self.expected_block_code
                 or self.observed_outcome is ProductOutcome.NOT_OBSERVED
                 or self.error_code is not CaseErrorCode.NONE
                 or self.child_manifest is None
@@ -495,6 +629,13 @@ class CampaignCaseEvidence:
         return self.child_manifest.fault_profile.value
 
     @property
+    def safety_profile(self) -> Optional[str]:
+        """Return the bounded dispatch-time Safety profile when observed."""
+        if self.child_manifest is None:
+            return None
+        return self.child_manifest.safety_profile.value
+
+    @property
     def pressure(self) -> Optional[Dict[str, int]]:
         """Return exact content-free contention counters when observed."""
         if self.child_manifest is None:
@@ -509,13 +650,16 @@ class CampaignCaseEvidence:
             'cleanup': self.cleanup.value,
             'duration_seconds': self.duration_seconds,
             'error_code': self.error_code.value,
+            'expected_block_code': self.expected_block_code.value,
             'expected_outcome': self.expected_outcome.value,
             'fault_profile': self.fault_profile,
+            'observed_block_code': self.observed_block_code.value,
             'observed_outcome': self.observed_outcome.value,
             'ordinal': self.ordinal,
             'pressure': self.pressure,
             'profile': self.profile,
             'scenario_profile': self.scenario_profile,
+            'safety_profile': self.safety_profile,
             'target_binding_digest': self.target_binding_digest,
             'test_verdict': self.test_verdict.value,
         }
@@ -670,7 +814,16 @@ class TextGazeboCampaignReceipt:
                 )
             run_ids.append(child.run_id)
             manifest_digests.append(child.manifest_digest)
-            goal_set_digests.append(child.goal_set_digest)
+            if child.product_outcome is ProductOutcome.SUCCEEDED:
+                if child.goal_set_digest == _EMPTY_GOAL_SET_DIGEST:
+                    raise ValueError(
+                        'a successful child requires a non-empty goal set'
+                    )
+                goal_set_digests.append(child.goal_set_digest)
+            elif child.goal_set_digest != _EMPTY_GOAL_SET_DIGEST:
+                raise ValueError(
+                    'a blocked child requires the empty goal-set digest'
+                )
             binding = campaign_profile_binding(
                 CampaignProfile(case.profile)
             )
@@ -720,6 +873,12 @@ class TextGazeboCampaignReceipt:
                 case.observed_outcome
                 is not ProductOutcome.NOT_OBSERVED
                 and case.observed_outcome is not case.expected_outcome
+            )
+            or (
+                case.observed_outcome
+                is not ProductOutcome.NOT_OBSERVED
+                and case.observed_block_code
+                is not case.expected_block_code
             )
             for case in self.cases
         )
@@ -773,6 +932,8 @@ class TextGazeboCampaignReceipt:
             if any(
                 case.test_verdict is not CaseTestVerdict.PASSED
                 or case.observed_outcome is not case.expected_outcome
+                or case.observed_block_code
+                is not case.expected_block_code
                 or case.child_manifest is None
                 or case.cleanup is not CaseCleanupState.CLEAN
                 for case in self.cases
@@ -893,6 +1054,10 @@ def _child_receipt(value: Dict[str, object]) -> TextGazeboEvidenceReceipt:
             value['pressure'],
             _CHILD_PRESSURE_KEYS,
         )
+        fault_observation_value = _exact_keys(
+            value['fault_observation'],
+            _CHILD_FAULT_OBSERVATION_KEYS,
+        )
         states = StableStates(
             readiness=ReadinessState(states_value['readiness']),
             confirmation=ConfirmationState(states_value['confirmation']),
@@ -904,6 +1069,9 @@ def _child_receipt(value: Dict[str, object]) -> TextGazeboEvidenceReceipt:
         durations = EvidenceDurations(**durations_value)
         cleanup = CleanupEvidence(**cleanup_value)
         pressure = PressureEvidence(**pressure_value)
+        fault_observation = SafetyFaultObservation(
+            **fault_observation_value
+        )
         return TextGazeboEvidenceReceipt(
             run_id=value['run_id'],
             commit=value['commit'],
@@ -918,6 +1086,15 @@ def _child_receipt(value: Dict[str, object]) -> TextGazeboEvidenceReceipt:
             fault_profile=TextGazeboFaultProfile(
                 value['fault_profile']
             ),
+            safety_profile=TextGazeboSafetyProfile(
+                value['safety_profile']
+            ),
+            product_outcome=ChildProductOutcome(
+                value['product_outcome']
+            ),
+            test_status=TestStatus(value['test_status']),
+            block_result_code=value['block_result_code'],
+            fault_observation=fault_observation,
             states=states,
             counts=counts,
             durations=durations,
@@ -992,6 +1169,16 @@ def parse_child_manifest(payload: bytes) -> ChildManifestSummary:
         typed_manifest = TextGazeboEvidenceManifest(receipt)
         if typed_manifest.canonical_json() != canonical:
             raise CampaignEvidenceError('child_manifest_schema_invalid')
+        if (
+            receipt.product_outcome is ChildProductOutcome.SUCCEEDED
+            and receipt.goal_set_digest == _EMPTY_GOAL_SET_DIGEST
+        ) or (
+            receipt.product_outcome is ChildProductOutcome.BLOCKED
+            and receipt.goal_set_digest != _EMPTY_GOAL_SET_DIGEST
+        ):
+            raise CampaignEvidenceError(
+                'child_manifest_success_invalid'
+            )
         cleanup = receipt.cleanup
         return ChildManifestSummary(
             manifest_digest=_sha256(canonical),
@@ -1005,6 +1192,17 @@ def parse_child_manifest(payload: bytes) -> ChildManifestSummary:
             target_binding_digest=receipt.target_binding_digest,
             scenario_profile=receipt.scenario_profile,
             fault_profile=receipt.fault_profile,
+            safety_profile=receipt.safety_profile,
+            product_outcome=ProductOutcome(
+                receipt.product_outcome.value
+            ),
+            block_result_code=(
+                SafetyBlockCode.NONE
+                if receipt.block_result_code is None
+                else SafetyBlockCode(receipt.block_result_code)
+            ),
+            test_status=receipt.test_status,
+            fault_observation=receipt.fault_observation,
             pressure=receipt.pressure,
             cleanup_complete=cleanup.completed,
             owned_processes_remaining=(
@@ -1015,7 +1213,9 @@ def parse_child_manifest(payload: bytes) -> ChildManifestSummary:
             forced_termination_count=cleanup.forced_termination_count,
             simulation=receipt.simulation,
             physical_authorized=receipt.physical_authorized,
-            exact_success=True,
+            exact_success=(
+                receipt.product_outcome is ChildProductOutcome.SUCCEEDED
+            ),
             total_duration_seconds=receipt.durations.total_seconds,
         )
     except CampaignEvidenceError:

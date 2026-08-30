@@ -26,6 +26,15 @@ class TextGazeboFaultProfile(str, Enum):
     COMPETING_WORKERS = 'competing_workers'
 
 
+class TextGazeboSafetyProfile(str, Enum):
+    """Allowlisted dispatch-time Safety conditions for SWM25-137."""
+
+    NONE = 'none'
+    STALE_STATE = 'stale_state'
+    EMERGENCY_STOP = 'emergency_stop'
+    MAP_REVISION_CHANGED = 'map_revision_changed'
+
+
 @dataclass(frozen=True, slots=True)
 class TextGazeboPressureContract:
     """Exact public counters required for one bounded pressure profile."""
@@ -36,6 +45,15 @@ class TextGazeboPressureContract:
     pressure_contender_count: int
     pressure_winner_count: int
     pressure_nonwinner_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class TextGazeboSafetyContract:
+    """Exact product result and injection counts for one Safety profile."""
+
+    result_code: str | None
+    fault_application_count: int
+    map_switch_count: int
 
 
 @dataclass(frozen=True, repr=False, slots=True)
@@ -120,6 +138,35 @@ _PRESSURE_CONTRACTS: Mapping[
 })
 
 
+_SAFETY_CONTRACTS: Mapping[
+    TextGazeboSafetyProfile,
+    TextGazeboSafetyContract,
+] = MappingProxyType({
+    TextGazeboSafetyProfile.NONE: TextGazeboSafetyContract(
+        result_code=None,
+        fault_application_count=0,
+        map_switch_count=0,
+    ),
+    TextGazeboSafetyProfile.STALE_STATE: TextGazeboSafetyContract(
+        result_code='robot_state_stale',
+        fault_application_count=1,
+        map_switch_count=0,
+    ),
+    TextGazeboSafetyProfile.EMERGENCY_STOP: TextGazeboSafetyContract(
+        result_code='safety_emergency_stop',
+        fault_application_count=1,
+        map_switch_count=0,
+    ),
+    TextGazeboSafetyProfile.MAP_REVISION_CHANGED: (
+        TextGazeboSafetyContract(
+            result_code='target_binding_changed',
+            fault_application_count=1,
+            map_switch_count=1,
+        )
+    ),
+})
+
+
 def coerce_scenario_profile(
     value: Union[TextGazeboScenarioProfile, str],
 ) -> TextGazeboScenarioProfile:
@@ -166,13 +213,40 @@ def pressure_contract(
     return _PRESSURE_CONTRACTS[coerce_fault_profile(profile)]
 
 
+def coerce_safety_profile(
+    value: Union[TextGazeboSafetyProfile, str],
+) -> TextGazeboSafetyProfile:
+    """Accept only an enum or exact dispatch Safety profile token."""
+    if isinstance(value, TextGazeboSafetyProfile):
+        return value
+    if type(value) is not str:
+        raise ValueError('text Gazebo Safety profile is invalid')
+    try:
+        return TextGazeboSafetyProfile(value)
+    except ValueError as error:
+        raise ValueError(
+            'text Gazebo Safety profile is not allowlisted'
+        ) from error
+
+
+def safety_contract(
+    profile: Union[TextGazeboSafetyProfile, str],
+) -> TextGazeboSafetyContract:
+    """Return the exact fail-closed contract for one Safety profile."""
+    return _SAFETY_CONTRACTS[coerce_safety_profile(profile)]
+
+
 __all__ = [
     'TextGazeboFaultProfile',
     'TextGazeboPressureContract',
+    'TextGazeboSafetyContract',
+    'TextGazeboSafetyProfile',
     'TextGazeboScenarioProfile',
     'TextGazeboScenarioSpec',
     'coerce_fault_profile',
     'coerce_scenario_profile',
+    'coerce_safety_profile',
     'pressure_contract',
+    'safety_contract',
     'scenario_spec',
 ]

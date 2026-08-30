@@ -19,16 +19,21 @@ from malbut_scenarios.text_gazebo_evidence import (
     EvidenceDurations,
     NavigationState,
     PressureEvidence,
+    ProductOutcome,
     ReadinessState,
     RobotActionState,
+    SafetyFaultObservation,
     StableStates,
+    TestStatus,
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
     pressure_evidence_for,
+    safety_fault_observation_for,
     write_evidence_manifest,
 )
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
 )
 
@@ -104,29 +109,34 @@ def test_receipt_schema_is_fixed_canonical_and_digest_bound() -> None:
     manifest_value = json.loads(manifest.canonical_json())
 
     assert set(receipt_value) == {
+        'block_result_code',
         'cleanup',
         'commit',
         'counts',
         'durations',
         'fault_profile',
+        'fault_observation',
         'goal_set_digest',
         'installed_digest',
         'physical_authorized',
         'pressure',
+        'product_outcome',
         'run_id',
         'runtime_binding_digest',
         'scenario_profile',
+        'safety_profile',
         'simulation',
         'source_tree_digest',
         'states',
         'target_binding_digest',
+        'test_status',
     }
     assert receipt_value['simulation'] is True
     assert receipt_value['physical_authorized'] is False
     assert receipt_value['states']['navigation'] == 'succeeded'
     assert receipt_value['counts']['nav2_goal_count'] == 1
     assert manifest_value == {
-        'format': 'malbut.text-gazebo-e2e-evidence.v4',
+        'format': 'malbut.text-gazebo-e2e-evidence.v5',
         'receipt': receipt_value,
         'receipt_digest': receipt.digest(),
     }
@@ -158,6 +168,7 @@ def test_public_api_has_no_private_content_fields() -> None:
         StableStates,
         EvidenceCounts,
         PressureEvidence,
+        SafetyFaultObservation,
         EvidenceDurations,
         CleanupEvidence,
     )
@@ -263,8 +274,153 @@ def test_typed_states_reject_arbitrary_strings() -> None:
     ),
 )
 def test_success_receipt_rejects_non_success_evidence(changes) -> None:
-    with pytest.raises(ValueError, match='success receipt'):
+    with pytest.raises(ValueError, match='receipt'):
         _receipt(**changes)
+
+
+def _blocked_states() -> StableStates:
+    return StableStates(
+        readiness=ReadinessState.READY,
+        confirmation=ConfirmationState.APPROVED,
+        robot_action=RobotActionState.BLOCKED,
+        dispatch=DispatchState.NOT_CREATED,
+        navigation=NavigationState.NOT_STARTED,
+    )
+
+
+def _blocked_counts() -> EvidenceCounts:
+    return EvidenceCounts(
+        agent_proposal_count=1,
+        confirmation_count=1,
+        approved_confirmation_count=1,
+        robot_action_count=1,
+        dispatch_intent_count=0,
+        robot_web_start_count=0,
+        robot_web_verified_target_count=1,
+        nav2_goal_count=0,
+        preapproval_nav2_goal_count=0,
+        terminal_result_count=0,
+        replay_additional_effect_count=0,
+    )
+
+
+@pytest.mark.parametrize(
+    'profile,result_code,applications,map_switches',
+    (
+        (
+            TextGazeboSafetyProfile.STALE_STATE,
+            'robot_state_stale',
+            1,
+            0,
+        ),
+        (
+            TextGazeboSafetyProfile.EMERGENCY_STOP,
+            'safety_emergency_stop',
+            1,
+            0,
+        ),
+        (
+            TextGazeboSafetyProfile.MAP_REVISION_CHANGED,
+            'target_binding_changed',
+            1,
+            1,
+        ),
+    ),
+)
+def test_blocked_product_outcome_is_a_pass_with_zero_effects(
+    profile,
+    result_code,
+    applications,
+    map_switches,
+) -> None:
+    receipt = _receipt(
+        states=_blocked_states(),
+        counts=_blocked_counts(),
+        safety_profile=profile,
+        product_outcome=ProductOutcome.BLOCKED,
+        test_status=TestStatus.PASSED,
+        block_result_code=result_code,
+        fault_observation=SafetyFaultObservation(
+            observed=True,
+            fault_application_count=applications,
+            map_switch_count=map_switches,
+        ),
+    )
+
+    value = receipt.as_dict()
+    assert value['product_outcome'] == 'blocked'
+    assert value['test_status'] == 'passed'
+    assert value['safety_profile'] == profile.value
+    assert value['block_result_code'] == result_code
+    assert value['states']['robot_action'] == 'blocked'
+    assert value['counts']['dispatch_intent_count'] == 0
+    assert value['counts']['robot_web_start_count'] == 0
+    assert value['counts']['nav2_goal_count'] == 0
+    assert value['fault_observation'] == {
+        'fault_application_count': applications,
+        'map_switch_count': map_switches,
+        'observed': True,
+    }
+
+
+@pytest.mark.parametrize(
+    'changes,match',
+    (
+        (
+            {'block_result_code': 'wrong_result'},
+            'block result code',
+        ),
+        (
+            {
+                'fault_observation': SafetyFaultObservation(
+                    observed=False,
+                    fault_application_count=1,
+                    map_switch_count=0,
+                ),
+            },
+            'fault observation',
+        ),
+        (
+            {'counts': replace(_blocked_counts(), nav2_goal_count=1)},
+            'zero-effect',
+        ),
+        (
+            {'states': _states()},
+            'blocked states',
+        ),
+        (
+            {'test_status': TestStatus.FAILED},
+            'passed test status',
+        ),
+        (
+            {'fault_profile': TextGazeboFaultProfile.DUPLICATE_REQUEST},
+            'Safety profile only',
+        ),
+    ),
+)
+def test_blocked_receipt_rejects_mismatched_or_effectful_claims(
+    changes,
+    match,
+) -> None:
+    values = {
+        'states': _blocked_states(),
+        'counts': _blocked_counts(),
+        'safety_profile': TextGazeboSafetyProfile.STALE_STATE,
+        'product_outcome': ProductOutcome.BLOCKED,
+        'test_status': TestStatus.PASSED,
+        'block_result_code': 'robot_state_stale',
+        'fault_observation': safety_fault_observation_for(
+            TextGazeboSafetyProfile.STALE_STATE
+        ),
+    }
+    values.update(changes)
+    if changes.get('fault_profile') is not None:
+        values['pressure'] = pressure_evidence_for(
+            changes['fault_profile']
+        )
+
+    with pytest.raises(ValueError, match=match):
+        _receipt(**values)
 
 
 @pytest.mark.parametrize(

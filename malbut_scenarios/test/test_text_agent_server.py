@@ -102,6 +102,7 @@ def test_execution_flags_are_explicit_and_default_off() -> None:
     assert parsed.execute_approved_simulation is False
     assert parsed.robot_web_url is None
     assert parsed.fault_profile == 'none'
+    assert parsed.safety_profile == 'none'
 
 
 def test_explicit_execution_composes_without_robot_web_io(
@@ -244,10 +245,14 @@ def test_execution_check_validates_full_composition_without_starting_it(
         robot_web_url,
         scenario_profile,
         fault_profile,
+        safety_profile,
+        map_switch_callback,
     ):
         assert robot_web_url == 'http://127.0.0.1:8765'
         assert scenario_profile.value == 'happy_path'
         assert fault_profile.value == 'none'
+        assert safety_profile.value == 'none'
+        assert map_switch_callback is None
         events.append('approved_execution')
         return ApprovedSimulationTextRuntime(
             orchestrator=SimpleNamespace(
@@ -405,6 +410,85 @@ def test_competing_worker_profile_owns_two_independent_connections(
         )
     finally:
         _close_execution_runtime(runtime, None)
+
+
+def test_dispatch_safety_profile_is_armed_without_composition_io(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Keep the real state read lazy while composing the Safety wrappers."""
+    monkeypatch.setattr(
+        text_agent_server.RobotWebNavigationClient,
+        '_request',
+        lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError('composition performed Robot Web I/O')
+        ),
+    )
+    settings = Settings(
+        provider='mock',
+        auth_token='local-test-token',
+        database_path=str(tmp_path / 'runtime.sqlite3'),
+        tool_mode='proposal',
+        port=8877,
+    )
+
+    runtime = build_approved_simulation_text_runtime(
+        settings,
+        lambda: Catalog(),
+        robot_web_url='http://127.0.0.1:8765',
+        safety_profile='emergency_stop',
+    )
+    try:
+        assert runtime.dispatch_safety_fault is not None
+        assert runtime.dispatch_safety_fault.safety_profile.value == (
+            'emergency_stop'
+        )
+        assert len(runtime.action_repositories) == 1
+        assert len(runtime.dispatchers) == 1
+        assert runtime.dispatcher.is_alive is False
+    finally:
+        _close_execution_runtime(runtime, None)
+
+
+def test_map_revision_safety_requires_an_explicit_server_callback(
+    tmp_path,
+) -> None:
+    settings = Settings(
+        provider='mock',
+        auth_token='local-test-token',
+        database_path=str(tmp_path / 'runtime.sqlite3'),
+        tool_mode='proposal',
+        port=8877,
+    )
+
+    with pytest.raises(TypeError, match='switch callback'):
+        build_approved_simulation_text_runtime(
+            settings,
+            lambda: Catalog(),
+            robot_web_url='http://127.0.0.1:8765',
+            safety_profile='map_revision_changed',
+        )
+
+
+def test_pressure_and_dispatch_safety_profiles_cannot_be_combined(
+    tmp_path,
+) -> None:
+    settings = Settings(
+        provider='mock',
+        auth_token='local-test-token',
+        database_path=str(tmp_path / 'runtime.sqlite3'),
+        tool_mode='proposal',
+        port=8877,
+    )
+
+    with pytest.raises(ValueError, match='cannot be combined'):
+        build_approved_simulation_text_runtime(
+            settings,
+            lambda: Catalog(),
+            robot_web_url='http://127.0.0.1:8765',
+            fault_profile='duplicate_request',
+            safety_profile='stale_state',
+        )
 
 
 def test_concurrent_approval_profile_wraps_only_the_target_resolver(

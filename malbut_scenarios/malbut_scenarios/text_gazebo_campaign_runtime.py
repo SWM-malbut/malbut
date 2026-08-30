@@ -30,14 +30,17 @@ from malbut_scenarios.owned_process import (
 from malbut_scenarios.text_gazebo_campaign_evidence import (
     CampaignEvidenceError,
     ChildManifestSummary,
+    ProductOutcome,
     parse_child_manifest,
 )
+from malbut_scenarios.text_gazebo_campaign_core import SafetyBlockCode
 from malbut_scenarios.text_gazebo_evidence import (
     PressureEvidence,
     pressure_evidence_for,
 )
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
 )
 from malbut_scenarios.text_gazebo_runtime import sanitized_ros_environment
@@ -180,6 +183,7 @@ class TextGazeboCampaignRunRequest:
         TextGazeboScenarioProfile.HAPPY_PATH
     )
     fault_profile: TextGazeboFaultProfile = TextGazeboFaultProfile.NONE
+    safety_profile: TextGazeboSafetyProfile = TextGazeboSafetyProfile.NONE
 
     def __post_init__(self) -> None:
         """Validate explicit authority fields without filesystem access."""
@@ -195,6 +199,10 @@ class TextGazeboCampaignRunRequest:
                 self.fault_profile,
                 TextGazeboFaultProfile,
             )
+            or not isinstance(
+                self.safety_profile,
+                TextGazeboSafetyProfile,
+            )
             or type(self.gui) is not bool
         ):
             raise TextGazeboCampaignRuntimeError(
@@ -208,13 +216,14 @@ class TextGazeboCampaignRunRequest:
             f'ros_domain_id={self.ros_domain_id!r}, '
             f'scenario_profile={self.scenario_profile.value!r}, '
             f'fault_profile={self.fault_profile.value!r}, '
+            f'safety_profile={self.safety_profile.value!r}, '
             f'gui={self.gui!r})'
         )
 
 
 @dataclass(frozen=True, repr=False, slots=True)
 class TextGazeboCampaignRunResult:
-    """Content-free proof that one exact-success receipt was validated."""
+    """Content-free proof of one strictly validated product outcome."""
 
     manifest_digest: str
     receipt_digest: str
@@ -241,6 +250,9 @@ class TextGazeboCampaignRunResult:
             TextGazeboFaultProfile.NONE
         )
     )
+    safety_profile: TextGazeboSafetyProfile = TextGazeboSafetyProfile.NONE
+    product_outcome: ProductOutcome = ProductOutcome.SUCCEEDED
+    block_result_code: SafetyBlockCode = SafetyBlockCode.NONE
 
     def __post_init__(self) -> None:
         """Keep the public result bounded and digest-only."""
@@ -287,16 +299,36 @@ class TextGazeboCampaignRunResult:
                 self.fault_profile,
                 TextGazeboFaultProfile,
             )
+            or not isinstance(
+                self.safety_profile,
+                TextGazeboSafetyProfile,
+            )
+            or not isinstance(self.product_outcome, ProductOutcome)
+            or not isinstance(self.block_result_code, SafetyBlockCode)
             or not isinstance(self.pressure, PressureEvidence)
             or not isinstance(
                 self.child_manifest,
                 ChildManifestSummary,
             )
-            or self.exact_success is not True
             or self.cleanup_complete is not True
             or self.forced_termination_count != 0
             or self.simulation is not True
             or self.physical_authorized is not False
+        ):
+            raise TextGazeboCampaignRuntimeError(
+                'campaign_runner_evidence_invalid'
+            )
+        if (
+            self.product_outcome
+            not in {ProductOutcome.SUCCEEDED, ProductOutcome.BLOCKED}
+            or self.exact_success
+            is not (self.product_outcome is ProductOutcome.SUCCEEDED)
+            or (
+                self.product_outcome is ProductOutcome.BLOCKED
+            ) is (self.block_result_code is SafetyBlockCode.NONE)
+            or (
+                self.product_outcome is ProductOutcome.BLOCKED
+            ) is (self.safety_profile is TextGazeboSafetyProfile.NONE)
         ):
             raise TextGazeboCampaignRuntimeError(
                 'campaign_runner_evidence_invalid'
@@ -315,6 +347,9 @@ class TextGazeboCampaignRunResult:
             or child.target_binding_digest != self.target_binding_digest
             or child.scenario_profile is not self.scenario_profile
             or child.fault_profile is not self.fault_profile
+            or child.safety_profile is not self.safety_profile
+            or child.product_outcome is not self.product_outcome
+            or child.block_result_code is not self.block_result_code
             or child.pressure != self.pressure
             or child.exact_success is not self.exact_success
             or child.cleanup_complete is not self.cleanup_complete
@@ -330,11 +365,11 @@ class TextGazeboCampaignRunResult:
             )
 
     def __repr__(self) -> str:
-        """Return only public digests and the exact-success verdict."""
+        """Return only public digests and the bounded product outcome."""
         return (
             'TextGazeboCampaignRunResult('
             f'manifest_digest={self.manifest_digest!r}, '
-            f'exact_success={self.exact_success!r})'
+            f'product_outcome={self.product_outcome.value!r})'
         )
 
 
@@ -934,6 +969,7 @@ class InstalledTextGazeboAcceptanceRunner:
             or child.installed_digest != self._config.installed_digest
             or child.scenario_profile is not request.scenario_profile
             or child.fault_profile is not request.fault_profile
+            or child.safety_profile is not request.safety_profile
         ):
             raise TextGazeboCampaignRuntimeError(
                 'campaign_runner_evidence_invalid'
@@ -951,11 +987,14 @@ class InstalledTextGazeboAcceptanceRunner:
             target_binding_digest=child.target_binding_digest,
             scenario_profile=child.scenario_profile,
             fault_profile=child.fault_profile,
+            safety_profile=child.safety_profile,
             pressure=child.pressure,
             elapsed_seconds=elapsed,
             child_output_digest=output.digest,
             child_output_bytes=output.bytes_observed,
-            exact_success=True,
+            exact_success=child.exact_success,
+            product_outcome=child.product_outcome,
+            block_result_code=child.block_result_code,
             cleanup_complete=True,
             forced_termination_count=cleanup.forced_termination_count,
             simulation=child.simulation,
@@ -1220,6 +1259,8 @@ class InstalledTextGazeboAcceptanceRunner:
             request.scenario_profile.value,
             '--fault-profile',
             request.fault_profile.value,
+            '--safety-profile',
+            request.safety_profile.value,
             '--source-commit',
             self._config.source_commit,
             '--source-tree',
@@ -1356,6 +1397,7 @@ def _strict_check_output(raw: bytes) -> dict[str, object]:
         'mode',
         'nav2_start_count',
         'physical_authorized',
+        'safety_profile',
         'scenario_profile',
         'simulation',
         'source_tree_digest',
@@ -1371,6 +1413,8 @@ def _strict_check_output(raw: bytes) -> dict[str, object]:
         or type(value['physical_authorized']) is not bool
         or value['physical_authorized'] is not False
         or value['fault_profile'] != TextGazeboFaultProfile.NONE.value
+        or value['safety_profile']
+        != TextGazeboSafetyProfile.NONE.value
         or value['scenario_profile']
         != TextGazeboScenarioProfile.HAPPY_PATH.value
         or type(value['source_tree_digest']) is not str

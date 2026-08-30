@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from malbut_scenarios import text_gazebo_campaign_runtime as runtime
+from malbut_scenarios.text_gazebo_campaign_core import SafetyBlockCode
 from malbut_scenarios.owned_process import (
     ProcessCleanupEvidence,
     ProcessOutputEvidence,
@@ -19,17 +20,22 @@ from malbut_scenarios.text_gazebo_evidence import (
     EvidenceCounts,
     EvidenceDurations,
     NavigationState,
+    ProductOutcome as ChildProductOutcome,
     ReadinessState,
     RobotActionState,
     StableStates,
+    TestStatus,
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
     pressure_evidence_for,
+    safety_fault_observation_for,
     write_evidence_manifest,
 )
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
+    safety_contract,
 )
 
 
@@ -37,6 +43,7 @@ _COMMIT = '1' * 40
 _SOURCE_DIGEST = '2' * 64
 _INSTALLED_DIGEST = '3' * 64
 _EMPTY_DIGEST = hashlib.sha256(b'').hexdigest()
+_EMPTY_GOAL_SET_DIGEST = hashlib.sha256(b'[]').hexdigest()
 
 
 class _Clock:
@@ -273,6 +280,39 @@ def _manifest(**changes):
     )
 
 
+def _blocked_manifest(safety_profile):
+    contract = safety_contract(safety_profile)
+    return _manifest(
+        scenario_profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        safety_profile=safety_profile,
+        product_outcome=ChildProductOutcome.BLOCKED,
+        test_status=TestStatus.PASSED,
+        block_result_code=contract.result_code,
+        fault_observation=safety_fault_observation_for(safety_profile),
+        goal_set_digest=_EMPTY_GOAL_SET_DIGEST,
+        states=StableStates(
+            readiness=ReadinessState.READY,
+            confirmation=ConfirmationState.APPROVED,
+            robot_action=RobotActionState.BLOCKED,
+            dispatch=DispatchState.NOT_CREATED,
+            navigation=NavigationState.NOT_STARTED,
+        ),
+        counts=EvidenceCounts(
+            agent_proposal_count=1,
+            confirmation_count=1,
+            approved_confirmation_count=1,
+            robot_action_count=1,
+            dispatch_intent_count=0,
+            robot_web_start_count=0,
+            robot_web_verified_target_count=1,
+            nav2_goal_count=0,
+            preapproval_nav2_goal_count=0,
+            terminal_result_count=0,
+            replay_additional_effect_count=0,
+        ),
+    )
+
+
 def _summary(manifest=None):
     selected = manifest if manifest is not None else _manifest()
     return runtime.parse_child_manifest(
@@ -288,6 +328,7 @@ def _check_payload(**changes):
         'nav2_start_count': 0,
         'physical_authorized': False,
         'scenario_profile': 'happy_path',
+        'safety_profile': 'none',
         'simulation': True,
         'source_tree_digest': _SOURCE_DIGEST,
         'status': 'ok',
@@ -402,6 +443,7 @@ def test_config_rejects_unbounded_or_ambiguous_values(tmp_path, changes):
         {'ros_domain_id': True},
         {'evidence_path': Path('relative.json')},
         {'scenario_profile': 'happy_path'},
+        {'safety_profile': 'stale_state'},
         {'gui': 1},
     ),
 )
@@ -428,7 +470,7 @@ def test_request_preserves_legacy_positional_gui_argument(tmp_path):
     )
 
 
-def test_success_uses_exact_installed_argv_sanitized_env_and_v4_evidence(
+def test_success_uses_exact_installed_argv_sanitized_env_and_v5_evidence(
     tmp_path,
 ):
     prefix, source, evidence_parent = _layout(tmp_path)
@@ -454,6 +496,8 @@ def test_success_uses_exact_installed_argv_sanitized_env_and_v4_evidence(
         '--scenario-profile',
         'happy_path',
         '--fault-profile',
+        'none',
+        '--safety-profile',
         'none',
         '--source-commit',
         _COMMIT,
@@ -487,6 +531,77 @@ def test_success_uses_exact_installed_argv_sanitized_env_and_v4_evidence(
     assert result.child_output_bytes == 17
     assert str(source) not in repr(result)
     assert str(request.evidence_path) not in repr(result)
+
+
+@pytest.mark.parametrize(
+    'safety_profile,block_code',
+    (
+        (
+            TextGazeboSafetyProfile.STALE_STATE,
+            SafetyBlockCode.ROBOT_STATE_STALE,
+        ),
+        (
+            TextGazeboSafetyProfile.EMERGENCY_STOP,
+            SafetyBlockCode.SAFETY_EMERGENCY_STOP,
+        ),
+        (
+            TextGazeboSafetyProfile.MAP_REVISION_CHANGED,
+            SafetyBlockCode.TARGET_BINDING_CHANGED,
+        ),
+    ),
+)
+def test_blocked_safety_result_is_a_valid_completed_child(
+    tmp_path,
+    safety_profile,
+    block_code,
+):
+    """The adapter forwards Safety profile and preserves typed BLOCKED."""
+    prefix, source, evidence_parent = _layout(tmp_path)
+    request = _request(
+        evidence_parent,
+        scenario_profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        safety_profile=safety_profile,
+    )
+    manifest = _blocked_manifest(safety_profile)
+    _FakePopenOwner.on_start = lambda _owner: write_evidence_manifest(
+        request.evidence_path,
+        manifest,
+    )
+
+    result = _runner(_config(prefix, source), _Clock()).run(request)
+    owner = _FakePopenOwner.instances[0]
+
+    index = owner.argv.index('--safety-profile')
+    assert owner.argv[index + 1] == safety_profile.value
+    assert result.product_outcome is runtime.ProductOutcome.BLOCKED
+    assert result.block_result_code is block_code
+    assert result.exact_success is False
+    assert result.goal_set_digest == _EMPTY_GOAL_SET_DIGEST
+    assert result.child_manifest.fault_observation.observed is True
+
+
+def test_child_safety_profile_mismatch_is_fail_closed_after_cleanup(
+    tmp_path,
+):
+    prefix, source, evidence_parent = _layout(tmp_path)
+    request = _request(
+        evidence_parent,
+        scenario_profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        safety_profile=TextGazeboSafetyProfile.STALE_STATE,
+    )
+    manifest = _blocked_manifest(TextGazeboSafetyProfile.EMERGENCY_STOP)
+    _FakePopenOwner.on_start = lambda _owner: write_evidence_manifest(
+        request.evidence_path,
+        manifest,
+    )
+
+    with pytest.raises(
+        runtime.TextGazeboCampaignRuntimeError,
+        match='^campaign_runner_evidence_invalid$',
+    ):
+        _runner(_config(prefix, source), _Clock()).run(request)
+
+    assert _FakePopenOwner.instances[0].stopped is True
 
 
 def test_child_profile_mismatch_is_fail_closed_after_cleanup(tmp_path):

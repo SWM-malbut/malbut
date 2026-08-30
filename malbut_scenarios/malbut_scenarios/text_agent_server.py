@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from functools import partial
 from ipaddress import ip_address
 import os
 from pathlib import Path
@@ -44,10 +45,20 @@ from malbut_scenarios.concurrent_approval_resolver import (
     ConcurrentApprovalResolverGate,
     concurrent_approval_observation_path,
 )
+from malbut_scenarios.dispatch_safety_fault import (
+    ClaimArmedActionRepository,
+    DispatchSafetyFaultCoordinator,
+    DispatchSafetyRobotStateSource,
+)
+from malbut_scenarios.named_navigation_fixture import (
+    activate_swm25_137_alternate_revision,
+)
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
     coerce_fault_profile,
+    coerce_safety_profile,
     scenario_spec,
 )
 from malbut_scenarios.worker_competition import (
@@ -79,6 +90,7 @@ class ApprovedSimulationTextRuntime:
     additional_dispatchers: tuple[ApprovedActionWorkerRuntime, ...] = ()
     worker_competition: WorkerCompetitionCoordinator | None = None
     concurrent_approval_gate: ConcurrentApprovalResolverGate | None = None
+    dispatch_safety_fault: DispatchSafetyFaultCoordinator | None = None
 
     @property
     def action_repositories(self) -> tuple[SQLiteActionRepository, ...]:
@@ -137,6 +149,10 @@ def build_approved_simulation_text_runtime(
     fault_profile: TextGazeboFaultProfile | str = (
         TextGazeboFaultProfile.NONE
     ),
+    safety_profile: TextGazeboSafetyProfile | str = (
+        TextGazeboSafetyProfile.NONE
+    ),
+    map_switch_callback: Callable[[], None] | None = None,
 ) -> ApprovedSimulationTextRuntime:
     """
     Compose the explicit SWM25-132 simulation execution boundary.
@@ -164,6 +180,21 @@ def build_approved_simulation_text_runtime(
 
     scenario = scenario_spec(scenario_profile)
     fault = coerce_fault_profile(fault_profile)
+    safety_profile = coerce_safety_profile(safety_profile)
+    if (
+        fault is not TextGazeboFaultProfile.NONE
+        and safety_profile is not TextGazeboSafetyProfile.NONE
+    ):
+        raise ValueError(
+            'pressure and Safety profiles cannot be combined'
+        )
+    if (
+        safety_profile is not TextGazeboSafetyProfile.MAP_REVISION_CHANGED
+        and map_switch_callback is not None
+    ):
+        raise ValueError(
+            'map switch callback requires map revision Safety profile'
+        )
     catalog = catalog_loader()
     # Pin the one MVP destination before constructing SQLite or HTTP owners.
     catalog.resolve(scenario.location)
@@ -178,7 +209,7 @@ def build_approved_simulation_text_runtime(
         )
         resolver = concurrent_approval_gate
     client = RobotWebNavigationClient(robot_web_url)
-    state_source = RobotWebSimulationStateSource(
+    real_state_source = RobotWebSimulationStateSource(
         client,
         expected_device_id=catalog.device_id,
         expected_map_id=catalog.map_id,
@@ -187,6 +218,18 @@ def build_approved_simulation_text_runtime(
             SIMULATION_BATTERY_ASSUMPTION_PERCENT
         ),
     )
+    dispatch_safety_fault = None
+    state_source = real_state_source
+    if safety_profile is not TextGazeboSafetyProfile.NONE:
+        dispatch_safety_fault = DispatchSafetyFaultCoordinator(
+            settings.database_path,
+            safety_profile,
+            map_switch_callback=map_switch_callback,
+        )
+        state_source = DispatchSafetyRobotStateSource(
+            real_state_source,
+            dispatch_safety_fault,
+        )
     facade = NamedNavigationFacade(
         catalog_loader,
         client,
@@ -234,6 +277,12 @@ def build_approved_simulation_text_runtime(
                     contender=contender,
                 )
                 worker_prefix = 'swm25-136-'
+            elif dispatch_safety_fault is not None:
+                worker_repository = ClaimArmedActionRepository(
+                    repository,
+                    dispatch_safety_fault,
+                )
+                worker_prefix = 'swm25-137-'
             worker_arguments = {
                 'worker_id': worker_prefix + secrets.token_hex(16),
                 'lease_for_seconds': WORKER_LEASE_SECONDS,
@@ -272,12 +321,15 @@ def build_approved_simulation_text_runtime(
             additional_dispatchers=tuple(dispatchers[1:]),
             worker_competition=competition,
             concurrent_approval_gate=concurrent_approval_gate,
+            dispatch_safety_fault=dispatch_safety_fault,
         )
     except Exception:
         if competition is not None:
             competition.close()
         for repository in action_repositories:
             repository.close()
+        if dispatch_safety_fault is not None:
+            dispatch_safety_fault.close()
         orchestrator.conversation_store.close()
         orchestrator.memory_store.close()
         raise
@@ -351,6 +403,12 @@ def _close_execution_runtime(
         # The worker may still own these connections.  Closing them beneath
         # it would turn an orderly shutdown into a persistence race.
         raise RuntimeError('approved action dispatcher did not stop')
+    if runtime.dispatch_safety_fault is not None:
+        try:
+            runtime.dispatch_safety_fault.close()
+        except Exception as error:
+            if first_error is None:
+                first_error = error
     closes = [
         repository.close
         for repository in runtime.action_repositories
@@ -404,6 +462,14 @@ def _parser() -> argparse.ArgumentParser:
         help='Allowlisted exactly-once pressure (default: none).',
     )
     parser.add_argument(
+        '--safety-profile',
+        choices=tuple(
+            profile.value for profile in TextGazeboSafetyProfile
+        ),
+        default=TextGazeboSafetyProfile.NONE.value,
+        help='Allowlisted dispatch Safety condition (default: none).',
+    )
+    parser.add_argument(
         '--check',
         action='store_true',
         help='Validate composition and target binding, then exit.',
@@ -431,12 +497,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parser().parse_args(argv)
     scenario = scenario_spec(args.scenario_profile)
     fault = coerce_fault_profile(args.fault_profile)
+    safety_profile = coerce_safety_profile(args.safety_profile)
     if (
         fault is not TextGazeboFaultProfile.NONE
         and not args.execute_approved_simulation
     ):
         raise ValueError(
             'fault profile requires approved simulation execution'
+        )
+    if (
+        safety_profile is not TextGazeboSafetyProfile.NONE
+        and not args.execute_approved_simulation
+    ):
+        raise ValueError(
+            'Safety profile requires approved simulation execution'
+        )
+    if (
+        fault is not TextGazeboFaultProfile.NONE
+        and safety_profile is not TextGazeboSafetyProfile.NONE
+    ):
+        raise ValueError(
+            'pressure and Safety profiles cannot be combined'
         )
     load_env_file(Path(args.env_file).expanduser())
     settings = Settings.from_env(os.environ)
@@ -465,6 +546,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     # Fail before binding HTTP if the exact MVP target is unavailable.
     source.load().resolve(scenario.location)
+    map_switch_callback = None
+    if safety_profile is TextGazeboSafetyProfile.MAP_REVISION_CHANGED:
+        map_switch_callback = partial(
+            activate_swm25_137_alternate_revision,
+            source.map_store,
+        )
     runtime = None
     robot_web_url = None
     if args.execute_approved_simulation:
@@ -489,6 +576,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 robot_web_url=str(robot_web_url),
                 scenario_profile=scenario.profile,
                 fault_profile=fault,
+                safety_profile=safety_profile,
+                map_switch_callback=map_switch_callback,
             )
             _close_execution_runtime(checked_runtime, None)
             checked_mode = 'approved-execution'
@@ -513,6 +602,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             robot_web_url=str(robot_web_url),
             scenario_profile=scenario.profile,
             fault_profile=fault,
+            safety_profile=safety_profile,
+            map_switch_callback=map_switch_callback,
         )
         orchestrator = runtime.orchestrator
         text_turn_service = runtime.text_turn_service

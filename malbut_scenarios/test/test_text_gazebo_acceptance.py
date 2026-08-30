@@ -18,6 +18,10 @@ from malbut_scenarios.concurrent_approval_resolver import (
     ConcurrentApprovalGateObservation,
     concurrent_approval_observation_path,
 )
+from malbut_scenarios.dispatch_safety_fault import (
+    DispatchSafetyFaultObservation,
+    dispatch_safety_observation_path,
+)
 from malbut_scenarios.counting_robot_web_proxy import RobotWebProxyCounts
 from malbut_scenarios.nav2_goal_status_observer import (
     GoalStatusEvidence,
@@ -26,6 +30,9 @@ from malbut_scenarios.nav2_goal_status_observer import (
 from malbut_scenarios.text_gazebo_evidence import (
     CleanupEvidence,
     PressureEvidence,
+    ProductOutcome,
+    SafetyFaultObservation,
+    TestStatus,
     pressure_evidence_for,
 )
 from malbut_scenarios.text_gazebo_runtime import (
@@ -37,6 +44,7 @@ from malbut_scenarios.text_gazebo_runtime import (
 )
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
+    TextGazeboSafetyProfile,
     TextGazeboScenarioProfile,
 )
 from malbut_scenarios.worker_competition import (
@@ -82,6 +90,7 @@ def _args(**changes) -> argparse.Namespace:
         'ros_domain_id': 77,
         'scenario_profile': 'happy_path',
         'fault_profile': 'none',
+        'safety_profile': 'none',
     }
     values.update(changes)
     return argparse.Namespace(**values)
@@ -96,6 +105,17 @@ def _proxy_counts(*, started: bool) -> RobotWebProxyCounts:
         start_count=count,
         cancel_count=0,
         verified_preview_count=count,
+    )
+
+
+def _blocked_proxy_counts() -> RobotWebProxyCounts:
+    return RobotWebProxyCounts(
+        bootstrap_count=1,
+        status_count=1,
+        preview_count=1,
+        start_count=0,
+        cancel_count=0,
+        verified_preview_count=1,
     )
 
 
@@ -135,6 +155,24 @@ def _known_success() -> LedgerSnapshot:
     )
 
 
+def _known_blocked(result_code: str) -> LedgerSnapshot:
+    return LedgerSnapshot(
+        confirmation_count=1,
+        approved_confirmation_count=1,
+        confirmation_state='resolved',
+        confirmation_disposition='approved',
+        confirmation_result_code='confirmation_approved',
+        robot_action_count=1,
+        action_state='BLOCKED',
+        action_result_code=result_code,
+        dispatch_intent_count=0,
+        dispatch_state=None,
+        dispatch_result_code=None,
+        simulation=True,
+        physical_authorized=False,
+    )
+
+
 def _nav2_success(*goal_digests: str) -> Nav2GoalStatusEvidence:
     goals = tuple(
         GoalStatusEvidence(
@@ -155,6 +193,16 @@ def _nav2_success(*goal_digests: str) -> Nav2GoalStatusEvidence:
     )
 
 
+def _nav2_not_started() -> Nav2GoalStatusEvidence:
+    return Nav2GoalStatusEvidence(
+        status_topic='/navigate_to_pose/_action/status',
+        distinct_goal_count=0,
+        status_message_count=0,
+        rejected_status_entry_count=0,
+        goals=(),
+    )
+
+
 def _cleanup(nav2=None) -> acceptance._CleanupResult:
     return acceptance._CleanupResult(
         duration_seconds=0.3,
@@ -165,7 +213,7 @@ def _cleanup(nav2=None) -> acceptance._CleanupResult:
             owned_sockets_remaining=0,
             forced_termination_count=0,
         ),
-        nav2=nav2 or _nav2_success(_GOAL_DIGEST),
+        nav2=(nav2 if nav2 is not None else _nav2_success(_GOAL_DIGEST)),
     )
 
 
@@ -205,6 +253,7 @@ def test_check_mode_is_default_safe_and_does_not_enter_runtime(
         'nav2_start_count': 0,
         'physical_authorized': False,
         'scenario_profile': 'happy_path',
+        'safety_profile': 'none',
         'simulation': True,
         'source_tree_digest': _TREE_DIGEST,
         'status': 'ok',
@@ -221,6 +270,11 @@ def test_run_mode_prints_only_public_manifest_digest(
     calls = []
 
     class Manifest:
+        receipt = SimpleNamespace(
+            product_outcome=ProductOutcome.SUCCEEDED,
+            test_status=TestStatus.PASSED,
+        )
+
         def digest(self):
             return '9' * 64
 
@@ -261,7 +315,10 @@ def test_run_mode_prints_only_public_manifest_digest(
         'mode': 'run',
         'physical_authorized': False,
         'scenario_profile': 'happy_kitchen',
+        'safety_profile': 'none',
         'simulation': True,
+        'product_outcome': 'succeeded',
+        'test_status': 'passed',
         'status': 'succeeded',
     }
     assert evidence not in captured.out
@@ -346,6 +403,31 @@ def test_run_mode_prints_only_public_manifest_digest(
             str(_SOURCE_TREE),
             '--scenario-profile',
             'raw_location_payload',
+        ],
+        [
+            '--check',
+            '--source-commit',
+            _COMMIT,
+            '--source-tree',
+            str(_SOURCE_TREE),
+            '--safety-profile',
+            'caller_defined_fault',
+        ],
+        [
+            '--run',
+            '--execute-approved-simulation',
+            '--source-commit',
+            _COMMIT,
+            '--source-tree',
+            str(_SOURCE_TREE),
+            '--evidence',
+            '/private/evidence.json',
+            '--ros-domain-id',
+            '77',
+            '--fault-profile',
+            'duplicate_request',
+            '--safety-profile',
+            'stale_state',
         ],
     ),
 )
@@ -730,6 +812,9 @@ def test_build_receipt_requires_and_projects_exact_once_evidence() -> None:
     assert receipt.source_tree_digest == _TREE_DIGEST
     assert receipt.scenario_profile is TextGazeboScenarioProfile.HAPPY_PATH
     assert receipt.fault_profile is TextGazeboFaultProfile.NONE
+    assert receipt.safety_profile is TextGazeboSafetyProfile.NONE
+    assert receipt.product_outcome is ProductOutcome.SUCCEEDED
+    assert receipt.test_status is TestStatus.PASSED
     assert receipt.pressure == PressureEvidence(1, 3, 1, 1, 1, 0)
     assert receipt.target_binding_digest == _TARGET_DIGEST
     assert receipt.counts.as_dict() == {
@@ -749,6 +834,70 @@ def test_build_receipt_requires_and_projects_exact_once_evidence() -> None:
     assert 'device-private' not in rendered
     assert 'map-private' not in rendered
     assert 'revision-private' not in rendered
+
+
+@pytest.mark.parametrize(
+    'profile,result_code,map_switch_count',
+    (
+        (
+            TextGazeboSafetyProfile.STALE_STATE,
+            'robot_state_stale',
+            0,
+        ),
+        (
+            TextGazeboSafetyProfile.EMERGENCY_STOP,
+            'safety_emergency_stop',
+            0,
+        ),
+        (
+            TextGazeboSafetyProfile.MAP_REVISION_CHANGED,
+            'target_binding_changed',
+            1,
+        ),
+    ),
+)
+def test_build_receipt_projects_blocked_as_pass_with_zero_effects(
+    profile,
+    result_code,
+    map_switch_count,
+) -> None:
+    blocked = _known_blocked(result_code)
+    receipt = acceptance._build_receipt(
+        args=_args(safety_profile=profile.value),
+        layout=_layout(),
+        attestation=_attestation(),
+        run_id='run-' + '8' * 32,
+        total_seconds=7.0,
+        successful=acceptance._SuccessfulRun(
+            readiness_seconds=2.0,
+            execution_seconds=4.0,
+            preapproval_goal_count=0,
+            final_ledger=blocked,
+            proxy_counts=_blocked_proxy_counts(),
+            product_outcome=ProductOutcome.BLOCKED,
+            block_result_code=result_code,
+            fault_observation=SafetyFaultObservation(
+                observed=True,
+                fault_application_count=1,
+                map_switch_count=map_switch_count,
+            ),
+        ),
+        binding={
+            'device_id': 'device-private',
+            'map_id': 'map-private',
+            'map_revision': 'revision-private',
+            'target_binding_digest': _TARGET_DIGEST,
+        },
+        cleanup=_cleanup(_nav2_not_started()),
+    )
+
+    assert receipt.product_outcome is ProductOutcome.BLOCKED
+    assert receipt.test_status is TestStatus.PASSED
+    assert receipt.block_result_code == result_code
+    assert receipt.counts.dispatch_intent_count == 0
+    assert receipt.counts.robot_web_start_count == 0
+    assert receipt.counts.nav2_goal_count == 0
+    assert receipt.counts.terminal_result_count == 0
 
 
 @pytest.mark.parametrize(
@@ -874,6 +1023,84 @@ def _write_approval_observation(run_root: Path) -> Path:
     )
     path.chmod(0o600)
     return path
+
+
+def _write_safety_observation(
+    run_root: Path,
+    profile: TextGazeboSafetyProfile,
+) -> Path:
+    result_code = {
+        TextGazeboSafetyProfile.STALE_STATE: 'robot_state_stale',
+        TextGazeboSafetyProfile.EMERGENCY_STOP: 'safety_emergency_stop',
+        TextGazeboSafetyProfile.MAP_REVISION_CHANGED: (
+            'target_binding_changed'
+        ),
+    }[profile]
+    observation = DispatchSafetyFaultObservation(
+        safety_profile=profile,
+        result_code=result_code,
+        claim_arm_count=1,
+        preclaim_read_count=1,
+        postclaim_read_count=1,
+        fault_application_count=1,
+        map_switch_count=(
+            1
+            if profile is TextGazeboSafetyProfile.MAP_REVISION_CHANGED
+            else 0
+        ),
+    )
+    path = dispatch_safety_observation_path(
+        run_root / 'agent.sqlite3'
+    )
+    path.write_text(
+        json.dumps(
+            observation.as_dict(),
+            ensure_ascii=True,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(',', ':'),
+        ),
+        encoding='utf-8',
+    )
+    path.chmod(0o600)
+    return path
+
+
+@pytest.mark.parametrize(
+    'profile,map_switch_count',
+    (
+        (TextGazeboSafetyProfile.STALE_STATE, 0),
+        (TextGazeboSafetyProfile.EMERGENCY_STOP, 0),
+        (TextGazeboSafetyProfile.MAP_REVISION_CHANGED, 1),
+    ),
+)
+def test_safety_observation_requires_strict_server_owned_proof(
+    tmp_path,
+    profile,
+    map_switch_count,
+) -> None:
+    supervisor = acceptance._AcceptanceSupervisor(
+        layout=_layout(),
+        run_root=tmp_path,
+        domain_id=77,
+        gui=False,
+        nonce='4' * 32,
+        safety_profile=profile,
+    )
+    with pytest.raises(
+        acceptance.TextGazeboAcceptanceError,
+        match='safety_evidence_invalid',
+    ):
+        supervisor._safety_fault_observation()
+
+    _write_safety_observation(tmp_path, profile)
+    assert supervisor._safety_fault_observation() == (
+        SafetyFaultObservation(
+            observed=True,
+            fault_application_count=1,
+            map_switch_count=map_switch_count,
+        )
+    )
 
 
 def test_approval_pressure_observation_is_required_for_concurrent_profile(
@@ -1143,6 +1370,138 @@ def test_supervisor_orders_observation_before_runtime_and_effects(
         'map_revision': 'revision',
         'target_binding_digest': _TARGET_DIGEST,
     }
+
+
+def test_supervisor_accepts_expected_block_without_nav2_effect(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    events = []
+    state = {'approved': False}
+    blocked = _known_blocked('robot_state_stale')
+
+    class Reservation:
+        next_port = 34000
+
+        def __init__(self):
+            self.port = Reservation.next_port
+            Reservation.next_port += 1
+
+        def release(self):
+            return None
+
+    class Observer:
+        def snapshot(self):
+            return _nav2_not_started()
+
+    class Proxy:
+        def snapshot(self):
+            return (
+                _blocked_proxy_counts()
+                if state['approved']
+                else _proxy_counts(started=False)
+            )
+
+    class Ledger:
+        def snapshot(self, _confirmation_id):
+            return blocked if state['approved'] else _preapproval()
+
+        def await_expected_blocked(
+            self,
+            _confirmation_id,
+            *,
+            result_code,
+            **_options,
+        ):
+            events.append(('ledger.await-blocked', result_code))
+            assert state['approved'] is True
+            assert result_code == 'robot_state_stale'
+            return blocked
+
+    class Client:
+        def create_conversation(self):
+            return None
+
+        def request_navigation(self):
+            return ProposalReceipt('private-confirmation-id')
+
+        def approve_navigation(self):
+            state['approved'] = True
+
+        def replay_approval(self):
+            return None
+
+        def send_late_approval(self):
+            return None
+
+    supervisor = acceptance._AcceptanceSupervisor(
+        layout=_layout(),
+        run_root=tmp_path,
+        domain_id=77,
+        gui=False,
+        nonce='d' * 32,
+        safety_profile=TextGazeboSafetyProfile.STALE_STATE,
+    )
+    monkeypatch.setattr(acceptance, '_ros_node_count', lambda *_args: 0)
+    monkeypatch.setattr(acceptance, 'LoopbackPortReservation', Reservation)
+    monkeypatch.setattr(
+        acceptance,
+        'SQLiteAcceptanceObserver',
+        lambda _database: Ledger(),
+    )
+    monkeypatch.setattr(acceptance.time, 'sleep', lambda _seconds: None)
+    monkeypatch.setattr(
+        supervisor,
+        '_prepare_fixture',
+        lambda: {
+            'device_id': 'device',
+            'map_id': 'map',
+            'map_revision': 'revision',
+            'store': '/private/store',
+            'user_map_path': '/private/user-map.json',
+            'expected_preview_digest': 'a' * 64,
+            'target_binding_digest': _TARGET_DIGEST,
+        },
+    )
+    monkeypatch.setattr(
+        supervisor,
+        '_start_observer',
+        lambda: setattr(supervisor, '_observer', Observer()),
+    )
+    monkeypatch.setattr(supervisor, '_start_gazebo', lambda _fixture: None)
+    monkeypatch.setattr(
+        acceptance,
+        '_await_robot_web_readiness',
+        lambda *_args, **_kwargs: 1.0,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        '_start_proxy',
+        lambda _fixture: setattr(supervisor, '_proxy', Proxy()),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        '_start_agent',
+        lambda _fixture: Client(),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        '_await_nav2_success',
+        lambda: pytest.fail('blocked flow must not await Nav2 success'),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        '_safety_fault_observation',
+        lambda: SafetyFaultObservation(True, 1, 0),
+    )
+
+    successful, _binding = supervisor.run()
+
+    assert successful.product_outcome is ProductOutcome.BLOCKED
+    assert successful.block_result_code == 'robot_state_stale'
+    assert successful.proxy_counts.start_count == 0
+    assert successful.final_ledger.dispatch_intent_count == 0
+    assert events == [('ledger.await-blocked', 'robot_state_stale')]
 
 
 @pytest.mark.parametrize(

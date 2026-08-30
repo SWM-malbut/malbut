@@ -27,7 +27,6 @@ from malbut_scenarios.text_gazebo_campaign_core import (
     CaseExecutionStatus,
     CaseVerdict,
     CleanupOutcome,
-    ExpectedProductOutcome,
     ObservedProductOutcome,
     TextGazeboCampaignError,
     campaign_profile_binding,
@@ -54,9 +53,6 @@ from malbut_scenarios.text_gazebo_campaign_runtime import (
     TextGazeboCampaignRuntimeError,
 )
 _FULL_COMMIT = re.compile(r'(?:[0-9a-f]{40}|[0-9a-f]{64})\Z')
-_PROFILE_OUTCOMES = {
-    profile: ExpectedProductOutcome.SUCCEEDED for profile in CampaignProfile
-}
 
 
 class TextGazeboCampaignCLIError(RuntimeError):
@@ -142,18 +138,25 @@ class _InstalledCampaignExecutor:
         binding = campaign_profile_binding(case.profile)
         scenario_profile = binding.scenario_profile
         fault_profile = binding.fault_profile
+        safety_profile = binding.safety_profile
         try:
             candidate = self._runner.run(TextGazeboCampaignRunRequest(
                 ros_domain_id=self._ros_domain_id,
                 evidence_path=evidence_path,
                 scenario_profile=scenario_profile,
                 fault_profile=fault_profile,
+                safety_profile=safety_profile,
                 gui=self._gui,
             ))
             if (
                 not isinstance(candidate, TextGazeboCampaignRunResult)
                 or candidate.scenario_profile is not scenario_profile
                 or candidate.fault_profile is not fault_profile
+                or candidate.safety_profile is not safety_profile
+                or candidate.product_outcome.value
+                != binding.expected_outcome.value
+                or candidate.block_result_code
+                is not binding.expected_block_code
             ):
                 raise TextGazeboCampaignCLIError(
                     'campaign_unexpected_failure'
@@ -161,7 +164,9 @@ class _InstalledCampaignExecutor:
             result = candidate
             return CaseExecution(
                 status=CaseExecutionStatus.COMPLETED,
-                observed_outcome=ObservedProductOutcome.SUCCEEDED,
+                observed_outcome=ObservedProductOutcome(
+                    result.product_outcome.value
+                ),
                 cleanup=CleanupOutcome.CLEAN,
                 provenance=CampaignProvenance(
                     commit=result.commit,
@@ -169,6 +174,7 @@ class _InstalledCampaignExecutor:
                     installed_digest=result.installed_digest,
                 ),
                 evidence_digest=result.manifest_digest,
+                observed_block_code=result.block_result_code,
             )
         finally:
             elapsed = max(0.0, self._monotonic() - started)
@@ -324,10 +330,12 @@ def _cases(profile_values: Sequence[str]) -> tuple[CampaignCase, ...]:
     try:
         for ordinal, value in enumerate(profile_values, start=1):
             profile = CampaignProfile(value)
+            binding = campaign_profile_binding(profile)
             cases.append(CampaignCase(
                 case_id=CampaignCaseId(f'case-{ordinal:03d}'),
                 profile=profile,
-                expected_outcome=_PROFILE_OUTCOMES[profile],
+                expected_outcome=binding.expected_outcome,
+                expected_block_code=binding.expected_block_code,
             ))
     except (KeyError, TypeError, ValueError):
         raise TextGazeboCampaignCLIError(
@@ -435,6 +443,8 @@ def _case_evidence(
         child_manifest=summary,
         duration_seconds=duration,
         cleanup=CaseCleanupState(result.cleanup.value),
+        expected_block_code=result.expected_block_code,
+        observed_block_code=result.observed_block_code,
     )
 
 
