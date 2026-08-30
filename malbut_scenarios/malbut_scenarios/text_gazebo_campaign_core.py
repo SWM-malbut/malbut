@@ -5,7 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 import re
+from types import MappingProxyType
 from typing import Dict, Protocol, Sequence, Tuple
+
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
+    TextGazeboScenarioProfile,
+)
 
 
 MAX_CAMPAIGN_CASES = 32
@@ -45,6 +51,58 @@ class CampaignProfile(str, Enum):
     HAPPY_LIVING_ROOM = 'happy_living_room'
     HAPPY_KITCHEN = 'happy_kitchen'
     HAPPY_BEDROOM = 'happy_bedroom'
+    DUPLICATE_REQUEST = 'duplicate_request'
+    CONCURRENT_APPROVAL = 'concurrent_approval'
+    COMPETING_WORKERS = 'competing_workers'
+
+
+@dataclass(frozen=True, slots=True)
+class CampaignProfileBinding:
+    """Bind one public case token to semantic target and fault behavior."""
+
+    scenario_profile: TextGazeboScenarioProfile
+    fault_profile: TextGazeboFaultProfile
+
+
+_PROFILE_BINDINGS = MappingProxyType({
+    CampaignProfile.HAPPY_PATH: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_PATH,
+        TextGazeboFaultProfile.NONE,
+    ),
+    CampaignProfile.HAPPY_LIVING_ROOM: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        TextGazeboFaultProfile.NONE,
+    ),
+    CampaignProfile.HAPPY_KITCHEN: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_KITCHEN,
+        TextGazeboFaultProfile.NONE,
+    ),
+    CampaignProfile.HAPPY_BEDROOM: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_BEDROOM,
+        TextGazeboFaultProfile.NONE,
+    ),
+    CampaignProfile.DUPLICATE_REQUEST: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        TextGazeboFaultProfile.DUPLICATE_REQUEST,
+    ),
+    CampaignProfile.CONCURRENT_APPROVAL: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        TextGazeboFaultProfile.CONCURRENT_APPROVAL,
+    ),
+    CampaignProfile.COMPETING_WORKERS: CampaignProfileBinding(
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        TextGazeboFaultProfile.COMPETING_WORKERS,
+    ),
+})
+
+
+def campaign_profile_binding(
+    profile: CampaignProfile,
+) -> CampaignProfileBinding:
+    """Return the immutable semantic/fault binding for a case token."""
+    if not isinstance(profile, CampaignProfile):
+        raise TypeError('profile must be a CampaignProfile')
+    return _PROFILE_BINDINGS[profile]
 
 
 class ExpectedProductOutcome(str, Enum):
@@ -633,6 +691,7 @@ __all__ = [
     'CampaignCaseId',
     'CampaignCaseResult',
     'CampaignProfile',
+    'CampaignProfileBinding',
     'CampaignProvenance',
     'CampaignResult',
     'CampaignVerdict',
@@ -644,5 +703,6 @@ __all__ = [
     'ExpectedProductOutcome',
     'ObservedProductOutcome',
     'TextGazeboCampaignError',
+    'campaign_profile_binding',
     'run_campaign',
 ]

@@ -32,6 +32,7 @@ from malbut_scenarios.text_gazebo_evidence import (
     EvidenceCounts,
     EvidenceDurations,
     NavigationState,
+    pressure_evidence_for,
     ReadinessState,
     RobotActionState,
     StableStates,
@@ -39,6 +40,7 @@ from malbut_scenarios.text_gazebo_evidence import (
     TextGazeboEvidenceReceipt,
 )
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
     TextGazeboScenarioProfile,
 )
 
@@ -55,6 +57,7 @@ def _child_manifest(
     goal_digit='5',
     target_digit='6',
     profile=TextGazeboScenarioProfile.HAPPY_PATH,
+    fault_profile=TextGazeboFaultProfile.NONE,
 ):
     receipt = TextGazeboEvidenceReceipt(
         run_id='run-' + run_digit * 32,
@@ -65,6 +68,8 @@ def _child_manifest(
         runtime_binding_digest='6' * 64,
         target_binding_digest=target_digit * 64,
         scenario_profile=profile,
+        fault_profile=fault_profile,
+        pressure=pressure_evidence_for(fault_profile),
         states=StableStates(
             readiness=ReadinessState.READY,
             confirmation=ConfirmationState.APPROVED,
@@ -109,6 +114,7 @@ def _child_summary(
     goal_digit='5',
     target_digit='6',
     profile=TextGazeboScenarioProfile.HAPPY_PATH,
+    fault_profile=TextGazeboFaultProfile.NONE,
 ):
     manifest = _child_manifest(
         run_digit=run_digit,
@@ -116,6 +122,7 @@ def _child_summary(
         goal_digit=goal_digit,
         target_digit=target_digit,
         profile=profile,
+        fault_profile=fault_profile,
     )
     payload = (manifest.canonical_json() + '\n').encode('utf-8')
     return parse_child_manifest(payload)
@@ -207,6 +214,10 @@ def test_child_parser_returns_strict_digest_only_success_summary():
     assert summary.scenario_profile is (
         TextGazeboScenarioProfile.HAPPY_PATH
     )
+    assert summary.fault_profile is TextGazeboFaultProfile.NONE
+    assert summary.pressure == pressure_evidence_for(
+        TextGazeboFaultProfile.NONE
+    )
     assert summary.cleanup_complete is True
     assert summary.forced_termination_count == 0
     assert summary.simulation is True
@@ -281,7 +292,7 @@ def test_child_parser_rejects_wrong_format_extra_fields_and_digest():
 
 
 def test_child_parser_rejects_noncanonical_or_non_success_receipt():
-    """Only canonical exact-success v3 child evidence is accepted."""
+    """Only canonical exact-success v4 child evidence is accepted."""
     manifest = _child_manifest()
     noncanonical = json.dumps(json.loads(manifest.canonical_json()))
     with pytest.raises(CampaignEvidenceError) as caught:
@@ -336,9 +347,14 @@ def test_one_case_passed_campaign_schema_is_fixed_and_digest_bound():
         'duration_seconds': 5.0,
         'error_code': 'none',
         'expected_outcome': 'succeeded',
+        'fault_profile': 'none',
         'observed_outcome': 'succeeded',
         'ordinal': 1,
+        'pressure': pressure_evidence_for(
+            TextGazeboFaultProfile.NONE
+        ).as_dict(),
         'profile': 'happy_path',
+        'scenario_profile': 'happy_path',
         'target_binding_digest': '6' * 64,
         'test_verdict': 'passed',
     }
@@ -417,6 +433,42 @@ def test_case_rejects_child_from_a_different_scenario_profile():
                 profile=TextGazeboScenarioProfile.HAPPY_PATH
             ),
         )
+
+
+def test_case_rejects_child_from_a_different_fault_profile() -> None:
+    child = _child_summary(
+        profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        fault_profile=TextGazeboFaultProfile.NONE,
+    )
+
+    with pytest.raises(ValueError, match='fault profile'):
+        _case(profile='duplicate_request', child=child)
+
+
+@pytest.mark.parametrize(
+    'case_profile,fault_profile',
+    (
+        ('duplicate_request', TextGazeboFaultProfile.DUPLICATE_REQUEST),
+        ('concurrent_approval', TextGazeboFaultProfile.CONCURRENT_APPROVAL),
+        ('competing_workers', TextGazeboFaultProfile.COMPETING_WORKERS),
+    ),
+)
+def test_exactly_once_case_accepts_living_room_with_matching_fault(
+    case_profile,
+    fault_profile,
+) -> None:
+    child = _child_summary(
+        profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        fault_profile=fault_profile,
+    )
+
+    evidence = _case(profile=case_profile, child=child)
+
+    assert evidence.profile == case_profile
+    assert evidence.child_manifest.scenario_profile is (
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM
+    )
+    assert evidence.child_manifest.fault_profile is fault_profile
 
 
 def test_campaign_rejects_reused_binding_for_different_locations():

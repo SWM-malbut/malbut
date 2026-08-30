@@ -15,6 +15,8 @@ import pytest
 
 from malbut_scenarios import text_gazebo_runtime as runtime_module
 from malbut_scenarios.text_gazebo_runtime import (
+    ConcurrentApprovalResult,
+    DuplicateRequestResult,
     LoopbackPortReservation,
     ProposalReceipt,
     SQLiteAcceptanceObserver,
@@ -224,6 +226,180 @@ def test_http_client_drives_exact_public_happy_path_contract() -> None:
     assert request_values[4]['request_id'].startswith('late-')
 
 
+def test_http_client_exact_request_replay_reuses_confirmation_binding(
+) -> None:
+    proposal = {
+        'status': 'awaiting_confirmation',
+        'result_code': 'confirmation_pending',
+        'cached': False,
+        'proposal': {
+            'tool_name': 'navigate',
+            'arguments': {'location': '거실'},
+        },
+        'confirmation_request_id': _CONFIRMATION_ID,
+        'execution': _non_authorizing_execution(),
+    }
+    with _ScriptedLoopbackServer([
+        _HTTPResponse(value=proposal),
+        _HTTPResponse(value={**proposal, 'cached': True}),
+    ]) as server:
+        client = _client(server.port)
+        receipt = client.request_navigation()
+        result = client.replay_navigation_request(receipt)
+
+    assert result == DuplicateRequestResult(
+        request_attempt_count=2,
+        matching_confirmation_count=2,
+        additional_confirmation_binding_count=0,
+    )
+    assert len(server.requests) == 2
+    first = json.loads(server.requests[0]['body'].decode('utf-8'))
+    second = json.loads(server.requests[1]['body'].decode('utf-8'))
+    assert first == second
+    rendered = repr(result)
+    assert _CONFIRMATION_ID not in rendered
+    assert 'private-agent-token' not in rendered
+    assert '거실로 가줘' not in rendered
+
+
+def test_http_client_request_replay_rejects_changed_binding_safely() -> None:
+    proposal = {
+        'status': 'awaiting_confirmation',
+        'result_code': 'confirmation_pending',
+        'cached': False,
+        'proposal': {
+            'tool_name': 'navigate',
+            'arguments': {'location': '거실'},
+        },
+        'confirmation_request_id': _CONFIRMATION_ID,
+        'execution': _non_authorizing_execution(),
+    }
+    with _ScriptedLoopbackServer([
+        _HTTPResponse(value=proposal),
+        _HTTPResponse(value={
+            **proposal,
+            'confirmation_request_id': 'changed-private-binding',
+        }),
+    ]) as server:
+        client = _client(server.port)
+        receipt = client.request_navigation()
+        with pytest.raises(TextGazeboRuntimeError) as caught:
+            client.replay_navigation_request(receipt)
+
+    assert caught.value.code == 'agent_duplicate_request_invalid'
+    rendered = repr(caught.value)
+    assert _CONFIRMATION_ID not in rendered
+    assert 'changed-private-binding' not in rendered
+    assert 'private-agent-token' not in rendered
+
+
+def test_http_client_concurrent_approvals_have_one_winner_and_safe_loser(
+) -> None:
+    loser = _HTTPResponse(status=409, value={'error': {
+        'code': 'confirmation_already_terminal',
+        'message': 'confirmation intent is already terminal',
+    }})
+    approved = _HTTPResponse(value={
+        'status': 'approved',
+        'result_code': 'confirmation_approved',
+        'cached': False,
+        'execution': _non_authorizing_execution(),
+    })
+    cached = _HTTPResponse(value={
+        'status': 'approved',
+        'result_code': 'confirmation_approved',
+        'cached': True,
+        'execution': _non_authorizing_execution(),
+    })
+    with _ScriptedLoopbackServer([approved, loser, cached]) as server:
+        client = _client(server.port)
+        result = client.approve_navigation_concurrently()
+        client.replay_winning_approval(result)
+
+    assert result == ConcurrentApprovalResult(
+        approval_attempt_count=2,
+        approved_count=1,
+        non_authorizing_loser_count=1,
+    )
+    assert len(server.requests) == 3
+    values = [
+        json.loads(request['body'].decode('utf-8'))
+        for request in server.requests
+    ]
+    assert len({value['request_id'] for value in values[:2]}) == 2
+    assert len({value['turn_id'] for value in values[:2]}) == 2
+    canonical = [
+        json.dumps(value, ensure_ascii=False, sort_keys=True)
+        for value in values
+    ]
+    assert sorted(canonical.count(value) for value in set(canonical)) == [1, 2]
+    assert {value['text'] for value in values} == {'네'}
+    rendered = repr(result)
+    assert 'private-agent-token' not in rendered
+    assert '0123456789abcdef' not in rendered
+    assert not any(
+        thread.name.startswith('swm25-136-approval-')
+        for thread in threading.enumerate()
+    )
+
+
+def test_concurrent_approval_rejects_a_late_no_pending_loser() -> None:
+    """A serialized late request cannot prove the intended stale-CAS race."""
+    approved = _HTTPResponse(value={
+        'status': 'approved',
+        'result_code': 'confirmation_approved',
+        'cached': False,
+        'execution': _non_authorizing_execution(),
+    })
+    late = _HTTPResponse(value={
+        'status': 'no_pending_confirmation',
+        'result_code': 'confirmation_not_pending',
+        'execution': _non_authorizing_execution(),
+    })
+    with _ScriptedLoopbackServer([approved, late]) as server:
+        client = _client(server.port)
+        with pytest.raises(TextGazeboRuntimeError) as caught:
+            client.approve_navigation_concurrently()
+
+    assert caught.value.code == 'agent_concurrent_approval_invalid'
+
+
+def test_http_client_rejects_foreign_concurrent_result_before_io() -> None:
+    result = ConcurrentApprovalResult(
+        approval_attempt_count=2,
+        approved_count=1,
+        non_authorizing_loser_count=1,
+    )
+    with _ScriptedLoopbackServer([]) as server:
+        client = _client(server.port)
+        with pytest.raises(ValueError, match='result is invalid'):
+            client.replay_winning_approval(result)
+
+    assert server.requests == []
+
+
+def test_http_client_concurrent_approvals_fail_closed_without_one_loser(
+) -> None:
+    approved = _HTTPResponse(value={
+        'status': 'approved',
+        'result_code': 'confirmation_approved',
+        'cached': False,
+        'execution': _non_authorizing_execution(),
+    })
+    with _ScriptedLoopbackServer([approved, approved]) as server:
+        client = _client(server.port)
+        with pytest.raises(TextGazeboRuntimeError) as caught:
+            client.approve_navigation_concurrently()
+
+    assert caught.value.code == 'agent_concurrent_approval_invalid'
+    assert 'private-agent-token' not in repr(caught.value)
+    assert '0123456789abcdef' not in repr(caught.value)
+    assert not any(
+        thread.name.startswith('swm25-136-approval-')
+        for thread in threading.enumerate()
+    )
+
+
 @pytest.mark.parametrize(
     'profile,request_text,location',
     (
@@ -400,6 +576,10 @@ def _create_ledger(
     connection = sqlite3.connect(database)
     try:
         connection.executescript('''
+            CREATE TABLE conversation_turns (
+                turn_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL
+            );
             CREATE TABLE confirmation_intents (
                 confirmation_request_id TEXT PRIMARY KEY,
                 state TEXT NOT NULL,
@@ -424,6 +604,10 @@ def _create_ledger(
                     CHECK (physical_authorized = 0)
             );
         ''')
+        connection.execute(
+            "INSERT INTO conversation_turns VALUES (?, 'completed')",
+            ('private-agent-turn',),
+        )
         connection.execute(
             'INSERT INTO confirmation_intents VALUES (?, ?, ?, ?)',
             (
@@ -480,6 +664,7 @@ def test_sqlite_observer_projects_exact_preapproval_without_writes(
     assert snapshot.is_known_success() is False
     assert snapshot.robot_action_count == 0
     assert snapshot.dispatch_intent_count == 0
+    assert snapshot.durable_agent_turn_count == 1
     assert before.st_size == after.st_size
     assert before.st_mtime_ns == after.st_mtime_ns
     assert connect_calls
@@ -511,6 +696,7 @@ def test_sqlite_observer_accepts_only_exact_known_success(tmp_path) -> None:
     assert snapshot.approved_confirmation_count == 1
     assert snapshot.robot_action_count == 1
     assert snapshot.dispatch_intent_count == 1
+    assert snapshot.durable_agent_turn_count == 1
     assert snapshot.simulation is True
     assert snapshot.physical_authorized is False
     assert observer.quick_check() is True
@@ -593,6 +779,30 @@ def test_sqlite_observer_rejects_wrong_or_ambiguous_confirmation(
     with pytest.raises(TextGazeboRuntimeError) as ambiguous:
         observer.snapshot(_CONFIRMATION_ID)
     assert ambiguous.value.code == 'ledger_snapshot_invalid'
+
+
+def test_sqlite_observer_rejects_duplicate_durable_agent_turn(
+    tmp_path,
+) -> None:
+    database = (tmp_path / 'duplicate-turn.sqlite3').resolve()
+    _create_ledger(database)
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute(
+            "INSERT INTO conversation_turns VALUES (?, 'completed')",
+            ('second-private-agent-turn',),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    snapshot = SQLiteAcceptanceObserver(database).snapshot(
+        _CONFIRMATION_ID
+    )
+
+    assert snapshot.durable_agent_turn_count == 2
+    assert snapshot.is_preapproval() is False
+    assert snapshot.is_known_success() is False
 
 
 def test_loopback_port_reservation_holds_then_releases_one_port() -> None:

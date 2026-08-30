@@ -21,7 +21,11 @@ from malbut_scenarios.text_gazebo_campaign_runtime import (
     TextGazeboCampaignRunnerConfig,
     TextGazeboCampaignRuntimeError,
 )
-from malbut_scenarios.text_gazebo_scenario import TextGazeboScenarioProfile
+from malbut_scenarios.text_gazebo_evidence import pressure_evidence_for
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
+    TextGazeboScenarioProfile,
+)
 
 
 _COMMIT = '1' * 40
@@ -50,6 +54,7 @@ def _check_result() -> TextGazeboCampaignCheckResult:
 def _run_result(
     ordinal: int,
     profile: TextGazeboScenarioProfile = TextGazeboScenarioProfile.HAPPY_PATH,
+    fault_profile: TextGazeboFaultProfile = TextGazeboFaultProfile.NONE,
 ) -> TextGazeboCampaignRunResult:
     manifest_digest = _digest(f'manifest-{ordinal}')
     receipt_digest = _digest(f'receipt-{ordinal}')
@@ -76,6 +81,8 @@ def _run_result(
         physical_authorized=False,
         exact_success=True,
         total_duration_seconds=0.0,
+        fault_profile=fault_profile,
+        pressure=pressure_evidence_for(fault_profile),
     )
     return TextGazeboCampaignRunResult(
         manifest_digest=manifest_digest,
@@ -97,6 +104,8 @@ def _run_result(
         simulation=True,
         physical_authorized=False,
         child_manifest=summary,
+        fault_profile=fault_profile,
+        pressure=summary.pressure,
     )
 
 
@@ -120,6 +129,7 @@ class _FakeInstalledRunner:
         return _run_result(
             len(type(self).requests),
             self.result_profile or request.scenario_profile,
+            request.fault_profile,
         )
 
 
@@ -388,6 +398,51 @@ def test_profiles_map_to_unique_ordered_cases_and_private_child_paths(
     assert response['status'] == 'succeeded'
     assert response['simulation'] is True
     assert response['physical_authorized'] is False
+
+
+def test_exactly_once_tokens_map_to_living_room_and_distinct_faults(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    source = _source_tree(tmp_path)
+    evidence = _private_evidence(tmp_path)
+    _patch_installed(monkeypatch, tmp_path)
+    profiles = [
+        'duplicate_request',
+        'concurrent_approval',
+        'competing_workers',
+    ]
+
+    result = campaign.main(_run_arguments(
+        source,
+        evidence,
+        profiles=profiles,
+    ))
+
+    assert result == 0
+    assert capsys.readouterr().err == ''
+    requests = _FakeInstalledRunner.requests
+    assert [item.scenario_profile for item in requests] == [
+        TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+    ] * 3
+    assert [item.fault_profile.value for item in requests] == profiles
+    receipt = json.loads(evidence.read_text(encoding='utf-8'))['receipt']
+    assert [item['profile'] for item in receipt['cases']] == profiles
+    assert [item['scenario_profile'] for item in receipt['cases']] == [
+        'happy_living_room',
+    ] * 3
+    assert [item['fault_profile'] for item in receipt['cases']] == profiles
+    assert [item['pressure'] for item in receipt['cases']] == [
+        pressure_evidence_for(profile).as_dict()
+        for profile in (
+            TextGazeboFaultProfile.DUPLICATE_REQUEST,
+            TextGazeboFaultProfile.CONCURRENT_APPROVAL,
+            TextGazeboFaultProfile.COMPETING_WORKERS,
+        )
+    ]
+    assert receipt['cleanup']['completed'] is True
+    assert receipt['cleanup']['clean_case_count'] == 3
 
 
 def test_child_cleanup_failure_stops_and_publishes_failed_aggregate(

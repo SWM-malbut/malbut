@@ -17,6 +17,27 @@ class TextGazeboScenarioProfile(str, Enum):
     HAPPY_BEDROOM = 'happy_bedroom'
 
 
+class TextGazeboFaultProfile(str, Enum):
+    """Public identifiers for bounded exactly-once pressure profiles."""
+
+    NONE = 'none'
+    DUPLICATE_REQUEST = 'duplicate_request'
+    CONCURRENT_APPROVAL = 'concurrent_approval'
+    COMPETING_WORKERS = 'competing_workers'
+
+
+@dataclass(frozen=True, slots=True)
+class TextGazeboPressureContract:
+    """Exact public counters required for one bounded pressure profile."""
+
+    request_attempt_count: int
+    approval_attempt_count: int
+    worker_contender_count: int
+    pressure_contender_count: int
+    pressure_winner_count: int
+    pressure_nonwinner_count: int
+
+
 @dataclass(frozen=True, repr=False, slots=True)
 class TextGazeboScenarioSpec:
     """Server-owned natural-language request and semantic target binding."""
@@ -54,6 +75,51 @@ _SPECS: Mapping[TextGazeboScenarioProfile, TextGazeboScenarioSpec] = (
 )
 
 
+_PRESSURE_CONTRACTS: Mapping[
+    TextGazeboFaultProfile,
+    TextGazeboPressureContract,
+] = MappingProxyType({
+    TextGazeboFaultProfile.NONE: TextGazeboPressureContract(
+        request_attempt_count=1,
+        approval_attempt_count=3,
+        worker_contender_count=1,
+        pressure_contender_count=1,
+        pressure_winner_count=1,
+        pressure_nonwinner_count=0,
+    ),
+    TextGazeboFaultProfile.DUPLICATE_REQUEST: (
+        TextGazeboPressureContract(
+            request_attempt_count=2,
+            approval_attempt_count=3,
+            worker_contender_count=1,
+            pressure_contender_count=2,
+            pressure_winner_count=1,
+            pressure_nonwinner_count=1,
+        )
+    ),
+    TextGazeboFaultProfile.CONCURRENT_APPROVAL: (
+        TextGazeboPressureContract(
+            request_attempt_count=1,
+            approval_attempt_count=4,
+            worker_contender_count=1,
+            pressure_contender_count=2,
+            pressure_winner_count=1,
+            pressure_nonwinner_count=1,
+        )
+    ),
+    TextGazeboFaultProfile.COMPETING_WORKERS: (
+        TextGazeboPressureContract(
+            request_attempt_count=1,
+            approval_attempt_count=3,
+            worker_contender_count=2,
+            pressure_contender_count=2,
+            pressure_winner_count=1,
+            pressure_nonwinner_count=1,
+        )
+    ),
+})
+
+
 def coerce_scenario_profile(
     value: Union[TextGazeboScenarioProfile, str],
 ) -> TextGazeboScenarioProfile:
@@ -77,9 +143,36 @@ def scenario_spec(
     return _SPECS[coerce_scenario_profile(profile)]
 
 
+def coerce_fault_profile(
+    value: Union[TextGazeboFaultProfile, str],
+) -> TextGazeboFaultProfile:
+    """Accept an enum or exact fault token, never caller-defined behavior."""
+    if isinstance(value, TextGazeboFaultProfile):
+        return value
+    if type(value) is not str:
+        raise ValueError('text Gazebo fault profile is invalid')
+    try:
+        return TextGazeboFaultProfile(value)
+    except ValueError as error:
+        raise ValueError(
+            'text Gazebo fault profile is not allowlisted'
+        ) from error
+
+
+def pressure_contract(
+    profile: Union[TextGazeboFaultProfile, str],
+) -> TextGazeboPressureContract:
+    """Return exact evidence counters for one allowlisted fault profile."""
+    return _PRESSURE_CONTRACTS[coerce_fault_profile(profile)]
+
+
 __all__ = [
+    'TextGazeboFaultProfile',
+    'TextGazeboPressureContract',
     'TextGazeboScenarioProfile',
     'TextGazeboScenarioSpec',
+    'coerce_fault_profile',
     'coerce_scenario_profile',
+    'pressure_contract',
     'scenario_spec',
 ]

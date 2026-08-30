@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 import hashlib
 import json
@@ -32,7 +32,14 @@ from malbut_scenarios.text_gazebo_campaign_evidence import (
     ChildManifestSummary,
     parse_child_manifest,
 )
-from malbut_scenarios.text_gazebo_scenario import TextGazeboScenarioProfile
+from malbut_scenarios.text_gazebo_evidence import (
+    PressureEvidence,
+    pressure_evidence_for,
+)
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
+    TextGazeboScenarioProfile,
+)
 from malbut_scenarios.text_gazebo_runtime import sanitized_ros_environment
 
 
@@ -172,6 +179,7 @@ class TextGazeboCampaignRunRequest:
     scenario_profile: TextGazeboScenarioProfile = (
         TextGazeboScenarioProfile.HAPPY_PATH
     )
+    fault_profile: TextGazeboFaultProfile = TextGazeboFaultProfile.NONE
 
     def __post_init__(self) -> None:
         """Validate explicit authority fields without filesystem access."""
@@ -182,6 +190,10 @@ class TextGazeboCampaignRunRequest:
             or not isinstance(
                 self.scenario_profile,
                 TextGazeboScenarioProfile,
+            )
+            or not isinstance(
+                self.fault_profile,
+                TextGazeboFaultProfile,
             )
             or type(self.gui) is not bool
         ):
@@ -195,6 +207,7 @@ class TextGazeboCampaignRunRequest:
             'TextGazeboCampaignRunRequest('
             f'ros_domain_id={self.ros_domain_id!r}, '
             f'scenario_profile={self.scenario_profile.value!r}, '
+            f'fault_profile={self.fault_profile.value!r}, '
             f'gui={self.gui!r})'
         )
 
@@ -222,6 +235,12 @@ class TextGazeboCampaignRunResult:
     simulation: bool
     physical_authorized: bool
     child_manifest: ChildManifestSummary
+    fault_profile: TextGazeboFaultProfile = TextGazeboFaultProfile.NONE
+    pressure: PressureEvidence = field(
+        default_factory=lambda: pressure_evidence_for(
+            TextGazeboFaultProfile.NONE
+        )
+    )
 
     def __post_init__(self) -> None:
         """Keep the public result bounded and digest-only."""
@@ -265,6 +284,11 @@ class TextGazeboCampaignRunResult:
                 TextGazeboScenarioProfile,
             )
             or not isinstance(
+                self.fault_profile,
+                TextGazeboFaultProfile,
+            )
+            or not isinstance(self.pressure, PressureEvidence)
+            or not isinstance(
                 self.child_manifest,
                 ChildManifestSummary,
             )
@@ -290,6 +314,8 @@ class TextGazeboCampaignRunResult:
             != self.runtime_binding_digest
             or child.target_binding_digest != self.target_binding_digest
             or child.scenario_profile is not self.scenario_profile
+            or child.fault_profile is not self.fault_profile
+            or child.pressure != self.pressure
             or child.exact_success is not self.exact_success
             or child.cleanup_complete is not self.cleanup_complete
             or child.forced_termination_count
@@ -907,6 +933,7 @@ class InstalledTextGazeboAcceptanceRunner:
             != self._config.source_tree_digest
             or child.installed_digest != self._config.installed_digest
             or child.scenario_profile is not request.scenario_profile
+            or child.fault_profile is not request.fault_profile
         ):
             raise TextGazeboCampaignRuntimeError(
                 'campaign_runner_evidence_invalid'
@@ -923,6 +950,8 @@ class InstalledTextGazeboAcceptanceRunner:
             runtime_binding_digest=child.runtime_binding_digest,
             target_binding_digest=child.target_binding_digest,
             scenario_profile=child.scenario_profile,
+            fault_profile=child.fault_profile,
+            pressure=child.pressure,
             elapsed_seconds=elapsed,
             child_output_digest=output.digest,
             child_output_bytes=output.bytes_observed,
@@ -1189,6 +1218,8 @@ class InstalledTextGazeboAcceptanceRunner:
             '--execute-approved-simulation',
             '--scenario-profile',
             request.scenario_profile.value,
+            '--fault-profile',
+            request.fault_profile.value,
             '--source-commit',
             self._config.source_commit,
             '--source-tree',
@@ -1320,6 +1351,7 @@ def _strict_object(raw: bytes) -> dict[str, object]:
 
 def _strict_check_output(raw: bytes) -> dict[str, object]:
     value = _exact(_strict_object(raw), {
+        'fault_profile',
         'installed_digest',
         'mode',
         'nav2_start_count',
@@ -1338,6 +1370,7 @@ def _strict_check_output(raw: bytes) -> dict[str, object]:
         or value['simulation'] is not True
         or type(value['physical_authorized']) is not bool
         or value['physical_authorized'] is not False
+        or value['fault_profile'] != TextGazeboFaultProfile.NONE.value
         or value['scenario_profile']
         != TextGazeboScenarioProfile.HAPPY_PATH.value
         or type(value['source_tree_digest']) is not str

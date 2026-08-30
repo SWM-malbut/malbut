@@ -15,6 +15,10 @@ import secrets
 import stat
 from typing import Any, Dict, Optional, Tuple
 
+from malbut_scenarios.text_gazebo_campaign_core import (
+    CampaignProfile,
+    campaign_profile_binding,
+)
 from malbut_scenarios.text_gazebo_evidence import (
     CleanupEvidence,
     ConfirmationState,
@@ -22,29 +26,31 @@ from malbut_scenarios.text_gazebo_evidence import (
     EvidenceCounts,
     EvidenceDurations,
     NavigationState,
+    PressureEvidence,
     ReadinessState,
     RobotActionState,
     StableStates,
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
+    pressure_evidence_for,
 )
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
     TextGazeboScenarioProfile,
-    coerce_scenario_profile,
     scenario_spec,
 )
 
 
 CAMPAIGN_EVIDENCE_FORMAT = (
-    'malbut.text-gazebo-campaign-evidence.v2'
+    'malbut.text-gazebo-campaign-evidence.v3'
 )
-CHILD_EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v3'
+CHILD_EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v4'
 MAX_CAMPAIGN_CASES = 32
 MAX_CHILD_MANIFEST_BYTES = 64 * 1024
 MAX_DURATION_SECONDS = 86_400.0
 MAX_EVIDENCE_COUNT = 1_000_000
 CAMPAIGN_PROFILE_ALLOWLIST = frozenset(
-    profile.value for profile in TextGazeboScenarioProfile
+    profile.value for profile in CampaignProfile
 )
 
 _CAMPAIGN_ID = re.compile(r'campaign-[0-9a-f]{32}\Z')
@@ -64,9 +70,11 @@ _CHILD_RECEIPT_KEYS = frozenset({
     'commit',
     'counts',
     'durations',
+    'fault_profile',
     'goal_set_digest',
     'installed_digest',
     'physical_authorized',
+    'pressure',
     'run_id',
     'runtime_binding_digest',
     'scenario_profile',
@@ -107,6 +115,14 @@ _CHILD_CLEANUP_KEYS = frozenset({
     'owned_processes_remaining',
     'owned_sockets_remaining',
     'ros_nodes_remaining',
+})
+_CHILD_PRESSURE_KEYS = frozenset({
+    'approval_attempt_count',
+    'pressure_contender_count',
+    'pressure_nonwinner_count',
+    'pressure_winner_count',
+    'request_attempt_count',
+    'worker_contender_count',
 })
 
 
@@ -253,6 +269,12 @@ class ChildManifestSummary:
     physical_authorized: bool
     exact_success: bool
     total_duration_seconds: float
+    fault_profile: TextGazeboFaultProfile = TextGazeboFaultProfile.NONE
+    pressure: PressureEvidence = field(
+        default_factory=lambda: pressure_evidence_for(
+            TextGazeboFaultProfile.NONE
+        )
+    )
 
     def __post_init__(self) -> None:
         """Reject summaries that could support an unproven success claim."""
@@ -271,6 +293,17 @@ class ChildManifestSummary:
             TextGazeboScenarioProfile,
             'scenario_profile',
         )
+        _require_enum(
+            self.fault_profile,
+            TextGazeboFaultProfile,
+            'fault_profile',
+        )
+        if not isinstance(self.pressure, PressureEvidence):
+            raise TypeError('pressure must be a PressureEvidence')
+        if self.pressure != pressure_evidence_for(self.fault_profile):
+            raise ValueError(
+                'pressure must match the exact fault profile contract'
+            )
         if (
             not isinstance(self.run_id, str)
             or _RUN_ID.fullmatch(self.run_id) is None
@@ -390,9 +423,16 @@ class CampaignCaseEvidence:
             _duration(self.duration_seconds, 'duration_seconds'),
         )
         if self.child_manifest is not None:
-            if self.child_manifest.scenario_profile.value != self.profile:
+            binding = campaign_profile_binding(CampaignProfile(self.profile))
+            if (
+                self.child_manifest.scenario_profile
+                is not binding.scenario_profile
+                or self.child_manifest.fault_profile
+                is not binding.fault_profile
+            ):
                 raise ValueError(
-                    'child scenario profile must match the campaign case'
+                    'child scenario profile and fault profile must match '
+                    'the campaign case binding'
                 )
             if self.observed_outcome is not ProductOutcome.SUCCEEDED:
                 raise ValueError(
@@ -440,6 +480,27 @@ class CampaignCaseEvidence:
             return None
         return self.child_manifest.target_binding_digest
 
+    @property
+    def scenario_profile(self) -> Optional[str]:
+        """Return the bounded semantic profile proven by the child."""
+        if self.child_manifest is None:
+            return None
+        return self.child_manifest.scenario_profile.value
+
+    @property
+    def fault_profile(self) -> Optional[str]:
+        """Return the bounded pressure behavior proven by the child."""
+        if self.child_manifest is None:
+            return None
+        return self.child_manifest.fault_profile.value
+
+    @property
+    def pressure(self) -> Optional[Dict[str, int]]:
+        """Return exact content-free contention counters when observed."""
+        if self.child_manifest is None:
+            return None
+        return self.child_manifest.pressure.as_dict()
+
     def as_dict(self) -> Dict[str, object]:
         """Return the fixed, ordered, content-free case projection."""
         return {
@@ -449,9 +510,12 @@ class CampaignCaseEvidence:
             'duration_seconds': self.duration_seconds,
             'error_code': self.error_code.value,
             'expected_outcome': self.expected_outcome.value,
+            'fault_profile': self.fault_profile,
             'observed_outcome': self.observed_outcome.value,
             'ordinal': self.ordinal,
+            'pressure': self.pressure,
             'profile': self.profile,
+            'scenario_profile': self.scenario_profile,
             'target_binding_digest': self.target_binding_digest,
             'test_verdict': self.test_verdict.value,
         }
@@ -607,9 +671,10 @@ class TextGazeboCampaignReceipt:
             run_ids.append(child.run_id)
             manifest_digests.append(child.manifest_digest)
             goal_set_digests.append(child.goal_set_digest)
-            location = scenario_spec(
-                coerce_scenario_profile(case.profile)
-            ).location
+            binding = campaign_profile_binding(
+                CampaignProfile(case.profile)
+            )
+            location = scenario_spec(binding.scenario_profile).location
             previous_target = target_by_location.setdefault(
                 location,
                 child.target_binding_digest,
@@ -824,6 +889,10 @@ def _child_receipt(value: Dict[str, object]) -> TextGazeboEvidenceReceipt:
             value['cleanup'],
             _CHILD_CLEANUP_KEYS,
         )
+        pressure_value = _exact_keys(
+            value['pressure'],
+            _CHILD_PRESSURE_KEYS,
+        )
         states = StableStates(
             readiness=ReadinessState(states_value['readiness']),
             confirmation=ConfirmationState(states_value['confirmation']),
@@ -834,6 +903,7 @@ def _child_receipt(value: Dict[str, object]) -> TextGazeboEvidenceReceipt:
         counts = EvidenceCounts(**counts_value)
         durations = EvidenceDurations(**durations_value)
         cleanup = CleanupEvidence(**cleanup_value)
+        pressure = PressureEvidence(**pressure_value)
         return TextGazeboEvidenceReceipt(
             run_id=value['run_id'],
             commit=value['commit'],
@@ -845,10 +915,14 @@ def _child_receipt(value: Dict[str, object]) -> TextGazeboEvidenceReceipt:
             scenario_profile=TextGazeboScenarioProfile(
                 value['scenario_profile']
             ),
+            fault_profile=TextGazeboFaultProfile(
+                value['fault_profile']
+            ),
             states=states,
             counts=counts,
             durations=durations,
             cleanup=cleanup,
+            pressure=pressure,
         )
     except CampaignEvidenceError:
         raise
@@ -930,6 +1004,8 @@ def parse_child_manifest(payload: bytes) -> ChildManifestSummary:
             runtime_binding_digest=receipt.runtime_binding_digest,
             target_binding_digest=receipt.target_binding_digest,
             scenario_profile=receipt.scenario_profile,
+            fault_profile=receipt.fault_profile,
+            pressure=receipt.pressure,
             cleanup_complete=cleanup.completed,
             owned_processes_remaining=(
                 cleanup.owned_processes_remaining

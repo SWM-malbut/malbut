@@ -14,19 +14,34 @@ from types import SimpleNamespace
 import pytest
 
 from malbut_scenarios import text_gazebo_acceptance as acceptance
+from malbut_scenarios.concurrent_approval_resolver import (
+    ConcurrentApprovalGateObservation,
+    concurrent_approval_observation_path,
+)
 from malbut_scenarios.counting_robot_web_proxy import RobotWebProxyCounts
 from malbut_scenarios.nav2_goal_status_observer import (
     GoalStatusEvidence,
     Nav2GoalStatusEvidence,
 )
-from malbut_scenarios.text_gazebo_evidence import CleanupEvidence
+from malbut_scenarios.text_gazebo_evidence import (
+    CleanupEvidence,
+    PressureEvidence,
+    pressure_evidence_for,
+)
 from malbut_scenarios.text_gazebo_runtime import (
+    ConcurrentApprovalResult,
+    DuplicateRequestResult,
     LedgerSnapshot,
     ProposalReceipt,
     TextGazeboRuntimeError,
 )
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
     TextGazeboScenarioProfile,
+)
+from malbut_scenarios.worker_competition import (
+    WorkerCompetitionObservation,
+    worker_competition_observation_path,
 )
 
 
@@ -66,6 +81,7 @@ def _args(**changes) -> argparse.Namespace:
         'gui': False,
         'ros_domain_id': 77,
         'scenario_profile': 'happy_path',
+        'fault_profile': 'none',
     }
     values.update(changes)
     return argparse.Namespace(**values)
@@ -184,6 +200,7 @@ def test_check_mode_is_default_safe_and_does_not_enter_runtime(
     assert captured.err == ''
     assert json.loads(captured.out) == {
         'installed_digest': _DIGEST,
+        'fault_profile': 'none',
         'mode': 'check',
         'nav2_start_count': 0,
         'physical_authorized': False,
@@ -239,6 +256,7 @@ def test_run_mode_prints_only_public_manifest_digest(
     assert result == 0
     assert captured.err == ''
     assert json.loads(captured.out) == {
+        'fault_profile': 'none',
         'manifest_digest': '9' * 64,
         'mode': 'run',
         'physical_authorized': False,
@@ -711,6 +729,8 @@ def test_build_receipt_requires_and_projects_exact_once_evidence() -> None:
     assert receipt.physical_authorized is False
     assert receipt.source_tree_digest == _TREE_DIGEST
     assert receipt.scenario_profile is TextGazeboScenarioProfile.HAPPY_PATH
+    assert receipt.fault_profile is TextGazeboFaultProfile.NONE
+    assert receipt.pressure == PressureEvidence(1, 3, 1, 1, 1, 0)
     assert receipt.target_binding_digest == _TARGET_DIGEST
     assert receipt.counts.as_dict() == {
         'agent_proposal_count': 1,
@@ -729,6 +749,211 @@ def test_build_receipt_requires_and_projects_exact_once_evidence() -> None:
     assert 'device-private' not in rendered
     assert 'map-private' not in rendered
     assert 'revision-private' not in rendered
+
+
+@pytest.mark.parametrize(
+    'profile,duplicate,concurrent,approval,worker,expected',
+    (
+        (
+            TextGazeboFaultProfile.NONE,
+            None,
+            None,
+            None,
+            None,
+            PressureEvidence(1, 3, 1, 1, 1, 0),
+        ),
+        (
+            TextGazeboFaultProfile.DUPLICATE_REQUEST,
+            DuplicateRequestResult(2, 2, 0),
+            None,
+            None,
+            None,
+            PressureEvidence(2, 3, 1, 2, 1, 1),
+        ),
+        (
+            TextGazeboFaultProfile.CONCURRENT_APPROVAL,
+            None,
+            ConcurrentApprovalResult(2, 1, 1),
+            ConcurrentApprovalGateObservation(),
+            None,
+            PressureEvidence(1, 4, 1, 2, 1, 1),
+        ),
+        (
+            TextGazeboFaultProfile.COMPETING_WORKERS,
+            None,
+            None,
+            None,
+            WorkerCompetitionObservation(),
+            PressureEvidence(1, 3, 2, 2, 1, 1),
+        ),
+    ),
+)
+def test_pressure_evidence_is_derived_from_exact_observed_profile(
+    tmp_path,
+    profile,
+    duplicate,
+    concurrent,
+    approval,
+    worker,
+    expected,
+) -> None:
+    run_root = tmp_path / profile.value
+    run_root.mkdir()
+    supervisor = acceptance._AcceptanceSupervisor(
+        layout=_layout(),
+        run_root=run_root,
+        domain_id=77,
+        gui=False,
+        nonce='e' * 32,
+        fault_profile=profile,
+    )
+
+    assert supervisor._pressure_evidence(
+        duplicate_result=duplicate,
+        concurrent_result=concurrent,
+        approval_observation=approval,
+        worker_observation=worker,
+    ) == expected
+
+
+def test_pressure_evidence_rejects_a_vacuous_fault_profile(tmp_path) -> None:
+    run_root = tmp_path / 'vacuous'
+    run_root.mkdir()
+    supervisor = acceptance._AcceptanceSupervisor(
+        layout=_layout(),
+        run_root=run_root,
+        domain_id=77,
+        gui=False,
+        nonce='f' * 32,
+        fault_profile=TextGazeboFaultProfile.DUPLICATE_REQUEST,
+    )
+
+    with pytest.raises(
+        acceptance.TextGazeboAcceptanceError,
+        match='pressure_evidence_invalid',
+    ):
+        supervisor._pressure_evidence(
+            duplicate_result=None,
+            concurrent_result=None,
+            approval_observation=None,
+            worker_observation=None,
+        )
+
+
+def _write_worker_observation(run_root: Path) -> Path:
+    path = worker_competition_observation_path(
+        str(run_root / 'agent.sqlite3')
+    )
+    path.write_text(
+        json.dumps(
+            WorkerCompetitionObservation().as_dict(),
+            ensure_ascii=True,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(',', ':'),
+        ),
+        encoding='utf-8',
+    )
+    path.chmod(0o600)
+    return path
+
+
+def _write_approval_observation(run_root: Path) -> Path:
+    path = concurrent_approval_observation_path(
+        str(run_root / 'agent.sqlite3')
+    )
+    path.write_text(
+        json.dumps(
+            ConcurrentApprovalGateObservation().as_dict(),
+            ensure_ascii=True,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(',', ':'),
+        ),
+        encoding='utf-8',
+    )
+    path.chmod(0o600)
+    return path
+
+
+def test_approval_pressure_observation_is_required_for_concurrent_profile(
+    tmp_path,
+) -> None:
+    supervisor = acceptance._AcceptanceSupervisor(
+        layout=_layout(),
+        run_root=tmp_path,
+        domain_id=77,
+        gui=False,
+        nonce='5' * 32,
+        fault_profile=TextGazeboFaultProfile.CONCURRENT_APPROVAL,
+    )
+
+    with pytest.raises(
+        acceptance.TextGazeboAcceptanceError,
+        match='pressure_evidence_invalid',
+    ):
+        supervisor._concurrent_approval_pressure_observation()
+
+
+def test_approval_pressure_observation_is_rejected_for_other_profiles(
+    tmp_path,
+) -> None:
+    path = _write_approval_observation(tmp_path)
+    supervisor = acceptance._AcceptanceSupervisor(
+        layout=_layout(),
+        run_root=tmp_path,
+        domain_id=77,
+        gui=False,
+        nonce='6' * 32,
+        fault_profile=TextGazeboFaultProfile.NONE,
+    )
+
+    with pytest.raises(
+        acceptance.TextGazeboAcceptanceError,
+        match='pressure_evidence_invalid',
+    ):
+        supervisor._concurrent_approval_pressure_observation()
+    assert path.exists()
+
+
+def test_worker_pressure_observation_is_required_for_worker_profile(
+    tmp_path,
+) -> None:
+    supervisor = acceptance._AcceptanceSupervisor(
+        layout=_layout(),
+        run_root=tmp_path,
+        domain_id=77,
+        gui=False,
+        nonce='7' * 32,
+        fault_profile=TextGazeboFaultProfile.COMPETING_WORKERS,
+    )
+
+    with pytest.raises(
+        acceptance.TextGazeboAcceptanceError,
+        match='pressure_evidence_invalid',
+    ):
+        supervisor._worker_pressure_observation()
+
+
+def test_worker_pressure_observation_is_rejected_for_other_profiles(
+    tmp_path,
+) -> None:
+    path = _write_worker_observation(tmp_path)
+    supervisor = acceptance._AcceptanceSupervisor(
+        layout=_layout(),
+        run_root=tmp_path,
+        domain_id=77,
+        gui=False,
+        nonce='8' * 32,
+        fault_profile=TextGazeboFaultProfile.NONE,
+    )
+
+    with pytest.raises(
+        acceptance.TextGazeboAcceptanceError,
+        match='pressure_evidence_invalid',
+    ):
+        supervisor._worker_pressure_observation()
+    assert path.exists()
 
 
 @pytest.mark.parametrize(
@@ -918,6 +1143,187 @@ def test_supervisor_orders_observation_before_runtime_and_effects(
         'map_revision': 'revision',
         'target_binding_digest': _TARGET_DIGEST,
     }
+
+
+@pytest.mark.parametrize(
+    'profile',
+    (
+        TextGazeboFaultProfile.DUPLICATE_REQUEST,
+        TextGazeboFaultProfile.CONCURRENT_APPROVAL,
+        TextGazeboFaultProfile.COMPETING_WORKERS,
+    ),
+)
+def test_supervisor_executes_each_exactly_once_pressure_branch(
+    monkeypatch,
+    tmp_path,
+    profile,
+) -> None:
+    """Each fault token must drive its real client branch and exact replay."""
+    events = []
+    state = {'approved': False}
+    concurrent = ConcurrentApprovalResult(2, 1, 1)
+
+    class Reservation:
+        next_port = 33000
+
+        def __init__(self):
+            self.port = Reservation.next_port
+            Reservation.next_port += 1
+
+        def release(self):
+            return None
+
+    class Observer:
+        def snapshot(self):
+            return (
+                _nav2_success(_GOAL_DIGEST)
+                if state['approved']
+                else _nav2_success()
+            )
+
+    class Proxy:
+        def snapshot(self):
+            return _proxy_counts(started=state['approved'])
+
+    class Ledger:
+        def snapshot(self, _confirmation_id):
+            events.append(
+                'ledger.final' if state['approved'] else 'ledger.preapproval'
+            )
+            return _known_success() if state['approved'] else _preapproval()
+
+        def await_known_success(self, _confirmation_id, **_options):
+            events.append('ledger.await-success')
+            assert state['approved'] is True
+            return _known_success()
+
+    class Client:
+        def create_conversation(self):
+            events.append('client.create')
+
+        def request_navigation(self):
+            events.append('client.request')
+            return ProposalReceipt('private-confirmation-id')
+
+        def replay_navigation_request(self, receipt):
+            assert receipt.confirmation_request_id == (
+                'private-confirmation-id'
+            )
+            events.append('client.request-replay')
+            return DuplicateRequestResult(2, 2, 0)
+
+        def approve_navigation(self):
+            events.append('client.approve')
+            state['approved'] = True
+
+        def approve_navigation_concurrently(self):
+            events.append('client.approve-concurrently')
+            state['approved'] = True
+            return concurrent
+
+        def replay_approval(self):
+            events.append('client.approval-replay')
+
+        def replay_winning_approval(self, result):
+            assert result is concurrent
+            events.append('client.winner-replay')
+
+        def send_late_approval(self):
+            events.append('client.late')
+
+    supervisor = acceptance._AcceptanceSupervisor(
+        layout=_layout(),
+        run_root=tmp_path,
+        domain_id=77,
+        gui=False,
+        nonce='9' * 32,
+        fault_profile=profile,
+    )
+    if profile is TextGazeboFaultProfile.CONCURRENT_APPROVAL:
+        _write_approval_observation(tmp_path)
+    if profile is TextGazeboFaultProfile.COMPETING_WORKERS:
+        _write_worker_observation(tmp_path)
+    monkeypatch.setattr(acceptance, '_ros_node_count', lambda *_args: 0)
+    monkeypatch.setattr(acceptance, 'LoopbackPortReservation', Reservation)
+    monkeypatch.setattr(
+        acceptance,
+        'SQLiteAcceptanceObserver',
+        lambda _database: Ledger(),
+    )
+    monkeypatch.setattr(acceptance.time, 'sleep', lambda _seconds: None)
+    monkeypatch.setattr(
+        supervisor,
+        '_prepare_fixture',
+        lambda: {
+            'device_id': 'device',
+            'map_id': 'map',
+            'map_revision': 'revision',
+            'store': '/private/store',
+            'user_map_path': '/private/user-map.json',
+            'expected_preview_digest': 'f' * 64,
+            'target_binding_digest': _TARGET_DIGEST,
+        },
+    )
+
+    def start_observer():
+        supervisor._observer = Observer()
+
+    def start_proxy(_fixture):
+        supervisor._proxy = Proxy()
+
+    monkeypatch.setattr(supervisor, '_start_observer', start_observer)
+    monkeypatch.setattr(supervisor, '_start_gazebo', lambda _fixture: None)
+    monkeypatch.setattr(
+        acceptance,
+        '_await_robot_web_readiness',
+        lambda *_args, **_kwargs: 1.0,
+    )
+    monkeypatch.setattr(supervisor, '_start_proxy', start_proxy)
+    monkeypatch.setattr(
+        supervisor,
+        '_start_agent',
+        lambda _fixture: Client(),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        '_await_nav2_success',
+        lambda: events.append('nav2.succeeded'),
+    )
+
+    successful, _binding = supervisor.run()
+
+    assert successful.pressure == pressure_evidence_for(profile)
+    assert events.count('client.request') == 1
+    assert events.count('client.request-replay') == (
+        1 if profile is TextGazeboFaultProfile.DUPLICATE_REQUEST else 0
+    )
+    assert events.count('client.approve-concurrently') == (
+        1 if profile is TextGazeboFaultProfile.CONCURRENT_APPROVAL else 0
+    )
+    assert events.count('client.approve') == (
+        0 if profile is TextGazeboFaultProfile.CONCURRENT_APPROVAL else 1
+    )
+    assert events.count('client.winner-replay') == (
+        1 if profile is TextGazeboFaultProfile.CONCURRENT_APPROVAL else 0
+    )
+    assert events.count('client.approval-replay') == (
+        0 if profile is TextGazeboFaultProfile.CONCURRENT_APPROVAL else 1
+    )
+    assert events.count('client.late') == 1
+    assert events.index('ledger.preapproval') < events.index(
+        'ledger.await-success'
+    )
+    if profile is TextGazeboFaultProfile.DUPLICATE_REQUEST:
+        assert events.index('client.request-replay') < events.index(
+            'ledger.preapproval'
+        )
+    if profile is TextGazeboFaultProfile.CONCURRENT_APPROVAL:
+        assert events.index('client.approve-concurrently') < events.index(
+            'ledger.await-success'
+        )
+        assert events.index('nav2.succeeded') < events.index(
+            'client.winner-replay'
+        )
 
 
 def test_supervisor_rejects_effect_that_appears_in_delayed_sample(

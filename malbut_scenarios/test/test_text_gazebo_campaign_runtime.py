@@ -24,9 +24,13 @@ from malbut_scenarios.text_gazebo_evidence import (
     StableStates,
     TextGazeboEvidenceManifest,
     TextGazeboEvidenceReceipt,
+    pressure_evidence_for,
     write_evidence_manifest,
 )
-from malbut_scenarios.text_gazebo_scenario import TextGazeboScenarioProfile
+from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
+    TextGazeboScenarioProfile,
+)
 
 
 _COMMIT = '1' * 40
@@ -278,6 +282,7 @@ def _summary(manifest=None):
 
 def _check_payload(**changes):
     value = {
+        'fault_profile': 'none',
         'installed_digest': _INSTALLED_DIGEST,
         'mode': 'check',
         'nav2_start_count': 0,
@@ -423,7 +428,7 @@ def test_request_preserves_legacy_positional_gui_argument(tmp_path):
     )
 
 
-def test_success_uses_exact_installed_argv_sanitized_env_and_v2_evidence(
+def test_success_uses_exact_installed_argv_sanitized_env_and_v4_evidence(
     tmp_path,
 ):
     prefix, source, evidence_parent = _layout(tmp_path)
@@ -448,6 +453,8 @@ def test_success_uses_exact_installed_argv_sanitized_env_and_v2_evidence(
         '--execute-approved-simulation',
         '--scenario-profile',
         'happy_path',
+        '--fault-profile',
+        'none',
         '--source-commit',
         _COMMIT,
         '--source-tree',
@@ -510,6 +517,64 @@ def test_child_profile_mismatch_is_fail_closed_after_cleanup(tmp_path):
     assert '--scenario-profile' in owner.argv
     index = owner.argv.index('--scenario-profile')
     assert owner.argv[index + 1] == 'happy_kitchen'
+
+
+def test_fault_profile_is_forwarded_and_child_mismatch_fails_closed(
+    tmp_path,
+) -> None:
+    prefix, source, evidence_parent = _layout(tmp_path)
+    config = _config(prefix, source)
+    request = _request(
+        evidence_parent,
+        scenario_profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        fault_profile=TextGazeboFaultProfile.DUPLICATE_REQUEST,
+    )
+    clock = _Clock()
+    manifest = _manifest(
+        scenario_profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+    )
+    _FakePopenOwner.on_start = lambda _owner: write_evidence_manifest(
+        request.evidence_path,
+        manifest,
+    )
+
+    with pytest.raises(
+        runtime.TextGazeboCampaignRuntimeError,
+        match='^campaign_runner_evidence_invalid$',
+    ):
+        _runner(config, clock).run(request)
+
+    owner = _FakePopenOwner.instances[0]
+    fault_index = owner.argv.index('--fault-profile')
+    assert owner.argv[fault_index + 1] == 'duplicate_request'
+
+
+def test_fault_profile_pressure_is_preserved_in_run_result(tmp_path) -> None:
+    prefix, source, evidence_parent = _layout(tmp_path)
+    config = _config(prefix, source)
+    fault = TextGazeboFaultProfile.COMPETING_WORKERS
+    request = _request(
+        evidence_parent,
+        scenario_profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        fault_profile=fault,
+    )
+    clock = _Clock()
+    pressure = pressure_evidence_for(fault)
+    manifest = _manifest(
+        scenario_profile=TextGazeboScenarioProfile.HAPPY_LIVING_ROOM,
+        fault_profile=fault,
+        pressure=pressure,
+    )
+    _FakePopenOwner.on_start = lambda _owner: write_evidence_manifest(
+        request.evidence_path,
+        manifest,
+    )
+
+    result = _runner(config, clock).run(request)
+
+    assert result.fault_profile is fault
+    assert result.pressure == pressure
+    assert result.child_manifest.pressure == pressure
 
 
 def test_check_uses_exact_non_actuating_argv_and_strict_public_output(

@@ -101,6 +101,7 @@ def test_execution_flags_are_explicit_and_default_off() -> None:
 
     assert parsed.execute_approved_simulation is False
     assert parsed.robot_web_url is None
+    assert parsed.fault_profile == 'none'
 
 
 def test_explicit_execution_composes_without_robot_web_io(
@@ -237,10 +238,16 @@ def test_execution_check_validates_full_composition_without_starting_it(
             return True
 
     def checked_execution(
-        _settings, _loader, *, robot_web_url, scenario_profile,
+        _settings,
+        _loader,
+        *,
+        robot_web_url,
+        scenario_profile,
+        fault_profile,
     ):
         assert robot_web_url == 'http://127.0.0.1:8765'
         assert scenario_profile.value == 'happy_path'
+        assert fault_profile.value == 'none'
         events.append('approved_execution')
         return ApprovedSimulationTextRuntime(
             orchestrator=SimpleNamespace(
@@ -356,3 +363,133 @@ def test_approved_runtime_pins_selected_location_before_robot_web_io(
         runtime.action_repository.close()
         runtime.orchestrator.conversation_store.close()
         runtime.orchestrator.memory_store.close()
+
+
+def test_competing_worker_profile_owns_two_independent_connections(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """The race must cross SQLite connections, not one Python RLock."""
+    monkeypatch.setattr(
+        text_agent_server.RobotWebNavigationClient,
+        '_request',
+        lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError('composition performed Robot Web I/O')
+        ),
+    )
+    settings = Settings(
+        provider='mock',
+        auth_token='local-test-token',
+        database_path=str(tmp_path / 'runtime.sqlite3'),
+        tool_mode='proposal',
+        port=8877,
+    )
+
+    runtime = build_approved_simulation_text_runtime(
+        settings,
+        lambda: Catalog(),
+        robot_web_url='http://127.0.0.1:8765',
+        fault_profile='competing_workers',
+    )
+    try:
+        assert len(runtime.action_repositories) == 2
+        assert len(runtime.dispatchers) == 2
+        assert (
+            runtime.action_repositories[0]
+            is not runtime.action_repositories[1]
+        )
+        assert runtime.worker_competition is not None
+        assert all(
+            dispatcher.is_alive is False
+            for dispatcher in runtime.dispatchers
+        )
+    finally:
+        _close_execution_runtime(runtime, None)
+
+
+def test_concurrent_approval_profile_wraps_only_the_target_resolver(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Approval pressure keeps one worker and the production DB CAS."""
+    monkeypatch.setattr(
+        text_agent_server.RobotWebNavigationClient,
+        '_request',
+        lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError('composition performed Robot Web I/O')
+        ),
+    )
+    settings = Settings(
+        provider='mock',
+        auth_token='local-test-token',
+        database_path=str(tmp_path / 'runtime.sqlite3'),
+        tool_mode='proposal',
+        port=8877,
+    )
+
+    runtime = build_approved_simulation_text_runtime(
+        settings,
+        lambda: Catalog(),
+        robot_web_url='http://127.0.0.1:8765',
+        fault_profile='concurrent_approval',
+    )
+    try:
+        assert len(runtime.action_repositories) == 1
+        assert len(runtime.dispatchers) == 1
+        assert runtime.worker_competition is None
+        assert runtime.concurrent_approval_gate is not None
+        assert runtime.concurrent_approval_gate.snapshot().contender_count == 0
+    finally:
+        _close_execution_runtime(runtime, None)
+
+
+def test_two_worker_shutdown_joins_every_runtime_before_repositories() -> None:
+    events = []
+
+    class Competition:
+        def close(self):
+            events.append('competition.close')
+
+    class Dispatcher:
+        def __init__(self, name):
+            self.name = name
+
+        def close(self):
+            events.append(self.name + '.close')
+
+        def join(self, *, timeout):
+            assert timeout > 120.0
+            events.append(self.name + '.join')
+            return True
+
+    def owned(name):
+        return SimpleNamespace(
+            close=lambda: events.append(name + '.close')
+        )
+
+    runtime = ApprovedSimulationTextRuntime(
+        orchestrator=SimpleNamespace(
+            conversation_store=owned('conversation'),
+            memory_store=owned('memory'),
+        ),
+        text_turn_service=object(),
+        action_repository=owned('repository-a'),
+        dispatcher=Dispatcher('dispatcher-a'),
+        additional_action_repositories=(owned('repository-b'),),
+        additional_dispatchers=(Dispatcher('dispatcher-b'),),
+        worker_competition=Competition(),
+    )
+
+    _close_execution_runtime(runtime, None)
+
+    assert events == [
+        'competition.close',
+        'dispatcher-a.close',
+        'dispatcher-b.close',
+        'dispatcher-a.join',
+        'dispatcher-b.join',
+        'repository-a.close',
+        'repository-b.close',
+        'conversation.close',
+        'memory.close',
+    ]

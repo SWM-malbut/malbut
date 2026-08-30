@@ -40,9 +40,20 @@ from malbut_scenarios.approved_named_navigation_executor import (
     ApprovedNamedNavigationExecutor,
     RobotWebSimulationStateSource,
 )
+from malbut_scenarios.concurrent_approval_resolver import (
+    ConcurrentApprovalResolverGate,
+    concurrent_approval_observation_path,
+)
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
     TextGazeboScenarioProfile,
+    coerce_fault_profile,
     scenario_spec,
+)
+from malbut_scenarios.worker_competition import (
+    CompetingApprovedActionWorker,
+    CoordinatedActionRepository,
+    WorkerCompetitionCoordinator,
 )
 
 
@@ -62,6 +73,25 @@ class ApprovedSimulationTextRuntime:
     text_turn_service: TextTurnService
     action_repository: SQLiteActionRepository
     dispatcher: ApprovedActionWorkerRuntime
+    additional_action_repositories: tuple[
+        SQLiteActionRepository, ...
+    ] = ()
+    additional_dispatchers: tuple[ApprovedActionWorkerRuntime, ...] = ()
+    worker_competition: WorkerCompetitionCoordinator | None = None
+    concurrent_approval_gate: ConcurrentApprovalResolverGate | None = None
+
+    @property
+    def action_repositories(self) -> tuple[SQLiteActionRepository, ...]:
+        """Return every repository in deterministic ownership order."""
+        return (
+            self.action_repository,
+            *self.additional_action_repositories,
+        )
+
+    @property
+    def dispatchers(self) -> tuple[ApprovedActionWorkerRuntime, ...]:
+        """Return every worker runtime in deterministic ownership order."""
+        return (self.dispatcher, *self.additional_dispatchers)
 
 
 def build_simulation_text_runtime(
@@ -104,6 +134,9 @@ def build_approved_simulation_text_runtime(
     scenario_profile: TextGazeboScenarioProfile | str = (
         TextGazeboScenarioProfile.HAPPY_PATH
     ),
+    fault_profile: TextGazeboFaultProfile | str = (
+        TextGazeboFaultProfile.NONE
+    ),
 ) -> ApprovedSimulationTextRuntime:
     """
     Compose the explicit SWM25-132 simulation execution boundary.
@@ -130,10 +163,20 @@ def build_approved_simulation_text_runtime(
         )
 
     scenario = scenario_spec(scenario_profile)
+    fault = coerce_fault_profile(fault_profile)
     catalog = catalog_loader()
     # Pin the one MVP destination before constructing SQLite or HTTP owners.
     catalog.resolve(scenario.location)
     resolver = CatalogNamedTargetResolver(catalog_loader)
+    concurrent_approval_gate = None
+    if fault is TextGazeboFaultProfile.CONCURRENT_APPROVAL:
+        concurrent_approval_gate = ConcurrentApprovalResolverGate(
+            resolver,
+            observation_path=concurrent_approval_observation_path(
+                settings.database_path
+            ),
+        )
+        resolver = concurrent_approval_gate
     client = RobotWebNavigationClient(robot_web_url)
     state_source = RobotWebSimulationStateSource(
         client,
@@ -157,37 +200,84 @@ def build_approved_simulation_text_runtime(
         settings,
         robot_state_source=state_source,
     )
-    action_repository = None
+    action_repositories: list[SQLiteActionRepository] = []
+    competition = None
     try:
         # Construct this before HTTP starts accepting approvals.  This makes
         # the action schema available to the confirmation/action transaction.
         action_repository = SQLiteActionRepository(settings.database_path)
+        action_repositories.append(action_repository)
+        if fault is TextGazeboFaultProfile.COMPETING_WORKERS:
+            # A separate SQLite connection is essential: sharing one
+            # repository object would test only its in-process RLock, not
+            # the durable BEGIN IMMEDIATE/CAS boundary used across workers.
+            action_repositories.append(
+                SQLiteActionRepository(settings.database_path)
+            )
+            competition = WorkerCompetitionCoordinator(
+                settings.database_path
+            )
         text_turn_service = TextTurnService(
             orchestrator,
             resolver,
             create_robot_actions=True,
             action_dispatch_window_seconds=DISPATCH_WINDOW_SECONDS,
         )
-        worker = ApprovedActionWorker(
-            action_repository,
-            executor,
-            state_source,
-            orchestrator.safety_policy,
-            resolver,
-            worker_id='swm25-132-' + secrets.token_hex(16),
-            lease_for_seconds=WORKER_LEASE_SECONDS,
-            status_deadline_seconds=STATUS_DEADLINE_SECONDS,
-            status_poll_interval_seconds=0.25,
-        )
+        dispatchers = []
+        for contender, repository in enumerate(action_repositories):
+            worker_repository = repository
+            worker_prefix = 'swm25-132-'
+            if competition is not None:
+                worker_repository = CoordinatedActionRepository(
+                    repository,
+                    competition,
+                    contender=contender,
+                )
+                worker_prefix = 'swm25-136-'
+            worker_arguments = {
+                'worker_id': worker_prefix + secrets.token_hex(16),
+                'lease_for_seconds': WORKER_LEASE_SECONDS,
+                'status_deadline_seconds': STATUS_DEADLINE_SECONDS,
+                'status_poll_interval_seconds': 0.25,
+            }
+            if competition is None:
+                worker = ApprovedActionWorker(
+                    worker_repository,
+                    executor,
+                    state_source,
+                    orchestrator.safety_policy,
+                    resolver,
+                    **worker_arguments,
+                )
+            else:
+                worker = CompetingApprovedActionWorker(
+                    worker_repository,
+                    executor,
+                    state_source,
+                    orchestrator.safety_policy,
+                    resolver,
+                    competition_coordinator=competition,
+                    contender=contender,
+                    **worker_arguments,
+                )
+            dispatchers.append(ApprovedActionWorkerRuntime(worker))
         return ApprovedSimulationTextRuntime(
             orchestrator=orchestrator,
             text_turn_service=text_turn_service,
             action_repository=action_repository,
-            dispatcher=ApprovedActionWorkerRuntime(worker),
+            dispatcher=dispatchers[0],
+            additional_action_repositories=tuple(
+                action_repositories[1:]
+            ),
+            additional_dispatchers=tuple(dispatchers[1:]),
+            worker_competition=competition,
+            concurrent_approval_gate=concurrent_approval_gate,
         )
     except Exception:
-        if action_repository is not None:
-            action_repository.close()
+        if competition is not None:
+            competition.close()
+        for repository in action_repositories:
+            repository.close()
         orchestrator.conversation_store.close()
         orchestrator.memory_store.close()
         raise
@@ -223,33 +313,53 @@ def _close_execution_runtime(
 ) -> None:
     """Drain request and worker threads before closing their SQLite stores."""
     first_error = None
-    try:
-        runtime.dispatcher.close()
-    except Exception as error:
-        first_error = error
+    if runtime.worker_competition is not None:
+        try:
+            runtime.worker_competition.close()
+        except Exception as error:
+            first_error = error
+    if runtime.concurrent_approval_gate is not None:
+        try:
+            runtime.concurrent_approval_gate.close()
+        except Exception as error:
+            if first_error is None:
+                first_error = error
+    for dispatcher in runtime.dispatchers:
+        try:
+            dispatcher.close()
+        except Exception as error:
+            if first_error is None:
+                first_error = error
     if server is not None:
         try:
             server.server_close()
         except Exception as error:
             if first_error is None:
                 first_error = error
-    try:
-        joined = runtime.dispatcher.join(
-            timeout=DISPATCHER_JOIN_TIMEOUT_SECONDS
-        )
-    except Exception as error:
-        if first_error is None:
-            first_error = error
-        joined = False
-    if not joined:
+    joined_all = True
+    for dispatcher in runtime.dispatchers:
+        try:
+            joined = dispatcher.join(
+                timeout=DISPATCHER_JOIN_TIMEOUT_SECONDS
+            )
+        except Exception as error:
+            if first_error is None:
+                first_error = error
+            joined = False
+        joined_all = joined_all and joined
+    if not joined_all:
         # The worker may still own these connections.  Closing them beneath
         # it would turn an orderly shutdown into a persistence race.
         raise RuntimeError('approved action dispatcher did not stop')
-    for close in (
-        runtime.action_repository.close,
+    closes = [
+        repository.close
+        for repository in runtime.action_repositories
+    ]
+    closes.extend((
         runtime.orchestrator.conversation_store.close,
         runtime.orchestrator.memory_store.close,
-    ):
+    ))
+    for close in closes:
         try:
             close()
         except Exception as error:
@@ -288,6 +398,12 @@ def _parser() -> argparse.ArgumentParser:
         help='Allowlisted text/navigation scenario (default: happy_path).',
     )
     parser.add_argument(
+        '--fault-profile',
+        choices=tuple(profile.value for profile in TextGazeboFaultProfile),
+        default=TextGazeboFaultProfile.NONE.value,
+        help='Allowlisted exactly-once pressure (default: none).',
+    )
+    parser.add_argument(
         '--check',
         action='store_true',
         help='Validate composition and target binding, then exit.',
@@ -314,6 +430,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     """Start one loopback server whose confirmation is non-actuating."""
     args = _parser().parse_args(argv)
     scenario = scenario_spec(args.scenario_profile)
+    fault = coerce_fault_profile(args.fault_profile)
+    if (
+        fault is not TextGazeboFaultProfile.NONE
+        and not args.execute_approved_simulation
+    ):
+        raise ValueError(
+            'fault profile requires approved simulation execution'
+        )
     load_env_file(Path(args.env_file).expanduser())
     settings = Settings.from_env(os.environ)
     settings.validate_for_server()
@@ -364,6 +488,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 source.load,
                 robot_web_url=str(robot_web_url),
                 scenario_profile=scenario.profile,
+                fault_profile=fault,
             )
             _close_execution_runtime(checked_runtime, None)
             checked_mode = 'approved-execution'
@@ -387,6 +512,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             source.load,
             robot_web_url=str(robot_web_url),
             scenario_profile=scenario.profile,
+            fault_profile=fault,
         )
         orchestrator = runtime.orchestrator
         text_turn_service = runtime.text_turn_service
@@ -414,7 +540,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             # HTTP handlers must drain before the stores they use are closed.
             server.daemon_threads = False
             server.block_on_close = True
-            runtime.dispatcher.start()
+            for dispatcher in runtime.dispatchers:
+                dispatcher.start()
         print(
             'Malbut text confirmation listening on '
             f'http://{settings.host}:{settings.port} '

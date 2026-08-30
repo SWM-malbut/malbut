@@ -15,11 +15,13 @@ import tempfile
 from typing import Any, Dict
 
 from malbut_scenarios.text_gazebo_scenario import (
+    TextGazeboFaultProfile,
     TextGazeboScenarioProfile,
+    pressure_contract,
 )
 
 
-EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v3'
+EVIDENCE_FORMAT = 'malbut.text-gazebo-e2e-evidence.v4'
 MAX_EVIDENCE_COUNT = 1_000_000
 MAX_EVIDENCE_DURATION_SECONDS = 86_400.0
 
@@ -174,6 +176,52 @@ class EvidenceCounts:
 
 
 @dataclass(frozen=True, slots=True)
+class PressureEvidence:
+    """Exact contention accounting without request or worker identities."""
+
+    request_attempt_count: int
+    approval_attempt_count: int
+    worker_contender_count: int
+    pressure_contender_count: int
+    pressure_winner_count: int
+    pressure_nonwinner_count: int
+
+    def __post_init__(self) -> None:
+        """Require bounded real integers for every public counter."""
+        for name in self.__dataclass_fields__:
+            _require_count(getattr(self, name), name)
+        if (
+            self.pressure_contender_count
+            != self.pressure_winner_count + self.pressure_nonwinner_count
+        ):
+            raise ValueError(
+                'pressure contenders must equal winners plus non-winners'
+            )
+
+    def as_dict(self) -> Dict[str, int]:
+        """Return the fixed content-free pressure projection."""
+        return {
+            name: getattr(self, name)
+            for name in self.__dataclass_fields__
+        }
+
+
+def pressure_evidence_for(
+    profile: TextGazeboFaultProfile,
+) -> PressureEvidence:
+    """Build the one exact pressure claim allowed for a fault profile."""
+    contract = pressure_contract(profile)
+    return PressureEvidence(
+        request_attempt_count=contract.request_attempt_count,
+        approval_attempt_count=contract.approval_attempt_count,
+        worker_contender_count=contract.worker_contender_count,
+        pressure_contender_count=contract.pressure_contender_count,
+        pressure_winner_count=contract.pressure_winner_count,
+        pressure_nonwinner_count=contract.pressure_nonwinner_count,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceDurations:
     """Bounded monotonic durations; wall-clock timestamps are excluded."""
 
@@ -244,6 +292,12 @@ class TextGazeboEvidenceReceipt:
     counts: EvidenceCounts
     durations: EvidenceDurations
     cleanup: CleanupEvidence
+    fault_profile: TextGazeboFaultProfile = TextGazeboFaultProfile.NONE
+    pressure: PressureEvidence = field(
+        default_factory=lambda: pressure_evidence_for(
+            TextGazeboFaultProfile.NONE
+        )
+    )
     simulation: bool = field(default=True, init=False)
     physical_authorized: bool = field(default=False, init=False)
 
@@ -274,11 +328,17 @@ class TextGazeboEvidenceReceipt:
             TextGazeboScenarioProfile,
             'scenario_profile',
         )
+        _require_enum(
+            self.fault_profile,
+            TextGazeboFaultProfile,
+            'fault_profile',
+        )
         for name, expected in (
             ('states', StableStates),
             ('counts', EvidenceCounts),
             ('durations', EvidenceDurations),
             ('cleanup', CleanupEvidence),
+            ('pressure', PressureEvidence),
         ):
             if not isinstance(getattr(self, name), expected):
                 raise TypeError(f'{name} must be a {expected.__name__}')
@@ -312,6 +372,10 @@ class TextGazeboEvidenceReceipt:
             for name, expected in exact_counts.items()
         ):
             raise ValueError('a success receipt requires exact-once counts')
+        if self.pressure != pressure_evidence_for(self.fault_profile):
+            raise ValueError(
+                'a success receipt requires exact pressure evidence'
+            )
         if (
             not self.cleanup.completed
             or self.cleanup.owned_processes_remaining != 0
@@ -328,9 +392,11 @@ class TextGazeboEvidenceReceipt:
             'commit': self.commit,
             'counts': self.counts.as_dict(),
             'durations': self.durations.as_dict(),
+            'fault_profile': self.fault_profile.value,
             'goal_set_digest': self.goal_set_digest,
             'installed_digest': self.installed_digest,
             'physical_authorized': self.physical_authorized,
+            'pressure': self.pressure.as_dict(),
             'run_id': self.run_id,
             'runtime_binding_digest': self.runtime_binding_digest,
             'scenario_profile': self.scenario_profile.value,
