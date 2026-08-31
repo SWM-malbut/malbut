@@ -43,8 +43,9 @@ scenarios:
       package: malbut_gazebo
       path: models/humanoid_actor/scenarios/front_door_entry.sdf
     trajectory: front_door_house_route
-    robot_pose: {x: 6.0, y: -4.55, z: 0.002, yaw: -1.5707963267948966}
+    robot_pose: {x: 6.0, y: -4.55, z: 0.002, yaw: 1.5707963267948966}
     actor_pose: {x: 6.0, y: -6.2, z: 0.0, yaw: 0.0}
+    measurement_duration_s: 127.0
 
   small_house_living_room:
     world_name: small_house
@@ -60,4 +61,3 @@ scenarios:
     trajectory: living_room_large_loop
     robot_pose: {x: -1.5, y: 1.2, z: 0.002, yaw: -1.5707963267948966}
     actor_pose: {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0}
-

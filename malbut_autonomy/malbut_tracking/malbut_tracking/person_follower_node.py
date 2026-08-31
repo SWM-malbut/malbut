@@ -3,6 +3,7 @@
 import json
 import math
 import sys
+import time
 
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Pose, PoseStamped
@@ -45,7 +46,6 @@ from .follow_policy import (
     FollowCommand,
     FollowSettings,
     decide_follow_motion,
-    should_update_goal,
     speed_limit_for_travel_distance,
 )
 from .geometry import (
@@ -103,6 +103,14 @@ _ALLOWED_FOLLOW_TRANSITIONS = {
 
 def _stamp_seconds(stamp) -> float:
     return float(stamp.sec) + float(stamp.nanosec) * 1e-9
+
+
+def _stamp_nanoseconds(stamp) -> int:
+    return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+
+
+def _monotonic_nanoseconds() -> int:
+    return time.clock_gettime_ns(time.CLOCK_MONOTONIC)
 
 
 class PersonFollowerNode(Node):
@@ -168,6 +176,7 @@ class PersonFollowerNode(Node):
             str(self.get_parameter('follow_path_action').value),
             str(self.get_parameter('spin_action').value),
             self._on_nav2_result,
+            self._on_nav2_feedback,
         )
         self._path_planner = Nav2PathClient(
             self,
@@ -258,8 +267,6 @@ class PersonFollowerNode(Node):
         self._latest_static_map: CostmapGrid | None = None
         self._lidar_clusters_received = False
         self._last_goal_position: Point2D | None = None
-        self._last_plan_target: Point2D | None = None
-        self._last_plan_request_s = 0.0
         self._last_target_pose = PoseStamped()
         self._last_target_height = 0.0
         self._current_distance: float | None = None
@@ -267,7 +274,6 @@ class PersonFollowerNode(Node):
         self._recovery_path_requested = False
         self._recovery_navigation_active = False
         self._recovery_scan_started = False
-        self._recovery_scan_complete = False
         self._recovery_direction_target: Point2D | None = None
         self._recovery_last_position: Point2D | None = None
         self._last_observed_bearing_rad = 0.0
@@ -275,19 +281,49 @@ class PersonFollowerNode(Node):
         self._recovery_turn_sign = 1.0
         self._last_motion_target: Point2D | None = None
         self._last_motion_velocity: Point2D | None = None
-        self._last_motion_precise = False
         self._last_motion_bearing_only = False
-        self._last_motion_source_stamp_s: float | None = None
+        self._last_motion_source_stamp_ns: int | None = None
+        self._motion_generation = 0
         self._goal_dispatch_count = 0
-        self._navigation_retry_not_before_s = 0.0
+        self._tracking_retry_pending = False
         self._navigation_failure_count = 0
         self._tracking_source = 'none'
-        self._last_speed_publish_s = -math.inf
         self._last_warning_s: dict[str, float] = {}
-        # This lightweight timer only checks state. Global path computation is
-        # separately capped at 3 Hz, leaving the executor available between
-        # requests for perception, LiDAR, TF, and action callbacks.
-        self._timer = self.create_timer(0.05, self._tick)
+        self._cancel_requested_goal = None
+
+        # These timers are canceled while idle and are reset only by the event
+        # that needs them. There is no permanent polling loop in the follower.
+        self._loss_timer = self.create_timer(
+            max(
+                1e-3,
+                float(
+                    self.get_parameter('observation_loss_debounce_s').value
+                ),
+            ),
+            self._on_loss_timer,
+        )
+        self._loss_timer.cancel()
+        self._pending_detection_timer = self.create_timer(
+            0.02,
+            self._on_pending_detection_timer,
+        )
+        self._pending_detection_timer.cancel()
+        retry_period_s = float(
+            self.get_parameter('navigation_retry_delay_s').value
+        )
+        self._tracking_retry_timer = self.create_timer(
+            retry_period_s,
+            self._on_tracking_retry_timer,
+        )
+        self._tracking_retry_timer.cancel()
+        self._recovery_retry_timer = self.create_timer(
+            retry_period_s,
+            self._on_recovery_retry_timer,
+        )
+        self._recovery_retry_timer.cancel()
+        self._cancel_guard = self.create_guard_condition(
+            self._on_cancel_guard
+        )
         self._publish_status()
         self.get_logger().info(
             'Person follower ready; target motion is delegated to Nav2 only.'
@@ -360,13 +396,6 @@ class PersonFollowerNode(Node):
         self.declare_parameter('full_speed_travel_distance_m', 1.50)
         self.declare_parameter('approach_prediction_horizon_s', 0.75)
         self.declare_parameter('approach_speed_threshold_mps', 0.10)
-        self.declare_parameter('goal_update_distance_m', 0.10)
-        self.declare_parameter('goal_update_minimum_period_s', 0.33)
-        self.declare_parameter('goal_update_period_s', 0.33)
-        self.declare_parameter('coarse_goal_update_distance_m', 0.20)
-        self.declare_parameter('coarse_goal_update_period_s', 0.33)
-        self.declare_parameter('bearing_goal_update_distance_m', 0.20)
-        self.declare_parameter('bearing_goal_update_period_s', 0.33)
         self.declare_parameter('bearing_only_variance_threshold_m2', 1.0)
         # The global inflation layer already encodes the configured 0.55 m
         # wall margin. Only send goals in its low-cost exterior and prefer
@@ -422,10 +451,6 @@ class PersonFollowerNode(Node):
             'lidar_reassociation_max_distance_m',
             'dynamic_rebind_minimum_speed_mps',
             'camera_horizontal_fov_rad',
-            'coarse_goal_update_distance_m',
-            'coarse_goal_update_period_s',
-            'bearing_goal_update_distance_m',
-            'bearing_goal_update_period_s',
             'bearing_only_variance_threshold_m2',
             'approach_prediction_horizon_s',
             'approach_speed_threshold_mps',
@@ -504,15 +529,6 @@ class PersonFollowerNode(Node):
             distance_tolerance_m=float(
                 self.get_parameter('distance_tolerance_m').value
             ),
-            goal_update_distance_m=float(
-                self.get_parameter('goal_update_distance_m').value
-            ),
-            goal_update_minimum_period_s=float(
-                self.get_parameter('goal_update_minimum_period_s').value
-            ),
-            goal_update_period_s=float(
-                self.get_parameter('goal_update_period_s').value
-            ),
             minimum_follow_speed_mps=float(
                 self.get_parameter('minimum_follow_speed_mps').value
             ),
@@ -537,11 +553,6 @@ class PersonFollowerNode(Node):
             ),
             minimum_distance_m=defaults.minimum_distance_m,
             distance_tolerance_m=defaults.distance_tolerance_m,
-            goal_update_distance_m=defaults.goal_update_distance_m,
-            goal_update_minimum_period_s=(
-                defaults.goal_update_minimum_period_s
-            ),
-            goal_update_period_s=defaults.goal_update_period_s,
             minimum_follow_speed_mps=defaults.minimum_follow_speed_mps,
             maximum_linear_speed_mps=defaults.maximum_linear_speed_mps,
             full_speed_travel_distance_m=(
@@ -583,8 +594,18 @@ class PersonFollowerNode(Node):
                 'target_person_id is required for REGISTERED_PERSON'
             )
 
-    def _cancel_callback(self, _goal_handle) -> CancelResponse:
+    def _cancel_callback(self, goal_handle) -> CancelResponse:
+        """Defer cancellation until the ActionServer enters canceling state."""
+        self._cancel_requested_goal = goal_handle
+        self._cancel_guard.trigger()
         return CancelResponse.ACCEPT
+
+    def _on_cancel_guard(self) -> None:
+        """Finish an accepted cancel request without a polling timer."""
+        goal_handle = self._cancel_requested_goal
+        self._cancel_requested_goal = None
+        if goal_handle is self._active_goal:
+            self._cancel_follow_action('follow action canceled')
 
     def _handle_accepted(self, goal_handle) -> None:
         self._active_goal = goal_handle
@@ -609,8 +630,6 @@ class PersonFollowerNode(Node):
         self._last_lidar_stamp_s = None
         self._lidar_proximity_guard_until_s = 0.0
         self._last_goal_position = None
-        self._last_plan_target = None
-        self._last_plan_request_s = 0.0
         self._last_target_pose = PoseStamped()
         self._last_target_height = 0.0
         self._last_observed_bearing_rad = 0.0
@@ -621,15 +640,19 @@ class PersonFollowerNode(Node):
         self._reset_recovery()
         self._last_motion_target = None
         self._last_motion_velocity = None
-        self._last_motion_precise = False
         self._last_motion_bearing_only = False
-        self._last_motion_source_stamp_s = None
+        self._last_motion_source_stamp_ns = None
+        self._motion_generation = 0
         self._goal_dispatch_count = 0
-        self._navigation_retry_not_before_s = 0.0
+        self._tracking_retry_pending = False
+        self._tracking_retry_timer.cancel()
+        self._loss_timer.cancel()
+        self._pending_detection_timer.cancel()
+        self._recovery_retry_timer.cancel()
         self._navigation_failure_count = 0
         self._tracking_source = 'none'
         self._set_state(FollowState.IDLE)
-        self._publish_speed_limit(force=True)
+        self._publish_speed_limit()
         goal_handle.execute()
         self.get_logger().info(
             'Waiting to acquire '
@@ -674,13 +697,16 @@ class PersonFollowerNode(Node):
                 if self._pending_detection is None:
                     self._pending_detection = message
                     self._pending_detection_received_s = now_s
+                    self._pending_detection_timer.reset()
                 return
             self._pending_detection = None
             self._pending_detection_received_s = None
+            self._pending_detection_timer.cancel()
             self._record_camera_miss()
             return
         self._pending_detection = None
         self._pending_detection_received_s = None
+        self._pending_detection_timer.cancel()
         detection, detected_pose = observation
         bearing_only = self._is_bearing_only(detection)
         camera_position = Point2D(
@@ -811,12 +837,14 @@ class PersonFollowerNode(Node):
                 if fused_lidar is not None
                 else 'camera'
             ),
-            precise=False,
             bearing_only=bearing_only,
             target_velocity=(
                 None if bearing_only else camera_estimate.velocity
             ),
-            source_stamp_s=self._message_stamp_seconds(message, detection),
+            source_stamp_ns=self._message_stamp_nanoseconds(
+                message,
+                detection,
+            ),
         )
 
     def _retry_pending_detection(self, now_s: float) -> None:
@@ -831,6 +859,7 @@ class PersonFollowerNode(Node):
         if now_s - received_s > timeout_s:
             self._pending_detection = None
             self._pending_detection_received_s = None
+            self._pending_detection_timer.cancel()
             self._record_camera_miss()
             self._warn_periodically(
                 'target_tf_expired',
@@ -840,17 +869,26 @@ class PersonFollowerNode(Node):
             return
         self._on_detections(message, retrying_transform=True)
 
-    def _message_stamp_seconds(
+    def _on_pending_detection_timer(self) -> None:
+        """Retry TF only while one detection is actually waiting for it."""
+        self._pending_detection_timer.cancel()
+        self._retry_pending_detection(self._now_seconds())
+        if self._pending_detection is not None:
+            self._pending_detection_timer.reset()
+
+    def _message_stamp_nanoseconds(
         self,
         message: Detection3DArray,
         detection: Detection3D,
-    ) -> float:
-        """Return the sensor timestamp used by one accepted detection."""
+    ) -> int:
+        """Return the exact sensor timestamp used by one accepted detection."""
         stamp = detection.header.stamp
         if stamp.sec == 0 and stamp.nanosec == 0:
             stamp = message.header.stamp
-        seconds = _stamp_seconds(stamp)
-        return seconds if seconds > 0.0 else self._now_seconds()
+        nanoseconds = _stamp_nanoseconds(stamp)
+        if nanoseconds > 0:
+            return nanoseconds
+        return self.get_clock().now().nanoseconds
 
     def _is_bearing_only(self, detection: Detection3D) -> bool:
         """Return whether range is a high-variance depth lower bound."""
@@ -922,6 +960,9 @@ class PersonFollowerNode(Node):
         stamp_s = _stamp_seconds(message.header.stamp)
         if stamp_s <= 0.0:
             stamp_s = self._now_seconds()
+        source_stamp_ns = _stamp_nanoseconds(message.header.stamp)
+        if source_stamp_ns <= 0:
+            source_stamp_ns = self.get_clock().now().nanoseconds
         fresh_camera_position = self._fresh_precise_camera_position()
         gate_center = (
             fresh_camera_position
@@ -1013,9 +1054,13 @@ class PersonFollowerNode(Node):
             and labeled is not None
             and labeled.track.confirmed
         ):
-            if not self._accept_lidar_proximity(labeled):
+            if not self._accept_lidar_proximity(
+                labeled,
+                source_stamp_ns,
+            ):
                 self._accept_lidar_continuation(
                     labeled,
+                    source_stamp_ns,
                     allow_camera_negative_rebind=reassociated is not None,
                 )
 
@@ -1204,6 +1249,7 @@ class PersonFollowerNode(Node):
     def _accept_lidar_continuation(
         self,
         labeled: LabeledObstacle,
+        source_stamp_ns: int,
         *,
         allow_camera_negative_rebind: bool = False,
     ) -> bool:
@@ -1251,15 +1297,15 @@ class PersonFollowerNode(Node):
             robot_position,
             now_s,
             source='lidar',
-            precise=True,
             target_velocity=labeled.track.velocity,
-            source_stamp_s=labeled.stamp_seconds,
+            source_stamp_ns=source_stamp_ns,
         )
         return True
 
     def _accept_lidar_proximity(
         self,
         labeled: LabeledObstacle,
+        source_stamp_ns: int,
     ) -> bool:
         """Apply fast LiDAR ALIGN/RETREAT only to the camera-labeled person."""
         settings = self._settings
@@ -1336,6 +1382,7 @@ class PersonFollowerNode(Node):
         self._tracking_source = 'lidar_proximity'
         self._last_lidar_stamp_s = labeled.stamp_seconds
         self._last_seen_s = now_s
+        self._arm_loss_timer()
         self._record_observed_bearing(
             robot_position,
             robot_yaw,
@@ -1353,9 +1400,8 @@ class PersonFollowerNode(Node):
             robot_position,
             control_position,
             now_s,
-            precise=True,
             target_velocity=labeled.track.velocity,
-            source_stamp_s=labeled.stamp_seconds,
+            source_stamp_ns=source_stamp_ns,
         )
         self._publish_track_markers()
         self._publish_feedback()
@@ -1444,10 +1490,9 @@ class PersonFollowerNode(Node):
         now_s: float,
         *,
         source: str,
-        precise: bool,
         bearing_only: bool = False,
         target_velocity: Point2D | None = None,
-        source_stamp_s: float | None = None,
+        source_stamp_ns: int | None = None,
     ) -> None:
         """Publish and follow the single resolved person point in `map`."""
         self._last_target_pose = self._make_target_pose(
@@ -1466,14 +1511,15 @@ class PersonFollowerNode(Node):
             self._nav2.cancel()
         self._set_state(FollowState.TRACKING)
         self._tracking_source = source
+        self._last_seen_s = now_s
+        self._arm_loss_timer()
         self._apply_tracking_motion(
             robot_position,
             target_position,
             now_s,
-            precise=precise,
             bearing_only=bearing_only,
             target_velocity=target_velocity,
-            source_stamp_s=source_stamp_s,
+            source_stamp_ns=source_stamp_ns,
         )
         self._publish_track_markers()
         self._publish_feedback()
@@ -1608,21 +1654,22 @@ class PersonFollowerNode(Node):
         robot_position: Point2D,
         target_position: Point2D,
         now_s: float,
-        precise: bool,
         bearing_only: bool = False,
         recovery: bool = False,
         target_velocity: Point2D | None = None,
-        source_stamp_s: float | None = None,
+        source_stamp_ns: int | None = None,
+        new_observation: bool = True,
     ) -> None:
         settings = self._settings
         if settings is None:
             return
         self._last_motion_target = target_position
         self._last_motion_velocity = target_velocity
-        self._last_motion_precise = precise
         self._last_motion_bearing_only = bearing_only
-        if source_stamp_s is not None:
-            self._last_motion_source_stamp_s = source_stamp_s
+        if source_stamp_ns is not None:
+            self._last_motion_source_stamp_ns = source_stamp_ns
+        if new_observation:
+            self._motion_generation += 1
         decision = decide_follow_motion(
             robot_position,
             target_position,
@@ -1655,9 +1702,9 @@ class PersonFollowerNode(Node):
             # metric depth returns.
             self._path_planner.cancel()
             self._last_goal_position = None
-            self._last_plan_target = None
+            self._cancel_tracking_retry()
             self._remaining_travel_distance_m = 0.0
-            self._publish_speed_limit(force=True)
+            self._publish_speed_limit()
             self._publish_track_markers()
             if recovery:
                 self._schedule_recovery_navigation_retry()
@@ -1667,22 +1714,23 @@ class PersonFollowerNode(Node):
                 self._nav2.cancel()
             self._path_planner.cancel()
             self._last_goal_position = None
-            self._last_plan_target = None
+            self._cancel_tracking_retry()
             self._remaining_travel_distance_m = 0.0
-            self._publish_speed_limit(force=True)
+            self._publish_speed_limit()
             self._publish_track_markers()
             if recovery:
                 self._schedule_recovery_navigation_retry()
             return
         if decision.command == FollowCommand.ALIGN:
+            self._cancel_tracking_retry()
             self._remaining_travel_distance_m = 0.0
-            self._publish_speed_limit(force=True)
+            self._publish_speed_limit()
             self._align_with_target(decision.goal.yaw)
             self._publish_track_markers()
             if recovery:
                 self._schedule_recovery_navigation_retry()
             return
-        if now_s < self._navigation_retry_not_before_s:
+        if self._tracking_retry_pending:
             return
         if self._nav2.mode == MotionMode.SPIN:
             return
@@ -1692,35 +1740,10 @@ class PersonFollowerNode(Node):
             if planning_to_target
             else decision.goal.position
         )
-        if precise:
-            update_distance_m = settings.goal_update_distance_m
-            update_period_s = settings.goal_update_period_s
-        elif bearing_only:
-            update_distance_m = float(
-                self.get_parameter('bearing_goal_update_distance_m').value
-            )
-            update_period_s = float(
-                self.get_parameter('bearing_goal_update_period_s').value
-            )
-        else:
-            update_distance_m = float(
-                self.get_parameter('coarse_goal_update_distance_m').value
-            )
-            update_period_s = float(
-                self.get_parameter('coarse_goal_update_period_s').value
-            )
-        plan_reference_position = (
-            target_position if planning_to_target else requested_position
-        )
-        if not recovery and not should_update_goal(
-            self._last_plan_target,
-            plan_reference_position,
-            max(0.0, now_s - self._last_plan_request_s),
-            settings,
-            update_distance_m=update_distance_m,
-            update_period_s=update_period_s,
-            minimum_period_s=settings.goal_update_minimum_period_s,
-        ):
+        if self._path_planner.busy:
+            # Sensor callbacks keep replacing `_last_motion_*`. Once the
+            # in-flight plan completes, exactly one newest observation is
+            # planned next instead of polling stale sensor data.
             return
         final_pose = PoseStamped()
         grid = self._latest_global_costmap
@@ -1794,7 +1817,6 @@ class PersonFollowerNode(Node):
                     self._nav2.cancel()
                 self._path_planner.cancel()
                 self._last_goal_position = None
-                self._last_plan_target = None
                 self._warn_periodically(
                     'no_safe_tracking_goal',
                     'No global-costmap goal with the configured margin; '
@@ -1822,24 +1844,26 @@ class PersonFollowerNode(Node):
         final_pose.pose.orientation.z = quaternion[2]
         final_pose.pose.orientation.w = quaternion[3]
         plan_source = self._tracking_source
-        plan_source_stamp_s = self._last_motion_source_stamp_s
-        if self._path_planner.busy:
-            return
+        plan_source_stamp_ns = self._last_motion_source_stamp_ns
+        plan_generation = self._motion_generation
+        planning_started_ns = _monotonic_nanoseconds()
         if self._path_planner.compute(
             final_pose,
             str(self.get_parameter('planner_id').value),
             lambda path, detail, source=plan_source,
-            source_stamp_s=plan_source_stamp_s: self._on_tracking_path(
+            source_stamp_ns=plan_source_stamp_ns,
+            started_ns=planning_started_ns,
+            generation=plan_generation: self._on_tracking_path(
                 path,
                 detail,
                 target_position if planning_to_target else None,
                 source,
                 recovery,
-                source_stamp_s,
+                source_stamp_ns,
+                started_ns,
+                generation,
             ),
         ):
-            self._last_plan_target = plan_reference_position
-            self._last_plan_request_s = now_s
             if recovery:
                 self._recovery_path_requested = True
         else:
@@ -1847,6 +1871,10 @@ class PersonFollowerNode(Node):
                 'planner_unavailable',
                 'Nav2 ComputePathToPose action is not ready',
             )
+            if recovery:
+                self._schedule_recovery_navigation_retry()
+            else:
+                self._schedule_tracking_navigation_retry()
 
     def _on_tracking_path(
         self,
@@ -1855,9 +1883,12 @@ class PersonFollowerNode(Node):
         target_position: Point2D | None,
         tracking_source: str,
         recovery: bool,
-        source_stamp_s: float | None,
+        source_stamp_ns: int | None,
+        planning_started_ns: int,
+        planning_generation: int,
     ) -> None:
         """Dispatch a bounded tracking path or full last-seen recovery path."""
+        planning_finished_ns = _monotonic_nanoseconds()
         expected_state = (
             FollowState.RECOVERING if recovery else FollowState.TRACKING
         )
@@ -1870,20 +1901,22 @@ class PersonFollowerNode(Node):
         ):
             return
         if path is None:
-            self._last_plan_target = None
             self._navigation_failure_count += 1
             self._warn_periodically('tracking_path_failed', detail)
             if recovery:
                 self._schedule_recovery_navigation_retry()
+            else:
+                self._schedule_tracking_navigation_retry()
             return
         if not path.poses:
-            self._last_plan_target = None
             self._warn_periodically(
                 'empty_tracking_path',
                 'Nav2 returned an empty tracking path',
             )
             if recovery:
                 self._schedule_recovery_navigation_retry()
+            else:
+                self._schedule_tracking_navigation_retry()
             return
         if recovery:
             selected_path = path
@@ -1909,9 +1942,15 @@ class PersonFollowerNode(Node):
             travel_distance_m,
             travel_description,
             tracking_source,
-            source_stamp_s,
+            source_stamp_ns,
+            planning_started_ns,
+            planning_finished_ns,
             recovery,
         ):
+            if not recovery:
+                self._plan_latest_observation_if_pending(
+                    planning_generation
+                )
             return
         self._warn_periodically(
             'follow_path_unavailable',
@@ -1919,6 +1958,8 @@ class PersonFollowerNode(Node):
         )
         if recovery:
             self._schedule_recovery_navigation_retry()
+        else:
+            self._schedule_tracking_navigation_retry()
 
     def _dispatch_tracking_path(
         self,
@@ -1927,7 +1968,9 @@ class PersonFollowerNode(Node):
         travel_distance_m: float,
         travel_description: str,
         tracking_source: str,
-        source_stamp_s: float | None,
+        source_stamp_ns: int | None,
+        planning_started_ns: int,
+        planning_finished_ns: int,
         recovery: bool,
     ) -> bool:
         """Send one already computed route to Nav2 FollowPath."""
@@ -1937,16 +1980,20 @@ class PersonFollowerNode(Node):
             str(self.get_parameter('goal_checker_id').value),
         ):
             return False
+        dispatch_ns = _monotonic_nanoseconds()
+        self._cancel_tracking_retry()
         self._remaining_travel_distance_m = travel_distance_m
-        self._publish_speed_limit(force=True)
+        self._publish_speed_limit()
         self._last_goal_position = waypoint_position
-        self._navigation_retry_not_before_s = 0.0
         self._navigation_failure_count = 0
         self._goal_dispatch_count += 1
         self._publish_command_trace(
-            source_stamp_s,
+            source_stamp_ns,
             tracking_source,
             self._goal_dispatch_count,
+            planning_started_ns,
+            planning_finished_ns,
+            dispatch_ns,
         )
         if recovery:
             self._recovery_navigation_active = True
@@ -1978,7 +2025,6 @@ class PersonFollowerNode(Node):
         if self._nav2.mode == MotionMode.NAVIGATE:
             self._nav2.cancel()
         self._last_goal_position = None
-        self._last_plan_target = None
         try:
             _, robot_yaw = self._robot_pose()
         except TransformException as error:
@@ -2005,122 +2051,124 @@ class PersonFollowerNode(Node):
                 'Nav2 Spin action is not ready for target alignment',
             )
 
-    def _tick(self) -> None:
-        if self._active_goal is None:
-            return
-        if self._active_goal.is_cancel_requested:
-            self._cancel_follow_action('follow action canceled')
-            return
+    def _arm_loss_timer(self) -> None:
+        """Restart the one-shot loss deadline for a real sensor observation."""
+        if self._active_goal is not None and self._last_seen_s is not None:
+            self._loss_timer.reset()
+
+    def _on_loss_timer(self) -> None:
+        """Enter recovery once after the latest observation deadline."""
+        self._loss_timer.cancel()
         settings = self._settings
-        if settings is None:
+        if (
+            self._active_goal is None
+            or settings is None
+            or self._last_seen_s is None
+        ):
             return
         now_s = self._now_seconds()
-        self._retry_pending_detection(now_s)
-        self._publish_speed_limit()
-        if self._last_seen_s is None:
-            # A follow request waits stationary for sensor-backed acquisition.
-            # Search rotation is valid only after a real target was acquired.
-            self._publish_feedback()
+        if now_s - self._last_seen_s < settings.observation_loss_debounce_s:
+            self._loss_timer.reset()
             return
-        lost_for = max(0.0, now_s - self._last_seen_s)
-        if lost_for >= settings.observation_loss_debounce_s:
-            if (
-                self._state == FollowState.RECOVERING
-                and self._recovery_phase
-                == RecoveryPhase.FINISHING_WAYPOINT
-                and self._last_goal_position is not None
-            ):
-                try:
-                    robot_position, _ = self._robot_pose()
-                except TransformException as error:
-                    self._warn_periodically(
-                        'recovery_waypoint_tf',
-                        f'Recovery waypoint TF unavailable: {error}',
-                    )
-                else:
-                    tolerance_m = float(
-                        self.get_parameter(
-                            'recovery_waypoint_tolerance_m'
-                        ).value
-                    )
-                    if distance(
-                        robot_position,
-                        self._last_goal_position,
-                    ) <= tolerance_m:
-                        self.get_logger().info(
-                            'Recovery waypoint reached within '
-                            f'{tolerance_m:.2f} m tolerance'
-                        )
-                        self._start_direction_turn()
-                        self._publish_feedback()
-                        return
-            if self._state == FollowState.TRACKING:
-                self._begin_loss_recovery(now_s)
-            elif (
-                self._state == FollowState.RECOVERING
-                and self._recovery_phase == RecoveryPhase.TURNING_TO_TARGET
-                and self._nav2.mode is None
-            ):
-                self._start_direction_turn()
-            elif (
-                self._state == FollowState.RECOVERING
-                and self._recovery_phase
-                == RecoveryPhase.REACHING_LAST_POSITION
-                and not self._recovery_path_requested
-                and not self._recovery_navigation_active
-                and now_s >= self._navigation_retry_not_before_s
-            ):
-                self._request_last_seen_recovery(now_s)
-            elif (
-                self._state == FollowState.RECOVERING
-                and self._recovery_phase == RecoveryPhase.SCANNING
-                and self._recovery_scan_complete
-            ):
-                # Keep searching until the action is explicitly canceled.
-                # Reissuing the same directed 270-degree scan avoids the old
-                # terminal dead end while remaining Nav2-owned.
-                self._recovery_scan_started = False
-                self._recovery_scan_complete = False
-                self.get_logger().info(
-                    'Person not reacquired; continuing directed search'
-                )
-                self._start_recovery_scan()
-        elif (
-            self._state == FollowState.TRACKING
-            and self._nav2.mode != MotionMode.SPIN
-            and self._last_motion_target is not None
-            and now_s >= self._navigation_retry_not_before_s
+        if self._state == FollowState.TRACKING:
+            self._begin_loss_recovery(now_s)
+            self._publish_feedback()
+
+    def _plan_latest_observation_if_pending(
+        self,
+        completed_generation: int,
+    ) -> None:
+        """Coalesce observations received while Nav2 planned the last one."""
+        if (
+            self._active_goal is None
+            or self._state != FollowState.TRACKING
+            or self._tracking_retry_pending
+            or self._motion_generation <= completed_generation
+            or self._last_motion_target is None
         ):
-            try:
-                robot_position, _ = self._robot_pose()
-            except TransformException as error:
-                self._warn_periodically(
-                    'target_tf', f'Target TF unavailable: {error}'
-                )
-            else:
-                self._apply_tracking_motion(
-                    robot_position,
-                    self._last_motion_target,
-                    now_s,
-                    precise=self._last_motion_precise,
-                    bearing_only=self._last_motion_bearing_only,
-                    target_velocity=self._last_motion_velocity,
-                    source_stamp_s=self._last_motion_source_stamp_s,
-                )
-        self._publish_feedback()
+            return
+        try:
+            robot_position, _ = self._robot_pose()
+        except TransformException as error:
+            self._warn_periodically(
+                'target_tf', f'Target TF unavailable: {error}'
+            )
+            self._schedule_tracking_navigation_retry()
+            return
+        self._apply_tracking_motion(
+            robot_position,
+            self._last_motion_target,
+            self._now_seconds(),
+            bearing_only=self._last_motion_bearing_only,
+            target_velocity=self._last_motion_velocity,
+            source_stamp_ns=self._last_motion_source_stamp_ns,
+            new_observation=False,
+        )
+
+    def _schedule_tracking_navigation_retry(self) -> None:
+        """Retry one latest observation after an actual Nav2 failure."""
+        self._tracking_retry_pending = True
+        self._tracking_retry_timer.reset()
+
+    def _cancel_tracking_retry(self) -> None:
+        self._tracking_retry_pending = False
+        self._tracking_retry_timer.cancel()
+
+    def _on_tracking_retry_timer(self) -> None:
+        """Retry failed planning without continuously replaying sensor data."""
+        self._tracking_retry_timer.cancel()
+        if (
+            self._active_goal is None
+            or self._state != FollowState.TRACKING
+            or self._last_motion_target is None
+        ):
+            self._tracking_retry_pending = False
+            return
+        self._tracking_retry_pending = False
+        try:
+            robot_position, _ = self._robot_pose()
+        except TransformException as error:
+            self._warn_periodically(
+                'target_tf', f'Target TF unavailable: {error}'
+            )
+            self._schedule_tracking_navigation_retry()
+            return
+        self._apply_tracking_motion(
+            robot_position,
+            self._last_motion_target,
+            self._now_seconds(),
+            bearing_only=self._last_motion_bearing_only,
+            target_velocity=self._last_motion_velocity,
+            source_stamp_ns=self._last_motion_source_stamp_ns,
+            new_observation=False,
+        )
+
+    def _on_recovery_retry_timer(self) -> None:
+        """Resume only the recovery phase that requested a retry."""
+        self._recovery_retry_timer.cancel()
+        if self._active_goal is None or self._state != FollowState.RECOVERING:
+            return
+        if self._recovery_phase == RecoveryPhase.TURNING_TO_TARGET:
+            self._start_direction_turn()
+        elif self._recovery_phase == RecoveryPhase.REACHING_LAST_POSITION:
+            self._request_last_seen_recovery(self._now_seconds())
+        elif self._recovery_phase == RecoveryPhase.SCANNING:
+            self._recovery_scan_started = False
+            self._start_recovery_scan()
 
     def _reset_recovery(self) -> None:
         """Forget loss recovery as soon as a sensor target is visible."""
+        self._recovery_retry_timer.cancel()
         self._recovery_path_requested = False
         self._recovery_navigation_active = False
         self._recovery_scan_started = False
-        self._recovery_scan_complete = False
         self._recovery_direction_target = None
         self._recovery_last_position = None
         self._recovery_phase = RecoveryPhase.NONE
 
     def _begin_loss_recovery(self, now_s: float) -> None:
         """Freeze the last green target before escalating target recovery."""
+        self._cancel_tracking_retry()
         self._path_planner.cancel()
         initial_turn = directed_recovery_turn(
             self._last_camera_bearing_rad,
@@ -2181,6 +2229,7 @@ class PersonFollowerNode(Node):
                 'recovery_turn_tf',
                 f'Recovery turn TF unavailable: {error}',
             )
+            self._recovery_retry_timer.reset()
             return
         target_yaw = math.atan2(
             target.y - robot_position.y,
@@ -2236,6 +2285,7 @@ class PersonFollowerNode(Node):
             self._warn_periodically(
                 'recovery_tf', f'Recovery TF unavailable: {error}'
             )
+            self._schedule_recovery_navigation_retry()
             return
         target_yaw = math.atan2(
             target_position.y - robot_position.y,
@@ -2284,6 +2334,7 @@ class PersonFollowerNode(Node):
         recovery_pose.pose.orientation.z = quaternion[2]
         recovery_pose.pose.orientation.w = quaternion[3]
         self._tracking_source = 'last_seen_recovery'
+        planning_started_ns = _monotonic_nanoseconds()
         if self._path_planner.compute(
             recovery_pose,
             str(self.get_parameter('planner_id').value),
@@ -2293,11 +2344,11 @@ class PersonFollowerNode(Node):
                 None,
                 'last_seen_recovery',
                 True,
-                self._last_motion_source_stamp_s,
+                None,
+                planning_started_ns,
+                self._motion_generation,
             ),
         ):
-            self._last_plan_target = safe_position
-            self._last_plan_request_s = now_s
             self._recovery_path_requested = True
             return
         self._warn_periodically(
@@ -2310,25 +2361,27 @@ class PersonFollowerNode(Node):
         """Retry the frozen goal later without entering search prematurely."""
         self._recovery_path_requested = False
         self._recovery_navigation_active = False
-        self._navigation_retry_not_before_s = (
-            self._now_seconds()
-            + float(self.get_parameter('navigation_retry_delay_s').value)
-        )
+        self._recovery_retry_timer.reset()
 
     def _publish_command_trace(
         self,
-        source_stamp_s: float | None,
+        source_stamp_ns: int | None,
         source: str,
         sequence: int,
+        planning_started_ns: int,
+        planning_finished_ns: int,
+        dispatch_ns: int,
     ) -> None:
-        """Publish exact sensor-to-FollowPath dispatch timing metadata."""
-        if source_stamp_s is None or source_stamp_s <= 0.0:
+        """Publish ROS correlation and actual same-host monotonic timings."""
+        if source_stamp_ns is None or source_stamp_ns <= 0:
             return
         trace = TrackingCommandTrace()
-        source_nanoseconds = int(round(source_stamp_s * 1e9))
-        trace.source_stamp.sec = source_nanoseconds // 1_000_000_000
-        trace.source_stamp.nanosec = source_nanoseconds % 1_000_000_000
+        trace.source_stamp.sec = source_stamp_ns // 1_000_000_000
+        trace.source_stamp.nanosec = source_stamp_ns % 1_000_000_000
         trace.dispatch_stamp = self.get_clock().now().to_msg()
+        trace.planning_started_steady_time_ns = planning_started_ns
+        trace.planning_finished_steady_time_ns = planning_finished_ns
+        trace.dispatch_steady_time_ns = dispatch_ns
         trace.sequence = sequence
         trace.source = source
         self._command_trace_publisher.publish(trace)
@@ -2356,11 +2409,11 @@ class PersonFollowerNode(Node):
                 f'last exit side ({math.degrees(scan_angle):.0f} deg)'
             )
             return
-        self._recovery_scan_complete = True
         self._warn_periodically(
             'spin_unavailable',
             'Nav2 Spin action is not ready; waiting safely in place',
         )
+        self._recovery_retry_timer.reset()
 
     def _make_target_pose(self, point: Point2D, z: float) -> PoseStamped:
         pose = PoseStamped()
@@ -2371,6 +2424,29 @@ class PersonFollowerNode(Node):
         pose.pose.position.z = z
         pose.pose.orientation.w = 1.0
         return pose
+
+    def _on_nav2_feedback(self, mode: MotionMode, feedback) -> None:
+        """Advance recovery from Nav2 distance feedback, not TF polling."""
+        if mode != MotionMode.NAVIGATE:
+            return
+        self._remaining_travel_distance_m = max(
+            0.0,
+            float(feedback.distance_to_goal),
+        )
+        self._publish_speed_limit()
+        if (
+            self._state == FollowState.RECOVERING
+            and self._recovery_phase == RecoveryPhase.FINISHING_WAYPOINT
+            and self._remaining_travel_distance_m
+            <= float(
+                self.get_parameter('recovery_waypoint_tolerance_m').value
+            )
+        ):
+            self.get_logger().info(
+                'Recovery waypoint reached within Nav2 feedback tolerance'
+            )
+            self._start_direction_turn()
+            self._publish_feedback()
 
     def _on_nav2_result(
         self,
@@ -2415,12 +2491,7 @@ class PersonFollowerNode(Node):
                 # while the outer FollowPerson action remains active.
                 self._last_goal_position = None
                 self._navigation_failure_count += 1
-                self._navigation_retry_not_before_s = (
-                    self._now_seconds()
-                    + float(
-                        self.get_parameter('navigation_retry_delay_s').value
-                    )
-                )
+                self._schedule_tracking_navigation_retry()
                 self._warn_periodically('navigate_failed', detail)
             else:
                 self._navigation_failure_count = 0
@@ -2434,9 +2505,16 @@ class PersonFollowerNode(Node):
                 self._request_last_seen_recovery(self._now_seconds())
                 return
             if self._recovery_phase == RecoveryPhase.SCANNING:
-                self._recovery_scan_complete = True
                 if status != GoalStatus.STATUS_SUCCEEDED:
                     self._warn_periodically('spin_failed', detail)
+                    self._recovery_scan_started = False
+                    self._recovery_retry_timer.reset()
+                    return
+                self._recovery_scan_started = False
+                self.get_logger().info(
+                    'Person not reacquired; continuing directed search'
+                )
+                self._start_recovery_scan()
 
     def _publish_feedback(self) -> None:
         if self._active_goal is None:
@@ -2626,11 +2704,8 @@ class PersonFollowerNode(Node):
             message.markers.append(goal_label)
         self._track_markers_publisher.publish(message)
 
-    def _publish_speed_limit(self, force: bool = False) -> None:
+    def _publish_speed_limit(self) -> None:
         if self._settings is None:
-            return
-        now_s = self._now_seconds()
-        if not force and now_s - self._last_speed_publish_s < 1.0:
             return
         message = SpeedLimit()
         message.header.stamp = self.get_clock().now().to_msg()
@@ -2640,7 +2715,6 @@ class PersonFollowerNode(Node):
             self._settings,
         )
         self._speed_publisher.publish(message)
-        self._last_speed_publish_s = now_s
 
     def _reset_speed_limit(self) -> None:
         message = SpeedLimit()
@@ -2696,13 +2770,17 @@ class PersonFollowerNode(Node):
         self._last_precise_camera_position = None
         self._last_lidar_stamp_s = None
         self._last_goal_position = None
-        self._last_plan_target = None
         self._last_motion_target = None
         self._last_motion_velocity = None
         self._last_motion_bearing_only = False
+        self._last_motion_source_stamp_ns = None
+        self._motion_generation = 0
         self._last_observed_bearing_rad = 0.0
         self._last_camera_bearing_rad = 0.0
         self._recovery_turn_sign = 1.0
+        self._loss_timer.cancel()
+        self._pending_detection_timer.cancel()
+        self._cancel_tracking_retry()
         self._reset_recovery()
         self._tracking_source = 'none'
         result_future.set_result(result)

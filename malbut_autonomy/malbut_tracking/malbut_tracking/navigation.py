@@ -18,6 +18,7 @@ class MotionMode(Enum):
 
 
 MotionResultCallback = Callable[[MotionMode, int, str], None]
+MotionFeedbackCallback = Callable[[MotionMode, object], None]
 PathResultCallback = Callable[[Path | None, str], None]
 
 
@@ -133,6 +134,7 @@ class Nav2MotionClient:
         follow_path_action: str,
         spin_action: str,
         on_result: MotionResultCallback,
+        on_feedback: MotionFeedbackCallback | None = None,
     ) -> None:
         """Attach standard Nav2 action clients to a ROS node."""
         self._follow_path_client = ActionClient(
@@ -142,6 +144,7 @@ class Nav2MotionClient:
         )
         self._spin_client = ActionClient(node, Spin, spin_action)
         self._on_result = on_result
+        self._on_feedback = on_feedback
         self._token = 0
         self._mode: MotionMode | None = None
         self._pending = False
@@ -214,11 +217,28 @@ class Nav2MotionClient:
         token = self._token
         self._mode = mode
         self._pending = True
-        future = client.send_goal_async(goal)
+        feedback_callback = None
+        if self._on_feedback is not None:
+            def feedback_callback(message):
+                self._feedback(message, token, mode)
+        future = client.send_goal_async(
+            goal,
+            feedback_callback=feedback_callback,
+        )
         future.add_done_callback(
             lambda completed: self._goal_response(completed, token, mode)
         )
         return True
+
+    def _feedback(self, message, token: int, mode: MotionMode) -> None:
+        """Forward feedback only for the currently relevant Nav2 goal."""
+        if (
+            token != self._token
+            or self._mode != mode
+            or self._on_feedback is None
+        ):
+            return
+        self._on_feedback(mode, message.feedback)
 
     def _goal_response(self, future, token: int, mode: MotionMode) -> None:
         try:

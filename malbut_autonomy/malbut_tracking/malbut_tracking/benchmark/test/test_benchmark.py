@@ -175,7 +175,8 @@ def test_living_room_loop_has_map_and_geometry_clearance():
 
 def test_front_door_scenario_reuses_the_verified_project_route():
     catalog = yaml.safe_load(CATALOG.read_text(encoding='utf-8'))
-    actor = catalog['scenarios']['small_house_front_door']['actor_file']
+    scenario = catalog['scenarios']['small_house_front_door']
+    actor = scenario['actor_file']
     assert actor == {
         'package': 'malbut_gazebo',
         'path': 'models/humanoid_actor/scenarios/front_door_entry.sdf',
@@ -185,6 +186,7 @@ def test_front_door_scenario_reuses_the_verified_project_route():
     )
     assert route[0] == route[-1] == (6.0, -6.2)
     assert len(route) >= 30
+    assert scenario['measurement_duration_s'] == 127.0
 
 
 def test_benchmark_instruments_a_temporary_world_only():

@@ -23,9 +23,6 @@ class FollowSettings:
     desired_distance_m: float
     minimum_distance_m: float
     distance_tolerance_m: float
-    goal_update_distance_m: float
-    goal_update_minimum_period_s: float
-    goal_update_period_s: float
     minimum_follow_speed_mps: float
     maximum_linear_speed_mps: float
     full_speed_travel_distance_m: float
@@ -44,16 +41,6 @@ class FollowSettings:
         ):
             raise ValueError(
                 'distance tolerance must leave room above minimum distance'
-            )
-        if self.goal_update_distance_m <= 0.0:
-            raise ValueError('goal update distance must be positive')
-        if self.goal_update_period_s <= 0.0:
-            raise ValueError('goal update period must be positive')
-        if self.goal_update_minimum_period_s <= 0.0:
-            raise ValueError('goal update minimum period must be positive')
-        if self.goal_update_minimum_period_s > self.goal_update_period_s:
-            raise ValueError(
-                'goal update minimum period must not exceed refresh period'
             )
         if self.minimum_follow_speed_mps <= 0.0:
             raise ValueError('minimum follow speed must be positive')
@@ -198,51 +185,3 @@ def decide_follow_motion(
             'distance satisfied; keep camera facing target',
         )
     return FollowDecision(FollowCommand.NAVIGATE, goal, 'target ahead')
-
-
-def should_update_goal(
-    previous_goal: Point2D | None,
-    candidate_goal: Point2D,
-    elapsed_seconds: float,
-    settings: FollowSettings,
-    update_distance_m: float | None = None,
-    update_period_s: float | None = None,
-    minimum_period_s: float | None = None,
-) -> bool:
-    """Rate-limit Nav2 preemption while still reacting to target motion."""
-    distance_threshold = (
-        settings.goal_update_distance_m
-        if update_distance_m is None
-        else update_distance_m
-    )
-    period_threshold = (
-        settings.goal_update_period_s
-        if update_period_s is None
-        else update_period_s
-    )
-    minimum_period = (
-        settings.goal_update_minimum_period_s
-        if minimum_period_s is None
-        else minimum_period_s
-    )
-    if distance_threshold <= 0.0:
-        raise ValueError('goal update distance must be positive')
-    if period_threshold <= 0.0:
-        raise ValueError('goal update period must be positive')
-    if minimum_period <= 0.0:
-        raise ValueError('goal update minimum period must be positive')
-    if minimum_period > period_threshold:
-        raise ValueError(
-            'goal update minimum period must not exceed refresh period'
-        )
-    if previous_goal is None:
-        return True
-    # Never preempt above the hard rate ceiling. After that interval, target
-    # motion may refresh immediately; an unchanged path refreshes only when it
-    # reaches its longer maximum age.
-    if elapsed_seconds < minimum_period:
-        return False
-    return (
-        distance(previous_goal, candidate_goal) >= distance_threshold
-        or elapsed_seconds >= period_threshold
-    )

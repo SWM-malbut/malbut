@@ -11,6 +11,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/FollowPerson.action"
   "msg/LidarCluster.msg"
   "msg/LidarClusterArray.msg"
+  "msg/SensorProcessingTrace.msg"
   "msg/TrackingCommandTrace.msg"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs
 )

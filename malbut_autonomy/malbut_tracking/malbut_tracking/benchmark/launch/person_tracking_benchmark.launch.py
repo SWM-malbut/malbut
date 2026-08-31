@@ -61,6 +61,7 @@ def _shutdown_on_actor_spawn_failure(event, _context):
 
 
 def _launch_setup(context):
+    show_rviz = LaunchConfiguration('rviz').perform(context)
     tracking_share = Path(get_package_share_directory('malbut_tracking'))
     gazebo_share = Path(get_package_share_directory('malbut_gazebo'))
     perception_share = Path(get_package_share_directory('malbut_perception'))
@@ -121,7 +122,10 @@ def _launch_setup(context):
         for name in ('x', 'y', 'z', 'yaw')
     }
     duration = _number(
-        context, 'measurement_duration_s', 180.0, positive=True
+        context,
+        'measurement_duration_s',
+        scenario.measurement_duration_s,
+        positive=True,
     )
     script_start_delay = _number(
         context, 'actor_script_start_delay_s', 5.0, positive=True
@@ -253,7 +257,7 @@ def _launch_setup(context):
         arguments=['-d', str(gazebo_share / 'rviz' / 'nav_nav2.rviz')],
         parameters=[{'use_sim_time': use_sim_time}],
         output='screen',
-        condition=IfCondition(LaunchConfiguration('rviz')),
+        condition=IfCondition(show_rviz),
     )
     image_view = Node(
         package='rqt_image_view',
@@ -369,10 +373,10 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 'actor_script_start_delay_s', default_value='5.0'
             ),
-            DeclareLaunchArgument('actor_spawn_delay', default_value='0.0'),
+            DeclareLaunchArgument('actor_spawn_delay', default_value='5.0'),
             DeclareLaunchArgument('spawn_timeout', default_value='60'),
             DeclareLaunchArgument(
-                'measurement_duration_s', default_value='180.0'
+                'measurement_duration_s', default_value=''
             ),
             DeclareLaunchArgument('output_directory', default_value=''),
             DeclareLaunchArgument(

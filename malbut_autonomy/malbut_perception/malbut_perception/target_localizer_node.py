@@ -3,11 +3,13 @@
 import math
 from pathlib import Path
 import sys
+import time
 from typing import Dict, Optional, Tuple
 
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
 from geometry_msgs.msg import Quaternion, TransformStamped
+from malbut_interfaces.msg import SensorProcessingTrace
 import message_filters
 import numpy as np
 import rclpy
@@ -175,6 +177,7 @@ class PersonLocalizerNode(Node):
         self._camera_info: Optional[CameraInfo] = None
         self._rate_limiter = TimestampRateLimiter()
         self._inference_frame_index = 0
+        self._processing_trace_sequence = 0
         self._warning_times: Dict[str, int] = {}
 
         self._output_frame = str(self.get_parameter('output_frame').value)
@@ -216,6 +219,11 @@ class PersonLocalizerNode(Node):
             Bool,
             str(self.get_parameter('health_topic').value),
             10,
+        )
+        self._processing_trace_publisher = self.create_publisher(
+            SensorProcessingTrace,
+            str(self.get_parameter('processing_trace_topic').value),
+            100,
         )
 
         self._camera_info_subscription = self.create_subscription(
@@ -271,6 +279,9 @@ class PersonLocalizerNode(Node):
             '/perception/person/debug_image/compressed',
         )
         self.declare_parameter('health_topic', '/perception/person/healthy')
+        self.declare_parameter(
+            'processing_trace_topic', '/perception/sensor_processing_trace'
+        )
         self.declare_parameter('projection_frame', '')
         self.declare_parameter('output_frame', '')
         self.declare_parameter('detector_backend', 'auto')
@@ -325,6 +336,7 @@ class PersonLocalizerNode(Node):
             'debug_image_topic',
             'compressed_debug_image_topic',
             'health_topic',
+            'processing_trace_topic',
         )
         for name in topic_parameters:
             if not str(self.get_parameter(name).value).startswith('/'):
@@ -498,6 +510,9 @@ class PersonLocalizerNode(Node):
         return self._rate_limiter.should_process(stamp_ns, rate)
 
     def _on_rgb_depth(self, rgb_message: Image, depth_message: Image) -> None:
+        receipt_steady_time_ns = time.clock_gettime_ns(
+            time.CLOCK_MONOTONIC
+        )
         if not self._should_process(rgb_message):
             return
         if self._camera_info is None:
@@ -536,12 +551,17 @@ class PersonLocalizerNode(Node):
             tracks = self._tracker.update(
                 detections, appearance_features
             )
-            self._publish_detections(
+            publish_steady_time_ns = self._publish_detections(
                 rgb_message,
                 depth_message,
                 bgr_image,
                 np.asarray(depth_image),
                 tracks,
+            )
+            self._publish_processing_trace(
+                rgb_message,
+                receipt_steady_time_ns,
+                publish_steady_time_ns,
             )
             self._publish_health(True)
         except (CvBridgeError, RuntimeError, ValueError, cv2.error) as error:
@@ -558,7 +578,7 @@ class PersonLocalizerNode(Node):
         bgr_image: np.ndarray,
         depth_image: np.ndarray,
         tracks,
-    ) -> None:
+    ) -> int:
         detections_2d = Detection2DArray()
         detections_2d.header = rgb_message.header
         for track in tracks:
@@ -575,6 +595,9 @@ class PersonLocalizerNode(Node):
             tracks,
         )
         self._detections_3d_publisher.publish(detections_3d)
+        publish_steady_time_ns = time.clock_gettime_ns(
+            time.CLOCK_MONOTONIC
+        )
 
         if bool(self.get_parameter('publish_debug_image').value):
             debug_image = self._draw_debug_image(
@@ -608,6 +631,23 @@ class PersonLocalizerNode(Node):
                 self._compressed_debug_publisher.publish(
                     compressed_message
                 )
+        return publish_steady_time_ns
+
+    def _publish_processing_trace(
+        self,
+        source_message: Image,
+        receipt_steady_time_ns: int,
+        publish_steady_time_ns: int,
+    ) -> None:
+        """Publish wall-clock timing without changing sensor semantics."""
+        self._processing_trace_sequence += 1
+        trace = SensorProcessingTrace()
+        trace.source_stamp = source_message.header.stamp
+        trace.receipt_steady_time_ns = receipt_steady_time_ns
+        trace.publish_steady_time_ns = publish_steady_time_ns
+        trace.sequence = self._processing_trace_sequence
+        trace.source = 'camera'
+        self._processing_trace_publisher.publish(trace)
 
     @staticmethod
     def _make_detection_2d(
