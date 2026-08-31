@@ -13,6 +13,7 @@ person_localizer:
     debug_image_topic: /perception/person/debug_image
     compressed_debug_image_topic: /perception/person/debug_image/compressed
     health_topic: /perception/person/healthy
+    processing_trace_topic: /perception/sensor_processing_trace
 
     # Pixel projection is expressed in a REP-103 optical frame. Leave empty
     # when the camera message already names that frame; override simulators

@@ -116,16 +116,23 @@ green target even if its detector ID changed; LiDAR is used to refine its
 range and continue it through temporary camera loss.
 The robot advances when the person is beyond the configured distance band and
 holds inside it. When the person approaches too closely, the same Nav2 planner
-computes the reverse path. Forward and reverse goals share the same roughly
-3 Hz refresh policy. The normal holonomic `FollowPath` controller follows all
-planner-produced positions and orientations, including forward, lateral,
-reverse, and turning motion, without an independent command overriding its
-angular velocity.
+computes the reverse path. Each accepted camera or LiDAR observation may
+request a fresh route; while one `ComputePathToPose` request is in flight, only
+the newest observation is retained and planned immediately afterward. The
+normal holonomic `FollowPath` controller follows all planner-produced positions
+and orientations, including forward, lateral, reverse, and turning motion,
+without an independent command overriding its angular velocity.
 Navigation failures are retried with fresh sensor goals instead of invoking
 Nav2's generic fixed-direction recovery sequence. Every recovery step remains
 preemptible: a new RGB-D observation immediately resumes normal tracking. The
 follow Action remains active until explicitly canceled, and a later RGB-D
 observation immediately resumes `TRACKING` without a new Action goal.
+
+Benchmark E2E latency uses Linux `CLOCK_MONOTONIC` on the robot computer. It is
+measured from entry into the camera or LiDAR processing callback, through
+perception and `ComputePathToPose`, to local submission of `FollowPath`.
+Camera and LiDAR statistics are reported separately; Nav2 goal acceptance and
+physical robot motion are intentionally outside this latency interval.
 
 ## Public state
 

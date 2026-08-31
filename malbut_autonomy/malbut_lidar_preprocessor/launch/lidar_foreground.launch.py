@@ -24,6 +24,10 @@ def generate_launch_description():
             'clusters_topic',
             default_value='/perception/lidar/foreground_clusters',
         ),
+        DeclareLaunchArgument(
+            'processing_trace_topic',
+            default_value='/perception/sensor_processing_trace',
+        ),
         DeclareLaunchArgument('global_frame', default_value='map'),
     ]
     node = Node(
@@ -38,6 +42,9 @@ def generate_launch_description():
                 'scan_topic': LaunchConfiguration('scan_topic'),
                 'static_map_topic': LaunchConfiguration('static_map_topic'),
                 'clusters_topic': LaunchConfiguration('clusters_topic'),
+                'processing_trace_topic': LaunchConfiguration(
+                    'processing_trace_topic'
+                ),
                 'global_frame': LaunchConfiguration('global_frame'),
             },
         ],

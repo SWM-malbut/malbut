@@ -12,7 +12,7 @@ import statistics
 
 from geometry_msgs.msg import PoseStamped
 from malbut_interfaces.action import FollowPerson
-from malbut_interfaces.msg import TrackingCommandTrace
+from malbut_interfaces.msg import SensorProcessingTrace, TrackingCommandTrace
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
@@ -29,6 +29,129 @@ class PlanarPose:
     x: float
     y: float
     yaw: float
+
+
+@dataclass(frozen=True)
+class SensorTraceTiming:
+    """Wall-clock timing recorded by one sensor front end."""
+
+    receipt_steady_time_ns: int
+    publish_steady_time_ns: int
+    sequence: int
+
+
+@dataclass(frozen=True)
+class CommandTraceTiming:
+    """Wall-clock timing recorded while dispatching one Nav2 command."""
+
+    planning_started_steady_time_ns: int
+    planning_finished_steady_time_ns: int
+    dispatch_steady_time_ns: int
+    dispatch_sim_time_s: float
+    sequence: int
+    source: str
+
+
+_TRACE_CACHE_LIMIT = 8192
+
+
+def _stamp_key(stamp) -> tuple[int, int]:
+    """Return an exact ROS stamp key without float conversion."""
+    return int(stamp.sec), int(stamp.nanosec)
+
+
+def _normalized_sensor_source(command_source: str) -> str | None:
+    """Map follower fusion labels to the sensor that owns its timestamp."""
+    if command_source in {'camera', 'camera_lidar', 'bearing'}:
+        return 'camera'
+    if command_source in {'lidar', 'lidar_proximity'}:
+        return 'lidar'
+    return None
+
+
+def _bounded_store(mapping: dict, key, value) -> None:
+    """Keep unmatched trace state bounded during long benchmark runs."""
+    mapping[key] = value
+    while len(mapping) > _TRACE_CACHE_LIMIT:
+        mapping.pop(next(iter(mapping)))
+
+
+class WallClockTraceCorrelator:
+    """Join cross-process traces once by exact sensor source and ROS stamp."""
+
+    def __init__(self) -> None:
+        self._sensors: dict[
+            tuple[str, int, int], SensorTraceTiming
+        ] = {}
+        self._commands: dict[
+            tuple[str, int, int], CommandTraceTiming
+        ] = {}
+        self._matched: set[tuple[str, int, int]] = set()
+
+    def add_sensor(
+        self,
+        source: str,
+        stamp: tuple[int, int],
+        timing: SensorTraceTiming,
+    ) -> tuple[
+        tuple[str, int, int], SensorTraceTiming, CommandTraceTiming
+    ] | None:
+        if (
+            source not in {'camera', 'lidar'}
+            or timing.receipt_steady_time_ns <= 0
+            or timing.publish_steady_time_ns
+            < timing.receipt_steady_time_ns
+        ):
+            return None
+        key = (source, *stamp)
+        if key in self._matched:
+            return None
+        command = self._commands.pop(key, None)
+        if command is None:
+            _bounded_store(self._sensors, key, timing)
+            return None
+        self._sensors.pop(key, None)
+        self._matched.add(key)
+        return key, timing, command
+
+    def add_command(
+        self,
+        source: str,
+        stamp: tuple[int, int],
+        timing: CommandTraceTiming,
+    ) -> tuple[
+        tuple[str, int, int], SensorTraceTiming, CommandTraceTiming
+    ] | None:
+        sensor_source = _normalized_sensor_source(source)
+        if sensor_source is None or not _valid_command_timing(timing):
+            return None
+        key = (sensor_source, *stamp)
+        if key in self._matched:
+            return None
+        sensor = self._sensors.pop(key, None)
+        if sensor is not None:
+            self._commands.pop(key, None)
+            self._matched.add(key)
+            return key, sensor, timing
+        previous = self._commands.get(key)
+        if (
+            previous is None
+            or timing.dispatch_steady_time_ns
+            < previous.dispatch_steady_time_ns
+        ):
+            _bounded_store(self._commands, key, timing)
+        return None
+
+
+def _valid_command_timing(timing: CommandTraceTiming) -> bool:
+    """Reject a command trace whose local monotonic stages are impossible."""
+    return (
+        timing.planning_started_steady_time_ns > 0
+        and timing.planning_finished_steady_time_ns
+        >= timing.planning_started_steady_time_ns
+        and timing.dispatch_steady_time_ns
+        >= timing.planning_finished_steady_time_ns
+    )
 
 
 def _time_seconds(stamp) -> float:
@@ -51,6 +174,16 @@ def _nearest_rank(values: list[float], percentile: float) -> float | None:
     ordered = sorted(values)
     index = max(0, math.ceil(percentile * len(ordered)) - 1)
     return ordered[index]
+
+
+def _latency_summary(values: list[float]) -> dict:
+    """Return the stable latency aggregate used by benchmark JSON output."""
+    return {
+        'median': None if not values else statistics.median(values),
+        'p95': _nearest_rank(values, 0.95),
+        'max': None if not values else max(values),
+        'sample_count': len(values),
+    }
 
 
 def _circle_intersects_oriented_box(
@@ -125,7 +258,6 @@ class PersonTrackingBenchmark(Node):
         self._action_sent = False
         self._action_goal_handle = None
         self._finalized = False
-        self._shutdown_timer = None
 
         self._sample_count = 0
         self._distance_error_sum = 0.0
@@ -134,6 +266,11 @@ class PersonTrackingBenchmark(Node):
         self._prediction_error_sum = 0.0
         self._prediction_outside_count = 0
         self._latencies_ms: list[float] = []
+        self._latencies_by_source_ms: dict[str, list[float]] = {
+            'camera': [],
+            'lidar': [],
+        }
+        self._trace_correlator = WallClockTraceCorrelator()
 
         self._result_directory = self._create_result_directory()
         self._sample_stream = (
@@ -188,6 +325,12 @@ class PersonTrackingBenchmark(Node):
             10,
         )
         self.create_subscription(
+            SensorProcessingTrace,
+            str(self.get_parameter('processing_trace_topic').value),
+            self._on_sensor_processing_trace,
+            100,
+        )
+        self.create_subscription(
             TrackingCommandTrace,
             str(self.get_parameter('command_trace_topic').value),
             self._on_command_trace,
@@ -215,6 +358,9 @@ class PersonTrackingBenchmark(Node):
         )
         self.declare_parameter(
             'command_trace_topic', '/tracking/person/command_trace'
+        )
+        self.declare_parameter(
+            'processing_trace_topic', '/perception/sensor_processing_trace'
         )
         self.declare_parameter('follow_action', '/follow_person')
         self.declare_parameter('robot_entity_name', 'malbut')
@@ -327,20 +473,89 @@ class PersonTrackingBenchmark(Node):
     def _on_command_trace(self, message: TrackingCommandTrace) -> None:
         if self._measurement_start_s is None or self._finalized:
             return
-        if message.source == 'last_seen_recovery':
+        sensor_source = _normalized_sensor_source(message.source)
+        if sensor_source is None:
             return
-        source_s = _time_seconds(message.source_stamp)
-        dispatch_s = _time_seconds(message.dispatch_stamp)
-        latency_ms = 1000.0 * (dispatch_s - source_s)
-        if latency_ms < 0.0:
-            return
-        self._latencies_ms.append(latency_ms)
-        self._write_event(
-            'navigation_command_dispatch',
-            dispatch_s,
+        command = CommandTraceTiming(
+            planning_started_steady_time_ns=int(
+                message.planning_started_steady_time_ns
+            ),
+            planning_finished_steady_time_ns=int(
+                message.planning_finished_steady_time_ns
+            ),
+            dispatch_steady_time_ns=int(message.dispatch_steady_time_ns),
+            dispatch_sim_time_s=_time_seconds(message.dispatch_stamp),
             sequence=int(message.sequence),
             source=message.source,
+        )
+        match = self._trace_correlator.add_command(
+            message.source,
+            _stamp_key(message.source_stamp),
+            command,
+        )
+        if match is not None:
+            self._record_e2e_latency(*match)
+
+    def _on_sensor_processing_trace(
+        self, message: SensorProcessingTrace
+    ) -> None:
+        if self._finalized:
+            return
+        sensor = SensorTraceTiming(
+            receipt_steady_time_ns=int(message.receipt_steady_time_ns),
+            publish_steady_time_ns=int(message.publish_steady_time_ns),
+            sequence=int(message.sequence),
+        )
+        match = self._trace_correlator.add_sensor(
+            message.source,
+            _stamp_key(message.source_stamp),
+            sensor,
+        )
+        if match is not None:
+            self._record_e2e_latency(*match)
+
+    def _record_e2e_latency(
+        self,
+        key: tuple[str, int, int],
+        sensor: SensorTraceTiming,
+        command: CommandTraceTiming,
+    ) -> None:
+        """Record the first complete wall-clock trace for one observation."""
+        if self._measurement_start_s is None or self._finalized:
+            return
+        receipt_ns = sensor.receipt_steady_time_ns
+        sensor_publish_ns = sensor.publish_steady_time_ns
+        planning_start_ns = command.planning_started_steady_time_ns
+        planning_finish_ns = command.planning_finished_steady_time_ns
+        dispatch_ns = command.dispatch_steady_time_ns
+        if dispatch_ns < receipt_ns:
+            return
+        latency_ms = (dispatch_ns - receipt_ns) / 1_000_000.0
+        sensor_processing_ms = (
+            None
+            if sensor_publish_ns < receipt_ns
+            else (sensor_publish_ns - receipt_ns) / 1_000_000.0
+        )
+        planning_ms = (
+            None
+            if planning_start_ns <= 0
+            or planning_finish_ns < planning_start_ns
+            else (planning_finish_ns - planning_start_ns) / 1_000_000.0
+        )
+        self._latencies_ms.append(latency_ms)
+        self._latencies_by_source_ms[key[0]].append(latency_ms)
+        self._write_event(
+            'navigation_command_dispatch',
+            self._now_seconds(),
+            sequence=command.sequence,
+            sensor_sequence=sensor.sequence,
+            source=command.source,
+            source_stamp_sec=key[1],
+            source_stamp_nanosec=key[2],
+            dispatch_sim_time_s=command.dispatch_sim_time_s,
             latency_ms=latency_ms,
+            sensor_processing_ms=sensor_processing_ms,
+            nav2_planning_ms=planning_ms,
         )
 
     def _try_start_following(self) -> None:
@@ -587,18 +802,12 @@ class PersonTrackingBenchmark(Node):
                     else self._prediction_outside_count / self._sample_count
                 ),
                 'end_to_end_latency_ms': {
-                    'median': (
-                        None
-                        if not self._latencies_ms
-                        else statistics.median(self._latencies_ms)
-                    ),
-                    'p95': _nearest_rank(self._latencies_ms, 0.95),
-                    'max': (
-                        None
-                        if not self._latencies_ms
-                        else max(self._latencies_ms)
-                    ),
-                    'sample_count': len(self._latencies_ms),
+                    **_latency_summary(self._latencies_ms),
+                    'by_source': {
+                        source: _latency_summary(values)
+                        for source, values
+                        in self._latencies_by_source_ms.items()
+                    },
                 },
             },
             'sample_count': self._sample_count,
@@ -615,13 +824,9 @@ class PersonTrackingBenchmark(Node):
             f'Benchmark {status}: {reason}; '
             f'summary={self._result_directory / "summary.json"}'
         )
-        self._shutdown_timer = self.create_timer(
-            0.1, self._shutdown_after_finalize
-        )
+        self._shutdown_after_finalize()
 
     def _shutdown_after_finalize(self) -> None:
-        if self._shutdown_timer is not None:
-            self._shutdown_timer.cancel()
         if rclpy.ok():
             rclpy.shutdown()
 

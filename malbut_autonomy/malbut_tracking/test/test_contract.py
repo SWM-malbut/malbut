@@ -107,9 +107,17 @@ def test_command_trace_measures_sensor_to_follow_path_dispatch():
     ).read_text(encoding='utf-8')
     assert 'builtin_interfaces/Time source_stamp' in interface
     assert 'builtin_interfaces/Time dispatch_stamp' in interface
-    assert '_publish_command_trace' in source
-    assert 'self._nav2.follow_path(' in source
-    assert source.index('self._nav2.follow_path(') < source.index(
+    assert 'uint64 planning_started_steady_time_ns' in interface
+    assert 'uint64 planning_finished_steady_time_ns' in interface
+    assert 'uint64 dispatch_steady_time_ns' in interface
+    dispatch_source = source.split(
+        '    def _dispatch_tracking_path(', 1
+    )[1].split('    def _turn_allowance(', 1)[0]
+    assert '_publish_command_trace' in dispatch_source
+    assert 'self._nav2.follow_path(' in dispatch_source
+    assert dispatch_source.index(
+        'self._nav2.follow_path('
+    ) < dispatch_source.index(
         'self._publish_command_trace('
     )
 
@@ -130,9 +138,9 @@ def test_default_config_has_safe_loss_recovery_and_distance():
     assert raw['full_speed_travel_distance_m'] == 1.50
     assert raw['approach_prediction_horizon_s'] > 0.0
     assert raw['approach_speed_threshold_mps'] > 0.0
-    assert raw['goal_update_distance_m'] == pytest.approx(0.10)
-    assert raw['goal_update_minimum_period_s'] == pytest.approx(0.33)
-    assert raw['goal_update_period_s'] == pytest.approx(0.33)
+    assert 'goal_update_distance_m' not in raw
+    assert 'goal_update_minimum_period_s' not in raw
+    assert 'goal_update_period_s' not in raw
     assert raw['observation_loss_debounce_s'] < 1.0
     assert raw['lidar_proximity_control_distance_m'] > raw[
         'desired_distance_m'
@@ -172,12 +180,10 @@ def test_default_config_has_safe_loss_recovery_and_distance():
     assert 0.0 < raw['camera_horizontal_fov_rad'] < 3.14159265
     assert 'lidar_continuation_timeout_s' not in raw
     assert 'lidar_continuation_max_distance_m' not in raw
-    assert raw['coarse_goal_update_distance_m'] >= raw[
-        'goal_update_distance_m'
-    ]
-    assert raw['coarse_goal_update_period_s'] >= raw[
-        'goal_update_minimum_period_s'
-    ]
+    assert 'coarse_goal_update_distance_m' not in raw
+    assert 'coarse_goal_update_period_s' not in raw
+    assert 'bearing_goal_update_distance_m' not in raw
+    assert 'bearing_goal_update_period_s' not in raw
     assert 'target_lost_timeout_s' not in raw
     assert raw['recovery_direction_minimum_turn_rad'] >= 0.65
     assert 0.0 < raw['recovery_waypoint_tolerance_m'] <= 0.10
@@ -241,8 +247,9 @@ def test_target_selection_separates_visible_and_registered_identity_modes():
     assert '_start_recovery_scan' in node_source
     assert "'recovery_scan_angle_rad'" in node_source
     assert 'directed_search_offsets' not in node_source
-    assert 'should_update_goal' in node_source
-    assert 'self._nav2.mode != MotionMode.SPIN' in node_source
+    assert 'should_update_goal' not in node_source
+    assert 'self._path_planner.busy' in node_source
+    assert '_plan_latest_observation_if_pending' in node_source
     assert 'sensor_transform_queue_timeout_s' in node_source
     assert 'self._nav2.follow_path(' in node_source
     assert 'def _align_with_target' in node_source
@@ -340,11 +347,12 @@ def test_waiting_for_first_person_does_not_start_blind_search():
         / 'malbut_tracking'
         / 'person_follower_node.py'
     ).read_text(encoding='utf-8')
-    waiting_guard = node_source.index('if self._last_seen_s is None:')
-    recovery_call = node_source.index(
-        'self._request_last_seen_recovery(now_s)', waiting_guard
-    )
-    assert waiting_guard < recovery_call
+    loss_handler = node_source.split(
+        '    def _on_loss_timer(', 1
+    )[1].split('    def _plan_latest_observation_if_pending(', 1)[0]
+    assert 'or self._last_seen_s is None' in loss_handler
+    assert 'self._begin_loss_recovery(now_s)' in loss_handler
+    assert 'self._loss_timer.reset()' in node_source
 
 
 def test_loss_recovery_is_a_small_ordered_nav2_state_machine():
@@ -384,16 +392,20 @@ def test_loss_recovery_is_a_small_ordered_nav2_state_machine():
     assert 'FollowState.RECOVERING' in begin_recovery
     assert 'self._request_last_seen_recovery(now_s)' in begin_recovery
     assert 'self._start_direction_turn()' not in begin_recovery
-    tick = node_source[
-        node_source.index('def _tick'):
-        node_source.index('def _reset_recovery')
-    ]
-    assert tick.count('self._cancel_follow_action(') == 1
-    assert 'is_cancel_requested' in tick
-    assert "'recovery_waypoint_tolerance_m'" in tick
-    assert 'self._last_goal_position' in tick
-    assert 'self._start_direction_turn()' in tick
-    assert 'continuing directed search' in tick
+    assert 'def _tick' not in node_source
+    assert 'create_timer(0.05' not in node_source
+    cancel_guard = node_source.split(
+        '    def _on_cancel_guard(', 1
+    )[1].split('    def _handle_accepted(', 1)[0]
+    assert "self._cancel_follow_action('follow action canceled')" in (
+        cancel_guard
+    )
+    nav_feedback = node_source.split(
+        '    def _on_nav2_feedback(', 1
+    )[1].split('    def _on_nav2_result(', 1)[0]
+    assert "'recovery_waypoint_tolerance_m'" in nav_feedback
+    assert 'self._start_direction_turn()' in nav_feedback
+    assert 'continuing directed search' in result_handler
     assert 'FollowState.TARGET_LOST' not in node_source
     assert 'self._start_direction_turn()' in result_handler
     assert 'status == GoalStatus.STATUS_SUCCEEDED' in result_handler

@@ -1,4 +1,7 @@
 builtin_interfaces/Time source_stamp
 builtin_interfaces/Time dispatch_stamp
+uint64 planning_started_steady_time_ns
+uint64 planning_finished_steady_time_ns
+uint64 dispatch_steady_time_ns
 uint32 sequence
 string source

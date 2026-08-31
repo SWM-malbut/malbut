@@ -7,7 +7,6 @@ from malbut_tracking.follow_policy import (
     FollowCommand,
     FollowSettings,
     decide_follow_motion,
-    should_update_goal,
     speed_limit_for_travel_distance,
 )
 from malbut_tracking.geometry import Point2D
@@ -20,9 +19,6 @@ def settings():
         desired_distance_m=1.2,
         minimum_distance_m=0.65,
         distance_tolerance_m=0.15,
-        goal_update_distance_m=0.25,
-        goal_update_minimum_period_s=0.33,
-        goal_update_period_s=0.75,
         minimum_follow_speed_mps=0.10,
         maximum_linear_speed_mps=0.40,
         full_speed_travel_distance_m=1.5,
@@ -118,29 +114,6 @@ def test_satisfied_distance_still_aligns_camera(target_x, settings):
     assert decision.goal.position == Point2D(0.0, 0.0)
 
 
-def test_goal_update_uses_motion_or_maximum_refresh_age(settings):
-    """Target motion reacts now and a stale goal refreshes by its deadline."""
-    previous = Point2D(1.0, 1.0)
-    assert should_update_goal(
-        previous,
-        Point2D(1.3, 1.0),
-        0.5,
-        settings,
-    )
-    assert should_update_goal(
-        previous,
-        Point2D(1.1, 1.0),
-        1.0,
-        settings,
-    )
-    assert not should_update_goal(
-        previous,
-        Point2D(1.1, 1.0),
-        0.5,
-        settings,
-    )
-
-
 def test_speed_limit_scales_with_remaining_path_length(settings):
     """Short corrections slow down while long paths retain full speed."""
     assert speed_limit_for_travel_distance(0.0, settings) == pytest.approx(
@@ -165,34 +138,3 @@ def test_recovery_turn_uses_the_last_camera_exit_side_first():
     assert directed_recovery_turn(-0.20, 0.80, 0.70) == pytest.approx(-0.70)
     assert directed_recovery_turn(0.30, -0.90, 0.70) == pytest.approx(0.70)
     assert directed_recovery_turn(0.0, -0.90, 0.70) == pytest.approx(-0.90)
-
-
-def test_goal_update_period_is_a_hard_rate_ceiling(settings):
-    """Target jumps must not preempt Nav2 above the configured rate."""
-    assert not should_update_goal(
-        Point2D(0.0, 0.0),
-        Point2D(2.0, 0.0),
-        settings.goal_update_minimum_period_s - 0.01,
-        settings,
-    )
-
-
-def test_camera_only_goal_updates_use_coarser_thresholds(settings):
-    """Far RGB-D tracking should not preempt Nav2 for fine sensor jitter."""
-    previous = Point2D(1.0, 1.0)
-    assert should_update_goal(
-        previous,
-        Point2D(1.3, 1.0),
-        1.2,
-        settings,
-        update_distance_m=0.5,
-        update_period_s=1.0,
-    )
-    assert should_update_goal(
-        previous,
-        Point2D(1.6, 1.0),
-        1.2,
-        settings,
-        update_distance_m=0.5,
-        update_period_s=1.0,
-    )

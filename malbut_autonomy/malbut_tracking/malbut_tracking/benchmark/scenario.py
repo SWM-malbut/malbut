@@ -34,6 +34,7 @@ class BenchmarkScenario:
     trajectory: str
     robot_pose: Pose
     actor_pose: Pose
+    measurement_duration_s: float
 
 
 def _package_file(value: object, label: str) -> Path:
@@ -87,6 +88,18 @@ def load_scenario(catalog_file: Path, scenario_name: str) -> BenchmarkScenario:
         )
     if not trajectory:
         raise ValueError('scenario trajectory label is required')
+    try:
+        measurement_duration_s = float(
+            value.get('measurement_duration_s', 180.0)
+        )
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            'scenario measurement_duration_s must be numeric'
+        ) from error
+    if not math.isfinite(measurement_duration_s) or measurement_duration_s <= 0:
+        raise ValueError(
+            'scenario measurement_duration_s must be positive'
+        )
     return BenchmarkScenario(
         name=scenario_name,
         world_name=world_name,
@@ -96,6 +109,7 @@ def load_scenario(catalog_file: Path, scenario_name: str) -> BenchmarkScenario:
         trajectory=trajectory,
         robot_pose=_pose(value.get('robot_pose'), 'robot_pose'),
         actor_pose=_pose(value.get('actor_pose'), 'actor_pose'),
+        measurement_duration_s=measurement_duration_s,
     )
 
 

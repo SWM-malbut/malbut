@@ -90,19 +90,10 @@ person_follower:
     approach_prediction_horizon_s: 0.75
     approach_speed_threshold_mps: 0.10
 
-    # Re-evaluate a moving target at up to roughly 3 Hz.
-    goal_update_distance_m: 0.10
-    goal_update_minimum_period_s: 0.33
-    goal_update_period_s: 0.33
-    # Camera-only targets outside the costmap remain followable through
-    # coarse map points. Large changes preempt immediately and the period
-    # forces refresh even while displacement remains small.
-    coarse_goal_update_distance_m: 0.20
-    coarse_goal_update_period_s: 0.33
     # Past the 3 m depth limit, RGB supplies direction and a minimum range.
-    # Repeated replanning closes that distance until metric depth returns.
-    bearing_goal_update_distance_m: 0.20
-    bearing_goal_update_period_s: 0.33
+    # Each new sensor observation may request the next path. A single in-flight
+    # Nav2 plan remains the only concurrency guard, and newer observations are
+    # coalesced into one latest request when that plan completes.
     bearing_only_variance_threshold_m2: 1.0
 
     # Accept destinations only beyond the global inflation gradient. With the

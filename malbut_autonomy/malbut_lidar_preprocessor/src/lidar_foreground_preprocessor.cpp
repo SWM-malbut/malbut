@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <ctime>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -19,6 +20,7 @@
 #include <laser_geometry/laser_geometry.hpp>
 #include <malbut_interfaces/msg/lidar_cluster.hpp>
 #include <malbut_interfaces/msg/lidar_cluster_array.hpp>
+#include <malbut_interfaces/msg/sensor_processing_trace.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -30,6 +32,16 @@
 namespace
 {
 constexpr double kTau = 6.28318530717958647692;
+
+std::uint64_t monotonic_time_ns()
+{
+  timespec stamp{};
+  if (::clock_gettime(CLOCK_MONOTONIC, &stamp) != 0) {
+    throw std::runtime_error("clock_gettime(CLOCK_MONOTONIC) failed");
+  }
+  return static_cast<std::uint64_t>(stamp.tv_sec) * 1000000000ULL +
+    static_cast<std::uint64_t>(stamp.tv_nsec);
+}
 
 struct PointWithIndex
 {
@@ -101,6 +113,9 @@ public:
 
     clusters_publisher_ = create_publisher<malbut_interfaces::msg::LidarClusterArray>(
       clusters_topic_, rclcpp::SensorDataQoS());
+    processing_trace_publisher_ =
+      create_publisher<malbut_interfaces::msg::SensorProcessingTrace>(
+      processing_trace_topic_, rclcpp::QoS(100));
     static_map_subscription_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
       static_map_topic_,
       rclcpp::QoS(1).transient_local().reliable(),
@@ -124,6 +139,8 @@ private:
     declare_parameter("scan_topic", "/scan");
     declare_parameter("static_map_topic", "/map");
     declare_parameter("clusters_topic", "/perception/lidar/foreground_clusters");
+    declare_parameter(
+      "processing_trace_topic", "/perception/sensor_processing_trace");
     declare_parameter("global_frame", "map");
     declare_parameter("static_occupied_threshold", 65);
     declare_parameter("static_exclusion_radius_m", 0.20);
@@ -140,6 +157,7 @@ private:
     scan_topic_ = get_parameter("scan_topic").as_string();
     static_map_topic_ = get_parameter("static_map_topic").as_string();
     clusters_topic_ = get_parameter("clusters_topic").as_string();
+    processing_trace_topic_ = get_parameter("processing_trace_topic").as_string();
     global_frame_ = get_parameter("global_frame").as_string();
     occupied_threshold_ = get_parameter("static_occupied_threshold").as_int();
     exclusion_radius_m_ = get_parameter("static_exclusion_radius_m").as_double();
@@ -155,7 +173,8 @@ private:
 
     if (scan_topic_.empty() || scan_topic_.front() != '/' ||
       static_map_topic_.empty() || static_map_topic_.front() != '/' ||
-      clusters_topic_.empty() || clusters_topic_.front() != '/')
+      clusters_topic_.empty() || clusters_topic_.front() != '/' ||
+      processing_trace_topic_.empty() || processing_trace_topic_.front() != '/')
     {
       throw std::invalid_argument("sensor and output topics must be absolute");
     }
@@ -256,18 +275,21 @@ private:
 
   void queue_scan(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan)
   {
+    const auto receipt_steady_time_ns = monotonic_time_ns();
     if (!map_ready_ || scan->header.frame_id.empty()) {
       return;
     }
     // Match the previous follower semantics: retain only the freshest scan and
     // retry it briefly while its measurement-time TF catches up.
     pending_scan_ = scan;
+    pending_scan_receipt_steady_time_ns_ = receipt_steady_time_ns;
     process_pending_scan();
   }
 
   void process_pending_scan()
   {
     const auto scan = pending_scan_;
+    const auto receipt_steady_time_ns = pending_scan_receipt_steady_time_ns_;
     if (scan == nullptr) {
       return;
     }
@@ -282,6 +304,7 @@ private:
       const double age_s = (get_clock()->now() - stamp).seconds();
       if (age_s > transform_queue_timeout_s_) {
         pending_scan_.reset();
+        pending_scan_receipt_steady_time_ns_ = 0U;
         RCLCPP_WARN_THROTTLE(
           get_logger(), *get_clock(), 5000,
           "Dropping scan without measurement-time TF after %.2f s: %s",
@@ -290,6 +313,7 @@ private:
       return;
     }
     pending_scan_.reset();
+    pending_scan_receipt_steady_time_ns_ = 0U;
 
     const auto * x_field = find_field(cloud, "x");
     const auto * y_field = find_field(cloud, "y");
@@ -355,6 +379,14 @@ private:
       append_cluster(group, output);
     }
     clusters_publisher_->publish(output);
+    const auto publish_steady_time_ns = monotonic_time_ns();
+    malbut_interfaces::msg::SensorProcessingTrace trace;
+    trace.source_stamp = scan->header.stamp;
+    trace.receipt_steady_time_ns = receipt_steady_time_ns;
+    trace.publish_steady_time_ns = publish_steady_time_ns;
+    trace.sequence = ++processing_trace_sequence_;
+    trace.source = "lidar";
+    processing_trace_publisher_->publish(trace);
   }
 
   void append_cluster(
@@ -396,6 +428,7 @@ private:
   std::string scan_topic_;
   std::string static_map_topic_;
   std::string clusters_topic_;
+  std::string processing_trace_topic_;
   std::string global_frame_;
   std::int64_t occupied_threshold_{65};
   double exclusion_radius_m_{0.20};
@@ -425,8 +458,12 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscription_;
   rclcpp::TimerBase::SharedPtr scan_transform_timer_;
   sensor_msgs::msg::LaserScan::ConstSharedPtr pending_scan_;
+  std::uint64_t pending_scan_receipt_steady_time_ns_{0U};
+  std::uint32_t processing_trace_sequence_{0U};
   rclcpp::Publisher<malbut_interfaces::msg::LidarClusterArray>::SharedPtr
     clusters_publisher_;
+  rclcpp::Publisher<malbut_interfaces::msg::SensorProcessingTrace>::SharedPtr
+    processing_trace_publisher_;
 };
 
 int main(int argc, char ** argv)

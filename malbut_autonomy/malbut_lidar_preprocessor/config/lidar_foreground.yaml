@@ -4,6 +4,7 @@ lidar_foreground_preprocessor:
     scan_topic: /scan
     static_map_topic: /map
     clusters_topic: /perception/lidar/foreground_clusters
+    processing_trace_topic: /perception/sensor_processing_trace
     global_frame: map
     static_occupied_threshold: 65
     static_exclusion_radius_m: 0.20

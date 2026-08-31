@@ -36,6 +36,10 @@ def generate_launch_description():
             'camera_info_topic',
             default_value='/camera/color/camera_info',
         ),
+        DeclareLaunchArgument(
+            'processing_trace_topic',
+            default_value='/perception/sensor_processing_trace',
+        ),
         DeclareLaunchArgument('detector_backend', default_value='auto'),
         DeclareLaunchArgument('model_path', default_value=str(default_model)),
         DeclareLaunchArgument('inference_backend', default_value='auto'),
@@ -65,6 +69,9 @@ def generate_launch_description():
                 'rgb_topic': LaunchConfiguration('rgb_topic'),
                 'depth_topic': LaunchConfiguration('depth_topic'),
                 'camera_info_topic': LaunchConfiguration('camera_info_topic'),
+                'processing_trace_topic': LaunchConfiguration(
+                    'processing_trace_topic'
+                ),
                 'detector_backend': LaunchConfiguration('detector_backend'),
                 'model_path': LaunchConfiguration('model_path'),
                 'inference_backend': LaunchConfiguration(
