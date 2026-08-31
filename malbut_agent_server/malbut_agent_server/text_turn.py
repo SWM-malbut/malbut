@@ -31,6 +31,7 @@ from malbut_agent_server.schemas import (
     validate_user_id,
 )
 from malbut_agent_server.text_confirmation import (
+    APPROVE,
     APPROVED,
     CANCELED,
     DENIED,
@@ -40,6 +41,14 @@ from malbut_agent_server.text_confirmation import (
     ConfirmationResolution,
     classify_confirmation_text,
 )
+from malbut_agent_server.text_decision_policy import (
+    TextDecisionPolicy,
+    TextDecisionRoute,
+)
+
+
+_TEXT_TURN_MODEL_TOOLS = ('navigate',)
+_TEXT_TURN_CONFIRMABLE_TOOLS = ('navigate',)
 
 
 @dataclass(frozen=True)
@@ -156,6 +165,10 @@ class TextTurnService:
         self.create_robot_actions = create_robot_actions
         self.action_dispatch_window_seconds = float(
             action_dispatch_window_seconds
+        )
+        self.decision_policy = TextDecisionPolicy(
+            orchestrator.capability_registry,
+            confirmable_tool_names=_TEXT_TURN_CONFIRMABLE_TOOLS,
         )
 
     def handle(self, *, user_id: str, value: Any) -> dict[str, Any]:
@@ -309,6 +322,24 @@ class TextTurnService:
             )
             return value
 
+        if (
+            classified == APPROVE
+            and not self._pending_is_still_confirmable(record)
+        ):
+            invalidated = self._invalidate_pending(
+                user_id,
+                request.conversation_id,
+                record,
+                request,
+                request_fingerprint,
+                result_code='confirmation_policy_changed',
+            )
+            return self._record_response(
+                request,
+                invalidated,
+                cached=False,
+            )
+
         current_target = self._resolve_record_target(record)
         if (
             current_target is None
@@ -371,6 +402,24 @@ class TextTurnService:
         except Exception:
             return None
 
+    def _pending_is_still_confirmable(
+        self,
+        record: ConfirmationRecord,
+    ) -> bool:
+        """Recheck the bound proposal, never the response text or the LLM."""
+        decision = AgentDecision(
+            type='tool_call',
+            message=record.message,
+            tool_name=record.tool_name,
+            arguments=record.arguments_dict(),
+            reason='durable_confirmation_revalidation',
+            confidence=1.0,
+        )
+        return self.decision_policy.classify(
+            decision,
+            available_tools=_TEXT_TURN_MODEL_TOOLS,
+        ).confirmable
+
     def _invalidate_target_change(
         self,
         user_id: str,
@@ -379,10 +428,29 @@ class TextTurnService:
         request: TextTurnRequest,
         request_fingerprint: str,
     ) -> ConfirmationRecord:
+        return self._invalidate_pending(
+            user_id,
+            conversation_id,
+            record,
+            request,
+            request_fingerprint,
+            result_code='confirmation_target_changed',
+        )
+
+    def _invalidate_pending(
+        self,
+        user_id: str,
+        conversation_id: str,
+        record: ConfirmationRecord,
+        request: TextTurnRequest,
+        request_fingerprint: str,
+        *,
+        result_code: str,
+    ) -> ConfirmationRecord:
         return self.store.invalidate_confirmation(
             user_id,
             conversation_id,
-            result_code='confirmation_target_changed',
+            result_code=result_code,
             now=float(self.clock()),
             expected_target_binding_digest=(
                 record.target_binding_digest
@@ -404,10 +472,11 @@ class TextTurnService:
             turn_id=request.turn_id,
             utterance=request.text,
             robot_state=RobotState(),
-            available_tools=('navigate',),
+            available_tools=_TEXT_TURN_MODEL_TOOLS,
         )
         result = self.orchestrator.handle(
             agent_request,
+            proposal_verifier=self._verify_model_proposal,
             confirmation_factory=self._confirmation_factory,
         )
         try:
@@ -436,9 +505,15 @@ class TextTurnService:
         token: BeginTurnToken,
     ) -> ConfirmationDraft | None:
         decision = result.decision
+        classification = self.decision_policy.classify(
+            result.raw_decision,
+            available_tools=_TEXT_TURN_MODEL_TOOLS,
+        )
+        if classification.route is TextDecisionRoute.REJECTED:
+            self._reject_unroutable_decision(result, classification.code)
+            return None
         if (
-            decision.type != 'tool_call'
-            or decision.tool_name != 'navigate'
+            not classification.confirmable
             or result.safety.allowed is not True
             or result.state_trusted is not True
         ):
@@ -455,6 +530,45 @@ class TextTurnService:
             target,
             confirmation_expires_at=(
                 result.issued_at + self.maximum_confirmation_seconds
+            ),
+        )
+
+    def _verify_model_proposal(
+        self,
+        decision: AgentDecision,
+    ) -> SafetyResult | None:
+        """Reject invalid routes before authoritative RobotState is read."""
+        classification = self.decision_policy.classify(
+            decision,
+            available_tools=_TEXT_TURN_MODEL_TOOLS,
+        )
+        if classification.route is not TextDecisionRoute.REJECTED:
+            return None
+        return self._routing_rejection(classification.code)
+
+    @staticmethod
+    def _reject_unroutable_decision(
+        result: OrchestrationResult,
+        code: str,
+    ) -> None:
+        """Persist one rejected model proposal through the existing refusal."""
+        result.safety = TextTurnService._routing_rejection(code)
+        result.decision = AgentDecision(
+            type='refusal',
+            message=result.safety.reason,
+            reason=f'routing:{code}',
+            confidence=1.0,
+            expires_in_ms=result.raw_decision.expires_in_ms,
+        )
+
+    @staticmethod
+    def _routing_rejection(code: str) -> SafetyResult:
+        return SafetyResult(
+            False,
+            f'text_route_{code}',
+            (
+                '요청한 기능은 현재 텍스트 경로에서 사용할 수 없어 '
+                '실행하지 않습니다.'
             ),
         )
 
@@ -509,9 +623,16 @@ class TextTurnService:
         elif record.disposition == CANCELED:
             value['message'] = '요청을 취소했습니다.'
         elif record.disposition == INVALIDATED:
-            value['message'] = (
-                '목적지 정보가 바뀌어 기존 확인을 무효화했습니다.'
-            )
+            if record.result_code == 'confirmation_policy_changed':
+                value['message'] = (
+                    '현재 기능 정책이 바뀌어 기존 확인을 '
+                    '무효화했습니다.'
+                )
+            else:
+                value['message'] = (
+                    '목적지 정보가 바뀌어 기존 확인을 '
+                    '무효화했습니다.'
+                )
         return value
 
     @staticmethod
