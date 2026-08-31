@@ -365,6 +365,9 @@ class AgentOrchestrator:
         self,
         request: AgentRequest,
         *,
+        proposal_verifier: Callable[
+            [AgentDecision], SafetyResult | None
+        ] | None = None,
         confirmation_factory: Callable[
             [OrchestrationResult, BeginTurnToken], Any
         ] | None = None,
@@ -375,6 +378,8 @@ class AgentOrchestrator:
             and not callable(confirmation_factory)
         ):
             raise TypeError('confirmation_factory must be callable')
+        if proposal_verifier is not None and not callable(proposal_verifier):
+            raise TypeError('proposal_verifier must be callable')
         fingerprint = self._request_fingerprint(request)
         with self._handle_lock:
             begin = self.conversation_store.begin_turn(
@@ -402,6 +407,7 @@ class AgentOrchestrator:
                     begin.history,
                     begin.summary,
                     token,
+                    proposal_verifier,
                 )
                 completion_arguments = {}
                 if confirmation_factory is not None:
@@ -447,6 +453,9 @@ class AgentOrchestrator:
         conversation_turns: Sequence[ConversationTurn],
         conversation_summary: ConversationSummary | None,
         token: BeginTurnToken,
+        proposal_verifier: Callable[
+            [AgentDecision], SafetyResult | None
+        ] | None,
     ) -> OrchestrationResult:
         """Call one provider without holding a SQLite transaction."""
         effective_value = request.to_dict()
@@ -503,17 +512,36 @@ class AgentOrchestrator:
             raise ProviderError(
                 'provider returned an invalid decision'
             ) from error
-        (
-            safety_request,
-            state_trusted,
-            state_evidence_id,
-            state_observed_at,
-        ) = self._fresh_safety_request(safety_request)
-        safety = self.safety_policy.evaluate(
-            safety_request,
-            raw_decision,
-            state_trusted=state_trusted,
+        early_rejection = (
+            proposal_verifier(copy.deepcopy(raw_decision))
+            if proposal_verifier is not None
+            else None
         )
+        if early_rejection is not None:
+            if not isinstance(early_rejection, SafetyResult):
+                raise TypeError(
+                    'proposal_verifier must return SafetyResult or None'
+                )
+            if early_rejection.allowed is not False:
+                raise ValueError(
+                    'proposal_verifier may only return a rejection'
+                )
+            state_trusted = False
+            state_evidence_id = None
+            state_observed_at = None
+            safety = early_rejection
+        else:
+            (
+                safety_request,
+                state_trusted,
+                state_evidence_id,
+                state_observed_at,
+            ) = self._fresh_safety_request(safety_request)
+            safety = self.safety_policy.evaluate(
+                safety_request,
+                raw_decision,
+                state_trusted=state_trusted,
+            )
         decision = raw_decision
         if not safety.allowed:
             decision = AgentDecision(

@@ -25,6 +25,7 @@ from malbut_agent_server.robot_state_source import (
 from malbut_agent_server.safety import SafetyPolicy
 from malbut_agent_server.schemas import RobotState, ValidationError
 from malbut_agent_server.text_turn import TextTurnService
+from malbut_agent_server.text_decision_policy import TextDecisionPolicy
 
 
 class Clock:
@@ -153,6 +154,17 @@ def test_request_ambiguous_confirmation_and_approval_call_llm_once(
         assert provider.calls == 1
         assert resolver.calls == 1
 
+        original_decision_policy = service.decision_policy
+
+        class UnexpectedDecisionPolicy:
+            def classify(self, *args, **kwargs):
+                del args, kwargs
+                raise AssertionError(
+                    'pending confirmation reached decision routing'
+                )
+
+        service.decision_policy = UnexpectedDecisionPolicy()
+
         ambiguous = service.handle(
             user_id='user-1',
             value=_request('response-ambiguous', 'turn-2', '글쎄'),
@@ -163,6 +175,8 @@ def test_request_ambiguous_confirmation_and_approval_call_llm_once(
             == 'confirmation_response_unrecognized'
         )
         assert provider.calls == 1
+
+        service.decision_policy = original_decision_policy
 
         approved = service.handle(
             user_id='user-1',
@@ -181,6 +195,7 @@ def test_request_ambiguous_confirmation_and_approval_call_llm_once(
         )
         assert provider.calls == 1
 
+        service.decision_policy = UnexpectedDecisionPolicy()
         replay = service.handle(
             user_id='user-1',
             value=_request('response-1', 'turn-3', '네'),
@@ -190,6 +205,161 @@ def test_request_ambiguous_confirmation_and_approval_call_llm_once(
         assert replay['cached'] is True
         assert provider.calls == 1
     finally:
+        store.close()
+        memory.close()
+
+
+def test_approval_rechecks_current_policy_without_calling_llm(
+    tmp_path,
+) -> None:
+    """A revoked route invalidates its old ticket before action creation."""
+    base, provider, resolver, store, memory, database = _runtime(
+        tmp_path
+    )
+    repository = SQLiteActionRepository(database)
+    service = TextTurnService(
+        base.orchestrator,
+        resolver,
+        create_robot_actions=True,
+    )
+    try:
+        store.create('user-1', 'conversation-1')
+        proposal = service.handle(
+            user_id='user-1',
+            value=_request('proposal-1', 'turn-1', '거실로 가줘'),
+        )
+        service.decision_policy = TextDecisionPolicy(
+            production_registry(),
+            confirmable_tool_names=(),
+        )
+
+        result = service.handle(
+            user_id='user-1',
+            value=_request('approval-1', 'turn-2', '네'),
+        )
+
+        assert proposal['status'] == 'awaiting_confirmation'
+        assert result['status'] == 'invalidated'
+        assert result['result_code'] == 'confirmation_policy_changed'
+        assert result['message'] == (
+            '현재 기능 정책이 바뀌어 기존 확인을 무효화했습니다.'
+        )
+        assert result['execution']['execution_authorized'] is False
+        assert result['execution']['nav2_start_count'] == 0
+        assert result['execution']['nav2_cancel_count'] == 0
+        assert provider.calls == 1
+        assert resolver.calls == 1
+        assert repository.find_by_confirmation(
+            proposal['confirmation_request_id']
+        ) is None
+        with sqlite3.connect(database) as connection:
+            assert connection.execute(
+                'SELECT COUNT(*) FROM robot_actions'
+            ).fetchone()[0] == 0
+    finally:
+        repository.close()
+        store.close()
+        memory.close()
+
+
+def test_server_route_policy_gates_confirmation_creation(tmp_path) -> None:
+    """A model Tool proposal cannot bypass the server-owned route policy."""
+    base, provider, resolver, store, memory, database = _runtime(
+        tmp_path
+    )
+    repository = SQLiteActionRepository(database)
+    service = TextTurnService(
+        base.orchestrator,
+        resolver,
+        create_robot_actions=True,
+    )
+    service.decision_policy = TextDecisionPolicy(
+        production_registry(),
+        confirmable_tool_names=(),
+    )
+    state_source = base.orchestrator.robot_state_source
+    assert state_source is not None
+    original_read = state_source.read
+    state_read_count = 0
+
+    def counted_read():
+        nonlocal state_read_count
+        state_read_count += 1
+        return original_read()
+
+    state_source.read = counted_read
+    try:
+        store.create('user-1', 'conversation-1')
+        result = service.handle(
+            user_id='user-1',
+            value=_request('request-1', 'turn-1', '거실로 가줘'),
+        )
+
+        assert result['status'] == 'completed'
+        assert result['decision']['type'] == 'refusal'
+        assert result['safety']['allowed'] is False
+        assert result['safety']['code'] == (
+            'text_route_tool_not_routable'
+        )
+        assert result['execution']['execution_authorized'] is False
+        assert result['execution']['physical_authorized'] is False
+        assert result['execution']['nav2_start_count'] == 0
+        assert result['execution']['nav2_cancel_count'] == 0
+        assert store.pending_confirmation(
+            'user-1',
+            'conversation-1',
+        ) is None
+        assert provider.calls == 1
+        assert resolver.calls == 0
+        assert state_read_count == 0
+        with sqlite3.connect(database) as connection:
+            assert connection.execute(
+                'SELECT COUNT(*) FROM robot_actions'
+            ).fetchone()[0] == 0
+    finally:
+        repository.close()
+        store.close()
+        memory.close()
+
+
+def test_direct_reply_creates_no_confirmation_action_or_navigation(
+    tmp_path,
+) -> None:
+    """A normal answer remains speech-only through the full text service."""
+    base, provider, resolver, store, memory, database = _runtime(
+        tmp_path
+    )
+    repository = SQLiteActionRepository(database)
+    service = TextTurnService(
+        base.orchestrator,
+        resolver,
+        create_robot_actions=True,
+    )
+    try:
+        store.create('user-1', 'conversation-1')
+        result = service.handle(
+            user_id='user-1',
+            value=_request('greeting-1', 'turn-1', '안녕하세요'),
+        )
+
+        assert result['status'] == 'completed'
+        assert result['decision']['type'] == 'message'
+        assert result['execution']['execution_authorized'] is False
+        assert result['execution']['physical_authorized'] is False
+        assert result['execution']['nav2_start_count'] == 0
+        assert result['execution']['nav2_cancel_count'] == 0
+        assert store.pending_confirmation(
+            'user-1',
+            'conversation-1',
+        ) is None
+        assert provider.calls == 1
+        assert resolver.calls == 0
+        with sqlite3.connect(database) as connection:
+            assert connection.execute(
+                'SELECT COUNT(*) FROM robot_actions'
+            ).fetchone()[0] == 0
+    finally:
+        repository.close()
         store.close()
         memory.close()
 
