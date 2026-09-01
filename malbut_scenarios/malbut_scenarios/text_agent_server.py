@@ -20,10 +20,6 @@ from malbut_agent_server.application.approved_action_worker import (
 from malbut_agent_server.config import Settings, load_env_file
 from malbut_agent_server.factory import build_orchestrator
 from malbut_agent_server.http_server import make_server
-from malbut_agent_server.robot_state_source import (
-    StaticSimulationRobotStateSource,
-)
-from malbut_agent_server.schemas import RobotState
 from malbut_agent_server.text_turn import TextTurnService
 from malbut_gazebo.named_navigation import NamedNavigationCatalog
 from malbut_gazebo.named_navigation_facade import (
@@ -52,6 +48,9 @@ from malbut_scenarios.dispatch_safety_fault import (
 )
 from malbut_scenarios.named_navigation_fixture import (
     activate_swm25_137_alternate_revision,
+)
+from malbut_scenarios.simulation_text_runtime import (
+    build_simulation_text_runtime,
 )
 from malbut_scenarios.text_gazebo_scenario import (
     TextGazeboFaultProfile,
@@ -104,38 +103,6 @@ class ApprovedSimulationTextRuntime:
     def dispatchers(self) -> tuple[ApprovedActionWorkerRuntime, ...]:
         """Return every worker runtime in deterministic ownership order."""
         return (self.dispatcher, *self.additional_dispatchers)
-
-
-def build_simulation_text_runtime(
-    settings: Settings,
-    catalog_loader: Callable[[], NamedNavigationCatalog],
-):
-    """Compose Agent and catalog lookup without any navigation facade."""
-    if settings.tool_mode != 'proposal':
-        raise ValueError(
-            'SWM25-131 text runtime requires proposal Tool mode'
-        )
-    if not settings.auth_token:
-        raise ValueError(
-            'SWM25-131 text runtime requires MALBUT_AGENT_AUTH_TOKEN'
-        )
-    resolver = CatalogNamedTargetResolver(catalog_loader)
-    # This is explicit Gazebo evidence only.  A physical RobotStateSource is
-    # owned by SWM25-123 and must replace it before real-robot authority.
-    state_source = StaticSimulationRobotStateSource(RobotState(
-        battery_percent=100.0,
-        navigation_available=True,
-        localization_ok=True,
-        emergency_stop=False,
-        camera_available=False,
-        privacy_mode=True,
-        docked=False,
-    ))
-    orchestrator = build_orchestrator(
-        settings,
-        robot_state_source=state_source,
-    )
-    return orchestrator, TextTurnService(orchestrator, resolver)
 
 
 def build_approved_simulation_text_runtime(

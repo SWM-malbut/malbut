@@ -20,6 +20,7 @@ class TextDecisionRoute(str, Enum):
     """One server-derived route; never a model-provided authority field."""
 
     DIRECT_REPLY = 'direct_reply'
+    CLARIFICATION_REQUIRED = 'clarification_required'
     READ_ONLY_QUERY = 'read_only_query'
     CONFIRMABLE_ACTION_PROPOSAL = 'confirmable_action_proposal'
     REJECTED = 'rejected'
@@ -82,6 +83,13 @@ class TextDecisionPolicy:
             decision.validate()
         except (TypeError, ValidationError):
             return self._rejected('decision_invalid')
+
+        if decision.type == 'clarification':
+            return TextDecisionClassification(
+                route=TextDecisionRoute.CLARIFICATION_REQUIRED,
+                code='clarification_required',
+                capability_revision=self.registry.revision,
+            )
 
         if decision.type != 'tool_call':
             return TextDecisionClassification(

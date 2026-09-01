@@ -46,6 +46,57 @@ class MemoryChangedError(ValidationError):
     """Raised when memory changes while a model request is in flight."""
 
 
+@dataclass(frozen=True)
+class ServerClarification:
+    """One non-action clarification produced by trusted server policy."""
+
+    message: str
+    code: str
+    policy_revision: str
+
+    def __post_init__(self) -> None:
+        """Keep this DTO incapable of carrying Tool or execution fields."""
+        for name, maximum in (
+            ('message', 2000),
+            ('code', 128),
+            ('policy_revision', 128),
+        ):
+            value = getattr(self, name)
+            if (
+                type(value) is not str
+                or not value
+                or value != value.strip()
+                or len(value) > maximum
+                or any(
+                    ord(character) < 32 or ord(character) == 127
+                    for character in value
+                )
+            ):
+                raise ValueError(f'{name} is invalid')
+        for name in ('code', 'policy_revision'):
+            value = getattr(self, name)
+            if any(
+                not (
+                    character.isascii()
+                    and (
+                        character.isalnum()
+                        or character in {'_', '-', '.'}
+                    )
+                )
+                for character in value
+            ):
+                raise ValueError(f'{name} is invalid')
+
+    def to_decision(self) -> AgentDecision:
+        """Project the policy result into the existing non-action wire type."""
+        return AgentDecision(
+            type='clarification',
+            message=self.message,
+            reason=f'server:{self.code}',
+            confidence=1.0,
+        )
+
+
 @dataclass
 class OrchestrationResult:
     """Auditable provider proposal and final locally checked decision."""
@@ -365,12 +416,17 @@ class AgentOrchestrator:
         self,
         request: AgentRequest,
         *,
+        utterance_resolver: Callable[
+            [AgentRequest, Sequence[ConversationTurn], BeginTurnToken],
+            str | None,
+        ] | None = None,
         proposal_verifier: Callable[
             [AgentDecision], SafetyResult | None
         ] | None = None,
         confirmation_factory: Callable[
             [OrchestrationResult, BeginTurnToken], Any
         ] | None = None,
+        server_clarification: ServerClarification | None = None,
     ) -> OrchestrationResult:
         """Process one turn and optionally bind a non-authorizing intent."""
         if (
@@ -380,6 +436,17 @@ class AgentOrchestrator:
             raise TypeError('confirmation_factory must be callable')
         if proposal_verifier is not None and not callable(proposal_verifier):
             raise TypeError('proposal_verifier must be callable')
+        if utterance_resolver is not None and not callable(
+            utterance_resolver
+        ):
+            raise TypeError('utterance_resolver must be callable')
+        if (
+            server_clarification is not None
+            and not isinstance(server_clarification, ServerClarification)
+        ):
+            raise TypeError(
+                'server_clarification must be a ServerClarification'
+            )
         fingerprint = self._request_fingerprint(request)
         with self._handle_lock:
             begin = self.conversation_store.begin_turn(
@@ -402,12 +469,20 @@ class AgentOrchestrator:
                     'conversation begin returned no token'
                 )
             try:
+                effective_request = self._effective_request(
+                    request,
+                    begin.history,
+                    token,
+                    utterance_resolver,
+                )
                 result = self._handle_uncached(
                     request,
+                    effective_request,
                     begin.history,
                     begin.summary,
                     token,
                     proposal_verifier,
+                    server_clarification,
                 )
                 completion_arguments = {}
                 if confirmation_factory is not None:
@@ -450,41 +525,54 @@ class AgentOrchestrator:
     def _handle_uncached(
         self,
         request: AgentRequest,
+        effective_request: AgentRequest,
         conversation_turns: Sequence[ConversationTurn],
         conversation_summary: ConversationSummary | None,
         token: BeginTurnToken,
         proposal_verifier: Callable[
             [AgentDecision], SafetyResult | None
         ] | None,
+        server_clarification: ServerClarification | None,
     ) -> OrchestrationResult:
         """Call one provider without holding a SQLite transaction."""
-        effective_value = request.to_dict()
+        effective_value = effective_request.to_dict()
         effective_value['available_tools'] = (
             self.capability_registry.effective_names(
-                request.available_tools
+                effective_request.available_tools
             )
         )
         safety_request = AgentRequest.from_dict(effective_value)
         model_request = AgentRequest.from_dict(effective_value)
-        memories, memory_revision = (
-            self.memory_store.search_with_revision(
-                request.user_id,
-                request.utterance,
-                limit=self.memory_limit,
+        if server_clarification is None:
+            memories, memory_revision = (
+                self.memory_store.search_with_revision(
+                    request.user_id,
+                    request.utterance,
+                    limit=self.memory_limit,
+                )
             )
-        )
-        tool_specs = self.capability_registry.select_specs(
-            model_request.available_tools
-        )
-        provider_result = self.provider.complete(
-            model_request,
-            memories,
-            copy.deepcopy(list(conversation_turns)),
-            tool_specs,
-            conversation_summary=copy.deepcopy(
-                conversation_summary
-            ),
-        )
+            tool_specs = self.capability_registry.select_specs(
+                model_request.available_tools
+            )
+            provider_result = self.provider.complete(
+                model_request,
+                memories,
+                copy.deepcopy(list(conversation_turns)),
+                tool_specs,
+                conversation_summary=copy.deepcopy(
+                    conversation_summary
+                ),
+            )
+        else:
+            memories = []
+            memory_revision = self.memory_store.revision
+            provider_result = ProviderResult(
+                decision=server_clarification.to_decision(),
+                provider='malbut-server-policy',
+                model=server_clarification.policy_revision,
+                latency_ms=0.0,
+                input_chars=0,
+            )
         try:
             provider_result.validate()
         except (ValidationError, TypeError) as error:
@@ -531,12 +619,17 @@ class AgentOrchestrator:
             state_observed_at = None
             safety = early_rejection
         else:
-            (
-                safety_request,
-                state_trusted,
-                state_evidence_id,
-                state_observed_at,
-            ) = self._fresh_safety_request(safety_request)
+            if server_clarification is None:
+                (
+                    safety_request,
+                    state_trusted,
+                    state_evidence_id,
+                    state_observed_at,
+                ) = self._fresh_safety_request(safety_request)
+            else:
+                state_trusted = False
+                state_evidence_id = None
+                state_observed_at = None
             safety = self.safety_policy.evaluate(
                 safety_request,
                 raw_decision,
@@ -591,6 +684,32 @@ class AgentOrchestrator:
             ),
             clock=self._state_clock,
         )
+
+    @staticmethod
+    def _effective_request(
+        request: AgentRequest,
+        conversation_turns: Sequence[ConversationTurn],
+        token: BeginTurnToken,
+        utterance_resolver: Callable[
+            [AgentRequest, Sequence[ConversationTurn], BeginTurnToken],
+            str | None,
+        ] | None,
+    ) -> AgentRequest:
+        """Resolve one server-owned utterance without changing authority."""
+        if utterance_resolver is None:
+            return request
+        resolved = utterance_resolver(
+            copy.deepcopy(request),
+            copy.deepcopy(tuple(conversation_turns)),
+            copy.deepcopy(token),
+        )
+        if resolved is None:
+            return request
+        if type(resolved) is not str:
+            raise TypeError('utterance_resolver must return str or None')
+        value = request.to_dict()
+        value['utterance'] = resolved
+        return AgentRequest.from_dict(value)
 
     def _fresh_safety_request(
         self,

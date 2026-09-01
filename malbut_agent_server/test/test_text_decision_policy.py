@@ -24,7 +24,7 @@ def _policy(*confirmable_tool_names: str) -> TextDecisionPolicy:
 
 @pytest.mark.parametrize(
     'decision_type',
-    ['message', 'clarification', 'refusal'],
+    ['message', 'refusal'],
 )
 def test_non_tool_decisions_are_direct_replies(
     decision_type: str,
@@ -40,6 +40,24 @@ def test_non_tool_decisions_are_direct_replies(
 
     assert result.route is TextDecisionRoute.DIRECT_REPLY
     assert result.code == 'direct_reply'
+    assert result.tool_name is None
+    assert result.capability_mode is None
+    assert result.risk_level is None
+    assert result.confirmable is False
+
+
+def test_clarification_is_a_distinct_non_authorizing_route() -> None:
+    """A question is speaking, but it expects one bounded follow-up turn."""
+    result = _policy('navigate').classify(
+        AgentDecision(
+            type='clarification',
+            message='어느 공간으로 이동할까요?',
+        ),
+        available_tools=('navigate',),
+    )
+
+    assert result.route is TextDecisionRoute.CLARIFICATION_REQUIRED
+    assert result.code == 'clarification_required'
     assert result.tool_name is None
     assert result.capability_mode is None
     assert result.risk_level is None

@@ -1532,6 +1532,63 @@ class SQLiteConversationStore:
                 self._connection.rollback()
                 raise
 
+    def has_text_turn_claim_at_revision(
+        self,
+        user_id: str,
+        conversation_id: str,
+        session_instance_id: str,
+        generation: int,
+        revision: int,
+    ) -> bool:
+        """Return whether an exact conversation revision has a claim."""
+        normalized_user = validate_user_id(user_id)
+        normalized_id = validate_conversation_id(conversation_id)
+        normalized_session_instance = self._required_text(
+            session_instance_id,
+            'session_instance_id',
+            128,
+        )
+        normalized_generation = self._bounded_integer(
+            generation,
+            'generation',
+            1,
+            2 ** 63 - 1,
+        )
+        normalized_revision = self._bounded_integer(
+            revision,
+            'revision',
+            0,
+            2 ** 63 - 1,
+        )
+        with self._lock:
+            self._begin()
+            try:
+                self._expire_due_locked(self._now())
+                row = self._connection.execute(
+                    '''
+                    SELECT 1
+                    FROM text_turn_request_claims
+                    WHERE user_id = ?
+                      AND conversation_id = ?
+                      AND session_instance_id = ?
+                      AND generation = ?
+                      AND revision = ?
+                    LIMIT 1
+                    ''',
+                    (
+                        normalized_user,
+                        normalized_id,
+                        normalized_session_instance,
+                        normalized_generation,
+                        normalized_revision,
+                    ),
+                ).fetchone()
+                self._connection.commit()
+                return row is not None
+            except Exception:
+                self._connection.rollback()
+                raise
+
     def has_agent_request(self, user_id: str, request_id: str) -> bool:
         """Return whether the user already owns an Agent request ID."""
         normalized_user = validate_user_id(user_id)
@@ -1624,6 +1681,28 @@ class SQLiteConversationStore:
                     record = self._linked_confirmation_locked(existing)
                     self._connection.commit()
                     return existing, record
+                pending_turn = self._connection.execute(
+                    '''
+                    SELECT 1
+                    FROM conversation_turns
+                    WHERE user_id = ?
+                      AND conversation_id = ?
+                      AND session_instance_id = ?
+                      AND generation = ?
+                      AND status = 'pending'
+                    LIMIT 1
+                    ''',
+                    (
+                        normalized_user,
+                        normalized_id,
+                        session.session_instance_id,
+                        session.generation,
+                    ),
+                ).fetchone()
+                if pending_turn is not None:
+                    raise ConversationConflictError(
+                        'another turn is already in progress'
+                    )
                 self._require_text_turn_namespace_available_locked(
                     normalized_user,
                     normalized_id,
