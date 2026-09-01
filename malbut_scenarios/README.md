@@ -97,6 +97,22 @@ ros2 run malbut_scenarios malbut_text_agent_server -- \
 전체 curl 예제와 RAI sidecar 설정은
 `malbut_agent_server/docs/jira/SWM25-131_TEXT_CONFIRMATION_RAI.md`에 있습니다.
 
+### 로컬 Text Agent Inspector
+
+문장을 직접 반복 입력하며 모델 decision type, Tool, argument key, 서버 route,
+Safety와 confirmation 결과를 확인할 때는 content-free non-actuating Inspector를
+사용합니다. 원문·변환문·인자 값·응답 본문은 표시하거나 history에 보관하지 않습니다.
+기본값은 offline Mock이고 RobotAction·Robot Web·Nav2 실행 경로를 구성하지 않습니다.
+
+```bash
+ros2 run malbut_scenarios malbut_text_agent_inspector -- \
+  --env-file <private-path>/.env.local
+```
+
+명령은 `/new`, `/history`, `/stateful`, `/isolated`, `/quit`입니다. OpenAI 또는 RAI는
+`--provider`와 `--allow-live-provider`를 함께 지정해야 하며 외부 호출과 비용이 발생할
+수 있습니다. 자세한 해석 필드와 privacy 경계는 SWM25-149 구현 문서에 있습니다.
+
 ## SWM25-132 승인된 Gazebo 이동
 
 기본 실행은 계속 `nav2=off`입니다. 승인 결과를 실제 Small House Nav2와

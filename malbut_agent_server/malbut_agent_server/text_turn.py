@@ -6,17 +6,19 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from malbut_agent_server.conversation import (
     BeginTurnToken,
     ConfirmationIntentNotFoundError,
+    ConversationTurn,
     TextTurnRequestClaim,
 )
 from malbut_agent_server.named_target import NamedTargetResolver
 from malbut_agent_server.orchestrator import (
     AgentOrchestrator,
     OrchestrationResult,
+    ServerClarification,
 )
 from malbut_agent_server.safety import SafetyResult
 from malbut_agent_server.schemas import (
@@ -40,6 +42,12 @@ from malbut_agent_server.text_confirmation import (
     ConfirmationRecord,
     ConfirmationResolution,
     classify_confirmation_text,
+)
+from malbut_agent_server.text_clarification import (
+    NAVIGATION_CLARIFICATION_POLICY_REVISION,
+    NAVIGATION_DESTINATION_QUESTION,
+    NavigationClarificationResolver,
+    is_deictic_navigation_request,
 )
 from malbut_agent_server.text_decision_policy import (
     TextDecisionPolicy,
@@ -158,6 +166,9 @@ class TextTurnService:
         self.orchestrator = orchestrator
         self.store = orchestrator.conversation_store
         self.target_resolver = target_resolver
+        self.clarification_resolver = NavigationClarificationResolver(
+            target_resolver
+        )
         self.clock = clock
         self.maximum_confirmation_seconds = float(
             maximum_confirmation_seconds
@@ -465,6 +476,97 @@ class TextTurnService:
         user_id: str,
         request: TextTurnRequest,
     ) -> dict[str, Any]:
+        server_clarification = None
+        effective_tools = (
+            self.orchestrator.capability_registry.effective_names(
+                _TEXT_TURN_MODEL_TOOLS
+            )
+        )
+        if (
+            'navigate' in effective_tools
+            and is_deictic_navigation_request(request.text)
+        ):
+            server_clarification = ServerClarification(
+                message=NAVIGATION_DESTINATION_QUESTION,
+                code='navigation_destination_missing',
+                policy_revision=(
+                    NAVIGATION_CLARIFICATION_POLICY_REVISION
+                ),
+            )
+        clarification_context = {
+            'pending': False,
+            'resolved': False,
+        }
+
+        def resolve_utterance(
+            agent_request: AgentRequest,
+            conversation_turns: Sequence[ConversationTurn],
+            token: BeginTurnToken,
+        ) -> str | None:
+            pending = (
+                self.clarification_resolver
+                .has_pending_navigation_clarification(
+                    agent_request,
+                    conversation_turns,
+                    token,
+                )
+            )
+            if pending and self.store.has_text_turn_claim_at_revision(
+                token.user_id,
+                token.conversation_id,
+                token.session_instance_id,
+                token.generation,
+                token.revision,
+            ):
+                pending = False
+            clarification_context['pending'] = pending
+            if not pending:
+                return None
+            resolution = self.clarification_resolver.resolve(
+                agent_request,
+                conversation_turns,
+                token,
+            )
+            clarification_context['resolved'] = resolution is not None
+            return (
+                resolution.canonical_utterance
+                if resolution is not None
+                else None
+            )
+
+        def verify_proposal(
+            decision: AgentDecision,
+        ) -> SafetyResult | None:
+            rejection = self._verify_model_proposal(decision)
+            if rejection is not None:
+                return rejection
+            if (
+                clarification_context['pending']
+                and decision.type == 'clarification'
+            ):
+                return SafetyResult(
+                    False,
+                    'clarification_limit_reached',
+                    (
+                        '목적지를 확정하지 못해 요청을 종료합니다. '
+                        '등록된 공간 이름으로 다시 요청해 주세요.'
+                    ),
+                )
+            if (
+                clarification_context['pending']
+                and not clarification_context['resolved']
+            ):
+                return SafetyResult(
+                    False,
+                    'clarification_answer_invalid',
+                    (
+                        '목적지를 확정하지 못해 요청을 종료합니다. '
+                        '등록된 공간 이름 하나를 포함해 '
+                        '다시 요청해 주세요.'
+                    ),
+                )
+            return None
+
         agent_request = AgentRequest(
             request_id=request.request_id,
             user_id=user_id,
@@ -476,8 +578,10 @@ class TextTurnService:
         )
         result = self.orchestrator.handle(
             agent_request,
-            proposal_verifier=self._verify_model_proposal,
+            utterance_resolver=resolve_utterance,
+            proposal_verifier=verify_proposal,
             confirmation_factory=self._confirmation_factory,
+            server_clarification=server_clarification,
         )
         try:
             confirmation = self.store.confirmation_for_request(
