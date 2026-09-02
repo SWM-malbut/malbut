@@ -35,6 +35,8 @@ RAI_SIDECAR_MODULE = 'malbut_agent_server.rai_sidecar_runtime'
 def _openai_adapter(
     settings: Settings,
     model: str,
+    *,
+    include_reasoning: bool = True,
 ) -> OpenAIResponsesProvider:
     """Build one official-origin OpenAI model adapter."""
     return OpenAIResponsesProvider(
@@ -45,6 +47,46 @@ def _openai_adapter(
         max_model_input_chars=settings.max_model_input_chars,
         max_output_tokens=settings.openai_max_output_tokens,
         reasoning_effort=settings.openai_reasoning_effort,
+        include_reasoning=include_reasoning,
+    )
+
+
+def _reliable_openai_provider(
+    settings: Settings,
+    primary_model: str,
+    *,
+    fallback_model: str = '',
+    include_reasoning: bool = True,
+) -> ReliableProvider:
+    """Build one reliability boundary for an explicit model role."""
+    providers = [_openai_adapter(
+        settings,
+        primary_model,
+        include_reasoning=include_reasoning,
+    )]
+    if fallback_model:
+        providers.append(_openai_adapter(
+            settings,
+            fallback_model,
+            include_reasoning=include_reasoning,
+        ))
+    return ReliableProvider(
+        providers,
+        max_retries=settings.provider_max_retries,
+        base_delay_seconds=(
+            settings.provider_retry_base_delay_ms / 1000.0
+        ),
+        max_delay_seconds=(
+            settings.provider_retry_max_delay_ms / 1000.0
+        ),
+        failure_threshold=settings.provider_failure_threshold,
+        recovery_timeout_seconds=(
+            settings.provider_recovery_timeout_seconds
+        ),
+        attempt_timeout_seconds=settings.request_timeout_seconds,
+        total_timeout_seconds=(
+            settings.provider_total_timeout_seconds
+        ),
     )
 
 
@@ -86,31 +128,41 @@ def build_provider(settings: Settings) -> AgentProvider:
         raise ValueError('MALBUT_AGENT_PROVIDER is unsupported')
     if not settings.openai_api_key:
         raise ValueError('OPENAI_API_KEY is required')
-    providers = [_openai_adapter(settings, settings.openai_model)]
-    if settings.openai_fallback_model:
-        providers.append(
-            _openai_adapter(
+    return _reliable_openai_provider(
+        settings,
+        settings.openai_model,
+        fallback_model=settings.openai_fallback_model,
+    )
+
+
+def _openai_role_providers(
+    settings: Settings,
+    fallback_provider: AgentProvider,
+) -> tuple[AgentProvider, AgentProvider]:
+    """Return isolated Chat and Planner roles only when configured."""
+    role_models_configured = bool(
+        settings.openai_general_model
+        or settings.openai_robot_planner_model
+    )
+    if settings.provider != 'openai' or not role_models_configured:
+        return fallback_provider, fallback_provider
+
+    def build_role_provider(model: str) -> ReliableProvider:
+        if model:
+            return _reliable_openai_provider(
                 settings,
-                settings.openai_fallback_model,
+                model,
+                include_reasoning=False,
             )
+        return _reliable_openai_provider(
+            settings,
+            settings.openai_model,
+            fallback_model=settings.openai_fallback_model,
         )
-    return ReliableProvider(
-        providers,
-        max_retries=settings.provider_max_retries,
-        base_delay_seconds=(
-            settings.provider_retry_base_delay_ms / 1000.0
-        ),
-        max_delay_seconds=(
-            settings.provider_retry_max_delay_ms / 1000.0
-        ),
-        failure_threshold=settings.provider_failure_threshold,
-        recovery_timeout_seconds=(
-            settings.provider_recovery_timeout_seconds
-        ),
-        attempt_timeout_seconds=settings.request_timeout_seconds,
-        total_timeout_seconds=(
-            settings.provider_total_timeout_seconds
-        ),
+
+    return (
+        build_role_provider(settings.openai_general_model),
+        build_role_provider(settings.openai_robot_planner_model),
     )
 
 
@@ -150,10 +202,13 @@ def build_orchestrator(
         provider = build_provider(settings)
         if front_router is not None:
             routing_service = FrontRoutingService(front_router)
+            general_provider, planner_provider = (
+                _openai_role_providers(settings, provider)
+            )
             provider = RoutedAgentProvider(
                 routing_service,
-                general_provider=provider,
-                robot_planner_provider=provider,
+                general_provider=general_provider,
+                robot_planner_provider=planner_provider,
                 fallback_provider=provider,
             )
         return AgentOrchestrator(

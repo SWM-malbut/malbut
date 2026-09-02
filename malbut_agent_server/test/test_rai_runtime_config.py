@@ -104,6 +104,8 @@ def test_rai_fields_append_after_legacy_positional_contract() -> None:
         'rai_sidecar_working_directory',
         'rai_sidecar_timeout_seconds',
         'rai_model',
+        'openai_general_model',
+        'openai_robot_planner_model',
     )
 
 

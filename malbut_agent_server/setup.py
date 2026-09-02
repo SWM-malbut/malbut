@@ -30,6 +30,8 @@ setup(
                 'docs/jira/SWM25-128_CLEAN_BASELINE.md',
                 'docs/jira/SWM25-131_TEXT_CONFIRMATION_RAI.md',
                 'docs/jira/SWM25-132_APPROVED_NAV2_EXECUTION.md',
+                'docs/jira/'
+                'SWM25-152_ROLE_MODEL_CONFIGURATION.md',
             ],
         ),
         (
