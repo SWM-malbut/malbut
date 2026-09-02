@@ -113,6 +113,27 @@ def test_builds_strict_responses_payload_and_parses_tool_call() -> None:
     assert result.usage.total_tokens == 14
 
 
+def test_non_reasoning_chat_payload_omits_reasoning_options() -> None:
+    """A fast Chat role can use models that reject reasoning options."""
+    provider = OpenAIResponsesProvider(
+        api_key='test-only-key',
+        model='gpt-4.1-mini',
+        include_reasoning=False,
+    )
+
+    request = AgentRequest.from_dict({
+        **_request().to_dict(),
+        'utterance': '안녕',
+        'available_tools': [],
+    })
+    payload = provider.build_payload(request, [], [], [])
+
+    assert payload['model'] == 'gpt-4.1-mini'
+    assert 'reasoning' not in payload
+    assert 'tools' not in payload
+    assert 'tool_choice' not in payload
+
+
 def test_parses_structured_text_message() -> None:
     """Non-action text follows the separate strict text schema."""
     text_decision = {

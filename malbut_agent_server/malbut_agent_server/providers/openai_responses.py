@@ -110,6 +110,7 @@ class OpenAIResponsesProvider(AgentProvider):
         max_model_input_chars: int = MAX_MODEL_INPUT_CHARS,
         max_output_tokens: int = 500,
         reasoning_effort: str = 'none',
+        include_reasoning: bool = True,
     ) -> None:
         """Initialize a lazy adapter without performing a network call."""
         if not api_key or not api_key.strip():
@@ -133,6 +134,8 @@ class OpenAIResponsesProvider(AgentProvider):
         normalized_effort = reasoning_effort.strip().lower()
         if normalized_effort not in REASONING_EFFORTS:
             raise ValueError('reasoning_effort is unsupported')
+        if type(include_reasoning) is not bool:
+            raise ValueError('include_reasoning must be a boolean')
         self._api_key = api_key.strip()
         self.model = model.strip()
         self.base_url = base_url.strip().rstrip('/')
@@ -140,6 +143,7 @@ class OpenAIResponsesProvider(AgentProvider):
         self.max_model_input_chars = max_model_input_chars
         self.max_output_tokens = max_output_tokens
         self.reasoning_effort = normalized_effort
+        self.include_reasoning = include_reasoning
         self._validate_base_url()
         self.transport = transport or self._urllib_transport
 
@@ -151,6 +155,7 @@ class OpenAIResponsesProvider(AgentProvider):
             f'base_url={self.base_url!r}, '
             f'timeout_seconds={self.timeout_seconds!r}, '
             f'reasoning_effort={self.reasoning_effort!r}, '
+            f'include_reasoning={self.include_reasoning!r}, '
             'api_key=<redacted>)'
         )
 
@@ -249,10 +254,6 @@ class OpenAIResponsesProvider(AgentProvider):
             'tool_choice': 'auto',
             'store': False,
             'max_output_tokens': self.max_output_tokens,
-            'reasoning': {
-                'effort': self.reasoning_effort,
-                'context': 'current_turn',
-            },
             'safety_identifier': self._safety_identifier(
                 request.user_id
             ),
@@ -265,6 +266,11 @@ class OpenAIResponsesProvider(AgentProvider):
                 },
             },
         }
+        if self.include_reasoning:
+            payload['reasoning'] = {
+                'effort': self.reasoning_effort,
+                'context': 'current_turn',
+            }
         if tools:
             payload['tools'] = [
                 tool.to_openai_dict()
