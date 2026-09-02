@@ -62,6 +62,10 @@ setup(
                 'malbut-agent-eval = '
                 'malbut_agent_server.eval_runner:main'
             ),
+            (
+                'malbut-front-route-inspect = '
+                'malbut_agent_server.front_route_inspector:main'
+            ),
         ],
     },
 )
