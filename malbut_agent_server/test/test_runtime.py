@@ -14,6 +14,7 @@ from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
 )
 from malbut_agent_server.providers.reliable import ReliableProvider
+from malbut_agent_server.providers.routed import RoutedAgentProvider
 from malbut_agent_server.schemas import (
     AgentDecision,
     ProviderResult,
@@ -181,6 +182,31 @@ def test_factory_builds_mock_runtime_without_wrapper() -> None:
     )
     try:
         assert runtime.provider.name == 'mock'
+    finally:
+        runtime.conversation_store.close()
+        runtime.memory_store.close()
+
+
+def test_factory_wraps_only_an_explicit_front_router() -> None:
+    """No calibrated Router is enabled by the default runtime settings."""
+    class AbstainingFrontRouter:
+        def try_route(self, request):
+            del request
+            return None
+
+    runtime = build_orchestrator(
+        Settings(database_path=':memory:'),
+        front_router=AbstainingFrontRouter(),
+    )
+    try:
+        assert isinstance(runtime.provider, RoutedAgentProvider)
+        assert runtime.provider.general_provider is (
+            runtime.provider.robot_planner_provider
+        )
+        assert runtime.provider.general_provider is (
+            runtime.provider.fallback_provider
+        )
+        assert runtime.provider.fallback_provider.name == 'mock'
     finally:
         runtime.conversation_store.close()
         runtime.memory_store.close()

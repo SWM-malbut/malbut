@@ -1,5 +1,8 @@
 """Construct provider, storage, and safety services."""
 
+from malbut_agent_server.application.front_routing import (
+    FrontRoutingService,
+)
 from malbut_agent_server.config import Settings
 from malbut_agent_server.conversation import SQLiteConversationStore
 from malbut_agent_server.gateway import (
@@ -15,6 +18,8 @@ from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
 )
 from malbut_agent_server.providers.reliable import ReliableProvider
+from malbut_agent_server.providers.routed import RoutedAgentProvider
+from malbut_agent_server.ports.front_router import FrontRouterPort
 from malbut_agent_server.rai_sidecar_client import (
     RaiSidecarClient,
     RaiSidecarProvider,
@@ -124,6 +129,7 @@ def build_orchestrator(
     settings: Settings,
     *,
     robot_state_source: RobotStateSource | None = None,
+    front_router: FrontRouterPort | None = None,
 ) -> AgentOrchestrator:
     """Build one runtime while keeping model output non-actuating."""
     memory_store = SQLiteMemoryStore(settings.database_path)
@@ -141,8 +147,17 @@ def build_orchestrator(
                 settings.conversation_summary_max_chars
             ),
         )
+        provider = build_provider(settings)
+        if front_router is not None:
+            routing_service = FrontRoutingService(front_router)
+            provider = RoutedAgentProvider(
+                routing_service,
+                general_provider=provider,
+                robot_planner_provider=provider,
+                fallback_provider=provider,
+            )
         return AgentOrchestrator(
-            provider=build_provider(settings),
+            provider=provider,
             memory_store=memory_store,
             conversation_store=conversation_store,
             safety_policy=SafetyPolicy(),
