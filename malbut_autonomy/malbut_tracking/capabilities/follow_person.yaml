@@ -1,0 +1,31 @@
+schema_version: 1
+
+capability:
+  id: follow_person
+  title: 사람 추적
+  description: 선택한 사람과 희망 거리를 유지하며 지속적으로 따라간다.
+
+command:
+  kind: ACTION
+  name: follow_person
+  type: malbut_interfaces/action/FollowPerson
+
+input:
+  fields:
+    target_mode:
+      type: uint8
+      description: 현재 보이는 사람 또는 등록된 사람을 선택하는 방식
+      default: 0
+
+    target_person_id:
+      type: string
+      description: 등록된 사람을 선택할 때 사용할 식별자
+      default: ""
+
+    desired_distance_m:
+      type: float32
+      description: 사람과 유지할 희망 거리
+      default: 1.0
+
+execution:
+  mode: FOREGROUND
