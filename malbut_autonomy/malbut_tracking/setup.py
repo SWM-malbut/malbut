@@ -52,6 +52,10 @@ setup(
             glob('config/*.yaml'),
         ),
         (
+            os.path.join('share', package_name, 'capabilities'),
+            glob('capabilities/*.yaml'),
+        ),
+        (
             os.path.join('share', package_name, 'launch'),
             glob('launch/*.launch.py'),
         ),
