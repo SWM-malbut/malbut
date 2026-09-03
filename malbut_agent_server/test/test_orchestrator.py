@@ -7,6 +7,9 @@ from typing import List, Optional
 
 import pytest
 
+from malbut_agent_server.application.front_routing import (
+    FrontRoutingService,
+)
 from malbut_agent_server.conversation import (
     ConversationChangedError,
     ConversationSummary,
@@ -17,6 +20,10 @@ from malbut_agent_server.gateway import (
     CapabilityRegistry,
     ToolCapability,
 )
+from malbut_agent_server.domain.front_route import (
+    FrontRoute,
+    FrontRouteMatch,
+)
 from malbut_agent_server.memory import MemoryRecord, SQLiteMemoryStore
 from malbut_agent_server.orchestrator import (
     AgentOrchestrator,
@@ -25,6 +32,7 @@ from malbut_agent_server.orchestrator import (
 )
 from malbut_agent_server.providers.base import AgentProvider
 from malbut_agent_server.providers.mock import MockProvider
+from malbut_agent_server.providers.routed import RoutedAgentProvider
 from malbut_agent_server.safety import SafetyPolicy
 from malbut_agent_server.schemas import (
     AgentDecision,
@@ -244,6 +252,21 @@ class RecordingProvider(AgentProvider):
             model='fixture',
             latency_ms=0,
         )
+
+
+class RecordingFrontRouter:
+    """Count high-confidence routes at the Provider selection seam."""
+
+    def __init__(self, route: FrontRoute) -> None:
+        """Return one fixed route for every uncached invocation."""
+        self.route = route
+        self.calls = 0
+
+    def try_route(self, request):
+        """Count one bounded request without inspecting private state."""
+        del request
+        self.calls += 1
+        return FrontRouteMatch(route=self.route)
 
 
 def test_unknown_provider_tool_never_reaches_executor() -> None:
@@ -809,6 +832,74 @@ def test_durable_retry_survives_runtime_restart(tmp_path) -> None:
                 'test-conversation',
             )
         ) == 1
+    finally:
+        second_conversations.close()
+        second_memory.close()
+
+
+def test_durable_retry_after_restart_bypasses_front_router(
+    tmp_path,
+) -> None:
+    """A stored response bypasses both a new Router and Provider process."""
+    database = str(tmp_path / 'routed-agent.sqlite3')
+    request = _request('재시작 후에도 분기하지 마', {}, [])
+    first_provider = RecordingProvider()
+    first_router = RecordingFrontRouter(
+        FrontRoute.GENERAL_CONVERSATION
+    )
+    first_memory = SQLiteMemoryStore(database)
+    first_conversations = SQLiteConversationStore(database)
+    try:
+        first_conversations.create(
+            'test-user',
+            'test-conversation',
+        )
+        routed = RoutedAgentProvider(
+            FrontRoutingService(first_router),
+            general_provider=first_provider,
+            robot_planner_provider=first_provider,
+            fallback_provider=first_provider,
+        )
+        first_runtime = AgentOrchestrator(
+            provider=routed,
+            memory_store=first_memory,
+            conversation_store=first_conversations,
+            safety_policy=SafetyPolicy(),
+        )
+        first = first_runtime.handle(request)
+        assert first_router.calls == 1
+        assert first_provider.calls == 1
+    finally:
+        first_conversations.close()
+        first_memory.close()
+
+    second_provider = RecordingProvider()
+    second_router = RecordingFrontRouter(
+        FrontRoute.ROBOT_ACTION_REQUEST
+    )
+    second_memory = SQLiteMemoryStore(database)
+    second_conversations = SQLiteConversationStore(database)
+    try:
+        routed = RoutedAgentProvider(
+            FrontRoutingService(second_router),
+            general_provider=second_provider,
+            robot_planner_provider=second_provider,
+            fallback_provider=second_provider,
+        )
+        second_runtime = AgentOrchestrator(
+            provider=routed,
+            memory_store=second_memory,
+            conversation_store=second_conversations,
+            safety_policy=SafetyPolicy(),
+        )
+        retried = second_runtime.handle(request)
+        assert second_router.calls == 0
+        assert second_provider.calls == 0
+        assert retried.decision_id == first.decision_id
+        assert len(second_conversations.list_turns(
+            'test-user',
+            'test-conversation',
+        )) == 1
     finally:
         second_conversations.close()
         second_memory.close()

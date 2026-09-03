@@ -4,6 +4,10 @@ import pytest
 
 from malbut_agent_server.cli import server_main
 from malbut_agent_server.config import Settings
+from malbut_agent_server.domain.front_route import (
+    FrontRoute,
+    FrontRouteMatch,
+)
 from malbut_agent_server.factory import (
     build_capability_registry,
     build_orchestrator,
@@ -14,6 +18,7 @@ from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
 )
 from malbut_agent_server.providers.reliable import ReliableProvider
+from malbut_agent_server.providers.routed import RoutedAgentProvider
 from malbut_agent_server.schemas import (
     AgentDecision,
     ProviderResult,
@@ -186,6 +191,31 @@ def test_factory_builds_mock_runtime_without_wrapper() -> None:
         runtime.memory_store.close()
 
 
+def test_factory_wraps_only_an_explicit_front_router() -> None:
+    """No calibrated Router is enabled by the default runtime settings."""
+    class AbstainingFrontRouter:
+        def try_route(self, request):
+            del request
+            return None
+
+    runtime = build_orchestrator(
+        Settings(database_path=':memory:'),
+        front_router=AbstainingFrontRouter(),
+    )
+    try:
+        assert isinstance(runtime.provider, RoutedAgentProvider)
+        assert runtime.provider.general_provider is (
+            runtime.provider.robot_planner_provider
+        )
+        assert runtime.provider.general_provider is (
+            runtime.provider.fallback_provider
+        )
+        assert runtime.provider.fallback_provider.name == 'mock'
+    finally:
+        runtime.conversation_store.close()
+        runtime.memory_store.close()
+
+
 def test_factory_builds_openai_primary_and_optional_model_fallback() -> None:
     """Both OpenAI models share one normalized reliability boundary."""
     provider = build_provider(
@@ -206,6 +236,245 @@ def test_factory_builds_openai_primary_and_optional_model_fallback() -> None:
         'gpt-5.6-luna',
         'gpt-5.6-terra',
     ]
+
+
+def test_openai_role_models_are_optional_and_validated() -> None:
+    """Role overrides are explicit and reject malformed model IDs."""
+    configured = Settings.from_env({
+        'MALBUT_AGENT_PROVIDER': 'openai',
+        'MALBUT_AGENT_AUTH_TOKEN': 'local-http-token',
+        'OPENAI_API_KEY': 'test-only-openai-key',
+        'OPENAI_GENERAL_MODEL': 'gpt-4.1-mini',
+        'OPENAI_ROBOT_PLANNER_MODEL': 'gpt-5.6-terra',
+    })
+
+    configured.validate_for_server()
+
+    assert configured.openai_general_model == 'gpt-4.1-mini'
+    assert configured.openai_robot_planner_model == 'gpt-5.6-terra'
+    assert Settings.from_env({}).openai_general_model == ''
+    assert Settings.from_env({}).openai_robot_planner_model == ''
+
+    invalid = Settings.from_env({
+        'MALBUT_AGENT_PROVIDER': 'openai',
+        'MALBUT_AGENT_AUTH_TOKEN': 'local-http-token',
+        'OPENAI_API_KEY': 'test-only-openai-key',
+        'OPENAI_GENERAL_MODEL': 'bad model id',
+    })
+    with pytest.raises(ValueError, match='OPENAI_GENERAL_MODEL'):
+        invalid.validate_for_server()
+
+    invalid_planner = Settings.from_env({
+        'MALBUT_AGENT_PROVIDER': 'openai',
+        'MALBUT_AGENT_AUTH_TOKEN': 'local-http-token',
+        'OPENAI_API_KEY': 'test-only-openai-key',
+        'OPENAI_ROBOT_PLANNER_MODEL': 'bad planner model',
+    })
+    with pytest.raises(
+        ValueError,
+        match='OPENAI_ROBOT_PLANNER_MODEL',
+    ):
+        invalid_planner.validate_for_server()
+
+
+def test_factory_isolates_explicit_openai_role_models() -> None:
+    """Chat, Planner, and abstain keep independent model circuits."""
+    class GeneralRouter:
+        def try_route(self, request):
+            del request
+            return FrontRouteMatch(
+                route=FrontRoute.GENERAL_CONVERSATION,
+            )
+
+    runtime = build_orchestrator(
+        Settings(
+            provider='openai',
+            openai_api_key='test-only-openai-key',
+            openai_model='legacy-primary',
+            openai_fallback_model='legacy-fallback',
+            openai_general_model='gpt-4.1-mini',
+            openai_robot_planner_model='gpt-5.6-terra',
+            database_path=':memory:',
+        ),
+        front_router=GeneralRouter(),
+    )
+    try:
+        routed = runtime.provider
+        assert isinstance(routed, RoutedAgentProvider)
+        assert isinstance(routed.general_provider, ReliableProvider)
+        assert isinstance(
+            routed.robot_planner_provider,
+            ReliableProvider,
+        )
+        assert isinstance(routed.fallback_provider, ReliableProvider)
+        assert len({
+            id(routed.general_provider),
+            id(routed.robot_planner_provider),
+            id(routed.fallback_provider),
+        }) == 3
+        assert [
+            item.model
+            for item in routed.general_provider._providers
+        ] == ['gpt-4.1-mini']
+        assert all(
+            item.include_reasoning is False
+            for item in routed.general_provider._providers
+        )
+        assert [
+            item.model
+            for item in routed.robot_planner_provider._providers
+        ] == ['gpt-5.6-terra']
+        assert all(
+            item.include_reasoning is False
+            for item in routed.robot_planner_provider._providers
+        )
+        assert [
+            item.model
+            for item in routed.fallback_provider._providers
+        ] == ['legacy-primary', 'legacy-fallback']
+        assert routed.general_provider._circuits is not (
+            routed.robot_planner_provider._circuits
+        )
+    finally:
+        runtime.conversation_store.close()
+        runtime.memory_store.close()
+
+
+@pytest.mark.parametrize(
+    ('general_model', 'planner_model', 'expected_general',
+     'expected_planner', 'general_reasoning',
+     'planner_reasoning'),
+    [
+        (
+            'gpt-4.1-mini',
+            '',
+            ['gpt-4.1-mini'],
+            ['legacy-primary', 'legacy-fallback'],
+            [False],
+            [True, True],
+        ),
+        (
+            '',
+            'gpt-4.1-mini',
+            ['legacy-primary', 'legacy-fallback'],
+            ['gpt-4.1-mini'],
+            [True, True],
+            [False],
+        ),
+    ],
+)
+def test_factory_preserves_unspecified_role_fallback_chain(
+    general_model,
+    planner_model,
+    expected_general,
+    expected_planner,
+    general_reasoning,
+    planner_reasoning,
+) -> None:
+    """One override isolates roles without weakening the other role."""
+    class GeneralRouter:
+        def try_route(self, request):
+            del request
+            return FrontRouteMatch(
+                route=FrontRoute.GENERAL_CONVERSATION,
+            )
+
+    runtime = build_orchestrator(
+        Settings(
+            provider='openai',
+            openai_api_key='test-only-openai-key',
+            openai_model='legacy-primary',
+            openai_fallback_model='legacy-fallback',
+            openai_general_model=general_model,
+            openai_robot_planner_model=planner_model,
+            database_path=':memory:',
+        ),
+        front_router=GeneralRouter(),
+    )
+    try:
+        routed = runtime.provider
+        assert [
+            item.model for item in routed.general_provider._providers
+        ] == expected_general
+        assert [
+            item.model
+            for item in routed.robot_planner_provider._providers
+        ] == expected_planner
+        assert [
+            item.include_reasoning
+            for item in routed.general_provider._providers
+        ] == general_reasoning
+        assert [
+            item.include_reasoning
+            for item in routed.robot_planner_provider._providers
+        ] == planner_reasoning
+        assert len({
+            id(routed.general_provider),
+            id(routed.robot_planner_provider),
+            id(routed.fallback_provider),
+        }) == 3
+    finally:
+        runtime.conversation_store.close()
+        runtime.memory_store.close()
+
+
+def test_factory_ignores_role_models_while_front_router_is_off() -> None:
+    """Role settings alone do not activate the experimental Router."""
+    runtime = build_orchestrator(
+        Settings(
+            provider='openai',
+            openai_api_key='test-only-openai-key',
+            openai_model='legacy-primary',
+            openai_fallback_model='legacy-fallback',
+            openai_general_model='gpt-4.1-mini',
+            openai_robot_planner_model='gpt-5.6-terra',
+            database_path=':memory:',
+        )
+    )
+    try:
+        provider = runtime.provider
+        assert isinstance(provider, ReliableProvider)
+        assert not isinstance(provider, RoutedAgentProvider)
+        assert [
+            item.model for item in provider._providers
+        ] == ['legacy-primary', 'legacy-fallback']
+        assert all(
+            item.include_reasoning is True
+            for item in provider._providers
+        )
+    finally:
+        runtime.conversation_store.close()
+        runtime.memory_store.close()
+
+
+def test_factory_preserves_shared_provider_without_role_settings() -> None:
+    """Existing explicit Router composition is byte-for-byte optional."""
+    class AbstainingFrontRouter:
+        def try_route(self, request):
+            del request
+            return None
+
+    runtime = build_orchestrator(
+        Settings(
+            provider='openai',
+            openai_api_key='test-only-openai-key',
+            openai_model='cli-overridden-model',
+            database_path=':memory:',
+        ),
+        front_router=AbstainingFrontRouter(),
+    )
+    try:
+        routed = runtime.provider
+        assert isinstance(routed, RoutedAgentProvider)
+        assert routed.general_provider is routed.fallback_provider
+        assert routed.robot_planner_provider is routed.fallback_provider
+        assert [
+            item.model
+            for item in routed.fallback_provider._providers
+        ] == ['cli-overridden-model']
+    finally:
+        runtime.conversation_store.close()
+        runtime.memory_store.close()
 
 
 def test_cli_check_initializes_and_closes_runtime(

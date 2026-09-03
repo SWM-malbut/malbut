@@ -130,6 +130,8 @@ class Settings:
         DEFAULT_RAI_SIDECAR_TIMEOUT_SECONDS
     )
     rai_model: str = ''
+    openai_general_model: str = ''
+    openai_robot_planner_model: str = ''
 
     def __repr__(self) -> str:
         """Return safe diagnostics with every credential redacted."""
@@ -175,7 +177,10 @@ class Settings:
             'rai_sidecar_working_directory=<redacted>, '
             'rai_sidecar_timeout_seconds='
             f'{self.rai_sidecar_timeout_seconds!r}, '
-            f'rai_model={self.rai_model!r})'
+            f'rai_model={self.rai_model!r}, '
+            f'openai_general_model={self.openai_general_model!r}, '
+            'openai_robot_planner_model='
+            f'{self.openai_robot_planner_model!r})'
         )
 
     @classmethod
@@ -400,6 +405,14 @@ class Settings:
                 'MALBUT_RAI_MODEL',
                 '',
             ).strip(),
+            openai_general_model=source.get(
+                'OPENAI_GENERAL_MODEL',
+                '',
+            ).strip(),
+            openai_robot_planner_model=source.get(
+                'OPENAI_ROBOT_PLANNER_MODEL',
+                '',
+            ).strip(),
         )
 
     def validate_for_server(self) -> None:
@@ -449,6 +462,16 @@ class Settings:
             raise ValueError('OPENAI_API_KEY is required')
         if not _valid_model_id(self.openai_model):
             raise ValueError('OPENAI_MODEL is invalid')
+        if self.openai_general_model and not _valid_model_id(
+            self.openai_general_model
+        ):
+            raise ValueError('OPENAI_GENERAL_MODEL is invalid')
+        if self.openai_robot_planner_model and not _valid_model_id(
+            self.openai_robot_planner_model
+        ):
+            raise ValueError(
+                'OPENAI_ROBOT_PLANNER_MODEL is invalid'
+            )
         if self.openai_fallback_model:
             if not _valid_model_id(self.openai_fallback_model):
                 raise ValueError('OPENAI_FALLBACK_MODEL is invalid')

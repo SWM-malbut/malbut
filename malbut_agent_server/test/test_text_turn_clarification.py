@@ -8,16 +8,24 @@ from dataclasses import dataclass
 
 import pytest
 
+from malbut_agent_server.application.front_routing import (
+    FrontRoutingService,
+)
 from malbut_agent_server.adapters.outbound import SQLiteActionRepository
 from malbut_agent_server.conversation import (
     ConversationConflictError,
     SQLiteConversationStore,
+)
+from malbut_agent_server.domain.front_route import (
+    FrontRoute,
+    FrontRouteMatch,
 )
 from malbut_agent_server.gateway import production_registry
 from malbut_agent_server.memory import SQLiteMemoryStore
 from malbut_agent_server.named_target import BoundNamedTarget
 from malbut_agent_server.orchestrator import AgentOrchestrator
 from malbut_agent_server.providers.mock import MockProvider
+from malbut_agent_server.providers.routed import RoutedAgentProvider
 from malbut_agent_server.robot_state_source import (
     StaticSimulationRobotStateSource,
 )
@@ -56,6 +64,20 @@ class CountingMockProvider(MockProvider):
         result = super().complete(request, *args, **kwargs)
         self.decision_types.append(result.decision.type)
         return result
+
+
+class CountingFrontRouter:
+    """Count whether a server-owned clarification reaches routing."""
+
+    def __init__(self) -> None:
+        """Prepare an action route that should never be consulted."""
+        self.calls = 0
+
+    def try_route(self, request):
+        """Count an unexpected call and return an action match."""
+        del request
+        self.calls += 1
+        return FrontRouteMatch(route=FrontRoute.ROBOT_ACTION_REQUEST)
 
 
 class ExactTargetResolver:
@@ -220,12 +242,20 @@ def test_clear_destination_keeps_existing_confirmation_flow(tmp_path) -> None:
 
 def test_deictic_request_is_clarification_without_effects(tmp_path) -> None:
     runtime = _runtime(str(tmp_path / 'clarification.sqlite3'))
+    router = CountingFrontRouter()
+    runtime.service.orchestrator.provider = RoutedAgentProvider(
+        FrontRoutingService(router),
+        general_provider=runtime.provider,
+        robot_planner_provider=runtime.provider,
+        fallback_provider=runtime.provider,
+    )
     try:
         runtime.conversations.create('user-1', 'conversation-1')
 
         result = _start_clarification(runtime)
 
         assert runtime.provider.calls == 0
+        assert router.calls == 0
         assert runtime.provider.utterances == []
         assert runtime.resolver.calls == 0
         turns = runtime.conversations.list_turns(

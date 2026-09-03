@@ -274,8 +274,20 @@ PYTHONPATH=. python3 -m malbut_agent_server.eval_runner \
 | `MALBUT_RAI_SIDECAR_TIMEOUT_SECONDS` | 5 | 1~120 |
 | `OPENAI_MODEL` | `gpt-5.6-terra` | 출력 가능한 공식 model ID |
 | `OPENAI_FALLBACK_MODEL` | 빈 값 | 선택, 주력과 다른 model ID |
+| `OPENAI_GENERAL_MODEL` | 빈 값 | Front Router 일반 대화 전용 model ID |
+| `OPENAI_ROBOT_PLANNER_MODEL` | 빈 값 | Front Router 로봇 계획 전용 model ID |
 | `OPENAI_REASONING_EFFORT` | `none` | 지원 effort 값 |
 | `OPENAI_MAX_OUTPUT_TOKENS` | 500 | 64~4,096 |
+
+역할별 model 값은 명시적인 Front Router가 주입된 OpenAI 구성에서만
+사용한다. 둘 다 비어 있으면 SWM25-151 이전과 동일하게 하나의 범용
+Provider를 공유한다. 하나라도 지정하면 일반 대화와 로봇 Planner는
+서로 다른 retry·circuit 상태를 가진다. 명시한 역할은 선택한 model만
+사용하고, 명시하지 않은 역할은 기존 `OPENAI_MODEL`과
+`OPENAI_FALLBACK_MODEL` 체인을 독립적으로 복제한다. Router가 `None`으로
+abstain한 요청도 기존 범용 체인을 사용한다. 명시적인 역할 model에는
+모델별 지원 여부가 다른 선택적 `reasoning` 필드를 보내지 않는다. 기존
+범용 Provider와 미설정 역할의 payload는 기존 reasoning 설정을 유지한다.
 
 ## 문서
 
@@ -287,6 +299,7 @@ PYTHONPATH=. python3 -m malbut_agent_server.eval_runner \
 - [SWM25-73 Agent Tool Gateway](docs/jira/SWM25-73_AGENT_TOOL_GATEWAY.md)
 - [SWM25-128 clean baseline과 RAI 책임 경계](docs/jira/SWM25-128_CLEAN_BASELINE.md)
 - [SWM25-131 텍스트 확인과 RAI sidecar](docs/jira/SWM25-131_TEXT_CONFIRMATION_RAI.md)
+- [SWM25-152 역할별 OpenAI 모델 설정](docs/jira/SWM25-152_ROLE_MODEL_CONFIGURATION.md)
 - [SWM25-72 OpenAI baseline 평가](docs/evaluations/SWM25-72_OPENAI_EVALUATION_2026-08-05.md)
 - [SWM25-72 OpenAI post-fix parity 평가](docs/evaluations/SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md)
 

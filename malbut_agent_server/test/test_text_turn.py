@@ -5,9 +5,16 @@ import sqlite3
 
 import pytest
 
+from malbut_agent_server.application.front_routing import (
+    FrontRoutingService,
+)
 from malbut_agent_server.adapters.outbound import (
     ActionConflictError,
     SQLiteActionRepository,
+)
+from malbut_agent_server.domain.front_route import (
+    FrontRoute,
+    FrontRouteMatch,
 )
 from malbut_agent_server.conversation import (
     ConfirmationIntentConflictError,
@@ -19,11 +26,17 @@ from malbut_agent_server.memory import SQLiteMemoryStore
 from malbut_agent_server.named_target import BoundNamedTarget
 from malbut_agent_server.orchestrator import AgentOrchestrator
 from malbut_agent_server.providers.mock import MockProvider
+from malbut_agent_server.providers.routed import RoutedAgentProvider
 from malbut_agent_server.robot_state_source import (
     StaticSimulationRobotStateSource,
 )
 from malbut_agent_server.safety import SafetyPolicy
-from malbut_agent_server.schemas import RobotState, ValidationError
+from malbut_agent_server.schemas import (
+    AgentDecision,
+    ProviderResult,
+    RobotState,
+    ValidationError,
+)
 from malbut_agent_server.text_turn import TextTurnService
 from malbut_agent_server.text_decision_policy import TextDecisionPolicy
 
@@ -47,6 +60,21 @@ class CountingMockProvider(MockProvider):
     def complete(self, *args, **kwargs):
         self.calls += 1
         return super().complete(*args, **kwargs)
+
+
+class CountingFrontRouter:
+    """Count uncached requests at the specialist selection boundary."""
+
+    def __init__(self, route: FrontRoute) -> None:
+        """Return one fixed high-confidence route."""
+        self.route = route
+        self.calls = 0
+
+    def try_route(self, request):
+        """Record one call and return the configured route."""
+        del request
+        self.calls += 1
+        return FrontRouteMatch(route=self.route)
 
 
 class MutableTargetResolver:
@@ -125,6 +153,13 @@ def test_request_ambiguous_confirmation_and_approval_call_llm_once(
     service, provider, resolver, store, memory, _database = _runtime(
         tmp_path
     )
+    router = CountingFrontRouter(FrontRoute.ROBOT_ACTION_REQUEST)
+    service.orchestrator.provider = RoutedAgentProvider(
+        FrontRoutingService(router),
+        general_provider=provider,
+        robot_planner_provider=provider,
+        fallback_provider=provider,
+    )
     try:
         store.create('user-1', 'conversation-1')
         proposal = service.handle(
@@ -152,6 +187,7 @@ def test_request_ambiguous_confirmation_and_approval_call_llm_once(
         )
         assert pending.safety_policy_revision == 'malbut-safety-v1'
         assert provider.calls == 1
+        assert router.calls == 1
         assert resolver.calls == 1
 
         original_decision_policy = service.decision_policy
@@ -175,6 +211,7 @@ def test_request_ambiguous_confirmation_and_approval_call_llm_once(
             == 'confirmation_response_unrecognized'
         )
         assert provider.calls == 1
+        assert router.calls == 1
 
         service.decision_policy = original_decision_policy
 
@@ -194,6 +231,7 @@ def test_request_ambiguous_confirmation_and_approval_call_llm_once(
             '아니며, 이동 여부는 별도 안전 재검사에서 결정됩니다.'
         )
         assert provider.calls == 1
+        assert router.calls == 1
 
         service.decision_policy = UnexpectedDecisionPolicy()
         replay = service.handle(
@@ -204,6 +242,70 @@ def test_request_ambiguous_confirmation_and_approval_call_llm_once(
         assert replay['message'] == approved['message']
         assert replay['cached'] is True
         assert provider.calls == 1
+        assert router.calls == 1
+    finally:
+        store.close()
+        memory.close()
+
+
+def test_general_route_tool_proposal_cannot_create_confirmation(
+    tmp_path,
+) -> None:
+    """A wrong-route navigate proposal is replaced before confirmation."""
+    service, provider, resolver, store, memory, _database = _runtime(
+        tmp_path
+    )
+
+    def malicious_complete(*args, **kwargs):
+        del args, kwargs
+        provider.calls += 1
+        return ProviderResult(
+            decision=AgentDecision(
+                type='tool_call',
+                message='거실로 이동할까요?',
+                tool_name='navigate',
+                arguments={'location': '거실'},
+            ),
+            provider='malicious-general-fixture',
+            model='fixture-model',
+            latency_ms=3.0,
+        )
+
+    provider.complete = malicious_complete
+    router = CountingFrontRouter(FrontRoute.GENERAL_CONVERSATION)
+    service.orchestrator.provider = RoutedAgentProvider(
+        FrontRoutingService(router),
+        general_provider=provider,
+        robot_planner_provider=provider,
+        fallback_provider=provider,
+    )
+    try:
+        store.create('user-1', 'conversation-1')
+        result = service.handle(
+            user_id='user-1',
+            value=_request('request-chat', 'turn-chat', '안녕'),
+        )
+
+        assert router.calls == 1
+        assert provider.calls == 1
+        assert result['status'] == 'completed'
+        assert result['decision']['type'] == 'refusal'
+        assert result['decision']['tool_name'] is None
+        assert result['decision']['reason'] == (
+            'front_route:general_tool_forbidden'
+        )
+        assert result['provider']['provider'] == (
+            'malicious-general-fixture'
+        )
+        assert store.pending_confirmation(
+            'user-1',
+            'conversation-1',
+        ) is None
+        assert resolver.calls == 0
+        assert result['execution']['execution_authorized'] is False
+        assert result['execution']['physical_authorized'] is False
+        assert result['execution']['nav2_start_count'] == 0
+        assert result['execution']['nav2_cancel_count'] == 0
     finally:
         store.close()
         memory.close()
