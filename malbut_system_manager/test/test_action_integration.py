@@ -6,6 +6,7 @@ import time
 from action_msgs.msg import GoalStatus
 import pytest
 import rclpy
+import yaml
 from rclpy.action import (
     ActionClient,
     ActionServer,
@@ -138,6 +139,48 @@ class _NavigateToPoseServer(Node):
         result = NavigateToPose.Result()
         goal_handle.succeed()
         return result
+
+
+class _ResourceActionServer(Node):
+    """Keep a fake resource owner running until terminal cancellation."""
+
+    def __init__(self, name, *, hold_cancel=False):
+        super().__init__(f'test_resource_{name}')
+        self.starts = []
+        self.finishes = []
+        self.cancel_requested = Event()
+        self.allow_cancel_completion = Event()
+        if not hold_cancel:
+            self.allow_cancel_completion.set()
+        self._server = ActionServer(
+            self,
+            FollowPerson,
+            f'/test_resource/{name}',
+            execute_callback=self._execute,
+            goal_callback=lambda _request: GoalResponse.ACCEPT,
+            cancel_callback=lambda _handle: CancelResponse.ACCEPT,
+            callback_group=ReentrantCallbackGroup(),
+        )
+
+    def destroy_node(self):
+        self._server.destroy()
+        return super().destroy_node()
+
+    def _execute(self, goal_handle):
+        self.starts.append(time.monotonic())
+        deadline = time.monotonic() + 2 * TIMEOUT_S
+        while not goal_handle.is_cancel_requested:
+            if time.monotonic() >= deadline:
+                goal_handle.abort()
+                return FollowPerson.Result()
+            time.sleep(0.01)
+        self.cancel_requested.set()
+        if not self.allow_cancel_completion.wait(TIMEOUT_S):
+            goal_handle.abort()
+            return FollowPerson.Result()
+        self.finishes.append(time.monotonic())
+        goal_handle.canceled()
+        return FollowPerson.Result()
 
 
 def _wait_until(predicate, timeout=TIMEOUT_S):
@@ -340,6 +383,145 @@ def test_pending_cancel_waits_for_rclpy_cancel_transition():
         executor.shutdown(timeout_sec=TIMEOUT_S)
         spin_thread.join(timeout=TIMEOUT_S)
         for node in (client_node, manager, navigation, downstream):
+            executor.remove_node(node)
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+def test_resource_preemption_keeps_unrelated_foreground_running(tmp_path):
+    """Preempt BASE after terminal cancel while SPEAKER keeps running."""
+    for capability_id, resource in (
+        ('base_first', 'BASE'),
+        ('base_next', 'BASE'),
+        ('speaker', 'SPEAKER'),
+    ):
+        manifest = {
+            'schema_version': 1,
+            'capability': {
+                'id': capability_id,
+                'title': capability_id,
+                'description': 'Controllable integration-test resource owner.',
+            },
+            'command': {
+                'kind': 'ACTION',
+                'name': f'/test_resource/{capability_id}',
+                'type': 'malbut_interfaces/action/FollowPerson',
+            },
+            'input': {
+                'fields': {
+                    'target_mode': {
+                        'type': 'uint8', 'description': 'Mode', 'default': 0,
+                    },
+                    'target_person_id': {
+                        'type': 'string', 'description': 'ID', 'default': '',
+                    },
+                    'desired_distance_m': {
+                        'type': 'float32',
+                        'description': 'Gap',
+                        'default': 1.0,
+                    },
+                },
+            },
+            'execution': {
+                'mode': 'FOREGROUND',
+                'priority': 'NORMAL',
+                'resources': [resource],
+            },
+        }
+        (tmp_path / f'{capability_id}.yaml').write_text(
+            yaml.safe_dump(manifest), encoding='utf-8',
+        )
+
+    rclpy.init()
+    first = _ResourceActionServer('base_first', hold_cancel=True)
+    next_base = _ResourceActionServer('base_next')
+    speaker = _ResourceActionServer('speaker')
+    manager = SystemManagerNode(manifest_directory=str(tmp_path))
+    client_node = Node('test_resource_mission_client')
+    nodes = (first, next_base, speaker, manager, client_node)
+    executor = MultiThreadedExecutor(num_threads=10)
+    for node in nodes:
+        executor.add_node(node)
+    spin_thread = Thread(target=executor.spin, daemon=True)
+    spin_thread.start()
+    client = ActionClient(
+        client_node, ExecuteMission, '/malbut/mission/execute',
+    )
+    states = []
+    qos = QoSProfile(depth=1)
+    qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+    client_node.create_subscription(
+        SystemState, '/malbut/state', states.append, qos,
+    )
+
+    def active_ids():
+        if not states:
+            return set()
+        return {
+            mission.capability_id
+            for mission in states[-1].active_foreground_missions
+        }
+
+    def send(capability_id):
+        goal = ExecuteMission.Goal()
+        goal.capability_id = capability_id
+        goal.arguments_yaml = '{}'
+        handle = _wait_future(client.send_goal_async(goal))
+        assert handle.accepted
+        return handle
+
+    def cancel(handle):
+        assert _wait_future(handle.cancel_goal_async()).goals_canceling
+        result = _wait_future(handle.get_result_async())
+        assert result.status == GoalStatus.STATUS_CANCELED
+
+    try:
+        assert client.wait_for_server(timeout_sec=TIMEOUT_S)
+        first_handle = send('base_first')
+        _wait_until(lambda: len(first.starts) == 1)
+        speaker_handle = send('speaker')
+        _wait_until(lambda: len(speaker.starts) == 1)
+        _wait_until(lambda: active_ids() == {'base_first', 'speaker'})
+        assert not first.cancel_requested.is_set()
+
+        next_handle = send('base_next')
+        assert first.cancel_requested.wait(TIMEOUT_S)
+        _wait_until(lambda: len(states[-1].pending_missions) == 1)
+        assert not next_base.starts
+        assert not speaker.cancel_requested.is_set()
+        first.allow_cancel_completion.set()
+
+        _wait_until(lambda: len(next_base.starts) == 1)
+        _wait_until(lambda: active_ids() == {'base_next', 'speaker'})
+        assert first.finishes[0] <= next_base.starts[0]
+        assert not speaker.cancel_requested.is_set()
+        assert not first_handle.get_result_async().done()
+
+        cancel(next_handle)
+        _wait_until(lambda: len(first.starts) == 2)
+        _wait_until(lambda: active_ids() == {'base_first', 'speaker'})
+        assert len(speaker.starts) == 1
+        assert not speaker.cancel_requested.is_set()
+
+        cancel(first_handle)
+        cancel(speaker_handle)
+        _wait_until(lambda: states[-1].system_state == SystemState.IDLE)
+        assert not states[-1].active_foreground_missions
+        assert not states[-1].suspended_missions
+        assert not states[-1].pending_missions
+        assert manager.downstream_execution_count == 0
+    finally:
+        first.allow_cancel_completion.set()
+        manager.begin_shutdown()
+        try:
+            _wait_until(lambda: manager.downstream_execution_count == 0)
+        except AssertionError:
+            manager.force_shutdown()
+        client.destroy()
+        executor.shutdown(timeout_sec=TIMEOUT_S)
+        spin_thread.join(timeout=TIMEOUT_S)
+        for node in reversed(nodes):
             executor.remove_node(node)
             node.destroy_node()
         if rclpy.ok():

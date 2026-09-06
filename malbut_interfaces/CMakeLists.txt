@@ -10,6 +10,7 @@ find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/ExecuteMission.action"
   "action/FollowPerson.action"
+  "action/Patrol.action"
   "msg/LidarCluster.msg"
   "msg/LidarClusterArray.msg"
   "msg/MissionStatus.msg"

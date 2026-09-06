@@ -9,7 +9,7 @@
 | `.action` | 장시간 명령의 Goal·Result·Feedback 필드와 ROS 자료형 |
 | `.srv` | 짧은 명령의 Request·Response 필드와 ROS 자료형 |
 | `.msg` | 별도 상태 Topic의 필드와 ROS 자료형 |
-| `capabilities/*.yaml` | 기능 책임, 인터페이스 연결 정보, 입력과 실행 형태 |
+| `capabilities/*.yaml` | 기능 책임, 인터페이스 연결 정보, 입력과 실행 형태·자원 |
 
 Capability Manifest는 ROS 표준을 대체하지 않는 **Malbut 기능 등록 규격**입니다. `.action/.srv/.msg`가 필드와 상수의 최종 기준입니다.
 
@@ -49,6 +49,7 @@ input:                               # object
 execution:                           # object
   mode: enum(FOREGROUND, BACKGROUND)
   priority: enum(LOW, NORMAL, HIGH, URGENT)
+  resources: list[enum(BASE, SPEAKER, BUZZER, LED, DISPLAY)]
 ```
 
 | 항목 | 의미 |
@@ -58,10 +59,15 @@ execution:                           # object
 | `input` | Goal·Request 필드의 타입, 의미와 기본값 |
 | `execution.mode` | 전경 미션 또는 병행 백그라운드 작업 구분 |
 | `execution.priority` | 충돌하는 미션 사이의 선점 우선순위 |
+| `execution.resources` | 기능 실행 중 독점 제어하는 출력 자원 목록. 없으면 `[]` |
 
 `default`가 없으면 반드시 전달해야 하는 입력입니다. 선택 가능한 값은 `.action/.srv`에 선언된 상수를 직접 확인하며 Manifest에 중복하지 않습니다. 조건부 입력과 수치 범위는 해당 Action·Service 서버가 검사합니다.
 
-`FOREGROUND`는 로봇의 주 임무, `BACKGROUND`는 전경 미션과 병행할 기능을 의미합니다. Action인지 Service인지는 실행 형태의 구분 기준이 아닙니다. 우선순위는 충돌 관계라고 판단된 미션 사이에서만 비교합니다.
+`FOREGROUND`는 로봇의 주 임무, `BACKGROUND`는 병행 백그라운드 기능을 의미합니다. Action인지 Service인지는 실행 형태의 구분 기준이 아닙니다. 전경·백그라운드와 무관하게 `resources`가 하나라도 겹치면 충돌하며, 겹치지 않으면 전경 미션도 함께 실행할 수 있습니다.
+
+자원은 `BASE`(차체 이동·회전), `SPEAKER`(스피커), `BUZZER`(부저), `LED`(표시등), `DISPLAY`(화면)입니다. 여러 자원을 제어하면 `resources: [BASE, SPEAKER]`처럼 모두 적습니다. 센서·지도 토픽을 읽는 것은 독점 자원이 아닙니다. 실제 제어하는 자원을 빠짐없이 선언하고, 독점 제어가 없는 기능만 `resources: []`로 작성합니다.
+
+우선순위는 충돌하는 미션 사이에서만 비교합니다. 새 요청이 모든 충돌 미션보다 우선순위가 높거나 같으면 해당 미션만 취소하고, 실제 종료를 확인한 후 새 요청을 실행합니다. 하나라도 더 높은 우선순위의 충돌 미션이 있으면 새 요청을 거부합니다. 선점당한 미션은 선점한 미션 종료 후 자원이 비면 같은 입력으로 다시 실행합니다. 중단 지점 복원을 의미하지는 않습니다.
 
 현재 시스템 관리자의 실행 범위는 안전하게 취소할 수 있는 Action입니다. Service 실행 정책이 정해지기 전에는 Service Manifest를 중앙 허용 목록에 등록하지 않습니다.
 
@@ -80,5 +86,6 @@ execution:                           # object
 2. `command.kind`, `command.type`, `execution.mode`, `execution.priority` 값이 규격에 맞아야 합니다.
 3. `input`의 필드명과 타입이 실제 Goal·Request와 일치해야 합니다.
 4. `default`가 실제 ROS 타입과 일치해야 합니다.
+5. `execution.resources`는 필수 목록이며, 위 자원 이름만 중복 없이 사용합니다. 빈 목록 `[]`은 허용합니다.
 
 현재 `FollowPerson.action`처럼 이미 정의된 인터페이스는 이 형식에 맞춰 등록합니다. 인터페이스 변경이 필요한 부분만 해당 기능의 별도 작업에서 수정합니다.

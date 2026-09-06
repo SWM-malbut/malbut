@@ -88,6 +88,15 @@ On later starts the same launch selects the saved map and static localization.
 An interrupted or failed replacement never overwrites the previous active
 revision.
 
+The saved-map runtime starts the map-driven `/patrol` Action server. It reads
+`/map`, the global costmap, camera frames and optional room polygons from the
+active User Map; it does not generate or load a fixed `room-patrol.yaml` route.
+The existing web patrol start endpoint sends `Patrol.Goal` with
+`thoroughness=1` by default (`0=LIGHT`, `1=NORMAL`, `2=THOROUGH`). Stop and the
+legacy pause endpoint cancel the Action and wait for its result before
+releasing the drive session. The legacy resume endpoint starts a new patrol;
+there is no saved paused patrol to resume.
+
 Start the household world, robot, ROS-Gazebo bridge, SLAM Toolbox, and the
 project RViz mapping view with one command:
 

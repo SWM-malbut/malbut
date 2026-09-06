@@ -1,0 +1,18 @@
+# Inspect the reachable parts of the current saved map once, using live RGB
+# frames and map-projected camera visibility. No preconfigured waypoints.
+uint8 LIGHT=0
+uint8 NORMAL=1
+uint8 THOROUGH=2
+uint8 thoroughness 1
+---
+# success means the requested coverage and reachable room visits were met.
+# Exhausting usable viewpoints returns an aborted result with partial coverage.
+bool success
+string message
+float32 coverage_ratio
+uint32 viewpoints_visited
+---
+# PLANNING, NAVIGATING, OBSERVING, CANCELING
+string state
+float32 coverage_ratio
+uint32 viewpoints_visited

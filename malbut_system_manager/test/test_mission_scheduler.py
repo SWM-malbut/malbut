@@ -8,6 +8,7 @@ from malbut_system_manager.models import (
     CommandKind,
     ControlMode,
     ExecutionMode,
+    ExecutionResource,
     MissionPriority,
     MissionRecord,
     MissionState,
@@ -22,7 +23,13 @@ def _mission(
     *,
     mode=ExecutionMode.FOREGROUND,
     priority=MissionPriority.NORMAL,
+    resources=None,
 ):
+    if resources is None:
+        resources = (
+            [ExecutionResource.BASE]
+            if mode is ExecutionMode.FOREGROUND else []
+        )
     capability = CapabilityManifest(
         capability_id=f'capability_{mission_id}',
         title=mission_id,
@@ -32,6 +39,7 @@ def _mission(
         command_type='test_interfaces/action/Test',
         execution_mode=mode,
         priority=priority,
+        resources=frozenset(resources),
         input_fields={},
         interface_type=object,
         source_path=f'/test/{mission_id}.yaml',
@@ -178,7 +186,7 @@ def test_explicit_cancel_completes_pending_goal_and_restores_old_goal():
     assert accepted
     assert _completion(effects, 'pending').outcome is TerminalOutcome.CANCELED
     assert state.get('pending') is None
-    assert state.active_foreground['original'].preempted_by is None
+    assert not state.active_foreground['original'].preempted_by
 
     terminal = scheduler.handle_terminal(
         'original',
@@ -229,7 +237,7 @@ def test_rejected_preemption_cancel_aborts_preemptor_and_keeps_active():
         'preemptor',
     ).outcome is TerminalOutcome.ABORTED
     assert state.active_foreground['active'].state is MissionState.RUNNING
-    assert state.active_foreground['active'].preempted_by is None
+    assert not state.active_foreground['active'].preempted_by
     assert state.get('preemptor') is None
 
 
@@ -278,7 +286,7 @@ def test_user_cancel_during_preemption_cannot_leave_pending_deadlock():
     ).outcome is TerminalOutcome.ABORTED
     assert state.get('preemptor') is None
     assert state.active_foreground['active'].state is MissionState.RUNNING
-    assert state.active_foreground['active'].preempted_by is None
+    assert not state.active_foreground['active'].preempted_by
 
 
 def test_orphaned_downstream_is_never_resumed_after_later_preemption():
@@ -322,7 +330,7 @@ def test_higher_priority_request_replaces_a_pending_preemptor():
     assert _completion(effects, 'normal').outcome is TerminalOutcome.ABORTED
     assert state.get('normal') is None
     assert state.pending['urgent'].waiting_for == {'active'}
-    assert state.active_foreground['active'].preempted_by == 'urgent'
+    assert state.active_foreground['active'].preempted_by == {'urgent'}
 
     terminal = scheduler.handle_terminal(
         'active',
@@ -336,6 +344,7 @@ def test_replaced_pending_recomputes_custom_foreground_conflicts():
     conflict_pairs = {
         frozenset(('first', 'old')),
         frozenset(('second', 'new')),
+        frozenset(('old', 'new')),
     }
 
     def conflict_policy(active, incoming):
@@ -356,8 +365,8 @@ def test_replaced_pending_recomputes_custom_foreground_conflicts():
 
     assert _completion(effects, 'old').outcome is TerminalOutcome.ABORTED
     assert effects.cancel == ['second']
-    assert state.active_foreground['first'].preempted_by is None
-    assert state.active_foreground['second'].preempted_by == 'new'
+    assert not state.active_foreground['first'].preempted_by
+    assert state.active_foreground['second'].preempted_by == {'new'}
     assert state.pending['new'].waiting_for == {'second'}
 
 
@@ -366,6 +375,7 @@ def test_pending_replacement_cannot_preempt_higher_new_conflict():
     conflict_pairs = {
         frozenset(('low', 'old')),
         frozenset(('high', 'new')),
+        frozenset(('old', 'new')),
     }
 
     def conflict_policy(active, incoming):
@@ -387,7 +397,7 @@ def test_pending_replacement_cannot_preempt_higher_new_conflict():
     assert _completion(effects, 'new').outcome is TerminalOutcome.ABORTED
     assert 'higher priority HIGH' in _completion(effects, 'new').message
     assert state.pending['old'].waiting_for == {'low'}
-    assert state.active_foreground['low'].preempted_by == 'old'
+    assert state.active_foreground['low'].preempted_by == {'old'}
 
 
 def test_dispatch_timeout_aborts_public_goal_but_retains_authority():
@@ -425,7 +435,7 @@ def test_dispatch_timeout_during_preemption_aborts_waiting_request():
         is TerminalOutcome.ABORTED
     )
     assert state.get('preemptor') is None
-    assert state.active_foreground['active'].preempted_by is None
+    assert not state.active_foreground['active'].preempted_by
 
 
 def test_dispatch_timeout_resumes_compatible_suspended_mission():
@@ -549,3 +559,248 @@ def test_shutdown_aborts_waiting_work_and_cancels_active_work():
     assert _completion(finished, 'active').outcome is TerminalOutcome.ABORTED
     assert finished.start == []
     assert state.system_state is SystemState.IDLE
+
+
+def test_disjoint_foregrounds_ignore_each_others_priority():
+    """Independent outputs run together, even at different priorities."""
+    state, scheduler = _ready_scheduler()
+    scheduler.submit(_mission('drive', priority=MissionPriority.URGENT))
+
+    effects = scheduler.submit(_mission(
+        'speak', priority=MissionPriority.LOW,
+        resources=[ExecutionResource.SPEAKER],
+    ))
+
+    assert effects.start == ['speak']
+    assert not effects.cancel
+    scheduler.handle_terminal('drive', TerminalOutcome.SUCCEEDED)
+    assert list(state.active_foreground) == ['speak']
+    assert state.system_state is SystemState.EXECUTING_MISSION
+
+
+@pytest.mark.parametrize('resource', list(ExecutionResource))
+@pytest.mark.parametrize('background_first', [True, False])
+def test_resource_conflicts_cross_foreground_background_boundary(
+    resource, background_first,
+):
+    """Background mode must not bypass exclusive output ownership."""
+    state, scheduler = _ready_scheduler()
+    first_mode = (
+        ExecutionMode.BACKGROUND if background_first
+        else ExecutionMode.FOREGROUND
+    )
+    second_mode = (
+        ExecutionMode.FOREGROUND if background_first
+        else ExecutionMode.BACKGROUND
+    )
+    first = _mission('first', mode=first_mode, resources=[resource])
+    second = _mission('second', mode=second_mode, resources=[resource])
+    scheduler.submit(first)
+
+    effects = scheduler.submit(second)
+
+    assert effects.cancel == ['first']
+    assert not effects.start
+    assert scheduler.handle_terminal(
+        'first', TerminalOutcome.CANCELED,
+    ).start == ['second']
+    assert scheduler.handle_terminal(
+        'second', TerminalOutcome.SUCCEEDED,
+    ).start == ['first']
+    assert not first.preempted_by
+
+
+def test_empty_resources_never_claim_an_output():
+    """Explicit empty lists allow concurrent missions in either mode."""
+    state, scheduler = _ready_scheduler()
+    scheduler.submit(_mission('all_outputs', resources=list(ExecutionResource)))
+    for mode in ExecutionMode:
+        effects = scheduler.submit(_mission(mode.value, mode=mode, resources=[]))
+        assert effects.start == [mode.value]
+        assert not effects.cancel
+    assert len(list(state.active())) == 3
+
+
+def test_multi_resource_request_checks_all_priorities_before_canceling():
+    """One higher-priority blocker rejects the entire request atomically."""
+    state, scheduler = _ready_scheduler()
+    scheduler.submit(_mission('drive'))
+    scheduler.submit(_mission(
+        'speak', priority=MissionPriority.HIGH,
+        resources=[ExecutionResource.SPEAKER],
+    ))
+
+    effects = scheduler.submit(_mission(
+        'both', resources=[ExecutionResource.BASE, ExecutionResource.SPEAKER],
+    ))
+
+    assert _completion(effects, 'both').outcome is TerminalOutcome.ABORTED
+    assert not effects.cancel and not effects.start
+    assert all(m.state is MissionState.RUNNING for m in state.active())
+    assert not state.pending
+
+
+def test_multi_resource_request_waits_for_every_conflicting_action():
+    """Releasing one of two required resources is not enough to start."""
+    state, scheduler = _ready_scheduler()
+    scheduler.submit(_mission('drive'))
+    scheduler.submit(_mission('speak', resources=[ExecutionResource.SPEAKER]))
+    scheduler.submit(_mission('light', resources=[ExecutionResource.LED]))
+    effects = scheduler.submit(_mission(
+        'both', resources=[ExecutionResource.BASE, ExecutionResource.SPEAKER],
+    ))
+    assert set(effects.cancel) == {'drive', 'speak'}
+    assert not scheduler.handle_terminal('drive', TerminalOutcome.CANCELED).start
+    assert state.pending['both'].waiting_for == {'speak'}
+    assert scheduler.handle_terminal(
+        'speak', TerminalOutcome.CANCELED,
+    ).start == ['both']
+    assert state.get('light').state is MissionState.RUNNING
+    effects = scheduler.handle_terminal('both', TerminalOutcome.SUCCEEDED)
+    assert set(effects.start) == {'drive', 'speak'}
+
+
+def test_unrelated_pending_requests_do_not_replace_each_other():
+    """Independent preemptors can wait for the same multi-output action."""
+    state, scheduler = _ready_scheduler()
+    original = _mission(
+        'original', priority=MissionPriority.LOW,
+        resources=[ExecutionResource.BASE, ExecutionResource.SPEAKER],
+    )
+    scheduler.submit(original)
+    scheduler.submit(_mission('drive', priority=MissionPriority.HIGH))
+    effects = scheduler.submit(_mission(
+        'speak', resources=[ExecutionResource.SPEAKER],
+    ))
+
+    assert not effects.complete and not effects.cancel and not effects.start
+    assert set(state.pending) == {'drive', 'speak'}
+    assert original.preempted_by == {'drive', 'speak'}
+    effects = scheduler.handle_terminal('original', TerminalOutcome.CANCELED)
+    assert set(effects.start) == {'drive', 'speak'}
+    assert not scheduler.handle_terminal('drive', TerminalOutcome.SUCCEEDED).start
+    assert original.preempted_by == {'speak'}
+    assert scheduler.handle_terminal(
+        'speak', TerminalOutcome.SUCCEEDED,
+    ).start == ['original']
+
+
+def test_equal_priority_replaces_only_overlapping_pending_request():
+    """Newest equal-priority work supersedes only its own resource queue."""
+    state, scheduler = _ready_scheduler()
+    original = _mission(
+        'original', resources=[ExecutionResource.BASE, ExecutionResource.SPEAKER],
+    )
+    scheduler.submit(original)
+    scheduler.submit(_mission('drive'))
+    scheduler.submit(_mission('speak', resources=[ExecutionResource.SPEAKER]))
+
+    effects = scheduler.submit(_mission('new_drive'))
+
+    assert [c.mission_id for c in effects.complete] == ['drive']
+    assert not effects.cancel
+    assert set(state.pending) == {'new_drive', 'speak'}
+    assert original.preempted_by == {'new_drive', 'speak'}
+    effects = scheduler.handle_terminal('original', TerminalOutcome.CANCELED)
+    assert set(effects.start) == {'new_drive', 'speak'}
+
+
+@pytest.mark.parametrize('failure', ['cancel_rejected', 'dispatch_timeout'])
+def test_failed_shared_blocker_releases_all_and_only_its_waiters(failure):
+    """A shared cancellation failure cannot strand a second preemptor."""
+    state, scheduler = _ready_scheduler()
+    original = _mission(
+        'original', resources=[ExecutionResource.BASE, ExecutionResource.SPEAKER],
+    )
+    scheduler.submit(original)
+    scheduler.submit(_mission('old_light', resources=[ExecutionResource.LED]))
+    scheduler.submit(_mission('drive'))
+    scheduler.submit(_mission('speak', resources=[ExecutionResource.SPEAKER]))
+    scheduler.submit(_mission('light', resources=[ExecutionResource.LED]))
+
+    handler = getattr(scheduler, f'handle_{failure}')
+    effects = handler('original', 'downstream did not stop')
+
+    completed = {c.mission_id for c in effects.complete}
+    assert {'drive', 'speak'} <= completed
+    assert 'light' not in completed
+    assert set(state.pending) == {'light'}
+    assert original.state is MissionState.RUNNING
+    assert not original.preempted_by
+    assert not effects.start
+
+
+def test_cancel_one_pending_preemptor_preserves_other_dependency():
+    """Canceling one output request cannot resume a shared owner early."""
+    state, scheduler = _ready_scheduler()
+    original = _mission(
+        'original', resources=[ExecutionResource.BASE, ExecutionResource.SPEAKER],
+    )
+    scheduler.submit(original)
+    scheduler.submit(_mission('drive'))
+    scheduler.submit(_mission('speak', resources=[ExecutionResource.SPEAKER]))
+    accepted, _ = scheduler.request_cancel('drive')
+    assert accepted
+    assert original.preempted_by == {'speak'}
+    assert scheduler.handle_terminal(
+        'original', TerminalOutcome.CANCELED,
+    ).start == ['speak']
+    assert scheduler.handle_terminal(
+        'speak', TerminalOutcome.SUCCEEDED,
+    ).start == ['original']
+
+
+def test_user_cancel_failure_also_aborts_new_resource_waiter():
+    """A new mission waiting on an existing user cancel must be resolved."""
+    state, scheduler = _ready_scheduler()
+    scheduler.submit(_mission('original'))
+    scheduler.request_cancel('original')
+    assert not scheduler.submit(_mission('next')).cancel
+
+    effects = scheduler.handle_cancel_rejected('original', 'refused')
+
+    assert {c.mission_id for c in effects.complete} == {'original', 'next'}
+    assert not state.pending
+    assert state.get('original').state is MissionState.RUNNING
+
+
+def test_combined_pending_replacement_checks_all_reservations_atomically():
+    """A higher-priority pending owner must not lose its reservation."""
+    state, scheduler = _ready_scheduler()
+    original = _mission(
+        'original', resources=[ExecutionResource.BASE, ExecutionResource.SPEAKER],
+    )
+    scheduler.submit(original)
+    scheduler.submit(_mission('drive'))
+    scheduler.submit(_mission(
+        'speak', priority=MissionPriority.HIGH,
+        resources=[ExecutionResource.SPEAKER],
+    ))
+    effects = scheduler.submit(_mission(
+        'both', resources=[ExecutionResource.BASE, ExecutionResource.SPEAKER],
+    ))
+
+    assert [c.mission_id for c in effects.complete] == ['both']
+    assert not effects.cancel
+    assert set(state.pending) == {'drive', 'speak'}
+    assert original.preempted_by == {'drive', 'speak'}
+
+
+def test_replaced_pending_releases_unrelated_suspended_resources():
+    """Narrowing a pending request must free outputs it no longer needs."""
+    state, scheduler = _ready_scheduler()
+    scheduler.submit(_mission('drive'))
+    scheduler.submit(_mission('speak', resources=[ExecutionResource.SPEAKER]))
+    scheduler.submit(_mission(
+        'both', resources=[ExecutionResource.BASE, ExecutionResource.SPEAKER],
+    ))
+    scheduler.handle_terminal('drive', TerminalOutcome.CANCELED)
+
+    effects = scheduler.submit(_mission(
+        'new_speak', resources=[ExecutionResource.SPEAKER],
+    ))
+
+    assert [c.mission_id for c in effects.complete] == ['both']
+    assert effects.start == ['drive']
+    assert state.pending['new_speak'].waiting_for == {'speak'}
+    assert not state.get('drive').preempted_by

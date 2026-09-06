@@ -292,7 +292,6 @@ def test_testbed_defaults_off_and_hard_disables_automatic_motion_owners():
         'inscribed_escape_enabled': 'true',
         'zone_mask': '/unsafe/mask.yaml',
         'user_map': '/unsafe/map.geojson',
-        'patrol_route_file': '/unsafe/patrol.yaml',
         'pose_checkpoint_store': '/unsafe/checkpoints',
     })
 
@@ -306,7 +305,6 @@ def test_testbed_defaults_off_and_hard_disables_automatic_motion_owners():
     for name in (
         'zone_mask',
         'user_map',
-        'patrol_route_file',
         'pose_checkpoint_store',
         'pose_checkpoint_map_id',
         'pose_checkpoint_map_revision',
@@ -355,7 +353,6 @@ def test_explicit_named_navigation_only_enables_web_and_pose_validation():
         'autonomous_modes': 'true',
         'person_following': 'true',
         'inscribed_escape_enabled': 'true',
-        'patrol_route_file': '/unsafe/patrol.yaml',
     })
     slam_map = load_slam_map(PACKAGE_ROOT / 'maps' / 'small_house.yaml')
 
@@ -384,7 +381,6 @@ def test_explicit_named_navigation_only_enables_web_and_pose_validation():
     ) == slam_map.map_revision
     assert _resolve(context, navigation['boot_pose_trusted']) == 'true'
     assert _resolve(context, navigation['autonomous_modes']) == 'false'
-    assert _resolve(context, navigation['patrol_route_file']) == ''
     assert _resolve(context, navigation['person_following']) == 'false'
     assert _resolve(
         context,

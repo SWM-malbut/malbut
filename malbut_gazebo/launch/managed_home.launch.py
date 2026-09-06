@@ -15,7 +15,6 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from malbut_gazebo.drive_modes import write_room_patrol_route
 from malbut_gazebo.map_lifecycle import load_active_revision
 from malbut_gazebo.pose_checkpoint import (
     PoseSafetyGrid,
@@ -183,9 +182,6 @@ def _select_mode(context):
     map_yaml = str((store / active["map_yaml"]).resolve())
     user_map = str((store / active["user_map"]).resolve())
     revision = (store / active["map_yaml"]).resolve().parent
-    patrol_route = write_room_patrol_route(
-        Path(user_map), revision / "room-patrol.yaml", str(active["map_id"])
-    )
     zone_mask = revision / "zone-filter.yaml"
     # 마스크가 없으면 진입 금지 필터 서버가 아예 뜨지 않고, 이 판단은
     # 기동 때 한 번뿐이다. 그러면 소유자가 처음 그린 진입 금지 구역이
@@ -268,7 +264,6 @@ def _select_mode(context):
             "robot_web": "true",
             "robot_web_port": LaunchConfiguration("web_port"),
             "autonomous_modes": "true",
-            "patrol_route_file": str(patrol_route),
             "person_following": "true",
             "person_projection_frame": (
                 "camera_depth_optical_frame" if simulation_enabled else ""

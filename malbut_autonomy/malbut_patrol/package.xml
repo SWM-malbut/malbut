@@ -4,7 +4,7 @@
   <name>malbut_patrol</name>
   <version>0.1.0</version>
   <description>
-    Scheduled waypoint patrol orchestration for the Malbut robot.
+    Map-driven camera coverage patrol for the Malbut robot.
   </description>
   <maintainer email="ubuntu@todo.todo">Malbut Team</maintainer>
   <license>Apache-2.0</license>
@@ -15,10 +15,16 @@
   <depend>launch</depend>
   <depend>launch_ros</depend>
   <depend>nav2_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>malbut_interfaces</depend>
+  <depend>map_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>tf2_ros</depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
   <depend>python3-yaml</depend>
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
-  <depend>std_srvs</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

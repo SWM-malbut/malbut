@@ -9,7 +9,7 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
   - RGB-D 사람 인식: `malbut_perception`
   - 사람 목표 추적: `malbut_tracking`
   - 자율 순회: `malbut_roaming`
-  - 예약 순찰: `malbut_patrol`
+  - 지도 기반 카메라 순찰: `malbut_patrol`
   - 공통 ROS 인터페이스: `malbut_interfaces`
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
 - 홈캠 웹·백엔드: `homecam_web`
