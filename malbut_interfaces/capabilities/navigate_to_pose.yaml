@@ -1,0 +1,25 @@
+schema_version: 1
+
+capability:
+  id: navigate_to_pose
+  title: 목적지 이동
+  description: Nav2를 사용해 지정한 지도 좌표로 이동한다.
+
+command:
+  kind: ACTION
+  name: /navigate_to_pose
+  type: nav2_msgs/action/NavigateToPose
+
+input:
+  fields:
+    pose:
+      type: geometry_msgs/PoseStamped
+      description: 이동할 목적지의 좌표와 방향
+    behavior_tree:
+      type: string
+      description: Nav2에서 사용할 Behavior Tree XML 경로
+      default: ""
+
+execution:
+  mode: FOREGROUND
+  priority: NORMAL

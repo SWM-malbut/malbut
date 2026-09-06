@@ -8,12 +8,20 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "action/ExecuteMission.action"
   "action/FollowPerson.action"
   "msg/LidarCluster.msg"
   "msg/LidarClusterArray.msg"
+  "msg/MissionStatus.msg"
   "msg/SensorProcessingTrace.msg"
+  "msg/SystemState.msg"
   "msg/TrackingCommandTrace.msg"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs
+)
+
+install(
+  DIRECTORY capabilities
+  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_export_dependencies(rosidl_default_runtime)

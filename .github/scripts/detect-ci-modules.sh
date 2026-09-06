@@ -30,7 +30,7 @@ select_path()
       ros=true
       homecam=true
       ;;
-    malbut_agent_server/*|malbut_autonomy/*|malbut_scenarios/*)
+    malbut_agent_server/*|malbut_autonomy/*|malbut_interfaces/*|malbut_scenarios/*|malbut_system_manager/*)
       ros=true
       ;;
   esac
