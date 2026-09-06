@@ -283,7 +283,6 @@ def generate_launch_description():
     )
     boot_pose_trusted = LaunchConfiguration('boot_pose_trusted')
     autonomous_modes = LaunchConfiguration('autonomous_modes')
-    patrol_route_file = LaunchConfiguration('patrol_route_file')
     person_following = LaunchConfiguration('person_following')
     person_projection_frame = LaunchConfiguration('person_projection_frame')
     inscribed_escape_enabled = LaunchConfiguration(
@@ -507,7 +506,6 @@ def generate_launch_description():
                 "'verifying' if '", boot_pose_trusted,
                 "' == 'true' else 'revalidation_required'",
             ]),
-            'patrol_route_file': patrol_route_file,
         }],
     )
     patrol_manager = Node(
@@ -515,15 +513,14 @@ def generate_launch_description():
         executable='patrol_manager',
         name='patrol_manager',
         namespace=namespace,
-        condition=IfCondition(PythonExpression([
-            "'", autonomous_modes, "' == 'true' and '",
-            patrol_route_file, "' != ''",
-        ])),
+        condition=IfCondition(autonomous_modes),
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
-            'autostart': False,
-            'route_file': patrol_route_file,
+            'room_map_file': ParameterValue(user_map, value_type=str),
+            'camera_optical_frame': ParameterValue(
+                person_projection_frame, value_type=str,
+            ),
         }],
     )
     roaming_manager = Node(
@@ -789,11 +786,6 @@ def generate_launch_description():
                 'autonomous_modes',
                 default_value='false',
                 description='Start patrol and roaming managers for the web.',
-            ),
-            DeclareLaunchArgument(
-                'patrol_route_file',
-                default_value='',
-                description='Room-derived patrol route paired with this map.',
             ),
             DeclareLaunchArgument(
                 'person_following',

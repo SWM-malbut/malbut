@@ -19,6 +19,16 @@ class ExecutionMode(str, Enum):
     BACKGROUND = 'BACKGROUND'
 
 
+class ExecutionResource(str, Enum):
+    """Robot outputs that only one managed mission may control at a time."""
+
+    BASE = 'BASE'
+    SPEAKER = 'SPEAKER'
+    BUZZER = 'BUZZER'
+    LED = 'LED'
+    DISPLAY = 'DISPLAY'
+
+
 class MissionPriority(IntEnum):
     """Ordering used only after missions are known to conflict."""
 
@@ -95,6 +105,7 @@ class CapabilityManifest:
     priority: MissionPriority
     input_fields: Mapping[str, InputField]
     interface_type: Any = field(repr=False, compare=False)
+    resources: frozenset[ExecutionResource]
     source_path: str = ''
 
 
@@ -108,7 +119,7 @@ class MissionRecord:
     state: MissionState = MissionState.PENDING
     generation: int = 0
     waiting_for: set[str] = field(default_factory=set)
-    preempted_by: str | None = None
+    preempted_by: set[str] = field(default_factory=set)
     cancel_reason: CancelReason | None = None
     user_cancel_requested: bool = False
     resumable: bool = True
@@ -122,6 +133,11 @@ class MissionRecord:
     def priority(self) -> MissionPriority:
         """Return the Manifest priority."""
         return self.capability.priority
+
+    @property
+    def resources(self) -> frozenset[ExecutionResource]:
+        """Return the exclusive output resources declared by the Manifest."""
+        return self.capability.resources
 
 
 @dataclass(frozen=True)

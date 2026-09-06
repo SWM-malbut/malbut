@@ -298,7 +298,6 @@ def generate_launch_description():
                 'pose_checkpoint_map_revision': enabled_map_revision,
                 'boot_pose_trusted': enable_named_navigation,
                 'autonomous_modes': 'false',
-                'patrol_route_file': '',
                 'person_following': 'false',
                 'person_projection_frame': '',
                 'inscribed_escape_enabled': 'false',

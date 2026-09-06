@@ -10,7 +10,7 @@ ROS 패키지가 아니며, 내부 패키지는 각각 독립적으로 빌드하
 | `malbut_lidar_preprocessor` | LaserScan의 TF 보정, 정적 지도 제거 및 전경 클러스터 생성 |
 | `malbut_tracking` | 인식 결과와 Nav2를 이용한 사람 목표 추적 |
 | `malbut_roaming` | 지도 안에서 목적지를 선택하는 자율 순회 |
-| `malbut_patrol` | 설정된 경로와 일정에 따른 예약 순찰 |
+| `malbut_patrol` | 고정 좌표 없이 지도에서 관측 위치를 선택하는 카메라 순찰 Action |
 
 공유 ROS 인터페이스와 Capability Manifest는 저장소 최상위의
 `malbut_interfaces`에서 관리한다.

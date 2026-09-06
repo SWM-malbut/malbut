@@ -1,535 +1,550 @@
-"""ROS adapter that sends scheduled patrol goals to Nav2."""
+"""Run one map-driven camera patrol through cancellable Nav2 actions."""
 
 import json
+import math
 from pathlib import Path
+import signal
+import threading
 import time
-from typing import Callable
 
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import NavigateToPose
+from malbut_interfaces.action import Patrol
+from map_msgs.msg import OccupancyGridUpdate
+from nav2_msgs.action import NavigateToPose, Spin
+from nav_msgs.msg import OccupancyGrid
+import numpy as np
 import rclpy
-from rclpy.action import ActionClient
+from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.duration import Duration
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+from rclpy.signals import SignalHandlerOptions
+from rclpy.time import Time
+from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
-from std_srvs.srv import Trigger
+from tf2_ros import Buffer, TransformException, TransformListener
 
-from malbut_patrol.geometry import yaw_to_quaternion
-from malbut_patrol.patrol_state import (
-    PatrolCommand,
-    PatrolProgress,
-    PatrolState,
-    Transition,
-)
-from malbut_patrol.route_loader import load_route
+from malbut_patrol.coverage import CoverageGrid, CoveragePlanner, CoverageProfile
+
+
+class PatrolInterrupted(RuntimeError):
+    """A patrol must stop and settle its outstanding Nav2 command."""
+
+
+class ChildAction:
+    """Track a Nav2 goal from send through its terminal result, including races."""
+
+    def __init__(self, client, request):
+        self.wake = threading.Event()
+        self.lock = threading.RLock()
+        self.handle = None
+        self.result = None
+        self.error = None
+        self.settled = False
+        self.cancel_requested = False
+        self.cancel_sent = False
+        self.sent_at = time.monotonic()
+        try:
+            client.send_goal_async(request).add_done_callback(self._accepted)
+        except Exception as error:
+            self.error = error
+            self.settled = True
+
+    def _accepted(self, future):
+        with self.lock:
+            try:
+                self.handle = future.result()
+                if not self.handle.accepted:
+                    self.settled = True
+                else:
+                    self.handle.get_result_async().add_done_callback(
+                        self._finished)
+                    if self.cancel_requested:
+                        self.cancel()
+            except Exception as error:
+                # A transport failure does not prove that the robot stopped.
+                self.error = error
+            self.wake.set()
+
+    def _finished(self, future):
+        with self.lock:
+            try:
+                self.result = future.result()
+                self.settled = True
+            except Exception as error:
+                self.error = error
+            self.wake.set()
+
+    def cancel(self):
+        """Cancel now, or cancel immediately when a delayed acceptance arrives."""
+        with self.lock:
+            self.cancel_requested = True
+            if (self.handle is not None and self.handle.accepted
+                    and not self.settled and not self.cancel_sent):
+                self.cancel_sent = True
+                try:
+                    self.handle.cancel_goal_async()
+                except Exception as error:
+                    self.error = error
+            self.wake.set()
+
+
+def _yaw(q):
+    return math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                      1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+
+
+def _grid(message):
+    origin = message.info.origin
+    return CoverageGrid(
+        np.asarray(message.data, dtype=np.int16).reshape(
+            message.info.height, message.info.width),
+        message.info.resolution, origin.position.x, origin.position.y,
+        _yaw(origin.orientation))
 
 
 class PatrolManager(Node):
-    """Orchestrate patrol timing while delegating motion entirely to Nav2."""
+    """Observe a saved map once at the requested inspection thoroughness."""
 
-    def __init__(self) -> None:
-        """Load the route and expose patrol services and state."""
-        super().__init__('patrol_manager')
-        self.declare_parameter('route_file', '')
-        self.declare_parameter('autostart', False)
-        self.declare_parameter('nav2_action_name', 'navigate_to_pose')
-        self.declare_parameter('nav2_server_timeout_seconds', 30.0)
-
-        route_file = str(self.get_parameter('route_file').value).strip()
-        if not route_file:
-            raise ValueError('route_file parameter must not be empty')
-        self._route_file = Path(route_file).expanduser().resolve()
-        self._route = load_route(self._route_file)
-        self._progress = PatrolProgress(self._route)
-        self._action_name = str(
-            self.get_parameter('nav2_action_name').value
-        ).strip()
-        if not self._action_name:
-            raise ValueError('nav2_action_name must not be empty')
-        self._server_timeout = float(
-            self.get_parameter('nav2_server_timeout_seconds').value
-        )
-        if self._server_timeout <= 0.0:
-            raise ValueError(
-                'nav2_server_timeout_seconds must be greater than zero'
-            )
-
-        self._goal_token = 0
-        self._pending_server = False
-        self._server_deadline = 0.0
-        self._request_pending = False
-        self._active_goal = None
-        self._cancelling_tokens: set[int] = set()
-        self._deferred_send = False
-        self._phase_deadline_ns: int | None = None
-        self._phase_command = PatrolCommand.NONE
-        self._paused_phase_remaining: float | None = None
-        self._detail = 'patrol manager ready'
-
-        status_qos = QoSProfile(
-            depth=1,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
-            reliability=ReliabilityPolicy.RELIABLE,
-        )
-        self._status_publisher = self.create_publisher(
-            String,
-            'patrol/status',
-            status_qos,
-        )
-        self._action_client = ActionClient(
-            self,
-            NavigateToPose,
-            self._action_name,
-        )
-        self.create_service(Trigger, 'patrol/start', self._start_callback)
-        self.create_service(Trigger, 'patrol/pause', self._pause_callback)
-        self.create_service(Trigger, 'patrol/resume', self._resume_callback)
-        self.create_service(Trigger, 'patrol/stop', self._stop_callback)
-        self._timer = self.create_timer(0.1, self._tick)
-        self._publish_status()
-
-        if bool(self.get_parameter('autostart').value):
-            self._apply(self._progress.start())
-
-    @property
-    def shutdown_pending(self) -> bool:
-        """Return whether an asynchronous request still needs to settle."""
-        return self._request_pending or bool(self._cancelling_tokens)
-
-    def request_shutdown(self) -> None:
-        """Stop patrol and request cancellation before node shutdown."""
-        if self._progress.state == PatrolState.STOPPING:
-            return
-        if self._progress.state != PatrolState.IDLE:
-            self._apply(self._progress.stop())
-        else:
-            self._invalidate_goal()
-
-    def _start_callback(self, _request, response):
-        if self._request_pending or self._cancelling_tokens:
-            return self._response(
-                response,
-                False,
-                'wait for the previous Nav2 goal to finish cancelling',
-            )
-        try:
-            self._reload_route()
-            transition = self._progress.start()
-        except (RuntimeError, ValueError) as error:
-            return self._response(response, False, str(error))
-        self._paused_phase_remaining = None
-        self._apply(transition)
-        return self._response(response, True, transition.message)
-
-    def _reload_route(self) -> None:
-        """Reload an idle route so Room edits apply to the next patrol run."""
-        if self._progress.is_active:
-            raise RuntimeError(
-                f'cannot start while state is {self._progress.state.value}'
-            )
-        route = load_route(self._route_file)
-        if route.map_id != self._route.map_id:
-            raise RuntimeError('patrol route map_id changed while running')
-        self._route = route
-        self._progress = PatrolProgress(route)
-
-    def _pause_callback(self, _request, response):
-        remaining = self._remaining_phase_seconds()
-        try:
-            transition = self._progress.pause()
-        except RuntimeError as error:
-            return self._response(response, False, str(error))
-        self._paused_phase_remaining = (
-            remaining
-            if self._progress.state == PatrolState.PAUSED
-            else None
-        )
-        self._apply(transition)
-        return self._response(response, True, self._detail)
-
-    def _resume_callback(self, _request, response):
-        if self._request_pending or self._cancelling_tokens:
-            return self._response(
-                response,
-                False,
-                'wait for the Nav2 goal cancellation to finish',
-            )
-        try:
-            transition = self._progress.resume()
-        except RuntimeError as error:
-            return self._response(response, False, str(error))
-        if (
-            self._paused_phase_remaining is not None
-            and transition.command
-            in {
-                PatrolCommand.START_DWELL,
-                PatrolCommand.START_INTERVAL_WAIT,
-                PatrolCommand.START_RETRY_WAIT,
-            }
-        ):
-            transition = Transition(
-                transition.command,
-                self._paused_phase_remaining,
-                transition.message,
-            )
-        self._paused_phase_remaining = None
-        self._apply(transition)
-        return self._response(response, True, self._detail)
-
-    def _stop_callback(self, _request, response):
-        if self._progress.state == PatrolState.IDLE:
-            return self._response(response, False, 'patrol is already stopped')
-        try:
-            transition = self._progress.stop()
-        except RuntimeError as error:
-            return self._response(response, False, str(error))
-        self._paused_phase_remaining = None
-        self._apply(transition)
-        return self._response(response, True, self._detail)
-
-    @staticmethod
-    def _response(response, success: bool, message: str):
-        response.success = success
-        response.message = message
-        return response
-
-    def _tick(self) -> None:
-        now_ns = self.get_clock().now().nanoseconds
-        if self._pending_server:
-            if self._action_client.server_is_ready():
-                self._send_goal()
-            elif time.monotonic() >= self._server_deadline:
-                self._pending_server = False
-                self._apply(
-                    self._progress.goal_failed(
-                        'Nav2 action server unavailable'
-                    )
-                )
-
-        if (
-            self._phase_deadline_ns is not None
-            and now_ns >= self._phase_deadline_ns
-        ):
-            command = self._phase_command
-            self._clear_phase_deadline()
-            callbacks: dict[PatrolCommand, Callable[[], Transition]] = {
-                PatrolCommand.START_DWELL:
-                    self._progress.dwell_elapsed,
-                PatrolCommand.START_RETRY_WAIT:
-                    self._progress.retry_wait_elapsed,
-                PatrolCommand.START_INTERVAL_WAIT:
-                    self._progress.interval_elapsed,
-            }
-            callback = callbacks.get(command)
-            if callback is not None:
-                self._apply(callback())
-
-    def _apply(self, transition: Transition) -> None:
-        self._detail = transition.message or self._detail
-        command = transition.command
-        if command == PatrolCommand.SEND_GOAL:
-            self._queue_goal()
-        elif command == PatrolCommand.CANCEL_GOAL:
-            settled = self._invalidate_goal()
-            if settled is not None:
-                self._detail = settled.message or self._detail
-        elif command in {
-            PatrolCommand.START_DWELL,
-            PatrolCommand.START_INTERVAL_WAIT,
-            PatrolCommand.START_RETRY_WAIT,
-        }:
-            self._set_phase_deadline(command, transition.duration_seconds)
-        else:
-            self._clear_phase_deadline()
-        self.get_logger().info(self._detail)
-        self._publish_status()
-
-    def _queue_goal(self) -> None:
-        self._clear_phase_deadline()
-        if self._request_pending or self._cancelling_tokens:
-            self._deferred_send = True
-            self._detail = 'waiting for previous Nav2 goal cancellation'
-            return
-        self._deferred_send = False
-        self._goal_token += 1
-        self._pending_server = True
-        self._server_deadline = time.monotonic() + self._server_timeout
-        self._detail = (
-            f'waiting for Nav2 to visit '
-            f'{self._progress.current_waypoint.name}'
-        )
-
-    def _send_goal(self) -> None:
-        self._pending_server = False
-        waypoint = self._progress.current_waypoint
-        token = self._goal_token
-        goal = NavigateToPose.Goal()
-        pose = PoseStamped()
-        pose.header.frame_id = self._route.frame_id
-        pose.header.stamp = self.get_clock().now().to_msg()
-        pose.pose.position.x = waypoint.x
-        pose.pose.position.y = waypoint.y
-        quaternion = yaw_to_quaternion(waypoint.yaw)
-        pose.pose.orientation.x = quaternion[0]
-        pose.pose.orientation.y = quaternion[1]
-        pose.pose.orientation.z = quaternion[2]
-        pose.pose.orientation.w = quaternion[3]
-        goal.pose = pose
-
-        self._request_pending = True
-        future = self._action_client.send_goal_async(goal)
-        future.add_done_callback(
-            lambda completed: self._goal_response(completed, token)
-        )
-        self._detail = f'sent Nav2 goal: {waypoint.name}'
-        self._publish_status()
-
-    def _goal_response(self, future, token: int) -> None:
-        self._request_pending = False
-        try:
-            goal_handle = future.result()
-        except Exception as error:  # noqa: B902 - rclpy future boundary
-            if self._is_current(token):
-                self._apply(
-                    self._progress.goal_failed(
-                        f'goal request error: {error}'
-                    )
-                )
-            else:
-                settled = self._finish_control_without_goal()
-                if settled is not None:
-                    self._apply(settled)
-            return
-
-        if not self._is_current(token):
-            if goal_handle.accepted:
-                self._cancel_handle(goal_handle, token)
-                result_future = goal_handle.get_result_async()
-                result_future.add_done_callback(
-                    lambda completed: self._goal_result(completed, token)
-                )
-            else:
-                settled = self._finish_control_without_goal()
-                if settled is not None:
-                    self._apply(settled)
-            return
-        if not goal_handle.accepted:
-            self._apply(self._progress.goal_failed('goal rejected by Nav2'))
-            return
-
-        self._active_goal = (token, goal_handle)
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(
-            lambda completed: self._goal_result(completed, token)
-        )
-        self._detail = (
-            f'navigating to {self._progress.current_waypoint.name}'
-        )
-        self._publish_status()
-
-    def _goal_result(self, future, token: int) -> None:
-        if self._active_goal is not None and self._active_goal[0] == token:
-            self._active_goal = None
-        cancellation_pending = token in self._cancelling_tokens
-        try:
-            wrapped_result = future.result()
-        except Exception as error:  # noqa: B902 - rclpy future boundary
-            if cancellation_pending:
-                self._detail = (
-                    'cannot confirm that the canceled Nav2 goal stopped: '
-                    f'{error}'
-                )
-                self.get_logger().error(self._detail)
-                self._publish_status()
-                return
-            if not self._is_current(token):
-                return
-            self._apply(
-                self._progress.goal_failed(f'goal result error: {error}')
-            )
-            return
-
-        if cancellation_pending:
-            self._settle_cancellation(
-                token,
-                wrapped_result.status == GoalStatus.STATUS_SUCCEEDED,
-            )
-            return
-        if not self._is_current(token):
-            return
-        if wrapped_result.status == GoalStatus.STATUS_SUCCEEDED:
-            self._apply(self._progress.goal_succeeded())
-            return
-        if wrapped_result.status == GoalStatus.STATUS_CANCELED:
-            self._apply(
-                self._progress.goal_canceled(
-                    'Nav2 goal was canceled outside patrol control'
-                )
-            )
-            return
-        self._apply(
-            self._progress.goal_failed(
-                f'Nav2 result status {wrapped_result.status}'
-            )
-        )
-
-    def _is_current(self, token: int) -> bool:
-        return (
-            token == self._goal_token
-            and self._progress.state == PatrolState.NAVIGATING
-        )
-
-    def _invalidate_goal(self) -> Transition | None:
-        self._goal_token += 1
-        self._pending_server = False
-        self._deferred_send = False
-        self._clear_phase_deadline()
-        if self._active_goal is not None:
-            token, goal_handle = self._active_goal
-            self._active_goal = None
-            self._cancel_handle(goal_handle, token)
-        elif not self._request_pending:
-            return self._finish_control_without_goal()
-        return None
-
-    def _cancel_handle(self, goal_handle, token: int) -> None:
-        self._cancelling_tokens.add(token)
-        try:
-            future = goal_handle.cancel_goal_async()
-        except Exception as error:  # noqa: B902 - rclpy action boundary
-            self._detail = f'Nav2 goal cancellation request failed: {error}'
-            self.get_logger().error(self._detail)
-            self._publish_status()
-            return
-        future.add_done_callback(
-            lambda completed: self._cancel_response(completed, token)
-        )
-
-    def _cancel_response(self, future, token: int) -> None:
-        if token not in self._cancelling_tokens:
-            return
-        try:
-            response = future.result()
-        except Exception as error:  # noqa: B902 - rclpy action boundary
-            self._detail = f'Nav2 goal cancellation response failed: {error}'
-            self.get_logger().error(self._detail)
-        else:
-            if not response.goals_canceling:
-                return_code = getattr(response, 'return_code', 'unknown')
-                self._detail = (
-                    f'Nav2 did not accept cancellation for goal token {token}; '
-                    f'return code {return_code}; waiting for its terminal '
-                    'result'
-                )
-                self.get_logger().warning(self._detail)
-        self._publish_status()
-
-    def _settle_cancellation(
-        self,
-        token: int,
-        goal_succeeded: bool,
-    ) -> None:
-        self._cancelling_tokens.discard(token)
-        if self._progress.state in {
-            PatrolState.PAUSING,
-            PatrolState.STOPPING,
-        }:
-            self._apply(
-                self._progress.cancellation_finished(goal_succeeded)
-            )
-        if (
-            not self._cancelling_tokens
-            and self._deferred_send
-            and not self._request_pending
-            and self._progress.state == PatrolState.NAVIGATING
-        ):
-            self._queue_goal()
-        self._publish_status()
-
-    def _finish_control_without_goal(self) -> Transition | None:
-        if self._progress.state not in {
-            PatrolState.PAUSING,
-            PatrolState.STOPPING,
-        }:
-            return None
-        return self._progress.cancellation_finished(False)
-
-    def _set_phase_deadline(
-        self,
-        command: PatrolCommand,
-        duration_seconds: float,
-    ) -> None:
-        self._phase_command = command
-        self._phase_deadline_ns = (
-            self.get_clock().now().nanoseconds
-            + int(duration_seconds * 1_000_000_000)
-        )
-
-    def _clear_phase_deadline(self) -> None:
-        self._phase_command = PatrolCommand.NONE
-        self._phase_deadline_ns = None
-
-    def _remaining_phase_seconds(self) -> float | None:
-        if self._phase_deadline_ns is None:
-            return None
-        remaining_ns = (
-            self._phase_deadline_ns
-            - self.get_clock().now().nanoseconds
-        )
-        return max(0.0, remaining_ns / 1_000_000_000)
-
-    def _publish_status(self) -> None:
-        waypoint = self._progress.current_waypoint
-        payload = {
-            'action_name': self._action_name,
-            'cancel_pending': bool(self._cancelling_tokens),
-            'current_retries': self._progress.current_retries,
-            'detail': self._detail,
-            'map_id': self._route.map_id,
-            'route': self._route.name,
-            'run_cycles_completed':
-                self._progress.run_cycles_completed,
-            'schedule_mode': self._route.schedule.mode,
-            'state': self._progress.state.value,
-            'total_cycles_completed':
-                self._progress.total_cycles_completed,
-            'waypoint_count': len(self._route.waypoints),
-            'waypoint_index': self._progress.current_index,
-            'waypoint_name': waypoint.name,
+    def __init__(self, **kwargs):
+        super().__init__('patrol_manager', **kwargs)
+        defaults = {
+            'map_topic': '/map',
+            'costmap_topic': '/global_costmap/costmap',
+            'camera_image_topic': '/camera/color/image_raw',
+            'camera_info_topic': '/camera/color/camera_info',
+            'camera_optical_frame': '',
+            'room_map_file': '',
+            'base_frame': 'base_footprint',
+            'nav2_action_name': 'navigate_to_pose',
+            'spin_action_name': 'spin',
+            'robot_clearance_m': 0.26,
+            'observation_ranges_m': [4.0, 3.0, 2.0],
+            'coverage_targets': [0.80, 0.90, 0.95],
+            'candidate_spacing_m': [1.5, 1.0, 0.65],
+            'observation_hz': 5.0,
+            'sensor_timeout_s': 3.0,
+            'costmap_timeout_s': 5.0,
+            'goal_response_timeout_s': 5.0,
+            'cancel_completion_timeout_s': 5.0,
+            'navigation_timeout_s': 120.0,
+            'spin_time_allowance_s': 60.0,
+            'maximum_goal_cost': 80,
         }
+        for name, value in defaults.items():
+            self.declare_parameter(name, value)
+        self.settings = {name: self.get_parameter(name).value for name in defaults}
+        for name in ('observation_hz', 'sensor_timeout_s', 'costmap_timeout_s',
+                     'goal_response_timeout_s', 'cancel_completion_timeout_s',
+                     'navigation_timeout_s', 'spin_time_allowance_s',
+                     'robot_clearance_m'):
+            if not math.isfinite(self.settings[name]) or self.settings[name] <= 0:
+                raise ValueError(f'{name} must be positive and finite')
+        for name in ('observation_ranges_m', 'coverage_targets',
+                     'candidate_spacing_m'):
+            if len(self.settings[name]) != 3:
+                raise ValueError(f'{name} must contain LIGHT, NORMAL, THOROUGH')
+        if not 0 <= self.settings['maximum_goal_cost'] < 99:
+            raise ValueError('maximum_goal_cost must be in 0..98')
+        self.profiles = [CoverageProfile(*values) for values in zip(
+            self.settings['observation_ranges_m'],
+            self.settings['coverage_targets'],
+            self.settings['candidate_spacing_m'])]
+        self.lock = threading.RLock()
+        self.stop_event = threading.Event()
+        self.busy = False
+        self.child = None
+        self.map_message = None
+        self.map_changed = False
+        self.costmap = None
+        self.costmap_received = 0.0
+        self.image = None
+        self.image_received = 0.0
+        self.camera_info = None
+        self.planner = None
+        self.phase = 'IDLE'
+        self.visited = 0
+        self.last_image_stamp = None
+        self.last_observation = 0.0
+        self.last_pump = 0.0
+        self.last_feedback = 0.0
+        self.group = ReentrantCallbackGroup()
+        self.tf = Buffer(cache_time=Duration(seconds=10.0))
+        self.tf_listener = TransformListener(self.tf, self)
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(OccupancyGrid, self.settings['map_topic'],
+                                 self._receive_map, latched,
+                                 callback_group=self.group)
+        self.create_subscription(OccupancyGrid, self.settings['costmap_topic'],
+                                 self._receive_costmap, latched,
+                                 callback_group=self.group)
+        self.create_subscription(OccupancyGridUpdate,
+                                 self.settings['costmap_topic'] + '_updates',
+                                 self._receive_costmap_update, 10,
+                                 callback_group=self.group)
+        self.create_subscription(Image, self.settings['camera_image_topic'],
+                                 self._receive_image, qos_profile_sensor_data,
+                                 callback_group=self.group)
+        self.create_subscription(CameraInfo, self.settings['camera_info_topic'],
+                                 self._receive_info, qos_profile_sensor_data,
+                                 callback_group=self.group)
+        self.navigation = ActionClient(self, NavigateToPose,
+                                       self.settings['nav2_action_name'],
+                                       callback_group=self.group)
+        self.spin_client = ActionClient(self, Spin,
+                                        self.settings['spin_action_name'],
+                                        callback_group=self.group)
+        self.status = self.create_publisher(String, 'patrol/status', latched)
+        self.server = ActionServer(
+            self, Patrol, 'patrol', execute_callback=self._execute,
+            goal_callback=self._goal, cancel_callback=self._cancel,
+            callback_group=self.group)
+        self._publish_status('idle', 'Waiting for a patrol goal')
+
+    def _receive_map(self, message):
+        with self.lock:
+            if self.busy and self.map_message is not None:
+                old = self.map_message
+                if (old.header.frame_id != message.header.frame_id
+                        or old.info.resolution != message.info.resolution
+                        or old.info.width != message.info.width
+                        or old.info.height != message.info.height
+                        or old.info.origin != message.info.origin
+                        or old.data != message.data):
+                    self.map_changed = True
+            self.map_message = message
+
+    def _receive_costmap(self, message):
+        with self.lock:
+            self.costmap = message
+            self.costmap_received = time.monotonic()
+
+    def _receive_costmap_update(self, update):
+        # Nav2 can publish patches instead of a new full grid every cycle.
+        with self.lock:
+            grid = self.costmap
+            if (grid is None or grid.header.frame_id != update.header.frame_id
+                    or update.x < 0 or update.y < 0
+                    or update.width == 0 or update.height == 0
+                    or update.x + update.width > grid.info.width
+                    or update.y + update.height > grid.info.height
+                    or len(update.data) != update.width * update.height):
+                return
+            for row in range(update.height):
+                start = (row + update.y) * grid.info.width + update.x
+                patch = row * update.width
+                grid.data[start:start + update.width] = (
+                    update.data[patch:patch + update.width])
+            grid.header.stamp = update.header.stamp
+            self.costmap_received = time.monotonic()
+
+    def _receive_image(self, message):
+        # Keep only the latest image. No image processing or coverage work idle.
+        if message.width and message.height and len(message.data):
+            with self.lock:
+                self.image = message
+                self.image_received = time.monotonic()
+
+    def _receive_info(self, message):
+        with self.lock:
+            self.camera_info = message
+
+    def _robot_xy(self):
+        transform = self.tf.lookup_transform(
+            self.map_message.header.frame_id, self.settings['base_frame'], Time())
+        p = transform.transform.translation
+        return p.x, p.y
+
+    def _ready(self):
+        now = time.monotonic()
+        if self.map_message is None or not self.map_message.header.frame_id:
+            return 'Saved /map is not available'
+        if not self.map_message.data or self.map_message.info.resolution <= 0:
+            return 'Saved /map is empty or invalid'
+        if (self.image is None or self.camera_info is None
+                or self.camera_info.k[0] <= 0 or not self.camera_info.width):
+            return 'RGB image and calibrated CameraInfo are required'
+        if now - self.image_received > self.settings['sensor_timeout_s']:
+            return 'RGB camera is stale'
+        if (self.costmap is None or now - self.costmap_received
+                > self.settings['costmap_timeout_s']):
+            return 'Global costmap is not available or stale'
+        if self.costmap.header.frame_id != self.map_message.header.frame_id:
+            return 'Global costmap and saved map must use the same frame'
+        if (not self.navigation.server_is_ready()
+                or not self.spin_client.server_is_ready()):
+            return 'Nav2 NavigateToPose and Spin servers must be active'
+        try:
+            self._robot_xy()
+        except TransformException:
+            return 'Robot localization TF is not available'
+        return ''
+
+    def _goal(self, goal):
+        with self.lock:
+            reason = ''
+            if goal.thoroughness not in (Patrol.Goal.LIGHT, Patrol.Goal.NORMAL,
+                                         Patrol.Goal.THOROUGH):
+                reason = 'Unknown thoroughness'
+            elif self.busy or (self.child is not None and not self.child.settled):
+                reason = 'Previous patrol or Nav2 cancellation is still active'
+            else:
+                reason = self._ready()
+            if reason:
+                self.get_logger().warning(f'Patrol rejected: {reason}')
+                return GoalResponse.REJECT
+            self.busy = True
+            self.stop_event.clear()
+            self.map_changed = False
+            return GoalResponse.ACCEPT
+
+    def _cancel(self, _goal_handle):
+        # ROS changes to CANCELING after this callback returns ACCEPT.
+        # The execute loop tests is_cancel_requested after the transition.
+        if self.child is not None:
+            self.child.cancel()
+        return CancelResponse.ACCEPT
+
+    def request_shutdown(self):
+        """Cancel outstanding robot motion before shutting down the node."""
+        self.stop_event.set()
+        if self.child is not None:
+            self.child.cancel()
+
+    def _observe(self):
+        with self.lock:
+            image = self.image
+            info = self.camera_info
+        stamp = (image.header.stamp.sec, image.header.stamp.nanosec)
+        if stamp == self.last_image_stamp:
+            return
+        image_time = Time.from_msg(image.header.stamp)
+        age = (self.get_clock().now() - image_time).nanoseconds / 1e9
+        if age < -0.1 or age > self.settings['sensor_timeout_s']:
+            return
+        optical_frame = self.settings['camera_optical_frame']
+        if not optical_frame and image.header.frame_id != info.header.frame_id:
+            return
+        try:
+            transform = self.tf.lookup_transform(
+                self.map_message.header.frame_id,
+                optical_frame or image.header.frame_id,
+                image_time)
+        except TransformException:
+            return
+        q = transform.transform.rotation
+        # CameraInfo uses an optical frame: +Z is the viewing direction.
+        forward_x = 2.0 * (q.x * q.z + q.w * q.y)
+        forward_y = 2.0 * (q.y * q.z - q.w * q.x)
+        if math.hypot(forward_x, forward_y) < 1e-6:
+            return
+        fov = 2.0 * math.atan2(info.width, 2.0 * info.k[0])
+        p = transform.transform.translation
+        self.planner.mark_observed(p.x, p.y, math.atan2(forward_y, forward_x), fov)
+        self.last_image_stamp = stamp
+        self.last_observation = time.monotonic()
+
+    def _pump(self, handle):
+        if self.stop_event.is_set() or handle.is_cancel_requested or not rclpy.ok():
+            raise PatrolInterrupted('Patrol canceled')
+        if self.map_changed:
+            raise PatrolInterrupted('Saved map changed; start a new patrol on that map')
+        reason = self._ready()
+        if reason:
+            raise PatrolInterrupted(reason)
+        now = time.monotonic()
+        if now - self.last_pump >= 1.0 / self.settings['observation_hz']:
+            self.last_pump = now
+            self._observe()
+        if now - self.last_observation > self.settings['sensor_timeout_s']:
+            raise PatrolInterrupted('No current camera frame with matching TF')
+        if now - self.last_feedback >= 1.0:
+            self.last_feedback = now
+            feedback = Patrol.Feedback()
+            feedback.state = self.phase
+            feedback.coverage_ratio = float(self.planner.coverage_ratio)
+            feedback.viewpoints_visited = self.visited
+            handle.publish_feedback(feedback)
+            self._publish_status(self.phase.lower(), '')
+
+    def _allowed(self, x, y):
+        message = self.costmap
+        origin = message.info.origin
+        angle = _yaw(origin.orientation)
+        dx, dy = x - origin.position.x, y - origin.position.y
+        resolution = message.info.resolution
+        if resolution <= 0:
+            return False
+        col = math.floor((math.cos(angle) * dx + math.sin(angle) * dy) / resolution)
+        row = math.floor((-math.sin(angle) * dx + math.cos(angle) * dy) / resolution)
+        if not (0 <= col < message.info.width and 0 <= row < message.info.height):
+            return False
+        cost = message.data[row * message.info.width + col]
+        return 0 <= cost <= self.settings['maximum_goal_cost']
+
+    def _run_child(self, client, request, handle, timeout):
+        self.child = ChildAction(client, request)
+        operation = self.child
+        while not operation.settled:
+            self._pump(handle)
+            elapsed = time.monotonic() - operation.sent_at
+            if operation.error is not None:
+                raise PatrolInterrupted(f'Nav2 communication failed: {operation.error}')
+            if (operation.handle is None and elapsed
+                    > self.settings['goal_response_timeout_s']):
+                raise PatrolInterrupted('Nav2 goal response timeout')
+            if elapsed > timeout:
+                if not self._settle_child():
+                    raise PatrolInterrupted('Nav2 did not confirm cancellation')
+                return False
+            operation.wake.wait(1.0 / self.settings['observation_hz'])
+            operation.wake.clear()
+        self._pump(handle)
+        if operation.result is None:
+            return False
+        if operation.result.status == GoalStatus.STATUS_CANCELED:
+            raise PatrolInterrupted('Nav2 goal was canceled externally')
+        return operation.result.status == GoalStatus.STATUS_SUCCEEDED
+
+    def _settle_child(self):
+        if self.child is None or self.child.settled:
+            return True
+        self.phase = 'CANCELING'
+        self._publish_status('stopping', 'Waiting for Nav2 to stop')
+        self.child.cancel()
+        deadline = time.monotonic() + self.settings['cancel_completion_timeout_s']
+        warned = False
+        while not self.child.settled and rclpy.ok():
+            if not warned and time.monotonic() > deadline:
+                warned = True
+                self.get_logger().error(
+                    'Nav2 stop is unconfirmed; retaining patrol ownership')
+                self._publish_status('stopping',
+                                     'Nav2 stop unconfirmed; retaining ownership')
+            self.child.wake.wait(0.05)
+            self.child.wake.clear()
+        return self.child.settled
+
+    def _execute(self, handle):
+        self.visited = 0
+        self.planner = None
+        self.phase = 'PLANNING'
+        self.last_image_stamp = None
+        self.last_feedback = 0.0
+        self.last_observation = time.monotonic()
+        success = False
+        detail = ''
+        try:
+            self._publish_status('planning', 'Computing reachable viewpoints')
+            rooms = None
+            room_file = self.settings['room_map_file']
+            if room_file:
+                rooms = json.loads(Path(room_file).expanduser().read_text(encoding='utf-8'))
+            info = self.camera_info
+            self.planner = CoveragePlanner(
+                _grid(self.map_message), self.profiles[handle.request.thoroughness],
+                self._robot_xy(), self.settings['robot_clearance_m'], rooms,
+                2.0 * math.atan2(info.width, 2.0 * info.k[0]))
+            self.last_observation = time.monotonic()
+            while True:
+                self._pump(handle)
+                if self.planner.complete:
+                    success = True
+                    detail = 'Requested coverage and reachable room visits completed'
+                    break
+                viewpoint = self.planner.select(self._robot_xy(), self._allowed)
+                if viewpoint is None:
+                    detail = 'No usable untried viewpoint remains; partial coverage returned'
+                    break
+                self.planner.mark_attempted(viewpoint.index)
+                request = NavigateToPose.Goal()
+                request.pose = PoseStamped()
+                request.pose.header.frame_id = self.map_message.header.frame_id
+                request.pose.header.stamp = self.get_clock().now().to_msg()
+                request.pose.pose.position.x = float(viewpoint.x)
+                request.pose.pose.position.y = float(viewpoint.y)
+                request.pose.pose.orientation.z = math.sin(viewpoint.yaw * 0.5)
+                request.pose.pose.orientation.w = math.cos(viewpoint.yaw * 0.5)
+                self.phase = 'NAVIGATING'
+                if not self._run_child(self.navigation, request, handle,
+                                       self.settings['navigation_timeout_s']):
+                    continue
+                self.visited += 1
+                self.phase = 'OBSERVING'
+                request = Spin.Goal()
+                request.target_yaw = 2.0 * math.pi
+                allowance = self.settings['spin_time_allowance_s']
+                request.time_allowance = Duration(seconds=allowance).to_msg()
+                self._run_child(self.spin_client, request, handle, allowance + 5.0)
+        except (PatrolInterrupted, ValueError, OSError, TransformException) as error:
+            detail = str(error)
+        except Exception as error:
+            self.get_logger().error(f'Patrol failed: {error}')
+            detail = f'Patrol failed: {error}'
+        finally:
+            settled = self._settle_child()
+            result = Patrol.Result()
+            result.success = success and settled and not handle.is_cancel_requested
+            result.coverage_ratio = float(self.planner.coverage_ratio) if self.planner else 0.0
+            result.viewpoints_visited = self.visited
+            result.message = detail
+            if not settled:
+                result.message += '; Nav2 stop unconfirmed; new patrols blocked until settled'
+            if handle.is_cancel_requested and settled:
+                handle.canceled()
+                state = 'idle'
+            elif result.success:
+                handle.succeed()
+                state = 'completed'
+            else:
+                handle.abort()
+                state = 'aborted'
+            self._publish_status(state, result.message)
+            with self.lock:
+                self.busy = False
+            return result
+
+    def _publish_status(self, state, detail):
         message = String()
-        message.data = json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-        self._status_publisher.publish(message)
+        message.data = json.dumps({
+            'state': state, 'detail': detail,
+            'coverage_ratio': float(self.planner.coverage_ratio) if self.planner else 0.0,
+            'viewpoints_visited': self.visited,
+            'unvisited_rooms': list(self.planner.unvisited_room_names)
+            if self.planner else [],
+            'inaccessible_rooms': list(self.planner.inaccessible_room_names)
+            if self.planner else [],
+        })
+        self.status.publish(message)
 
 
-def main(args=None) -> None:
-    """Run the patrol manager until ROS shutdown."""
-    rclpy.init(args=args)
-    node = None
+def main(args=None):
+    """Keep the Action server idle until requested and cancel on shutdown."""
+    # Keep ROS communication alive long enough to cancel Nav2 on SIGINT/TERM.
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+
+    def interrupt(_signum, _frame):
+        raise KeyboardInterrupt
+
+    previous_term = signal.signal(signal.SIGTERM, interrupt)
+    node = PatrolManager()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
     try:
-        node = PatrolManager()
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
-        pass
+        node.request_shutdown()
     finally:
-        if node is not None:
-            node.request_shutdown()
-            deadline = time.monotonic() + 1.0
-            while (
-                rclpy.ok()
-                and node.shutdown_pending
-                and time.monotonic() < deadline
-            ):
-                rclpy.spin_once(node, timeout_sec=0.05)
-            node.destroy_node()
+        node.request_shutdown()
+        while rclpy.ok() and (node.busy or (
+                node.child is not None and not node.child.settled)):
+            executor.spin_once(timeout_sec=0.1)
+        executor.shutdown()
+        node.server.destroy()
+        node.destroy_node()
+        signal.signal(signal.SIGTERM, previous_term)
         if rclpy.ok():
             rclpy.shutdown()
-
-
-if __name__ == '__main__':
-    main()

@@ -13,6 +13,7 @@ from malbut_system_manager.manifest_registry import (
 from malbut_system_manager.models import (
     CommandKind,
     ExecutionMode,
+    ExecutionResource,
     MissionPriority,
 )
 
@@ -111,6 +112,7 @@ def _document() -> dict:
         'execution': {
             'mode': 'FOREGROUND',
             'priority': 'NORMAL',
+            'resources': ['BASE'],
         },
     }
 
@@ -155,8 +157,57 @@ def test_loads_follow_person_manifest_and_canonicalizes_float32(
     assert manifest.command_name == '/follow_person'
     assert manifest.execution_mode is ExecutionMode.FOREGROUND
     assert manifest.priority is MissionPriority.NORMAL
+    assert manifest.resources == frozenset({ExecutionResource.BASE})
     assert manifest.input_fields['desired_distance_m'].ros_type == 'float32'
     assert manifest.interface_type is _FakeFollowPerson
+
+
+@pytest.mark.parametrize(
+    'resources',
+    [[], ['BASE', 'SPEAKER', 'BUZZER', 'LED', 'DISPLAY']],
+)
+def test_loads_explicit_resource_lists(tmp_path, resources) -> None:
+    """An empty list is explicit shared use; every output enum is accepted."""
+    document = _document()
+    document['execution']['resources'] = resources
+    _write_manifest(tmp_path, document)
+
+    manifest = _registry(tmp_path).get('follow_person')
+
+    assert manifest.resources == frozenset(map(ExecutionResource, resources))
+
+
+@pytest.mark.parametrize(
+    ('resources', 'message'),
+    [
+        ('BASE', 'resources must be a list'),
+        (None, 'resources must be a list'),
+        ({'BASE': True}, 'resources must be a list'),
+        (['CAMERA'], 'resources must contain only'),
+        (['base'], 'resources must contain only'),
+        ([1], 'resources entries must be strings'),
+        ([['BASE']], 'resources entries must be strings'),
+        (['BASE', 'BASE'], 'duplicate execution.resources'),
+    ],
+)
+def test_rejects_invalid_resource_lists(tmp_path, resources, message) -> None:
+    """Malformed resource metadata cannot silently disable conflict checks."""
+    document = _document()
+    document['execution']['resources'] = resources
+    _write_manifest(tmp_path, document)
+
+    with pytest.raises(ManifestError, match=message):
+        _registry(tmp_path)
+
+
+def test_requires_explicit_resources(tmp_path) -> None:
+    """Missing resource declarations are not treated as resource-free."""
+    document = _document()
+    del document['execution']['resources']
+    _write_manifest(tmp_path, document)
+
+    with pytest.raises(ManifestError, match='missing key.*resources'):
+        _registry(tmp_path)
 
 
 def test_parse_arguments_applies_defaults_and_accepts_overrides(

@@ -28,3 +28,4 @@ input:
 execution:
   mode: FOREGROUND
   priority: NORMAL
+  resources: [BASE]

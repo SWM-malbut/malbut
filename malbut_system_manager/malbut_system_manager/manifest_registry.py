@@ -14,6 +14,7 @@ from .models import (
     CapabilityManifest,
     CommandKind,
     ExecutionMode,
+    ExecutionResource,
     InputField,
     MissionPriority,
 )
@@ -267,7 +268,7 @@ class ManifestRegistry:
         execution = _mapping(document['execution'], path, 'execution')
         _expect_keys(
             execution,
-            required={'mode', 'priority'},
+            required={'mode', 'priority', 'resources'},
             context=f'{path}: execution',
         )
         try:
@@ -287,6 +288,28 @@ class ManifestRegistry:
                 f'{path}: execution.priority must be LOW, NORMAL, HIGH, '
                 'or URGENT'
             ) from error
+
+        resource_names = execution['resources']
+        if not isinstance(resource_names, list):
+            raise ManifestError(f'{path}: execution.resources must be a list')
+        resources: set[ExecutionResource] = set()
+        for name in resource_names:
+            if not isinstance(name, str):
+                raise ManifestError(
+                    f'{path}: execution.resources entries must be strings'
+                )
+            try:
+                resource = ExecutionResource(name)
+            except ValueError as error:
+                raise ManifestError(
+                    f'{path}: execution.resources must contain only BASE, '
+                    'SPEAKER, BUZZER, LED, or DISPLAY'
+                ) from error
+            if resource in resources:
+                raise ManifestError(
+                    f'{path}: duplicate execution.resources entry: {name}'
+                )
+            resources.add(resource)
 
         input_section = _mapping(document['input'], path, 'input')
         _expect_keys(
@@ -316,6 +339,7 @@ class ManifestRegistry:
             priority=priority,
             input_fields=parsed_fields,
             interface_type=interface_type,
+            resources=frozenset(resources),
             source_path=str(path),
         )
 

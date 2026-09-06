@@ -34,7 +34,7 @@ import tf2_ros
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from lifecycle_msgs.srv import GetState
-from malbut_interfaces.action import FollowPerson
+from malbut_interfaces.action import FollowPerson, Patrol
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.srv import GetCostmap
 from nav_msgs.msg import Path as NavPath
@@ -45,7 +45,6 @@ from malbut_gazebo.drive_modes import (
     AUTONOMOUS_MODES,
     TRIGGER_DRIVE_MODES,
     common_mode_state,
-    write_room_patrol_route,
 )
 from malbut_gazebo.pose_checkpoint import VALIDATION_TOPIC
 from malbut_gazebo.user_map_editor import (
@@ -486,6 +485,7 @@ class RobotWebBridge(Node):
         self.follow_person = ActionClient(
             self, FollowPerson, "follow_person"
         )
+        self.patrol = ActionClient(self, Patrol, "patrol")
         self.get_costmap = self.create_client(
             GetCostmap, "/global_costmap/get_costmap"
         )
@@ -584,14 +584,6 @@ class RobotWebBridge(Node):
         self.auto_cancel_message: str | None = None
         self.navigation_watchdog: NavigationWatchdog | None = None
         self.previews: dict[str, PreviewRecord] = {}
-        patrol_route = (
-            str(self.get_parameter("patrol_route_file").value).strip()
-            if self.has_parameter("patrol_route_file") else ""
-        )
-        self.patrol_route_file = (
-            Path(patrol_route).expanduser().resolve()
-            if patrol_route else None
-        )
         self.drive_clients = {
             mode: {
                 action: self.create_client(
@@ -609,6 +601,8 @@ class RobotWebBridge(Node):
         self.drive_started_monotonic = 0.0
         self.follow_goal_handle = None
         self.follow_cancel_requested = False
+        self.patrol_goal_handle = None
+        self.patrol_session_id = None
         self.drive_emergency_stop_pending = False
         validation_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
@@ -681,6 +675,18 @@ class RobotWebBridge(Node):
         with self.lock:
             self.drive_status[mode] = status
             current = self.autonomous_drive
+            if (
+                mode == "patrol"
+                and getattr(self, "patrol_session_id", None)
+                and self.patrol_session_id == current.get("session_id")
+            ):
+                if common_mode_state(mode, status) in {"idle", "failed"}:
+                    # Release control only when the Action result arrives.
+                    self.drive_status[mode] = {"state": "stopping"}
+                    return
+                if current.get("state") == "stopping":
+                    self.drive_status[mode] = {"state": "stopping"}
+                    return
             active_modes = [
                 candidate
                 for candidate, candidate_status in self.drive_status.items()
@@ -1095,6 +1101,27 @@ class RobotWebBridge(Node):
 
     def _stop_mode_transport(self, mode: str, message: str) -> None:
         """Issue one bounded stop without acquiring the operation lock."""
+        if mode == "patrol":
+            with self.lock:
+                goal_handle = self.patrol_goal_handle
+            if goal_handle is None:
+                raise NavigationError(
+                    409, "PATROL_NOT_ACTIVE", "진행 중인 순찰을 찾을 수 없습니다."
+                )
+            response = self._wait(
+                goal_handle.cancel_goal_async(), CANCEL_TIMEOUT_S, "순찰 중지"
+            )
+            if not response.goals_canceling:
+                if goal_handle.status in {
+                    GoalStatus.STATUS_SUCCEEDED,
+                    GoalStatus.STATUS_CANCELED,
+                    GoalStatus.STATUS_ABORTED,
+                }:
+                    return
+                raise NavigationError(
+                    409, "PATROL_CANCEL_REJECTED", "순찰 취소가 거절됐습니다."
+                )
+            return
         if mode == "person_following":
             with self.lock:
                 goal_handle = self.follow_goal_handle
@@ -1194,6 +1221,8 @@ class RobotWebBridge(Node):
             ]
             if self.follow_person.server_is_ready():
                 available.append("person_following")
+            if self.patrol.server_is_ready():
+                available.append("patrol")
             if autonomous["mode"] == "idle":
                 drive_mode = _drive_mode_from_navigation(navigation)
             else:
@@ -1392,8 +1421,179 @@ class RobotWebBridge(Node):
                 "message": "사람 따라가기를 중지하고 있습니다.",
             }
 
+    def _patrol_result(self, session_id: str, future: object) -> None:
+        """Release the patrol lease only after its Action has finished."""
+        try:
+            wrapped = future.result()
+            result = wrapped.result
+            finished = (
+                wrapped.status == GoalStatus.STATUS_CANCELED or result.success
+            )
+            message = str(result.message or "")[:512]
+            detail = {
+                "coverage_ratio": result.coverage_ratio,
+                "viewpoints_visited": result.viewpoints_visited,
+            }
+        except Exception as error:
+            # Losing the result response is not a terminal robot-motion state.
+            with self.lock:
+                if self.patrol_session_id == session_id:
+                    self.drive_status["patrol"] = {"state": "stopping"}
+                    self.autonomous_drive = {
+                        **self.autonomous_drive, "state": "stopping",
+                        "message": f"순찰 종료 확인이 필요합니다: {error}"[:512],
+                    }
+            return
+        with self.lock:
+            current = self.autonomous_drive
+            if self.patrol_session_id != session_id:
+                return
+            self.patrol_goal_handle = None
+            self.patrol_session_id = None
+            self.drive_status["patrol"] = {"state": "idle"}
+            if current.get("session_id") != session_id:
+                return
+            self.drive_seen_active = False
+            self.autonomous_drive = (
+                {**self._idle_autonomous_drive(), "message": message,
+                 "detail": detail}
+                if finished else
+                {**current, "state": "failed", "message": message,
+                 "detail": detail}
+            )
+
+    def _patrol_command(self, action: str, request: dict) -> dict:
+        """Start map coverage or cancel it; resume starts a fresh coverage run."""
+        with self.operation_lock:
+            with self.lock:
+                previous = dict(self.autonomous_drive)
+                navigation = dict(self.navigation_state)
+            if action in {"start", "resume"}:
+                self._require_ready()
+                if navigation.get("state") in {"driving", "canceling"}:
+                    raise NavigationError(
+                        409, "NAVIGATION_IN_PROGRESS", "목적지 이동을 먼저 중지해 주세요."
+                    )
+                self._require_autonomous_idle()
+                thoroughness = request.get("thoroughness", Patrol.Goal.NORMAL)
+                if type(thoroughness) is not int or thoroughness not in {
+                    Patrol.Goal.LIGHT, Patrol.Goal.NORMAL, Patrol.Goal.THOROUGH,
+                }:
+                    raise NavigationError(
+                        422, "INVALID_THOROUGHNESS", "순찰 강도는 0, 1, 2 중 하나입니다."
+                    )
+                if not self.patrol.wait_for_server(timeout_sec=1.0):
+                    raise NavigationError(
+                        503, "PATROL_UNAVAILABLE", "순찰 Action이 아직 준비되지 않았습니다."
+                    )
+                session_id = secrets.token_hex(8)
+                started = {
+                    "mode": "patrol", "state": "starting",
+                    "session_id": session_id,
+                    "message": "지도와 카메라를 기준으로 순찰을 준비합니다.",
+                }
+                with self.lock:
+                    self.autonomous_drive = started
+                    self.drive_seen_active = False
+                    self.drive_started_monotonic = time.monotonic()
+                    self.patrol_session_id = session_id
+                    self.drive_status["patrol"] = {"state": "starting"}
+                goal = Patrol.Goal()
+                goal.thoroughness = thoroughness
+                try:
+                    response_future = self.patrol.send_goal_async(goal)
+                except Exception as error:
+                    with self.lock:
+                        self.autonomous_drive = previous
+                        self.patrol_session_id = None
+                        self.drive_status["patrol"] = {"state": "idle"}
+                    raise NavigationError(
+                        502, "PATROL_CALL_FAILED", "순찰 요청을 전송하지 못했습니다."
+                    ) from error
+                try:
+                    goal_handle = self._wait(
+                        response_future, SEND_GOAL_TIMEOUT_S, "순찰 시작",
+                    )
+                except NavigationError:
+                    with self.lock:
+                        self.autonomous_drive = {
+                            **started, "state": "stopping",
+                            "message": "지연된 순찰 응답을 기다려 안전 중지합니다.",
+                        }
+                        self.drive_status["patrol"] = {"state": "stopping"}
+                    response_future.add_done_callback(
+                        partial(self._cancel_delayed_patrol, session_id)
+                    )
+                    raise
+                if not goal_handle.accepted:
+                    with self.lock:
+                        self.autonomous_drive = previous
+                        self.patrol_session_id = None
+                        self.drive_status["patrol"] = {"state": "idle"}
+                    raise NavigationError(
+                        409, "PATROL_REJECTED", "순찰 요청이 거절됐습니다."
+                    )
+                with self.lock:
+                    self.patrol_goal_handle = goal_handle
+                goal_handle.get_result_async().add_done_callback(
+                    partial(self._patrol_result, session_id)
+                )
+                return dict(started)
+
+            session_id = request.get("session_id")
+            if (
+                not isinstance(session_id, str)
+                or previous.get("mode") != "patrol"
+                or previous.get("session_id") != session_id
+            ):
+                raise NavigationError(
+                    404, "DRIVE_MODE_NOT_FOUND", "해당 주행 세션을 찾을 수 없습니다."
+                )
+            with self.lock:
+                self.autonomous_drive = {
+                    **previous, "state": "stopping", "message": "순찰을 중지합니다.",
+                }
+                self.drive_status["patrol"] = {"state": "stopping"}
+            try:
+                self._stop_mode_transport("patrol", "순찰을 중지합니다.")
+            except NavigationError:
+                with self.lock:
+                    if self.patrol_session_id == session_id:
+                        self.autonomous_drive = previous
+                raise
+            # The old pause endpoint cancels to idle. There is no paused run.
+            return {
+                "mode": "patrol", "state": "stopping",
+                "session_id": session_id, "message": "순찰을 중지합니다.",
+            }
+
+    def _cancel_delayed_patrol(self, session_id: str, future: object) -> None:
+        """Cancel a late acceptance and hold its lease until the final result."""
+        try:
+            goal_handle = future.result()
+            with self.lock:
+                if self.patrol_session_id != session_id:
+                    return
+                if not goal_handle.accepted:
+                    self.patrol_session_id = None
+                    self.drive_status["patrol"] = {"state": "idle"}
+                    self.autonomous_drive = self._idle_autonomous_drive()
+                    return
+                self.patrol_goal_handle = goal_handle
+            goal_handle.get_result_async().add_done_callback(
+                partial(self._patrol_result, session_id)
+            )
+            goal_handle.cancel_goal_async()
+        except Exception:
+            # A failed response is not proof that the server stopped its goal.
+            with self.lock:
+                if self.patrol_session_id == session_id:
+                    self.autonomous_drive["message"] = (
+                        "순찰 중지 확인이 필요합니다. 다른 주행은 시작하지 않습니다."
+                    )
+
     def drive_mode_command(self, action: str, request: dict) -> dict:
-        """Invoke one patrol or roaming lifecycle service under one lease."""
+        """Invoke an autonomous Action or roaming service under one lease."""
         mode = request.get("mode")
         if mode not in AUTONOMOUS_MODES or action not in {
             "start", "pause", "resume", "stop"
@@ -1403,6 +1603,8 @@ class RobotWebBridge(Node):
             )
         if mode == "person_following":
             return self._person_follow_command(action, request)
+        if mode == "patrol":
+            return self._patrol_command(action, request)
         with self.operation_lock:
             with self.lock:
                 previous = dict(self.autonomous_drive)
@@ -1416,23 +1618,6 @@ class RobotWebBridge(Node):
                         "목적지 이동을 먼저 중지해 주세요.",
                     )
                 self._require_autonomous_idle()
-                if mode == "patrol":
-                    if self.patrol_route_file is None:
-                        raise NavigationError(
-                            503,
-                            "PATROL_ROUTE_UNAVAILABLE",
-                            "현재 지도에 맞는 순찰 경로가 없습니다.",
-                        )
-                    try:
-                        write_room_patrol_route(
-                            self.map_path,
-                            self.patrol_route_file,
-                            self.map_id,
-                        )
-                    except ValueError as error:
-                        raise NavigationError(
-                            409, "PATROL_ROUTE_INVALID", str(error)
-                        ) from error
                 session_id = secrets.token_hex(8)
                 with self.lock:
                     self.autonomous_drive = {

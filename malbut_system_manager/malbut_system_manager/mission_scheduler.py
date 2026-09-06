@@ -18,15 +18,12 @@ from .state_store import StateStore
 ConflictPolicy = Callable[[MissionRecord, MissionRecord], bool]
 
 
-def foregrounds_conflict(
+def resources_conflict(
     first: MissionRecord,
     second: MissionRecord,
 ) -> bool:
-    """Use the safe v1 policy until coexistence pairs are specified."""
-    return (
-        first.mode is ExecutionMode.FOREGROUND
-        and second.mode is ExecutionMode.FOREGROUND
-    )
+    """Conflict only when two missions claim the same exclusive output."""
+    return not first.resources.isdisjoint(second.resources)
 
 
 class MissionScheduler:
@@ -36,7 +33,7 @@ class MissionScheduler:
         self,
         state: StateStore,
         *,
-        conflict_policy: ConflictPolicy = foregrounds_conflict,
+        conflict_policy: ConflictPolicy = resources_conflict,
     ) -> None:
         self.state = state
         self._conflicts = conflict_policy
@@ -50,37 +47,20 @@ class MissionScheduler:
         if gate_error:
             return self._reject(mission, gate_error)
 
-        if mission.mode is ExecutionMode.BACKGROUND:
-            self.state.activate(mission)
-            effects.start.append(mission.mission_id)
-            effects.updated.add(mission.mission_id)
-            return effects
-
-        if self.state.pending:
-            pending = next(iter(self.state.pending.values()))
-            if mission.priority < pending.priority:
-                return self._reject(
-                    mission,
-                    f'pending mission {pending.mission_id} has higher '
-                    f'priority {pending.priority.name}',
-                )
-            return self._replace_pending(pending, mission)
-
         conflicts = [
             active
-            for active in self.state.active_foreground.values()
+            for active in self.state.active()
             if self._conflicts(active, mission)
         ]
-        if not conflicts:
-            self.state.activate(mission)
-            effects.start.append(mission.mission_id)
-            effects.updated.add(mission.mission_id)
-            return effects
-
+        pending_conflicts = [
+            pending
+            for pending in self.state.pending.values()
+            if self._conflicts(pending, mission)
+        ]
         higher = [
-            active
-            for active in conflicts
-            if active.priority > mission.priority
+            other
+            for other in conflicts + pending_conflicts
+            if other.priority > mission.priority
         ]
         if higher:
             blocker = max(higher, key=lambda item: item.priority)
@@ -90,15 +70,25 @@ class MissionScheduler:
                 f'priority {blocker.priority.name}',
             )
 
+        # Validate all blockers before replacing any already accepted request.
+        for pending in pending_conflicts:
+            self._supersede_pending(pending, mission, effects)
+
         mission.waiting_for = {item.mission_id for item in conflicts}
-        self.state.add_pending(mission)
+        if conflicts:
+            self.state.add_pending(mission)
+        else:
+            self.state.activate(mission)
+            effects.start.append(mission.mission_id)
         effects.updated.add(mission.mission_id)
         for active in conflicts:
-            active.state = MissionState.CANCELING
-            active.cancel_reason = CancelReason.PREEMPTION
-            active.preempted_by = mission.mission_id
-            effects.cancel.append(active.mission_id)
+            active.preempted_by.add(mission.mission_id)
+            if active.state is not MissionState.CANCELING:
+                active.state = MissionState.CANCELING
+                active.cancel_reason = CancelReason.PREEMPTION
+                effects.cancel.append(active.mission_id)
             effects.updated.add(active.mission_id)
+        effects.extend(self._start_ready())
         return effects
 
     def request_cancel(
@@ -176,7 +166,7 @@ class MissionScheduler:
         for mission in list(self.state.active()):
             mission.state = MissionState.CANCELING
             mission.cancel_reason = CancelReason.SHUTDOWN
-            mission.preempted_by = None
+            mission.preempted_by.clear()
             effects.cancel.append(mission.mission_id)
             effects.updated.add(mission.mission_id)
         return effects
@@ -280,14 +270,16 @@ class MissionScheduler:
                     ),
                 )
             )
+            mission.preempted_by.clear()
+            self._abort_waiters(mission_id, message, effects)
             effects.updated.add(mission_id)
+            effects.extend(self._start_ready())
             return effects
         if mission.cancel_reason is CancelReason.SHUTDOWN:
             mission.state = MissionState.CANCELING
             effects.updated.add(mission_id)
             return effects
 
-        preemptor_id = mission.preempted_by
         if mission.user_cancel_requested:
             mission.state = MissionState.RUNNING
             mission.cancel_reason = None
@@ -305,22 +297,9 @@ class MissionScheduler:
         else:
             mission.state = MissionState.RUNNING
             mission.cancel_reason = None
-        mission.preempted_by = None
+        mission.preempted_by.clear()
         effects.updated.add(mission_id)
-        if preemptor_id is None:
-            return effects
-
-        pending = self.state.pending.pop(preemptor_id, None)
-        if pending is not None:
-            effects.complete.append(
-                MissionCompletion(
-                    preemptor_id,
-                    TerminalOutcome.ABORTED,
-                    message=message,
-                )
-            )
-            effects.updated.add(preemptor_id)
-        self._release_preempted_by(preemptor_id, effects)
+        self._abort_waiters(mission_id, message, effects)
         effects.extend(self._start_ready())
         return effects
 
@@ -337,11 +316,10 @@ class MissionScheduler:
         if mission is None:
             return effects
 
-        preemptor_id = mission.preempted_by
         mission.state = MissionState.RUNNING
         mission.cancel_reason = None
         mission.user_cancel_requested = False
-        mission.preempted_by = None
+        mission.preempted_by.clear()
         mission.resumable = False
         effects.complete.append(
             MissionCompletion(
@@ -352,49 +330,42 @@ class MissionScheduler:
         )
         effects.updated.add(mission_id)
 
-        if preemptor_id is not None:
-            pending = self.state.pending.pop(preemptor_id, None)
-            if pending is not None:
-                effects.complete.append(
-                    MissionCompletion(
-                        preemptor_id,
-                        TerminalOutcome.ABORTED,
-                        message=(
-                            'conflicting mission dispatch could not be '
-                            'resolved'
-                        ),
-                    )
-                )
-                effects.updated.add(preemptor_id)
-            self._release_preempted_by(preemptor_id, effects)
+        self._abort_waiters(
+            mission_id,
+            'conflicting mission dispatch could not be resolved',
+            effects,
+        )
         effects.extend(self._start_ready())
         return effects
 
-    def _replace_pending(
+    def _abort_waiters(
+        self,
+        blocker_id: str,
+        message: str,
+        effects: SchedulerEffects,
+    ) -> None:
+        """Fail every request waiting for an action that cannot stop."""
+        for pending in list(self.state.pending.values()):
+            if blocker_id not in pending.waiting_for:
+                continue
+            self.state.remove(pending.mission_id)
+            effects.complete.append(
+                MissionCompletion(
+                    pending.mission_id,
+                    TerminalOutcome.ABORTED,
+                    message=message,
+                )
+            )
+            effects.updated.add(pending.mission_id)
+            self._release_preempted_by(pending.mission_id, effects)
+
+    def _supersede_pending(
         self,
         pending: MissionRecord,
         incoming: MissionRecord,
-    ) -> SchedulerEffects:
-        active_foreground = list(self.state.active_foreground.values())
-        conflicts = [
-            active
-            for active in active_foreground
-            if self._conflicts(active, incoming)
-        ]
-        higher = [
-            active
-            for active in conflicts
-            if active.priority > incoming.priority
-        ]
-        if higher:
-            blocker = max(higher, key=lambda item: item.priority)
-            return self._reject(
-                incoming,
-                f'conflicting mission {blocker.mission_id} has higher '
-                f'priority {blocker.priority.name}',
-            )
-
-        effects = SchedulerEffects()
+        effects: SchedulerEffects,
+    ) -> None:
+        """Replace one conflicting reservation and transfer resume links."""
         self.state.remove(pending.mission_id)
         effects.complete.append(
             MissionCompletion(
@@ -408,41 +379,15 @@ class MissionScheduler:
         )
         effects.updated.add(pending.mission_id)
 
-        incoming.waiting_for = {item.mission_id for item in conflicts}
-        conflict_ids = incoming.waiting_for
-        for active in active_foreground:
-            was_preempted = active.preempted_by == pending.mission_id
-            is_conflict = active.mission_id in conflict_ids
-            if was_preempted and not is_conflict:
-                active.preempted_by = None
-                effects.updated.add(active.mission_id)
-            if not is_conflict:
+        for previous in list(self.state.active()) + list(
+            self.state.suspended.values()
+        ):
+            if pending.mission_id not in previous.preempted_by:
                 continue
-            active.preempted_by = incoming.mission_id
-            if active.state is not MissionState.CANCELING:
-                active.state = MissionState.CANCELING
-                active.cancel_reason = CancelReason.PREEMPTION
-                effects.cancel.append(active.mission_id)
-            effects.updated.add(active.mission_id)
-
-        for suspended in self.state.suspended.values():
-            if suspended.preempted_by != pending.mission_id:
-                continue
-            suspended.preempted_by = (
-                incoming.mission_id
-                if self._conflicts(suspended, incoming)
-                else None
-            )
-            effects.updated.add(suspended.mission_id)
-
-        if conflicts:
-            self.state.add_pending(incoming)
-        else:
-            self.state.activate(incoming)
-            effects.start.append(incoming.mission_id)
-        effects.updated.add(incoming.mission_id)
-        effects.extend(self._start_ready())
-        return effects
+            previous.preempted_by.discard(pending.mission_id)
+            if self._conflicts(previous, incoming):
+                previous.preempted_by.add(incoming.mission_id)
+            effects.updated.add(previous.mission_id)
 
     def set_ready(self, ready: bool) -> SchedulerEffects:
         """Open or close mission admission after startup validation."""
@@ -473,7 +418,7 @@ class MissionScheduler:
                 continue
             conflicts = [
                 active
-                for active in self.state.active_foreground.values()
+                for active in self.state.active()
                 if self._conflicts(active, mission)
             ]
             if conflicts:
@@ -483,12 +428,14 @@ class MissionScheduler:
             effects.updated.add(mission.mission_id)
 
         for mission in list(self.state.suspended.values()):
-            if mission.preempted_by is not None or self._gate_error(mission):
+            if mission.preempted_by or self._gate_error(mission):
                 continue
             conflicts = [
-                active
-                for active in self.state.active_foreground.values()
-                if self._conflicts(active, mission)
+                other
+                for other in list(self.state.active()) + list(
+                    self.state.pending.values()
+                )
+                if self._conflicts(other, mission)
             ]
             if conflicts:
                 continue
@@ -504,13 +451,12 @@ class MissionScheduler:
         mission_id: str,
         effects: SchedulerEffects,
     ) -> None:
-        for suspended in self.state.suspended.values():
-            if suspended.preempted_by == mission_id:
-                suspended.preempted_by = None
-                effects.updated.add(suspended.mission_id)
-        for active in self.state.active_foreground.values():
-            if active.preempted_by == mission_id:
-                active.preempted_by = None
+        for previous in list(self.state.active()) + list(
+            self.state.suspended.values()
+        ):
+            if mission_id in previous.preempted_by:
+                previous.preempted_by.discard(mission_id)
+                effects.updated.add(previous.mission_id)
 
     def _gate_error(self, mission: MissionRecord) -> str:
         if not self.state.ready:

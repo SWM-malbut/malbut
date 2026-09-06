@@ -5,7 +5,6 @@ import hashlib
 import http.client
 from http.server import ThreadingHTTPServer
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from threading import Lock, Thread
 import time
@@ -103,6 +102,7 @@ class _FollowClient:
         return timeout_sec > 0
 
     def send_goal_async(self, _goal):
+        self.last_goal = _goal
         return _ImmediateFuture(self.goal_handle)
 
 
@@ -429,53 +429,41 @@ def test_destination_navigation_reports_one_common_drive_mode():
     assert _drive_mode_from_navigation({"state": "succeeded"})["mode"] == "idle"
 
 
-def test_autonomous_drive_mode_owns_one_session_and_rejects_conflicts(tmp_path):
-    """Patrol and roaming must never own Nav2 at the same time."""
-    user_map = tmp_path / "user-map.geojson"
-    user_map.write_text(json.dumps({
-        "type": "FeatureCollection",
-        "map_id": "home",
-        "features": [{
-            "type": "Feature",
-            "id": "room-1",
-            "properties": {
-                "role": "room", "name": "거실",
-                "representative_point": [1.0, 2.0],
-            },
-            "geometry": {"type": "Polygon", "coordinates": []},
-        }],
-    }), encoding="utf-8")
+def _patrol_web_bridge():
     bridge = object.__new__(RobotWebBridge)
     bridge.lock = Lock()
     bridge.operation_lock = Lock()
-    bridge.map_path = user_map
-    bridge.map_id = "home"
-    bridge.patrol_route_file = tmp_path / "room-patrol.yaml"
     bridge.navigation_state = {"state": "idle"}
     bridge.autonomous_drive = bridge._idle_autonomous_drive()
     bridge.drive_seen_active = False
     bridge.drive_started_monotonic = 0.0
     bridge.drive_emergency_stop_pending = False
     bridge.drive_status = {"patrol": {}, "roaming": {}}
-    bridge.follow_person = _FollowClient()
-    bridge.follow_goal_handle = None
-    bridge.follow_cancel_requested = False
+    bridge.patrol = _FollowClient()
+    bridge.patrol_goal_handle = None
+    bridge.patrol_session_id = None
     bridge.drive_clients = {
-        mode: {action: _DriveClient() for action in (
+        "roaming": {action: _DriveClient() for action in (
             "start", "pause", "resume", "stop",
-        )}
-        for mode in ("patrol", "roaming")
+        )},
     }
     bridge._require_ready = lambda: {"x": 0.0, "y": 0.0, "yaw": 0.0}
+    return bridge
 
-    started = bridge.drive_mode_command("start", {"mode": "patrol"})
+
+def test_patrol_action_owns_session_until_cancellation_result():
+    """Keep the lease until Nav2 cleanup has finished inside Patrol."""
+    bridge = _patrol_web_bridge()
+    started = bridge.drive_mode_command("start", {
+        "mode": "patrol", "thoroughness": 2,
+    })
     session_id = started["session_id"]
     assert session_id
-    assert Path(bridge.patrol_route_file).is_file()
+    assert bridge.patrol.last_goal.thoroughness == 2
     status = String()
     status.data = json.dumps({
-        "state": "navigating", "detail": "moving",
-        "waypoint_index": 0, "waypoint_count": 1,
+        "state": "navigating", "coverage_ratio": 0.3,
+        "viewpoints_visited": 2,
     })
     bridge._receive_drive_status("patrol", status)
     assert bridge.autonomous_drive["state"] == "active"
@@ -484,19 +472,6 @@ def test_autonomous_drive_mode_owns_one_session_and_rejects_conflicts(tmp_path):
     with pytest.raises(NavigationError) as conflict:
         bridge.drive_mode_command("start", {"mode": "roaming"})
     assert conflict.value.code == "DRIVE_MODE_IN_PROGRESS"
-    conflicting_status = String()
-    conflicting_status.data = json.dumps({
-        "state": "navigating", "detail": "unexpected roaming",
-    })
-    bridge._receive_drive_status("roaming", conflicting_status)
-    assert bridge.autonomous_drive["state"] == "failed"
-    assert bridge.autonomous_drive["detail"] == {
-        "active_modes": ["patrol", "roaming"],
-    }
-    conflicting_status.data = json.dumps({"state": "idle"})
-    bridge._receive_drive_status("roaming", conflicting_status)
-    assert bridge.autonomous_drive["mode"] == "patrol"
-    assert bridge.autonomous_drive["state"] == "active"
     with pytest.raises(NavigationError) as stale:
         bridge.drive_mode_command("pause", {
             "mode": "patrol", "session_id": "wrong-session",
@@ -506,15 +481,107 @@ def test_autonomous_drive_mode_owns_one_session_and_rejects_conflicts(tmp_path):
     bridge.drive_mode_command("pause", {
         "mode": "patrol", "session_id": session_id,
     })
-    status.data = json.dumps({"state": "paused", "detail": "paused"})
+    assert bridge.patrol.goal_handle.cancel_calls == 1
+    assert bridge.autonomous_drive["state"] == "stopping"
+    status.data = json.dumps({"state": "idle"})
     bridge._receive_drive_status("patrol", status)
-    assert bridge.autonomous_drive["state"] == "paused"
-    bridge.drive_mode_command("stop", {
-        "mode": "patrol", "session_id": session_id,
-    })
-    status.data = json.dumps({"state": "idle", "detail": "stopped"})
-    bridge._receive_drive_status("patrol", status)
+    assert bridge.autonomous_drive["state"] == "stopping"
+    with pytest.raises(NavigationError):
+        bridge.drive_mode_command("start", {"mode": "roaming"})
+
+    bridge.patrol.goal_handle.result_future.complete(SimpleNamespace(
+        status=GoalStatus.STATUS_CANCELED,
+        result=SimpleNamespace(
+            success=False, message="canceled",
+            coverage_ratio=0.3, viewpoints_visited=2,
+        ),
+    ))
     assert bridge.autonomous_drive["mode"] == "idle"
+    assert bridge.patrol_goal_handle is None
+
+    bridge.patrol.goal_handle = _FollowGoalHandle()
+    restarted = bridge.drive_mode_command("resume", {"mode": "patrol"})
+    assert restarted["session_id"] != session_id
+    assert bridge.patrol.last_goal.thoroughness == 1
+
+
+@pytest.mark.parametrize("value", [-1, 3, True, 1.2, "normal"])
+def test_patrol_web_rejects_invalid_thoroughness(value):
+    """Reject invalid public Goal values before dispatch."""
+    bridge = _patrol_web_bridge()
+    with pytest.raises(NavigationError) as caught:
+        bridge.drive_mode_command("start", {
+            "mode": "patrol", "thoroughness": value,
+        })
+    assert caught.value.code == "INVALID_THOROUGHNESS"
+    assert bridge.autonomous_drive["mode"] == "idle"
+
+
+def test_patrol_result_transport_error_keeps_motion_lease():
+    """A lost result response must not allow a competing motion to start."""
+    bridge = _patrol_web_bridge()
+    started = bridge.drive_mode_command("start", {"mode": "patrol"})
+
+    def failed_result():
+        raise RuntimeError("connection lost")
+
+    bridge._patrol_result(started["session_id"],
+                          SimpleNamespace(result=failed_result))
+    assert bridge.patrol_session_id == started["session_id"]
+    assert bridge.patrol_goal_handle is not None
+    assert bridge.autonomous_drive["state"] == "stopping"
+    with pytest.raises(NavigationError):
+        bridge.drive_mode_command("start", {"mode": "roaming"})
+
+
+def test_patrol_completed_action_returns_to_idle_with_coverage():
+    """The Action result provides final camera coverage to the web."""
+    bridge = _patrol_web_bridge()
+    bridge.drive_mode_command("start", {"mode": "patrol"})
+    status = String()
+    status.data = json.dumps({"state": "completed"})
+    bridge._receive_drive_status("patrol", status)
+    assert bridge.autonomous_drive["mode"] == "patrol"
+    bridge.patrol.goal_handle.result_future.complete(SimpleNamespace(
+        status=GoalStatus.STATUS_SUCCEEDED,
+        result=SimpleNamespace(
+            success=True, message="completed",
+            coverage_ratio=0.92, viewpoints_visited=8,
+        ),
+    ))
+    assert bridge.autonomous_drive["mode"] == "idle"
+    assert bridge.autonomous_drive["detail"]["coverage_ratio"] == 0.92
+
+
+def test_timed_out_patrol_late_acceptance_is_canceled_before_releasing(monkeypatch):
+    """A delayed goal response must not leave an unowned navigation running."""
+    bridge = _patrol_web_bridge()
+    pending_response = _PendingFuture()
+    bridge.patrol.send_goal_async = lambda _goal: pending_response
+    monkeypatch.setattr(robot_web_server_module, "SEND_GOAL_TIMEOUT_S", 0.001)
+    with pytest.raises(NavigationError) as caught:
+        bridge.drive_mode_command("start", {"mode": "patrol"})
+    assert caught.value.code == "NAV2_TIMEOUT"
+    assert bridge.autonomous_drive["state"] == "stopping"
+    # An unrelated idle status cannot accidentally free the pending lease.
+    message = String()
+    message.data = json.dumps({"state": "idle"})
+    bridge._receive_drive_status("roaming", message)
+    with pytest.raises(NavigationError) as conflict:
+        bridge.drive_mode_command("start", {"mode": "roaming"})
+    assert conflict.value.code == "DRIVE_MODE_IN_PROGRESS"
+    pending_response.complete(bridge.patrol.goal_handle)
+    assert bridge.patrol.goal_handle.cancel_calls == 1
+    assert bridge.autonomous_drive["state"] == "stopping"
+    bridge.patrol.goal_handle.result_future.complete(SimpleNamespace(
+        status=GoalStatus.STATUS_CANCELED,
+        result=SimpleNamespace(
+            success=False, message="canceled",
+            coverage_ratio=0.0, viewpoints_visited=0,
+        ),
+    ))
+    assert bridge.autonomous_drive["mode"] == "idle"
+    assert bridge.patrol_goal_handle is None
 
 
 def test_person_following_reports_recovery_and_stops_on_safety_loss(tmp_path):
@@ -524,7 +591,6 @@ def test_person_following_reports_recovery_and_stops_on_safety_loss(tmp_path):
     bridge.operation_lock = Lock()
     bridge.map_path = tmp_path / "user-map.geojson"
     bridge.map_id = "home"
-    bridge.patrol_route_file = None
     bridge.navigation_state = {"state": "idle"}
     bridge.autonomous_drive = bridge._idle_autonomous_drive()
     bridge.drive_seen_active = False
@@ -535,7 +601,7 @@ def test_person_following_reports_recovery_and_stops_on_safety_loss(tmp_path):
         mode: {action: _DriveClient() for action in (
             "start", "pause", "resume", "stop",
         )}
-        for mode in ("patrol", "roaming")
+        for mode in ("roaming",)
     }
     bridge.follow_person = _FollowClient()
     bridge.follow_goal_handle = None

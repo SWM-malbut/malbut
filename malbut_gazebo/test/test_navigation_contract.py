@@ -149,7 +149,7 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
     assert 'pose_checkpoint_map_revision' in declared_arguments
     assert 'boot_pose_trusted' in declared_arguments
     assert 'autonomous_modes' in declared_arguments
-    assert 'patrol_route_file' in declared_arguments
+    assert 'patrol_route_file' not in declared_arguments
     assert 'person_following' in declared_arguments
     assert 'person_projection_frame' in declared_arguments
     assert 'inscribed_escape_enabled' in declared_arguments
