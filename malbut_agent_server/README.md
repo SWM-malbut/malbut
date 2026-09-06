@@ -1,5 +1,8 @@
 # Malbut Agent Server
 
+Agent의 기준 문서는 [Malbut Agent 명세](docs/AGENT_ROS2_INTERFACE_SPEC.md)다.
+이전 상세 명세는 [보관본](docs/AGENT_ROS2_INTERFACE_SPEC_LEGACY.md)에서 확인할 수 있다.
+
 `malbut_agent_server`는 LLM과 로봇 실행 계층 사이의 안전 계약, 사용자별
 멀티턴 세션, 제한된 대화·기억 컨텍스트, LLM provider 연결과
 서버 소유 Tool capability 경계를
