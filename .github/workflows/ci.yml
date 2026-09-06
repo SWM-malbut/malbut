@@ -259,7 +259,8 @@ jobs:
               malbut_agent_server \
               malbut_scenarios \
               malbut_perception \
-              malbut_tracking
+              malbut_tracking \
+              malbut_system_manager
 
       - name: Test patrol package
         if: needs.changes.outputs.ros == 'true'
@@ -285,7 +286,8 @@ jobs:
               malbut_agent_server \
               malbut_scenarios \
               malbut_perception \
-              malbut_tracking
+              malbut_tracking \
+              malbut_system_manager
           colcon test-result --verbose
 
       - name: Validate robot Xacro

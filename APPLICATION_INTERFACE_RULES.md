@@ -14,13 +14,13 @@
 Capability Manifest는 ROS 표준을 대체하지 않는 **Malbut 기능 등록 규격**입니다. `.action/.srv/.msg`가 필드와 상수의 최종 기준입니다.
 
 ```text
-<application_package>/
+malbut_interfaces/
 ├── capabilities/
 │   └── <capability_id>.yaml
 └── ...
 ```
 
-설치 시 `capabilities/`를 `share/<application_package>/capabilities/`에 포함합니다.
+설치 시 `capabilities/`를 `share/malbut_interfaces/capabilities/`에 포함합니다. 이 중앙 폴더가 시스템 관리자가 실행할 수 있는 기능의 허용 목록입니다.
 
 ## 2. Capability Manifest 구조
 
@@ -47,7 +47,8 @@ input:                               # object
       default: ros_value             # 선택, 없으면 필수 입력
 
 execution:                           # object
-  mode: enum(FOREGROUND, BACKGROUND, IMMEDIATE)
+  mode: enum(FOREGROUND, BACKGROUND)
+  priority: enum(LOW, NORMAL, HIGH, URGENT)
 ```
 
 | 항목 | 의미 |
@@ -55,11 +56,14 @@ execution:                           # object
 | `capability` | 기능의 고유 이름과 책임 |
 | `command` | 호출할 Action·Service의 이름과 ROS 타입 |
 | `input` | Goal·Request 필드의 타입, 의미와 기본값 |
-| `execution.mode` | 전경 미션, 병행 백그라운드 작업, 즉시 요청 구분 |
+| `execution.mode` | 전경 미션 또는 병행 백그라운드 작업 구분 |
+| `execution.priority` | 충돌하는 미션 사이의 선점 우선순위 |
 
 `default`가 없으면 반드시 전달해야 하는 입력입니다. 선택 가능한 값은 `.action/.srv`에 선언된 상수를 직접 확인하며 Manifest에 중복하지 않습니다. 조건부 입력과 수치 범위는 해당 Action·Service 서버가 검사합니다.
 
-`FOREGROUND`는 하나씩 수행할 전경 미션, `BACKGROUND`는 전경 미션과 병행할 기능, `IMMEDIATE`는 짧게 끝나는 요청을 의미합니다. 선점 우선순위, 중복 요청, 동시 실행 및 준비 조건 정책은 이 규격에 포함하지 않습니다.
+`FOREGROUND`는 로봇의 주 임무, `BACKGROUND`는 전경 미션과 병행할 기능을 의미합니다. Action인지 Service인지는 실행 형태의 구분 기준이 아닙니다. 우선순위는 충돌 관계라고 판단된 미션 사이에서만 비교합니다.
+
+현재 시스템 관리자의 실행 범위는 안전하게 취소할 수 있는 Action입니다. Service 실행 정책이 정해지기 전에는 Service Manifest를 중앙 허용 목록에 등록하지 않습니다.
 
 ## 3. ROS 인터페이스 작성 규칙
 
@@ -73,7 +77,7 @@ execution:                           # object
 ## 4. 최소 검증 규칙
 
 1. 기능 ID와 명령 이름이 중복되지 않아야 합니다.
-2. `command.kind`, `command.type`, `execution.mode` 조합이 맞아야 합니다.
+2. `command.kind`, `command.type`, `execution.mode`, `execution.priority` 값이 규격에 맞아야 합니다.
 3. `input`의 필드명과 타입이 실제 Goal·Request와 일치해야 합니다.
 4. `default`가 실제 ROS 타입과 일치해야 합니다.
 

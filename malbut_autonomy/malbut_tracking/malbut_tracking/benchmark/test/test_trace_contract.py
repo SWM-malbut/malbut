@@ -7,7 +7,7 @@ AUTONOMY_ROOT = Path(__file__).resolve().parents[4]
 
 
 def test_trace_interfaces_carry_exact_ros_and_monotonic_timestamps():
-    interface_root = AUTONOMY_ROOT / 'malbut_interfaces' / 'msg'
+    interface_root = AUTONOMY_ROOT.parent / 'malbut_interfaces' / 'msg'
     sensor = (interface_root / 'SensorProcessingTrace.msg').read_text(
         encoding='utf-8'
     )

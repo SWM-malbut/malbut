@@ -74,7 +74,7 @@ def test_tracking_is_robot_reusable_and_never_publishes_velocity():
 def test_follow_action_exposes_only_target_selection_and_follow_distance():
     """Action clients choose whom to follow, not deployment safety policy."""
     action = (
-        AUTONOMY_ROOT
+        AUTONOMY_ROOT.parent
         / 'malbut_interfaces'
         / 'action'
         / 'FollowPerson.action'
@@ -97,7 +97,7 @@ def test_follow_action_exposes_only_target_selection_and_follow_distance():
 def test_command_trace_measures_sensor_to_follow_path_dispatch():
     """Latency trace must be diagnostic-only and timestamped at dispatch."""
     interface = (
-        AUTONOMY_ROOT
+        AUTONOMY_ROOT.parent
         / 'malbut_interfaces'
         / 'msg'
         / 'TrackingCommandTrace.msg'

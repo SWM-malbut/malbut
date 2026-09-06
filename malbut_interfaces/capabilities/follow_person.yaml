@@ -7,7 +7,7 @@ capability:
 
 command:
   kind: ACTION
-  name: follow_person
+  name: /follow_person
   type: malbut_interfaces/action/FollowPerson
 
 input:
@@ -16,12 +16,10 @@ input:
       type: uint8
       description: 현재 보이는 사람 또는 등록된 사람을 선택하는 방식
       default: 0
-
     target_person_id:
       type: string
       description: 등록된 사람을 선택할 때 사용할 식별자
       default: ""
-
     desired_distance_m:
       type: float32
       description: 사람과 유지할 희망 거리
@@ -29,3 +27,4 @@ input:
 
 execution:
   mode: FOREGROUND
+  priority: NORMAL
