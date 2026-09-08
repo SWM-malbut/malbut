@@ -306,6 +306,14 @@ class MissionSequence(Node):
         future = self.missions[label]['result']
         return future is not None and future.done()
 
+    def was_replaced(self, label):
+        """Distinguish manager-driven preemption from application execution faults."""
+        if not self.done(label):
+            return False
+        result = self.missions[label]['result'].result()
+        return (result.status == GoalStatus.STATUS_ABORTED
+                and result.result.message == 'mission preempted by a replacement request')
+
     def cancel(self, label):
         """Cancel only this client's goal, then await its terminal cancellation."""
         if self.done(label):
@@ -333,7 +341,7 @@ class MissionSequence(Node):
                         for status in goals.values()))
 
     def run_sequence(self):
-        """Run patrol, equal-priority preemption, follow, resume, and full stop."""
+        """Replace missions with full cancellation, then verify no automatic resume."""
         self.startup()
         if self.options.initial_follow_seconds > 0:
             self.submit('initial_follow', 'follow_person', {
@@ -361,40 +369,66 @@ class MissionSequence(Node):
                 'position': {'x': self.options.goal_x, 'y': self.options.goal_y},
                 'orientation': {'z': math.sin(yaw / 2), 'w': math.cos(yaw / 2)},
             }}})
-        self.wait(lambda: 'SUSPENDED' in self.feedback_states['patrol']
+        self.wait(lambda: self.done('patrol')
                   and (self.running('navigate') or self.done('navigate')),
-                  'Equal-priority navigation suspends patrol')
-        self.check(True, 'Equal priority: new navigation preempts and suspends patrol')
+                  'Equal-priority navigation completely cancels patrol')
+        self.check(self.was_replaced('patrol'),
+                   'Equal priority: new navigation ends patrol with replacement result')
         self.wait(lambda: all(self.child_status.get('/patrol', {}).get(goal) not in LIVE
                               for goal in original_patrol_goals),
                   'Patrol application really terminates before replacement')
         self.check(True, 'Preempted patrol downstream goal is terminal')
         self.hold('navigate')
 
-        prior = 'navigate' if self.running('navigate') else 'patrol'
+        prior = 'navigate'
+        prior_action = '/navigate_to_pose'
+        if self.done('navigate'):
+            self.check(self.missions['navigate']['result'].result().status
+                       == GoalStatus.STATUS_SUCCEEDED,
+                       'Navigation completed successfully before next request')
+            self.wait(self.stopped, 'Completed navigation returns to stationary IDLE')
+            self.check(True, 'Navigation completion does not resume canceled patrol')
+            previous_patrol_goals = set(self.child_seen['/patrol'])
+            self.submit('replacement_patrol', 'patrol', {'thoroughness': 0})
+            self.wait(lambda: self.running('replacement_patrol')
+                      and bool(self.child_seen['/patrol'] - previous_patrol_goals),
+                      'Explicitly requested replacement patrol dispatched')
+            self.hold('replacement_patrol')
+            prior = 'replacement_patrol'
+            prior_action = '/patrol'
         self.check(self.running(prior), 'A foreground mission exists before follow request')
+        prior_goals = set(self.child_seen[prior_action])
         previous_follow_goals = set(self.child_seen['/follow_person'])
         self.submit('follow', 'follow_person', {
             'target_mode': 0, 'target_person_id': '', 'desired_distance_m': 1.0})
-        self.wait(lambda: self.running('follow')
+        self.wait(lambda: self.done(prior) and self.running('follow')
                   and bool(self.child_seen['/follow_person'] - previous_follow_goals),
                   'Follower dispatched through manager')
+        self.check(self.was_replaced(prior),
+                   'Follow replacement completely terminates prior mission')
+        self.wait(lambda: all(self.child_status.get(prior_action, {}).get(goal) not in LIVE
+                              for goal in prior_goals),
+                  'Replaced application goal actually terminates')
+        self.check(True, 'Follow replacement leaves prior downstream goal terminal')
         self.check(True, 'Follow RUNNING and downstream goal observed')
         self.hold('follow')
         self.check(not self.done('follow'), 'Follow mission stays active until cancellation')
         self.cancel('follow')
-        self.wait(lambda: self.running(prior) or self.running('patrol'),
-                  'Previously suspended mission resumes')
-        self.check(True, 'Suspended mission resumes after follow cancellation')
-        self.hold('resumed')
         self.phase = 'stopping'
-        self.cancel('navigate')
-        self.cancel('patrol')
         self.wait(self.stopped, 'IDLE, terminal child goals and stationary odometry')
         self.check(True, 'All missions removed; children terminal; stationary for 3s')
-        self.check(all(m['result'].result().status in {
-            GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_CANCELED,
-        } for m in self.missions.values()), 'No application mission ended ABORTED')
+        stopped_goals = {name: set(goals) for name, goals in self.child_seen.items()}
+        self.hold('idle_after_cancel')
+        self.check(self.stopped(), 'Manager stays stationary IDLE after follow cancellation')
+        self.check(dict(self.child_seen) == stopped_goals,
+                   'Canceled missions never dispatch new downstream goals')
+        self.check(all('SUSPENDED' not in states for states in self.feedback_states.values()),
+                   'Replacement never suspends an old mission')
+        self.check(all(
+            self.was_replaced(label) if label in {'patrol', prior}
+            else m['result'].result().status in {
+                GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_CANCELED,
+            } for label, m in self.missions.items()), 'No unexpected mission failure')
         self.check(self.fatal is None, 'No overlapping registered BASE owners observed')
 
     def cleanup_owned(self):

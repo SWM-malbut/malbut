@@ -1,4 +1,4 @@
-"""Deterministic admission, preemption, cancellation, and resume rules."""
+"""Deterministic admission, replacement preemption, and cancellation rules."""
 
 from collections.abc import Callable
 
@@ -203,40 +203,33 @@ class MissionScheduler:
             return effects
 
         self.state.remove(mission_id)
-        was_preempted = (
-            outcome is TerminalOutcome.CANCELED
-            and mission.cancel_reason is CancelReason.PREEMPTION
-            and not mission.user_cancel_requested
-            and mission.resumable
-        )
-        if was_preempted:
-            self.state.suspend(mission)
-            effects.updated.add(mission_id)
-        else:
-            if mission.user_cancel_requested:
-                outcome = TerminalOutcome.CANCELED
-            if (
-                outcome is TerminalOutcome.CANCELED
-                and mission.cancel_reason
-                not in (CancelReason.USER, CancelReason.SHUTDOWN)
+        if mission.user_cancel_requested:
+            outcome = TerminalOutcome.CANCELED
+        elif outcome is TerminalOutcome.CANCELED:
+            if mission.cancel_reason is CancelReason.PREEMPTION:
+                # Server-driven replacement is terminal, never suspension.
+                # ROS CANCELED requires the upper client to request cancel;
+                # report server-driven interruption as ABORTED with a reason.
+                outcome = TerminalOutcome.ABORTED
+                message = 'mission preempted by a replacement request'
+            elif mission.cancel_reason not in (
+                CancelReason.USER, CancelReason.SHUTDOWN,
             ):
                 outcome = TerminalOutcome.ABORTED
-                message = message or (
-                    'Downstream goal canceled without a manager request'
-                )
-            if mission.cancel_reason is CancelReason.SHUTDOWN:
-                outcome = TerminalOutcome.ABORTED
-                message = message or 'system manager is shutting down'
-            effects.complete.append(
-                MissionCompletion(
-                    mission_id,
-                    outcome,
-                    result_yaml=result_yaml,
-                    message=message,
-                )
+                message = message or 'Downstream goal canceled without a manager request'
+        if mission.cancel_reason is CancelReason.SHUTDOWN:
+            outcome = TerminalOutcome.ABORTED
+            message = message or 'system manager is shutting down'
+        effects.complete.append(
+            MissionCompletion(
+                mission_id,
+                outcome,
+                result_yaml=result_yaml,
+                message=message,
             )
-            effects.updated.add(mission_id)
-            self._release_preempted_by(mission_id, effects)
+        )
+        effects.updated.add(mission_id)
+        self._release_preempted_by(mission_id, effects)
 
         for pending in self.state.pending.values():
             pending.waiting_for.discard(mission_id)

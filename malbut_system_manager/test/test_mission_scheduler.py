@@ -146,35 +146,47 @@ def test_equal_or_higher_priority_waits_for_conflict_to_be_canceled(
 
     assert terminal.start == ['incoming']
     assert state.active_foreground['incoming'].state is MissionState.RUNNING
-    assert state.suspended['active'].state is MissionState.SUSPENDED
+    assert _completion(terminal, 'active').outcome is TerminalOutcome.ABORTED
+    assert 'preempted' in _completion(terminal, 'active').message
+    assert state.get('active') is None
+    assert not state.suspended
 
 
-def test_suspended_mission_resumes_after_preemptor_finishes():
-    """A preempted public goal must restart after its preemptor ends."""
+@pytest.mark.parametrize('replacement_outcome', list(TerminalOutcome))
+def test_replaced_mission_never_resumes_after_replacement_ends(
+    replacement_outcome,
+):
+    """Completion, failure, and cancellation cannot resurrect replaced work."""
     state, scheduler = _ready_scheduler()
     original = _mission('original', priority=MissionPriority.LOW)
     preemptor = _mission('preemptor', priority=MissionPriority.HIGH)
     scheduler.submit(original)
     scheduler.submit(preemptor)
-    scheduler.handle_terminal('original', TerminalOutcome.CANCELED)
+    replaced = scheduler.handle_terminal('original', TerminalOutcome.CANCELED)
+    assert _completion(replaced, 'original').outcome is TerminalOutcome.ABORTED
+    assert 'preempted' in _completion(replaced, 'original').message
+    assert state.get('original') is None
+    if replacement_outcome is TerminalOutcome.CANCELED:
+        scheduler.request_cancel('preemptor')
 
     effects = scheduler.handle_terminal(
         'preemptor',
-        TerminalOutcome.SUCCEEDED,
+        replacement_outcome,
         result_yaml='success: true',
     )
 
     assert _completion(
         effects,
         'preemptor',
-    ).outcome is TerminalOutcome.SUCCEEDED
-    assert effects.start == ['original']
-    assert state.active_foreground['original'].state is MissionState.RUNNING
-    assert 'original' not in state.suspended
+    ).outcome is replacement_outcome
+    assert not effects.start
+    assert state.get('original') is None
+    assert not state.suspended
+    assert state.system_state is SystemState.IDLE
 
 
-def test_explicit_cancel_completes_pending_goal_and_restores_old_goal():
-    """Canceling a pending preemptor must resolve its upstream goal."""
+def test_cancel_pending_replacement_does_not_restart_old_goal():
+    """An already requested old cancellation is final even if new work stops."""
     state, scheduler = _ready_scheduler()
     original = _mission('original', priority=MissionPriority.LOW)
     pending = _mission('pending', priority=MissionPriority.HIGH)
@@ -192,8 +204,28 @@ def test_explicit_cancel_completes_pending_goal_and_restores_old_goal():
         'original',
         TerminalOutcome.CANCELED,
     )
-    assert terminal.start == ['original']
-    assert state.active_foreground['original'].state is MissionState.RUNNING
+    assert not terminal.start
+    assert _completion(terminal, 'original').outcome is TerminalOutcome.ABORTED
+    assert state.get('original') is None
+    assert state.system_state is SystemState.IDLE
+
+
+@pytest.mark.parametrize('old_outcome', list(TerminalOutcome))
+def test_old_terminal_race_releases_replacement_once(old_outcome):
+    """Any old terminal result releases ownership without saving a restart."""
+    state, scheduler = _ready_scheduler()
+    scheduler.submit(_mission('old'))
+    scheduler.submit(_mission('new'))
+
+    effects = scheduler.handle_terminal('old', old_outcome)
+
+    assert effects.start == ['new']
+    assert len(effects.complete) == 1
+    assert state.get('old') is None
+    assert not state.suspended
+    late = scheduler.handle_terminal('old', old_outcome)
+    assert not late.start and not late.cancel and not late.complete
+    assert list(state.active_foreground) == ['new']
 
 
 def test_explicit_cancel_completes_suspended_goal_without_resuming_it():
@@ -201,9 +233,8 @@ def test_explicit_cancel_completes_suspended_goal_without_resuming_it():
     state, scheduler = _ready_scheduler()
     original = _mission('original', priority=MissionPriority.LOW)
     preemptor = _mission('preemptor', priority=MissionPriority.HIGH)
-    scheduler.submit(original)
+    state.suspend(original)
     scheduler.submit(preemptor)
-    scheduler.handle_terminal('original', TerminalOutcome.CANCELED)
 
     accepted, effects = scheduler.request_cancel('original')
 
@@ -438,8 +469,9 @@ def test_dispatch_timeout_during_preemption_aborts_waiting_request():
     assert not state.active_foreground['active'].preempted_by
 
 
-def test_dispatch_timeout_resumes_compatible_suspended_mission():
-    """Aborting a multi-blocker preemptor must release safe old work."""
+@pytest.mark.parametrize('failure', ['cancel_rejected', 'dispatch_timeout'])
+def test_failed_blocker_does_not_restart_already_replaced_mission(failure):
+    """A second blocker's failure cannot resurrect work already canceled."""
     conflicts = {
         frozenset(('first', 'new')),
         frozenset(('second', 'new')),
@@ -457,14 +489,17 @@ def test_dispatch_timeout_resumes_compatible_suspended_mission():
     scheduler.submit(new)
     scheduler.handle_terminal('second', TerminalOutcome.CANCELED)
 
-    effects = scheduler.handle_dispatch_timeout(
+    effects = getattr(scheduler, f'handle_{failure}')(
         'first',
-        'goal response timed out',
+        'downstream cancellation could not complete',
     )
 
-    assert effects.start == ['second']
-    assert state.active_foreground['second'].state is MissionState.RUNNING
+    assert not effects.start
+    assert state.get('second') is None
+    assert not state.suspended
     assert state.get('new') is None
+    assert state.get('first').state is MissionState.RUNNING
+    assert not state.get('first').preempted_by
 
 
 def test_preemption_after_dispatch_timeout_can_abort_waiting_request():
@@ -606,8 +641,9 @@ def test_resource_conflicts_cross_foreground_background_boundary(
     ).start == ['second']
     assert scheduler.handle_terminal(
         'second', TerminalOutcome.SUCCEEDED,
-    ).start == ['first']
-    assert not first.preempted_by
+    ).start == []
+    assert state.get('first') is None
+    assert not state.suspended
 
 
 def test_empty_resources_never_claim_an_output():
@@ -657,7 +693,11 @@ def test_multi_resource_request_waits_for_every_conflicting_action():
     ).start == ['both']
     assert state.get('light').state is MissionState.RUNNING
     effects = scheduler.handle_terminal('both', TerminalOutcome.SUCCEEDED)
-    assert set(effects.start) == {'drive', 'speak'}
+    assert not effects.start
+    assert state.get('drive') is None
+    assert state.get('speak') is None
+    assert not state.suspended
+    assert list(state.active_foreground) == ['light']
 
 
 def test_unrelated_pending_requests_do_not_replace_each_other():
@@ -678,11 +718,13 @@ def test_unrelated_pending_requests_do_not_replace_each_other():
     assert original.preempted_by == {'drive', 'speak'}
     effects = scheduler.handle_terminal('original', TerminalOutcome.CANCELED)
     assert set(effects.start) == {'drive', 'speak'}
+    assert _completion(effects, 'original').outcome is TerminalOutcome.ABORTED
     assert not scheduler.handle_terminal('drive', TerminalOutcome.SUCCEEDED).start
-    assert original.preempted_by == {'speak'}
+    assert state.get('original') is None
     assert scheduler.handle_terminal(
         'speak', TerminalOutcome.SUCCEEDED,
-    ).start == ['original']
+    ).start == []
+    assert not state.suspended
 
 
 def test_equal_priority_replaces_only_overlapping_pending_request():
@@ -731,7 +773,7 @@ def test_failed_shared_blocker_releases_all_and_only_its_waiters(failure):
 
 
 def test_cancel_one_pending_preemptor_preserves_other_dependency():
-    """Canceling one output request cannot resume a shared owner early."""
+    """Canceling one output request leaves the other waiting for safe release."""
     state, scheduler = _ready_scheduler()
     original = _mission(
         'original', resources=[ExecutionResource.BASE, ExecutionResource.SPEAKER],
@@ -747,7 +789,9 @@ def test_cancel_one_pending_preemptor_preserves_other_dependency():
     ).start == ['speak']
     assert scheduler.handle_terminal(
         'speak', TerminalOutcome.SUCCEEDED,
-    ).start == ['original']
+    ).start == []
+    assert state.get('original') is None
+    assert not state.suspended
 
 
 def test_user_cancel_failure_also_aborts_new_resource_waiter():
@@ -786,8 +830,8 @@ def test_combined_pending_replacement_checks_all_reservations_atomically():
     assert original.preempted_by == {'drive', 'speak'}
 
 
-def test_replaced_pending_releases_unrelated_suspended_resources():
-    """Narrowing a pending request must free outputs it no longer needs."""
+def test_replaced_pending_does_not_restart_old_resource_owner():
+    """Narrowing a pending request cannot resurrect already canceled work."""
     state, scheduler = _ready_scheduler()
     scheduler.submit(_mission('drive'))
     scheduler.submit(_mission('speak', resources=[ExecutionResource.SPEAKER]))
@@ -801,6 +845,7 @@ def test_replaced_pending_releases_unrelated_suspended_resources():
     ))
 
     assert [c.mission_id for c in effects.complete] == ['both']
-    assert effects.start == ['drive']
+    assert not effects.start
     assert state.pending['new_speak'].waiting_for == {'speak'}
-    assert not state.get('drive').preempted_by
+    assert state.get('drive') is None
+    assert not state.suspended
