@@ -71,7 +71,9 @@ execution:                           # object
 
 클라이언트가 직접 취소하면 상위 Action 결과는 `CANCELED`입니다. 관리자 판단으로 교체하면 상위 결과는 `ABORTED`이며, `message: mission preempted by a replacement request`로 실행 오류와 구분합니다. 두 경우 모두 하위 실행의 종료를 확인합니다.
 
-현재 시스템 관리자의 실행 범위는 안전하게 취소할 수 있는 Action입니다. Service 실행 정책이 정해지기 전에는 Service Manifest를 중앙 허용 목록에 등록하지 않습니다.
+시스템 관리자는 Action과 짧은 요청·응답 Service를 같은 진입점으로 실행하며, 우선순위·자원 충돌 규칙은 동일합니다. 이미 요청한 Service는 취소할 수 없으므로 취소·선점 시 응답까지 자원을 유지한 뒤 종료합니다. Service 응답은 `result_yaml`로 그대로 반환하며, 상위 `SUCCEEDED`는 요청·응답 완료를 뜻합니다. 응답 내부의 기능별 성공 여부는 별도로 확인합니다. 자동 재요청이나 응답 없는 자원의 임의 해제는 하지 않습니다.
+
+상시 실행되며 Topic으로 정보를 제공하는 노드는 Bringup에서 실행하고, 소비자가 Topic을 직접 구독합니다. 매니저로 직접 실행할 명령만 Manifest에 등록하며 내부 보조 호출까지 등록할 필요는 없습니다.
 
 ## 3. ROS 인터페이스 작성 규칙
 

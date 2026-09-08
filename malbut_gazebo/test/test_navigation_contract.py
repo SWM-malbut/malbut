@@ -222,13 +222,27 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
         and entity._Node__node_name == 'collision_lifecycle_manager'
     ]
     assert len(collision_lifecycle_nodes) == 1
-    perception_nodes = {
+    tracking_nodes = {
         entity.node_executable
         for entity in description.entities
         if isinstance(entity, Node)
-        and entity.node_executable in {'person_localizer', 'person_follower'}
+        and entity.node_package == 'malbut_tracking'
     }
-    assert perception_nodes == {'person_localizer', 'person_follower'}
+    assert tracking_nodes == {'person_follower', 'lidar_foreground_preprocessor'}
+    perception_group = next(
+        entity for entity in description.entities
+        if isinstance(entity, GroupAction)
+        and any(
+            isinstance(child, IncludeLaunchDescription)
+            and 'projection_frame' in dict(child.launch_arguments)
+            for child in entity.get_sub_entities()
+        )
+    )
+    context = LaunchContext()
+    context.launch_configurations['person_following'] = 'false'
+    assert not perception_group.condition.evaluate(context)
+    context.launch_configurations['person_following'] = 'true'
+    assert perception_group.condition.evaluate(context)
 
     launch_source = launch_file.read_text(encoding='utf-8')
     assert "('cmd_vel_smoothed', 'cmd_vel_pre_collision')" in launch_source

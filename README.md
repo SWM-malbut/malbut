@@ -5,12 +5,13 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 저장소: [SWM-malbut/malbut](https://github.com/SWM-malbut/malbut)
 - 로봇 모델 패키지: `malbut_description`
 - 시뮬레이션 패키지: `malbut_gazebo`
+- 공용 객체 검출: `malbut_yolo` (`yolo_ros` 연결·실행 설정)
+- 공용 사람 재식별: `malbut_reid` (OSNet·사람 ID Topic)
+- 사람 목표 추적: `malbut_tracking` (RGB-D 위치 추정·LiDAR 전처리 포함)
 - 자율주행 응용 패키지 모음: `malbut_autonomy/`
-  - RGB-D 사람 인식: `malbut_perception`
-  - 사람 목표 추적: `malbut_tracking`
   - 자율 순회: `malbut_roaming`
   - 지도 기반 카메라 순찰: `malbut_patrol`
-  - 공통 ROS 인터페이스: `malbut_interfaces`
+- 공통 ROS 인터페이스: `malbut_interfaces`
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
 - 홈캠 웹·백엔드: `homecam_web`
 - 대화·에이전트 계약 패키지: `malbut_agent_server`
@@ -64,14 +65,21 @@ git clone https://github.com/SWM-malbut/malbut.git
 cd ~/ros2_ws
 source /opt/ros/humble/setup.bash
 
+sudo apt install python3-vcstool
+vcs import src < src/malbut/perception.repos
 rosdep update
-rosdep install --from-paths src --ignore-src -y --rosdistro humble
+rosdep install --from-paths src --ignore-src -y --rosdistro humble \
+  --skip-keys "python3-torchvision-pip python3-ultralytics-pip"
 
 colcon build --symlink-install
 source ~/ros2_ws/install/local_setup.bash
 ```
 
 `--symlink-install`의 하이픈은 문서용 긴 대시(`—`)가 아닌 일반 하이픈 두 개(`--`)를 사용해야 합니다.
+
+`perception.repos`는 외부 `yolo_ros` 소스 버전을 고정합니다. YOLO와 OSNet의
+추론 환경·모델 준비는 각각 `malbut_yolo/README.md`, `malbut_reid/README.md`를
+따릅니다. 위 `rosdep` 명령은 GPU별 Python 환경을 시스템 전체에 덮어쓰지 않습니다.
 
 ### 빌드 확인
 
@@ -80,7 +88,8 @@ colcon list
 ros2 pkg prefix malbut_description
 ros2 pkg prefix malbut_gazebo
 ros2 pkg prefix malbut_patrol
-ros2 pkg prefix malbut_perception
+ros2 pkg prefix malbut_yolo
+ros2 pkg prefix malbut_reid
 ros2 pkg prefix malbut_interfaces
 ros2 pkg prefix malbut_tracking
 ```
@@ -139,7 +148,7 @@ alias tl='ros2 topic list'
 alias te='ros2 topic echo'
 alias nl='ros2 node list'
 
-alias di='cd ~/ros2_ws && rosdep install --from-paths src --ignore-src -y --rosdistro humble'
+alias di='cd ~/ros2_ws && rosdep install --from-paths src --ignore-src -y --rosdistro humble --skip-keys "python3-torchvision-pip python3-ultralytics-pip"'
 ```
 
 `~/.bashrc` 마지막에 다음 한 줄을 추가한 뒤 새 터미널을 열거나 `source ~/.bashrc`를 실행합니다.
@@ -200,8 +209,8 @@ ros2 launch malbut_description display.launch.py
 
 ### RGB-D 사람 인식
 
-최초 한 번 호환 YOLO와 OSNet 모델을 준비한 뒤 휴머노이드와 센서 기반
-사람 인식·재식별을 함께 실행합니다.
+최초 한 번 `malbut_yolo`, `malbut_reid`의 README에 따라 추론 환경과 모델을
+준비한 뒤 휴머노이드와 센서 기반 사람 인식·재식별을 함께 실행합니다.
 
 준비 스크립트는 격리된 Python 가상환경에서 모델을 내보냅니다. 배포판에
 `python3-venv`가 없으면 `ensurepip is not available` 오류로 중단되므로 먼저
@@ -213,9 +222,8 @@ sudo apt install python3.10-venv
 
 ```bash
 cd ~/ros2_ws/src/malbut
-./malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh
-./malbut_autonomy/malbut_perception/scripts/prepare_osnet_model.sh
-./malbut_autonomy/malbut_perception/scripts/prepare_inference_runtime.sh
+./malbut_reid/scripts/prepare_osnet_model.sh
+./malbut_reid/scripts/prepare_inference_runtime.sh
 
 cd ~/ros2_ws
 source install/local_setup.bash

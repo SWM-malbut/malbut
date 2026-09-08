@@ -1,5 +1,6 @@
 """Safety-focused unit tests for asynchronous downstream execution."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -201,6 +202,44 @@ class _Node:
             self.timers.remove(timer)
 
 
+class _ServiceClient:
+    """Service client whose response is explicitly controlled by the test."""
+
+    def __init__(self, *, ready=True, dispatch_error=None):
+        self.ready = ready
+        self.dispatch_error = dispatch_error
+        self.calls = []
+        self.response = _Future()
+
+    def service_is_ready(self):
+        """Report test-controlled discovery state."""
+        return self.ready
+
+    def call_async(self, request):
+        """Record exactly one request and return its response future."""
+        self.calls.append(request)
+        if self.dispatch_error is not None:
+            raise self.dispatch_error
+        return self.response
+
+
+class _ServiceNode(_Node):
+    """Node exposing the ROS Service client factory and destroy API."""
+
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
+        self.destroyed_clients = []
+
+    def create_client(self, *_args, **_kwargs):
+        """Return the controlled service transport."""
+        return self.client
+
+    def destroy_client(self, client):
+        """Record that the node released its owned service client."""
+        self.destroyed_clients.append(client)
+
+
 def _mission(mission_id, command_name=None):
     capability = CapabilityManifest(
         capability_id=f'capability_{mission_id}',
@@ -250,6 +289,70 @@ def _executor(
         cancel_completion_timeout_s=cancel_completion_timeout_s,
     )
     return executor, events
+
+
+def _service_mission():
+    mission = _mission('service')
+    mission.capability = replace(
+        mission.capability,
+        command_kind=CommandKind.SERVICE,
+        command_type='std_srvs/srv/Trigger',
+    )
+    return mission
+
+
+def test_service_cancel_waits_for_response_without_action_watchdogs(monkeypatch):
+    """Cancellation does not abandon a request or fake resource release."""
+    client = _ServiceClient()
+    node = _ServiceNode(client)
+    executor, events = _executor(
+        node=node, goal_response_timeout_s=0.01, cancel_completion_timeout_s=0.01,
+    )
+    monkeypatch.setattr(executor_module, 'message_to_yaml', lambda _: 'success: true')
+    mission = _service_mission()
+    executor.start(mission, object())
+    assert executor.cancel(mission.mission_id)
+    assert executor.cancel(mission.mission_id)
+    assert executor.active_count == 1
+    assert not events.terminal
+    assert not node.timers
+    assert len(client.calls) == 1
+
+    client.response.resolve(object())
+    assert executor.active_count == 0
+    assert events.terminal[0][2] is TerminalOutcome.CANCELED
+    assert events.terminal[0][3] == 'success: true'
+    assert 'side effects are not undone' in events.terminal[0][4]
+    executor.destroy()
+    assert node.destroyed_clients == [client]
+
+
+@pytest.mark.parametrize('failure_stage', ['dispatch', 'response'])
+def test_service_transport_failure_never_retries_or_releases_resources(failure_stage):
+    """An uncertain side effect remains tracked instead of being retried."""
+    client = _ServiceClient(
+        dispatch_error=RuntimeError('transport failure')
+        if failure_stage == 'dispatch' else None,
+    )
+    executor, events = _executor(node=_ServiceNode(client))
+    executor.start(_service_mission(), object())
+    if failure_stage == 'response':
+        client.response.resolve(error=RuntimeError('response failed'))
+    assert executor.active_count == 1
+    assert len(client.calls) == 1
+    assert len(events.dispatch_timeout) == 1
+    assert not events.terminal
+
+
+def test_unavailable_service_fails_before_dispatch():
+    """A missing endpoint fails without claiming an outstanding request."""
+    client = _ServiceClient(ready=False)
+    executor, events = _executor(node=_ServiceNode(client))
+    executor.start(_service_mission(), object())
+    assert executor.active_count == 0
+    assert not client.calls
+    assert events.terminal[0][2] is TerminalOutcome.ABORTED
+    assert 'unavailable' in events.terminal[0][4]
 
 
 def test_cancel_rejection_resets_executor_for_a_later_retry(monkeypatch):

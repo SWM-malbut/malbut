@@ -26,7 +26,6 @@ from .manifest_registry import (
 from .mission_executor import MissionExecutor
 from .mission_scheduler import MissionScheduler
 from .models import (
-    CommandKind,
     ControlMode,
     ExecutionMode,
     MissionCompletion,
@@ -52,7 +51,7 @@ class _MissionContext:
 
 
 class SystemManagerNode(Node):
-    """Validate, schedule, execute, and report registered Action missions."""
+    """Validate, schedule, and report registered Action or Service missions."""
 
     def __init__(
         self,
@@ -110,16 +109,6 @@ class SystemManagerNode(Node):
         self._publish_state()
 
         self._registry = ManifestRegistry(configured_directory or None)
-        unsupported = [
-            manifest.capability_id
-            for manifest in self._registry.all()
-            if manifest.command_kind is not CommandKind.ACTION
-        ]
-        if unsupported:
-            raise ManifestError(
-                'System manager currently supports Action capabilities only: '
-                + ', '.join(unsupported)
-            )
         self._executor_bridge = MissionExecutor(
             self,
             self._client_group,

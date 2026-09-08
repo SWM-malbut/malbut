@@ -11,6 +11,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     EmitEvent,
     ExecuteProcess,
+    GroupAction,
     IncludeLaunchDescription,
     RegisterEventHandler,
     TimerAction,
@@ -20,7 +21,6 @@ from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
 
 
 GAZEBO_PACKAGE = "malbut_gazebo"
@@ -58,11 +58,11 @@ def _shutdown_on_actor_spawn_failure(event, _context):
 def generate_launch_description():
     """Start a selected world, robot, and local humanoid actor model."""
     gazebo_share = Path(get_package_share_directory(GAZEBO_PACKAGE))
-    perception_share = Path(
-        get_package_share_directory("malbut_perception")
+    tracking_share = Path(
+        get_package_share_directory("malbut_tracking")
     )
     default_model = (
-        Path.home() / ".cache" / "malbut_perception" / "yolo26n.onnx"
+        Path.home() / ".cache" / "malbut_perception" / "yolo26n.pt"
     )
     default_reid_model = (
         Path.home()
@@ -107,42 +107,26 @@ def generate_launch_description():
         ],
         output="screen",
     )
-    perception = Node(
-        package="malbut_perception",
-        executable="person_localizer",
-        name="person_localizer",
-        output="screen",
+    perception = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            str(tracking_share / "launch" / "person_detection.launch.py")
+        ),
         condition=IfCondition(LaunchConfiguration("perception")),
-        parameters=[
-            LaunchConfiguration("perception_config"),
-            {
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-                "detector_backend": LaunchConfiguration("detector_backend"),
-                "model_path": LaunchConfiguration("model_path"),
-                "inference_backend": LaunchConfiguration(
-                    "inference_backend"
-                ),
-                "dnn_target": LaunchConfiguration("dnn_target"),
-                "opencv_num_threads": LaunchConfiguration(
-                    "opencv_num_threads"
-                ),
-                "reid_backend": LaunchConfiguration("reid_backend"),
-                "reid_model_path": LaunchConfiguration("reid_model_path"),
-                "output_frame": LaunchConfiguration("output_frame"),
-                "projection_frame": LaunchConfiguration(
-                    "projection_frame"
-                ),
-                "publish_debug_image": LaunchConfiguration(
-                    "publish_debug_image"
-                ),
-                "debug_image_transport": LaunchConfiguration(
-                    "debug_image_transport"
-                ),
-                "debug_jpeg_quality": LaunchConfiguration(
-                    "debug_jpeg_quality"
-                ),
-            },
-        ],
+        launch_arguments={
+            "use_sim_time": LaunchConfiguration("use_sim_time"),
+            "model_path": LaunchConfiguration("model_path"),
+            "device": LaunchConfiguration("device"),
+            "inference_backend": LaunchConfiguration("inference_backend"),
+            "dnn_target": LaunchConfiguration("dnn_target"),
+            "opencv_num_threads": LaunchConfiguration("opencv_num_threads"),
+            "reid_backend": LaunchConfiguration("reid_backend"),
+            "reid_model_path": LaunchConfiguration("reid_model_path"),
+            "output_frame": LaunchConfiguration("output_frame"),
+            "projection_frame": LaunchConfiguration("projection_frame"),
+            "publish_debug_image": LaunchConfiguration("publish_debug_image"),
+            "debug_image_transport": LaunchConfiguration("debug_image_transport"),
+            "debug_jpeg_quality": LaunchConfiguration("debug_jpeg_quality"),
+        }.items(),
     )
 
     return LaunchDescription(
@@ -190,13 +174,7 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("perception", default_value="false"),
-            DeclareLaunchArgument(
-                "perception_config",
-                default_value=str(
-                    perception_share / "config" / "person_detection.yaml"
-                ),
-            ),
-            DeclareLaunchArgument("detector_backend", default_value="auto"),
+            DeclareLaunchArgument("device", default_value="cuda:0"),
             DeclareLaunchArgument(
                 "model_path", default_value=str(default_model)
             ),
@@ -245,6 +223,6 @@ def generate_launch_description():
                 period=LaunchConfiguration("actor_spawn_delay"),
                 actions=[actor_spawn],
             ),
-            perception,
+            GroupAction([perception], scoped=True),
         ]
     )

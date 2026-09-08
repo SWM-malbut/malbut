@@ -45,7 +45,7 @@ YOLO26n-pose를 최대 5 FPS로 실행하는 2단계 구조다. 모델 준비 �
 `~/.cache/malbut_perception/yolo26n-pose.onnx`를 실행 스크립트가 자동으로 찾는다.
 
 ```bash
-./malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh
+./malbut_yolo/scripts/prepare_yolo26_model.sh
 ```
 
 YOLO26의 end-to-end `TopK` 연산은 Ubuntu 22.04 기본 OpenCV 4.5.4 DNN에서
@@ -83,6 +83,11 @@ checkout하거나 수정하지 않는다.
 
 이 디렉터리가 `malbut/homecam_agent`로 병합된 뒤에는 기존 저장소를 pull하고
 다음 명령만 실행한다. workspace 경로는 자동으로 찾는다.
+
+SWM25-161 이후 구조를 처음 받았다면 저장소 루트 README의 의존성 설치 단계를
+먼저 수행한다. 시뮬레이션의 공용 인식 패키지가 사용하는 `yolo_ros`는
+`perception.repos`로 워크스페이스에 받아 두어야 한다. 홈캠의 ONNX 검출기와
+기존 모델 캐시 경로는 바뀌지 않는다.
 
 ```bash
 git pull

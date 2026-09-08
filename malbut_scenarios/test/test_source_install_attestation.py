@@ -89,12 +89,22 @@ def _assert_code(code, callable_value) -> None:
     assert str(caught.value) == code
 
 
+@pytest.mark.parametrize('stale_access_time', (False, True))
 def test_clean_exact_source_and_install_return_content_free_attestation(
     tmp_path,
+    stale_access_time,
 ) -> None:
     """A clean exact binding yields only commit and tree digest."""
     fixture = _repository(tmp_path)
     source_root, source_file, installed_file, commit, tree = fixture
+    if stale_access_time:
+        # Make read-triggered atime updates reproducible without sleeps.
+        for path in (source_file, installed_file):
+            before = path.stat()
+            os.utime(path, ns=(
+                before.st_atime_ns - 2 * 24 * 60 * 60 * 1_000_000_000,
+                before.st_mtime_ns,
+            ))
     source_before = source_file.stat()
     installed_before = installed_file.stat()
 
@@ -112,8 +122,17 @@ def test_clean_exact_source_and_install_return_content_free_attestation(
     )
     assert set(receipt.__dataclass_fields__) == {'commit', 'tree_digest'}
     assert not hasattr(receipt, '__dict__')
-    assert source_file.stat() == source_before
-    assert installed_file.stat() == installed_before
+    # Reading may update atime; file identity and write metadata must not change.
+    for path, before in (
+        (source_file, source_before),
+        (installed_file, installed_before),
+    ):
+        after = path.stat()
+        for field in (
+            'st_mode', 'st_ino', 'st_dev', 'st_nlink', 'st_uid', 'st_gid',
+            'st_size', 'st_mtime_ns', 'st_ctime_ns',
+        ):
+            assert getattr(after, field) == getattr(before, field), field
     assert _git(source_root, 'status', '--porcelain=v1', '-z') == ''
     rendered = repr(receipt)
     assert str(source_root) not in rendered
