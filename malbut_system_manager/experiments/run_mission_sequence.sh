@@ -2,6 +2,11 @@
 # Run only this experiment's simulation and processes; never kill other sessions.
 set -eo pipefail
 
+experiment_interactive=false
+if [[ "${1:-}" == --interactive ]]; then
+  experiment_interactive=true
+  shift
+fi
 experiment_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 experiment_workspace="${MALBUT_WORKSPACE:-$(cd -- "$experiment_script_dir/../../../.." && pwd)}"
 if [[ ! -f "$experiment_workspace/install/local_setup.bash" ]]; then
@@ -29,7 +34,7 @@ git -C "$experiment_script_dir/../.." rev-parse HEAD \
   >"$experiment_output/git_revision.txt"
 git -C "$experiment_script_dir/../.." status --short --branch \
   >"$experiment_output/git_status.txt"
-experiment_gui="${MALBUT_EXPERIMENT_GUI:-false}"
+experiment_gui="${MALBUT_EXPERIMENT_GUI:-$experiment_interactive}"
 if [[ "$experiment_gui" != true && "$experiment_gui" != false ]]; then
   echo 'MALBUT_EXPERIMENT_GUI must be true or false.' >&2
   exit 2
@@ -72,9 +77,15 @@ echo "Starting isolated Small House experiment (ROS domain $ROS_DOMAIN_ID)."
 echo "Experiment logs: $experiment_output"
 setsid ros2 launch malbut_gazebo target_tracking_demo.launch.py \
   "gui:=$experiment_gui" "headless:=$experiment_headless" \
-  "rviz:=$experiment_gui" "image_view:=$experiment_gui" \
+  rviz:=false "image_view:=$experiment_gui" \
   actor_spawn_delay:=15.0 >"$experiment_output/simulation.log" 2>&1 &
 experiment_pids+=("$!")
+if [[ "$experiment_gui" == true ]]; then
+  experiment_gazebo_share="$(ros2 pkg prefix --share malbut_gazebo)"
+  setsid ros2 run rviz2 rviz2 -d "$experiment_gazebo_share/rviz/nav_nav2.rviz" \
+    --ros-args -p use_sim_time:=true >"$experiment_output/rviz.log" 2>&1 &
+  experiment_pids+=("$!")
+fi
 setsid ros2 launch malbut_patrol patrol.launch.py \
   use_sim_time:=true camera_optical_frame:=camera_depth_optical_frame \
   >"$experiment_output/patrol.log" 2>&1 &
@@ -84,9 +95,14 @@ setsid ros2 run malbut_system_manager system_manager \
   >"$experiment_output/manager.log" 2>&1 &
 experiment_pids+=("$!")
 
-setsid python3 -u "$experiment_script_dir/mission_sequence.py" \
-  --output-dir "$experiment_output" "$@" \
-  >"$experiment_output/sequence.log" 2>&1 &
+if [[ "$experiment_interactive" == true ]]; then
+  setsid python3 -u "$experiment_script_dir/manager_control_panel.py" \
+    >"$experiment_output/sequence.log" 2>&1 &
+else
+  setsid python3 -u "$experiment_script_dir/mission_sequence.py" \
+    --output-dir "$experiment_output" "$@" \
+    >"$experiment_output/sequence.log" 2>&1 &
+fi
 experiment_sequence_pid=$!
 experiment_pids+=("$experiment_sequence_pid")
 experiment_status=0

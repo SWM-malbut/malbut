@@ -1,4 +1,4 @@
-"""ROS integration test for unified execution, preemption, and resume."""
+"""ROS integration tests for execution, final replacement, and cancellation."""
 
 from threading import Event, Thread
 import time
@@ -197,8 +197,8 @@ def _wait_future(future, timeout=TIMEOUT_S):
     return future.result()
 
 
-def test_execute_preempt_resume_cancel_and_transient_state():
-    """One public goal remains alive while its downstream goal is resumed."""
+def test_execute_preempt_finishes_old_goal_and_transient_state():
+    """Replacing a mission finishes its public goal without client cancel."""
     rclpy.init()
     downstream = _FollowPersonServer()
     navigation = _NavigateToPoseServer()
@@ -279,19 +279,12 @@ def test_execute_preempt_resume_cancel_and_transient_state():
         assert navigation_request.pose.pose.orientation.w == pytest.approx(1.0)
         assert navigation_request.behavior_tree == ''
 
-        _wait_until(lambda: len(downstream.requests) >= 3)
-        assert [item[1] for item in downstream.requests[1:3]] == [
-            'first',
-            'first',
-        ]
-        assert 'CANCELING' in first_feedback
-        assert 'SUSPENDED' in first_feedback
-        assert first_handle.get_result_async().done() is False
-
-        cancel_response = _wait_future(first_handle.cancel_goal_async())
-        assert cancel_response.goals_canceling
         first_result = _wait_future(first_handle.get_result_async())
-        assert first_result.status == GoalStatus.STATUS_CANCELED
+        assert first_result.status == GoalStatus.STATUS_ABORTED
+        assert 'preempted' in first_result.result.message
+        assert len(downstream.requests) == 2
+        assert 'CANCELING' in first_feedback
+        assert 'SUSPENDED' not in first_feedback
 
         state_event = Event()
         states = []
@@ -311,6 +304,10 @@ def test_execute_preempt_resume_cancel_and_transient_state():
         )
         assert state_event.wait(TIMEOUT_S)
         assert states[-1].system_state == SystemState.IDLE
+        assert not states[-1].active_foreground_missions
+        assert not states[-1].suspended_missions
+        assert not states[-1].pending_missions
+        assert len(downstream.requests) == 2
         client_node.destroy_subscription(subscription)
     finally:
         client.destroy()
@@ -370,6 +367,13 @@ def test_pending_cancel_waits_for_rclpy_cancel_transition():
         assert cancel_response.goals_canceling
         pending_result = _wait_future(pending_handle.get_result_async())
         assert pending_result.status == GoalStatus.STATUS_CANCELED
+        blocker_result = _wait_future(blocker_handle.get_result_async())
+        assert blocker_result.status == GoalStatus.STATUS_ABORTED
+        assert 'preempted' in blocker_result.result.message
+        _wait_until(lambda: manager.downstream_execution_count == 0)
+        assert len(downstream.requests) == 1
+        assert not navigation.requests
+        assert not manager._state.suspended
     finally:
         manager.begin_shutdown()
         try:
@@ -490,21 +494,25 @@ def test_resource_preemption_keeps_unrelated_foreground_running(tmp_path):
         _wait_until(lambda: len(states[-1].pending_missions) == 1)
         assert not next_base.starts
         assert not speaker.cancel_requested.is_set()
+        first_result_future = first_handle.get_result_async()
+        assert not first_result_future.done()
         first.allow_cancel_completion.set()
 
         _wait_until(lambda: len(next_base.starts) == 1)
         _wait_until(lambda: active_ids() == {'base_next', 'speaker'})
         assert first.finishes[0] <= next_base.starts[0]
         assert not speaker.cancel_requested.is_set()
-        assert not first_handle.get_result_async().done()
+        first_result = _wait_future(first_result_future)
+        assert first_result.status == GoalStatus.STATUS_ABORTED
+        assert 'preempted' in first_result.result.message
+        assert not states[-1].suspended_missions
 
         cancel(next_handle)
-        _wait_until(lambda: len(first.starts) == 2)
-        _wait_until(lambda: active_ids() == {'base_first', 'speaker'})
+        _wait_until(lambda: active_ids() == {'speaker'})
+        assert len(first.starts) == 1
         assert len(speaker.starts) == 1
         assert not speaker.cancel_requested.is_set()
 
-        cancel(first_handle)
         cancel(speaker_handle)
         _wait_until(lambda: states[-1].system_state == SystemState.IDLE)
         assert not states[-1].active_foreground_missions
