@@ -57,6 +57,14 @@ setup(
     entry_points={
         'console_scripts': [
             (
+                'agent_communication = '
+                'malbut_agent_server.ros_communication:main'
+            ),
+            (
+                'speech_receiver = '
+                'malbut_agent_server.speech_receiver:main'
+            ),
+            (
                 'malbut-agent-server = '
                 'malbut_agent_server.cli:server_main'
             ),

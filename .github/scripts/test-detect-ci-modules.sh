@@ -11,6 +11,8 @@ scenarios=(
   "malbut_interfaces/action/FollowPerson.action|false,false,true,false"
   "malbut_scenarios/malbut_scenarios/text_agent_server.py|false,false,true,false"
   "malbut_system_manager/malbut_system_manager/system_manager_node.py|false,false,true,false"
+  "malbut_stt/malbut_stt/node.py|false,false,true,false"
+  "malbut_tts/malbut_tts/receiver.py|false,false,true,false"
   "README.md|false,false,false,false"
   ".github/workflows/ci.yml|true,true,true,true"
 )

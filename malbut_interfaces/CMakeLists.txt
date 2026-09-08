@@ -15,6 +15,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/LidarClusterArray.msg"
   "msg/MissionStatus.msg"
   "msg/SensorProcessingTrace.msg"
+  "msg/SpeechRequest.msg"
+  "msg/SpeechTranscript.msg"
   "msg/SystemState.msg"
   "msg/TrackingCommandTrace.msg"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs

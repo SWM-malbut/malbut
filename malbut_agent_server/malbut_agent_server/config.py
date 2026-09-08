@@ -417,11 +417,22 @@ class Settings:
 
     def validate_for_server(self) -> None:
         """Reject unsafe binds and incomplete live-provider settings."""
+        self._validate_runtime(http_server=True)
+
+    def validate_for_dialogue(self) -> None:
+        """Validate ROS dialogue without treating HTTP tokens as ROS auth."""
+        if self.tool_mode != 'proposal':
+            raise ValueError('ROS dialogue requires proposal-only Tool mode')
+        if not isinstance(self.user_id, str) or not self.user_id.strip():
+            raise ValueError('MALBUT_AGENT_USER_ID is invalid')
+        self._validate_runtime(http_server=False)
+
+    def _validate_runtime(self, *, http_server: bool) -> None:
         if self.provider not in SUPPORTED_PROVIDERS:
             raise ValueError('MALBUT_AGENT_PROVIDER is unsupported')
         if self.tool_mode not in SUPPORTED_TOOL_MODES:
             raise ValueError('MALBUT_AGENT_TOOL_MODE is unsupported')
-        if self.host not in {'127.0.0.1', 'localhost', '::1'}:
+        if http_server and self.host not in {'127.0.0.1', 'localhost', '::1'}:
             raise ValueError(
                 'The MVP server is loopback-only; use an authenticated '
                 'TLS proxy for remote access'
@@ -430,7 +441,7 @@ class Settings:
             raise ValueError('MALBUT_AGENT_DB must not be empty')
         if not self.user_id or len(self.user_id) > 128:
             raise ValueError('MALBUT_AGENT_USER_ID is invalid')
-        if self.auth_token and not self.auth_token.isascii():
+        if http_server and self.auth_token and not self.auth_token.isascii():
             raise ValueError(
                 'MALBUT_AGENT_AUTH_TOKEN must contain ASCII only'
             )
@@ -451,12 +462,12 @@ class Settings:
             )
         if self.provider == 'mock':
             return
-        if not self.auth_token:
+        if http_server and not self.auth_token:
             raise ValueError(
                 'Live provider mode requires MALBUT_AGENT_AUTH_TOKEN'
             )
         if self.provider == 'rai-sidecar':
-            self.validate_rai_sidecar()
+            self.validate_rai_sidecar(require_http_auth=http_server)
             return
         if not self.openai_api_key:
             raise ValueError('OPENAI_API_KEY is required')
@@ -488,11 +499,11 @@ class Settings:
                 'OPENAI_REASONING_EFFORT is unsupported'
             )
 
-    def validate_rai_sidecar(self) -> None:
+    def validate_rai_sidecar(self, *, require_http_auth: bool = True) -> None:
         """Reject implicit process lookup and non-isolated RAI startup."""
         if self.provider != 'rai-sidecar':
             raise ValueError('RAI sidecar validation requires RAI mode')
-        if not self.auth_token:
+        if require_http_auth and not self.auth_token:
             raise ValueError(
                 'RAI sidecar mode requires MALBUT_AGENT_AUTH_TOKEN'
             )

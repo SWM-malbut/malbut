@@ -55,6 +55,10 @@ flowchart TD
 - 대화/ 명령 구분 프로그램에서 재질문 요청이 들어올 시 정해진 형식에 맞는 재질문 텍스트를 TTS에 전송한다.
 - 명령 구분 프로그램에서 결과가 들어오면 이 결과를 정리하여 TTS에 전송한다.
 
+### 통신
+
+노드 간 통신은 공개 ROS 인터페이스를 사용한다. 필드·자료형·상수는 .msg/.srv/.action을, 기능 등록 정보는 Capability Manifest를 기준으로 한다.
+
 ## 2. 입력
 ```mermaid
 sequenceDiagram
@@ -63,7 +67,7 @@ sequenceDiagram
     participant M as Manager
     participant T as TTS
 
-    S->>A: 사용자 발화 원문<br/>자료형: string
+        S->>A: 최종 발화 메시지 — ROS 2 Topic<br/>utterance_id: string — 발화 ID<br/>text: string — 발화 원문
 
     A->>M: ExecuteMission.Goal<br/>capability_id: string<br/>arguments_yaml: string — YAML 형식
     Note over A,M: ROS가 실행 요청에 goal_id: UUID를 연결
@@ -88,10 +92,14 @@ sequenceDiagram
         A->>T: 요청 거절 안내 텍스트<br/>자료형: string
     end
 ```
+
 ### 대화/명령 판별기
 
-- STT가 최종 인식한 사용자 발화 텍스트를 원문 그대로 전달 받는다.
-- ROS 2 Topic을 사용하며, 전달 내용은 문자열이다.
+- STT가 최종 인식한 사용자 발화를 ROS 2 Topic으로 전달받는다.
+- 통신 이름·메시지 타입·전송 규칙은 [STT → Agent 통신 명세](../../malbut_stt/docs/stt_agent.md)를 따른다.
+- 전달 데이터
+  - 'utterance_id: string' - 한 번의 발화를 구분하는 고유 ID
+  - 'text: string' - STT가 최종 인식한 사용자 발화의 원문
 
 ### 명령 처리
 
@@ -117,6 +125,7 @@ sequenceDiagram
 ### 명령 처리
 
 - Manager 노드로 실행할 기능과 해당 기능에 필요한 입력값을 전달한다.
+- 실행 중인 요청을 취소할 때는 해당 Goal을 지정하여 ROS 2 Action 취소를 요청한다.
 - `/malbut/mission/execute` ROS 2 Action의 Goal로 요청한다.
 
 - 실행 요청 (`ExecuteMission.Goal`)
@@ -128,7 +137,9 @@ sequenceDiagram
 ### 응답 정리
 
 - 자유 대화 및 명령 처리에서 보낸 텍스트를 기반으로 사용자에게 말할 텍스트를 TTS에 보낸다.
-- ROS 2 Topic을 사용하며, 전달 내용은 문자열이다.
+- `/malbut/speech/response` ROS 2 Topic을 사용한다.
+- 메시지 타입은 `malbut_interfaces/msg/SpeechRequest`이며, `text`: TTS에 사용자에게 말할 텍스트를 담는다.
+- QoS는 `RELIABLE`, `VOLATILE`, `KEEP_LAST`, depth `10`을 사용한다.
 
 ## 4. 동작 규칙
 
@@ -136,12 +147,14 @@ sequenceDiagram
 
 - 사용자 발화와 대화 문맥으로 의도를 판단하고, 불명확하면 실행 요청 없이 재질문한다.
 - 예시나 인용에 포함된 명령은 실제 실행 요청으로 취급하지 않는다.
+- 이미 접수한 발화 ID는 중복 처리하지 않는다. 원문이 같아도 발화 ID가 다르면 별도 발화로 처리한다.
 
 ### 명령 처리
 
 - 기능과 입력값이 명확하면 재확인 없이 Manager에 요청하고, 정보가 부족하면 필요한 내용을 재질문한다.
 - 지원하지 않는 기능은 요청하지 않고 사용자에게 안내한다.
 - Manager의 응답을 해당 요청에 연결한다. 거절·실패는 확인된 사유를 안내하고, 실행 여부가 불명확하면 시작 요청을 임의로 다시 보내지 않는다.
+- 취소 대상이 불명확하면 질문한다. 취소 요청의 접수와 실제 Action 종료를 구분하며, 물리 정지는 확인된 근거가 있을 때만 안내한다.
 
 ### 대화 처리
 
