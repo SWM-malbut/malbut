@@ -90,14 +90,16 @@ def _reliable_openai_provider(
     )
 
 
-def build_provider(settings: Settings) -> AgentProvider:
+def build_provider(
+    settings: Settings, *, http_server: bool = True,
+) -> AgentProvider:
     """Build the selected provider without making a network request."""
     if settings.provider == 'mock':
         return MockProvider(
             max_model_input_chars=settings.max_model_input_chars,
         )
     if settings.provider == 'rai-sidecar':
-        settings.validate_rai_sidecar()
+        settings.validate_rai_sidecar(require_http_auth=http_server)
         environment = {}
         if settings.openai_api_key:
             environment['OPENAI_API_KEY'] = settings.openai_api_key
@@ -182,6 +184,7 @@ def build_orchestrator(
     *,
     robot_state_source: RobotStateSource | None = None,
     front_router: FrontRouterPort | None = None,
+    http_server: bool = True,
 ) -> AgentOrchestrator:
     """Build one runtime while keeping model output non-actuating."""
     memory_store = SQLiteMemoryStore(settings.database_path)
@@ -199,7 +202,10 @@ def build_orchestrator(
                 settings.conversation_summary_max_chars
             ),
         )
-        provider = build_provider(settings)
+        provider = (
+            build_provider(settings) if http_server
+            else build_provider(settings, http_server=False)
+        )
         if front_router is not None:
             routing_service = FrontRoutingService(front_router)
             general_provider, planner_provider = (

@@ -1,0 +1,5 @@
+# Install only for the microphone/API runtime; pure tests and ROS build need none.
+pvporcupine>=4,<5
+pvrecorder>=1.2,<2
+webrtcvad-wheels>=2.0.14,<3
+openai>=3.8,<4

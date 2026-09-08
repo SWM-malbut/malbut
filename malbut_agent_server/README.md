@@ -308,3 +308,303 @@ abstain한 요청도 기존 범용 체인을 사용한다. 명시적인 역할 m
 다중 프로세스 분산 잠금, Tool query cache의 재시작 후 보존, 주기적 만료
 sweeper, 독립 provider 장애 fallback과 ROS 2 대화 bridge는 이 MVP의 운영
 완료 범위가 아니다.
+
+## STT 발화 수신 확인
+
+`speech_receiver`는 STT의 최종 발화를 받는 별도 실행 모드다. 기존 HTTP
+서버를 시작하거나 LLM·Manager·로봇 동작을 호출하지 않는다.
+
+ROS 2 환경에서 `malbut_interfaces`와 `malbut_agent_server`를 빌드하고
+작업 공간의 `install/setup.bash`를 source한 뒤 실행한다.
+
+```bash
+ros2 run malbut_agent_server speech_receiver
+```
+
+`/malbut/speech/transcript` Topic의 `malbut_interfaces/msg/SpeechTranscript`
+메시지를 구독한다. STT와 수신기의 QoS는 `RELIABLE`, `VOLATILE`,
+`KEEP_LAST`, depth `10`으로 맞춘다. 수신기를 먼저 실행한 뒤 별도 터미널에서
+통신만 확인할 수 있다.
+
+```bash
+ros2 topic pub --once /malbut/speech/transcript \
+  malbut_interfaces/msg/SpeechTranscript \
+  '{utterance_id: "manual-check-1", text: "안녕 말벗"}'
+```
+
+신규 발화는 DB 기록 완료 후 `status: "received"`와 ID·원문을 JSON 형식의
+로그로 표시한다. 같은 ID·같은 원문은 `duplicate`, 같은 ID·다른 원문은
+`conflict`로 표시하며 최초 기록을 유지한다. 같은 문장을 다시 말한 경우
+새 ID를 사용하면 새 발화로 접수한다. 빈 ID나 공백뿐인 원문은 거절한다.
+
+기본 기록 파일은 `~/.local/state/malbut/speech-receipts.sqlite3`이며
+`--db-path`로 변경할 수 있다. DB에는 ID·원문의 SHA-256·수신 시각만
+저장하므로 같은 파일로 재시작하면 중복 판정도 유지된다. 원문은 수신
+확인용 로그에만 나타나며 장기기억에 저장하지 않는다. DB 실패는 오류로
+기록하고 접수 성공을 표시하지 않는다.
+
+발화 ID는 사용자 신원이나 실행 권한을 뜻하지 않는다. 여기서 접수는
+Agent의 수신 기록이 만들어졌다는 의미다. Topic 발행만으로 상대가
+접수했음을 보장하지 않으며, 수신기가 꺼져 있을 때의 발화 재생·실행은
+제공하지 않는다. 실제 음성 인식과 수신 로그의 확인은 ROS 통신 시험과
+구분해서 기록한다.
+
+## STT · Agent 대화 · Manager · TTS 연결
+
+`agent_communication`은 STT 최종 발화를 기존 대화 처리에 전달하고, 생성한
+응답을 TTS Topic으로 보내는 개발용 실행 모드다. 한 프로세스에서 새 대화
+세션을 만들고 실행 중 문맥을 유지한다. Manager의 실행 요청·진행·취소 통신도
+같은 Agent Node에서 제공하며, 모델 응답을 기다리는 동안에도 처리한다.
+
+```mermaid
+flowchart LR
+    STT["STT"] -->|"SpeechTranscript Topic: 발화 ID · 원문"| A["Agent<br/>발화 수신 · 대화 · 응답 정리"]
+    DEV["개발 터미널의 명시적 요청"] --> A
+    A -->|"ExecuteMission Goal · Cancel"| M["Manager"]
+    M -->|"접수 · Feedback · Result"| A
+    A -->|"SpeechRequest Topic: 대화 답변 · 안내 문장"| TTS["TTS 수신기"]
+```
+
+| 구간 | 공개 ROS 계약 | 이번 구현의 처리 |
+| --- | --- | --- |
+| STT → Agent | `/malbut/speech/transcript`, `malbut_interfaces/msg/SpeechTranscript` | 기존 수신 기록·중복 판정 후 원문을 대화 처리에 전달 |
+| Agent ↔ Manager | `/malbut/mission/execute`, `malbut_interfaces/action/ExecuteMission` | 요청, 접수, 진행, 결과, 특정 Goal 취소 |
+| Agent → TTS | `/malbut/speech/response`, `malbut_interfaces/msg/SpeechRequest` | `text`에 대화 답변·질문·명령 안내 문장을 담아 발행 |
+
+두 Topic은 `RELIABLE`, `VOLATILE`, `KEEP_LAST`, depth `10`을 사용한다.
+TTS를 위한 별도 Manifest는 만들지 않는다. TTS 수신기는 음성을 합성하거나
+스피커로 재생하지 않으며, 발행 성공도 상대 수신·재생 완료를 보장하지 않는다.
+
+이 모드는 개발용 사용자와 대화 DB를 사용한다. 발화 ID로 화자 신원을
+추정하거나 기존 실제 사용자의 대화·기억에 연결하지 않는다. 대화 DB에는
+기존 대화 처리 규칙에 따라 발화와 응답이 저장된다. 원문 없이 ID·해시를
+보관하는 STT 수신 기록 DB와 역할이 다르다.
+
+### 실행과 텍스트 전달
+
+Ubuntu ROS 2 Humble 환경에서 필요한 ROS 의존성을 설치한 뒤 빌드한다.
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --packages-select malbut_interfaces malbut_system_manager \
+  malbut_agent_server malbut_stt malbut_tts
+source install/setup.bash
+export ROS_DOMAIN_ID=192
+export ROS_LOCALHOST_ONLY=1
+ros2 run malbut_tts tts_receiver
+```
+
+다른 터미널에도 같은 환경을 적용하고 Agent를 실행한다. 대화 연결이
+기본 활성화되며, 기존 `mock`·OpenAI·RAI Provider 설정을 재사용한다.
+수신 로그만 확인하려면 기존 `speech_receiver`를 사용한다. 같은 STT 발화를
+받을 때에는 두 Agent 실행 모드를 동시에 실행하지 않는다.
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+export ROS_DOMAIN_ID=192
+export ROS_LOCALHOST_ONLY=1
+ros2 run malbut_agent_server agent_communication \
+  --provider mock \
+  --db-path /tmp/malbut-communication-receipts.sqlite3 \
+  --conversation-db /tmp/malbut-speech-dialogue.sqlite3
+```
+
+주요 실행 설정은 다음과 같다.
+
+| 옵션 | 의미와 기본값 |
+| --- | --- |
+| `--provider` | 기존 `mock`, `openai`, `rai-sidecar` 설정 사용. 환경 설정도 없으면 `mock` |
+| `--env-file` | 명시한 파일의 환경 설정만 읽음. 생략하면 파일을 자동 로드하지 않음 |
+| `--model` | 기존 OpenAI 모델 설정을 덮어씀 |
+| `--conversation-db` | 대화 저장 파일. 기본 `~/.local/state/malbut/speech-dialogue.sqlite3` |
+| `--user-id` | 고정 개발 범위. 기본 `speech-development-user`; 화자 인증 결과가 아님 |
+| `--db-path` | 발화 ID 수신 기록. 기본 `~/.local/state/malbut/speech-receipts.sqlite3` |
+| `--check` | 설정만 검사한 뒤 종료. ROS·모델·DB를 시작하지 않음 |
+
+대화 DB는 일반 HTTP 서버의 `MALBUT_AGENT_DB`를 자동 재사용하지 않는다.
+OpenAI·RAI를 선택하면 기존 키 환경과 sidecar 설정을 사용한다. 이 ROS 실행
+모드에는 HTTP 서버 인증 토큰이 필요하지 않다. 키 값을 터미널 명령에 넣지
+않고, 필요한 설정 파일을 `--env-file`로 지정할 수 있다.
+
+STT 없이 대화 연결부터 확인하려면 같은 ROS 환경의 다른 터미널에서 최종
+발화 메시지를 발행한다. 대화 처리가 끝나면 TTS 터미널의
+`tts_text_received`에 해당 Provider가 만든 응답이 나타난다.
+
+```bash
+ros2 topic pub --once /malbut/speech/transcript \
+  malbut_interfaces/msg/SpeechTranscript \
+  '{utterance_id: "dialogue-demo-1", text: "안녕"}'
+```
+
+새로운 발화에는 새로운 ID를 사용한다. 기존 ID를 다시 보내면 대화 처리나
+답변 발행을 반복하지 않는다. 발화 ID 기록은 재시작 후에도 유지되지만
+대화 세션은 실행마다 새로 만든다. 실제 STT 실행법은
+[STT README](../malbut_stt/README.md)를 따른다.
+
+Agent 터미널에 다음 JSON을 한 줄로 입력하면 TTS 터미널에
+`tts_text_received`가 나타난다. `say`는 모델을 거치지 않고 지정한 문장을
+보내는 개발 명령이다. `mock`으로 실행한 이 확인에는 API 키가 필요 없다.
+
+```json
+{"op":"say","text":"안녕하세요. 통신을 확인하고 있어요."}
+```
+
+개발 명령은 `say`, `submit`, `status`, `cancel` 네 종류다. `submit`은 실제
+Manager에 실행을 요청하므로, 아래 예시는 시험용 기능 Node가 연결된
+Manager에서 사용하는 형식이다. 자동 통신 시험은 해당 구성을 직접 만든다.
+
+```json
+{"op":"submit","request_id":"follow-demo","capability_id":"follow_person","arguments":{"target_mode":1,"target_person_id":"test-person","desired_distance_m":1.0}}
+{"op":"status","request_id":"follow-demo"}
+{"op":"cancel","request_id":"follow-demo"}
+```
+
+`arguments`에는 실제 기능 Goal 필드만 넣는다. `request_id`는 Agent 내부에서
+요청을 구분하며 `arguments_yaml`에 섞지 않는다. `follow_person`의 필드·상수는
+`FollowPerson.action`이 기준이다. 이 개발 명령은 사용자·추적 대상 확인을
+대신하는 자연어 실행 API가 아니다.
+
+### 상태와 책임 경계
+
+- STT 원문은 기존 대화 처리와 Provider를 거쳐 응답으로 정리한다. 같은
+  프로세스 안에서는 앞선 대화 문맥을 이어가며, 재시작하면 새 세션을 사용한다.
+  처리 완료·실패 안내와 Manager가 확인한 실행 결과를 구분한다.
+- 대화 추론은 ROS callback과 분리한다. 모델 지연이 Manager의 Feedback·Result,
+  개발 터미널의 조회·취소 처리를 막지 않게 한다.
+- 대화 처리 용량은 진행 중·대기 중·아직 발행하지 않은 응답을 합쳐 10개다.
+  가득 차면 새 발화 ID를 소비하기 전에 바쁨을 안내한다. 이미 접수한 ID는
+  용량과 관계없이 중복 처리하지 않는다.
+- 일반 모델 처리 실패는 오류를 안내한 뒤 다음 새 발화를 처리한다. 기존
+  세션의 유휴 만료(기본 30분)·닫힘·삭제·turn 한도는 재시작 안내로 구분한다.
+  만료된 세션을 임의로 복원하거나 새 세션으로 조용히 바꾸지 않는다.
+- 종료하면 대기 발화와 미발행 답변을 폐기하고, 실행 중 추론이 끝난 뒤 DB를
+  닫는다. 접수된 발화는 재시작 후 자동 재처리하지 않으며 새 발화로 다시 말한다.
+- 자연어 발화를 새로운 로봇 실행 권한으로 사용하지 않는다. 이번에 추가하는
+  연결은 대화 응답이며, Manager 실행은 기존의 명시적인 개발 명령으로 요청한다.
+- `ManagerClient`는 Goal UUID와 요청을 연결하고 접수·진행·종료·취소 결과를
+  전달한다. 같은 프로세스에서 같은 요청 ID·입력을 다시 제출하면 기존 기록을
+  반환하며, 입력이 달라지면 거절한다. 결과의 `mission_id`도 해당 Goal과 대조한다.
+- Manager는 Action을 접수한 뒤 등록·입력·실행 조건 검사에서 거절할 수 있다.
+  따라서 `accepted`와 성공 종료를 구분한다. 결과 YAML은 원문 그대로 보존하고
+  기능별 완료나 물리 정지를 추측하지 않는다.
+- `MissionAnnouncer`는 확인된 상태를 문장으로 바꾼다. 같은 요청의 반복 진행은
+  한 번만 안내하고, 종료 뒤 늦은 진행으로 다시 실행 중이라고 안내하지 않는다.
+- 취소 요청·취소 수락·Action의 최종 취소 종료는 별도 상태다. 로봇 전체 중지
+  경로와 물리 정지 판정은 이번 연결에 포함하지 않는다.
+- 접수 응답 제한 시간은 기본 5초다. 응답이 없으면 `UNKNOWN`으로 남기고 시작
+  요청을 자동 재전송하지 않는다. 늦은 접수에 기존 취소 의사를 전달할 수 있다.
+  이 시간은 미션 실행 제한 시간이 아니며, 중단·재개도 새 Goal 없이 관찰한다.
+- 미션 기록은 이번 프로세스 안에서만 유지한다. 재시작 후 미션 복구·조회는
+  제공하지 않는다. 기존 STT 중복 기록은 별도 SQLite에 영속 저장한다.
+- Ctrl+C는 통신 자원을 정리한다. Agent 종료를 미션 취소로 해석하지 않는다.
+  특정 요청을 취소하려면 `cancel` 후 해당 요청의 최종 상태를 확인한다.
+
+`ros_communication`은 Agent 내부 구성 요소를 조합하며, 응용 기능 Node를
+직접 호출하지 않는다. 기존 HTTP 서버를 켜지 않고 대화 처리·Provider를
+재사용한다. 다른 Python 코드에 포함할 때는 Node 생성·ROS callback·Node 종료를
+같은 스레드의 SingleThreadedExecutor에서 처리하고, 추론 작업과 분리한다.
+
+### 자동 검증
+
+```bash
+cd malbut_agent_server
+PYTHONPATH=. python3 -m pytest -q test
+```
+
+ROS 환경에서는 빌드된 작업 공간을 source한 뒤 통신 시험만 실행할 수도 있다.
+
+```bash
+PYTHONPATH=. python3 -m pytest -q test/test_node_communication_ros.py
+```
+
+이 시험은 도메인 `193`과 localhost에서 실제 Manager, 시험용 FollowPerson
+서버, Agent, TTS 수신기를 생성한다. 요청·Feedback·Result·Cancel, 접수 뒤 거절,
+여러 요청의 결과 구분, Manager 부재, TTS 원문 전달, STT 수신을 확인한다.
+시험용 등록 정보는 임시 디렉터리에만 만들며 운영 Manifest에 추가하지 않는다.
+ROS가 없는 환경에서는 이 통합 시험을 건너뛰고 Python 단위 시험을 수행한다.
+이때 시험 환경에 `pytest`와 `PyYAML`이 필요하다. ROS 실행 의존성은
+`package.xml`을 통해 설치한다.
+
+대화 연결은 신규 발화의 응답 전달, 대화 문맥 유지, 중복 발화, 추론 지연·실패,
+추론 중 Manager 조회·취소를 시험한다. 실제 모델을 사용한 대화 품질, 자연어
+로봇 실행 정책, 실제 기능 Node의 물리 동작, 음성 합성과 재생은 별도 검증
+대상이다. TTS 실행법은
+[TTS README](../malbut_tts/README.md)에서도 확인할 수 있다.
+
+### 2026-09-08 SpeechRequest 전환 검증
+
+Agent 발행과 TTS 수신을 `malbut_interfaces/msg/SpeechRequest`의 `text`로
+맞췄다. 필드 원본은 [SpeechRequest.msg](../malbut_interfaces/msg/SpeechRequest.msg)이며,
+Topic과 QoS는 기존 계약을 유지한다.
+
+Ubuntu 22.04 ARM64 Docker·ROS 2 Humble의 별도 작업 공간과 도메인 `193`에서
+다음 내용을 확인했다.
+
+| 검사 | 결과 |
+| --- | --- |
+| 인터페이스·Manager·Agent·STT·TTS 빌드 | 5개 패키지 성공 |
+| `ros2 interface show malbut_interfaces/msg/SpeechRequest` | `string text` 생성 확인 |
+| Agent·TTS 전체 pytest | 708개 통과: Agent 699개, TTS 9개 |
+| 위 시험에 포함된 실제 ROS 통신 | 11개 통과: 송·수신 타입 일치, 한글·공백·개행·따옴표·탭 원문 전달 확인 |
+| ROS 없는 macOS Agent pytest | 688개 통과, ROS 통합 모듈 1개 건너뜀 |
+
+검증 로그는 컨테이너의 `/tmp/malbut-speech-request-validation-pWmY4MRs/`에
+`build.log`, `interface.log`, `agent-tts-tests.log`로 남겼다. 변경한 Python 코드와
+테스트의 lint 및 `git diff --check`가 통과했다. 이 검증은 텍스트 통신을 대상으로
+하며, 실제 음성 합성·스피커 재생·물리 로봇 동작을 확인한 결과는 아니다.
+
+### 2026-09-08 대화 연결 검증 기록 (SpeechRequest 전환 전)
+
+목표인 **노드 통신 완성**의 세 달성조건을 다음 근거로 확인했다.
+아래는 TTS 메시지를 `String`에서 `SpeechRequest`로 바꾸기 전의 검증 기록이다.
+
+| 달성조건 | 구현과 검증 근거 |
+| --- | --- |
+| 명세를 기준으로 노드 interface 확정 | Agent 명세의 TTS Topic·String·QoS 보완, 기존 SpeechTranscript·ExecuteMission 정의와 코드 대조 |
+| STT → Agent → TTS Topic으로 기존 대화 처리 | 기존 AgentOrchestrator를 통해 2턴 문맥과 답변 전달, 발화 ID 중복 방지 확인 |
+| Agent ↔ Manager ExecuteMission Action 통신 | 실제 Manager와 시험용 FollowPerson Node 사이의 Goal·Feedback·Result·Cancel 및 거절 처리 확인 |
+
+Ubuntu 22.04 ARM64 Docker·ROS 2 Humble·Python 3.10에서 검증했다.
+
+| 검사 | 최종 결과 |
+| --- | --- |
+| 인터페이스·Manager·Agent·STT·TTS 빌드 | 5개 패키지 성공, 최종 Agent 제품 코드도 재빌드 |
+| ROS 환경 Agent 전체 pytest | 699개 통과 |
+| 위 시험에 포함된 실제 ROS 통신 | 11개 통과 |
+| 설치된 Agent와 TTS 별도 프로세스 | 자동 2턴 답변·문맥 반영·중복 1회 처리·정상 종료 확인 |
+| ROS 없는 환경의 설정 검사 | `--provider mock --check` 종료 코드 0, ROS·DB·모델 미실행 |
+| ROS 없는 macOS Agent pytest | 688개 통과, ROS 통합 모듈 1개 건너뜀 |
+
+실행한 CLI 시험에서 `안녕` 발화 뒤 `내가 뭐라고 했어?`를 보내자 TTS가
+`아까 “안녕”라고 말했어.`를 수신했다. 이때 Provider는 기존 Mock이었다.
+ROS 통합 시험에서는 실제 대화 처리·저장소와 고정 Provider를 사용해 문맥을
+직접 검사했다. 모델 지연 중에도 Manager 취소가 완료됐고, 포화 시 신규 ID를
+소비하지 않는 동작과 실패 복귀·종료 후 늦은 응답 차단도 확인했다.
+
+신규 코드 lint, CI 모듈 선택 시험, `git diff --check`가 통과했다.
+Agent 명세의 승인된 TTS 문구 외 기존 사용자 문구와 ROS 인터페이스 정의는
+보존했다. 저장소 전체 CI, 실제 모델의 응답 품질, 마이크 인식, 음성 재생,
+자연어 명령의 로봇 실행 정책, 물리 동작 완료를 이 결과로 선언하지 않는다.
+
+### 2026-09-08 대화 연결 전 통신 검증 기록
+
+아래는 STT 발화를 대화 처리에 연결하기 전의 검증 기록이다. 새 대화 연결의
+시험 통과를 뜻하지 않는다. 실제 ROS 통신은 Ubuntu 22.04 ARM64 Docker·
+ROS 2 Humble·Python 3.10에서 확인했다. 마이크·스피커·물리 로봇을 사용하지
+않았으며, Manager에는 시험용 FollowPerson 서버만 연결했다.
+
+| 검사 | 결과 |
+| --- | --- |
+| 인터페이스·Manager·Agent·STT·TTS `colcon build` | 5개 패키지 성공 |
+| Agent 최종 `colcon test` | 662개 통과, 그중 실제 ROS 통신 7개 |
+| Manager 회귀 시험 | 기능 93개 + 별도 lint 2개 통과 |
+| STT 회귀 시험 | 32개 통과, 선택적 VAD·OpenAI SDK 의존 시험 3개 건너뜀 |
+| TTS 수신 시험 | 9개 통과 |
+| 설치된 Agent·TTS 별도 프로세스 | `say` 수신, 없는 요청 조회 거절, SIGINT 정상 종료 |
+| ROS 없는 macOS의 Agent 시험 | 655개 통과, ROS 통합 시험 모듈 건너뜀 |
+
+CI 모듈 선택 시험, 신규 코드 lint, `git diff --check`도 통과했다. Manager의
+기능 시험과 lint는 분리 실행했으며, 저장소 전체 CI 완료를 뜻하지 않는다.
+당시 사용자 작성 Agent·STT 명세와 기존 ROS 인터페이스 정의는 해당 통신
+작업 전후 SHA-256이 동일한지 확인했다.
