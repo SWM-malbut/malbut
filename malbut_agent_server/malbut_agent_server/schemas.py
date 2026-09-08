@@ -581,10 +581,21 @@ class ProviderResult:
     response_id: Optional[str] = None
     input_chars: Optional[int] = None
     context_metrics: Optional[ContextMetrics] = None
+    memory_proposal: Optional[Dict[str, Any]] = None
+    memory_supported: bool = False
 
     def validate(self) -> None:
         """Validate content-free provider metadata and its decision."""
         self.decision.validate()
+        if type(self.memory_supported) is not bool:
+            raise ValidationError('provider memory support flag is invalid')
+        if self.memory_proposal is not None:
+            from malbut_agent_server.memory_contract import (
+                validate_memory_proposal,
+            )
+            if not self.memory_supported or self.decision.type == 'tool_call':
+                raise ValidationError('provider mixed memory and tool output')
+            validate_memory_proposal(self.memory_proposal)
         for field_name in ('provider', 'model'):
             value = getattr(self, field_name)
             if (

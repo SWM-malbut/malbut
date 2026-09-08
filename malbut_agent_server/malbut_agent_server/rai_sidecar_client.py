@@ -15,6 +15,7 @@ from malbut_agent_server.conversation import (
     ConversationTurn,
 )
 from malbut_agent_server.memory import MemoryRecord
+from malbut_agent_server.memory_contract import MEMORY_INSTRUCTIONS
 from malbut_agent_server.prompting import (
     MAX_CONVERSATION_TURNS,
     MAX_MODEL_INPUT_CHARS,
@@ -388,6 +389,8 @@ class RaiSidecarClient:
             raise RaiSidecarRuntimeError(response.code)
         if type(response) is not ProposalResponse or (
             response.request_id != request.request_id
+        ) or (
+            response.schema_version != request.schema_version
         ):
             raise RaiSidecarMalformedResponseError()
         return response
@@ -397,6 +400,7 @@ class RaiSidecarProvider(AgentProvider):
     """Adapt one isolated RAI proposal into the existing Provider contract."""
 
     name = 'rai-sidecar'
+    supports_memory = True
 
     def __init__(
         self,
@@ -431,6 +435,8 @@ class RaiSidecarProvider(AgentProvider):
         conversation_turns: List[ConversationTurn],
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary] = None,
+        *,
+        memory_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Request one proposal, revalidate it locally, and never retry."""
         prepared = prepare_model_input(
@@ -440,13 +446,18 @@ class RaiSidecarProvider(AgentProvider):
             conversation_summary,
             self.max_model_input_chars,
             MAX_CONVERSATION_TURNS,
+            memory_context=memory_context,
         )
         try:
             proposal_request = ProposalRequest(
                 request_id=request.request_id,
-                instructions=SYSTEM_INSTRUCTIONS,
+                instructions=(
+                    SYSTEM_INSTRUCTIONS if memory_context is None
+                    else SYSTEM_INSTRUCTIONS + '\n\n' + MEMORY_INSTRUCTIONS
+                ),
                 model_input=prepared.text,
                 tools=project_tool_specs(tools),
+                memory_context=memory_context,
             )
         except (RaiSidecarProtocolError, TypeError, ValueError):
             raise RaiSidecarRequestError() from None
@@ -467,6 +478,11 @@ class RaiSidecarProvider(AgentProvider):
             response_id=response.response_id,
             input_chars=prepared.metrics.model_input_chars,
             context_metrics=prepared.metrics,
+            memory_proposal=(
+                response.output.memory_proposal
+                if type(response.output) is TextReply else None
+            ),
+            memory_supported=memory_context is not None,
         )
 
     @staticmethod

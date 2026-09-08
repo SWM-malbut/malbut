@@ -1211,6 +1211,7 @@ class SQLiteConversationStore:
         assistant_content: str,
         response: Dict[str, Any],
         confirmation_draft: Optional['ConfirmationDraft'] = None,
+        commit_callback: Optional[Callable] = None,
     ) -> Tuple[ConversationSession, ConversationTurn]:
         """Atomically commit one response and optional confirmation."""
         normalized_assistant = self._assistant_text(
@@ -1250,6 +1251,14 @@ class SQLiteConversationStore:
                             'retry with a new request_id and turn_id'
                         )
                 if changed_error is None:
+                    if commit_callback is not None:
+                        assistant_content, response = commit_callback(
+                            self._connection,
+                        )
+                        normalized_assistant = self._assistant_text(
+                            assistant_content,
+                        )
+                        response_json = self._response_json(response)
                     cursor = self._connection.execute(
                         '''
                         UPDATE conversation_turns
@@ -1979,8 +1988,14 @@ class SQLiteConversationStore:
         text_turn_request_fingerprint: Optional[str] = None,
         create_robot_action: bool = False,
         action_dispatch_window_seconds: float = 30.0,
+        precommit_validator: Optional[
+            Callable[[sqlite3.Connection], None]
+        ] = None,
     ) -> 'ConfirmationRecord':
         """CAS a response and optionally create its action atomically."""
+        if (precommit_validator is not None
+                and not callable(precommit_validator)):
+            raise TypeError('precommit_validator must be callable')
         if type(create_robot_action) is not bool:
             raise TypeError('create_robot_action must be a boolean')
         if (
@@ -2048,6 +2063,8 @@ class SQLiteConversationStore:
                         normalized_id,
                     )
                 )
+                if precommit_validator is not None:
+                    precommit_validator(self._connection)
                 existing_claim = self._select_text_turn_claim_locked(
                     normalized_user,
                     normalized_response_id,

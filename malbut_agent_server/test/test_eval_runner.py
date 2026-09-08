@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from malbut_agent_server.eval_runner import (
+    DEFAULT_OPENAI_MODELS,
     EvaluationCase,
     build_eval_providers,
     evaluation_exit_code,
@@ -45,6 +46,7 @@ def test_versioned_suite_contains_thirty_unique_cases() -> None:
 
 def test_openai_eval_builder_requires_key_and_builds_two_models() -> None:
     """Provider construction is lazy and never makes a network call."""
+    assert DEFAULT_OPENAI_MODELS == ('gpt-5.6-luna', 'gpt-5.6-terra')
     with pytest.raises(ValueError, match='OPENAI_API_KEY'):
         build_eval_providers(
             'openai',

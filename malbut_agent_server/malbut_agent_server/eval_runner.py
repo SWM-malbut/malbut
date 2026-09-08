@@ -20,7 +20,6 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from malbut_agent_server import __version__
 from malbut_agent_server.config import (
-    DEFAULT_OPENAI_MODEL,
     DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECONDS,
     load_env_file,
 )
@@ -54,7 +53,7 @@ DEFAULT_ROBOT_STATE = {
     'forbidden_zones': [],
 }
 DEFAULT_TOOLS = list(TOOL_SPECS)
-DEFAULT_OPENAI_MODELS = ('gpt-5.6-luna', DEFAULT_OPENAI_MODEL)
+DEFAULT_OPENAI_MODELS = ('gpt-5.6-luna', 'gpt-5.6-terra')
 PRICE_SOURCE = 'https://developers.openai.com/api/docs/pricing'
 PRICE_AS_OF = '2026-08-05'
 STANDARD_PRICES_PER_MILLION = {
@@ -281,6 +280,7 @@ def _seed_case_memories(
     user_id: str,
 ) -> None:
     now = time.time()
+    consented_users = set()
     for index, seed in enumerate(case.seed_memories):
         scope = seed.get('scope', 'same')
         seed_user = (
@@ -288,6 +288,17 @@ def _seed_case_memories(
             if scope == 'same'
             else f'{user_id}-other'
         )
+        if seed_user not in consented_users:
+            # Seeded evaluation memories represent an already-consenting user.
+            store.set_personalization(seed_user, True, {
+                'conversation_id': 'eval-fixture',
+                'session_instance_id': 'eval-fixture',
+                'generation': 1,
+                'turn_id': f'{case.id}-consent',
+                'request_id': f'{case.id}-consent',
+                'text': '평가 시나리오의 사용자는 개인화에 명시적으로 동의했어요.',
+            })
+            consented_users.add(seed_user)
         expires_offset = seed.get('expires_in_seconds')
         expires_at = (
             now + float(expires_offset)

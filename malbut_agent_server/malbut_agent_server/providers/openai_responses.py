@@ -1,5 +1,6 @@
 """OpenAI Responses API adapter using only the Python standard library."""
 
+import copy
 import hashlib
 import json
 import time
@@ -16,6 +17,11 @@ from malbut_agent_server.endpoint_policy import (
     is_official_openai_base_url,
 )
 from malbut_agent_server.memory import MemoryRecord
+from malbut_agent_server.memory_contract import (
+    MEMORY_INSTRUCTIONS,
+    MEMORY_PROPOSAL_SCHEMA,
+    validate_memory_proposal,
+)
 from malbut_agent_server.prompting import (
     MAX_CONVERSATION_TURNS,
     MAX_MODEL_INPUT_CHARS,
@@ -99,6 +105,7 @@ class OpenAIResponsesProvider(AgentProvider):
     """Provider that maps Responses API output into an AgentDecision."""
 
     name = 'openai'
+    supports_memory = True
 
     def __init__(
         self,
@@ -172,6 +179,8 @@ class OpenAIResponsesProvider(AgentProvider):
         conversation_turns: List[ConversationTurn],
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary] = None,
+        *,
+        memory_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Call the API once and normalize either a tool call or text."""
         prepared = prepare_model_input(
@@ -181,6 +190,7 @@ class OpenAIResponsesProvider(AgentProvider):
             conversation_summary,
             self.max_model_input_chars,
             MAX_CONVERSATION_TURNS,
+            memory_context=memory_context,
         )
         payload = self.build_payload(
             request,
@@ -189,6 +199,7 @@ class OpenAIResponsesProvider(AgentProvider):
             tools,
             conversation_summary,
             prepared=prepared,
+            memory_context=memory_context,
         )
         headers = {
             'Authorization': f'Bearer {self._api_key}',
@@ -206,7 +217,9 @@ class OpenAIResponsesProvider(AgentProvider):
             self.timeout_seconds,
         )
         latency_ms = (time.perf_counter() - started) * 1000
-        decision = self._parse_decision(response)
+        decision, memory_proposal = self._parse_output(
+            response, memory_enabled=memory_context is not None,
+        )
         try:
             decision.validate()
         except (ValueError, TypeError) as error:
@@ -226,6 +239,8 @@ class OpenAIResponsesProvider(AgentProvider):
             ),
             input_chars=prepared.metrics.model_input_chars,
             context_metrics=prepared.metrics,
+            memory_proposal=memory_proposal,
+            memory_supported=memory_context is not None,
         )
 
     def build_payload(
@@ -236,6 +251,8 @@ class OpenAIResponsesProvider(AgentProvider):
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary] = None,
         prepared: Optional[PreparedModelInput] = None,
+        *,
+        memory_context: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """Build the documented Responses API request body."""
         prepared_context = prepared or prepare_model_input(
@@ -245,6 +262,7 @@ class OpenAIResponsesProvider(AgentProvider):
             conversation_summary,
             self.max_model_input_chars,
             MAX_CONVERSATION_TURNS,
+            memory_context=memory_context,
         )
         payload: Dict[str, Any] = {
             'model': self.model,
@@ -266,6 +284,19 @@ class OpenAIResponsesProvider(AgentProvider):
                 },
             },
         }
+        if memory_context is not None:
+            schema = copy.deepcopy(TEXT_DECISION_SCHEMA)
+            schema['properties']['memory_proposal'] = {
+                'anyOf': [
+                    copy.deepcopy(MEMORY_PROPOSAL_SCHEMA),
+                    {'type': 'null'},
+                ],
+            }
+            schema['required'].append('memory_proposal')
+            payload['text']['format'].update({
+                'name': 'malbut_memory_decision', 'schema': schema,
+            })
+            payload['instructions'] += '\n\n' + MEMORY_INSTRUCTIONS
         if self.include_reasoning:
             payload['reasoning'] = {
                 'effort': self.reasoning_effort,
@@ -292,6 +323,12 @@ class OpenAIResponsesProvider(AgentProvider):
 
     @staticmethod
     def _parse_decision(response: Dict[str, Any]) -> AgentDecision:
+        return OpenAIResponsesProvider._parse_output(response)[0]
+
+    @staticmethod
+    def _parse_output(
+        response: Dict[str, Any], *, memory_enabled: bool = False,
+    ) -> tuple:
         if not isinstance(response, dict):
             raise ProviderError('provider response must be an object')
         status = response.get('status')
@@ -374,14 +411,14 @@ class OpenAIResponsesProvider(AgentProvider):
                 reason='model_tool_call',
                 confidence=None,
                 expires_in_ms=5000,
-            )
+            ), None
         if refusal_parts:
             return AgentDecision(
                 type='refusal',
                 message=' '.join(refusal_parts).strip(),
                 reason='provider_refusal',
                 confidence=None,
-            )
+            ), None
         if not text_parts:
             raise ProviderError(
                 'provider returned neither a tool call nor text'
@@ -403,16 +440,24 @@ class OpenAIResponsesProvider(AgentProvider):
                 'structured text decision must be an object'
             )
         allowed = {'type', 'message', 'reason', 'confidence'}
+        if memory_enabled:
+            allowed.add('memory_proposal')
         if set(parsed) != allowed:
             raise ProviderError(
                 'structured text decision fields do not match the schema'
             )
+        proposal = parsed.get('memory_proposal')
+        if proposal is not None:
+            try:
+                proposal = validate_memory_proposal(proposal)
+            except (ValueError, TypeError) as error:
+                raise ProviderError('invalid memory proposal') from error
         return AgentDecision(
             type=parsed.get('type'),
             message=parsed.get('message'),
             reason=parsed.get('reason'),
             confidence=parsed.get('confidence'),
-        )
+        ), proposal
 
     @staticmethod
     def _parse_usage(value: Any) -> ProviderUsage:

@@ -1,0 +1,2 @@
+trial_id,phase,latency_ms,input_tokens,output_tokens,cached_tokens,cost_usd,error,http_status
+3cd5f021-d265-4e24-a189-d054e48b2b44,combined,564.7168749710545,,,,,ProviderError,401

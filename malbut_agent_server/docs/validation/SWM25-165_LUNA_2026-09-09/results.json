@@ -1,0 +1,1034 @@
+{
+  "scope": "live Luna HTTP and speech worker; no ROS/audio/robot",
+  "call_limit": 7,
+  "calls": [
+    {
+      "requested_model": "gpt-5.6-luna",
+      "timeout_s": 5,
+      "reasoning": {
+        "effort": "none",
+        "context": "current_turn"
+      },
+      "max_output_tokens": 500,
+      "model": "gpt-5.6-luna",
+      "status": "completed",
+      "usage": {
+        "input_tokens": 1822,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 1819
+        },
+        "output_tokens": 104,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 1926
+      },
+      "response_id": "resp_05bb3eadd67edcd4016aa08958868887d0ac4344f52130c4bd",
+      "output": [
+        {
+          "id": "msg_05bb3eadd67edcd4016aa08959682487d0b3c8a782bdf7c114",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "{\"type\":\"message\",\"message\":\"알겠어요.\",\"reason\":\"사용자가 반려견 이름을 직접 제공함\",\"confidence\":0.99,\"memory_proposal\":{\"operation\":\"remember\",\"facts\":[{\"kind\":\"pet\",\"subject\":\"강아지\",\"attribute\":\"name\",\"value\":\"두부\",\"evidence\":\"우리 강아지 이름은 두부야\"}],\"target_ids\":[],\"query\":\"\",\"evidence\":\"우리 강아지 이름은 두부야\"}}"
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "elapsed_ms": 2401.3002919964492
+    },
+    {
+      "requested_model": "gpt-5.6-luna",
+      "timeout_s": 5,
+      "reasoning": {
+        "effort": "none",
+        "context": "current_turn"
+      },
+      "max_output_tokens": 500,
+      "model": "gpt-5.6-luna",
+      "status": "completed",
+      "usage": {
+        "input_tokens": 1799,
+        "input_tokens_details": {
+          "cache_write_tokens": 326,
+          "cached_tokens": 1470
+        },
+        "output_tokens": 104,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 1903
+      },
+      "response_id": "resp_06ab47b4f8a07b2e016aa0895ac0b887d0af5dc9f252c2af82",
+      "output": [
+        {
+          "id": "msg_06ab47b4f8a07b2e016aa0895bf39c87d09b9e4dd05a8fe6e8",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "{\"type\":\"message\",\"message\":\"네, 강아지 이름은 두부로 기억하고 있어요.\",\"reason\":\"memory_recall\",\"confidence\":1,\"memory_proposal\":{\"operation\":\"recall\",\"facts\":[],\"target_ids\":[\"36dbb221-c952-470e-9405-71b2bd8fd7d1\"],\"query\":\"우리 강아지 이름\",\"evidence\":\"우리 강아지 이름을 기억하고 있어?\"}}"
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "elapsed_ms": 2615.5493339756504
+    },
+    {
+      "requested_model": "gpt-5.6-luna",
+      "timeout_s": 5,
+      "reasoning": {
+        "effort": "none",
+        "context": "current_turn"
+      },
+      "max_output_tokens": 500,
+      "model": "gpt-5.6-luna",
+      "status": "completed",
+      "usage": {
+        "input_tokens": 1984,
+        "input_tokens_details": {
+          "cache_write_tokens": 511,
+          "cached_tokens": 1470
+        },
+        "output_tokens": 139,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 2123
+      },
+      "response_id": "resp_01231888e4d40543016aa0895d4c3c87d082aa7b0105caa14a",
+      "output": [
+        {
+          "id": "msg_01231888e4d40543016aa0895e023887d0accd66d34c45457f",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "{\"type\":\"message\",\"message\":\"알겠어요. 강아지 이름은 초코로 이해할게요.\",\"reason\":\"memory_correction\",\"confidence\":1,\"memory_proposal\":{\"operation\":\"correct\",\"facts\":[{\"kind\":\"pet\",\"subject\":\"강아지\",\"attribute\":\"name\",\"value\":\"초코\",\"evidence\":\"우리 강아지 이름은 두부가 아니라 초코야\"}],\"target_ids\":[\"36dbb221-c952-470e-9405-71b2bd8fd7d1\"],\"query\":\"\",\"evidence\":\"우리 강아지 이름은 두부가 아니라 초코야\"}}"
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "elapsed_ms": 2135.0340000353754
+    },
+    {
+      "requested_model": "gpt-5.6-luna",
+      "timeout_s": 5,
+      "reasoning": {
+        "effort": "none",
+        "context": "current_turn"
+      },
+      "max_output_tokens": 500,
+      "model": "gpt-5.6-luna",
+      "status": "completed",
+      "usage": {
+        "input_tokens": 2001,
+        "input_tokens_details": {
+          "cache_write_tokens": 528,
+          "cached_tokens": 1470
+        },
+        "output_tokens": 102,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 2103
+      },
+      "response_id": "resp_064c41eda0ca3b53016aa0895f6c2887d0ae119306d5f222c4",
+      "output": [
+        {
+          "id": "msg_064c41eda0ca3b53016aa089603db087d0859be94a92e34ca8",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "{\"type\":\"message\",\"message\":\"강아지 이름에 대한 기억 삭제를 요청할게요.\",\"reason\":\"memory_forget_request\",\"confidence\":0.99,\"memory_proposal\":{\"operation\":\"forget\",\"facts\":[],\"target_ids\":[\"5c1b883d-2388-4014-b4d0-5c8af0f30eb7\"],\"query\":\"\",\"evidence\":\"강아지 이름 기억을 삭제해줘\"}}"
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "elapsed_ms": 2097.6348749827594
+    },
+    {
+      "requested_model": "gpt-5.6-luna",
+      "timeout_s": 5,
+      "reasoning": {
+        "effort": "none",
+        "context": "current_turn"
+      },
+      "max_output_tokens": 500,
+      "model": "gpt-5.6-luna",
+      "status": "completed",
+      "usage": {
+        "input_tokens": 1893,
+        "input_tokens_details": {
+          "cache_write_tokens": 420,
+          "cached_tokens": 1470
+        },
+        "output_tokens": 96,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 1989
+      },
+      "response_id": "resp_0848916d70026650016aa08961a4cc87d0a7e056a5c524445d",
+      "output": [
+        {
+          "id": "msg_0848916d70026650016aa0896251c887d09cc9079155553b77",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "{\"type\":\"message\",\"message\":\"알겠어요.\",\"reason\":\"일상 대화\",\"confidence\":1,\"memory_proposal\":{\"operation\":\"remember\",\"facts\":[{\"kind\":\"pet\",\"subject\":\"강아지\",\"attribute\":\"name\",\"value\":\"보리\",\"evidence\":\"우리 강아지 이름은 보리야\"}],\"target_ids\":[],\"query\":\"\",\"evidence\":\"우리 강아지 이름은 보리야\"}}"
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "elapsed_ms": 1961.5084580145776
+    },
+    {
+      "requested_model": "gpt-5.6-luna",
+      "timeout_s": 5,
+      "reasoning": {
+        "effort": "none",
+        "context": "current_turn"
+      },
+      "max_output_tokens": 500,
+      "model": "gpt-5.6-luna",
+      "status": "completed",
+      "usage": {
+        "input_tokens": 1809,
+        "input_tokens_details": {
+          "cache_write_tokens": 336,
+          "cached_tokens": 1470
+        },
+        "output_tokens": 109,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 1918
+      },
+      "response_id": "resp_0327a24f56dc1189016aa0896389ec87d08c44e49b70c8d281",
+      "output": [
+        {
+          "id": "msg_0327a24f56dc1189016aa08964286487d0ba1d9d2a2c570787",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "{\"type\":\"message\",\"message\":\"네, 강아지 이름은 보리로 기억하고 있어요.\",\"reason\":\"memory_recall\",\"confidence\":1,\"memory_proposal\":{\"operation\":\"recall\",\"facts\":[],\"target_ids\":[\"7b6b3e1c-6275-4e11-b94b-7c3afe9358c5\"],\"query\":\"우리 강아지 이름\",\"evidence\":\"우리 강아지 이름을 기억하고 있어?\"}}"
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "elapsed_ms": 1935.3806669823825
+    }
+  ],
+  "turns": [
+    {
+      "channel": "HTTP",
+      "input": "개인화 켜줘",
+      "status": 200,
+      "response": {
+        "request_id": "http-1",
+        "conversation": {
+          "conversation_id": "first",
+          "turn_id": "turn-1",
+          "generation": 1,
+          "revision": 1,
+          "ordinal": 1
+        },
+        "decision": {
+          "type": "clarification",
+          "message": "이름·호칭·반려동물 정보·취향처럼 직접 말한 일상 정보를 앞으로 자동으로 저장하고 다음 대화에 활용해도 될까요? 언제든 조회·정정·삭제하거나 개인화를 중단할 수 있어요.",
+          "tool_name": null,
+          "arguments": {},
+          "reason": "personal_memory",
+          "confidence": 1.0,
+          "expires_in_ms": 5000
+        },
+        "safety": {
+          "allowed": true,
+          "code": "not_an_action",
+          "reason": "행동 요청이 아닙니다."
+        },
+        "provider": {
+          "provider": "malbut-memory-policy",
+          "model": "consent-v1",
+          "latency_ms": 0.0,
+          "usage": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "total_tokens": null
+          },
+          "response_id": null,
+          "input_chars": null,
+          "context": null
+        },
+        "memory": {
+          "retrieved_count": 0,
+          "ids": []
+        },
+        "execution": {
+          "decision_id": "334689c2-6f22-46cd-bd57-a8ff96c44fd8",
+          "issued_at": 1788905816.016916,
+          "expires_at": 1788905821.016916,
+          "authorized": false,
+          "proposal_authorized": false,
+          "state_trusted": false,
+          "fresh": true,
+          "consume_once": false,
+          "tool_call_id": null
+        }
+      },
+      "facts_after_reply": [],
+      "elapsed_ms": 3.6473750369623303
+    },
+    {
+      "channel": "HTTP",
+      "input": "네",
+      "status": 200,
+      "response": {
+        "request_id": "http-2",
+        "conversation": {
+          "conversation_id": "first",
+          "turn_id": "turn-2",
+          "generation": 1,
+          "revision": 2,
+          "ordinal": 2
+        },
+        "decision": {
+          "type": "message",
+          "message": "개인화를 시작했어요. 직접 말한 일상 정보를 기억하고 대화에 활용할게요.",
+          "tool_name": null,
+          "arguments": {},
+          "reason": "personal_memory",
+          "confidence": 1.0,
+          "expires_in_ms": 5000
+        },
+        "safety": {
+          "allowed": true,
+          "code": "not_an_action",
+          "reason": "행동 요청이 아닙니다."
+        },
+        "provider": {
+          "provider": "malbut-memory-policy",
+          "model": "consent-v1",
+          "latency_ms": 0.0,
+          "usage": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "total_tokens": null
+          },
+          "response_id": null,
+          "input_chars": null,
+          "context": null
+        },
+        "memory": {
+          "retrieved_count": 0,
+          "ids": []
+        },
+        "execution": {
+          "decision_id": "e7199b8f-e7cd-4743-be7c-7471dd065419",
+          "issued_at": 1788905816.0194938,
+          "expires_at": 1788905821.0194938,
+          "authorized": false,
+          "proposal_authorized": false,
+          "state_trusted": false,
+          "fresh": true,
+          "consume_once": false,
+          "tool_call_id": null
+        }
+      },
+      "facts_after_reply": [],
+      "elapsed_ms": 1.781625091098249
+    },
+    {
+      "channel": "HTTP",
+      "input": "우리 강아지 이름은 두부야",
+      "status": 200,
+      "response": {
+        "request_id": "http-3",
+        "conversation": {
+          "conversation_id": "first",
+          "turn_id": "turn-3",
+          "generation": 1,
+          "revision": 3,
+          "ordinal": 3
+        },
+        "decision": {
+          "type": "message",
+          "message": "알겠어요.",
+          "tool_name": null,
+          "arguments": {},
+          "reason": "사용자가 반려견 이름을 직접 제공함",
+          "confidence": 0.99,
+          "expires_in_ms": 5000
+        },
+        "safety": {
+          "allowed": true,
+          "code": "not_an_action",
+          "reason": "행동 요청이 아닙니다."
+        },
+        "provider": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "latency_ms": 2401.838,
+          "usage": {
+            "input_tokens": 1822,
+            "output_tokens": 104,
+            "total_tokens": 1926
+          },
+          "response_id": "resp_05bb3eadd67edcd4016aa08958868887d0ac4344f52130c4bd",
+          "input_chars": 2553,
+          "context": {
+            "recent_conversation": {
+              "turn_count": 2,
+              "included_turn_count": 2,
+              "source_chars": 141,
+              "included_chars": 141
+            },
+            "conversation_summary": {
+              "summary_id": null,
+              "source_turn_count": 0,
+              "source_chars": 0,
+              "included_chars": 0
+            },
+            "long_term_memory": {
+              "record_count": 0,
+              "included_record_count": 0,
+              "source_chars": 0,
+              "included_chars": 0
+            },
+            "current_utterance": {
+              "source_chars": 14,
+              "included_chars": 14
+            },
+            "model_input": {
+              "chars": 2553,
+              "max_chars": 20000,
+              "truncated": false,
+              "truncated_sections": [],
+              "overflow_fallback": false
+            }
+          }
+        },
+        "memory": {
+          "retrieved_count": 0,
+          "ids": []
+        },
+        "execution": {
+          "decision_id": "13a4a95d-f8ea-4927-b31e-95671629f0fc",
+          "issued_at": 1788905818.425299,
+          "expires_at": 1788905823.425299,
+          "authorized": false,
+          "proposal_authorized": false,
+          "state_trusted": false,
+          "fresh": true,
+          "consume_once": false,
+          "tool_call_id": null
+        }
+      },
+      "facts_after_reply": [
+        {
+          "kind": "pet",
+          "evidence": "우리 강아지 이름은 두부야",
+          "value": "두부",
+          "subject": "강아지",
+          "attribute": "name"
+        }
+      ],
+      "elapsed_ms": 2410.3716670069844
+    },
+    {
+      "channel": "HTTP",
+      "input": "우리 강아지 이름을 기억하고 있어?",
+      "status": 200,
+      "response": {
+        "request_id": "http-4",
+        "conversation": {
+          "conversation_id": "new-session",
+          "turn_id": "turn-4",
+          "generation": 1,
+          "revision": 1,
+          "ordinal": 1
+        },
+        "decision": {
+          "type": "message",
+          "message": "기억하고 있는 내용이에요. 강아지 이름은 두부",
+          "tool_name": null,
+          "arguments": {},
+          "reason": "personal_memory",
+          "confidence": 1.0,
+          "expires_in_ms": 5000
+        },
+        "safety": {
+          "allowed": true,
+          "code": "not_an_action",
+          "reason": "행동 요청이 아닙니다."
+        },
+        "provider": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "latency_ms": 2616.058,
+          "usage": {
+            "input_tokens": 1799,
+            "output_tokens": 104,
+            "total_tokens": 1903
+          },
+          "response_id": "resp_06ab47b4f8a07b2e016aa0895ac0b887d0af5dc9f252c2af82",
+          "input_chars": 2493,
+          "context": {
+            "recent_conversation": {
+              "turn_count": 0,
+              "included_turn_count": 0,
+              "source_chars": 0,
+              "included_chars": 0
+            },
+            "conversation_summary": {
+              "summary_id": null,
+              "source_turn_count": 0,
+              "source_chars": 0,
+              "included_chars": 0
+            },
+            "long_term_memory": {
+              "record_count": 1,
+              "included_record_count": 1,
+              "source_chars": 10,
+              "included_chars": 10
+            },
+            "current_utterance": {
+              "source_chars": 19,
+              "included_chars": 19
+            },
+            "model_input": {
+              "chars": 2493,
+              "max_chars": 20000,
+              "truncated": false,
+              "truncated_sections": [],
+              "overflow_fallback": false
+            }
+          }
+        },
+        "memory": {
+          "retrieved_count": 1,
+          "ids": [
+            "36dbb221-c952-470e-9405-71b2bd8fd7d1"
+          ]
+        },
+        "execution": {
+          "decision_id": "315a1975-25d0-4511-b9b8-3a0df97736a5",
+          "issued_at": 1788905821.0532758,
+          "expires_at": 1788905826.0532758,
+          "authorized": false,
+          "proposal_authorized": false,
+          "state_trusted": false,
+          "fresh": true,
+          "consume_once": false,
+          "tool_call_id": null
+        }
+      },
+      "facts_after_reply": [
+        {
+          "kind": "pet",
+          "evidence": "우리 강아지 이름은 두부야",
+          "value": "두부",
+          "subject": "강아지",
+          "attribute": "name"
+        }
+      ],
+      "elapsed_ms": 2620.3346659895033
+    },
+    {
+      "channel": "HTTP",
+      "input": "우리 강아지 이름은 두부가 아니라 초코야",
+      "status": 200,
+      "response": {
+        "request_id": "http-5",
+        "conversation": {
+          "conversation_id": "first",
+          "turn_id": "turn-5",
+          "generation": 1,
+          "revision": 4,
+          "ordinal": 4
+        },
+        "decision": {
+          "type": "message",
+          "message": "요청한 내용으로 기억을 정정했어요.",
+          "tool_name": null,
+          "arguments": {},
+          "reason": "personal_memory",
+          "confidence": 1.0,
+          "expires_in_ms": 5000
+        },
+        "safety": {
+          "allowed": true,
+          "code": "not_an_action",
+          "reason": "행동 요청이 아닙니다."
+        },
+        "provider": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "latency_ms": 2135.339,
+          "usage": {
+            "input_tokens": 1984,
+            "output_tokens": 139,
+            "total_tokens": 2123
+          },
+          "response_id": "resp_01231888e4d40543016aa0895d4c3c87d082aa7b0105caa14a",
+          "input_chars": 2982,
+          "context": {
+            "recent_conversation": {
+              "turn_count": 3,
+              "included_turn_count": 3,
+              "source_chars": 160,
+              "included_chars": 160
+            },
+            "conversation_summary": {
+              "summary_id": null,
+              "source_turn_count": 0,
+              "source_chars": 0,
+              "included_chars": 0
+            },
+            "long_term_memory": {
+              "record_count": 1,
+              "included_record_count": 1,
+              "source_chars": 10,
+              "included_chars": 10
+            },
+            "current_utterance": {
+              "source_chars": 22,
+              "included_chars": 22
+            },
+            "model_input": {
+              "chars": 2982,
+              "max_chars": 20000,
+              "truncated": false,
+              "truncated_sections": [],
+              "overflow_fallback": false
+            }
+          }
+        },
+        "memory": {
+          "retrieved_count": 1,
+          "ids": [
+            "36dbb221-c952-470e-9405-71b2bd8fd7d1"
+          ]
+        },
+        "execution": {
+          "decision_id": "6e16d4a2-f4ba-4448-a86c-34bafe4c0869",
+          "issued_at": 1788905823.1947038,
+          "expires_at": 1788905828.1947038,
+          "authorized": false,
+          "proposal_authorized": false,
+          "state_trusted": false,
+          "fresh": true,
+          "consume_once": false,
+          "tool_call_id": null
+        }
+      },
+      "facts_after_reply": [
+        {
+          "kind": "pet",
+          "evidence": "우리 강아지 이름은 두부가 아니라 초코야",
+          "value": "초코",
+          "subject": "강아지",
+          "attribute": "name"
+        }
+      ],
+      "elapsed_ms": 2139.236249960959
+    },
+    {
+      "channel": "HTTP",
+      "input": "강아지 이름 기억을 삭제해줘",
+      "status": 200,
+      "response": {
+        "request_id": "http-6",
+        "conversation": {
+          "conversation_id": "first",
+          "turn_id": "turn-6",
+          "generation": 1,
+          "revision": 5,
+          "ordinal": 5
+        },
+        "decision": {
+          "type": "message",
+          "message": "요청한 기억을 삭제했어요.",
+          "tool_name": null,
+          "arguments": {},
+          "reason": "personal_memory",
+          "confidence": 1.0,
+          "expires_in_ms": 5000
+        },
+        "safety": {
+          "allowed": true,
+          "code": "not_an_action",
+          "reason": "행동 요청이 아닙니다."
+        },
+        "provider": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "latency_ms": 2097.821,
+          "usage": {
+            "input_tokens": 2001,
+            "output_tokens": 102,
+            "total_tokens": 2103
+          },
+          "response_id": "resp_064c41eda0ca3b53016aa0895f6c2887d0ae119306d5f222c4",
+          "input_chars": 3065,
+          "context": {
+            "recent_conversation": {
+              "turn_count": 4,
+              "included_turn_count": 4,
+              "source_chars": 141,
+              "included_chars": 141
+            },
+            "conversation_summary": {
+              "summary_id": null,
+              "source_turn_count": 0,
+              "source_chars": 0,
+              "included_chars": 0
+            },
+            "long_term_memory": {
+              "record_count": 1,
+              "included_record_count": 1,
+              "source_chars": 10,
+              "included_chars": 10
+            },
+            "current_utterance": {
+              "source_chars": 15,
+              "included_chars": 15
+            },
+            "model_input": {
+              "chars": 3065,
+              "max_chars": 20000,
+              "truncated": false,
+              "truncated_sections": [],
+              "overflow_fallback": false
+            }
+          }
+        },
+        "memory": {
+          "retrieved_count": 1,
+          "ids": [
+            "5c1b883d-2388-4014-b4d0-5c8af0f30eb7"
+          ]
+        },
+        "execution": {
+          "decision_id": "ed45bb28-e1df-4e5d-a80f-15b9dbdbd204",
+          "issued_at": 1788905825.29758,
+          "expires_at": 1788905830.29758,
+          "authorized": false,
+          "proposal_authorized": false,
+          "state_trusted": false,
+          "fresh": true,
+          "consume_once": false,
+          "tool_call_id": null
+        }
+      },
+      "facts_after_reply": [],
+      "elapsed_ms": 2101.3417500071228
+    },
+    {
+      "channel": "HTTP",
+      "input": "개인화를 중단해줘",
+      "status": 200,
+      "response": {
+        "request_id": "http-7",
+        "conversation": {
+          "conversation_id": "first",
+          "turn_id": "turn-7",
+          "generation": 1,
+          "revision": 6,
+          "ordinal": 6
+        },
+        "decision": {
+          "type": "message",
+          "message": "개인화를 중단했어요. 자동 저장과 활용을 멈추고, 기존 기억은 유지할게요.",
+          "tool_name": null,
+          "arguments": {},
+          "reason": "personal_memory",
+          "confidence": 1.0,
+          "expires_in_ms": 5000
+        },
+        "safety": {
+          "allowed": true,
+          "code": "not_an_action",
+          "reason": "행동 요청이 아닙니다."
+        },
+        "provider": {
+          "provider": "malbut-memory-policy",
+          "model": "consent-v1",
+          "latency_ms": 0.0,
+          "usage": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "total_tokens": null
+          },
+          "response_id": null,
+          "input_chars": null,
+          "context": null
+        },
+        "memory": {
+          "retrieved_count": 0,
+          "ids": []
+        },
+        "execution": {
+          "decision_id": "b7f865ce-c87e-43a0-9b26-3f36eee00b7e",
+          "issued_at": 1788905825.3006778,
+          "expires_at": 1788905830.3006778,
+          "authorized": false,
+          "proposal_authorized": false,
+          "state_trusted": false,
+          "fresh": true,
+          "consume_once": false,
+          "tool_call_id": null
+        }
+      },
+      "facts_after_reply": [],
+      "elapsed_ms": 1.561208046041429
+    },
+    {
+      "channel": "speech worker",
+      "input": "개인화 켜줘",
+      "response": {
+        "utterance_id": "speech-8",
+        "text": "이름·호칭·반려동물 정보·취향처럼 직접 말한 일상 정보를 앞으로 자동으로 저장하고 다음 대화에 활용해도 될까요? 언제든 조회·정정·삭제하거나 개인화를 중단할 수 있어요.",
+        "kind": "answer",
+        "conversation_id": "f980d4b7-07ce-4196-acf6-090fdb4a567a"
+      },
+      "facts_after_reply": [],
+      "elapsed_ms": 13.023875071667135
+    },
+    {
+      "channel": "speech worker",
+      "input": "네",
+      "response": {
+        "utterance_id": "speech-9",
+        "text": "개인화를 시작했어요. 직접 말한 일상 정보를 기억하고 대화에 활용할게요.",
+        "kind": "answer",
+        "conversation_id": "f980d4b7-07ce-4196-acf6-090fdb4a567a"
+      },
+      "facts_after_reply": [],
+      "elapsed_ms": 10.784292011521757
+    },
+    {
+      "channel": "speech worker",
+      "input": "우리 강아지 이름은 보리야",
+      "response": {
+        "utterance_id": "speech-10",
+        "text": "알겠어요.",
+        "kind": "answer",
+        "conversation_id": "f980d4b7-07ce-4196-acf6-090fdb4a567a"
+      },
+      "facts_after_reply": [
+        {
+          "kind": "pet",
+          "evidence": "우리 강아지 이름은 보리야",
+          "value": "보리",
+          "subject": "강아지",
+          "attribute": "name"
+        }
+      ],
+      "elapsed_ms": 1970.8307499531657
+    },
+    {
+      "channel": "speech worker",
+      "input": "우리 강아지 이름을 기억하고 있어?",
+      "response": {
+        "utterance_id": "speech-11",
+        "text": "기억하고 있는 내용이에요. 강아지 이름은 보리",
+        "kind": "answer",
+        "conversation_id": "3a318f78-657b-44b6-acf5-4145dcd43aec"
+      },
+      "facts_after_reply": [
+        {
+          "kind": "pet",
+          "evidence": "우리 강아지 이름은 보리야",
+          "value": "보리",
+          "subject": "강아지",
+          "attribute": "name"
+        }
+      ],
+      "elapsed_ms": 1945.6544999266043
+    }
+  ],
+  "checks": [
+    {
+      "name": "Luna selected by default",
+      "passed": true
+    },
+    {
+      "name": "HTTP response 1",
+      "passed": true
+    },
+    {
+      "name": "No provider error 1",
+      "passed": true
+    },
+    {
+      "name": "No memory before consent",
+      "passed": true
+    },
+    {
+      "name": "HTTP response 2",
+      "passed": true
+    },
+    {
+      "name": "No provider error 2",
+      "passed": true
+    },
+    {
+      "name": "Consent persisted",
+      "passed": true
+    },
+    {
+      "name": "HTTP response 3",
+      "passed": true
+    },
+    {
+      "name": "No provider error 3",
+      "passed": true
+    },
+    {
+      "name": "Stored before HTTP reply",
+      "passed": true
+    },
+    {
+      "name": "HTTP response 4",
+      "passed": true
+    },
+    {
+      "name": "No provider error 4",
+      "passed": true
+    },
+    {
+      "name": "Recalled in new conversation",
+      "passed": true
+    },
+    {
+      "name": "HTTP response 5",
+      "passed": true
+    },
+    {
+      "name": "No provider error 5",
+      "passed": true
+    },
+    {
+      "name": "Correction committed",
+      "passed": true
+    },
+    {
+      "name": "HTTP response 6",
+      "passed": true
+    },
+    {
+      "name": "No provider error 6",
+      "passed": true
+    },
+    {
+      "name": "Deletion committed",
+      "passed": true
+    },
+    {
+      "name": "HTTP response 7",
+      "passed": true
+    },
+    {
+      "name": "No provider error 7",
+      "passed": true
+    },
+    {
+      "name": "Personalization disabled",
+      "passed": true
+    },
+    {
+      "name": "Speech answer 8",
+      "passed": true
+    },
+    {
+      "name": "No provider error 8",
+      "passed": true
+    },
+    {
+      "name": "Speech answer 9",
+      "passed": true
+    },
+    {
+      "name": "No provider error 9",
+      "passed": true
+    },
+    {
+      "name": "Speech answer 10",
+      "passed": true
+    },
+    {
+      "name": "No provider error 10",
+      "passed": true
+    },
+    {
+      "name": "Stored before speech reply",
+      "passed": true
+    },
+    {
+      "name": "Speech answer 11",
+      "passed": true
+    },
+    {
+      "name": "No provider error 11",
+      "passed": true
+    },
+    {
+      "name": "Recall after worker restart",
+      "passed": true
+    },
+    {
+      "name": "Other user has no memories",
+      "passed": true
+    }
+  ],
+  "run_dir": "/var/folders/5s/gq4btl_j0cl6870s1__ggygh0000gn/T/malbut-swm25-165-live-emc6cu_g",
+  "configuration": {
+    "provider": "openai",
+    "openai_model": "gpt-5.6-luna",
+    "openai_fallback_model": "",
+    "openai_general_model": "",
+    "openai_reasoning_effort": "none",
+    "openai_max_output_tokens": 500,
+    "request_timeout_seconds": 5,
+    "provider_total_timeout_seconds": 11,
+    "provider_max_retries": 0
+  },
+  "passed": true
+}

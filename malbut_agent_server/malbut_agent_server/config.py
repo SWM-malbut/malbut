@@ -19,7 +19,7 @@ from malbut_agent_server.rai_sidecar_protocol import (
 
 SUPPORTED_PROVIDERS = frozenset({'mock', 'openai', 'rai-sidecar'})
 SUPPORTED_TOOL_MODES = frozenset({'proposal', 'simulation'})
-DEFAULT_OPENAI_MODEL = 'gpt-5.6-terra'
+DEFAULT_OPENAI_MODEL = 'gpt-5.6-luna'
 DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECONDS = 5
 DEFAULT_PROVIDER_TOTAL_TIMEOUT_SECONDS = 11
 DEFAULT_RAI_SIDECAR_TIMEOUT_SECONDS = 5

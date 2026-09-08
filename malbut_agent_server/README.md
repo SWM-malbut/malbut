@@ -35,8 +35,9 @@ SWM25-72에서 오프라인 `mock`과 OpenAI Responses API를 같은
 - `네/아니요/취소`의 LLM 없는 exact 판정과 terminal CAS
 - 별도 Python에서만 켜지는 optional RAI structured-proposal sidecar
 
-공개 장기 기억 CRUD API와 실제 ROS 부작용 Tool 실행기는 후속 스토리에서
-연결한다. 모델이 추론한 내용을 자동 저장하는 경로는 없다. 일반 Agent
+장기기억 관리는 SWM25-165에서 기존 대화 경로에 연결했다. 개인화 동의 이후
+현재 직접 말한 일상 정보만 검증해 자동 저장하며, 조회·정정·삭제·중단은
+자연어로 요청한다. 별도 기억 CRUD HTTP API는 추가하지 않았다. 일반 Agent
 server는 `trusted_robot_state=False`, `MALBUT_AGENT_TOOL_MODE=proposal`이
 기본이다. SWM25-131의 별도 simulation composition에서 승인을 받아도
 `execution_authorized=false`, `physical_authorized=false`이며 Nav2를 호출하지
@@ -106,8 +107,77 @@ curl -X POST http://127.0.0.1:8765/v1/agent/respond \
   }'
 ```
 
-같은 `request_id`와 동일한 입력을 재전송하면 저장된 응답을 반환하며 Mock을
-다시 호출하지 않는다. 같은 ID로 다른 입력을 보내면 `409`로 거절한다.
+같은 `request_id`와 동일한 입력을 재전송하면 여전히 유효한 저장 응답을
+반환하며 Mock을 다시 호출하지 않는다. 사용자 기억 정책이 바뀐 옛 응답은
+반환하지 않는다. 같은 ID로 다른 입력을 보내면 `409`로 거절한다.
+
+## SWM25-165 동의 기반 장기기억
+
+기존 HTTP 대화와 `agent_communication`의 STT 대화가 같은 기억 정책을
+사용한다. 사용자별 기억·동의는 **각 실행에 지정한 SQLite 파일**에 남는다.
+HTTP와 음성이 같은 기억을 사용하려면 같은 파일과 동일한 서버 사용자
+범위를 지정해야 한다. 음성의 `--user-id`는 실행 설정이며 화자 인식이 아니다.
+
+```mermaid
+flowchart LR
+    U["HTTP / STT 발화"] --> A["Agent 대화 처리"]
+    A --> I["Provider: 답변과 기억 제안"]
+    I --> V["Agent: 동의·원문·대상 검증"]
+    V <--> D[("기존 SQLite 파일")]
+    D --> R["실제 처리 결과 안내"]
+    R --> O["HTTP 응답 / TTS Topic"]
+```
+
+처음 시작하는 사용자와 동의 기록이 없는 기존 사용자는 개인화가 꺼져 있다.
+기존 기억을 삭제하거나 자동으로 동의한 상태로 바꾸지 않는다. 위 Mock 서버나
+음성 Agent에서 다음 순서로 시험할 수 있다. 발화마다 새 `request_id`·`turn_id`
+(음성 Topic은 새 `utterance_id`)를 사용하고, 동의 답변은 같은 대화에서 보낸다.
+
+| 발화 | 예상 동작 |
+| --- | --- |
+| `우리 강아지 이름은 두부야. 기억해줘` | 앞으로의 자동 저장·활용 범위를 설명하고 동의를 질문. 아직 무저장 |
+| `네` | 유효한 동의 질문에 답한 경우 동의와 보류한 기억을 저장 |
+| `나는 커피를 좋아해` | 동의 이후 현재 직접 진술한 선호를 자동 저장 |
+| 새 대화에서 `강아지 이름이 뭐였지?` | 관련 기억을 조회해 답변 |
+| `기억하고 있는 내용을 알려줘` | 현재 사용자의 기억을 명시적으로 조회 |
+| `강아지 이름을 초코로 정정해줘` | 대상이 확인되면 정정. 불명확하면 먼저 질문 |
+| `강아지 이름 기억 삭제해줘` | 확인된 대상 삭제 후 완료 안내 |
+| `개인화를 중단해줘` | 자동 저장·개인화 활용 중단. 기존 기억 유지 |
+| `개인화 켜줘` → `네` | 새 동의 설명·승인을 거쳐 다시 활용 |
+
+이름·호칭·반려동물·취향의 현재 원문에 근거가 있는 제안만 반영한다. 인용·예시·
+추측은 자동 저장하지 않는다. 모호한 대상·충돌은 질문하며, 기억 관리와 로봇
+실행 확인이 겹친 단순한 `네`로 로봇을 승인하지 않는다. 기억 변경과 최종 답변은
+같은 DB 트랜잭션으로 확정하며 모델 호출 동안 트랜잭션을 잡지 않는다.
+
+정정·삭제 후에도 과거 대화 조회 기록은 남는다. 해당 기억의 출처와 관련 답변은
+새 모델 입력에서 제외하고 요약은 남은 문맥으로 다시 구성한다. 출처가 없는
+기존 기억은 관련 과거 문맥을 보수적으로 제외하므로 일부 대화 연결이 줄어들 수
+있다. 오래된 응답의 재전송·지연 저장·음성 대기열도 사용자별 변경 번호로
+차단한다. 이미 TTS Topic에 발행한 텍스트의 회수나 재생 중지는 이번 계약에 없다.
+
+OpenAI·RAI는 일반 답변과 기억 제안을 한 추론에서 받는다. RAI 기억 경로는
+내부 프로토콜 v2를 요구하며 v1 호출 계약은 유지한다. v2를 지원하지 않는
+sidecar의 결과를 기억 처리 성공으로 안내하지 않는다. Mock은 개발 시험용
+고정 한국어 패턴이며 실제 모델의 한국어 해석 성능을 보장하지 않는다.
+
+마이그레이션은 기존 대화·기억 DB를 열 때 추가 테이블을 생성하는 방식이다.
+기억 정책·사실 구분·삭제 출처·응답 의존 관계를 추가하고 기존 기록은 보존한다.
+새 기억 Node, ROS interface, Capability Manifest, 별도 벡터 DB는 추가하지 않는다.
+
+검증 범위와 재현 방법은
+[SWM25-165 검증 기록](docs/SWM25-165_MEMORY_VALIDATION.md)에 정리한다.
+
+**선택한 운영 방식은 A(검증·저장 후 답변)다.** 답변과 기억 후보를 한 번의
+추론에서 함께 생성하고, 동의·원문 검증 및 기억·대화 기록 확정 후 응답한다.
+HTTP와 STT 대화는 기존 `AgentOrchestrator`의 이 처리 순서를 유지한다.
+OpenAI 대화 기본 모델은 `gpt-5.6-luna`, reasoning은 `none`, 출력 상한은
+500토큰이다. 기본 자동 재시도와 다른 모델로의 전환은 사용하지 않는다.
+
+동기 저장·저장 후처리·별도 기억 추출의 개발용 시간 비교는
+[기억 처리 비교 실행 안내](docs/SWM25-165_MEMORY_BENCHMARK.md)를 참고한다.
+기본 실행은 고정 응답 시험이며, `--live`에서만 최대 44회 API를 호출한다.
+세 방식은 각각 10회 측정한다. 별도 기억 추출과 준비 호출도 상한에 포함한다.
 
 ## SWM25-73 Tool Gateway
 
@@ -175,8 +245,11 @@ chmod 600 .env.local
 
 `.env.local`에서 `MALBUT_AGENT_PROVIDER=openai`, `OPENAI_API_KEY`,
 `MALBUT_AGENT_AUTH_TOKEN`을 설정한다. API key는 코드·Git·명령행 인자에
-넣지 않는다. 실측 기준 운영 후보는 `gpt-5.6-terra`, 저비용
-fallback 후보는 `gpt-5.6-luna`다.
+넣지 않는다. SWM25-165의 대화·기억 처리 기본 모델은 `gpt-5.6-luna`이며,
+`OPENAI_FALLBACK_MODEL`은 비워 둔다. 기존 로컬 설정에 Terra가 지정되어
+있다면 `OPENAI_MODEL`을 Luna로 변경한다. 명시한 환경 변수와 `--model`은
+기본값보다 우선하므로 HTTP와 음성 실행에 사용하는 설정을 함께 확인한다.
+Front Router를 쓰는 경우 `OPENAI_GENERAL_MODEL`도 비우거나 Luna로 지정한다.
 
 먼저 유료 API 호출 없이 설정을 검사한다.
 
@@ -274,7 +347,7 @@ PYTHONPATH=. python3 -m malbut_agent_server.eval_runner \
 | `MALBUT_AGENT_PROVIDER_MAX_RETRIES` | 0 | 0~3 |
 | `MALBUT_AGENT_TOOL_MODE` | `proposal` | `proposal`, `simulation` |
 | `MALBUT_RAI_SIDECAR_TIMEOUT_SECONDS` | 5 | 1~120 |
-| `OPENAI_MODEL` | `gpt-5.6-terra` | 출력 가능한 공식 model ID |
+| `OPENAI_MODEL` | `gpt-5.6-luna` | 출력 가능한 공식 model ID |
 | `OPENAI_FALLBACK_MODEL` | 빈 값 | 선택, 주력과 다른 model ID |
 | `OPENAI_GENERAL_MODEL` | 빈 값 | Front Router 일반 대화 전용 model ID |
 | `OPENAI_ROBOT_PLANNER_MODEL` | 빈 값 | Front Router 로봇 계획 전용 model ID |

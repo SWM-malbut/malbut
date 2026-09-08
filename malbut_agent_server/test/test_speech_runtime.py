@@ -70,6 +70,8 @@ def test_settings_do_not_reuse_http_database_or_user(monkeypatch, tmp_path):
     result = ros_communication.dialogue_settings_from_args(args)
     assert result.database_path == args.conversation_db
     assert result.user_id == 'speech-test'
+    assert result.openai_model == 'gpt-5.6-luna'
+    assert result.openai_fallback_model == ''
     assert not Path(result.database_path).exists()
 
 
