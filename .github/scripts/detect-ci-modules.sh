@@ -26,11 +26,11 @@ select_path()
     homecam_agent/*)
       homecam=true
       ;;
-    malbut_description/*|malbut_gazebo/*)
+    malbut_description/*|malbut_gazebo/*|malbut_gazebo_plugins/*|malbut_yolo/*|perception.repos)
       ros=true
       homecam=true
       ;;
-    malbut_agent_server/*|malbut_autonomy/*|malbut_interfaces/*|malbut_scenarios/*|malbut_system_manager/*|malbut_stt/*|malbut_tts/*)
+    malbut_agent_server/*|malbut_autonomy/*|malbut_interfaces/*|malbut_scenarios/*|malbut_system_manager/*|malbut_stt/*|malbut_tts/*|malbut_reid/*|malbut_tracking/*)
       ros=true
       ;;
   esac

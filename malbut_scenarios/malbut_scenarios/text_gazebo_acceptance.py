@@ -521,12 +521,12 @@ def _installed_layout() -> InstalledLayout:
             'malbut_gazebo',
             'malbut_gazebo_plugins',
             'malbut_interfaces',
-            'malbut_lidar_preprocessor',
             'malbut_patrol',
-            'malbut_perception',
+            'malbut_reid',
             'malbut_roaming',
             'malbut_scenarios',
             'malbut_tracking',
+            'malbut_yolo',
         )
         package_prefixes = {
             name: Path(get_package_prefix(name)).resolve(strict=True)

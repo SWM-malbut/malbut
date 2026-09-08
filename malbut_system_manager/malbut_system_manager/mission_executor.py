@@ -1,4 +1,4 @@
-"""Asynchronous dynamic ROS Action execution for managed missions."""
+"""Asynchronous dynamic ROS Action and Service execution for managed missions."""
 
 from dataclasses import dataclass
 from threading import RLock
@@ -31,6 +31,7 @@ class _Execution:
     mission_id: str
     generation: int
     client: Any
+    command_kind: CommandKind = CommandKind.ACTION
     downstream_goal_handle: Any = None
     cancel_pending: bool = False
     cancel_sent: bool = False
@@ -43,7 +44,7 @@ class _Execution:
 
 
 class MissionExecutor:
-    """Cache dynamic clients and forward Action events without blocking."""
+    """Cache dynamic clients and forward command events without blocking."""
 
     def __init__(
         self,
@@ -72,18 +73,9 @@ class MissionExecutor:
 
     def start(self, mission: MissionRecord, request_message: Any) -> None:
         """Dispatch a fresh downstream generation for a mission."""
-        if mission.capability.command_kind is not CommandKind.ACTION:
-            self._on_terminal(
-                mission.mission_id,
-                mission.generation,
-                TerminalOutcome.ABORTED,
-                '',
-                'Service capabilities are not enabled in this manager version',
-            )
-            return
-
         mission.generation += 1
         generation = mission.generation
+        kind = mission.capability.command_kind
         try:
             client = self._client_for(mission)
         except Exception as error:
@@ -92,12 +84,15 @@ class MissionExecutor:
                 generation,
                 TerminalOutcome.ABORTED,
                 '',
-                f'Failed to create downstream Action client: {error}',
+                f'Failed to create downstream {kind.value.title()} client: {error}',
             )
             return
-        execution = _Execution(mission.mission_id, generation, client)
+        execution = _Execution(mission.mission_id, generation, client, kind)
         with self._lock:
             self._runs[mission.mission_id] = execution
+        if kind is CommandKind.SERVICE:
+            self._start_service(execution, request_message)
+            return
         try:
             server_ready = client.server_is_ready()
         except Exception as error:
@@ -186,7 +181,7 @@ class MissionExecutor:
             return len(self._runs)
 
     def begin_shutdown(self) -> int:
-        """Best-effort cancel every active downstream Action."""
+        """Cancel Actions and await any already-dispatched Service responses."""
         with self._lock:
             mission_ids = list(self._runs)
         for mission_id in mission_ids:
@@ -198,12 +193,15 @@ class MissionExecutor:
         with self._lock:
             runs = list(self._runs.values())
             self._runs.clear()
-            clients = list(self._clients.values())
+            clients = list(self._clients.items())
             self._clients.clear()
         for execution in runs:
             self._clear_execution_timers(execution)
-        for client in clients:
-            client.destroy()
+        for key, client in clients:
+            if key[0] == CommandKind.SERVICE.value:
+                self._node.destroy_client(client)
+            else:
+                client.destroy()
 
     def _client_for(self, mission: MissionRecord):
         manifest = mission.capability
@@ -215,14 +213,92 @@ class MissionExecutor:
         with self._lock:
             client = self._clients.get(key)
             if client is None:
-                client = ActionClient(
-                    self._node,
-                    manifest.interface_type,
-                    manifest.command_name,
-                    callback_group=self._callback_group,
-                )
+                if manifest.command_kind is CommandKind.SERVICE:
+                    client = self._node.create_client(
+                        manifest.interface_type,
+                        manifest.command_name,
+                        callback_group=self._callback_group,
+                    )
+                else:
+                    client = ActionClient(
+                        self._node,
+                        manifest.interface_type,
+                        manifest.command_name,
+                        callback_group=self._callback_group,
+                    )
                 self._clients[key] = client
             return client
+
+    def _start_service(self, execution: _Execution, request: Any) -> None:
+        try:
+            ready = execution.client.service_is_ready()
+        except Exception as error:
+            self._finish(
+                execution,
+                TerminalOutcome.ABORTED,
+                message=f'Could not inspect downstream Service: {error}',
+            )
+            return
+        if not ready:
+            self._finish(
+                execution,
+                TerminalOutcome.ABORTED,
+                message='Downstream Service is unavailable',
+            )
+            return
+        try:
+            future = execution.client.call_async(request)
+            future.add_done_callback(
+                lambda completed: self._service_response(execution, completed)
+            )
+        except Exception as error:
+            # A transport failure may occur after the request was sent.
+            # Never retry a side effect or release its unresolved resources.
+            self._mark_unresolved(
+                execution,
+                f'Downstream Service dispatch could not be resolved: {error}',
+            )
+
+    def _service_response(self, execution: _Execution, future) -> None:
+        if not self._is_current(execution):
+            return
+        try:
+            response = future.result()
+            if response is None:
+                raise RuntimeError('Service returned no response')
+        except Exception as error:
+            self._mark_unresolved(
+                execution,
+                f'Downstream Service response could not be resolved: {error}',
+            )
+            return
+        try:
+            payload = message_to_yaml(response)
+        except Exception as error:
+            self._finish(
+                execution,
+                TerminalOutcome.ABORTED,
+                message=f'Could not serialize Service response: {error}',
+            )
+            return
+        # The response confirms completion, even after a cancel/preempt request.
+        # Payload fields (including any application-specific success flag) are
+        # forwarded unchanged; the generic manager does not interpret them.
+        outcome = (
+            TerminalOutcome.CANCELED
+            if execution.cancel_required
+            else TerminalOutcome.SUCCEEDED
+        )
+        self._finish(
+            execution,
+            outcome,
+            result_yaml=payload,
+            message=(
+                'Service completed before cancellation could finish; '
+                'side effects are not undone'
+                if execution.cancel_required else ''
+            ),
+        )
 
     def _goal_response(self, execution: _Execution, future) -> None:
         if not self._is_current(execution):
@@ -310,6 +386,10 @@ class MissionExecutor:
                 return
             execution.cancel_required = True
             execution.cancel_pending = True
+            if execution.command_kind is CommandKind.SERVICE:
+                # ROS Services have no cancellation protocol. Keep the request
+                # and its resources alive until the actual response arrives.
+                return
             has_goal_handle = execution.downstream_goal_handle is not None
             if not has_goal_handle and not execution.dispatch_timed_out:
                 return

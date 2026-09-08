@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Run the optional simulation benchmark evaluator."""
+
+from malbut_tracking.benchmark.evaluator import main
+
+
+if __name__ == '__main__':
+    main()

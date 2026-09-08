@@ -28,9 +28,6 @@ def generate_launch_description():
         get_package_share_directory('malbut_scenarios')
     )
     gazebo_share = Path(get_package_share_directory('malbut_gazebo'))
-    perception_share = Path(
-        get_package_share_directory('malbut_perception')
-    )
     roaming_share = Path(get_package_share_directory('malbut_roaming'))
     tracking_share = Path(get_package_share_directory('malbut_tracking'))
     use_sim_time = LaunchConfiguration('use_sim_time')
@@ -76,7 +73,7 @@ def generate_launch_description():
     )
     perception = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            str(perception_share / 'launch' / 'person_detection.launch.py')
+            str(tracking_share / 'launch' / 'person_detection.launch.py')
         ),
         launch_arguments={
             'use_sim_time': use_sim_time,
@@ -85,6 +82,7 @@ def generate_launch_description():
             'debug_image_transport': 'raw',
             'inference_backend': LaunchConfiguration('inference_backend'),
             'dnn_target': LaunchConfiguration('dnn_target'),
+            'device': LaunchConfiguration('device'),
         }.items(),
     )
     navigation = GroupAction(
@@ -245,7 +243,7 @@ def generate_launch_description():
     )
 
     runtime_actions = [
-        perception,
+        GroupAction([perception], scoped=True),
         navigation,
         roaming,
         tracking,
@@ -294,6 +292,7 @@ def generate_launch_description():
         DeclareLaunchArgument('readiness_timeout', default_value='90.0'),
         DeclareLaunchArgument('inference_backend', default_value='auto'),
         DeclareLaunchArgument('dnn_target', default_value='auto'),
+        DeclareLaunchArgument('device', default_value='cuda:0'),
         DeclareLaunchArgument('zone_mask', default_value=''),
         DeclareLaunchArgument('x', default_value='-3.665503'),
         DeclareLaunchArgument('y', default_value='-0.4874'),

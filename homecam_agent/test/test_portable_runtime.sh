@@ -149,7 +149,7 @@ dependencies="$repo_root/scripts/install_dependencies.sh"
 grep -Fq 'python3-venv' "$dependencies"
 grep -Fq 'ros-humble-action-msgs' "$dependencies"
 
-model_preparer="$repo_root/../malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh"
+model_preparer="$repo_root/../malbut_yolo/scripts/prepare_yolo26_model.sh"
 grep -Fq '! -x "$export_env/bin/pip"' "$model_preparer"
 grep -Fq 'rm -rf -- "$export_env"' "$model_preparer"
 

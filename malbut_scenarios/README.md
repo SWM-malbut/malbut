@@ -449,7 +449,7 @@ simulation fault입니다. 실제 RobotState provenance는 SWM25-123 범위입�
 - 홈캠 웹 연결: `malbut_gazebo/cloud_robot_sync.py` (선택 실행)
 - 금지 구역: 기존 semantic Zone GeoJSON과 Nav2 KeepoutFilter
 - 자율 순찰: `malbut_roaming`
-- 사람 인식: `malbut_perception`
+- 사람 인식: `malbut_yolo` → `malbut_reid` → `malbut_tracking`의 RGB-D 위치 계산
 - 사람 추적: `malbut_tracking`의 `FollowPerson` Action
 - 실제 이동과 충돌 회피: ROS 2 Humble Nav2
 

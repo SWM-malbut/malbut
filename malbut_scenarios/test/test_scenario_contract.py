@@ -207,7 +207,6 @@ def test_package_declares_only_public_ros_dependencies():
         'malbut_gazebo',
         'malbut_gazebo_plugins',
         'malbut_interfaces',
-        'malbut_perception',
         'malbut_roaming',
         'malbut_tracking',
         'nav2_msgs',
@@ -263,9 +262,18 @@ def test_one_launch_composes_existing_features_and_velocity_arbitration():
     runtime = readiness_handler.__dict__[
         '_OnActionEventBase__on_event'
     ](SimpleNamespace(returncode=0), context)
+    perception_group = next(
+        entity for entity in runtime
+        if isinstance(entity, GroupAction)
+        and any(
+            isinstance(child, IncludeLaunchDescription)
+            and 'projection_frame' in dict(child.launch_arguments)
+            for child in entity.get_sub_entities()
+        )
+    )
     runtime_includes = [
         entity
-        for entity in runtime
+        for entity in runtime + list(perception_group.get_sub_entities())
         if isinstance(entity, IncludeLaunchDescription)
     ]
     runtime_include_names = {
@@ -281,6 +289,7 @@ def test_one_launch_composes_existing_features_and_velocity_arbitration():
         entity
         for entity in runtime
         if isinstance(entity, GroupAction)
+        and any(isinstance(child, SetRemap) for child in entity.get_sub_entities())
     )
     grouped = navigation_group.get_sub_entities()
     remap = next(

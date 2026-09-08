@@ -121,7 +121,7 @@ if [[ -z "$HOMECAM_MODEL_PATH" ]]; then
   else
     homecam_warn \
       "YOLO model not found; person and pet labels are disabled. Run "\
-      "malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh once."
+      "malbut_yolo/scripts/prepare_yolo26_model.sh once."
   fi
 fi
 
@@ -134,7 +134,7 @@ if [[ -z "$HOMECAM_POSE_MODEL_PATH" ]]; then
   else
     homecam_warn \
       "YOLO pose model not found; secondary person pose is disabled. Run "\
-      "malbut_autonomy/malbut_perception/scripts/prepare_yolo26_model.sh once."
+      "malbut_yolo/scripts/prepare_yolo26_model.sh once."
   fi
 fi
 

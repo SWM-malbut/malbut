@@ -22,6 +22,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription, Substitution
 from launch.actions import (
     DeclareLaunchArgument,
+    GroupAction,
     IncludeLaunchDescription,
     OpaqueFunction,
     RegisterEventHandler,
@@ -40,7 +41,7 @@ from launch.utilities import (
     normalize_to_list_of_substitutions,
     perform_substitutions,
 )
-from launch_ros.actions import Node
+from launch_ros.actions import Node, PushRosNamespace
 from launch_ros.parameter_descriptions import ParameterValue
 from nav2_common.launch import RewrittenYaml
 import yaml
@@ -234,11 +235,7 @@ def generate_launch_description():
     """Start localization, navigation, and the project Nav2 RViz view."""
     gazebo_share = get_package_share_directory('malbut_gazebo')
     nav2_share = get_package_share_directory('nav2_bringup')
-    perception_share = get_package_share_directory('malbut_perception')
     tracking_share = get_package_share_directory('malbut_tracking')
-    lidar_preprocessor_share = get_package_share_directory(
-        'malbut_lidar_preprocessor'
-    )
     safe_navigation_source, safe_bringup_source = (
         _safe_nav2_launch_sources(nav2_share)
     )
@@ -581,34 +578,21 @@ def generate_launch_description():
             'node_names': ['collision_monitor'],
         }],
     )
-    person_detector = Node(
-        package='malbut_perception',
-        executable='person_localizer',
-        name='person_localizer',
-        namespace=namespace,
+    person_detector = GroupAction(
+        scoped=True,
         condition=IfCondition(person_following),
-        output='screen',
-        parameters=[
-            os.path.join(
-                perception_share, 'config', 'person_detection.yaml'
+        actions=[
+            PushRosNamespace(namespace),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(os.path.join(
+                    tracking_share, 'launch', 'person_detection.launch.py',
+                )),
+                launch_arguments={
+                    'use_sim_time': use_sim_time,
+                    'projection_frame': person_projection_frame,
+                    'publish_debug_image': 'false',
+                }.items(),
             ),
-            {
-                'use_sim_time': use_sim_time,
-                'model_path': str(
-                    Path.home()
-                    / '.cache'
-                    / 'malbut_perception'
-                    / 'yolo26n.onnx'
-                ),
-                'reid_model_path': str(
-                    Path.home()
-                    / '.cache'
-                    / 'malbut_perception'
-                    / 'osnet_ain_x1_0_msmt17.onnx'
-                ),
-                'projection_frame': person_projection_frame,
-                'publish_debug_image': False,
-            },
         ],
     )
     person_follower = Node(
@@ -626,7 +610,7 @@ def generate_launch_description():
         ],
     )
     person_lidar_preprocessor = Node(
-        package='malbut_lidar_preprocessor',
+        package='malbut_tracking',
         executable='lidar_foreground_preprocessor',
         name='lidar_foreground_preprocessor',
         namespace=namespace,
@@ -634,7 +618,7 @@ def generate_launch_description():
         output='screen',
         parameters=[
             os.path.join(
-                lidar_preprocessor_share,
+                tracking_share,
                 'config',
                 'lidar_foreground.yaml',
             ),
