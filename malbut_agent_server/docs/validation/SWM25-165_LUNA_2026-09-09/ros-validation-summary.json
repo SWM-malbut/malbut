@@ -1,0 +1,66 @@
+{
+  "snapshot": "/tmp/malbut-swm25-165-release-ros-wvc3vf55",
+  "head": "8747abdea846fe6ea6bb873fad4148cf89e6d6a0",
+  "branch": "codex/SWM25-165-consent-memory",
+  "snapshot_files": 204,
+  "python_files": 128,
+  "final_code_sha256": "10ee91171416ff0053533aebab73ce4fb1e2a9aa75b80722f9f60e5a411fdc25",
+  "suites": {
+    "ros-communication": {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "13",
+      "time": "3.534",
+      "timestamp": "2026-09-08T22:19:34.050416",
+      "hostname": "6ce872292cf4"
+    },
+    "agent-all": {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "902",
+      "time": "15.739",
+      "timestamp": "2026-09-08T22:19:37.850646",
+      "hostname": "6ce872292cf4"
+    },
+    "final-providers": {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "39",
+      "time": "0.099",
+      "timestamp": "2026-09-08T22:20:29.740116",
+      "hostname": "6ce872292cf4"
+    }
+  },
+  "platform": {
+    "os_release": "PRETTY_NAME=\"Ubuntu 22.04.5 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"22.04\"\nVERSION=\"22.04.5 LTS (Jammy Jellyfish)\"\nVERSION_CODENAME=jammy\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=jammy\n",
+    "machine": "aarch64",
+    "python": "3.10.12",
+    "ros_distribution": "humble"
+  },
+  "ros_domain_id": 194,
+  "ros_localhost_only": true,
+  "live_manager": {
+    "pid": 1096,
+    "alive": true,
+    "domain159": true
+  },
+  "remaining_domain194_processes": [],
+  "boundary": {
+    "actual_ros_topics_and_actions": true,
+    "provider": "fixed fixtures",
+    "live_model_api": false,
+    "microphone": false,
+    "audio_playback": false,
+    "physical_robot": false
+  },
+  "notes": [
+    "Initial PYTHONPATH=. command removed ROS paths and skipped 2 modules. Corrected commands preserved sourced ROS PYTHONPATH; both final suites have no skips.",
+    "After full suite, final test function was renamed only; patch retained and complete test_memory_providers.py rerun. Runtime Python source unchanged."
+  ]
+}

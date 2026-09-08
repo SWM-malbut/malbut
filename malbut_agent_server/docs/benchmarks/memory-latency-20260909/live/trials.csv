@@ -1,0 +1,2 @@
+trial_id,case,mode,warmup,valid,reply_ready_ms,memory_done_ms,call_count,cost_usd,error,quality_issues
+3cd5f021-d265-4e24-a189-d054e48b2b44,pet,A,True,False,,,1,,ProviderError,['unexpected_stored_facts']

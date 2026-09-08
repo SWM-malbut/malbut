@@ -8,10 +8,13 @@ import math
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence, Union
 
+from malbut_agent_server.memory_contract import validate_memory_proposal
+from malbut_agent_server.schemas import ValidationError
 from malbut_agent_server.tools import ToolSpec
 
 
 SCHEMA_VERSION = 1
+MEMORY_SCHEMA_VERSION = 2
 MAX_REQUEST_BYTES = 256 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024
 MAX_IDENTIFIER_LENGTH = 256
@@ -294,6 +297,23 @@ def _canonical_arguments(value: Any) -> dict[str, Any]:
     return decoded
 
 
+def _memory_proposal(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    try:
+        return validate_memory_proposal(value)
+    except ValidationError:
+        _fail('invalid_memory_proposal')
+
+
+def _schema_version(value: Any) -> int:
+    if type(value) is not int or value not in {
+        SCHEMA_VERSION, MEMORY_SCHEMA_VERSION,
+    }:
+        _fail('unsupported_schema_version')
+    return value
+
+
 @dataclass(frozen=True)
 class ProposalRequest:
     """One bounded single-turn request sent to the sidecar."""
@@ -302,6 +322,7 @@ class ProposalRequest:
     instructions: str
     model_input: str
     tools: tuple[dict[str, Any], ...]
+    memory_context: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         """Normalize all fields before the request crosses the process edge."""
@@ -333,17 +354,41 @@ class ProposalRequest:
             'tools',
             _validate_tools(list(self.tools)),
         )
+        if self.memory_context is not None:
+            if type(self.memory_context) is not dict:
+                _fail('invalid_memory_context')
+            encoded = _encode_json(
+                self.memory_context,
+                maximum=MAX_MODEL_INPUT_LENGTH,
+                size_code='memory_context_too_large',
+            )
+            object.__setattr__(self, 'memory_context', _decode_json(
+                encoded,
+                maximum=MAX_MODEL_INPUT_LENGTH,
+                size_code='memory_context_too_large',
+            ))
+
+    @property
+    def schema_version(self) -> int:
+        """Use version two only for explicitly memory-aware requests."""
+        return (
+            MEMORY_SCHEMA_VERSION if self.memory_context is not None
+            else SCHEMA_VERSION
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return a detached strict request envelope."""
-        return {
-            'schema_version': SCHEMA_VERSION,
+        result = {
+            'schema_version': self.schema_version,
             'kind': 'proposal_request',
             'request_id': self.request_id,
             'instructions': self.instructions,
             'model_input': self.model_input,
             'tools': copy.deepcopy(list(self.tools)),
         }
+        if self.memory_context is not None:
+            result['memory_context'] = copy.deepcopy(self.memory_context)
+        return result
 
 
 @dataclass(frozen=True)
@@ -354,6 +399,7 @@ class TextReply:
     message: str
     reason: str
     confidence: float | None = None
+    memory_proposal: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         """Validate a bounded user-facing reply without hidden reasoning."""
@@ -380,16 +426,28 @@ class TextReply:
             ),
         )
         object.__setattr__(self, 'confidence', _confidence(self.confidence))
+        object.__setattr__(
+            self, 'memory_proposal', _memory_proposal(self.memory_proposal),
+        )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, schema_version: int = SCHEMA_VERSION) -> dict[str, Any]:
         """Return the strict text output object."""
-        return {
+        _schema_version(schema_version)
+        if (
+            schema_version == SCHEMA_VERSION
+            and self.memory_proposal is not None
+        ):
+            _fail('memory_requires_version_two')
+        result = {
             'kind': 'text_reply',
             'response_type': self.response_type,
             'message': self.message,
             'reason': self.reason,
             'confidence': self.confidence,
         }
+        if schema_version == MEMORY_SCHEMA_VERSION:
+            result['memory_proposal'] = copy.deepcopy(self.memory_proposal)
+        return result
 
 
 @dataclass(frozen=True)
@@ -497,6 +555,7 @@ class ProposalResponse:
     output: SidecarOutput
     response_id: str | None = None
     usage: SidecarUsage = SidecarUsage()
+    schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         """Validate response identity and exact output type."""
@@ -520,17 +579,23 @@ class ProposalResponse:
             )
         if type(self.usage) is not SidecarUsage:
             _fail('invalid_usage')
+        _schema_version(self.schema_version)
+        if type(self.output) is TextReply:
+            self.output.to_dict(self.schema_version)
 
     def to_dict(self) -> dict[str, Any]:
         """Return one strict success envelope."""
         return {
-            'schema_version': SCHEMA_VERSION,
+            'schema_version': self.schema_version,
             'kind': 'proposal_response',
             'request_id': self.request_id,
             'model': self.model,
             'response_id': self.response_id,
             'usage': self.usage.to_dict(),
-            'output': self.output.to_dict(),
+            'output': (
+                self.output.to_dict(self.schema_version)
+                if type(self.output) is TextReply else self.output.to_dict()
+            ),
         }
 
 
@@ -539,16 +604,18 @@ class RuntimeErrorResponse:
     """Content-free sidecar failure returned instead of partial output."""
 
     code: str
+    schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         """Limit runtime failures to a documented, non-sensitive set."""
         if self.code not in RUNTIME_ERROR_CODES:
             _fail('invalid_runtime_error')
+        _schema_version(self.schema_version)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the strict error envelope."""
         return {
-            'schema_version': SCHEMA_VERSION,
+            'schema_version': self.schema_version,
             'kind': 'error_response',
             'code': self.code,
         }
@@ -569,44 +636,56 @@ def encode_request(request: ProposalRequest) -> bytes:
 
 
 def decode_request(raw: bytes) -> ProposalRequest:
-    """Decode one exact version-1 request and reject unknown fields."""
+    """Decode one exact supported request and reject unknown fields."""
     value = _decode_json(
         raw,
         maximum=MAX_REQUEST_BYTES,
         size_code='request_too_large',
     )
-    envelope = _strict_object(
-        value,
-        {
+    if type(value) is not dict:
+        _fail('invalid_request_envelope')
+    version = _schema_version(value.get('schema_version'))
+    expected = {
             'schema_version',
             'kind',
             'request_id',
             'instructions',
             'model_input',
             'tools',
-        },
+    }
+    if version == MEMORY_SCHEMA_VERSION:
+        expected.add('memory_context')
+        if type(value.get('memory_context')) is not dict:
+            _fail('invalid_memory_context')
+    envelope = _strict_object(
+        value,
+        expected,
         'invalid_request_envelope',
     )
-    if envelope['schema_version'] != SCHEMA_VERSION or (
-        envelope['kind'] != 'proposal_request'
-    ):
+    if envelope['kind'] != 'proposal_request':
         _fail('unsupported_request_envelope')
     return ProposalRequest(
         request_id=envelope['request_id'],
         instructions=envelope['instructions'],
         model_input=envelope['model_input'],
         tools=_validate_tools(envelope['tools']),
+        memory_context=envelope.get('memory_context'),
     )
 
 
-def _decode_output(value: Any) -> SidecarOutput:
+def _decode_output(value: Any, schema_version: int) -> SidecarOutput:
     if type(value) is not dict:
         _fail('invalid_output')
     kind = value.get('kind')
     if kind == 'text_reply':
+        expected = {
+            'kind', 'response_type', 'message', 'reason', 'confidence',
+        }
+        if schema_version == MEMORY_SCHEMA_VERSION:
+            expected.add('memory_proposal')
         output = _strict_object(
             value,
-            {'kind', 'response_type', 'message', 'reason', 'confidence'},
+            expected,
             'invalid_text_reply',
         )
         return TextReply(
@@ -614,6 +693,7 @@ def _decode_output(value: Any) -> SidecarOutput:
             message=output['message'],
             reason=output['reason'],
             confidence=output['confidence'],
+            memory_proposal=output.get('memory_proposal'),
         )
     if kind == 'action_proposal':
         output = _strict_object(
@@ -660,6 +740,7 @@ def decode_response(raw: bytes) -> SidecarResponse:
     )
     if type(value) is not dict:
         _fail('invalid_response_envelope')
+    version = _schema_version(value.get('schema_version'))
     kind = value.get('kind')
     if kind == 'error_response':
         envelope = _strict_object(
@@ -667,9 +748,9 @@ def decode_response(raw: bytes) -> SidecarResponse:
             {'schema_version', 'kind', 'code'},
             'invalid_response_envelope',
         )
-        if envelope['schema_version'] != SCHEMA_VERSION:
-            _fail('unsupported_response_envelope')
-        return RuntimeErrorResponse(code=envelope['code'])
+        return RuntimeErrorResponse(
+            code=envelope['code'], schema_version=version,
+        )
     if kind != 'proposal_response':
         _fail('invalid_response_envelope')
     envelope = _strict_object(
@@ -685,8 +766,6 @@ def decode_response(raw: bytes) -> SidecarResponse:
         },
         'invalid_response_envelope',
     )
-    if envelope['schema_version'] != SCHEMA_VERSION:
-        _fail('unsupported_response_envelope')
     usage_value = _strict_object(
         envelope['usage'],
         {'input_tokens', 'output_tokens', 'total_tokens'},
@@ -701,5 +780,6 @@ def decode_response(raw: bytes) -> SidecarResponse:
             output_tokens=usage_value['output_tokens'],
             total_tokens=usage_value['total_tokens'],
         ),
-        output=_decode_output(envelope['output']),
+        output=_decode_output(envelope['output'], version),
+        schema_version=version,
     )

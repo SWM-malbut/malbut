@@ -581,6 +581,12 @@ def test_memory_change_during_inference_discards_result() -> None:
 def test_retrieved_memory_expiry_bounds_decision_ttl() -> None:
     """A decision must not outlive the memory used to produce it."""
     store = SQLiteMemoryStore(':memory:')
+    store.set_personalization('test-user', True, {
+        'conversation_id': 'consent-session',
+        'session_instance_id': 'consent-instance',
+        'generation': 1, 'turn_id': 'consent-turn',
+        'request_id': 'consent-request', 'text': '개인화에 동의해',
+    })
     expires_at = time.time() + 10
     record = store.add(
         'test-user',

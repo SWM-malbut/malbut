@@ -137,9 +137,10 @@ def create_communication_node(
                 self._dialogue_error_seen = True
                 self.get_logger().error('speech_dialogue startup failed')
             for response in self.dialogue.drain():
-                if self.say(response['text']):
+                published = self.dialogue.publish_reply(response, self.say)
+                if published is not None:
                     self.get_logger().info(json.dumps({
-                        'event': 'dialogue_response_published', **response,
+                        'event': 'dialogue_response_published', **published,
                     }, ensure_ascii=False))
 
         def _mission_event(self, event):

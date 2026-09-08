@@ -10,6 +10,7 @@ from malbut_agent_server.conversation import (
     ConversationTurn,
 )
 from malbut_agent_server.memory import MemoryRecord
+from malbut_agent_server.memory_contract import validate_memory_proposal
 from malbut_agent_server.prompting import (
     MAX_CONVERSATION_TURNS,
     MAX_MODEL_INPUT_CHARS,
@@ -33,6 +34,7 @@ class MockProvider(AgentProvider):
 
     name = 'mock'
     model = 'malbut-korean-rules-v1'
+    supports_memory = True
 
     def __init__(
         self,
@@ -48,6 +50,8 @@ class MockProvider(AgentProvider):
         conversation_turns: List[ConversationTurn],
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary] = None,
+        *,
+        memory_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Return a predictable response for regression and safety tests."""
         started = time.perf_counter()
@@ -57,6 +61,18 @@ class MockProvider(AgentProvider):
             conversation_turns,
             tools,
         )
+        memory_proposal = None
+        if memory_context is not None and decision.type in {
+            'message', 'clarification',
+        }:
+            memory_proposal = self._memory_proposal(request.utterance)
+            if memory_proposal is not None:
+                decision = AgentDecision(
+                    type='message',
+                    message='말해 준 내용을 확인할게.',
+                    reason='memory_proposal',
+                    confidence=1.0,
+                )
         decision.validate()
         elapsed = (time.perf_counter() - started) * 1000
         prepared = prepare_model_input(
@@ -66,6 +82,7 @@ class MockProvider(AgentProvider):
             conversation_summary,
             self.max_model_input_chars,
             MAX_CONVERSATION_TURNS,
+            memory_context=memory_context,
         )
         return ProviderResult(
             decision=decision,
@@ -74,7 +91,108 @@ class MockProvider(AgentProvider):
             latency_ms=elapsed,
             input_chars=prepared.metrics.model_input_chars,
             context_metrics=prepared.metrics,
+            memory_proposal=memory_proposal,
+            memory_supported=memory_context is not None,
         )
+
+    @staticmethod
+    def _memory_proposal(utterance: str) -> Optional[dict]:
+        """Recognize fixed direct-statement examples without guessing facts."""
+        if any(marker in utterance for marker in (
+            '"', "'", '“', '”', '‘', '’', '`', '예를 들', '만약',
+            '라고 했', '라고 말했', '라고 적', '라는 문장', '인용',
+        )):
+            return None
+        compact = re.sub(r'\s+', '', utterance)
+        operation = None
+        if any(word in compact for word in (
+            '개인화중단', '개인화를중단', '개인화꺼', '개인화를꺼',
+            '자동저장중단', '동의철회', '동의를철회', '기억하지마',
+        )):
+            operation = 'disable'
+        elif any(word in compact for word in (
+            '개인화에동의', '개인화동의', '개인화켜', '개인화를켜',
+            '기억해도돼', '저장에동의',
+        )):
+            operation = 'enable'
+        elif any(word in compact for word in ('삭제', '잊어줘', '지워줘')):
+            operation = 'forget'
+        elif any(word in compact for word in (
+            '정정', '수정', '바꿔', '아니라',
+        )):
+            operation = 'correct'
+        elif any(word in compact for word in (
+            '기억하고있', '기억하는', '뭘기억', '무엇을기억',
+            '이름이뭐', '이름은뭐', '좋아한다고했', '기억조회',
+            '내취향', '내선호',
+        )):
+            operation = 'recall'
+        elif any(word in compact for word in ('기억해줘', '저장해줘')):
+            operation = 'remember'
+        facts = MockProvider._memory_facts(utterance)
+        if operation is None:
+            if not facts:
+                return None
+            operation = 'remember'
+        return validate_memory_proposal({
+            'operation': operation,
+            'facts': facts if operation in {'remember', 'correct'} else [],
+            'target_ids': [],
+            'query': MockProvider._memory_query(utterance, operation),
+            'evidence': utterance,
+        })
+
+    @staticmethod
+    def _memory_query(utterance: str, operation: str) -> str:
+        if operation not in {'recall', 'correct', 'forget'}:
+            return ''
+        for subject in ('강아지', '고양이', '반려견', '반려묘'):
+            if subject in utterance:
+                return subject + (' 이름' if '이름' in utterance else '')
+        if re.search(r'(?:내|제)\s*이름', utterance):
+            return '이름'
+        if '호칭' in utterance or '별명' in utterance:
+            return '호칭'
+        if any(word in utterance for word in ('좋아', '취향', '선호')):
+            return '좋아'
+        if operation == 'recall':
+            return ''
+        return utterance
+
+    @staticmethod
+    def _memory_facts(utterance: str) -> List[dict]:
+        facts = []
+        patterns = (
+            ('name', 'user', 'name',
+             r'(?:내|제)\s*이름(?:은|이)\s*(?P<value>[가-힣A-Za-z]+?)'
+             r'(?:이야|야|입니다|이에요|예요)(?=$|[\s,.!])'),
+            ('nickname', 'user', 'nickname',
+             r'(?:나를|저를)\s*(?P<value>[가-힣A-Za-z]+?)(?:이?라고)'
+             r'\s*불러(?:줘|주세요)?'),
+            ('pet', None, 'name',
+             r'(?:우리|내|제)\s*(?P<subject>강아지|고양이|반려견|반려묘)'
+             r'\s*이름(?:은|이)\s*(?:[가-힣A-Za-z]+?\s*아니라\s*)?'
+             r'(?P<value>[가-힣A-Za-z]+?)'
+             r'(?:이야|야|입니다|이에요|예요)(?=$|[\s,.!])'),
+            ('pet', None, 'name',
+             r'(?P<subject>강아지|고양이|반려견|반려묘)\s*이름을\s*'
+             r'(?P<value>[가-힣A-Za-z]+?)(?:으로|로)\s*'
+             r'(?:정정|수정|바꿔)(?:해줘|줘|해|주세요)?'),
+            ('preference', 'user', 'preference',
+             r'(?:나는|저는|난|전)\s*(?P<value>[^.!?\n]+?'
+             r'(?:좋아해요|좋아해|싫어해요|싫어해|선호해요|선호해))'
+             r'(?=$|[,.!])'),
+        )
+        for kind, subject, attribute, pattern in patterns:
+            for match in re.finditer(pattern, utterance):
+                facts.append({
+                    'kind': kind,
+                    'subject': subject or match.group('subject'),
+                    'attribute': attribute,
+                    'value': match.group('value'),
+                    'evidence': match.group(0),
+                })
+        return facts[:8]
 
     def _decide(
         self,

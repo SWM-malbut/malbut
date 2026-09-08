@@ -21,9 +21,13 @@ from malbut_agent_server.gateway import (
     production_registry,
 )
 from malbut_agent_server.memory import SQLiteMemoryStore
+from malbut_agent_server.personal_memory import (
+    PersonalMemory, management_request, reply as memory_reply,
+)
 from malbut_agent_server.providers.base import (
     AgentProvider,
     ProviderError,
+    accepts_memory_context,
 )
 from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy, SafetyResult
@@ -117,6 +121,9 @@ class OrchestrationResult:
     expires_at: float
     state_trusted: bool
     memory_revision: int
+    memory_validator: Callable[[], None] | None = field(
+        default=None, repr=False, compare=False,
+    )
     state_evidence_id: str | None = None
     state_observed_at: float | None = None
     safety_policy_revision: str | None = None
@@ -131,6 +138,8 @@ class OrchestrationResult:
         include_raw_decision: bool = False,
     ) -> Dict[str, Any]:
         """Return the stable HTTP response contract."""
+        if self.memory_validator is not None:
+            self.memory_validator()
         now = float(self.clock())
         if not math.isfinite(now):
             raise RuntimeError('orchestration clock is invalid')
@@ -411,6 +420,18 @@ class AgentOrchestrator:
             capability_registry or production_registry()
         )
         self._handle_lock = threading.RLock()
+        self.personal_memory = PersonalMemory(memory_store, conversation_store)
+
+    def _memory_guard(self, user_id, request_id):
+        """Bind a response to its durable user-specific memory version."""
+        def validate():
+            try:
+                self.personal_memory.assert_fresh(user_id, request_id)
+            except ValidationError as error:
+                raise MemoryChangedError(
+                    'memory changed; submit a new turn'
+                ) from error
+        return validate
 
     def handle(
         self,
@@ -458,10 +479,13 @@ class AgentOrchestrator:
                 user_content=request.utterance,
             )
             if begin.cached_response is not None:
+                guard = self._memory_guard(request.user_id, request.request_id)
+                guard()
                 result = OrchestrationResult.from_persisted_dict(
                     begin.cached_response
                 )
                 result.clock = self._state_clock
+                result.memory_validator = guard
                 return result
             token = begin.token
             if token is None:
@@ -469,20 +493,25 @@ class AgentOrchestrator:
                     'conversation begin returned no token'
                 )
             try:
+                memory_snapshot = self.personal_memory.snapshot(
+                    request, token, begin.history, begin.summary,
+                    memory_limit=self.memory_limit,
+                )
                 effective_request = self._effective_request(
                     request,
-                    begin.history,
+                    memory_snapshot.history,
                     token,
                     utterance_resolver,
                 )
                 result = self._handle_uncached(
                     request,
                     effective_request,
-                    begin.history,
-                    begin.summary,
+                    memory_snapshot.history,
+                    memory_snapshot.summary,
                     token,
                     proposal_verifier,
                     server_clarification,
+                    memory_snapshot,
                 )
                 completion_arguments = {}
                 if confirmation_factory is not None:
@@ -502,10 +531,17 @@ class AgentOrchestrator:
                         raise RuntimeError(
                             'confirmation factory modified safety provenance'
                         )
+
+                def commit_memory(connection):
+                    return self.personal_memory.commit(
+                        request, token, memory_snapshot, result, connection,
+                    )
+
                 session, _turn = self.conversation_store.complete_turn(
                     token,
                     assistant_content=result.decision.message,
                     response=result.to_persisted_dict(),
+                    commit_callback=commit_memory,
                     **completion_arguments,
                 )
                 if (
@@ -517,9 +553,19 @@ class AgentOrchestrator:
                     raise RuntimeError(
                         'conversation commit metadata did not match'
                     )
+                result.memory_validator = self._memory_guard(
+                    request.user_id, request.request_id,
+                )
                 return result
-            except Exception:
+            except Exception as error:
                 self.conversation_store.fail_turn(token)
+                if (
+                    isinstance(error, ValidationError)
+                    and str(error) == 'memory_changed'
+                ):
+                    raise MemoryChangedError(
+                        'memory changed; submit a new turn'
+                    ) from error
                 raise
 
     def _handle_uncached(
@@ -533,6 +579,7 @@ class AgentOrchestrator:
             [AgentDecision], SafetyResult | None
         ] | None,
         server_clarification: ServerClarification | None,
+        memory_snapshot,
     ) -> OrchestrationResult:
         """Call one provider without holding a SQLite transaction."""
         effective_value = effective_request.to_dict()
@@ -543,17 +590,23 @@ class AgentOrchestrator:
         )
         safety_request = AgentRequest.from_dict(effective_value)
         model_request = AgentRequest.from_dict(effective_value)
-        if server_clarification is None:
-            memories, memory_revision = (
-                self.memory_store.search_with_revision(
-                    request.user_id,
-                    request.utterance,
-                    limit=self.memory_limit,
-                )
+        local_memory = self.personal_memory.local_decision(
+            request, memory_snapshot,
+        )
+        memories = memory_snapshot.memories[:self.memory_limit]
+        memory_revision = memory_snapshot.state['revision']
+        if local_memory is not None:
+            provider_result = ProviderResult(
+                decision=local_memory, provider='malbut-memory-policy',
+                model='consent-v1', latency_ms=0.0, memory_supported=True,
             )
+        elif server_clarification is None:
             tool_specs = self.capability_registry.select_specs(
                 model_request.available_tools
             )
+            memory_arguments = {}
+            if accepts_memory_context(self.provider):
+                memory_arguments['memory_context'] = memory_snapshot.context
             provider_result = self.provider.complete(
                 model_request,
                 memories,
@@ -562,10 +615,10 @@ class AgentOrchestrator:
                 conversation_summary=copy.deepcopy(
                     conversation_summary
                 ),
+                **memory_arguments,
             )
         else:
             memories = []
-            memory_revision = self.memory_store.revision
             provider_result = ProviderResult(
                 decision=server_clarification.to_decision(),
                 provider='malbut-server-policy',
@@ -589,8 +642,20 @@ class AgentOrchestrator:
             confidence=provider_decision.confidence,
             expires_in_ms=provider_decision.expires_in_ms,
         )
+        if raw_decision.type == 'tool_call' and (
+            provider_result.memory_proposal is not None
+            or management_request(request.utterance)
+        ):
+            raw_decision = memory_reply(
+                '로봇 실행과 기억 관리 중 먼저 처리할 요청을 말씀해 주세요.',
+                clarification=True,
+            )
+            provider_result.memory_proposal = None
         provider_result.decision = raw_decision
-        if self.memory_store.revision != memory_revision:
+        if (
+            self.memory_store.policy_state(request.user_id)
+            != memory_snapshot.state
+        ):
             raise MemoryChangedError(
                 'memory changed during model inference; retry the request'
             )

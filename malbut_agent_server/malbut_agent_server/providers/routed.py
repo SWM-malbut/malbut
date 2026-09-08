@@ -26,6 +26,7 @@ from malbut_agent_server.memory import MemoryRecord
 from malbut_agent_server.providers.base import (
     AgentProvider,
     ProviderError,
+    accepts_memory_context,
 )
 from malbut_agent_server.schemas import (
     AgentDecision,
@@ -57,6 +58,8 @@ _GENERAL_TOOL_FORBIDDEN_MESSAGE = (
 
 class RoutedAgentProvider(AgentProvider):
     """Delegate one uncached turn to exactly one selected provider."""
+
+    supports_memory = True
 
     def __init__(
         self,
@@ -93,6 +96,8 @@ class RoutedAgentProvider(AgentProvider):
         conversation_turns: List[ConversationTurn],
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary] = None,
+        *,
+        memory_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Route once and return without trying a second provider."""
         front_request = self._front_request(
@@ -116,6 +121,7 @@ class RoutedAgentProvider(AgentProvider):
                 conversation_turns,
                 tools,
                 conversation_summary,
+                memory_context,
             )
         if match.route is FrontRoute.GENERAL_CONVERSATION:
             general_request = self._without_tools(request)
@@ -126,6 +132,7 @@ class RoutedAgentProvider(AgentProvider):
                 conversation_turns,
                 [],
                 conversation_summary,
+                memory_context,
             )
             if result.decision.type == 'tool_call':
                 sanitized = replace(
@@ -167,6 +174,7 @@ class RoutedAgentProvider(AgentProvider):
                 conversation_turns,
                 tools,
                 conversation_summary,
+                memory_context,
             )
         raise ProviderError('front route is unsupported')
 
@@ -248,13 +256,21 @@ class RoutedAgentProvider(AgentProvider):
         conversation_turns: List[ConversationTurn],
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary],
+        memory_context: Optional[dict] = None,
     ) -> ProviderResult:
+        memory_arguments = (
+            {'memory_context': memory_context}
+            if memory_context is not None
+            and accepts_memory_context(provider)
+            else {}
+        )
         result = provider.complete(
             request,
             memories,
             conversation_turns,
             tools,
             conversation_summary=conversation_summary,
+            **memory_arguments,
         )
         if not isinstance(result, ProviderResult):
             raise ProviderError(

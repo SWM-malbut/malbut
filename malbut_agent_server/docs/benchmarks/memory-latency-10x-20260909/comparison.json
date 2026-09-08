@@ -1,0 +1,145 @@
+{
+  "measured_attempts": 30,
+  "matched_groups": 9,
+  "excluded_groups": [
+    {
+      "comparison_group": 2,
+      "case": "preference",
+      "failed_modes": [
+        "B"
+      ]
+    }
+  ],
+  "summary": {
+    "A": {
+      "reply_ready_s": {
+        "median": 2.0552039169706404,
+        "mean": 2.272539814791849,
+        "min": 1.5234637079993263,
+        "max": 4.718633667100221
+      },
+      "memory_done_s": {
+        "median": 2.0550857089692727,
+        "mean": 2.2721186990125313,
+        "min": 1.5233942080521956,
+        "max": 4.718257209053263
+      },
+      "attempts": 10,
+      "valid": 10,
+      "matched": 9,
+      "measured_api_calls": 10,
+      "measured_cost_usd": 0.00142818,
+      "input_tokens": 17154,
+      "output_tokens": 869,
+      "cached_input_tokens": 16919,
+      "reply_to_memory_median_ms": -0.25379203725606203,
+      "cases": {
+        "pet": {
+          "samples": 4,
+          "reply_median_s": 2.384134708030615,
+          "memory_median_s": 2.383848999510519
+        },
+        "preference": {
+          "samples": 2,
+          "reply_median_s": 1.9915802499745041,
+          "memory_median_s": 1.9913195834960788
+        },
+        "greeting": {
+          "samples": 3,
+          "reply_median_s": 1.5293705420335755,
+          "memory_median_s": 1.5274912080494687
+        }
+      }
+    },
+    "B": {
+      "reply_ready_s": {
+        "median": 2.8187760829459876,
+        "mean": 3.4448755785383076,
+        "min": 1.6668292499380186,
+        "max": 6.451575875049457
+      },
+      "memory_done_s": {
+        "median": 2.8203709999797866,
+        "mean": 3.44767192131581,
+        "min": 1.667621250031516,
+        "max": 6.456988124991767
+      },
+      "attempts": 10,
+      "valid": 9,
+      "matched": 9,
+      "measured_api_calls": 10,
+      "measured_cost_usd": 0.0014265,
+      "input_tokens": 17154,
+      "output_tokens": 867,
+      "cached_input_tokens": 16915,
+      "reply_to_memory_median_ms": 2.120459103025496,
+      "cases": {
+        "pet": {
+          "samples": 4,
+          "reply_median_s": 4.051863958011381,
+          "memory_median_s": 4.05613108293619
+        },
+        "preference": {
+          "samples": 2,
+          "reply_median_s": 3.8459855414694175,
+          "memory_median_s": 3.847918188024778
+        },
+        "greeting": {
+          "samples": 3,
+          "reply_median_s": 2.222913875011727,
+          "memory_median_s": 2.225160999922082
+        }
+      }
+    },
+    "C": {
+      "reply_ready_s": {
+        "median": 1.6812872500158846,
+        "mean": 1.6446522547759943,
+        "min": 1.2217471670592204,
+        "max": 1.9346383749507368
+      },
+      "memory_done_s": {
+        "median": 3.106077083037235,
+        "mean": 3.05684462044802,
+        "min": 2.517270667012781,
+        "max": 3.586739583988674
+      },
+      "attempts": 10,
+      "valid": 10,
+      "matched": 9,
+      "measured_api_calls": 20,
+      "measured_cost_usd": 0.0051516,
+      "input_tokens": 19518,
+      "output_tokens": 1040,
+      "cached_input_tokens": 0,
+      "reply_to_memory_median_ms": 1295.5234999535605,
+      "cases": {
+        "pet": {
+          "samples": 4,
+          "reply_median_s": 1.4859667504788376,
+          "memory_median_s": 3.238183271023445
+        },
+        "preference": {
+          "samples": 2,
+          "reply_median_s": 1.8258516874630004,
+          "memory_median_s": 3.264572187443264
+        },
+        "greeting": {
+          "samples": 3,
+          "reply_median_s": 1.6812872500158846,
+          "memory_median_s": 2.755752749973908
+        }
+      }
+    }
+  },
+  "all_44_calls_estimated_cost_usd": 0.00919734,
+  "usage_complete": true,
+  "auth_preflight": {
+    "source": "~/.zshrc",
+    "endpoint": "GET /v1/models/gpt-5.6-luna",
+    "http_status": 200
+  },
+  "latency_basis": "Only original case/repetition groups where A,B,C all passed; costs include all ten measured attempts per mode.",
+  "c_reply_median_reduction_vs_a_percent": 18.193652895811287,
+  "c_measured_cost_ratio_vs_a": 3.6071083476872663
+}

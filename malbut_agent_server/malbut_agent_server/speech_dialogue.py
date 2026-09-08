@@ -8,6 +8,7 @@ from typing import Callable, Optional
 from malbut_agent_server.conversation import (
     ConversationNotFoundError, ConversationStateError,
 )
+from malbut_agent_server.orchestrator import MemoryChangedError
 from malbut_agent_server.schemas import (
     AgentRequest, MAX_UTTERANCE_LENGTH, RobotState, validate_user_id,
 )
@@ -17,6 +18,18 @@ ERROR_RESPONSE = '답변을 만들지 못했어요. 다시 말씀해 주세요.'
 SESSION_ERROR_RESPONSE = (
     '대화 세션을 사용할 수 없어요. Agent 대화 모드를 다시 시작해 주세요.'
 )
+MEMORY_CHANGED_RESPONSE = (
+    '기억 정보가 변경되어 이전 답변을 전달하지 않았어요. 다시 말씀해 주세요.'
+)
+
+
+class _DialogueReply(dict):
+    """Keep freshness validation outside the serializable reply fields."""
+
+    def __init__(self, fields, memory_validator=None):
+        """Attach the internal guard without adding a public JSON field."""
+        super().__init__(fields)
+        self._memory_validator = memory_validator
 
 
 def validate_dialogue_input(utterance_id: str, text: str) -> None:
@@ -88,12 +101,41 @@ class DialogueWorker:
             return True
 
     def drain(self) -> list[dict]:
-        """Return ready replies and release their admission capacity."""
+        """Recheck ready replies and release their admission capacity."""
         with self._condition:
             results = list(self._results)
             self._results.clear()
             self._outstanding -= len(results)
+            for reply in results:
+                self._refresh_reply(reply)
             return results
+
+    def publish_reply(self, reply: dict, publish: Callable) -> Optional[dict]:
+        """Check again immediately before publishing while stores are open."""
+        with self._condition:
+            if self._closing or self._stopped:
+                return None
+            self._refresh_reply(reply)
+            if publish(reply['text']):
+                return dict(reply)
+            return None
+
+    def _refresh_reply(self, reply):
+        validator = getattr(reply, '_memory_validator', None)
+        if validator is None:
+            return
+        try:
+            if self._closing or self._stopped:
+                raise MemoryChangedError('dialogue worker is closed')
+            validator()
+        except MemoryChangedError:
+            reply['text'] = MEMORY_CHANGED_RESPONSE
+            reply['kind'] = 'error'
+            reply._memory_validator = None
+        except Exception:
+            reply['text'] = ERROR_RESPONSE
+            reply['kind'] = 'error'
+            reply._memory_validator = None
 
     def close(self) -> None:
         """Discard waiting and late replies; let the running call finish."""
@@ -154,11 +196,17 @@ class DialogueWorker:
                     reply = self._reply(
                         utterance_id, conversation_id,
                         decision.message, 'answer',
+                        getattr(result, 'memory_validator', None),
                     )
                 except (ConversationNotFoundError, ConversationStateError):
                     reply = self._reply(
                         utterance_id, conversation_id,
                         SESSION_ERROR_RESPONSE, 'error',
+                    )
+                except MemoryChangedError:
+                    reply = self._reply(
+                        utterance_id, conversation_id,
+                        MEMORY_CHANGED_RESPONSE, 'error',
                     )
                 except Exception:
                     reply = self._reply(
@@ -177,10 +225,12 @@ class DialogueWorker:
                     runtime.memory_store.close()
 
     @staticmethod
-    def _reply(utterance_id, conversation_id, text, kind):
-        return {
+    def _reply(
+        utterance_id, conversation_id, text, kind, memory_validator=None,
+    ):
+        return _DialogueReply({
             'utterance_id': utterance_id,
             'text': text,
             'kind': kind,
             'conversation_id': conversation_id,
-        }
+        }, memory_validator)

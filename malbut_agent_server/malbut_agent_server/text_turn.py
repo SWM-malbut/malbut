@@ -11,10 +11,14 @@ from typing import Any, Callable, Sequence
 from malbut_agent_server.conversation import (
     BeginTurnToken,
     ConfirmationIntentNotFoundError,
+    ConversationConflictError,
     ConversationTurn,
     TextTurnRequestClaim,
 )
 from malbut_agent_server.named_target import NamedTargetResolver
+from malbut_agent_server.personal_memory import (
+    local_intent, management_request,
+)
 from malbut_agent_server.orchestrator import (
     AgentOrchestrator,
     OrchestrationResult,
@@ -207,6 +211,16 @@ class TextTurnService:
         if self.store.has_agent_request(owner, request.request_id):
             return self._handle_new_request(owner, request)
 
+        memory_question = self.orchestrator.personal_memory.pending_question(
+            owner, request.conversation_id,
+        )
+        memory_control = local_intent(request.text) is not None or (
+            management_request(request.text)
+            and any(word in request.text for word in ('기억', '개인화'))
+        )
+        if memory_question is not None or memory_control:
+            return self._handle_new_request(owner, request)
+
         pending = self.store.pending_confirmation(
             owner,
             request.conversation_id,
@@ -313,6 +327,7 @@ class TextTurnService:
         classified: str | None,
         request_fingerprint: str,
     ) -> dict[str, Any]:
+        self.orchestrator._memory_guard(user_id, record.request_id)()
         if classified is None:
             self.store.claim_text_turn_response(
                 user_id,
@@ -396,12 +411,27 @@ class TextTurnService:
             action_dispatch_window_seconds=(
                 self.action_dispatch_window_seconds
             ),
+            precommit_validator=(
+                lambda connection: self._validate_reply_context(
+                    user_id, request, record, connection,
+                )
+            ),
         )
         return self._record_response(
             request,
             terminal,
             cached=False,
         )
+
+    def _validate_reply_context(self, user_id, request, record, connection):
+        """Recheck memory authority in the confirmation write transaction."""
+        self.orchestrator._memory_guard(user_id, record.request_id)()
+        if self.orchestrator.personal_memory.pending_question(
+            user_id, request.conversation_id, connection=connection,
+        ) is not None:
+            raise ConversationConflictError(
+                'memory question changed; retry the current response',
+            )
 
     def _resolve_record_target(
         self,
@@ -702,6 +732,9 @@ class TextTurnService:
         *,
         cached: bool,
     ) -> dict[str, Any]:
+        self.orchestrator._memory_guard(
+            record.user_id, record.request_id,
+        )()
         value = record.to_public_dict()
         value.update({
             'schema_version': 1,

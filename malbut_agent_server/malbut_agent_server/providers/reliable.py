@@ -18,6 +18,7 @@ from malbut_agent_server.memory import MemoryRecord
 from malbut_agent_server.providers.base import (
     AgentProvider,
     ProviderError,
+    accepts_memory_context,
 )
 from malbut_agent_server.schemas import (
     AgentDecision,
@@ -201,6 +202,8 @@ class _Circuit:
 
 class ReliableProvider(AgentProvider):
     """Route calls across providers with bounded reliability controls."""
+
+    supports_memory = True
 
     _MAX_RETRIES_LIMIT = 10
     _SAFE_MESSAGE = (
@@ -459,7 +462,14 @@ class ReliableProvider(AgentProvider):
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary],
         deadline: float,
+        memory_context: Optional[dict] = None,
     ) -> Tuple[Optional[ProviderResult], ProviderFailure]:
+        memory_arguments = (
+            {'memory_context': memory_context}
+            if memory_context is not None
+            and accepts_memory_context(provider)
+            else {}
+        )
         failure = _FAILURES[ProviderFailureCode.UNKNOWN]
         for attempt in range(self._max_retries + 1):
             if (
@@ -475,6 +485,7 @@ class ReliableProvider(AgentProvider):
                     conversation_turns,
                     tools,
                     conversation_summary,
+                    **memory_arguments,
                 )
                 return self._validated_result(result), failure
             except Exception as error:
@@ -509,6 +520,8 @@ class ReliableProvider(AgentProvider):
         conversation_turns: List[ConversationTurn],
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary] = None,
+        *,
+        memory_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Return the first valid result or a safe non-action response."""
         started_at = self._clock()
@@ -529,6 +542,7 @@ class ReliableProvider(AgentProvider):
                 tools,
                 conversation_summary,
                 deadline,
+                memory_context,
             )
             if result is not None:
                 self._record_success(index)

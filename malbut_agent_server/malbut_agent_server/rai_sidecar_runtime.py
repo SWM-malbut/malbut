@@ -26,6 +26,10 @@ from typing import (
 )
 import warnings
 
+from malbut_agent_server.memory_contract import (
+    MEMORY_INSTRUCTIONS,
+    MEMORY_PROPOSAL_SCHEMA,
+)
 from malbut_agent_server.rai_sidecar_protocol import (
     ActionProposal,
     MAX_REQUEST_BYTES,
@@ -106,6 +110,13 @@ class _RaiStructuredProposalRuntime:
             'ToolSpec projection:\n'
             f'{tool_projection}'
         )
+        if request.memory_context is not None:
+            system_prompt += (
+                '\n\n' + MEMORY_INSTRUCTIONS + '\n'
+                'Return memory_proposal for text_reply only; use null '
+                'when there is no memory operation. For action_proposal '
+                'memory_proposal must be null.'
+            )
         graph = self._rai_langchain.create_structured_output_runnable(
             llm=self._llm,
             structured_output=self._output_model(request),
@@ -149,8 +160,13 @@ class _RaiStructuredProposalRuntime:
             __config__=self._strict_config,
             **argument_fields,
         )
+        memory_fields = {}
+        if request.memory_context is not None:
+            memory_fields['memory_proposal'] = (
+                Optional[self._memory_model()], ...,
+            )
         return self._pydantic.create_model(
-            'MalbutRaiProposalV1',
+            f'MalbutRaiProposalV{request.schema_version}',
             __config__=self._strict_config,
             kind=(Literal['text_reply', 'action_proposal'], ...),
             response_type=(
@@ -165,6 +181,43 @@ class _RaiStructuredProposalRuntime:
             tool_name=(Optional[str], ...),
             arguments=(Optional[arguments_model], ...),
             expires_in_ms=(Optional[int], ...),
+            **memory_fields,
+        )
+
+    def _memory_model(self) -> Any:
+        """Project the shared memory contract into strict Pydantic models."""
+        properties = MEMORY_PROPOSAL_SCHEMA['properties']
+        fact_schema = properties['facts']['items']
+        fact_model = self._pydantic.create_model(
+            'MalbutRaiMemoryFactV2',
+            __config__=self._strict_config,
+            **{
+                name: (
+                    Literal[tuple(schema['enum'])] if 'enum' in schema
+                    else str,
+                    ...,
+                )
+                for name, schema in fact_schema['properties'].items()
+            },
+        )
+        return self._pydantic.create_model(
+            'MalbutRaiMemoryProposalV2',
+            __config__=self._strict_config,
+            operation=(Literal[tuple(properties['operation']['enum'])], ...),
+            facts=(
+                list[fact_model],
+                self._pydantic.Field(
+                    ..., max_length=properties['facts']['maxItems'],
+                ),
+            ),
+            target_ids=(
+                list[str],
+                self._pydantic.Field(
+                    ..., max_length=properties['target_ids']['maxItems'],
+                ),
+            ),
+            query=(str, ...),
+            evidence=(str, ...),
         )
 
     @staticmethod
@@ -184,6 +237,8 @@ class _RaiStructuredProposalRuntime:
             'arguments',
             'expires_in_ms',
         }
+        if request.memory_context is not None:
+            expected.add('memory_proposal')
         if set(payload) != expected:
             raise ValueError('invalid structured output')
         if payload['kind'] == 'text_reply':
@@ -197,9 +252,12 @@ class _RaiStructuredProposalRuntime:
                 message=payload['message'],
                 reason=payload['reason'],
                 confidence=payload['confidence'],
+                memory_proposal=payload.get('memory_proposal'),
             )
         if payload['kind'] == 'action_proposal':
-            if payload['response_type'] is not None:
+            if payload['response_type'] is not None or (
+                payload.get('memory_proposal') is not None
+            ):
                 raise ValueError('mixed structured output')
             arguments = payload['arguments']
             if type(arguments) is not dict:
@@ -381,28 +439,39 @@ def run_once(
     try:
         runtime = create_runtime(runtime_factory)
     except RaiRuntimeConfigurationError:
-        return encode_response(RuntimeErrorResponse('runtime_unavailable'))
+        return encode_response(RuntimeErrorResponse(
+            'runtime_unavailable', request.schema_version,
+        ))
 
     try:
         output = runtime.propose(request)
         if type(output) not in {TextReply, ActionProposal}:
             return encode_response(
-                RuntimeErrorResponse('invalid_runtime_output')
+                RuntimeErrorResponse(
+                    'invalid_runtime_output', request.schema_version,
+                )
             )
         if not _proposal_is_bound_to_request(request, output):
             return encode_response(
-                RuntimeErrorResponse('invalid_runtime_output')
+                RuntimeErrorResponse(
+                    'invalid_runtime_output', request.schema_version,
+                )
             )
         response = ProposalResponse(
             request_id=request.request_id,
             model=runtime.model,
             output=output,
+            schema_version=request.schema_version,
         )
         return encode_response(response)
     except RaiSidecarProtocolError:
-        return encode_response(RuntimeErrorResponse('invalid_runtime_output'))
+        return encode_response(RuntimeErrorResponse(
+            'invalid_runtime_output', request.schema_version,
+        ))
     except Exception:
-        return encode_response(RuntimeErrorResponse('runtime_failed'))
+        return encode_response(RuntimeErrorResponse(
+            'runtime_failed', request.schema_version,
+        ))
 
 
 def main(

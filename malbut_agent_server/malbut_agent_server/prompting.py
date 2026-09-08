@@ -1,5 +1,6 @@
 """Prompt construction with explicit trust and context-size boundaries."""
 
+import copy
 import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set
@@ -82,6 +83,8 @@ def prepare_model_input(
     conversation_summary: Optional[ConversationSummary] = None,
     max_model_input_chars: int = MAX_MODEL_INPUT_CHARS,
     recent_turn_limit: int = DEFAULT_RECENT_CONVERSATION_TURNS,
+    *,
+    memory_context: Optional[dict] = None,
 ) -> PreparedModelInput:
     """Build JSON whose instructions plus data never exceed the cap."""
     if (
@@ -154,6 +157,16 @@ def prepare_model_input(
         'current_user_utterance': request.utterance,
         'context_truncated': bool(truncated_sections),
     }
+    if memory_context is not None:
+        if type(memory_context) is not dict:
+            raise ValueError('memory_context must be an object')
+        memory_management = copy.deepcopy(memory_context)
+        encoded = json.dumps(
+            memory_management, ensure_ascii=False, allow_nan=False,
+        )
+        if len(encoded) > MAX_CONVERSATION_CONTEXT_CHARS:
+            raise ValueError('memory_context exceeds the context limit')
+        context['memory_management_context'] = memory_management
     text = _render_context(context)
     overflow_fallback = False
     if len(text) > data_limit:
@@ -166,6 +179,8 @@ def prepare_model_input(
         )
         text = _render_context(context)
     if len(text) > data_limit:
+        if memory_context is not None:
+            raise ValueError('memory context cannot fit without losing data')
         overflow_fallback = True
         if conversation_turns:
             truncated_sections.add('recent_conversation')
