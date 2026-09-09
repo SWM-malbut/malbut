@@ -199,6 +199,9 @@ jobs:
         env:
           ROS_APT_SOURCE_VERSION: "1.2.0"
         run: |
+          # ROS tests do not use Chrome. Its preinstalled apt source can fail
+          # with a Hash Sum mismatch and prevent unrelated ROS installation.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           # GitHub-hosted Ubuntu runners prefer the Azure mirror. When that
           # endpoint is unhealthy apt can wait for each package indefinitely,
           # even though archive.ubuntu.com is listed as a fallback.
