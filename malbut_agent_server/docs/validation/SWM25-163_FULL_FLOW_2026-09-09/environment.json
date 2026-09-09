@@ -1,0 +1,19 @@
+{
+  "platform": "Linux-6.12.54-linuxkit-aarch64-with-glibc2.35",
+  "architecture": "aarch64",
+  "python": "3.10.12 (main, Jun 22 2026, 18:55:27) [GCC 11.4.0]",
+  "ROS_DISTRO": "humble",
+  "ROS_DOMAIN_ID": "195",
+  "ROS_LOCALHOST_ONLY": "1",
+  "packages": {
+    "pytest": "6.2.5",
+    "pydantic": "2.13.5",
+    "PyYAML": "5.4.1",
+    "openai": null,
+    "httpx": null,
+    "httpx2": null,
+    "pvporcupine": null,
+    "pvrecorder": null,
+    "webrtcvad": null
+  }
+}

@@ -1,0 +1,907 @@
+{
+  "commit": "1f526c6ceecc14f60fd6afcf1f6804cb7c2f7ded",
+  "worktree": "/Users/sinhyeonjae/Documents/ChatGPT/malbut-agent-validation",
+  "packages": [
+    "malbut_interfaces",
+    "malbut_agent_server",
+    "malbut_stt",
+    "malbut_tts",
+    "malbut_system_manager"
+  ],
+  "file_count": 223,
+  "archive_sha256": "0d933f9bff7b400b452c938c8bec3b49c8fcb31a40fc512f4b95df7b74e57a99",
+  "files": [
+    {
+      "path": "malbut_agent_server/.env.example",
+      "sha256": "4030f3b6879f20fff7a9e6133ac7adbbefdff97cc94269cc3ae0ed9884a73953"
+    },
+    {
+      "path": "malbut_agent_server/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "malbut_agent_server/README.md",
+      "sha256": "792165f337454da6c2d67e07ef054001d6e614c2fd15eb0a7f42ef0af69e472b"
+    },
+    {
+      "path": "malbut_agent_server/docs/SWM25-165_MEMORY_BENCHMARK.md",
+      "sha256": "9428a6637bd9a74981bd70927738387a125df1c643baa1cf294b7f0d3993ee91"
+    },
+    {
+      "path": "malbut_agent_server/docs/SWM25-165_MEMORY_VALIDATION.md",
+      "sha256": "900f89422031e6e727595345305b459ab7dd440322cbf7e00bd4c4d8b796053c"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-10x-20260909/RAW_REPORT.md",
+      "sha256": "e4c58f5a7b1c0958c9b3273b0e0f63d9da04406ed881f47bc77777b1459d2346"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-10x-20260909/REPORT.md",
+      "sha256": "6a28b96cbf98426959acd9778cc6d43cd1369d2477013b29a18b5acf31dd6f37"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-10x-20260909/calls.csv",
+      "sha256": "7353e15da96dacd6a387f703ae3781de378618bff848046489d496ac07ab784c"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-10x-20260909/comparison.json",
+      "sha256": "541fd1e9a958de8f55192f3be1c947ff0e8d7aa0d29a7afa083d1d4b64c27839"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-10x-20260909/paired_trials.csv",
+      "sha256": "2f785809bf26a24aa7daaaed59cc3e08846d40b580dfdf8af574c771bd26926e"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-10x-20260909/results.json",
+      "sha256": "c2ff927ff2dbc0331744ff1e83969f4f01255157593b42cad4bb135d73effb55"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-10x-20260909/trials.csv",
+      "sha256": "f861a5d1e7f5c3c252bbd04667bca0a189a75cd89716bd4cc04e446099f8bbd6"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-20260909/fixed/REPORT.md",
+      "sha256": "0460da749b398ee18def03dc5120bb39f5436f40247e40c3a999b64ccaa45ac1"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-20260909/fixed/calls.csv",
+      "sha256": "cb44f70e4ec01217f4dd8ce89d5e2e51cf92072a51a3953ffbe2c1bb29be54c9"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-20260909/fixed/results.json",
+      "sha256": "75e93ca45cfc5a02945a0fa2473ea6e5b87efc49f5e7bfa00e060ca269a0dbb0"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-20260909/fixed/trials.csv",
+      "sha256": "d9a96fadb75a684e5bd65ea9a8c9c40de7bdb73abc32ad3380dd9138c1c29740"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-20260909/live/REPORT.md",
+      "sha256": "bb1b12d6ea98a467538e9bf963548ae54025a6472bce0017a006d641c2e37e7a"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-20260909/live/calls.csv",
+      "sha256": "0f419109c50616fb213f84ce41ef94abd99552355a8b0a7e6470800a7f8d35ef"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-20260909/live/results.json",
+      "sha256": "454dc8d9a80843e870be4c2c9f7aea2465b971a72e647230b5d405001229f942"
+    },
+    {
+      "path": "malbut_agent_server/docs/benchmarks/memory-latency-20260909/live/trials.csv",
+      "sha256": "2dac3ad2d55ff89edc81c5d820412069d93c09ebb38cc1ceaacb6a937ac21bfd"
+    },
+    {
+      "path": "malbut_agent_server/docs/evaluations/SWM25-72_OPENAI_EVALUATION_2026-08-05.md",
+      "sha256": "4463b112f0e6e8db22efa0254ceac5801349b34641e6bfef2b2ae0877d481744"
+    },
+    {
+      "path": "malbut_agent_server/docs/evaluations/SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md",
+      "sha256": "1de77065fbcf14aeff1c84f01bc68b7a009dc7b8fefa7bbe9bbab40dabb14720"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-128_CLEAN_BASELINE.md",
+      "sha256": "f074a898b1992e1dce31266940c0bc42890e01821c0a10599d18fc3bc1d21030"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-131_TEXT_CONFIRMATION_RAI.md",
+      "sha256": "659a15ce55a3057601afca664133487a1d4577c4bce6aebce11749e0c7da35e2"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-132_APPROVED_NAV2_EXECUTION.md",
+      "sha256": "95cbf11131de00b5fecd0272eea4539f347c8d4d8d6b28b871573979a99bf64e"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-133_GAZEBO_FULL_FLOW.md",
+      "sha256": "07c65f0ba21dc24d409c0b7045e638bf1e35fcf5151ad95a7d66a4e561af7c7d"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-134_GAZEBO_CAMPAIGN.md",
+      "sha256": "a75a667da18f8259afe588d7795b48b71d006ae164a393001f120fa4ba0d4aa4"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-135_MULTI_SPACE_GAZEBO_REPEAT.md",
+      "sha256": "a0b2f8d81ec919faf26a88b765d9bd82c0f3bf056edf426f264398af64bf923d"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-136_EXACTLY_ONCE_DUPLICATE_RACES.md",
+      "sha256": "9ecc23e40c552bea67b8d4d58aaed6d05cc3cd0ca15663518cf379f9cc601924"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-137_SAFETY_BLOCKING.md",
+      "sha256": "f4c90146be6735bf8310ee83b06dbf9f742cb7b5ecd1409bca2cca7f5151a723"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-138_NAV2_UNKNOWN_RECONCILIATION.md",
+      "sha256": "f39a0dc856c2687ad4ce1d0e70e64b2fa09cf70d9de45dbeb415506db3af8c96"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-139_GAZEBO_FINAL_ACCEPTANCE.md",
+      "sha256": "9a9ae94c3dc128c2e2530318e7719a47391f93bf72f831b39381558669e5132a"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-149_TEXT_CLARIFICATION.md",
+      "sha256": "7c6e7be3db213aac11f7d49581763f43382705985c6b97877cee06ad87878c7e"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-150_FRONT_AGENT_ROUTING_CONTRACT.md",
+      "sha256": "90d7d070036acb41021a999688d6b29568231eff6f38c8f074d001651966f2b2"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-151_SPECIALIST_AGENT_ROUTING.md",
+      "sha256": "58952a5d1e4ce6cfef10876ce23a210a9c414d1bf34881a08fbb5d1a6777ee3f"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-152_ROLE_MODEL_CONFIGURATION.md",
+      "sha256": "d469b4630683de6263e1e3e698432dbb33b6d580a6bc3641758312f424e02a4f"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md",
+      "sha256": "9463938c55227b6f2ce5778292ce33ad4b13079b4bfb0e1f1ecc190f6e96cd4c"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-69_INTERFACE_APPROVAL_GUIDE.md",
+      "sha256": "1be338e9de1dce509f97a4202529ad43b725485c8e26392693d5d3782f020b03"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-70_MULTITURN_CONVERSATION_SESSION.md",
+      "sha256": "8fb187b57c828b1915f1aff9304a2baa64f2260638838d60a09205351f9cacc8"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-71_USER_CONTEXT_INTEGRATION.md",
+      "sha256": "01b5029e4ae051fda7d92bdf77ad17b1f4363434be732725358ed4eb86d646ce"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-72_LLM_PROVIDER_INTEGRATION.md",
+      "sha256": "d36712acf05d17ed30b7e76eecba27423fb58c6ddbec85c8d6e66a6c60ad3212"
+    },
+    {
+      "path": "malbut_agent_server/docs/jira/SWM25-73_AGENT_TOOL_GATEWAY.md",
+      "sha256": "8ebabae4ad70b2d513f6aa3bfcf3a0dbfa3b03c3c604375ba3237a580b9e4626"
+    },
+    {
+      "path": "malbut_agent_server/docs/malbut_agent.md",
+      "sha256": "93c1f2f072a601e1136b0028ee49b63d593adc8b3c4ef4e16e237777751b986c"
+    },
+    {
+      "path": "malbut_agent_server/docs/validation/SWM25-165_LUNA_2026-09-09/ambiguous-results.json",
+      "sha256": "73921255bd99170f49d3dfc6ab74b60b6fea8821136878aaf744f0c9a9dfc0a9"
+    },
+    {
+      "path": "malbut_agent_server/docs/validation/SWM25-165_LUNA_2026-09-09/results.json",
+      "sha256": "e93877b26777e73e721b26005f6d408fb1d74a84e35ea21cf2a05db343fb24d9"
+    },
+    {
+      "path": "malbut_agent_server/docs/validation/SWM25-165_LUNA_2026-09-09/ros-validation-summary.json",
+      "sha256": "ed51c4d2e7f781e7a4079c7bfa8f469de9cb3f18b5ae24a42632bebe1aa5ef08"
+    },
+    {
+      "path": "malbut_agent_server/docs/validation/SWM25-165_LUNA_2026-09-09/worktree-code-check.json",
+      "sha256": "743bd9f96b40d8b42dcd7869dfe58d687d3bbd143f2eb9710be2e5d78b64a4d2"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/__init__.py",
+      "sha256": "3f46ae829040ff493434b795ca7e642514bdb8af427296c55180a4b070a5f25b"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/adapters/__init__.py",
+      "sha256": "bc13dd44da3027735dabf472730dd7cf2e01bd3936014efc573f4e04ec486975"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/adapters/outbound/__init__.py",
+      "sha256": "b4d186a02b8fc033ec5edc35497587ab1fed0f933681ecadb5fdd6e509f2bb3e"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/adapters/outbound/openai_front_route_candidate.py",
+      "sha256": "bf29616d127d70f94741dd243d97a82ed0b2a7f4ffdf36ea9969f269d6793de9"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/adapters/outbound/sqlite_action_repository.py",
+      "sha256": "ec55964302a5311012e8905ad7bebc3703162caea79d9e2ce44f22af3d1dd4e9"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/application/__init__.py",
+      "sha256": "9beb2fe7ab8e73373ebcc751079c11c0b0fae4dabf639598a2fedfc885ad240b"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/application/approved_action_worker.py",
+      "sha256": "a60951670f044ae95e337b0f958380e8e46771aa22bc768cb6884e63d1e1a604"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/application/front_routing.py",
+      "sha256": "d60e0f2d804b3a6eb57ee5545e199d6f70884a8515dfab1180f85f7c4d162d2f"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/cli.py",
+      "sha256": "37abf5148786b8e8104cd62bdca42b19eed79abc1434ac97416f733e1cc98213"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/config.py",
+      "sha256": "71f3c533f78418841e5d1c79849f2ad86480527131b8990d0b3f5a399923126d"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/conversation.py",
+      "sha256": "a33d0fc3d3790c3a514e4d207fe230ae324bc74b66e298a9df51ff4656338873"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/data/korean_commands_v2.jsonl",
+      "sha256": "18e357f43ac5c855724ffd65abbe7bfc7cf9483499ade2cc4764be2fac9d8a63"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/domain/__init__.py",
+      "sha256": "b1a7d9d90b0745af261aceb9f21a930c461dc75be24a04134b4b36e81e852fb2"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/domain/front_route.py",
+      "sha256": "687480294339bd2f99510428bad085ecaf0d80c188f16410347c5b53aaf3db26"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/domain/robot_action.py",
+      "sha256": "262ad1b1762f443bd80bf0c67016864108a90b7346b79334d30fd40aca04f108"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/endpoint_policy.py",
+      "sha256": "769d17141c854e0c779b70ed47628950b23037a8fac8d2e69ea883f94aee2b65"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/eval_runner.py",
+      "sha256": "22eade2e46631a4738871d5495b76305ad4cadb4ab706b7fc97c3091f53b1a7b"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/factory.py",
+      "sha256": "2f950e850cffd9a885bbe5b73f2991d7803f312755951bb8ad455b49ebd85ce9"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/front_route_inspector.py",
+      "sha256": "240a386b7a345cfb186a87e0b565508c4541b255aadaf90b47bc51a5456ff982"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/gateway.py",
+      "sha256": "049320b84bcfc4be5df12b4432fa9ff0b6b64bd707c0581d170b8f11550c167b"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/http_server.py",
+      "sha256": "7ea9f0035db02435d22f47bc240f2dfd08bbcba980a98c1362b7f2cfe33b34b7"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/manager_client.py",
+      "sha256": "57caf82ab02ebf7397421b82dd348701523a93c67ec5a3f7e773ca70b14e48ef"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/memory.py",
+      "sha256": "043a6fe2db352636639b46118182b375a1d96e96ea19a1744c5c21235ce27e98"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/memory_benchmark.py",
+      "sha256": "1a10acfcb454e5ced6d279ae3784d6708dd61995e3d26337e002a5423d3dfb8f"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/memory_contract.py",
+      "sha256": "7dab5a8d1eb4579508a0b5384fd4d5528c415bc6b08a040e36a0810eea7ecc3b"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/mission_speech.py",
+      "sha256": "b5c9569124cce49c916407e60de46a880ae35521218e2a38e6655faf3a9bf9e0"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/named_target.py",
+      "sha256": "26a6026f3c26af776a5f95bbf8b9448d218cea1b32c03ec9348e8adfbc61e92e"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/orchestrator.py",
+      "sha256": "cf4f4e25e7027000d699f2e5c4ebec6c9574fee4f841e285537f6707de63fbde"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/personal_memory.py",
+      "sha256": "58d981dd9a15a31147e44223296a6cb69d1db2a962a53de357370d17ea0e56b6"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/ports/__init__.py",
+      "sha256": "b11f6a678253502146c7bf347d7640a00b94c878595981d80b983164fc0d5039"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/ports/action_repository.py",
+      "sha256": "28b6df686dddc74e3b5066171c1d1dd2c515bfc779264c34693c259d2081e0d0"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/ports/approved_navigation_executor.py",
+      "sha256": "38819c46cd940f4eef86b3a187b828247245538b13e649b0e8e0cb7e3d2c45ab"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/ports/front_router.py",
+      "sha256": "7f298454977595a272508768219abfb186c6d979124d24766f3562e8dfe379ae"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/prompting.py",
+      "sha256": "77e8df06b46cee4625af98b55a93c038b80e9d228ef37fe73b214f1095230857"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/providers/__init__.py",
+      "sha256": "e0ab7a5db58fa157f30d0a3f328f06d868bb2ee01ed8160c1246a4ab01d66e44"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/providers/base.py",
+      "sha256": "90b7d072759d5f11f5955a3335f079e315f3ccd00f46e79d8875445d3909797f"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/providers/mock.py",
+      "sha256": "c3df05058c57c79b5f48273dcf644f29fc78c6857b27e58ed660e881cc57b1bd"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/providers/openai_responses.py",
+      "sha256": "daf513df908fb1b85a8a0c2419251c4aded7336ca0baae129a3185fdd1eac51e"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/providers/reliable.py",
+      "sha256": "d3b764cf7db0eb11e8d7b4826f10bb8127494fc0683ad4755a558ac4a930a399"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/providers/routed.py",
+      "sha256": "01f0b4a59dfd9029f806e49a016e38c89010cf4174fce2ed439407595a514ec2"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/rai_sidecar_client.py",
+      "sha256": "91c3e19462017f797acb14ce75211c750ddd3c18a62e96e45855521909c43542"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/rai_sidecar_protocol.py",
+      "sha256": "5153f4c9efea4bbdef36462ac145f1840f5761f0198c6c13a2278e88f5a8b9ef"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/rai_sidecar_runtime.py",
+      "sha256": "71fa352420e1c0b92e31a74edce8801aa939a945eb035a61675ac82ae0923485"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/robot_state_source.py",
+      "sha256": "909aef3e47c11bea886f7d49e57067e20f8b41dcaf20133c65c1cc742105b7db"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/ros_communication.py",
+      "sha256": "93453d8307ad9a52c5bbf617d0383dc63714121f351ab64d84864f2b0d19287b"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/safety.py",
+      "sha256": "c1a76bccc9e02a52bd486a5059e46f6d1a6525de6847e5e14252fd7225bdb285"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/schemas.py",
+      "sha256": "644b642ededc0f6cb557482d9233712b97772f87ba46305519e88361681d347b"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/speech_dialogue.py",
+      "sha256": "679ee9af2030da7a176967243e8e3fa3e17f0af9e96c1de2dec62c0344a51b85"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/speech_receipts.py",
+      "sha256": "e1d878485a05566caba8f6c9e0c205fad104b1c5677ffc9e5497fd51f962d28c"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/speech_receiver.py",
+      "sha256": "7da819f9fa0f8d04eb5e8441abedfbe2134ecf8d12aa0ba81de07f0154ac104e"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/summarization.py",
+      "sha256": "3f5506f52c4a33d3f2c5f6227d84ce36c5a00c0c3b5fcc2a527180fce56c299b"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/text_clarification.py",
+      "sha256": "8b0ae323c04548b608ef1e3a2a8eba709528ea62a93bbf9b9b535475517430a4"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/text_confirmation.py",
+      "sha256": "368821a7e3de17c37533f203f22228c5a59c99b230d7a24466ea825cf4f191e0"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/text_decision_policy.py",
+      "sha256": "e067b79b6188d08c43571c213e71c98a418ea1df4e350b55d08b4e05738124b7"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/text_turn.py",
+      "sha256": "827948aa4fafc46783fbc3727da3f466fecd6df9db711512b0beadb1e0d739cd"
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/tools.py",
+      "sha256": "19dad7a86166822a8024713eb311520276969dba3d1e06add3c828d66fafe298"
+    },
+    {
+      "path": "malbut_agent_server/package.xml",
+      "sha256": "dd645fb2fe1d34275cbf54c17f905b69521533934b56b6287d5cac125cc2410b"
+    },
+    {
+      "path": "malbut_agent_server/resource/malbut_agent_server",
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "path": "malbut_agent_server/setup.cfg",
+      "sha256": "30599080b8dffaa1a0802980193241f726899b1e9ab9d421de147f74f548b2fd"
+    },
+    {
+      "path": "malbut_agent_server/setup.py",
+      "sha256": "582fe0f2c4f2ee01cf724eb67c537bc4dd70afc4944c58f22f2f3e89052d7179"
+    },
+    {
+      "path": "malbut_agent_server/test/test_agent_contract.py",
+      "sha256": "65f2c786b35adb80fe09920446afbee6be5fc1fe9747623408d635168c87bc8c"
+    },
+    {
+      "path": "malbut_agent_server/test/test_approved_action_worker.py",
+      "sha256": "824009904ea36aeceb1ef3f74d670905b6205f2ef172a26d2bcb3a2c652ba98c"
+    },
+    {
+      "path": "malbut_agent_server/test/test_communication_commands.py",
+      "sha256": "f8cd1ac1ab5691c0fe5be71f406305d8e16da1ae21fdf6d3ec4b74684a26ef7e"
+    },
+    {
+      "path": "malbut_agent_server/test/test_context_window.py",
+      "sha256": "bc6b38630b55f5aef18d81d06be0790b3bae0b0063fbb0bcbe56d62b1ef4b719"
+    },
+    {
+      "path": "malbut_agent_server/test/test_conversation.py",
+      "sha256": "4cc5e7f49148dd3dc71874baf11300d24988ab436991c744c9a6e980fc11194a"
+    },
+    {
+      "path": "malbut_agent_server/test/test_eval_runner.py",
+      "sha256": "627863483dfe338db5bff48664ef0018fdc4dc0e4319177f717d72ff507c70bd"
+    },
+    {
+      "path": "malbut_agent_server/test/test_front_route_inspector.py",
+      "sha256": "12bac52c44fd3101686b85b72bb4389b03de5c92165fa1183b5c96deb8c90d18"
+    },
+    {
+      "path": "malbut_agent_server/test/test_front_routing.py",
+      "sha256": "dd2788db679cbc22ee83b489e73d54f48c72d09013ab643971dd995a61912fe5"
+    },
+    {
+      "path": "malbut_agent_server/test/test_gateway.py",
+      "sha256": "44a24e54d2c88cfc7f0b2b19f69ded2feede1363ffa7064ad324a36508fcd5c9"
+    },
+    {
+      "path": "malbut_agent_server/test/test_http_server.py",
+      "sha256": "bcc63ce296523378b9c13b635cf87a2cf51a8c80059c5e9b0bc826b2aa071dcb"
+    },
+    {
+      "path": "malbut_agent_server/test/test_manager_client.py",
+      "sha256": "d7b9a9c73b995d60ea776ef137f40c5cd92c12ce428d8424fc2372cba580b6c6"
+    },
+    {
+      "path": "malbut_agent_server/test/test_memory.py",
+      "sha256": "c28cfd85c9b478363754bac5285a83548f3831c4e88279afd9dee80ae37688b7"
+    },
+    {
+      "path": "malbut_agent_server/test/test_memory_benchmark.py",
+      "sha256": "85838789ce040417af32d8b2bf0ee3a1f7b35e6a745ccc0f79730a5dd87a393f"
+    },
+    {
+      "path": "malbut_agent_server/test/test_memory_fact_evidence.py",
+      "sha256": "f3a0598a8abe35b8b576350c30bbe6361396e1d72d2b8331be8a61b42e3aa021"
+    },
+    {
+      "path": "malbut_agent_server/test/test_memory_policy.py",
+      "sha256": "94b4d86fd5d18bf8c74e4c195ebb272fd4a2aa4585419274821404494176ece1"
+    },
+    {
+      "path": "malbut_agent_server/test/test_memory_providers.py",
+      "sha256": "5fe13221b8ed63d18000822b70cacda57bf10f1d91cee4896c6b4e7f8eefbda6"
+    },
+    {
+      "path": "malbut_agent_server/test/test_mission_speech.py",
+      "sha256": "72be99547933fc41093a0bc8e16dc431e5dd4ced167cd018359f500a8cac7335"
+    },
+    {
+      "path": "malbut_agent_server/test/test_node_communication_ros.py",
+      "sha256": "3c1150abc1e45eab783ea0da579700b9fead4729b6c95357298555bef09c26db"
+    },
+    {
+      "path": "malbut_agent_server/test/test_openai_front_route_candidate.py",
+      "sha256": "a41f01946af74955df3d2199a3e8d27b50b9778525fcd973939be1ad2132fd9e"
+    },
+    {
+      "path": "malbut_agent_server/test/test_openai_provider.py",
+      "sha256": "4b045ddf5ce27de60183d3a5ca39154504808e6445f86440a92f7d113ac0332e"
+    },
+    {
+      "path": "malbut_agent_server/test/test_orchestrator.py",
+      "sha256": "07854bf2d4d8f1a25abccf40e74f800c2ac4898f5efa6951f230abe8a2b42525"
+    },
+    {
+      "path": "malbut_agent_server/test/test_orchestrator_utterance_resolver.py",
+      "sha256": "6ae3862849c6b0b17a355c7bee9ddaa796be6a6cb692c7b6820c7b32bd5ef0a5"
+    },
+    {
+      "path": "malbut_agent_server/test/test_personal_memory_authority.py",
+      "sha256": "208489169e61f5082eb9c867f1b78cefd664e4551f41bbb04ad5293be6182a50"
+    },
+    {
+      "path": "malbut_agent_server/test/test_personal_memory_flow.py",
+      "sha256": "72216e949bbe2bc30249fda06474aac1e15cc8aba32c2110e564d80602f468d1"
+    },
+    {
+      "path": "malbut_agent_server/test/test_prompting.py",
+      "sha256": "0f7450726aec8cace0c8efe2e7efaa930d696bcd9910e42c7f30a9a7f8106cbc"
+    },
+    {
+      "path": "malbut_agent_server/test/test_rai_memory.py",
+      "sha256": "c80fa5011ff56148d47bc4d4471ccb95ee7157ad4baf395f605e5d8a3a1380a7"
+    },
+    {
+      "path": "malbut_agent_server/test/test_rai_runtime_config.py",
+      "sha256": "e3fc530d32b4d49a56163f308002b99bacdb99e7b5d4b7104986b955a6ef2794"
+    },
+    {
+      "path": "malbut_agent_server/test/test_rai_sidecar_client.py",
+      "sha256": "036cec1b96ed5532b962e56aca2806199370ca1adc1db27fe7c7728c057da6fc"
+    },
+    {
+      "path": "malbut_agent_server/test/test_rai_sidecar_protocol.py",
+      "sha256": "87d7867e50034f10b07fcf2e8efe076711a55bf86be679298fb02271114ccae3"
+    },
+    {
+      "path": "malbut_agent_server/test/test_rai_sidecar_runtime.py",
+      "sha256": "b96f45ae26483468160846b092ad5cc540a6a521092531d0e9c9500c56dccc6d"
+    },
+    {
+      "path": "malbut_agent_server/test/test_reliable_provider.py",
+      "sha256": "977ccd248acafe90ac3e1597510c6e354c92877730ee11e5821ce84a42bafdfd"
+    },
+    {
+      "path": "malbut_agent_server/test/test_robot_state_source.py",
+      "sha256": "ff8c501fc9827d8cf5dcc832cfc95bda34e3dc776a2fb7ff5d7793052de2742f"
+    },
+    {
+      "path": "malbut_agent_server/test/test_role_model_routing.py",
+      "sha256": "174f832e0e02981ff0fe76c6f867783781667d66616ea329fff5474575967651"
+    },
+    {
+      "path": "malbut_agent_server/test/test_ros_memory_communication.py",
+      "sha256": "118b1f2ec46196248c17570107561acd37832404a95401ac9e3bfbd7d7665140"
+    },
+    {
+      "path": "malbut_agent_server/test/test_routed_agent_provider.py",
+      "sha256": "023a59f4a7eed41b2760be80731d6f2d5ce029a0a172f55b568c2638a7851312"
+    },
+    {
+      "path": "malbut_agent_server/test/test_runtime.py",
+      "sha256": "9d747142965f6cdfac58d9f489bcf41d206324ae2ca9ccbd5c16c7fb7ac48459"
+    },
+    {
+      "path": "malbut_agent_server/test/test_speech_dialogue.py",
+      "sha256": "4db518a44ecbb7043bff647049d383c1e779aaebac251080d4cec1969b8abe5c"
+    },
+    {
+      "path": "malbut_agent_server/test/test_speech_memory.py",
+      "sha256": "10947ddaec84a976ddefb54aff9e40b868f39a3c86bf7d021bb8592b77b77a65"
+    },
+    {
+      "path": "malbut_agent_server/test/test_speech_receiver.py",
+      "sha256": "671ce2c520571f7a681e2eeaef70b82f5a7926a7b3d90c3dfa100ebc58914b0c"
+    },
+    {
+      "path": "malbut_agent_server/test/test_speech_runtime.py",
+      "sha256": "93b6e12227b87033188f47a8060e6093cb9d7a0fee19bbb0a11a6e75ba08713c"
+    },
+    {
+      "path": "malbut_agent_server/test/test_sqlite_action_repository.py",
+      "sha256": "56a513d16497990db79e68eafad22a19ed75e8dd25312e18b9b2ae23f8135432"
+    },
+    {
+      "path": "malbut_agent_server/test/test_summarization.py",
+      "sha256": "2f5a42c4de7e139c81810c290c5d67e9eec7849f6fa8016598850788aaa5fce3"
+    },
+    {
+      "path": "malbut_agent_server/test/test_text_clarification.py",
+      "sha256": "10fcc70bd82c68463a538cb7705557d3f412639d1c0d2edbf88cbe42dad8a947"
+    },
+    {
+      "path": "malbut_agent_server/test/test_text_confirmation.py",
+      "sha256": "bb08166dc4f450b39a1931b2829a910c722dd7af126e777c2b66f34bea1a4117"
+    },
+    {
+      "path": "malbut_agent_server/test/test_text_confirmation_store.py",
+      "sha256": "b45d4d9d9bf507e0f09d543103a1afa1f3157b49585e7bbc20ed619721a673d1"
+    },
+    {
+      "path": "malbut_agent_server/test/test_text_decision_policy.py",
+      "sha256": "8bf2c51a37571b2c42f94a63534f572534186b59dcfa10492b131c7caf8627ac"
+    },
+    {
+      "path": "malbut_agent_server/test/test_text_memory_boundary.py",
+      "sha256": "f786f8fe8e5cfbb8eb837b0950cc7c2682c6d97de9cd9e00a9b244deeae3fa63"
+    },
+    {
+      "path": "malbut_agent_server/test/test_text_turn.py",
+      "sha256": "88bd8d4ab9a7078096226720b69f100231a657208a0a7d4752d69ab260191e40"
+    },
+    {
+      "path": "malbut_agent_server/test/test_text_turn_claim_revision.py",
+      "sha256": "ab0faadbb4e68bf6dfb2e8e5a2705a3cd0fc3566b3b981ce55ecbfa203e0cf48"
+    },
+    {
+      "path": "malbut_agent_server/test/test_text_turn_clarification.py",
+      "sha256": "b8825b9c0d8ac52e0cd79314b5e424b2b48934db66fa531168776b4ab9a3c83a"
+    },
+    {
+      "path": "malbut_interfaces/CMakeLists.txt",
+      "sha256": "51b6cf8a8eaa01286a7e80b4d44f0fe412cf774db4dd55fb0e99d1fb8e67b27f"
+    },
+    {
+      "path": "malbut_interfaces/action/ExecuteMission.action",
+      "sha256": "69a8cc4125796f8a521e6eb0ac5f9b463f354484972dc99ed890e4b7cf8104d4"
+    },
+    {
+      "path": "malbut_interfaces/action/FollowPerson.action",
+      "sha256": "65992e87628dd295ec7088abdaa86338b17a7ffae80e0f64969934fd7b41001e"
+    },
+    {
+      "path": "malbut_interfaces/action/Patrol.action",
+      "sha256": "130b9b1cb1e4c288c8f9bb98ef2b403671375fdc950c8bb51c0c31098bba4db1"
+    },
+    {
+      "path": "malbut_interfaces/capabilities/follow_person.yaml",
+      "sha256": "668d4542306b4346a997632d6431c02bc37161dc95d6df32001d7db78a9db0f2"
+    },
+    {
+      "path": "malbut_interfaces/capabilities/navigate_to_pose.yaml",
+      "sha256": "8897b98a75056a2240750cabe9d174cb7301f57a745e844f341d999584742ee2"
+    },
+    {
+      "path": "malbut_interfaces/capabilities/patrol.yaml",
+      "sha256": "6f02714748f9d7d21281ee880f335660517d2e375d30933e32b8236d95b5dda8"
+    },
+    {
+      "path": "malbut_interfaces/msg/LidarCluster.msg",
+      "sha256": "ed263079c74c0815353bb473e9f602e00fd7e3657ea40a72a555ae576796d6cf"
+    },
+    {
+      "path": "malbut_interfaces/msg/LidarClusterArray.msg",
+      "sha256": "bc82000304022cc0170aa847dd3ad85e357607efc8636836247a93ca836e4a4e"
+    },
+    {
+      "path": "malbut_interfaces/msg/MissionStatus.msg",
+      "sha256": "423758284b6624b0c008a3b75a1c6e0b6129b2db80a99ecedb2657a452c74a5a"
+    },
+    {
+      "path": "malbut_interfaces/msg/SensorProcessingTrace.msg",
+      "sha256": "68f3f50252fb8410f9dfb7dedec613780642fe1ee9fb6bb1ad68c8bd27f65eb1"
+    },
+    {
+      "path": "malbut_interfaces/msg/SpeechRequest.msg",
+      "sha256": "8a26f87571d8311eaf6b59ea417c00c2db832409bc8ea86583b962549dbe7173"
+    },
+    {
+      "path": "malbut_interfaces/msg/SpeechTranscript.msg",
+      "sha256": "cdef4102c54a558ab5109981901931b235855880cb2b819c26890ddd66c8e31d"
+    },
+    {
+      "path": "malbut_interfaces/msg/SystemState.msg",
+      "sha256": "786578db9dca83e74a1fd4bffc27400d8a19f29ade74c652e3bc91902e7cd816"
+    },
+    {
+      "path": "malbut_interfaces/msg/TrackingCommandTrace.msg",
+      "sha256": "bf70737afba761d4388b09af6a7aa140ae436bea6e2dde1b651c86febb694161"
+    },
+    {
+      "path": "malbut_interfaces/package.xml",
+      "sha256": "6139d9f2461f7a57f7ba4d574e63562e5cf8ed067e1e76abf927b9fe99a9d356"
+    },
+    {
+      "path": "malbut_stt/README.md",
+      "sha256": "a6db503f96ff1202ef5bf69e0d7246aa2a56ed58a7433ba6ea2ded40c9896c70"
+    },
+    {
+      "path": "malbut_stt/docs/stt_agent.md",
+      "sha256": "d39294e39463f01875d01a83d8e8cdb72c2e63a3fbabf28551f50b12ef002621"
+    },
+    {
+      "path": "malbut_stt/malbut_stt/__init__.py",
+      "sha256": "d2ca19f8559df71eeaec0792400b2776fbd2c091f38ff6015e6cd1ba81964b96"
+    },
+    {
+      "path": "malbut_stt/malbut_stt/audio.py",
+      "sha256": "0c8099ebdc31e8d63a196b6c5e7b63e2a77f2b87f250f985e91b92e9f4348f90"
+    },
+    {
+      "path": "malbut_stt/malbut_stt/node.py",
+      "sha256": "acdf1c7296ad422df4d23ed6e2613cb21d6f0510c8e5896a9670502588ac4113"
+    },
+    {
+      "path": "malbut_stt/malbut_stt/pipeline.py",
+      "sha256": "a0a1e7375d305ded50490730da883d1fa499006855307a391cabd705ea81dc85"
+    },
+    {
+      "path": "malbut_stt/malbut_stt/transcription.py",
+      "sha256": "b9bc0e9917658fee4d68764cacabaa785e718f137fcc203ab751870bdd3774cd"
+    },
+    {
+      "path": "malbut_stt/package.xml",
+      "sha256": "8bf98267d166b31e22f99e601c746ca64cd0784138c5851e5a19e88d1895f02f"
+    },
+    {
+      "path": "malbut_stt/requirements.txt",
+      "sha256": "610ddd780b614f3d87054ccd4ec4c5e3ac50bd94bd959550f4bab9d991098e64"
+    },
+    {
+      "path": "malbut_stt/resource/malbut_stt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "malbut_stt/setup.cfg",
+      "sha256": "c741ab98ef13690a0a93f972c721976cff53a4103c25b62bfc73557af17735d3"
+    },
+    {
+      "path": "malbut_stt/setup.py",
+      "sha256": "3024ceb7290124a3751b03a52ebb1680618e4ca432d9aec1921048c83994f25e"
+    },
+    {
+      "path": "malbut_stt/test/test_audio.py",
+      "sha256": "0742a153c674b080272d7ca27feaaf7fa180bcbe8c5a0e0625c98b45682bf804"
+    },
+    {
+      "path": "malbut_stt/test/test_node.py",
+      "sha256": "f08dd5c50dfd445e092e126ef464c174daceeaf839964b80db9a855a5d8afa5f"
+    },
+    {
+      "path": "malbut_stt/test/test_pipeline.py",
+      "sha256": "4d7cffcee00cad4a7bdabef86a608122ba01f0e96e30ce6b8c363b7d62140fa3"
+    },
+    {
+      "path": "malbut_stt/test/test_ros_transcript_delivery.py",
+      "sha256": "d898bf05cdcc92c80113cb3a23d4351338d52daa1d75b39e0301562af6c80102"
+    },
+    {
+      "path": "malbut_stt/test/test_transcription.py",
+      "sha256": "d507ec5fc53535c662aa75077ad087ed66916ea009a0c560daba01867b1ddec8"
+    },
+    {
+      "path": "malbut_system_manager/README.md",
+      "sha256": "a331b2e5558f38f764ffbd15de80bedbb201a30461320e1215cebc892f5b8664"
+    },
+    {
+      "path": "malbut_system_manager/experiments/README.md",
+      "sha256": "86dcc189e1ed4ddcc86ad85afb81dbb09ba2aa045e7bbf593ae3c2a347f087cc"
+    },
+    {
+      "path": "malbut_system_manager/experiments/manager_control_panel.py",
+      "sha256": "80b194735832316b9906948c80c6efe8ad337101a9bbeb8dbd7371af51973646"
+    },
+    {
+      "path": "malbut_system_manager/experiments/mission_sequence.py",
+      "sha256": "f1ec6d3cb5bb39448d80836c7541f6c147ac3640c9f3ab03f4cc297dd39e6add"
+    },
+    {
+      "path": "malbut_system_manager/experiments/run_mission_sequence.sh",
+      "sha256": "29ac9f7b2a78738bef1ca966dd032cf62f953582e89c4e03e71538488464a377"
+    },
+    {
+      "path": "malbut_system_manager/launch/system_manager.launch.py",
+      "sha256": "6c9ec21006b2c226572a9d6362d99709d99716394dac1f43e3326aee92927705"
+    },
+    {
+      "path": "malbut_system_manager/malbut_system_manager/__init__.py",
+      "sha256": "4005ec19d1b89700e42dc473a32a2663b49a2dc86cf04526672a5f293e349420"
+    },
+    {
+      "path": "malbut_system_manager/malbut_system_manager/manifest_registry.py",
+      "sha256": "89d209cbd8247463d03e92f63a6df14305921807114363516f908c10bdc4953f"
+    },
+    {
+      "path": "malbut_system_manager/malbut_system_manager/mission_executor.py",
+      "sha256": "eb4705fa4b81e830e6764b2575a216457a6fbed5a440244d3cf5553a714af6c9"
+    },
+    {
+      "path": "malbut_system_manager/malbut_system_manager/mission_scheduler.py",
+      "sha256": "53258d8f12ed5d504fe61fe8373d0bf6b60d4b9ac99992dcc9a682a365f99f1f"
+    },
+    {
+      "path": "malbut_system_manager/malbut_system_manager/models.py",
+      "sha256": "9334301f59527a8f167849243e08115267c11c7a3937ef9b99a553d4e320cbe4"
+    },
+    {
+      "path": "malbut_system_manager/malbut_system_manager/state_store.py",
+      "sha256": "59656ec9b8997a85053efcbe30240e5e7b96ad3523b4f189e1b17f2c10427bd5"
+    },
+    {
+      "path": "malbut_system_manager/malbut_system_manager/system_manager_node.py",
+      "sha256": "f9b3d9c07ade5e427a5a242c0ae953bafc7f75a61998bf9f3c5ef630f411e33b"
+    },
+    {
+      "path": "malbut_system_manager/package.xml",
+      "sha256": "f46150d07fbb9fdfa8af1dd43a48c2ffbe31b079275118818c6752761865e774"
+    },
+    {
+      "path": "malbut_system_manager/resource/malbut_system_manager",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "malbut_system_manager/setup.cfg",
+      "sha256": "fc8184c6b96860635f73ae6e3e6209069b2d67b7e9fbc0ebb7e750c911f66e21"
+    },
+    {
+      "path": "malbut_system_manager/setup.py",
+      "sha256": "e78291302e1ad9f3f87b78aedb1452c3e70f0da7a39184f9d6389328647c8c9c"
+    },
+    {
+      "path": "malbut_system_manager/test/test_action_integration.py",
+      "sha256": "f9e2f213681297f4713c78e3a8b51a204d4ee503afb9b756ed69cca5b24e204d"
+    },
+    {
+      "path": "malbut_system_manager/test/test_executor_safety.py",
+      "sha256": "b44f829259d78f8e56b996fd393e7ddc551a839cdcf61f31a98b5ef9c3dffc54"
+    },
+    {
+      "path": "malbut_system_manager/test/test_flake8.py",
+      "sha256": "483cfdd3ebd999617ceb9072d55151b9245bc587867c033b7099100697f3de92"
+    },
+    {
+      "path": "malbut_system_manager/test/test_manifest_registry.py",
+      "sha256": "a9b3827ba7b8522389145a36d9dbfe770e39cb506216d773f924126f76cee6d7"
+    },
+    {
+      "path": "malbut_system_manager/test/test_mission_scheduler.py",
+      "sha256": "4d3a4050bceb2ab54fa120cc10a240f063e377ab77a8c94ebb4ddd18346189e9"
+    },
+    {
+      "path": "malbut_system_manager/test/test_pep257.py",
+      "sha256": "d6795497b38e5f57c3a5d191166c839e6d810670ed67d09cc704121f608f73e5"
+    },
+    {
+      "path": "malbut_system_manager/test/test_service_integration.py",
+      "sha256": "8545a9a0e598d87340caec82cfc4bd1cbbf44f8652698f6ed3bcfdb400f44a34"
+    },
+    {
+      "path": "malbut_tts/README.md",
+      "sha256": "1d01081cd68f013a136f5cfd8e69cbdff4d8e1a918ec25b35d8892c9a7a21b20"
+    },
+    {
+      "path": "malbut_tts/docs/tts_agent.md",
+      "sha256": "2f9fcfe94113cf1c4152654810e7ec1a20c6b7c844e242d0deeeb5e809c2ac67"
+    },
+    {
+      "path": "malbut_tts/malbut_tts/__init__.py",
+      "sha256": "c41908f4e2786a0da538a74971a7fa05f2c566e556ced4f7f5e08ac7b324eb05"
+    },
+    {
+      "path": "malbut_tts/malbut_tts/receiver.py",
+      "sha256": "d07116a18a94a2aa81c7f85ff5cca08d7e0b26fdd54b377bfe87cdb26c23e8b4"
+    },
+    {
+      "path": "malbut_tts/package.xml",
+      "sha256": "141869acb402fa83b81b43bf8e6d601a6490feb57581f53b1ea8e82f3a2090e0"
+    },
+    {
+      "path": "malbut_tts/resource/malbut_tts",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "malbut_tts/setup.cfg",
+      "sha256": "0f6a67c887886f2e308b0e603b6f40c513548ff498a4c3437039f89c838f42ef"
+    },
+    {
+      "path": "malbut_tts/setup.py",
+      "sha256": "49e90971b4921ee5d7b978a1f5fe5acf9d1c549afbc8b079b12a6c18fc8976fb"
+    },
+    {
+      "path": "malbut_tts/test/test_receiver.py",
+      "sha256": "36c18275cff3fed50aeb381a3a914095a9d5255854cb6c332b8434f189119415"
+    }
+  ]
+}

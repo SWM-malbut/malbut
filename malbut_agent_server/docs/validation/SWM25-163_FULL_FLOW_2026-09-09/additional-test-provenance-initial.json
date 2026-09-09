@@ -1,0 +1,6 @@
+{
+  "base_commit": "1f526c6ceecc14f60fd6afcf1f6804cb7c2f7ded",
+  "changed_file": "malbut_agent_server/test/test_ros_memory_communication.py",
+  "sha256": "d84119d577901cfb1382ee973c8d878a87fe47b4bcbd876f4e3f73a9e93ec98b",
+  "reason": "Parent-authored ROS restart and SpeechPipeline cross-flow regressions only"
+}

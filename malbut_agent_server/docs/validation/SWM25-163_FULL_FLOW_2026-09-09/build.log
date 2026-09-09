@@ -1,0 +1,12 @@
+Starting >>> malbut_interfaces
+Finished <<< malbut_interfaces [4.66s]
+Starting >>> malbut_system_manager
+Starting >>> malbut_tts
+Finished <<< malbut_tts [0.38s]
+Finished <<< malbut_system_manager [0.39s]
+Starting >>> malbut_agent_server
+Finished <<< malbut_agent_server [0.36s]
+Starting >>> malbut_stt
+Finished <<< malbut_stt [0.31s]
+
+Summary: 5 packages finished [5.80s]

@@ -199,6 +199,14 @@ jobs:
         env:
           ROS_APT_SOURCE_VERSION: "1.2.0"
         run: |
+          # ROS tests do not use Chrome. Its preinstalled apt source can fail
+          # with a Hash Sum mismatch and prevent unrelated ROS installation.
+          for apt_source in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            if [ -f "$apt_source" ] && grep -q 'dl.google.com/linux/chrome' "$apt_source"; then
+              echo "Disabling unused Chrome apt source: $apt_source"
+              sudo mv "$apt_source" "$apt_source.disabled"
+            fi
+          done
           # GitHub-hosted Ubuntu runners prefer the Azure mirror. When that
           # endpoint is unhealthy apt can wait for each package indefinitely,
           # even though archive.ubuntu.com is listed as a fallback.
@@ -366,6 +374,13 @@ jobs:
         env:
           ROS_APT_SOURCE_VERSION: "1.2.0"
         run: |
+          # This ROS build does not use Chrome or its package repository.
+          for apt_source in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            if [ -f "$apt_source" ] && grep -q 'dl.google.com/linux/chrome' "$apt_source"; then
+              echo "Disabling unused Chrome apt source: $apt_source"
+              sudo mv "$apt_source" "$apt_source.disabled"
+            fi
+          done
           # Keep apt off the intermittently unresponsive Azure mirror used by
           # GitHub-hosted Ubuntu runners. The official mirror serves the same
           # Jammy repositories and fails promptly with the limits below.

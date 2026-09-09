@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="4" time="1.091" timestamp="2026-09-08T23:09:01.367032" hostname="6ce872292cf4"><testcase classname="test.test_ros_memory_communication" name="test_ros_consent_save_recall_and_delete" time="0.378" /><testcase classname="test.test_ros_memory_communication" name="test_ros_does_not_publish_answer_deleted_after_queue_drain" time="0.219" /><testcase classname="test.test_ros_memory_communication" name="test_ros_restart_recalls_and_deletes_memory" time="0.338" /><testcase classname="test.test_ros_memory_communication" name="test_stt_pipeline_final_text_reaches_agent_and_tts" time="0.069"><failure message="AssertionError: assert '안녕' == '  안녕\n'&#10;  -   안녕&#10;  + 안녕">ros_memory = &lt;test_ros_memory_communication._DialogueHarness object at 0xffff998e7b20&gt;
+
+    def test_stt_pipeline_final_text_reaches_agent_and_tts(ros_memory):
+        """Connect real capture policy and two ROS Topics with fixture vendors."""
+        pipeline_module = pytest.importorskip('malbut_stt.pipeline')
+        audio_module = pytest.importorskip('malbut_stt.audio')
+        text = '  안녕\n'
+        sent = []
+        calls = []
+        phases = []
+        stopped = []
+    
+        class Recorder:
+            sample_rate = 16000
+            active = False
+            closed = False
+    
+            def __init__(self):
+                self.frames = iter(
+                    [[9] * 320] * 5 + [[7] * 320, [1] * 320]
+                    + [[0] * 320] * 50,
+                )
+    
+            def start(self):
+                self.active = True
+    
+            def read(self):
+                return next(self.frames)
+    
+            def stop(self):
+                self.active = False
+    
+            def delete(self):
+                self.closed = True
+    
+        recorder = Recorder()
+    
+        def transcribe(pcm, sample_rate):
+            assert recorder.closed and not recorder.active
+            assert phases == ['waiting_for_wake', 'listening', 'transcribing']
+            assert pcm == b'\x01\x00' * 320 + bytes(640 * 50)
+            assert sample_rate == 16000
+            calls.append(pcm)
+            return text
+    
+        def publish(utterance_id, original):
+            assert str(UUID(utterance_id)) == utterance_id
+            sent.append((utterance_id, original))
+            ros_memory.publisher.publish(SpeechTranscript(
+                utterance_id=utterance_id, text=original,
+            ))
+    
+        def report(event):
+            phases.append(event)
+            if event.startswith('published:'):
+                stopped.append(True)
+    
+        pipeline_module.SpeechPipeline(
+            recorder_factory=lambda: recorder,
+            wake=SimpleNamespace(
+                sample_rate=16000,
+                process=lambda frame: 0 if frame[0] == 7 else -1,
+            ),
+            is_speech=lambda frame, _: frame[:2] == b'\x01\x00',
+            transcriber=SimpleNamespace(transcribe=transcribe),
+            publish=publish, should_stop=lambda: bool(stopped), report=report,
+            settings=audio_module.CaptureSettings(),
+        ).run()
+    
+        ros_memory.spin_until(lambda: len(ros_memory.received) == 1)
+        assert len(calls) == len(sent) == 1
+        assert sent[0][1] == text
+&gt;       assert ros_memory.provider.calls[-1]['text'] == text
+E       AssertionError: assert '안녕' == '  안녕\n'
+E         -   안녕
+E         + 안녕
+
+test/test_ros_memory_communication.py:369: AssertionError</failure></testcase></testsuite></testsuites>
