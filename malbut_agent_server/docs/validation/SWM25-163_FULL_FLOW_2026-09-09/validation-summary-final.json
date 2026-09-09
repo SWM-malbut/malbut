@@ -1,0 +1,296 @@
+{
+  "commit": "1f526c6ceecc14f60fd6afcf1f6804cb7c2f7ded",
+  "architecture": "aarch64",
+  "source_file_count": 223,
+  "source_mismatches": [],
+  "build_exit": 0,
+  "default_ros_domain": 195,
+  "fixture_ros_domains": {
+    "malbut_agent_server": [
+      193
+    ],
+    "malbut_stt": [
+      191
+    ],
+    "malbut_system_manager": [
+      195
+    ]
+  },
+  "packages": {
+    "malbut_agent_server": {
+      "exit": 0,
+      "tests": 904,
+      "passed": 904,
+      "skipped": 0,
+      "failed": 0,
+      "modules": {
+        "test.test_agent_contract": 22,
+        "test.test_approved_action_worker": 36,
+        "test.test_communication_commands": 10,
+        "test.test_context_window": 14,
+        "test.test_conversation": 11,
+        "test.test_eval_runner": 10,
+        "test.test_front_route_inspector": 20,
+        "test.test_front_routing": 58,
+        "test.test_gateway": 11,
+        "test.test_http_server": 11,
+        "test.test_manager_client": 41,
+        "test.test_memory": 5,
+        "test.test_memory_benchmark": 23,
+        "test.test_memory_fact_evidence": 40,
+        "test.test_memory_policy": 17,
+        "test.test_memory_providers": 39,
+        "test.test_mission_speech": 13,
+        "test.test_node_communication_ros": 11,
+        "test.test_openai_front_route_candidate": 47,
+        "test.test_openai_provider": 16,
+        "test.test_orchestrator": 20,
+        "test.test_orchestrator_utterance_resolver": 14,
+        "test.test_personal_memory_authority": 17,
+        "test.test_personal_memory_flow": 25,
+        "test.test_prompting": 2,
+        "test.test_rai_memory": 23,
+        "test.test_rai_runtime_config": 7,
+        "test.test_rai_sidecar_client": 12,
+        "test.test_rai_sidecar_protocol": 14,
+        "test.test_rai_sidecar_runtime": 18,
+        "test.test_reliable_provider": 18,
+        "test.test_robot_state_source": 5,
+        "test.test_role_model_routing": 5,
+        "test.test_ros_memory_communication": 4,
+        "test.test_routed_agent_provider": 19,
+        "test.test_runtime": 17,
+        "test.test_speech_dialogue": 23,
+        "test.test_speech_memory": 5,
+        "test.test_speech_receiver": 13,
+        "test.test_speech_runtime": 10,
+        "test.test_sqlite_action_repository": 12,
+        "test.test_summarization": 14,
+        "test.test_text_clarification": 51,
+        "test.test_text_confirmation": 13,
+        "test.test_text_confirmation_store": 7,
+        "test.test_text_decision_policy": 11,
+        "test.test_text_memory_boundary": 12,
+        "test.test_text_turn": 24,
+        "test.test_text_turn_claim_revision": 12,
+        "test.test_text_turn_clarification": 22
+      },
+      "duration_s": 16.088
+    },
+    "malbut_stt": {
+      "exit": 0,
+      "tests": 35,
+      "passed": 32,
+      "skipped": [
+        {
+          "test": "test.test_audio::test_real_webrtcvad_silence_when_runtime_library_is_installed",
+          "reason": "could not import 'webrtcvad': No module named 'webrtcvad'"
+        },
+        {
+          "test": "test.test_transcription::test_real_sdk_multipart_and_no_automatic_retries[200]",
+          "reason": "could not import 'openai': No module named 'openai'"
+        },
+        {
+          "test": "test.test_transcription::test_real_sdk_multipart_and_no_automatic_retries[503]",
+          "reason": "could not import 'openai': No module named 'openai'"
+        }
+      ],
+      "failures": [],
+      "modules": {
+        "test.test_audio": 12,
+        "test.test_node": 8,
+        "test.test_pipeline": 11,
+        "test.test_ros_transcript_delivery": 1,
+        "test.test_transcription": 3
+      },
+      "duration_s": 1.285
+    },
+    "malbut_tts": {
+      "exit": 0,
+      "tests": 9,
+      "passed": 9,
+      "skipped": [],
+      "failures": [],
+      "modules": {
+        "test.test_receiver": 9
+      },
+      "duration_s": 0.013
+    },
+    "malbut_system_manager": {
+      "exit": 0,
+      "tests": 109,
+      "passed": 109,
+      "skipped": [],
+      "failures": [],
+      "modules": {
+        "test.test_action_integration": 7,
+        "test.test_executor_safety": 18,
+        "test.test_flake8": 1,
+        "test.test_manifest_registry": 28,
+        "test.test_mission_scheduler": 50,
+        "test.test_pep257": 1,
+        "test.test_service_integration": 4
+      },
+      "duration_s": 1.802
+    }
+  },
+  "process_check": [
+    {
+      "pid": 1071,
+      "cwd": "/",
+      "ros_environment": {
+        "ROS_DOMAIN_ID": "159",
+        "ROS_LOCALHOST_ONLY": "1"
+      }
+    },
+    {
+      "pid": 1094,
+      "cwd": "/",
+      "ros_environment": {
+        "ROS_DOMAIN_ID": "159",
+        "ROS_LOCALHOST_ONLY": "1"
+      }
+    },
+    {
+      "pid": 1095,
+      "cwd": "/",
+      "ros_environment": {
+        "ROS_DOMAIN_ID": "159",
+        "ROS_LOCALHOST_ONLY": "1"
+      }
+    },
+    {
+      "pid": 1096,
+      "cwd": "/",
+      "ros_environment": {
+        "ROS_DOMAIN_ID": "159",
+        "ROS_LOCALHOST_ONLY": "1"
+      }
+    },
+    {
+      "pid": 5077,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    },
+    {
+      "pid": 5090,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    },
+    {
+      "pid": 5091,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    },
+    {
+      "pid": 5092,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    },
+    {
+      "pid": 5093,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    },
+    {
+      "pid": 5094,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    },
+    {
+      "pid": 5095,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    },
+    {
+      "pid": 5096,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    },
+    {
+      "pid": 5097,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    },
+    {
+      "pid": 5098,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    },
+    {
+      "pid": 5099,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    },
+    {
+      "pid": 5100,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    },
+    {
+      "pid": 5101,
+      "cwd": "/tmp/malbut-communication-validation-9A1WpZ1M/src/malbut_system_manager",
+      "ros_environment": {
+        "ROS_LOCALHOST_ONLY": "1",
+        "ROS_DOMAIN_ID": "192"
+      }
+    }
+  ],
+  "preserved_manager_pid1096": true,
+  "remaining_test_domain_processes": [],
+  "test_addition": {
+    "base_commit": "1f526c6ceecc14f60fd6afcf1f6804cb7c2f7ded",
+    "changed_file": "malbut_agent_server/test/test_ros_memory_communication.py",
+    "sha256": "bc3348ca6e003b029448a1b77d7f747f2ba9f569aadd0f5e2aa421040c29778d",
+    "reason": "Parent corrected test to distinguish original ROS receipt from normalized internal AgentRequest; product code unchanged"
+  },
+  "focused": {
+    "exit": 0,
+    "tests": 4,
+    "passed": 4,
+    "skipped": 0,
+    "failed": 0,
+    "modules": {
+      "test.test_ros_memory_communication": 4
+    },
+    "duration_s": 1.09
+  },
+  "total_passed": 1054,
+  "note": "Agent final suite includes two new parent-authored ROS tests; focused four tests are already included, not additive. Other packages unchanged from baseline. Three Ubuntu STT optional dependency skips retained."
+}

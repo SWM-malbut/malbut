@@ -2,7 +2,8 @@
 
 import copy
 import time
-from uuid import uuid4
+from types import SimpleNamespace
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -17,6 +18,7 @@ from rclpy.qos import (  # noqa: E402
 )
 
 from malbut_agent_server.config import Settings  # noqa: E402
+from malbut_agent_server import ros_communication  # noqa: E402
 from malbut_agent_server.factory import build_orchestrator  # noqa: E402
 from malbut_agent_server.memory import SQLiteMemoryStore  # noqa: E402
 from malbut_agent_server.personal_memory import CONSENT_PROMPT  # noqa: E402
@@ -148,10 +150,12 @@ def ros_memory(tmp_path, monkeypatch):
     executor = SingleThreadedExecutor()
     nodes = []
     received = []
+    events = []
     provider = _MemoryProvider()
     database = tmp_path / 'dialogue.sqlite3'
     settings = Settings(user_id=SPEAKER, database_path=str(database))
     original_receive = tts_receiver.receive_text
+    original_transcript = ros_communication.receive_transcript
 
     def receive(text, logger):
         result = original_receive(text, logger)
@@ -159,17 +163,29 @@ def ros_memory(tmp_path, monkeypatch):
             received.append(text)
         return result
 
+    def receive_transcript(receipts, utterance_id, text, logger):
+        outcome = original_transcript(receipts, utterance_id, text, logger)
+        events.append({
+            'utterance_id': utterance_id, 'text': text, 'status': outcome,
+        })
+        return outcome
+
     def runtime_factory():
         runtime = build_orchestrator(settings, http_server=False)
         runtime.provider = provider
         return runtime
 
     monkeypatch.setattr(tts_receiver, 'receive_text', receive)
+    monkeypatch.setattr(ros_communication, 'receive_transcript',
+                        receive_transcript)
     try:
-        agent = create_communication_node(
-            speech_db_path=str(tmp_path / 'receipts.sqlite3'),
-            dialogue_settings=settings, dialogue_factory=runtime_factory,
-        )
+        def create_agent():
+            return create_communication_node(
+                speech_db_path=str(tmp_path / 'receipts.sqlite3'),
+                dialogue_settings=settings, dialogue_factory=runtime_factory,
+            )
+
+        agent = create_agent()
         nodes.append(agent)
         stt = Node('memory_transcript_test_publisher')
         nodes.append(stt)
@@ -188,6 +204,22 @@ def ros_memory(tmp_path, monkeypatch):
         harness = _DialogueHarness(
             agent, publisher, executor, received, database, provider,
         )
+        harness.events = events
+
+        def restart():
+            old_agent = harness.agent
+            executor.remove_node(old_agent)
+            old_agent.destroy_node()
+            nodes.remove(old_agent)
+            harness.agent = create_agent()
+            nodes.append(harness.agent)
+            executor.add_node(harness.agent)
+            harness.spin_until(lambda: (
+                publisher.get_subscription_count() == 1
+                and harness.agent._speech.get_subscription_count() == 1
+            ))
+
+        harness.restart = restart
         harness.spin_until(lambda: (
             publisher.get_subscription_count() == 1
             and agent._speech.get_subscription_count() == 1
@@ -252,3 +284,112 @@ def test_ros_does_not_publish_answer_deleted_after_queue_drain(ros_memory):
     assert deleted == [record.id]
     assert ros_memory.received[previous_count:] == [MEMORY_CHANGED_RESPONSE]
     assert ros_memory.inspect_store()[1] == []
+
+
+def test_ros_restart_recalls_and_deletes_memory(ros_memory):
+    """Restart the real Agent Node while retaining user and SQLite files."""
+    ros_memory.enable_and_remember()
+    saved = ros_memory.inspect_store()[1][0]
+    ros_memory.restart()
+
+    assert ros_memory.inspect_store()[0]['enabled'] is True
+    assert ros_memory.say(RECALL_TEXT) == RECALL_REPLY
+    after = ros_memory.provider.calls[-1]
+    assert after['history'] == []
+    assert [m.id for m in after['memories']] == [saved.id]
+    assert ros_memory.say('강아지 이름 기억 삭제해줘') == '요청한 기억을 삭제했어요.'
+
+    ros_memory.restart()
+    assert ros_memory.inspect_store()[1] == []
+    assert ros_memory.say(RECALL_TEXT) == EMPTY_REPLY
+    assert ros_memory.provider.calls[-1]['history'] == []
+    assert ros_memory.provider.calls[-1]['memories'] == []
+
+
+def test_stt_pipeline_final_text_reaches_agent_and_tts(ros_memory):
+    """Connect real capture policy and two ROS Topics with fixture vendors."""
+    pipeline_module = pytest.importorskip('malbut_stt.pipeline')
+    audio_module = pytest.importorskip('malbut_stt.audio')
+    text = '  안녕\n'
+    sent = []
+    calls = []
+    phases = []
+    stopped = []
+
+    class Recorder:
+        sample_rate = 16000
+        active = False
+        closed = False
+
+        def __init__(self):
+            self.frames = iter(
+                [[9] * 320] * 5 + [[7] * 320, [1] * 320]
+                + [[0] * 320] * 50,
+            )
+
+        def start(self):
+            self.active = True
+
+        def read(self):
+            return next(self.frames)
+
+        def stop(self):
+            self.active = False
+
+        def delete(self):
+            self.closed = True
+
+    recorder = Recorder()
+
+    def transcribe(pcm, sample_rate):
+        assert recorder.closed and not recorder.active
+        assert phases == ['waiting_for_wake', 'listening', 'transcribing']
+        assert pcm == b'\x01\x00' * 320 + bytes(640 * 50)
+        assert sample_rate == 16000
+        calls.append(pcm)
+        return text
+
+    def publish(utterance_id, original):
+        assert str(UUID(utterance_id)) == utterance_id
+        sent.append((utterance_id, original))
+        ros_memory.publisher.publish(SpeechTranscript(
+            utterance_id=utterance_id, text=original,
+        ))
+
+    def report(event):
+        phases.append(event)
+        if event.startswith('published:'):
+            stopped.append(True)
+
+    pipeline_module.SpeechPipeline(
+        recorder_factory=lambda: recorder,
+        wake=SimpleNamespace(
+            sample_rate=16000,
+            process=lambda frame: 0 if frame[0] == 7 else -1,
+        ),
+        is_speech=lambda frame, _: frame[:2] == b'\x01\x00',
+        transcriber=SimpleNamespace(transcribe=transcribe),
+        publish=publish, should_stop=lambda: bool(stopped), report=report,
+        settings=audio_module.CaptureSettings(),
+    ).run()
+
+    ros_memory.spin_until(lambda: len(ros_memory.received) == 1)
+    assert len(calls) == len(sent) == 1
+    assert sent[0][1] == text
+    assert ros_memory.events == [{
+        'utterance_id': sent[0][0], 'text': text, 'status': 'received',
+    }]
+    # AgentRequest trims boundary whitespace after original ROS receipt.
+    assert ros_memory.provider.calls[-1]['text'] == '안녕'
+    assert ros_memory.received == ['말씀을 들었어요.']
+    assert ros_memory.agent.missions._requests == {}
+    assert ros_memory.inspect_store()[1] == []
+
+    ros_memory.publisher.publish(SpeechTranscript(
+        utterance_id=sent[0][0], text=text,
+    ))
+    ros_memory.spin_until(lambda: any(
+        event.get('status') == 'duplicate' for event in ros_memory.events
+    ))
+    assert len(ros_memory.provider.calls) == 1
+    assert ros_memory.received == ['말씀을 들었어요.']

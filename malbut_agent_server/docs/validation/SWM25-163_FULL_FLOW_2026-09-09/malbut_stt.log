@@ -1,0 +1,6 @@
+...........s.....................ss                                      [100%]
+-- generated xml file: /tmp/malbut-swm25-163-full-ros-dhy4hb7h/malbut_stt.xml --
+=========================== short test summary info ============================
+SKIPPED [1] test/test_audio.py:93: could not import 'webrtcvad': No module named 'webrtcvad'
+SKIPPED [2] test/test_transcription.py:44: could not import 'openai': No module named 'openai'
+32 passed, 3 skipped in 1.29s

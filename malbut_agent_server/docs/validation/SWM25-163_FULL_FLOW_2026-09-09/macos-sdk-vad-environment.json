@@ -1,0 +1,16 @@
+{
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "python": "3.12.13",
+  "packages": {
+    "pytest": "9.1.1",
+    "openai": "3.8.0",
+    "httpx2": "2.12.0",
+    "webrtcvad-wheels": "2.0.14"
+  },
+  "tests": 3,
+  "passed": 3,
+  "skipped": 0,
+  "failed": 0,
+  "network": "No API calls; SDK uses MockTransport; VAD uses local silence",
+  "junit": "macos-sdk-vad.xml"
+}

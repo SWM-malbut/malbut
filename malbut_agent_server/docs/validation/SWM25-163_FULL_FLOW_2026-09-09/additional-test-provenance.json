@@ -1,0 +1,6 @@
+{
+  "base_commit": "1f526c6ceecc14f60fd6afcf1f6804cb7c2f7ded",
+  "changed_file": "malbut_agent_server/test/test_ros_memory_communication.py",
+  "sha256": "bc3348ca6e003b029448a1b77d7f747f2ba9f569aadd0f5e2aa421040c29778d",
+  "reason": "Parent corrected test to distinguish original ROS receipt from normalized internal AgentRequest; product code unchanged"
+}
