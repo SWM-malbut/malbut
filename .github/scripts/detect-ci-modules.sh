@@ -4,6 +4,7 @@ set -euo pipefail
 web=false
 infra=false
 ros=false
+ros_full=false
 homecam=false
 
 select_path()
@@ -14,6 +15,7 @@ select_path()
       web=true
       infra=true
       ros=true
+      ros_full=true
       homecam=true
       ;;
     homecam_web/infra/*)
@@ -28,10 +30,15 @@ select_path()
       ;;
     malbut_description/*|malbut_gazebo/*|malbut_gazebo_plugins/*|malbut_yolo/*|perception.repos)
       ros=true
+      ros_full=true
       homecam=true
       ;;
-    malbut_agent_server/*|malbut_autonomy/*|malbut_interfaces/*|malbut_scenarios/*|malbut_system_manager/*|malbut_stt/*|malbut_tts/*|malbut_reid/*|malbut_tracking/*)
+    malbut_agent_server/*)
       ros=true
+      ;;
+    malbut_autonomy/*|malbut_interfaces/*|malbut_scenarios/*|malbut_system_manager/*|malbut_stt/*|malbut_tts/*|malbut_reid/*|malbut_tracking/*)
+      ros=true
+      ros_full=true
       ;;
   esac
 }
@@ -50,10 +57,11 @@ else
   fi
   while IFS= read -r -d '' path; do
     select_path "$path"
-  done < <(git diff --name-only --diff-filter=ACMRD -z "$base_sha" HEAD)
+  done < <(git diff --no-renames --name-only --diff-filter=ACMRD -z "$base_sha" HEAD)
 fi
 
 printf 'web=%s\n' "$web"
 printf 'infra=%s\n' "$infra"
 printf 'ros=%s\n' "$ros"
+printf 'ros_full=%s\n' "$ros_full"
 printf 'homecam=%s\n' "$homecam"
