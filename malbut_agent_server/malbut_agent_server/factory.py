@@ -3,6 +3,9 @@
 from malbut_agent_server.application.front_routing import (
     FrontRoutingService,
 )
+from malbut_agent_server.automatic_memory_extractor import (
+    AutomaticMemoryExtractor,
+)
 from malbut_agent_server.config import Settings
 from malbut_agent_server.conversation import SQLiteConversationStore
 from malbut_agent_server.gateway import (
@@ -11,6 +14,7 @@ from malbut_agent_server.gateway import (
     simulation_registry,
 )
 from malbut_agent_server.memory import SQLiteMemoryStore
+from malbut_agent_server.memory_source_review import MemorySourceReviewer
 from malbut_agent_server.orchestrator import AgentOrchestrator
 from malbut_agent_server.providers.base import AgentProvider
 from malbut_agent_server.providers.mock import MockProvider
@@ -206,6 +210,24 @@ def build_orchestrator(
             build_provider(settings) if http_server
             else build_provider(settings, http_server=False)
         )
+        # Review bypasses front routing and cannot enter robot planning.
+        memory_reviewer = None
+        memory_extractor = None
+        if settings.provider != 'mock':
+            # Separate reliability/circuit state: background review failures
+            # must not open the foreground conversation's circuit breaker.
+            review_provider = (
+                build_provider(settings) if http_server
+                else build_provider(settings, http_server=False)
+            )
+            memory_reviewer = MemorySourceReviewer(review_provider)
+        if settings.provider == 'openai':
+            # C mode has its own reliability state and no front/robot router.
+            # Other adapters keep their existing memory contract until they
+            # explicitly implement the answer-only/extraction modes.
+            memory_extractor = AutomaticMemoryExtractor(build_provider(
+                settings, http_server=http_server,
+            ))
         if front_router is not None:
             routing_service = FrontRoutingService(front_router)
             general_provider, planner_provider = (
@@ -226,6 +248,9 @@ def build_orchestrator(
             trusted_robot_state=False,
             capability_registry=build_capability_registry(settings),
             robot_state_source=robot_state_source,
+            memory_source_reviewer=memory_reviewer,
+            background_memory=settings.provider != 'mock',
+            automatic_memory_extractor=memory_extractor,
         )
     except Exception:
         if conversation_store is not None:

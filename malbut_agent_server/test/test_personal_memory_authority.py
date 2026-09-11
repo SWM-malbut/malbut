@@ -106,7 +106,7 @@ def test_old_conflict_question_expires_after_other_conversation_change(flow):
     flow.enable()
     flow.remember()
     previous = flow.memory.list_for_user('alice')[0]
-    text = '우리 강아지 이름은 초코야'
+    text = '우리 강아지 이름은 초코야. 기억해줘'
     question = flow.say(text, proposed(
         'remember', text, facts=[pet_fact(text, '초코')],
     ))

@@ -50,7 +50,8 @@ if TYPE_CHECKING:
 class AgentHTTPServer(ThreadingHTTPServer):
     """Threaded server carrying explicit service dependencies."""
 
-    daemon_threads = True
+    # Shutdown must wait for foreground handlers before stores can be closed.
+    daemon_threads = False
 
     def __init__(
         self,
@@ -118,7 +119,15 @@ class AgentHTTPServer(ThreadingHTTPServer):
         try:
             super().server_close()
         finally:
-            self.tool_gateway.close()
+            try:
+                self.tool_gateway.close()
+            finally:
+                self.orchestrator.stop_background_memory()
+
+    def serve_forever(self, poll_interval: float = 0.5) -> None:
+        """Resume eligible durable memory jobs only when actually serving."""
+        self.orchestrator.start_background_memory()
+        super().serve_forever(poll_interval=poll_interval)
 
     def get_request(self) -> Tuple[Any, Any]:
         """Apply an inbound socket timeout before parsing HTTP."""

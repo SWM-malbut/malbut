@@ -281,7 +281,8 @@ class SQLiteMemoryStore:
             return int(row['revision'])
 
     @staticmethod
-    def _bump_revision(connection, user_id, *, cutoff=0.0):
+    def _bump_revision(connection, user_id, *, cutoff=0.0,
+                       _automatic_insert=False):
         now = time.time()
         connection.execute(
             '''INSERT INTO memory_policy_state (user_id, updated_at)
@@ -290,10 +291,10 @@ class SQLiteMemoryStore:
         )
         connection.execute(
             '''UPDATE memory_policy_state
-                SET revision = revision + 1,
+                SET revision = revision + ?,
                     legacy_cutoff = MAX(legacy_cutoff, ?), updated_at = ?
                 WHERE user_id = ?''',
-            (cutoff, now, user_id),
+            (0 if _automatic_insert else 1, cutoff, now, user_id),
         )
         connection.execute(
             '''UPDATE memory_state_counter SET revision = revision + 1
@@ -312,12 +313,16 @@ class SQLiteMemoryStore:
         memory_id: Optional[str] = None,
         created_at: Optional[float] = None,
         connection: Optional[sqlite3.Connection] = None,
+        *,
+        _automatic_insert: bool = False,
     ) -> MemoryRecord:
         """Persist an explicit memory.
 
         Arbitrary model output is intentionally not accepted.
         """
         normalized_user = validate_user_id(user_id)
+        if type(_automatic_insert) is not bool:
+            raise ValidationError('automatic insert mode must be boolean')
         if not isinstance(content, str) or not content.strip():
             raise ValidationError('memory content must not be empty')
         normalized_content = content.strip()
@@ -410,7 +415,12 @@ class SQLiteMemoryStore:
                     metadata_json,
                 ),
             )
-            self._bump_revision(active, normalized_user)
+            # A delayed, additive fact cannot invalidate answers that were
+            # already generated without it. Destructive/ordinary writes keep
+            # advancing the user epoch; the global counter advances always.
+            self._bump_revision(
+                active, normalized_user, _automatic_insert=_automatic_insert,
+            )
         return record
 
     def search(
@@ -609,6 +619,17 @@ class SQLiteMemoryStore:
                 'legacy_cutoff': float(row['legacy_cutoff']),
             }
 
+    def invalidate_answers(self, user_id, connection=None) -> Dict[str, Any]:
+        """Fence prior answers and jobs even for a no-match management intent.
+
+        Admission callers pass their existing transaction so the epoch change
+        and new turn cannot be separated by a crash or another runtime.
+        """
+        normalized_user = validate_user_id(user_id)
+        with self._transaction(connection, write=True) as active:
+            self._bump_revision(active, normalized_user)
+            return self.policy_state(normalized_user, connection=active)
+
     def set_personalization(
         self, user_id, enabled, source, connection=None,
     ) -> Dict[str, Any]:
@@ -794,14 +815,19 @@ class SQLiteMemoryStore:
 
     def upsert_fact(
         self, user_id, fact, source, correct_ids=(), connection=None,
+        *, _automatic_insert=False,
     ) -> Dict[str, Any]:
         """Store direct facts or report conflicts without changing the slot."""
         normalized_user = validate_user_id(user_id)
+        if type(_automatic_insert) is not bool:
+            raise ValidationError('automatic insert mode must be boolean')
         value = self._validate_fact(fact)
         origin = self._validate_source(source)
         if value['evidence'] not in origin['text']:
             raise ValidationError('memory evidence is absent from source')
         targets = self._ids(correct_ids)
+        if _automatic_insert and targets:
+            raise ValidationError('automatic insert cannot correct facts')
         slot_parts = [
             self._fact_key(value[key])
             for key in ('kind', 'subject', 'attribute')
@@ -873,6 +899,7 @@ class SQLiteMemoryStore:
                         'fact': value, 'source': origin, 'version': version,
                     },
                     connection=active,
+                    _automatic_insert=_automatic_insert,
                 )
                 active.execute(
                     '''INSERT INTO memory_fact_slots

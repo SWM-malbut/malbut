@@ -390,11 +390,14 @@ def test_reset_during_inference_blocks_late_automatic_store(flow):
 
 
 def test_ambiguous_fact_change_waits_for_yes_before_replacing(flow):
-    """A conflicting direct statement does not overwrite an existing fact."""
+    """An explicit conflicting save does not overwrite an existing fact."""
     flow.enable()
     flow.remember()
     old = flow.memory.list_for_user('alice')[0]
-    conflict = flow.remember('보리')
+    text = '우리 강아지 이름은 보리야. 기억해줘'
+    conflict = flow.say(text, proposed(
+        'remember', text, facts=[pet_fact(text, '보리')],
+    ))
     assert conflict.decision.type == 'clarification'
     assert flow.memory.list_for_user('alice')[0].id == old.id
     confirmed = flow.say('네')

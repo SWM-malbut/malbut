@@ -124,7 +124,12 @@ def test_wrong_subject_kind_attribute_or_polarity_never_becomes_a_fact(
     candidate = _fact(source, **fields)
     result = flow.say(source, proposed('remember', source, facts=[candidate]))
     assert flow.memory.list_for_user('alice') == []
-    assert result.decision.type == 'clarification'
+    if '아니라' in source:
+        # A direct correction remains an explicit memory control.
+        assert result.decision.type == 'clarification'
+    else:
+        assert result.decision.type == 'message'
+        assert result.decision.message == '대화 답변이에요.'
 
 
 @pytest.mark.parametrize(
