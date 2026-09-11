@@ -8,6 +8,11 @@ import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, List, Optional
 
+from malbut_agent_server.automatic_memory_extractor import (
+    ANSWER_ONLY_INSTRUCTIONS,
+    AUTOMATIC_EXTRACTION_INSTRUCTIONS,
+    validate_automatic_proposal,
+)
 from malbut_agent_server.conversation import (
     ConversationSummary,
     ConversationTurn,
@@ -217,8 +222,13 @@ class OpenAIResponsesProvider(AgentProvider):
             self.timeout_seconds,
         )
         latency_ms = (time.perf_counter() - started) * 1000
+        memory_mode = memory_context.get('mode') if memory_context else None
+        memory_enabled = (
+            memory_context is not None and memory_mode != 'answer_only'
+        )
         decision, memory_proposal = self._parse_output(
-            response, memory_enabled=memory_context is not None,
+            response, memory_enabled=memory_enabled,
+            automatic_extraction=memory_mode == 'automatic_extraction',
         )
         try:
             decision.validate()
@@ -240,7 +250,7 @@ class OpenAIResponsesProvider(AgentProvider):
             input_chars=prepared.metrics.model_input_chars,
             context_metrics=prepared.metrics,
             memory_proposal=memory_proposal,
-            memory_supported=memory_context is not None,
+            memory_supported=memory_enabled,
         )
 
     def build_payload(
@@ -255,6 +265,12 @@ class OpenAIResponsesProvider(AgentProvider):
         memory_context: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """Build the documented Responses API request body."""
+        memory_mode = memory_context.get('mode') if memory_context else None
+        if memory_mode == 'automatic_extraction' and (
+            memories or conversation_turns or tools or request.available_tools
+            or conversation_summary is not None
+        ):
+            raise ValueError('automatic extraction requires isolated context')
         prepared_context = prepared or prepare_model_input(
             request,
             memories,
@@ -284,7 +300,29 @@ class OpenAIResponsesProvider(AgentProvider):
                 },
             },
         }
-        if memory_context is not None:
+        if memory_mode == 'answer_only':
+            payload['instructions'] += '\n\n' + ANSWER_ONLY_INSTRUCTIONS
+        elif memory_mode == 'automatic_extraction':
+            proposal_schema = copy.deepcopy(MEMORY_PROPOSAL_SCHEMA)
+            proposal_schema['properties']['operation']['enum'] = ['remember']
+            payload['text']['format'].update({
+                'name': 'malbut_memory_extraction',
+                'schema': {
+                    'type': 'object',
+                    'properties': {
+                        'memory_proposal': {
+                            'anyOf': [proposal_schema, {'type': 'null'}],
+                        },
+                    },
+                    'required': ['memory_proposal'],
+                    'additionalProperties': False,
+                },
+            })
+            payload['instructions'] = (
+                MEMORY_INSTRUCTIONS + '\n\n'
+                + AUTOMATIC_EXTRACTION_INSTRUCTIONS
+            )
+        elif memory_context is not None:
             schema = copy.deepcopy(TEXT_DECISION_SCHEMA)
             schema['properties']['memory_proposal'] = {
                 'anyOf': [
@@ -328,6 +366,7 @@ class OpenAIResponsesProvider(AgentProvider):
     @staticmethod
     def _parse_output(
         response: Dict[str, Any], *, memory_enabled: bool = False,
+        automatic_extraction: bool = False,
     ) -> tuple:
         if not isinstance(response, dict):
             raise ProviderError('provider response must be an object')
@@ -339,6 +378,20 @@ class OpenAIResponsesProvider(AgentProvider):
         output = response.get('output')
         if not isinstance(output, list):
             raise ProviderError('provider response output must be a list')
+        if automatic_extraction:
+            if any(not isinstance(item, dict)
+                   or item.get('type') not in {'message', 'reasoning'}
+                   for item in output):
+                raise ProviderError(
+                    'automatic extraction returned non-text output',
+                )
+            messages = [item for item in output if item['type'] == 'message']
+            if (len(messages) != 1
+                    or not isinstance(messages[0].get('content'), list)
+                    or len(messages[0]['content']) != 1
+                    or not isinstance(messages[0]['content'][0], dict)
+                    or messages[0]['content'][0].get('type') != 'output_text'):
+                raise ProviderError('automatic extraction envelope is invalid')
 
         function_calls = [
             item
@@ -439,6 +492,14 @@ class OpenAIResponsesProvider(AgentProvider):
             raise ProviderError(
                 'structured text decision must be an object'
             )
+        if automatic_extraction:
+            if set(parsed) != {'memory_proposal'}:
+                raise ProviderError('automatic extraction fields are invalid')
+            proposal = validate_automatic_proposal(parsed['memory_proposal'])
+            return AgentDecision(
+                type='message', message='',
+                reason='automatic_memory_extraction',
+            ), proposal
         allowed = {'type', 'message', 'reason', 'confidence'}
         if memory_enabled:
             allowed.add('memory_proposal')

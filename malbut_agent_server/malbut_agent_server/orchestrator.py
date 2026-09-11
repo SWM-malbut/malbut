@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 import threading
 import time
 import uuid
@@ -21,8 +22,14 @@ from malbut_agent_server.gateway import (
     production_registry,
 )
 from malbut_agent_server.memory import SQLiteMemoryStore
+from malbut_agent_server.automatic_memory_jobs import AutomaticMemoryJobs
+from malbut_agent_server.automatic_memory_policy import (
+    automatic_candidate, automatic_deferred, automatic_request,
+)
+from malbut_agent_server.automatic_memory_worker import AutomaticMemoryWorker
 from malbut_agent_server.personal_memory import (
-    PersonalMemory, management_request, reply as memory_reply,
+    PersonalMemory, direct_source, local_intent, management_request,
+    negated_management, requested_operation, reply as memory_reply,
 )
 from malbut_agent_server.providers.base import (
     AgentProvider,
@@ -390,6 +397,9 @@ class AgentOrchestrator:
         robot_state_source: RobotStateSource | None = None,
         robot_state_max_age_seconds: float = 2.0,
         state_clock: Callable[[], float] = time.time,
+        memory_source_reviewer=None,
+        background_memory: bool = False,
+        automatic_memory_extractor=None,
     ) -> None:
         """Initialize provider, memory, session, and safety services."""
         if memory_limit < 1 or memory_limit > 10:
@@ -421,6 +431,38 @@ class AgentOrchestrator:
         )
         self._handle_lock = threading.RLock()
         self.personal_memory = PersonalMemory(memory_store, conversation_store)
+        self.memory_source_reviewer = memory_source_reviewer
+        self.automatic_memory_extractor = automatic_memory_extractor
+        if type(background_memory) is not bool:
+            raise TypeError('background_memory must be a boolean')
+        self.automatic_memory_jobs = AutomaticMemoryJobs(conversation_store)
+        self.automatic_memory_worker = (
+            AutomaticMemoryWorker(self, self.automatic_memory_jobs)
+            if background_memory else None
+        )
+        self._closed = False
+
+    def start_background_memory(self):
+        """Recover queued work when serving, not during construction."""
+        if self.automatic_memory_worker is not None and not self._closed:
+            self.automatic_memory_worker.start()
+
+    def stop_background_memory(self):
+        """Drain the owned worker before callers close the shared stores."""
+        if self.automatic_memory_worker is not None:
+            self.automatic_memory_worker.close()
+
+    def close(self):
+        """Reject new turns, join the worker, then close SQLite handles."""
+        with self._handle_lock:
+            if self._closed:
+                return
+            self._closed = True
+        self.stop_background_memory()
+        try:
+            self.conversation_store.close()
+        finally:
+            self.memory_store.close()
 
     def _memory_guard(self, user_id, request_id):
         """Bind a response to its durable user-specific memory version."""
@@ -432,6 +474,39 @@ class AgentOrchestrator:
                     'memory changed; submit a new turn'
                 ) from error
         return validate
+
+    def _admit_memory_turn(self, connection, request):
+        """Ordinary turns preserve jobs; explicit memory intent fences them.
+
+        This runs after request-cache/conflict checks in the turn reservation
+        transaction. Bump even for no-match deletion so an older in-flight
+        provider cannot enqueue its stale source after this request finishes.
+        """
+        text = request.utterance
+        # Existing extraction eligibility is deliberately broad. Its
+        # "기억하" stem also matches read-only questions like "기억하니?";
+        # those must not become cancellation merely by mentioning memory.
+        remember_instruction = re.sub(
+            r'(기억|저장)(하고\s*있|하니|하나요|하는지|했니|했나요|했는지'
+            r'|해(?:요)?\s*(?=[?？]))',
+            '', text,
+        )
+        if direct_source(text) and (
+            local_intent(text) is not None
+            or (negated_management(text) and re.search(
+                r'(기억|저장)(을|은|는)?\s*(하지|말아|말고|말라|않|금지)'
+                r'|안\s*(기억|저장)', text,
+            ))
+            or any(requested_operation(text, operation)
+                   for operation in ('correct', 'forget'))
+            or requested_operation(remember_instruction, 'remember')
+        ):
+            self.automatic_memory_jobs.invalidate_user(
+                connection, request.user_id, reason='memory_control',
+            )
+            self.memory_store.invalidate_answers(
+                request.user_id, connection=connection,
+            )
 
     def handle(
         self,
@@ -470,6 +545,8 @@ class AgentOrchestrator:
             )
         fingerprint = self._request_fingerprint(request)
         with self._handle_lock:
+            if self._closed:
+                raise RuntimeError('orchestrator is closed')
             begin = self.conversation_store.begin_turn(
                 user_id=request.user_id,
                 conversation_id=request.conversation_id,
@@ -477,6 +554,9 @@ class AgentOrchestrator:
                 request_id=request.request_id,
                 request_fingerprint=fingerprint,
                 user_content=request.utterance,
+                before_new_turn=lambda conn: self._admit_memory_turn(
+                    conn, request,
+                ),
             )
             if begin.cached_response is not None:
                 guard = self._memory_guard(request.user_id, request.request_id)
@@ -486,6 +566,7 @@ class AgentOrchestrator:
                 )
                 result.clock = self._state_clock
                 result.memory_validator = guard
+                self.start_background_memory()
                 return result
             token = begin.token
             if token is None:
@@ -513,6 +594,23 @@ class AgentOrchestrator:
                     server_clarification,
                     memory_snapshot,
                 )
+                worker = self.automatic_memory_worker
+                extract = (
+                    self._separate_memory_extraction(request, memory_snapshot)
+                    and server_clarification is None
+                    and automatic_deferred(request, memory_snapshot, result)
+                )
+                deferred = (
+                    worker is not None and not worker.closed
+                    and (extract or automatic_candidate(
+                        request, memory_snapshot, result,
+                    ))
+                )
+                if not deferred:
+                    self.personal_memory.prepare_source_review(
+                        request, memory_snapshot, result,
+                        self.memory_source_reviewer,
+                    )
                 completion_arguments = {}
                 if confirmation_factory is not None:
                     safety_provenance = (
@@ -533,6 +631,16 @@ class AgentOrchestrator:
                         )
 
                 def commit_memory(connection):
+                    if deferred and (extract or automatic_candidate(
+                        request, memory_snapshot, result,
+                    )):
+                        # The response and private reservation commit together.
+                        # Saturation skips autosave, not the conversation.
+                        self.automatic_memory_jobs.enqueue(
+                            connection, request, token, memory_snapshot,
+                            result, extract=extract,
+                        )
+                        result.provider_result.memory_proposal = None
                     return self.personal_memory.commit(
                         request, token, memory_snapshot, result, connection,
                     )
@@ -556,6 +664,7 @@ class AgentOrchestrator:
                 result.memory_validator = self._memory_guard(
                     request.user_id, request.request_id,
                 )
+                self.start_background_memory()
                 return result
             except Exception as error:
                 self.conversation_store.fail_turn(token)
@@ -567,6 +676,15 @@ class AgentOrchestrator:
                         'memory changed; submit a new turn'
                     ) from error
                 raise
+
+    def _separate_memory_extraction(self, request, snapshot):
+        worker = self.automatic_memory_worker
+        return (
+            self.automatic_memory_extractor is not None
+            and worker is not None and not worker.closed
+            and accepts_memory_context(self.provider)
+            and automatic_request(request, snapshot)
+        )
 
     def _handle_uncached(
         self,
@@ -606,7 +724,10 @@ class AgentOrchestrator:
             )
             memory_arguments = {}
             if accepts_memory_context(self.provider):
-                memory_arguments['memory_context'] = memory_snapshot.context
+                memory_context = copy.deepcopy(memory_snapshot.context)
+                if self._separate_memory_extraction(request, memory_snapshot):
+                    memory_context['mode'] = 'answer_only'
+                memory_arguments['memory_context'] = memory_context
             provider_result = self.provider.complete(
                 model_request,
                 memories,
@@ -632,6 +753,10 @@ class AgentOrchestrator:
             raise ProviderError(
                 'provider returned invalid metadata'
             ) from error
+        if self._separate_memory_extraction(request, memory_snapshot):
+            # No foreground proposal can bypass the C extraction path,
+            # even when an injected/older provider ignores the mode hint.
+            provider_result.memory_proposal = None
         provider_decision = provider_result.decision
         raw_decision = AgentDecision(
             type=provider_decision.type,

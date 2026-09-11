@@ -72,8 +72,7 @@ def server_main(argv: Optional[List[str]] = None) -> int:
     settings.validate_for_server()
     orchestrator = build_orchestrator(settings)
     if args.check:
-        orchestrator.conversation_store.close()
-        orchestrator.memory_store.close()
+        orchestrator.close()
         print('configuration: ok')
         return 0
 
@@ -99,8 +98,7 @@ def server_main(argv: Optional[List[str]] = None) -> int:
         pass
     finally:
         server.server_close()
-        orchestrator.conversation_store.close()
-        orchestrator.memory_store.close()
+        orchestrator.close()
     return 0
 
 

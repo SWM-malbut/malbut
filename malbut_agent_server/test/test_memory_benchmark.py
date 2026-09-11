@@ -134,10 +134,12 @@ def test_invalid_evidence_and_frozen_reply(tmp_path, mode):
     assert not row['valid'] and row['facts'] == []
     before = json.loads(row['reply_json'])['decision']
     after = json.loads(row['postcommit_reply_json'])['decision']
-    assert after['type'] == 'clarification'
-    if mode != 'A':
-        assert before['message'] == '이야기해 줘서 고마워요.'
-        assert 'postcommit_decision_changed' in row['quality_issues']
+    # Rejected automatic candidates no longer interrupt ordinary conversation.
+    # Missing expected storage still makes the benchmark trial invalid above.
+    assert after['type'] == 'message'
+    assert before == after
+    assert after['message'] == '이야기해 줘서 고마워요.'
+    assert 'postcommit_decision_changed' not in row['quality_issues']
 
 
 @pytest.mark.parametrize('mode', list('ABC'))

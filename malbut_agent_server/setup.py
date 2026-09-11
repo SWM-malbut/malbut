@@ -19,6 +19,10 @@ setup(
             ['package.xml', 'README.md', '.env.example'],
         ),
         (
+            'share/' + package_name + '/docs',
+            ['docs/SEMANTIC_MEMORY.md'],
+        ),
+        (
             'share/' + package_name + '/docs/jira',
             [
                 'docs/jira/SWM25-69_CONVERSATION_AGENT_CONTRACT.md',
@@ -32,6 +36,7 @@ setup(
                 'docs/jira/SWM25-132_APPROVED_NAV2_EXECUTION.md',
                 'docs/jira/'
                 'SWM25-152_ROLE_MODEL_CONFIGURATION.md',
+                'docs/jira/SWM25-171_LONG_TERM_MEMORY.md',
             ],
         ),
         (

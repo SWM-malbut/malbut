@@ -2,12 +2,16 @@
 
 import hashlib
 import json
+import logging
 import re
 import time
 import unicodedata
 from dataclasses import dataclass, replace
 
 from malbut_agent_server.memory_contract import validate_memory_proposal
+from malbut_agent_server.memory_source_review import (
+    attach_source_review, source_review_matches,
+)
 from malbut_agent_server.schemas import AgentDecision, ValidationError
 from malbut_agent_server.summarization import (
     ExtractiveConversationSummarizer,
@@ -35,6 +39,36 @@ YES = {
 }
 NO = {'아니', '아니요', '싫어', '동의안해', '거절', 'no'}
 CANCEL = NO | {'취소', '취소할게', '취소해줘', '그만'}
+_LOGGER = logging.getLogger(__name__)
+
+
+def _missing_memory_followup(text):
+    """Ask about a clear command, never infer one from memory vocabulary.
+
+    This only selects user-facing wording when no valid proposal exists;
+    retrieval, consent, source validation and mutation authority are unchanged.
+    """
+    if not direct_source(text) or negated_management(text):
+        return None
+    # This is a receipt/follow-up check, not a new intent classifier. Bare
+    # "기억해" may describe recollection; generic editing is not memory work.
+    text = re.sub(r'(기억|저장)\s*해(?:요)?\s*[?？]', '', text)
+    ending = r'(?:해\s*(?:줘요?|주세요|둬|두자|줄래|주라)|하자)'
+    memory_target = bool(re.search(r'기억|개인화', text))
+    commands = (
+        (r'삭제\s*' + ending + r'|지워\s*(?:줘요?|주세요)|잊어\s*줘',
+         '어떤 내용을 지울지 다시 알려줄래요?', memory_target),
+        (r'(?:정정|수정|변경)\s*' + ending + r'|바꿔\s*(?:줘요?|주세요)',
+         '어떤 내용을 어떻게 바꿀지 다시 알려줄래요?', memory_target),
+        (r'(?:기억|저장)\s*' + ending,
+         '기억해 둘 내용을 한 가지만 다시 알려줄래요?', True),
+    )
+    for pattern, message, eligible in commands:
+        if eligible and re.search(
+            r'(?:' + pattern + r')(?=\s*(?:$|[.!?。？]))', text,
+        ):
+            return reply(message, True)
+    return None
 
 
 def compact(text):
@@ -313,6 +347,7 @@ class PersonalMemory:
     def snapshot(self, request, token, history, summary, memory_limit=5):
         """Read eligible history and memories under one read transaction."""
         source = {
+            'user_id': request.user_id,
             'conversation_id': token.conversation_id,
             'session_instance_id': token.session_instance_id,
             'generation': token.generation,
@@ -424,6 +459,75 @@ class PersonalMemory:
             pending,
             source,
         )
+
+    def prepare_source_review(self, request, snapshot, result, reviewer):
+        """Review unresolved meanings before opening the commit transaction."""
+        proposal = result.provider_result.memory_proposal
+        if (
+            reviewer is None or snapshot.pending
+            or result.decision.type not in {'message', 'clarification'}
+            or proposal is None
+            or proposal['operation'] not in {'remember', 'correct'}
+            or not proposal['facts']
+            or not direct_source(request.utterance)
+            or negated_management(request.utterance)
+        ):
+            return
+        explicit_save = requested_operation(request.utterance, 'remember')
+        explicit_correct = requested_operation(request.utterance, 'correct')
+        if not snapshot.state['enabled'] and not explicit_save:
+            return
+        if proposal['operation'] == 'correct' and not explicit_correct:
+            return
+        if not explicit_save and not explicit_correct and re.search(
+            r'[?？]|뭐|누구|어떤|어떻게|일까|인가요', request.utterance,
+        ):
+            return
+        if (
+            proposal['evidence']
+            and proposal['evidence'] not in request.utterance
+        ):
+            return
+        attributes = {
+            'name': {'name'}, 'nickname': {'nickname'},
+            'preference': {'likes', 'dislikes', 'preference'},
+            'pet': {'name', 'species', 'breed', 'age', 'birthday', 'color',
+                    'likes', 'dislikes', 'preference'},
+        }
+        unresolved = []
+        for fact in proposal['facts']:
+            if (
+                fact['evidence'] not in request.utterance
+                or not compact(fact['value'])
+                or compact(fact['value']) not in compact(fact['evidence'])
+                or fact['attribute'] not in attributes[fact['kind']]
+                or (fact['kind'] != 'pet' and compact(fact['subject']) not in {
+                    'user', 'self', '사용자', '나', '저',
+                })
+                or (fact['kind'] == 'pet' and compact(fact['subject']) in {
+                    'user', 'self', '사용자', '나', '저',
+                })
+            ):
+                return
+            if not fact_matches_source(fact, request.utterance):
+                unresolved.append(fact)
+        if not unresolved:
+            return
+        outcome = reviewer.review(request, unresolved)
+        attach_source_review(snapshot.source, outcome.facts)
+        provider = result.provider_result
+        provider.latency_ms += outcome.elapsed_ms
+        # Account for review tokens without changing the public metadata shape.
+        # Unknown usage must stay unknown, rather than under-reporting a call.
+        usage = {}
+        for key in ('input_tokens', 'output_tokens', 'total_tokens'):
+            old = getattr(provider.usage, key)
+            extra = (getattr(outcome.response.usage, key)
+                     if outcome.response is not None else None)
+            usage[key] = (old + extra
+                          if old is not None and extra is not None else None)
+        provider.usage = replace(provider.usage, **usage)
+        return outcome
 
     def _context(self, user_id, token, state, history, summary, conn):
         invalid = self.memory.invalidated_ids(user_id, connection=conn)
@@ -615,6 +719,15 @@ class PersonalMemory:
             != snapshot.state
         ):
             raise ValidationError('memory_changed')
+        # Another runtime may have attached a delayed fact to an earlier turn
+        # while this turn was in inference. Its text was already part of this
+        # conversation, so merge newly attached lineage without changing the
+        # frozen model inputs or reply. Destructive writes still fail the
+        # epoch check above, within this same transaction.
+        _, _, inherited_dependencies = self._context(
+            request.user_id, token, snapshot.state, snapshot.history,
+            snapshot.summary, conn,
+        )
         conn.execute(
             (
                 'DELETE FROM memory_questions WHERE user_id=? '
@@ -623,13 +736,25 @@ class PersonalMemory:
             (request.user_id, request.conversation_id),
         )
         decision, added = self._apply(request, token, snapshot, result, conn)
-        if decision is None and re.search(
-            r'(기억|저장|삭제|정정|수정|개인화).{0,16}(했|하였|완료|해\s*뒀|해\s*두었|됐)',
-            result.decision.message,
-        ):
-            decision = reply(
-                '기억 처리 결과를 확인할 수 없어 완료로 안내하지 않을게요.'
-            )
+        claim = (
+            r'(기억|저장|삭제|정정|수정|개인화).{0,16}'
+            r'(했|하였|완료|해\s*뒀|해\s*두었|됐|할게|해\s*둘게|하겠|해둘께)'
+        )
+        if decision is None and re.search(claim, result.decision.message):
+            _LOGGER.info('memory_policy reason=unverified_completion')
+            decision = _missing_memory_followup(request.utterance)
+            if decision is None:
+                # Automatic candidates do not request storage receipts.
+                # Keep normal conversational sentences; never repeat a model's
+                # uncommitted completion claim or future storage promise.
+                parts = re.split(
+                    r'(?<=[.!?。])\s*|\n+', result.decision.message,
+                )
+                message = ' '.join(
+                    part for part in parts
+                    if part.strip() and not re.search(claim, part)
+                )
+                decision = reply(message or '말씀해 주셔서 고마워요.')
         if decision is not None:
             result.decision = decision
             result.raw_decision = decision
@@ -637,7 +762,9 @@ class PersonalMemory:
             result.state_trusted = False
         state = self.memory.policy_state(request.user_id, connection=conn)
         result.memory_revision = state['revision']
-        dependencies = snapshot.dependencies | set(added)
+        dependencies = (
+            snapshot.dependencies | inherited_dependencies | set(added)
+        )
         for record in self.memory.list_for_user(
             request.user_id, connection=conn
         ):
@@ -675,14 +802,40 @@ class PersonalMemory:
         )
         return result.decision.message, result.to_persisted_dict()
 
-    def _apply(self, request, token, snapshot, result, conn):
+    def _apply(self, request, token, snapshot, result, conn,
+               *, _automatic_insert=False):
         text = request.utterance
         pending = snapshot.pending
         answer = compact(text).rstrip('.!?。')
-        explicit = management_request(text)
+        explicit = management_request(text) or requested_operation(
+            text, 'remember'
+        )
         source = snapshot.source
         proposal = result.provider_result.memory_proposal
         control = local_intent(text)
+        if type(_automatic_insert) is not bool:
+            raise ValidationError('automatic insert mode must be boolean')
+        if _automatic_insert and (
+            pending is not None or control is not None
+            or not isinstance(proposal, dict)
+            or proposal.get('operation') != 'remember'
+            or proposal.get('target_ids') or proposal.get('query')
+            or explicit
+        ):
+            raise ValidationError('automatic insert cannot manage memories')
+        if (
+            isinstance(proposal, dict)
+            and proposal.get('operation') == 'remember'
+            and control is None
+            and not negated_management(text)
+        ):
+            # Words such as "기억력이" are not instructions to save a fact.
+            # Keep explicit correction/deletion requests and pending controls
+            # visible even when a provider labels their proposal "remember".
+            explicit = any(
+                requested_operation(text, operation)
+                for operation in ('remember', 'correct', 'forget')
+            )
         confirmed_correction = False
         selected_target = False
         if pending and pending['kind'] == 'target' and control is None:
@@ -772,20 +925,22 @@ class PersonalMemory:
                 'evidence': text,
             }
         if proposal is None:
-            if explicit:
-                return (
-                    reply(
-                        '기억 관리 요청을 처리하지 못했어요. 기억할 내용이나 관리할 대상을 구체적으로 말씀해 주세요.',
-                        True,
-                    ),
-                    [],
+            followup = _missing_memory_followup(text)
+            if explicit or followup is not None:
+                _LOGGER.info(
+                    'memory_policy reason=proposal_missing response=%s',
+                    'followup' if followup is not None else 'conversation',
                 )
-            return None, []
+            return followup, []
         try:
             proposal = validate_memory_proposal(proposal)
         except ValidationError:
+            _LOGGER.info('memory_policy reason=invalid_proposal')
+            if not explicit and result.decision.type != 'tool_call':
+                return None, []
             return (
-                reply('기억 처리 제안을 확인할 수 없어 변경하지 않았어요.'),
+                _missing_memory_followup(text)
+                or reply('어떤 내용을 말씀하시는지 조금 더 알려줄래요?', True),
                 [],
             )
         operation = proposal['operation']
@@ -850,11 +1005,16 @@ class PersonalMemory:
         ):
             return None, []
         for fact in proposal['facts']:
-            if not fact_matches_source(fact, source['text']):
+            if not (
+                fact_matches_source(fact, source['text'])
+                or source_review_matches(fact, source)
+            ):
+                if operation == 'remember' and not explicit:
+                    return None, []
+                _LOGGER.info('memory_policy reason=source_unverified')
                 return (
                     reply(
-                        '기억할 정보의 대상과 의미를 원문에서 확인할 수 없어요. '
-                        '누구의 어떤 정보인지 한 가지씩 말씀해 주세요.',
+                        '누구에 대한 어떤 내용인지 한 가지만 더 알려줄래요?',
                         True,
                     ),
                     [],
@@ -868,6 +1028,8 @@ class PersonalMemory:
         if snapshot.pending:
             supplied.update(snapshot.pending['proposal'].get('target_ids', []))
         if any(key not in by_id or key not in supplied for key in targets):
+            if operation == 'remember' and not explicit:
+                return None, []
             return (
                 reply(
                     '관리할 기억을 확인할 수 없어요. 대상을 다시 말씀해 주세요.',
@@ -978,6 +1140,8 @@ class PersonalMemory:
                 [],
             )
         if not proposal['facts']:
+            if operation == 'remember' and not explicit:
+                return None, []
             return reply('기억할 내용을 구체적으로 말씀해 주세요.', True), []
         # A savepoint prevents partial automatic saves before a conflict.
         conn.execute('SAVEPOINT memory_effects')
@@ -993,10 +1157,13 @@ class PersonalMemory:
                 source,
                 correct_ids=targets if operation == 'correct' else (),
                 connection=conn,
+                _automatic_insert=_automatic_insert,
             )
             if outcome['status'] == 'conflict':
                 conn.execute('ROLLBACK TO memory_effects')
                 conn.execute('RELEASE memory_effects')
+                if operation == 'remember' and not explicit:
+                    return None, []
                 conflicting = [r.id for r in outcome['records']]
                 proposal['target_ids'] = conflicting
                 self._question(conn, token, 'conflict', proposal, source)

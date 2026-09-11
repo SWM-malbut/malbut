@@ -997,8 +997,11 @@ class SQLiteConversationStore:
         request_id: str,
         request_fingerprint: str,
         user_content: str,
+        before_new_turn: Optional[Callable] = None,
     ) -> BeginTurnResult:
         """Reserve one ordered turn or return its durable response."""
+        if before_new_turn is not None and not callable(before_new_turn):
+            raise TypeError('before_new_turn must be callable')
         normalized_user = validate_user_id(user_id)
         normalized_id = validate_conversation_id(conversation_id)
         normalized_turn = validate_turn_id(turn_id)
@@ -1150,6 +1153,8 @@ class SQLiteConversationStore:
                     self.history_limit,
                 )
                 ordinal = turn_count + 1
+                if before_new_turn is not None:
+                    before_new_turn(self._connection)
                 self._connection.execute(
                     '''
                     INSERT INTO conversation_turns (

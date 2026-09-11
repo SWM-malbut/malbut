@@ -153,6 +153,9 @@ class DialogueWorker:
         try:
             try:
                 runtime = self._factory()
+                start_memory = getattr(runtime, 'start_background_memory', None)
+                if start_memory is not None:
+                    start_memory()
                 session = runtime.conversation_store.create(self._user_id)
                 conversation_id = session.conversation_id
             except Exception as error:
@@ -219,10 +222,15 @@ class DialogueWorker:
             with self._condition:
                 self._stopped = True
             if runtime is not None:
-                try:
-                    runtime.conversation_store.close()
-                finally:
-                    runtime.memory_store.close()
+                close_runtime = getattr(runtime, 'close', None)
+                if close_runtime is not None:
+                    close_runtime()
+                else:
+                    # Retain the existing injected-runtime adapter contract.
+                    try:
+                        runtime.conversation_store.close()
+                    finally:
+                        runtime.memory_store.close()
 
     @staticmethod
     def _reply(

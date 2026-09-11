@@ -2,6 +2,7 @@
 
 import copy
 import json
+import threading
 
 import pytest
 
@@ -93,8 +94,8 @@ def test_openai_returns_answer_and_proposal_with_one_call():
 
 
 @pytest.mark.parametrize('http_server', [True, False])
-def test_default_luna_commits_memory_before_reply(tmp_path, http_server):
-    """Both runtime factories use one Luna call and commit before returning."""
+def test_default_luna_queues_memory_after_reply(tmp_path, http_server):
+    """Both factories return the reply before completing automatic memory."""
     settings = Settings.from_env({
         'MALBUT_AGENT_PROVIDER': 'openai',
         'MALBUT_AGENT_DB': str(tmp_path / 'luna.sqlite3'),
@@ -103,16 +104,32 @@ def test_default_luna_commits_memory_before_reply(tmp_path, http_server):
     })
     runtime = build_orchestrator(settings, http_server=http_server)
     calls = []
+    extraction_entered = threading.Event()
+    extraction_release = threading.Event()
 
     def transport(_url, _headers, payload, _timeout):
         calls.append(payload)
         response = _response(_proposal())
         response['model'] = payload['model']
+        value = json.loads(response['output'][0]['content'][0]['text'])
+        if payload['text']['format']['name'] == 'malbut_memory_extraction':
+            extraction_entered.set()
+            assert extraction_release.wait(5)
+            value = {'memory_proposal': _proposal()}
+        else:
+            value.pop('memory_proposal')
+        response['output'][0]['content'][0]['text'] = json.dumps(value)
         return response
 
     try:
         assert len(runtime.provider._providers) == 1
         runtime.provider._providers[0].transport = transport
+        extraction_provider = runtime.automatic_memory_extractor.provider
+        extraction_provider._providers[0].transport = transport
+        assert extraction_provider is not runtime.provider
+        assert extraction_provider is not (
+            runtime.memory_source_reviewer.provider
+        )
         request = _request()
         runtime.conversation_store.create(request.user_id,
                                           request.conversation_id)
@@ -125,17 +142,36 @@ def test_default_luna_commits_memory_before_reply(tmp_path, http_server):
                 robot_state=RobotState(), available_tools=(),
             ))
         result = runtime.handle(request)
-        assert len(calls) == 1
+        assert extraction_entered.wait(2)
+        assert len(calls) == 2
+        assert 'memory_proposal' not in (
+            calls[0]['text']['format']['schema']['properties']
+        )
+        assert list(calls[1]['text']['format']['schema']['properties']) == [
+            'memory_proposal',
+        ]
+        assert runtime.memory_store.list_for_user(request.user_id) == []
         assert calls[0]['model'] == 'gpt-5.6-luna'
         assert calls[0]['reasoning']['effort'] == 'none'
         assert calls[0]['max_output_tokens'] == 500
         assert result.provider_result.model == 'gpt-5.6-luna'
+        extraction_release.set()
+        import time
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            state = runtime.automatic_memory_jobs.metadata(
+                request.user_id, request.request_id,
+            )['state']
+            if state not in {'queued', 'running'}:
+                break
+            time.sleep(0.01)
+        assert state == 'saved'
         records = runtime.memory_store.list_for_user(request.user_id)
         assert len(records) == 1
         assert records[0].metadata['fact']['value'] == '현재'
     finally:
-        runtime.conversation_store.close()
-        runtime.memory_store.close()
+        extraction_release.set()
+        runtime.close()
 
 
 @pytest.mark.parametrize('mutation', [
