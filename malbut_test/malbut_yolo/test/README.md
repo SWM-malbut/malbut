@@ -8,7 +8,7 @@ cd ~/ros2_ws
 source /opt/ros/humble/setup.zsh
 source install/setup.zsh
 source install/malbut_test/local_setup.zsh
-python3 src/malbut/malbut_test/malbut_yolo/test/check_shared_pipeline.py
+python3 src/malbut/malbut_yolo/test/check_shared_pipeline.py
 ```
 
 준비된 YOLO26n·OSNet 모델과 CUDA 실행 환경이 필요하다. 이미 설치된

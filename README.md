@@ -832,6 +832,19 @@ cbp malbut_patrol
 
 ## 12. 기본 점검
 
+CI는 변경한 ROS 패키지를 검사하고, 빌드에는 필요한 의존 패키지만 포함한다.
+Bringup 변경으로 시뮬레이션·Agent·Homecam SDK 전체 검사를 실행하지 않는다.
+공유 인터페이스 변경은 영향을 받는 ROS 소비자까지 검사하며, CI 규칙 자체 변경과
+GitHub Actions의 **Run workflow**는 전체 검사를 수행한다. 오래 걸리는 사람 경로의
+메시 충돌 검사는 관련 world·actor·경로 변경 또는 전체 검사에서만 실행한다.
+
+단위 테스트는 원본 패키지의 `test/`에 둔다. `malbut_test`는 실로봇 적용본이며
+단위 테스트 복사본을 두지 않는다. 취소·선점·센서/설정·인증 등 기능 검사는 유지하고,
+문구·주석·CSS 모양만 고정하는 검사는 추가하지 않는다. 수동 GPU 검사는 명시적으로
+실행하며 기본 CI에서 모델 다운로드·실제 추론을 하지 않는다.
+
+웹 단위 검사: `cd homecam_web && npm test`. 빌드까지 검사하려면 `npm run test:full`.
+
 ```bash
 ros2 topic list
 ros2 node list

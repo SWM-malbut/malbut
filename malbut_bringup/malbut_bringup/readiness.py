@@ -7,7 +7,7 @@ import time
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
 from malbut_interfaces.action import FollowPerson, Patrol
-from nav2_msgs.action import ComputePathToPose, FollowPath, NavigateToPose, Spin
+from nav2_msgs.action import BackUp, ComputePathToPose, FollowPath, NavigateToPose, Spin, Wait
 from nav2_msgs.msg import Costmap
 from nav_msgs.msg import OccupancyGrid, Odometry
 import rclpy
@@ -90,6 +90,7 @@ class RobotReadiness(Node):
                     ('/navigate_to_pose', NavigateToPose),
                     ('/compute_path_to_pose', ComputePathToPose),
                     ('/follow_path', FollowPath), ('/spin', Spin),
+                    ('/wait', Wait), ('/backup', BackUp),
                     ('/follow_person', FollowPerson), ('/patrol', Patrol),
                 )
             ]
@@ -133,7 +134,9 @@ class RobotReadiness(Node):
                 label not in self.fixed and now - received > self.timeout)
         ]
         base = self.settings['robot_frame']
-        for label in ('scan', 'camera_info', 'odom'):
+        for label in ('scan', 'camera_info', 'odom', 'rgb', 'depth', 'perception'):
+            if label not in self.seen:
+                continue
             frame = self.frames.get(label)
             if not frame or not self.tf.can_transform(base, frame, Time()):
                 missing.append(f'TF:{label}->{base}')
@@ -150,6 +153,9 @@ class RobotReadiness(Node):
         for name, entry in self.lifecycle.items():
             client, future, active = entry
             if not client.service_is_ready():
+                if future is not None:
+                    future.cancel()
+                entry[1] = None
                 entry[2] = False
             elif future is None or future.done():
                 if future is not None:

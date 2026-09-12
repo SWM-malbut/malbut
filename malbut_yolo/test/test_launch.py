@@ -90,6 +90,23 @@ def test_combined_launch_isolates_each_child_config_and_yolo_namespace():
     assert localizers[0].node_executable == 'person_localizer'
 
 
+def test_combined_launch_keeps_yolo_and_reid_interpreters_separate():
+    """A ReID runtime must not accidentally select the YOLO interpreter."""
+    description = _load('malbut_tracking', 'person_detection.launch.py')
+    context = _context(description)
+    context.launch_configurations['python_executable'] = '/tmp/yolo/bin/python'
+    context.launch_configurations['reid_python_executable'] = '/tmp/reid/bin/python'
+    interpreters = []
+    for group in description.entities:
+        if not isinstance(group, GroupAction):
+            continue
+        include = next(item for item in group.get_sub_entities()
+                       if isinstance(item, IncludeLaunchDescription))
+        options = dict(include.launch_arguments)
+        interpreters.append(options['python_executable'].perform(context))
+    assert interpreters == ['/tmp/yolo/bin/python', '/tmp/reid/bin/python']
+
+
 def test_detector_declares_upstream_and_ros_dependencies_without_tracking_dependency():
     """The shared detector must be reusable without depending on its consumer."""
     package = ElementTree.parse(ROOT / 'malbut_yolo/package.xml').getroot()

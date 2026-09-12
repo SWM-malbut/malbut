@@ -6,23 +6,29 @@ import signal
 import threading
 import time
 
-from action_msgs.msg import GoalStatus
+from action_msgs.msg import GoalStatus, GoalStatusArray
+from lifecycle_msgs.msg import State
+from lifecycle_msgs.srv import GetState
 from malbut_interfaces.action import AutoSlam
 from nav2_msgs.action import NavigateToPose
 from nav2_msgs.srv import SaveMap
-from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import OccupancyGrid, Odometry
 import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile
+from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
+from sensor_msgs.msg import LaserScan
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from malbut_autoslam.frontier import (
     find_frontiers, map_grid_from_message, map_statistics,
+)
+from malbut_autoslam.runtime import (
+    DEFAULT_READY_TIMEOUT_S, OwnedRuntime, RuntimeGraph, missing_components,
 )
 
 
@@ -103,7 +109,12 @@ class AutoSlamNode(Node):
             'minimum_goal_distance_m': 0.45,
             'exploration_period_s': 1.0, 'completion_delay_s': 12.0,
             'map_timeout_s': 10.0, 'tf_timeout_s': 3.0,
-            'ready_timeout_s': 30.0, 'navigation_timeout_s': 90.0,
+            'ready_timeout_s': DEFAULT_READY_TIMEOUT_S, 'navigation_timeout_s': 90.0,
+            'auto_start': False,
+            'scan_topic': '/scan_raw', 'odom_topic': '/odom',
+            'normalized_scan_topic': '/scan_normalized',
+            'runtime_directory': str(Path.home() / '.ros/malbut/autoslam'),
+            'sensor_timeout_s': 3.0,
         }
         for name, default in defaults.items():
             self.declare_parameter(name, default)
@@ -120,9 +131,32 @@ class AutoSlamNode(Node):
         self.message = None
         self.received_at = 0.0
         self.child = None
+        self.runtime = None
+        self.scan_received_at = 0.0
+        self.odom_received_at = 0.0
+        self.navigation_busy = False
         self.known_area_m2 = 0.0
         self.frontier_count = 0
         self.group = ReentrantCallbackGroup()
+        self.lifecycle_clients = {}
+        if self.settings['auto_start']:
+            if self.get_parameter('use_sim_time').value:
+                raise ValueError(
+                    'auto_start requires real hardware; use auto_start:=false in simulation')
+            self.create_subscription(
+                LaserScan, self.settings['scan_topic'], self._receive_scan,
+                qos_profile_sensor_data, callback_group=self.group)
+            self.create_subscription(
+                Odometry, self.settings['odom_topic'], self._receive_odom,
+                qos_profile_sensor_data, callback_group=self.group)
+            self.create_subscription(
+                GoalStatusArray, self.settings['navigation_action'] + '/_action/status',
+                self._receive_navigation_status,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+                callback_group=self.group)
+            for name in ('controller_server', 'planner_server', 'bt_navigator'):
+                self.lifecycle_clients[name] = self.create_client(
+                    GetState, f'/{name}/get_state', callback_group=self.group)
         self.tf = Buffer()
         self.listener = TransformListener(self.tf, self)
         self.create_subscription(
@@ -148,6 +182,96 @@ class AutoSlamNode(Node):
             self.received_at = time.monotonic()
         self.wake.set()
 
+    def _receive_scan(self, _message):
+        self.scan_received_at = time.monotonic()
+
+    def _receive_odom(self, _message):
+        self.odom_received_at = time.monotonic()
+
+    def _receive_navigation_status(self, message):
+        self.navigation_busy = any(status.status in (
+            GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING,
+            GoalStatus.STATUS_CANCELING) for status in message.status_list)
+
+    def _runtime_graph(self):
+        def full_name(name, namespace):
+            return namespace.rstrip('/') + '/' + name
+
+        def publishers(topic):
+            return tuple(sorted(full_name(info.node_name, info.node_namespace)
+                                for info in self.get_publishers_info_by_topic(topic)))
+
+        return RuntimeGraph(
+            nodes=tuple(sorted(full_name(name, namespace)
+                               for name, namespace in self.get_node_names_and_namespaces())),
+            map_publishers=publishers(self.settings['map_topic']),
+            scan_publishers=publishers(self.settings['scan_topic']),
+            odom_publishers=publishers(self.settings['odom_topic']),
+            normalized_scan_publishers=publishers(self.settings['normalized_scan_topic']),
+            navigation_present=self.navigation.server_is_ready(),
+        )
+
+    def _prepare_runtime(self, handle):
+        if not self.settings['auto_start']:
+            return
+        self.runtime = OwnedRuntime(self.settings['runtime_directory'])
+        self.runtime.acquire()
+        # DDS discovery is asynchronous. Take a settled graph snapshot rather
+        # than launching a second stack immediately after this server starts.
+        previous = None
+        stable_since = time.monotonic()
+        deadline = stable_since + self.settings['ready_timeout_s']
+        while time.monotonic() < deadline:
+            self._check(handle)
+            graph = self._runtime_graph()
+            if graph != previous:
+                previous = graph
+                stable_since = time.monotonic()
+            if time.monotonic() - stable_since >= 1.0:
+                break
+            self._feedback(handle, 'WAITING')
+            self._pause()
+        else:
+            raise RuntimeError('ROS graph did not settle; mapping startup was not attempted')
+        if self.navigation_busy:
+            raise RuntimeError('Nav2 has an active goal; cancel its owner before AutoSLAM')
+        components = missing_components(graph)
+        if components['start_slam']:
+            with self.lock:
+                self.message = None  # Never reuse a map from the previous owned session.
+        self.runtime.start(
+            components, self.settings['scan_topic'], self.settings['odom_topic'],
+            self.settings['normalized_scan_topic'])
+        if self.runtime.log_path is not None:
+            self.get_logger().info(f'Mapping prerequisite log: {self.runtime.log_path}')
+
+    def _wait_active_navigation(self, handle, deadline):
+        if not self.settings['auto_start']:
+            return
+        for name, client in self.lifecycle_clients.items():
+            future = None
+            while True:
+                self._check(handle)
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f'mapping prerequisites not ready: {name} is not active')
+                if future is None and client.service_is_ready():
+                    future = client.call_async(GetState.Request())
+                if future is not None and future.done():
+                    response = future.result()
+                    if response.current_state.id == State.PRIMARY_STATE_ACTIVE:
+                        break
+                    future = None
+                self._feedback(handle, 'WAITING')
+                self._pause()
+
+    def _check_sensor_updates(self):
+        if not self.settings['auto_start']:
+            return
+        now = time.monotonic()
+        if (now - self.scan_received_at > self.settings['sensor_timeout_s']
+                or now - self.odom_received_at > self.settings['sensor_timeout_s']):
+            raise RuntimeError('waiting for fresh LiDAR and odometry')
+
     def _goal(self, request):
         with self.lock:
             if self.busy or self.stopping.is_set():
@@ -167,12 +291,15 @@ class AutoSlamNode(Node):
     def _check(self, handle):
         if handle.is_cancel_requested or self.stopping.is_set():
             raise Interrupted('automatic mapping canceled')
+        if self.runtime is not None:
+            self.runtime.check()
 
     def _pause(self):
         self.wake.wait(0.2)
         self.wake.clear()
 
     def _snapshot(self):
+        self._check_sensor_updates()
         with self.lock:
             message, received = self.message, self.received_at
         if message is None or not message.header.frame_id:
@@ -204,9 +331,39 @@ class AutoSlamNode(Node):
         if child is None:
             return
         child.cancel()
+        deadline = time.monotonic() + self.settings['ready_timeout_s']
         while not child.done.wait(0.2):
             self._feedback(handle, 'CANCELING')
+            if (time.monotonic() >= deadline and self.runtime is not None
+                    and self.runtime.components.get('start_navigation')):
+                # Only a Nav2 process group owned by this request can be stopped
+                # when its Action transport no longer returns a terminal result.
+                try:
+                    self.runtime.stop()
+                    break
+                except RuntimeError as error:
+                    self.get_logger().error(str(error))
+                    self.stopping.set()
+                    # An unkillable owned process must not release the Action's
+                    # BASE resource. Retain ownership until cleanup can finish.
         self.child = None
+
+    def _close_runtime(self, handle):
+        if self.runtime is None:
+            return
+        while True:
+            if self.runtime.process is not None:
+                self._feedback(handle, 'CANCELING')
+            try:
+                self.runtime.close()
+                self.runtime = None
+                return
+            except RuntimeError as error:
+                self.get_logger().error(str(error))
+                self.stopping.set()
+                # Do not send a terminal Action result while an owned process
+                # could still publish commands. Each shutdown attempt is bounded.
+                self._pause()
 
     def _navigate(self, handle, frontier, frame):
         request = NavigateToPose.Goal()
@@ -249,6 +406,10 @@ class AutoSlamNode(Node):
         future.add_done_callback(lambda _future: done.set())
         while not done.wait(0.2):
             # Saving is a non-cancellable Service. Wait for its actual response.
+            if self.stopping.is_set():
+                # Parent launch also stops map_saver on SIGINT, so a response
+                # may never arrive. Still run owned mapping cleanup in finally.
+                raise Interrupted('server stopping; map save result is unconfirmed')
             self._feedback(handle, 'CANCELING' if handle.is_cancel_requested
                            else 'SAVING')
         response = future.result()
@@ -261,6 +422,7 @@ class AutoSlamNode(Node):
 
     def _explore(self, handle, result):
         base = map_base(self.settings['map_directory'], handle.request.map_name)
+        self._prepare_runtime(handle)
         deadline = time.monotonic() + self.settings['ready_timeout_s']
         while True:
             self._check(handle)
@@ -276,6 +438,8 @@ class AutoSlamNode(Node):
                     raise RuntimeError(f'mapping prerequisites not ready: {error}')
                 self._feedback(handle, 'WAITING')
                 self._pause()
+
+        self._wait_active_navigation(handle, deadline)
 
         blacklist = []
         completed = None
@@ -349,6 +513,7 @@ class AutoSlamNode(Node):
         finally:
             # Do not report completion while an accepted or pending goal can move.
             self._settle_child(handle)
+            self._close_runtime(handle)
             with self.lock:
                 if handle.is_cancel_requested:
                     result.success = False

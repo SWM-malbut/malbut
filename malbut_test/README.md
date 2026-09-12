@@ -1,13 +1,14 @@
 # 실로봇 적용본 — malbut_test
 
 기존 기능을 ROSOrin / Jetson Orin NX / ROS 2 Humble에 연결하는 복사본이다.
-**Git 저장소 전체를 `~/ros2_ws/src/malbut`에 clone한 뒤 이 폴더를 선택해 빌드한다.**
-제조사 패키지와 원본 Malbut 패키지는 수정하지 않는다. 새 드라이버·응용 기능을
-구현하거나 시뮬레이션 지도를 실기기에 대신 넣는 구성은 아니다.
+**아래 명령은 이 폴더의 내용을 로봇의 `~/ros2_ws/src/malbut`으로 복사한 경우다.**
+개발 수정은 저장소 루트의 원본 패키지에서 하고 이 적용본에도 반영한다.
+제조사 원본은 수정하지 않으며 시뮬레이션 지도를 실기기에 대신 넣지 않는다.
+추적·순찰·관리자의 알고리즘과 공개 인터페이스는 유지한다.
 
-복사 기준은 `cc5208a` + SWM25-169 Bringup이다. 추적·순찰·관리자의 알고리즘과
-공개 인터페이스는 유지한다. 이후 실기기 연결 수정은 이 폴더 안에서만 한다.
-원본 변경이 자동 동기화되지는 않는다. 실기기 수정분 위에 통째로 덮어쓰지 않는다.
+단위 테스트는 저장소의 원본 패키지 `test/`에서만 관리한다. 이 적용본에 같은
+pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Bringup의
+`test/test_deployment.py`에서 확인하며, 실기기 웹 패널과 수동 GPU 검사는 유지한다.
 
 ## 구조와 빌드 경계
 
@@ -15,20 +16,18 @@
 ~/ros2_ws/
 ├── src/
 │   ├── slam/, navigation/, peripherals/, ...   # 기존 제조사 코드
-│   └── malbut/                                # Git clone 위치
-│       ├── 기존 패키지들/
-│       └── malbut_test/
-│           ├── malbut_bringup/
-│           ├── malbut_interfaces/
-│           ├── malbut_system_manager/
-│           ├── malbut_yolo/
-│           │   └── vendor/yolo_ros/            # 함께 포함된 upstream 소스
-│           ├── malbut_reid/
-│           ├── malbut_tracking/
-│           ├── malbut_patrol/
-│           ├── malbut_autoslam/
-│           ├── build.sh
-│           └── COLCON_IGNORE
+│   └── malbut/                                # malbut_test 내용의 복사 위치
+│       ├── malbut_bringup/
+│       ├── malbut_interfaces/
+│       ├── malbut_system_manager/
+│       ├── malbut_yolo/
+│       │   └── vendor/yolo_ros/                # 함께 포함된 upstream 소스
+│       ├── malbut_reid/
+│       ├── malbut_tracking/
+│       ├── malbut_patrol/
+│       ├── malbut_autoslam/
+│       ├── build.sh
+│       └── COLCON_IGNORE
 ├── build/malbut_test/                          # 이 복사본의 빌드 결과
 ├── install/malbut_test/                        # 이 복사본의 설치 결과
 └── log/malbut_test/
@@ -39,7 +38,8 @@
 `yolo_ros`, `yolo_msgs` 경로를 직접 지정한다. 제조사 패키지를 재빌드하거나
 제조사의 `install/setup.zsh`를 덮어쓰지 않는다. 패키지명은 그대로 유지한다.
 
-Gazebo·actor·시나리오·벤치마크·웹·음성 기능은 포함하지 않는다. 제조사 하드웨어
+Gazebo·actor·시나리오·벤치마크·기존 홈카메라 웹·음성 기능은 포함하지 않는다.
+실기기용 간단한 웹 테스트 패널은 Bringup에 포함한다. 제조사 하드웨어
 launch가 차체·센서·로봇 description과 TF를 제공하므로 시뮬레이션용 description을
 별도로 실행하지 않는다. 순찰은 기존 `malbut_autonomy/malbut_patrol`의 복사본이다.
 
@@ -55,22 +55,14 @@ CUDA 인식 확인은 아직 실제 YOLO/OSNet 추론 검증을 의미하지 않
 ```zsh
 source /opt/ros/humble/setup.zsh
 source ~/ros2_ws/install/setup.zsh
-# 현재 제조사 이미지의 navigation 하위 launch는 소스 폴더에만 있다.
-export need_compile=False
 ros2 pkg prefix slam
 ros2 pkg prefix navigation
 ```
 
-이 작업 브랜치가 **원격에 반영된 뒤**, 아직 clone하지 않은 경우:
-
-```zsh
-cd ~/ros2_ws/src
-git clone --branch feat/SWM25-169-robot-bringup \
-  https://github.com/SWM-malbut/malbut.git malbut
-```
-
-PR이 main에 병합된 뒤에는 `--branch ...`를 생략한다. 기존 clone이 있다면
-그 저장소의 변경 여부부터 확인하고 해당 브랜치를 받는다. 새 clone으로 덮어쓰지 않는다.
+Git 저장소는 별도 위치(예: `~/malbut`)에서 받고 그 안의 `malbut_test` 내용을
+위 위치에 복사한다. 전체 저장소를 `src/malbut`에 두는 방식도 지원하지만, 그때는
+아래 **소스 명령 경로에만** `/malbut_test`를 추가한다. 설치 경로는 동일하다.
+Bringup이 제조사 실행에 필요한 `need_compile=False`를 자체 설정한다.
 
 ROS 의존성을 준비한다. 없는 도구는 `python3-rosdep`,
 `python3-colcon-common-extensions`, `python3-venv`,
@@ -79,11 +71,11 @@ ROS 의존성을 준비한다. 없는 도구는 `python3-rosdep`,
 ```zsh
 cd ~/ros2_ws
 rosdep update
-rosdep install --from-paths src/malbut/malbut_test/malbut_* \
-  src/malbut/malbut_test/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} \
-  --ignore-src -r -y \
-  --skip-keys 'python3-torchvision-pip python3-ultralytics-pip'
-bash src/malbut/malbut_test/build.sh
+rosdep install --from-paths src/malbut/malbut_* \
+  src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} \
+  --ignore-src -r -y --rosdistro humble \
+  --skip-keys 'ament_python python3-torchvision-pip python3-ultralytics-pip'
+bash src/malbut/build.sh
 source ~/ros2_ws/install/malbut_test/local_setup.zsh
 ```
 
@@ -91,7 +83,7 @@ source ~/ros2_ws/install/malbut_test/local_setup.zsh
 YOLO 소스도 적용본 안에 있으므로 별도로 다운로드하지 않는다.
 메모리 부족 시 빌드 명령 뒤에 `--parallel-workers 1`을 붙일 수 있다.
 
-새 터미널마다 위 제조사 환경과 `need_compile=False`를 설정한 다음
+새 터미널마다 위 제조사 환경을 설정한 다음
 `source ~/ros2_ws/install/malbut_test/local_setup.zsh`를 실행한다.
 `ros2 pkg prefix malbut_bringup` 결과가 **`install/malbut_test/malbut_bringup`**
 아래인지 확인한다. 원본 패키지 경로라면 잘못된 overlay를 사용 중이다.
@@ -113,28 +105,33 @@ Bringup도 `robot_name=/`, `master_name=/`를 전달한다.
 ros2 launch malbut_bringup robot.launch.py perception:=false
 ```
 
-현재 실제 지도가 없으므로 센서 모드가 기본이다. 지도 작성 단계에서
-실행 환경이 **실시간 SLAM 지도·TF·Nav2를 제공한 뒤** 자동 탐색 서버를 켠다.
-이 서버는 [malbut_autoslam](malbut_autoslam/README.md)이며 SLAM·Nav2 자체를
-기동하지 않는다. 저장 지도를 요구하는 `mode:=navigation`은 지도 작성 후 사용한다.
+실제 지도가 없다면 센서-only 실행을 종료하고 다음 지도 작성 모드를 사용한다.
+아직 이동하지 않으며 [AutoSLAM](malbut_autoslam/README.md) 서버와 웹 패널만 켠다.
 
 ```zsh
-ros2 launch malbut_autoslam autoslam.launch.py use_sim_time:=false
+ros2 launch malbut_bringup robot.launch.py mode:=mapping web_panel:=true
 ```
 
-다른 터미널에서 요청하면 실제 로봇이 탐색을 시작한다:
+Mac에서 `http://<로봇-IP>:8766` 접속 → 터미널의 Access token 입력 →
+**자동 지도 만들기 시작**. 또는 다른 터미널에서:
 
 ```zsh
 ros2 action send_goal /autoslam malbut_interfaces/action/AutoSlam \
-  "{map_name: home}" --feedback
+  "{map_name: home2}" --feedback
 ```
+
+Goal을 받으면 누락된 차체·센서·SLAM·Nav2·스캔 정규화기를 기동하고 준비된 뒤
+탐색한다. 이미 온전히 실행 중인 구성은 재사용한다. AMCL/저장 지도 모드와
+동시 실행하거나 중복·불완전한 드라이버 구성은 거부한다. 종료 시 자기가 켠
+구성만 정리한다. 외부 실행을 임의로 죽이지 않는다.
 
 기본 저장 폴더는 Git 밖의 `~/.ros/malbut/maps`이며 서버의 `map_directory`로
 변경한다. 이미 있는 이름은 거부하므로 새 이름으로 요청한다.
 성공 결과의 `map_yaml`을 이후 Bringup의 `map` 인자로 사용한다. YAML과
-이미지가 모두 필요하다. SLAM과 Bringup이 같은 드라이버를 중복 실행하지 않게
-종료/재사용한다. 관리자를 통해 요청하려면 관리자뿐 아니라 `/autoslam` 서버도
-먼저 실행되어 있어야 한다. 센서/Navigation Bringup에서 자동으로 켜지는 서버는 아니다.
+이미지가 모두 필요하다. 관리자를 통해 요청하려면 관리자와 `/autoslam` 서버를
+함께 실행한다. 저장 지도 Navigation 모드와 실시간 SLAM은 동시에 사용하지 않는다.
+준비된 외부 SLAM을 그대로 쓸 때는 기존 scan 설정도 유지되므로, 스캔 정규화
+수정까지 적용하려면 기존 SLAM을 종료하고 위 Mapping 모드로 새로 시작한다.
 
 ## 3. 공유 인식 준비
 
@@ -142,7 +139,7 @@ ROS 빌드와 GPU 패키지 설치는 별개다. 다음은 로봇에서 필요�
 Bringup이 자동 실행하지 않는다. 이미 준비된 모델은 그대로 재사용할 수 있다.
 
 ```zsh
-cd ~/ros2_ws/src/malbut/malbut_test
+cd ~/ros2_ws/src/malbut
 bash malbut_yolo/scripts/prepare_runtime.sh
 bash malbut_reid/scripts/prepare_osnet_model.sh
 bash malbut_reid/scripts/prepare_inference_runtime.sh
@@ -171,12 +168,19 @@ ros2 launch malbut_bringup robot.launch.py publish_debug_image:=true
 
 ```zsh
 ros2 launch malbut_bringup robot.launch.py \
-  mode:=navigation map:="$HOME/.ros/malbut/maps/home.yaml"
+  mode:=navigation map:="$HOME/.ros/malbut/maps/home2.yaml" \
+  publish_debug_image:=true web_panel:=true
 ```
 
-공식 RViz에서 실제 초기 위치를 설정한다. 센서·TF·Nav2와 응용 서버가 준비되면
+같은 지도의 마지막 AMCL 위치가 있으면 초기 추정치로 한 번 복원한다. 위치는
+5초 주기로 `~/.ros/malbut/localization/last_pose.yaml`에 저장한다. 최초 실행이거나
+로봇을 꺼 둔 동안 옮겼다면 RViz의 **2D Pose Estimate**로 실제 위치를 지정한다.
+지도 YAML·이미지가 바뀌면 이전 위치는 복원하지 않는다.
+센서·TF·Nav2와 응용 서버가 준비되면
 관리자가 시작된다. 준비 검사기는 **부팅 확인용**이며 주행 안전감시기를 대체하지 않는다.
 아래 요청 전에는 로봇이 자동으로 순찰/추적을 시작하지 않는다.
+같은 웹 주소에서 영상 확인·추적·순찰·이 패널의 요청 취소가 가능하다.
+웹 취소는 비상 정지가 아니며, 브라우저 닫기나 Wi-Fi 끊김으로 주행이 정지하지 않는다.
 
 ```zsh
 ros2 action send_goal /malbut/mission/execute \
@@ -207,9 +211,29 @@ ros2 service call /malbut/mission/execute/_action/cancel_goal \
 추적의 Nav2 planner/controller/goal-checker ID와 여유값은
 `malbut_tracking/config/person_following.yaml`을 실제 Nav2와 대조한다.
 Nav2 공통 설정은 로봇에서 받은 파일을 `malbut_bringup/config/nav2_params.yaml`로
-복사했다. 변경은 기본 BT에 필요한 Spin/Wait/BackUp 활성화, 잘못된 숫자 표기
-수정, 임의의 초기 위치(0, 0, 0) 자동 설정 해제뿐이다. 실제 초기 위치는 RViz에서
-지정한다. 제조사 속도·가속도·costmap 설정은 유지한다.
+복사했다. 기본 BT의 Spin/Wait/BackUp, 숫자 표기와 임의의 원점 초기화를 정리했고,
+이번 실물 설정은 다음과 같다:
+
+- Local·Global 차체 반경 `0.18m`, 팽창 반경 `0.20m`.
+- 속도 smoother를 제조사 DWB와 동일한 전후 `0.4m/s`, 회전 `1.0rad/s` 및
+  가감속 제한으로 일치. 제조사 DWB의 횡이동 비활성 설정은 유지.
+- `/scan_raw`를 실제 각도 기준으로 `/scan_normalized`의 일정한 격자로 변환.
+  SLAM·AMCL·Nav2·사람 추적에서 사용. 빈 방향을 자유 공간으로 만들지 않는다.
+- LiDAR는 Local/Global 모두 표준 2D ObstacleLayer 사용.
+  스캔 토픽·관측 범위는 유지하며 LiDAR 전용 Voxel 저장·발행은 제거.
+- 두 costmap에 `/depth_cam/depth0/points` 기반 별도 VoxelLayer 연결.
+  바닥 위 `0.05~0.20m` 점을 장애물로 표시하며 바닥 관측은 지우기에만 사용.
+  사용자 확인 기본 구성과 제조사 높이 `0.166m`에 약 `0.034m` 여유를 둔
+  초기 상한이다. 실측·TF 확인이 끝난 값은 아니며 추가 장착 시 재검토한다.
+  Depth 저장 공간은 `0.03m × 16층 = 0.48m`다. Depth의
+  `-0.05~0.48m` 제거용 관측은 높은 선반을 장애물로 표시하지 않는다.
+
+5cm 바닥 기준은 실제 카메라 TF·바닥 높이로 검증할 필요가 있다. 5cm 미만,
+카메라 사각·최소 측정 거리·유리/반사체까지 검출된다는 의미는 아니다.
+스캔 정규화도 잘못된 드라이버 각도·TF·오도메트리까지 교정하지는 않는다.
+검토한 외부 binning 필터는 Humble 배포 여부와 동작 차이 때문에 그대로 교체하지 않았다.
+기존 구현 비교·Depth 표시/제거 설정의 근거는
+[Bringup 설명](malbut_bringup/README.md#기존-구현-검토)에 정리했다.
 다른 검토한 복사본은 `nav2_params_file`로 지정할 수 있다.
 현재 제조사 설치 폴더에는 navigation 하위 launch가 누락되어 있으므로
 `navigation_launch_file` 기본값은 기존

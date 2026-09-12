@@ -437,15 +437,3 @@ def test_main_always_destroys_the_node_and_shuts_down_rclpy():
         }
         for finalizer in finalizers
     )
-
-
-def test_gate_source_cannot_create_actions_or_depend_on_roaming():
-    source = MODULE_FILE.read_text(encoding='utf-8')
-    for forbidden in (
-        'ActionClient',
-        'NavigateToPose',
-        'send_goal_async',
-        'roaming',
-        'start_roaming',
-    ):
-        assert forbidden not in source

@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -22,6 +23,11 @@ jobs:
       ros: ${{ steps.modules.outputs.ros }}
       ros_full: ${{ steps.modules.outputs.ros_full }}
       homecam: ${{ steps.modules.outputs.homecam }}
+      agent: ${{ steps.modules.outputs.agent }}
+      assets: ${{ steps.modules.outputs.assets }}
+      ros_packages: ${{ steps.modules.outputs.ros_packages }}
+      ros_paths: ${{ steps.modules.outputs.ros_paths }}
+      ros_test_packages: ${{ steps.modules.outputs.ros_test_packages }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -35,7 +41,11 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          result="$(.github/scripts/detect-ci-modules.sh "$BASE_SHA")"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            result="$(.github/scripts/detect-ci-modules.sh --all)"
+          else
+            result="$(.github/scripts/detect-ci-modules.sh "$BASE_SHA")"
+          fi
           printf '%s\n' "$result"
           printf '%s\n' "$result" >> "$GITHUB_OUTPUT"
 
@@ -49,7 +59,7 @@ jobs:
 
       - name: Check changed Python files
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         shell: bash
         run: |
           if [ -n "$BASE_SHA" ]; then
@@ -103,7 +113,11 @@ jobs:
         if: needs.changes.outputs.web == 'true'
         run: npm run lint
 
-      - name: Build and test
+      - name: Build
+        if: needs.changes.outputs.web == 'true'
+        run: npm run build
+
+      - name: Test
         if: needs.changes.outputs.web == 'true'
         run: npm test
 
@@ -157,7 +171,7 @@ jobs:
     name: Agent Python tests
     runs-on: ubuntu-22.04
     needs: changes
-    if: needs.changes.outputs.ros == 'true'
+    if: needs.changes.outputs.agent == 'true'
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -181,7 +195,10 @@ jobs:
     needs: changes
     env:
       ROS_FULL: ${{ needs.changes.outputs.ros_full }}
-      AGENT_ROS_PACKAGES: malbut_interfaces malbut_agent_server malbut_system_manager malbut_stt malbut_tts
+      ROS_PACKAGES: ${{ needs.changes.outputs.ros_packages }}
+      ROS_PATHS: ${{ needs.changes.outputs.ros_paths }}
+      ROS_TEST_PACKAGES: ${{ needs.changes.outputs.ros_test_packages }}
+      ROS_ASSETS: ${{ needs.changes.outputs.assets }}
     steps:
       - name: Skip unchanged ROS packages
         if: needs.changes.outputs.ros != 'true'
@@ -196,7 +213,7 @@ jobs:
       # and ros-humble-nav2-bringup during rosdep install. Drop the versioned
       # LLVM copies so apt can resolve the plain libunwind-dev again.
       - name: Unblock libunwind-dev
-        if: needs.changes.outputs.ros_full == 'true'
+        if: needs.changes.outputs.ros == 'true'
         shell: bash
         run: |
           echo "installed libunwind packages before:"
@@ -260,31 +277,13 @@ jobs:
           rosdep update
           # ament_python is a colcon build type, not an installable ROS package.
           python3 -c 'import colcon_ros.task.ament_python.build'
-          if [ "$ROS_FULL" != 'true' ]; then
-            read -r -a agent_packages <<< "$AGENT_ROS_PACKAGES"
-            rosdep install --from-paths "${agent_packages[@]}" --ignore-src \
-              --rosdistro humble --skip-keys ament_python \
-              --dependency-types build --dependency-types buildtool \
-              --dependency-types build_export --dependency-types exec \
-              --dependency-types test -r -y
-            exit 0
-          fi
-          # Nested vendor packages need explicit paths below their owning package.
-          rosdep install --from-paths . \
-            malbut_yolo/vendor/yolo_ros/yolo_ros \
-            malbut_yolo/vendor/yolo_ros/yolo_msgs \
-            --ignore-src --rosdistro humble \
-            --skip-keys "ament_python python3-torchvision-pip python3-ultralytics-pip" \
-            --dependency-types build \
-            --dependency-types buildtool \
-            --dependency-types build_export \
-            --dependency-types exec \
-            --dependency-types test \
-            -r -y
-          rosdep install --from-paths malbut_autonomy/malbut_patrol --ignore-src \
+          read -r -a package_paths <<< "$ROS_PATHS"
+          rosdep install --from-paths "${package_paths[@]}" --ignore-src \
             --rosdistro humble \
-            --dependency-types test \
-            -r -y
+            --skip-keys "ament_python python3-torchvision-pip python3-ultralytics-pip" \
+            --dependency-types build --dependency-types buildtool \
+            --dependency-types build_export --dependency-types exec \
+            --dependency-types test -r -y
 
       - name: Build ROS packages
         if: needs.changes.outputs.ros == 'true'
@@ -294,37 +293,13 @@ jobs:
           # skips its optional uv sync when uv is not on the build PATH.
           export PATH=/usr/bin:/bin
           source /opt/ros/humble/setup.bash
-          if [ "$ROS_FULL" != 'true' ]; then
-            read -r -a agent_packages <<< "$AGENT_ROS_PACKAGES"
-            colcon build --symlink-install --base-paths "${agent_packages[@]}" \
-              --packages-select "${agent_packages[@]}"
-            exit 0
-          fi
-          colcon build --symlink-install --base-paths . \
-            malbut_yolo/vendor/yolo_ros/yolo_ros \
-            malbut_yolo/vendor/yolo_ros/yolo_msgs \
-            --packages-select \
-              yolo_msgs \
-              yolo_ros \
-              malbut_description \
-              malbut_gazebo_plugins \
-              malbut_gazebo \
-              malbut_interfaces \
-              malbut_roaming \
-              malbut_patrol \
-              malbut_agent_server \
-              malbut_stt \
-              malbut_tts \
-              malbut_scenarios \
-              malbut_yolo \
-              malbut_reid \
-              malbut_tracking \
-              malbut_system_manager \
-              malbut_autoslam \
-              malbut_bringup
+          read -r -a package_paths <<< "$ROS_PATHS"
+          read -r -a packages <<< "$ROS_PACKAGES"
+          colcon build --symlink-install --base-paths "${package_paths[@]}" \
+            --packages-select "${packages[@]}"
 
       - name: Verify Agent ROS test dependencies
-        if: needs.changes.outputs.ros == 'true'
+        if: needs.changes.outputs.agent == 'true'
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
@@ -344,52 +319,28 @@ jobs:
           assert (Path(prefix) / 'lib/malbut_agent_server/speech_receiver').is_file()
           PY
 
-      - name: Test patrol package
-        if: needs.changes.outputs.ros_full == 'true'
-        shell: bash
-        run: |
-          source /opt/ros/humble/setup.bash
-          source install/setup.bash
-          colcon test --base-paths . \
-            malbut_yolo/vendor/yolo_ros/yolo_ros \
-            malbut_yolo/vendor/yolo_ros/yolo_msgs \
-            --packages-select malbut_patrol
-          colcon test-result --verbose
 
-      - name: Run ROS package tests
+      - name: Run changed ROS package tests
         if: needs.changes.outputs.ros == 'true'
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
           source install/setup.bash
-          if [ "$ROS_FULL" != 'true' ]; then
-            read -r -a agent_packages <<< "$AGENT_ROS_PACKAGES"
-            colcon test --event-handlers console_direct+ \
-              --base-paths "${agent_packages[@]}" --packages-select "${agent_packages[@]}" \
-              --packages-skip malbut_agent_server
-            colcon test-result --verbose
-            exit 0
+          read -r -a package_paths <<< "$ROS_PATHS"
+          read -r -a test_packages <<< "$ROS_TEST_PACKAGES"
+          # Expensive triangle-by-route checks are needed only for changed
+          # scene/actor assets (or explicit full CI), not a web/launch edit.
+          if [ "$ROS_ASSETS" != 'true' ]; then
+            export PYTEST_ADDOPTS="--ignore=$GITHUB_WORKSPACE/malbut_gazebo/test/test_humanoid_route_collisions.py"
           fi
-          colcon test --event-handlers console_direct+ --base-paths . \
-            malbut_yolo/vendor/yolo_ros/yolo_ros \
-            malbut_yolo/vendor/yolo_ros/yolo_msgs \
-            --packages-select \
-              malbut_description \
-              malbut_gazebo \
-              malbut_roaming \
-              malbut_stt \
-              malbut_tts \
-              malbut_scenarios \
-              malbut_yolo \
-              malbut_reid \
-              malbut_tracking \
-              malbut_system_manager \
-              malbut_autoslam \
-              malbut_bringup
+          if [ "${#test_packages[@]}" -gt 0 ]; then
+            colcon test --event-handlers console_direct+ \
+              --base-paths "${package_paths[@]}" --packages-select "${test_packages[@]}"
+          fi
           colcon test-result --verbose
 
       - name: Run Agent ROS communication tests
-        if: needs.changes.outputs.ros == 'true'
+        if: needs.changes.outputs.agent == 'true'
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash

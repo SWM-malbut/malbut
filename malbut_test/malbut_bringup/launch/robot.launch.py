@@ -7,13 +7,13 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument, EmitEvent, GroupAction, IncludeLaunchDescription,
-    LogInfo, OpaqueFunction, RegisterEventHandler,
+    LogInfo, OpaqueFunction, RegisterEventHandler, SetEnvironmentVariable,
 )
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node, SetParameter
+from launch_ros.actions import Node, SetParameter, SetRemap
 
 
 def _file(value, label):
@@ -28,10 +28,11 @@ def _package_file(package, relative):
                  f'{package}/{relative}')
 
 
-def _include(path, arguments):
+def _include(path, arguments, remappings=()):
     # In particular, a child's generic "config" must not affect its siblings.
     return GroupAction([
         SetParameter('use_sim_time', False),
+        *[SetRemap(src=source, dst=destination) for source, destination in remappings],
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(path),
             launch_arguments={
@@ -46,11 +47,26 @@ def _setup(context):
         return LaunchConfiguration(name).perform(context)
 
     navigating = value('mode') == 'navigation'
+    mapping = value('mode') == 'mapping'
     perception = value('perception') == 'true'
     hardware = value('start_hardware') == 'true'
     navigation = value('start_navigation') == 'true'
     if navigating and not perception:
         raise RuntimeError('navigation mode requires perception for FollowPerson')
+
+    if mapping:
+        # AutoSLAM starts missing prerequisites on a Goal, not on page load.
+        actions = [_include(_package_file(
+            'malbut_autoslam', 'launch/autoslam.launch.py'), {
+                'auto_start': 'true', 'scan_topic': value('raw_scan_topic'),
+                'normalized_scan_topic': value('scan_topic'),
+                'odom_topic': value('odom_topic'),
+            })]
+        if value('web_panel') == 'true':
+            actions.append(Node(
+                package='malbut_bringup', executable='robot_web_panel',
+                name='robot_web_panel', output='screen'))
+        return actions
 
     # Validate paths before starting any child process. Never substitute a
     # small_house/test map or overwrite the vendor's calibration/parameters.
@@ -80,7 +96,29 @@ def _setup(context):
             'sim': 'false', 'robot_name': '/', 'master_name': '/',
         }))
     if navigation_path:
-        actions.append(_include(navigation_path, navigation_arguments))
+        actions.append(_include(navigation_path, navigation_arguments, remappings=[
+            ('/scan_normalized', value('scan_topic')),
+            ('/odom', value('odom_topic')),
+        ]))
+
+    if value('start_scan_adapter') == 'true':
+        actions.append(Node(
+            package='malbut_bringup', executable='scan_normalizer',
+            name='scan_normalizer', output='screen', parameters=[{
+                'use_sim_time': False, 'input_topic': value('raw_scan_topic'),
+                'output_topic': value('scan_topic'),
+            }]))
+    if navigating and value('map') and value('pose_memory') == 'true':
+        actions.append(Node(
+            package='malbut_bringup', executable='pose_memory',
+            name='pose_memory', output='screen', parameters=[{
+                'use_sim_time': False, 'map': value('map'),
+                'restore_pose': value('restore_pose') == 'true',
+            }]))
+    if value('web_panel') == 'true':
+        actions.append(Node(
+            package='malbut_bringup', executable='robot_web_panel',
+            name='robot_web_panel', output='screen'))
 
     if perception:
         options = {name: value(name) for name in (
@@ -176,6 +214,10 @@ def generate_launch_description():
         'mode': 'sensors',
         'start_hardware': 'true',
         'start_navigation': 'true',
+        'start_scan_adapter': 'true',
+        'pose_memory': 'true',
+        'restore_pose': 'true',
+        'web_panel': 'false',
         'perception': 'true',
         'hardware_launch_file': '',
         # The robot image installs only the top-level navigation launches.
@@ -189,7 +231,8 @@ def generate_launch_description():
         'rgb_topic': '/depth_cam/rgb0/image_raw',
         'depth_topic': '/depth_cam/depth0/image_raw',
         'camera_info_topic': '/depth_cam/rgb0/camera_info',
-        'scan_topic': '/scan_raw',
+        'raw_scan_topic': '/scan_raw',
+        'scan_topic': '/scan_normalized',
         'odom_topic': '/odom',
         'global_frame': 'map',
         'robot_frame': 'base_footprint',
@@ -210,13 +253,16 @@ def generate_launch_description():
         'sensor_timeout_s': '3.0',
     }
     choices = {
-        'mode': ['sensors', 'navigation'],
+        'mode': ['sensors', 'navigation', 'mapping'],
         **{key: ['true', 'false'] for key in (
             'start_hardware', 'start_navigation', 'perception',
-            'publish_debug_image',
+            'publish_debug_image', 'start_scan_adapter', 'pose_memory',
+            'restore_pose', 'web_panel',
         )},
     }
     return LaunchDescription([
+        # The supplied robot image keeps complete vendor launch includes in src.
+        SetEnvironmentVariable('need_compile', 'False'),
         *[DeclareLaunchArgument(
             key, default_value=default, choices=choices.get(key))
           for key, default in defaults.items()],

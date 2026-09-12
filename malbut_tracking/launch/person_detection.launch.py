@@ -1,5 +1,6 @@
 """Start shared YOLO, shared identity tracking, and RGB-D localization."""
 
+import os
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
@@ -18,7 +19,12 @@ def generate_launch_description():
     tracking_share = Path(get_package_share_directory('malbut_tracking'))
     yolo_share = Path(get_package_share_directory('malbut_yolo'))
     reid_share = Path(get_package_share_directory('malbut_reid'))
-    cache = Path.home() / '.cache/malbut_perception'
+    cache_root = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')).expanduser()
+    cache = cache_root / 'malbut_perception'
+    yolo_runtime = Path(os.environ.get(
+        'MALBUT_YOLO_RUNTIME', cache_root / 'malbut_yolo/runtime')).expanduser()
+    reid_runtime = Path(os.environ.get(
+        'MALBUT_REID_RUNTIME', cache_root / 'malbut_reid/runtime')).expanduser()
     defaults = {
         'config': str(tracking_share / 'config/person_detection.yaml'),
         'use_sim_time': 'false',
@@ -32,9 +38,8 @@ def generate_launch_description():
         'yolo_processing_trace_topic': '/perception/yolo_processing_trace',
         'model_path': str(cache / 'yolo26n.pt'),
         'device': 'cuda:0',
-        'python_executable': str(
-            Path.home() / '.cache/malbut_yolo/runtime/bin/python'
-        ),
+        'python_executable': str(yolo_runtime / 'bin/python'),
+        'reid_python_executable': str(reid_runtime / 'bin/python'),
         'reid_backend': 'auto',
         'reid_model_path': str(cache / 'osnet_ain_x1_0_msmt17.onnx'),
         'inference_backend': 'auto',
@@ -66,6 +71,7 @@ def generate_launch_description():
     reid_arguments['config'] = str(
         reid_share / 'config/person_reidentification.yaml'
     )
+    reid_arguments['python_executable'] = LaunchConfiguration('reid_python_executable')
     shared_nodes = [
         GroupAction([IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(share / 'launch' / filename)),

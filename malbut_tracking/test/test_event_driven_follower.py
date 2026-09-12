@@ -116,6 +116,28 @@ def test_nav2_distance_feedback_updates_the_dynamic_speed_cap():
     follower._publish_speed_limit.assert_called_once_with()
 
 
+def test_waiting_for_first_person_does_not_start_blind_search():
+    """A request without a first observation must not start recovery motion."""
+    follower = SimpleNamespace(
+        _loss_timer=Mock(),
+        _active_goal=object(),
+        _settings=SimpleNamespace(observation_loss_debounce_s=0.75),
+        _last_seen_s=None,
+        _state=FollowState.IDLE,
+        _now_seconds=Mock(),
+        _begin_loss_recovery=Mock(),
+        _publish_feedback=Mock(),
+    )
+
+    PersonFollowerNode._on_loss_timer(follower)
+
+    follower._loss_timer.cancel.assert_called_once_with()
+    follower._loss_timer.reset.assert_not_called()
+    follower._now_seconds.assert_not_called()
+    follower._begin_loss_recovery.assert_not_called()
+    follower._publish_feedback.assert_not_called()
+
+
 def test_loss_deadline_is_one_shot_and_starts_recovery_once():
     """An expired observation deadline replaces periodic loss polling."""
     follower = SimpleNamespace(

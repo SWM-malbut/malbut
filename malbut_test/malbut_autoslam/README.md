@@ -9,19 +9,36 @@ YAML·PGM을 저장한다.
 
 ## 실행
 
-**먼저 드라이버·실시간 SLAM·Nav2를 실행해야 한다.** `/map`, 로봇 TF,
-`/navigate_to_pose`가 필요하다. 저장 지도를 읽는 AMCL 실행이 아니라 지도를
-작성 중인 SLAM 환경이어야 한다. 이 패키지는 드라이버나 SLAM/주행 알고리즘을
-중복 기동하지 않는다. 기존 웹 자동 탐색기는 동시에 시작하지 않는다.
+실기기에서는 **아래 서버를 켜고 Goal을 요청하면 필요한 구성도 준비한다.**
+Goal을 받으면 ROS 그래프를 확인하고, 드라이버·실시간 SLAM·Nav2 중 없는 구성만
+`malbut_bringup/mapping_backend.launch.py`로 실행한다. 이미 실행 중인 구성은
+재사용한다. 센서·지도·TF 수신 및 Nav2 활성 상태를 확인한 뒤 탐색한다.
+기존 웹 자동 탐색기는 동시에 시작하지 않는다.
 
 ```bash
 ros2 launch malbut_autoslam autoslam.launch.py
 ```
 
 이 명령은 대기 중인 Action 서버와 지도 저장 서버만 켠다. 실제 로봇이 움직이는
-것은 아래 요청 이후다. 시뮬레이션에서는 `use_sim_time:=true`를 지정한다.
+것은 아래 요청 이후다. 완료·취소·실패하면 **이번 요청이 켠 구성만 종료**한다.
+시뮬레이션에서는 `use_sim_time:=true`를 지정한다. 이때는 자동 기동이 기본으로
+꺼지고 기존 시뮬레이션의 SLAM·Nav2를 그대로 사용한다.
 환경이 다르면 `map_topic`, `base_frame`, `navigation_action`, `map_directory`를
 launch 인자로 지정한다. 기본 저장 폴더는 `~/.ros/malbut/maps`다.
+
+이미 별도로 준비한 매핑 구성을 그대로 사용할 때는 다음과 같이 실행한다.
+
+```bash
+ros2 launch malbut_autoslam autoslam.launch.py auto_start:=false
+```
+
+자동 기동은 실기기의 제조사 드라이버와 `slam_toolbox`/Nav2 구성용이다.
+AMCL·저장 지도 서버가 켜져 있으면 매핑으로 임의 전환하지 않고 오류를 반환한다.
+기존 주행 Bringup을 먼저 종료해야 한다. 알 수 없는 지도 발행자, 중복 발행자,
+일부만 켜진 하드웨어도 임의로 덧붙이지 않는다. 사용자 정의 매핑 시스템은
+`auto_start:=false`로 외부에서 준비한다. `scan_topic`과 `odom_topic`은 실제
+드라이버 토픽이며, 자동 기동 SLAM/Nav2는 `normalized_scan_topic`을 사용한다.
+자동 기동 로그는 `~/.ros/malbut/autoslam/mapping-*.log`에 남는다.
 
 관리자 없이 직접 실행:
 
@@ -60,11 +77,16 @@ ros2 action send_goal /malbut/mission/execute \
 - 갈 수 없는 경계, 반복 방문해도 변하지 않는 경계는 기존 방식대로 제외한다.
 - 같은 서버의 중복 요청은 거부한다. Manifest는 `FOREGROUND/NORMAL/[BASE]`다.
 - 취소·선점·Ctrl+C 시 하위 Nav2 Goal을 취소하고 **실제 종료까지 기다린다**.
-  응답이 불명확하면 이동이 끝났다고 간주해 새 작업을 받지 않는다.
+  외부 Nav2의 응답이 불명확하면 이동이 끝났다고 간주해 새 작업을 받지 않는다.
+  직접 기동한 Nav2가 취소에 응답하지 않으면 준비 제한 시간 후 소유한 프로세스
+  그룹만 종료한다. 종료는 SIGINT → SIGTERM → SIGKILL 순으로 제한 시간을 두며,
+  다른 터미널의 프로세스에는 신호를 보내지 않는다.
 - 저장 요청은 취소 불가능한 Service이므로 이미 저장 중이면 응답 후 취소를
   완료한다. 이때 저장된 파일은 남고 `map_yaml`로 반환한다.
+  서버 자체를 Ctrl+C로 종료하면 지도 저장 서버도 함께 종료될 수 있으므로,
+  응답이 없을 때는 저장 성공을 보고하지 않고 저장 결과 미확인으로 종료·정리한다.
 - 지도 작성과 저장이 끝나도 외부에서 실행한 SLAM·Nav2는 이 Action이 끄지 않는다.
-  이후 운영자가 매핑 실행을 종료하고, 반환받은 `map_yaml`로 주행 Bringup을 실행한다.
+  외부 매핑 구성이 남았다면 종료하고 반환받은 `map_yaml`로 주행 Bringup을 실행한다.
 - 저장 대상은 주행용 2D 지도이며 웹 방 라벨 생성·클라우드 업로드·pose graph 저장은
   포함하지 않는다. 기존 웹 지도 작성 기능은 별도로 유지한다.
 
@@ -73,6 +95,7 @@ ros2 action send_goal /malbut/mission/execute \
 - `frontier.py`: 기존 탐색 경계 추출·정렬과 지도 통계. 기존 Gazebo 웹 코드도
   이 공통 구현을 재사용한다.
 - `autoslam_node.py`: Action 수명주기, Nav2 호출·취소, 지도 저장.
+- `runtime.py`: 중복·저장 지도 충돌 검사, 요청 소유 프로세스 기동·정리.
 - `launch/autoslam.launch.py`: Action 서버와 공식 Nav2 지도 저장 서버 실행.
 
 탐색 주기는 `exploration_period_s=1.0`, 종료 확인 시간은 기존처럼
@@ -80,6 +103,9 @@ ros2 action send_goal /malbut/mission/execute \
 `minimum_goal_distance_m=0.45`, `minimum_frontier_cells=8`도 기존 탐색 기준이다.
 통신 준비·지도/TF 신선도·개별 이동 제한은 각각 `ready_timeout_s`,
 `map_timeout_s`, `tf_timeout_s`, `navigation_timeout_s`로 조정한다.
+`ready_timeout_s`는 launch 인자로도 설정할 수 있다. 부모 launch의 종료 유예도
+같은 값에 프로세스 정리 시간을 더해 적용하므로, Ctrl+C가 Action 서버를 먼저
+강제 종료해 자동 기동한 매핑 프로세스를 남기지 않도록 한다.
 전체 탐색 시간에는 제한이 없다. 대기 중에는 프론티어 계산이나 이동을 하지 않는다.
 
 단위·모의 ROS 테스트는 실제 로봇의 탐색 품질 검증이 아니다. 실제 운행 전에는

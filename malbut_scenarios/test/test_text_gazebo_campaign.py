@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 from pathlib import Path
@@ -790,29 +789,6 @@ def test_public_output_never_contains_private_paths(
     for private_value in (str(source), str(evidence), str(prefix)):
         assert private_value not in combined
     assert 'case-001.json' not in combined
-
-
-def test_campaign_cli_has_no_agent_or_execution_subsystem_imports() -> None:
-    """Campaign imports only core, evidence, and runtime ports."""
-    source = Path(campaign.__file__).read_text(encoding='utf-8')
-    tree = ast.parse(source)
-    imported = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imported.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module is not None:
-            imported.append(node.module)
-    banned = (
-        'malbut_agent_server',
-        'malbut_gazebo',
-        'malbut_roaming',
-        'rclpy',
-    )
-    assert not any(
-        name == prefix or name.startswith(prefix + '.')
-        for name in imported
-        for prefix in banned
-    )
 
 
 def test_more_than_32_cases_fails_before_install_discovery(

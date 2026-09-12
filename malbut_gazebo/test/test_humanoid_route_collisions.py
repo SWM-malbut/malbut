@@ -1,6 +1,7 @@
 """Validate the humanoid route against all Small House scene geometry."""
 
 import ast
+from functools import lru_cache
 import math
 import re
 from pathlib import Path
@@ -256,7 +257,9 @@ def _cross(origin, first, second):
     )
 
 
+@lru_cache(maxsize=1)
 def _scene_triangles():
+    # All routes inspect the same unchanged assets in this pytest process.
     world = ElementTree.parse(WORLD_FILE).getroot().find('world')
     triangles = []
     for include in world.findall('include'):
@@ -311,11 +314,15 @@ def _scene_triangles():
                 if max(heights) < 0.10 or min(heights) > 1.90:
                     continue
                 triangles.append(
-                    (name, [(point[0], point[1]) for point in world_triangle])
+                    (
+                        name,
+                        tuple((point[0], point[1]) for point in world_triangle),
+                    )
                 )
-    return triangles
+    return tuple(triangles)
 
 
+@lru_cache(maxsize=1)
 def _scene_spheres():
     world = ElementTree.parse(WORLD_FILE).getroot().find('world')
     spheres = []
@@ -360,7 +367,7 @@ def _scene_spheres():
             if center_z + radius < 0.10 or center_z - radius > 1.90:
                 continue
             spheres.append((name, center, radius))
-    return spheres
+    return tuple(spheres)
 
 
 def _point_segment_distance(point, start, end):
@@ -441,7 +448,7 @@ def _route_to_triangle_distance(start, end, triangle):
         end, triangle
     ):
         return 0.0
-    edges = zip(triangle, triangle[1:] + [triangle[0]])
+    edges = zip(triangle, triangle[1:] + triangle[:1])
     return min(
         _segment_distance(start, end, edge_start, edge_end)
         for edge_start, edge_end in edges
