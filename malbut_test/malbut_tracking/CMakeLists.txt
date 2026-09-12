@@ -49,13 +49,6 @@ install(DIRECTORY config launch
 )
 install(FILES README.md DESTINATION share/${PROJECT_NAME})
 
-if(BUILD_TESTING)
-  find_package(ament_cmake_pytest REQUIRED)
-  ament_add_pytest_test(tracking_contracts test
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    APPEND_ENV PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}
-    TIMEOUT 120
-  )
-endif()
+# Unit tests live in the original package, not in this deployment copy.
 
 ament_package()

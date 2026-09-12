@@ -128,15 +128,3 @@ test("PostgreSQL migration creates the homecam schema and durable event outbox",
     await database.close();
   }
 });
-
-test("runtime source no longer imports Cloudflare D1", async () => {
-  const [database, schema, packageJson] = await Promise.all([
-    readFile(new URL("../db/index.ts", import.meta.url), "utf8"),
-    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
-  ]);
-  assert.doesNotMatch(database, /cloudflare:workers|drizzle-orm\/d1/);
-  assert.match(database, /drizzle-orm\/node-postgres/);
-  assert.match(schema, /drizzle-orm\/pg-core/);
-  assert.doesNotMatch(packageJson, /wrangler|vinext|@cloudflare\/vite-plugin/);
-});

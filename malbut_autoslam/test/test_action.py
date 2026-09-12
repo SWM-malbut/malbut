@@ -27,6 +27,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from tf2_ros import TransformBroadcaster
 
 from malbut_autoslam.autoslam_node import AutoSlamNode, Navigation, map_base
+from malbut_autoslam.runtime import RuntimeGraph
 
 
 TIMEOUT_S = 6.0
@@ -263,6 +264,141 @@ def test_missing_navigation_backend_returns_failure(system_factory):
     assert not result.result.success
     assert 'prerequisites not ready' in result.result.message
     assert not system.backend.save_requests
+
+
+@pytest.fixture
+def mock_startup(system_factory, monkeypatch):
+    """Keep real Action handling but replace every process operation with a mock."""
+    runtime = Mock(process=None, log_path=None)
+    runtime.components = {}
+    monkeypatch.setattr('malbut_autoslam.autoslam_node.OwnedRuntime', lambda _path: runtime)
+
+    def create(**settings):
+        system = system_factory(auto_start=True, **settings)
+        monkeypatch.setattr(system.node, '_runtime_graph', lambda: RuntimeGraph(
+            (), (), (), (), (), False))
+        # The backend's map and TF are real ROS messages, but it has no real
+        # hardware or lifecycle nodes. Unit tests cover those readiness checks.
+        monkeypatch.setattr(system.node, '_check_sensor_updates', lambda: None)
+        monkeypatch.setattr(system.node, '_wait_active_navigation', lambda *_args: None)
+        return system, runtime
+
+    return create
+
+
+def test_action_starts_missing_runtime_and_cleans_it_before_result(mock_startup):
+    """A successful public request owns preparation and teardown around exploration."""
+    system, runtime = mock_startup()
+    handle = system.request()
+    result = _result(handle.get_result_async())
+    assert result.status == GoalStatus.STATUS_SUCCEEDED
+    runtime.acquire.assert_called_once_with()
+    runtime.start.assert_called_once()
+    assert all(runtime.start.call_args.args[0].values())
+    runtime.close.assert_called_once_with()
+    assert system.node.runtime is None
+
+
+def test_startup_failure_cleans_only_owned_runtime(mock_startup):
+    """Failed backend startup never sends a navigation Goal or saves a map."""
+    system, runtime = mock_startup()
+    runtime.start.side_effect = RuntimeError('missing factory launch')
+    result = _result(system.request().get_result_async())
+    assert result.status == GoalStatus.STATUS_ABORTED
+    assert 'missing factory launch' in result.result.message
+    runtime.close.assert_called_once_with()
+    assert not system.backend.started.is_set()
+    assert system.backend.save_requests == []
+
+
+def test_saved_map_conflict_does_not_start_or_stop_external_nodes(mock_startup, monkeypatch):
+    """The active localization mode is never replaced implicitly by mapping."""
+    system, runtime = mock_startup()
+    monkeypatch.setattr(system.node, '_runtime_graph', lambda: RuntimeGraph(
+        ('/amcl',), (), (), (), (), True))
+    result = _result(system.request().get_result_async())
+    assert result.status == GoalStatus.STATUS_ABORTED
+    assert 'Saved-map localization' in result.result.message
+    runtime.start.assert_not_called()
+    runtime.close.assert_called_once_with()
+
+
+def test_cancel_during_backend_readiness_shuts_owned_launch(mock_startup):
+    """Cancellation while waiting for Nav2 does not leak the mapping launch."""
+    system, runtime = mock_startup(navigation=False)
+    handle = system.request()
+    _wait_until(lambda: runtime.start.called)
+    assert _result(handle.cancel_goal_async()).goals_canceling
+    result = _result(handle.get_result_async())
+    assert result.status == GoalStatus.STATUS_CANCELED
+    runtime.close.assert_called_once_with()
+    assert system.backend.save_requests == []
+
+
+def test_active_external_navigation_goal_is_not_preempted(mock_startup):
+    """Direct AutoSLAM startup must not steal a running external Nav2 Goal."""
+    system, runtime = mock_startup()
+    system.node.navigation_busy = True
+    result = _result(system.request().get_result_async())
+    assert result.status == GoalStatus.STATUS_ABORTED
+    assert 'active goal' in result.result.message
+    runtime.start.assert_not_called()
+    assert not system.backend.started.is_set()
+
+
+def test_unconfirmed_runtime_cleanup_holds_action_until_owned_processes_stop(mock_startup):
+    """Keep the manager's BASE ownership when runtime termination is uncertain."""
+    system, runtime = mock_startup()
+    attempted, release = Event(), Event()
+
+    def close():
+        attempted.set()
+        if not release.is_set():
+            raise RuntimeError('owned group still alive')
+
+    runtime.close.side_effect = close
+    handle = system.request()
+    result = handle.get_result_async()
+    try:
+        assert attempted.wait(TIMEOUT_S)
+        assert not result.done()
+        assert system.node.busy
+        assert not system.request('other').accepted
+    finally:
+        release.set()
+    assert _result(result).status == GoalStatus.STATUS_SUCCEEDED
+    assert system.node.runtime is None
+
+
+def test_server_stop_during_unanswered_save_still_cleans_owned_mapping(mock_startup, monkeypatch):
+    """Parent launch stopping MapSaver cannot leave the owned mapping process orphaned."""
+    system, runtime = mock_startup()
+    save = Mock(return_value=Future())
+    monkeypatch.setattr(system.node.saver, 'call_async', save)
+    handle = system.request()
+    result = handle.get_result_async()
+    _wait_until(lambda: save.called)
+    assert not result.done()
+    system.node.stopping.set()  # The same flag set by the server's SIGINT handler.
+    outcome = _result(result)
+    assert outcome.status == GoalStatus.STATUS_ABORTED
+    assert not outcome.result.success
+    assert 'save result is unconfirmed' in outcome.result.message
+    assert outcome.result.map_yaml == ''
+    runtime.close.assert_called_once_with()
+
+
+def test_live_hardware_readiness_requires_both_sensor_updates(system_factory):
+    """Topic discovery alone is not enough to allow motion on the real robot."""
+    system = system_factory()
+    system.node.settings['auto_start'] = True
+    with pytest.raises(RuntimeError, match='fresh LiDAR and odometry'):
+        system.node._check_sensor_updates()
+    system.node.scan_received_at = time.monotonic()
+    with pytest.raises(RuntimeError, match='fresh LiDAR and odometry'):
+        system.node._check_sensor_updates()
+    system.node.odom_received_at = time.monotonic()
+    system.node._check_sensor_updates()
 
 
 def test_cancel_before_late_navigation_acceptance_keeps_ownership():

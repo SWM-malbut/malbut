@@ -41,12 +41,42 @@ def test_ready_requires_data_and_transforms(monkeypatch):
     node.check()
     assert not node.ready
     node.seen['rgb'] = 10.0
+    node.frames['rgb'] = 'camera_optical'
     node.tf.can_transform.return_value = False
     node.check()
     assert not node.ready
     node.tf.can_transform.return_value = True
     node.check()
     assert node.ready
+
+
+def test_disconnected_depth_frame_is_not_ready(monkeypatch):
+    """Receiving images alone cannot prove they can be used by the localizer."""
+    node = _node(monkeypatch)
+    node.seen['depth'] = 10.0
+    node.frames['depth'] = 'depth_optical'
+    node.tf.can_transform.side_effect = lambda base, frame, stamp: frame != 'depth_optical'
+    node.check()
+    assert not node.ready
+    node.tf.can_transform.side_effect = None
+    node.check()
+    assert node.ready
+
+
+def test_restarted_lifecycle_server_can_be_queried_again(monkeypatch):
+    """Do not wait forever on an unanswered request to an exited server."""
+    node = _node(monkeypatch)
+    pending = Future()
+    service = Mock()
+    service.service_is_ready.return_value = False
+    node.lifecycle['controller_server'] = [service, pending, False]
+    node.check()
+    assert pending.cancelled()
+    assert node.lifecycle['controller_server'][1] is None
+    assert not node.ready
+    service.service_is_ready.return_value = True
+    node.check()
+    service.call_async.assert_called_once()
 
 
 def test_old_sensor_message_does_not_count_as_fresh_data(monkeypatch):

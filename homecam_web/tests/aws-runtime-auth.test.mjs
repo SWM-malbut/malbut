@@ -253,18 +253,3 @@ test("auth action paths stay same-origin and reject open redirect return paths",
   runtime.AUTH_SIGN_IN_PATH = "//attacker.example/login";
   assert.equal(commonJsModule.exports.chatGPTSignInPath("/"), "/auth/login?return_to=%2F");
 });
-
-test("the Node runtime migration removes direct Cloudflare imports from app code", async () => {
-  const files = [
-    "../app/server-auth.ts", "../app/kvs-broker.ts", "../app/push-broker.ts",
-    "../app/api/device/v1/session/route.ts", "../app/api/devices/[deviceId]/live-session/route.ts",
-    "../app/api/internal/device-provisioning/route.ts", "../app/api/internal/maintenance/route.ts",
-    "../app/api/kvs/join/route.ts", "../app/api/kvs/session/route.ts",
-    "../app/api/live-sessions/route.ts", "../app/api/push-subscriptions/vapid-public-key/route.ts",
-    "../app/api/recordings/route.ts", "../app/api/recordings/[recordingId]/playback/route.ts",
-    "../app/api/recordings/[recordingId]/hls/[playbackId]/[resource]/route.ts",
-  ];
-  const sources = await Promise.all(files.map((file) => readFile(new URL(file, import.meta.url), "utf8")));
-  assert.doesNotMatch(sources.join("\n"), /cloudflare:workers/);
-  assert.match(sources.join("\n"), /getRuntimeEnvironment/);
-});

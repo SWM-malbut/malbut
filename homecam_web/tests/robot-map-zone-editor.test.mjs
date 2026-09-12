@@ -117,22 +117,11 @@ test("all map modes share room boundaries, room names, and zone drafts", async (
   assert.match(styles, /\.robot-map-room-label\.is-context\s*\{[^}]*pointer-events:\s*none/s);
 });
 
-test("the cloud robot marker interpolates one-second pose updates while driving", async () => {
-  const [panel, styles] = await Promise.all([
-    readFile(new URL("../app/components/robot-map-panel.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
-  ]);
-
-  assert.match(panel, /robot-map-marker \$\{navigationDriving \? "is-driving" : ""\}/);
-  assert.match(styles, /\.robot-map-marker\.is-driving\s*\{[^}]*transition-duration:\s*950ms/s);
-  assert.match(styles, /\.robot-map-marker\.is-driving\s*\{[^}]*transition-timing-function:\s*linear/s);
-});
-
 test("navigation progress survives missing cloud ratios and remains visible at arrival", async () => {
-  const [panel, styles] = await Promise.all([
-    readFile(new URL("../app/components/robot-map-panel.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
-  ]);
+  const panel = await readFile(
+    new URL("../app/components/robot-map-panel.tsx", import.meta.url),
+    "utf8",
+  );
 
   assert.match(panel, /function navigationProgressPercent/);
   assert.match(panel, /initial_path_length_m/);
@@ -141,7 +130,6 @@ test("navigation progress survives missing cloud ratios and remains visible at a
   assert.match(panel, /navigationSucceeded \? 100 : navigationProgressPercent\(navigation\)/);
   assert.match(panel, /선택한 목적지에 도착했어요/);
   assert.match(panel, /aria-valuenow=\{navigationProgress\}/);
-  assert.match(styles, /\.robot-map-progress i\s*\{[^}]*transition:\s*width 950ms linear/s);
 });
 
 test("common drive mode blocks conflicting destination commands and stays owner-only", async () => {

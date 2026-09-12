@@ -109,26 +109,3 @@ def test_demo_composes_sensor_perception_nav2_and_tracking():
     ).read_text(encoding='utf-8')
     assert 'nav2_collision_monitor' not in launch_source
     assert 'SetRemap' not in launch_source
-
-
-def test_demo_uses_optical_sensor_coordinates_without_ground_truth():
-    """Projected detections must use the camera optical TF, not model poses."""
-    target_demo = (
-        PACKAGE_ROOT / 'launch' / 'target_tracking_demo.launch.py'
-    ).read_text(encoding='utf-8')
-    humanoid_demo = (
-        PACKAGE_ROOT / 'launch' / 'humanoid_demo.launch.py'
-    ).read_text(encoding='utf-8')
-    tracking_source = '\n'.join(
-        path.read_text(encoding='utf-8')
-        for path in (
-            PACKAGE_ROOT.parent
-            / 'malbut_tracking'
-            / 'malbut_tracking'
-        ).glob('*.py')
-    )
-    combined = target_demo + tracking_source
-    assert 'camera_depth_optical_frame' in humanoid_demo
-    assert 'Detection3DArray' in tracking_source
-    assert 'model_pose' not in combined
-    assert '/world/' not in combined

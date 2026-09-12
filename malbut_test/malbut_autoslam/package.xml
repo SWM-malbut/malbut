@@ -8,6 +8,8 @@
   <buildtool_depend>ament_python</buildtool_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>action_msgs</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>nav2_msgs</exec_depend>
   <exec_depend>nav2_map_server</exec_depend>
@@ -18,10 +20,5 @@
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>launch</exec_depend>
-  <test_depend>python3-pytest</test_depend>
-  <test_depend>python3-yaml</test_depend>
-  <test_depend>malbut_system_manager</test_depend>
-  <test_depend>ament_flake8</test_depend>
-  <test_depend>ament_pep257</test_depend>
   <export><build_type>ament_python</build_type></export>
 </package>

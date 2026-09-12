@@ -29,9 +29,10 @@ npm test
 npm audit --audit-level=high
 ```
 
-`npm test`는 Next.js production build, 인증·스트리밍 계약 테스트와 PGlite를
-사용한 PostgreSQL 스키마·이벤트 outbox 테스트를 실행합니다. 실제 RDS 통합은
-배포된 개발 스택에서 별도로 smoke test합니다.
+`npm test`는 빌드 없이 인증·스트리밍 계약 테스트와 PGlite를 사용한 PostgreSQL
+스키마·이벤트 outbox 테스트를 실행합니다. `npm run test:full`은 Next.js production
+build까지 함께 검증합니다. 실제 RDS 통합은 배포된 개발 스택에서 별도로 smoke
+test합니다.
 
 ## AWS 런타임
 

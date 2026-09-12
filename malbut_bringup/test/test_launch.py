@@ -18,20 +18,22 @@ ROOT = Path(__file__).parents[2]
 
 
 @pytest.fixture
-def launch_module(tmp_path):
+def launch_module(tmp_path, monkeypatch):
     """Supply fake vendor assets, but use the real Malbut launch files."""
     for name in ('slam/launch/include/robot.launch.py',
-                 'navigation/launch/include/bringup.launch.py',
-                 'navigation/config/nav2_params.yaml'):
+                 'home/ros2_ws/src/navigation/launch/include/bringup.launch.py'):
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text('')
+        path.write_text('from launch import LaunchDescription\n'
+                        'def generate_launch_description():\n'
+                        '    return LaunchDescription()\n')
     source = ROOT / 'malbut_bringup/launch/robot.launch.py'
     spec = importlib.util.spec_from_file_location('robot_launch', source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    monkeypatch.setattr(module.Path, 'home', lambda: tmp_path / 'home')
     module.get_package_share_directory = lambda name: str(
-        ROOT / ('malbut_autonomy/' + name if name == 'malbut_patrol' else name)
+        (ROOT / name if (ROOT / name).is_dir() else ROOT / 'malbut_autonomy' / name)
         if name.startswith('malbut_') else tmp_path / name)
     return module
 
@@ -59,6 +61,8 @@ def test_default_without_map_only_starts_hardware_and_perception(launch_module):
     assert len(includes) == 2
     options = [dict(item.launch_arguments) for item in includes]
     assert options[0]['sim'] == 'false'
+    assert options[0]['robot_name'] == '/'
+    assert options[0]['master_name'] == '/'
     assert options[1]['reid_backend'] == 'osnet'
     assert not any(isinstance(action, Node)
                    and action.node_package == 'malbut_system_manager'
@@ -71,7 +75,32 @@ def test_hardware_only_does_not_require_vendor_or_gpu_install(launch_module):
     context = _context(launch_module, start_hardware='false', perception='false')
     actions = launch_module._setup(context)
     assert _includes(actions) == []
-    assert len([item for item in actions if isinstance(item, Node)]) == 1
+    assert len([item for item in actions if isinstance(item, Node)]) == 2
+
+
+def test_mapping_only_prepares_idle_autoslam_and_optional_web(launch_module):
+    """Leave hardware startup to the AutoSLAM Goal, with no navigation manager."""
+    context = _context(launch_module, mode='mapping', web_panel='true',
+                       raw_scan_topic='/laser_raw', scan_topic='/laser_fixed')
+    actions = launch_module._setup(context)
+    includes = _includes(actions)
+    assert len(includes) == 1
+    options = dict(includes[0].launch_arguments)
+    assert options['auto_start'] == 'true'
+    assert options['scan_topic'] == '/laser_raw'
+    assert options['normalized_scan_topic'] == '/laser_fixed'
+    assert options['use_sim_time'] == 'false'
+    assert [item.node_executable for item in actions if isinstance(item, Node)] == [
+        'robot_web_panel']
+
+
+def test_external_scan_adapter_is_not_duplicated(launch_module):
+    """An explicitly reused scan adapter is not started twice."""
+    context = _context(launch_module, start_hardware='false', perception='false',
+                       start_scan_adapter='false')
+    actions = launch_module._setup(context)
+    assert [item.node_executable for item in actions if isinstance(item, Node)] == [
+        'wait_for_robot']
 
 
 def test_navigation_requires_explicit_real_map(launch_module):
@@ -92,8 +121,12 @@ def test_navigation_keeps_each_child_scoped_and_wall_timed(launch_module, tmp_pa
     assert all(item['use_sim_time'] == 'false' for item in options)
     nav = next(item for item in options if 'map' in item)
     assert nav['map'] == str(map_path)
-    assert nav['params_file'].endswith('navigation/config/nav2_params.yaml')
+    assert nav['params_file'].endswith('malbut_bringup/config/nav2_params.yaml')
     assert nav['use_namespace'] == 'false'
+    nav_source = includes[1].launch_description_source
+    nav_source.get_launch_description(context)
+    assert nav_source.location.endswith(
+        'home/ros2_ws/src/navigation/launch/include/bringup.launch.py')
     assert sum('model_path' in item for item in options) == 1
     assert sum('scan_topic' in item for item in options) == 1
     for group in [item for item in actions if isinstance(item, GroupAction)]:
@@ -101,6 +134,13 @@ def test_navigation_keeps_each_child_scoped_and_wall_timed(launch_module, tmp_pa
     assert not any(isinstance(action, Node)
                    and action.node_package == 'malbut_system_manager'
                    for action in actions)
+
+    assert any(isinstance(action, Node) and action.node_executable == 'pose_memory'
+               for action in actions)
+    disabled = launch_module._setup(_context(
+        launch_module, mode='navigation', map=str(map_path), pose_memory='false'))
+    assert not any(isinstance(action, Node) and action.node_executable == 'pose_memory'
+                   for action in disabled)
 
 
 def test_external_navigation_does_not_load_another_map_or_nav2(launch_module):
@@ -118,7 +158,8 @@ def test_manager_only_starts_after_successful_readiness(
     context = _context(launch_module, mode='navigation', start_hardware='false',
                        start_navigation='false')
     actions = launch_module._setup(context)
-    wait = next(item for item in actions if isinstance(item, Node))
+    wait = next(item for item in actions if isinstance(item, Node)
+                and item.node_executable == 'wait_for_robot')
     event = ProcessExited(action=wait, name='bringup_readiness', cmd=[],
                           cwd=None, env=None, pid=1, returncode=returncode)
     result = []

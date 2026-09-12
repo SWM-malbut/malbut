@@ -40,11 +40,6 @@
   <exec_depend>nav2_collision_monitor</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
 
-  <test_depend>ament_flake8</test_depend>
-  <test_depend>ament_cmake_pytest</test_depend>
-  <test_depend>ament_pep257</test_depend>
-  <test_depend>python3-pytest</test_depend>
-  <test_depend>python3-yaml</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

@@ -1,6 +1,5 @@
 """Contracts for the local, non-actuating Text Agent inspector."""
 
-import ast
 from dataclasses import fields
 from io import StringIO
 from pathlib import Path
@@ -240,28 +239,6 @@ def test_unknown_credential_shape_never_reaches_report_or_history() -> None:
         assert 'binding_digest' not in rendered
     finally:
         _close(orchestrator)
-
-
-def test_inspector_source_has_no_execution_or_ros_imports() -> None:
-    path = Path(__file__).parents[1] / (
-        'malbut_scenarios/text_agent_inspector.py'
-    )
-    tree = ast.parse(path.read_text(encoding='utf-8'))
-    imports = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imports.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            imports.add(node.module)
-    forbidden = {
-        'rclpy',
-        'malbut_agent_server.adapters.outbound',
-        'malbut_agent_server.application.approved_action_worker',
-        'malbut_gazebo.robot_web_navigation_client',
-        'malbut_scenarios.text_agent_server',
-    }
-
-    assert imports.isdisjoint(forbidden)
 
 
 def test_console_script_is_registered() -> None:

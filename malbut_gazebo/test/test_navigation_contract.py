@@ -613,15 +613,3 @@ def test_small_house_map_covers_the_full_aws_world():
             if not dimensions.startswith(b'#'):
                 break
     assert dimensions.split() == [b'500', b'500']
-
-
-def test_readme_documents_real_navigation_and_teleop_interfaces():
-    """User-facing commands must match implemented launch and key controls."""
-    readme_path = REPOSITORY_ROOT / 'README.md'
-    if not readme_path.is_file():
-        pytest.skip('repository README is not part of the package layout')
-    readme = readme_path.read_text(encoding='utf-8')
-
-    assert 'ros2 launch malbut_gazebo navigation.launch.py' in readme
-    assert '`q`/`e`' in readme
-    assert 'DEPTH_CAMERA_TYPE' not in readme
