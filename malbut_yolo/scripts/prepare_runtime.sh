@@ -52,9 +52,16 @@ PY
 model_dir="${XDG_CACHE_HOME:-$HOME/.cache}/malbut_perception"
 mkdir -p "$model_dir"
 model_path="$model_dir/yolo26n.pt"
-if [[ ! -f "$model_path" ]]; then
+model_sha256=9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef
+if [[ ! -f "$model_path" ]] || \
+  ! echo "$model_sha256  $model_path" | sha256sum --check --status; then
+  model_download="$(mktemp "$model_dir/.yolo26n.XXXXXX")"
+  trap 'rm -f -- "$model_download"' EXIT
   curl --fail --location --retry 3 \
     https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n.pt \
-    --output "$model_path"
+    --output "$model_download"
+  echo "$model_sha256  $model_download" | sha256sum --check
+  mv -- "$model_download" "$model_path"
+  trap - EXIT
 fi
-echo "9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef  $model_path" | sha256sum --check
+echo "$model_sha256  $model_path" | sha256sum --check

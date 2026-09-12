@@ -1,4 +1,4 @@
-"""Persist an AMCL pose only for the exact saved map it belongs to."""
+"""Persist localization and read initial poses tied to exact saved map contents."""
 
 from datetime import datetime, timezone
 import hashlib
@@ -50,6 +50,12 @@ def read_pose(path, identity):
     except (OSError, ValueError, yaml.YAMLError):
         pass
     return None
+
+
+def read_initial_pose(pose_file, map_file, identity):
+    """Prefer matching AMCL memory, falling back to this map's saved SLAM pose."""
+    return (read_pose(pose_file, identity)
+            or read_pose(Path(map_file).expanduser().with_suffix('.pose.yaml'), identity))
 
 
 def write_pose(path, identity, pose):

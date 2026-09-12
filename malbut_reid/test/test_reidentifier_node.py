@@ -71,6 +71,20 @@ def test_no_person_publishes_empty_result_without_decoding_or_encoding_rgb():
     assert output[0].detections == []
 
 
+def test_without_encoder_tracks_boxes_without_reading_appearance():
+    """No OSNet or color features are needed to maintain a moving visible track."""
+    node, features, images, output, warnings = _fixture()
+    node._encoder = None
+    for second in range(1, 5):
+        image, detections = _messages(second)
+        detections.detections[0].bbox.center.position.x += second * 2
+        PersonReidentifierNode._on_rgb_detections(node, image, detections)
+    assert features == images == warnings == []
+    assert len(output) == 4
+    assert all(message.detections[0].id == '1' for message in output)
+    assert output[-1].header.stamp.sec == 4
+
+
 def test_wrong_frame_is_rejected_even_when_source_timestamps_match():
     node, features, images, output, warnings = _fixture()
     image, detections = _messages(1)

@@ -12,7 +12,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
-from .pose_store import map_identity, read_pose, valid_pose, write_pose
+from .pose_store import map_identity, read_initial_pose, valid_pose, write_pose
 
 
 class PoseMemory(Node):
@@ -29,14 +29,16 @@ class PoseMemory(Node):
         if not math.isfinite(self.period) or self.period <= 0:
             raise ValueError('save_period_s must be positive')
         self.path = self.get_parameter('pose_file').value
-        self.identity = map_identity(self.get_parameter('map').value)
-        self.saved = read_pose(self.path, self.identity)
+        map_file = self.get_parameter('map').value
+        self.identity = map_identity(map_file)
+        self.saved = read_initial_pose(self.path, map_file, self.identity)
         self.restore_done = not (self.saved and self.get_parameter('restore_pose').value)
         self.latest = None
         self.received = 0.0
         self.saved_received = 0.0
         self.initial_stamp = 0
         self.future = None
+        self.future_started = 0.0
         self.active = False
         self.publisher = self.create_publisher(
             PoseWithCovarianceStamped, '/initialpose', 10)
@@ -92,8 +94,16 @@ class PoseMemory(Node):
                 self.future.cancel()
                 self.future = None
             return
+        if (self.future is not None and not self.future.done()
+                and time.monotonic() - self.future_started >= self.period):
+            # Discovery can stay healthy even when one GetState reply is lost.
+            self.client.remove_pending_request(self.future)
+            self.future.cancel()
+            self.future = None
+            self.active = False
         if self.future is None:
             self.future = self.client.call_async(GetState.Request())
+            self.future_started = time.monotonic()
             return
         if not self.future.done():
             return
@@ -121,7 +131,7 @@ class PoseMemory(Node):
         self.restore_done = True
         self.publisher.publish(msg)
         self.get_logger().info(
-            'Restored last AMCL pose as an initial estimate only. '
+            'Restored saved AMCL/SLAM pose as an initial estimate only. '
             'If the robot was moved while off, correct it in RViz before driving.')
 
     def save_latest(self):

@@ -4,7 +4,7 @@ import importlib.util
 from pathlib import Path
 
 from launch import LaunchContext
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.utilities import perform_substitutions
 from launch_ros.actions import Node
 from launch_ros.utilities import evaluate_parameters
@@ -27,12 +27,15 @@ def test_parent_launch_grace_includes_configured_cancel_and_process_cleanup(over
     for action in launch.entities:
         if isinstance(action, DeclareLaunchArgument):
             action.execute(context)
-    server = next(action for action in launch.entities
+    factory = next(action for action in launch.entities if isinstance(action, OpaqueFunction))
+    server = next(action for action in factory.execute(context)
                   if isinstance(action, Node) and action.node_package == 'malbut_autoslam')
     parameters = evaluate_parameters(context, server._Node__parameters)[0]
     ready_timeout = parameters['ready_timeout_s']
     assert ready_timeout == (DEFAULT_READY_TIMEOUT_S if override is None else float(override))
-    # Humble ExecuteLocal stores these substitutions until actual process
-    # execution. Evaluate the same data without spawning the Action server.
+    # Shutdown occurs after a scoped GroupAction has popped its configurations.
+    # Reproduce that lifetime without spawning an Action server: the previous
+    # deferred PythonExpression failed here with ready_timeout_s missing.
+    context.launch_configurations.clear()
     grace = float(perform_substitutions(context, server._ExecuteLocal__sigterm_timeout))
     assert grace > ready_timeout + sum(timeout for _, timeout in PROCESS_SHUTDOWN_STAGES)

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install only the ONNX execution runtime used by the ROS node. Model export
-# dependencies remain isolated in the preparation scripts' cache environments.
+# Install only into the node's runtime venv; never change the robot's user-site
+# or system packages. Model export dependencies stay in their own cache venv.
 
 architecture="$(uname -m)"
 python_version="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+runtime_dir="${MALBUT_REID_RUNTIME:-${XDG_CACHE_HOME:-$HOME/.cache}/malbut_reid/runtime}"
+runtime_python="$runtime_dir/bin/python"
 
 if [[ "$architecture" == "x86_64" ]]; then
   runtime_packages=(
@@ -31,13 +33,19 @@ else
   exit 1
 fi
 
-if python3 -m pip show onnxruntime >/dev/null 2>&1; then
-  python3 -m pip uninstall -y onnxruntime
+if [[ ! -f "$runtime_dir/pyvenv.cfg" || ! -x "$runtime_python" ]] || \
+  ! "$runtime_python" -m pip --version >/dev/null 2>&1; then
+  python3 -m venv --system-site-packages "$runtime_dir" || {
+    echo 'Install python3-venv, then rerun this script.' >&2
+    exit 1
+  }
 fi
-python3 -m pip install --user --upgrade \
+"$runtime_python" -c \
+  'import sys; assert sys.prefix != sys.base_prefix, "Expected an isolated runtime venv"'
+"$runtime_python" -m pip install --upgrade \
   'numpy==1.23.5' "${runtime_packages[@]}"
 
-python3 - "$architecture" <<'PY'
+"$runtime_python" - "$architecture" <<'PY'
 import sys
 
 import numpy as np
@@ -59,3 +67,4 @@ if architecture == 'x86_64':
         raise RuntimeError(f'Expected TensorRT 10.9, found {trt.__version__}')
     print(f'TensorRT {trt.__version__}')
 PY
+echo "Prepared ReID runtime: $runtime_python"

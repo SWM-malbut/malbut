@@ -24,9 +24,11 @@ def _node(monkeypatch):
     node.fixed = set()
     node.action_clients = []
     node.lifecycle = {}
+    node.lifecycle_requested = {}
     node.tf = Mock()
     node.tf.can_transform.return_value = True
     node.last_missing = None
+    node.status_publisher = Mock()
     node.get_logger = Mock()
     node.get_clock = lambda: SimpleNamespace(
         now=lambda: Time(seconds=10, clock_type=ClockType.ROS_TIME))
@@ -40,6 +42,9 @@ def test_ready_requires_data_and_transforms(monkeypatch):
     node.seen['rgb'] = None
     node.check()
     assert not node.ready
+    import json
+    assert 'data:rgb' in json.loads(
+        node.status_publisher.publish.call_args.args[0].data)['missing']
     node.seen['rgb'] = 10.0
     node.frames['rgb'] = 'camera_optical'
     node.tf.can_transform.return_value = False
@@ -48,6 +53,8 @@ def test_ready_requires_data_and_transforms(monkeypatch):
     node.tf.can_transform.return_value = True
     node.check()
     assert node.ready
+    assert json.loads(node.status_publisher.publish.call_args.args[0].data) == {
+        'state': 'READY', 'missing': []}
 
 
 def test_disconnected_depth_frame_is_not_ready(monkeypatch):
@@ -91,6 +98,31 @@ def test_old_sensor_message_does_not_count_as_fresh_data(monkeypatch):
     message.header.stamp.sec = 10
     node._receive('rgb', message)
     assert node.seen['rgb'] == 10.0
+
+
+def test_lost_lifecycle_response_retries_without_restarting_server(monkeypatch):
+    """Reproduce get_state response loss while Nav2 stays discoverable."""
+    node = _node(monkeypatch)
+    pending, retry = Future(), Future()
+    service = Mock()
+    service.service_is_ready.return_value = True
+    service.call_async.side_effect = [pending, retry, Future()]
+    node.lifecycle['amcl'] = [service, None, False]
+    node.check()
+    assert not node.ready
+    node.check()
+    assert service.call_async.call_count == 1
+
+    monkeypatch.setattr('malbut_bringup.readiness.time.monotonic', lambda: 13.0)
+    node.seen = {name: 13.0 for name in node.seen}
+    node.check()
+    assert pending.cancelled()
+    service.remove_pending_request.assert_called_once_with(pending)
+    assert service.call_async.call_count == 2
+    assert not node.ready  # Retrying alone is not proof that Nav2 is active.
+    retry.set_result(SimpleNamespace(current_state=State(id=State.PRIMARY_STATE_ACTIVE)))
+    node.check()
+    assert node.ready
 
 
 def test_empty_detection_array_is_valid_no_person_required(monkeypatch):

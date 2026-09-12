@@ -1,5 +1,6 @@
 """Launch only upstream detection, without its optional tracking/3D nodes."""
 
+import os
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
@@ -13,7 +14,9 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     """Keep model/runtime selection separate from ROS and JetPack installs."""
     share = Path(get_package_share_directory('malbut_yolo'))
-    runtime_python = Path.home() / '.cache/malbut_yolo/runtime/bin/python'
+    cache_root = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')).expanduser()
+    runtime_python = Path(os.environ.get(
+        'MALBUT_YOLO_RUNTIME', cache_root / 'malbut_yolo/runtime')).expanduser() / 'bin/python'
     arguments = [
         DeclareLaunchArgument('config', default_value=str(share / 'config/yolo.yaml')),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
@@ -21,7 +24,7 @@ def generate_launch_description():
         DeclareLaunchArgument('detections_topic', default_value='/yolo/detections'),
         DeclareLaunchArgument('namespace', default_value='yolo'),
         DeclareLaunchArgument('model_path', default_value=str(
-            Path.home() / '.cache/malbut_perception/yolo26n.pt'
+            cache_root / 'malbut_perception/yolo26n.pt'
         )),
         DeclareLaunchArgument('device', default_value='cuda:0'),
         DeclareLaunchArgument('python_executable', default_value=str(runtime_python)),
