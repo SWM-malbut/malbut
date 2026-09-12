@@ -251,19 +251,35 @@ class AutoSlamNode(Node):
             return
         for name, client in self.lifecycle_clients.items():
             future = None
-            while True:
-                self._check(handle)
-                if time.monotonic() >= deadline:
-                    raise RuntimeError(f'mapping prerequisites not ready: {name} is not active')
-                if future is None and client.service_is_ready():
-                    future = client.call_async(GetState.Request())
-                if future is not None and future.done():
-                    response = future.result()
-                    if response.current_state.id == State.PRIMARY_STATE_ACTIVE:
-                        break
-                    future = None
-                self._feedback(handle, 'WAITING')
-                self._pause()
+            requested_at = 0.0
+            try:
+                while True:
+                    self._check(handle)
+                    now = time.monotonic()
+                    if now >= deadline:
+                        raise RuntimeError(
+                            f'mapping prerequisites not ready: {name} is not active')
+                    if (future is not None and not future.done()
+                            and now - requested_at >= self.settings['sensor_timeout_s']):
+                        # GetState is read-only: retry a lost reply within the
+                        # existing startup deadline, without restarting Nav2.
+                        client.remove_pending_request(future)
+                        future.cancel()
+                        future = None
+                    if future is None and client.service_is_ready():
+                        future = client.call_async(GetState.Request())
+                        requested_at = now
+                    if future is not None and future.done():
+                        response = future.result()
+                        if response.current_state.id == State.PRIMARY_STATE_ACTIVE:
+                            break
+                        future = None
+                    self._feedback(handle, 'WAITING')
+                    self._pause()
+            finally:
+                if future is not None and not future.done():
+                    client.remove_pending_request(future)
+                    future.cancel()
 
     def _check_sensor_updates(self):
         if not self.settings['auto_start']:

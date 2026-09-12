@@ -167,13 +167,16 @@ def test_navigation_keeps_each_child_scoped_and_wall_timed(launch_module, tmp_pa
     assert sum('model_path' in item for item in options) == 1
     assert sum('scan_topic' in item for item in options) == 1
     follower = next(item for item in options if 'scan_topic' in item)
+    assert follower['scan_topic'] == '/scan_normalized'
     assert follower['lidar_config'].endswith('malbut_tracking/config/lidar_foreground.yaml')
     assert Path(follower['lidar_config']).is_file()
     panel = next(item for item in actions if isinstance(item, Node)
                  and item.node_executable == 'robot_web_panel')
     assert evaluate_parameters(context, panel._Node__parameters)[0]['manage_bringup'] is False
     for group in [item for item in actions if isinstance(item, GroupAction)]:
-        assert any(isinstance(child, SetParameter) for child in group.get_sub_entities())
+        # A global -p creates /** before the named config. In rclcpp this can
+        # make that config's /scan beat the later inline /scan_normalized.
+        assert not any(isinstance(child, SetParameter) for child in group.get_sub_entities())
     assert not any(isinstance(action, Node)
                    and action.node_package == 'malbut_system_manager'
                    for action in actions)

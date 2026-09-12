@@ -40,7 +40,7 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
   <h2>Global Costmap과 로봇 위치</h2>
   <canvas id="mapCanvas" role="img" aria-label="Global Costmap과 로봇 위치. 위치 지정이나 이동 명령 기능은 없습니다."></canvas>
   <p class="note" id="mapInfo">지도 수신 대기</p>
-  <p class="note">/global_costmap/costmap · 검정: 장애물 · 어두울수록 높은 주행 비용(팽창 영역 포함) · 밝은색: 빈 공간 · 회색: 미확인 · 파란 화살표: 로봇 위치·방향. 저장 지도 원본이 아닌 현재 주행용 지도입니다.</p>
+  <p class="note">/global_costmap/costmap · RViz의 Costmap 색상: 자홍색: 장애물 · 청록색: 차체 진입 불가 영역 · 파랑→빨강: 낮은→높은 팽창 비용 · 흰색: 빈 공간 · 회녹색: 미확인 · 파란 화살표: 로봇 위치·방향. 저장 지도 원본이 아닌 현재 주행용 지도입니다.</p>
   <p class="note">AutoSLAM이 저장한 위치는 같은 지도의 주행 모드에서 초기 추정 위치로 복원합니다. 로봇을 다른 곳으로 옮겼거나 저장된 위치가 없다면, RViz의 <strong>2D Pose Estimate</strong>로 실제 위치를 지정하세요. 복원 후에도 지도 위 위치가 실제와 맞는지 확인하세요.</p>
 </section>
 <div class="grid">
@@ -188,6 +188,8 @@ function drawMap() {
   const left=(width-map.width*scale)/2, top=(height-map.height*scale)/2;
   const live=connected&&map.active;
   ctx.save();ctx.imageSmoothingEnabled=false;
+  // RViz costmap free cells are transparent; give this standalone layer a base.
+  ctx.fillStyle='white';ctx.fillRect(left,top,map.width*scale,map.height*scale);
   ctx.drawImage(mapImage,left,top,map.width*scale,map.height*scale);ctx.restore();
   if(live&&map.pose_available&&map.pose){
     const point=worldToGrid(map.pose,map);

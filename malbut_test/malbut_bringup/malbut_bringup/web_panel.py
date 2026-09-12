@@ -533,8 +533,8 @@ class RosBridge:
             if request_id in self.cancel_pending:
                 self._cancel(request_id, handle)
         except Exception as error:
-            state = 'UNCONFIRMED' if request_id in self.handles else 'ERROR'
-            self.data.update(request_id, state=state, message=str(error))
+            # Losing the acceptance reply does not prove the goal was rejected.
+            self.data.update(request_id, state='UNCONFIRMED', message=str(error))
 
     def _finished(self, request_id, future):
         try:

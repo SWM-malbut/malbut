@@ -41,15 +41,18 @@ def test_unreceived_and_inactive_maps_are_distinguished():
     assert cache.png()[0]['version'] == snapshot['version'] == 1
 
 
-def test_png_shades_and_vertical_flip_preserve_original_message():
-    """Free, occupied, unknown and intermediate cells use distinct map shades."""
-    message = _map()
+def test_png_costmap_palette_and_vertical_flip_preserve_original_message():
+    """PNG pixels match RViz's costmap palette, including alpha and boundaries."""
+    message = _map(width=4, height=2, data=[-1, 0, 99, 100, 1, 25, 50, 98])
     original = message.data[:]
     cache = MapCache()
     cache.update(message)
     _, png = cache.png()
-    pixels = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
-    assert pixels.tolist() == [[191, 128, 64], [127, 255, 0]]
+    pixels = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    assert pixels.tolist() == [
+        [[253, 0, 2, 255], [192, 0, 63, 255], [128, 0, 127, 255], [6, 0, 249, 255]],
+        [[134, 137, 112, 255], [0, 0, 0, 0], [255, 255, 0, 255], [255, 0, 255, 255]],
+    ]
     assert message.data == original
 
 

@@ -144,6 +144,7 @@ class RuntimeSupervisor:
                 raise RuntimeError('Stop the current Bringup before starting another')
             self._status.update(state='STARTING', mode=mode, map=map_id,
                                 message='Starting Bringup', log_path=None)
+            self._stop_future = None
             return self._worker.submit(self._start, mode, map_id, start_hardware)
 
     def _start(self, mode, map_id, start_hardware):

@@ -66,9 +66,17 @@ def _encode_png(message):
     import numpy as np
 
     cells = np.asarray(message.data).reshape(message.info.height, message.info.width)
-    shades = np.rint(np.linspace(255, 0, 101)).astype(np.uint8)
-    pixels = shades[np.maximum(cells, 0)]
-    pixels[cells == -1] = 127
+    # Match RViz Humble's makeCostmapPalette; OpenCV encodes BGRA, not RGBA.
+    # ros2/rviz: rviz_default_plugins/displays/map/palette_builder.cpp
+    palette = np.zeros((102, 4), dtype=np.uint8)
+    red = np.arange(1, 99) * 255 // 100
+    palette[1:99, 0] = 255 - red
+    palette[1:99, 2] = red
+    palette[1:99, 3] = 255
+    palette[99] = (255, 255, 0, 255)  # Inscribed obstacle: cyan.
+    palette[100] = (255, 0, 255, 255)  # Lethal obstacle: magenta.
+    palette[101] = (134, 137, 112, 255)  # Unknown; free cells stay transparent.
+    pixels = palette[np.where(cells == -1, 101, cells)]
     # OccupancyGrid row zero is at the bottom; PNG row zero is at the top.
     success, encoded = cv2.imencode('.png', np.ascontiguousarray(pixels[::-1]))
     if not success:

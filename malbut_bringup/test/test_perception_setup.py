@@ -1,5 +1,6 @@
 """Check file preflight and isolated runtime preparation without installation."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -74,6 +75,57 @@ def test_nonexecutable_python_and_directory_model_are_rejected(tmp_path):
     message = str(raised.value)
     assert 'Python file is not executable' in message
     assert f'model_path: {tmp_path}' in message
+
+
+def test_yolo_model_download_recovers_partial_files_without_replacing_on_failure(tmp_path):
+    """Run only the real download block with fake curl; never install or infer."""
+    script = Path(__file__).parents[2] / 'malbut_yolo/scripts/prepare_runtime.sh'
+    payload = b'verified model fixture'
+    fragment = 'model_dir=' + script.read_text().split('\nmodel_dir=', 1)[1]
+    fragment = fragment.replace(
+        '9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef',
+        hashlib.sha256(payload).hexdigest(),
+    )
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    calls = tmp_path / 'curl.calls'
+    curl = bin_dir / 'curl'
+    curl.write_text(
+        f'#!{sys.executable}\n'
+        'import os, pathlib, sys\n'
+        'with open(os.environ["CURL_CALLS"], "a") as log:\n'
+        '    log.write("download\\n")\n'
+        'output = pathlib.Path(sys.argv[sys.argv.index("--output") + 1])\n'
+        'mode = os.environ.get("CURL_MODE", "ok")\n'
+        f'output.write_bytes({payload!r} if mode == "ok" else b"partial")\n'
+        'sys.exit(22 if mode == "error" else 0)\n'
+    )
+    curl.chmod(0o755)
+    cache = tmp_path / 'cache with spaces'
+    model = cache / 'malbut_perception/yolo26n.pt'
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b'old interrupted download')
+    environment = {
+        **os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
+        'XDG_CACHE_HOME': str(cache), 'CURL_CALLS': str(calls),
+    }
+
+    def run(mode='ok'):
+        return subprocess.run(
+            ['bash', '-euo', 'pipefail', '-c', fragment],
+            env={**environment, 'CURL_MODE': mode}, capture_output=True,
+            text=True, timeout=10,
+        )
+
+    assert run().returncode == 0
+    assert model.read_bytes() == payload
+    assert run('error').returncode == 0  # A verified model needs no download.
+    assert calls.read_text().splitlines() == ['download']
+    for mode in ('error', 'bad_checksum'):
+        model.write_bytes(b'old interrupted download')
+        assert run(mode).returncode != 0
+        assert model.read_bytes() == b'old interrupted download'
+        assert not list(model.parent.glob('.yolo26n.*'))
 
 
 def test_reid_preparation_installs_only_in_runtime_venv(tmp_path):

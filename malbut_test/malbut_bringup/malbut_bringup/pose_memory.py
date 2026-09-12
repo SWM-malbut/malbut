@@ -38,6 +38,7 @@ class PoseMemory(Node):
         self.saved_received = 0.0
         self.initial_stamp = 0
         self.future = None
+        self.future_started = 0.0
         self.active = False
         self.publisher = self.create_publisher(
             PoseWithCovarianceStamped, '/initialpose', 10)
@@ -93,8 +94,16 @@ class PoseMemory(Node):
                 self.future.cancel()
                 self.future = None
             return
+        if (self.future is not None and not self.future.done()
+                and time.monotonic() - self.future_started >= self.period):
+            # Discovery can stay healthy even when one GetState reply is lost.
+            self.client.remove_pending_request(self.future)
+            self.future.cancel()
+            self.future = None
+            self.active = False
         if self.future is None:
             self.future = self.client.call_async(GetState.Request())
+            self.future_started = time.monotonic()
             return
         if not self.future.done():
             return

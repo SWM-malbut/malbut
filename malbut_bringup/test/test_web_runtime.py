@@ -1,5 +1,6 @@
 """Check map validation and process ownership without launching ROS or a robot."""
 
+from concurrent.futures import Future
 from pathlib import Path
 import signal
 import threading
@@ -129,6 +130,24 @@ def test_start_stop_race_is_serialized_without_blocking_caller(runtime):
     started.result(timeout=2)
     assert stopped.result(timeout=2)['state'] == 'STOPPED'
     assert popen.call_count == 1
+
+
+def test_new_start_does_not_reuse_previous_runs_unresolved_stop_future():
+    """STOPPED can be visible just before the old worker Future resolves."""
+    supervisor = object.__new__(RuntimeSupervisor)
+    supervisor._lock = threading.RLock()
+    supervisor._worker = Mock()
+    supervisor._process = None
+    supervisor._closed = supervisor._closing = False
+    supervisor._status = {'state': 'STOPPED'}
+    previous_stop = Future()
+    supervisor._stop_future = previous_stop
+    supervisor.start('mapping')
+    current_stop = supervisor.stop()
+    assert current_stop is not previous_stop
+    assert supervisor._status['state'] == 'STOPPING'
+    assert supervisor._worker.submit.call_count == 2
+    assert supervisor._worker.submit.call_args.args == (supervisor._stop,)
 
 
 def test_dead_leader_never_discards_remaining_process_group(runtime):

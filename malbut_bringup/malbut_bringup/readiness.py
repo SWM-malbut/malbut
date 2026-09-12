@@ -54,6 +54,7 @@ class RobotReadiness(Node):
         self.subscriptions_ = []
         self.action_clients = []
         self.lifecycle = {}
+        self.lifecycle_requested = {}
         self.tf = Buffer()
         self.tf_listener = TransformListener(self.tf, self)
         sensor_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -156,8 +157,17 @@ class RobotReadiness(Node):
                 missing.append(f'Action:{name}')
         for name, entry in self.lifecycle.items():
             client, future, active = entry
+            if (future is not None and not future.done()
+                    and now - self.lifecycle_requested.get(name, now) >= self.timeout):
+                # A lost GetState response must not block startup forever.
+                # Reuse the existing readiness timeout; this is a read-only query.
+                client.remove_pending_request(future)
+                future.cancel()
+                future = entry[1] = None
+                entry[2] = False
             if not client.service_is_ready():
                 if future is not None:
+                    client.remove_pending_request(future)
                     future.cancel()
                 entry[1] = None
                 entry[2] = False
@@ -168,6 +178,7 @@ class RobotReadiness(Node):
                     except Exception:  # A disconnected lifecycle service is not ready.
                         entry[2] = False
                 entry[1] = client.call_async(GetState.Request())
+                self.lifecycle_requested[name] = now
             if not entry[2]:
                 missing.append(f'lifecycle:{name}')
         if missing:

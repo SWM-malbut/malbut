@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import TransformStamped
+from lifecycle_msgs.msg import State
 from malbut_interfaces.action import AutoSlam
 from nav2_msgs.action import NavigateToPose
 from nav2_msgs.srv import SaveMap
@@ -399,6 +400,36 @@ def test_live_hardware_readiness_requires_both_sensor_updates(system_factory):
         system.node._check_sensor_updates()
     system.node.odom_received_at = time.monotonic()
     system.node._check_sensor_updates()
+
+
+@pytest.mark.parametrize('reply_received', [True, False])
+def test_lost_lifecycle_reply_retries_within_startup_deadline(monkeypatch, reply_received):
+    """A lost read-only reply neither hangs startup nor bypasses ACTIVE checks."""
+    clock = [0.0]
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+    pending, retry = Future(), Future()
+    if reply_received:
+        retry.set_result(SimpleNamespace(current_state=State(id=State.PRIMARY_STATE_ACTIVE)))
+    client = Mock()
+    client.service_is_ready.return_value = True
+    client.call_async.side_effect = [pending, retry]
+
+    def advance():
+        clock[0] += 3.0
+
+    node = SimpleNamespace(
+        settings={'auto_start': True, 'sensor_timeout_s': 3.0},
+        lifecycle_clients={'controller_server': client},
+        _check=Mock(), _feedback=Mock(), _pause=advance)
+    if reply_received:
+        AutoSlamNode._wait_active_navigation(node, Mock(), deadline=6.0)
+    else:
+        with pytest.raises(RuntimeError, match='controller_server is not active'):
+            AutoSlamNode._wait_active_navigation(node, Mock(), deadline=6.0)
+        assert retry.cancelled()
+    assert pending.cancelled()
+    client.remove_pending_request.assert_any_call(pending)
+    assert client.call_async.call_count == 2
 
 
 def test_cancel_before_late_navigation_acceptance_keeps_ownership():

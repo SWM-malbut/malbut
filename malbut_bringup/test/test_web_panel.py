@@ -384,6 +384,22 @@ def test_result_transport_failure_does_not_forget_running_goal():
     handle.cancel_goal_async.assert_called_once()
 
 
+def test_lost_acceptance_reply_does_not_release_direct_autoslam():
+    """An unanswered acceptance is not a confirmed rejection or robot stop."""
+    bridge, _ = _bridge()
+    acceptance = Future()
+    bridge.clients['autoslam'].send_goal_async.return_value = acceptance
+    first = bridge.submit(_command())
+    bridge._drain()
+    acceptance.set_exception(RuntimeError('Acceptance response lost'))
+    assert bridge.data.requests[first]['state'] == 'UNCONFIRMED'
+    bridge.clients['manager'].server_is_ready.return_value = True
+    second = bridge.submit(_command('patrol', {'thoroughness': 1}))
+    bridge._drain()
+    assert bridge.data.requests[second]['state'] == 'ERROR'
+    bridge.clients['manager'].send_goal_async.assert_not_called()
+
+
 def test_result_request_failure_keeps_accepted_handle_for_cancellation():
     """A local error after Goal acceptance must not hide an active mission."""
     bridge, handle = _bridge()

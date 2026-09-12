@@ -13,7 +13,7 @@ from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node, SetParameter, SetRemap
+from launch_ros.actions import Node, SetRemap
 
 from malbut_bringup.perception_setup import validate_perception_files
 
@@ -32,8 +32,9 @@ def _package_file(package, relative):
 
 def _include(path, arguments, remappings=()):
     # In particular, a child's generic "config" must not affect its siblings.
+    # Pass clock mode through the child launch, not a global SetParameter:
+    # creating /** first lets named YAML values override later inline wiring.
     return GroupAction([
-        SetParameter('use_sim_time', False),
         *[SetRemap(src=source, dst=destination) for source, destination in remappings],
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(path),
