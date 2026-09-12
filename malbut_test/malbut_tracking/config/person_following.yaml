@@ -1,0 +1,136 @@
+person_follower:
+  ros__parameters:
+    # Physical robots use wall time. The Gazebo demo overrides this to true.
+    use_sim_time: false
+
+    action_name: follow_person
+    detections_topic: /perception/person/detections_3d
+    global_costmap_topic: /global_costmap/costmap_raw
+    static_map_topic: /map
+    lidar_clusters_topic: /perception/lidar/foreground_clusters
+    status_topic: /tracking/person/status
+    target_pose_topic: /tracking/person/estimated_target_pose
+    track_markers_topic: /tracking/person/lidar_tracks
+    command_trace_topic: /tracking/person/command_trace
+
+    # Standard Nav2 endpoints. The follower never publishes /cmd_vel.
+    follow_path_action: follow_path
+    compute_path_action: compute_path_to_pose
+    planner_id: GridBased
+    tracking_controller_id: FollowPath
+    goal_checker_id: general_goal_checker
+    spin_action: spin
+    navigation_retry_delay_s: 0.75
+    speed_limit_topic: speed_limit
+    global_frame: map
+    odometry_frame: odom
+    robot_frame: base_footprint
+
+    minimum_confidence: 0.20
+    # RGB-D supplies the authoritative visible-person identity and bearing.
+    # After association, continuously observed LiDAR supplies metric planar
+    # position without an unrelated camera-age cutoff.
+    camera_position_alpha: 0.55
+    camera_velocity_alpha: 0.35
+    maximum_person_speed_mps: 2.0
+    # Constant-velocity Kalman filter and global nearest-neighbor assignment.
+    # 9.21 is the 99 percent chi-square gate for a 2-D measurement.
+    tracker_process_variance: 1.0
+    tracker_measurement_variance: 0.04
+    mahalanobis_gate: 9.21
+    track_confirmation_hits: 3
+    maximum_missed_updates: 4
+    maximum_coast_time_s: 3.0
+    # RGB-D is authoritative while visible. A LiDAR obstacle receives its
+    # label only when its centroid is tightly consistent with that map point.
+    camera_label_gate_m: 0.40
+    # Camera supplies identity/bearing; LiDAR supplies planar range only when
+    # the two observations remain within this bounded depth disagreement.
+    camera_lidar_range_gate_m: 1.00
+    # Only clusters near the camera-confirmed person (or its short prediction)
+    # enter the tracker. This follower is not a general scene-wide DATMO node.
+    lidar_candidate_gate_m: 0.70
+    # While metric RGB-D is fresh, it narrows the wider prediction gate. A
+    # small bounded extent allowance covers the torso/leg centroid offset;
+    # neighboring furniture is negative evidence and loses the person label.
+    camera_lidar_fusion_freshness_s: 0.40
+    camera_lidar_extent_padding_m: 0.15
+    # Keep a current LiDAR label through small centroid noise, but let a
+    # clearly closer RGB-D match correct an obstacle-label mix-up.
+    camera_rebind_margin_m: 0.15
+    # Once RGB-D labels a confirmed obstacle, current LiDAR measurements keep
+    # that same track while it remains continuously observed. A missing track
+    # is aged by the Kalman tracker's missed-update/coast rules instead of an
+    # unrelated camera-age timeout.
+    # After camera loss, grow the 0.70 m local gate only as far as a person
+    # could move. If the camera is looking at the stale point and sees nobody,
+    # exactly one confirmed nearby moving track may inherit the person label.
+    lidar_reassociation_max_distance_m: 1.50
+    dynamic_rebind_minimum_speed_mps: 0.10
+    camera_negative_evidence_frames: 2
+    camera_horizontal_fov_rad: 1.291543646
+    lidar_proximity_control_distance_m: 1.50
+    lidar_proximity_camera_guard_s: 0.30
+    # Nominal one-metre standoff. The robot holds in the 0.90--1.10 m band.
+    desired_distance_m: 1.00
+    minimum_distance_m: 0.65
+    distance_tolerance_m: 0.10
+    # Once translation is unnecessary, rotate only enough to center the
+    # fixed forward camera.
+    alignment_angle_tolerance_rad: 0.10
+    # Translation, including reverse, remains collision checked by Nav2
+    # ComputePathToPose and the configured holonomic controller.
+    # Nav2 receives a distance-dependent speed cap: short corrections stay
+    # near 0.10 m/s and paths of at least 1.5 m may use the full 0.40 m/s.
+    minimum_follow_speed_mps: 0.10
+    maximum_linear_speed_mps: 0.40
+    full_speed_travel_distance_m: 1.50
+    # Start backing away before an approaching person crosses the lower
+    # distance bound. Forward and reverse paths use the same refresh policy.
+    approach_prediction_horizon_s: 0.75
+    approach_speed_threshold_mps: 0.10
+
+    # Past the 3 m depth limit, RGB supplies direction and a minimum range.
+    # Each new sensor observation may request the next path. A single in-flight
+    # Nav2 plan remains the only concurrency guard, and newer observations are
+    # coalesced into one latest request when that plan completes.
+    bearing_only_variance_threshold_m2: 1.0
+
+    # Accept destinations only beyond the global inflation gradient. With the
+    # current Nav2 inflation radius this preserves roughly the configured
+    # 0.55 m wall margin, while the search chooses the room side of a corner.
+    goal_maximum_cost: 80
+    # Match Nav2's global/local inflation radius before caching the static map.
+    # Fixed-map A* and live Nav2 therefore use the same obstacle clearance.
+    static_occupied_threshold: 65
+    static_padding_radius_m: 0.35
+    goal_safe_search_radius_m: 1.00
+    goal_openness_radius_m: 0.60
+    goal_openness_preference_m: 0.30
+    heading_probe_distance_m: 0.90
+    minimum_heading_clearance_m: 0.45
+    require_global_costmap_for_goal: true
+
+    # RGB-D establishes identity and an observed LiDAR track may continue it.
+    # Brief delivery gaps are debounced before the ordered recovery begins.
+    # Once acquired, explicit client cancellation is the only normal stop.
+    observation_loss_debounce_s: 0.75
+    # The camera's 74-degree horizontal field of view has a roughly
+    # 37-degree half-angle. Turn at least 40 degrees toward the exit side so
+    # a stale map estimate cannot reduce reacquisition to a tiny correction.
+    recovery_direction_minimum_turn_rad: 0.70
+    # FollowPath can struggle over the final centimeters while rotating.
+    # This tolerance applies only to the frozen loss-recovery waypoint.
+    recovery_waypoint_tolerance_m: 0.08
+    # Search 270 degrees in the sign of the last observed camera bearing,
+    # rather than always rotating counter-clockwise through a full circle.
+    recovery_scan_angle_rad: 4.71238898
+    recovery_spin_allowance_s: 12.0
+
+    # Bounded prediction supports identity association and display only.
+    prediction_horizon_s: 0.60
+    transform_timeout_s: 0.10
+    # ros_gz sensor messages can arrive just before their exact odom/TF
+    # sample. Retry only the newest detection briefly instead of treating
+    # transport skew as a lost person.
+    sensor_transform_queue_timeout_s: 0.30

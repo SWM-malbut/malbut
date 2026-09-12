@@ -8,10 +8,12 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 공용 객체 검출: `malbut_yolo` (`yolo_ros` 연결·실행 설정)
 - 공용 사람 재식별: `malbut_reid` (OSNet·사람 ID Topic)
 - 사람 목표 추적: `malbut_tracking` (RGB-D 위치 추정·LiDAR 전처리 포함)
+- 자동 지도 작성: `malbut_autoslam` ([독립 Action 실행 안내](malbut_autoslam/README.md))
 - 자율주행 응용 패키지 모음: `malbut_autonomy/`
   - 자율 순회: `malbut_roaming`
   - 지도 기반 카메라 순찰: `malbut_patrol`
 - 공통 ROS 인터페이스: `malbut_interfaces`
+- 실로봇 기동: `malbut_bringup` ([ROSOrin 실행 안내](malbut_bringup/README.md))
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
 - 홈캠 웹·백엔드: `homecam_web`
 - 대화·에이전트 계약 패키지: `malbut_agent_server`
@@ -24,6 +26,10 @@ Fortress에서는 공식 패키지의 고정 메시 바퀴와 별도 원통 바�
 기록되어 있습니다.
 
 ## 1. 기준 환경
+
+아래 설치·실행 안내는 시뮬레이션 개발 PC 기준이다. 실제 ROSOrin에서는
+기본 ROS/JetPack/제조사 workspace를 유지하고
+[실로봇 Bringup 안내](malbut_bringup/README.md)를 따른다.
 
 Ubuntu 설치, GPU 드라이버, 네트워크와 GitHub 계정 설정은 완료되어 있다고 가정합니다.
 
@@ -65,26 +71,31 @@ git clone https://github.com/SWM-malbut/malbut.git
 cd ~/ros2_ws
 source /opt/ros/humble/setup.bash
 
-sudo apt install python3-vcstool
-vcs import src < src/malbut/perception.repos
 rosdep update
-rosdep install --from-paths src --ignore-src -y --rosdistro humble \
+rosdep install --from-paths src \
+  src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} \
+  --ignore-src -y --rosdistro humble \
   --skip-keys "python3-torchvision-pip python3-ultralytics-pip"
 
-colcon build --symlink-install
+colcon build --symlink-install --base-paths src \
+  src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs}
 source ~/ros2_ws/install/local_setup.bash
 ```
 
 `--symlink-install`의 하이픈은 문서용 긴 대시(`—`)가 아닌 일반 하이픈 두 개(`--`)를 사용해야 합니다.
 
-`perception.repos`는 외부 `yolo_ros` 소스 버전을 고정합니다. YOLO와 OSNet의
+`yolo_ros` 소스는 `malbut_yolo/vendor/yolo_ros`에 포함되어 있어
+별도 clone이나 import가 필요하지 않습니다. ROS 패키지 안에 있으므로 빌드 시
+upstream의 `yolo_ros`, `yolo_msgs` 두 경로를 `--base-paths`에 명시합니다.
+upstream의 `yolo_bringup`은 사용하지 않습니다. YOLO와 OSNet의
 추론 환경·모델 준비는 각각 `malbut_yolo/README.md`, `malbut_reid/README.md`를
 따릅니다. 위 `rosdep` 명령은 GPU별 Python 환경을 시스템 전체에 덮어쓰지 않습니다.
 
 ### 빌드 확인
 
 ```bash
-colcon list
+colcon list --base-paths src \
+  src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs}
 ros2 pkg prefix malbut_description
 ros2 pkg prefix malbut_gazebo
 ros2 pkg prefix malbut_patrol
@@ -135,20 +146,20 @@ alias cw='cd ~/ros2_ws'
 alias cs='cd ~/ros2_ws/src'
 alias ccd='colcon_cd'
 
-alias cb='cd ~/ros2_ws && colcon build --symlink-install'
-alias cbs='colcon build --symlink-install'
-alias cbp='cd ~/ros2_ws && colcon build --symlink-install --packages-select'
-alias cbu='cd ~/ros2_ws && colcon build --symlink-install --packages-up-to'
+alias cb='cd ~/ros2_ws && colcon build --symlink-install --base-paths src src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs}'
+alias cbs='colcon build --symlink-install --base-paths . "$HOME/ros2_ws/src/malbut/malbut_yolo/vendor/yolo_ros/"{yolo_ros,yolo_msgs}'
+alias cbp='cd ~/ros2_ws && colcon build --symlink-install --base-paths src src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} --packages-select'
+alias cbu='cd ~/ros2_ws && colcon build --symlink-install --base-paths src src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} --packages-up-to'
 
-alias ct='cd ~/ros2_ws && colcon test'
-alias ctp='cd ~/ros2_ws && colcon test --packages-select'
+alias ct='cd ~/ros2_ws && colcon test --base-paths src src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs}'
+alias ctp='cd ~/ros2_ws && colcon test --base-paths src src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} --packages-select'
 alias ctr='cd ~/ros2_ws && colcon test-result --verbose'
 
 alias tl='ros2 topic list'
 alias te='ros2 topic echo'
 alias nl='ros2 node list'
 
-alias di='cd ~/ros2_ws && rosdep install --from-paths src --ignore-src -y --rosdistro humble --skip-keys "python3-torchvision-pip python3-ultralytics-pip"'
+alias di='cd ~/ros2_ws && rosdep install --from-paths src src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} --ignore-src -y --rosdistro humble --skip-keys "python3-torchvision-pip python3-ultralytics-pip"'
 ```
 
 `~/.bashrc` 마지막에 다음 한 줄을 추가한 뒤 새 터미널을 열거나 `source ~/.bashrc`를 실행합니다.
@@ -300,6 +311,29 @@ ros2 run malbut_gazebo teleop_key_control
 
 조작 키는 `w`/`s`(전진/후진), `a`/`d`(좌우 횡이동),
 `q`/`e`(좌우 회전), `Space`(정지)이며 종료는 `Ctrl+C`입니다.
+
+### 독립 Action으로 자동 지도 작성
+
+실행 환경의 **SLAM·TF·Nav2가 준비된 상태**에서 자동 탐색 서버를 실행한다.
+아래 launch 자체는 센서·SLAM·Nav2나 로봇 이동을 시작하지 않는다.
+
+```bash
+ros2 launch malbut_autoslam autoslam.launch.py use_sim_time:=true
+```
+
+다른 터미널에서 요청하면 탐색 후 지도를 저장한다. 실로봇은
+`use_sim_time:=false`로 실행한다.
+
+```bash
+ros2 action send_goal /autoslam malbut_interfaces/action/AutoSlam \
+  "{map_name: home}" --feedback
+```
+
+기본 저장 폴더는 `~/.ros/malbut/maps`이며 서버의 `map_directory`로 변경한다.
+같은 이름이 이미 있으면 덮어쓰지 않고 거부하므로 다른 `map_name`을 지정한다.
+성공 결과의 `map_yaml`을 저장 지도 기반 Navigation에 전달한다.
+관리자를 통한 호출도 다른 기능과 동일하게 해당 Action 서버가 먼저 실행되어
+있어야 한다. 등록만으로 서버를 켜지는 않는다.
 
 ### 최초 실행 지도 만들기
 
@@ -774,6 +808,7 @@ rm -rf \
   build/malbut_description build/malbut_gazebo \
   install/malbut_description install/malbut_gazebo
 colcon build --symlink-install \
+  --base-paths src src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} \
   --packages-select malbut_description malbut_gazebo
 source ~/ros2_ws/install/local_setup.bash
 ```
@@ -782,7 +817,8 @@ source ~/ros2_ws/install/local_setup.bash
 
 ```bash
 cd ~/ros2_ws
-colcon build --symlink-install
+colcon build --symlink-install --base-paths src \
+  src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs}
 source ~/ros2_ws/install/local_setup.bash
 ```
 
@@ -809,8 +845,12 @@ ros2 topic echo /imu
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/ros2_ws/install/local_setup.bash
-rosdep check --from-paths ~/ros2_ws/src --ignore-src --rosdistro humble
-colcon build --symlink-install
+cd ~/ros2_ws
+rosdep check --from-paths src \
+  src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} \
+  --ignore-src --rosdistro humble
+colcon build --symlink-install --base-paths src \
+  src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs}
 ```
 
 ## 13. 라이선스

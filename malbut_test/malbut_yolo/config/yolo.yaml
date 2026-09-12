@@ -1,0 +1,14 @@
+/**:
+  ros__parameters:
+    model_type: YOLO
+    device: cuda:0
+    threshold: 0.20
+    iou: 0.45
+    imgsz_height: 640
+    imgsz_width: 640
+    half: true
+    enable: true
+    fuse_model: false
+    image_reliability: 2  # sensor-data BEST_EFFORT, queue depth 1 upstream
+    opencv_num_threads: 4
+    # All object classes are published; downstream consumers choose classes.

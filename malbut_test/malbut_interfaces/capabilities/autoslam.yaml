@@ -1,0 +1,30 @@
+schema_version: 1
+
+capability:
+  id: autoslam
+  title: 자동 지도 만들기
+  description: 현재 SLAM 지도의 미탐색 경계를 따라 이동하고 탐색이 끝나면 주행용 지도를 저장한다.
+
+command:
+  kind: ACTION
+  name: /autoslam
+  type: malbut_interfaces/action/AutoSlam
+
+input:
+  fields:
+    map_name:
+      type: string
+      description: 저장할 지도 파일 이름. 확장자와 경로 없이 지정하며 기존 지도는 덮어쓰지 않는다.
+      default: home
+
+execution:
+  mode: FOREGROUND
+  priority: NORMAL
+  resources: [BASE]
+
+# 드라이버·실시간 SLAM·TF·Nav2를 실행 환경에서 먼저 준비한다.
+# 관리자를 켜지 않아도 /autoslam Action을 직접 요청할 수 있다.
+# 더 탐색할 유효한 경계가 일정 시간 없으면 지도 저장 후 종료한다.
+# 성공은 탐색 절차와 저장 완료이며 모든 공간의 완전한 탐색을 보장하지 않는다.
+# 취소/선점 시 하위 Nav2의 실제 종료를 확인한다. 자동 재개하지 않는다.
+# map_yaml은 map_directory에 저장한 YAML 경로이며 대응하는 PGM도 함께 생성된다.

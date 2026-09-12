@@ -28,7 +28,7 @@ select_path()
     homecam_agent/*)
       homecam=true
       ;;
-    malbut_description/*|malbut_gazebo/*|malbut_gazebo_plugins/*|malbut_yolo/*|perception.repos)
+    malbut_description/*|malbut_gazebo/*|malbut_gazebo_plugins/*|malbut_yolo/*)
       ros=true
       ros_full=true
       homecam=true
@@ -36,7 +36,7 @@ select_path()
     malbut_agent_server/*)
       ros=true
       ;;
-    malbut_autonomy/*|malbut_interfaces/*|malbut_scenarios/*|malbut_system_manager/*|malbut_stt/*|malbut_tts/*|malbut_reid/*|malbut_tracking/*)
+    malbut_autonomy/*|malbut_interfaces/*|malbut_scenarios/*|malbut_system_manager/*|malbut_autoslam/*|malbut_bringup/*|malbut_stt/*|malbut_tts/*|malbut_reid/*|malbut_tracking/*)
       ros=true
       ros_full=true
       ;;

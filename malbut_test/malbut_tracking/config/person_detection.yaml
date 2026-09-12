@@ -1,0 +1,38 @@
+/**:
+  ros__parameters:
+    use_sim_time: false
+    rgb_topic: /camera/color/image_raw
+    depth_topic: /camera/depth/image_raw
+    camera_info_topic: /camera/color/camera_info
+    detections_2d_topic: /perception/person/detections_2d
+    detections_3d_topic: /perception/person/detections_3d
+    debug_image_topic: /perception/person/debug_image
+    compressed_debug_image_topic: /perception/person/debug_image/compressed
+    health_topic: /perception/person/healthy
+    processing_trace_topic: /perception/sensor_processing_trace
+    yolo_processing_trace_topic: /perception/yolo_processing_trace
+
+    # Pixel projection uses optical coordinates; simulators may override this
+    # when their image header shares a body-frame label with the point cloud.
+    projection_frame: ''
+    output_frame: ''
+    opencv_num_threads: 4
+
+    # Existing RGB-D range and bearing-only observation behavior, unchanged.
+    depth_roi_scale: 0.45
+    minimum_depth_m: 0.30
+    maximum_depth_m: 3.0
+    minimum_depth_samples: 20
+    fallback_depth_scale: 1.0
+    enable_bearing_only_fallback: true
+    bearing_only_uncertainty_m: 2.0
+    person_thickness_m: 0.35
+
+    # Match aligned RGB-D first, then retain pairs until the identity result
+    # for that exact source RGB stamp arrives. No processing rate limit.
+    sync_queue_size: 3
+    sync_slop_sec: 0.08
+    identity_sync_queue_size: 60
+    publish_debug_image: true
+    debug_image_transport: compressed
+    debug_jpeg_quality: 80

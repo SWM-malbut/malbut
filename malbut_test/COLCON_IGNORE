@@ -1,0 +1,2 @@
+# Keep original and robot packages from being discovered together.
+# build.sh explicitly selects the package directories below this marker.
