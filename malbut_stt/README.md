@@ -228,12 +228,18 @@ OpenAI SDK `3.13.0`이며, 현재 구현의 회귀 시험 결과와 구분합니
 | 대상 | 결과 |
 |---|---|
 | macOS / Python 3.12, STT 자동 시험 | 118 passed, 1 skipped: ROS 미설치 |
+| Ubuntu / ROS 2 Humble 컨테이너, STT·Agent 통신 시험 | 관련 5개 패키지 빌드 성공, 131 passed, 3 skipped: 선택적 VAD·OpenAI SDK 미설치 |
 | 합성 호출어 → 실제 VAD·로컬 Whisper → 별도 명령 녹음 → 실제 OpenAI | “제이크야” 감지 후 “오늘 날씨가 어때?” 원문과 UUID 1개를 로컬 콜백으로 전달, API 요청 1회 |
 
 연결 시험은 파일을 마이크 대역으로 입력했고 두 녹음의 종료를 확인했습니다.
 결과는 `.runtime/swm25-172-validation/connected-result.json`에 보존했습니다.
-실제 마이크·ROS·Agent 수신을 사용한 시험은 아니며, 기록된 총 실행 시간에는
+이 합성 API 연결 시험은 실제 마이크·ROS·Agent 수신을 사용하지 않았으며, 기록된 총 실행 시간에는
 모델 로딩과 가상 녹음도 포함되어 사용자 체감 지연으로 해석하지 않습니다.
+
+별도 Ubuntu 통합 시험은 호출어·명령 녹음 및 모델 응답을 대역으로 제공하고,
+실제 ROS Topic에서 STT 파이프라인 → Agent 원문 수신·대화 → TTS 텍스트 수신,
+중복 접수 방지를 확인했습니다. 실제 마이크·외부 모델 API·스피커·로봇 동작은
+포함하지 않습니다. 로그는 `.runtime/swm25-172-validation/local-ros-test.log`에 보존했습니다.
 
 ## Ubuntu에서 준비
 
