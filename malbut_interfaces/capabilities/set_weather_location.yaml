@@ -1,0 +1,26 @@
+schema_version: 1
+
+capability:
+  id: set_weather_location
+  title: 날씨 조회 지역 설정
+  description: 사용자가 알려준 지역을 확인하여 이후 날씨 조회에 사용할 위치로 저장한다.
+
+command:
+  kind: ACTION
+  name: /malbut/weather/location/set
+  type: malbut_interfaces/action/ExecuteMission
+
+input:
+  fields:
+    capability_id:
+      type: string
+      description: 날씨 조회 지역 설정 기능
+      default: set_weather_location
+    arguments_yaml:
+      type: string
+      description: 사용자가 알려준 지역 이름을 location 필드에 담은 YAML
+
+execution:
+  mode: BACKGROUND
+  priority: NORMAL
+  resources: []

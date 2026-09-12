@@ -8,7 +8,8 @@ import re
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from concurrent.futures import CancelledError
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, List, Sequence
 
 from malbut_agent_server.conversation import (
@@ -35,9 +36,12 @@ from malbut_agent_server.providers.base import (
     AgentProvider,
     ProviderError,
     accepts_memory_context,
+    accepts_weather_context,
 )
+from malbut_agent_server.prompting import bounded_weather_context
 from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy, SafetyResult
+from malbut_agent_server.tools import validate_tool_arguments
 from malbut_agent_server.schemas import (
     AgentDecision,
     AgentRequest,
@@ -198,6 +202,10 @@ class OrchestrationResult:
             'public': self.to_dict(include_raw_decision=False),
             'memory_revision': self.memory_revision,
         }
+        if (self.raw_decision.type == 'tool_call'
+                and self.raw_decision.tool_name in {'get_weather', 'set_weather_location'}
+                and self.safety.allowed and self.decision.type != 'tool_call'):
+            value['weather_tool_decision'] = self.raw_decision.to_dict()
         provenance = (
             self.state_evidence_id,
             self.state_observed_at,
@@ -274,6 +282,14 @@ class OrchestrationResult:
             public = value['public']
             conversation = public['conversation']
             decision = cls._decision_from_dict(public['decision'])
+            raw_decision = decision
+            if 'weather_tool_decision' in value:
+                raw_decision = cls._decision_from_dict(value['weather_tool_decision'])
+                if (raw_decision.type != 'tool_call'
+                        or raw_decision.tool_name not in {'get_weather', 'set_weather_location'}
+                        or decision.type == 'tool_call'):
+                    raise ValueError('invalid persisted weather Tool decision')
+                validate_tool_arguments(raw_decision.tool_name, raw_decision.arguments)
             safety_value = public['safety']
             provider_value = public['provider']
             usage_value = provider_value['usage']
@@ -323,7 +339,7 @@ class OrchestrationResult:
                 conversation_ordinal=int(
                     conversation['ordinal']
                 ),
-                raw_decision=decision,
+                raw_decision=raw_decision,
                 decision=decision,
                 safety=SafetyResult(
                     allowed=bool(safety_value['allowed']),
@@ -400,6 +416,8 @@ class AgentOrchestrator:
         memory_source_reviewer=None,
         background_memory: bool = False,
         automatic_memory_extractor=None,
+        weather_executor: Callable[[str], dict] | None = None,
+        weather_location_executor: Callable[[str, str], dict] | None = None,
     ) -> None:
         """Initialize provider, memory, session, and safety services."""
         if memory_limit < 1 or memory_limit > 10:
@@ -433,6 +451,8 @@ class AgentOrchestrator:
         self.personal_memory = PersonalMemory(memory_store, conversation_store)
         self.memory_source_reviewer = memory_source_reviewer
         self.automatic_memory_extractor = automatic_memory_extractor
+        self.weather_executor = weather_executor
+        self.weather_location_executor = weather_location_executor
         if type(background_memory) is not bool:
             raise TypeError('background_memory must be a boolean')
         self.automatic_memory_jobs = AutomaticMemoryJobs(conversation_store)
@@ -706,6 +726,15 @@ class AgentOrchestrator:
                 effective_request.available_tools
             )
         )
+        if self.weather_executor is None:
+            effective_value['available_tools'] = [
+                name for name in effective_value['available_tools'] if name != 'get_weather'
+            ]
+        if self.weather_location_executor is None:
+            effective_value['available_tools'] = [
+                name for name in effective_value['available_tools']
+                if name != 'set_weather_location'
+            ]
         safety_request = AgentRequest.from_dict(effective_value)
         model_request = AgentRequest.from_dict(effective_value)
         local_memory = self.personal_memory.local_decision(
@@ -769,7 +798,8 @@ class AgentOrchestrator:
         )
         if raw_decision.type == 'tool_call' and (
             provider_result.memory_proposal is not None
-            or management_request(request.utterance)
+            or (management_request(request.utterance)
+                and raw_decision.tool_name != 'set_weather_location')
         ):
             raw_decision = memory_reply(
                 '로봇 실행과 기억 관리 중 먼저 처리할 요청을 말씀해 주세요.',
@@ -809,7 +839,9 @@ class AgentOrchestrator:
             state_observed_at = None
             safety = early_rejection
         else:
-            if server_clarification is None:
+            if server_clarification is None and raw_decision.tool_name not in {
+                'get_weather', 'set_weather_location',
+            }:
                 (
                     safety_request,
                     state_trusted,
@@ -834,6 +866,13 @@ class AgentOrchestrator:
                 confidence=1.0,
                 expires_in_ms=raw_decision.expires_in_ms,
             )
+        elif raw_decision.type == 'tool_call' and raw_decision.tool_name in {
+            'get_weather', 'set_weather_location',
+        }:
+            provider_result = self._answer_weather(
+                model_request, memories, conversation_turns, conversation_summary, provider_result,
+            )
+            decision = provider_result.decision
         issued_at = float(self._state_clock())
         expires_at = (
             issued_at + decision.expires_in_ms / 1000.0
@@ -873,6 +912,82 @@ class AgentOrchestrator:
                 else None
             ),
             clock=self._state_clock,
+        )
+
+    def _answer_weather(
+        self, request, memories, conversation_turns, conversation_summary, first_result,
+    ) -> ProviderResult:
+        """Execute one Manager read after the model's Tool choice, then answer without Tools."""
+        setting_location = first_result.decision.tool_name == 'set_weather_location'
+        executor = self.weather_location_executor if setting_location else self.weather_executor
+        if executor is None or not accepts_weather_context(self.provider):
+            return replace(first_result, decision=AgentDecision(
+                type='message', message='지금 날씨 조회 기능을 사용할 수 없어요.',
+                reason='weather_unavailable', confidence=1.0,
+            ))
+        try:
+            if setting_location:
+                weather = executor(request.request_id, first_result.decision.arguments['location'])
+            else:
+                weather = executor(request.request_id)
+            weather = bounded_weather_context(weather)
+        except CancelledError:
+            raise
+        except Exception:
+            weather = {'status': 'unavailable'}
+        if setting_location:
+            # A committed setting needs a receipt even if a second model call would fail.
+            status = weather['status']
+            location = weather.get('location')
+            if status == 'location_set' and isinstance(location, str) and location.strip():
+                decision = AgentDecision(
+                    'message', f'날씨 조회 위치를 저장했어요. 앞으로 {location} 날씨를 알려드릴게요.',
+                    reason='weather_location_saved', confidence=1.0,
+                )
+            elif status == 'location_ambiguous':
+                decision = AgentDecision(
+                    'clarification', '어느 지역인가요? ' + ', '.join(weather['candidates'])
+                    + ' 중에서 시·구·동을 알려주세요.', reason='weather_location_ambiguous',
+                )
+            elif status == 'location_not_found':
+                decision = AgentDecision(
+                    'clarification', '지역을 찾지 못했어요. 시·구·동을 더 자세히 알려주세요.',
+                    reason='weather_location_not_found',
+                )
+            else:
+                decision = AgentDecision(
+                    'message', '날씨 조회 위치를 저장하지 못했어요. 잠시 후 다시 알려주세요.',
+                    reason='weather_location_unavailable',
+                )
+            return replace(first_result, decision=decision, memory_proposal=None)
+        value = request.to_dict()
+        value['available_tools'] = []
+        answer = self.provider.complete(
+            AgentRequest.from_dict(value), list(memories),
+            copy.deepcopy(list(conversation_turns)), [],
+            conversation_summary=copy.deepcopy(conversation_summary),
+            weather_context=weather,
+        )
+        answer.validate()
+        if answer.decision.type == 'tool_call' or answer.memory_proposal is not None:
+            answer = replace(answer, decision=AgentDecision(
+                type='refusal', message='날씨 조회 결과로 답변을 만들지 못했어요.',
+                reason='weather_followup_tool_forbidden', confidence=1.0,
+            ), memory_proposal=None)
+
+        def combined(name):
+            first = getattr(first_result.usage, name)
+            second = getattr(answer.usage, name)
+            return first + second if first is not None and second is not None else None
+
+        return replace(
+            answer, latency_ms=first_result.latency_ms + answer.latency_ms,
+            usage=ProviderUsage(**{name: combined(name) for name in (
+                'input_tokens', 'output_tokens', 'total_tokens',
+            )}),
+            input_chars=(first_result.input_chars + answer.input_chars
+                         if first_result.input_chars is not None and answer.input_chars is not None
+                         else None),
         )
 
     @staticmethod
