@@ -7,24 +7,29 @@
 
 ## 준비
 
-ROS 2 Humble workspace에서 외부 소스는 Malbut 저장소 밖에 설치한다.
-`perception.repos`가 검증한 upstream commit을 고정한다.
+필요한 upstream 소스는 `malbut_yolo/vendor/yolo_ros`에 함께 들어 있다.
+Malbut 소스만 받으면 되며 별도 clone이나 import는 하지 않는다.
 
 ```bash
 cd ~/ros2_ws
-vcs import src < src/malbut/perception.repos
 source /opt/ros/humble/setup.bash
-rosdep install --from-paths src --ignore-src -r -y \
+rosdep install --from-paths src \
+  src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} \
+  --ignore-src -r -y \
   --skip-keys 'python3-torchvision-pip python3-ultralytics-pip'
 bash src/malbut/malbut_yolo/scripts/prepare_runtime.sh
-PATH=/usr/bin:/bin colcon build --symlink-install --packages-up-to malbut_tracking
+PATH=/usr/bin:/bin colcon build --symlink-install \
+  --base-paths src src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} \
+  --packages-up-to malbut_tracking
 source install/setup.bash
 ```
 
-`python3-venv`, `python3-vcstool`이 필요하다. PyTorch/Ultralytics는 별도
+`python3-venv`가 필요하다. PyTorch/Ultralytics는 별도
 `~/.cache/malbut_yolo/runtime`에 설치한다. 기본 ROS·드라이버는 변경하지 않는다.
 upstream의 `uv sync` 기반 composite launch는 사용하지 않는다. 빌드 시에도
 위 PATH로 upstream 자동 환경 재설정을 피한다.
+Colcon은 `malbut_yolo` 패키지 안을 자동 탐색하지 않으므로 upstream의 두
+패키지 경로를 위처럼 명시한다. `yolo_bringup`은 빌드하지 않는다.
 
 데스크톱 NVIDIA GPU는 공식 PyTorch CUDA 12.8 wheel을 사용한다.
 Jetson Orin NX는 **설치된 JetPack에 맞는 NVIDIA PyTorch/torchvision**이 먼저 필요하다.

@@ -37,6 +37,18 @@ in:
 See `malbut_gazebo/models/aws_small_house/SOURCE.md` for the selected content
 and local adaptations.
 
+## YOLO ROS
+
+- Source: <https://github.com/mgonzs13/yolo_ros>
+- Imported source: `eb11e81f7dbdb81c23a61d743ce0bac3cf9b07eb`
+- Included at `malbut_yolo/vendor/yolo_ros` and in the real-robot copy under
+  `malbut_test/malbut_yolo/vendor/yolo_ros`.
+- License: GPL-3.0, preserved in each source directory's `LICENSE` file.
+
+The upstream source and its copyright notices retain their original license;
+they are not covered by Malbut's Apache-2.0 grant. The runtime dependency
+Ultralytics has separate AGPL-3.0/commercial licensing terms.
+
 ## Apache-2.0 upstream material
 
 Files retaining copyright notices from Intel Corporation or the Open Source

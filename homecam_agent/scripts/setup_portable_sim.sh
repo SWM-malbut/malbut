@@ -212,6 +212,21 @@ printf 'Using the existing malbut source without modifying it: %s\n' \
   "$malbut_source"
 printf 'malbut revision: %s\n' "$actual_malbut_commit"
 
+# Colcon does not recurse below malbut_yolo's package.xml. Discover the two
+# vendored upstream packages explicitly without changing their source.
+colcon_base_paths=("$workspace")
+if [[ -f "$malbut_source/malbut_yolo/package.xml" ]]; then
+  for yolo_package in yolo_ros yolo_msgs; do
+    yolo_package_path="$malbut_source/malbut_yolo/vendor/yolo_ros/$yolo_package"
+    if [[ ! -f "$yolo_package_path/package.xml" ]]; then
+      printf 'Missing YOLO dependency: %s\n' "$yolo_package_path" >&2
+      printf 'Restore the bundled malbut_yolo/vendor/yolo_ros source from Malbut.\n' >&2
+      exit 1
+    fi
+    colcon_base_paths+=("$yolo_package_path")
+  done
+fi
+
 homecam_source_setup_file "$ros_setup"
 if [[ -r "$workspace/install/setup.bash" ]]; then
   homecam_source_setup_file "$workspace/install/setup.bash"
@@ -240,6 +255,7 @@ cd "$workspace"
 # Always rebuild the current malbut source. An older install overlay may contain
 # malbut_gazebo while still missing launch/world files added by the latest pull.
 colcon build \
+  --base-paths "${colcon_base_paths[@]}" \
   --symlink-install \
   --packages-up-to \
     malbut_gazebo \
@@ -276,6 +292,7 @@ if ! "$skip_tests"; then
       'No malbut contract tests found; required launch/world files were checked.\n'
   fi
   colcon test \
+    --base-paths "${colcon_base_paths[@]}" \
     --packages-select homecam_detector homecam_media_agent \
     --return-code-on-test-failure
 fi

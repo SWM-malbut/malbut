@@ -1,0 +1,9 @@
+/build/
+/install/
+/log/
+/maps/
+/external/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/

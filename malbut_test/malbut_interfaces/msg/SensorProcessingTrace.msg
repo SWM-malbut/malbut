@@ -1,0 +1,5 @@
+builtin_interfaces/Time source_stamp
+uint64 receipt_steady_time_ns
+uint64 publish_steady_time_ns
+uint32 sequence
+string source

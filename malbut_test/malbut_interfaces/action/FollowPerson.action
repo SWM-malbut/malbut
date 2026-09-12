@@ -1,0 +1,13 @@
+# Person recognition belongs upstream; this action selects its identity and follows it.
+uint8 VISIBLE_PERSON=0
+uint8 REGISTERED_PERSON=1
+uint8 target_mode
+string target_person_id
+float32 desired_distance_m
+---
+bool success
+string final_state
+string message
+---
+string state
+bool target_visible

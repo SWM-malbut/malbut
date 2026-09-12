@@ -86,7 +86,8 @@ checkout하거나 수정하지 않는다.
 
 SWM25-161 이후 구조를 처음 받았다면 저장소 루트 README의 의존성 설치 단계를
 먼저 수행한다. 시뮬레이션의 공용 인식 패키지가 사용하는 `yolo_ros`는
-`perception.repos`로 워크스페이스에 받아 두어야 한다. 홈캠의 ONNX 검출기와
+`malbut_yolo/vendor/yolo_ros`에 포함되어 있어 별도로 받을 필요가 없다.
+홈캠의 ONNX 검출기와
 기존 모델 캐시 경로는 바뀌지 않는다.
 
 ```bash

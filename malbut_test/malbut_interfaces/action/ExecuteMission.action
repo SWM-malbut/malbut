@@ -1,0 +1,13 @@
+# Capability Manifest에 등록된 기능과 입력값을 요청한다.
+string capability_id
+string arguments_yaml
+---
+# mission_id는 이 Action Goal의 UUID를 문자열로 표현한 값이다.
+string mission_id
+string result_yaml
+string message
+---
+# state는 PENDING, RUNNING, CANCELING, SUSPENDED 중 하나다.
+string mission_id
+string state
+string feedback_yaml

@@ -1,0 +1,30 @@
+schema_version: 1
+
+capability:
+  id: patrol
+  title: 카메라 순찰
+  description: 저장된 지도에서 관측 위치를 자동 선택하고 요청한 꼼꼼함으로 접근 가능한 구역을 카메라로 살핀다.
+
+command:
+  kind: ACTION
+  name: /patrol
+  type: malbut_interfaces/action/Patrol
+
+input:
+  fields:
+    thoroughness:
+      type: uint8
+      description: 순찰 꼼꼼함. Patrol.action에 정의된 LIGHT, NORMAL, THOROUGH 중 선택한다.
+      default: 1
+
+execution:
+  mode: FOREGROUND
+  priority: NORMAL
+  resources: [BASE]
+
+# /map은 현재 Nav2가 사용하는 저장 지도이며, 방 라벨은 선택적 GeoJSON이다.
+# 지도·카메라·TF·Nav2 준비 후 실행하며 같은 서버의 중복 요청은 거부한다.
+# 취소는 진행 중인 Nav2 Action의 종료 확인 후 완료한다.
+# 관측률은 실제 RGB 프레임 시점의 수평 시야와 지도 가림으로 계산하는
+# 2D 면적 지표다. 영상 내용 인식이나 3D 표면의 완전 관측을 보장하지 않는다.
+# 관측 목표 미달 또는 센서/주행 실패 시 부분 관측률과 사유를 반환한다.

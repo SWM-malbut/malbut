@@ -23,6 +23,7 @@
   <exec_depend>lifecycle_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>malbut_autoslam</exec_depend>
   <exec_depend>malbut_description</exec_depend>
   <exec_depend>malbut_gazebo_plugins</exec_depend>
   <exec_depend>malbut_interfaces</exec_depend>
