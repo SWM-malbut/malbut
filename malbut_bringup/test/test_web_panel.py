@@ -196,6 +196,7 @@ def _bridge(manager_ready=False, autoslam_ready=True):
     bridge.runtime = None
     bridge.stopping_runtime = None
     bridge.runtime_message = ''
+    bridge.startup_status = {}
     bridge.action_status = {}
     bridge.cancel_clients = {}
     bridge.cancel_request = SimpleNamespace
@@ -293,6 +294,35 @@ def test_missing_servers_fail_without_waiting():
     bridge._drain()
     assert bridge.data.requests[request_id]['state'] == 'ERROR'
     bridge.clients['autoslam'].send_goal_async.assert_not_called()
+
+
+def test_manager_does_not_make_missing_autoslam_executable():
+    """A ready manager cannot stand in for a missing application server."""
+    bridge, _ = _bridge(manager_ready=True, autoslam_ready=False)
+    request_id = bridge.submit(_command())
+    bridge._drain()
+    assert bridge.data.requests[request_id]['state'] == 'ERROR'
+    bridge.clients['manager'].send_goal_async.assert_not_called()
+
+
+def test_readiness_reason_is_exposed_without_changing_manager(monkeypatch):
+    """Show exact preparation blockers while retaining the launch process state."""
+    bridge, _ = _bridge(autoslam_ready=False)
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {
+        'state': 'RUNNING', 'mode': 'navigation', 'message': 'process alive'}
+    monkeypatch.setattr(bridge, '_robot_pose', lambda: None)
+    bridge.node.count_publishers.return_value = 0
+    bridge._bringup_status(SimpleNamespace(data=json.dumps({
+        'state': 'WAITING', 'missing': ['TF:map->base_footprint (set initial pose)'],
+    })))
+    bridge._refresh()
+    runtime = bridge.data.snapshot()['runtime']
+    assert runtime['state'] == 'RUNNING' and not runtime['ready']
+    assert runtime['waiting'] == ['TF:map->base_footprint (set initial pose)']
+    assert runtime['message'] == '필수 입력 준비 대기'
+    bridge._bringup_status(SimpleNamespace(data='invalid JSON'))
+    assert bridge.startup_status['state'] == 'WAITING'
 
 
 def test_direct_autoslam_blocks_other_panel_starts():

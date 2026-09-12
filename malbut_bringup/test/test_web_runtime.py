@@ -159,3 +159,17 @@ def test_failed_spawn_reports_error_without_claiming_external_processes(runtime)
     assert supervisor.snapshot()['state'] == 'ERROR'
     supervisor.stop().result()
     signals.assert_not_called()
+
+
+def test_error_exposes_only_bounded_owned_log_tail(runtime):
+    """Bringup startup failure details must reach the web without unbounded reads."""
+    supervisor, _, process, _, _ = runtime
+    supervisor.start('mapping').result()
+    path = Path(supervisor.snapshot()['log_path'])
+    path.write_text('old line\n' * 2000 + 'missing runtime Python\n')
+    assert supervisor.snapshot()['log_tail'] == ''
+    process.poll.return_value = 1
+    status = supervisor.snapshot()
+    assert status['state'] == 'ERROR'
+    assert status['log_tail'].endswith('missing runtime Python\n')
+    assert len(status['log_tail'].encode()) <= 8192

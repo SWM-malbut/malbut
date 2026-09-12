@@ -23,6 +23,7 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
 <section class="card">
   <h2>로봇 실행 준비</h2>
   <p class="note" id="runtimeInfo">연결 후 Bringup 상태를 확인합니다.</p>
+  <details id="runtimeError" hidden><summary>Bringup 오류 로그</summary><pre id="runtimeLog"></pre></details>
   <div class="row">
     <button id="mappingStart" disabled>지도 만들기 모드 켜기</button>
     <button class="stop" id="bringupStop" disabled>Bringup 종료</button>
@@ -40,7 +41,7 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
   <canvas id="mapCanvas" role="img" aria-label="현재 지도와 로봇 위치. 위치 지정이나 이동 명령 기능은 없습니다."></canvas>
   <p class="note" id="mapInfo">지도 수신 대기</p>
   <p class="note">검정: 장애물 · 밝은색: 빈 공간 · 회색: 미확인 · 파란 화살표: 로봇 위치·방향. 이 화면은 위치 확인용입니다.</p>
-  <p class="note">처음 저장 지도를 사용하거나 꺼진 로봇을 다른 곳으로 옮겼다면, RViz의 <strong>2D Pose Estimate</strong>로 실제 위치를 지정해야 합니다.</p>
+  <p class="note">AutoSLAM이 저장한 위치는 같은 지도의 주행 모드에서 초기 추정 위치로 복원합니다. 로봇을 다른 곳으로 옮겼거나 저장된 위치가 없다면, RViz의 <strong>2D Pose Estimate</strong>로 실제 위치를 지정하세요. 복원 후에도 지도 위 위치가 실제와 맞는지 확인하세요.</p>
 </section>
 <div class="grid">
   <section class="card"><h2>원본 카메라</h2><img class="video" id="raw" alt="카메라 수신 대기"><p class="note" id="rawInfo">/depth_cam/rgb0/image_raw</p></section>
@@ -92,7 +93,7 @@ function lockControls() {
   const missionReady=connected&&!requestBusy&&!stopping;
   el('follow').disabled=!(missionReady&&servers.manager);
   el('patrol').disabled=!(missionReady&&servers.manager);
-  el('autoslam').disabled=!(missionReady&&(servers.manager||servers.autoslam));
+  el('autoslam').disabled=!(missionReady&&servers.autoslam&&runtime.mode!=='navigation');
   el('cancel').disabled=!connected;
   const canStart=connected&&runtime.enabled&&!requestBusy&&['STOPPED','ERROR'].includes(runtime.state);
   el('mappingStart').disabled=!canStart;
@@ -102,14 +103,22 @@ function lockControls() {
   el('refreshMaps').disabled=!connected||mapsBusy;
 }
 function showRuntime(runtime) {
-  const stateNames={STOPPED:'꺼짐',STARTING:'준비 중',RUNNING:'실행 중',STOPPING:'종료 중',ERROR:'확인 필요'};
+  const stateNames={STOPPED:'꺼짐',STARTING:'준비 중',RUNNING:runtime.ready?'준비 완료':'준비 대기',STOPPING:'종료 중',ERROR:'확인 필요'};
   const modeNames={mapping:'지도 만들기',navigation:'저장 지도 주행'};
   const lines=[runtime.enabled?'Bringup: '+(stateNames[runtime.state]||runtime.state||'확인 중'):'이 패널에서는 Bringup 시작·종료를 관리하지 않습니다.'];
-  if(runtime.mode)lines.push('모드: '+(modeNames[runtime.mode]||runtime.mode)+(runtime.ready?' · 준비 완료':''));
+  if(runtime.mode)lines.push('모드: '+(modeNames[runtime.mode]||runtime.mode));
   if(runtime.map)lines.push('지도: '+runtime.map);
   if(runtime.message)lines.push(runtime.message);
+  if(!runtime.ready&&Array.isArray(runtime.waiting)&&runtime.waiting.length){
+    lines.push('준비 대기 사유:');
+    for(const reason of runtime.waiting)lines.push('· '+reason);
+  }
   if(runtime.log_path)lines.push('로봇 로그: '+runtime.log_path);
   el('runtimeInfo').textContent=lines.join('\n');
+  const errorLog=runtime.state==='ERROR'&&runtime.log_tail;
+  if(errorLog&&el('runtimeError').hidden)el('runtimeError').open=true;
+  el('runtimeError').hidden=!errorLog;
+  el('runtimeLog').textContent=errorLog||'';
 }
 async function refreshMaps() {
   if(!connected||mapsBusy)return;

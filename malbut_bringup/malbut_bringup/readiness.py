@@ -1,6 +1,7 @@
 """Check startup inputs without sending goals or controlling the chassis."""
 
 from functools import partial
+import json
 import math
 import time
 
@@ -17,6 +18,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image, LaserScan
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 from vision_msgs.msg import Detection3DArray
 
@@ -59,6 +61,8 @@ class RobotReadiness(Node):
             depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
             reliability=ReliabilityPolicy.RELIABLE,
         )
+        self.status_publisher = self.create_publisher(
+            String, '/malbut/bringup/status', static_qos)
         topics = [
             ('scan', LaserScan, self.settings['scan_topic']),
             ('odom', Odometry, self.settings['odom_topic']),
@@ -170,9 +174,15 @@ class RobotReadiness(Node):
             summary = ', '.join(missing)
             if summary != self.last_missing:
                 self.get_logger().info('Waiting for ' + summary)
+                self.status_publisher.publish(String(data=json.dumps({
+                    'state': 'WAITING', 'missing': missing,
+                })))
                 self.last_missing = summary
             return
         self.ready = True
+        self.status_publisher.publish(String(data=json.dumps({
+            'state': 'READY', 'missing': [],
+        })))
         self.get_logger().info('Required robot inputs are ready.')
 
 

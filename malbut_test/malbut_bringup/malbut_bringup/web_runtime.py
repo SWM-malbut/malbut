@@ -116,7 +116,17 @@ class RuntimeSupervisor:
                 if code is not None:
                     self._status.update(
                         state='ERROR', message=f'Bringup exited ({code}); stop before retrying')
-            return dict(self._status)
+            status = dict(self._status)
+        status['log_tail'] = ''
+        if status['state'] == 'ERROR' and status['log_path']:
+            try:
+                with Path(status['log_path']).open('rb') as stream:
+                    stream.seek(0, os.SEEK_END)
+                    stream.seek(max(0, stream.tell() - 8192))
+                    status['log_tail'] = stream.read().decode('utf-8', errors='replace')
+            except OSError:
+                pass
+        return status
 
     def start(self, mode, map_id=None, start_hardware=True):
         """Queue one fixed Bringup command, rejecting overlapping transitions."""

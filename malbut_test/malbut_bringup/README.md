@@ -200,8 +200,9 @@ ros2 launch malbut_bringup robot.launch.py \
   mode:=navigation start_hardware:=false start_navigation:=false
 ```
 
-공식 RViz의 **2D Pose Estimate**로 첫 실행의 실제 초기 위치를 지정한다.
-웹의 지도 선택이나 로봇 위치 표시는 초기 위치를 대신 지정하지 않는다.
+AutoSLAM이 저장한 `<지도이름>.pose.yaml`이 있으면 저장 지도 주행에서 초기 위치로
+복원한다. 수정 이전에 만든 지도처럼 위치 기록이 없거나 로봇을 옮겼다면 공식
+RViz의 **2D Pose Estimate**로 실제 초기 위치를 지정한다.
 같은 지도로 다시 실행하면
 아래 위치 기억 기능이 마지막 AMCL 위치를 초기 추정치로 한 번 전달한다.
 전원이 꺼진 동안 로봇을 옮겼다면 반드시 수동으로 초기 위치를 바로잡는다.
@@ -215,7 +216,9 @@ ros2 launch navigation rviz_navigation.launch.py
 - `pose_memory`는 AMCL이 활성일 때 최신 `/amcl_pose`를 **5초마다** 저장한다.
   경로는 `~/.ros/malbut/localization/last_pose.yaml`이며 Git 밖의 로봇 실행 데이터다.
   지도 YAML+이미지 해시, 위치·방향·공분산·저장 시각을 기록하고 원자적으로 교체한다.
-  동일 지도에서 AMCL 준비 후 `/initialpose`로 한 번 복원한다. 수동 초기화가 우선이다.
+  동일 지도에서 AMCL 준비 후 `/initialpose`로 한 번 복원한다. 일치하는 AMCL 기록이
+  없으면 AutoSLAM의 지도별 `.pose.yaml`을 사용한다. 두 기록 모두 지도 내용이 같아야
+  하며 초기 추정치일 뿐이다. 수동 초기화가 우선이다.
   `restore_pose:=false`면 복원 없이 저장만, `pose_memory:=false`면 노드를 켜지 않는다.
   복원은 위치 확인의 대체가 아니며, covariance가 유한하다는 것이 정확도를 보증하지 않는다.
 - Local/Global 차체 반경 **0.18m**, Local/Global inflation **0.20m**.

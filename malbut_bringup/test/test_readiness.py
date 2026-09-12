@@ -27,6 +27,7 @@ def _node(monkeypatch):
     node.tf = Mock()
     node.tf.can_transform.return_value = True
     node.last_missing = None
+    node.status_publisher = Mock()
     node.get_logger = Mock()
     node.get_clock = lambda: SimpleNamespace(
         now=lambda: Time(seconds=10, clock_type=ClockType.ROS_TIME))
@@ -40,6 +41,9 @@ def test_ready_requires_data_and_transforms(monkeypatch):
     node.seen['rgb'] = None
     node.check()
     assert not node.ready
+    import json
+    assert 'data:rgb' in json.loads(
+        node.status_publisher.publish.call_args.args[0].data)['missing']
     node.seen['rgb'] = 10.0
     node.frames['rgb'] = 'camera_optical'
     node.tf.can_transform.return_value = False
@@ -48,6 +52,8 @@ def test_ready_requires_data_and_transforms(monkeypatch):
     node.tf.can_transform.return_value = True
     node.check()
     assert node.ready
+    assert json.loads(node.status_publisher.publish.call_args.args[0].data) == {
+        'state': 'READY', 'missing': []}
 
 
 def test_disconnected_depth_frame_is_not_ready(monkeypatch):

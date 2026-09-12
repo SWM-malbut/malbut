@@ -189,15 +189,17 @@ ros2 launch malbut_bringup robot.launch.py \
   publish_debug_image:=true
 ```
 
-같은 지도의 마지막 AMCL 위치가 있으면 초기 추정치로 한 번 복원한다. 위치는
-5초 주기로 `~/.ros/malbut/localization/last_pose.yaml`에 저장한다. 최초 실행이거나
-로봇을 꺼 둔 동안 옮겼다면 RViz의 **2D Pose Estimate**로 실제 위치를 지정한다.
+같은 지도의 마지막 AMCL 위치가 있으면 초기 추정치로 한 번 복원한다. 없으면
+AutoSLAM이 지도와 함께 저장한 `<지도이름>.pose.yaml`의 위치·방향을 사용한다.
+AMCL 위치는 5초 주기로 `~/.ros/malbut/localization/last_pose.yaml`에 저장한다.
+기존 지도에 위치 기록이 없거나 로봇을 꺼 둔 동안 옮겼다면 RViz의
+**2D Pose Estimate**로 실제 위치를 지정한다.
 지도 YAML·이미지가 바뀌면 이전 위치는 복원하지 않는다.
 센서·TF·Nav2와 응용 서버가 준비되면
 관리자가 시작된다. 준비 검사기는 **부팅 확인용**이며 주행 안전감시기를 대체하지 않는다.
 아래 요청 전에는 로봇이 자동으로 순찰/추적을 시작하지 않는다.
 같은 웹 주소에서 지도·영상 확인·추적·순찰·이 패널의 요청 취소가 가능하다.
-처음 실행하거나 로봇을 옮긴 경우 웹의 지도 표시만으로 초기화되지 않으므로
+위치 기록이 없거나 로봇을 옮긴 경우 웹의 지도 표시만으로 초기화되지 않으므로
 RViz를 별도로 열어 **2D Pose Estimate**를 사용한다.
 
 ```zsh

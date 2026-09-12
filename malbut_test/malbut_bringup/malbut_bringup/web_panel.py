@@ -232,6 +232,7 @@ class RosBridge:
         self.runtime = (RuntimeSupervisor(self.catalog) if self.node.declare_parameter(
             'manage_bringup', True).value else None)
         self.runtime_message = ''
+        self.startup_status = {}
         self.stopping_runtime = None
         self.action_status = {}
         self.cancel_request = CancelGoal.Request
@@ -259,6 +260,9 @@ class RosBridge:
                                           sensor_qos),
             self.node.create_subscription(String, '/tracking/person/status',
                                           self._tracking, 1),
+            self.node.create_subscription(
+                String, '/malbut/bringup/status', self._bringup_status,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
             self.node.create_subscription(
                 SystemState, '/malbut/state', self._system,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
@@ -304,6 +308,12 @@ class RosBridge:
         status['enabled'] = self.runtime is not None
         status['ready'] = bool(self.data.servers[
             'autoslam' if status['mode'] == 'mapping' else 'manager'])
+        status['waiting'] = []
+        if (self.runtime and status['state'] == 'RUNNING'
+                and not status['ready']):
+            status['waiting'] = self.startup_status.get('missing', [])
+            status['message'] = ('필수 입력 준비 대기' if status['waiting']
+                                 else 'Action 서버 준비 대기')
         if self.runtime_message:
             status['message'] = self.runtime_message
         if self.stopping_runtime is not None:
@@ -316,6 +326,15 @@ class RosBridge:
             self.data.receive_map(message)
         except ValueError as error:
             self.node.get_logger().warning(f'Ignoring invalid map: {error}')
+
+    def _bringup_status(self, message):
+        try:
+            status = json.loads(message.data)
+            if (isinstance(status, dict) and isinstance(status.get('missing'), list)
+                    and all(isinstance(item, str) for item in status['missing'])):
+                self.startup_status = status
+        except (ValueError, TypeError):
+            pass
 
     def _robot_pose(self):
         from rclpy.time import Time
@@ -370,6 +389,7 @@ class RosBridge:
         self.runtime_message = ''
         self.tf_buffer.clear()
         self.action_status.clear()
+        self.startup_status = {}
         with self.data.lock:
             self.data.map_cache.clear()
             self.data.map_active = False
@@ -460,6 +480,11 @@ class RosBridge:
             self.cancel_pending.discard(request_id)
             return
         capability = payload['capability']
+        if capability == 'autoslam':
+            if self.runtime and self.runtime.snapshot()['mode'] == 'navigation':
+                raise ValueError('저장 지도 주행을 종료하고 지도 만들기 모드를 켜세요')
+            if not self.clients['autoslam'].server_is_ready():
+                raise ValueError('AutoSLAM 서버가 없습니다. 지도 만들기 모드를 먼저 켜세요')
         route = 'manager' if self.clients['manager'].server_is_ready() else 'autoslam'
         if route == 'autoslam' and capability != 'autoslam':
             raise ValueError('System manager is not available')

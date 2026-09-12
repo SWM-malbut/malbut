@@ -8,7 +8,9 @@ from unittest.mock import Mock
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from lifecycle_msgs.msg import State
 from malbut_bringup.pose_memory import PoseMemory
-from malbut_bringup.pose_store import map_identity, read_pose, valid_pose, write_pose
+from malbut_bringup.pose_store import (
+    map_identity, read_initial_pose, read_pose, valid_pose, write_pose,
+)
 import pytest
 from rclpy.time import Time
 
@@ -57,6 +59,18 @@ def test_invalid_and_missing_files_are_ignored(tmp_path):
     for value in ('[broken', 'null', '123', '{}'):
         path.write_text(value)
         assert read_pose(path, 'map') is None
+
+
+def test_mapping_pose_fallback_matches_map_and_preserves_amcl_memory(tmp_path):
+    """A newly mapped pose seeds startup, but matching AMCL memory takes precedence."""
+    map_file = tmp_path / 'home.yaml'
+    record = tmp_path / 'home.pose.yaml'
+    amcl_file = tmp_path / 'last_pose.yaml'
+    write_pose(record, 'saved-map', _pose())
+    assert read_initial_pose(amcl_file, map_file, 'saved-map')['x'] == 1.0
+    assert read_initial_pose(amcl_file, map_file, 'changed-map') is None
+    write_pose(amcl_file, 'saved-map', {**_pose(), 'x': 3.0})
+    assert read_initial_pose(amcl_file, map_file, 'saved-map')['x'] == 3.0
 
 
 def _node(monkeypatch, tmp_path):
