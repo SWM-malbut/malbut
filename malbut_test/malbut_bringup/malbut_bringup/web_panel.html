@@ -9,6 +9,7 @@ h1{font-size:24px}h2{font-size:18px;margin-top:0}.card{background:white;border:1
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid #aebac4}button{cursor:pointer;background:#164e88;color:white}button:disabled{opacity:.4;cursor:default}
 .stop{background:#b32c2c}input[type=number]{width:90px}input[type=password]{width:290px}.note{font-size:14px;color:#48556a;line-height:1.5}.warning{color:#a23023}.video{width:100%;min-height:120px;background:#192331;border-radius:6px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;max-height:340px;overflow:auto}#message{min-height:24px;white-space:pre-wrap}
+#savedMap{max-width:100%;min-width:180px}#runtimeInfo{white-space:pre-wrap}#mapCanvas{display:block;width:100%;aspect-ratio:16/10;background:#e6eaee;border-radius:6px}#mapInfo{overflow-wrap:anywhere}
 @media(max-width:720px){.grid{grid-template-columns:1fr}body{margin:12px auto}}
 </style>
 <h1>Malbut 로봇 테스트</h1>
@@ -19,6 +20,28 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
   <p class="note">키는 이 페이지 메모리에만 보관합니다. 새로 고침하면 다시 입력하세요. 신뢰하는 로컬 네트워크에서만 사용하세요.</p>
 </section>
 <div id="message" role="status"></div>
+<section class="card">
+  <h2>로봇 실행 준비</h2>
+  <p class="note" id="runtimeInfo">연결 후 Bringup 상태를 확인합니다.</p>
+  <div class="row">
+    <button id="mappingStart" disabled>지도 만들기 모드 켜기</button>
+    <button class="stop" id="bringupStop" disabled>Bringup 종료</button>
+  </div><br>
+  <div class="row">
+    <label>저장 지도 <select id="savedMap" disabled><option value="">지도 목록 수신 대기</option></select></label>
+    <button id="refreshMaps" disabled>지도 목록 새로고침</button>
+    <button id="navigationStart" disabled>선택한 지도로 주행 모드 켜기</button>
+  </div>
+  <p class="note" id="mapsInfo">지도 선택만으로는 실행되지 않습니다.</p>
+  <p class="note">모드를 바꾸려면 기존 Bringup을 종료한 뒤 다시 켜세요. Bringup 종료는 이 패널이 켠 스택의 미션을 취소한 뒤 처리하며, CLI 등 다른 곳에서 요청한 미션도 중지될 수 있습니다. 아래 기능 시작 버튼을 누르기 전까지 자동 주행하지 않습니다.</p>
+</section>
+<section class="card">
+  <h2>지도와 로봇 위치</h2>
+  <canvas id="mapCanvas" role="img" aria-label="현재 지도와 로봇 위치. 위치 지정이나 이동 명령 기능은 없습니다."></canvas>
+  <p class="note" id="mapInfo">지도 수신 대기</p>
+  <p class="note">검정: 장애물 · 밝은색: 빈 공간 · 회색: 미확인 · 파란 화살표: 로봇 위치·방향. 이 화면은 위치 확인용입니다.</p>
+  <p class="note">처음 저장 지도를 사용하거나 꺼진 로봇을 다른 곳으로 옮겼다면, RViz의 <strong>2D Pose Estimate</strong>로 실제 위치를 지정해야 합니다.</p>
+</section>
 <div class="grid">
   <section class="card"><h2>원본 카메라</h2><img class="video" id="raw" alt="카메라 수신 대기"><p class="note" id="rawInfo">/depth_cam/rgb0/image_raw</p></section>
   <section class="card"><h2>사람 인식</h2><img class="video" id="debug" alt="사람 인식 수신 대기"><p class="note" id="debugInfo">/perception/person/debug_image/compressed</p></section>
@@ -26,7 +49,7 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
 <section class="card">
   <h2>실행 요청</h2>
   <p class="warning">아래 시작 버튼을 누르면 로봇이 움직일 수 있습니다. 주변 공간과 정지 수단을 먼저 확보하세요.</p>
-  <p class="note">SLAM과 저장 지도 주행은 서로 다른 모드입니다. 모드 변경은 로봇 터미널에서 하세요. 이 페이지는 Bringup을 켜거나 전환하지 않습니다.</p>
+  <p class="note">자동 지도 만들기는 지도 만들기 모드에서, 사람 추적·순찰은 저장 지도 주행 모드에서 실행하세요.</p>
   <div class="row">
     <label>새 지도 이름 <input id="mapName" value="home2" maxlength="64"></label>
     <button class="motion" id="autoslam" disabled>자동 지도 만들기 시작</button>
@@ -42,7 +65,7 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
     <button class="motion" id="patrol" disabled>순찰 시작</button>
     <button class="stop" id="cancel" disabled>이 웹 패널의 요청 모두 취소</button>
   </div>
-  <p class="note warning">취소는 비상 정지가 아닙니다. CANCELED 등 최종 결과와 실제 정지를 확인하세요. 창 닫기·Wi-Fi 끊김은 로봇 정지를 의미하지 않습니다. 다른 클라이언트가 보낸 요청은 취소하지 않습니다.</p>
+  <p class="note warning">이 패널의 요청 취소 버튼은 다른 클라이언트가 보낸 요청을 취소하지 않습니다. 취소는 비상 정지가 아니므로 CANCELED 등 최종 결과와 실제 정지를 확인하세요. 창 닫기·Wi-Fi 끊김은 로봇 정지를 의미하지 않습니다.</p>
 </section>
 <div class="grid">
   <section class="card"><h2>서버·시스템 상태</h2><pre id="system">연결 대기</pre><h2>사람 추적 상태</h2><pre id="tracking">수신 대기</pre></section>
@@ -50,7 +73,10 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
 </div>
 <script>
 'use strict';
-let token='', connected=false, requestBusy=false;
+let token='', connected=false, requestBusy=false, mapsBusy=false, mapBusy=false;
+let lastServers={}, lastRuntime={}, mapData=null, mapImage=null, imageVersion=null, mapError='';
+let completedAutoslam='';
+const terminalStates=new Set(['SUCCEEDED','ABORTED','CANCELED','REJECTED','ERROR']);
 const objectUrls={};
 const el=id=>document.getElementById(id);
 const pretty=value=>JSON.stringify(value,null,2);
@@ -60,30 +86,132 @@ async function api(path, options={}) {
   if(!response.ok){const error=await response.json();throw Error(error.error||response.statusText);}
   return response;
 }
-function lockControls(servers={}) {
-  el('follow').disabled=!(connected&&servers.manager&&!requestBusy);
-  el('patrol').disabled=!(connected&&servers.manager&&!requestBusy);
-  el('autoslam').disabled=!(connected&&(servers.manager||servers.autoslam)&&!requestBusy);
+function lockControls() {
+  const servers=lastServers, runtime=lastRuntime;
+  const stopping=runtime.enabled&&runtime.state==='STOPPING';
+  const missionReady=connected&&!requestBusy&&!stopping;
+  el('follow').disabled=!(missionReady&&servers.manager);
+  el('patrol').disabled=!(missionReady&&servers.manager);
+  el('autoslam').disabled=!(missionReady&&(servers.manager||servers.autoslam));
   el('cancel').disabled=!connected;
+  const canStart=connected&&runtime.enabled&&!requestBusy&&['STOPPED','ERROR'].includes(runtime.state);
+  el('mappingStart').disabled=!canStart;
+  el('navigationStart').disabled=!(canStart&&el('savedMap').value&&!mapsBusy);
+  el('bringupStop').disabled=!(connected&&runtime.enabled&&!requestBusy&&['STARTING','RUNNING','ERROR'].includes(runtime.state));
+  el('savedMap').disabled=!connected||mapsBusy;
+  el('refreshMaps').disabled=!connected||mapsBusy;
 }
-let lastServers={};
+function showRuntime(runtime) {
+  const stateNames={STOPPED:'꺼짐',STARTING:'준비 중',RUNNING:'실행 중',STOPPING:'종료 중',ERROR:'확인 필요'};
+  const modeNames={mapping:'지도 만들기',navigation:'저장 지도 주행'};
+  const lines=[runtime.enabled?'Bringup: '+(stateNames[runtime.state]||runtime.state||'확인 중'):'이 패널에서는 Bringup 시작·종료를 관리하지 않습니다.'];
+  if(runtime.mode)lines.push('모드: '+(modeNames[runtime.mode]||runtime.mode)+(runtime.ready?' · 준비 완료':''));
+  if(runtime.map)lines.push('지도: '+runtime.map);
+  if(runtime.message)lines.push(runtime.message);
+  if(runtime.log_path)lines.push('로봇 로그: '+runtime.log_path);
+  el('runtimeInfo').textContent=lines.join('\n');
+}
+async function refreshMaps() {
+  if(!connected||mapsBusy)return;
+  mapsBusy=true;lockControls();
+  const selected=el('savedMap').value;
+  try {
+    const data=await(await api('/api/maps')).json();
+    const select=el('savedMap');select.replaceChildren();
+    const placeholder=document.createElement('option');
+    placeholder.value='';placeholder.textContent=data.maps.length?'지도를 선택하세요':'저장된 지도가 없습니다';
+    select.appendChild(placeholder);
+    for(const map of data.maps){
+      const option=document.createElement('option');
+      option.value=map.id;option.textContent=map.name;option.title=map.path;
+      select.appendChild(option);
+    }
+    if(data.maps.some(map=>map.id===selected))select.value=selected;
+    el('mapsInfo').textContent='저장 지도 '+data.maps.length+'개 · 선택만으로는 실행되지 않습니다.';
+  } catch(error) {
+    el('mapsInfo').textContent='지도 목록 수신 실패: '+error.message;
+  } finally {mapsBusy=false;lockControls();}
+}
 async function status() {
   if(!token)return;
   try {
     const data=await(await api('/api/status')).json();
-    connected=true;lastServers=data.servers;
+    connected=true;lastServers=data.servers;lastRuntime=data.runtime||{};
     el('connection').textContent='연결됨';
+    showRuntime(lastRuntime);
     el('system').textContent=pretty({servers:data.servers,system:data.system,video_age_s:data.video_age_s});
     let tracking=data.tracking;
     try {tracking=JSON.parse(tracking);} catch(error){}
     el('tracking').textContent=tracking?pretty(tracking):'추적 상태 수신 대기';
     el('requests').textContent=data.requests.length?pretty(data.requests.slice().reverse()):'요청 없음';
+    const finished=data.requests.filter(item=>item.capability==='autoslam'&&terminalStates.has(item.state)).map(item=>item.id+':'+item.state).join(',');
+    if(finished!==completedAutoslam){completedAutoslam=finished;await refreshMaps();}
   } catch(error) {
     connected=false;
     el('connection').textContent='연결 확인 필요';
+    el('mapInfo').textContent='연결 확인 필요 · 표시된 지도는 마지막 수신 정보입니다.';
     report('상태 수신 실패: '+error.message+'\n연결 끊김은 로봇 정지를 의미하지 않습니다.');
   }
-  lockControls(lastServers);
+  lockControls();drawMap();
+}
+
+function worldToGrid(pose, map) {
+  // The PNG already flips grid Y. Invert the rotated map origin only once.
+  const dx=pose.x-map.origin.x, dy=pose.y-map.origin.y;
+  const c=Math.cos(map.origin.yaw), s=Math.sin(map.origin.yaw);
+  return {x:(c*dx+s*dy)/map.resolution,y:(-s*dx+c*dy)/map.resolution,
+    heading:-(pose.yaw-map.origin.yaw)};
+}
+function drawMap() {
+  const canvas=el('mapCanvas'), box=canvas.getBoundingClientRect();
+  const dpr=window.devicePixelRatio||1;
+  const width=Math.max(1,box.width), height=Math.max(1,box.height);
+  const pixelWidth=Math.round(width*dpr), pixelHeight=Math.round(height*dpr);
+  if(canvas.width!==pixelWidth||canvas.height!==pixelHeight){canvas.width=pixelWidth;canvas.height=pixelHeight;}
+  const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,width,height);
+  if(!mapData||!mapData.available||!mapImage||imageVersion!==mapData.version){
+    ctx.fillStyle='#48556a';ctx.font='15px system-ui';ctx.textAlign='center';
+    ctx.fillText(mapError||'지도 수신 대기',width/2,height/2);return;
+  }
+  const map=mapData, scale=Math.min((width-24)/map.width,(height-24)/map.height);
+  const left=(width-map.width*scale)/2, top=(height-map.height*scale)/2;
+  const live=connected&&map.active&&!mapError;
+  ctx.save();ctx.globalAlpha=live?1:0.45;ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(mapImage,left,top,map.width*scale,map.height*scale);ctx.restore();
+  if(live&&map.pose_available&&map.pose){
+    const point=worldToGrid(map.pose,map);
+    if(point.x>=0&&point.y>=0&&point.x<=map.width&&point.y<=map.height){
+      ctx.save();ctx.translate(left+point.x*scale,top+(map.height-point.y)*scale);
+      ctx.rotate(point.heading);ctx.beginPath();ctx.moveTo(13,0);ctx.lineTo(-8,-7);
+      ctx.lineTo(-4,0);ctx.lineTo(-8,7);ctx.closePath();
+      ctx.fillStyle='#176bd1';ctx.strokeStyle='white';ctx.lineWidth=2;ctx.fill();ctx.stroke();ctx.restore();
+    }
+  }
+}
+async function refreshMap() {
+  if(!connected||mapBusy)return;
+  mapBusy=true;
+  try {
+    const map=await(await api('/api/map')).json();mapData=map;mapError='';
+    if(!map.available){el('mapInfo').textContent='지도 수신 대기 · 지도 만들기 또는 주행 모드에서 표시됩니다.';drawMap();return;}
+    if(imageVersion!==map.version){
+      const response=await api('/api/map/image/'+encodeURIComponent(map.version));
+      const url=URL.createObjectURL(await response.blob());
+      try {
+        const nextImage=new Image();
+        await new Promise((resolve,reject)=>{nextImage.onload=resolve;nextImage.onerror=()=>reject(Error('지도 이미지 읽기 실패'));nextImage.src=url;});
+        mapImage=nextImage;imageVersion=map.version;
+      } finally {URL.revokeObjectURL(url);}
+    }
+    const pose=map.pose_available&&map.pose;
+    el('mapInfo').textContent=(map.active?'현재 수신 지도':'마지막 수신 지도 · 현재 비활성')+
+      ' · '+map.width+' × '+map.height+'칸 · '+map.resolution+'m/칸 · '+map.frame_id+
+      (map.active&&pose?' · 로봇 ('+pose.x.toFixed(2)+', '+pose.y.toFixed(2)+')m':' · 로봇 위치 수신 대기');
+  } catch(error) {
+    mapError='지도 갱신 대기: '+error.message;
+    el('mapInfo').textContent=mapError+' · 다음 주기에 다시 확인합니다.';
+  } finally {mapBusy=false;drawMap();}
 }
 async function video(stream) {
   if(!connected)return;
@@ -99,22 +227,33 @@ async function video(stream) {
 }
 async function command(payload) {
   const starting=payload.command==='start';
-  if(starting&&requestBusy)return;
+  const runtimeCommand=payload.command==='bringup_start'||payload.command==='bringup_stop';
+  if((starting||runtimeCommand)&&requestBusy)return;
   if(starting&&!confirm('이 요청으로 로봇이 움직일 수 있습니다. 실행할까요?'))return;
-  if(starting)requestBusy=true;lockControls(lastServers);
+  if(payload.command==='bringup_start'&&!confirm((payload.mode==='mapping'?'지도 만들기':'선택한 저장 지도의 주행')+' 모드를 켤까요? 기능 시작은 아래에서 별도로 요청합니다.'))return;
+  if(payload.command==='bringup_stop'&&!confirm('이 패널이 켠 스택의 미션을 취소한 뒤 Bringup을 종료할까요? CLI 등 다른 곳에서 요청한 미션도 중지될 수 있습니다. 실제 정지는 반드시 확인하세요.'))return;
+  if(starting||runtimeCommand)requestBusy=true;lockControls();
   try {
     await api('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    report(payload.command==='cancel'?'취소 요청 전달됨. 최종 결과와 실제 정지를 확인하세요.':'실행 요청 전달됨. 아래 요청·결과에서 수락 여부를 확인하세요.');
+    const messages={cancel:'취소 요청 전달됨. 최종 결과와 실제 정지를 확인하세요.',bringup_start:'Bringup 시작 요청 전달됨. 준비 상태를 확인하세요.',bringup_stop:'Bringup 종료 요청 전달됨. 종료 상태와 실제 정지를 확인하세요.'};
+    report(messages[payload.command]||'실행 요청 전달됨. 아래 요청·결과에서 수락 여부를 확인하세요.');
   } catch(error) {report('요청 응답 확인 실패: '+error.message+'\n자동 재전송하지 않습니다. 요청·결과를 확인하세요.');}
-  finally {if(starting)requestBusy=false;await status();}
+  finally {if(starting||runtimeCommand)requestBusy=false;await status();}
 }
-el('connect').onclick=async()=>{token=el('token').value.trim();el('token').value='';await status();};
+el('connect').onclick=async()=>{token=el('token').value.trim();el('token').value='';imageVersion=null;await status();await refreshMaps();await refreshMap();};
+el('refreshMaps').onclick=refreshMaps;
+el('savedMap').onchange=()=>lockControls();
+el('mappingStart').onclick=()=>command({command:'bringup_start',mode:'mapping'});
+el('navigationStart').onclick=()=>command({command:'bringup_start',mode:'navigation',map:el('savedMap').value});
+el('bringupStop').onclick=()=>command({command:'bringup_stop'});
 el('autoslam').onclick=()=>command({command:'start',capability:'autoslam',arguments:{map_name:el('mapName').value.trim()}});
 el('follow').onclick=()=>command({command:'start',capability:'follow_person',arguments:{target_mode:Number(el('targetMode').value),target_person_id:el('personId').value.trim(),desired_distance_m:Number(el('distance').value)}});
 el('patrol').onclick=()=>command({command:'start',capability:'patrol',arguments:{thoroughness:Number(el('thoroughness').value)}});
 el('cancel').onclick=()=>command({command:'cancel'});
 async function pollStatus(){await status();setTimeout(pollStatus,1000);}
 async function pollVideo(){await Promise.all([video('raw'),video('debug')]);setTimeout(pollVideo,200);}
-pollStatus();pollVideo();
+async function pollMap(){await refreshMap();setTimeout(pollMap,1000);}
+window.addEventListener('resize',drawMap);
+drawMap();pollStatus();pollVideo();pollMap();
 </script>
 </html>

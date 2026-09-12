@@ -15,6 +15,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node, SetParameter, SetRemap
 
+from malbut_bringup.perception_setup import validate_perception_files
+
 
 def _file(value, label):
     path = Path(value).expanduser()
@@ -53,6 +55,12 @@ def _setup(context):
     navigation = value('start_navigation') == 'true'
     if navigating and not perception:
         raise RuntimeError('navigation mode requires perception for FollowPerson')
+    web_parameters = {
+        'use_sim_time': False, 'manage_bringup': False,
+        'map_directory': value('map_directory'),
+        'map_topic': value('static_map_topic'),
+        'robot_frame': value('robot_frame'), 'rgb_topic': value('rgb_topic'),
+    }
 
     if mapping:
         # AutoSLAM starts missing prerequisites on a Goal, not on page load.
@@ -61,15 +69,23 @@ def _setup(context):
                 'auto_start': 'true', 'scan_topic': value('raw_scan_topic'),
                 'normalized_scan_topic': value('scan_topic'),
                 'odom_topic': value('odom_topic'),
+                'map_directory': value('map_directory'),
+                'map_topic': value('static_map_topic'),
+                'base_frame': value('robot_frame'),
             })]
         if value('web_panel') == 'true':
             actions.append(Node(
                 package='malbut_bringup', executable='robot_web_panel',
-                name='robot_web_panel', output='screen'))
+                name='robot_web_panel', output='screen', parameters=[web_parameters]))
         return actions
 
     # Validate paths before starting any child process. Never substitute a
     # small_house/test map or overwrite the vendor's calibration/parameters.
+    perception_files = {}
+    if perception:
+        perception_files = validate_perception_files(
+            value('python_executable'), value('reid_python_executable'),
+            value('model_path'), value('reid_model_path'))
     hardware_path = None
     if hardware:
         hardware_path = (_file(value('hardware_launch_file'), 'hardware launch')
@@ -118,7 +134,7 @@ def _setup(context):
     if value('web_panel') == 'true':
         actions.append(Node(
             package='malbut_bringup', executable='robot_web_panel',
-            name='robot_web_panel', output='screen'))
+            name='robot_web_panel', output='screen', parameters=[web_parameters]))
 
     if perception:
         options = {name: value(name) for name in (
@@ -126,6 +142,7 @@ def _setup(context):
             'python_executable', 'reid_python_executable', 'device', 'reid_model_path',
             'inference_backend', 'dnn_target', 'publish_debug_image',
         )}
+        options.update(perception_files)
         options['reid_backend'] = 'osnet'
         actions.append(_include(_package_file(
             'malbut_tracking', 'launch/person_detection.launch.py'), options))
@@ -137,8 +154,11 @@ def _setup(context):
         )}
         if value('following_config'):
             follower['config'] = _file(value('following_config'), 'follower config')
-        if value('lidar_config'):
-            follower['lidar_config'] = _file(value('lidar_config'), 'LiDAR config')
+        # An empty parent LaunchConfiguration otherwise shadows the child's
+        # default, which ROS interprets as the current directory, not a YAML.
+        follower['lidar_config'] = (
+            _file(value('lidar_config'), 'LiDAR config') if value('lidar_config')
+            else _package_file('malbut_tracking', 'config/lidar_foreground.yaml'))
         actions.append(_include(_package_file(
             'malbut_tracking', 'launch/person_following.launch.py'), follower))
         actions.append(_include(_package_file(
@@ -225,6 +245,7 @@ def generate_launch_description():
         'navigation_launch_file': str(
             Path.home() / 'ros2_ws/src/navigation/launch/include/bringup.launch.py'),
         'map': '',
+        'map_directory': str(Path.home() / '.ros/malbut/maps'),
         'nav2_params_file': '',
         # Topic names match the robot's supplied topic list. Header frames and
         # RGB-D alignment still require device verification; do not invent TF.
