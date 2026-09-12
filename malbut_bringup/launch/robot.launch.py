@@ -58,7 +58,7 @@ def _setup(context):
     web_parameters = {
         'use_sim_time': False, 'manage_bringup': False,
         'map_directory': value('map_directory'),
-        'map_topic': value('static_map_topic'),
+        'map_topic': value('patrol_costmap_topic'),
         'robot_frame': value('robot_frame'), 'rgb_topic': value('rgb_topic'),
     }
 

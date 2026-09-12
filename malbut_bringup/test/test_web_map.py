@@ -38,7 +38,7 @@ def test_unreceived_and_inactive_maps_are_distinguished():
     snapshot = cache.snapshot(active=False)
     assert snapshot['available'] and not snapshot['active']
     assert snapshot['frame_id'] == 'map'
-    assert cache.png()[0] == snapshot['version'] == 1
+    assert cache.png()[0]['version'] == snapshot['version'] == 1
 
 
 def test_png_shades_and_vertical_flip_preserve_original_message():
@@ -57,17 +57,16 @@ def test_clear_forgets_map_and_never_reuses_its_image_version():
     """A restarted runtime cannot expose the previous runtime's cached image."""
     cache = MapCache()
     first = cache.update(_map())
-    assert cache.png(first) is not None
+    assert cache.png()[0]['version'] == first
     cache.clear()
     cleared = cache.snapshot(active=True, pose={'x': 0, 'y': 0, 'yaw': 0})
     assert cleared['version'] > first
     assert not cleared['available'] and not cleared['pose_available']
     assert 'origin' not in cleared
-    assert cache.png(first) is None and cache.png() is None
+    assert cache.png() is None
     latest = cache.update(_map(width=1, height=1, data=[100]))
     assert latest > cleared['version']
-    assert cache.png(first) is None
-    assert cache.png(latest)[0] == latest
+    assert cache.png()[0]['version'] == latest
 
 
 def test_encoding_is_deferred_and_shared_by_concurrent_requests(monkeypatch):
@@ -79,12 +78,13 @@ def test_encoding_is_deferred_and_shared_by_concurrent_requests(monkeypatch):
     cache.snapshot(active=True)
     encoder.assert_not_called()
     with ThreadPoolExecutor(max_workers=4) as executor:
-        results = list(executor.map(lambda _: cache.png(1), range(8)))
-    assert results == [(1, b'png')] * 8
+        results = list(executor.map(lambda _: cache.png(), range(8)))
+    assert all(metadata['version'] == 1 and png == b'png' for metadata, png in results)
     encoder.assert_called_once()
     cache.update(_map(width=2, height=1, data=[100, 0], yaw=math.pi / 2))
-    assert cache.png(1) is None
-    assert cache.png(2) == (2, b'png')
+    metadata, png = cache.png()
+    assert metadata['version'] == 2 and png == b'png'
+    assert (metadata['width'], metadata['height']) == (2, 1)
     assert encoder.call_count == 2
     snapshot = cache.snapshot(active=True)
     assert (snapshot['width'], snapshot['height']) == (2, 1)
@@ -104,16 +104,17 @@ def test_update_during_encoding_cannot_cache_an_old_png_for_a_new_map(monkeypatc
     cache = MapCache()
     cache.update(_map())
     with ThreadPoolExecutor(max_workers=1) as executor:
-        pending = executor.submit(cache.png, 1)
+        pending = executor.submit(cache.png)
         assert entered.wait(timeout=2)
         try:
             cache.update(_map(width=1, height=1, data=[0]))
             assert cache.snapshot(active=True)['version'] == 2
         finally:
             release.set()
-        assert pending.result(timeout=2) == (1, b'\x03')
-    assert cache.png(1) is None
-    assert cache.png(2) == (2, b'\x01')
+        metadata, png = pending.result(timeout=2)
+        assert (metadata['version'], metadata['width'], png) == (1, 3, b'\x03')
+    metadata, png = cache.png()
+    assert (metadata['version'], metadata['width'], png) == (2, 1, b'\x01')
 
 
 @pytest.mark.parametrize('mutate', [

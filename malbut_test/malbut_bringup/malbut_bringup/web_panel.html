@@ -37,10 +37,10 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
   <p class="note">모드를 바꾸려면 기존 Bringup을 종료한 뒤 다시 켜세요. Bringup 종료는 이 패널이 켠 스택의 미션을 취소한 뒤 처리하며, CLI 등 다른 곳에서 요청한 미션도 중지될 수 있습니다. 아래 기능 시작 버튼을 누르기 전까지 자동 주행하지 않습니다.</p>
 </section>
 <section class="card">
-  <h2>지도와 로봇 위치</h2>
-  <canvas id="mapCanvas" role="img" aria-label="현재 지도와 로봇 위치. 위치 지정이나 이동 명령 기능은 없습니다."></canvas>
+  <h2>Global Costmap과 로봇 위치</h2>
+  <canvas id="mapCanvas" role="img" aria-label="Global Costmap과 로봇 위치. 위치 지정이나 이동 명령 기능은 없습니다."></canvas>
   <p class="note" id="mapInfo">지도 수신 대기</p>
-  <p class="note">검정: 장애물 · 밝은색: 빈 공간 · 회색: 미확인 · 파란 화살표: 로봇 위치·방향. 이 화면은 위치 확인용입니다.</p>
+  <p class="note">/global_costmap/costmap · 검정: 장애물 · 어두울수록 높은 주행 비용(팽창 영역 포함) · 밝은색: 빈 공간 · 회색: 미확인 · 파란 화살표: 로봇 위치·방향. 저장 지도 원본이 아닌 현재 주행용 지도입니다.</p>
   <p class="note">AutoSLAM이 저장한 위치는 같은 지도의 주행 모드에서 초기 추정 위치로 복원합니다. 로봇을 다른 곳으로 옮겼거나 저장된 위치가 없다면, RViz의 <strong>2D Pose Estimate</strong>로 실제 위치를 지정하세요. 복원 후에도 지도 위 위치가 실제와 맞는지 확인하세요.</p>
 </section>
 <div class="grid">
@@ -51,6 +51,7 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
   <h2>실행 요청</h2>
   <p class="warning">아래 시작 버튼을 누르면 로봇이 움직일 수 있습니다. 주변 공간과 정지 수단을 먼저 확보하세요.</p>
   <p class="note">자동 지도 만들기는 지도 만들기 모드에서, 사람 추적·순찰은 저장 지도 주행 모드에서 실행하세요.</p>
+  <p class="note">현재 추적 테스트는 OSNet·옷 색상 비교 없이 동작합니다. 아래에서 ‘지금 보이는 사람’을 선택하세요.</p>
   <div class="row">
     <label>새 지도 이름 <input id="mapName" value="home2" maxlength="64"></label>
     <button class="motion" id="autoslam" disabled>자동 지도 만들기 시작</button>
@@ -75,7 +76,7 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
 <script>
 'use strict';
 let token='', connected=false, requestBusy=false, mapsBusy=false, mapBusy=false;
-let lastServers={}, lastRuntime={}, mapData=null, mapImage=null, imageVersion=null, mapError='';
+let lastServers={}, lastRuntime={}, mapData=null, mapImage=null, mapError='';
 let completedAutoslam='';
 const terminalStates=new Set(['SUCCEEDED','ABORTED','CANCELED','REJECTED','ERROR']);
 const objectUrls={};
@@ -179,14 +180,14 @@ function drawMap() {
   if(canvas.width!==pixelWidth||canvas.height!==pixelHeight){canvas.width=pixelWidth;canvas.height=pixelHeight;}
   const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.clearRect(0,0,width,height);
-  if(!mapData||!mapData.available||!mapImage||imageVersion!==mapData.version){
+  if(!mapData||!mapImage){
     ctx.fillStyle='#48556a';ctx.font='15px system-ui';ctx.textAlign='center';
     ctx.fillText(mapError||'지도 수신 대기',width/2,height/2);return;
   }
   const map=mapData, scale=Math.min((width-24)/map.width,(height-24)/map.height);
   const left=(width-map.width*scale)/2, top=(height-map.height*scale)/2;
-  const live=connected&&map.active&&!mapError;
-  ctx.save();ctx.globalAlpha=live?1:0.45;ctx.imageSmoothingEnabled=false;
+  const live=connected&&map.active;
+  ctx.save();ctx.imageSmoothingEnabled=false;
   ctx.drawImage(mapImage,left,top,map.width*scale,map.height*scale);ctx.restore();
   if(live&&map.pose_available&&map.pose){
     const point=worldToGrid(map.pose,map);
@@ -198,28 +199,39 @@ function drawMap() {
     }
   }
 }
-async function refreshMap() {
+async function refreshMap(force=false) {
   if(!connected||mapBusy)return;
   mapBusy=true;
   try {
-    const map=await(await api('/api/map')).json();mapData=map;mapError='';
-    if(!map.available){el('mapInfo').textContent='지도 수신 대기 · 지도 만들기 또는 주행 모드에서 표시됩니다.';drawMap();return;}
-    if(imageVersion!==map.version){
-      const response=await api('/api/map/image/'+encodeURIComponent(map.version));
+    let map=await(await api('/api/map')).json();
+    if(!map.available){
+      if(mapData)mapData={...mapData,active:false,pose_available:false,pose:null};
+      el('mapInfo').textContent='Global Costmap 수신 대기'+(mapImage?' · 마지막 수신 지도 유지':' · SLAM 주행 또는 저장 지도 주행 중 표시됩니다.');
+      return;
+    }
+    let nextImage=mapImage;
+    if(force||!mapImage||mapData.version!==map.version){
+      // Geometry and pixels come from one server snapshot, not two versions.
+      const response=await api('/api/map/image');
+      const geometry=JSON.parse(response.headers.get('X-Map-Metadata'));
       const url=URL.createObjectURL(await response.blob());
       try {
-        const nextImage=new Image();
+        nextImage=new Image();
         await new Promise((resolve,reject)=>{nextImage.onload=resolve;nextImage.onerror=()=>reject(Error('지도 이미지 읽기 실패'));nextImage.src=url;});
-        mapImage=nextImage;imageVersion=map.version;
+        if(nextImage.naturalWidth!==geometry.width||nextImage.naturalHeight!==geometry.height)throw Error('지도 이미지 크기 불일치');
+        if(map.frame_id!==geometry.frame_id)map={...map,pose_available:false,pose:null};
+        map={...map,...geometry};
       } finally {URL.revokeObjectURL(url);}
     }
+    // Keep the displayed pair untouched until the replacement has decoded.
+    mapData=map;mapImage=nextImage;mapError='';
     const pose=map.pose_available&&map.pose;
-    el('mapInfo').textContent=(map.active?'현재 수신 지도':'마지막 수신 지도 · 현재 비활성')+
+    el('mapInfo').textContent=(map.active?'Global Costmap':'마지막 Global Costmap · 현재 비활성')+
       ' · '+map.width+' × '+map.height+'칸 · '+map.resolution+'m/칸 · '+map.frame_id+
       (map.active&&pose?' · 로봇 ('+pose.x.toFixed(2)+', '+pose.y.toFixed(2)+')m':' · 로봇 위치 수신 대기');
   } catch(error) {
     mapError='지도 갱신 대기: '+error.message;
-    el('mapInfo').textContent=mapError+' · 다음 주기에 다시 확인합니다.';
+    el('mapInfo').textContent=mapError+' · 마지막 수신 지도 유지';
   } finally {mapBusy=false;drawMap();}
 }
 async function video(stream) {
@@ -249,7 +261,7 @@ async function command(payload) {
   } catch(error) {report('요청 응답 확인 실패: '+error.message+'\n자동 재전송하지 않습니다. 요청·결과를 확인하세요.');}
   finally {if(starting||runtimeCommand)requestBusy=false;await status();}
 }
-el('connect').onclick=async()=>{token=el('token').value.trim();el('token').value='';imageVersion=null;await status();await refreshMaps();await refreshMap();};
+el('connect').onclick=async()=>{token=el('token').value.trim();el('token').value='';await status();await refreshMaps();await refreshMap(true);};
 el('refreshMaps').onclick=refreshMaps;
 el('savedMap').onchange=()=>lockControls();
 el('mappingStart').onclick=()=>command({command:'bringup_start',mode:'mapping'});

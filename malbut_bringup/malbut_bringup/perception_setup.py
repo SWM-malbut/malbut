@@ -11,8 +11,8 @@ def validate_perception_files(python_executable, reid_python_executable,
         'python_executable': python_executable,
         'reid_python_executable': reid_python_executable,
         'model_path': model_path,
-        'reid_model_path': reid_model_path,
     }
+    # The robot test runs the existing box tracker without loading OSNet.
     paths, problems = {}, []
     for name, value in requested.items():
         try:
@@ -37,8 +37,6 @@ def validate_perception_files(python_executable, reid_python_executable,
             'prepare_runtime.sh"\n'
             'bash "$(ros2 pkg prefix malbut_reid)/share/malbut_reid/scripts/'
             'prepare_inference_runtime.sh"\n'
-            'bash "$(ros2 pkg prefix malbut_reid)/share/malbut_reid/scripts/'
-            'prepare_osnet_model.sh"\n'
             'These scripts prepare the configured cache/runtime directories. '
             'For custom file paths, pass the resulting prepared paths to the '
             'launch arguments above. Bringup does not install or download files.')

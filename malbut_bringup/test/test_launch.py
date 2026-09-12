@@ -118,7 +118,7 @@ def test_mapping_only_prepares_idle_autoslam_and_optional_web(launch_module):
     panel = next(item for item in actions if isinstance(item, Node))
     assert evaluate_parameters(context, panel._Node__parameters)[0] == {
         'use_sim_time': False, 'manage_bringup': False,
-        'map_directory': '/configured/maps', 'map_topic': '/mapping/map',
+        'map_directory': '/configured/maps', 'map_topic': '/global_costmap/costmap',
         'robot_frame': 'robot/base', 'rgb_topic': '/camera/color',
     }
 

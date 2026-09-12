@@ -37,6 +37,15 @@ def test_preflight_expands_paths_without_resolving_venv_python(tmp_path):
     assert paths['model_path'] == str(files['model_path'])
 
 
+def test_robot_test_does_not_require_an_unused_osnet_model(tmp_path):
+    """The box-only tracker can start without the disabled OSNet model file."""
+    files = _files(tmp_path)
+    files['reid_model_path'] = tmp_path / 'not-installed.onnx'
+    paths = validate_perception_files(**files)
+    assert paths['reid_python_executable'] == str(files['reid_python_executable'])
+    assert 'reid_model_path' not in paths
+
+
 def test_preflight_reports_all_missing_files_and_real_preparation_commands(tmp_path):
     """One failure explains all missing prerequisites without running commands."""
     paths = {name: tmp_path / name for name in (
@@ -45,11 +54,13 @@ def test_preflight_reports_all_missing_files_and_real_preparation_commands(tmp_p
         validate_perception_files(**paths)
     message = str(raised.value)
     for name, path in paths.items():
+        if name == 'reid_model_path':
+            assert str(path) not in message
+            continue
         assert name in message and str(path) in message
     for package, script in (
             ('malbut_yolo', 'prepare_runtime.sh'),
-            ('malbut_reid', 'prepare_inference_runtime.sh'),
-            ('malbut_reid', 'prepare_osnet_model.sh')):
+            ('malbut_reid', 'prepare_inference_runtime.sh')):
         assert f'$(ros2 pkg prefix {package})/share/{package}/scripts/{script}' in message
 
 

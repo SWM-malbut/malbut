@@ -120,7 +120,10 @@ ros2 launch malbut_bringup robot.launch.py raw_scan_topic:=/scan
 RGB-D 위치 추정은 **RGB에 정렬된 Depth와 해당 RGB CameraInfo**를 사용해야
 한다. 이름만 연결했다고 정렬되는 것이 아니다. 헤더의 optical frame과 실제
 TF가 맞는지도 확인한다. 시뮬레이션의 frame 보정이나 fake static TF를 적용하지 않는다.
-OSNet은 명시적으로 `osnet` backend를 사용하므로 로딩 실패를 HSV 대체로 숨기지 않는다.
+현재 실기기 테스트에서는 OSNet 초기화와 외형 특징 계산을 코드에서 생략한다.
+색상 비교도 사용하지 않으며 기존 검출 박스·이동 기반 추적은 유지한다.
+웹에서도 **지금 보이는 사람**으로 테스트한다. 지정된 사람 모드의 인터페이스와
+선택 로직은 유지하지만, 이 테스트 상태에서는 외형 기반 동일인 재식별을 하지 않는다.
 `model_path`, `python_executable`, `device`, `reid_model_path`,
 `inference_backend`, `dnn_target`은 기존 인식 launch에 전달한다.
 디버그 영상은 기본 끔, 필요하면 `publish_debug_image:=true`를 지정한다.
@@ -272,8 +275,11 @@ ros2 launch navigation rviz_navigation.launch.py
 단독 `ros2 run malbut_bringup robot_web_panel` 실행을 기본으로 사용한다. Mac에서
 `http://<로봇-IP>:8766` 접속 후 로봇 터미널의 접근 토큰을 입력한다.
 저장 지도 선택·Bringup 시작/종료, 원본/인식 영상, 추적 상태,
-AutoSLAM·사람추적·순찰 실행·취소를 제공한다. 실시간 2D 지도는 `/map`,
+AutoSLAM·사람추적·순찰 실행·취소를 제공한다. 실시간 2D 지도는
+`/global_costmap/costmap`(장애물·팽창 비용 포함),
 로봇 위치·방향은 TF에서 가져오며 지도를 클릭해 이동하거나 초기화하지 않는다.
+새 이미지와 지도 좌표 정보가 함께 준비되면 화면을 교체한다. 갱신 지연·실패 시
+기존 지도는 유지하고 수신 상태만 알린다. 저장하는 지도 원본은 기존 `/map`이다.
 
 기존 Bringup에 `web_panel:=true`로 포함한 패널은 영상·지도·미션 요청만 제공하고
 Bringup 시작/종료는 비활성화한다. 단독 패널과 같은 포트로 중복 실행하지 않는다.

@@ -247,7 +247,7 @@ class RosBridge:
         topics = {
             'rgb_topic': '/depth_cam/rgb0/image_raw',
             'debug_topic': '/perception/person/debug_image/compressed',
-            'map_topic': '/map',
+            'map_topic': '/global_costmap/costmap',
         }
         self.topics = {key: self.node.declare_parameter(key, value).value
                        for key, value in topics.items()}
@@ -621,7 +621,7 @@ class PanelHandler(BaseHTTPRequestHandler):
     def log_message(self, format_string, *args):
         """Avoid logging credentials or potentially sensitive robot state."""
 
-    def _reply(self, status, content, mime='application/json'):
+    def _reply(self, status, content, mime='application/json', headers=None):
         if not isinstance(content, bytes):
             content = json.dumps(content, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
@@ -630,6 +630,8 @@ class PanelHandler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header('Content-Security-Policy',
                          "default-src 'self'; img-src 'self' blob:; "
                          "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
@@ -658,13 +660,14 @@ class PanelHandler(BaseHTTPRequestHandler):
                 self._reply(503, {'error': str(error)})
         elif self.path == '/api/map':
             self._reply(200, self.server.data.map_snapshot())
-        elif re.fullmatch(r'/api/map/image/[0-9]+', self.path):
-            version = int(self.path.rsplit('/', 1)[1])
-            rendered = self.server.data.map_cache.png(version)
+        elif self.path == '/api/map/image':
+            rendered = self.server.data.map_cache.png()
             if rendered is None:
-                self._reply(409, {'error': 'Map changed or unavailable; refresh map metadata'})
+                self._reply(503, {'error': 'Global Costmap has not been received'})
             else:
-                self._reply(200, rendered[1], 'image/png')
+                self._reply(200, rendered[1], 'image/png', {
+                    'X-Map-Metadata': json.dumps(rendered[0], ensure_ascii=True),
+                })
         elif self.path in ('/api/image/raw', '/api/image/debug'):
             try:
                 content = self.server.data.jpeg(self.path.rsplit('/', 1)[1])

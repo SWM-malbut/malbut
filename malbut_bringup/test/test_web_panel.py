@@ -133,7 +133,7 @@ def test_page_load_is_read_only_and_does_not_expose_token(http_server):
     assert _request(server, 'GET', '/api/status')[0] == 401
     assert _request(server, 'GET', '/api/image/raw')[0] == 401
     assert _request(server, 'GET', '/api/command')[0] == 401
-    for path in ('/api/maps', '/api/map', '/api/map/image/1'):
+    for path in ('/api/maps', '/api/map', '/api/map/image'):
         assert _request(server, 'GET', path)[0] == 401
     submit.assert_not_called()
 
@@ -169,7 +169,7 @@ def _future(result):
 
 
 def test_map_api_is_authenticated_and_does_not_launch(http_server):
-    """Geometry, versioned PNG and saved-map listing never dispatch a command."""
+    """A PNG carries matching geometry without requiring a still-current version."""
     server, submit = http_server
     headers = {'Authorization': 'Bearer test-secret'}
     server.catalog = Mock()
@@ -178,11 +178,17 @@ def test_map_api_is_authenticated_and_does_not_launch(http_server):
     assert status == 200 and json.loads(content)['maps'][0]['id'] == 'home.yaml'
     status, content = _request(server, 'GET', '/api/map', **headers)
     assert status == 200 and not json.loads(content)['available']
-    assert _request(server, 'GET', '/api/map/image/1', **headers)[0] == 409
+    assert _request(server, 'GET', '/api/map/image', **headers)[0] == 503
     server.data.map_cache = Mock()
-    server.data.map_cache.png.return_value = (7, b'PNG bytes')
-    assert _request(server, 'GET', '/api/map/image/7', **headers) == (200, b'PNG bytes')
-    server.data.map_cache.png.assert_called_once_with(7)
+    metadata = {'version': 7, 'width': 3, 'height': 2, 'frame_id': 'map'}
+    server.data.map_cache.png.return_value = (metadata, b'PNG bytes')
+    client = http.client.HTTPConnection(*server.server_address, timeout=2)
+    client.request('GET', '/api/map/image', headers=headers)
+    response = client.getresponse()
+    assert response.status == 200 and response.read() == b'PNG bytes'
+    assert json.loads(response.getheader('X-Map-Metadata')) == metadata
+    client.close()
+    server.data.map_cache.png.assert_called_once_with()
     submit.assert_not_called()
 
 

@@ -1,4 +1,4 @@
-"""Cache a read-only 2D occupancy map for the LAN test panel."""
+"""Cache the Global Costmap's OccupancyGrid for the LAN test panel."""
 
 import math
 import operator
@@ -131,18 +131,20 @@ class MapCache:
                 result['origin'] = dict(self._metadata['origin'])
             return result
 
-    def png(self, version=None):
-        """Encode each requested version once, or return None if unavailable."""
+    def png(self):
+        """Return one consistent geometry/PNG pair, even if a new map arrives."""
         with self._encode_lock:
             with self._lock:
                 current = self._version
-                if self._message is None or (version is not None and version != current):
+                if self._message is None:
                     return None
                 if self._png is not None:
                     return self._png
                 message = self._message
+                metadata = {**self._metadata, 'version': current}
+                metadata['origin'] = dict(metadata['origin'])
             # Slow encoding must not block the ROS callback or metadata readers.
-            result = (current, _encode_png(message))
+            result = (metadata, _encode_png(message))
             with self._lock:
                 if self._version == current:
                     self._png = result
