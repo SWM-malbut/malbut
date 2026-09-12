@@ -313,19 +313,22 @@ def test_stt_pipeline_final_text_reaches_agent_and_tts(ros_memory):
     text = '  안녕\n'
     sent = []
     calls = []
+    wake_calls = []
     phases = []
     stopped = []
+    recorders = []
+    recordings = iter([
+        [[7] * 320] + [[0] * 320] * 20,
+        [[1] * 320] + [[0] * 320] * 50,
+    ])
 
     class Recorder:
         sample_rate = 16000
         active = False
         closed = False
 
-        def __init__(self):
-            self.frames = iter(
-                [[9] * 320] * 5 + [[7] * 320, [1] * 320]
-                + [[0] * 320] * 50,
-            )
+        def __init__(self, frames):
+            self.frames = iter(frames)
 
         def start(self):
             self.active = True
@@ -339,11 +342,28 @@ def test_stt_pipeline_final_text_reaches_agent_and_tts(ros_memory):
         def delete(self):
             self.closed = True
 
-    recorder = Recorder()
+    def recorder_factory():
+        assert not recorders or recorders[-1].closed
+        recorder = Recorder(next(recordings))
+        recorders.append(recorder)
+        return recorder
+
+    def recognize_wake(pcm, sample_rate):
+        assert len(recorders) == 1
+        assert recorders[-1].closed and not recorders[-1].active
+        assert phases == ['waiting_for_wake', 'recognizing_wake']
+        assert pcm == b'\x07\x00' * 320 + bytes(640 * 20)
+        assert sample_rate == 16000
+        wake_calls.append(pcm)
+        return '제이크야'
 
     def transcribe(pcm, sample_rate):
-        assert recorder.closed and not recorder.active
-        assert phases == ['waiting_for_wake', 'listening', 'transcribing']
+        assert len(recorders) == 2
+        assert recorders[-1].closed and not recorders[-1].active
+        assert phases == [
+            'waiting_for_wake', 'recognizing_wake', 'wake_detected',
+            'listening', 'transcribing',
+        ]
         assert pcm == b'\x01\x00' * 320 + bytes(640 * 50)
         assert sample_rate == 16000
         calls.append(pcm)
@@ -362,19 +382,18 @@ def test_stt_pipeline_final_text_reaches_agent_and_tts(ros_memory):
             stopped.append(True)
 
     pipeline_module.SpeechPipeline(
-        recorder_factory=lambda: recorder,
-        wake=SimpleNamespace(
-            sample_rate=16000,
-            process=lambda frame: 0 if frame[0] == 7 else -1,
-        ),
-        is_speech=lambda frame, _: frame[:2] == b'\x01\x00',
+        recorder_factory=recorder_factory,
+        wake=SimpleNamespace(transcribe=recognize_wake),
+        is_speech=lambda frame, _: frame[:2] in (b'\x07\x00', b'\x01\x00'),
         transcriber=SimpleNamespace(transcribe=transcribe),
         publish=publish, should_stop=lambda: bool(stopped), report=report,
         settings=audio_module.CaptureSettings(),
     ).run()
 
     ros_memory.spin_until(lambda: len(ros_memory.received) == 1)
-    assert len(calls) == len(sent) == 1
+    assert len(wake_calls) == len(calls) == len(sent) == 1
+    assert len(recorders) == 2
+    assert all(recorder.closed and not recorder.active for recorder in recorders)
     assert sent[0][1] == text
     assert ros_memory.events == [{
         'utterance_id': sent[0][0], 'text': text, 'status': 'received',

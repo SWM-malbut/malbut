@@ -1,0 +1,22 @@
+[
+  {"id": "wake_01", "category": "wake", "text": "제이크야", "rate": 140, "expected_wake": true},
+  {"id": "wake_02", "category": "wake", "text": "제이크야", "rate": 180, "expected_wake": true},
+  {"id": "wake_03", "category": "wake", "text": "제이크야", "rate": 220, "expected_wake": true},
+  {"id": "confusable_01", "category": "confusable", "text": "스테이크야.", "rate": 180, "expected_wake": false},
+  {"id": "confusable_02", "category": "confusable", "text": "케이크 먹을까?", "rate": 180, "expected_wake": false},
+  {"id": "confusable_03", "category": "confusable", "text": "제이크", "rate": 180, "expected_wake": false},
+  {"id": "confusable_04", "category": "confusable", "text": "제이컵", "rate": 180, "expected_wake": false},
+  {"id": "confusable_05", "category": "confusable", "text": "말벗아", "rate": 180, "expected_wake": false},
+  {"id": "command_01", "category": "command", "text": "거실로 이동해 줘.", "rate": 180, "expected_wake": false},
+  {"id": "command_02", "category": "command", "text": "지금 멈춰 줘.", "rate": 180, "expected_wake": false},
+  {"id": "command_03", "category": "command", "text": "지금 어디에 있어?", "rate": 180, "expected_wake": false},
+  {"id": "command_04", "category": "command", "text": "방금 요청한 이동을 취소해 줘.", "rate": 180, "expected_wake": false},
+  {"id": "command_05", "category": "command", "text": "앞에 장애물이 있으면 멈추고 움직이지 마.", "rate": 180, "expected_wake": false},
+  {"id": "command_06", "category": "command", "text": "제이크야, 내 옆으로 와서 멈춰 줘.", "rate": 180, "expected_wake": false},
+  {"id": "daily_01", "category": "daily", "text": "오늘 날씨가 어때?", "rate": 180, "expected_wake": false},
+  {"id": "daily_02", "category": "daily", "text": "십오 분 타이머를 맞춰 줘.", "rate": 180, "expected_wake": false},
+  {"id": "daily_03", "category": "daily", "text": "지금 몇 시야?", "rate": 180, "expected_wake": false},
+  {"id": "daily_04", "category": "daily", "text": "잘 지냈어?", "rate": 180, "expected_wake": false},
+  {"id": "daily_05", "category": "daily", "text": "오늘은 집에서 책을 읽고 잠깐 쉬었다가 저녁을 먹은 뒤에 내일 할 일을 차근차근 정리하려고 해.", "rate": 180, "expected_wake": false},
+  {"id": "silence_01", "category": "silence", "text": "", "rate": 180, "expected_wake": false}
+]

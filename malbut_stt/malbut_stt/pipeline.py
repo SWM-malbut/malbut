@@ -6,6 +6,7 @@ from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from malbut_stt.audio import CaptureResult, CaptureSettings, UtteranceCollector
+from malbut_stt.wake import is_wake_phrase
 
 
 def pcm_bytes(samples: Any) -> bytes:
@@ -39,40 +40,33 @@ class SpeechPipeline:
         self.should_stop = should_stop
         self.report = report
         self.settings = settings
+        self.wake_settings = CaptureSettings(silence_timeout_s=0.4, max_utterance_s=6.0)
         self.phase = 'idle'
 
-    def _listen(self) -> Optional[CaptureResult]:
-        """Close the recorder before transcription, discarding queued frames."""
+    def _listen(self, settings, event) -> Optional[CaptureResult]:
+        """Collect one utterance and close the microphone before any inference."""
         self.phase = 'opening_microphone'
         recorder = self.recorder_factory()
         started = False
         try:
-            if recorder.sample_rate != self.wake.sample_rate:
-                raise ValueError('recorder and wake detector sample rates differ')
+            if recorder.sample_rate != 16000:
+                raise ValueError('speech capture requires 16kHz PCM')
             if self.should_stop():
                 return None
             self.phase = 'starting_microphone'
             recorder.start()
             started = True
-            self.report('waiting_for_wake')
-            collector = None
+            self.report(event)
+            collector = UtteranceCollector(16000, self.is_speech, settings)
             while not self.should_stop():
                 self.phase = 'reading_microphone'
                 samples = recorder.read()
                 if self.should_stop():
                     return None
-                if collector is None:
-                    self.phase = 'detecting_wake'
-                    if self.wake.process(samples) >= 0:
-                        collector = UtteranceCollector(
-                            self.wake.sample_rate, self.is_speech, self.settings,
-                        )
-                        self.report('listening')
-                else:
-                    self.phase = 'collecting_utterance'
-                    result = collector.feed(pcm_bytes(samples))
-                    if result is not None:
-                        return result
+                self.phase = 'collecting_utterance'
+                result = collector.feed(pcm_bytes(samples))
+                if result is not None:
+                    return result
             return None
         finally:
             try:
@@ -84,7 +78,28 @@ class SpeechPipeline:
     def run(self) -> None:
         """Publish valid final results once; every new capture gets a fresh ID."""
         while not self.should_stop():
-            capture = self._listen()
+            if self.wake is not None:
+                capture = self._listen(self.wake_settings, 'waiting_for_wake')
+                if capture is None or self.should_stop():
+                    return
+                if capture.status != 'complete':
+                    self.report('wake_' + capture.status)
+                    continue
+                self.phase = 'recognizing_wake'
+                self.report('recognizing_wake')
+                try:
+                    text = self.wake.transcribe(capture.pcm, 16000)
+                finally:
+                    capture = None
+                if self.should_stop():
+                    return
+                if not is_wake_phrase(text):
+                    self.report('not_wake')
+                    continue
+                self.report('wake_detected')
+                if self.should_stop():
+                    return
+            capture = self._listen(self.settings, 'listening')
             if capture is None or self.should_stop():
                 return
             if capture.status != 'complete':
@@ -93,7 +108,7 @@ class SpeechPipeline:
             self.report('transcribing')
             self.phase = 'transcribing'
             try:
-                text = self.transcriber.transcribe(capture.pcm, self.wake.sample_rate)
+                text = self.transcriber.transcribe(capture.pcm, 16000)
             except Exception as error:
                 # SDK messages can include request content: log only the class.
                 self.report('transcription_failed:' + type(error).__name__)
