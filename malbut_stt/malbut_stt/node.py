@@ -38,8 +38,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         def parameter(name, default):
             return node.declare_parameter(name, default).value
 
-        keyword_path = parameter('keyword_path', '')
-        language_model_path = parameter('language_model_path', '')
+        wake_model_path = parameter('wake_model_path', '')
         device_index = parameter('device_index', -1)
         vad_mode = parameter('vad_mode', 2)
         settings = CaptureSettings(
@@ -53,32 +52,22 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             raise ValueError('vad_mode must be 0 through 3')
         if not isinstance(timeout_s, (int, float)) or not 0 < timeout_s <= 120:
             raise ValueError('api_timeout_s must be positive and at most 120')
-        for name in ('OPENAI_API_KEY', 'PICOVOICE_ACCESS_KEY'):
-            if not os.environ.get(name, '').strip():
-                node.get_logger().error('Missing environment variable: ' + name)
-                return 1
-        for name, path in (
-            ('keyword_path', keyword_path),
-            ('language_model_path', language_model_path),
-        ):
-            if not path or not Path(path).expanduser().is_file():
-                node.get_logger().error('Missing model file for parameter: ' + name)
-                return 1
+        if not os.environ.get('OPENAI_API_KEY', '').strip():
+            node.get_logger().error('Missing environment variable: OPENAI_API_KEY')
+            return 1
+        if not wake_model_path or not Path(wake_model_path).expanduser().is_dir():
+            node.get_logger().error('Missing local model directory for parameter: wake_model_path')
+            return 1
 
         phase = 'loading_runtime_dependencies'
-        import pvporcupine
         from pvrecorder import PvRecorder
         import webrtcvad
         from openai import OpenAI
+        from malbut_stt.wake import LocalWakeRecognizer
 
         with ExitStack() as resources:
             phase = 'initializing_wake'
-            wake = pvporcupine.create(
-                access_key=os.environ['PICOVOICE_ACCESS_KEY'],
-                keyword_paths=[str(Path(keyword_path).expanduser())],
-                model_path=str(Path(language_model_path).expanduser()),
-            )
-            resources.callback(wake.delete)
+            wake = LocalWakeRecognizer(Path(wake_model_path).expanduser())
             phase = 'creating_api_client'
             client = OpenAI(
                 api_key=os.environ['OPENAI_API_KEY'],
@@ -114,7 +103,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             phase = 'creating_pipeline'
             pipeline = SpeechPipeline(
                 recorder_factory=lambda: PvRecorder(
-                    frame_length=wake.frame_length, device_index=device_index,
+                    frame_length=512, device_index=device_index,
                 ),
                 wake=wake,
                 is_speech=vad.is_speech,
