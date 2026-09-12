@@ -11,14 +11,16 @@ from zoneinfo import ZoneInfo
 import pytest
 import yaml
 
-from malbut_agent_server import weather_action
+from malbut_agent_server import weather_action, weather_kma
 from malbut_agent_server.weather import (
-    OpenMeteoClient, SOURCE, WeatherForecast, WeatherState,
+    SOURCE, WeatherForecast, WeatherState,
 )
+from malbut_agent_server.weather_kma import KmaWeatherClient, KmaWeatherError
 
 
 @pytest.fixture
 def runtime(monkeypatch, tmp_path):
+    monkeypatch.delenv('KMA_SERVICE_KEY', raising=False)
     now = datetime(2026, 9, 12, 12, tzinfo=ZoneInfo('Asia/Seoul')).timestamp()
     snapshot = WeatherState(
         now + 0.25, now - 600, '시험 지역', 37, 127, SOURCE,
@@ -28,7 +30,7 @@ def runtime(monkeypatch, tmp_path):
     )
     state = SimpleNamespace(
         params={'location': '시험 지역', 'latitude': 37.0, 'longitude': 127.0},
-        destroyed=0, fetches=0, snapshot=snapshot, lifecycle=[], nodes=[],
+        destroyed=0, fetches=0, snapshot=snapshot, lifecycle=[], nodes=[], env_files=[],
         outcome=snapshot, started=Event(), release=Event(), block=False,
         database_path=str(tmp_path / 'weather-location.sqlite3'),
     )
@@ -78,7 +80,7 @@ def runtime(monkeypatch, tmp_path):
         def destroy(self):
             state.lifecycle.append('destroy_server')
 
-    class Client(OpenMeteoClient):
+    class Client(KmaWeatherClient):
         def fetch(self):
             state.fetches += 1
             state.started.set()
@@ -132,7 +134,8 @@ def runtime(monkeypatch, tmp_path):
         'malbut_interfaces.msg': messages, 'malbut_interfaces.action': action_types,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
-    monkeypatch.setattr(weather_action, 'OpenMeteoClient', Client)
+    monkeypatch.setattr(weather_action, 'KmaWeatherClient', Client)
+    monkeypatch.setattr(weather_action, 'load_env_file', state.env_files.append)
     monkeypatch.setattr(weather_action, 'DEFAULT_WEATHER_LOCATION_PATH', state.database_path)
 
     def forbid_location_lookup(query):
@@ -195,6 +198,7 @@ def test_start_has_no_http_and_each_goal_fetches_once_with_typed_result(runtime)
     node = weather_action.create_weather_action_node()
     assert runtime.fetches == 0
     assert runtime.endpoint == '/malbut/weather/get'
+    assert runtime.env_files == [], 'Only the executable may read dotenv configuration'
     for expected in (1, 2):
         assert runtime.server.goal_callback(None) == 'accept'
         handle = Handle()
@@ -245,7 +249,7 @@ def test_missing_saved_location_asks_for_location_without_weather_fetch(runtime)
 
 
 def test_saved_location_overrides_manual_config_and_is_read_for_each_goal(runtime, monkeypatch):
-    client_type = weather_action.OpenMeteoClient
+    client_type = weather_action.KmaWeatherClient
     options = []
 
     def client(**values):
@@ -253,7 +257,7 @@ def test_saved_location_overrides_manual_config_and_is_read_for_each_goal(runtim
         runtime.outcome = replace(runtime.snapshot, **values)
         return client_type(**values)
 
-    monkeypatch.setattr(weather_action, 'OpenMeteoClient', client)
+    monkeypatch.setattr(weather_action, 'KmaWeatherClient', client)
     node = weather_action.create_weather_action_node()
     assert options == [dict(location='시험 지역', latitude=37.0,
                             longitude=127.0, timezone='Asia/Seoul')]
@@ -274,7 +278,7 @@ def test_saved_location_overrides_manual_config_and_is_read_for_each_goal(runtim
 def test_setting_and_correction_survive_weather_node_restart(runtime, monkeypatch):
     runtime.params.clear()
     options = []
-    client_type = weather_action.OpenMeteoClient
+    client_type = weather_action.KmaWeatherClient
     values = location()
 
     def client(**configured):
@@ -282,7 +286,7 @@ def test_setting_and_correction_survive_weather_node_restart(runtime, monkeypatc
         runtime.outcome = replace(runtime.snapshot, **configured)
         return client_type(**configured)
 
-    monkeypatch.setattr(weather_action, 'OpenMeteoClient', client)
+    monkeypatch.setattr(weather_action, 'KmaWeatherClient', client)
     node = weather_action.create_weather_action_node(location_resolver=lambda query: [values])
     for expected in (location(), location('용인시 동백동', 37.27)):
         values = expected
@@ -410,6 +414,11 @@ def test_late_location_resolution_never_saves_after_interruption(runtime, end):
      'FETCH_FAILED'),
     (OSError('PRIVATE-UPSTREAM-BODY'), 'FETCH_FAILED'),
     (ValueError('PRIVATE-UPSTREAM-BODY'), 'INVALID_DATA'),
+    (KmaWeatherError('KMA_KEY_REQUIRED'), 'KMA_KEY_REQUIRED'),
+    (KmaWeatherError('KMA_AUTH_FAILED'), 'KMA_AUTH_FAILED'),
+    (KmaWeatherError('KMA_RATE_LIMITED'), 'KMA_RATE_LIMITED'),
+    (KmaWeatherError('KMA_UNAVAILABLE'), 'KMA_UNAVAILABLE'),
+    (KmaWeatherError('INVALID_DATA'), 'INVALID_DATA'),
     (object(), 'INVALID_DATA'),
 ])
 def test_fetch_failure_aborts_without_weather_or_upstream_body(runtime, outcome, code):
@@ -424,6 +433,22 @@ def test_fetch_failure_aborts_without_weather_or_upstream_body(runtime, outcome,
     assert 'PRIVATE' not in result.message
     assert runtime.fetches == 1
     node.destroy_node()
+
+
+def test_missing_kma_key_aborts_goal_without_attempting_http(runtime, monkeypatch):
+    def forbid_http(*args, **kwargs):
+        raise AssertionError('Missing credentials must not trigger HTTP')
+
+    monkeypatch.setattr(weather_kma, 'urlopen', forbid_http)
+    client = KmaWeatherClient('수원시 우만1동', 37.28, 127.03)
+    node = weather_action.create_weather_action_node(client=client)
+    assert runtime.server.goal_callback(None) == 'accept'
+    handle = Handle()
+    result = runtime.server.execute_callback(handle)
+    assert handle.status == 'aborted'
+    assert result.error_code == result.message == 'KMA_KEY_REQUIRED'
+    assert result.weather.daily == []
+    node._worker.join(2)
 
 
 @pytest.mark.parametrize('end,code,status', [
@@ -545,6 +570,7 @@ def test_invalid_timeout_fails_before_http(runtime, timeout):
 
 def test_main_closes_before_executor_and_node_cleanup(runtime):
     assert weather_action.main(['--ros-args']) == 0
+    assert [str(path) for path in runtime.env_files] == ['.env']
     assert runtime.fetches == 0
     assert runtime.lifecycle == [
         ('init', ['--ros-args']), 'spin', 'executor_shutdown',

@@ -33,7 +33,7 @@ def _request(utterance='내일 날씨 어때?'):
 
 def _weather(status='fresh'):
     return {
-        'status': status, 'location': '서울', 'source': 'Open-Meteo weather model',
+        'status': status, 'location': '서울', 'source': '기상청 초단기실황·단기예보',
         'fetched_at': '2026-09-12T10:00:00+09:00',
         'checked_at': '2026-09-12T10:01:00+09:00', 'timezone': 'Asia/Seoul',
         'latitude': 37.56, 'longitude': 126.97,

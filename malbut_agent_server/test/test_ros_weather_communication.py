@@ -33,10 +33,13 @@ from malbut_agent_server.schemas import (  # noqa: E402
     AgentDecision, ProviderResult,
 )
 from malbut_agent_server.weather import (  # noqa: E402
-    OpenMeteoClient, WeatherForecast, WeatherState,
+    SOURCE, WeatherForecast, WeatherState,
 )
 from malbut_agent_server.weather_action import (  # noqa: E402
     create_weather_action_node,
+)
+from malbut_agent_server.weather_kma import (  # noqa: E402
+    KmaWeatherClient, KmaWeatherError,
 )
 from malbut_agent_server.weather_location_store import WeatherLocationStore  # noqa: E402
 from malbut_system_manager.system_manager_node import (  # noqa: E402
@@ -53,13 +56,13 @@ PRIVATE_ERROR = 'private-weather-backend-body'
 
 def weather_state(temperature=23.5, *, location='시험 지역', latitude=37.0,
                   longitude=127.0, timezone='Asia/Seoul'):
-    """Return model data with synthetic coordinates and local dates."""
+    """Return synthetic observation and forecast data with local dates."""
     now = time.time()
     today = datetime.fromtimestamp(now, ZoneInfo(timezone)).date()
     return WeatherState(
         fetched_at=now, valid_at=now - 300,
         location=location, latitude=latitude, longitude=longitude,
-        source='Open-Meteo weather model', timezone=timezone,
+        source=SOURCE, timezone=timezone,
         temperature_c=temperature, weather_code=0,
         daily=(
             WeatherForecast(today.isoformat(), 27.0, 18.0, 10.0, 0),
@@ -87,6 +90,8 @@ class _WeatherClient:
         try:
             if self.block and not self.release.wait(15.0):
                 raise TimeoutError(PRIVATE_ERROR)
+            if isinstance(self.error, Exception):
+                raise self.error
             if self.error:
                 raise OSError(PRIVATE_ERROR)
             return self.state
@@ -145,6 +150,7 @@ class _WeatherProvider:
 @pytest.fixture
 def ros_weather(tmp_path, monkeypatch):
     """Keep Agent SQLite on one thread and Action callbacks on another."""
+    monkeypatch.delenv('KMA_SERVICE_KEY', raising=False)
     monkeypatch.setenv('ROS_DOMAIN_ID', '197')
     monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
     location_db_path = str(tmp_path / 'weather-location.sqlite3')
@@ -180,7 +186,7 @@ def ros_weather(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ros_communication, 'receive_transcript', receive)
     monkeypatch.setattr(SystemManagerNode, '_goal', goal)
-    monkeypatch.setattr(OpenMeteoClient, 'fetch', forbid_http)
+    monkeypatch.setattr(KmaWeatherClient, 'fetch', forbid_http)
 
     def spin_until(predicate):
         deadline = time.monotonic() + 15.0
@@ -333,7 +339,7 @@ def stored_weather(ros_weather, monkeypatch):
         return run.client
 
     run.resolve_location = resolve
-    monkeypatch.setattr(weather_action, 'OpenMeteoClient', make_client)
+    monkeypatch.setattr(weather_action, 'KmaWeatherClient', make_client)
     return run
 
 
@@ -496,6 +502,7 @@ def test_weather_fetch_runs_through_manager_and_typed_action_result(
     assert run.provider.calls[0]['weather'] is None
     context = run.provider.calls[1]['weather']
     assert context['current']['temperature_c'] == 23.5
+    assert context['source'] == '기상청 초단기실황·단기예보'
     assert [day['date'] for day in context['daily']] == [
         day.date for day in run.client.state.daily
     ]
@@ -533,13 +540,17 @@ def test_new_speech_fetches_again_but_duplicate_id_does_not(ros_weather):
     assert reply == '시험 지역 현재 기온은 19.0도예요.'
 
 
-@pytest.mark.parametrize('failure', ['fetch_error', 'timeout'])
+@pytest.mark.parametrize('failure,expected', [
+    ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+    ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+])
 def test_fetch_failure_and_timeout_reach_manager_as_aborted(
-    ros_weather, failure,
+    ros_weather, failure, expected,
 ):
     """Failed Actions carry errors; Agent cannot use weather numbers."""
     run = ros_weather
-    run.client.error = failure == 'fetch_error'
+    run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                        else failure == 'fetch_error')
     run.client.block = failure == 'timeout'
     run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
     _, reply = run.say('오늘 날씨가 어때?')
@@ -549,7 +560,6 @@ def test_fetch_failure_and_timeout_reach_manager_as_aborted(
     assert event['kind'] == 'failed'
     assert event['ros_status'] == GoalStatus.STATUS_ABORTED
     result = yaml.safe_load(event['result_yaml'])
-    expected = 'FETCH_FAILED' if failure == 'fetch_error' else 'TIMEOUT'
     assert result['error_code'] == expected
     if failure == 'timeout':
         assert not run.client.finished.is_set()

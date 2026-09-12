@@ -1,25 +1,22 @@
-"""Validated on-demand Open-Meteo data and typed Action result decoding."""
+"""Validated KMA weather data and typed Action result decoding."""
 
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone as dt_timezone
-import json
 import math
 import time
-from urllib.parse import urlencode
-from urllib.request import urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-SOURCE = 'Open-Meteo weather model'
+SOURCE = '기상청 초단기실황·단기예보'
 MAX_RESPONSE_BYTES = 1024 * 1024
 CONDITIONS = {
     0: '맑음', 1: '대체로 맑음', 2: '부분적으로 흐림', 3: '흐림',
     45: '안개', 48: '착빙 안개',
     51: '약한 이슬비', 53: '이슬비', 55: '강한 이슬비',
     56: '약한 어는 이슬비', 57: '강한 어는 이슬비',
-    61: '약한 비', 63: '비', 65: '강한 비', 66: '약한 어는 비', 67: '강한 어는 비',
-    71: '약한 눈', 73: '눈', 75: '강한 눈', 77: '눈 알갱이',
-    80: '약한 소나기', 81: '소나기', 82: '강한 소나기',
+    61: '비', 63: '비', 65: '강한 비', 66: '약한 어는 비', 67: '강한 어는 비',
+    68: '비 또는 눈', 71: '눈', 73: '눈', 75: '강한 눈', 77: '눈 알갱이',
+    80: '소나기', 81: '소나기', 82: '강한 소나기',
     85: '약한 눈 소나기', 86: '강한 눈 소나기',
     95: '뇌우', 96: '우박 동반 뇌우', 99: '강한 우박 동반 뇌우',
 }
@@ -100,7 +97,7 @@ class WeatherForecast:
 
 @dataclass(frozen=True)
 class WeatherState:
-    """A model snapshot; current and daily values are not observations."""
+    """Regional KMA observations and forecasts, not robot sensor readings."""
 
     fetched_at: float
     valid_at: float
@@ -125,7 +122,7 @@ class WeatherState:
                 or not -180 <= self.longitude <= 180):
             raise ValueError('invalid weather coordinates')
         if self.source != SOURCE:
-            raise ValueError('weather source must identify Open-Meteo model')
+            raise ValueError('weather source must identify KMA observations and forecasts')
         zone = _zone(self.timezone)
         _number(self.temperature_c)
         _weather_code(self.weather_code)
@@ -158,85 +155,6 @@ def _from_message(message):
         raise ValueError('invalid weather message') from error
 
 
-class OpenMeteoClient:
-    """Fetch one bounded response; API access occurs only in fetch()."""
-
-    def __init__(self, location, latitude, longitude, timezone='Asia/Seoul',
-                 *, clock=time.time):
-        self.location = _text(location)
-        self.latitude, self.longitude = _number(latitude), _number(longitude)
-        if not -90 <= self.latitude <= 90 or not -180 <= self.longitude <= 180:
-            raise ValueError('invalid weather coordinates')
-        self.timezone = _text(timezone)
-        if self.timezone != 'auto':
-            _zone(self.timezone)
-        self._clock = clock
-
-    def fetch(self):
-        """Request current and today/tomorrow data with unambiguous epochs."""
-        params = {
-            'latitude': self.latitude, 'longitude': self.longitude,
-            'current': 'temperature_2m,weather_code',
-            'daily': ('weather_code,temperature_2m_max,temperature_2m_min,'
-                      'precipitation_probability_max'),
-            'forecast_days': 2, 'timezone': self.timezone,
-            'timeformat': 'unixtime', 'temperature_unit': 'celsius',
-        }
-        url = 'https://api.open-meteo.com/v1/forecast?' + urlencode(params)
-        with urlopen(url, timeout=10.0) as response:
-            if response.status != 200:
-                raise ValueError('weather HTTP request failed')
-            body = response.read(MAX_RESPONSE_BYTES + 1)
-        if len(body) > MAX_RESPONSE_BYTES:
-            raise ValueError('weather response exceeds size limit')
-        payload = json.loads(body)
-        fetched_at = _timestamp(self._clock())
-        try:
-            if not isinstance(payload, dict) or payload.get('error'):
-                raise ValueError('invalid weather response')
-            response_timezone = _text(payload['timezone'])
-            _zone(response_timezone)
-            if self.timezone != 'auto' and response_timezone != self.timezone:
-                raise ValueError('unexpected weather timezone')
-            current, daily = payload['current'], payload['daily']
-            if (payload['current_units']['time'] != 'unixtime'
-                    or payload['daily_units']['time'] != 'unixtime'
-                    or payload['current_units']['temperature_2m'] != '°C'
-                    or payload['daily_units']['temperature_2m_max'] != '°C'
-                    or payload['daily_units']['temperature_2m_min'] != '°C'
-                    or payload['daily_units'][
-                        'precipitation_probability_max'] != '%'):
-                raise ValueError('unexpected weather units')
-            fields = ('time', 'temperature_2m_max', 'temperature_2m_min',
-                      'precipitation_probability_max', 'weather_code')
-            if any(not isinstance(daily[key], list) or len(daily[key]) != 2
-                   for key in fields):
-                raise ValueError('invalid daily weather arrays')
-            offset = payload['utc_offset_seconds']
-            if type(offset) is not int or not -50400 <= offset <= 50400:
-                raise ValueError('invalid weather UTC offset')
-            # Daily epochs use the response's fixed offset, including at DST.
-            forecasts = tuple(WeatherForecast(
-                datetime.fromtimestamp(
-                    _timestamp(daily['time'][index]) + offset,
-                    dt_timezone.utc).date().isoformat(),
-                daily['temperature_2m_max'][index],
-                daily['temperature_2m_min'][index],
-                daily['precipitation_probability_max'][index],
-                daily['weather_code'][index],
-            ) for index in range(2))
-            state = WeatherState(
-                fetched_at, _timestamp(current['time']), self.location,
-                self.latitude, self.longitude, SOURCE, response_timezone,
-                current['temperature_2m'], current['weather_code'], forecasts,
-            )
-            if state.valid_at > fetched_at + 60:
-                raise ValueError('weather timestamp is in the future')
-            return state
-        except (KeyError, TypeError, AttributeError, OverflowError) as error:
-            raise ValueError('incomplete weather response') from error
-
-
 def context_from_weather(message_or_state, *, clock=time.time):
     """Validate one result and format model evidence without retaining it."""
     state = _from_message(message_or_state) if message_or_state is not None else None
@@ -254,7 +172,7 @@ def context_from_weather(message_or_state, *, clock=time.time):
         fetched_at=datetime.fromtimestamp(state.fetched_at, zone).isoformat(),
         valid_at=datetime.fromtimestamp(state.valid_at, zone).isoformat(),
     )
-    if (now - state.fetched_at > 1800 or now - state.valid_at > 3600
+    if (now - state.fetched_at > 1800 or now - state.valid_at > 4200
             or state.daily[0].date != checked_at.date().isoformat()):
         return result
     result.update(

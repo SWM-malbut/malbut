@@ -1,6 +1,7 @@
 """Serve Manager-dispatched weather queries and saved location settings."""
 
 import math
+from pathlib import Path
 import sys
 from threading import Event, RLock, Thread
 import time
@@ -8,7 +9,9 @@ from urllib.error import URLError
 
 import yaml
 
-from malbut_agent_server.weather import OpenMeteoClient, WeatherState
+from malbut_agent_server.config import load_env_file
+from malbut_agent_server.weather import WeatherState
+from malbut_agent_server.weather_kma import KmaWeatherClient, KmaWeatherError
 from malbut_agent_server.weather_location_store import (
     DEFAULT_WEATHER_LOCATION_PATH, WeatherLocationStore, resolve_weather_location,
 )
@@ -101,7 +104,7 @@ def create_weather_action_node(*, client=None, timeout_s=10.0,
                 )
                 self._client = client
                 if client is None and not automatic:
-                    self._client = OpenMeteoClient(**values)
+                    self._client = KmaWeatherClient(**values)
                 self._server = ActionServer(
                     self, GetWeather, WEATHER_ACTION,
                     execute_callback=self._execute,
@@ -158,7 +161,7 @@ def create_weather_action_node(*, client=None, timeout_s=10.0,
                     client = self._client
                     location = self._store.get()
                     if location is not None:
-                        client = OpenMeteoClient(**location)
+                        client = KmaWeatherClient(**location)
                     elif client is None:
                         outcome.error_code = 'LOCATION_REQUIRED'
                         return
@@ -171,6 +174,8 @@ def create_weather_action_node(*, client=None, timeout_s=10.0,
                     if not isinstance(state, WeatherState):
                         raise ValueError('invalid weather snapshot')
                     outcome.weather = _message(state)
+                except KmaWeatherError as error:
+                    outcome.error_code = error.code
                 except TimeoutError:
                     outcome.error_code = 'TIMEOUT'
                 except URLError as error:
@@ -284,6 +289,7 @@ def main(args=None):
     node = executor = None
     initialized = False
     try:
+        load_env_file(Path('.env'))
         rclpy.init(args=args)
         initialized = True
         node = create_weather_action_node()
