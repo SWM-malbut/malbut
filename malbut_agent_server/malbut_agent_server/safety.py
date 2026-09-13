@@ -5,8 +5,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional, Set
 
-from malbut_agent_server.schemas import AgentDecision, AgentRequest, RobotState
-from malbut_agent_server.tools import TOOL_SPECS
+from malbut_agent_server.schemas import AgentDecision, AgentRequest, RobotState, ValidationError
+from malbut_agent_server.tools import TOOL_SPECS, validate_tool_arguments
 
 
 DEFAULT_LOCATIONS = {
@@ -266,6 +266,18 @@ class SafetyPolicy:
         """Return whether a normalized decision may reach an executor."""
         if decision.type != 'tool_call':
             return SafetyResult(True, 'not_an_action', '행동 요청이 아닙니다.')
+
+        if decision.tool_name in {'get_weather', 'set_weather_location'}:
+            if decision.tool_name not in request.available_tools:
+                return SafetyResult(False, 'tool_unavailable', '날씨 조회 기능을 사용할 수 없습니다.')
+            try:
+                validate_tool_arguments(decision.tool_name, decision.arguments)
+            except ValidationError:
+                return SafetyResult(False, 'invalid_arguments', '날씨 조회 인자가 올바르지 않습니다.')
+            return SafetyResult(
+                True, 'weather_read_only' if decision.tool_name == 'get_weather'
+                else 'weather_location_setting', 'Manager를 통한 날씨 기능입니다.',
+            )
 
         if not state_trusted:
             return SafetyResult(

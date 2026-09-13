@@ -167,7 +167,9 @@ class _DialogueProvider(AgentProvider):
                  conversation_summary=None):
         """Use supplied prior turns to answer the second name question."""
         del memories, conversation_summary
-        assert not tools, 'Dialogue must not expose executable tools'
+        assert all(tool.name in {'get_weather', 'set_weather_location'} for tool in tools), (
+            'Dialogue must not expose robot actuation tools'
+        )
         call_number = len(self.calls)
         self.calls.append(request)
         self.histories.append(list(conversation_turns))

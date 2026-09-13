@@ -8,7 +8,7 @@ setup(
     name=package_name,
     version='0.5.0',
     packages=find_packages(exclude=['test']),
-    package_data={package_name: ['data/*.jsonl']},
+    package_data={package_name: ['data/*.jsonl', 'data/weather_regions.json']},
     data_files=[
         (
             'share/ament_index/resource_index/packages',
@@ -61,6 +61,10 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            (
+                'weather = '
+                'malbut_agent_server.weather_action:main'
+            ),
             (
                 'agent_communication = '
                 'malbut_agent_server.ros_communication:main'

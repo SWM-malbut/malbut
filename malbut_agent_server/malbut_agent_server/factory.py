@@ -189,6 +189,8 @@ def build_orchestrator(
     robot_state_source: RobotStateSource | None = None,
     front_router: FrontRouterPort | None = None,
     http_server: bool = True,
+    weather_executor=None,
+    weather_location_executor=None,
 ) -> AgentOrchestrator:
     """Build one runtime while keeping model output non-actuating."""
     memory_store = SQLiteMemoryStore(settings.database_path)
@@ -251,6 +253,8 @@ def build_orchestrator(
             memory_source_reviewer=memory_reviewer,
             background_memory=settings.provider != 'mock',
             automatic_memory_extractor=memory_extractor,
+            weather_executor=weather_executor,
+            weather_location_executor=weather_location_executor,
         )
     except Exception:
         if conversation_store is not None:

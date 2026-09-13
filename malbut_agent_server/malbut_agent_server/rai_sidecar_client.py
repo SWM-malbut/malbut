@@ -437,6 +437,7 @@ class RaiSidecarProvider(AgentProvider):
         conversation_summary: Optional[ConversationSummary] = None,
         *,
         memory_context: Optional[dict] = None,
+        weather_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Request one proposal, revalidate it locally, and never retry."""
         prepared = prepare_model_input(
@@ -447,6 +448,7 @@ class RaiSidecarProvider(AgentProvider):
             self.max_model_input_chars,
             MAX_CONVERSATION_TURNS,
             memory_context=memory_context,
+            weather_context=weather_context,
         )
         try:
             proposal_request = ProposalRequest(
