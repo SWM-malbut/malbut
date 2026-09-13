@@ -34,6 +34,8 @@ SIMULATION = 'simulation'
 RUNTIME_MODES = frozenset({PRODUCTION, SIMULATION})
 
 TOOL_RISK_LEVELS = {
+    'get_weather': 'L0',
+    'set_weather_location': 'L0',
     'get_robot_status': 'L0',
     'detect_pet': 'L1',
     'capture_photo': 'L2',
@@ -42,6 +44,8 @@ TOOL_RISK_LEVELS = {
 }
 
 TOOL_TIMEOUT_SECONDS = {
+    'get_weather': 10.0,
+    'set_weather_location': 10.0,
     'get_robot_status': 1.0,
     'navigate': 2.0,
     'detect_pet': 3.0,
@@ -99,6 +103,8 @@ class ToolCapability:
             raise ValueError(f'unknown Tool capability: {self.name}')
         if self.mode not in CAPABILITY_MODES:
             raise ValueError(f'unsupported Tool mode: {self.mode}')
+        if self.name in {'get_weather', 'set_weather_location'} and self.mode != PROPOSAL_ONLY:
+            raise ValueError('weather tools must execute through Manager')
         if not isinstance(self.available, bool):
             raise ValueError('Tool availability must be a boolean')
         if self.mode == READ_ONLY and self.name not in READ_ONLY_ELIGIBLE:
@@ -663,8 +669,10 @@ def simulation_registry() -> CapabilityRegistry:
         capabilities.append(
             ToolCapability(
                 name=name,
-                mode=SIMULATION_ONLY,
-                adapter=MockToolAdapter(name),
+                mode=PROPOSAL_ONLY if name in {'get_weather', 'set_weather_location'}
+                else SIMULATION_ONLY,
+                adapter=None if name in {'get_weather', 'set_weather_location'}
+                else MockToolAdapter(name),
                 timeout_seconds=TOOL_TIMEOUT_SECONDS[name],
             )
         )

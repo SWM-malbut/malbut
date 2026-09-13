@@ -19,6 +19,7 @@ from malbut_agent_server.providers.base import (
     AgentProvider,
     ProviderError,
     accepts_memory_context,
+    accepts_weather_context,
 )
 from malbut_agent_server.schemas import (
     AgentDecision,
@@ -463,13 +464,16 @@ class ReliableProvider(AgentProvider):
         conversation_summary: Optional[ConversationSummary],
         deadline: float,
         memory_context: Optional[dict] = None,
+        weather_context: Optional[dict] = None,
     ) -> Tuple[Optional[ProviderResult], ProviderFailure]:
-        memory_arguments = (
+        context_arguments = (
             {'memory_context': memory_context}
             if memory_context is not None
             and accepts_memory_context(provider)
             else {}
         )
+        if weather_context is not None and accepts_weather_context(provider):
+            context_arguments['weather_context'] = weather_context
         failure = _FAILURES[ProviderFailureCode.UNKNOWN]
         for attempt in range(self._max_retries + 1):
             if (
@@ -485,7 +489,7 @@ class ReliableProvider(AgentProvider):
                     conversation_turns,
                     tools,
                     conversation_summary,
-                    **memory_arguments,
+                    **context_arguments,
                 )
                 return self._validated_result(result), failure
             except Exception as error:
@@ -522,6 +526,7 @@ class ReliableProvider(AgentProvider):
         conversation_summary: Optional[ConversationSummary] = None,
         *,
         memory_context: Optional[dict] = None,
+        weather_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Return the first valid result or a safe non-action response."""
         started_at = self._clock()
@@ -543,6 +548,7 @@ class ReliableProvider(AgentProvider):
                 conversation_summary,
                 deadline,
                 memory_context,
+                weather_context,
             )
             if result is not None:
                 self._record_success(index)

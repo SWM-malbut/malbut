@@ -102,6 +102,8 @@ def test_tool_allowlist_contains_no_low_level_motion_control() -> None:
     forbidden = {'cmd_vel', 'motor_pwm', 'set_velocity', 'release_estop'}
     assert forbidden.isdisjoint(TOOL_SPECS)
     assert set(TOOL_SPECS) == {
+        'get_weather',
+        'set_weather_location',
         'navigate',
         'detect_pet',
         'capture_photo',

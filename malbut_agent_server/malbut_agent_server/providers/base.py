@@ -21,11 +21,21 @@ def accepts_memory_context(provider: object) -> bool:
     """Check opt-in and the actual method before passing a new keyword."""
     if not getattr(provider, 'supports_memory', False):
         return False
+    return _accepts_context_keyword(provider, 'memory_context')
+
+
+def accepts_weather_context(provider: object) -> bool:
+    """Check the signature without retrying a legacy call after TypeError."""
+    return _accepts_context_keyword(provider, 'weather_context')
+
+
+def _accepts_context_keyword(provider: object, name: str) -> bool:
+    """Inspect keyword compatibility without invoking provider code."""
     try:
         parameters = inspect.signature(provider.complete).parameters
     except (AttributeError, TypeError, ValueError):
         return False
-    parameter = parameters.get('memory_context')
+    parameter = parameters.get(name)
     if parameter is not None:
         return parameter.kind in {
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
@@ -48,6 +58,7 @@ class AgentProvider(ABC):
         conversation_summary: Optional[ConversationSummary] = None,
         *,
         memory_context: Optional[dict] = None,
+        weather_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Return exactly one normalized high-level decision."""
         raise NotImplementedError

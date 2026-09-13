@@ -52,7 +52,9 @@ class _MemoryProvider:
         self, request, memories, conversation_turns, tools,
         conversation_summary=None, *, memory_context=None,
     ):
-        assert tools == [], 'Memory dialogue must not propose robot work'
+        assert all(tool.name in {'get_weather', 'set_weather_location'} for tool in tools), (
+            'Memory dialogue must not expose robot actuation tools'
+        )
         self.calls.append({
             'text': request.utterance,
             'memories': copy.deepcopy(memories),

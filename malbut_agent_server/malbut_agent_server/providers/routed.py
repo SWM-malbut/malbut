@@ -27,6 +27,7 @@ from malbut_agent_server.providers.base import (
     AgentProvider,
     ProviderError,
     accepts_memory_context,
+    accepts_weather_context,
 )
 from malbut_agent_server.schemas import (
     AgentDecision,
@@ -98,6 +99,7 @@ class RoutedAgentProvider(AgentProvider):
         conversation_summary: Optional[ConversationSummary] = None,
         *,
         memory_context: Optional[dict] = None,
+        weather_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Route once and return without trying a second provider."""
         front_request = self._front_request(
@@ -122,19 +124,26 @@ class RoutedAgentProvider(AgentProvider):
                 tools,
                 conversation_summary,
                 memory_context,
+                weather_context,
             )
         if match.route is FrontRoute.GENERAL_CONVERSATION:
-            general_request = self._without_tools(request)
+            general_request = self._without_robot_tools(request)
+            general_tools = [tool for tool in tools if tool.name in {
+                'get_weather', 'set_weather_location',
+            }]
             result = self._delegate(
                 self.general_provider,
                 general_request,
                 memories,
                 conversation_turns,
-                [],
+                general_tools,
                 conversation_summary,
                 memory_context,
+                weather_context,
             )
-            if result.decision.type == 'tool_call':
+            if result.decision.type == 'tool_call' and not (
+                result.decision.tool_name in {tool.name for tool in general_tools}
+            ):
                 sanitized = replace(
                     result,
                     decision=self._local_decision(
@@ -175,6 +184,7 @@ class RoutedAgentProvider(AgentProvider):
                 tools,
                 conversation_summary,
                 memory_context,
+                weather_context,
             )
         raise ProviderError('front route is unsupported')
 
@@ -243,9 +253,12 @@ class RoutedAgentProvider(AgentProvider):
         return tuple(selected)
 
     @staticmethod
-    def _without_tools(request: AgentRequest) -> AgentRequest:
+    def _without_robot_tools(request: AgentRequest) -> AgentRequest:
         value = request.to_dict()
-        value['available_tools'] = []
+        value['available_tools'] = [
+            name for name in request.available_tools
+            if name in {'get_weather', 'set_weather_location'}
+        ]
         return AgentRequest.from_dict(value)
 
     @staticmethod
@@ -257,20 +270,23 @@ class RoutedAgentProvider(AgentProvider):
         tools: List[ToolSpec],
         conversation_summary: Optional[ConversationSummary],
         memory_context: Optional[dict] = None,
+        weather_context: Optional[dict] = None,
     ) -> ProviderResult:
-        memory_arguments = (
+        context_arguments = (
             {'memory_context': memory_context}
             if memory_context is not None
             and accepts_memory_context(provider)
             else {}
         )
+        if weather_context is not None and accepts_weather_context(provider):
+            context_arguments['weather_context'] = weather_context
         result = provider.complete(
             request,
             memories,
             conversation_turns,
             tools,
             conversation_summary=conversation_summary,
-            **memory_arguments,
+            **context_arguments,
         )
         if not isinstance(result, ProviderResult):
             raise ProviderError(

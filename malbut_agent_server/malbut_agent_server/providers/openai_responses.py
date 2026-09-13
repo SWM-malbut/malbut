@@ -186,6 +186,7 @@ class OpenAIResponsesProvider(AgentProvider):
         conversation_summary: Optional[ConversationSummary] = None,
         *,
         memory_context: Optional[dict] = None,
+        weather_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Call the API once and normalize either a tool call or text."""
         prepared = prepare_model_input(
@@ -196,6 +197,7 @@ class OpenAIResponsesProvider(AgentProvider):
             self.max_model_input_chars,
             MAX_CONVERSATION_TURNS,
             memory_context=memory_context,
+            weather_context=weather_context,
         )
         payload = self.build_payload(
             request,
@@ -205,6 +207,7 @@ class OpenAIResponsesProvider(AgentProvider):
             conversation_summary,
             prepared=prepared,
             memory_context=memory_context,
+            weather_context=weather_context,
         )
         headers = {
             'Authorization': f'Bearer {self._api_key}',
@@ -263,6 +266,7 @@ class OpenAIResponsesProvider(AgentProvider):
         prepared: Optional[PreparedModelInput] = None,
         *,
         memory_context: Optional[dict] = None,
+        weather_context: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """Build the documented Responses API request body."""
         memory_mode = memory_context.get('mode') if memory_context else None
@@ -279,6 +283,7 @@ class OpenAIResponsesProvider(AgentProvider):
             self.max_model_input_chars,
             MAX_CONVERSATION_TURNS,
             memory_context=memory_context,
+            weather_context=weather_context,
         )
         payload: Dict[str, Any] = {
             'model': self.model,

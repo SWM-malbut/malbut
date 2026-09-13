@@ -21,6 +21,7 @@ from malbut_agent_server.speech_receipts import SpeechReceiptStore
 from malbut_agent_server.speech_receiver import (
     DEFAULT_DB_PATH, TRANSCRIPT_TOPIC, receive_transcript,
 )
+from malbut_agent_server.weather_query import ManagerWeatherQuery
 
 
 RESPONSE_TOPIC = '/malbut/speech/response'
@@ -33,6 +34,7 @@ def create_communication_node(
     *, speech_db_path=DEFAULT_DB_PATH, on_event=None,
     goal_response_timeout_s=5.0,
     dialogue_settings=None, dialogue_factory=None,
+    weather_query_timeout_s=20.0,
 ):
     """Compose communication on one owning thread with a single executor."""
     from malbut_interfaces.msg import SpeechRequest, SpeechTranscript
@@ -45,9 +47,6 @@ def create_communication_node(
 
     settings = dialogue_settings or Settings(user_id=DEFAULT_SPEECH_USER)
     settings.validate_for_dialogue()
-    runtime_factory = dialogue_factory or (
-        lambda: build_orchestrator(settings, http_server=False)
-    )
 
     class CommunicationNode(Node):
         """Expose communication functions without invoking inference."""
@@ -59,6 +58,7 @@ def create_communication_node(
             self._receipts = None
             self._closing = False
             self._dialogue_error_seen = False
+            self.weather_query = None
             try:
                 qos = QoSProfile(
                     history=HistoryPolicy.KEEP_LAST, depth=10,
@@ -70,6 +70,23 @@ def create_communication_node(
                 )
                 self._announcer = MissionAnnouncer(self.say)
                 self._receipts = SpeechReceiptStore(speech_db_path)
+                self.missions = ManagerClient(
+                    self, on_event=self._mission_event,
+                    goal_response_timeout_s=goal_response_timeout_s,
+                )
+                self.weather_query = ManagerWeatherQuery(
+                    self.missions, timeout_s=weather_query_timeout_s,
+                )
+
+                def runtime_factory():
+                    runtime = (
+                        dialogue_factory() if dialogue_factory is not None
+                        else build_orchestrator(settings, http_server=False)
+                    )
+                    runtime.weather_executor = self.weather_query.execute
+                    runtime.weather_location_executor = self.weather_query.set_location
+                    return runtime
+
                 self.dialogue = DialogueWorker(
                     runtime_factory, settings.user_id,
                 )
@@ -78,10 +95,6 @@ def create_communication_node(
                     self._receive_speech, qos,
                 )
                 self.create_timer(0.05, self._drain_dialogue)
-                self.missions = ManagerClient(
-                    self, on_event=self._mission_event,
-                    goal_response_timeout_s=goal_response_timeout_s,
-                )
             except Exception:
                 self.destroy_node()
                 raise
@@ -133,6 +146,7 @@ def create_communication_node(
         def _drain_dialogue(self):
             if self._closing:
                 return
+            self.weather_query.drain()
             if self.dialogue.startup_error and not self._dialogue_error_seen:
                 self._dialogue_error_seen = True
                 self.get_logger().error('speech_dialogue startup failed')
@@ -147,7 +161,11 @@ def create_communication_node(
             self.get_logger().info(json.dumps(
                 {'event': 'mission_event', **event}, ensure_ascii=False,
             ))
-            text = self._announcer.handle(event)
+            weather_event = (
+                self.weather_query is not None
+                and self.weather_query.handle(event)
+            )
+            text = None if weather_event else self._announcer.handle(event)
             if text is not None:
                 self.get_logger().info(json.dumps({
                     'event': 'speech_published',
@@ -159,6 +177,9 @@ def create_communication_node(
         def destroy_node(self):
             """Release communication without claiming to stop any mission."""
             self._closing = True
+            if self.weather_query is not None:
+                self.weather_query.close()
+                self.weather_query.drain()
             try:
                 if self.dialogue is not None:
                     self.dialogue.close()

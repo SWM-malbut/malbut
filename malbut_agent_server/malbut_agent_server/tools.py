@@ -35,6 +35,37 @@ EMPTY_PARAMETERS: Dict[str, Any] = {
 
 
 TOOL_SPECS = {
+    'get_weather': ToolSpec(
+        name='get_weather',
+        description=(
+            'Ask Manager for weather at the saved or manually configured '
+            'location and the today/tomorrow '
+            'forecast. Read the returned data before answering weather questions. '
+            'This tool takes no arguments and does not control robot movement.'
+        ),
+        parameters=EMPTY_PARAMETERS,
+    ),
+    'set_weather_location': ToolSpec(
+        name='set_weather_location',
+        description=(
+            'Ask Manager to resolve and save the robot weather location in its database. '
+            'Use only when the user explicitly states or corrects their current location, '
+            'asks to change the weather location, or answers your location clarification. '
+            'Extract the new location, never the negated old location. Do not use for '
+            'a one-off weather question about another place, travel plans, quoted speech, '
+            'or third-party locations. Never invent coordinates. Read the result before '
+            'claiming the location was saved; ambiguous names need a city/district.'
+        ),
+        parameters={
+            'type': 'object',
+            'properties': {'location': {
+                'type': 'string',
+                'description': 'The explicitly supplied new area, e.g. 경기도 수원시 우만동.',
+            }},
+            'required': ['location'],
+            'additionalProperties': False,
+        },
+    ),
     'navigate': ToolSpec(
         name='navigate',
         description=(

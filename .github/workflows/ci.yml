@@ -348,7 +348,8 @@ jobs:
           cd malbut_agent_server
           # Core tests run in agent-python, without launch changing Python loggers.
           PYTHONPATH=".:${PYTHONPATH}" python3 -m pytest -q -rs \
-            test/test_node_communication_ros.py test/test_ros_memory_communication.py
+            test/test_node_communication_ros.py test/test_ros_memory_communication.py \
+            test/test_ros_weather_communication.py test/test_weather_action.py
 
       - name: Validate robot Xacro
         if: needs.changes.outputs.ros_full == 'true'

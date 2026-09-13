@@ -168,7 +168,7 @@ def test_tool_mode_is_explicit_and_independent_from_provider() -> None:
     ).to_dict()
     assert simulation['runtime_mode'] == 'simulation'
     assert all(
-        item['executable'] is True
+        item['executable'] is (item['name'] not in {'get_weather', 'set_weather_location'})
         for item in simulation['capabilities']
     )
 

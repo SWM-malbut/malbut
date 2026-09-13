@@ -1,0 +1,10 @@
+# Query the node's configured location when this Goal is accepted.
+---
+# Valid only on SUCCEEDED with an empty error_code.
+malbut_interfaces/WeatherState weather
+# Empty on success; failure/cancellation must not expose default weather values.
+string error_code
+string message
+---
+# FETCHING: the external weather request is in progress.
+string state

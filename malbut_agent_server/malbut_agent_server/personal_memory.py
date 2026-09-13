@@ -735,12 +735,23 @@ class PersonalMemory:
             ),
             (request.user_id, request.conversation_id),
         )
-        decision, added = self._apply(request, token, snapshot, result, conn)
+        weather_setting = (
+            result.raw_decision.tool_name == 'set_weather_location'
+            and result.decision.reason in {
+                'weather_location_saved', 'weather_location_ambiguous',
+                'weather_location_not_found', 'weather_location_unavailable',
+            }
+        )
+        # Explicit robot configuration is not a personal-memory management request.
+        decision, added = (None, []) if weather_setting else self._apply(
+            request, token, snapshot, result, conn,
+        )
         claim = (
             r'(기억|저장|삭제|정정|수정|개인화).{0,16}'
             r'(했|하였|완료|해\s*뒀|해\s*두었|됐|할게|해\s*둘게|하겠|해둘께)'
         )
-        if decision is None and re.search(claim, result.decision.message):
+        # Weather setting replies are constructed from Manager results, not model claims.
+        if decision is None and not weather_setting and re.search(claim, result.decision.message):
             _LOGGER.info('memory_policy reason=unverified_completion')
             decision = _missing_memory_followup(request.utterance)
             if decision is None:

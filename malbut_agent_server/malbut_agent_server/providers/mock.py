@@ -52,6 +52,7 @@ class MockProvider(AgentProvider):
         conversation_summary: Optional[ConversationSummary] = None,
         *,
         memory_context: Optional[dict] = None,
+        weather_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Return a predictable response for regression and safety tests."""
         started = time.perf_counter()
@@ -61,8 +62,16 @@ class MockProvider(AgentProvider):
             conversation_turns,
             tools,
         )
+        if weather_context is not None:
+            fresh = weather_context.get('status') == 'fresh'
+            decision = AgentDecision(
+                type='message',
+                message=('Manager에서 최신 날씨 정보를 받았어요.' if fresh
+                         else '지금 사용할 수 있는 최신 날씨 정보가 없어요.'),
+                reason='mock_weather_result', confidence=1.0,
+            )
         memory_proposal = None
-        if memory_context is not None and decision.type in {
+        if weather_context is None and memory_context is not None and decision.type in {
             'message', 'clarification',
         }:
             memory_proposal = self._memory_proposal(request.utterance)
@@ -83,6 +92,7 @@ class MockProvider(AgentProvider):
             self.max_model_input_chars,
             MAX_CONVERSATION_TURNS,
             memory_context=memory_context,
+            weather_context=weather_context,
         )
         return ProviderResult(
             decision=decision,
@@ -310,6 +320,7 @@ class MockProvider(AgentProvider):
                 'capture_photo': '사진 촬영',
                 'send_notification': '알림 요청',
                 'get_robot_status': '상태 확인',
+                'get_weather': '날씨 조회',
             }
             available = [
                 labels[tool.name]
@@ -392,6 +403,13 @@ class MockProvider(AgentProvider):
                 arguments={},
                 reason='status_request',
                 confidence=0.98,
+            )
+
+        if ('get_weather' in {tool.name for tool in tools}
+                and any(word in compact for word in ('날씨', '기온', '비가올', '비올', 'weather'))):
+            return AgentDecision(
+                type='tool_call', message='Manager를 통해 날씨를 확인할게.',
+                tool_name='get_weather', arguments={}, reason='weather_request', confidence=1.0,
             )
 
         if self._looks_like_memory_question(compact):

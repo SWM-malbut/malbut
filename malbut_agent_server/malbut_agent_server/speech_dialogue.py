@@ -188,7 +188,12 @@ class DialogueWorker:
                         conversation_id=conversation_id,
                         turn_id='speech-turn-' + digest,
                         utterance=text,
-                        robot_state=RobotState(), available_tools=(),
+                        robot_state=RobotState(),
+                        available_tools=(
+                            ('get_weather', 'set_weather_location')
+                            if getattr(runtime, 'weather_executor', None)
+                            is not None else ()
+                        ),
                     ))
                     decision = result.decision
                     if (decision.type not in {
