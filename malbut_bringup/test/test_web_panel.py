@@ -31,6 +31,10 @@ def _command(capability='autoslam', arguments=None):
                                'desired_distance_m': float('nan')}),
     _command('follow_person', {'target_mode': 1, 'target_person_id': '',
                                'desired_distance_m': 1.0}),
+    {'command': 'bringup_start', 'mode': 'navigation', 'map': '../home.yaml'},
+    {'command': 'bringup_start', 'mode': 'navigation', 'map': '/tmp/home.yaml'},
+    {'command': 'bringup_start', 'mode': 'shell'},
+    {'command': 'bringup_stop', 'pid': 1},
 ])
 def test_invalid_commands_cannot_reach_ros(payload):
     """Reject arbitrary ROS commands, paths and invalid typed inputs."""
@@ -44,6 +48,10 @@ def test_valid_commands_are_not_launched_by_validation():
     assert validate_command(payload) == payload
     assert validate_command({'command': 'cancel'}) == {'command': 'cancel'}
     assert validate_command(_command('patrol', {'thoroughness': 2}))
+    assert validate_command({'command': 'bringup_start', 'mode': 'mapping'})
+    assert validate_command({'command': 'bringup_start', 'mode': 'navigation',
+                             'map': 'home.yaml'})
+    assert validate_command({'command': 'bringup_stop'})
 
 
 def test_history_and_pending_requests_are_bounded():
@@ -125,6 +133,8 @@ def test_page_load_is_read_only_and_does_not_expose_token(http_server):
     assert _request(server, 'GET', '/api/status')[0] == 401
     assert _request(server, 'GET', '/api/image/raw')[0] == 401
     assert _request(server, 'GET', '/api/command')[0] == 401
+    for path in ('/api/maps', '/api/map', '/api/map/image'):
+        assert _request(server, 'GET', path)[0] == 401
     submit.assert_not_called()
 
 
@@ -158,6 +168,30 @@ def _future(result):
     return future
 
 
+def test_map_api_is_authenticated_and_does_not_launch(http_server):
+    """A PNG carries matching geometry without requiring a still-current version."""
+    server, submit = http_server
+    headers = {'Authorization': 'Bearer test-secret'}
+    server.catalog = Mock()
+    server.catalog.list_maps.return_value = [{'id': 'home.yaml', 'name': 'home'}]
+    status, content = _request(server, 'GET', '/api/maps', **headers)
+    assert status == 200 and json.loads(content)['maps'][0]['id'] == 'home.yaml'
+    status, content = _request(server, 'GET', '/api/map', **headers)
+    assert status == 200 and not json.loads(content)['available']
+    assert _request(server, 'GET', '/api/map/image', **headers)[0] == 503
+    server.data.map_cache = Mock()
+    metadata = {'version': 7, 'width': 3, 'height': 2, 'frame_id': 'map'}
+    server.data.map_cache.png.return_value = (metadata, b'PNG bytes')
+    client = http.client.HTTPConnection(*server.server_address, timeout=2)
+    client.request('GET', '/api/map/image', headers=headers)
+    response = client.getresponse()
+    assert response.status == 200 and response.read() == b'PNG bytes'
+    assert json.loads(response.getheader('X-Map-Metadata')) == metadata
+    client.close()
+    server.data.map_cache.png.assert_called_once_with()
+    submit.assert_not_called()
+
+
 def _bridge(manager_ready=False, autoslam_ready=True):
     bridge = object.__new__(RosBridge)
     bridge.data = PanelData()
@@ -165,6 +199,15 @@ def _bridge(manager_ready=False, autoslam_ready=True):
     bridge.commands = queue.Queue(maxsize=64)
     bridge.handles = {}
     bridge.cancel_pending = set()
+    bridge.runtime = None
+    bridge.stopping_runtime = None
+    bridge.runtime_message = ''
+    bridge.startup_status = {}
+    bridge.action_status = {}
+    bridge.cancel_clients = {}
+    bridge.cancel_request = SimpleNamespace
+    bridge.tf_buffer = Mock()
+    bridge.topics = {'map_topic': '/map'}
     bridge.guard = Mock()
     bridge.to_dict = lambda message: vars(message)
     bridge.auto_goal = SimpleNamespace
@@ -192,6 +235,64 @@ def test_autoslam_uses_manager_when_available():
     bridge.clients['autoslam'].send_goal_async.assert_not_called()
 
 
+def test_runtime_start_reuses_ready_hardware_and_rejects_other_bringup():
+    """Never launch another driver set over existing scan/odometry publishers."""
+    bridge, _ = _bridge()
+    bridge.runtime = Mock()
+    bridge.node.get_node_names_and_namespaces.return_value = [('controller', '/')]
+    bridge.node.count_publishers.side_effect = lambda name: int(name != '/map')
+    bridge._start_runtime({'mode': 'mapping'})
+    bridge.runtime.start.assert_called_once_with('mapping', map_id=None, start_hardware=False)
+    bridge.node.get_node_names_and_namespaces.return_value += [('controller_server', '/')]
+    with pytest.raises(ValueError, match='Stop existing'):
+        bridge._start_runtime({'mode': 'mapping'})
+    bridge.runtime.start.assert_called_once()
+    bridge.node.get_node_names_and_namespaces.return_value = []
+    bridge.node.count_publishers.side_effect = lambda name: int(name == '/scan_raw')
+    with pytest.raises(ValueError, match='partly running'):
+        bridge._start_runtime({'mode': 'mapping'})
+
+
+def test_runtime_stop_waits_for_nav2_terminal_status():
+    """Cancel acknowledgement alone must not shut down a moving controller."""
+    bridge, _ = _bridge()
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {'state': 'RUNNING', 'mode': 'mapping'}
+    uuid = bytes(range(16))
+    goal = SimpleNamespace(goal_id=SimpleNamespace(uuid=uuid))
+    from malbut_bringup.web_panel import RUNTIME_ACTIONS
+    for name in RUNTIME_ACTIONS['mapping']:
+        client = Mock()
+        client.service_is_ready.return_value = name == '/follow_path'
+        client.call_async.return_value = _future(
+            SimpleNamespace(return_code=0, goals_canceling=[goal]))
+        bridge.cancel_clients[name] = client
+    bridge.action_status = {'/follow_path': {uuid: 3}}
+    bridge._stop_runtime()
+    bridge._finish_runtime_stop()
+    bridge.runtime.stop.assert_not_called()
+    with pytest.raises(ValueError, match='stopping'):
+        bridge._start('unused', _command())
+    bridge.action_status['/follow_path'][uuid] = 5
+    bridge._finish_runtime_stop()
+    bridge.runtime.stop.assert_called_once()
+    assert bridge.stopping_runtime is None
+
+
+def test_runtime_stop_rejection_preserves_processes():
+    """Keep Bringup running when its active mission refuses cancellation."""
+    bridge, _ = _bridge()
+    bridge.runtime = Mock()
+    import time
+    bridge.stopping_runtime = {
+        'since': time.monotonic(), 'names': ('/patrol',),
+        'futures': {'/patrol': _future(SimpleNamespace(return_code=1))},
+    }
+    bridge._finish_runtime_stop()
+    bridge.runtime.stop.assert_not_called()
+    assert 'rejected' in bridge.runtime_message
+
+
 def test_missing_servers_fail_without_waiting():
     """An unavailable ROS server must not block the web request or executor."""
     bridge, _ = _bridge(autoslam_ready=False)
@@ -199,6 +300,35 @@ def test_missing_servers_fail_without_waiting():
     bridge._drain()
     assert bridge.data.requests[request_id]['state'] == 'ERROR'
     bridge.clients['autoslam'].send_goal_async.assert_not_called()
+
+
+def test_manager_does_not_make_missing_autoslam_executable():
+    """A ready manager cannot stand in for a missing application server."""
+    bridge, _ = _bridge(manager_ready=True, autoslam_ready=False)
+    request_id = bridge.submit(_command())
+    bridge._drain()
+    assert bridge.data.requests[request_id]['state'] == 'ERROR'
+    bridge.clients['manager'].send_goal_async.assert_not_called()
+
+
+def test_readiness_reason_is_exposed_without_changing_manager(monkeypatch):
+    """Show exact preparation blockers while retaining the launch process state."""
+    bridge, _ = _bridge(autoslam_ready=False)
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {
+        'state': 'RUNNING', 'mode': 'navigation', 'message': 'process alive'}
+    monkeypatch.setattr(bridge, '_robot_pose', lambda: None)
+    bridge.node.count_publishers.return_value = 0
+    bridge._bringup_status(SimpleNamespace(data=json.dumps({
+        'state': 'WAITING', 'missing': ['TF:map->base_footprint (set initial pose)'],
+    })))
+    bridge._refresh()
+    runtime = bridge.data.snapshot()['runtime']
+    assert runtime['state'] == 'RUNNING' and not runtime['ready']
+    assert runtime['waiting'] == ['TF:map->base_footprint (set initial pose)']
+    assert runtime['message'] == '필수 입력 준비 대기'
+    bridge._bringup_status(SimpleNamespace(data='invalid JSON'))
+    assert bridge.startup_status['state'] == 'WAITING'
 
 
 def test_direct_autoslam_blocks_other_panel_starts():
@@ -252,6 +382,22 @@ def test_result_transport_failure_does_not_forget_running_goal():
     assert request_id in bridge.handles
     bridge.cancel_owned()
     handle.cancel_goal_async.assert_called_once()
+
+
+def test_lost_acceptance_reply_does_not_release_direct_autoslam():
+    """An unanswered acceptance is not a confirmed rejection or robot stop."""
+    bridge, _ = _bridge()
+    acceptance = Future()
+    bridge.clients['autoslam'].send_goal_async.return_value = acceptance
+    first = bridge.submit(_command())
+    bridge._drain()
+    acceptance.set_exception(RuntimeError('Acceptance response lost'))
+    assert bridge.data.requests[first]['state'] == 'UNCONFIRMED'
+    bridge.clients['manager'].server_is_ready.return_value = True
+    second = bridge.submit(_command('patrol', {'thoroughness': 1}))
+    bridge._drain()
+    assert bridge.data.requests[second]['state'] == 'ERROR'
+    bridge.clients['manager'].send_goal_async.assert_not_called()
 
 
 def test_result_request_failure_keeps_accepted_handle_for_cancellation():

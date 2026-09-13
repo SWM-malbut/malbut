@@ -1,4 +1,4 @@
-"""Serve a small authenticated LAN test page using public ROS interfaces only."""
+"""Show robot data and supervise explicitly requested Bringup on a trusted LAN."""
 
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -17,16 +17,36 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
+from .web_map import MapCache
+from .web_runtime import RuntimeSupervisor, SavedMapCatalog
+
 
 TERMINAL = {'SUCCEEDED', 'CANCELED', 'ABORTED', 'REJECTED', 'ERROR'}
+RUNTIME_ACTIONS = {
+    'mapping': ('/autoslam', '/navigate_to_pose', '/follow_path', '/spin', '/backup', '/wait'),
+    'navigation': ('/malbut/mission/execute', '/follow_person', '/patrol',
+                   '/navigate_to_pose', '/follow_path', '/spin', '/backup', '/wait'),
+}
 
 
 def validate_command(payload):
-    """Allow only the three explicit test actions and this panel's cancellation."""
+    """Allow explicit test actions and fixed Bringup commands, never shell text."""
     if not isinstance(payload, dict):
         raise ValueError('JSON object required')
     if payload == {'command': 'cancel'}:
         return payload
+    if payload == {'command': 'bringup_stop'}:
+        return payload
+    if payload.get('command') == 'bringup_start':
+        if payload == {'command': 'bringup_start', 'mode': 'mapping'}:
+            return payload
+        if (set(payload) == {'command', 'mode', 'map'}
+                and payload['mode'] == 'navigation'
+                and isinstance(payload['map'], str)
+                and Path(payload['map']).name == payload['map']
+                and Path(payload['map']).suffix in ('.yaml', '.yml')):
+            return payload
+        raise ValueError('Choose mapping, or navigation with a listed map filename')
     if set(payload) != {'command', 'capability', 'arguments'}:
         raise ValueError('Expected command, capability, arguments')
     if payload['command'] != 'start' or not isinstance(payload['arguments'], dict):
@@ -100,6 +120,11 @@ class PanelData:
         self.tracking = None
         self.frames = {}
         self.encoded = (None, b'')
+        self.map_cache = MapCache()
+        self.map_active = False
+        self.robot_pose = None
+        self.runtime = {'enabled': False, 'state': 'STOPPED', 'ready': False,
+                        'mode': None, 'map': None, 'message': '', 'log_path': None}
         self.closed = False
 
     def update(self, request_id, **values):
@@ -133,6 +158,16 @@ class PanelData:
         with self.lock:
             self.frames[stream] = (time.monotonic(), message)
 
+    def receive_map(self, message):
+        """Keep a new map without rendering it on the ROS executor."""
+        with self.lock:
+            self.map_cache.update(message)
+
+    def map_snapshot(self):
+        """Pair current map geometry with the latest valid robot transform."""
+        with self.lock:
+            return self.map_cache.snapshot(active=self.map_active, pose=self.robot_pose)
+
     def jpeg(self, stream):
         """Encode on demand once per latest raw frame, shared by all viewers."""
         with self.lock:
@@ -156,6 +191,7 @@ class PanelData:
             return copy.deepcopy({
                 'servers': self.servers, 'system': self.system,
                 'tracking': self.tracking, 'requests': list(self.requests.values()),
+                'runtime': self.runtime,
                 'video_age_s': {key: round(time.monotonic() - frame[0], 1)
                                 for key, frame in self.frames.items()},
             })
@@ -168,12 +204,16 @@ class RosBridge:
         """Subscribe to diagnostics/images and prepare nonblocking Action clients."""
         from malbut_interfaces.action import AutoSlam, ExecuteMission
         from malbut_interfaces.msg import SystemState
+        from action_msgs.msg import GoalStatusArray
+        from action_msgs.srv import CancelGoal
+        from nav_msgs.msg import OccupancyGrid
         from rclpy.action import ActionClient
         from rclpy.node import Node
         from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
         from rosidl_runtime_py.convert import message_to_ordereddict
         from sensor_msgs.msg import CompressedImage, Image
         from std_msgs.msg import String
+        from tf2_ros import Buffer, TransformListener
 
         self.node = Node('robot_web_panel')
         self.data = data
@@ -187,10 +227,27 @@ class RosBridge:
             'manager': ActionClient(self.node, ExecuteMission, '/malbut/mission/execute'),
             'autoslam': ActionClient(self.node, AutoSlam, '/autoslam'),
         }
+        self.catalog = SavedMapCatalog(self.node.declare_parameter(
+            'map_directory', str(Path.home() / '.ros/malbut/maps')).value)
+        self.runtime = (RuntimeSupervisor(self.catalog) if self.node.declare_parameter(
+            'manage_bringup', True).value else None)
+        self.runtime_message = ''
+        self.startup_status = {}
+        self.stopping_runtime = None
+        self.action_status = {}
+        self.cancel_request = CancelGoal.Request
+        self.cancel_clients = {
+            name: self.node.create_client(CancelGoal, name + '/_action/cancel_goal')
+            for name in set(sum(RUNTIME_ACTIONS.values(), ()))
+        }
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self.node)
+        self.robot_frame = self.node.declare_parameter('robot_frame', 'base_footprint').value
         sensor_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         topics = {
             'rgb_topic': '/depth_cam/rgb0/image_raw',
             'debug_topic': '/perception/person/debug_image/compressed',
+            'map_topic': '/global_costmap/costmap',
         }
         self.topics = {key: self.node.declare_parameter(key, value).value
                        for key, value in topics.items()}
@@ -204,9 +261,20 @@ class RosBridge:
             self.node.create_subscription(String, '/tracking/person/status',
                                           self._tracking, 1),
             self.node.create_subscription(
+                String, '/malbut/bringup/status', self._bringup_status,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
+            self.node.create_subscription(
                 SystemState, '/malbut/state', self._system,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
+            self.node.create_subscription(
+                OccupancyGrid, self.topics['map_topic'], self._map,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
         ]
+        self.subscriptions.extend(self.node.create_subscription(
+            GoalStatusArray, name + '/_action/status',
+            lambda msg, name=name: self._action_status(name, msg),
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+            for name in self.cancel_clients)
         self.guard = self.node.create_guard_condition(self._drain)
         self.timer = self.node.create_timer(1.0, self._refresh)
         self._refresh()
@@ -230,6 +298,151 @@ class RosBridge:
         with self.data.lock:
             self.data.servers = {name: client.server_is_ready()
                                  for name, client in self.clients.items()}
+            self.data.map_active = bool(self.node.count_publishers(self.topics['map_topic']))
+            self.data.robot_pose = self._robot_pose()
+        self._finish_runtime_stop()
+        status = (self.runtime.snapshot() if self.runtime else {
+            'state': 'STOPPED', 'mode': None, 'map': None, 'log_path': None,
+            'message': 'Embedded viewer: start a standalone web panel to control Bringup',
+        })
+        status['enabled'] = self.runtime is not None
+        status['ready'] = bool(self.data.servers[
+            'autoslam' if status['mode'] == 'mapping' else 'manager'])
+        status['waiting'] = []
+        if (self.runtime and status['state'] == 'RUNNING'
+                and not status['ready']):
+            status['waiting'] = self.startup_status.get('missing', [])
+            status['message'] = ('필수 입력 준비 대기' if status['waiting']
+                                 else 'Action 서버 준비 대기')
+        if self.runtime_message:
+            status['message'] = self.runtime_message
+        if self.stopping_runtime is not None:
+            status.update(state='STOPPING', message='Waiting for Action cancellation to finish')
+        with self.data.lock:
+            self.data.runtime = status
+
+    def _map(self, message):
+        try:
+            self.data.receive_map(message)
+        except ValueError as error:
+            self.node.get_logger().warning(f'Ignoring invalid map: {error}')
+
+    def _bringup_status(self, message):
+        try:
+            status = json.loads(message.data)
+            if (isinstance(status, dict) and isinstance(status.get('missing'), list)
+                    and all(isinstance(item, str) for item in status['missing'])):
+                self.startup_status = status
+        except (ValueError, TypeError):
+            pass
+
+    def _robot_pose(self):
+        from rclpy.time import Time
+        from tf2_ros import TransformException
+
+        info = self.data.map_snapshot()
+        if not info['available'] or not info['active']:
+            return None
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                info['frame_id'], self.robot_frame, Time())
+        except TransformException:
+            return None
+        stamp = Time.from_msg(transform.header.stamp).nanoseconds
+        age = (self.node.get_clock().now().nanoseconds - stamp) / 1e9
+        if not 0 <= age <= 2.0:
+            return None  # Don't display the last known TF as a live robot position.
+        translation = transform.transform.translation
+        q = transform.transform.rotation
+        return {'x': translation.x, 'y': translation.y,
+                'yaw': math.atan2(2 * (q.w*q.z + q.x*q.y),
+                                  1 - 2 * (q.y*q.y + q.z*q.z))}
+
+    def _action_status(self, name, message):
+        self.action_status[name] = {
+            bytes(item.goal_info.goal_id.uuid): item.status for item in message.status_list}
+
+    def _start_runtime(self, payload):
+        if self.runtime is None:
+            raise ValueError('Start a standalone robot_web_panel to control Bringup')
+        if self.stopping_runtime is not None:
+            raise ValueError('Wait for Bringup shutdown to finish')
+        names = {name for name, _ in self.node.get_node_names_and_namespaces()}
+        conflicts = names.intersection({
+            'amcl', 'map_server', 'slam_toolbox', 'controller_server', 'planner_server',
+            'bt_navigator', 'nav2_container', 'system_manager', 'autoslam',
+            'person_follower', 'person_localizer', 'person_reidentifier', 'yolo_node',
+        })
+        if conflicts or self.node.count_publishers(self.topics['map_topic']):
+            raise ValueError('Stop existing mapping/navigation/perception first: '
+                             + ', '.join(sorted(conflicts)))
+        scan = self.node.count_publishers('/scan_raw')
+        odom = self.node.count_publishers('/odom')
+        if scan > 1 or odom > 1 or bool(scan) != bool(odom):
+            raise ValueError('Hardware is duplicated or only partly running; check scan/odom')
+        if not scan and names.intersection({
+                'controller', 'odom_publisher', 'ros_robot_controller',
+                'robot_state_publisher', 'aurora930_node', 'LD19'}):
+            raise ValueError('Existing hardware nodes are not ready; do not launch duplicates')
+        self.runtime.start(payload['mode'], map_id=payload.get('map'),
+                           start_hardware=not bool(scan))
+        self.runtime_message = ''
+        self.tf_buffer.clear()
+        self.action_status.clear()
+        self.startup_status = {}
+        with self.data.lock:
+            self.data.map_cache.clear()
+            self.data.map_active = False
+            self.data.robot_pose = None
+            self.data.system = None
+            self.data.tracking = None
+            self.data.frames.clear()
+
+    def _stop_runtime(self):
+        if self.runtime is None or self.runtime.snapshot()['state'] == 'STOPPED':
+            raise ValueError('This panel has no running Bringup to stop')
+        if self.stopping_runtime is not None:
+            return
+        self.cancel_owned()
+        mode = self.runtime.snapshot()['mode']
+        names = RUNTIME_ACTIONS.get(mode, ())
+        self.stopping_runtime = {
+            'since': time.monotonic(), 'names': names,
+            'futures': {name: self.cancel_clients[name].call_async(self.cancel_request())
+                        for name in names if self.cancel_clients[name].service_is_ready()},
+        }
+        self.runtime_message = ''
+
+    def _finish_runtime_stop(self):
+        pending = self.stopping_runtime
+        if pending is None:
+            return
+        if time.monotonic() - pending['since'] > 30.0:
+            self.runtime_message = 'Action stop unconfirmed; Bringup kept running. Check robot.'
+            self.stopping_runtime = None
+            return
+        try:
+            for name, future in pending['futures'].items():
+                if not future.done():
+                    return
+                response = future.result()
+                if response.return_code == 1:
+                    raise ValueError(f'{name} rejected cancellation')
+                statuses = self.action_status.get(name, {})
+                if any(statuses.get(bytes(goal.goal_id.uuid)) not in (4, 5, 6)
+                       for goal in response.goals_canceling):
+                    return
+            if any(state in (1, 2, 3) for name in pending['names']
+                   for state in self.action_status.get(name, {}).values()):
+                return
+            if any(item['state'] not in TERMINAL
+                   for item in self.data.snapshot()['requests']):
+                return
+            self.runtime.stop()
+            self.stopping_runtime = None
+        except Exception as error:
+            self.runtime_message = f'Stop unconfirmed; Bringup kept running: {error}'
+            self.stopping_runtime = None
 
     def _system(self, message):
         with self.data.lock:
@@ -244,6 +457,14 @@ class RosBridge:
             request_id, payload = self.commands.get_nowait()
             if payload['command'] == 'cancel':
                 self.cancel_owned()
+            elif payload['command'] in ('bringup_start', 'bringup_stop'):
+                try:
+                    if payload['command'] == 'bringup_start':
+                        self._start_runtime(payload)
+                    else:
+                        self._stop_runtime()
+                except Exception as error:
+                    self.runtime_message = str(error)
             else:
                 try:
                     self._start(request_id, payload)
@@ -251,11 +472,19 @@ class RosBridge:
                     self.data.update(request_id, state='ERROR', message=str(error))
 
     def _start(self, request_id, payload):
+        if (self.stopping_runtime is not None
+                or self.runtime and self.runtime.snapshot()['state'] == 'STOPPING'):
+            raise ValueError('Bringup is stopping; no new mission can start')
         if self.data.closed or request_id in self.cancel_pending:
             self.data.update(request_id, state='CANCELED', message='Canceled before send')
             self.cancel_pending.discard(request_id)
             return
         capability = payload['capability']
+        if capability == 'autoslam':
+            if self.runtime and self.runtime.snapshot()['mode'] == 'navigation':
+                raise ValueError('저장 지도 주행을 종료하고 지도 만들기 모드를 켜세요')
+            if not self.clients['autoslam'].server_is_ready():
+                raise ValueError('AutoSLAM 서버가 없습니다. 지도 만들기 모드를 먼저 켜세요')
         route = 'manager' if self.clients['manager'].server_is_ready() else 'autoslam'
         if route == 'autoslam' and capability != 'autoslam':
             raise ValueError('System manager is not available')
@@ -304,8 +533,8 @@ class RosBridge:
             if request_id in self.cancel_pending:
                 self._cancel(request_id, handle)
         except Exception as error:
-            state = 'UNCONFIRMED' if request_id in self.handles else 'ERROR'
-            self.data.update(request_id, state=state, message=str(error))
+            # Losing the acceptance reply does not prove the goal was rejected.
+            self.data.update(request_id, state='UNCONFIRMED', message=str(error))
 
     def _finished(self, request_id, future):
         try:
@@ -353,12 +582,13 @@ class RosBridge:
 class PanelServer(HTTPServer):
     """Bound HTTP workers and require a random bearer token for robot data/control."""
 
-    def __init__(self, address, data, submit, token):
+    def __init__(self, address, data, submit, token, catalog=None):
         """Bind the test port without granting anonymous control or data access."""
         super().__init__(address, PanelHandler)
         self.data = data
         self.submit = submit
         self.token = token
+        self.catalog = catalog
         self.pool = ThreadPoolExecutor(max_workers=4)
         self.slots = threading.BoundedSemaphore(8)
 
@@ -391,7 +621,7 @@ class PanelHandler(BaseHTTPRequestHandler):
     def log_message(self, format_string, *args):
         """Avoid logging credentials or potentially sensitive robot state."""
 
-    def _reply(self, status, content, mime='application/json'):
+    def _reply(self, status, content, mime='application/json', headers=None):
         if not isinstance(content, bytes):
             content = json.dumps(content, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
@@ -400,6 +630,8 @@ class PanelHandler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header('Content-Security-Policy',
                          "default-src 'self'; img-src 'self' blob:; "
                          "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
@@ -420,6 +652,22 @@ class PanelHandler(BaseHTTPRequestHandler):
             self._reply(401, {'error': 'Enter the token printed in the robot terminal'})
         elif self.path == '/api/status':
             self._reply(200, self.server.data.snapshot())
+        elif self.path == '/api/maps':
+            try:
+                maps = self.server.catalog.list_maps() if self.server.catalog else []
+                self._reply(200, {'maps': maps})
+            except OSError as error:
+                self._reply(503, {'error': str(error)})
+        elif self.path == '/api/map':
+            self._reply(200, self.server.data.map_snapshot())
+        elif self.path == '/api/map/image':
+            rendered = self.server.data.map_cache.png()
+            if rendered is None:
+                self._reply(503, {'error': 'Global Costmap has not been received'})
+            else:
+                self._reply(200, rendered[1], 'image/png', {
+                    'X-Map-Metadata': json.dumps(rendered[0], ensure_ascii=True),
+                })
         elif self.path in ('/api/image/raw', '/api/image/debug'):
             try:
                 content = self.server.data.jpeg(self.path.rsplit('/', 1)[1])
@@ -453,7 +701,7 @@ class PanelHandler(BaseHTTPRequestHandler):
 
 
 def main(args=None):
-    """Run the page only; never launch sensor/navigation nodes or send startup goals."""
+    """Wait for explicit web requests; never start Bringup or missions on page load."""
     import rclpy
     from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
     from rclpy.signals import SignalHandlerOptions
@@ -465,7 +713,7 @@ def main(args=None):
     host = bridge.node.declare_parameter('host', '0.0.0.0').value
     port = bridge.node.declare_parameter('port', 8766).value
     token = secrets.token_urlsafe(24)
-    server = PanelServer((host, port), data, bridge.submit, token)
+    server = PanelServer((host, port), data, bridge.submit, token, bridge.catalog)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     print(f'Robot test page: http://<robot-IP>:{server.server_port}', flush=True)
@@ -484,15 +732,24 @@ def main(args=None):
         server.server_close()
         if rclpy.ok():
             bridge.cancel_owned()
-            deadline = time.monotonic() + 3.0
-            while (any(item['state'] not in TERMINAL
-                       for item in data.snapshot()['requests'])
+            if bridge.runtime and bridge.runtime.snapshot()['state'] != 'STOPPED':
+                bridge._stop_runtime()
+            deadline = time.monotonic() + 31.0
+            while ((bridge.stopping_runtime is not None
+                    or any(item['state'] not in TERMINAL
+                           for item in data.snapshot()['requests']))
                    and rclpy.ok() and time.monotonic() < deadline):
                 executor.spin_once(timeout_sec=0.1)
         active = [item for item in data.snapshot()['requests'] if item['state'] not in TERMINAL]
         if active:
             print('WARNING: Action stop is unconfirmed. Check the robot and action server.',
                   flush=True)
+        if bridge.runtime:
+            try:
+                # Graceful SIGINT still lets the owned servers clean up on exit.
+                bridge.runtime.close()
+            except Exception as error:
+                print(f'WARNING: Owned Bringup shutdown failed: {error}', flush=True)
         executor.shutdown()
         bridge.node.destroy_node()
         if rclpy.ok():

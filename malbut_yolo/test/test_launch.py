@@ -38,10 +38,18 @@ def _context(description):
     return context
 
 
-def test_detector_launch_uses_selected_python_and_only_one_detector():
+def test_detector_launch_uses_selected_python_and_only_one_detector(monkeypatch):
     """An explicit runtime executes the entry script, even with path spaces."""
+    monkeypatch.setenv('XDG_CACHE_HOME', '/tmp/test cache')
+    monkeypatch.setenv('MALBUT_YOLO_RUNTIME', '/tmp/prepared runtime')
     description = _load('malbut_yolo', 'yolo.launch.py')
     context = _context(description)
+    assert context.launch_configurations['python_executable'] == (
+        '/tmp/prepared runtime/bin/python'
+    )
+    assert context.launch_configurations['model_path'] == (
+        '/tmp/test cache/malbut_perception/yolo26n.pt'
+    )
     nodes = [action for action in description.entities if isinstance(action, Node)]
     assert len(nodes) == 1
     node = nodes[0]
