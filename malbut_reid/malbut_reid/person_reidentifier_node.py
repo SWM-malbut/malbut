@@ -57,7 +57,8 @@ class PersonReidentifierNode(Node):
         self._validate_parameters()
         cv2.setNumThreads(self.get_parameter('opencv_num_threads').value)
         self._bridge = CvBridge()
-        self._encoder = self._create_encoder()
+        # Temporary robot test: keep box/motion tracking, load no appearance model.
+        self._encoder = None
         self._tracker = ByteTrackTracker(
             high_threshold=self.get_parameter('tracker_high_threshold').value,
             low_threshold=self.get_parameter('tracker_low_threshold').value,
@@ -100,8 +101,8 @@ class PersonReidentifierNode(Node):
         )
         self._synchronizer.registerCallback(self._on_rgb_detections)
         self.get_logger().info(
-            'Person re-identification ready: YOLO boxes + matching RGB; '
-            'identity memory is independent of tracking missions.'
+            'Person tracking ready: YOLO boxes + matching RGB; '
+            'OSNet and color appearance matching are disabled for this test.'
         )
 
     def _validate_parameters(self) -> None:
@@ -169,7 +170,7 @@ class PersonReidentifierNode(Node):
             self._frame_index += 1
             refresh_due = (self._frame_index - 1) % self._refresh_interval == 0
             features = None
-            if detections and (
+            if self._encoder is not None and detections and (
                 refresh_due
                 or self._tracker.needs_appearance_features(detections)
             ):

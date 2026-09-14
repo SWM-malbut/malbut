@@ -1,6 +1,7 @@
 """Check startup inputs without sending goals or controlling the chassis."""
 
 from functools import partial
+import json
 import math
 import time
 
@@ -17,6 +18,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image, LaserScan
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 from vision_msgs.msg import Detection3DArray
 
@@ -52,6 +54,7 @@ class RobotReadiness(Node):
         self.subscriptions_ = []
         self.action_clients = []
         self.lifecycle = {}
+        self.lifecycle_requested = {}
         self.tf = Buffer()
         self.tf_listener = TransformListener(self.tf, self)
         sensor_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -59,6 +62,8 @@ class RobotReadiness(Node):
             depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
             reliability=ReliabilityPolicy.RELIABLE,
         )
+        self.status_publisher = self.create_publisher(
+            String, '/malbut/bringup/status', static_qos)
         topics = [
             ('scan', LaserScan, self.settings['scan_topic']),
             ('odom', Odometry, self.settings['odom_topic']),
@@ -152,8 +157,17 @@ class RobotReadiness(Node):
                 missing.append(f'Action:{name}')
         for name, entry in self.lifecycle.items():
             client, future, active = entry
+            if (future is not None and not future.done()
+                    and now - self.lifecycle_requested.get(name, now) >= self.timeout):
+                # A lost GetState response must not block startup forever.
+                # Reuse the existing readiness timeout; this is a read-only query.
+                client.remove_pending_request(future)
+                future.cancel()
+                future = entry[1] = None
+                entry[2] = False
             if not client.service_is_ready():
                 if future is not None:
+                    client.remove_pending_request(future)
                     future.cancel()
                 entry[1] = None
                 entry[2] = False
@@ -164,15 +178,22 @@ class RobotReadiness(Node):
                     except Exception:  # A disconnected lifecycle service is not ready.
                         entry[2] = False
                 entry[1] = client.call_async(GetState.Request())
+                self.lifecycle_requested[name] = now
             if not entry[2]:
                 missing.append(f'lifecycle:{name}')
         if missing:
             summary = ', '.join(missing)
             if summary != self.last_missing:
                 self.get_logger().info('Waiting for ' + summary)
+                self.status_publisher.publish(String(data=json.dumps({
+                    'state': 'WAITING', 'missing': missing,
+                })))
                 self.last_missing = summary
             return
         self.ready = True
+        self.status_publisher.publish(String(data=json.dumps({
+            'state': 'READY', 'missing': [],
+        })))
         self.get_logger().info('Required robot inputs are ready.')
 
 

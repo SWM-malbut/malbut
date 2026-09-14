@@ -2,7 +2,7 @@
   ros__parameters:
     model_type: YOLO
     device: cuda:0
-    threshold: 0.20
+    threshold: 0.50
     iou: 0.45
     imgsz_height: 640
     imgsz_width: 640

@@ -30,6 +30,7 @@ from malbut_autoslam.frontier import (
 from malbut_autoslam.runtime import (
     DEFAULT_READY_TIMEOUT_S, OwnedRuntime, RuntimeGraph, missing_components,
 )
+from malbut_autoslam.saved_pose import write_mapping_pose
 
 
 class Interrupted(RuntimeError):
@@ -42,7 +43,7 @@ def map_base(directory, name):
             or '\x00' in name or name.endswith(('.yaml', '.pgm'))):
         raise ValueError('map_name must be a filename without a path or extension')
     base = Path(directory).expanduser().resolve() / name
-    if any(Path(str(base) + suffix).exists() for suffix in ('.yaml', '.pgm')):
+    if any(Path(str(base) + suffix).exists() for suffix in ('.yaml', '.pgm', '.pose.yaml')):
         raise ValueError(f'map already exists: {base}; choose another map_name')
     return base
 
@@ -250,19 +251,35 @@ class AutoSlamNode(Node):
             return
         for name, client in self.lifecycle_clients.items():
             future = None
-            while True:
-                self._check(handle)
-                if time.monotonic() >= deadline:
-                    raise RuntimeError(f'mapping prerequisites not ready: {name} is not active')
-                if future is None and client.service_is_ready():
-                    future = client.call_async(GetState.Request())
-                if future is not None and future.done():
-                    response = future.result()
-                    if response.current_state.id == State.PRIMARY_STATE_ACTIVE:
-                        break
-                    future = None
-                self._feedback(handle, 'WAITING')
-                self._pause()
+            requested_at = 0.0
+            try:
+                while True:
+                    self._check(handle)
+                    now = time.monotonic()
+                    if now >= deadline:
+                        raise RuntimeError(
+                            f'mapping prerequisites not ready: {name} is not active')
+                    if (future is not None and not future.done()
+                            and now - requested_at >= self.settings['sensor_timeout_s']):
+                        # GetState is read-only: retry a lost reply within the
+                        # existing startup deadline, without restarting Nav2.
+                        client.remove_pending_request(future)
+                        future.cancel()
+                        future = None
+                    if future is None and client.service_is_ready():
+                        future = client.call_async(GetState.Request())
+                        requested_at = now
+                    if future is not None and future.done():
+                        response = future.result()
+                        if response.current_state.id == State.PRIMARY_STATE_ACTIVE:
+                            break
+                        future = None
+                    self._feedback(handle, 'WAITING')
+                    self._pause()
+            finally:
+                if future is not None and not future.done():
+                    client.remove_pending_request(future)
+                    future.cancel()
 
     def _check_sensor_updates(self):
         if not self.settings['auto_start']:
@@ -420,6 +437,26 @@ class AutoSlamNode(Node):
             raise RuntimeError('map saver returned without the expected map files')
         return str(yaml_path)
 
+    def _save_pose(self, map_yaml):
+        # Read after SaveMap completes, while the SLAM/odometry runtime is alive.
+        transform = self.tf.lookup_transform('map', self.settings['base_frame'], Time())
+        stamp = Time.from_msg(transform.header.stamp)
+        age = (self.get_clock().now() - stamp).nanoseconds / 1e9
+        if abs(age) > self.settings['tf_timeout_s']:
+            raise RuntimeError('robot transform is stale or too far in the future')
+        position = transform.transform.translation
+        rotation = transform.transform.rotation
+        components = (rotation.x, rotation.y, rotation.z, rotation.w)
+        if not all(math.isfinite(value) for value in (
+                position.x, position.y, position.z, *components)):
+            raise ValueError('robot transform is not finite')
+        norm = math.hypot(*components)
+        if not math.isfinite(norm) or norm == 0.0:
+            raise ValueError('robot transform has an invalid quaternion')
+        x, y, z, w = (value / norm for value in components)
+        yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+        write_mapping_pose(map_yaml, position.x, position.y, yaw)
+
     def _explore(self, handle, result):
         base = map_base(self.settings['map_directory'], handle.request.map_name)
         self._prepare_runtime(handle)
@@ -472,6 +509,17 @@ class AutoSlamNode(Node):
                         raise RuntimeError('SLAM map contains no usable free space')
                     self._feedback(handle, 'SAVING', grid)
                     result.map_yaml = self._save(handle, base)
+                    try:
+                        self._save_pose(result.map_yaml)
+                        result.message = (
+                            'No more usable frontiers; navigation map and '
+                            'initial robot pose saved')
+                    except (OSError, ValueError, RuntimeError, TransformException) as error:
+                        result.message = (
+                            'No more usable frontiers; navigation map saved; WARNING: '
+                            f'initial robot pose not saved ({error}); '
+                            'set RViz 2D Pose Estimate before navigation')
+                        self.get_logger().warning(result.message)
                     self._check(handle)
                     return
                 self._pause()
@@ -504,7 +552,8 @@ class AutoSlamNode(Node):
         try:
             self._explore(handle, result)
             result.success = True
-            result.message = 'No more usable frontiers; navigation map saved'
+            if not result.message:
+                result.message = 'No more usable frontiers; navigation map saved'
         except Interrupted as error:
             result.message = str(error)
         except Exception as error:

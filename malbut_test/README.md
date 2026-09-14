@@ -105,28 +105,36 @@ Bringup도 `robot_name=/`, `master_name=/`를 전달한다.
 ros2 launch malbut_bringup robot.launch.py perception:=false
 ```
 
-실제 지도가 없다면 센서-only 실행을 종료하고 다음 지도 작성 모드를 사용한다.
-아직 이동하지 않으며 [AutoSLAM](malbut_autoslam/README.md) 서버와 웹 패널만 켠다.
+실제 지도가 없다면 센서-only 실행을 종료하고 웹 패널을 한 번 실행한다.
+이 명령과 페이지 접속만으로는 Bringup을 켜거나 움직이지 않는다.
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py mode:=mapping web_panel:=true
+ros2 run malbut_bringup robot_web_panel
 ```
 
-Mac에서 `http://<로봇-IP>:8766` 접속 → 터미널의 Access token 입력 →
-**자동 지도 만들기 시작**. 또는 다른 터미널에서:
+로봇의 `hostname -I`로 같은 Wi-Fi IP를 확인한 뒤 Mac에서
+`http://<로봇-IP>:8766` 접속 → 터미널의 `Access token` 입력 → **연결**.
 
-```zsh
-ros2 action send_goal /autoslam malbut_interfaces/action/AutoSlam \
-  "{map_name: home2}" --feedback
-```
+1. **지도 만들기 모드 켜기**를 누르고 [AutoSLAM](malbut_autoslam/README.md) 서버 준비를 확인한다.
+2. 새 지도 이름(예: `home2`)을 넣고 **자동 지도 만들기 시작**을 누른다.
+3. 결과와 저장 완료를 확인한 뒤 **Bringup 종료**를 누르고 `꺼짐` 상태를 확인한다.
+4. 인식 준비가 끝나면 같은 페이지에서 저장 지도를 선택하고 주행 모드를 켠다(아래 4절).
+
+화면 지도는 `/global_costmap/costmap`(장애물·팽창 비용 포함), 로봇 위치·방향은
+TF를 이용해 표시한다. 새 이미지와 좌표 정보가 준비되면 함께 교체하며,
+수신 중에는 기존 지도를 유지한다. 저장 지도 원본은 기존 `/map`이다. 지도 클릭으로
+이동 명령이나 초기 위치를 보내지는 않는다. Mapping 모드는 YOLO를 켜지 않으므로
+사람 인식 영상이 비어 있어도 정상이며, 원본 카메라는 센서가 준비된 뒤 표시된다.
 
 Goal을 받으면 누락된 차체·센서·SLAM·Nav2·스캔 정규화기를 기동하고 준비된 뒤
 탐색한다. 이미 온전히 실행 중인 구성은 재사용한다. AMCL/저장 지도 모드와
 동시 실행하거나 중복·불완전한 드라이버 구성은 거부한다. 종료 시 자기가 켠
 구성만 정리한다. 외부 실행을 임의로 죽이지 않는다.
 
-기본 저장 폴더는 Git 밖의 `~/.ros/malbut/maps`이며 서버의 `map_directory`로
-변경한다. 이미 있는 이름은 거부하므로 새 이름으로 요청한다.
+기본 저장·목록 조회 폴더는 Git 밖의 `~/.ros/malbut/maps`다. 다른 폴더를 쓰려면
+단독 패널 실행에 `--ros-args -p map_directory:=/원하는/지도폴더`를 추가한다.
+이미 있는 이름은 거부하므로 새 이름으로 요청한다. 자동 지도 만들기가 종료되면
+저장 목록을 갱신하며 **지도 목록 새로고침**으로도 다시 읽는다.
 성공 결과의 `map_yaml`을 이후 Bringup의 `map` 인자로 사용한다. YAML과
 이미지가 모두 필요하다. 관리자를 통해 요청하려면 관리자와 `/autoslam` 서버를
 함께 실행한다. 저장 지도 Navigation 모드와 실시간 SLAM은 동시에 사용하지 않는다.
@@ -139,11 +147,15 @@ ROS 빌드와 GPU 패키지 설치는 별개다. 다음은 로봇에서 필요�
 Bringup이 자동 실행하지 않는다. 이미 준비된 모델은 그대로 재사용할 수 있다.
 
 ```zsh
-cd ~/ros2_ws/src/malbut
-bash malbut_yolo/scripts/prepare_runtime.sh
-bash malbut_reid/scripts/prepare_osnet_model.sh
-bash malbut_reid/scripts/prepare_inference_runtime.sh
+bash "$(ros2 pkg prefix malbut_yolo)/share/malbut_yolo/scripts/prepare_runtime.sh"
+bash "$(ros2 pkg prefix malbut_reid)/share/malbut_reid/scripts/prepare_inference_runtime.sh"
+bash "$(ros2 pkg prefix malbut_reid)/share/malbut_reid/scripts/prepare_osnet_model.sh"
 ```
+
+빌드·source 후 실행하는 설치된 도구 경로이므로 소스 복사 위치와 무관하다.
+Bringup은 인식용 Python 실행 파일·모델 누락을 미리 검사하고 준비 명령과 함께
+오류로 알린다. 웹에서 시작했다면 Bringup 상태에 표시되는 로봇 로그 경로를
+확인한다. 자동으로 설치하지 않으며, 파일 존재 확인은 실제 GPU 추론 검증이 아니다.
 
 - YOLO: 기존 Jetson PyTorch/torchvision을 유지하는 `~/.cache/malbut_yolo/runtime`.
 - ReID: `~/.cache/malbut_reid/runtime`. 로봇의 공용 NumPy·ONNX Runtime을 제거하거나 변경하지 않는다.
@@ -156,7 +168,9 @@ OSNet 준비 중 GPU provider가 표시되더라도 실제 모델 추론까지 �
 실제 실행 로그와 검출 결과를 확인한다. PC의 venv나 TensorRT 엔진은 로봇에 복사하지 않는다.
 자세한 내용은 [YOLO](malbut_yolo/README.md), [ReID](malbut_reid/README.md)를 참고한다.
 
-기존 센서-only 실행을 종료한 뒤:
+터미널에서 인식만 별도로 확인하려면, 웹에서 실행한 Bringup 등 기존 실행을
+종료한 뒤 아래 명령을 사용한다. 웹 주행 모드도 인식 파이프라인을 켜므로
+평소에는 이 명령을 따로 실행할 필요 없다.
 
 ```zsh
 ros2 launch malbut_bringup robot.launch.py publish_debug_image:=true
@@ -164,23 +178,41 @@ ros2 launch malbut_bringup robot.launch.py publish_debug_image:=true
 
 ## 4. 저장 지도로 Bringup 및 기능 요청
 
-이전 실행을 종료하고:
+웹 패널은 켜 둔 채 이전 Bringup의 `꺼짐` 상태를 확인한다.
+**저장 지도**에서 `home2` 등을 선택 → **선택한 지도로 주행 모드 켜기**.
+저장 지도를 선택한 것만으로는 실행하지 않으며, 준비 완료 후 사람 추적·순찰을
+각각 시작한다. 미션을 그만두려면 취소하고 실제 정지를 확인한다.
+
+웹 대신 터미널로 직접 Bringup을 실행하는 경우:
 
 ```zsh
 ros2 launch malbut_bringup robot.launch.py \
   mode:=navigation map:="$HOME/.ros/malbut/maps/home2.yaml" \
-  publish_debug_image:=true web_panel:=true
+  publish_debug_image:=true
 ```
 
-같은 지도의 마지막 AMCL 위치가 있으면 초기 추정치로 한 번 복원한다. 위치는
-5초 주기로 `~/.ros/malbut/localization/last_pose.yaml`에 저장한다. 최초 실행이거나
-로봇을 꺼 둔 동안 옮겼다면 RViz의 **2D Pose Estimate**로 실제 위치를 지정한다.
+같은 지도의 마지막 AMCL 위치가 있으면 초기 추정치로 한 번 복원한다. 없으면
+AutoSLAM이 지도와 함께 저장한 `<지도이름>.pose.yaml`의 위치·방향을 사용한다.
+AMCL 위치는 5초 주기로 `~/.ros/malbut/localization/last_pose.yaml`에 저장한다.
+기존 지도에 위치 기록이 없거나 로봇을 꺼 둔 동안 옮겼다면 RViz의
+**2D Pose Estimate**로 실제 위치를 지정한다.
 지도 YAML·이미지가 바뀌면 이전 위치는 복원하지 않는다.
 센서·TF·Nav2와 응용 서버가 준비되면
 관리자가 시작된다. 준비 검사기는 **부팅 확인용**이며 주행 안전감시기를 대체하지 않는다.
 아래 요청 전에는 로봇이 자동으로 순찰/추적을 시작하지 않는다.
-같은 웹 주소에서 영상 확인·추적·순찰·이 패널의 요청 취소가 가능하다.
+같은 웹 주소에서 지도·영상 확인·추적·순찰·이 패널의 요청 취소가 가능하다.
+위치 기록이 없거나 로봇을 옮긴 경우 웹의 지도 표시만으로 초기화되지 않으므로
+RViz를 별도로 열어 **2D Pose Estimate**를 사용한다.
+
+```zsh
+ros2 launch navigation rviz_navigation.launch.py
+```
+
+Bringup에 `web_panel:=true`로 포함한 패널은 영상·지도·미션 요청만 가능하고,
+Bringup 시작/종료는 비활성화된다. 위 단독 패널과 같은 포트로 중복 실행하지 않는다.
 웹 취소는 비상 정지가 아니며, 브라우저 닫기나 Wi-Fi 끊김으로 주행이 정지하지 않는다.
+웹 **Bringup 종료**는 미션 취소가 확인된 뒤 자기가 켠 구성만 종료한다.
+확인하지 못하면 사유를 표시하므로 실제 로봇과 로그를 확인한다.
 
 ```zsh
 ros2 action send_goal /malbut/mission/execute \
