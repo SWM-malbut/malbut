@@ -76,7 +76,11 @@ def create_communication_node(
                 self._speech = self.create_publisher(
                     SpeechRequest, RESPONSE_TOPIC, qos,
                 )
-                self._announcer = MissionAnnouncer(self.say)
+                self._announcer = MissionAnnouncer(
+                    lambda text: self.say(
+                        text, request_type=SpeechRequest.NOTIFICATION,
+                    ),
+                )
                 self._receipts = SpeechReceiptStore(speech_db_path)
                 self.missions = ManagerClient(
                     self, on_event=self._mission_event,
@@ -112,13 +116,15 @@ def create_communication_node(
                 self.destroy_node()
                 raise
 
-        def say(self, text):
+        def say(self, text, request_type=SpeechRequest.DIALOGUE):
             """Publish text without claiming playback completion."""
             if not isinstance(text, str) or not text.strip():
                 return False
             if self._closing or not self.context.ok():
                 return False
-            self._speech.publish(SpeechRequest(text=text))
+            self._speech.publish(SpeechRequest(
+                text=text, request_type=request_type,
+            ))
             return True
 
         def _receive_speech(self, message):
