@@ -1,66 +1,158 @@
-# STT → Agent 계약
-
-## 입력과 인식 순서
-
-마이크에서 16kHz mono PCM16 음성을 받는다. 호출어는 계정 없이 로컬 Whisper
-small(CPU int8, 6 threads)로 확인하고, 별도의 명령 발화는 OpenAI `gpt-transcribe`로
-인식한다. 노트북 `smoke`와 ROS STT 노드는 같은 `SpeechPipeline`을 사용한다.
-
+## STT 명세
 ```mermaid
-flowchart TD
-    W["waiting_for_wake<br/>호출어 녹음"] --> C["마이크 닫기·로컬 Whisper"]
-    C --> M{"전체 전사가 제이크야?"}
-    M -->|"아니오"| W
-    M -->|"예: wake_detected"| R["새 마이크·listening<br/>명령 발화 녹음"]
-    R --> O["마이크 닫기·OpenAI STT"]
-    O --> P["새 발화 ID + 최종 원문"]
-    P -->|"SpeechTranscript Topic"| A["Agent"]
+flowchart LR
+    M["마이크"] --> S["로컬 Whisper STT"]
+    S -->|"인식한 문장"| A["Agent"]
+    A -->|"답변 텍스트"| T["TTS 음성 합성·재생"]
+    T --> SP["스피커"]
+    T -->|"실제 재생 시작·완료 알림"| S
+```
+## 1. 목적
+
+목소리를 활용하여 자유롭게 소통할 수 있는 기능을 구현함에 목적을 둔다.
+
+## 2. 입력과 출력
+
+| 용도 | 통신 방식 | 이름 | 타입 |
+|---|---|---|---|
+| STT → Agent 전사 전달 | Topic | `/malbut/speech/transcript` | `SpeechTranscript` |
+| TTS → STT 재생 상태 | Topic | `/malbut/speech/playback_status` | `SpeechPlaybackStatus` |
+| STT → Agent 발화 대상 판정 | **Service** | `/malbut/speech/classify_addressee` | `ClassifySpeechAddressee` |
+| STT → TTS 재생 제어 | **Service** | `/malbut/speech/playback_control` | `ControlSpeechPlayback` |
+
+필드와 선택값의 최종 기준은 `malbut_interfaces`의 `.msg`와 `.srv` 파일이다.
+Service의 요청과 응답은 ROS가 연결하므로 별도 결과 Topic을 사용하지 않는다.
+
+### 2.1. Topic 메시지 필드
+
+TTS 재생 상태: [SpeechPlaybackStatus.msg](../../malbut_interfaces/msg/SpeechPlaybackStatus.msg)
+
+```text
+string PLAYING=playing
+string PAUSED=paused
+string FINISHED=finished
+string FAILED=failed
+string STOPPED=stopped
+
+# TTS 재생 한 건을 구분하는 고유 ID
+string playback_id
+
+# 위 상수 중 하나. FINISHED만 정상 재생 완료를 뜻한다.
+string state
 ```
 
-1. `waiting_for_wake`가 표시되면 “제이크야”만 부른다. 호출어 수집은 시작 대기
-   5초·종료 무음 0.4초·최대 발화 6초·발화 직전 소리 0.3초 보존으로 고정한다.
-2. 마이크를 닫고 로컬에서 전체 발화를 인식한다. 공백·구두점을 제외한 전사가
-   `제이크야`와 정확히 같아야 한다. “제이크야 오늘 날씨가 어때”는 거부한다.
-3. `wake_detected` 뒤 새 마이크가 열려 `listening`이 표시되면 명령을 말한다.
-   명령 수집 기본값은 시작 대기 5초·종료 무음 1초·최대 발화 20초·발화 직전 소리
-   0.3초 보존이다. 호출어 녹음의 소리는 명령 녹음에 이어 붙이지 않는다.
-4. 마이크를 닫고 명령 WAV만 OpenAI로 한 번 전송한다. 유효한 최종 원문을 발행한
-   뒤 다시 호출어를 기다린다. 인식 처리 중 음성은 녹음하거나 대기열에 쌓지 않는다.
+Agent에 전달하는 전사 결과: [SpeechTranscript.msg](../../malbut_interfaces/msg/SpeechTranscript.msg)
 
-로컬 모델은 최초에 명시적으로 다운로드한다. ROS의 필수 `wake_model_path`와
-노트북의 `--model-path`는 `tokenizer.json`을 포함한 완전한 모델 디렉터리를 가리킨다.
-실행 중에는 `local_files_only=True`로 열어 자동 다운로드하지 않는다. 키·모델·녹음은
-Git에 포함하지 않고, 런타임 원본 녹음은 파일에 자동 저장하지 않는다.
+```text
+# 한 번의 최종 발화를 구분하는 고유 ID
+string utterance_id
 
-## 출력
+# STT가 최종 인식한 사용자 발화 원문
+string text
+```
 
-| 항목 | 계약 |
-|---|---|
-| Topic | `/malbut/speech/transcript` |
-| 메시지 타입 | `malbut_interfaces/msg/SpeechTranscript` |
-| `utterance_id: string` | 새 최종 발화마다 생성하는 UUID |
-| `text: string` | OpenAI가 돌려준 최종 발화 원문 |
-| QoS | `RELIABLE`, `VOLATILE`, `KEEP_LAST`, depth `10` |
+### 2.2. Service 요청·응답 필드
 
-원문에 요약·명령 변환·공백 정규화를 적용하지 않는다. 같은 문장을 다시 말해도
-새 ID를 사용한다. 중간 인식 결과·빈 원문·오류 문장은 발행하지 않는다.
-무음·길이 초과 녹음은 인식에 보내지 않고 버리며, 잘린 문장을 전송하지 않는다.
-명령 STT 실패는 발행 없이 호출어 대기로 돌아간다. 로컬 호출어 인식·장치 실패는
-오류 종류를 기록하고 종료한다. API 자동 재시도와 Topic 접수 응답·재전송은 없다.
+Agent 발화 대상 판정: [ClassifySpeechAddressee.srv](../../malbut_interfaces/srv/ClassifySpeechAddressee.srv)
 
-## Agent 수신 범위
+```text
+# Request
+# 판정할 사용자 발화의 고유 ID
+string utterance_id
 
-- `speech_receiver`: 발화 ID·원문 해시를 SQLite에 기록하고 `received`를 표시한다.
-  LLM·Manager·TTS를 호출하지 않는다.
-- `agent_communication`: 수신·중복 확인 후 원문을 기존 대화 처리에 전달하고
-  `/malbut/speech/response`에 답변 텍스트를 발행한다. Provider 환경 설정도 없으면
-  `mock`이며 실제 OpenAI 대화는 기존 키와 `--provider openai` 설정을 사용한다.
-  대화 발화·응답은 별도의 대화 DB에 저장한다.
+# 사용자가 끼어들었을 때의 TTS 재생 고유 ID
+string playback_id
 
-두 Agent 모드를 동시에 실행하지 않는다. `published:<ID>`는 발행 기록이며 Agent
-접수·답변·음성 재생·로봇 동작 성공을 뜻하지 않는다. 수신기를 먼저 실행하고
-Agent 로그에서 같은 ID와 원문의 접수를 확인한다. 같은 ID·같은 원문은 `duplicate`,
-같은 ID·다른 원문은 `conflict`이며, 늦게 시작한 Agent에 과거 발화를 재생하지 않는다.
+# STT가 최종 인식한 끼어들기 발화 원문
+string text
+---
+# Response
+# 로봇에게 하는 말 / 다른 대상에게 하는 말 / 판단할 수 없음
+string ADDRESSED=addressed
+string NOT_ADDRESSED=not_addressed
+string UNKNOWN=unknown
+string decision
+```
 
-실행 명령과 검증 범위는 [패키지 README](../README.md)를 따른다. 합성 음성과 대역
-장치 시험은 실제 사용자·로봇의 호출어 및 STT 성능 검증과 구분한다.
+TTS 재생 제어: [ControlSpeechPlayback.srv](../../malbut_interfaces/srv/ControlSpeechPlayback.srv)
+
+```text
+# Request
+string PAUSE=pause
+string RESUME=resume
+string STOP=stop
+
+# 제어할 TTS 재생의 고유 ID
+string playback_id
+
+# 위 상수 중 하나
+string command
+---
+# Response: 요청을 검증하고 접수했는지 여부
+bool accepted
+```
+
+TTS는 `playback_id`와 `command`를 검증하여 제어 요청의 접수 여부를 응답한다.
+`accepted=true`는 실제 재생 상태 변경이 완료되었다는 뜻이 아니다.
+실제 일시정지·재개·종료 상태는 `SpeechPlaybackStatus`로 알린다.
+
+## 3. 기능
+
+### 3.1. 호출어 감지
+
+- 웨이크워드를 들으면 반응을 하고 대화 세션을 시작 한다.
+- 현재 호출어는 제이크이다.
+- 제이크라는 호출어를 인식하면 띠링 소리를 울리고 대화 모드로 전환한다.
+- 한번 호출할 시 대화 세션 종료까지 대화를 할 수 있다.
+
+### 3.2. 음성 입력
+
+- 대화 모드에서 마이크로 들어오는 사용자의 음성을 입력받는다.
+
+### 3.3. 발화 종료 감지
+```mermaid
+flowchart TD
+    A["사용자 음성 수집·중간 전사"]
+    B{"문장이 끝난 것으로 판단되는가?"}
+    C["마지막 음성부터 1.5초 무음 대기"]
+    D["마지막 음성부터 3초 무음 대기"]
+    E["발화 종료 확정"]
+
+    A --> B
+    B -->|"예"| C
+    B -->|"아니오·불확실"| D
+    C -->|"무음 기준 충족"| E
+    D -->|"무음 기준 충족"| E
+    C -->|"확정 전에 다시 말함"| A
+    D -->|"확정 전에 다시 말함"| A
+```
+- 사용자의 발화가 시작된 뒤, 마지막 사용자 음성 이후 3초 동안 무음이 이어지면 발화를 종료한다.
+- 발화 내용이 평서문·질문·요청 등 완결된 문장으로 판단되면, 무음 대기시간을 1.5초로 줄인다. 이 시간은 마지막 사용자 음성 시점부터 계산한다.
+- 문장이 끝났는지 판단하기 어려우면 기존 3초 무음 기준을 유지한다.
+- 발화 종료를 확정하기 전에 사용자가 다시 말하면 무음 대기시간을 초기화하고 같은 발화를 이어서 수집한다. 이전 문장 완결 판단으로 이어지는 발화를 종료하지 않는다.
+
+### 3.4. 텍스트 변환 및 전달
+
+- 들은 음성을 텍스트로 변한다.
+- 변환된 텍스트를 텍스트 ID와 합쳐 전달한다.
+
+### 3.5. 대화 모드 관리
+
+- 호출어가 감지되면 대화 모드를 시작한다.
+- 대화 모드에서는 호출어 없이 사용자의 발화를 입력받는다.
+- TTS가 발화를 마치면 5초 동안 사용자의 다음 발화를 기다린다.
+- 5초 이내에 사용자가 말하기 시작하면 종료 대기를 중단하고 대화를 이어간다.
+- 다음 TTS 발화가 끝나면 다시 5초 동안 기다린다.
+- 5초 동안 사용자 발화가 없으면 대화 모드를 종료하고 호출어 대기로 돌아간다.
+
+### 3.6. TTS 중 음성 처리
+
+- 로봇의 TTS 음성이 마이크에 입력되더라도 호출어 또는 사용자 발화로 처리하지 않는다.
+- 사용자 끼어들기는 허용한다.
+- 사용자가 말하기 시작하면 현재 TTS에 pause를 요청한다.
+- 해당 발화가 로봇에게 하는 말이 아니라고 판단되면, 같은 playback_id에 resume를 요청하여 중단된 지점부터 재생한다.
+
+## 4. 예외 처리
+
+- 마이크 입력을 사용할 수 없음: 음성 입력을 중단하고 오류를 기록한다. 입력 장치가 정상화되기 전에는 대화를 시작하지 않는다.
+- 음성을 텍스트로 변환하는데 실패하거나, 변환결과가 빈 문자열인 경우: Agent에 전달하지 않고 사용자의 다음 발화를 기다린다.
