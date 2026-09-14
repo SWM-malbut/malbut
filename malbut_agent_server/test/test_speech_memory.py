@@ -170,6 +170,7 @@ def _fake_ros(monkeypatch, spoken, logs):
     class Node:
         def __init__(self, _name):
             self.context = SimpleNamespace(ok=lambda: True)
+            self.executor = None
 
         def create_publisher(self, *_args):
             return SimpleNamespace(
@@ -177,6 +178,9 @@ def _fake_ros(monkeypatch, spoken, logs):
             )
 
         def create_subscription(self, *_args):
+            return None
+
+        def create_service(self, *_args, **_kwargs):
             return None
 
         def create_timer(self, *_args):
@@ -191,6 +195,10 @@ def _fake_ros(monkeypatch, spoken, logs):
             return True
 
     monkeypatch.setitem(sys.modules, 'rclpy.node', SimpleNamespace(Node=Node))
+    monkeypatch.setitem(sys.modules, 'rclpy.callback_groups', SimpleNamespace(
+        ReentrantCallbackGroup=object,
+    ))
+    monkeypatch.setitem(sys.modules, 'rclpy.task', SimpleNamespace(Future=object))
     monkeypatch.setitem(sys.modules, 'rclpy.qos', SimpleNamespace(
         DurabilityPolicy=SimpleNamespace(VOLATILE='volatile'),
         HistoryPolicy=SimpleNamespace(KEEP_LAST='keep-last'),
@@ -200,6 +208,9 @@ def _fake_ros(monkeypatch, spoken, logs):
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.msg', SimpleNamespace(
         SpeechRequest=lambda **kwargs: SimpleNamespace(**kwargs),
         SpeechTranscript=SimpleNamespace,
+    ))
+    monkeypatch.setitem(sys.modules, 'malbut_interfaces.srv', SimpleNamespace(
+        ClassifySpeechAddressee=SimpleNamespace(Response=SimpleNamespace(UNKNOWN='unknown')),
     ))
     monkeypatch.setattr(
         'malbut_agent_server.manager_client.ManagerClient',

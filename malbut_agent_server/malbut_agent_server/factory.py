@@ -31,6 +31,7 @@ from malbut_agent_server.rai_sidecar_client import (
 )
 from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy
+from malbut_agent_server.speech_addressee import SpeechAddresseeClassifier
 
 
 RAI_SIDECAR_MODULE = 'malbut_agent_server.rai_sidecar_runtime'
@@ -241,7 +242,14 @@ def build_orchestrator(
                 robot_planner_provider=planner_provider,
                 fallback_provider=provider,
             )
-        return AgentOrchestrator(
+        speech_addressee = SpeechAddresseeClassifier(
+            _openai_adapter(
+                settings,
+                settings.openai_general_model or settings.openai_model,
+                include_reasoning=False,
+            ) if settings.provider == 'openai' else None,
+        )
+        runtime = AgentOrchestrator(
             provider=provider,
             memory_store=memory_store,
             conversation_store=conversation_store,
@@ -256,6 +264,8 @@ def build_orchestrator(
             weather_executor=weather_executor,
             weather_location_executor=weather_location_executor,
         )
+        runtime.speech_addressee = speech_addressee
+        return runtime
     except Exception:
         if conversation_store is not None:
             conversation_store.close()

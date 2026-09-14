@@ -68,7 +68,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 phase = 'starting_microphone'
                 recorder.start()
                 resources.callback(recorder.stop)
-                emit('waiting_for_wake', phrase='제이크야')
+                emit('waiting_for_wake', phrase='제이크')
                 result = None
                 while result is None:
                     phase = 'reading_microphone'

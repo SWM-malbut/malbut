@@ -12,18 +12,22 @@ class CaptureSettings:
 
     start_timeout_s: float = 5.0
     silence_timeout_s: float = 1.0
-    max_utterance_s: float = 20.0
+    max_utterance_s: Optional[float] = 20.0
     pre_roll_s: float = 0.3
 
     def __post_init__(self) -> None:
         """Reject invalid durations before listening starts."""
-        for value in (
+        durations = (
             self.start_timeout_s, self.silence_timeout_s,
-            self.max_utterance_s, self.pre_roll_s,
-        ):
+            self.pre_roll_s,
+        )
+        if self.max_utterance_s is not None:
+            durations += (self.max_utterance_s,)
+        for value in durations:
             if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
                 raise ValueError('capture durations must be finite and positive')
-        if self.silence_timeout_s >= self.max_utterance_s:
+        if (self.max_utterance_s is not None
+                and self.silence_timeout_s >= self.max_utterance_s):
             raise ValueError('silence timeout must be shorter than utterance limit')
         if self.pre_roll_s > self.start_timeout_s:
             raise ValueError('pre-roll must not exceed speech start timeout')
@@ -35,6 +39,8 @@ class CaptureResult:
 
     status: str
     pcm: bytes = b''
+    revision: int = 0
+    silence_s: float = 0.0
 
 
 class UtteranceCollector:
@@ -61,6 +67,7 @@ class UtteranceCollector:
         self.silent_frames = 0
         self.started = False
         self.result: Optional[CaptureResult] = None
+        self.revision = 0
 
     def feed(self, pcm: bytes) -> Optional[CaptureResult]:
         """Accept PCM16 little-endian chunks and finalize at most once."""
@@ -78,6 +85,7 @@ class UtteranceCollector:
                 self.pre_roll.append(frame)
                 if speech:
                     self.started = True
+                    self.revision += 1
                     self.audio.extend(b''.join(self.pre_roll))
                     self.pre_roll.clear()
                     self.speech_frames = 1
@@ -87,13 +95,22 @@ class UtteranceCollector:
                 self.audio.extend(frame)
                 self.speech_frames += 1
                 self.silent_frames = 0 if speech else self.silent_frames + 1
-                if self.speech_frames > math.floor(self.settings.max_utterance_s / 0.02):
+                if speech:
+                    self.revision += 1
+                if (self.settings.max_utterance_s is not None
+                        and self.speech_frames > math.floor(
+                            self.settings.max_utterance_s / 0.02)):
                     self.result = CaptureResult('too_long')
                 elif self.silent_frames >= math.ceil(self.settings.silence_timeout_s / 0.02):
-                    self.result = CaptureResult('complete', bytes(self.audio))
+                    self.result = self.snapshot('complete')
             if self.result is not None:
                 self.pending.clear()
                 self.pre_roll.clear()
                 self.audio.clear()
                 return self.result
         return None
+
+    def snapshot(self, status: str) -> CaptureResult:
+        """Associate an immutable audio snapshot with its last voiced frame."""
+        return CaptureResult(status, bytes(self.audio), self.revision,
+                             self.silent_frames * 0.02)

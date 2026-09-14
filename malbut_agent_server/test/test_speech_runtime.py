@@ -119,3 +119,49 @@ def test_receipt_lookup_leaves_unaccepted_id_available(tmp_path):
         assert store.receive('pending', '안녕') == 'duplicate'
     finally:
         store.close()
+
+
+@pytest.mark.parametrize('context_shutdown', [False, True])
+def test_main_uses_explicit_executor_and_bounded_shutdown(monkeypatch, context_shutdown):
+    """SIGINT must not invoke an unbounded global-executor shutdown hook."""
+    calls = []
+    state = {'ok': True}
+
+    class ExternalShutdownException(Exception):
+        pass
+
+    class Executor:
+        def add_node(self, node):
+            calls.append('add_node')
+
+        def spin_once(self, *, timeout_sec):
+            calls.append('spin_once')
+            if context_shutdown:
+                state['ok'] = False
+                raise ExternalShutdownException()
+            raise KeyboardInterrupt()
+
+        def shutdown(self, *, timeout_sec):
+            calls.append(('executor_shutdown', timeout_sec))
+
+    def shutdown():
+        calls.append('context_shutdown')
+        state['ok'] = False
+
+    monkeypatch.setattr(ros_communication.os, 'environ', {})
+    monkeypatch.setattr(ros_communication.sys, 'stdin', SimpleNamespace(fileno=lambda: 0))
+    monkeypatch.setitem(sys.modules, 'rclpy', SimpleNamespace(
+        init=lambda **_: calls.append('init'), ok=lambda: state['ok'], shutdown=shutdown,
+    ))
+    monkeypatch.setitem(sys.modules, 'rclpy.executors', SimpleNamespace(
+        SingleThreadedExecutor=Executor, ExternalShutdownException=ExternalShutdownException,
+    ))
+    monkeypatch.setattr(
+        ros_communication, 'create_communication_node', lambda **_: SimpleNamespace(
+            get_logger=lambda: SimpleNamespace(info=lambda *_: None),
+            destroy_node=lambda: calls.append('destroy_node'),
+        ))
+    ros_communication.main(['--provider', 'mock'])
+    assert calls[:4] == ['init', 'add_node', 'spin_once', 'destroy_node']
+    assert calls[4] == ('executor_shutdown', 0)
+    assert calls[5:] == ([] if context_shutdown else ['context_shutdown'])
