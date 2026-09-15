@@ -322,6 +322,7 @@ jobs:
 
       - name: Run changed ROS package tests
         if: needs.changes.outputs.ros == 'true'
+        timeout-minutes: 20
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
@@ -349,7 +350,8 @@ jobs:
           # Core tests run in agent-python, without launch changing Python loggers.
           PYTHONPATH=".:${PYTHONPATH}" python3 -m pytest -q -rs \
             test/test_node_communication_ros.py test/test_ros_memory_communication.py \
-            test/test_ros_weather_communication.py test/test_weather_action.py
+            test/test_ros_weather_communication.py test/test_weather_action.py \
+            test/test_speech_addressee_service_ros.py
 
       - name: Validate robot Xacro
         if: needs.changes.outputs.ros_full == 'true'
