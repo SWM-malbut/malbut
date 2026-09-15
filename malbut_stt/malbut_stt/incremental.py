@@ -44,10 +44,9 @@ class IncrementalWhisperStream:
         duration = len(pcm) / 32000
         audio = np.frombuffer(pcm, dtype='<i2', offset=offset_samples * 2)
         audio = audio.astype(np.float32) / 32768.0
-        prompt = _text([segment for segment in self._committed if segment.end <= offset])
         segments, _ = self.model.transcribe(
             audio, language='ko', beam_size=1, condition_on_previous_text=False,
-            initial_prompt=prompt[-200:] or None,
+            initial_prompt=None,
         )
         decoded = []
         for segment in segments:

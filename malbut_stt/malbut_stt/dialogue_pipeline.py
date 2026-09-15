@@ -331,6 +331,11 @@ class DialoguePipeline:
             self._endpoint_candidate = None
             return
         if partial:
+            # During a pause, wait for the endpoint snapshot instead of
+            # starting another preview that would delay its fresher audio.
+            if collector.silent_frames:
+                self._endpoint_candidate = None
+                return
             # Replace an older pending preview with all audio collected so far.
             event = collector.snapshot('partial_check')
         key = (self._generation, uid, event.revision)

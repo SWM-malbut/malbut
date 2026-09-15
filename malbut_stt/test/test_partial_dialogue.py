@@ -105,6 +105,23 @@ def test_slow_partial_keeps_latest_pending_audio_without_a_job_backlog(state):
     assert state.final == []
 
 
+def test_pending_partial_during_silence_waits_for_the_fresher_endpoint(state):
+    pipeline = state.pipeline
+    state.release.clear()
+    pipeline.feed(VOICE * 100)
+    assert state.entered.wait(2)
+    pipeline.feed(VOICE * 100 + QUIET * 20)
+    state.release.set()
+    pump(pipeline, lambda: pipeline._endpoint_job is None)
+    assert len(state.calls) == 1 and pipeline.jobs.empty()
+    pipeline.feed(QUIET * 20)
+    pump(pipeline, lambda: len(state.calls) == 2)
+    assert len(state.calls[-1][1]) == int(4.8 * 32000)
+    pipeline.feed(QUIET * 35)
+    pump(pipeline, lambda: bool(state.final))
+    assert len(state.calls) == 2 and len(state.final) == 1
+
+
 @pytest.mark.parametrize('failure', ['', RuntimeError('temporary decode failure')])
 def test_failed_intermediate_result_retries_latest_full_capture_at_final(state, failure):
     def reply(pcm, final):

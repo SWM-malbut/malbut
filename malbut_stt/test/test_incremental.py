@@ -59,7 +59,8 @@ def test_stable_prefix_is_reused_and_latest_suffix_is_revisable():
     assert len(audio) == int(10.5 * 16000)
     assert audio[-1] == 1234 / 32768  # Includes the newest input sample.
     assert not options.get('word_timestamps', False)
-    assert options['initial_prompt'] == expected(10)
+    # Acoustic overlap supplies context; a text prefix can suppress new speech.
+    assert options['initial_prompt'] is None
     assert stream.last_metrics['final'] is True
 
 
