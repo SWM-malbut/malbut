@@ -17,7 +17,7 @@ class StreamingUtteranceCollector:
                  settings: CaptureSettings | None = None,
                  early_endpoint_s: float | None = None,
                  partial_interval_s: float | None = None) -> None:
-        self.settings = settings or CaptureSettings(silence_timeout_s=3.0)
+        self.settings = settings or CaptureSettings(silence_timeout_s=2.0)
         if early_endpoint_s is not None and (
             isinstance(early_endpoint_s, bool) or not math.isfinite(early_endpoint_s)
             or not 0 < early_endpoint_s < self.settings.silence_timeout_s

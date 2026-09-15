@@ -64,7 +64,7 @@ def test_partial_while_speaking_refreshes_the_tail_before_final_delivery(state):
     pump(pipeline, lambda: len(state.partial) == 1)
     assert state.final == []
     assert state.calls[0][2] is False
-    pipeline.feed(QUIET * 74)
+    pipeline.feed(QUIET * 49)
     pipeline.poll()
     assert state.final == []
     pipeline.feed(QUIET)
@@ -82,7 +82,7 @@ def test_resumed_voice_is_in_final_result_even_when_previous_partial_is_complete
     pipeline.feed(VOICE * 100)
     pump(pipeline, lambda: bool(state.partial))
     state.reply = lambda pcm, final: '문을 열지 말고 닫아 줘.'
-    pipeline.feed(QUIET * 40 + VOICE * 30 + QUIET * 75)
+    pipeline.feed(QUIET * 40 + VOICE * 30 + QUIET * 50)
     pump(pipeline, lambda: bool(state.final))
     assert state.final == [(state.partial[0][0], '문을 열지 말고 닫아 줘.')]
     assert len(state.calls) == 2
@@ -117,7 +117,7 @@ def test_pending_partial_during_silence_waits_for_the_fresher_endpoint(state):
     pipeline.feed(QUIET * 20)
     pump(pipeline, lambda: len(state.calls) == 2)
     assert len(state.calls[-1][1]) == int(4.8 * 32000)
-    pipeline.feed(QUIET * 35)
+    pipeline.feed(QUIET * 10)
     pump(pipeline, lambda: bool(state.final))
     assert len(state.calls) == 2 and len(state.final) == 1
 
@@ -135,7 +135,7 @@ def test_failed_intermediate_result_retries_latest_full_capture_at_final(state, 
     pipeline.feed(VOICE * 100)
     pump(pipeline, lambda: 'partial_failed' in state.reports)
     assert pipeline.session.active and state.final == []
-    pipeline.feed(QUIET * 150)
+    pipeline.feed(QUIET * 100)
     pump(pipeline, lambda: bool(state.final))
     assert state.final[0][1] == '거실에서 기다려 줘.'
     assert state.calls[-1][2] is True
@@ -147,7 +147,7 @@ def test_failed_inflight_partial_after_endpoint_retries_before_final_failure(sta
     state.release.clear()
     pipeline.feed(VOICE * 100)
     assert state.entered.wait(2)
-    pipeline.feed(QUIET * 150)
+    pipeline.feed(QUIET * 100)
     assert pipeline._busy and state.final == []
     state.release.set()
     pump(pipeline, lambda: bool(state.final))
@@ -164,7 +164,7 @@ def test_weak_trailing_audio_is_decoded_even_when_vad_revision_does_not_change(s
                                       else '내일 해줘.')
     pipeline.feed(VOICE * 100)
     pump(pipeline, lambda: bool(state.partial))
-    pipeline.feed(weak + QUIET * 74)
+    pipeline.feed(weak + QUIET * 49)
     pump(pipeline, lambda: bool(state.final))
     assert state.final[0][1] == '내일 말고 모레 해줘.'
     assert len(state.calls) == 2 and weak in state.calls[-1][1]
@@ -192,7 +192,7 @@ def test_latest_partial_failure_never_publishes_an_older_prefix_as_final(state):
     pipeline.feed(VOICE * 100)
     pump(pipeline, lambda: bool(state.partial))
     state.reply = lambda pcm, final: ''
-    pipeline.feed(VOICE * 100 + QUIET * 150)
+    pipeline.feed(VOICE * 100 + QUIET * 100)
     pump(pipeline, lambda: 'empty_transcript' in state.reports)
     assert state.final == [] and pipeline.session.active
 
@@ -209,7 +209,7 @@ def test_interruption_partials_wait_for_final_text_and_addressee_decision(state,
     assert controls == [('playing-answer', 'pause')]
     assert candidates == [] and state.final == []
     pipeline.on_playback_status('playing-answer', 'paused')
-    pipeline.feed(QUIET * 75)
+    pipeline.feed(QUIET * 50)
     pump(pipeline, lambda: bool(candidates))
     uid, playback_id, text = candidates[0]
     assert state.final == []

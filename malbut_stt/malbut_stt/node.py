@@ -51,7 +51,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         control_timeout = parameter('playback_control_timeout_s', 5.0)
         settings = CaptureSettings(
             start_timeout_s=parameter('start_timeout_s', 5.0),
-            silence_timeout_s=parameter('silence_timeout_s', 3.0),
+            silence_timeout_s=parameter('silence_timeout_s', 2.0),
             max_utterance_s=parameter('max_utterance_s', 20.0),
             pre_roll_s=parameter('pre_roll_s', 0.3),
         )

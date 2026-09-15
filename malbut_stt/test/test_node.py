@@ -254,7 +254,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert runtime.calls['ros_args'] == ['--ros-args']
     assert runtime.calls['node_name'] == 'malbut_stt'
     defaults = runtime.calls['defaults']
-    assert defaults['silence_timeout_s'] == 3.0
+    assert defaults['silence_timeout_s'] == 2.0
     assert defaults['start_timeout_s'] == 5.0
     assert defaults['max_utterance_s'] == 20.0
     assert defaults['pre_roll_s'] == 0.3
@@ -272,7 +272,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert runtime.calls['wake_shared'] is runtime.pipeline_args['transcriber']
     assert runtime.pipeline_args['wake'].model is runtime.pipeline_args['transcriber'].model
     assert runtime.pipeline_args['input_has_aec'] is False
-    assert runtime.pipeline_args['settings'].silence_timeout_s == 3.0
+    assert runtime.pipeline_args['settings'].silence_timeout_s == 2.0
     assert runtime.calls['spin_timeout'] == 0.02
     assert runtime.calls['playback_status'] == ('p1', 'playing')
     assert runtime.calls['addressee'] == ('u2', 'p1', 'addressed')

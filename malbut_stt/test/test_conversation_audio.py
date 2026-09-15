@@ -41,15 +41,15 @@ def test_speech_before_deadline_can_finish_after_deadline_without_a_new_wake():
     run.session.on_playback_status('first', 'finished')
     run.feed(QUIET, 249)
     assert run.session.active
-    # Onset at 4.99 s cancels the wait, although the final text arrives after 8 s.
+    # Onset at 4.99 s cancels the wait; audio completes after the 5-second deadline.
     run.now = 4.97
     run.feed(VOICE)
-    run.feed(QUIET, 149)
+    run.feed(QUIET, 99)
     assert run.completed == []
     assert run.session.deadline is None
     run.feed(QUIET)
     uid, pcm = run.completed.pop()
-    assert pcm.endswith(VOICE + QUIET * 150)
+    assert pcm.endswith(VOICE + QUIET * 100)
     run.now = 10.0  # A delayed local transcription result is still in this turn.
     run.session.finish_utterance(uid, '계속 이야기하자', addressed=True)
     assert run.transcripts == [(uid, '계속 이야기하자')]
@@ -66,7 +66,7 @@ def test_barge_in_pauses_before_transcription_and_resumes_after_acknowledgement(
     run.feed(VOICE)
     assert run.controls == [('reply', 'pause')]
     assert run.completed == run.transcripts == []
-    run.feed(QUIET, 150)
+    run.feed(QUIET, 100)
     uid, _ = run.completed.pop()
     # The decision is injected; these components do not classify the addressee.
     run.session.finish_utterance(uid, '친구에게 한 말', addressed=False)

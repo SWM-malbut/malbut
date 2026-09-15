@@ -70,7 +70,7 @@ def test_real_pipeline_observes_continuation_after_its_first_early_result(runtim
     first, second = result['transcripts']
     assert first['utterance_id'] != second['utterance_id']
     assert first['at_s'] < result['source']['duration_s'] < second['at_s']
-    assert all(item['vad_last_speech_to_text_s'] > 1.4 for item in result['transcripts'])
+    assert all(item['vad_last_speech_to_text_s'] > 0.9 for item in result['transcripts'])
     assert result['source']['pcm_sha256'] == hashlib.sha256(pcm).hexdigest()
     assert result['model_transcribe_calls'] == 2
     assert len(result['inference']) == len(runtime.requests) == 2
@@ -106,8 +106,8 @@ def test_busy_discarded_speech_cannot_shorten_an_earlier_transcripts_latency(run
     assert any(item['event'] == 'speech_discarded:busy' for item in result['events'])
     transcript = result['transcripts'][0]
     assert 0 <= transcript['first_vad_speech_at_s'] <= transcript['last_vad_speech_at_s'] < 0.3
-    assert transcript['at_s'] > 4.1
-    assert transcript['vad_last_speech_to_text_s'] > 4.0
+    assert transcript['at_s'] > 3.6
+    assert transcript['vad_last_speech_to_text_s'] > 3.5
     assert transcript['vad_last_speech_to_text_s'] == pytest.approx(
         transcript['at_s'] - transcript['last_vad_speech_at_s'])
 
@@ -133,7 +133,7 @@ def test_resumed_voice_keeps_first_onset_but_updates_its_own_last_voice(runtime,
     assert transcript['text'] == '거실로 이동해줘.'
     assert 0 <= transcript['first_vad_speech_at_s'] < 0.3
     assert 1.8 <= transcript['last_vad_speech_at_s'] < 2.3
-    assert transcript['vad_last_speech_to_text_s'] > 1.4
+    assert transcript['vad_last_speech_to_text_s'] > 0.9
 
 
 def test_required_wake_opens_dialogue_and_two_followups_keep_distinct_timing(runtime, tmp_path):
@@ -161,7 +161,7 @@ def test_required_wake_opens_dialogue_and_two_followups_keep_distinct_timing(run
     assert first['utterance_id'] != second['utterance_id']
     assert 0.8 < first['first_vad_speech_at_s'] < 1.2
     assert 2.9 < second['first_vad_speech_at_s'] < 3.3
-    assert all(item['vad_last_speech_to_text_s'] > 1.4 for item in result['transcripts'])
+    assert all(item['vad_last_speech_to_text_s'] > 0.9 for item in result['transcripts'])
     assert [call['initial_prompt'] for call in result['inference']] == [
         '로봇 이름은 제이크입니다.', None, None,
     ]
@@ -379,7 +379,7 @@ def test_mlx_replay_measures_shared_adapter_and_reports_its_backend(
     assert result['inference'][0]['beam_size'] is None
     assert result['inference'][0]['decoding'] == 'greedy with fallback'
     assert result['inference'][0]['elapsed_s'] is not None
-    assert result['transcripts'][0]['vad_last_speech_to_text_s'] >= 1.4
+    assert result['transcripts'][0]['vad_last_speech_to_text_s'] >= 0.9
     assert len(runtime.loads) == len(runtime.requests) == 1
 
     transcriber = MlxTranscriber(runtime.model_dir)

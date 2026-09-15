@@ -54,17 +54,17 @@ class DialoguePipeline:
             publish_transcript=publish_transcript,
             publish_control=self._publish_control,
         )
-        settings = settings or CaptureSettings(silence_timeout_s=3.0)
+        settings = settings or CaptureSettings(silence_timeout_s=2.0)
         if endpoint_predecode_s is not None and (
             isinstance(endpoint_predecode_s, bool)
             or not math.isfinite(endpoint_predecode_s)
-            or not 0 < endpoint_predecode_s <= 1.5 < settings.silence_timeout_s
+            or not 0 < endpoint_predecode_s <= 1.0 < settings.silence_timeout_s
         ):
-            raise ValueError('predecode must start by 1.5 seconds before the fallback')
+            raise ValueError('predecode must start by 1.0 seconds before the fallback')
         self.command_stream = StreamingUtteranceCollector(
             is_speech, settings=settings,
             early_endpoint_s=(endpoint_predecode_s if endpoint_predecode_s is not None
-                              else 1.5 if settings.silence_timeout_s > 1.5 else None),
+                              else 1.0 if settings.silence_timeout_s > 1.0 else None),
             partial_interval_s=(partial_interval_s if callable(self._stream_factory) else None),
         )
         self.wake_stream = StreamingUtteranceCollector(
@@ -448,7 +448,7 @@ class DialoguePipeline:
         self._finish_ready_endpoint()
 
     def _finish_ready_endpoint(self):
-        """Reuse early inference only after 1.5 seconds of current observed silence."""
+        """Reuse early inference only after 1.0 seconds of current observed silence."""
         if self._endpoint_result is None:
             return
         (generation, uid, revision), text, error_name = self._endpoint_result
@@ -458,7 +458,7 @@ class DialoguePipeline:
                 or self.command_stream.collector.revision != revision):
             self._endpoint_result = None
             return
-        if (self.command_stream.collector.silent_frames * 0.02 >= 1.5
+        if (self.command_stream.collector.silent_frames * 0.02 >= 1.0
                 and error_name is None and is_complete_korean_utterance(text)):
             event = self.command_stream.finish_endpoint(revision)
             if event is not None:
