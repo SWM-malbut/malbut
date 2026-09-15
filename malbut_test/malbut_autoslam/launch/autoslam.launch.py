@@ -39,10 +39,12 @@ def _servers(context):
                 'use_sim_time': sim,
                 'auto_start': ParameterValue(LaunchConfiguration('auto_start'), value_type=bool),
                 'ready_timeout_s': ready_timeout,
+                'max_exploration_time_s': ParameterValue(
+                    LaunchConfiguration('max_exploration_time_s'), value_type=float),
                 **{
                     name: LaunchConfiguration(name) for name in (
-                        'map_topic', 'scan_topic', 'odom_topic', 'normalized_scan_topic',
-                        'base_frame', 'navigation_action', 'map_directory')
+                        'map_topic', 'scan_topic', 'odom_topic',
+                        'base_frame', 'navigation_action', 'planning_action', 'map_directory')
                 }}],
         ),
     ]
@@ -59,10 +61,11 @@ def generate_launch_description():
         DeclareLaunchArgument('map_topic', default_value='/map'),
         DeclareLaunchArgument('scan_topic', default_value='/scan_raw'),
         DeclareLaunchArgument('odom_topic', default_value='/odom'),
-        DeclareLaunchArgument('normalized_scan_topic', default_value='/scan_normalized'),
         DeclareLaunchArgument('base_frame', default_value='base_footprint'),
         DeclareLaunchArgument('navigation_action', default_value='/navigate_to_pose'),
+        DeclareLaunchArgument('planning_action', default_value='/compute_path_to_pose'),
         DeclareLaunchArgument('ready_timeout_s', default_value=str(DEFAULT_READY_TIMEOUT_S)),
+        DeclareLaunchArgument('max_exploration_time_s', default_value='1200.0'),
         DeclareLaunchArgument('map_directory', default_value=str(
             Path.home() / '.ros/malbut/maps')),
         OpaqueFunction(function=_servers),

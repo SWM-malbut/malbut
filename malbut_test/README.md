@@ -138,8 +138,8 @@ Goal을 받으면 누락된 차체·센서·SLAM·Nav2·스캔 정규화기를 �
 성공 결과의 `map_yaml`을 이후 Bringup의 `map` 인자로 사용한다. YAML과
 이미지가 모두 필요하다. 관리자를 통해 요청하려면 관리자와 `/autoslam` 서버를
 함께 실행한다. 저장 지도 Navigation 모드와 실시간 SLAM은 동시에 사용하지 않는다.
-준비된 외부 SLAM을 그대로 쓸 때는 기존 scan 설정도 유지되므로, 스캔 정규화
-수정까지 적용하려면 기존 SLAM을 종료하고 위 Mapping 모드로 새로 시작한다.
+준비된 외부 SLAM을 그대로 쓸 때는 해당 노드도 드라이버의 스캔 토픽을 직접
+사용하도록 설정되어 있는지 확인한다.
 
 ## 3. 공유 인식 준비
 
@@ -249,8 +249,8 @@ Nav2 공통 설정은 로봇에서 받은 파일을 `malbut_bringup/config/nav2_
 - Local·Global 차체 반경 `0.18m`, 팽창 반경 `0.20m`.
 - 속도 smoother를 제조사 DWB와 동일한 전후 `0.4m/s`, 회전 `1.0rad/s` 및
   가감속 제한으로 일치. 제조사 DWB의 횡이동 비활성 설정은 유지.
-- `/scan_raw`를 실제 각도 기준으로 `/scan_normalized`의 일정한 격자로 변환.
-  SLAM·AMCL·Nav2·사람 추적에서 사용. 빈 방향을 자유 공간으로 만들지 않는다.
+- SLAM·AMCL·Nav2·사람 추적은 드라이버의 `/scan_raw`를 직접 사용.
+  고정 각도 격자는 로봇 드라이버의 `bins` 설정으로 제공하며 별도 정규화 노드는 없다.
 - LiDAR는 Local/Global 모두 표준 2D ObstacleLayer 사용.
   스캔 토픽·관측 범위는 유지하며 LiDAR 전용 Voxel 저장·발행은 제거.
 - 두 costmap에 `/depth_cam/depth0/points` 기반 별도 VoxelLayer 연결.
@@ -262,8 +262,7 @@ Nav2 공통 설정은 로봇에서 받은 파일을 `malbut_bringup/config/nav2_
 
 5cm 바닥 기준은 실제 카메라 TF·바닥 높이로 검증할 필요가 있다. 5cm 미만,
 카메라 사각·최소 측정 거리·유리/반사체까지 검출된다는 의미는 아니다.
-스캔 정규화도 잘못된 드라이버 각도·TF·오도메트리까지 교정하지는 않는다.
-검토한 외부 binning 필터는 Humble 배포 여부와 동작 차이 때문에 그대로 교체하지 않았다.
+드라이버의 `bins` 설정·수정은 로봇에서 별도로 적용한다. Malbut은 스캔을 재가공하지 않는다.
 기존 구현 비교·Depth 표시/제거 설정의 근거는
 [Bringup 설명](malbut_bringup/README.md#기존-구현-검토)에 정리했다.
 다른 검토한 복사본은 `nav2_params_file`로 지정할 수 있다.

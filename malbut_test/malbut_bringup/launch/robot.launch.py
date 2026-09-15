@@ -67,8 +67,7 @@ def _setup(context):
         # AutoSLAM starts missing prerequisites on a Goal, not on page load.
         actions = [_include(_package_file(
             'malbut_autoslam', 'launch/autoslam.launch.py'), {
-                'auto_start': 'true', 'scan_topic': value('raw_scan_topic'),
-                'normalized_scan_topic': value('scan_topic'),
+                'auto_start': 'true', 'scan_topic': value('scan_topic'),
                 'odom_topic': value('odom_topic'),
                 'map_directory': value('map_directory'),
                 'map_topic': value('static_map_topic'),
@@ -114,17 +113,10 @@ def _setup(context):
         }))
     if navigation_path:
         actions.append(_include(navigation_path, navigation_arguments, remappings=[
-            ('/scan_normalized', value('scan_topic')),
+            ('/scan_raw', value('scan_topic')),
             ('/odom', value('odom_topic')),
         ]))
 
-    if value('start_scan_adapter') == 'true':
-        actions.append(Node(
-            package='malbut_bringup', executable='scan_normalizer',
-            name='scan_normalizer', output='screen', parameters=[{
-                'use_sim_time': False, 'input_topic': value('raw_scan_topic'),
-                'output_topic': value('scan_topic'),
-            }]))
     if navigating and value('map') and value('pose_memory') == 'true':
         actions.append(Node(
             package='malbut_bringup', executable='pose_memory',
@@ -235,7 +227,6 @@ def generate_launch_description():
         'mode': 'sensors',
         'start_hardware': 'true',
         'start_navigation': 'true',
-        'start_scan_adapter': 'true',
         'pose_memory': 'true',
         'restore_pose': 'true',
         'web_panel': 'false',
@@ -253,8 +244,7 @@ def generate_launch_description():
         'rgb_topic': '/depth_cam/rgb0/image_raw',
         'depth_topic': '/depth_cam/depth0/image_raw',
         'camera_info_topic': '/depth_cam/rgb0/camera_info',
-        'raw_scan_topic': '/scan_raw',
-        'scan_topic': '/scan_normalized',
+        'scan_topic': '/scan_raw',
         'odom_topic': '/odom',
         'global_frame': 'map',
         'robot_frame': 'base_footprint',
@@ -278,7 +268,7 @@ def generate_launch_description():
         'mode': ['sensors', 'navigation', 'mapping'],
         **{key: ['true', 'false'] for key in (
             'start_hardware', 'start_navigation', 'perception',
-            'publish_debug_image', 'start_scan_adapter', 'pose_memory',
+            'publish_debug_image', 'pose_memory',
             'restore_pose', 'web_panel',
         )},
     }

@@ -111,6 +111,10 @@ stack must publish `/scan`, `/map`, TF, and
 
 ## Start automatic person following
 
+`desired_distance_m` accepts 0.2 m or more; the default remains 1.0 m.
+Zero in a direct Action request retains the configured-default behavior.
+This is the person-following distance, not obstacle clearance or robot size.
+
 ```bash
 ros2 action send_goal \
   /follow_person malbut_interfaces/action/FollowPerson \

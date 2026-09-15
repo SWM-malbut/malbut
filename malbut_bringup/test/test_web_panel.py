@@ -54,6 +54,20 @@ def test_valid_commands_are_not_launched_by_validation():
     assert validate_command({'command': 'bringup_stop'})
 
 
+def test_follow_distance_minimum_matches_the_web_input():
+    """The web request and displayed input both allow 0.2 m, not less."""
+    payload = _command('follow_person', {
+        'target_mode': 0, 'target_person_id': '', 'desired_distance_m': 0.2,
+    })
+    assert validate_command(payload) == payload
+    for distance in (0.19, 0.0, -1.0, float('nan'), float('inf')):
+        payload['arguments']['desired_distance_m'] = distance
+        with pytest.raises(ValueError, match='at least 0.2 m'):
+            validate_command(payload)
+    page = Path(__file__).parents[1] / 'malbut_bringup/web_panel.html'
+    assert 'id="distance" type="number" min="0.2"' in page.read_text()
+
+
 def test_history_and_pending_requests_are_bounded():
     """Never grow history indefinitely or forget outstanding requests."""
     data = PanelData()

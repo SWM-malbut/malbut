@@ -376,11 +376,19 @@ class MapOnboardingBridge(Node):
                 goal_handle.cancel_goal_async()
                 self._goal_failed("한 구역 탐색 시간이 초과되어 다음 구역으로 이동합니다.")
             return
-        candidates = find_frontiers(
-            grid,
-            (pose["x"], pose["y"]),
-            blacklisted=tuple(self.blacklisted),
-        )
+        try:
+            candidates = find_frontiers(
+                grid,
+                (pose["x"], pose["y"]),
+                blacklisted=tuple(self.blacklisted),
+            )
+        except ValueError:
+            self.no_frontier_since = None
+            self._set_state(
+                "waiting_for_navigation",
+                "지도 안의 이동 가능한 로봇 위치를 기다리고 있습니다.",
+            )
+            return
         with self.lock:
             self.frontier_count = len(candidates)
         if not candidates:

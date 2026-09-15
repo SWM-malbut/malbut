@@ -30,18 +30,13 @@ class FollowSettings:
 
     def validate(self) -> None:
         """Reject settings that could violate the standoff contract."""
-        if self.minimum_distance_m <= 0.0:
+        if not math.isfinite(self.minimum_distance_m) or self.minimum_distance_m <= 0.0:
             raise ValueError('minimum distance must be positive')
-        if self.desired_distance_m <= self.minimum_distance_m:
-            raise ValueError('desired distance must exceed minimum distance')
-        if self.distance_tolerance_m < 0.0:
+        if (not math.isfinite(self.desired_distance_m)
+                or self.desired_distance_m < self.minimum_distance_m):
+            raise ValueError('desired distance must be at least minimum distance')
+        if not math.isfinite(self.distance_tolerance_m) or self.distance_tolerance_m < 0.0:
             raise ValueError('distance tolerance must be non-negative')
-        if self.distance_tolerance_m >= (
-            self.desired_distance_m - self.minimum_distance_m
-        ):
-            raise ValueError(
-                'distance tolerance must leave room above minimum distance'
-            )
         if self.minimum_follow_speed_mps <= 0.0:
             raise ValueError('minimum follow speed must be positive')
         if self.maximum_linear_speed_mps <= 0.0:
@@ -121,7 +116,10 @@ def decide_follow_motion(
         raise ValueError('approach speed threshold must be non-negative')
     target_distance = distance(robot, target)
     yaw = math.atan2(target.y - robot.y, target.x - robot.x)
-    lower_bound = settings.desired_distance_m - settings.distance_tolerance_m
+    lower_bound = max(
+        settings.minimum_distance_m,
+        settings.desired_distance_m - settings.distance_tolerance_m,
+    )
     if target_distance <= 1e-9:
         return FollowDecision(
             FollowCommand.HOLD,

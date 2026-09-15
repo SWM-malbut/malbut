@@ -10,10 +10,10 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import PoseStamped, TransformStamped
 from lifecycle_msgs.msg import State
 from malbut_interfaces.action import AutoSlam
-from nav2_msgs.action import NavigateToPose
+from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.srv import SaveMap
 from nav_msgs.msg import OccupancyGrid
 import pytest
@@ -51,7 +51,8 @@ def _result(future):
 class _Backend(Node):
     """Provide synthetic map/TF and inert Nav2/save endpoints in a private context."""
 
-    def __init__(self, context, prefix, directory, scene, navigation):
+    def __init__(self, context, prefix, directory, scene, navigation,
+                 planning, navigation_succeeds):
         super().__init__('autoslam_test_backend', context=context)
         self.directory = directory
         self.scene = scene
@@ -60,6 +61,10 @@ class _Backend(Node):
         self.release_cancel = Event()
         self.stopping = Event()
         self.save_requests = []
+        self.planning_requests = []
+        self.navigation_requests = []
+        self.planning_mode = planning
+        self.navigation_succeeds = navigation_succeeds
         self.group = ReentrantCallbackGroup()
         self.publisher = self.create_publisher(
             OccupancyGrid, prefix + '/map',
@@ -68,6 +73,11 @@ class _Backend(Node):
         self.create_timer(0.05, self._publish)
         self.create_service(
             SaveMap, prefix + '/save_map', self._save, callback_group=self.group)
+        self.planner = ActionServer(
+            self, ComputePathToPose, prefix + '/plan',
+            execute_callback=self._plan,
+            cancel_callback=lambda _handle: CancelResponse.ACCEPT,
+            callback_group=self.group)
         self.navigation = None
         if navigation:
             self.navigation = ActionServer(
@@ -98,8 +108,35 @@ class _Backend(Node):
         transform.transform.rotation.w = 1.0
         self.broadcaster.sendTransform(transform)
 
+    def _plan(self, handle):
+        self.planning_requests.append(handle.request)
+        result = ComputePathToPose.Result()
+        if self.planning_mode == 'unreachable':
+            handle.abort()
+            return result
+        start = PoseStamped()
+        start.header = handle.request.goal.header
+        start.pose.position.x = 1.5
+        start.pose.position.y = 2.0
+        start.pose.orientation.w = 1.0
+        result.path.header = handle.request.goal.header
+        result.path.poses = [start, handle.request.goal]
+        if self.planning_mode == 'wrong_endpoint':
+            result.path.poses = [start]
+        elif self.planning_mode == 'unknown_shortcut':
+            unknown = PoseStamped()
+            unknown.pose.position.x = 0.1
+            unknown.pose.position.y = 0.1
+            result.path.poses = [start, unknown, handle.request.goal]
+        handle.succeed()
+        return result
+
     def _navigate(self, handle):
+        self.navigation_requests.append(handle.request)
         self.started.set()
+        if self.navigation_succeeds:
+            handle.succeed()
+            return NavigateToPose.Result()
         while not handle.is_cancel_requested and not self.stopping.wait(0.01):
             pass
         if handle.is_cancel_requested:
@@ -125,15 +162,18 @@ class _Backend(Node):
 class _System:
     """Own a test-only executor whose requests cannot address real robot actions."""
 
-    def __init__(self, directory, scene='complete', navigation=True, **settings):
+    def __init__(self, directory, scene='complete', navigation=True,
+                 planning='reachable', navigation_succeeds=False, **settings):
         self.context = Context()
         rclpy.init(context=self.context, domain_id=160 + os.getpid() % 30)
         self.prefix = '/test_autoslam_' + uuid4().hex
         self.backend = _Backend(
-            self.context, self.prefix, directory, scene, navigation)
+            self.context, self.prefix, directory, scene, navigation,
+            planning, navigation_succeeds)
         defaults = {
             'map_directory': str(directory), 'map_topic': self.prefix + '/map',
             'navigation_action': self.prefix + '/navigate',
+            'planning_action': self.prefix + '/plan',
             'save_map_service': self.prefix + '/save_map',
             'completion_delay_s': 0.1, 'exploration_period_s': 0.05,
             'ready_timeout_s': 2.0, 'navigation_timeout_s': 4.0,
@@ -178,6 +218,7 @@ class _System:
             self.thread.join(TIMEOUT_S)
             self.client.destroy()
             self.node.server.destroy()
+            self.backend.planner.destroy()
             if self.backend.navigation is not None:
                 self.backend.navigation.destroy()
             for node in (self.node, self.backend, self.client_node):
@@ -267,6 +308,51 @@ def test_missing_navigation_backend_returns_failure(system_factory):
     assert not system.backend.save_requests
 
 
+@pytest.mark.parametrize('planning', ['unreachable', 'wrong_endpoint', 'unknown_shortcut'])
+def test_unreachable_frontiers_save_partial_map_without_driving(
+        system_factory, tmp_path, planning):
+    """A planner failure skips motion and cannot loop forever over the same frontier."""
+    system = system_factory(
+        scene='frontier', planning=planning, navigation_timeout_s=0.8)
+    outcome = _result(system.request().get_result_async())
+    assert outcome.status == GoalStatus.STATUS_SUCCEEDED
+    assert outcome.result.success
+    assert outcome.result.map_yaml == str(tmp_path / 'home.yaml')
+    assert outcome.result.known_area_m2 == pytest.approx(4.0)
+    assert system.backend.planning_requests
+    assert system.backend.navigation_requests == []
+    assert len(system.backend.save_requests) == 1
+    assert ('Remaining frontiers' in outcome.result.message
+            or 'No new mapped space' in outcome.result.message)
+
+
+def test_navigation_success_without_new_space_finishes_and_saves(system_factory, tmp_path):
+    """Nav2 success alone is not mapping progress when fresh maps remain unchanged."""
+    system = system_factory(
+        scene='frontier', navigation_succeeds=True, navigation_timeout_s=0.8)
+    outcome = _result(system.request().get_result_async())
+    assert outcome.status == GoalStatus.STATUS_SUCCEEDED
+    assert outcome.result.success
+    assert outcome.result.map_yaml == str(tmp_path / 'home.yaml')
+    assert outcome.result.known_area_m2 == pytest.approx(4.0)
+    assert system.backend.navigation_requests
+    assert len(system.backend.save_requests) == 1
+    assert ('Remaining frontiers' in outcome.result.message
+            or 'No new mapped space' in outcome.result.message)
+
+
+def test_total_exploration_budget_finishes_with_saved_map(system_factory, tmp_path):
+    """The hard budget hands off a map even before the longer stagnation limit."""
+    system = system_factory(
+        scene='frontier', navigation_succeeds=True, max_exploration_time_s=0.1)
+    outcome = _result(system.request().get_result_async())
+    assert outcome.status == GoalStatus.STATUS_SUCCEEDED
+    assert outcome.result.success
+    assert 'Exploration time budget reached' in outcome.result.message
+    assert outcome.result.map_yaml == str(tmp_path / 'home.yaml')
+    assert len(system.backend.save_requests) == 1
+
+
 @pytest.fixture
 def mock_startup(system_factory, monkeypatch):
     """Keep real Action handling but replace every process operation with a mock."""
@@ -277,7 +363,7 @@ def mock_startup(system_factory, monkeypatch):
     def create(**settings):
         system = system_factory(auto_start=True, **settings)
         monkeypatch.setattr(system.node, '_runtime_graph', lambda: RuntimeGraph(
-            (), (), (), (), (), False))
+            (), (), (), (), False))
         # The backend's map and TF are real ROS messages, but it has no real
         # hardware or lifecycle nodes. Unit tests cover those readiness checks.
         monkeypatch.setattr(system.node, '_check_sensor_updates', lambda: None)
@@ -316,7 +402,7 @@ def test_saved_map_conflict_does_not_start_or_stop_external_nodes(mock_startup, 
     """The active localization mode is never replaced implicitly by mapping."""
     system, runtime = mock_startup()
     monkeypatch.setattr(system.node, '_runtime_graph', lambda: RuntimeGraph(
-        ('/amcl',), (), (), (), (), True))
+        ('/amcl',), (), (), (), True))
     result = _result(system.request().get_result_async())
     assert result.status == GoalStatus.STATUS_ABORTED
     assert 'Saved-map localization' in result.result.message
@@ -387,6 +473,28 @@ def test_server_stop_during_unanswered_save_still_cleans_owned_mapping(mock_star
     assert 'save result is unconfirmed' in outcome.result.message
     assert outcome.result.map_yaml == ''
     runtime.close.assert_called_once_with()
+
+
+def test_unanswered_save_times_out_and_rejects_reuse(mock_startup, monkeypatch):
+    """An uncertain non-cancellable save cleans up but cannot race a later save."""
+    system, runtime = mock_startup()
+    pending = Future()
+    monkeypatch.setattr(system.node.saver, 'call_async', Mock(return_value=pending))
+    remove_pending = Mock()
+    monkeypatch.setattr(system.node.saver, 'remove_pending_request', remove_pending)
+    outcome = _result(system.request().get_result_async())
+    assert outcome.status == GoalStatus.STATUS_ABORTED
+    assert not outcome.result.success
+    assert outcome.result.map_yaml == ''
+    assert 'save result is unconfirmed' in outcome.result.message
+    assert pending.cancelled()
+    remove_pending.assert_called_once_with(pending)
+    runtime.close.assert_called_once_with()
+    assert system.node.runtime is None
+    assert system.node.save_uncertain
+    assert not system.node.stopping.is_set()
+    assert not system.node.busy
+    assert not system.request('other').accepted
 
 
 def test_live_hardware_readiness_requires_both_sensor_updates(system_factory):

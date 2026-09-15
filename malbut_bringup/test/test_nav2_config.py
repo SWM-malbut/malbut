@@ -33,7 +33,7 @@ def test_localization_uses_actual_initial_pose_and_vendor_frames(config):
     assert amcl['base_frame_id'] == 'base_footprint'
     assert amcl['odom_frame_id'] == 'odom'
     assert amcl['global_frame_id'] == 'map'
-    assert amcl['scan_topic'] == '/scan_normalized'
+    assert amcl['scan_topic'] == '/scan_raw'
     assert config['map_server']['ros__parameters']['yaml_filename'] == ''
     planner = config['planner_server']['ros__parameters']
     assert planner['planner_plugins'] == ['GridBased']
@@ -54,7 +54,7 @@ def test_robot_costmap_radii_and_vendor_matched_velocity_limits(config):
         assert costmap['resolution'] == resolution
         assert costmap['inflation_layer']['inflation_radius'] == inflation
         scan = costmap['obstacle_layer']['scan']
-        assert scan['topic'] == '/scan_normalized'
+        assert scan['topic'] == '/scan_raw'
         assert scan['marking'] is True
         assert scan['clearing'] is True
     smoother = config['velocity_smoother']['ros__parameters']

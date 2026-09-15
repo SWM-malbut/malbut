@@ -5,8 +5,10 @@ import http.client
 from http.server import ThreadingHTTPServer
 import importlib.util
 import json
+import math
 from pathlib import Path
 from threading import Lock, Thread
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -63,12 +65,15 @@ def test_frontiers_report_safe_unknown_boundaries():
     assert grid.cells[row, column] == 0
     assert candidate.clearance_m >= 0.2
     assert candidate.distance_m >= 0.45
-    assert find_frontiers(
+    alternatives = find_frontiers(
         grid,
         (1.5, 2.0),
         minimum_clearance_m=0.2,
         blacklisted=((candidate.x, candidate.y),),
-    ) == []
+    )
+    assert alternatives
+    assert all(math.hypot(item.x - candidate.x, item.y - candidate.y) >= 0.75
+               for item in alternatives)
 
 
 def test_map_render_and_progress_exclude_costmap_inflation():
@@ -436,6 +441,26 @@ def _stub_onboarding_server():
     server.state = "exploring"
     server.message = ""
     return server
+
+
+def test_exploration_waits_when_robot_pose_is_outside_free_map_space():
+    """A temporary localization mismatch must not crash the shared frontier caller."""
+    server = _stub_onboarding_server()
+    server.grid = _grid()
+    server.pose = {"x": 99.0, "y": 99.0}
+    server.goal_handle = None
+    server.goal_requested_at = None
+    server.goal_started_at = None
+    server.lifecycle = {"navigation": "active"}
+    server.map_png = None
+    server.map_revision = 0
+    server.navigate = SimpleNamespace(server_is_ready=lambda: True)
+    server.no_frontier_since = 1.0
+
+    server._tick()
+
+    assert server.state == "waiting_for_navigation"
+    assert server.no_frontier_since is None
 
 
 def test_exploration_keeps_a_frontier_that_still_reveals_new_space():

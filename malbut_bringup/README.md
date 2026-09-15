@@ -97,16 +97,16 @@ ros2 launch malbut_bringup robot.launch.py
 ```
 
 기본 토픽 이름은 사용자가 제공한 ROSOrin/Aurora 실기기 목록과 일치한다.
-센서 Header·TF·RGB-D 정렬은 별도 실측 대상이다. 원본 `/scan_raw`는 유지하며
-SLAM·Nav2용 `/scan_normalized`를 별도로 발행한다.
+센서 Header·TF·RGB-D 정렬은 별도 실측 대상이다.
+SLAM·AMCL·Nav2·사람 추적은 드라이버의 `/scan_raw`를 직접 사용한다.
+드라이버의 `bins` 설정으로 고정 각도 격자가 제공된다고 가정하며, 별도 정규화 노드는 없다.
 
 | 인자 | 초기값 |
 | --- | --- |
 | `rgb_topic` | `/depth_cam/rgb0/image_raw` |
 | `depth_topic` | `/depth_cam/depth0/image_raw` |
 | `camera_info_topic` | `/depth_cam/rgb0/camera_info` |
-| `raw_scan_topic` | `/scan_raw` |
-| `scan_topic` | `/scan_normalized` |
+| `scan_topic` | `/scan_raw` |
 | `odom_topic` | `/odom` |
 | `robot_frame` | `base_footprint` |
 | `global_frame` | `map` |
@@ -114,7 +114,7 @@ SLAM·Nav2용 `/scan_normalized`를 별도로 발행한다.
 예를 들어 LiDAR가 `/scan`을 제공한다면:
 
 ```bash
-ros2 launch malbut_bringup robot.launch.py raw_scan_topic:=/scan
+ros2 launch malbut_bringup robot.launch.py scan_topic:=/scan
 ```
 
 RGB-D 위치 추정은 **RGB에 정렬된 Depth와 해당 RGB CameraInfo**를 사용해야
@@ -248,11 +248,8 @@ ros2 launch navigation rviz_navigation.launch.py
   카메라 노드나 추론을 두 번 실행하는 구성이 아니지만, 점군 관측 처리는 각각 수행한다.
   제거용 관측은 장애물을 등록하지 않으므로 20cm 위 선반을 통행 금지로 만들지 않는다.
   장애물 표시 상한과 voxel 저장 높이가 반드시 같아야 하는 것은 아니다.
-- `scan_normalizer`는 원본 각도 정보로 고정 각도 격자에 재배치한다. 가변 점 개수를
-  단순 절단하지 않으며 미관측 방향은 NaN, 같은 칸의 장애물은 가까운 값을 유지한다.
-  타임스탬프는 원본이고 `time_increment=0`이다(운동 보정/deskew 기능 아님).
-  원본 각도 metadata 자체가 잘못됐거나 odometry가 밀리는 문제는 고치지 못한다.
-  외부 SLAM을 재사용하면 그 노드의 scan 입력도 운영자가 따로 확인해야 한다.
+- LiDAR 입력은 드라이버가 발행한 LaserScan 그대로 사용한다. Malbut에서 점 개수,
+  각도, 타임스탬프를 바꾸지 않는다. 드라이버의 `bins` 적용은 로봇에서 별도로 수행한다.
 
 ### 기존 구현 검토
 
@@ -261,14 +258,6 @@ ros2 launch navigation rviz_navigation.launch.py
 - 같은 Depth 토픽의 marking/clearing 분리는
   [UBR-1 실제 적용 사례](https://www.robotandchisel.com/2020/09/01/navigation2/#tilting-head-node)가 있다.
   이 구성을 유지하되 위 높이값을 현장 검증값으로 오해하지 않는다.
-- 스캔 정규화는 당장 교체 가능한 Humble 필터가 확인되지 않아 기존 adapter를 유지한다.
-  [laser_filters 2.0.9](https://github.com/ros-perception/laser_filters/blob/2.0.9/laser_filters_plugins.xml)에는
-  `LaserScanBinningFilter`가 없으며,
-  [검토한 후속 구현](https://github.com/ros-perception/laser_filters/blob/rolling/include/laser_filters/binning_filter.h)은
-  입력에 따라 시작 각도를 바꾸고, 겹치는 각도에서 최근접 대신 마지막 측정을 남기며,
-  빈 intensities 배열을 검사하지 않고 접근한다. 현재 adapter를 그대로 대체하지 않는다.
-  제조사 드라이버가 안정된 각도 격자를 직접 제공하는 것이 확인되면 navigation/sensors 모드에서
-  `start_scan_adapter:=false scan_topic:=/scan_raw`로 생략할 수 있다.
 
 ## Mac에서 웹으로 확인
 

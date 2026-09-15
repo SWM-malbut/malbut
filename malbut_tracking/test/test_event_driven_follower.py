@@ -3,6 +3,9 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
+from malbut_tracking.follow_policy import FollowSettings
 from malbut_tracking.geometry import Point2D
 from malbut_tracking.navigation import MotionMode, Nav2MotionClient
 from malbut_tracking.person_follower_node import (
@@ -10,6 +13,27 @@ from malbut_tracking.person_follower_node import (
     PersonFollowerNode,
 )
 from tf2_ros import TransformException
+
+
+def test_goal_distance_accepts_minimum_and_retains_zero_as_default():
+    """Validate explicit close goals while preserving the omitted-distance default."""
+    defaults = FollowSettings(
+        desired_distance_m=1.0, minimum_distance_m=0.2, distance_tolerance_m=0.1,
+        minimum_follow_speed_mps=0.1, maximum_linear_speed_mps=0.4,
+        full_speed_travel_distance_m=1.5, observation_loss_debounce_s=0.75,
+    )
+    follower = SimpleNamespace(_default_settings=lambda: defaults)
+    for requested, expected in ((0.2, 0.2), (0.75, 0.75), (1.0, 1.0), (0.0, 1.0)):
+        actual = PersonFollowerNode._settings_for_goal(
+            follower, SimpleNamespace(desired_distance_m=requested),
+        )
+        assert actual.desired_distance_m == expected
+        assert actual.distance_tolerance_m == 0.1
+    for requested in (0.19, -1.0, float('nan'), float('inf')):
+        with pytest.raises(ValueError):
+            PersonFollowerNode._settings_for_goal(
+                follower, SimpleNamespace(desired_distance_m=requested),
+            )
 
 
 def test_nav2_feedback_forwards_only_the_current_goal():

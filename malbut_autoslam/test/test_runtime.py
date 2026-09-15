@@ -9,14 +9,14 @@ import pytest
 from malbut_autoslam.runtime import OwnedRuntime, RuntimeGraph, missing_components
 
 
-EMPTY = RuntimeGraph((), (), (), (), (), False)
+EMPTY = RuntimeGraph((), (), (), (), False)
 READY = RuntimeGraph(
     ('/slam_toolbox', '/controller_server', '/planner_server', '/bt_navigator'),
-    ('/slam_toolbox',), ('/lidar',), ('/ekf',), ('/scan_normalizer',), True)
+    ('/slam_toolbox',), ('/lidar',), ('/ekf',), True)
 
 
 def test_empty_graph_requests_only_predefined_mapping_components():
-    """An empty real runtime needs sensors, mapper, Nav2 and scan adaptation."""
+    """An empty real runtime needs sensors, mapper and Nav2."""
     assert all(missing_components(EMPTY).values())
 
 
@@ -30,14 +30,8 @@ def test_existing_sensors_are_reused_when_mapping_is_missing():
     graph = replace(EMPTY, scan_publishers=('/lidar',), odom_publishers=('/ekf',))
     assert missing_components(graph) == {
         'start_hardware': False, 'start_slam': True,
-        'start_navigation': True, 'start_scan_adapter': True,
+        'start_navigation': True,
     }
-
-
-def test_existing_raw_scan_mapper_does_not_need_our_adapter():
-    """Reuse a complete external pipeline that never used normalized scans."""
-    assert not any(missing_components(
-        replace(READY, normalized_scan_publishers=())).values())
 
 
 def test_existing_nav2_nodes_await_readiness_without_duplicate_startup():
@@ -85,11 +79,11 @@ def test_launch_uses_argument_list_and_new_owned_session(tmp_path, monkeypatch):
     runtime = OwnedRuntime(tmp_path)
     runtime.acquire()
     components = missing_components(EMPTY)
-    runtime.start(components, '/scan_raw', '/odom', '/scan_normalized')
+    runtime.start(components, '/scan_raw', '/odom')
     command = popen.call_args.args[0]
     assert command[:4] == ['ros2', 'launch', 'malbut_bringup', 'mapping_backend.launch.py']
     assert 'start_hardware:=true' in command
-    assert 'normalized_scan_topic:=/scan_normalized' in command
+    assert 'scan_topic:=/scan_raw' in command
     assert popen.call_args.kwargs['start_new_session'] is True
     assert 'shell' not in popen.call_args.kwargs
     runtime.check()
@@ -107,7 +101,7 @@ def test_reused_runtime_does_not_spawn_or_signal_any_process(tmp_path, monkeypat
     monkeypatch.setattr('malbut_autoslam.runtime.os.killpg', killpg)
     runtime = OwnedRuntime(tmp_path)
     runtime.acquire()
-    runtime.start(missing_components(READY), '/scan_raw', '/odom', '/scan_normalized')
+    runtime.start(missing_components(READY), '/scan_raw', '/odom')
     runtime.close()
     popen.assert_not_called()
     killpg.assert_not_called()

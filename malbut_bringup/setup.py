@@ -1,4 +1,4 @@
-"""Install robot launch, localization memory, sensor adapter and test panel."""
+"""Install robot launch, localization memory and test panel."""
 
 from glob import glob
 
@@ -27,7 +27,6 @@ setup(
     entry_points={'console_scripts': [
         'wait_for_robot = malbut_bringup.readiness:main',
         'pose_memory = malbut_bringup.pose_memory:main',
-        'scan_normalizer = malbut_bringup.scan_normalizer:main',
         'robot_web_panel = malbut_bringup.web_panel:main',
     ]},
 )

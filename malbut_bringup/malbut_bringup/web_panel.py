@@ -69,8 +69,8 @@ def validate_command(payload):
             raise ValueError('Registered person mode requires a person ID')
         distance = args['desired_distance_m']
         if (type(distance) not in (float, int) or not math.isfinite(distance)
-                or distance <= 0):
-            raise ValueError('desired_distance_m must be positive and finite')
+                or distance < 0.2):
+            raise ValueError('desired_distance_m must be finite and at least 0.2 m')
     elif capability == 'patrol':
         if (set(args) != {'thoroughness'} or type(args['thoroughness']) is not int
                 or args['thoroughness'] not in (0, 1, 2)):

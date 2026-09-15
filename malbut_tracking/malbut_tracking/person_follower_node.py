@@ -388,7 +388,7 @@ class PersonFollowerNode(Node):
         )
         self.declare_parameter('lidar_proximity_camera_guard_s', 0.30)
         self.declare_parameter('desired_distance_m', 1.00)
-        self.declare_parameter('minimum_distance_m', 0.65)
+        self.declare_parameter('minimum_distance_m', 0.20)
         self.declare_parameter('distance_tolerance_m', 0.10)
         self.declare_parameter('alignment_angle_tolerance_rad', 0.10)
         self.declare_parameter('minimum_follow_speed_mps', 0.10)
@@ -545,10 +545,13 @@ class PersonFollowerNode(Node):
 
     def _settings_for_goal(self, request) -> FollowSettings:
         defaults = self._default_settings()
+        requested_distance = float(request.desired_distance_m)
+        if not math.isfinite(requested_distance) or requested_distance < 0.0:
+            raise ValueError('desired_distance_m must be finite and non-negative')
         settings = FollowSettings(
             desired_distance_m=(
-                float(request.desired_distance_m)
-                if request.desired_distance_m > 0.0
+                requested_distance
+                if requested_distance > 0.0
                 else defaults.desired_distance_m
             ),
             minimum_distance_m=defaults.minimum_distance_m,

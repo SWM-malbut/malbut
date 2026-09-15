@@ -1,5 +1,7 @@
 """Unit tests for safe follow and Nav2 goal-update decisions."""
 
+from dataclasses import replace
+
 import pytest
 
 from malbut_tracking.follow_policy import (
@@ -17,7 +19,7 @@ def settings():
     """Return representative household follow settings."""
     return FollowSettings(
         desired_distance_m=1.2,
-        minimum_distance_m=0.65,
+        minimum_distance_m=0.20,
         distance_tolerance_m=0.15,
         minimum_follow_speed_mps=0.10,
         maximum_linear_speed_mps=0.40,
@@ -53,12 +55,23 @@ def test_minimum_distance_triggers_safety_retreat(settings):
     """A person inside the minimum distance must trigger reverse motion."""
     decision = decide_follow_motion(
         Point2D(0.0, 0.0),
-        Point2D(0.5, 0.0),
+        Point2D(0.15, 0.0),
         settings,
     )
     assert decision.command == FollowCommand.RETREAT
-    assert decision.goal.position.x == pytest.approx(-0.7)
+    assert decision.goal.position.x == pytest.approx(-1.05)
     assert decision.reason == 'minimum distance safety retreat'
+
+
+def test_minimum_requested_distance_clamps_the_retreat_band(settings):
+    """Allow 0.2 m without allowing tolerance to lower the minimum distance."""
+    close = replace(settings, desired_distance_m=0.2, distance_tolerance_m=0.1)
+    close.validate()
+    for target_x, expected in ((0.19, FollowCommand.RETREAT), (0.2, FollowCommand.ALIGN)):
+        decision = decide_follow_motion(Point2D(0.0, 0.0), Point2D(target_x, 0.0), close)
+        assert decision.command == expected
+    with pytest.raises(ValueError, match='at least minimum distance'):
+        replace(close, desired_distance_m=0.19).validate()
 
 
 def test_target_below_distance_band_triggers_retreat(settings):

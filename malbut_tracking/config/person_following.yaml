@@ -73,7 +73,7 @@ person_follower:
     lidar_proximity_camera_guard_s: 0.30
     # Nominal one-metre standoff. The robot holds in the 0.90--1.10 m band.
     desired_distance_m: 1.00
-    minimum_distance_m: 0.65
+    minimum_distance_m: 0.20
     distance_tolerance_m: 0.10
     # Once translation is unnecessary, rotate only enough to center the
     # fixed forward camera.

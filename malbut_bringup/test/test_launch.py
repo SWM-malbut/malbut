@@ -92,13 +92,14 @@ def test_hardware_only_does_not_require_vendor_or_gpu_install(launch_module):
     context = _context(launch_module, start_hardware='false', perception='false')
     actions = launch_module._setup(context)
     assert _includes(actions) == []
-    assert len([item for item in actions if isinstance(item, Node)]) == 2
+    assert [item.node_executable for item in actions if isinstance(item, Node)] == [
+        'wait_for_robot']
 
 
 def test_mapping_only_prepares_idle_autoslam_and_optional_web(launch_module):
     """Leave hardware startup to the AutoSLAM Goal, with no navigation manager."""
     context = _context(launch_module, mode='mapping', web_panel='true',
-                       raw_scan_topic='/laser_raw', scan_topic='/laser_fixed',
+                       scan_topic='/laser_raw',
                        map_directory='/configured/maps', static_map_topic='/mapping/map',
                        robot_frame='robot/base', rgb_topic='/camera/color',
                        python_executable='/not/prepared')
@@ -108,7 +109,6 @@ def test_mapping_only_prepares_idle_autoslam_and_optional_web(launch_module):
     options = dict(includes[0].launch_arguments)
     assert options['auto_start'] == 'true'
     assert options['scan_topic'] == '/laser_raw'
-    assert options['normalized_scan_topic'] == '/laser_fixed'
     assert options['use_sim_time'] == 'false'
     assert options['map_directory'] == '/configured/maps'
     assert options['map_topic'] == '/mapping/map'
@@ -129,15 +129,6 @@ def test_missing_perception_files_fail_before_constructing_hardware(launch_modul
     launch_module._include = lambda *_args, **_kwargs: pytest.fail('child constructed')
     with pytest.raises(RuntimeError, match='Perception files are not ready'):
         launch_module._setup(context)
-
-
-def test_external_scan_adapter_is_not_duplicated(launch_module):
-    """An explicitly reused scan adapter is not started twice."""
-    context = _context(launch_module, start_hardware='false', perception='false',
-                       start_scan_adapter='false')
-    actions = launch_module._setup(context)
-    assert [item.node_executable for item in actions if isinstance(item, Node)] == [
-        'wait_for_robot']
 
 
 def test_navigation_requires_explicit_real_map(launch_module):
@@ -167,7 +158,7 @@ def test_navigation_keeps_each_child_scoped_and_wall_timed(launch_module, tmp_pa
     assert sum('model_path' in item for item in options) == 1
     assert sum('scan_topic' in item for item in options) == 1
     follower = next(item for item in options if 'scan_topic' in item)
-    assert follower['scan_topic'] == '/scan_normalized'
+    assert follower['scan_topic'] == '/scan_raw'
     assert follower['lidar_config'].endswith('malbut_tracking/config/lidar_foreground.yaml')
     assert Path(follower['lidar_config']).is_file()
     panel = next(item for item in actions if isinstance(item, Node)
@@ -175,7 +166,7 @@ def test_navigation_keeps_each_child_scoped_and_wall_timed(launch_module, tmp_pa
     assert evaluate_parameters(context, panel._Node__parameters)[0]['manage_bringup'] is False
     for group in [item for item in actions if isinstance(item, GroupAction)]:
         # A global -p creates /** before the named config. In rclcpp this can
-        # make that config's /scan beat the later inline /scan_normalized.
+        # make that config's /scan beat the later inline /scan_raw.
         assert not any(isinstance(child, SetParameter) for child in group.get_sub_entities())
     assert not any(isinstance(action, Node)
                    and action.node_package == 'malbut_system_manager'

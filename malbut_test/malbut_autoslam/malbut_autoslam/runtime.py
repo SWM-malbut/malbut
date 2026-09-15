@@ -25,7 +25,6 @@ class RuntimeGraph:
     map_publishers: tuple
     scan_publishers: tuple
     odom_publishers: tuple
-    normalized_scan_publishers: tuple
     navigation_present: bool
 
 
@@ -45,8 +44,7 @@ def missing_components(graph):
         raise RuntimeError(
             'Unknown map publisher; use auto_start:=false for an externally managed mapper')
     for label, publishers in (
-            ('scan', graph.scan_publishers), ('odometry', graph.odom_publishers),
-            ('normalized scan', graph.normalized_scan_publishers)):
+            ('scan', graph.scan_publishers), ('odometry', graph.odom_publishers)):
         if len(publishers) > 1:
             raise RuntimeError(f'Multiple {label} publishers; resolve duplicate owners first')
 
@@ -69,10 +67,6 @@ def missing_components(graph):
         'start_hardware': not hardware,
         'start_slam': not slam,
         'start_navigation': not navigation,
-        # An externally managed SLAM can use its original scan. The adapter is
-        # needed only when our helper will introduce an SLAM/Nav2 consumer.
-        'start_scan_adapter': (not slam or not navigation)
-        and not bool(graph.normalized_scan_publishers),
     }
 
 
@@ -98,15 +92,14 @@ class OwnedRuntime:
             self.lock_file = None
             raise RuntimeError('Another AutoSLAM server owns mapping startup') from None
 
-    def start(self, components, scan_topic, odom_topic, normalized_scan_topic):
+    def start(self, components, scan_topic, odom_topic):
         """Launch a predefined mapping composition; never execute arbitrary shell text."""
         self.components = components
         if not any(components.values()):
             return
         command = ['ros2', 'launch', 'malbut_bringup', 'mapping_backend.launch.py',
                    'use_sim_time:=false', f'scan_topic:={scan_topic}',
-                   f'odom_topic:={odom_topic}',
-                   f'normalized_scan_topic:={normalized_scan_topic}']
+                   f'odom_topic:={odom_topic}']
         command.extend(f'{name}:={str(enabled).lower()}'
                        for name, enabled in components.items())
         self.log_path = self.directory / f'mapping-{time.time_ns()}.log'
