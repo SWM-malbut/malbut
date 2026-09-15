@@ -14,6 +14,10 @@ import pytest
 from malbut_stt.transcription import LocalWhisperTranscriber
 
 
+def fake_segment(text, end=0.1):
+    return SimpleNamespace(text=text, start=0.0, end=end)
+
+
 def write_wav(path, pcm, *, rate=16000, channels=1, width=2):
     with wave.open(str(path), 'wb') as output:
         output.setparams((channels, width, rate, 0, 'NONE', 'not compressed'))
@@ -40,7 +44,7 @@ def runtime(tmp_path, monkeypatch):
         def transcribe(self, audio, **options):
             state.requests.append((audio, options))
             text = '  알려줘.  ' if len(state.requests) == 1 else '이동해줘.'
-            return iter([SimpleNamespace(text=text)]), None
+            return iter([fake_segment(text)]), None
 
     monkeypatch.setitem(sys.modules, 'faster_whisper', SimpleNamespace(WhisperModel=Model))
     monkeypatch.setitem(sys.modules, 'webrtcvad', SimpleNamespace(Vad=lambda _: SimpleNamespace(
@@ -93,7 +97,7 @@ def test_busy_discarded_speech_cannot_shorten_an_earlier_transcripts_latency(run
 
     def slow_transcribe(*_args, **_kwargs):
         Event().wait(2.7)
-        return iter([SimpleNamespace(text='알려줘.')]), None
+        return iter([fake_segment('알려줘.')]), None
 
     transcriber.model.transcribe = slow_transcribe
     result = runtime.module.replay_wav(path, transcriber, max_runtime_s=12.0)
@@ -119,7 +123,7 @@ def test_resumed_voice_keeps_first_onset_but_updates_its_own_last_voice(runtime,
         if len(calls) == 1:
             Event().wait(2.7)
         text = '알려줘.' if len(calls) == 1 else '거실로 이동해줘.'
-        return iter([SimpleNamespace(text=text)]), None
+        return iter([fake_segment(text, end=0.1 if len(calls) == 1 else 2.0)]), None
 
     transcriber.model.transcribe = delayed_first_transcribe
     result = runtime.module.replay_wav(path, transcriber, max_runtime_s=12.0)
@@ -142,7 +146,7 @@ def test_required_wake_opens_dialogue_and_two_followups_keep_distinct_timing(run
     def transcribe(audio, **options):
         runtime.requests.append((audio, options))
         text = '제이크야' if options['initial_prompt'] is not None else next(commands)
-        return iter([SimpleNamespace(text=text)]), None
+        return iter([fake_segment(text)]), None
 
     transcriber.model.transcribe = transcribe
     result = runtime.module.replay_wav(path, transcriber, wake_required=True)
@@ -356,7 +360,7 @@ def test_mlx_replay_measures_shared_adapter_and_reports_its_backend(
 
             def transcribe(audio, **options):
                 runtime.requests.append((audio, options))
-                return iter([SimpleNamespace(text='알려줘.')]), None
+                return iter([fake_segment('알려줘.')]), None
 
             self.model = SimpleNamespace(transcribe=transcribe, compute_type='float16',
                                          beam_search=False, decoding='greedy with fallback')

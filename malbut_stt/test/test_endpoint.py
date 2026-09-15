@@ -296,7 +296,11 @@ def test_candidate_failure_does_not_end_the_utterance_early(run):
     reply(run, job, None, 'RuntimeError')
     assert run.pipeline.session.active and run.transcripts == []
     run.pipeline.feed(QUIET * 75)
-    assert run.pipeline.session.active and run.pipeline.session.utterance_id is None
+    assert run.pipeline.session.active and run.pipeline._busy
+    final_job = run.pipeline.jobs.get_nowait()
+    assert final_job[0] == 'command' and final_job[2] == job[2][0]
+    reply(run, final_job, None, 'RuntimeError')
+    assert run.pipeline.session.utterance_id is None
     assert 'transcription_failed:RuntimeError' in run.reports
     assert run.pipeline.jobs.empty()
     next_job = candidate(run)

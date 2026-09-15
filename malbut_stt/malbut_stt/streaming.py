@@ -15,7 +15,8 @@ class StreamingUtteranceCollector:
 
     def __init__(self, is_speech: Callable[[bytes, int], bool], *,
                  settings: CaptureSettings | None = None,
-                 early_endpoint_s: float | None = None) -> None:
+                 early_endpoint_s: float | None = None,
+                 partial_interval_s: float | None = None) -> None:
         self.settings = settings or CaptureSettings(silence_timeout_s=3.0)
         if early_endpoint_s is not None and (
             isinstance(early_endpoint_s, bool) or not math.isfinite(early_endpoint_s)
@@ -23,6 +24,12 @@ class StreamingUtteranceCollector:
         ):
             raise ValueError('early endpoint must precede the fallback silence timeout')
         self.early_endpoint_s = early_endpoint_s
+        if partial_interval_s is not None and (
+            isinstance(partial_interval_s, bool) or not math.isfinite(partial_interval_s)
+            or partial_interval_s <= 0
+        ):
+            raise ValueError('partial interval must be positive')
+        self.partial_interval_s = partial_interval_s
         self.is_speech = is_speech
         self.pending = bytearray()
         self.discarding = False
@@ -33,6 +40,7 @@ class StreamingUtteranceCollector:
 
     def _new_collector(self) -> UtteranceCollector:
         self._revision += 1
+        self._partial_frames = 0
         collector = UtteranceCollector(16000, self.is_speech, self.settings)
         collector.revision = self._revision
         return collector
@@ -97,6 +105,12 @@ class StreamingUtteranceCollector:
                         and self._candidate_revision != self.collector.revision):
                     self._candidate_revision = self.collector.revision
                     events.append(self.collector.snapshot('endpoint_check'))
+                elif (self.partial_interval_s is not None and self.collector.started
+                      and self.collector.silent_frames == 0
+                      and self.collector.speech_frames - self._partial_frames
+                      >= math.ceil(self.partial_interval_s / 0.02)):
+                    self._partial_frames = self.collector.speech_frames
+                    events.append(self.collector.snapshot('partial_check'))
                 continue
             if result.status != 'no_speech':
                 events.append(result)

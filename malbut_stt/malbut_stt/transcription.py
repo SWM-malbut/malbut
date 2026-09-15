@@ -25,6 +25,15 @@ class LocalWhisperTranscriber:
             local_files_only=True,
         )
 
+    def create_stream(self):
+        """Create independent incremental state without loading another model."""
+        # The optional MLX adapter currently exposes text-only segments.
+        if getattr(self, 'backend', None) == 'mlx':
+            return None
+        from malbut_stt.incremental import IncrementalWhisperStream
+
+        return IncrementalWhisperStream(self.model)
+
     def transcribe(self, pcm: bytes, sample_rate: int, *,
                    initial_prompt: str | None = None) -> str:
         """Decode mono PCM16, preserving text except for surrounding whitespace."""
