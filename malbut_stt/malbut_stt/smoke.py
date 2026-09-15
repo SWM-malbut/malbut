@@ -11,7 +11,7 @@ from typing import Optional, Sequence
 
 from malbut_stt.audio import CaptureSettings
 from malbut_stt.pipeline import SpeechPipeline
-from malbut_stt.transcription import OpenAITranscriber
+from malbut_stt.transcription import LocalWhisperTranscriber, OpenAITranscriber
 from malbut_stt.wake import LocalWakeRecognizer
 
 
@@ -21,7 +21,14 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     parser.add_argument('--list-devices', action='store_true')
     parser.add_argument('--manual', action='store_true', help='press Enter instead of a wake word')
     parser.add_argument('--wake-only', action='store_true', help='detect wake words without STT')
-    parser.add_argument('--model-path', help='downloaded faster-whisper model directory')
+    parser.add_argument('--local', action='store_true', help='transcribe commands locally without API')
+    parser.add_argument('--dialogue', action='store_true',
+                        help='continuous local dialogue; no TTS events to test its 5s timeout')
+    parser.add_argument('--model-path', help='downloaded model directory for the local backend')
+    parser.add_argument('--backend', choices=('faster-whisper', 'mlx'),
+                        help='local inference backend (default: faster-whisper)')
+    parser.add_argument('--compute-type', choices=('int8', 'float32'),
+                        help='local Whisper compute type (default: int8)')
     parser.add_argument('--device-index', type=int, default=-1)
     parser.add_argument('--once', action='store_true',
                         help='stop after one command attempt (wake attempt with --wake-only)')
@@ -29,11 +36,22 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
     if options.manual and options.wake_only:
         parser.error('--manual cannot be combined with --wake-only')
+    if options.dialogue and (not options.local or options.wake_only or options.once):
+        parser.error('--dialogue requires --local and cannot use --wake-only or --once')
+    if options.backend == 'mlx':
+        if not options.local and not options.wake_only:
+            parser.error('--backend mlx requires --local or --wake-only')
+        if options.compute_type is not None:
+            parser.error('--compute-type cannot be used with the fixed-fp16 MLX backend')
     if not options.list_devices:
-        required_keys = [] if options.wake_only else ['OPENAI_API_KEY']
-        if options.manual:
+        required_keys = [] if options.wake_only or options.local else ['OPENAI_API_KEY']
+        if options.manual and not options.local:
+            if options.backend is not None:
+                parser.error('--backend requires a local wake or transcription model')
+            if options.compute_type is not None:
+                parser.error('--compute-type requires a local wake or transcription model')
             if options.model_path:
-                parser.error('--manual cannot be combined with --model-path')
+                parser.error('--manual requires --local to use --model-path')
         elif not options.model_path or not Path(options.model_path).expanduser().is_dir():
             parser.error('--model-path must be a downloaded model directory')
         for name in required_keys:
@@ -93,16 +111,36 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             return 0
 
         with ExitStack() as resources:
+            compute_type = options.compute_type or 'int8'
+            backend = options.backend or 'faster-whisper'
+            transcriber = None
+            if options.local and not options.wake_only or backend == 'mlx':
+                phase = 'loading_local_model'
+                if backend == 'mlx':
+                    from malbut_stt.mlx_transcription import MlxWhisperTranscriber
+
+                    transcriber = MlxWhisperTranscriber(options.model_path)
+                    compute_type = 'float16'
+                else:
+                    transcriber = LocalWhisperTranscriber(
+                        str(Path(options.model_path).expanduser()),
+                        compute_type=compute_type,
+                    )
             phase = 'initializing_wake'
-            wake = None if options.manual else LocalWakeRecognizer(
-                str(Path(options.model_path).expanduser()),
-            )
+            if options.manual:
+                wake = None
+            elif transcriber is not None:
+                wake = LocalWakeRecognizer.from_transcriber(transcriber)
+            else:
+                wake = LocalWakeRecognizer(str(Path(options.model_path).expanduser()),
+                                           compute_type=compute_type)
+            if options.wake_only:
+                transcriber = None
 
             phase = 'loading_runtime_dependencies'
             import webrtcvad
 
-            transcriber = None
-            if not options.wake_only:
+            if not options.local and not options.wake_only:
                 from openai import OpenAI
 
                 phase = 'creating_api_client'
@@ -130,6 +168,34 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                     input()
                 return PvRecorder(frame_length=512, device_index=options.device_index)
 
+            if options.dialogue:
+                from threading import Event
+                from malbut_stt.dialogue_pipeline import DialoguePipeline
+
+                pipeline = DialoguePipeline(
+                    recorder_factory=recorder_factory,
+                    wake=wake or LocalWakeRecognizer.from_transcriber(transcriber),
+                    transcriber=transcriber, is_speech=vad.is_speech,
+                    publish_transcript=lambda uid, text: emit(
+                        'transcript', utterance_id=uid, text=text),
+                    publish_control=lambda *_: None, publish_interruption=lambda *_: None,
+                    report=lambda event: report(
+                        'listening' if options.manual and event == 'waiting_for_wake' else event),
+                )
+                resources.callback(pipeline.close)
+                if options.manual:
+                    pipeline.session.activate()
+                emit('ready', mode='dialogue', wake_required=not options.manual,
+                     model='small', backend='local', local_backend=backend,
+                     local_compute_type=compute_type, device_index=options.device_index,
+                     output='terminal_only', tts_completion_events=False,
+                     tts_5s_timeout_testable=False)
+                pipeline.start()
+                wait = Event()
+                while True:
+                    pipeline.poll()
+                    wait.wait(0.01)
+
             pipeline = SpeechPipeline(
                 recorder_factory=recorder_factory, wake=wake,
                 is_speech=is_speech, transcriber=transcriber,
@@ -138,7 +204,10 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             )
             mode = 'wake_only' if options.wake_only else 'manual' if options.manual else 'wake'
             emit('ready', mode=mode,
-                 model='small' if options.wake_only else 'gpt-transcribe',
+                 model='small' if options.wake_only or options.local else 'gpt-transcribe',
+                 backend='local' if options.wake_only or options.local else 'openai',
+                 local_backend=backend if wake is not None or options.local else None,
+                 local_compute_type=compute_type if wake is not None or options.local else None,
                  device_index=options.device_index)
             while True:
                 pipeline.run()

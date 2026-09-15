@@ -1,6 +1,6 @@
 """Run existing conversation handling outside the ROS callback thread."""
 
-from collections import deque
+from collections import OrderedDict, deque
 import hashlib
 from threading import Condition, Thread
 from typing import Callable, Optional
@@ -21,6 +21,9 @@ SESSION_ERROR_RESPONSE = (
 MEMORY_CHANGED_RESPONSE = (
     '기억 정보가 변경되어 이전 답변을 전달하지 않았어요. 다시 말씀해 주세요.'
 )
+MAX_INTERRUPTION_IDS = 128
+MAX_SPEECH_ID_LENGTH = 256
+ADDRESSEE_DECISIONS = ('addressed', 'not_addressed', 'unknown')
 
 
 class _DialogueReply(dict):
@@ -47,6 +50,19 @@ def validate_dialogue_input(utterance_id: str, text: str) -> None:
         raise ValueError('speech input must be valid UTF-8') from error
 
 
+def validate_interruption_input(utterance_id, playback_id, text):
+    """Bound correlation IDs and reuse the normal transcript text limits."""
+    validate_dialogue_input(utterance_id, text)
+    if (not isinstance(playback_id, str) or not playback_id.strip()
+            or len(playback_id) > MAX_SPEECH_ID_LENGTH
+            or len(utterance_id) > MAX_SPEECH_ID_LENGTH):
+        raise ValueError('interruption IDs must be nonblank and bounded')
+    try:
+        playback_id.encode('utf-8')
+    except UnicodeEncodeError as error:
+        raise ValueError('playback_id must be valid UTF-8') from error
+
+
 class DialogueWorker:
     """Keep one conversation ordered and bound queued and unread work.
 
@@ -68,6 +84,7 @@ class DialogueWorker:
         self._condition = Condition()
         self._pending = deque()
         self._results = deque()
+        self._interruptions = OrderedDict()
         self._outstanding = 0
         self._closing = False
         self._stopped = False
@@ -96,7 +113,49 @@ class DialogueWorker:
             if not self.has_capacity():
                 return False
             self._outstanding += 1
-            self._pending.append((utterance_id, text))
+            self._pending.append((utterance_id, text, None))
+            self._condition.notify()
+            return True
+
+    def submit_interruption(self, utterance_id, playback_id, text) -> bool:
+        """Classify once on this conversation without admitting a dialogue turn."""
+        validate_interruption_input(utterance_id, playback_id, text)
+        digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
+        with self._condition:
+            if self._closing or self._stopped:
+                return False
+            previous = self._interruptions.get(utterance_id)
+            if previous is not None:
+                if previous['playback_id'] == playback_id and previous['digest'] == digest:
+                    if previous['conflict']:
+                        return False
+                    if not previous['pending']:
+                        if not self.has_capacity():
+                            return False
+                        self._outstanding += 1
+                        self._results.append(self._addressee_reply(
+                            utterance_id, playback_id, previous['decision'],
+                        ))
+                    return True
+                previous['conflict'] = True
+                for reply in self._results:
+                    if reply['kind'] == 'addressee' and reply['utterance_id'] == utterance_id:
+                        reply['decision'] = 'unknown'
+                return False
+            if not self.has_capacity():
+                return False
+            if len(self._interruptions) >= MAX_INTERRUPTION_IDS:
+                expired = next((uid for uid, entry in self._interruptions.items()
+                                if not entry['pending']), None)
+                if expired is None:
+                    return False
+                del self._interruptions[expired]
+            self._interruptions[utterance_id] = {
+                'playback_id': playback_id, 'digest': digest,
+                'pending': True, 'conflict': False,
+            }
+            self._outstanding += 1
+            self._pending.append((utterance_id, text, playback_id))
             self._condition.notify()
             return True
 
@@ -114,6 +173,8 @@ class DialogueWorker:
         """Check again immediately before publishing while stores are open."""
         with self._condition:
             if self._closing or self._stopped:
+                return None
+            if reply.get('kind') == 'addressee':
                 return None
             self._refresh_reply(reply)
             if publish(reply['text']):
@@ -143,6 +204,7 @@ class DialogueWorker:
             self._closing = True
             self._pending.clear()
             self._results.clear()
+            self._interruptions.clear()
             self._outstanding = 0
             self._condition.notify_all()
         self._thread.join()
@@ -164,11 +226,16 @@ class DialogueWorker:
                     self._stopped = True
                     if not self._closing:
                         while self._pending:
-                            utterance_id, _text = self._pending.popleft()
-                            self._results.append(self._reply(
-                                utterance_id, conversation_id,
-                                ERROR_RESPONSE, 'error',
-                            ))
+                            utterance_id, _text, playback_id = self._pending.popleft()
+                            if playback_id is not None:
+                                self._results.append(self._addressee_reply(
+                                    utterance_id, playback_id, 'unknown',
+                                ))
+                            else:
+                                self._results.append(self._reply(
+                                    utterance_id, conversation_id,
+                                    ERROR_RESPONSE, 'error',
+                                ))
                 return
             while True:
                 with self._condition:
@@ -177,7 +244,20 @@ class DialogueWorker:
                     )
                     if self._closing:
                         return
-                    utterance_id, text = self._pending.popleft()
+                    utterance_id, text, playback_id = self._pending.popleft()
+                if playback_id is not None:
+                    reply = self._classify_interruption(
+                        runtime, conversation_id, utterance_id, playback_id, text,
+                    )
+                    with self._condition:
+                        if not self._closing:
+                            entry = self._interruptions[utterance_id]
+                            entry['pending'] = False
+                            if entry['conflict']:
+                                reply['decision'] = 'unknown'
+                            entry['decision'] = reply['decision']
+                            self._results.append(reply)
+                    continue
                 try:
                     digest = hashlib.sha256(
                         utterance_id.encode('utf-8'),
@@ -236,6 +316,25 @@ class DialogueWorker:
                         runtime.conversation_store.close()
                     finally:
                         runtime.memory_store.close()
+
+    @staticmethod
+    def _addressee_reply(utterance_id, playback_id, decision):
+        return {
+            'kind': 'addressee', 'utterance_id': utterance_id,
+            'playback_id': playback_id, 'decision': decision,
+        }
+
+    def _classify_interruption(self, runtime, conversation_id, utterance_id, playback_id, text):
+        try:
+            snapshot = runtime.conversation_store.snapshot(
+                self._user_id, conversation_id, limit=10,
+            )
+            decision = runtime.speech_addressee.classify(text, snapshot)
+            if decision not in ADDRESSEE_DECISIONS:
+                decision = 'unknown'
+        except Exception:
+            decision = 'unknown'
+        return self._addressee_reply(utterance_id, playback_id, decision)
 
     @staticmethod
     def _reply(

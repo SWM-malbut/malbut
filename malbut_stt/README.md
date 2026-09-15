@@ -1,55 +1,92 @@
 # Malbut STT → Agent
 
-로컬 Whisper로 **“제이크야”**를 확인한 뒤 별도의 명령 발화를 녹음하고,
-OpenAI가 돌려준 최종 원문을 ROS Topic으로 보냅니다. 브랜드 이름은 말벗으로
-유지합니다. 호출어에는 계정이나 API 키가 필요 없고, 명령 STT에는 기존
-`OPENAI_API_KEY`를 사용합니다.
+ROS STT 노드는 로컬 Whisper로 **“제이크” 또는 “제이크야”**를 확인한 뒤
+대화 모드에서 호출어 없이 다음 발화를 수집합니다. 호출어와 문장 전사는 모두
+로컬에서 실행하며 STT 노드에는 `OPENAI_API_KEY`가 필요하지 않습니다.
+끼어든 발화의 대상 판단은 별도 Agent가 최근 대화 문맥으로 수행합니다.
+Agent를 OpenAI로 실행하면 대상 판단과 답변 생성에는 모델 API를 사용합니다.
 
 ```mermaid
 flowchart LR
-    subgraph STT["STT Node"]
-        W["호출어 녹음·마이크 닫기"] --> L["로컬 Whisper<br/>제이크야 전체 일치"]
-        L -->|"wake_detected"| R["새 마이크·listening<br/>명령 녹음·마이크 닫기"]
-        P["새 발화 ID·원문 구성"]
-    end
-    R --> O["OpenAI 음성 인식"] --> P
-    P -->|"SpeechTranscript Topic"| A["선택한 Agent 실행 모드"]
+    M["연속 마이크 입력"] --> W["로컬 호출어 인식"]
+    W --> S["대화 모드·로컬 문장 전사"]
+    S -->|"일반 발화: SpeechTranscript"| A["Agent 대화 처리"]
+    S -->|"ClassifySpeechAddressee 요청"| C["Agent 발화 대상 판단"]
+    C -->|"판정 응답"| S
+    S -->|"ControlSpeechPlayback 요청"| T["TTS"]
+    T -->|"접수 응답"| S
+    T -->|"SpeechPlaybackStatus"| S
 ```
 
 ## 통신과 동작
 
-- Topic: `/malbut/speech/transcript`
-- 타입: `malbut_interfaces/msg/SpeechTranscript`
-- 필드 원본: [SpeechTranscript.msg](../malbut_interfaces/msg/SpeechTranscript.msg)
-- 사용 명세: [STT 명세](docs/stt_agent.md)
-- 양쪽 QoS: `RELIABLE`, `VOLATILE`, `KEEP_LAST`, depth `10`.
+| 방향 | 방식 | 이름 | `malbut_interfaces` 타입 |
+|---|---|---|---|
+| STT → Agent | Topic | `/malbut/speech/transcript` | `msg/SpeechTranscript` |
+| STT → Agent 요청·응답 | Service | `/malbut/speech/classify_addressee` | `srv/ClassifySpeechAddressee` |
+| STT → TTS 요청·응답 | Service | `/malbut/speech/playback_control` | `srv/ControlSpeechPlayback` |
+| TTS → STT | Topic | `/malbut/speech/playback_status` | `msg/SpeechPlaybackStatus` |
 
-STT는 최종 발화마다 UUID를 새로 생성합니다. 같은 문장을 다시 말해도 새 ID를
-사용하며, 최종 원문에 요약·명령 변환·공백 정규화를 적용하지 않습니다.
+- 필드·상수 원본: [ROS 메시지](../malbut_interfaces/msg), [ROS 서비스](../malbut_interfaces/srv)
+- 사용 명세: [STT 명세](docs/stt_agent.md)
+- Topic QoS: `RELIABLE`, `VOLATILE`, `KEEP_LAST`, depth `10`. Service는 ROS 기본 Service QoS를 사용합니다.
+
+STT는 발화마다 UUID를 새로 생성합니다. 같은 문장을 다시 말해도 새 ID를
+사용하며, 전사 결과의 앞뒤 공백을 제거하되 요약이나 명령 변환은 하지 않습니다.
 중간 인식 결과·오류 문장·빈 원문은 발행하지 않습니다.
 
-`waiting_for_wake`에서 “제이크야”만 부르고 쉽니다. 시작 대기 5초·종료 무음
-0.4초·최대 발화 6초로 수집한 뒤 마이크를 닫고, Whisper small을 CPU int8,
-6 threads로 실행합니다. 공백·구두점을 제외한 전체 전사가 `제이크야`일 때만
-통과합니다. “제이크야 오늘 날씨가 어때”처럼 이어 말한 문장은 거부합니다.
+`waiting_for_wake`에서 호출어만 부르고 쉽니다. 종료 무음 0.4초·최대 발화 6초로
+수집하며, 공백·구두점을 제외한 전체 전사가 `제이크` 또는 `제이크야`이면
+통과합니다. 호출어와 명령을 한 문장으로 이어 말하는 방식은 지원하지 않습니다.
+`wake_detected` 뒤에는 호출어 없이 말합니다. 1.5초 무음에서 후보 전사를 만들고,
+명확한 한국어 종결 표현이면 결과가 도착했을 때 발화를 확정합니다. 따라서 실제
+조기 확정은 1.5초 무음과 후보 추론 완료 중 늦은 시점입니다. 판단이 불확실하면
+3초 무음을 기다리며, 그동안 새 음성이 없으면 같은 전사를 재사용합니다.
+후보 추론 중 다시 말하면 같은 발화에 이어 붙이고 이전 후보로 종료하지 않습니다.
+마이크는 계속 열어 두고 별도 작업자에서 로컬 추론을 수행합니다. 원본 음성을
+파일에 자동 저장하지 않습니다. 기본 모델 실행은 CPU int8입니다. 호출어와 문장의
+모델 디렉터리가 같으면 심볼릭 링크 별칭까지 확인하여 모델 하나를 공유합니다.
+ROS의 `compute_type` 파라미터로 `float32`를 선택할 수 있습니다.
 
-`wake_detected` 뒤 새 마이크가 열리고 **`listening`이 표시되면 명령을 말합니다.**
-명령 수집 기본값은 시작 대기 5초·종료 무음 1초·최대 발화 20초·시작 직전 소리
-0.3초 보존입니다. 수집 후 마이크를 닫고 명령만 한 번의 WAV 요청으로 OpenAI에
-보냅니다. 로컬 인식·API 처리 중에는 녹음하지 않으며 대기열도 없습니다.
-호출어 음성과 명령 음성은 메모리에서만 다루고 파일에 자동 저장하지 않습니다.
+TTS의 정상 `finished`부터 5초를 기다립니다. 그 안에 사용자 음성이 시작되면
+종료 대기를 취소하며, 다음 TTS 완료에서 새 5초를 시작합니다.
+`paused`, `stopped`, `failed`는 정상 완료로 처리하지 않습니다.
 
-`published:<ID>`는 STT의 발행 기록이며 Agent 수신 확인이 아닙니다. Agent의
-`received` 로그와 SQLite 기록으로 실제 접수를 확인합니다. 늦게 시작한 Agent에
+끼어들기는 현재 재생에 `pause`를 요청한 뒤 `utterance_id`, `playback_id`, `text`를
+Agent Service에 보냅니다. Agent는 판정 발화를 일반 대화 기록에 추가하지 않고
+`addressed`, `not_addressed`, `unknown` 중 하나를 응답합니다. ROS가 응답을 요청과
+연결하고, STT는 요청에 보낸 두 ID로 현재 대기 중인 판정인지 확인합니다.
+`addressed`는 기존 재생에 `stop`을 요청하고 같은 발화 ID로 일반 전사를 전달합니다.
+`not_addressed`는 `paused` 확인 후 같은 재생에 `resume`를 요청합니다.
+`unknown`이나 45초 판정 대기 초과는 새 전사와 자동 재개 없이 대화 모드를 종료합니다.
+판정은 최근 생성한 답변을 참고하며 실제로 어디까지 들었는지는 알지 못합니다.
+
+재생 제어의 `accepted` 응답은 접수 여부입니다. 실제 재생 상태는
+`SpeechPlaybackStatus`로만 반영합니다. STT는 Service 응답을 비동기로 기다리며
+마이크 처리와 상태 수신을 계속합니다. 응답 대기를 끝내더라도 원격 Service 실행이
+취소되는 것은 아니며, 자동 재요청하지 않습니다.
+
+**현재 제한:** 실제 TTS 재생·중단·재개와 띠링 소리는 별도 연결이 필요합니다.
+`input_has_aec=false`가 기본이며, 이때는 TTS 재생 중 마이크 입력을 버리고
+`barge_in_requires_aec`를 기록하므로 끼어들기가 비활성입니다. `true`는 선택한
+마이크가 이미 에코 제거된 입력을 제공한다는 설정이며, AEC를 구현하거나 켜는
+옵션이 아닙니다. 최종 전사·대상 판정 처리 중 추가 발화는 종료 무음까지 버립니다.
+1.5초 무음의 후보 전사 중에는 이어지는 음성을 계속 수집합니다. 일반 전사가
+실패하거나 비어 있으면 Agent에 보내지 않고 대화 모드에서 다음 발화를 기다립니다.
+이때 TTS의 대상을 추정하여 자동으로 재개하거나 중지하지 않습니다.
+
+Agent의 `received` 로그와 SQLite 기록으로 실제 일반 전사 접수를 확인합니다. 늦게 시작한 Agent에
 과거 발화를 재생하거나, 중단 중 유실된 발화를 자동 복구하는 기능은 없습니다.
 이 Topic에는 STT→Agent의 별도 접수 응답이나 애플리케이션 재전송 기능이 없습니다.
 
 ## 노트북에서 먼저 시험하기 (ROS 불필요)
 
-STT 노트북 실행기 `smoke`는 로봇과 동일한 `SpeechPipeline`, 발화 종료 감지,
-`OpenAITranscriber`를 사용하고 최종 원문을 터미널 JSON으로 출력합니다.
-ROS Topic 발행·Agent 수신·로봇 동작은 이 시험에 포함하지 않습니다.
-`--wake-only`는 로컬 호출어까지만 확인하며 OpenAI를 호출하지 않습니다.
+STT 노트북 실행기 `smoke`는 최종 원문을 터미널 JSON에 출력합니다.
+`--dialogue --local`은 ROS 노드와 같은 `DialoguePipeline`으로 연속 수집과
+1.5초/3초 발화 종료를 시험합니다. `--dialogue`가 없으면 기존 한 문장용
+`SpeechPipeline`을 사용합니다. 기본 명령 인식은 `OpenAITranscriber`이므로
+**API 없이 시험하려면 `--local`을 명시합니다.** `--wake-only`도 API를 호출하지 않습니다.
+이 실행기에는 ROS Topic 발행·Agent·TTS·로봇 동작이 연결되어 있지 않습니다.
 
 저장소 루트에서 전용 환경을 준비합니다. `.runtime`은 Git에서 제외됩니다.
 macOS에서는 설치된 Python 3.12를 사용하고, 다른 환경에서는 해당 Python 명령으로
@@ -61,6 +98,112 @@ python3.12 -m venv .runtime/stt-laptop
 .runtime/stt-laptop/bin/python -m pip install -r malbut_stt/requirements.txt
 PYTHONPATH=malbut_stt .runtime/stt-laptop/bin/python -m malbut_stt.smoke --list-devices
 ```
+
+### 로컬 연속 대화 시험: MLX 또는 CPU
+
+**기본 선택은 CPU int8입니다.** MLX는 속도를 비교하기 위한 선택 옵션이며,
+짧은 명령의 독립 평가에서 다른 언어 출력과 반복 오류가 확인되어 기본값으로
+채택하지 않았습니다. 설정 선택 근거와 한계는
+[로컬 Whisper 평가 보고서](docs/local_whisper_evaluation_2026-09-13.md)를 확인합니다.
+
+현재 Apple Silicon Mac에서 선택할 수 있는 MLX 경로입니다. 기존 CPU 환경과
+분리된 `.runtime/stt-mlx-laptop`을 사용하며, ROS 노드의 기본 backend는 바꾸지
+않습니다. 환경이 아직 없다면 저장소 루트에서 한 번 준비합니다.
+
+```bash
+python3.12 -m venv .runtime/stt-mlx-laptop
+.runtime/stt-mlx-laptop/bin/python -m pip install -r malbut_stt/requirements-mlx-laptop.txt
+```
+
+현재 내려받아 둔 MLX Whisper small 모델은
+`.runtime/stt-autotune-20260913-2215/mlx-model`에 있습니다.
+`config.json`과 `weights.npz`가 필요하며 실행 중 자동 다운로드하지 않습니다.
+이 경로는 로컬 실험 자료이므로 새 체크아웃에는 포함되지 않습니다.
+MLX는 Apple Silicon macOS에서만 선택하며 fp16으로 실행합니다.
+`--backend mlx`와 `--compute-type`을 함께 지정하면 오류로 종료합니다.
+
+먼저 장치 목록을 확인합니다. 현재 Mac 내장 마이크 번호는 `1`이며 장치 연결
+상태에 따라 바뀔 수 있으므로 아래 실행 명령의 번호를 실제 목록에 맞춥니다.
+
+```bash
+env -u OPENAI_API_KEY -u PICOVOICE_ACCESS_KEY HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  PYTHONPATH=malbut_stt .runtime/stt-mlx-laptop/bin/python -m malbut_stt.smoke --list-devices
+```
+
+Enter를 한 번 누르고 연속 발화를 시험합니다.
+
+```bash
+env -u OPENAI_API_KEY -u PICOVOICE_ACCESS_KEY HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  PYTHONPATH=malbut_stt .runtime/stt-mlx-laptop/bin/python -m malbut_stt.smoke \
+  --local --dialogue --manual --backend mlx \
+  --model-path .runtime/stt-autotune-20260913-2215/mlx-model --device-index 1
+```
+
+`ready`에서 `mode: dialogue`, `backend: local`, `local_backend: mlx`를 확인합니다.
+Enter 뒤 `listening`이 표시되면 말합니다. 다음 발화부터는 Enter나 호출어 없이
+이어 말하며, 종료는 `Ctrl+C`입니다. 실제 마이크는 실행 동안 한 번 열어 둡니다.
+1.5초 무음에서 후보를 인식하고 명확한 종결 표현이면 추론 완료 후 확정합니다.
+불확실한 구절은 3초 무음을 기다립니다. 후보 처리 중 다시 말하면 이전 후보를
+확정하지 않고 이어지는 음성을 수집합니다. 출력의 `transcript`에는 발화 ID와
+원문만 표시하며, 종료 대기는 `checking_endpoint`, `endpoint_checked`,
+`endpoint_finalized` 로그로 확인합니다. 이 모드는 기존 한 문장 실행기의
+`transcription_s` 또는 전역 VAD 지연 값을 출력하지 않습니다.
+
+호출어에서 시작하려면 `--manual`을 뺍니다.
+
+```bash
+env -u OPENAI_API_KEY -u PICOVOICE_ACCESS_KEY HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  PYTHONPATH=malbut_stt .runtime/stt-mlx-laptop/bin/python -m malbut_stt.smoke \
+  --local --dialogue --backend mlx \
+  --model-path .runtime/stt-autotune-20260913-2215/mlx-model --device-index 1
+```
+
+`waiting_for_wake`에서 “제이크야”만 말하고, `wake_detected` 뒤에 명령을 따로
+말합니다. 이후 대화 모드에서는 이름을 다시 부르지 않습니다. 호출어와 일반
+발화는 모델 하나를 공유하되 이름 힌트는 호출어에만 적용합니다.
+
+MLX를 사용하지 않을 때는 기존 CPU int8 환경으로 같은 연속 대화 파이프라인을
+시험할 수 있습니다.
+
+```bash
+env -u OPENAI_API_KEY -u PICOVOICE_ACCESS_KEY HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  PYTHONPATH=malbut_stt .runtime/stt-laptop/bin/python -m malbut_stt.smoke \
+  --local --dialogue --manual --backend faster-whisper --compute-type int8 \
+  --model-path .runtime/stt-laptop/models/whisper-small --device-index 1
+```
+
+CPU의 `float32`를 따로 비교하려면 마지막 명령의 `--compute-type int8`만
+`--compute-type float32`로 바꿉니다. MLX 전용 모델과 faster-whisper 모델은
+파일 형식이 다르므로 각각 지정한 디렉터리를 사용합니다.
+
+마이크 없이 준비된 파일로 호출어와 후속 대화를 확인할 수도 있습니다.
+`replay_local.py`는 **비압축 mono 16kHz PCM16 WAV**만 받으며, 파일을 실제 시간에
+맞춰 파이프라인에 공급합니다. 마이크를 열거나 스피커로 파일을 재생하지 않습니다.
+다음 명령은 현재 준비된 개발용 합성 시퀀스를 CPU int8로 처리합니다.
+결과를 보존하려면 실행할 때마다 새로운 `--output` 파일명을 사용합니다.
+
+```bash
+env -u OPENAI_API_KEY -u PICOVOICE_ACCESS_KEY HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  PYTHONPATH=malbut_stt .runtime/stt-laptop/bin/python malbut_stt/tools/replay_local.py \
+  --backend faster-whisper --compute-type int8 --wake \
+  --model-path .runtime/stt-laptop/models/whisper-small \
+  --wav .runtime/stt-autotune-20260913-2215/wake_sequence/development_wake_two_followups.wav \
+  --output .runtime/stt-replay/user-wake-check-01.json
+```
+
+`status: completed`는 파일 관측이 끝났다는 뜻이며 인식 성공을 보장하지 않습니다.
+결과 JSON에서 `clean_shutdown`, `events`의 `wake_detected`, `transcript_count`,
+`transcripts`의 원문을 확인합니다. 이 파일의 기대 결과는 호출어 검출 1회와
+“창문을 열어 줘.”, “저녁은 언제 먹을까?”라는 후속 전사 2개이며, 호출어 자체가
+전송되지 않아야 합니다. 기존 개발 음성을 연결한 점검이므로 독립 평가나 실제
+사용자 마이크 성능으로 해석하지 않습니다.
+
+`--dialogue`에는 `--local`이 필수이며 `--once`, `--wake-only`를 함께 사용할 수
+없습니다. 결과는 터미널에만 출력하고 원본 녹음을 자동 저장하지 않습니다.
+TTS 완료 이벤트가 없으므로 **TTS 발화 완료 뒤 5초 무음으로 대화를 종료하는
+기능은 이 CLI에서 검증할 수 없습니다.** `ready`의 `tts_completion_events`와
+`tts_5s_timeout_testable`도 `false`입니다. 끼어들기와 실제 TTS 제어 역시 별도
+연결 시험이 필요합니다.
 
 ### 1. Enter로 시작하는 한 문장 시험
 
@@ -84,6 +227,35 @@ Enter를 누르고 `listening`이 표시되면 “오늘 날씨가 어때?”처
 API 오류는 `transcription_failed:<오류 종류>`로만 표시하고 원문 오류는 출력하지 않습니다.
 macOS 마이크 권한 요청이 뜨면 실행한 앱(Codex 또는 터미널)에 허용합니다.
 입력이 안 되면 시스템 설정 → 개인정보 보호 및 보안 → 마이크에서 해당 앱을 확인합니다.
+
+#### API 없이 Whisper small로 전체 문장 시험하기
+
+`--local`은 명령 STT를 로컬 Whisper로 바꾸는 노트북 시험 옵션입니다.
+아래 명령은 기존에 내려받은 모델을 사용하며, 모델이 없다면 아래 2절의 다운로드를
+먼저 완료합니다. 마이크 번호는 `--list-devices`로 확인합니다.
+
+```bash
+env -u OPENAI_API_KEY HF_HUB_OFFLINE=1 PYTHONPATH=malbut_stt .runtime/stt-laptop/bin/python -m malbut_stt.smoke --manual --local --model-path .runtime/stt-laptop/models/whisper-small --device-index 1
+```
+
+`ready`에 `backend: local`, `model: small`이 표시됩니다. Enter 후 `listening`이
+나오면 일반 문장을 말하고 1초간 조용히 기다립니다. `transcript.text`가 로컬 인식
+결과이며, `transcription_s`는 모델 로딩·녹음·종료 무음 대기를 제외한 로컬 추론
+시간입니다. Enter로 반복하고 Ctrl+C로 종료합니다. 한 번만 시도하려면 `--once`를
+추가합니다. OpenAI SDK를 초기화하거나 API를 호출하지 않습니다.
+
+호출어부터 명령까지 모두 로컬에서 시험하려면 `--manual`을 뺍니다.
+
+```bash
+env -u OPENAI_API_KEY HF_HUB_OFFLINE=1 PYTHONPATH=malbut_stt .runtime/stt-laptop/bin/python -m malbut_stt.smoke --local --model-path .runtime/stt-laptop/models/whisper-small --device-index 1
+```
+
+`waiting_for_wake`에서 “제이크야”만 말하고, `wake_detected` 다음 `listening`이
+표시되면 명령을 따로 말합니다. 호출어와 명령은 같은 모델 인스턴스를 재사용하며,
+기본 설정은 CPU int8·6 threads·한국어입니다. “로봇 이름은 제이크입니다.” 힌트는
+호출어에만 적용하며 일반 문장은 이름 힌트 없이 전사합니다.
+녹음 종료 조건은 기존과 같고, 원본 음성은 파일에 저장하지 않습니다.
+이 옵션은 노트북 실행기에 적용됩니다. ROS 노드는 별도로 로컬 문장 전사를 사용합니다.
 
 #### 실제 목소리 20문장 순서대로 기록하기
 
@@ -258,7 +430,8 @@ source install/setup.bash
 python3 -c 'from pvrecorder import PvRecorder; print(list(enumerate(PvRecorder.get_available_devices())))'
 ```
 
-Whisper·OpenAI·오디오 SDK는 이 패키지의 실제 음성 실행에 필요합니다. ROS 빌드와
+Whisper·오디오 SDK는 ROS STT의 실제 음성 실행에 필요합니다. OpenAI SDK는 기존
+노트북 API 비교 시험에 사용합니다. ROS 빌드와
 대역을 사용하는 Python 시험은 키·마이크·이 SDK들이 없어도 수행할 수 있습니다.
 WebRTC VAD는 동일한 `webrtcvad` Python API를 제공하는 `webrtcvad-wheels`로 설치합니다.
 
@@ -266,9 +439,9 @@ WebRTC VAD는 동일한 `webrtcvad` Python API를 제공하는 `webrtcvad-wheels
 
 | 준비물 | 용도 |
 |---|---|
-| 기존 `OPENAI_API_KEY` 환경변수 | 승인한 기존 OpenAI 키 사용 |
-| `tokenizer.json`을 포함한 Whisper small 디렉터리 | 계정 없는 로컬 “제이크야” 판정 |
+| `tokenizer.json`을 포함한 Whisper small 디렉터리 | 로컬 호출어·문장 전사 |
 | 사용 가능한 마이크 | 기본 장치 또는 장치 번호로 선택 |
+| 에코 제거된 마이크 입력 | 실제 TTS 중 끼어들기 사용 시 필요 |
 
 모델 디렉터리가 존재해도 필요한 파일이 불완전하면 초기화에 실패합니다.
 실행 중 다운로드하지 않으므로 최초 다운로드를 완료한 뒤 절대 경로를 지정합니다.
@@ -290,7 +463,8 @@ ros2 run malbut_agent_server speech_receiver \
 
 대화까지 연결하려면 위 수신기 대신 `agent_communication`을 실행합니다. Provider
 환경 설정도 없으면 기본은 `mock`입니다. 실제 OpenAI 대화는 기존 키 환경에서
-`--provider openai`로 선택하며, 이는 명령 STT와 별도의 모델 요청입니다.
+`--provider openai`로 선택합니다. 대화와 발화 대상 판단에는 모델 API를 사용하며,
+음성 전사는 계속 로컬입니다. `mock`과 `rai-sidecar`의 대상 판단은 현재 `unknown`입니다.
 
 ```bash
 ros2 run malbut_agent_server agent_communication --provider mock \
@@ -305,7 +479,7 @@ ros2 run malbut_agent_server agent_communication --provider mock \
 TTS 수신 확인과 Manager 연결의 자세한 절차는 [Agent 연결 안내](../malbut_agent_server/README.md#stt--agent-대화--manager--tts-연결)를
 따릅니다. 답변 텍스트 발행은 스피커 재생이나 로봇 동작 성공을 뜻하지 않습니다.
 
-두 번째 터미널에는 ROS 환경과 `OPENAI_API_KEY`가 있어야 합니다. 다음 모델 경로는
+두 번째 터미널에는 ROS 환경과 내려받은 로컬 모델이 필요합니다. 다음 모델 경로는
 다운로드를 마친 실제 디렉터리의 절대 경로로 바꿉니다.
 
 ```bash
@@ -318,9 +492,9 @@ ros2 run malbut_stt stt --ros-args \
   -p device_index:=-1
 ```
 
-`waiting_for_wake`가 나오면 “제이크야”만 부르고, `listening` 상태에서 문장을
-말합니다. `transcribing`은 음성 인식 중, `published:<ID>`는 발행 시도를 마친
-상태입니다. Agent에 같은 ID와 원문을 포함한 `status: received`가 나오는지 확인합니다.
+`waiting_for_wake`가 나오면 호출어만 부르고, `wake_detected` 뒤 문장을 말합니다.
+`transcribing`은 로컬 음성 인식 중입니다. Agent에 같은 ID와 원문을 포함한
+`status: received`가 나오는지 확인합니다.
 종료는 각 터미널에서 `Ctrl+C`로 합니다.
 
 ### 시작 시 적용하는 ROS parameter
@@ -328,31 +502,34 @@ ros2 run malbut_stt stt --ros-args \
 | 이름 | 기본값 | 의미 |
 |---|---|---|
 | `wake_model_path` | 필수 | 내려받은 Whisper small 모델 디렉터리 |
+| `stt_model_path` | 빈 문자열 | 문장 전사 모델; 비어 있으면 `wake_model_path` 사용 |
+| `input_has_aec` | `false` | 선택한 마이크가 이미 AEC 처리된 입력을 제공하는지 여부 |
+| `playback_control_timeout_s` | `5.0` | 재생 제어 Service의 접수 응답을 기다리는 시간; 실제 재생 완료 후 대화 대기와 별개 |
 | `device_index` | `-1` | PvRecorder 기본 입력 장치 |
 | `vad_mode` | `2` | WebRTC VAD의 음성 판단 모드, `0`~`3` |
-| `start_timeout_s` | `5.0` | `listening` 후 명령 발화 시작 대기 시간 |
-| `silence_timeout_s` | `1.0` | 명령 시작 후 이만큼 조용하면 발화 확정 |
+| `start_timeout_s` | `5.0` | 무음 수집 창; 발화가 없으면 새 창으로 이어서 대기 |
+| `silence_timeout_s` | `3.0` | 발화 시작 후 이만큼 조용하면 발화 확정 |
 | `max_utterance_s` | `20.0` | 명령 발화 시작 후 최대 수집 시간; 초과하면 전체 폐기 |
-| `pre_roll_s` | `0.3` | 새 명령 마이크에서 발화 시작 직전 보존할 소리 |
-| `api_timeout_s` | `30.0` | OpenAI SDK 요청 제한 시간, 자동 재시도 없음 |
+| `pre_roll_s` | `0.3` | 발화 시작 직전 보존할 소리 |
 
 위 수집 parameter는 명령에 적용합니다. 호출어는 시작 대기 5초·종료 무음 0.4초·
 최대 발화 6초·시작 직전 소리 0.3초로 고정합니다. WebRTC VAD 입력은 20ms PCM16
-mono이며 마이크가 16kHz가 아니면 실행을 중단합니다. 명령 STT 모델은
-`gpt-transcribe`, 언어 힌트는
-`languages: ["ko"]`, 경로는 `/v1/audio/transcriptions`입니다.
-API 방식은 [OpenAI 공식 문서](https://developers.openai.com/api/docs/guides/speech-to-text)를
-따릅니다. parameter는 시작 시 읽습니다. 값을 바꾸려면 새 `-p` 인자로 재실행합니다.
+mono이며 마이크가 16kHz가 아니면 실행을 중단합니다. 문장 전사는 지정한 로컬
+Whisper 모델과 한국어 설정을 사용하며 호출어용 이름 힌트를 넣지 않습니다.
+parameter는 시작 시 읽습니다. 값을 바꾸려면 새 `-p` 인자로 재실행합니다.
 
 ### 오류와 중복 처리
 
-- `wake_no_speech` / `wake_too_long`: 호출어 녹음을 버리고 로컬 인식 없이 다시 대기합니다.
-- `not_wake`: 전체 전사가 호출어와 달라 명령을 녹음하거나 API를 호출하지 않습니다.
-- `no_speech`: 호출 후 말이 없어 녹음을 버리고 다시 대기합니다.
-- `too_long`: 긴 녹음 전체를 버리고 다시 대기합니다. 잘린 문장을 보내지 않습니다.
+- `wake_too_long`: 호출어 녹음을 버리고 로컬 인식 없이 다시 대기합니다.
+- `not_wake`: 전체 전사가 호출어와 달라 대화 모드를 시작하지 않습니다.
+- `utterance_discarded:too_long`: 긴 녹음 전체를 버리고 호출어 대기로 돌아갑니다.
+- `speech_discarded:busy`: 처리 중 추가 발화를 끝까지 버립니다.
+- `addressee_unknown:*`: 판정 실패·시간 초과·재생 변경으로 새 발화를 전달하지 않습니다.
+- `playback_control_*`: 제어 서비스의 미가동·실패·거절·응답 대기 초과를 기록합니다.
+  응답이 없거나 거절되었다고 실제 TTS가 일시정지·종료된 것으로 처리하지 않습니다.
 - `empty_transcript` / `transcription_failed:<오류 종류>`: 발행 없이 다시 대기합니다.
-  API 오류의 원문은 키나 요청 내용 노출을 막기 위해 로그에 넣지 않습니다.
-- 키·모델이 없거나 장치 초기화·마이크 읽기·로컬 호출어 인식에 실패하면 오류 종류를
+  예외 원문 대신 오류 종류만 기록합니다.
+- 모델이 없거나 장치 초기화·마이크 읽기에 실패하면 오류 종류를
   기록하고 종료합니다.
   예: `STT stopped during opening_microphone: RuntimeError`.
 - Agent는 같은 ID·같은 원문을 `duplicate`, 같은 ID·다른 원문을 `conflict`로 구분합니다.

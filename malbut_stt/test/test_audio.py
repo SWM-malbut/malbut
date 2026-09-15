@@ -68,6 +68,19 @@ def test_overlong_utterance_is_discarded_instead_of_truncated():
     assert not collector.audio
 
 
+def test_unlimited_utterance_keeps_all_audio_until_ending_silence():
+    """An explicitly unlimited capture can cross 20 seconds without data loss."""
+    voice = b'\x01\x00' * 320
+    settings = CaptureSettings(silence_timeout_s=3.0, max_utterance_s=None)
+    collector = UtteranceCollector(16000, lambda frame, _: any(frame), settings)
+    for _ in range(1500):
+        assert collector.feed(voice) is None
+    assert collector.feed(FRAME * 149) is None
+    result = collector.feed(FRAME)
+    assert result.status == 'complete'
+    assert result.pcm == voice * 1500 + FRAME * 150
+
+
 @pytest.mark.parametrize('value', [0, -1, float('nan'), float('inf'), True])
 def test_bad_timing_settings_are_rejected(value):
     """Invalid settings must fail before any device starts."""

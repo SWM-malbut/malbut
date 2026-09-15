@@ -105,13 +105,21 @@ def test_wake_audio_never_reaches_api_and_first_command_frame_is_preserved():
     assert all(recorder.closed for recorder in run.recorders)
 
 
-@pytest.mark.parametrize('text', ['안녕', '제이크야 거실로 가줘', '제이크', '', '로봇 이름은 제이크입니다.'])
+@pytest.mark.parametrize('text', ['안녕', '제이크야 거실로 가줘', '제이크 거실로 가줘', '',
+                                 '로봇 이름은 제이크입니다.'])
 def test_non_wake_and_combined_command_never_open_command_capture_or_call_api(text):
     run = make_pipeline([wake_frames()], [], [text])
     run.pipeline.run()
     assert run.events[-1] == 'not_wake'
     assert len(run.recorders) == 1
     assert run.calls == run.messages == []
+
+
+def test_specified_name_without_vocative_opens_command_capture():
+    run = make_pipeline([wake_frames(), command_frames()], ['안녕'], ['제이크'])
+    run.pipeline.run()
+    assert [text for _, text in run.messages] == ['안녕']
+    assert run.events.count('wake_detected') == 1
 
 
 def test_same_sentence_spoken_twice_gets_different_ids():

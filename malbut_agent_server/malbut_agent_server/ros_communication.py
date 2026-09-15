@@ -9,13 +9,14 @@ from pathlib import Path
 import select
 import sqlite3
 import sys
+import time
 from typing import Optional, Sequence
 
 from malbut_agent_server.config import Settings, load_env_file
 from malbut_agent_server.factory import build_orchestrator
 from malbut_agent_server.mission_speech import MissionAnnouncer
 from malbut_agent_server.speech_dialogue import (
-    DialogueWorker, validate_dialogue_input,
+    DialogueWorker, validate_dialogue_input, validate_interruption_input,
 )
 from malbut_agent_server.speech_receipts import SpeechReceiptStore
 from malbut_agent_server.speech_receiver import (
@@ -25,6 +26,8 @@ from malbut_agent_server.weather_query import ManagerWeatherQuery
 
 
 RESPONSE_TOPIC = '/malbut/speech/response'
+ADDRESSEE_SERVICE = '/malbut/speech/classify_addressee'
+MAX_PENDING_ADDRESSEE_REQUESTS = 128
 MAX_COMMAND_BYTES = 65536
 DEFAULT_CONVERSATION_DB = '~/.local/state/malbut/speech-dialogue.sqlite3'
 DEFAULT_SPEECH_USER = 'speech-development-user'
@@ -38,10 +41,13 @@ def create_communication_node(
 ):
     """Compose communication on one owning thread with a single executor."""
     from malbut_interfaces.msg import SpeechRequest, SpeechTranscript
+    from malbut_interfaces.srv import ClassifySpeechAddressee
+    from rclpy.callback_groups import ReentrantCallbackGroup
     from rclpy.node import Node
     from rclpy.qos import (
         DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,
     )
+    from rclpy.task import Future
 
     from malbut_agent_server.manager_client import ManagerClient
 
@@ -58,6 +64,8 @@ def create_communication_node(
             self._receipts = None
             self._closing = False
             self._dialogue_error_seen = False
+            self._addressee_waiters = {}
+            self._addressee_callbacks = 0
             self.weather_query = None
             try:
                 qos = QoSProfile(
@@ -93,6 +101,11 @@ def create_communication_node(
                 self.create_subscription(
                     SpeechTranscript, TRANSCRIPT_TOPIC,
                     self._receive_speech, qos,
+                )
+                self.create_service(
+                    ClassifySpeechAddressee, ADDRESSEE_SERVICE,
+                    self._classify_addressee,
+                    callback_group=ReentrantCallbackGroup(),
                 )
                 self.create_timer(0.05, self._drain_dialogue)
             except Exception:
@@ -143,6 +156,54 @@ def create_communication_node(
                 self.get_logger().error('speech_dialogue submission failed')
                 self.say('대화를 처리하지 못했어요. 다시 말씀해 주세요.')
 
+        async def _classify_addressee(self, request, response):
+            """Yield to the executor while the dialogue worker classifies."""
+            response.decision = ClassifySpeechAddressee.Response.UNKNOWN
+            if self._closing or not self.context.ok():
+                return response
+            if self._addressee_callbacks >= MAX_PENDING_ADDRESSEE_REQUESTS:
+                return response
+            try:
+                validate_interruption_input(
+                    request.utterance_id, request.playback_id, request.text,
+                )
+                accepted = self.dialogue.submit_interruption(
+                    request.utterance_id, request.playback_id, request.text,
+                )
+            except ValueError:
+                accepted = False
+            if not accepted:
+                return response
+            key = (request.utterance_id, request.playback_id)
+            future = Future(executor=self.executor)
+            self._addressee_waiters.setdefault(key, []).append(future)
+            self._addressee_callbacks += 1
+            try:
+                response.decision = await future
+                if self._closing:
+                    response.decision = ClassifySpeechAddressee.Response.UNKNOWN
+                return response
+            finally:
+                self._addressee_callbacks -= 1
+                waiters = self._addressee_waiters.get(key, [])
+                if future in waiters:
+                    waiters.remove(future)
+                    if not waiters:
+                        del self._addressee_waiters[key]
+
+        def _resolve_addressee(self, result):
+            decision = result['decision']
+            if decision not in (
+                ClassifySpeechAddressee.Response.ADDRESSED,
+                ClassifySpeechAddressee.Response.NOT_ADDRESSED,
+                ClassifySpeechAddressee.Response.UNKNOWN,
+            ):
+                decision = ClassifySpeechAddressee.Response.UNKNOWN
+            key = (result['utterance_id'], result['playback_id'])
+            for future in self._addressee_waiters.pop(key, []):
+                if not future.done():
+                    future.set_result(decision)
+
         def _drain_dialogue(self):
             if self._closing:
                 return
@@ -151,6 +212,9 @@ def create_communication_node(
                 self._dialogue_error_seen = True
                 self.get_logger().error('speech_dialogue startup failed')
             for response in self.dialogue.drain():
+                if response.get('kind') == 'addressee':
+                    self._resolve_addressee(response)
+                    continue
                 published = self.dialogue.publish_reply(response, self.say)
                 if published is not None:
                     self.get_logger().info(json.dumps({
@@ -174,9 +238,28 @@ def create_communication_node(
             if on_event is not None:
                 on_event(dict(event))
 
-        def destroy_node(self):
-            """Release communication without claiming to stop any mission."""
+        def begin_shutdown(self):
+            """Reject new work and release classification responses as unknown."""
             self._closing = True
+            for waiters in self._addressee_waiters.values():
+                for future in waiters:
+                    if not future.done():
+                        future.set_result(ClassifySpeechAddressee.Response.UNKNOWN)
+            self._addressee_waiters.clear()
+
+        def destroy_node(self):
+            """Release communication from the owning thread outside callbacks."""
+            self.begin_shutdown()
+            if self.executor is not None and self.context.ok():
+                from rclpy.executors import ExternalShutdownException
+
+                deadline = time.monotonic() + 1.0
+                try:
+                    while (self._addressee_callbacks and self.context.ok()
+                           and time.monotonic() < deadline):
+                        self.executor.spin_once(timeout_sec=0.01)
+                except (KeyboardInterrupt, ExternalShutdownException):
+                    pass
             if self.weather_query is not None:
                 self.weather_query.close()
                 self.weather_query.drain()
@@ -280,20 +363,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     try:
         import rclpy
-        from rclpy.executors import ExternalShutdownException
+        from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
     except ImportError:
         print('Source ROS 2 and the built workspace first.', file=sys.stderr)
         return 2
     node = None
+    executor = None
     initialized = False
     try:
         rclpy.init(args=ros_args)
         initialized = True
+        executor = SingleThreadedExecutor()
         node = create_communication_node(
             speech_db_path=args.db_path,
             goal_response_timeout_s=args.goal_response_timeout_s,
             dialogue_settings=settings,
         )
+        executor.add_node(node)
         node.get_logger().info(
             'Agent communication ready; speech dialogue worker started. '
             'Enter JSON lines: '
@@ -304,7 +390,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         descriptor = sys.stdin.fileno()
         lines = CommandLines()
         while rclpy.ok():
-            rclpy.spin_once(node, timeout_sec=0.05)
+            executor.spin_once(timeout_sec=0.05)
             if descriptor is None:
                 continue
             if not select.select([descriptor], [], [], 0)[0]:
@@ -336,8 +422,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
               file=sys.stderr)
         return 2
     finally:
-        if node is not None:
-            node.destroy_node()
+        try:
+            if node is not None:
+                node.destroy_node()
+        finally:
+            if executor is not None:
+                executor.shutdown(timeout_sec=0)
         if initialized and rclpy.ok():
             rclpy.shutdown()
     return 0
