@@ -1,6 +1,7 @@
 """Exercise AutoSlam through isolated ROS endpoints without a robot or simulator."""
 
 from concurrent.futures import Future
+import math
 import os
 from pathlib import Path
 from threading import Event, Thread
@@ -295,6 +296,72 @@ def test_navigation_timeout_waits_for_confirmed_stop(system_factory):
     system.backend.release_cancel.set()
     assert _result(result_future).status == GoalStatus.STATUS_CANCELED
     assert system.backend.save_requests == []
+
+
+def test_stuck_navigation_stops_excludes_and_saves_then_resets(system_factory):
+    """No-progress failures survive the retry pass but not a new mapping request."""
+    system = system_factory(scene='frontier', progress_timeout_s=0.2)
+    handle = system.request()
+    result = handle.get_result_async()
+    assert system.backend.cancel_seen.wait(TIMEOUT_S)
+    assert not result.done()
+    assert system.node.busy
+    assert system.node.blocked_targets == []  # Wait for terminal, not cancel ACK.
+    system.backend.release_cancel.set()
+    outcome = _result(result)
+    assert outcome.status == GoalStatus.STATUS_SUCCEEDED
+    assert outcome.result.success
+    targets = [(goal.pose.pose.position.x, goal.pose.pose.position.y)
+               for goal in system.backend.navigation_requests]
+    assert targets and len(targets) == len(set(targets))
+    assert system.node.blocked_approaches
+    assert len(system.backend.save_requests) == 1
+    # A second run must be allowed to try the same area again.
+    count = len(targets)
+    second = _result(system.request('second').get_result_async())
+    assert second.status == GoalStatus.STATUS_SUCCEEDED
+    new = system.backend.navigation_requests[count].pose.pose.position
+    assert (new.x, new.y) == targets[0]
+
+
+@pytest.mark.parametrize('motion', ['translation', 'rotation', 'arrival_race'])
+def test_progress_watch_accepts_motion_and_late_success(monkeypatch, motion):
+    """Accumulate small movement/rotation, and do not ban an already reached goal."""
+    clock = [0.0]
+    child = SimpleNamespace(handle=SimpleNamespace(accepted=True), error=None, result=None)
+
+    def wait(_seconds):
+        clock[0] += 0.2
+        if clock[0] >= 2.0:
+            child.result = SimpleNamespace(status=GoalStatus.STATUS_SUCCEEDED)
+            return True
+        return False
+
+    child.done = SimpleNamespace(wait=wait)
+    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr('malbut_autoslam.autoslam_node.Navigation', lambda *_args: child)
+
+    def snapshot(with_heading=False):
+        assert with_heading
+        x = clock[0] * 0.1 if motion == 'translation' else 0.0
+        yaw = math.pi - 0.1 + clock[0] * 0.3 if motion == 'rotation' else 0.0
+        yaw = math.atan2(math.sin(yaw), math.cos(yaw))
+        return SimpleNamespace(header=SimpleNamespace(frame_id='map')), (x, 0.0, yaw)
+
+    def settle(_handle):
+        child.result = SimpleNamespace(status=GoalStatus.STATUS_SUCCEEDED)
+        node.child = None
+
+    node = SimpleNamespace(
+        settings={'navigation_timeout_s': 10.0, 'progress_timeout_s': 0.8,
+                  'progress_distance_m': 0.05, 'progress_angle_rad': 0.15},
+        navigation=Mock(), _target_pose=Mock(return_value=PoseStamped()),
+        _check=Mock(), _snapshot=snapshot, _feedback=Mock(),
+        _settle_child=Mock(side_effect=settle),
+        get_logger=Mock(), blocked_targets=[], blocked_approaches=[])
+    assert AutoSlamNode._navigate(node, Mock(), Mock(), 'map', run_deadline=10.0)
+    assert node._settle_child.call_count == (1 if motion == 'arrival_race' else 0)
+    assert node.blocked_targets == []
 
 
 def test_missing_navigation_backend_returns_failure(system_factory):

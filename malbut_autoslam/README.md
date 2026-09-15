@@ -95,6 +95,12 @@ ros2 action send_goal /malbut/mission/execute \
 - 도착 후 새 SLAM 지도를 기다리고, 알려진 지도 셀 증가량으로 진전을 확인한다.
   실패하거나 새 공간을 관측하지 못한 지점은 제외한다. 전체 제외 목록 재시도는
   다른 후보가 소진된 뒤 한 번만 하며, 오래된 실패를 삭제해 무한 순회하지 않는다.
+- 이동 Goal 수락 후 5초 동안 5cm 이동도 0.15rad(약 9도) 회전도 없으면
+  진행 불가로 추정하고, Nav2 취소 완료를 기다린다. 실패 목표와 사전 경로의
+  현재 위치 앞쪽 접근 구간은 **이번 요청이 끝날 때까지** 제외한다. 다른 후보의
+  사전 경로도 이 구간을 통과하면 보내지 않으며, 새 요청에서는 기록을 초기화한다.
+  이 기록은 저장 지도나 costmap을 바꾸지 않는다. Nav2 자체 재계획의 강제 금지구역은
+  아니며, TF 기반 추정이므로 충돌 센서나 비상 정지를 대체하지 않는다.
 - 같은 서버의 중복 요청은 거부한다. Manifest는 `FOREGROUND/NORMAL/[BASE]`다.
 - 취소·선점·Ctrl+C 시 하위 Nav2 Goal을 취소하고 **실제 종료까지 기다린다**.
   외부 Nav2의 응답이 불명확하면 이동이 끝났다고 간주해 새 작업을 받지 않는다.
@@ -126,6 +132,9 @@ ros2 action send_goal /malbut/mission/execute \
 `minimum_frontier_cells=8`은 작은 경계 잡음을 제외하는 기준이다.
 통신 준비·지도/TF 신선도·개별 이동 제한은 각각 `ready_timeout_s`,
 `map_timeout_s`, `tf_timeout_s`, `navigation_timeout_s`로 조정한다.
+짧은 정체 판단의 ROS parameter는 `progress_timeout_s=5.0`,
+`progress_distance_m=0.05`, `progress_angle_rad=0.15`다. 정상 제자리 회전도
+진행으로 인정하고, Goal 수락 대기 시간은 정체 시간에 포함하지 않는다.
 `ready_timeout_s`는 launch 인자로도 설정할 수 있다. 부모 launch의 종료 유예도
 같은 값에 프로세스 정리 시간을 더해 적용하므로, Ctrl+C가 Action 서버를 먼저
 강제 종료해 자동 기동한 매핑 프로세스를 남기지 않도록 한다.

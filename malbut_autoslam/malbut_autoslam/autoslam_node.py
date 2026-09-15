@@ -25,7 +25,8 @@ from sensor_msgs.msg import LaserScan
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from malbut_autoslam.frontier import (
-    map_grid_from_message, map_statistics, path_is_known_free, search_frontiers,
+    blocked_approach, map_grid_from_message, map_statistics, path_avoids_blocks,
+    path_is_known_free, search_frontiers,
 )
 from malbut_autoslam.runtime import (
     DEFAULT_READY_TIMEOUT_S, OwnedRuntime, RuntimeGraph, missing_components,
@@ -112,6 +113,8 @@ class AutoSlamNode(Node):
             'exploration_period_s': 1.0, 'completion_delay_s': 12.0,
             'map_timeout_s': 10.0, 'tf_timeout_s': 3.0,
             'ready_timeout_s': DEFAULT_READY_TIMEOUT_S, 'navigation_timeout_s': 90.0,
+            'progress_timeout_s': 5.0, 'progress_distance_m': 0.05,
+            'progress_angle_rad': 0.15,
             'max_exploration_time_s': 1200.0,
             'auto_start': False,
             'scan_topic': '/scan_raw', 'odom_topic': '/odom',
@@ -122,7 +125,7 @@ class AutoSlamNode(Node):
             self.declare_parameter(name, default)
         self.settings = {name: self.get_parameter(name).value for name in defaults}
         for name in defaults:
-            if name.endswith(('_s', '_m', '_cells')):
+            if name.endswith(('_s', '_m', '_rad', '_cells')):
                 value = self.settings[name]
                 if not math.isfinite(value) or value <= 0:
                     raise ValueError(f'{name} must be positive and finite')
@@ -135,6 +138,9 @@ class AutoSlamNode(Node):
         self.received_at = 0.0
         self.map_revision = 0
         self.child = None
+        self.planned_path = []
+        self.blocked_approaches = []
+        self.blocked_targets = []
         self.runtime = None
         self.scan_received_at = 0.0
         self.odom_received_at = 0.0
@@ -321,7 +327,7 @@ class AutoSlamNode(Node):
         self.wake.wait(0.2)
         self.wake.clear()
 
-    def _snapshot(self):
+    def _snapshot(self, with_heading=False):
         self._check_sensor_updates()
         with self.lock:
             message, received = self.message, self.received_at
@@ -338,6 +344,15 @@ class AutoSlamNode(Node):
         position = transform.transform.translation
         if not all(math.isfinite(value) for value in (position.x, position.y)):
             raise RuntimeError('robot position is not finite')
+        if with_heading:
+            rotation = transform.transform.rotation
+            quaternion = (rotation.x, rotation.y, rotation.z, rotation.w)
+            norm = math.hypot(*quaternion)
+            if not all(math.isfinite(value) for value in quaternion) or norm < 1e-6:
+                raise RuntimeError('robot heading is invalid')
+            x, y, z, w = (value / norm for value in quaternion)
+            yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+            return message, (position.x, position.y, yaw)
         return message, (position.x, position.y)
 
     def _feedback(self, handle, state, grid=None, frontier_count=None):
@@ -403,6 +418,7 @@ class AutoSlamNode(Node):
     def _can_reach(self, handle, frontier, frame):
         # Let the actual Nav2 costmap/robot footprint decide path feasibility.
         # Planning is read-only: an uncertain planning result never sends motion.
+        self.planned_path = []
         request = ComputePathToPose.Goal()
         request.goal = self._target_pose(frontier, frame)
         request.use_start = False
@@ -438,7 +454,12 @@ class AutoSlamNode(Node):
             if math.hypot(points[-1][0] - frontier.x, points[-1][1] - frontier.y) > max(
                     grid.resolution, self.settings['robot_clearance_m']):
                 return False
-            return path_is_known_free(grid, [robot, *points, (frontier.x, frontier.y)])
+            points = [robot, *points, (frontier.x, frontier.y)]
+            if (not path_is_known_free(grid, points)
+                    or not path_avoids_blocks(points, self.blocked_approaches)):
+                return False
+            self.planned_path = points
+            return True
         finally:
             planning.cancel()  # Also cancels a goal that is accepted after timeout.
 
@@ -449,12 +470,47 @@ class AutoSlamNode(Node):
         self.child = Navigation(self.navigation, request)
         deadline = min(run_deadline,
                        time.monotonic() + self.settings['navigation_timeout_s'])
+        baseline = None
+        last_progress = time.monotonic()
         while not self.child.done.wait(0.2):
             self._check(handle)
-            self._snapshot()  # Loss of SLAM/TF cancels before relinquishing BASE.
+            message, pose = self._snapshot(with_heading=True)
+            if message.header.frame_id != frame:
+                raise RuntimeError('SLAM frame changed during navigation')
             if self.child.error:
                 raise RuntimeError(f'Nav2 transport error: {self.child.error}')
             self._feedback(handle, 'NAVIGATING')
+            now = time.monotonic()
+            # Start only after acceptance. Real translation or rotation counts;
+            # an initial on-the-spot turn must not be mistaken for a collision.
+            if self.child.handle is not None and self.child.handle.accepted:
+                angle = (0.0 if baseline is None else
+                         math.atan2(math.sin(pose[2] - baseline[2]),
+                                    math.cos(pose[2] - baseline[2])))
+                if (baseline is None
+                        or math.dist(pose[:2], baseline[:2])
+                        >= self.settings['progress_distance_m']
+                        or abs(angle) >= self.settings['progress_angle_rad']):
+                    baseline, last_progress = pose, now
+                elif now - last_progress >= self.settings['progress_timeout_s']:
+                    self.get_logger().warning(
+                        f'No motion progress for {now - last_progress:.1f}s; '
+                        'canceling and excluding this approach for the current mapping run')
+                    child = self.child
+                    self._settle_child(handle)
+                    self._check(handle)
+                    if (child.result is not None
+                            and child.result.status == GoalStatus.STATUS_SUCCEEDED):
+                        return True  # Arrival raced with the cancellation request.
+                    self.blocked_targets.append((frontier.x, frontier.y))
+                    stopped_map, stopped_pose = self._snapshot()
+                    if stopped_map.header.frame_id != frame:
+                        raise RuntimeError('SLAM frame changed while stopping navigation')
+                    block = blocked_approach(
+                        self.planned_path, stopped_pose, self.settings['robot_clearance_m'])
+                    if block is not None:
+                        self.blocked_approaches.append(block)
+                    return False
             if time.monotonic() >= deadline:
                 self._settle_child(handle)
                 return False
@@ -620,7 +676,7 @@ class AutoSlamNode(Node):
                 minimum_cells=self.settings['minimum_frontier_cells'],
                 minimum_clearance_m=self.settings['robot_clearance_m'],
                 minimum_goal_distance_m=self.settings['minimum_goal_distance_m'],
-                blacklisted=tuple(blacklist),
+                blacklisted=tuple(blacklist + self.blocked_targets),
             )
             candidates = search.candidates
             self._feedback(handle, 'EXPLORING', grid, search.frontier_count)
@@ -638,7 +694,8 @@ class AutoSlamNode(Node):
                     updated = self.map_revision > empty_revision
                 if updated and now - empty_since >= self.settings['completion_delay_s']:
                     # A transient obstacle may clear while other regions are
-                    # explored. Retry excluded approaches once, never forever.
+                    # explored. Retry ordinary failures once. Suspected blocked
+                    # approaches remain excluded until the next AutoSLAM request.
                     if search.frontier_count and blacklist and not retried:
                         blacklist.clear()
                         retried = True
@@ -678,6 +735,9 @@ class AutoSlamNode(Node):
         result = AutoSlam.Result()
         self.known_area_m2 = 0.0
         self.frontier_count = 0
+        self.planned_path = []
+        self.blocked_approaches = []
+        self.blocked_targets = []
         try:
             self._explore(handle, result)
         except Interrupted as error:

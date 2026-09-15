@@ -299,3 +299,49 @@ def path_is_known_free(grid: MapGrid, points_xy) -> bool:
                 or not np.all(free[rows[1:][diagonal], columns[:-1][diagonal]])):
             return False
     return True
+
+
+def blocked_approach(points_xy, robot_xy, clearance_m):
+    """Remember a suspected blocked approach ahead, not an obstacle at the robot."""
+    points = np.asarray(points_xy, dtype=float)
+    robot = np.asarray(robot_xy, dtype=float)
+    if len(points) < 2:
+        return None
+    starts, vectors = points[:-1], np.diff(points, axis=0)
+    lengths_squared = np.sum(vectors * vectors, axis=1)
+    fractions = np.clip(np.sum((robot - starts) * vectors, axis=1)
+                        / np.maximum(lengths_squared, 1e-12), 0.0, 1.0)
+    projections = starts + fractions[:, None] * vectors
+    nearest = int(np.argmin(np.sum((projections - robot) ** 2, axis=1)))
+    center = projections[nearest]
+    remaining = 2.0 * clearance_m
+    for end in points[nearest + 1:]:
+        vector = end - center
+        length = float(np.linalg.norm(vector))
+        if length >= remaining:
+            center = center + vector * remaining / length
+            break
+        remaining -= length
+        center = end
+    distance = float(np.linalg.norm(center - robot))
+    if distance < 0.05:
+        return None  # Already at the endpoint: no defensible forward region.
+    return (float(center[0]), float(center[1]), min(clearance_m, distance / 2.0))
+
+
+def path_avoids_blocks(points_xy, blocks):
+    """Check entire segments against run-local exclusion disks, even on sparse paths."""
+    if not blocks:
+        return True
+    points = np.asarray(points_xy, dtype=float)
+    starts = points[:-1] if len(points) > 1 else points
+    vectors = np.diff(points, axis=0) if len(points) > 1 else np.zeros_like(points)
+    lengths_squared = np.sum(vectors * vectors, axis=1)
+    for x, y, radius in blocks:
+        center = np.asarray((x, y))
+        fractions = np.clip(np.sum((center - starts) * vectors, axis=1)
+                            / np.maximum(lengths_squared, 1e-12), 0.0, 1.0)
+        closest = starts + fractions[:, None] * vectors
+        if np.any(np.sum((closest - center) ** 2, axis=1) <= radius * radius):
+            return False
+    return True
