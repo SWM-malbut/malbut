@@ -1,4 +1,4 @@
-"""Setuptools metadata for Malbut TTS text reception."""
+"""Setuptools metadata for Malbut streaming TTS."""
 
 from setuptools import find_packages, setup
 
@@ -21,12 +21,14 @@ setup(
     zip_safe=True,
     maintainer='SWM Malbut contributors',
     maintainer_email='maintainers@example.com',
-    description='Receive Agent response text for Malbut TTS.',
+    description='Queue and stream local speech with ROS playback controls.',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'tts_receiver = malbut_tts.receiver:main',
+            'tts_node = malbut_tts.node:main',
+            'tts_smoke = malbut_tts.smoke:main',
         ],
     },
 )

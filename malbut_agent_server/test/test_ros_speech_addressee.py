@@ -15,6 +15,11 @@ class Response:
     UNKNOWN = 'unknown'
 
 
+class SpeechRequest(SimpleNamespace):
+    DIALOGUE = 0
+    NOTIFICATION = 1
+
+
 class Future:
     def __init__(self, *, executor=None):
         self._done = False
@@ -114,7 +119,7 @@ def node(monkeypatch, tmp_path):
         QoSProfile=lambda **kwargs: kwargs,
     ))
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.msg', SimpleNamespace(
-        SpeechRequest=SimpleNamespace, SpeechTranscript=SimpleNamespace,
+        SpeechRequest=SpeechRequest, SpeechTranscript=SimpleNamespace,
     ))
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.srv', SimpleNamespace(
         ClassifySpeechAddressee=SimpleNamespace(Response=Response),
@@ -217,16 +222,40 @@ def test_invalid_worker_decision_uses_generated_unknown_constant(node, monkeypat
 
 
 def test_normal_dialogue_answers_keep_the_existing_tts_path(node):
+    original = '  일반 대화 답변\n다음 문장도 원문대로.  '
     node.dialogue.results = [
         result(),
         {'kind': 'answer', 'utterance_id': 'normal',
-         'conversation_id': 'conversation', 'text': '일반 대화 답변'},
+         'conversation_id': 'conversation', 'text': original},
     ]
     node._drain_dialogue()
-    assert [message.text for message in node.sent[ros_communication.RESPONSE_TOPIC]] == [
-        '일반 대화 답변',
+    messages = node.sent[ros_communication.RESPONSE_TOPIC]
+    assert [(message.text, message.request_type) for message in messages] == [
+        (original, SpeechRequest.DIALOGUE),
     ]
     assert list(node.sent) == [ros_communication.RESPONSE_TOPIC]
+
+
+def test_mission_announcements_are_notification_requests(node):
+    node._mission_event({
+        'kind': 'succeeded', 'request_id': 'patrol-1',
+        'capability_id': 'patrol',
+    })
+    messages = node.sent[ros_communication.RESPONSE_TOPIC]
+    assert [(message.text, message.request_type) for message in messages] == [
+        ('순찰 요청: Manager가 실행 요청을 성공 상태로 종료했다고 알려왔어요.',
+         SpeechRequest.NOTIFICATION),
+    ]
+
+
+def test_direct_say_preserves_text_and_defaults_to_dialogue(node):
+    original = '  직접 발행한 답변.\n원문의 줄바꿈도 유지.  '
+    assert node.say(original)
+    assert not node.say(' \n ')
+    messages = node.sent[ros_communication.RESPONSE_TOPIC]
+    assert [(message.text, message.request_type) for message in messages] == [
+        (original, SpeechRequest.DIALOGUE),
+    ]
 
 
 def test_shutdown_resolves_pending_and_late_requests_as_unknown(node):
