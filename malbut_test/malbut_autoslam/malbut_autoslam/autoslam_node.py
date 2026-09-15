@@ -508,12 +508,19 @@ class AutoSlamNode(Node):
                 # Keep ROS alive to deliver the failure result, but reject new
                 # goals until an operator resolves the possibly delayed write.
                 self.save_uncertain = True
-                self.get_logger().error('Map save result is unconfirmed; restart after checking files')
+                self.get_logger().error(
+                    'Map save result is unconfirmed; restart after checking files')
                 raise Interrupted(
                     'map save result is unconfirmed; check map files before restarting AutoSLAM')
             self._feedback(handle, 'CANCELING' if handle.is_cancel_requested
                            else 'SAVING')
-        response = future.result()
+        try:
+            response = future.result()
+        except Exception as error:
+            self.save_uncertain = True
+            raise RuntimeError(
+                'map save result is unconfirmed; '
+                'check map files before restarting AutoSLAM') from error
         if not response.result:
             raise RuntimeError('Nav2 map saver failed')
         yaml_path = Path(str(base) + '.yaml')

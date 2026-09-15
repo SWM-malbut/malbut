@@ -519,7 +519,8 @@ class AutoSlamNode(Node):
         except Exception as error:
             self.save_uncertain = True
             raise RuntimeError(
-                'map save result is unconfirmed; check map files before restarting AutoSLAM') from error
+                'map save result is unconfirmed; '
+                'check map files before restarting AutoSLAM') from error
         if not response.result:
             raise RuntimeError('Nav2 map saver failed')
         yaml_path = Path(str(base) + '.yaml')

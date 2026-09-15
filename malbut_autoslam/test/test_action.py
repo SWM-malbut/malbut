@@ -475,10 +475,13 @@ def test_server_stop_during_unanswered_save_still_cleans_owned_mapping(mock_star
     runtime.close.assert_called_once_with()
 
 
-def test_unanswered_save_times_out_and_rejects_reuse(mock_startup, monkeypatch):
+@pytest.mark.parametrize('transport_error', [False, True])
+def test_unanswered_save_times_out_and_rejects_reuse(mock_startup, monkeypatch, transport_error):
     """An uncertain non-cancellable save cleans up but cannot race a later save."""
     system, runtime = mock_startup()
     pending = Future()
+    if transport_error:
+        pending.set_exception(RuntimeError('response lost'))
     monkeypatch.setattr(system.node.saver, 'call_async', Mock(return_value=pending))
     remove_pending = Mock()
     monkeypatch.setattr(system.node.saver, 'remove_pending_request', remove_pending)
@@ -487,8 +490,11 @@ def test_unanswered_save_times_out_and_rejects_reuse(mock_startup, monkeypatch):
     assert not outcome.result.success
     assert outcome.result.map_yaml == ''
     assert 'save result is unconfirmed' in outcome.result.message
-    assert pending.cancelled()
-    remove_pending.assert_called_once_with(pending)
+    if transport_error:
+        assert pending.done()
+    else:
+        assert pending.cancelled()
+        remove_pending.assert_called_once_with(pending)
     runtime.close.assert_called_once_with()
     assert system.node.runtime is None
     assert system.node.save_uncertain

@@ -43,8 +43,8 @@ to evaluate another compatible humanoid appearance without changing code.
 
 - Input detections: `/perception/person/detections_3d`
 - LiDAR foreground clusters: `/perception/lidar/foreground_clusters`
-- Cached static SLAM map: `/map` (fixed-route planning)
-- Global navigation grid: `/global_costmap/costmap_raw` (goal safety only)
+- Current static SLAM map: `/map` (bounded fixed-route planning)
+- Global navigation grid: `/global_costmap/costmap_raw` (goal and fallback safety)
 - Follow action: `/follow_person` (`malbut_interfaces/action/FollowPerson`)
 - State: `/tracking/person/status`
 - Estimated map pose: `/tracking/person/estimated_target_pose`
@@ -75,7 +75,7 @@ paths.
 RGB-D is the primary long-range position source, so a visible person remains
 followable even outside the LiDAR/costmap observation area. Camera-only motion
 continuously derives targets from current sensor observations. The follower
-caches the already-built SLAM map and plans a fixed-geometry route from the
+keeps the current raw SLAM map and plans a fixed-geometry route from the
 robot to the observed person. It scans that route backward from the person and
 selects the first cell that is safe in the current global costmap. Nav2 then
 plans and controls the actual motion to that live-safe destination. The
@@ -83,6 +83,31 @@ measured distance band still decides when to advance or hold. Nav2 owns
 both translation and body rotation; there is no downstream camera-yaw mixer.
 A newer path directly preempts the
 running `FollowPath` goal without an explicit cancel/stop gap.
+TF lookup never waits inside a sensor callback; only the newest pending image is retried
+briefly while the same ROS executor receives TF. Camera/LiDAR subscriptions
+keep one sample, and stamped observations older than the existing observation
+loss deadline are discarded. Loss timing uses capture time, not arrival time.
+Fixed-map A* runs on one worker with a 20 ms computation budget, without
+additional static-map padding or a connectivity cache. Map updates replace
+the old snapshot. This route is only a directional hint; Nav2's robot radius,
+obstacle inflation and local collision checking remain unchanged.
+Nav2 planning has a 200 ms response deadline. A timeout invalidates late results
+and requests cancellation, but does not forcibly stop Navfn's remote CPU work.
+No second global-plan request is sent before that owned request ends.
+If either planning stage fails or times out, a short straight segment toward
+the current target standoff is checked against the live costmap, including
+every crossed cell and diagonal corner. It stops before obstacles/unknown
+space and is capped by `goal_safe_search_radius_m` (1 m). A costmap older than
+twice the observation-loss interval (1.5 s by default) cannot supply a fallback.
+This segment goes directly to Nav2 `FollowPath`; it does not wait for another
+global search. Nav2's controller still checks current obstacles while moving.
+No safe progress means canceling current motion, not choosing a point behind
+the obstacle. Fresh observations override the retry backoff immediately.
+Fallback traces use the `:line_fallback` source suffix and zero Nav2 planning
+time because no `ComputePathToPose` request generated that segment.
+Alignment keeps an unchanged world heading, but a changed heading cancels the
+old Spin. After its terminal result, the next observation supplies a fresh
+relative angle. Motion-server switches likewise wait for the old goal to end.
 A failed individual path is discarded so the next camera observation can try a
 better goal while the outer follow action remains active. A confirmed LiDAR
 match supports only a short camera gap; RGB-D remains authoritative whenever
