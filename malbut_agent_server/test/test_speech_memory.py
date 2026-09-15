@@ -167,6 +167,10 @@ def test_legacy_fixture_result_needs_no_memory_validator(tmp_path):
 
 
 def _fake_ros(monkeypatch, spoken, logs):
+    class SpeechRequest(SimpleNamespace):
+        DIALOGUE = 0
+        NOTIFICATION = 1
+
     class Node:
         def __init__(self, _name):
             self.context = SimpleNamespace(ok=lambda: True)
@@ -206,7 +210,7 @@ def _fake_ros(monkeypatch, spoken, logs):
         QoSProfile=lambda **kwargs: kwargs,
     ))
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.msg', SimpleNamespace(
-        SpeechRequest=lambda **kwargs: SimpleNamespace(**kwargs),
+        SpeechRequest=SpeechRequest,
         SpeechTranscript=SimpleNamespace,
     ))
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.srv', SimpleNamespace(

@@ -4,12 +4,13 @@
 <package format="3">
   <name>malbut_tts</name>
   <version>0.1.0</version>
-  <description>Receive Agent response text for Malbut TTS.</description>
+  <description>Queue and stream local speech with ROS playback controls.</description>
   <maintainer email="maintainers@example.com">SWM Malbut contributors</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
   <exec_depend>python3</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>malbut_interfaces</exec_depend>
 
