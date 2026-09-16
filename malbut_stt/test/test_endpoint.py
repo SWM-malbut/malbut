@@ -50,23 +50,23 @@ def test_fragments_connectives_quotes_and_punctuation_keep_fallback(text):
 
 
 def test_early_snapshot_is_once_per_pause_and_revision_survives_reset():
-    stream = StreamingUtteranceCollector(lambda frame, _: any(frame), early_endpoint_s=1.5)
+    stream = StreamingUtteranceCollector(lambda frame, _: any(frame), early_endpoint_s=1.0)
     stream.feed(VOICE)
-    assert stream.feed(QUIET * 74) == []
+    assert stream.feed(QUIET * 49) == []
     candidate, = stream.feed(QUIET)
-    assert candidate.status == 'endpoint_check' and candidate.silence_s == 1.5
+    assert candidate.status == 'endpoint_check' and candidate.silence_s == 1.0
     assert stream.feed(QUIET * 10) == []
     stream.feed(SECOND)
     assert stream.finish_endpoint(candidate.revision) is None
-    newer, = stream.feed(QUIET * 75)
+    newer, = stream.feed(QUIET * 50)
     assert newer.revision != candidate.revision
     assert stream.finish_endpoint(candidate.revision) is None
     stream.reset()
     stream.feed(VOICE)
-    newest, = stream.feed(QUIET * 75)
+    newest, = stream.feed(QUIET * 50)
     assert newest.revision not in (candidate.revision, newer.revision)
     assert stream.finish_endpoint(newer.revision) is None
-    assert stream.finish_endpoint(newest.revision).silence_s == 1.5
+    assert stream.finish_endpoint(newest.revision).silence_s == 1.0
 
 
 @pytest.fixture
@@ -90,13 +90,13 @@ def candidate(run):
     pipeline = run.pipeline
     pipeline.feed(VOICE)
     uid = pipeline.session.utterance_id
-    pipeline.feed(QUIET * 74)
+    pipeline.feed(QUIET * 49)
     assert pipeline.jobs.empty()
-    run.now = 1.5
+    run.now = 1.0
     pipeline.feed(QUIET)
     job = pipeline.jobs.get_nowait()
     assert job[0] == 'endpoint' and job[2][0] == uid
-    assert job[3] == VOICE + QUIET * 150
+    assert job[3] == VOICE + QUIET * 100
     assert not pipeline._busy
     return job
 
@@ -107,84 +107,165 @@ def reply(run, job, text, error=None):
     run.pipeline.poll()
 
 
-def test_complete_candidate_finalizes_at_15_seconds_and_reuses_the_text(run):
+def test_complete_candidate_finalizes_at_one_second_and_reuses_the_text(run):
     job = candidate(run)
     reply(run, job, '문을 닫아 주세요.')
     assert run.transcripts == [(job[2][0], '문을 닫아 주세요.')]
     assert run.pipeline.jobs.empty()
     assert not run.pipeline._busy
-    assert 'endpoint_finalized:silence_s=1.50' in run.reports
+    assert 'endpoint_finalized:silence_s=1.00' in run.reports
 
 
-@pytest.mark.parametrize('fallback_s', [3.0, 3.01, 1.51])
+@pytest.fixture
+def predecoded_run(run):
+    run.pipeline.command_stream = StreamingUtteranceCollector(
+        lambda frame, _: any(frame), settings=run.pipeline.command_stream.settings,
+        early_endpoint_s=0.8,
+    )
+    return run
+
+
+@pytest.mark.parametrize('text, final_s', [('문을 닫아 주세요.', 1.0), ('문을 닫고', 2.0)])
+def test_predecoded_result_waits_for_its_exact_silence_boundary(predecoded_run, text, final_s):
+    run = predecoded_run
+    pipeline = run.pipeline
+    pipeline.feed(VOICE + QUIET * 39)
+    assert pipeline.jobs.empty()
+    pipeline.feed(QUIET)
+    job = pipeline.jobs.get_nowait()
+    assert job[0] == 'endpoint' and job[3] == VOICE + QUIET * 100
+    reply(run, job, text)
+    assert run.transcripts == []
+    pipeline.feed(QUIET * 9)
+    pipeline.poll()
+    assert run.transcripts == []  # 0.98 seconds cannot finalize a complete sentence.
+    pipeline.feed(QUIET)
+    pipeline.poll()
+    if final_s == 2.0:
+        assert run.transcripts == []
+        pipeline.feed(QUIET * 49)
+        pipeline.poll()
+        assert run.transcripts == []  # Incomplete text is still waiting at 1.98 s.
+        pipeline.feed(QUIET)
+    assert run.transcripts == [(job[2][0], text)]
+    assert f'endpoint_finalized:silence_s={final_s:.2f}' in run.reports
+    reply(run, job, text)  # A repeated result cannot deliver the same UID again.
+    pipeline.feed(QUIET * 100)
+    pipeline.poll()
+    assert run.transcripts == [(job[2][0], text)] and pipeline.jobs.empty()
+
+
+def test_resuming_before_one_second_invalidates_the_cached_complete_candidate(predecoded_run):
+    run = predecoded_run
+    pipeline = run.pipeline
+    pipeline.feed(VOICE + QUIET * 40)
+    old = pipeline.jobs.get_nowait()
+    reply(run, old, '문을 열어 주세요.')
+    pipeline.feed(QUIET * 9 + SECOND + QUIET * 39)
+    pipeline.poll()
+    assert run.transcripts == [] and pipeline.jobs.empty()
+    pipeline.feed(QUIET)
+    new = pipeline.jobs.get_nowait()
+    assert new[2][0] == old[2][0] and new[2][1] != old[2][1]
+    assert new[3] == VOICE + QUIET * 49 + SECOND + QUIET * 100
+    reply(run, new, '문을 열지 말고 닫아 주세요.')
+    assert run.transcripts == []
+    pipeline.feed(QUIET * 10)
+    pipeline.poll()
+    assert run.transcripts == [(old[2][0], '문을 열지 말고 닫아 주세요.')]
+
+
+@pytest.mark.parametrize('fallback_s', [0.5, 1.0, 1.01, 2.0, 3.0])
+def test_explicit_fallback_settings_are_preserved(fallback_s):
+    pipeline = DialoguePipeline(
+        recorder_factory=None, wake=None, transcriber=None, is_speech=lambda *_: False,
+        publish_transcript=None, publish_control=None, publish_interruption=None,
+        report=None, settings=CaptureSettings(silence_timeout_s=fallback_s),
+    )
+    assert pipeline.command_stream.settings.silence_timeout_s == fallback_s
+    assert pipeline.command_stream.early_endpoint_s == (1.0 if fallback_s > 1.0 else None)
+    pipeline.close()
+
+
+@pytest.mark.parametrize('predecode_s', [True, 0.0, -0.1, 1.01, float('inf'), float('nan')])
+def test_predecode_must_begin_by_the_one_second_complete_boundary(predecode_s):
+    with pytest.raises(ValueError, match='predecode must start by 1.0 seconds'):
+        DialoguePipeline(
+            recorder_factory=None, wake=None, transcriber=None, is_speech=lambda *_: False,
+            publish_transcript=None, publish_control=None, publish_interruption=None,
+            report=None, endpoint_predecode_s=predecode_s,
+        )
+
+
+@pytest.mark.parametrize('fallback_s', [2.0, 2.01, 1.01, 3.0])
 def test_candidate_zero_padding_matches_actual_fallback_pcm_without_waiting(run, fallback_s):
     settings = CaptureSettings(silence_timeout_s=fallback_s)
     stream = StreamingUtteranceCollector(
-        lambda frame, _: any(frame), settings=settings, early_endpoint_s=1.5,
+        lambda frame, _: any(frame), settings=settings, early_endpoint_s=1.0,
     )
     run.pipeline.command_stream = stream
-    run.pipeline.feed(VOICE + QUIET * 75)
+    run.pipeline.feed(VOICE + QUIET * 50)
     job = run.pipeline.jobs.get_nowait()
     observed = stream.collector.snapshot('endpoint_check')
     assert job[0] == 'endpoint' and job[2][1] == observed.revision
-    assert observed.pcm == VOICE + QUIET * 75 and observed.silence_s == 1.5
-    assert stream.collector.silent_frames == 75
+    assert observed.pcm == VOICE + QUIET * 50 and observed.silence_s == 1.0
+    assert stream.collector.silent_frames == 50
     baseline = StreamingUtteranceCollector(lambda frame, _: any(frame), settings=settings)
     events = baseline.feed(VOICE + QUIET * math.ceil(fallback_s / 0.02))
     final, = [event for event in events if event.status == 'complete']
     assert job[3] == final.pcm
-    assert observed.pcm == VOICE + QUIET * 75  # The immutable capture was not padded.
+    assert observed.pcm == VOICE + QUIET * 50  # The immutable capture was not padded.
     reply(run, job, '문을 닫아 주세요.')
     assert run.transcripts == [(job[2][0], '문을 닫아 주세요.')]
-    assert 'endpoint_finalized:silence_s=1.50' in run.reports
+    assert 'endpoint_finalized:silence_s=1.00' in run.reports
 
 
 def test_padding_preserves_observed_nonzero_vad_negative_audio(run):
     stream = StreamingUtteranceCollector(
-        lambda frame, _: frame[:2] == VOICE[:2], early_endpoint_s=1.5,
+        lambda frame, _: frame[:2] == VOICE[:2], early_endpoint_s=1.0,
     )
     run.pipeline.command_stream = stream
-    observed_pcm = VOICE + SECOND * 75
+    observed_pcm = VOICE + SECOND * 50
     run.pipeline.feed(observed_pcm)
     job = run.pipeline.jobs.get_nowait()
     observed = stream.collector.snapshot('endpoint_check')
-    assert observed.pcm == observed_pcm and observed.silence_s == 1.5
-    assert job[3] == observed_pcm + QUIET * 75
-    assert job[3] != VOICE + SECOND * 150  # Real future noise is not assumed identical.
-    assert stream.collector.silent_frames == 75
+    assert observed.pcm == observed_pcm and observed.silence_s == 1.0
+    assert job[3] == observed_pcm + QUIET * 50
+    assert job[3] != VOICE + SECOND * 100  # Real future noise is not assumed identical.
+    assert stream.collector.silent_frames == 50
     reply(run, job, '문을 닫아 주세요.')
-    assert 'endpoint_finalized:silence_s=1.50' in run.reports
+    assert 'endpoint_finalized:silence_s=1.00' in run.reports
 
 
 def test_synthetic_padding_does_not_advance_the_real_maximum_utterance_limit(run):
     pipeline = run.pipeline
-    pipeline.feed(VOICE * 890 + QUIET * 75)  # 19.3 seconds actually captured.
+    pipeline.feed(VOICE * 940 + QUIET * 50)  # 19.8 seconds actually captured.
     job = pipeline.jobs.get_nowait()
     assert len(job[3]) / 32000 == 20.8  # The extra input is inference-only.
-    assert pipeline.command_stream.collector.speech_frames == 965
+    assert pipeline.command_stream.collector.speech_frames == 990
     assert pipeline.session.active and 'utterance_discarded:too_long' not in run.reports
-    pipeline.feed(QUIET * 36)  # Actual capture now exceeds the unchanged 20-second limit.
+    pipeline.feed(QUIET * 11)  # Actual capture now exceeds the unchanged 20-second limit.
     assert not pipeline.session.active
     assert 'utterance_discarded:too_long' in run.reports
     reply(run, job, '문을 닫아 주세요.')
     assert run.transcripts == []
 
 
-def test_uncertain_candidate_keeps_three_seconds_without_a_second_decode(run):
+def test_uncertain_candidate_keeps_two_seconds_without_a_second_decode(run):
     job = candidate(run)
     reply(run, job, '문을 닫고.')
     assert run.transcripts == []
-    run.pipeline.feed(QUIET * 74)
+    run.pipeline.feed(QUIET * 49)
     assert run.transcripts == [] and run.pipeline.jobs.empty()
     run.pipeline.feed(QUIET)
     assert run.transcripts == [(job[2][0], '문을 닫고.')]
     assert run.pipeline.jobs.empty()
-    assert 'endpoint_finalized:silence_s=3.00' in run.reports
+    assert 'endpoint_finalized:silence_s=2.00' in run.reports
 
 
-def test_result_arriving_after_three_seconds_reuses_the_inflight_decode(run):
+def test_result_arriving_after_two_seconds_reuses_the_inflight_decode(run):
     job = candidate(run)
-    run.pipeline.feed(QUIET * 75)
+    run.pipeline.feed(QUIET * 50)
     assert run.pipeline.jobs.empty() and run.pipeline._busy
     reply(run, job, '문을 닫아 주세요.')
     assert run.transcripts == [(job[2][0], '문을 닫아 주세요.')]
@@ -195,7 +276,7 @@ def test_result_arriving_after_three_seconds_reuses_the_inflight_decode(run):
 def test_reset_releases_busy_owned_by_a_finalized_endpoint_wait(run):
     old = candidate(run)
     pipeline = run.pipeline
-    pipeline.feed(QUIET * 75)
+    pipeline.feed(QUIET * 50)
     assert pipeline._busy and pipeline._endpoint_final is not None
     pipeline.overflow.set()
     pipeline.poll()
@@ -213,7 +294,7 @@ def test_reset_releases_busy_owned_by_a_finalized_endpoint_wait(run):
 def test_stale_endpoint_does_not_release_busy_owned_by_a_new_wake_job(run):
     old = candidate(run)
     pipeline = run.pipeline
-    pipeline.feed(QUIET * 75)
+    pipeline.feed(QUIET * 50)
     pipeline.overflow.set()
     pipeline.poll()
     pipeline.feed(VOICE + QUIET * 20)
@@ -225,14 +306,14 @@ def test_stale_endpoint_does_not_release_busy_owned_by_a_new_wake_job(run):
     assert not pipeline._busy and pipeline.session.active
 
 
-def test_renewed_speech_invalidates_old_complete_text_even_after_new_15_second_pause(run):
+def test_renewed_speech_invalidates_old_complete_text_even_after_new_one_second_pause(run):
     old = candidate(run)
-    run.pipeline.feed(SECOND + QUIET * 75)
+    run.pipeline.feed(SECOND + QUIET * 50)
     reply(run, old, '문을 닫아 주세요.')
     assert run.transcripts == []
     new = run.pipeline.jobs.get_nowait()
     assert new[2] != old[2]
-    assert new[3] == VOICE + QUIET * 75 + SECOND + QUIET * 150
+    assert new[3] == VOICE + QUIET * 50 + SECOND + QUIET * 100
     reply(run, new, '문을 닫아 주시고 불도 꺼 주세요.')
     assert run.transcripts == [(old[2][0], '문을 닫아 주시고 불도 꺼 주세요.')]
 
@@ -240,17 +321,17 @@ def test_renewed_speech_invalidates_old_complete_text_even_after_new_15_second_p
 def test_renewed_speech_drops_a_cached_uncertain_transcript(run):
     old = candidate(run)
     reply(run, old, '문을 닫고')
-    run.pipeline.feed(SECOND + QUIET * 150)
+    run.pipeline.feed(SECOND + QUIET * 100)
     final = run.pipeline.jobs.get_nowait()
     assert final[0] == 'command'
-    assert final[3] == VOICE + QUIET * 75 + SECOND + QUIET * 150
+    assert final[3] == VOICE + QUIET * 50 + SECOND + QUIET * 100
     reply(run, final, '문을 닫고 불을 꺼 주세요.')
     assert run.transcripts == [(old[2][0], '문을 닫고 불을 꺼 주세요.')]
 
 
 def test_obsolete_inflight_result_does_not_clear_a_new_final_job_busy_flag(run):
     old = candidate(run)
-    run.pipeline.feed(SECOND + QUIET * 150)
+    run.pipeline.feed(SECOND + QUIET * 100)
     assert run.pipeline._busy
     reply(run, old, '이전 후보예요.')
     assert run.pipeline._busy and run.transcripts == []
@@ -263,12 +344,12 @@ def test_obsolete_inflight_result_does_not_clear_a_new_final_job_busy_flag(run):
 
 def test_final_audio_replaces_an_obsolete_candidate_not_yet_taken_by_worker(run):
     pipeline = run.pipeline
-    pipeline.feed(VOICE + QUIET * 75)
+    pipeline.feed(VOICE + QUIET * 50)
     assert not pipeline.jobs.empty()
-    pipeline.feed(SECOND + QUIET * 150)
+    pipeline.feed(SECOND + QUIET * 100)
     final = pipeline.jobs.get_nowait()
     assert final[0] == 'command'
-    assert final[3] == VOICE + QUIET * 75 + SECOND + QUIET * 150
+    assert final[3] == VOICE + QUIET * 50 + SECOND + QUIET * 100
     reply(run, final, '이어진 문장이에요.')
     assert len(run.transcripts) == 1
 
@@ -295,8 +376,12 @@ def test_candidate_failure_does_not_end_the_utterance_early(run):
     job = candidate(run)
     reply(run, job, None, 'RuntimeError')
     assert run.pipeline.session.active and run.transcripts == []
-    run.pipeline.feed(QUIET * 75)
-    assert run.pipeline.session.active and run.pipeline.session.utterance_id is None
+    run.pipeline.feed(QUIET * 50)
+    assert run.pipeline.session.active and run.pipeline._busy
+    final_job = run.pipeline.jobs.get_nowait()
+    assert final_job[0] == 'command' and final_job[2] == job[2][0]
+    reply(run, final_job, None, 'RuntimeError')
+    assert run.pipeline.session.utterance_id is None
     assert 'transcription_failed:RuntimeError' in run.reports
     assert run.pipeline.jobs.empty()
     next_job = candidate(run)
@@ -307,11 +392,11 @@ def test_candidate_failure_does_not_end_the_utterance_early(run):
 
 def test_report_includes_actual_audio_silence_and_candidate_wait(run):
     job = candidate(run)
-    run.now = 2.1
+    run.now = 1.6
     run.pipeline.feed(QUIET * 30)
     reply(run, job, '완료했습니다.')
     assert 'endpoint_checked:wait_s=0.600' in run.reports
-    assert 'endpoint_finalized:silence_s=2.10' in run.reports
+    assert 'endpoint_finalized:silence_s=1.60' in run.reports
 
 
 def test_wake_detection_keeps_its_short_audio_boundary(run):
@@ -320,4 +405,4 @@ def test_wake_detection_keeps_its_short_audio_boundary(run):
     pipeline.feed(VOICE + QUIET * 20)
     job = pipeline.jobs.get_nowait()
     assert job[0] == 'wake'
-    assert 'checking_endpoint:silence_s=1.50' not in run.reports
+    assert 'checking_endpoint:silence_s=1.00' not in run.reports

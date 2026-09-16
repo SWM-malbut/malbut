@@ -1,6 +1,7 @@
 """Keep continuous capture and local inference outside serialized dialogue events."""
 
 import math
+from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
@@ -11,6 +12,14 @@ from malbut_stt.endpoint import is_complete_korean_utterance
 from malbut_stt.pipeline import pcm_bytes
 from malbut_stt.streaming import StreamingUtteranceCollector
 from malbut_stt.wake import is_wake_phrase
+
+
+@dataclass(frozen=True)
+class _StreamInput:
+    pcm: bytes
+    stream: object
+    final: bool
+    speech_end_s: float
 
 
 class DialoguePipeline:
@@ -25,7 +34,8 @@ class DialoguePipeline:
     def __init__(self, *, recorder_factory, wake, transcriber, is_speech,
                  publish_transcript, publish_control, publish_interruption,
                  report, settings=None, input_has_aec=False, clock=monotonic,
-                 on_wake=None, endpoint_predecode_s: float | None = None):
+                 on_wake=None, endpoint_predecode_s: float | None = None,
+                 partial_interval_s: float | None = 2.0, on_partial=None):
         self.recorder_factory = recorder_factory
         self.wake = wake
         self.transcriber = transcriber
@@ -35,23 +45,27 @@ class DialoguePipeline:
         self.clock = clock
         self._event_time = None
         self.on_wake = on_wake
+        self.on_partial = on_partial
+        self._stream_factory = getattr(transcriber, 'create_stream', None)
+        self._stream = None
         self.input_has_aec = input_has_aec
         self.session = ConversationSession(
             clock=lambda: self.clock() if self._event_time is None else self._event_time,
             publish_transcript=publish_transcript,
             publish_control=self._publish_control,
         )
-        settings = settings or CaptureSettings(silence_timeout_s=3.0)
+        settings = settings or CaptureSettings(silence_timeout_s=2.0)
         if endpoint_predecode_s is not None and (
             isinstance(endpoint_predecode_s, bool)
             or not math.isfinite(endpoint_predecode_s)
-            or not 0 < endpoint_predecode_s <= 1.5 < settings.silence_timeout_s
+            or not 0 < endpoint_predecode_s <= 1.0 < settings.silence_timeout_s
         ):
-            raise ValueError('predecode must start by 1.5 seconds before the fallback')
+            raise ValueError('predecode must start by 1.0 seconds before the fallback')
         self.command_stream = StreamingUtteranceCollector(
             is_speech, settings=settings,
             early_endpoint_s=(endpoint_predecode_s if endpoint_predecode_s is not None
-                              else 1.5 if settings.silence_timeout_s > 1.5 else None),
+                              else 1.0 if settings.silence_timeout_s > 1.0 else None),
+            partial_interval_s=(partial_interval_s if callable(self._stream_factory) else None),
         )
         self.wake_stream = StreamingUtteranceCollector(
             is_speech, settings=CaptureSettings(silence_timeout_s=0.4, max_utterance_s=6.0),
@@ -79,10 +93,12 @@ class DialoguePipeline:
         self._raw_gate_until = 0.0
         self._tail_stream = None
         self._endpoint_job = None
+        self._endpoint_is_partial = False
         self._endpoint_requested_at = None
         self._endpoint_candidate = None
         self._endpoint_result = None
         self._endpoint_final = None
+        self._final_input = None
 
     @property
     def pending_addressee(self):
@@ -141,8 +157,12 @@ class DialoguePipeline:
                 break
             text, error_name = None, None
             try:
-                engine = self.wake if kind == 'wake' else self.transcriber
-                text = engine.transcribe(pcm, 16000)
+                if isinstance(pcm, _StreamInput):
+                    text = pcm.stream.transcribe(
+                        pcm.pcm, 16000, final=pcm.final, speech_end_s=pcm.speech_end_s)
+                else:
+                    engine = self.wake if kind == 'wake' else self.transcriber
+                    text = engine.transcribe(pcm, 16000)
             except Exception as error:
                 error_name = type(error).__name__
             finally:
@@ -172,6 +192,8 @@ class DialoguePipeline:
         self._tail_stream = None
         self._endpoint_candidate = None
         self._endpoint_result = None
+        self._stream = None
+        self._final_input = None
         # A finalized utterance may own busy while reusing its in-flight
         # endpoint decode. Cancelling that owner must not block future wakes.
         if self._endpoint_final is not None:
@@ -218,8 +240,8 @@ class DialoguePipeline:
         except Empty:
             pass
         else:
-            if result[0] == 'endpoint':
-                self._accept_endpoint(*result[1:])
+            if result[0] in ('endpoint', 'partial'):
+                self._accept_endpoint(*result[1:], partial=result[0] == 'partial')
             else:
                 self._busy = False
                 self._accept_result(*result)
@@ -269,9 +291,15 @@ class DialoguePipeline:
                     continue
                 if self.session.active:
                     self._capture_id = self.session.user_speech_started()
+                    self._endpoint_result = None
+                    self._stream = (self._stream_factory() if callable(self._stream_factory)
+                                    and self.command_stream.partial_interval_s is not None
+                                    else None)
                     self._utterance_playback_id = self.session.interrupted_playback_id
                     self.report('speech_started')
-            elif event.status == 'endpoint_check':
+            elif event.status in ('endpoint_check', 'partial_check'):
+                if event.status == 'partial_check' and self._stream is None:
+                    continue
                 if not self._discard_capture and self._capture_id is not None:
                     self._endpoint_candidate = (self._capture_id, event)
                     self._submit_endpoint()
@@ -295,24 +323,55 @@ class DialoguePipeline:
                 or self._busy or self._discard_capture):
             return
         uid, event = self._endpoint_candidate
-        if (uid != self._capture_id
-                or not self.command_stream.endpoint_is_current(event.revision)):
+        collector = self.command_stream.collector
+        partial = event.status == 'partial_check'
+        if (uid != self._capture_id or not collector.started
+                or (not partial
+                    and not self.command_stream.endpoint_is_current(event.revision))):
             self._endpoint_candidate = None
             return
+        if partial:
+            # During a pause, wait for the endpoint snapshot instead of
+            # starting another preview that would delay its fresher audio.
+            if collector.silent_frames:
+                self._endpoint_candidate = None
+                return
+            # Replace an older pending preview with all audio collected so far.
+            event = collector.snapshot('partial_check')
         key = (self._generation, uid, event.revision)
+        if (self._endpoint_result is not None and self._endpoint_result[0] == key
+                and self._usable_text(*self._endpoint_result[1:])):
+            self._endpoint_candidate = None
+            return
         # Match the fallback input duration without extending observed silence.
         target_frames = math.ceil(self.command_stream.settings.silence_timeout_s / 0.02)
         observed_frames = round(event.silence_s / 0.02)
         padding_frames = max(0, target_frames - observed_frames)
         pcm = event.pcm + bytes(padding_frames * 640)
         try:
-            self.jobs.put_nowait(('endpoint', key[0], (uid, event.revision), pcm))
+            kind = 'partial' if partial else 'endpoint'
+            payload = self._inference_input(
+                event.pcm if self._stream is not None else pcm, silence_s=event.silence_s)
+            self.jobs.put_nowait((kind, key[0], (uid, event.revision),
+                                 payload))
         except Full:
             return
         self._endpoint_job = key
+        self._endpoint_is_partial = partial
         self._endpoint_requested_at = self.clock()
         self._endpoint_candidate = None
-        self.report(f'checking_endpoint:silence_s={event.silence_s:.2f}')
+        self.report('partial_started' if partial else
+                    f'checking_endpoint:silence_s={event.silence_s:.2f}')
+
+    @staticmethod
+    def _usable_text(text, error):
+        return error is None and isinstance(text, str) and bool(text.strip())
+
+    def _inference_input(self, pcm, *, final=False, silence_s=0.0):
+        if self._stream is None:
+            return pcm
+        speech_end_s = max(0.0, len(pcm) / 32000 - silence_s)
+        return _StreamInput(pcm, self._stream, final, speech_end_s)
 
     def _complete_capture(self, kind, event):
         uid = self._capture_id
@@ -323,14 +382,17 @@ class DialoguePipeline:
         self.report('transcribing' if kind == 'command' else 'recognizing_wake')
         if kind == 'command':
             self.report(f'endpoint_finalized:silence_s={event.silence_s:.2f}')
-            if self._endpoint_result is not None and self._endpoint_result[0] == key:
+            if (self._endpoint_result is not None and self._endpoint_result[0] == key
+                    and self._usable_text(*self._endpoint_result[1:])):
                 _, text, error = self._endpoint_result
                 self._endpoint_result = None
                 self._busy = False
                 self._accept_result('command', key[0], uid, text, error)
                 return
-            if self._endpoint_job == key:
+            if self._endpoint_job == key and not self._endpoint_is_partial:
                 self._endpoint_final = key
+                self._final_input = self._inference_input(
+                    event.pcm, final=True, silence_s=event.silence_s)
                 return
         # A resumed utterance can finish before its obsolete candidate is taken
         # by the worker. Replace only that queued candidate with the final audio.
@@ -340,14 +402,16 @@ class DialoguePipeline:
             except Empty:
                 pass
             else:
-                if stale[0] != 'endpoint':
+                if stale[0] not in ('endpoint', 'partial'):
                     self._terminate('transcription_queue_full')
                     return
                 if self._endpoint_job == (stale[1], *stale[2]):
                     self._endpoint_job = None
-        self.jobs.put_nowait((kind, self._generation, uid, event.pcm))
+        payload = (self._inference_input(event.pcm, final=True, silence_s=event.silence_s)
+                   if kind == 'command' else event.pcm)
+        self.jobs.put_nowait((kind, self._generation, uid, payload))
 
-    def _accept_endpoint(self, generation, token, text, error_name):
+    def _accept_endpoint(self, generation, token, text, error_name, *, partial=False):
         uid, revision = token
         key = (generation, uid, revision)
         if self._endpoint_job == key:
@@ -359,26 +423,42 @@ class DialoguePipeline:
             return
         if self._endpoint_final == key:
             self._endpoint_final = None
-            self._busy = False
-            self._accept_result('command', generation, uid, text, error_name)
+            payload, self._final_input = self._final_input, None
+            if self._usable_text(text, error_name):
+                self._busy = False
+                self._accept_result('command', generation, uid, text, error_name)
+            else:
+                self.report('partial_failed')
+                self.jobs.put_nowait(('command', generation, uid, payload))
             return
-        if (uid != self._capture_id or not self.session.active
-                or not self.command_stream.endpoint_is_current(revision)):
+        if uid != self._capture_id or not self.session.active:
+            return
+        if self._usable_text(text, error_name):
+            self.report('partial_ready')
+            if self.on_partial is not None:
+                self.on_partial(uid, text)
+        else:
+            self.report('partial_failed')
+        # Speech-time previews do not cover quiet/weak trailing syllables yet.
+        # Only an endpoint snapshot can supply a final result, even if VAD's
+        # last voiced revision did not change while that tail was recorded.
+        if partial or revision != self.command_stream.collector.revision:
             return
         self._endpoint_result = (key, text, error_name)
         self._finish_ready_endpoint()
 
     def _finish_ready_endpoint(self):
-        """Reuse early inference only after 1.5 seconds of current observed silence."""
+        """Reuse early inference only after 1.0 seconds of current observed silence."""
         if self._endpoint_result is None:
             return
         (generation, uid, revision), text, error_name = self._endpoint_result
         if (generation != self._generation or uid != self._capture_id
                 or not self.session.active
-                or not self.command_stream.endpoint_is_current(revision)):
+                or not self.command_stream.collector.started
+                or self.command_stream.collector.revision != revision):
             self._endpoint_result = None
             return
-        if (self.command_stream.collector.silent_frames * 0.02 >= 1.5
+        if (self.command_stream.collector.silent_frames * 0.02 >= 1.0
                 and error_name is None and is_complete_korean_utterance(text)):
             event = self.command_stream.finish_endpoint(revision)
             if event is not None:
@@ -505,5 +585,7 @@ class DialoguePipeline:
         self._endpoint_candidate = None
         self._endpoint_result = None
         self._endpoint_final = None
+        self._final_input = None
+        self._stream = None
         if failure is not None:
             raise failure

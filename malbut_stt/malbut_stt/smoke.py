@@ -178,6 +178,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                     transcriber=transcriber, is_speech=vad.is_speech,
                     publish_transcript=lambda uid, text: emit(
                         'transcript', utterance_id=uid, text=text),
+                    on_partial=lambda uid, text: emit(
+                        'partial_transcript', utterance_id=uid, text=text),
                     publish_control=lambda *_: None, publish_interruption=lambda *_: None,
                     report=lambda event: report(
                         'listening' if options.manual and event == 'waiting_for_wake' else event),

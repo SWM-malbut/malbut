@@ -14,6 +14,10 @@ import pytest
 from malbut_stt.transcription import LocalWhisperTranscriber
 
 
+def fake_segment(text, end=0.1):
+    return SimpleNamespace(text=text, start=0.0, end=end)
+
+
 def write_wav(path, pcm, *, rate=16000, channels=1, width=2):
     with wave.open(str(path), 'wb') as output:
         output.setparams((channels, width, rate, 0, 'NONE', 'not compressed'))
@@ -40,7 +44,7 @@ def runtime(tmp_path, monkeypatch):
         def transcribe(self, audio, **options):
             state.requests.append((audio, options))
             text = '  알려줘.  ' if len(state.requests) == 1 else '이동해줘.'
-            return iter([SimpleNamespace(text=text)]), None
+            return iter([fake_segment(text)]), None
 
     monkeypatch.setitem(sys.modules, 'faster_whisper', SimpleNamespace(WhisperModel=Model))
     monkeypatch.setitem(sys.modules, 'webrtcvad', SimpleNamespace(Vad=lambda _: SimpleNamespace(
@@ -66,7 +70,7 @@ def test_real_pipeline_observes_continuation_after_its_first_early_result(runtim
     first, second = result['transcripts']
     assert first['utterance_id'] != second['utterance_id']
     assert first['at_s'] < result['source']['duration_s'] < second['at_s']
-    assert all(item['vad_last_speech_to_text_s'] > 1.4 for item in result['transcripts'])
+    assert all(item['vad_last_speech_to_text_s'] > 0.9 for item in result['transcripts'])
     assert result['source']['pcm_sha256'] == hashlib.sha256(pcm).hexdigest()
     assert result['model_transcribe_calls'] == 2
     assert len(result['inference']) == len(runtime.requests) == 2
@@ -93,7 +97,7 @@ def test_busy_discarded_speech_cannot_shorten_an_earlier_transcripts_latency(run
 
     def slow_transcribe(*_args, **_kwargs):
         Event().wait(2.7)
-        return iter([SimpleNamespace(text='알려줘.')]), None
+        return iter([fake_segment('알려줘.')]), None
 
     transcriber.model.transcribe = slow_transcribe
     result = runtime.module.replay_wav(path, transcriber, max_runtime_s=12.0)
@@ -102,8 +106,8 @@ def test_busy_discarded_speech_cannot_shorten_an_earlier_transcripts_latency(run
     assert any(item['event'] == 'speech_discarded:busy' for item in result['events'])
     transcript = result['transcripts'][0]
     assert 0 <= transcript['first_vad_speech_at_s'] <= transcript['last_vad_speech_at_s'] < 0.3
-    assert transcript['at_s'] > 4.1
-    assert transcript['vad_last_speech_to_text_s'] > 4.0
+    assert transcript['at_s'] > 3.6
+    assert transcript['vad_last_speech_to_text_s'] > 3.5
     assert transcript['vad_last_speech_to_text_s'] == pytest.approx(
         transcript['at_s'] - transcript['last_vad_speech_at_s'])
 
@@ -119,7 +123,7 @@ def test_resumed_voice_keeps_first_onset_but_updates_its_own_last_voice(runtime,
         if len(calls) == 1:
             Event().wait(2.7)
         text = '알려줘.' if len(calls) == 1 else '거실로 이동해줘.'
-        return iter([SimpleNamespace(text=text)]), None
+        return iter([fake_segment(text, end=0.1 if len(calls) == 1 else 2.0)]), None
 
     transcriber.model.transcribe = delayed_first_transcribe
     result = runtime.module.replay_wav(path, transcriber, max_runtime_s=12.0)
@@ -129,7 +133,7 @@ def test_resumed_voice_keeps_first_onset_but_updates_its_own_last_voice(runtime,
     assert transcript['text'] == '거실로 이동해줘.'
     assert 0 <= transcript['first_vad_speech_at_s'] < 0.3
     assert 1.8 <= transcript['last_vad_speech_at_s'] < 2.3
-    assert transcript['vad_last_speech_to_text_s'] > 1.4
+    assert transcript['vad_last_speech_to_text_s'] > 0.9
 
 
 def test_required_wake_opens_dialogue_and_two_followups_keep_distinct_timing(runtime, tmp_path):
@@ -142,7 +146,7 @@ def test_required_wake_opens_dialogue_and_two_followups_keep_distinct_timing(run
     def transcribe(audio, **options):
         runtime.requests.append((audio, options))
         text = '제이크야' if options['initial_prompt'] is not None else next(commands)
-        return iter([SimpleNamespace(text=text)]), None
+        return iter([fake_segment(text)]), None
 
     transcriber.model.transcribe = transcribe
     result = runtime.module.replay_wav(path, transcriber, wake_required=True)
@@ -157,7 +161,7 @@ def test_required_wake_opens_dialogue_and_two_followups_keep_distinct_timing(run
     assert first['utterance_id'] != second['utterance_id']
     assert 0.8 < first['first_vad_speech_at_s'] < 1.2
     assert 2.9 < second['first_vad_speech_at_s'] < 3.3
-    assert all(item['vad_last_speech_to_text_s'] > 1.4 for item in result['transcripts'])
+    assert all(item['vad_last_speech_to_text_s'] > 0.9 for item in result['transcripts'])
     assert [call['initial_prompt'] for call in result['inference']] == [
         '로봇 이름은 제이크입니다.', None, None,
     ]
@@ -356,7 +360,7 @@ def test_mlx_replay_measures_shared_adapter_and_reports_its_backend(
 
             def transcribe(audio, **options):
                 runtime.requests.append((audio, options))
-                return iter([SimpleNamespace(text='알려줘.')]), None
+                return iter([fake_segment('알려줘.')]), None
 
             self.model = SimpleNamespace(transcribe=transcribe, compute_type='float16',
                                          beam_search=False, decoding='greedy with fallback')
@@ -375,7 +379,7 @@ def test_mlx_replay_measures_shared_adapter_and_reports_its_backend(
     assert result['inference'][0]['beam_size'] is None
     assert result['inference'][0]['decoding'] == 'greedy with fallback'
     assert result['inference'][0]['elapsed_s'] is not None
-    assert result['transcripts'][0]['vad_last_speech_to_text_s'] >= 1.4
+    assert result['transcripts'][0]['vad_last_speech_to_text_s'] >= 0.9
     assert len(runtime.loads) == len(runtime.requests) == 1
 
     transcriber = MlxTranscriber(runtime.model_dir)

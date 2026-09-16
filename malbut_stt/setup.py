@@ -11,7 +11,13 @@ setup(
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
-        ('share/' + package_name, ['package.xml', 'README.md', 'requirements.txt']),
+        ('share/' + package_name, [
+            'package.xml', 'README.md', 'requirements.txt', 'requirements-whisper-cpp.txt',
+        ]),
+        ('share/' + package_name + '/config', ['config/jetson.yaml']),
+        ('share/' + package_name + '/native', [
+            'native/CMakeLists.txt', 'native/README.md', 'native/whisper_cpp_bridge.cpp',
+        ]),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

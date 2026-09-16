@@ -247,7 +247,7 @@ class MockProvider(AgentProvider):
             word in compact for word in ('열어', '잠금해제')
         ):
             return self._refusal(
-                'Malbut에는 문을 여는 기능이 없어.',
+                '제이크는 문을 여는 기능이 없어.',
                 'unsupported_capability',
             )
 
