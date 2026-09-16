@@ -56,6 +56,31 @@ def test_png_costmap_palette_and_vertical_flip_preserve_original_message():
     assert message.data == original
 
 
+def test_png_map_palette_preserves_native_grid_and_matches_existing_live_preview():
+    """Cloud /map uses neutral occupancy colors, without scaling or smoothing."""
+    message = _map(width=4, height=2, data=[-1, 0, 19, 20, 64, 65, 99, 100])
+    original = message.data[:]
+    cache = MapCache(palette='map')
+    cache.update(message)
+    metadata, png = cache.png()
+    pixels = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    assert pixels.shape == (message.info.height, message.info.width, 3)
+    assert pixels.tolist() == [
+        [[205, 205, 205], [39, 31, 25], [39, 31, 25], [39, 31, 25]],
+        [[247, 242, 247], [255, 255, 255], [255, 255, 255], [205, 205, 205]],
+    ]
+    assert metadata['resolution'] == message.info.resolution
+    assert metadata['origin'] == {'x': 2.0, 'y': -3.0, 'yaw': 0.0}
+    assert message.data == original
+    assert cache.png() == (metadata, png)
+
+
+def test_unsupported_palette_is_rejected():
+    """A misspelled cloud palette cannot silently fall back to costmap colors."""
+    with pytest.raises(ValueError, match='palette'):
+        MapCache(palette='invalid')
+
+
 def test_clear_forgets_map_and_never_reuses_its_image_version():
     """A restarted runtime cannot expose the previous runtime's cached image."""
     cache = MapCache()
@@ -98,7 +123,8 @@ def test_update_during_encoding_cannot_cache_an_old_png_for_a_new_map(monkeypatc
     """Encoding an old snapshot leaves the newer map and its version intact."""
     entered, release = threading.Event(), threading.Event()
 
-    def encode(message):
+    def encode(message, palette):
+        assert palette == 'costmap'
         entered.set()
         assert release.wait(timeout=2)
         return bytes([message.info.width])

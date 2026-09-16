@@ -38,6 +38,9 @@ for package_path in "${package_paths[@]}"; do
     exit 1
   fi
 done
+# The deployment copy includes cloud media; dependency failures stop before any
+# ROS build. Its helper prepares/reuses the SDK without installing OS packages.
+bash "$robot_source_dir/homecam_agent/scripts/build_robot_cloud.sh"
 colcon_executable="$(command -v colcon)"
 cd -- "$workspace_dir"
 # Keep factory build/install hooks intact and avoid upstream's optional uv sync.

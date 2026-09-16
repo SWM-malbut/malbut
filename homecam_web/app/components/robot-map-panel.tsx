@@ -10,6 +10,7 @@ import {
 import type { HomecamDevice } from "./homecam-dashboard";
 import type { RobotOperation } from "../robot-contract";
 import { ManagedRobotControls } from "./managed-robot-controls";
+import { ManagedRobotMap } from "./managed-robot-map";
 
 type RobotDriveModeSnapshot = {
   mode: "idle" | "destination" | "patrol" | "roaming" | "person_following";
@@ -106,9 +107,11 @@ export type RobotSemantics = {
 export function RobotMapPanel({
   device,
   initialMode = "view",
+  controlsMode = "legacy",
 }: {
   device: HomecamDevice | null;
   initialMode?: MapMode;
+  controlsMode?: "legacy" | "managed";
 }) {
   const deviceId = device?.id ?? "";
   const [snapshot, setSnapshot] = useState<RobotSnapshot | null>(null);
@@ -310,7 +313,7 @@ export function RobotMapPanel({
   }, [deviceId]);
 
   useEffect(() => {
-    if (!deviceId || !snapshot?.map?.revision) return;
+    if (controlsMode === "managed" || !deviceId || !snapshot?.map?.revision) return;
     const controller = new AbortController();
     void fetch(`/api/devices/${encodeURIComponent(deviceId)}/robot/semantic`, {
       cache: "no-store",
@@ -392,7 +395,7 @@ export function RobotMapPanel({
         semanticRetryTimer.current = null;
       }
     };
-  }, [deviceId, semanticRefresh, snapshot?.map?.revision]);
+  }, [controlsMode, deviceId, semanticRefresh, snapshot?.map?.revision]);
 
   useEffect(() => {
     window.queueMicrotask(() => void load());
@@ -429,7 +432,8 @@ export function RobotMapPanel({
     "waiting_for_map", "waiting_for_navigation", "exploring", "navigating", "review", "saving",
   ].includes(snapshot.state.state);
   const isOwner = device?.role === "owner";
-  const managed = snapshot?.state?.nav2.robot_interface === "malbut_manager_v1";
+  // The original map/editor stays unchanged. Robot controls live in their own tab.
+  const managed = controlsMode === "managed";
   const currentManagedGoal = managedGoal?.deviceId === deviceId && managedGoal?.mapId === snapshot?.map?.mapId
     ? { x: managedGoal.x, y: managedGoal.y } : null;
   const runtimeMode = snapshot?.state?.nav2.runtime_mode;
@@ -621,12 +625,6 @@ export function RobotMapPanel({
       return;
     }
     if (runtimeMode !== "navigation" || mapMode !== "navigate" || autonomousModeActive) return;
-    if (managed) {
-      if (!snapshot?.map) return;
-      setManagedGoal({ x, y, deviceId, mapId: snapshot.map.mapId });
-      setNotice("위치를 선택했습니다. 이동 버튼을 누르면 주행을 시작합니다.");
-      return;
-    }
     setNavigationPreview(null);
     setPreviewExpiresAt(0);
     void sendCommand("navigation_preview", { x, y });
@@ -998,9 +996,9 @@ export function RobotMapPanel({
   }, [draggingZone, snapshot?.map?.geometry, walkableArea]);
 
   return (
-    <section className="homecam-section robot-map-section" aria-labelledby="robot-map-title">
+    <section className={`homecam-section robot-map-section ${managed ? "managed-robot-section" : ""}`} aria-labelledby="robot-map-title">
       <div className="robot-map-topbar">
-        <h1 id="robot-map-title">{mapping ? "집 둘러보는 중" : navigationDriving ? "이동 중" : navigationSucceeded ? "이동 완료" : "우리 집"}</h1>
+        <h1 id="robot-map-title">{managed ? "로봇 기능" : mapping ? "집 둘러보는 중" : navigationDriving ? "이동 중" : navigationSucceeded ? "이동 완료" : "우리 집"}</h1>
         <div className="robot-map-mode-tabs" aria-label="지도 모드">
           {([
             ["view", "보기"],
@@ -1055,7 +1053,28 @@ export function RobotMapPanel({
                       : "저장된 공간과 말벗의 현재 위치를 확인하세요."}
             </span>
           </div>
-          <div className={`robot-map-card mode-${mapping ? "mapping" : mapMode}`}>
+          {managed ? (
+            snapshot?.map ? (
+              <ManagedRobotMap
+                key={`${deviceId}:${snapshot.map.mapId}`}
+                deviceId={deviceId}
+                map={snapshot.map}
+                pose={snapshot.online && snapshot.state?.localization.state === "ok" ? snapshot.state.pose : null}
+                goal={currentManagedGoal}
+                selectable={Boolean(isOwner && snapshot.online && runtimeMode === "navigation" && mapMode === "navigate")}
+                onSelect={({ x, y, mapId }) => {
+                  setManagedGoal({ x, y, mapId, deviceId });
+                  setNotice("위치를 선택했습니다. 이동 버튼을 누르면 주행을 시작합니다.");
+                }}
+              />
+            ) : (
+              <div className="robot-map-card"><div className="robot-map-empty">
+                <MapTrifold size={44} weight="light" aria-hidden="true" />
+                <strong>{loading ? "지도를 확인하고 있어요" : "로봇의 지도를 기다리고 있어요"}</strong>
+                <p>오른쪽에서 지도 만들기 모드 또는 저장 지도 주행을 준비하세요.</p>
+              </div></div>
+            )
+          ) : <div className={`robot-map-card mode-${mapping ? "mapping" : mapMode}`}>
             {snapshot?.map ? (
               <div
                 ref={mapCanvasRef}
@@ -1415,11 +1434,12 @@ export function RobotMapPanel({
                 <p>소유자가 지도 생성을 시작하고 집 안을 한 번 탐색한 뒤 완료하면 이곳에 저장됩니다.</p>
               </div>
             )}
-          </div>
+          </div>}
           <div className="robot-map-legend">
             <span><i className="is-robot" />말벗 위치와 방향</span>
             <span><i className="is-goal" />선택·탐색 지점</span>
-            <span><i className="is-route" />예상·실행 경로</span>
+            {!managed && <span><i className="is-route" />예상·실행 경로</span>}
+            {managed && <><span><i className="is-wall" />장애물</span><span><i className="is-free" />빈 공간</span><span><i className="is-unknown" />미확인</span></>}
             {roomDrafts.length > 0 && <span><i className="is-room" />방 경계·이름</span>}
             {renderedZoneFeatures.length > 0 && (
               <>
@@ -1433,9 +1453,10 @@ export function RobotMapPanel({
         </div>
 
         <aside className="robot-map-sidebar">
-          {managed && snapshot ? (
-            <ManagedRobotControls key={deviceId} snapshot={snapshot} isOwner={isOwner}
+          {managed ? (
+            snapshot ? <ManagedRobotControls key={deviceId} snapshot={snapshot} isOwner={isOwner}
               busy={busy || Boolean(activeCommand)} sendCommand={sendCommand} goal={currentManagedGoal} />
+              : <div className="robot-map-panel-card"><h3>로봇 연결 대기</h3><p>연결 후 실행 준비와 기능 요청을 사용할 수 있습니다.</p></div>
           ) : mapping ? (
             <>
               <div className="robot-map-summary">

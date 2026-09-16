@@ -2,20 +2,28 @@
 
 ROSOrin / Jetson Orin NX / ROS 2 Humble용 최상위 실행 패키지다.
 제조사 드라이버·TF·Nav2 설정을 재사용하고, Malbut 응용 서버를 연결한다.
-Gazebo, 시나리오, 기존 홈캠·AWS, LLM, 음성 서비스는 이 실행에 포함하지 않는다.
+Gazebo, 시나리오, LLM, 독립 음성 응용 서비스는 이 실행에 포함하지 않는다.
+클라우드 연결이 설정되어 있으면 기존 홈캠 KVS 영상·음성 전송 노드를 함께 실행한다.
 추적·순찰 알고리즘과 시스템 관리자의 정책은 변경하지 않는다.
 
 ## 실행 구성
 
 | 모드 | 시작하는 구성 | 시작하지 않는 구성 |
 | --- | --- | --- |
-| `sensors` (기본) | 공식 차체·센서·TF, 스캔 정규화, YOLO, ReID, RGB-D 위치 추정 | Nav2, 추적·순찰 서버, 관리자 |
-| `mapping` | AutoSLAM 대기 서버. Goal 수신 후 없는 매핑 구성만 기동 | YOLO, 추적·순찰, 저장 지도 AMCL, 미션 자동 실행 |
+| `sensors` (기본) | 공식 차체·센서·TF, YOLO, RGB-D 위치 추정 | Nav2, 추적·순찰 서버, 관리자 |
+| `mapping` | 공식 차체·센서·카메라 → 준비 확인 → AutoSLAM 대기 서버. Goal 수신 후 없는 SLAM·Nav2만 기동 | YOLO, 추적·순찰, 저장 지도 AMCL, 미션 자동 실행 |
 | `navigation` | 센서 구성 + Nav2 + 위치 저장·복원 + 추적·순찰 서버 → 준비 확인 → 관리자 | 미션 자동 실행 |
 
 기본은 `sensors`다. 시뮬레이션 지도를
 실로봇에 대신 넣지 않는다. 인식 환경 준비 전에는 `perception:=false`로
 센서만 확인한다. `navigation` 모드에서는 인식 파이프라인이 필요하다.
+
+실기기 적용본은 `build.sh` 하나로 홈캠 미디어까지 빌드한다.
+`cloud.launch.py`는 웹 명령·상태 연결만 유지하고, 웹이 시작하는 `robot.launch.py`가
+카메라와 영상 노드를 함께 관리한다. `HOMECAM_BACKEND_URL`이 설정된 모든 모드에서
+기존 `homecam_robot.launch.py`를 한 번 포함하며 토큰 파일 환경을 그대로 전달한다.
+별도 미디어 launch나 systemd 서비스를 중복 실행하지 않는다.
+전체 절차는 [실기기 클라우드 연결](../malbut_test/README_CLOUD.md)을 따른다.
 
 공식 실행을 다음 두 부분으로 나누어 **각각 한 번만** include한다.
 

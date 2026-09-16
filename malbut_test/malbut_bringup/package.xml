@@ -31,5 +31,6 @@
   <exec_depend>malbut_patrol</exec_depend>
   <exec_depend>malbut_autoslam</exec_depend>
   <exec_depend>malbut_system_manager</exec_depend>
+  <exec_depend>homecam_media_agent</exec_depend>
   <export><build_type>ament_python</build_type></export>
 </package>

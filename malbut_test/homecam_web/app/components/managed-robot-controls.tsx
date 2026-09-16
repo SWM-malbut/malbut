@@ -25,7 +25,8 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
   const maps = Array.isArray(target.maps) ? target.maps.map(record).filter((map) => typeof map.id === "string") : [];
   const requests = Array.isArray(target.requests) ? target.requests.map(record) : [];
   const active = requests.filter((request) => !terminal.has(String(request.state)));
-  const disabled = !isOwner || !snapshot.online || busy;
+  const managed = snapshot.state?.nav2.robot_interface === "malbut_manager_v1";
+  const disabled = !isOwner || !snapshot.online || !managed || busy;
   const stopped = runtime.state === "STOPPED";
   const navigationReady = runtime.mode === "navigation" && runtime.ready === true && servers.manager === true;
   const mappingReady = runtime.mode === "mapping" && runtime.ready === true && servers.autoslam === true;
@@ -33,6 +34,7 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
   return <>
     <div className="robot-map-panel-card managed-robot-controls">
       <h3>로봇 실행 준비</h3>
+      {!managed && <p>실로봇 연결을 기다리고 있습니다.</p>}
       <p>{String(runtime.message || runtime.state || "상태 수신 대기")}</p>
       {Array.isArray(runtime.waiting) && runtime.waiting.length > 0 && <p>준비 대기: {runtime.waiting.join(", ")}</p>}
       <div className="robot-map-actions is-inline">

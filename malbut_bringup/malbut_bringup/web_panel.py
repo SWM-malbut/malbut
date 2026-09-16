@@ -7,6 +7,7 @@ import hmac
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import math
+import os
 from pathlib import Path
 import queue
 import re
@@ -133,7 +134,7 @@ def image_jpeg(message):
 class PanelData:
     """Keep only latest sensor frames and bounded command/status history."""
 
-    def __init__(self):
+    def __init__(self, *, map_palette='costmap'):
         """Initialize bounded in-memory state without subscriptions or commands."""
         self.lock = threading.RLock()
         self.encode_lock = threading.Lock()
@@ -143,7 +144,7 @@ class PanelData:
         self.tracking = None
         self.frames = {}
         self.encoded = (None, b'')
-        self.map_cache = MapCache()
+        self.map_cache = MapCache(palette=map_palette)
         self.map_active = False
         self.robot_pose = None
         self.runtime = {'enabled': False, 'state': 'STOPPED', 'ready': False,
@@ -397,8 +398,10 @@ class RosBridge:
             'bt_navigator', 'nav2_container', 'system_manager', 'autoslam',
             'person_follower', 'person_localizer', 'person_reidentifier', 'yolo_node',
         })
+        if os.environ.get('HOMECAM_BACKEND_URL', '').strip():
+            conflicts.update(names.intersection({'homecam_media_agent'}))
         if conflicts or self.node.count_publishers(self.topics['map_topic']):
-            raise ValueError('Stop existing mapping/navigation/perception first: '
+            raise ValueError('Stop existing mapping/navigation/perception/media first: '
                              + ', '.join(sorted(conflicts)))
         scan = self.node.count_publishers('/scan_raw')
         odom = self.node.count_publishers('/odom')

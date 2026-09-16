@@ -51,7 +51,7 @@ def _setup(context):
 
     navigating = value('mode') == 'navigation'
     mapping = value('mode') == 'mapping'
-    perception = value('perception') == 'true'
+    perception = value('perception') == 'true' and not mapping
     hardware = value('start_hardware') == 'true'
     navigation = value('start_navigation') == 'true'
     if navigating and not perception:
@@ -62,22 +62,6 @@ def _setup(context):
         'map_topic': value('patrol_costmap_topic'),
         'robot_frame': value('robot_frame'), 'rgb_topic': value('rgb_topic'),
     }
-
-    if mapping:
-        # AutoSLAM starts missing prerequisites on a Goal, not on page load.
-        actions = [_include(_package_file(
-            'malbut_autoslam', 'launch/autoslam.launch.py'), {
-                'auto_start': 'true', 'scan_topic': value('scan_topic'),
-                'odom_topic': value('odom_topic'),
-                'map_directory': value('map_directory'),
-                'map_topic': value('static_map_topic'),
-                'base_frame': value('robot_frame'),
-            })]
-        if value('web_panel') == 'true':
-            actions.append(Node(
-                package='malbut_bringup', executable='robot_web_panel',
-                name='robot_web_panel', output='screen', parameters=[web_parameters]))
-        return actions
 
     # Validate paths before starting any child process. Never substitute a
     # small_house/test map or overwrite the vendor's calibration/parameters.
@@ -105,11 +89,35 @@ def _setup(context):
             'autostart': 'true', 'use_teb': 'false',
         }
 
+    # Reuse the outbound bridge's configuration. Offline/LAN-only Bringup
+    # does not need cloud media; never put the device token in launch arguments.
+    backend_url = context.environment.get('HOMECAM_BACKEND_URL', '').strip()
+    media_path = (_package_file('homecam_media_agent', 'launch/homecam_robot.launch.py')
+                  if backend_url else None)
+    autoslam = None
+    if mapping:
+        autoslam = _include(_package_file(
+            'malbut_autoslam', 'launch/autoslam.launch.py'), {
+                'auto_start': 'true', 'scan_topic': value('scan_topic'),
+                'odom_topic': value('odom_topic'),
+                'map_directory': value('map_directory'),
+                'map_topic': value('static_map_topic'),
+                'base_frame': value('robot_frame'),
+            })
+
     actions = []
     if hardware_path:
         actions.append(_include(hardware_path, {
             # This vendor version uses '/' (not '') for unprefixed TF/topics.
             'sim': 'false', 'robot_name': '/', 'master_name': '/',
+        }))
+    if media_path:
+        actions.append(_include(media_path, {
+            'backend_url': backend_url,
+            'device_id': context.environment.get('HOMECAM_DEVICE_ID', 'jetson-homecam'),
+            'image_topic': value('rgb_topic'),
+            'camera_info_topic': value('camera_info_topic'),
+            'odom_topic': value('odom_topic'),
         }))
     if navigation_path:
         actions.append(_include(navigation_path, navigation_arguments, remappings=[
@@ -189,6 +197,11 @@ def _setup(context):
             return []
         if event.returncode != 0:
             return [EmitEvent(event=Shutdown(reason='Robot readiness check failed'))]
+        if mapping:
+            # Camera/driver startup belongs to Bringup. Only expose the Goal
+            # server after sensors are ready so AutoSLAM won't start duplicates.
+            # The Goal still starts missing SLAM/Nav2; it never runs by itself.
+            return [LogInfo(msg='Sensors ready; starting idle AutoSLAM server.'), autoslam]
         if navigating:
             return [LogInfo(msg='Robot ready; starting system manager.'), manager]
         return [LogInfo(msg='Sensors ready. No navigation or missions were started.')]

@@ -167,6 +167,7 @@ public:
     desired_state_confirmed_ = config_.backend_url.empty();
     transport_ = make_kvs_transport();
     storage_transport_ = make_kvs_transport();
+#if HOMECAM_HAVE_GSTREAMER
     p2p_sender_ = std::make_unique<TransportSender>(
       [this](QueuedEncodedFrame queued) {
         send_queued_frame(std::move(queued), false);
@@ -175,6 +176,7 @@ public:
       [this](QueuedEncodedFrame queued) {
         send_queued_frame(std::move(queued), true);
       });
+#endif
     transport_->set_ptt_audio_callback(
       [this](const EncodedFrame & frame) {
         if (
@@ -302,8 +304,10 @@ public:
       storage_session_future_.wait();
       collect_storage_session_result();
     }
+#if HOMECAM_HAVE_GSTREAMER
     p2p_sender_->stop();
     storage_sender_->stop();
+#endif
     {
       std::lock_guard<std::mutex> lock(transport_mutex_);
       transport_->set_ptt_audio_callback({});

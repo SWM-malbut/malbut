@@ -7,12 +7,13 @@ import {
   GearSix,
   House,
   MapTrifold,
+  Robot,
   VideoCamera,
   User,
 } from "@phosphor-icons/react";
 import { logoutNavigationPath } from "../auth/logout/logout-flow";
 
-export type HomecamTab = "home" | "live" | "map" | "events" | "settings";
+export type HomecamTab = "home" | "live" | "map" | "events" | "robot" | "settings";
 
 type AuthStatus = {
   authenticated: boolean;
@@ -141,6 +142,15 @@ export function HomecamHeader({
             weight={activeTab === "events" ? "fill" : "regular"}
           />
           <span>이벤트</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === "robot" ? "is-active" : ""}
+          onClick={() => onNavigate("robot")}
+          aria-current={activeTab === "robot" ? "page" : undefined}
+        >
+          <Robot size={20} weight={activeTab === "robot" ? "fill" : "regular"} />
+          <span>로봇 기능</span>
         </button>
         <button
           type="button"

@@ -20,53 +20,56 @@
 소유자 계정과 장치를 등록하고 장치 토큰을 발급한 뒤 로봇으로 안전하게 전달한다.
 실제 AWS 인증·배포·장치 등록이 끝나기 전에는 예시 주소로 연결되지 않는다.
 
-## 2. 로봇 명령·상태 연결
+## 2. 한 번의 빌드
 
-기존 `build.sh`로 로봇 패키지를 빌드한다. Zsh 터미널에서는:
+제조사 ROS 환경을 source한 뒤 `build.sh` 하나로 로봇 패키지와 홈캠 영상 노드를
+같은 `install/malbut_test`에 빌드한다. KVS SDK도 최초 다운로드 후 증분 빌드로 재사용한다.
+SDK·미디어 빌드 스크립트를 따로 호출할 필요 없다. AWS 웹 자체는 AWS에서 별도 배포한다.
 
 ```zsh
 source /opt/ros/humble/setup.zsh
 source ~/ros2_ws/install/setup.zsh
+bash ~/ros2_ws/src/malbut/build.sh
 source ~/ros2_ws/install/malbut_test/local_setup.zsh
+```
+
+최초 OS 개발 의존성 준비는 `homecam_agent/scripts/install_dependencies.sh`로 한다.
+GStreamer 개발 패키지 등의 apt 설치가 실패했다면 먼저 해결해야 한다.
+통합 빌드는 누락된 의존성을 알려주고 중단하며, 임의 apt 업그레이드나 영상 없는
+health-only 빌드로 성공 처리하지 않는다. Jetson의 `nvvidconv`, `nvv4l2h264enc`는
+기존 JetPack 환경을 사용한다.
+
+## 3. 웹 연결은 별도, 카메라는 Bringup에 포함
+
+위 환경을 source한 터미널에서:
+
+```zsh
 export HOMECAM_BACKEND_URL='https://실제배포주소.cloudfront.net'
 export HOMECAM_DEVICE_TOKEN_FILE="$HOME/.config/malbut/device-token"
+export HOMECAM_DEVICE_ID='jetson-homecam'
 chmod 600 "$HOMECAM_DEVICE_TOKEN_FILE"
 ros2 launch malbut_bringup cloud.launch.py
 ```
 
 토큰 파일은 서버가 발급한 `hc1.…` 값만 담은 기존 파일이어야 한다. 채팅·Git·명령행 인자로 토큰을 전달하지 않는다.
+`HOMECAM_DEVICE_ID`는 서버에 등록한 장치 ID와 같아야 한다.
 웹에서 로봇 상태와 저장 지도 목록이 갱신되는지 먼저 확인한다.
 
-## 3. 영상 전송 빌드 — 최초 또는 SDK 변경 시
+- 웹의 **Bringup 준비**가 하드웨어·카메라와 `homecam_media_agent`를 함께 켠다.
+  기존 드라이버가 준비되어 있다면 중복 기동 없이 재사용한다.
+- 지도 작성 모드도 카메라를 먼저 켜고 센서 준비 후 AutoSLAM 요청을 받는다.
+  SLAM·Nav2 탐색은 AutoSLAM Goal 이후 시작한다. 저장 지도 주행 모드와 합치지 않는다.
+- **Bringup 종료**는 해당 Bringup이 켠 영상 노드도 종료한다. 웹 연결은 남아 다시 준비할 수 있다.
+- 영상 노드나 `malbut-homecam.service`를 별도로 함께 켜지 않는다.
+- 클라우드 주소가 없는 기존 오프라인/LAN Bringup에는 AWS 영상 노드를 추가하지 않는다.
 
-로봇 기본 빌드에 무거운 AWS SDK 빌드를 끼워 넣지 않는다. 실제 영상을 사용할 때만:
-
-```zsh
-cd ~/ros2_ws
-bash src/malbut/homecam_agent/scripts/install_dependencies.sh
-bash src/malbut/homecam_agent/scripts/build_kvs_webrtc_sdk.sh \
-  "$PWD/.deps/amazon-kinesis-video-streams-webrtc-sdk-c-v1.19.1"
-bash src/malbut/homecam_agent/scripts/build_robot_cloud.sh
-source ~/ros2_ws/install/malbut_test/local_setup.zsh
-```
-
-실제 Jetson의 `nvvidconv`, `nvv4l2h264enc` 플러그인은 JetPack 환경을 사용한다.
-기본 `HOMECAM_ENABLE_KVS=OFF` 빌드로는 실제 AWS 영상이 나오지 않는다.
-
-별도 터미널에서 같은 ROS 환경과 위 두 환경변수를 설정하고:
-
-```zsh
-ros2 launch homecam_media_agent homecam_robot.launch.py \
-  backend_url:="$HOMECAM_BACKEND_URL" device_id:='서버에등록한장치ID'
-```
-
-기본 카메라 입력은 `/depth_cam/rgb0/image_raw`, CameraInfo는 `/depth_cam/rgb0/camera_info`다.
-센서가 아직 꺼져 있다면 웹에서 Bringup을 준비한 뒤 영상을 확인한다.
-미디어 launch는 별도 검출기를 켜지 않으며, 사람 추적은 기존 공유 YOLO를 사용한다.
+기본 영상 입력은 `/depth_cam/rgb0/image_raw`, CameraInfo는 `/depth_cam/rgb0/camera_info`다.
+실제 송출은 기존 웹의 카메라 ON/OFF 설정을 따른다. 미디어 launch는 별도 검출기를
+켜지 않으며, 사람 추적은 기존 공유 YOLO를 사용한다.
 
 ## 4. 최소 실물 확인 순서
 
-1. 로그인 → 등록된 로봇 상태 갱신 확인(연결만으로 주행하지 않음).
+1. 로그인 → 왼쪽 이벤트 아래 **로봇 기능** → 등록된 로봇 상태 갱신 확인(연결만으로 주행하지 않음).
 2. 지도 작성 모드 → 준비 완료 → 새 이름으로 AutoSLAM → 결과와 지도 저장 확인.
 3. Bringup 종료 → 저장 지도 선택 → 주행 모드 준비 → 실제 위치 일치 확인.
 4. 사람 추적·순찰·목적지 이동 요청 → 실행 상태 → 취소와 실제 정지 확인.

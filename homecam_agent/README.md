@@ -269,22 +269,22 @@ perception demo actor는 이벤트 검증에 사용하지 않는다. Gazebo acto
 
 ## ROSOrin 실제 로봇: 공용 인식과 미디어 연결
 
-`malbut_bringup`이 하드웨어와 공용 `malbut_yolo`/추적을 실행한 상태에서
-`homecam_robot.launch.py`를 별도로 실행한다. 이 launch는 기존 KVS 영상·음성,
+실기기 적용본의 `build.sh` 하나가 로봇 패키지, KVS SDK와 미디어를 빌드한다.
+`malbut_bringup cloud.launch.py`로 웹 연결을 유지하고 웹에서 Bringup을 준비하면
+하드웨어·카메라와 `homecam_robot.launch.py`가 함께 실행된다. 별도 영상 실행은 필요 없다.
+이 launch는 기존 KVS 영상·음성,
 PTT, heartbeat, desired state 처리를 재사용하며 카메라 드라이버나
 `homecam_detector`, 별도 YOLO/pose/OSNet 모델을 기동하지 않는다.
 실제 로봇의 기본 입력은 `/depth_cam/rgb0/image_raw`,
 `/depth_cam/rgb0/camera_info`, `/odom`이며 launch 인자로 변경할 수 있다.
 
-```bash
-ros2 launch homecam_media_agent homecam_robot.launch.py \
-  backend_url:='https://YOUR_BACKEND' \
-  device_id:='REGISTERED_DEVICE_ID'
-```
+클라우드 설정은 `HOMECAM_BACKEND_URL`, `HOMECAM_DEVICE_ID`를 사용한다.
+Bringup 종료 시 해당 영상 노드도 함께 종료되며 웹 연결은 유지된다.
+클라우드 주소를 설정하지 않은 오프라인 Bringup에는 영상 송출 노드를 켜지 않는다.
 
 인증은 `HOMECAM_DEVICE_TOKEN_FILE` 또는 `HOMECAM_DEVICE_TOKEN` 환경 변수를
 사용한다. 장치 등록·AWS 채널 생성은 이 launch가 수행하지 않는다. 실제 전송에는
-위 수동 빌드의 `HOMECAM_ENABLE_KVS=ON`, SDK, GStreamer, CURL이 필요하다.
+`HOMECAM_ENABLE_KVS=ON`, SDK, GStreamer, CURL이 필요하며 적용본 빌드가 이를 지정한다.
 Jetson의 `nvvidconv`, `nvv4l2h264enc`도 설치되어 있어야 한다.
 
 이 경로는 **미디어 연결만** 담당한다. 공용 YOLO 결과를 기존 홈캠 이벤트 API로
@@ -432,9 +432,9 @@ runtime working directory에 비밀·상태 파일을 만들지 않는다.
 클라이언트까지 장치 내부에서 차단하는 cryptographic peer authorization은
 PoC 이후 보강 항목이다.
 
-실제 token, AWS credential, 모델 파일은 Git에 커밋하지 않는다. Jetson
-실물 장비는 빌드 후 다음처럼 systemd 서비스를 설치합니다. Gazebo 프로필에는
-적용하지 않습니다.
+실제 token, AWS credential, 모델 파일은 Git에 커밋하지 않는다. 아래 systemd는
+**단독 홈캠 운영용 대안**이다. 웹에서 Malbut Bringup을 제어하는 적용본은 영상 노드를
+Bringup이 관리하므로 이 서비스를 함께 설치·실행하지 않는다. Gazebo에도 적용하지 않는다.
 
 ```bash
 sudo ./homecam_agent/scripts/install_homecam_systemd.sh \

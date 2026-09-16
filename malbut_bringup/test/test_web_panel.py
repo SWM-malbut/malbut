@@ -82,6 +82,16 @@ def test_history_and_pending_requests_are_bounded():
     assert len(data.requests) <= 32
 
 
+def test_cloud_map_palette_is_explicit_and_lan_default_is_unchanged(monkeypatch):
+    """Only callers opting into the cloud map change the cache's display mode."""
+    cache = Mock()
+    monkeypatch.setattr('malbut_bringup.web_panel.MapCache', cache)
+    PanelData()
+    cache.assert_called_with(palette='costmap')
+    PanelData(map_palette='map')
+    cache.assert_called_with(palette='map')
+
+
 def test_frame_encoded_only_when_requested_and_once_per_frame(monkeypatch):
     """Camera callbacks do no JPEG work, and HTTP readers share one encoding."""
     data = PanelData()
@@ -277,7 +287,7 @@ def test_navigation_requires_fresh_pose_then_uses_manager():
     bridge.clients['autoslam'].send_goal_async.assert_not_called()
 
 
-def test_runtime_start_reuses_ready_hardware_and_rejects_other_bringup():
+def test_runtime_start_reuses_ready_hardware_and_rejects_other_bringup(monkeypatch):
     """Never launch another driver set over existing scan/odometry publishers."""
     bridge, _ = _bridge()
     bridge.runtime = Mock()
@@ -287,6 +297,11 @@ def test_runtime_start_reuses_ready_hardware_and_rejects_other_bringup():
     bridge.runtime.start.assert_called_once_with('mapping', map_id=None, start_hardware=False)
     bridge.node.get_node_names_and_namespaces.return_value += [('controller_server', '/')]
     with pytest.raises(ValueError, match='Stop existing'):
+        bridge._start_runtime({'mode': 'mapping'})
+    bridge.runtime.start.assert_called_once()
+    monkeypatch.setenv('HOMECAM_BACKEND_URL', 'https://robot.example.com')
+    bridge.node.get_node_names_and_namespaces.return_value = [('homecam_media_agent', '/')]
+    with pytest.raises(ValueError, match='homecam_media_agent'):
         bridge._start_runtime({'mode': 'mapping'})
     bridge.runtime.start.assert_called_once()
     bridge.node.get_node_names_and_namespaces.return_value = []

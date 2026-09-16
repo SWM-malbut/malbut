@@ -1,5 +1,6 @@
 """Validate cloud contracts without ROS, internet access, or robot execution."""
 
+import base64
 from contextlib import contextmanager
 import json
 from types import SimpleNamespace
@@ -211,7 +212,11 @@ def test_map_contract_uses_matching_geometry_and_stable_content_revision():
     second = map_payload({**metadata, 'version': 2}, b'png bytes', runtime)
     assert first == second
     assert first['finalized']
-    assert first['geometry']['originYaw'] == 0.5
+    assert first['geometry'] == {
+        'width': 2, 'height': 3, 'resolution': 0.05,
+        'originX': -1, 'originY': -2, 'originYaw': 0.5,
+    }
+    assert base64.b64decode(first['previewBase64']) == b'png bytes'
     draft = map_payload(metadata, b'png bytes', {'mode': 'mapping'})
     assert not draft['finalized'] and draft['revision'].startswith('live-')
     with pytest.raises(ValueError, match='geometry'):

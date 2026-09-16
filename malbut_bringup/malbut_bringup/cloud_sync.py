@@ -206,7 +206,7 @@ def state_payload(snapshot, map_info, maps, observed_at=None):
 
 
 def map_payload(metadata, png, runtime):
-    """Upload /map geometry and its matching PNG, not Gazebo-specific artifacts."""
+    """Preserve /map geometry and its native-size, neutral occupancy PNG."""
     if (not 1 <= metadata['width'] <= 8192 or not 1 <= metadata['height'] <= 8192
             or not 0.001 <= metadata['resolution'] <= 1.0):
         raise ValueError('Robot map geometry exceeds the cloud contract')
@@ -361,7 +361,8 @@ def main(args=None):
 
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     previous_term = signal.signal(signal.SIGTERM, _terminate)
-    bridge = RosBridge(PanelData(), node_name='robot_cloud_sync', map_topic='/map')
+    bridge = RosBridge(PanelData(map_palette='map'),
+                       node_name='robot_cloud_sync', map_topic='/map')
     executor = SingleThreadedExecutor()
     executor.add_node(bridge.node)
     sync = None

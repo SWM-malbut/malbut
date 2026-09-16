@@ -36,13 +36,14 @@ pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Br
 ```
 
 `COLCON_IGNORE`는 **삭제하지 않는다.** 기본 colcon 탐색에서 원본과 복사본의
-패키지 이름이 겹치지 않게 한다. `build.sh`는 이 안의 8개 패키지와 포함된
-`yolo_ros`, `yolo_msgs` 경로를 직접 지정한다. 제조사 패키지를 재빌드하거나
+패키지 이름이 겹치지 않게 한다. `build.sh`는 홈캠 영상 노드와 필요한 KVS SDK,
+8개 로봇 패키지와 포함된 `yolo_ros`, `yolo_msgs`를 한 번에 빌드한다.
+경로를 직접 지정하므로 제조사 패키지를 재빌드하거나
 제조사의 `install/setup.zsh`를 덮어쓰지 않는다. 패키지명은 그대로 유지한다.
 
 Gazebo·actor·시나리오·벤치마크·독립 음성 응용 기능은 포함하지 않는다.
-서비스 웹과 홈캠 영상 전송은 포함하되 기본 로봇 빌드와 분리한다.
-클라우드 연결과 추가 빌드는 [README_CLOUD.md](README_CLOUD.md)를 따른다.
+홈캠 영상 전송도 위 빌드에 포함한다. 서비스 웹 자체는 AWS에 별도 배포한다.
+클라우드 연결과 Bringup을 통한 영상 실행은 [README_CLOUD.md](README_CLOUD.md)를 따른다.
 실기기용 간단한 웹 테스트 패널은 Bringup에 포함한다. 제조사 하드웨어
 launch가 차체·센서·로봇 description과 TF를 제공하므로 시뮬레이션용 description을
 별도로 실행하지 않는다. 순찰은 기존 `malbut_autonomy/malbut_patrol`의 복사본이다.
@@ -77,8 +78,10 @@ cd ~/ros2_ws
 rosdep update
 rosdep install --from-paths src/malbut/malbut_* \
   src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} \
+  src/malbut/homecam_agent/homecam_media_agent \
   --ignore-src -r -y --rosdistro humble \
   --skip-keys 'ament_python python3-torchvision-pip python3-ultralytics-pip'
+bash src/malbut/homecam_agent/scripts/install_dependencies.sh  # 최초 개발 의존성 준비
 bash src/malbut/build.sh
 source ~/ros2_ws/install/malbut_test/local_setup.zsh
 ```

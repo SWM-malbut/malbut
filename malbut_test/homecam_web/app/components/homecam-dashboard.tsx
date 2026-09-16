@@ -1132,6 +1132,7 @@ export function HomecamDashboard({
         requestedView === "live" ||
         requestedView === "map" ||
         requestedView === "events" ||
+        requestedView === "robot" ||
         requestedView === "settings"
       ) {
         setTab(requestedView);
@@ -1667,7 +1668,7 @@ export function HomecamDashboard({
       />
 
       <main className="homecam-main">
-        {tab !== "map" && <div className="homecam-device-bar">
+        {tab !== "map" && tab !== "robot" && <div className="homecam-device-bar">
           <h1>{tab === "home" ? "홈" : tab === "live" ? "홈캠" : tab === "events" ? "이벤트" : "설정"}</h1>
           {tab === "events" && (
             <>
@@ -2144,6 +2145,10 @@ export function HomecamDashboard({
           LOCAL_HOME_CAM_DEMO && selectedDevice?.id === LOCAL_DEMO_DEVICE_ID
             ? <LocalDemoMapPanel mode={mapEntryMode} onModeChange={setMapEntryMode} />
             : <RobotMapPanel key={mapEntryMode} device={selectedDevice} initialMode={mapEntryMode} />
+        )}
+
+        {tab === "robot" && (
+          <RobotMapPanel key={`robot-${selectedDevice?.id ?? ""}`} device={selectedDevice} controlsMode="managed" />
         )}
 
         {tab === "settings" && (

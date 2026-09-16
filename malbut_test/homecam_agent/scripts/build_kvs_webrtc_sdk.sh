@@ -48,6 +48,9 @@ if [[ ! -r "$sdk_ca_cert" ]]; then
   exit 2
 fi
 
+# CMake 4 removed pre-3.5 compatibility used by SDK dependencies. The official
+# external override is inherited by nested dependency builds, only in this script.
+export CMAKE_POLICY_VERSION_MINIMUM=3.5
 cmake \
   -S "$sdk_root" \
   -B "$sdk_root/build" \
@@ -59,15 +62,4 @@ cmake \
   -DCMAKE_BUILD_TYPE=Release \
   "-DKVS_CA_CERT_PATH=$sdk_ca_cert"
 cmake --build "$sdk_root/build" --parallel
-
-cat <<EOF
-Pinned AWS KVS WebRTC SDK is ready.
-
-KVS_WEBRTC_SDK_ROOT=$sdk_root
-AWS_KVS_CACERT_PATH=$sdk_ca_cert
-
-Build the ROS package with:
-  colcon build --packages-select homecam_media_agent --cmake-force-configure \\
-    --cmake-args -DHOMECAM_ENABLE_KVS=ON \\
-    -DKVS_WEBRTC_SDK_ROOT=$sdk_root
-EOF
+echo "Pinned AWS KVS WebRTC SDK is ready: $sdk_root"
