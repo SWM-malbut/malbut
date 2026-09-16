@@ -16,7 +16,8 @@ def runtime(monkeypatch, tmp_path):
     model.mkdir()
     state = SimpleNamespace(
         ok=False, calls={}, logs=[], published=[], closed=[], failure=None,
-        cleanup_failure=False, shutdown_before_publish=False, callbacks={},
+        cleanup_failure=False, native_cleanup_failure=False,
+        shutdown_before_publish=False, callbacks={},
         parameters={'wake_model_path': str(model)},
         now=0.0, clients={}, on_spin=None, service_ready={}, service_failure={},
         response_failure={}, accepted=True, decision='addressed', decisions=[],
@@ -151,6 +152,17 @@ def runtime(monkeypatch, tmp_path):
         fail('initializing_stt')
         return SimpleNamespace(model=object())
 
+    def close_cpp():
+        state.closed.append('cpp')
+        if state.native_cleanup_failure:
+            raise RuntimeError('private native cleanup details')
+
+    def create_cpp_transcriber(model_path, library_path, **options):
+        state.calls.setdefault('cpp_stt', []).append((Path(model_path), Path(library_path)))
+        state.calls['cpp_stt_options'] = options
+        fail('initializing_stt')
+        return SimpleNamespace(model=object(), close=close_cpp)
+
     def create_vad(mode):
         state.calls['vad_mode'] = mode
         return SimpleNamespace(is_speech=lambda frame, _: frame[:2] != b'\x00\x00')
@@ -242,11 +254,27 @@ def runtime(monkeypatch, tmp_path):
         monkeypatch.setitem(sys.modules, name, module)
     monkeypatch.setattr('malbut_stt.wake.LocalWakeRecognizer', create_wake)
     monkeypatch.setattr('malbut_stt.node.LocalWhisperTranscriber', create_transcriber)
+    monkeypatch.setattr(
+        'malbut_stt.cpp_transcription.CppWhisperTranscriber', create_cpp_transcriber)
     monkeypatch.setattr('malbut_stt.node.DialoguePipeline', Pipeline)
     monkeypatch.setattr('malbut_stt.node.monotonic', lambda: state.now)
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     monkeypatch.delenv('PICOVOICE_ACCESS_KEY', raising=False)
     return state
+
+
+@pytest.fixture
+def cpp_runtime(runtime, tmp_path):
+    """Provide existing native asset files while keeping native loading mocked."""
+    runtime.cpp_model = tmp_path / 'ggml-small.bin'
+    runtime.cpp_library = tmp_path / 'libmalbut_whisper.so'
+    runtime.cpp_model.touch()
+    runtime.cpp_library.touch()
+    runtime.parameters.update(
+        backend='whisper_cpp', stt_model_path=str(runtime.cpp_model),
+        stt_library_path=str(runtime.cpp_library), wake_model_path='',
+    )
+    return runtime
 
 
 def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
@@ -256,10 +284,15 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     defaults = runtime.calls['defaults']
     assert defaults['silence_timeout_s'] == 2.0
     assert defaults['start_timeout_s'] == 5.0
-    assert defaults['max_utterance_s'] == 20.0
+    assert defaults['max_utterance_s'] == 0.0
     assert defaults['pre_roll_s'] == 0.3
     assert defaults['wake_model_path'] == defaults['stt_model_path'] == ''
     assert defaults['compute_type'] == 'int8'
+    assert defaults['backend'] == 'faster_whisper'
+    assert defaults['stt_library_path'] == ''
+    assert defaults['cpp_use_gpu'] is True
+    assert defaults['cpp_threads'] == 6
+    assert defaults['endpoint_predecode_s'] == 0.8
     assert defaults['input_has_aec'] is False
     assert defaults['playback_control_timeout_s'] == 5.0
     assert 'api_timeout_s' not in defaults
@@ -273,6 +306,8 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert runtime.pipeline_args['wake'].model is runtime.pipeline_args['transcriber'].model
     assert runtime.pipeline_args['input_has_aec'] is False
     assert runtime.pipeline_args['settings'].silence_timeout_s == 2.0
+    assert runtime.pipeline_args['settings'].max_utterance_s is None
+    assert runtime.pipeline_args['endpoint_predecode_s'] == 0.8
     assert runtime.calls['spin_timeout'] == 0.02
     assert runtime.calls['playback_status'] == ('p1', 'playing')
     assert runtime.calls['addressee'] == ('u2', 'p1', 'addressed')
@@ -341,6 +376,113 @@ def test_float32_parameter_reaches_both_local_engines(runtime, tmp_path, shared)
         assert runtime.calls['wake_options'] == {'compute_type': 'float32'}
 
 
+@pytest.mark.parametrize('wake_path', ['blank', 'same', 'symlink'])
+def test_cpp_backend_shares_one_native_model_and_closes_after_pipeline(cpp_runtime, wake_path):
+    runtime = cpp_runtime
+    if wake_path == 'same':
+        runtime.parameters['wake_model_path'] = str(runtime.cpp_model)
+    elif wake_path == 'symlink':
+        alias = runtime.cpp_model.with_name('wake-alias.bin')
+        alias.symlink_to(runtime.cpp_model)
+        runtime.parameters['wake_model_path'] = str(alias)
+    assert main() == 0
+    assert runtime.calls['cpp_stt'] == [(runtime.cpp_model, runtime.cpp_library)]
+    assert runtime.calls['cpp_stt_options'] == {'use_gpu': True, 'n_threads': 6}
+    assert not {'local_stt', 'wake'} & runtime.calls.keys()
+    assert runtime.calls['wake_shared'] is runtime.pipeline_args['transcriber']
+    assert runtime.pipeline_args['wake'].model is runtime.pipeline_args['transcriber'].model
+    assert runtime.pipeline_args['settings'].max_utterance_s is None
+    assert runtime.closed == ['pipeline', 'cpp', 'node', 'ros']
+
+
+def test_cpp_backend_forwards_explicit_options_without_cpu_compute_type(cpp_runtime):
+    cpp_runtime.parameters.update(cpp_use_gpu=False, cpp_threads=2, compute_type='float16')
+    assert main() == 0
+    assert cpp_runtime.calls['cpp_stt_options'] == {'use_gpu': False, 'n_threads': 2}
+    assert cpp_runtime.closed == ['pipeline', 'cpp', 'node', 'ros']
+
+
+@pytest.mark.parametrize('parameter, asset_kind', [
+    ('stt_model_path', 'blank'), ('stt_model_path', 'missing'),
+    ('stt_model_path', 'directory'), ('stt_library_path', 'blank'),
+    ('stt_library_path', 'missing'), ('stt_library_path', 'directory'),
+    ('wake_model_path', 'missing'), ('wake_model_path', 'directory'),
+    ('wake_model_path', 'different_file'),
+])
+def test_cpp_invalid_asset_paths_fail_before_native_load(
+    cpp_runtime, tmp_path, parameter, asset_kind,
+):
+    target = tmp_path / ('invalid-' + parameter)
+    if asset_kind == 'directory':
+        target.mkdir()
+    elif asset_kind == 'different_file':
+        target.touch()
+    cpp_runtime.parameters[parameter] = '' if asset_kind == 'blank' else str(target)
+    assert main() == 1
+    assert not {'cpp_stt', 'local_stt', 'wake', 'recorder'} & cpp_runtime.calls.keys()
+    assert cpp_runtime.closed == ['node', 'ros']
+
+
+@pytest.mark.parametrize('parameter, value', [
+    ('cpp_use_gpu', 'true'), ('cpp_use_gpu', 1), ('cpp_use_gpu', None),
+    ('cpp_threads', 0), ('cpp_threads', -1), ('cpp_threads', True),
+    ('cpp_threads', 1.5), ('cpp_threads', '6'),
+])
+def test_cpp_invalid_options_fail_before_native_load(cpp_runtime, parameter, value):
+    cpp_runtime.parameters[parameter] = value
+    assert main() == 1
+    assert not {'cpp_stt', 'local_stt', 'wake', 'recorder'} & cpp_runtime.calls.keys()
+    assert cpp_runtime.closed == ['node', 'ros']
+
+
+@pytest.mark.parametrize('failure', [
+    'initializing_stt', 'wake', 'opening_microphone', 'running',
+    'pipeline_close', 'native_close',
+])
+def test_cpp_cleanup_releases_native_model_and_ros_on_failures(cpp_runtime, failure):
+    if failure == 'wake':
+        cpp_runtime.failure = 'initializing_wake'
+    elif failure == 'pipeline_close':
+        cpp_runtime.cleanup_failure = True
+    elif failure == 'native_close':
+        cpp_runtime.native_cleanup_failure = True
+    else:
+        cpp_runtime.failure = failure
+    assert main() == 1
+    if failure == 'initializing_stt':
+        expected = ['node', 'ros']
+    elif failure == 'wake':
+        expected = ['cpp', 'node', 'ros']
+    else:
+        expected = ['pipeline', 'cpp', 'node', 'ros']
+    assert cpp_runtime.closed == expected
+    assert all('private' not in message and 'hidden' not in message
+               for _, message in cpp_runtime.logs)
+
+
+@pytest.mark.parametrize('configured, expected', [(0, None), (0.0, None), (31.5, 31.5)])
+def test_max_utterance_parameter_disables_or_preserves_explicit_limit(
+    runtime, configured, expected,
+):
+    runtime.parameters['max_utterance_s'] = configured
+    assert main() == 0
+    assert runtime.pipeline_args['settings'].max_utterance_s == expected
+
+
+@pytest.mark.parametrize('predecode', [0.2, 1.0])
+def test_explicit_predecode_parameter_reaches_pipeline(runtime, predecode):
+    runtime.parameters['endpoint_predecode_s'] = predecode
+    assert main() == 0
+    assert runtime.pipeline_args['endpoint_predecode_s'] == predecode
+
+
+def test_short_custom_silence_fallback_disables_early_predecode(runtime):
+    runtime.parameters['silence_timeout_s'] = 0.5
+    assert main() == 0
+    assert runtime.pipeline_args['settings'].silence_timeout_s == 0.5
+    assert runtime.pipeline_args['endpoint_predecode_s'] is None
+
+
 @pytest.mark.parametrize('phase', [
     'initializing_wake', 'initializing_stt', 'opening_microphone', 'running',
 ])
@@ -381,11 +523,19 @@ def test_publication_and_callbacks_are_guarded_after_ros_shutdown(runtime):
     ('playback_control_timeout_s', 0.0), ('playback_control_timeout_s', float('nan')),
     ('playback_control_timeout_s', float('inf')), ('playback_control_timeout_s', True),
     ('compute_type', 'auto'), ('compute_type', 32),
+    ('backend', 'mlx'), ('backend', ''), ('backend', 1),
+    ('max_utterance_s', -1.0), ('max_utterance_s', True), ('max_utterance_s', False),
+    ('max_utterance_s', float('nan')), ('max_utterance_s', float('inf')),
+    ('max_utterance_s', None), ('max_utterance_s', 2.0),
+    ('endpoint_predecode_s', 0.0), ('endpoint_predecode_s', -0.1),
+    ('endpoint_predecode_s', 1.01), ('endpoint_predecode_s', True),
+    ('endpoint_predecode_s', float('nan')), ('endpoint_predecode_s', float('inf')),
+    ('endpoint_predecode_s', None),
 ])
 def test_invalid_configuration_fails_before_local_models_or_microphone(runtime, parameter, value):
     runtime.parameters[parameter] = value
     assert main() == 1
-    assert not {'wake', 'local_stt', 'recorder'} & runtime.calls.keys()
+    assert not {'wake', 'local_stt', 'cpp_stt', 'recorder'} & runtime.calls.keys()
     assert runtime.closed == ['node', 'ros']
     assert runtime.published == []
 
