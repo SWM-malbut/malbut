@@ -11,17 +11,18 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped, TransformStamped
+from geometry_msgs.msg import PoseStamped, TransformStamped, Twist
 from lifecycle_msgs.msg import State
 from malbut_interfaces.action import AutoSlam
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.srv import SaveMap
-from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import OccupancyGrid, Odometry
 import pytest
 import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.context import Context
+from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
@@ -66,10 +67,12 @@ class _Backend(Node):
         self.navigation_requests = []
         self.planning_mode = planning
         self.navigation_succeeds = navigation_succeeds
+        self.navigation_active = Event()
         self.group = ReentrantCallbackGroup()
         self.publisher = self.create_publisher(
             OccupancyGrid, prefix + '/map',
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self.command_publisher = self.create_publisher(Twist, prefix + '/cmd_vel', 10)
         self.broadcaster = TransformBroadcaster(self)
         self.create_timer(0.05, self._publish)
         self.create_service(
@@ -108,6 +111,10 @@ class _Backend(Node):
         transform.transform.translation.y = 2.0
         transform.transform.rotation.w = 1.0
         self.broadcaster.sendTransform(transform)
+        if self.navigation_active.is_set():
+            command = Twist()
+            command.linear.x = 0.3
+            self.command_publisher.publish(command)
 
     def _plan(self, handle):
         self.planning_requests.append(handle.request)
@@ -135,20 +142,26 @@ class _Backend(Node):
     def _navigate(self, handle):
         self.navigation_requests.append(handle.request)
         self.started.set()
-        if self.navigation_succeeds:
-            handle.succeed()
-            return NavigateToPose.Result()
-        while not handle.is_cancel_requested and not self.stopping.wait(0.01):
-            pass
-        if handle.is_cancel_requested:
-            self.cancel_seen.set()
-            if self.release_cancel.wait(TIMEOUT_S):
-                handle.canceled()
+        self.navigation_active.set()
+        try:
+            if self.navigation_succeeds:
+                handle.succeed()
+                return NavigateToPose.Result()
+            while not handle.is_cancel_requested and not self.stopping.wait(0.01):
+                pass
+            self.navigation_active.clear()
+            if handle.is_cancel_requested:
+                self.cancel_seen.set()
+                if self.release_cancel.wait(TIMEOUT_S):
+                    handle.canceled()
+                else:
+                    handle.abort()
             else:
                 handle.abort()
-        else:
-            handle.abort()
-        return NavigateToPose.Result()
+            return NavigateToPose.Result()
+        finally:
+            self.navigation_active.clear()
+            self.command_publisher.publish(Twist())
 
     def _save(self, request, response):
         self.save_requests.append(request)
@@ -176,6 +189,8 @@ class _System:
             'navigation_action': self.prefix + '/navigate',
             'planning_action': self.prefix + '/plan',
             'save_map_service': self.prefix + '/save_map',
+            'cmd_vel_topic': self.prefix + '/cmd_vel',
+            'progress_odom_topic': self.prefix + '/odom_rf2o',
             'completion_delay_s': 0.1, 'exploration_period_s': 0.05,
             'ready_timeout_s': 2.0, 'navigation_timeout_s': 4.0,
         }
@@ -324,9 +339,12 @@ def test_stuck_navigation_stops_excludes_and_saves_then_resets(system_factory):
     assert (new.x, new.y) == targets[0]
 
 
-@pytest.mark.parametrize('motion', ['translation', 'rotation', 'arrival_race'])
+@pytest.mark.parametrize('motion', [
+    'translation', 'rotation', 'arrival_race', 'no_command', 'turning_while_blocked',
+    'source_switch', 'mode_switch',
+])
 def test_progress_watch_accepts_motion_and_late_success(monkeypatch, motion):
-    """Accumulate small movement/rotation, and do not ban an already reached goal."""
+    """Only commanded-axis progress counts; idle waits do not imply an obstacle."""
     clock = [0.0]
     child = SimpleNamespace(handle=SimpleNamespace(accepted=True), error=None, result=None)
 
@@ -344,7 +362,8 @@ def test_progress_watch_accepts_motion_and_late_success(monkeypatch, motion):
     def snapshot(with_heading=False):
         assert with_heading
         x = clock[0] * 0.1 if motion == 'translation' else 0.0
-        yaw = math.pi - 0.1 + clock[0] * 0.3 if motion == 'rotation' else 0.0
+        yaw = (math.pi - 0.1 + clock[0] * 0.3
+               if motion in ('rotation', 'turning_while_blocked') else 0.0)
         yaw = math.atan2(math.sin(yaw), math.cos(yaw))
         return SimpleNamespace(header=SimpleNamespace(frame_id='map')), (x, 0.0, yaw)
 
@@ -352,16 +371,95 @@ def test_progress_watch_accepts_motion_and_late_success(monkeypatch, motion):
         child.result = SimpleNamespace(status=GoalStatus.STATUS_SUCCEEDED)
         node.child = None
 
+    def command_mode():
+        if motion == 'no_command':
+            return None
+        if motion == 'rotation' or (motion == 'mode_switch' and 0.9 <= clock[0] < 1.5):
+            return 'rotation'
+        return 'translation'
+
+    def progress_pose(frame, pose):
+        if motion == 'source_switch' and 0.9 <= clock[0] < 1.5:
+            return ('odom', 'odom', 'base_footprint'), pose
+        return ('tf', frame), pose
+
     node = SimpleNamespace(
         settings={'navigation_timeout_s': 10.0, 'progress_timeout_s': 0.8,
                   'progress_distance_m': 0.05, 'progress_angle_rad': 0.15},
         navigation=Mock(), _target_pose=Mock(return_value=PoseStamped()),
         _check=Mock(), _snapshot=snapshot, _feedback=Mock(),
+        _command_mode=Mock(side_effect=command_mode),
+        _progress_pose=Mock(side_effect=progress_pose),
         _settle_child=Mock(side_effect=settle),
         get_logger=Mock(), blocked_targets=[], blocked_approaches=[])
     assert AutoSlamNode._navigate(node, Mock(), Mock(), 'map', run_deadline=10.0)
-    assert node._settle_child.call_count == (1 if motion == 'arrival_race' else 0)
+    assert node._settle_child.call_count == (
+        1 if motion in ('arrival_race', 'turning_while_blocked') else 0)
     assert node.blocked_targets == []
+
+
+def test_command_mode_requires_meaningful_finite_motion(system_factory, monkeypatch):
+    """Use both planar axes without making zero or invalid commands a collision."""
+    system = system_factory(progress_timeout_s=0.2)
+    assert system.node._command_mode() is None
+    for vx, vy, angular, expected in (
+        (0.0, 0.0, 0.0, None),
+        (0.01, 0.0, 0.0, None),
+        (0.3, 0.0, 0.0, 'translation'),
+        (0.0, -0.3, 0.0, 'translation'),
+        (0.0, 0.0, -1.0, 'rotation'),
+        (float('nan'), 0.0, 0.0, None),
+        (0.0, 0.0, float('inf'), None),
+    ):
+        command = Twist()
+        command.linear.x, command.linear.y = vx, vy
+        command.angular.z = angular
+        system.node._receive_command(command)
+        assert system.node._command_mode() == expected
+    command.linear.x = 0.3
+    command.angular.z = 0.0
+    system.node._receive_command(command)
+    expired = time.monotonic() + system.node.settings['sensor_timeout_s'] + 1.0
+    monkeypatch.setattr('malbut_autoslam.autoslam_node.time',
+                        SimpleNamespace(monotonic=lambda: expired))
+    assert system.node._command_mode() is None
+
+
+@pytest.mark.parametrize('sample', [
+    'fresh', 'stale', 'stale_receipt', 'invalid', 'missing_frame',
+])
+def test_progress_odometry_prefers_only_fresh_valid_measurements(
+        system_factory, monkeypatch, sample):
+    """Existing RF2O is optional; bad sensor samples fall back to map/TF progress."""
+    system = system_factory()
+    fallback = (8.0, 9.0, 0.5)
+    assert system.node._progress_pose('map', fallback) == (('tf', 'map'), fallback)
+    message = Odometry()
+    message.header.frame_id = 'odom'
+    message.child_frame_id = 'base_footprint'
+    stamp = system.node.get_clock().now()
+    if sample == 'stale':
+        stamp -= Duration(seconds=system.node.settings['sensor_timeout_s'] + 1.0)
+    message.header.stamp = stamp.to_msg()
+    message.pose.pose.position.x = 1.0
+    message.pose.pose.position.y = 2.0
+    message.pose.pose.orientation.z = math.sin(0.3 / 2.0)
+    message.pose.pose.orientation.w = math.cos(0.3 / 2.0)
+    if sample == 'invalid':
+        message.pose.pose.position.x = float('nan')
+    elif sample == 'missing_frame':
+        message.header.frame_id = ''
+    system.node._receive_progress_odom(message)
+    if sample == 'stale_receipt':
+        expired = time.monotonic() + system.node.settings['sensor_timeout_s'] + 1.0
+        monkeypatch.setattr('malbut_autoslam.autoslam_node.time',
+                            SimpleNamespace(monotonic=lambda: expired))
+    source, pose = system.node._progress_pose('map', fallback)
+    if sample == 'fresh':
+        assert source == ('odom', 'odom', 'base_footprint')
+        assert pose == pytest.approx((1.0, 2.0, 0.3))
+    else:
+        assert (source, pose) == (('tf', 'map'), fallback)
 
 
 def test_missing_navigation_backend_returns_failure(system_factory):

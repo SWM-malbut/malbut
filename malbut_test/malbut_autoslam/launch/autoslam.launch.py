@@ -44,6 +44,7 @@ def _servers(context):
                 **{
                     name: LaunchConfiguration(name) for name in (
                         'map_topic', 'scan_topic', 'odom_topic',
+                        'cmd_vel_topic', 'progress_odom_topic',
                         'base_frame', 'navigation_action', 'planning_action', 'map_directory')
                 }}],
         ),
@@ -61,6 +62,8 @@ def generate_launch_description():
         DeclareLaunchArgument('map_topic', default_value='/map'),
         DeclareLaunchArgument('scan_topic', default_value='/scan_raw'),
         DeclareLaunchArgument('odom_topic', default_value='/odom'),
+        DeclareLaunchArgument('cmd_vel_topic', default_value='/cmd_vel'),
+        DeclareLaunchArgument('progress_odom_topic', default_value='/odom_rf2o'),
         DeclareLaunchArgument('base_frame', default_value='base_footprint'),
         DeclareLaunchArgument('navigation_action', default_value='/navigate_to_pose'),
         DeclareLaunchArgument('planning_action', default_value='/compute_path_to_pose'),

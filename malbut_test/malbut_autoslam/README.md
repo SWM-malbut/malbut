@@ -95,8 +95,12 @@ ros2 action send_goal /malbut/mission/execute \
 - 도착 후 새 SLAM 지도를 기다리고, 알려진 지도 셀 증가량으로 진전을 확인한다.
   실패하거나 새 공간을 관측하지 못한 지점은 제외한다. 전체 제외 목록 재시도는
   다른 후보가 소진된 뒤 한 번만 하며, 오래된 실패를 삭제해 무한 순회하지 않는다.
-- 이동 Goal 수락 후 5초 동안 5cm 이동도 0.15rad(약 9도) 회전도 없으면
-  진행 불가로 추정하고, Nav2 취소 완료를 기다린다. 실패 목표와 사전 경로의
+- 이동 Goal 수락 후 **Nav2의 유효한 이동 명령이 지속되는데도** 5초 동안
+  5cm 이동이 없으면 진행 불가로 추정하고 Nav2 취소 완료를 기다린다.
+  제자리 회전 명령은 별도로 0.15rad(약 9도) 회전 여부를 본다. 계획 대기·정지
+  명령·명령 미수신은 이 장애물 추정에서 제외하며, 기존 전체 이동 제한은 유지한다.
+  얇은 물체를 밟는 IMU 충격만을 이유로 중단하지 않는다.
+  실패 목표와 사전 경로의
   현재 위치 앞쪽 접근 구간은 **이번 요청이 끝날 때까지** 제외한다. 다른 후보의
   사전 경로도 이 구간을 통과하면 보내지 않으며, 새 요청에서는 기록을 초기화한다.
   이 기록은 저장 지도나 costmap을 바꾸지 않는다. Nav2 자체 재계획의 강제 금지구역은
@@ -133,8 +137,14 @@ ros2 action send_goal /malbut/mission/execute \
 통신 준비·지도/TF 신선도·개별 이동 제한은 각각 `ready_timeout_s`,
 `map_timeout_s`, `tf_timeout_s`, `navigation_timeout_s`로 조정한다.
 짧은 정체 판단의 ROS parameter는 `progress_timeout_s=5.0`,
-`progress_distance_m=0.05`, `progress_angle_rad=0.15`다. 정상 제자리 회전도
-진행으로 인정하고, Goal 수락 대기 시간은 정체 시간에 포함하지 않는다.
+`progress_distance_m=0.05`, `progress_angle_rad=0.15`다. Goal 수락 대기 시간은
+정체 시간에 포함하지 않는다. `cmd_vel_topic=/cmd_vel`은 제조사 Nav2 smoother와
+behavior 서버의 출력이며, 별도 조이스틱 입력 `/controller/cmd_vel`과 다르다.
+기존 드라이버의 `progress_odom_topic=/odom_rf2o`가 신선하고 유효하면 그 이동량을
+우선 사용한다. 수신하지 못하면 기존 SLAM TF로 대체하며, 이때 바퀴 미끄러짐을
+독립적으로 구분할 수 있다고 보장하지 않는다. 입력 전환 시 기준 위치를 초기화하고
+로그에 사용 소스를 표시한다. 토픽 이름은 launch 인자로 변경할 수 있다.
+RF2O를 새로 기동하거나 LiDAR 정합 알고리즘을 추가하지 않는다.
 `ready_timeout_s`는 launch 인자로도 설정할 수 있다. 부모 launch의 종료 유예도
 같은 값에 프로세스 정리 시간을 더해 적용하므로, Ctrl+C가 Action 서버를 먼저
 강제 종료해 자동 기동한 매핑 프로세스를 남기지 않도록 한다.

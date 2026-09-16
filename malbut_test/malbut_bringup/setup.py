@@ -28,5 +28,6 @@ setup(
         'wait_for_robot = malbut_bringup.readiness:main',
         'pose_memory = malbut_bringup.pose_memory:main',
         'robot_web_panel = malbut_bringup.web_panel:main',
+        'robot_cloud_sync = malbut_bringup.cloud_sync:main',
     ]},
 )

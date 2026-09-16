@@ -1,0 +1,9 @@
+{
+  "app": "npx tsx bin/homecam-web.ts",
+  "context": {
+    "stage": "dev",
+    "region": "ap-northeast-2",
+    "deviceIds": ["gazebo-homecam"],
+    "containerImageTag": "dev"
+  }
+}

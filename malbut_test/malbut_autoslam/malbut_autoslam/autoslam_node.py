@@ -7,6 +7,7 @@ import threading
 import time
 
 from action_msgs.msg import GoalStatus, GoalStatusArray
+from geometry_msgs.msg import Twist
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
 from malbut_interfaces.action import AutoSlam
@@ -36,6 +37,16 @@ from malbut_autoslam.saved_pose import write_mapping_pose
 
 class Interrupted(RuntimeError):
     """Execution was canceled or the server is shutting down."""
+
+
+def _pose_xy_yaw(position, orientation):
+    quaternion = (orientation.x, orientation.y, orientation.z, orientation.w)
+    norm = math.hypot(*quaternion)
+    if (not all(math.isfinite(value) for value in (*quaternion, position.x, position.y, norm))
+            or norm < 1e-6):
+        raise ValueError('invalid planar pose')
+    x, y, z, w = (value / norm for value in quaternion)
+    return position.x, position.y, math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 def map_base(directory, name):
@@ -118,6 +129,7 @@ class AutoSlamNode(Node):
             'max_exploration_time_s': 1200.0,
             'auto_start': False,
             'scan_topic': '/scan_raw', 'odom_topic': '/odom',
+            'cmd_vel_topic': '/cmd_vel', 'progress_odom_topic': '/odom_rf2o',
             'runtime_directory': str(Path.home() / '.ros/malbut/autoslam'),
             'sensor_timeout_s': 3.0,
         }
@@ -144,10 +156,20 @@ class AutoSlamNode(Node):
         self.runtime = None
         self.scan_received_at = 0.0
         self.odom_received_at = 0.0
+        self.command = None
+        self.command_received_at = 0.0
+        self.progress_odom = None
+        self.progress_odom_received_at = 0.0
         self.navigation_busy = False
         self.known_area_m2 = 0.0
         self.frontier_count = 0
         self.group = ReentrantCallbackGroup()
+        self.create_subscription(
+            Twist, self.settings['cmd_vel_topic'], self._receive_command,
+            qos_profile_sensor_data, callback_group=self.group)
+        self.create_subscription(
+            Odometry, self.settings['progress_odom_topic'], self._receive_progress_odom,
+            qos_profile_sensor_data, callback_group=self.group)
         self.lifecycle_clients = {}
         if self.settings['auto_start']:
             if self.get_parameter('use_sim_time').value:
@@ -202,6 +224,46 @@ class AutoSlamNode(Node):
 
     def _receive_odom(self, _message):
         self.odom_received_at = time.monotonic()
+
+    def _receive_command(self, message):
+        with self.lock:
+            self.command, self.command_received_at = message, time.monotonic()
+
+    def _receive_progress_odom(self, message):
+        with self.lock:
+            self.progress_odom, self.progress_odom_received_at = message, time.monotonic()
+
+    def _command_mode(self):
+        with self.lock:
+            command, received = self.command, self.command_received_at
+        if command is None or time.monotonic() - received > self.settings['sensor_timeout_s']:
+            return None
+        x, y, yaw = command.linear.x, command.linear.y, command.angular.z
+        if not all(math.isfinite(value) for value in (x, y, yaw)):
+            return None
+        # Ignore zero/tiny commands: a deliberate Nav2 wait is not physical blockage.
+        timeout = self.settings['progress_timeout_s']
+        if math.hypot(x, y) * timeout >= self.settings['progress_distance_m']:
+            return 'translation'
+        if abs(yaw) * timeout >= self.settings['progress_angle_rad']:
+            return 'rotation'
+        return None
+
+    def _progress_pose(self, map_frame, fallback_pose):
+        # Reuse the driver's scan odometry; do not start a second estimator/TF publisher.
+        with self.lock:
+            odom, received = self.progress_odom, self.progress_odom_received_at
+        timeout = self.settings['sensor_timeout_s']
+        if (odom is not None and odom.header.frame_id and odom.child_frame_id
+                and time.monotonic() - received <= timeout):
+            age = (self.get_clock().now() - Time.from_msg(odom.header.stamp)).nanoseconds / 1e9
+            if abs(age) <= timeout:
+                try:
+                    pose = _pose_xy_yaw(odom.pose.pose.position, odom.pose.pose.orientation)
+                    return ('odom', odom.header.frame_id, odom.child_frame_id), pose
+                except ValueError:
+                    pass
+        return ('tf', map_frame), fallback_pose
 
     def _receive_navigation_status(self, message):
         self.navigation_busy = any(status.status in (
@@ -345,14 +407,7 @@ class AutoSlamNode(Node):
         if not all(math.isfinite(value) for value in (position.x, position.y)):
             raise RuntimeError('robot position is not finite')
         if with_heading:
-            rotation = transform.transform.rotation
-            quaternion = (rotation.x, rotation.y, rotation.z, rotation.w)
-            norm = math.hypot(*quaternion)
-            if not all(math.isfinite(value) for value in quaternion) or norm < 1e-6:
-                raise RuntimeError('robot heading is invalid')
-            x, y, z, w = (value / norm for value in quaternion)
-            yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
-            return message, (position.x, position.y, yaw)
+            return message, _pose_xy_yaw(position, transform.transform.rotation)
         return message, (position.x, position.y)
 
     def _feedback(self, handle, state, grid=None, frontier_count=None):
@@ -471,6 +526,7 @@ class AutoSlamNode(Node):
         deadline = min(run_deadline,
                        time.monotonic() + self.settings['navigation_timeout_s'])
         baseline = None
+        baseline_key = None
         last_progress = time.monotonic()
         while not self.child.done.wait(0.2):
             self._check(handle)
@@ -481,20 +537,32 @@ class AutoSlamNode(Node):
                 raise RuntimeError(f'Nav2 transport error: {self.child.error}')
             self._feedback(handle, 'NAVIGATING')
             now = time.monotonic()
-            # Start only after acceptance. Real translation or rotation counts;
-            # an initial on-the-spot turn must not be mistaken for a collision.
-            if self.child.handle is not None and self.child.handle.accepted:
+            mode = self._command_mode()
+            source, pose = self._progress_pose(frame, pose)
+            key = (source, mode)
+            # A bump alone does not matter. Compare the requested type of motion
+            # with observed progress only while fresh nonzero commands persist.
+            if mode is None or self.child.handle is None or not self.child.handle.accepted:
+                baseline = None
+            else:
+                if baseline_key != key:
+                    baseline = None  # Never compare RF2O and map-frame origins.
+                    if baseline_key is None or baseline_key[0] != source:
+                        self.get_logger().info(f'Motion progress source: {source}')
+                baseline_key = key
                 angle = (0.0 if baseline is None else
                          math.atan2(math.sin(pose[2] - baseline[2]),
                                     math.cos(pose[2] - baseline[2])))
                 if (baseline is None
-                        or math.dist(pose[:2], baseline[:2])
-                        >= self.settings['progress_distance_m']
-                        or abs(angle) >= self.settings['progress_angle_rad']):
+                        or (mode == 'translation' and math.dist(pose[:2], baseline[:2])
+                            >= self.settings['progress_distance_m'])
+                        or (mode == 'rotation' and abs(angle)
+                            >= self.settings['progress_angle_rad'])):
                     baseline, last_progress = pose, now
                 elif now - last_progress >= self.settings['progress_timeout_s']:
                     self.get_logger().warning(
-                        f'No motion progress for {now - last_progress:.1f}s; '
+                        f'Commanded {mode} without progress for {now - last_progress:.1f}s '
+                        f'({source}); '
                         'canceling and excluding this approach for the current mapping run')
                     child = self.child
                     self._settle_child(handle)

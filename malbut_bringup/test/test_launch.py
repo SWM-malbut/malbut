@@ -18,6 +18,25 @@ import pytest
 ROOT = Path(__file__).parents[2]
 
 
+def test_cloud_launch_starts_only_outbound_bridge():
+    """Cloud connectivity does not start hardware, navigation, or a local HTTP port."""
+    source = ROOT / 'malbut_bringup/launch/cloud.launch.py'
+    spec = importlib.util.spec_from_file_location('cloud_launch', source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    context = _context(module, backend_url='https://robot.example.com',
+                       token_file='/protected/device.token', map_directory='/maps')
+    actions = module.generate_launch_description().entities
+    nodes = [action for action in actions if isinstance(action, Node)]
+    assert len(nodes) == 1 and nodes[0].node_executable == 'robot_cloud_sync'
+    assert not _includes(actions)
+    parameters = evaluate_parameters(context, nodes[0]._Node__parameters)[0]
+    assert parameters['use_sim_time'] is False
+    assert parameters['map_topic'] == '/map'
+    assert parameters['token_file'] == '/protected/device.token'
+    assert 'token' not in parameters and 'port' not in parameters
+
+
 @pytest.fixture
 def launch_module(tmp_path, monkeypatch):
     """Supply fake vendor assets, but use the real Malbut launch files."""

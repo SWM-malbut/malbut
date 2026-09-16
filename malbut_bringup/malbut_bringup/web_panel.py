@@ -75,9 +75,32 @@ def validate_command(payload):
         if (set(args) != {'thoroughness'} or type(args['thoroughness']) is not int
                 or args['thoroughness'] not in (0, 1, 2)):
             raise ValueError('thoroughness must be 0, 1 or 2')
+    elif capability == 'navigate_to_pose':
+        if (set(args) != {'x', 'y', 'yaw'}
+                or any(type(args[key]) not in (float, int)
+                       or not math.isfinite(args[key]) for key in args)):
+            raise ValueError('Navigation requires finite x, y and yaw in map coordinates')
     else:
         raise ValueError('Unknown capability')
     return payload
+
+
+def mission_arguments(capability, arguments):
+    """Translate a bounded map-coordinate request to the public Nav2 Goal."""
+    if capability != 'navigate_to_pose':
+        return arguments
+    return {
+        'pose': {
+            'header': {'frame_id': 'map'},
+            'pose': {
+                'position': {'x': float(arguments['x']), 'y': float(arguments['y']), 'z': 0.0},
+                'orientation': {'x': 0.0, 'y': 0.0,
+                                'z': math.sin(arguments['yaw'] / 2.0),
+                                'w': math.cos(arguments['yaw'] / 2.0)},
+            },
+        },
+        'behavior_tree': '',
+    }
 
 
 def image_jpeg(message):
@@ -200,7 +223,8 @@ class PanelData:
 class RosBridge:
     """Own Action handles and execute all ROS commands on the ROS executor."""
 
-    def __init__(self, data):
+    def __init__(self, data, *, node_name='robot_web_panel',
+                 map_topic='/global_costmap/costmap'):
         """Subscribe to diagnostics/images and prepare nonblocking Action clients."""
         from malbut_interfaces.action import AutoSlam, ExecuteMission
         from malbut_interfaces.msg import SystemState
@@ -215,7 +239,7 @@ class RosBridge:
         from std_msgs.msg import String
         from tf2_ros import Buffer, TransformListener
 
-        self.node = Node('robot_web_panel')
+        self.node = Node(node_name)
         self.data = data
         self.commands = queue.Queue(maxsize=64)
         self.handles = {}
@@ -247,7 +271,7 @@ class RosBridge:
         topics = {
             'rgb_topic': '/depth_cam/rgb0/image_raw',
             'debug_topic': '/perception/person/debug_image/compressed',
-            'map_topic': '/global_costmap/costmap',
+            'map_topic': map_topic,
         }
         self.topics = {key: self.node.declare_parameter(key, value).value
                        for key, value in topics.items()}
@@ -480,6 +504,11 @@ class RosBridge:
             self.cancel_pending.discard(request_id)
             return
         capability = payload['capability']
+        if capability == 'navigate_to_pose':
+            info = self.data.map_snapshot()
+            if (not info.get('active') or info.get('frame_id') != 'map'
+                    or self._robot_pose() is None):
+                raise ValueError('Navigation requires a live map and current robot pose')
         if capability == 'autoslam':
             if self.runtime and self.runtime.snapshot()['mode'] == 'navigation':
                 raise ValueError('저장 지도 주행을 종료하고 지도 만들기 모드를 켜세요')
@@ -507,7 +536,8 @@ class RosBridge:
         if route == 'manager':
             goal = self.mission_goal()
             goal.capability_id = capability
-            goal.arguments_yaml = json.dumps(payload['arguments'])
+            goal.arguments_yaml = json.dumps(mission_arguments(
+                capability, payload['arguments']))
         else:
             goal = self.auto_goal()
             goal.map_name = payload['arguments']['map_name']

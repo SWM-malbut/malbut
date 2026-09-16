@@ -207,7 +207,7 @@ test("uses the configured public origin behind an internal container listener", 
   const upstream = `https://${AWS_HOST}/hls/v1/getHLSMasterPlaylist.m3u8?SessionToken=${encodeURIComponent(SESSION_TOKEN)}`;
   const proxy = await helper.createDeviceLivePlaybackProxy(
     {
-      requestUrl: "https://0.0.0.0:3000/api/devices/gazebo-homecam/live-playback",
+      requestUrl: "http://0.0.0.0:3000/api/devices/gazebo-homecam/live-playback",
       publicOrigin: "https://malbut.example.com",
       playbackUrl: upstream,
       deviceId: "gazebo-homecam",
@@ -218,5 +218,6 @@ test("uses the configured public origin behind an internal container listener", 
   );
 
   assert.equal(new URL(proxy.playbackUrl).origin, "https://malbut.example.com");
+  assert.match(proxy.setCookie, /; Secure(?:;|$)/);
   assert.doesNotMatch(proxy.playbackUrl, /0\.0\.0\.0|SessionToken|kinesisvideo/);
 });

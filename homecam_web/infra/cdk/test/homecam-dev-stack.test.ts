@@ -4,12 +4,14 @@ import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import {
   type AuthMigrationPhase,
+  type HomecamDevStackProps,
   HomecamDevStack,
 } from "../lib/homecam-dev-stack";
 
 function synthesize(
   deviceIds = ["gazebo-homecam"],
   authMigrationPhase: AuthMigrationPhase = "prepare",
+  options: Partial<Pick<HomecamDevStackProps, "ingressMode" | "deploymentSourceDirectory">> = {},
 ) {
   const app = new App();
   const stack = new HomecamDevStack(app, "TestHomecam", {
@@ -18,6 +20,7 @@ function synthesize(
     containerImageTag: "dev",
     authMigrationPhase,
     env: { account: "111122223333", region: "ap-northeast-2" },
+    ...options,
   });
   return Template.fromStack(stack);
 }
@@ -377,6 +380,77 @@ test("cleanup removes Hosted UI auth and keeps only application sessions", () =>
   assert.deepEqual(httpsListener?.Properties?.DefaultActions?.map(
     (action: { Type: string }) => action.Type,
   ), ["forward"]);
+});
+
+test("CloudFront supplies HTTPS without a domain or EC2 gateway and disables auth caching", () => {
+  const template = synthesize(["gazebo-homecam"], "cleanup", { ingressMode: "cloudfront" });
+  template.resourceCountIs("AWS::EC2::Instance", 0);
+  template.resourceCountIs("AWS::EC2::EIP", 0);
+  template.resourceCountIs("AWS::CertificateManager::Certificate", 0);
+  template.resourceCountIs("AWS::Route53::RecordSet", 0);
+  template.resourceCountIs("AWS::CloudFront::VpcOrigin", 1);
+  template.resourceCountIs("AWS::CloudFront::Distribution", 1);
+  assert.equal(template.toJSON().Parameters.HomecamHostedZoneId, undefined);
+  assert.equal(template.toJSON().Parameters.HomecamHostedZoneName, undefined);
+  template.hasResourceProperties("AWS::ElasticLoadBalancingV2::LoadBalancer", {
+    Scheme: "internal",
+    LoadBalancerAttributes: Match.arrayWith([
+      { Key: "routing.http.xff_header_processing.mode", Value: "preserve" },
+      { Key: "routing.http.preserve_host_header.enabled", Value: "true" },
+    ]),
+  });
+  template.hasResourceProperties("AWS::ElasticLoadBalancingV2::Listener", {
+    Port: 80, Protocol: "HTTP",
+  });
+  template.hasResourceProperties("AWS::CloudFront::Distribution", {
+    DistributionConfig: Match.objectLike({
+      DefaultCacheBehavior: Match.objectLike({
+        ViewerProtocolPolicy: "https-only",
+        AllowedMethods: ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "POST", "DELETE"],
+        CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+        OriginRequestPolicyId: "216adef6-5c7f-47e4-b989-5492eafa07d3",
+      }),
+      // Omitting a custom certificate uses the AWS-managed *.cloudfront.net certificate.
+      ViewerCertificate: Match.absent(),
+      Aliases: Match.absent(),
+      Origins: Match.arrayWith([Match.objectLike({ VpcOriginConfig: Match.anyValue() })]),
+    }),
+  });
+  const ingress = Object.values(template.findResources("AWS::EC2::SecurityGroupIngress"));
+  assert.ok(ingress.some((rule) => rule.Properties?.FromPort === 80 && rule.Properties?.SourcePrefixListId));
+  assert.ok(ingress.every((rule) => !rule.Properties?.CidrIp && !rule.Properties?.CidrIpv6));
+  const { environment } = taskRuntime(template);
+  assert.equal(environment.get("AUTH_MODE"), "cognito_session");
+  assert.match(JSON.stringify(environment.get("AUTH_PUBLIC_ORIGIN")), /HomecamDistribution.*DomainName/);
+  assert.match(JSON.stringify(template.toJSON().Outputs.HomecamUrl), /HomecamDistribution.*DomainName/);
+  assert.doesNotMatch(JSON.stringify(template.toJSON()), /authenticate-cognito/);
+});
+
+test("CloudFront cannot accidentally enable legacy ALB authentication", () => {
+  assert.throws(() => synthesize(["gazebo-homecam"], "prepare", { ingressMode: "cloudfront" }),
+    /cloudfront ingress requires authMigrationPhase=cleanup/);
+});
+
+test("snapshot builds consume a scoped S3 source and pin the image to its asset hash", () => {
+  const template = synthesize(["gazebo-homecam"], "cleanup", {
+    deploymentSourceDirectory: "homecam_web",
+  });
+  const sourceHash = template.toJSON().Outputs.DeploymentSourceHash.Value;
+  assert.match(sourceHash, /^[0-9a-f]{64}$/);
+  assert.equal(template.toJSON().Outputs.ContainerImageTag.Value, `snapshot-${sourceHash}`);
+  template.hasResourceProperties("AWS::CodeBuild::Project", {
+    Source: Match.objectLike({ Type: "S3" }),
+    Environment: Match.objectLike({ EnvironmentVariables: Match.arrayWith([
+      { Name: "IMAGE_TAG", Type: "PLAINTEXT", Value: `snapshot-${sourceHash}` },
+    ]) }),
+  });
+  const [project] = Object.values(template.findResources("AWS::CodeBuild::Project"));
+  const buildSpec = JSON.stringify(project?.Properties?.Source?.BuildSpec);
+  assert.doesNotMatch(buildSpec, /github.com|git fetch|GIT_SHA/);
+  assert.match(buildSpec, /CODEBUILD_SRC_DIR/);
+  assert.match(buildSpec, new RegExp(`snapshot-${sourceHash}`));
+  const { task } = taskRuntime(template);
+  assert.match(JSON.stringify(task.Properties?.ContainerDefinitions), new RegExp(`snapshot-${sourceHash}`));
 });
 
 function clientByName(template: Template, clientName: string) {

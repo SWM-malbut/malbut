@@ -12,7 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from malbut_bringup.web_panel import (
-    image_jpeg, PanelData, PanelServer, RosBridge, validate_command,
+    image_jpeg, mission_arguments, PanelData, PanelServer, RosBridge, validate_command,
 )
 
 
@@ -246,6 +246,34 @@ def test_autoslam_uses_manager_when_available():
     assert bridge.data.requests[request_id]['route'] == 'manager'
     goal = bridge.clients['manager'].send_goal_async.call_args.args[0]
     assert goal.capability_id == 'autoslam'
+    bridge.clients['autoslam'].send_goal_async.assert_not_called()
+
+
+def test_navigation_arguments_use_public_goal_without_arbitrary_behavior_tree():
+    """Translate finite map coordinates, leaving Nav2's default behavior intact."""
+    goal = mission_arguments('navigate_to_pose', {'x': 1, 'y': -2, 'yaw': 0})
+    assert goal['pose']['header'] == {'frame_id': 'map'}
+    assert goal['pose']['pose']['position'] == {'x': 1.0, 'y': -2.0, 'z': 0.0}
+    assert goal['pose']['pose']['orientation']['w'] == 1.0
+    assert goal['behavior_tree'] == ''
+
+
+def test_navigation_requires_fresh_pose_then_uses_manager():
+    """No direct Nav2 bypass exists when map/pose or the manager is unavailable."""
+    bridge, _ = _bridge(manager_ready=True)
+    command = _command('navigate_to_pose', {'x': 1, 'y': -2, 'yaw': 0})
+    request_id = bridge.submit(command)
+    bridge._drain()
+    assert bridge.data.requests[request_id]['state'] == 'ERROR'
+    bridge.clients['manager'].send_goal_async.assert_not_called()
+    bridge.data.map_snapshot = Mock(return_value={'active': True, 'frame_id': 'map'})
+    bridge._robot_pose = Mock(return_value={'x': 0, 'y': 0, 'yaw': 0})
+    request_id = bridge.submit(command)
+    bridge._drain()
+    assert bridge.data.requests[request_id]['state'] == 'RUNNING'
+    goal = bridge.clients['manager'].send_goal_async.call_args.args[0]
+    assert goal.capability_id == 'navigate_to_pose'
+    assert json.loads(goal.arguments_yaml)['pose']['header']['frame_id'] == 'map'
     bridge.clients['autoslam'].send_goal_async.assert_not_called()
 
 
