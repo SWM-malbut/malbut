@@ -80,11 +80,8 @@ person_follower:
     alignment_angle_tolerance_rad: 0.10
     # Translation, including reverse, remains collision checked by Nav2
     # ComputePathToPose and the configured holonomic controller.
-    # Nav2 receives a distance-dependent speed cap: short corrections stay
-    # near 0.10 m/s and paths of at least 1.5 m may use the full 0.40 m/s.
-    minimum_follow_speed_mps: 0.10
-    maximum_linear_speed_mps: 0.40
-    full_speed_travel_distance_m: 1.50
+    # Nav2's robot-specific controller/velocity smoother own speed limits;
+    # the follower no longer adds a distance-dependent 0.10--0.40 m/s cap.
     # Start backing away before an approaching person crosses the lower
     # distance bound. Forward and reverse paths use the same refresh policy.
     approach_prediction_horizon_s: 0.75
@@ -102,7 +99,7 @@ person_follower:
     # Raw-map A* is only a directional hint, never a robot-clearance verdict.
     # Nav2's live costmap/controller retain the actual obstacle inflation.
     static_occupied_threshold: 65
-    static_planning_budget_s: 0.02
+    static_planning_budget_s: 0.05
     # Response deadline; late results are discarded, not remote CPU killed.
     nav2_planning_timeout_s: 0.20
     goal_safe_search_radius_m: 1.00

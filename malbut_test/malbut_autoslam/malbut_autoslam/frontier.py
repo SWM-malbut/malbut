@@ -120,6 +120,40 @@ FRONTIER_CELL_CAP = 200
 FRONTIER_DISTANCE_PENALTY_CELLS_PER_M = 12.0
 
 
+def _cell_clearance(free, resolution):
+    # DistanceTransform measures between cell centers, not occupied cell areas.
+    # Subtract a cell half-diagonal for a conservative lower bound and include
+    # the outside of the map as unknown (OpenCV otherwise ignores the border).
+    padded = np.pad(free.astype(np.uint8), 1, mode='constant')
+    center_distance = cv2.distanceTransform(padded, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
+    return np.maximum(0.0, center_distance * resolution - resolution / math.sqrt(2.0))
+
+
+def point_has_clearance(grid: MapGrid, point_xy, clearance_m: float) -> bool:
+    """Check a goal's clearance from occupied/unknown cell areas and map edges."""
+    if not all(math.isfinite(value) for value in (*point_xy, clearance_m)) or clearance_m < 0:
+        return False
+    dx, dy = point_xy[0] - grid.origin_x, point_xy[1] - grid.origin_y
+    cosine, sine = math.cos(grid.origin_yaw), math.sin(grid.origin_yaw)
+    x, y = cosine * dx + sine * dy, -sine * dx + cosine * dy
+    resolution = grid.resolution
+    width, height = grid.width * resolution, grid.height * resolution
+    if (x < clearance_m or y < clearance_m
+            or x >= width or y >= height
+            or width - x < clearance_m or height - y < clearance_m):
+        return False
+    left = max(0, math.floor((x - clearance_m) / resolution))
+    right = min(grid.width - 1, math.floor((x + clearance_m) / resolution))
+    bottom = max(0, math.floor((y - clearance_m) / resolution))
+    top = min(grid.height - 1, math.floor((y + clearance_m) / resolution))
+    local = grid.cells[bottom:top + 1, left:right + 1]
+    rows, columns = np.where((local < 0) | (local > 19))
+    cell_x, cell_y = (columns + left) * resolution, (rows + bottom) * resolution
+    distances_x = np.maximum(np.maximum(cell_x - x, x - cell_x - resolution), 0.0)
+    distances_y = np.maximum(np.maximum(cell_y - y, y - cell_y - resolution), 0.0)
+    return not np.any(np.hypot(distances_x, distances_y) <= clearance_m)
+
+
 def search_frontiers(
     grid: MapGrid,
     robot_xy: tuple[float, float] | None,
@@ -150,10 +184,7 @@ def search_frontiers(
     count, labels, statistics, _centroids = cv2.connectedComponentsWithStats(
         frontier_mask, connectivity=8
     )
-    clearance = (
-        cv2.distanceTransform(free, cv2.DIST_L2, 5)
-        * grid.resolution
-    )
+    clearance = _cell_clearance(free, grid.resolution)
     candidates = []
     nearby_candidates = []
     frontier_count = 0

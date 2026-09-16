@@ -1,5 +1,6 @@
 """Tests for map geometry and statistically gated obstacle tracking."""
 
+from dataclasses import replace
 import math
 
 import pytest
@@ -233,3 +234,28 @@ def test_rotated_costmap_coordinates_preserve_world_position():
     assert center.x == pytest.approx(1.5)
     assert center.y == pytest.approx(3.5)
     assert grid.world_to_cell(center) == (0, 0)
+
+
+@pytest.mark.parametrize('value', [math.nan, math.inf, -math.inf])
+@pytest.mark.parametrize('field', [
+    'resolution', 'stamp_seconds', 'origin_x', 'origin_y', 'origin_yaw',
+])
+def test_nonfinite_grid_metadata_is_rejected_before_caching(field, value):
+    """Malformed maps cannot reach floor/trigonometry in later sensor callbacks."""
+    grid = _grid(set())
+    if field == 'origin_x':
+        grid = replace(grid, origin=Point2D(value, 0.0))
+    elif field == 'origin_y':
+        grid = replace(grid, origin=Point2D(0.0, value))
+    else:
+        grid = replace(grid, **{field: value})
+    with pytest.raises(ValueError, match='finite'):
+        grid.validate()
+
+
+def test_finite_zero_stamp_and_origin_preserve_unknown_costs():
+    """Validation permits normal zero metadata and both map unknown encodings."""
+    grid = replace(_grid(set(), stamp=0.0), width=2, height=1, costs=(-1, 255))
+    grid.validate()
+    assert grid.world_to_cell(Point2D(0.05, 0.05)) == (0, 0)
+    assert (grid.cost(0, 0), grid.cost(1, 0)) == (-1, 255)

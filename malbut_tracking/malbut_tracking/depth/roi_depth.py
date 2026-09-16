@@ -56,12 +56,9 @@ def estimate_roi_depth(
     if minimum_samples < 1:
         raise ValueError('minimum_samples must be positive')
 
-    depth_metres = depth_image_to_metres(
-        depth_image,
-        encoding,
-        fallback_scale,
-    )
-    image_height, image_width = depth_metres.shape
+    if depth_image.ndim != 2:
+        raise ValueError('depth image must be single channel')
+    image_height, image_width = depth_image.shape
     clipped = bbox.clipped(image_width, image_height)
     if clipped is None:
         return None
@@ -74,7 +71,11 @@ def estimate_roi_depth(
     bottom = min(image_height, int(math.ceil(center_y + half_height)))
     if right <= left or bottom <= top:
         return None
-    samples = depth_metres[top:bottom, left:right].reshape(-1)
+    # Convert only the pixels used by this person, not the entire RGB-D frame
+    # again for every box (and again for the debug image).
+    samples = depth_image_to_metres(
+        depth_image[top:bottom, left:right], encoding, fallback_scale,
+    ).reshape(-1)
     valid = samples[
         np.isfinite(samples)
         & (samples >= minimum_depth_m)

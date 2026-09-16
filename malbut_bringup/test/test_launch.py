@@ -124,6 +124,7 @@ def test_default_without_map_only_starts_hardware_and_perception(launch_module):
     assert options[0]['sim'] == 'false'
     assert options[0]['robot_name'] == '/'
     assert options[0]['master_name'] == '/'
+    assert options[0]['point_cloud_enable'] == 'false'
     assert options[1]['reid_backend'] == 'osnet'
     assert Path(options[1]['python_executable']).is_file()
     assert Path(options[1]['model_path']).is_file()

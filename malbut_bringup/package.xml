@@ -30,6 +30,7 @@
   <exec_depend>malbut_tracking</exec_depend>
   <exec_depend>malbut_patrol</exec_depend>
   <exec_depend>malbut_autoslam</exec_depend>
+  <exec_depend>malbut_depth_costmap</exec_depend>
   <exec_depend>malbut_system_manager</exec_depend>
   <exec_depend>homecam_media_agent</exec_depend>
   <test_depend>ament_flake8</test_depend>

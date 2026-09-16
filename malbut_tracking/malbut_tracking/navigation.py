@@ -236,6 +236,7 @@ class Nav2MotionClient:
         spin_action: str,
         on_result: MotionResultCallback,
         on_feedback: MotionFeedbackCallback | None = None,
+        on_idle: Callable[[], None] | None = None,
     ) -> None:
         """Attach standard Nav2 action clients to a ROS node."""
         self._follow_path_client = ActionClient(
@@ -246,6 +247,7 @@ class Nav2MotionClient:
         self._spin_client = ActionClient(node, Spin, spin_action)
         self._on_result = on_result
         self._on_feedback = on_feedback
+        self._on_idle = on_idle
         self._token = 0
         self._mode: MotionMode | None = None
         self._requests: dict[int, _MotionRequest] = {}
@@ -493,6 +495,10 @@ class Nav2MotionClient:
                 self._stop_requests()
         if not self._requests:
             self._stopping = False
+        became_idle = not self.busy
         self._dispatch_queued()
         if notify:
             self._on_result(mode, status, detail)
+        if (became_idle and not self.busy and not self._destroyed
+                and self._on_idle is not None):
+            self._on_idle()

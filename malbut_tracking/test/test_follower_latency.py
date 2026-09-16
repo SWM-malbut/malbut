@@ -14,7 +14,7 @@ from tf2_ros import Buffer, TransformException
 from vision_msgs.msg import Detection3D, Detection3DArray, ObjectHypothesisWithPose
 
 from malbut_tracking.geometry import Point2D
-from malbut_tracking.person_follower_node import PersonFollowerNode
+from malbut_tracking.person_follower_node import FollowState, PersonFollowerNode
 
 
 def _follower():
@@ -54,6 +54,48 @@ def _detections(count=1, stamp_s=20):
         hypothesis.hypothesis.score = 0.9
         detection.results.append(hypothesis)
         message.detections.append(detection)
+    return message
+
+
+def _receiving_follower():
+    """Run actual acceptance and loss policy with inert motion and publishers."""
+    follower = _follower()
+    for name in ('_select_target_observation', '_message_stamp_nanoseconds',
+                 '_accept_map_target', '_arm_loss_timer'):
+        setattr(follower, name, MethodType(getattr(PersonFollowerNode, name), follower))
+    follower._pending_detection = None
+    follower._pending_detection_received_s = None
+    follower._pending_detection_timer = Mock()
+    follower._is_bearing_only = Mock(return_value=False)
+    follower._robot_pose = Mock(return_value=(Point2D(0.0, 0.0), 0.0))
+    follower._camera_lidar_fusion = Mock(return_value=None)
+    follower._camera_estimator.update = Mock(
+        return_value=SimpleNamespace(velocity=Point2D(0.0, 0.0)))
+    follower._obstacle_tracker = SimpleNamespace(target=None, bind=Mock(return_value=None))
+    follower._observed_track_id = 'person-1'
+    follower._state = FollowState.TRACKING
+    follower._settings = SimpleNamespace(observation_loss_debounce_s=0.75)
+    follower._last_target_received_s = None
+    follower._last_target_height = 0.0
+    follower._loss_timer = Mock()
+    follower._make_target_pose = Mock()
+    follower._target_pose_publisher = Mock()
+    follower._path_planner = Mock()
+    follower._nav2 = SimpleNamespace(mode=None, cancel=Mock())
+    follower._reset_recovery = Mock()
+    follower._set_state = lambda state: setattr(follower, '_state', state)
+    follower._publish_track_markers = Mock()
+    follower._publish_feedback = Mock()
+    follower._begin_loss_recovery = Mock(
+        side_effect=lambda _now: follower._set_state(FollowState.RECOVERING))
+    return follower
+
+
+def _map_detection_at(stamp_s):
+    message = _detections()
+    message.header.frame_id = 'map'
+    stamp_ns = round(stamp_s * 1_000_000_000)
+    message.header.stamp.sec, message.header.stamp.nanosec = divmod(stamp_ns, 1_000_000_000)
     return message
 
 
@@ -159,39 +201,77 @@ def test_old_lidar_frame_is_rejected_before_tracker_and_motion_updates():
 
 def test_accepted_delayed_camera_frame_keeps_its_original_observation_time():
     """An allowed delayed frame does not appear newly captured to the estimator."""
-    follower = _follower()
-    for name in ('_select_target_observation', '_message_stamp_nanoseconds'):
-        setattr(follower, name, MethodType(getattr(PersonFollowerNode, name), follower))
-    follower._pending_detection = None
-    follower._pending_detection_received_s = None
-    follower._pending_detection_timer = Mock()
-    follower._is_bearing_only = Mock(return_value=False)
-    follower._robot_pose = Mock(return_value=(Point2D(0.0, 0.0), 0.0))
-    follower._camera_lidar_fusion = Mock(return_value=None)
-    follower._camera_estimator.update = Mock(
-        return_value=SimpleNamespace(velocity=Point2D(0.0, 0.0)),
-    )
-    follower._obstacle_tracker = SimpleNamespace(target=None, bind=Mock(return_value=None))
-    follower._observed_track_id = 'person-1'
+    follower = _receiving_follower()
     message = _detections(stamp_s=19)
     message.header.frame_id = 'map'
     message.header.stamp.nanosec = 400_000_000
     PersonFollowerNode._on_detections(follower, message)
-    assert follower._last_seen_s == pytest.approx(19.4)
+    assert follower._last_target_received_s == pytest.approx(20.0)
     assert follower._last_camera_seen_s == pytest.approx(19.4)
     assert follower._last_camera_source_stamp_ns == 19_400_000_000
     assert follower._camera_estimator.update.call_args.args[1] == pytest.approx(19.4)
-    follower._accept_map_target.assert_called_once()
-    assert follower._accept_map_target.call_args.kwargs[
+    follower._apply_tracking_motion.assert_called_once()
+    assert follower._apply_tracking_motion.call_args.kwargs[
         'source_stamp_ns'] == 19_400_000_000
+    assert follower._loss_timer.timer_period_ns == 750_000_000
+
+
+def test_near_expiry_frames_debounce_delivery_gaps_without_rewriting_source_age():
+    """A valid 740ms-old frame must not cause recovery 10ms after acceptance."""
+    follower = _receiving_follower()
+    follower._state = FollowState.RECOVERING
+    for index in range(5):
+        received_s = 20.0 + 0.2 * index
+        follower._now_seconds.return_value = received_s
+        message = _map_detection_at(received_s - 0.74)
+        PersonFollowerNode._on_detections(follower, message)
+        assert follower._state == FollowState.TRACKING
+        assert follower._last_target_received_s == pytest.approx(received_s)
+        assert follower._last_camera_seen_s == pytest.approx(received_s - 0.74)
+        assert follower._camera_estimator.update.call_args.args[1] == pytest.approx(
+            received_s - 0.74)
+
+        # Wake after the old source-time loss deadline. The input itself is
+        # now stale for new motion, but this is not a 750ms delivery gap.
+        follower._now_seconds.return_value = received_s + 0.02
+        PersonFollowerNode._on_loss_timer(follower)
+        assert not follower._observation_is_current(
+            follower._last_camera_source_stamp_ns, received_s + 0.02)
+        assert follower._loss_timer.timer_period_ns == pytest.approx(730_000_000, abs=2)
+        follower._begin_loss_recovery.assert_not_called()
+
+    follower._now_seconds.return_value = received_s + 0.751
+    PersonFollowerNode._on_loss_timer(follower)
+    PersonFollowerNode._on_loss_timer(follower)
+    follower._begin_loss_recovery.assert_called_once_with(received_s + 0.751)
+    assert follower._state == FollowState.RECOVERING
+
+
+@pytest.mark.parametrize('stamp_s', [19.26, 19.27, 21.0])
+def test_duplicate_stale_or_future_frame_does_not_refresh_delivery_deadline(stamp_s):
+    """Only a distinct age-valid target observation can postpone loss recovery."""
+    follower = _receiving_follower()
+    PersonFollowerNode._on_detections(follower, _map_detection_at(19.26))
+    assert follower._last_target_received_s == 20.0
+    follower._now_seconds.return_value = 20.2
+    # Keep the duplicate within the age window to exercise the monotonic
+    # source-stamp check independently of the delayed-frame guard.
+    if stamp_s == 19.26:
+        follower._now_seconds.return_value = 20.005
+    PersonFollowerNode._on_detections(follower, _map_detection_at(stamp_s))
+    assert follower._last_target_received_s == 20.0
+    assert follower._last_camera_source_stamp_ns == 19_260_000_000
+    assert follower._camera_estimator.update.call_count == 1
+    assert follower._apply_tracking_motion.call_count == 1
+    assert follower._loss_timer.reset.call_count == 1
 
 
 @pytest.mark.parametrize('age_s, accepted', [
     (0.0, True), (0.74, True), (0.76, False), (10.0, False),
     (-0.29, True), (-0.31, False),
 ])
-def test_freshness_reuses_loss_deadline_and_tf_future_slop(age_s, accepted):
-    """The existing 0.75 s loss policy also bounds accepted observation age."""
+def test_freshness_keeps_existing_source_age_and_tf_future_slop(age_s, accepted):
+    """Receipt-time debouncing does not relax the accepted source-age limit."""
     follower = _follower()
     stamp_ns = round((20.0 - age_s) * 1_000_000_000)
     assert follower._observation_is_current(stamp_ns, 20.0) is accepted
@@ -246,10 +326,10 @@ def test_new_camera_frame_replaces_the_pending_tf_frame():
 @pytest.mark.parametrize('age_s, remaining_ns', [
     (0.0, 750_000_000), (0.6, 150_000_000), (1.0, 1),
 ])
-def test_loss_timer_uses_remaining_sensor_deadline(age_s, remaining_ns):
-    """A 600 ms delayed observation leaves 150 ms, not another full 750 ms."""
+def test_loss_timer_uses_remaining_delivery_deadline(age_s, remaining_ns):
+    """An early callback uses time left since acceptance, not a new grace period."""
     follower = _follower()
-    follower._last_seen_s = 20.0 - age_s
+    follower._last_target_received_s = 20.0 - age_s
     follower._settings = SimpleNamespace(observation_loss_debounce_s=0.75)
     follower._loss_timer = Mock()
     PersonFollowerNode._arm_loss_timer(follower)
@@ -260,7 +340,7 @@ def test_loss_timer_uses_remaining_sensor_deadline(age_s, remaining_ns):
 def test_early_loss_timer_only_rearms_the_remaining_deadline():
     """An early timer wake does not restart the entire observation grace period."""
     follower = _follower()
-    follower._last_seen_s = 19.4
+    follower._last_target_received_s = 19.4
     follower._settings = SimpleNamespace(observation_loss_debounce_s=0.75)
     follower._loss_timer = Mock()
     follower._begin_loss_recovery = Mock()

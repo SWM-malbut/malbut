@@ -110,6 +110,9 @@ def _setup(context):
         actions.append(_include(hardware_path, {
             # This vendor version uses '/' (not '') for unprefixed TF/topics.
             'sim': 'false', 'robot_name': '/', 'master_name': '/',
+            # Aurora's upstream launch accepts this inherited argument. Keep
+            # RGB/depth images; the costmap creates XYZ locally, not over DDS.
+            'point_cloud_enable': 'false',
         }))
     if media_path:
         actions.append(_include(media_path, {

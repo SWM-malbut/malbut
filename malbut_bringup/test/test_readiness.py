@@ -1,5 +1,6 @@
 """Exercise startup admission checks with no DDS, GPU, or robot processes."""
 
+from collections import deque
 from concurrent.futures import Future
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -7,7 +8,7 @@ from unittest.mock import Mock
 from lifecycle_msgs.msg import State
 from rclpy.clock import ClockType
 from rclpy.time import Time
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, LaserScan
 from vision_msgs.msg import Detection3DArray
 
 from malbut_bringup.readiness import RobotReadiness
@@ -21,6 +22,10 @@ def _node(monkeypatch):
     node.ready = False
     node.seen = {'scan': 10.0, 'odom': 10.0, 'camera_info': 10.0}
     node.frames = {'scan': 'lidar', 'odom': 'odom', 'camera_info': 'camera_optical'}
+    node.scan_headers = deque([
+        (10.0, 'lidar', Time(seconds=9.8, clock_type=ClockType.ROS_TIME)),
+        (10.0, 'lidar', Time(seconds=9.9, clock_type=ClockType.ROS_TIME)),
+    ], maxlen=32)
     node.fixed = set()
     node.action_clients = []
     node.lifecycle = {}
@@ -166,3 +171,58 @@ def test_navigation_needs_matching_map_and_active_nav2(monkeypatch):
     node.lifecycle['controller_server'][1] = future
     node.check()
     assert node.ready
+
+
+def test_latest_tf_alone_cannot_admit_untransformable_scan_stream(monkeypatch):
+    """Static lidar mounting and latest odom TF do not prove scan-time TF."""
+    node = _node(monkeypatch)
+    node.tf.can_transform.side_effect = lambda target, source, stamp: stamp.nanoseconds == 0
+    node.check()
+    assert not node.ready
+    assert 'TF:scan->odom@stamp' in node.last_missing
+
+
+def test_scan_tf_can_arrive_after_scan_without_waiting_in_sensor_callback(monkeypatch):
+    """Recent older samples allow startup even while newest scan awaits TF."""
+    node = _node(monkeypatch)
+    node.scan_headers.clear()
+    for stamp in (9.8, 9.9, 10.0):
+        message = LaserScan(ranges=[1.0])
+        message.header.frame_id = 'lidar'
+        message.header.stamp = Time(seconds=stamp, clock_type=ClockType.ROS_TIME).to_msg()
+        node._receive('scan', message)
+    node.tf.can_transform.side_effect = lambda target, source, stamp: (
+        stamp.nanoseconds != 10_000_000_000)
+    node.check()
+    assert node.ready
+    # Only headers are retained, not the scan range payload.
+    assert len(node.scan_headers) == 3
+    assert all(isinstance(header[2], Time) for header in node.scan_headers)
+
+
+def test_one_success_or_expired_scan_cannot_admit_startup(monkeypatch):
+    """Do not rely on one lucky transform or an expired startup scan."""
+    node = _node(monkeypatch)
+    node.tf.can_transform.side_effect = lambda target, source, stamp: (
+        stamp.nanoseconds in (0, 9_900_000_000))
+    node.check()
+    assert not node.ready
+    node.tf.can_transform.side_effect = None
+    node.scan_headers = deque([
+        (10.0, 'lidar', Time(seconds=6, clock_type=ClockType.ROS_TIME)),
+        (10.0, 'lidar', Time(seconds=6.1, clock_type=ClockType.ROS_TIME)),
+    ], maxlen=32)
+    node.check()
+    assert not node.ready
+
+
+def test_navigation_also_requires_stamped_scan_transform_into_map(monkeypatch):
+    """Global costmap scan inputs need map TF, not just local odometry TF."""
+    node = _node(monkeypatch)
+    node.settings['navigation'] = True
+    node.tf.can_transform.side_effect = lambda target, source, stamp: (
+        not (target == 'map' and stamp.nanoseconds != 0))
+    node.check()
+    assert not node.ready
+    assert 'TF:scan->map@stamp' in node.last_missing
+    assert 'TF:scan->odom@stamp' not in node.last_missing

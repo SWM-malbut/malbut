@@ -26,8 +26,12 @@ class CostmapGrid:
         """Reject malformed grids before indexing their cost data."""
         if not self.frame_id:
             raise ValueError('costmap frame_id is required')
-        if self.resolution <= 0.0:
-            raise ValueError('costmap resolution must be positive')
+        if not math.isfinite(self.resolution) or self.resolution <= 0.0:
+            raise ValueError('costmap resolution must be finite and positive')
+        if not all(math.isfinite(value) for value in (
+            self.stamp_seconds, self.origin.x, self.origin.y, self.origin_yaw,
+        )):
+            raise ValueError('costmap timestamp and origin must be finite')
         if self.width <= 0 or self.height <= 0:
             raise ValueError('costmap dimensions must be positive')
         if len(self.costs) != self.width * self.height:

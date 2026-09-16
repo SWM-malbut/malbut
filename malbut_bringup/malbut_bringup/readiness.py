@@ -1,5 +1,6 @@
 """Check startup inputs without sending goals or controlling the chassis."""
 
+from collections import deque
 from functools import partial
 import json
 import math
@@ -50,6 +51,9 @@ class RobotReadiness(Node):
         self.ready = False
         self.seen = {}
         self.frames = {}
+        # Keep headers only: TF can arrive just after a scan, so testing only
+        # the newest sample at each tick would reject a healthy stream.
+        self.scan_headers = deque(maxlen=32)
         self.fixed = set()
         self.subscriptions_ = []
         self.action_clients = []
@@ -129,6 +133,27 @@ class RobotReadiness(Node):
                 return
         self.seen[label] = time.monotonic()
         self.frames[label] = message.header.frame_id
+        if label == 'scan':
+            stamp = Time.from_msg(message.header.stamp)
+            if stamp.nanoseconds > 0:
+                self.scan_headers.append((self.seen[label], message.header.frame_id, stamp))
+
+    def _scan_transform_ready(self, target, now):
+        """Require repeated recent scans usable at their acquisition times."""
+        if not target:
+            return False
+        clock_now = self.get_clock().now()
+        matched_stamps = set()
+        for received, frame, stamp in reversed(self.scan_headers):
+            if (now - received > self.timeout
+                    or frame != self.frames.get('scan')
+                    or not 0 <= (clock_now - stamp).nanoseconds * 1e-9 <= self.timeout):
+                continue
+            if self.tf.can_transform(target, frame, stamp):
+                matched_stamps.add(stamp.nanoseconds)
+                if len(matched_stamps) >= 2:
+                    return True
+        return False
 
     def check(self):
         """Poll only readiness; no fixed boot sleep and no autonomous motion."""
@@ -145,10 +170,17 @@ class RobotReadiness(Node):
             frame = self.frames.get(label)
             if not frame or not self.tf.can_transform(base, frame, Time()):
                 missing.append(f'TF:{label}->{base}')
+        # A static base->lidar transform says nothing about whether AMCL and
+        # costmaps can transform the actual scans through the dynamic odom TF.
+        odom = self.frames.get('odom')
+        if not self._scan_transform_ready(odom, now):
+            missing.append(f'TF:scan->{odom or "odom"}@stamp')
         if self.settings['navigation']:
             target = self.settings['global_frame']
             if not self.tf.can_transform(target, base, Time()):
                 missing.append(f'TF:{target}->{base} (set initial pose)')
+            if not self._scan_transform_ready(target, now):
+                missing.append(f'TF:scan->{target}@stamp')
             for label in self.fixed:
                 if self.frames.get(label) != target:
                     missing.append(f'frame:{label} must be {target}')

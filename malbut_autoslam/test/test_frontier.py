@@ -16,6 +16,7 @@ from malbut_autoslam.frontier import (
     map_statistics,
     path_avoids_blocks,
     path_is_known_free,
+    point_has_clearance,
     search_frontiers,
 )
 
@@ -120,6 +121,46 @@ def test_frontiers_report_safe_unknown_boundaries():
     assert alternatives
     assert all(math.hypot(item.x - candidate.x, item.y - candidate.y) >= 0.75
                for item in alternatives)
+
+
+def test_frontier_margin_is_measured_from_cell_areas_not_centers():
+    """A cell 30cm from an obstacle center is less than 30cm from its surface."""
+    cells = np.full((40, 40), -1, dtype=np.int16)
+    cells[5:35, 5:35] = 0
+    cells[5:35, 5] = 100
+    grid = MapGrid(40, 40, 0.05, 0.0, 0.0, 0.0, cells)
+    candidates = find_frontiers(grid, (0.8, 0.8))
+    assert candidates
+    assert all(point_has_clearance(grid, (item.x, item.y), 0.30) for item in candidates)
+    assert not point_has_clearance(grid, grid.world(20, 11), 0.30)
+    assert point_has_clearance(grid, grid.world(20, 12), 0.30)
+
+
+def test_frontier_near_map_edge_keeps_clearance_outside_grid():
+    """The map border is unknown, even when all in-bounds edge cells are free."""
+    cells = np.zeros((30, 30), dtype=np.int16)
+    cells[:5, 20:] = -1
+    grid = MapGrid(30, 30, 0.05, 0.0, 0.0, 0.0, cells)
+    candidates = find_frontiers(grid, (0.7, 0.3), minimum_cells=3)
+    assert candidates
+    assert all(point_has_clearance(grid, (item.x, item.y), 0.30) for item in candidates)
+
+
+@pytest.mark.parametrize('yaw', [0.0, math.pi / 2])
+def test_point_margin_checks_actual_subcell_position_and_rotated_origin(yaw):
+    """Do not round an off-center tolerated Nav2 endpoint to a safe cell center."""
+    cells = np.zeros((20, 20), dtype=np.int16)
+    cells[:, 5] = 100
+    grid = MapGrid(20, 20, 0.1, -2.0, 3.0, yaw, cells)
+
+    def world(x, y):
+        return (-2.0 + math.cos(yaw) * x - math.sin(yaw) * y,
+                3.0 + math.sin(yaw) * x + math.cos(yaw) * y)
+
+    assert point_has_clearance(grid, world(0.95, 1.0), 0.30)
+    assert not point_has_clearance(grid, world(0.89, 1.0), 0.30)
+    assert not point_has_clearance(grid, world(1.75, 1.0), 0.30)
+    assert not point_has_clearance(grid, world(0.55, 1.0), 0.30)
 
 
 @pytest.mark.parametrize('occupancy', [-1, 0, 100])

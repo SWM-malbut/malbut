@@ -27,7 +27,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 from malbut_autoslam.frontier import (
     blocked_approach, map_grid_from_message, map_statistics, path_avoids_blocks,
-    path_is_known_free, search_frontiers,
+    path_is_known_free, point_has_clearance, search_frontiers,
 )
 from malbut_autoslam.runtime import (
     DEFAULT_READY_TIMEOUT_S, OwnedRuntime, RuntimeGraph, missing_components,
@@ -508,6 +508,12 @@ class AutoSlamNode(Node):
             grid = map_grid_from_message(message)
             if math.hypot(points[-1][0] - frontier.x, points[-1][1] - frontier.y) > max(
                     grid.resolution, self.settings['robot_clearance_m']):
+                return False
+            # SLAM may have discovered a wall while the planner was running.
+            # Recheck both the requested goal and Navfn's tolerated endpoint;
+            # a free center cell alone does not preserve the approach margin.
+            if not all(point_has_clearance(grid, point, self.settings['robot_clearance_m'])
+                       for point in (points[-1], (frontier.x, frontier.y))):
                 return False
             points = [robot, *points, (frontier.x, frontier.y)]
             if (not path_is_known_free(grid, points)

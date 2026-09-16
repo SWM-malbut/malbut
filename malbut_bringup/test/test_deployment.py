@@ -13,7 +13,7 @@ ROOT = Path(__file__).parents[2] / 'malbut_test'
 PACKAGES = (
     'malbut_bringup', 'malbut_interfaces', 'malbut_system_manager',
     'malbut_yolo', 'malbut_reid', 'malbut_tracking', 'malbut_patrol',
-    'malbut_autoslam',
+    'malbut_autoslam', 'malbut_depth_costmap',
 )
 
 

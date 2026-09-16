@@ -236,12 +236,12 @@ def test_missing_static_path_keeps_original_target_goal_selection():
 
 
 def test_static_path_budget_expiry_is_not_reported_as_unreachable(monkeypatch):
-    """Exhausting the 20 ms budget is distinct from exhausting the search."""
+    """Exhausting the 50 ms budget is distinct from exhausting the search."""
     width = height = 40
     costs = [0] * (width * height)
     for row in range(height):
         costs[row * width + 20] = 100
-    ticks = iter([0.0, 0.001, 0.002, 0.010, 0.021])
+    ticks = iter([0.0, 0.001, 0.002, 0.030, 0.051])
     monkeypatch.setattr(
         goal_safety, 'time', SimpleNamespace(monotonic=lambda: next(ticks)),
     )
@@ -249,6 +249,18 @@ def test_static_path_budget_expiry_is_not_reported_as_unreachable(monkeypatch):
         plan_static_path(
             _grid(costs, width, height), Point2D(0.55, 0.55), Point2D(3.55, 0.55),
         )
+
+
+def test_default_static_budget_allows_search_after_twenty_milliseconds(monkeypatch):
+    """A 30 ms job is now within budget without disabling the deadline."""
+    ticks = iter([0.0, 0.030])
+    monkeypatch.setattr(
+        goal_safety, 'time', SimpleNamespace(monotonic=lambda: next(ticks, 0.030)),
+    )
+    grid = _grid([0] * 9, 3, 3)
+    assert plan_static_path(
+        grid, Point2D(0.05, 0.05), Point2D(0.25, 0.05),
+    ) == (grid.cell_center(0, 0), grid.cell_center(1, 0), grid.cell_center(2, 0))
 
 
 def test_static_path_does_not_join_diagonal_corner_contacts():
@@ -294,7 +306,10 @@ def test_static_path_budget_includes_result_point_conversion(monkeypatch):
 
     monkeypatch.setattr(CostmapGrid, 'cell_center', slow_center)
     with pytest.raises(StaticPlanningTimeout):
-        plan_static_path(_grid([0] * 9, 3, 3), Point2D(0.05, 0.05), Point2D(0.25, 0.05))
+        plan_static_path(
+            _grid([0] * 9, 3, 3), Point2D(0.05, 0.05), Point2D(0.25, 0.05),
+            time_budget_s=0.02,
+        )
 
 
 @pytest.mark.parametrize('budget', [-1.0, math.inf, math.nan])
@@ -355,11 +370,33 @@ def test_live_ray_stops_before_first_wall_or_unknown_even_with_free_cells_beyond
     assert grid.world_to_cell(result) == (4, 5)
 
 
-@pytest.mark.parametrize('cost', [81, 255, -1])
+@pytest.mark.parametrize('cost', [253, 254, 255, -1])
 def test_live_ray_holds_when_robot_start_is_not_admissible(cost):
     """The fallback cannot bypass an unsafe start by jumping to another free cell."""
     assert find_reachable_approach_goal(
         _grid([cost, 0, 0], 3, 1), Point2D(0.05, 0.05), Point2D(0.25, 0.05), 80,
+    ) is None
+
+
+def test_live_ray_can_leave_soft_inflation_without_going_deeper():
+    """The goal margin must not trap a collision-free robot already near a wall."""
+    grid = _grid([220, 180, 90, 70, 0], 5, 1)
+    endpoint = grid.cell_center(4, 0)
+    assert find_reachable_approach_goal(
+        grid, grid.cell_center(0, 0), endpoint, 80,
+    ) == endpoint
+
+
+@pytest.mark.parametrize('costs', [
+    [120, 180, 0],  # Moving deeper into inflation is not an exit.
+    [120, 100, 90],  # The whole short ray remains inside the goal margin.
+    [220, 253, 0], [220, 254, 0], [220, 255, 0],
+])
+def test_live_ray_does_not_tunnel_or_stop_inside_soft_inflation(costs):
+    """Leaving soft cost does not bypass collision, unknown or endpoint checks."""
+    grid = _grid(costs, 3, 1)
+    assert find_reachable_approach_goal(
+        grid, grid.cell_center(0, 0), grid.cell_center(2, 0), 80,
     ) is None
 
 

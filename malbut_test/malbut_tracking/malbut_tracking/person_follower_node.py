@@ -18,6 +18,7 @@ from rclpy.action import (
     CancelResponse,
     GoalResponse,
 )
+from rclpy.clock import Clock, ClockType
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -46,7 +47,6 @@ from .follow_policy import (
     FollowCommand,
     FollowSettings,
     decide_follow_motion,
-    speed_limit_for_travel_distance,
 )
 from .geometry import (
     Point2D,
@@ -64,12 +64,15 @@ from .goal_safety import (
 )
 from .motion_estimator import TargetMotionEstimator
 from .navigation import MotionMode, Nav2MotionClient, Nav2PathClient
-from .path_sampling import path_length_m
+from .path_sampling import path_length_m, path_to_standoff
 from .target_association import (
     TargetCandidate,
     fuse_camera_bearing_with_lidar_range,
     select_target_candidate,
 )
+
+
+_TRACKING_PLAN_PERIOD_NS = 200_000_000
 
 
 class FollowState:
@@ -180,6 +183,7 @@ class PersonFollowerNode(Node):
             str(self.get_parameter('spin_action').value),
             self._on_nav2_result,
             self._on_nav2_feedback,
+            on_idle=lambda: self._cancel_guard.trigger(),
         )
         self._path_planner = Nav2PathClient(
             self,
@@ -257,7 +261,7 @@ class PersonFollowerNode(Node):
         self._detector_track_id = ''
         self._state = FollowState.STOPPED
         self._recovery_phase = RecoveryPhase.NONE
-        self._last_seen_s: float | None = None
+        self._last_target_received_s: float | None = None
         self._last_camera_seen_s: float | None = None
         self._last_camera_source_stamp_ns: int | None = None
         self._last_camera_frame_s: float | None = None
@@ -292,6 +296,11 @@ class PersonFollowerNode(Node):
         self._motion_generation = 0
         self._goal_dispatch_count = 0
         self._tracking_retry_pending = False
+        self._tracking_retry_context = None
+        self._last_motion_command: FollowCommand | None = None
+        self._next_tracking_plan_ns = 0
+        self._tracking_plan_pending = False
+        self._line_fallback_immediate = False
         self._navigation_failure_count = 0
         self._tracking_source = 'none'
         self._last_warning_s: dict[str, float] = {}
@@ -299,6 +308,12 @@ class PersonFollowerNode(Node):
 
         # These timers are canceled while idle and are reset only by the event
         # that needs them. There is no permanent polling loop in the follower.
+        self._tracking_plan_timer = self.create_timer(
+            _TRACKING_PLAN_PERIOD_NS * 1e-9,
+            self._on_tracking_plan_timer,
+            clock=Clock(clock_type=ClockType.STEADY_TIME),
+        )
+        self._tracking_plan_timer.cancel()
         self._loss_timer = self.create_timer(
             max(
                 1e-3,
@@ -365,7 +380,7 @@ class PersonFollowerNode(Node):
         self.declare_parameter('goal_checker_id', 'general_goal_checker')
         self.declare_parameter('spin_action', 'spin')
         self.declare_parameter('navigation_retry_delay_s', 0.75)
-        self.declare_parameter('static_planning_budget_s', 0.02)
+        self.declare_parameter('static_planning_budget_s', 0.05)
         self.declare_parameter('nav2_planning_timeout_s', 0.20)
         self.declare_parameter('speed_limit_topic', 'speed_limit')
         self.declare_parameter('global_frame', 'map')
@@ -399,6 +414,7 @@ class PersonFollowerNode(Node):
         self.declare_parameter('minimum_distance_m', 0.20)
         self.declare_parameter('distance_tolerance_m', 0.10)
         self.declare_parameter('alignment_angle_tolerance_rad', 0.10)
+        # Retained for launch compatibility; Nav2 now owns all speed limits.
         self.declare_parameter('minimum_follow_speed_mps', 0.10)
         self.declare_parameter('maximum_linear_speed_mps', 0.40)
         self.declare_parameter('full_speed_travel_distance_m', 1.50)
@@ -536,15 +552,6 @@ class PersonFollowerNode(Node):
             distance_tolerance_m=float(
                 self.get_parameter('distance_tolerance_m').value
             ),
-            minimum_follow_speed_mps=float(
-                self.get_parameter('minimum_follow_speed_mps').value
-            ),
-            maximum_linear_speed_mps=float(
-                self.get_parameter('maximum_linear_speed_mps').value
-            ),
-            full_speed_travel_distance_m=float(
-                self.get_parameter('full_speed_travel_distance_m').value
-            ),
             observation_loss_debounce_s=float(
                 self.get_parameter('observation_loss_debounce_s').value
             ),
@@ -563,11 +570,6 @@ class PersonFollowerNode(Node):
             ),
             minimum_distance_m=defaults.minimum_distance_m,
             distance_tolerance_m=defaults.distance_tolerance_m,
-            minimum_follow_speed_mps=defaults.minimum_follow_speed_mps,
-            maximum_linear_speed_mps=defaults.maximum_linear_speed_mps,
-            full_speed_travel_distance_m=(
-                defaults.full_speed_travel_distance_m
-            ),
             observation_loss_debounce_s=(
                 defaults.observation_loss_debounce_s
             ),
@@ -576,7 +578,7 @@ class PersonFollowerNode(Node):
         return settings
 
     def _goal_callback(self, request) -> GoalResponse:
-        if self._active_goal is not None:
+        if self._active_goal is not None or self._result_future is not None:
             self.get_logger().warning('Rejecting concurrent follow action')
             return GoalResponse.REJECT
         try:
@@ -606,6 +608,9 @@ class PersonFollowerNode(Node):
 
     def _cancel_callback(self, goal_handle) -> CancelResponse:
         """Defer cancellation until the ActionServer enters canceling state."""
+        if (goal_handle is not self._active_goal
+                and goal_handle is not self._cancel_requested_goal):
+            return CancelResponse.REJECT
         self._cancel_requested_goal = goal_handle
         self._cancel_guard.trigger()
         return CancelResponse.ACCEPT
@@ -613,9 +618,12 @@ class PersonFollowerNode(Node):
     def _on_cancel_guard(self) -> None:
         """Finish an accepted cancel request without a polling timer."""
         goal_handle = self._cancel_requested_goal
-        self._cancel_requested_goal = None
+        if goal_handle is None:
+            return
         if goal_handle is self._active_goal:
             self._cancel_follow_action('follow action canceled')
+        elif self._active_goal is None:
+            self._complete_follow_cancel()
 
     def _handle_accepted(self, goal_handle) -> None:
         self._active_goal = goal_handle
@@ -630,7 +638,7 @@ class PersonFollowerNode(Node):
         self._detector_track_id = ''
         self._obstacle_tracker.clear_selection()
         self._camera_estimator.reset()
-        self._last_seen_s = None
+        self._last_target_received_s = None
         self._last_camera_seen_s = None
         self._last_camera_source_stamp_ns = None
         self._last_camera_frame_s = None
@@ -658,6 +666,8 @@ class PersonFollowerNode(Node):
         self._motion_generation = 0
         self._goal_dispatch_count = 0
         self._tracking_retry_pending = False
+        self._tracking_retry_context = None
+        self._last_motion_command = None
         self._tracking_retry_timer.cancel()
         self._loss_timer.cancel()
         self._pending_detection_timer.cancel()
@@ -665,7 +675,7 @@ class PersonFollowerNode(Node):
         self._navigation_failure_count = 0
         self._tracking_source = 'none'
         self._set_state(FollowState.IDLE)
-        self._publish_speed_limit()
+        self._reset_speed_limit()
         goal_handle.execute()
         self.get_logger().info(
             'Waiting to acquire '
@@ -678,7 +688,12 @@ class PersonFollowerNode(Node):
         )
 
     async def _execute_callback(self, goal_handle):
-        if goal_handle is not self._active_goal or self._result_future is None:
+        if goal_handle.status == GoalStatus.STATUS_CANCELED:
+            # A cancel with no owned motion can finish before execution starts.
+            return self._canceled_follow_result()
+        if ((goal_handle is not self._active_goal
+                and goal_handle is not self._cancel_requested_goal)
+                or self._result_future is None):
             result = FollowPerson.Result()
             result.success = False
             result.final_state = FollowState.STOPPED
@@ -786,7 +801,6 @@ class PersonFollowerNode(Node):
         self._last_precise_camera_position = (
             None if bearing_only else raw_camera_position
         )
-        self._last_seen_s = observation_s
         self._detector_track_id = detection.id
         self._last_target_height = detected_pose.pose.position.z
         if not self._observed_track_id:
@@ -1319,7 +1333,6 @@ class PersonFollowerNode(Node):
             )
             return False
         self._last_lidar_stamp_s = labeled.stamp_seconds
-        self._last_seen_s = labeled.stamp_seconds
         self._record_observed_bearing(
             robot_position,
             robot_yaw,
@@ -1414,7 +1427,7 @@ class PersonFollowerNode(Node):
         self._set_state(FollowState.TRACKING)
         self._tracking_source = 'lidar_proximity'
         self._last_lidar_stamp_s = labeled.stamp_seconds
-        self._last_seen_s = labeled.stamp_seconds
+        self._last_target_received_s = now_s
         self._arm_loss_timer()
         self._record_observed_bearing(
             robot_position,
@@ -1544,7 +1557,9 @@ class PersonFollowerNode(Node):
             self._nav2.cancel()
         self._set_state(FollowState.TRACKING)
         self._tracking_source = source
-        self._last_seen_s = source_stamp_ns * 1e-9 if source_stamp_ns else now_s
+        # Source-age validation remains separate: a valid delayed frame must
+        # not trigger loss recovery milliseconds after it has been accepted.
+        self._last_target_received_s = now_s
         self._arm_loss_timer()
         self._apply_tracking_motion(
             robot_position,
@@ -1714,9 +1729,6 @@ class PersonFollowerNode(Node):
             self._last_motion_source_stamp_ns = source_stamp_ns
         if new_observation:
             self._motion_generation += 1
-            # Backoff applies to a failed observation, not a newly measured
-            # target. Fresh input must not wait another 750 ms.
-            self._cancel_tracking_retry()
         decision = decide_follow_motion(
             robot_position,
             target_position,
@@ -1733,6 +1745,10 @@ class PersonFollowerNode(Node):
             ),
         )
         self._current_distance = decision.goal.target_distance
+        previous_command = self._last_motion_command
+        if decision.command != previous_command:
+            self._reset_tracking_plan_cadence()
+        self._last_motion_command = decision.command
         if decision.command != FollowCommand.NAVIGATE:
             # An unfinished forward search must not undo HOLD, ALIGN or retreat.
             self._static_job_context = None
@@ -1751,11 +1767,13 @@ class PersonFollowerNode(Node):
             # range, not that the person is close. Never infer reverse motion
             # from that uncertain depth, and stop an existing retreat until
             # metric depth returns.
+            self._reset_tracking_plan_cadence()
             self._path_planner.cancel()
+            if self._nav2.mode is not None:
+                self._nav2.cancel()
             self._last_goal_position = None
             self._cancel_tracking_retry()
             self._remaining_travel_distance_m = 0.0
-            self._publish_speed_limit()
             self._publish_track_markers()
             if recovery:
                 self._schedule_recovery_navigation_retry()
@@ -1768,7 +1786,6 @@ class PersonFollowerNode(Node):
             self._last_goal_position = None
             self._cancel_tracking_retry()
             self._remaining_travel_distance_m = 0.0
-            self._publish_speed_limit()
             self._publish_track_markers()
             if recovery:
                 self._schedule_recovery_navigation_retry()
@@ -1776,19 +1793,49 @@ class PersonFollowerNode(Node):
         if decision.command == FollowCommand.ALIGN:
             self._cancel_tracking_retry()
             self._remaining_travel_distance_m = 0.0
-            self._publish_speed_limit()
             self._align_with_target(decision.goal.yaw)
             self._publish_track_markers()
             if recovery:
                 self._schedule_recovery_navigation_retry()
             return
+        if (
+            previous_command in {FollowCommand.NAVIGATE, FollowCommand.RETREAT}
+            and decision.command != previous_command
+        ):
+            # A forward path cannot serve a retreat (or vice versa). Invalidate
+            # both pending results and active motion before waiting for the
+            # planner to become idle; its idle callback plans the latest input.
+            self._static_job_context = None
+            self._line_fallback_pending = False
+            self._path_planner.cancel()
+            self._nav2.cancel()
+            self._last_goal_position = None
         if self._tracking_retry_pending:
-            return
+            context = self._tracking_retry_context
+            # Keep the first failed target as the baseline. Resetting it for
+            # every image would suppress a person's slow, accumulated motion.
+            grid = self._latest_global_costmap
+            meaningful_distance = max(
+                settings.distance_tolerance_m,
+                grid.resolution if grid is not None else 0.0,
+                1e-3,
+            )
+            if context is not None and (
+                decision.command == context[1]
+                and distance(target_position, context[0]) < meaningful_distance
+            ):
+                return
+            self._cancel_tracking_retry()
         if self._nav2.mode == MotionMode.SPIN:
             self._nav2.cancel()
         self._alignment_target_yaw = None
         planning_to_target = decision.command == FollowCommand.NAVIGATE
         if planning_to_target and self._line_fallback_pending:
+            # A failed in-flight cycle may fall back immediately once. Later
+            # sensor-driven replacements use the same cadence as normal paths.
+            if not self._line_fallback_immediate and not self._tracking_plan_due():
+                return
+            self._line_fallback_immediate = False
             self._request_line_fallback(robot_position, target_position, decision)
             return
         if self._path_planner.busy:
@@ -1807,6 +1854,8 @@ class PersonFollowerNode(Node):
                 return
             if self._static_job is not None:
                 return  # One job; sensor callbacks retain only the latest target.
+            if not recovery and not self._tracking_plan_due():
+                return
             self._static_job_context = (
                 self._active_goal, recovery, robot_position, target_position,
                 decision, self._tracking_source,
@@ -1822,6 +1871,8 @@ class PersonFollowerNode(Node):
             self._static_job.add_done_callback(self._wake_static_plan)
             return
         self._static_job_context = None  # A retreat supersedes forward planning.
+        if not recovery and not self._tracking_plan_due():
+            return
         self._request_tracking_path(
             robot_position, target_position, decision, recovery, None,
             self._tracking_source, self._last_motion_source_stamp_ns,
@@ -1878,6 +1929,7 @@ class PersonFollowerNode(Node):
                 self._schedule_recovery_navigation_retry()
             else:
                 self._line_fallback_pending = True
+                self._line_fallback_immediate = True
                 self._plan_latest_observation_if_pending(-1)
             return
         if not self._path_planner.busy:
@@ -1948,6 +2000,7 @@ class PersonFollowerNode(Node):
                     self._schedule_tracking_navigation_retry()
                 else:
                     self._line_fallback_pending = True
+                    self._line_fallback_immediate = True
                     self._plan_latest_observation_if_pending(-1)
                 return
             safe_goal_position = safe_goal.position
@@ -2116,6 +2169,7 @@ class PersonFollowerNode(Node):
                 self._schedule_tracking_navigation_retry()
             else:
                 self._line_fallback_pending = True
+                self._line_fallback_immediate = True
                 self._cancel_tracking_retry()
                 self._plan_latest_observation_if_pending(-1)
             return
@@ -2126,11 +2180,17 @@ class PersonFollowerNode(Node):
             travel_description = 'full recovery path'
             travel_distance_m = path_length_m(selected_path)
         elif target_position is not None:
-            selected_path = path
-            endpoint = path.poses[-1].pose.position
+            # Planning to the person gives Nav2 the complete route around
+            # furniture, but execution must stop at the requested distance.
+            # Previously the full route ran into that distance band until a
+            # later observation canceled it, then often requested a retreat.
+            selected_path = path_to_standoff(
+                path, target_position, self._settings.desired_distance_m,
+            )
+            endpoint = selected_path.poses[-1].pose.position
             waypoint_position = Point2D(float(endpoint.x), float(endpoint.y))
             travel_distance_m = path_length_m(selected_path)
-            travel_description = 'selected safe tracking goal'
+            travel_description = 'safe tracking goal at requested standoff'
         else:
             selected_path = path
             endpoint = path.poses[-1].pose.position
@@ -2184,7 +2244,6 @@ class PersonFollowerNode(Node):
         dispatch_ns = _monotonic_nanoseconds()
         self._cancel_tracking_retry()
         self._remaining_travel_distance_m = travel_distance_m
-        self._publish_speed_limit()
         self._last_goal_position = waypoint_position
         self._navigation_failure_count = 0
         self._goal_dispatch_count += 1
@@ -2271,10 +2330,10 @@ class PersonFollowerNode(Node):
             )
 
     def _arm_loss_timer(self) -> None:
-        """Restart the one-shot loss deadline for a real sensor observation."""
-        if self._active_goal is not None and self._last_seen_s is not None:
+        """Watch gaps in accepted inputs, independently of source-age checks."""
+        if self._active_goal is not None and self._last_target_received_s is not None:
             remaining_s = (
-                self._last_seen_s + self._settings.observation_loss_debounce_s
+                self._last_target_received_s + self._settings.observation_loss_debounce_s
                 - self._now_seconds()
             )
             self._loss_timer.timer_period_ns = max(1, int(remaining_s * 1e9))
@@ -2287,16 +2346,47 @@ class PersonFollowerNode(Node):
         if (
             self._active_goal is None
             or settings is None
-            or self._last_seen_s is None
+            or self._last_target_received_s is None
         ):
             return
         now_s = self._now_seconds()
-        if now_s - self._last_seen_s < settings.observation_loss_debounce_s:
+        if now_s - self._last_target_received_s < settings.observation_loss_debounce_s:
             self._arm_loss_timer()
             return
         if self._state == FollowState.TRACKING:
             self._begin_loss_recovery(now_s)
             self._publish_feedback()
+
+    def _reset_tracking_plan_cadence(self) -> None:
+        """Discard deferred work when motion/state changes, not sensor updates."""
+        self._next_tracking_plan_ns = 0
+        self._tracking_plan_pending = False
+        self._line_fallback_immediate = False
+        self._tracking_plan_timer.cancel()
+
+    def _tracking_plan_due(self) -> bool:
+        """Start at most one new planning cycle per slot; retain only latest input."""
+        now_ns = _monotonic_nanoseconds()
+        remaining_ns = self._next_tracking_plan_ns - now_ns
+        if remaining_ns <= 0:
+            self._tracking_plan_timer.cancel()
+            self._tracking_plan_pending = False
+            # Start from now after a long job/pause: never catch up missed slots.
+            self._next_tracking_plan_ns = now_ns + _TRACKING_PLAN_PERIOD_NS
+            return True
+        if not self._tracking_plan_pending:
+            self._tracking_plan_pending = True
+            self._tracking_plan_timer.timer_period_ns = remaining_ns
+            self._tracking_plan_timer.reset()
+        return False
+
+    def _on_tracking_plan_timer(self) -> None:
+        """Plan the newest observation once, with fresh TF and normal age checks."""
+        self._tracking_plan_timer.cancel()
+        if not self._tracking_plan_pending:
+            return
+        self._tracking_plan_pending = False
+        self._plan_latest_observation_if_pending(-1)
 
     def _plan_latest_observation_if_pending(
         self,
@@ -2331,24 +2421,31 @@ class PersonFollowerNode(Node):
 
     def _schedule_tracking_navigation_retry(self) -> None:
         """Retry one latest observation after an actual Nav2 failure."""
+        if self._tracking_retry_pending:
+            return  # Repeated failures must not postpone the same deadline.
         self._tracking_retry_pending = True
+        self._tracking_retry_context = (
+            (self._last_motion_target, self._last_motion_command)
+            if self._last_motion_target is not None else None
+        )
         self._tracking_retry_timer.reset()
 
     def _cancel_tracking_retry(self) -> None:
         self._tracking_retry_pending = False
+        self._tracking_retry_context = None
         self._tracking_retry_timer.cancel()
 
     def _on_tracking_retry_timer(self) -> None:
         """Retry failed planning without continuously replaying sensor data."""
-        self._tracking_retry_timer.cancel()
+        if not self._tracking_retry_pending:
+            return
+        self._cancel_tracking_retry()
         if (
             self._active_goal is None
             or self._state != FollowState.TRACKING
             or self._last_motion_target is None
         ):
-            self._tracking_retry_pending = False
             return
-        self._tracking_retry_pending = False
         try:
             robot_position, _ = self._robot_pose()
         except TransformException as error:
@@ -2659,7 +2756,6 @@ class PersonFollowerNode(Node):
             0.0,
             float(feedback.distance_to_goal),
         )
-        self._publish_speed_limit()
         if (
             self._state == FollowState.RECOVERING
             and self._recovery_phase == RecoveryPhase.FINISHING_WAYPOINT
@@ -2930,19 +3026,8 @@ class PersonFollowerNode(Node):
             message.markers.append(goal_label)
         self._track_markers_publisher.publish(message)
 
-    def _publish_speed_limit(self) -> None:
-        if self._settings is None:
-            return
-        message = SpeedLimit()
-        message.header.stamp = self.get_clock().now().to_msg()
-        message.percentage = False
-        message.speed_limit = speed_limit_for_travel_distance(
-            self._remaining_travel_distance_m,
-            self._settings,
-        )
-        self._speed_publisher.publish(message)
-
     def _reset_speed_limit(self) -> None:
+        """Release a previous follow cap; keep Nav2's configured limits."""
         message = SpeedLimit()
         message.header.stamp = self.get_clock().now().to_msg()
         message.percentage = False
@@ -2958,6 +3043,7 @@ class PersonFollowerNode(Node):
                 f'{self._state} -> {state}'
             )
             return
+        self._reset_tracking_plan_cadence()
         self._state = state
         self.get_logger().info(f'Follow state: {state}')
         self._publish_status()
@@ -2968,18 +3054,13 @@ class PersonFollowerNode(Node):
         result_future = self._result_future
         if goal_handle is None or result_future is None:
             return
+        self._cancel_requested_goal = goal_handle
+        self._active_goal = None
         self._nav2.cancel()
         self._path_planner.cancel()
         self._reset_speed_limit()
         self._set_state(FollowState.STOPPED)
-        result = FollowPerson.Result()
-        result.success = False
-        result.final_state = FollowState.STOPPED
-        result.message = message
-        goal_handle.canceled()
-        self._active_goal = None
         self._line_fallback_pending = False
-        self._result_future = None
         self._settings = None
         self._target_mode = FollowPerson.Goal.VISIBLE_PERSON
         self._target_person_id = ''
@@ -2987,7 +3068,7 @@ class PersonFollowerNode(Node):
         self._detector_track_id = ''
         self._obstacle_tracker.clear_selection()
         self._camera_estimator.reset()
-        self._last_seen_s = None
+        self._last_target_received_s = None
         self._last_camera_seen_s = None
         self._last_camera_frame_s = None
         self._last_camera_source_stamp_ns = None
@@ -3012,8 +3093,29 @@ class PersonFollowerNode(Node):
         self._cancel_tracking_retry()
         self._reset_recovery()
         self._tracking_source = 'none'
+        self.get_logger().info(f'{message}; waiting for Nav2 motion to stop')
+        self._complete_follow_cancel()
+
+    @staticmethod
+    def _canceled_follow_result():
+        result = FollowPerson.Result()
+        result.success = False
+        result.final_state = FollowState.STOPPED
+        result.message = 'follow action canceled'
+        return result
+
+    def _complete_follow_cancel(self) -> None:
+        """Release the outer action only after owned Nav2 motion has ended."""
+        goal_handle = self._cancel_requested_goal
+        result_future = self._result_future
+        if goal_handle is None or result_future is None or self._nav2.busy:
+            return
+        result = self._canceled_follow_result()
+        goal_handle.canceled()
+        self._cancel_requested_goal = None
+        self._result_future = None
         result_future.set_result(result)
-        self.get_logger().info(message)
+        self.get_logger().info(result.message)
 
     def _warn_periodically(self, key: str, message: str) -> None:
         now_s = self._now_seconds()

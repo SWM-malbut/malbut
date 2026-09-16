@@ -279,11 +279,24 @@ private:
     if (!map_ready_ || scan->header.frame_id.empty()) {
       return;
     }
-    // Match the previous follower semantics: retain only the freshest scan and
-    // retry it briefly while its measurement-time TF catches up.
-    pending_scan_ = scan;
-    pending_scan_receipt_steady_time_ns_ = receipt_steady_time_ns;
+    // Do not replace a scan still waiting for its measurement-time TF: a TF
+    // delay longer than one scan interval would otherwise starve all output.
+    // Keep only the newest successor while the current scan completes/expires.
+    if (pending_scan_ == nullptr) {
+      pending_scan_ = scan;
+      pending_scan_receipt_steady_time_ns_ = receipt_steady_time_ns;
+    } else {
+      latest_scan_ = scan;
+      latest_scan_receipt_steady_time_ns_ = receipt_steady_time_ns;
+    }
     process_pending_scan();
+  }
+
+  void advance_pending_scan()
+  {
+    pending_scan_ = std::move(latest_scan_);
+    pending_scan_receipt_steady_time_ns_ = latest_scan_receipt_steady_time_ns_;
+    latest_scan_receipt_steady_time_ns_ = 0U;
   }
 
   void process_pending_scan()
@@ -303,8 +316,7 @@ private:
       const rclcpp::Time stamp(scan->header.stamp, get_clock()->get_clock_type());
       const double age_s = (get_clock()->now() - stamp).seconds();
       if (age_s > transform_queue_timeout_s_) {
-        pending_scan_.reset();
-        pending_scan_receipt_steady_time_ns_ = 0U;
+        advance_pending_scan();
         RCLCPP_WARN_THROTTLE(
           get_logger(), *get_clock(), 5000,
           "Dropping scan without measurement-time TF after %.2f s: %s",
@@ -312,8 +324,7 @@ private:
       }
       return;
     }
-    pending_scan_.reset();
-    pending_scan_receipt_steady_time_ns_ = 0U;
+    advance_pending_scan();
 
     const auto * x_field = find_field(cloud, "x");
     const auto * y_field = find_field(cloud, "y");
@@ -459,6 +470,8 @@ private:
   rclcpp::TimerBase::SharedPtr scan_transform_timer_;
   sensor_msgs::msg::LaserScan::ConstSharedPtr pending_scan_;
   std::uint64_t pending_scan_receipt_steady_time_ns_{0U};
+  sensor_msgs::msg::LaserScan::ConstSharedPtr latest_scan_;
+  std::uint64_t latest_scan_receipt_steady_time_ns_{0U};
   std::uint32_t processing_trace_sequence_{0U};
   rclcpp::Publisher<malbut_interfaces::msg::LidarClusterArray>::SharedPtr
     clusters_publisher_;

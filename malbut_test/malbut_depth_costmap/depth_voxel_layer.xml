@@ -1,0 +1,7 @@
+<library path="malbut_depth_costmap">
+  <class name="malbut_depth_costmap::DepthVoxelLayer"
+         type="malbut_depth_costmap::DepthVoxelLayer"
+         base_class_type="nav2_costmap_2d::Layer">
+    <description>Depth Image and CameraInfo input for the standard Nav2 voxel grid.</description>
+  </class>
+</library>

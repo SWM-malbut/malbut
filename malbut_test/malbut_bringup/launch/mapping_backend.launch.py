@@ -59,6 +59,7 @@ def _setup(context):
         actions.append(GroupAction([IncludeLaunchDescription(
             PythonLaunchDescriptionSource(hardware), launch_arguments={
                 'sim': str(sim).lower(), 'robot_name': '/', 'master_name': '/',
+                'point_cloud_enable': 'false',
             }.items())], scoped=True))
     if slam:
         actions.append(Node(

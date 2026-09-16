@@ -473,6 +473,45 @@ def test_missing_navigation_backend_returns_failure(system_factory):
     assert not system.backend.save_requests
 
 
+@pytest.mark.parametrize('changed', ['none', 'new_wall', 'tolerated_endpoint', 'near_wall_start'])
+def test_planning_rechecks_goal_margin_on_current_map_without_trapping_start(monkeypatch, changed):
+    """Fresh goal clearance is mandatory, but not 30cm padding on every path cell."""
+    message = OccupancyGrid()
+    message.header.frame_id = 'map'
+    message.info.width = message.info.height = 40
+    message.info.resolution = 0.05
+    message.info.origin.orientation.w = 1.0
+    message.data = [0] * 1600
+    frontier = SimpleNamespace(x=1.0, y=1.0)
+    endpoint = PoseStamped()
+    endpoint.pose.position.x = 1.0
+    endpoint.pose.position.y = 1.0
+    robot = (0.5, 1.0)
+    if changed == 'new_wall':
+        # The target remains in a free cell, but a new nearby occupied cell
+        # discovered during planning invalidates its earlier 30cm margin.
+        message.data[24 * 40 + 20] = 100
+    elif changed == 'tolerated_endpoint':
+        endpoint.pose.position.y = 1.25
+        message.data[29 * 40 + 20] = 100
+    elif changed == 'near_wall_start':
+        robot = (0.2, 1.0)
+    planning = SimpleNamespace(
+        done=SimpleNamespace(wait=lambda _timeout: True), cancel=Mock(),
+        result=SimpleNamespace(status=GoalStatus.STATUS_SUCCEEDED, result=SimpleNamespace(
+            path=SimpleNamespace(header=SimpleNamespace(frame_id='map'), poses=[endpoint]))))
+    monkeypatch.setattr('malbut_autoslam.autoslam_node.Navigation', lambda *_args: planning)
+    node = SimpleNamespace(
+        settings={'ready_timeout_s': 1.0, 'robot_clearance_m': 0.30},
+        planner=Mock(), _target_pose=Mock(return_value=PoseStamped()),
+        _check=Mock(), _snapshot=Mock(return_value=(message, robot)), blocked_approaches=[])
+    assert AutoSlamNode._can_reach(node, Mock(), frontier, 'map') == (
+        changed in ('none', 'near_wall_start'))
+    planning.cancel.assert_called_once()
+    if changed in ('new_wall', 'tolerated_endpoint'):
+        assert node.planned_path == []
+
+
 @pytest.mark.parametrize('planning', ['unreachable', 'wrong_endpoint', 'unknown_shortcut'])
 def test_unreachable_frontiers_save_partial_map_without_driving(
         system_factory, tmp_path, planning):

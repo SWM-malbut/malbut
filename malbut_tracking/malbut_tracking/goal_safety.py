@@ -86,7 +86,7 @@ def plan_static_path(
     goal: Point2D,
     occupied_threshold: int = 65,
     *,
-    time_budget_s: float = 0.02,
+    time_budget_s: float = 0.05,
 ) -> tuple[Point2D, ...] | None:
     """Plan without map preprocessing; signal timeout separately from no path."""
     if not math.isfinite(time_budget_s) or time_budget_s < 0.0:
@@ -179,7 +179,7 @@ def find_reachable_approach_goal(
     requested_goal: Point2D,
     maximum_cost: int,
 ) -> Point2D | None:
-    """Follow a live-grid supercover ray only until its first unsafe crossing."""
+    """Follow a checked ray, allowing only outward travel from soft inflation."""
     grid.validate()
     if not 0 <= maximum_cost < 255:
         raise ValueError('maximum goal cost must be in [0, 254]')
@@ -206,17 +206,31 @@ def find_reachable_approach_goal(
     edge_x = step_x == 0 and abs(x - round(x)) < 1e-9
     edge_y = step_y == 0 and abs(y - round(y)) < 1e-9
 
-    def safe(xx, yy):
+    def cell_cost(xx, yy):
+        costs = []
         for checked_y in (yy, yy - 1) if edge_y else (yy,):
             for checked_x in (xx, xx - 1) if edge_x else (xx,):
                 if not (0 <= checked_x < grid.width and 0 <= checked_y < grid.height):
-                    return False
-                if not 0 <= grid.cost(checked_x, checked_y) <= maximum_cost:
-                    return False
-        return True
+                    return None
+                cost = grid.cost(checked_x, checked_y)
+                # Nav2's 253/254/255 mean inscribed collision, occupied and
+                # unknown. None of these may be crossed, including at start.
+                if not 0 <= cost < 253:
+                    return None
+                costs.append(cost)
+        return max(costs)
 
-    if not safe(cell_x, cell_y):
+    start_cost = cell_cost(cell_x, cell_y)
+    if start_cost is None:
         return None
+    # Goal cost is a low-cost preference, not Nav2's collision boundary.
+    # A robot already in the graded band may leave it, never go deeper or
+    # stop inside that band. Once out, preserve the usual low-cost corridor.
+    allowed_cost = max(maximum_cost, start_cost)
+
+    def safe(xx, yy):
+        cost = cell_cost(xx, yy)
+        return cost is not None and cost <= allowed_cost
     delta_x = abs(1.0 / dx) if step_x else math.inf
     delta_y = abs(1.0 / dy) if step_y else math.inf
     crossing_x = (
@@ -230,8 +244,8 @@ def find_reachable_approach_goal(
     for _ in range(grid.width + grid.height + 2):
         crossing_t = min(crossing_x, crossing_y)
         if crossing_t > 1.0:
-            return requested_goal
-        if crossing_t > entered_t:
+            return requested_goal if allowed_cost <= maximum_cost else None
+        if crossing_t > entered_t and allowed_cost <= maximum_cost:
             # Keep the candidate just inside the verified free segment rather
             # than on a boundary that world_to_cell may round into an obstacle.
             margin = min(
@@ -254,9 +268,10 @@ def find_reachable_approach_goal(
         if not safe(next_x, next_y):
             break
         cell_x, cell_y = next_x, next_y
+        allowed_cost = max(maximum_cost, cell_cost(cell_x, cell_y))
         entered_t = crossing_t
         if crossing_t >= 1.0:
-            return requested_goal
+            return requested_goal if allowed_cost <= maximum_cost else None
         if crosses_x:
             crossing_x += delta_x
         if crosses_y:

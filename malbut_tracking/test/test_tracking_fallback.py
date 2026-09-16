@@ -19,7 +19,7 @@ def _fixture(wall_x=None, map_time=20.0):
         for row in range(20):
             costs[row * 40 + wall_x] = 254
     grid = CostmapGrid('map', map_time, 0.1, 40, 20, Point2D(0.0, 0.0), 0.0, costs)
-    settings = FollowSettings(1.0, 0.2, 0.1, 0.1, 0.4, 1.5, 0.75)
+    settings = FollowSettings(1.0, 0.2, 0.1, 0.75)
     parameters = {
         'sensor_transform_queue_timeout_s': 0.3,
         'goal_safe_search_radius_m': 1.0,
@@ -165,3 +165,27 @@ def test_failed_or_empty_retreat_plan_uses_retry_backoff(path):
     follower._dispatch_tracking_path.assert_not_called()
     follower._cancel_tracking_retry.assert_not_called()
     assert not follower._line_fallback_pending
+
+
+def test_successful_forward_plan_is_dispatched_with_requested_standoff():
+    """The actual callback passes the trimmed route, not just a helper result."""
+    from geometry_msgs.msg import PoseStamped
+    follower = _fixture()
+    follower._active_goal = object()
+    follower._state = FollowState.TRACKING
+    follower._observation_is_current = Mock(return_value=True)
+    follower._plan_latest_observation_if_pending = Mock()
+    path = Path()
+    for x in (0.25, 1.25, 2.25, 3.25):
+        pose = PoseStamped()
+        pose.pose.position.x = x
+        pose.pose.position.y = 0.55
+        path.poses.append(pose)
+    PersonFollowerNode._on_tracking_path(
+        follower, path, 'planned', Point2D(3.25, 0.55), 'camera', False,
+        20_000_000_000, 1, 1,
+    )
+    selected, endpoint, travel = follower._dispatch_tracking_path.call_args.args[:3]
+    assert endpoint == Point2D(2.25, 0.55)
+    assert selected.poses[-1].pose.position.x == 2.25
+    assert travel == pytest.approx(2.0)

@@ -49,8 +49,12 @@ def test_mapping_starts_independent_components(mapping):
                 if isinstance(child, IncludeLaunchDescription)]
     assert len(includes) == 2
     assert dict(includes[0].launch_arguments)['robot_name'] == '/'
+    assert dict(includes[0].launch_arguments)['point_cloud_enable'] == 'false'
     assert dict(includes[1].launch_arguments)['rtabmap'] == 'true'
     assert dict(includes[1].launch_arguments)['use_teb'] == 'false'
+    # AutoSLAM must receive the same in-process depth costmap as navigation.
+    assert Path(dict(includes[1].launch_arguments)['params_file']) == (
+        Path(__file__).parents[1] / 'config/nav2_params.yaml').resolve()
 
 
 def test_reuse_does_not_load_vendor_files_or_start_processes(mapping):

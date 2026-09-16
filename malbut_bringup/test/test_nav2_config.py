@@ -43,16 +43,19 @@ def test_localization_uses_actual_initial_pose_and_vendor_frames(config):
 
 def test_robot_costmap_radii_and_vendor_matched_velocity_limits(config):
     """Use robot-tested radii and match the manufacturer's DWB limits."""
-    for scope, frame, resolution, inflation in (
-            ('local_costmap', 'odom', 0.03, 0.20),
-            ('global_costmap', 'map', 0.05, 0.2)):
+    for scope, frame, resolution in (
+            ('local_costmap', 'odom', 0.03),
+            ('global_costmap', 'map', 0.05)):
         costmap = config[scope][scope]['ros__parameters']
         assert costmap['global_frame'] == frame
         assert costmap['robot_base_frame'] == 'base_footprint'
         assert costmap['use_sim_time'] is False
         assert costmap['robot_radius'] == 0.18
         assert costmap['resolution'] == resolution
-        assert costmap['inflation_layer']['inflation_radius'] == inflation
+        inflation = costmap['inflation_layer']['inflation_radius']
+        assert inflation == 0.30
+        # A sub-cell soft band cannot provide a useful wall-clearance gradient.
+        assert inflation - costmap['robot_radius'] >= 2 * resolution
         scan = costmap['obstacle_layer']['scan']
         assert scan['topic'] == '/scan_raw'
         assert scan['marking'] is True
@@ -64,41 +67,53 @@ def test_robot_costmap_radii_and_vendor_matched_velocity_limits(config):
     assert smoother['max_decel'] == [-2.5, 0.0, -3.2]
 
 
-def test_depth_obstacles_use_separate_3d_layers_and_real_cloud(config):
-    """A laser clearing ray must not erase obstacles below the laser plane."""
+def test_deployed_nav2_parameters_match_source(config):
+    """The copy used by the real robot must retain the same safety settings."""
+    path = Path(__file__).parents[2] / 'malbut_test/malbut_bringup/config/nav2_params.yaml'
+    assert yaml.safe_load(path.read_text()) == config
+
+
+def test_nav2_projects_depth_locally_without_cloud_subscriptions(config):
+    """Restore camera obstacles without receiving the measured 8 MB cloud."""
     for scope in ('local_costmap', 'global_costmap'):
         costmap = config[scope][scope]['ros__parameters']
-        assert 'depth_voxel_layer' in costmap['plugins']
-        assert costmap['plugins'][-1] == 'inflation_layer'
-        layer = costmap['depth_voxel_layer']
-        assert layer['plugin'] == 'nav2_costmap_2d::VoxelLayer'
-        assert layer['mark_threshold'] == 0
-        assert layer['z_resolution'] == 0.03
-        assert layer['z_voxels'] <= 16
-        assert layer['max_obstacle_height'] == 0.20
-        assert layer['origin_z'] + layer['z_resolution'] * layer['z_voxels'] >= (
-            layer['max_obstacle_height'])
-        cloud = layer['depth']
-        assert cloud['topic'] == '/depth_cam/depth0/points'
-        assert cloud['data_type'] == 'PointCloud2'
-        assert cloud['min_obstacle_height'] == 0.05
-        assert cloud['max_obstacle_height'] == layer['max_obstacle_height']
-        assert cloud['min_obstacle_height'] < cloud['max_obstacle_height']
-        assert 'sensor_frame' not in cloud  # Resolve the actual message frame by TF.
-        assert cloud['marking'] and not cloud['clearing']
-        assert cloud['raytrace_max_range'] >= cloud['obstacle_max_range']
-        clearing = layer['depth_clear']
-        assert clearing['topic'] == cloud['topic']
-        assert clearing['clearing'] and not clearing['marking']
-        assert clearing['min_obstacle_height'] < 0.0
-        # Higher points can establish free space without becoming obstacles.
-        assert clearing['max_obstacle_height'] == 0.48
-        assert clearing['max_obstacle_height'] > cloud['max_obstacle_height']
-        assert layer['observation_sources'].split() == ['depth', 'depth_clear']
+        expected = ['obstacle_layer', 'depth_voxel_layer', 'inflation_layer']
+        if scope == 'global_costmap':
+            expected.insert(0, 'static_layer')
+        assert costmap['plugins'] == expected
+        depth = costmap['depth_voxel_layer']
+        assert depth['plugin'] == 'malbut_depth_costmap::DepthVoxelLayer'
+        assert depth['observation_sources'] == ''
+        assert depth['depth_topic'] == '/depth_cam/depth0/image_raw'
+        assert depth['camera_info_topic'] == '/depth_cam/depth0/camera_info'
+        assert depth['depth_is_rectified'] is False
+        assert depth['publish_voxel_map'] is False
+        assert depth['expected_update_rate'] == 0.5
+        assert depth['max_obstacle_height'] == 0.20
+        assert depth['origin_z'] == 0.0
+        assert depth['z_resolution'] == 0.03 and depth['z_voxels'] == 16
+        assert depth['mark_threshold'] == 0
+        assert depth['marking'] == {
+            'min_obstacle_height': 0.05, 'max_obstacle_height': 0.20,
+            'obstacle_min_range': 0.0, 'obstacle_max_range': 2.5,
+        }
+        assert depth['clearing'] == {
+            'min_obstacle_height': -0.05, 'max_obstacle_height': 0.48,
+            'raytrace_min_range': 0.0, 'raytrace_max_range': 3.0,
+        }
+        observations = [
+            layer[source]
+            for layer in costmap.values() if isinstance(layer, dict)
+            for source in layer.get('observation_sources', '').split()
+        ]
+        assert len(observations) == 1
+        assert observations[0]['data_type'] == 'LaserScan'
+        assert observations[0]['topic'] == '/scan_raw'
+    assert '/depth_cam/depth0/points' not in yaml.safe_dump(config)
 
 
 def test_planar_lidar_uses_2d_layers_with_unchanged_observation_ranges(config):
-    """Keep planar scans separate from the depth camera's 3D occupancy."""
+    """Retain independent LiDAR marking/clearing when depth is projected locally."""
     for scope in ('local_costmap', 'global_costmap'):
         costmap = config[scope][scope]['ros__parameters']
         assert 'obstacle_layer' in costmap['plugins']

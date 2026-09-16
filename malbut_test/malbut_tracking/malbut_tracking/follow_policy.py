@@ -23,9 +23,6 @@ class FollowSettings:
     desired_distance_m: float
     minimum_distance_m: float
     distance_tolerance_m: float
-    minimum_follow_speed_mps: float
-    maximum_linear_speed_mps: float
-    full_speed_travel_distance_m: float
     observation_loss_debounce_s: float
 
     def validate(self) -> None:
@@ -37,16 +34,6 @@ class FollowSettings:
             raise ValueError('desired distance must be at least minimum distance')
         if not math.isfinite(self.distance_tolerance_m) or self.distance_tolerance_m < 0.0:
             raise ValueError('distance tolerance must be non-negative')
-        if self.minimum_follow_speed_mps <= 0.0:
-            raise ValueError('minimum follow speed must be positive')
-        if self.maximum_linear_speed_mps <= 0.0:
-            raise ValueError('maximum linear speed must be positive')
-        if self.minimum_follow_speed_mps > self.maximum_linear_speed_mps:
-            raise ValueError(
-                'minimum follow speed must not exceed maximum speed'
-            )
-        if self.full_speed_travel_distance_m <= 0.0:
-            raise ValueError('full-speed travel distance must be positive')
         if self.observation_loss_debounce_s < 0.0:
             raise ValueError(
                 'observation loss debounce must be non-negative'
@@ -60,25 +47,6 @@ class FollowDecision:
     command: FollowCommand
     goal: FollowGoal
     reason: str
-
-
-def speed_limit_for_travel_distance(
-    travel_distance_m: float,
-    settings: FollowSettings,
-) -> float:
-    """Scale the Nav2 speed cap linearly with the remaining path length."""
-    settings.validate()
-    if travel_distance_m < 0.0:
-        raise ValueError('travel distance must be non-negative')
-    ratio = min(
-        1.0,
-        travel_distance_m / settings.full_speed_travel_distance_m,
-    )
-    speed_range = (
-        settings.maximum_linear_speed_mps
-        - settings.minimum_follow_speed_mps
-    )
-    return settings.minimum_follow_speed_mps + ratio * speed_range
 
 
 def directed_recovery_turn(

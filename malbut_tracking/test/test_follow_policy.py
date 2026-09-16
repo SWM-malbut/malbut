@@ -9,7 +9,6 @@ from malbut_tracking.follow_policy import (
     FollowCommand,
     FollowSettings,
     decide_follow_motion,
-    speed_limit_for_travel_distance,
 )
 from malbut_tracking.geometry import Point2D
 
@@ -21,9 +20,6 @@ def settings():
         desired_distance_m=1.2,
         minimum_distance_m=0.20,
         distance_tolerance_m=0.15,
-        minimum_follow_speed_mps=0.10,
-        maximum_linear_speed_mps=0.40,
-        full_speed_travel_distance_m=1.5,
         observation_loss_debounce_s=0.75,
     )
 
@@ -125,25 +121,6 @@ def test_satisfied_distance_still_aligns_camera(target_x, settings):
     )
     assert decision.command == FollowCommand.ALIGN
     assert decision.goal.position == Point2D(0.0, 0.0)
-
-
-def test_speed_limit_scales_with_remaining_path_length(settings):
-    """Short corrections slow down while long paths retain full speed."""
-    assert speed_limit_for_travel_distance(0.0, settings) == pytest.approx(
-        0.10
-    )
-    assert speed_limit_for_travel_distance(0.5, settings) == pytest.approx(
-        0.20
-    )
-    assert speed_limit_for_travel_distance(1.0, settings) == pytest.approx(
-        0.30
-    )
-    assert speed_limit_for_travel_distance(1.5, settings) == pytest.approx(
-        0.40
-    )
-    assert speed_limit_for_travel_distance(3.0, settings) == pytest.approx(
-        0.40
-    )
 
 
 def test_recovery_turn_uses_the_last_camera_exit_side_first():
