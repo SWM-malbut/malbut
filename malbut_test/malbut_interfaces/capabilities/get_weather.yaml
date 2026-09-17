@@ -1,0 +1,19 @@
+schema_version: 1
+
+capability:
+  id: get_weather
+  title: 날씨 조회
+  description: 요청 시 설정된 지역의 현재 날씨와 오늘·내일 예보를 외부 API에서 조회한다.
+
+command:
+  kind: ACTION
+  name: /malbut/weather/get
+  type: malbut_interfaces/action/GetWeather
+
+input:
+  fields: {}
+
+execution:
+  mode: BACKGROUND
+  priority: NORMAL
+  resources: []

@@ -1,0 +1,12 @@
+# 판정할 사용자 발화의 고유 ID
+string utterance_id
+# 사용자가 끼어들었을 때의 TTS 재생 고유 ID
+string playback_id
+# STT가 최종 인식한 사용자 발화 원문
+string text
+---
+# 로봇에게 하는 말 / 다른 대상에게 하는 말 / 판단할 수 없음
+string ADDRESSED=addressed
+string NOT_ADDRESSED=not_addressed
+string UNKNOWN=unknown
+string decision

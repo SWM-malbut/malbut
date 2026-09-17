@@ -31,5 +31,8 @@
   <exec_depend>malbut_patrol</exec_depend>
   <exec_depend>malbut_autoslam</exec_depend>
   <exec_depend>malbut_system_manager</exec_depend>
+  <exec_depend>malbut_agent_server</exec_depend>
+  <exec_depend>malbut_stt</exec_depend>
+  <exec_depend>malbut_tts</exec_depend>
   <export><build_type>ament_python</build_type></export>
 </package>

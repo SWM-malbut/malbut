@@ -1,0 +1,13 @@
+# Experimental x86_64 Linux CUDA backend. Install matching CUDA PyTorch wheels
+# separately first, for example torch/torchaudio 2.6.0 from the cu124 index.
+# Do not install these into the system ROS Python environment.
+torch==2.6.0
+torchaudio==2.6.0
+qwen-tts==0.1.1
+numpy>=1.26,<2
+# ROS Humble's system copies are too old for Transformers/this NumPy.
+pillow>=10,<12
+scipy>=1.11,<1.16
+# Numba imports the optional system coverage module even outside tests.
+coverage>=7.6,<8
+sounddevice>=0.5,<0.6
