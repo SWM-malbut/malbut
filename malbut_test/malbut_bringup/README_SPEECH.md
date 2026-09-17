@@ -1,7 +1,8 @@
 # 통합 Bringup의 음성 준비와 preflight
 
-실로봇의 정상 실행 경로는 **`build.sh` 하나로 빌드하고 `robot.launch.py` 하나로 실행**하는
-방식이다. `robot.launch.py`가 Jetson용 whisper.cpp STT, Agent 대화 노드와 OpenAI TTS를
+실로봇은 **최초 `setup.sh` 준비 → `build.sh` 빌드 → `cloud.launch.py` 웹 연결 → 웹의
+Bringup 준비** 순서로 실행한다. 터미널에서 직접 실행할 때는 `robot.launch.py`를 사용한다.
+`robot.launch.py`가 Jetson용 whisper.cpp STT, Agent 대화 노드와 OpenAI TTS를
 기본으로 포함한다. `speech.launch.py`는 이때 사용하는 하위 launch이며 음성만 진단할 때
 별도로 실행할 수 있다. Agent의 현재 proposal-only 정책과 STT/TTS 명세는 그대로 사용한다.
 
@@ -12,40 +13,36 @@
 `src/malbut`에만 `/malbut_test`를 추가한다. 빌드·설치·캐시 경로는 동일하다.
 
 ROS 2 Humble과 제조사 환경, 현재 JetPack에 맞는 CUDA toolkit을 유지한다.
-`build.sh`는 ROS와 같은 `/usr/bin/python3`의 Python 3.10, C++ 빌드 도구, Git,
-CMake 3.18 이상과 `nvcc`가 필요하다. 없는 OS 도구는 최초에 준비한다:
+CUDA toolkit은 로봇에 설치된 JetPack과 일치해야 하며 `nvcc`가 빌드 터미널에서
+검색되어야 한다. 준비 스크립트는 필요한 ROS 패키지 의존성을 설치하며,
+CUDA·JetPack·PyTorch를 재설치하지 않는다.
+음성 빌드에는 ROS와 같은 `/usr/bin/python3`의 Python 3.10을 사용한다.
 
 ```zsh
-sudo apt install build-essential git cmake ninja-build python3-venv python3-pip libportaudio2
+source /opt/ros/humble/setup.zsh
+source ~/ros2_ws/install/setup.zsh
+bash ~/ros2_ws/src/malbut/setup.sh
 ```
 
-이 명령은 JetPack·CUDA·PyTorch 설치를 대신하지 않는다. CUDA toolkit은 로봇에 설치된
-JetPack과 일치해야 하며 `nvcc`가 빌드 터미널에서 검색되어야 한다. `libportaudio2`는
-TTS의 sounddevice 출력에 필요하다. ROS 의존성은 적용본 최상위 `README.md`를 따른다.
+`setup.sh`는 최초 준비 또는 의존성 변경 시 실행하며 다음을 처리한다:
 
-외부 whisper.cpp 소스를 최초 한 번 준비한다. 이미 같은 커밋의 깨끗한 checkout이 있으면
-`WHISPER_CPP_SOURCE_DIR`에 그 절대 경로를 지정해 재사용할 수 있다.
+1. 필요한 OS 개발 도구와 PortAudio, 기존 홈캠 설치 스크립트의 개발 의존성을 준비한다.
+   명시한 로봇 패키지와 `homecam_media_agent`, `homecam_detector` 경로로 `rosdep`을 실행한다.
+2. 외부 whisper.cpp 소스를 커밋 `da54572229bcf64ba367d96c7ef15770376c4280`에 고정한다.
+   같은 커밋의 깨끗한 checkout은 재사용하고 기존 소스에 수정이 있으면 덮어쓰지 않고 중단한다.
+3. 다국어 `ggml-small.bin`을 내려받고 SHA-256
+   `1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b`를 확인한다.
+   정상 모델은 다시 받지 않으며 부분 다운로드나 검증 실패를 완료로 처리하지 않는다.
 
-```zsh
-speech_cache="${XDG_CACHE_HOME:-$HOME/.cache}/malbut_speech"
-mkdir -p "$speech_cache"
-git clone https://github.com/ggml-org/whisper.cpp.git "$speech_cache/whisper.cpp"
-git -C "$speech_cache/whisper.cpp" checkout --detach da54572229bcf64ba367d96c7ef15770376c4280
-mkdir -p "$speech_cache/models"
-```
+기본 캐시는 `${XDG_CACHE_HOME:-$HOME/.cache}/malbut_speech`다.
+기존 음성 소스나 모델을 사용하려면 실행 전 `WHISPER_CPP_SOURCE_DIR`,
+`MALBUT_STT_MODEL_PATH`를 각각 절대 경로로 export한다. 기존 파일이 검증을 통과하지
+못하면 보존한 채 중단하므로 경로와 파일을 확인한다. 모델 원본 근거는
+[STT 네이티브 안내](../malbut_stt/native/README.md)에 있다.
 
-이미 확보한 다국어 `ggml-small.bin`을 `$speech_cache/models/ggml-small.bin`에 놓는다.
-모델의 공식 위치·크기와 원본 근거는 [STT 네이티브 안내](../malbut_stt/native/README.md)에
-있다. 아래 SHA-256이 일치하는지 확인한다:
-
-```zsh
-printf '%s  %s\n' \
-  1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b \
-  "$speech_cache/models/ggml-small.bin" | sha256sum --check -
-```
-
-빌드 스크립트는 OS 패키지·외부 소스·모델을 자동 다운로드하지 않는다.
-CUDA 라이브러리는 로봇에서 빌드하며 Mac의 `.dylib`나 Python 가상환경을 복사하지 않는다.
+음성 가상환경 생성과 CUDA 라이브러리 빌드는 아래 `build.sh`가 처리한다.
+모델·가상환경·컴파일 결과는 Git에 넣지 않으며, CUDA 라이브러리는 로봇에서 빌드한다.
+Mac의 `.dylib`나 Python 가상환경을 복사하지 않는다.
 
 ## 통합 빌드
 
@@ -53,11 +50,13 @@ CUDA 라이브러리는 로봇에서 빌드하며 Mac의 `.dylib`나 Python 가�
 source /opt/ros/humble/setup.zsh
 source ~/ros2_ws/install/setup.zsh
 cd ~/ros2_ws
-bash src/malbut/build.sh
+bash src/malbut/build.sh --cmake-args -DBUILD_TESTING=OFF
 source install/malbut_test/local_setup.zsh
 ```
 
-`build.sh`는 기본 `MALBUT_BUILD_SPEECH=1`로 다음을 처리한다:
+`build.sh`는 긴 홈캠 빌드 전에 음성 소스·모델·CUDA 도구를 확인한다. 빠졌으면
+`setup.sh` 실행을 안내하며, 외부 음성 소스나 모델을 자동 다운로드하지 않는다.
+기본 `MALBUT_BUILD_SPEECH=1`로 다음을 처리한다:
 
 1. 고정 커밋의 깨끗한 whisper.cpp 소스와 CUDA 도구를 확인한 뒤 STT 브리지를
    `Release`, `GGML_CUDA=ON`, `GGML_METAL=OFF`, CUDA architecture `87`로 빌드한다.
@@ -83,7 +82,8 @@ STT의 whisper.cpp CUDA 브리지는 Python Torch를 요구하지 않는다. Age
 | STT 라이브러리 | `<CUDA 빌드>/bin/libmalbut_whisper.so` | `MALBUT_STT_LIBRARY_PATH` |
 
 런타임·빌드 경로를 바꾸면 빌드와 실행 터미널에서 같은 설정을 사용한다.
-모델·라이브러리 환경 변수는 launch가 읽는 경로이며 파일을 만들거나 다운로드하지 않는다.
+`MALBUT_STT_MODEL_PATH`는 준비·빌드 확인·launch에서 함께 사용한다.
+`MALBUT_STT_LIBRARY_PATH`는 launch가 읽을 라이브러리 경로이며 파일을 만들지 않는다.
 공유 whisper/ggml 라이브러리도 같은 CUDA 빌드의 `bin`에 있으므로 `.so` 하나만 옮기지
 않고 빌드 디렉터리를 유지한다. 소스 checkout과 빌드 디렉터리는 분리한다.
 
@@ -104,6 +104,9 @@ Agent·STT·TTS 프로세스도 종료 후 새로 시작한다.
 전달되며 출력 음성은 AI가 생성한다. `OPENAI_API_KEY`와 필요한 Agent 환경 설정을
 실행 터미널에 미리 export한다. 키를 launch 인자나 YAML에 넣지 않는다.
 launch는 `.env` 파일을 자동 로드하지 않는다.
+웹 경로에서는 [클라우드 실행 안내](https://github.com/SWM-malbut/malbut/blob/main/malbut_test/README_CLOUD.md)에
+따라 같은 터미널에서 `cloud.launch.py`를 켜고 웹에서 **Bringup 준비**를 누른다.
+웹 연결만으로는 음성이 시작되지 않는다. 아래는 웹을 사용하지 않을 때의 직접 실행이다.
 
 ```zsh
 ros2 launch malbut_bringup robot.launch.py

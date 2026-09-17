@@ -93,7 +93,7 @@ def selection(paths, full=False, base=None):
             selected.add('malbut_gazebo')
         if path.startswith('malbut_test/'):
             path = path.removeprefix('malbut_test/')
-            if path in {'build.sh', 'COLCON_IGNORE'}:
+            if path in {'setup.sh', 'build.sh', 'COLCON_IGNORE'}:
                 selected.add('malbut_bringup')
             if path.startswith('malbut_patrol/'):
                 path = 'malbut_autonomy/' + path

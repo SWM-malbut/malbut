@@ -20,34 +20,52 @@
 소유자 계정과 장치를 등록하고 장치 토큰을 발급한 뒤 로봇으로 안전하게 전달한다.
 실제 AWS 인증·배포·장치 등록이 끝나기 전에는 예시 주소로 연결되지 않는다.
 
-## 2. 한 번의 빌드
+## 2. 최초 준비와 통합 빌드
 
-제조사 ROS 환경을 source한 뒤 `build.sh` 하나로 로봇 패키지와 홈캠 영상 노드를
-같은 `install/malbut_test`에 빌드한다. KVS SDK도 최초 다운로드 후 증분 빌드로 재사용한다.
-SDK·미디어 빌드 스크립트를 따로 호출할 필요 없다. AWS 웹 자체는 AWS에서 별도 배포한다.
+제조사 ROS 환경을 source한 뒤, 최초 설치나 의존성 변경 때 `setup.sh`를 실행한다.
+OS 개발 패키지·홈캠 의존성·로봇 ROS 의존성을 설치하고, 고정 whisper.cpp 소스와
+검증된 STT 모델을 준비한다. ROS 의존성 탐색에는 로컬 `homecam_detector`도 포함된다.
+정상 음성 소스·모델은 재사용하며, 기존 수정 파일은 덮어쓰지 않는다.
+현재 JetPack과 맞는 `nvcc`가 필요하며 JetPack·CUDA·PyTorch를 재설치하지 않는다.
 
 ```zsh
 source /opt/ros/humble/setup.zsh
 source ~/ros2_ws/install/setup.zsh
-bash ~/ros2_ws/src/malbut/build.sh
+bash ~/ros2_ws/src/malbut/setup.sh
+```
+
+준비가 끝나면 `build.sh`로 음성 가상환경·STT CUDA 라이브러리·로봇 패키지·홈캠 영상
+노드를 같은 배포 구성에 빌드한다. 코드만 갱신한 경우에는 이 단계부터 실행한다.
+
+```zsh
+bash ~/ros2_ws/src/malbut/build.sh --cmake-args -DBUILD_TESTING=OFF
 source ~/ros2_ws/install/malbut_test/local_setup.zsh
 ```
 
-최초 OS 개발 의존성 준비는 `homecam_agent/scripts/install_dependencies.sh`로 한다.
+`build.sh`는 긴 빌드 전에 음성 소스·모델·도구를 확인하며, 외부 음성 소스나 모델을
+다운로드하지 않는다. KVS SDK는 홈캠 빌드에서 최초 다운로드하고 이후 재사용한다.
+SDK·미디어 빌드 스크립트를 따로 호출할 필요 없다. AWS 웹 자체는 AWS에서 별도 배포한다.
 GStreamer 개발 패키지 등의 apt 설치가 실패했다면 먼저 해결해야 한다.
-통합 빌드는 누락된 의존성을 알려주고 중단하며, 임의 apt 업그레이드나 영상 없는
-health-only 빌드로 성공 처리하지 않는다. Jetson의 `nvvidconv`, `nvv4l2h264enc`는
-기존 JetPack 환경을 사용한다.
+누락된 의존성이 있으면 중단하며 영상 없는 health-only 빌드로 성공 처리하지 않는다.
+Jetson의 `nvvidconv`, `nvv4l2h264enc`는 기존 JetPack 환경을 사용한다.
+음성 경로와 장치 설정은 [README_SPEECH.md](malbut_bringup/README_SPEECH.md)를 따른다.
 
 ## 3. 웹 연결은 별도, 카메라는 Bringup에 포함
 
-위 환경을 source한 터미널에서:
+위 환경을 source한 터미널에서 Agent·TTS의 `OPENAI_API_KEY`와 장치 설정을 export한다.
+`cloud.launch.py`와 웹에서 시작한 Bringup은 이 환경을 상속하며 `.env`를 자동으로 읽지 않는다:
 
 ```zsh
 export HOMECAM_BACKEND_URL='https://실제배포주소.cloudfront.net'
 export HOMECAM_DEVICE_TOKEN_FILE="$HOME/.config/malbut/device-token"
 export HOMECAM_DEVICE_ID='jetson-homecam'
-chmod 600 "$HOMECAM_DEVICE_TOKEN_FILE"
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+  read -rs 'OPENAI_API_KEY?OpenAI API key: '
+  print
+fi
+export OPENAI_API_KEY
+test -s "$HOMECAM_DEVICE_TOKEN_FILE" &&
+chmod 600 "$HOMECAM_DEVICE_TOKEN_FILE" &&
 ros2 launch malbut_bringup cloud.launch.py
 ```
 
@@ -55,11 +73,11 @@ ros2 launch malbut_bringup cloud.launch.py
 `HOMECAM_DEVICE_ID`는 서버에 등록한 장치 ID와 같아야 한다.
 웹에서 로봇 상태와 저장 지도 목록이 갱신되는지 먼저 확인한다.
 
-- 웹의 **Bringup 준비**가 하드웨어·카메라와 `homecam_media_agent`를 함께 켠다.
+- 웹의 **Bringup 준비**가 하드웨어·카메라·`homecam_media_agent`와 STT·Agent·TTS를 함께 켠다.
   기존 드라이버가 준비되어 있다면 중복 기동 없이 재사용한다.
 - 지도 작성 모드도 카메라를 먼저 켜고 센서 준비 후 AutoSLAM 요청을 받는다.
   SLAM·Nav2 탐색은 AutoSLAM Goal 이후 시작한다. 저장 지도 주행 모드와 합치지 않는다.
-- **Bringup 종료**는 해당 Bringup이 켠 영상 노드도 종료한다. 웹 연결은 남아 다시 준비할 수 있다.
+- **Bringup 종료**는 해당 Bringup이 켠 영상·음성 노드도 종료한다. 웹 연결은 남아 다시 준비할 수 있다.
 - 영상 노드나 `malbut-homecam.service`를 별도로 함께 켜지 않는다.
 - 클라우드 주소가 없는 기존 오프라인/LAN Bringup에는 AWS 영상 노드를 추가하지 않는다.
 
@@ -74,6 +92,11 @@ ros2 launch malbut_bringup cloud.launch.py
 3. Bringup 종료 → 저장 지도 선택 → 주행 모드 준비 → 실제 위치 일치 확인.
 4. 사람 추적·순찰·목적지 이동 요청 → 실행 상태 → 취소와 실제 정지 확인.
 5. 카메라 라이브 영상 확인. 연결 끊김이나 브라우저 종료를 정지 수단으로 사용하지 않는다.
+6. `speech_preflight_passed` → `speech_peers_ready` 확인 후 마이크에 말하고 스피커 응답을 확인한다.
+   준비 로그만으로 실제 대화·CUDA 추론이 검증된 것은 아니다. 음성 기본 proposal 모드의
+   대화와 이동 명령 실행은 별개다.
+
+이 절차는 로봇에서 확인할 항목이며, 준비 스크립트·빌드 성공은 실물 검증 결과를 대신하지 않는다.
 
 명령 `accepted/queued`는 미션 성공이 아니다. 웹의 실행 상태·결과에서
 `SUCCEEDED/CANCELED/ABORTED/REJECTED/ERROR`를 확인한다.

@@ -31,6 +31,7 @@ pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Br
 │       ├── malbut_autoslam/
 │       ├── homecam_agent/                     # 실제 카메라 → AWS KVS
 │       ├── homecam_web/                       # AWS에 배포하는 서비스 웹
+│       ├── setup.sh                          # 최초 의존성·음성 소스·모델 준비
 │       ├── build.sh
 │       └── COLCON_IGNORE
 ├── build/malbut_test/                          # 이 복사본의 빌드 결과
@@ -76,23 +77,26 @@ Git 저장소는 별도 위치(예: `~/malbut`)에서 받고 그 안의 `malbut_
 아래 **소스 명령 경로에만** `/malbut_test`를 추가한다. 설치 경로는 동일하다.
 Bringup이 제조사 실행에 필요한 `need_compile=False`를 자체 설정한다.
 
-ROS 의존성을 준비한다. 없는 도구는 `python3-rosdep`,
-`python3-colcon-common-extensions`, `python3-venv`,
-`python3-pip` 패키지로 준비한다. ROS/Gazebo 설치기를 다시 실행하지 않는다.
-첫 빌드 전에는 [음성 최초 준비](malbut_bringup/README_SPEECH.md#최초-준비)에 따라
-현재 JetPack의 CUDA 도구, PortAudio, 고정 버전 whisper.cpp 소스와 STT 모델을 준비한다.
-이후에는 아래 `build.sh` 하나로 음성 가상환경·CUDA 라이브러리·ROS 빌드를 처리한다.
+최초 준비와 의존성 변경 때는 `setup.sh`를 실행한다. 필요한 OS 개발 패키지와
+홈캠 의존성을 설치하고, 명시한 로봇 패키지 경로만 `rosdep`으로 준비한다.
+`homecam_media_agent`와 로컬 `homecam_detector`도 함께 탐색한다.
+음성용 고정 버전 whisper.cpp 소스와 SHA-256을 검증한 다국어 small 모델도 준비한다.
+현재 JetPack과 맞는 CUDA toolkit 및 빌드 터미널의 `nvcc`는 미리 있어야 한다.
+필요한 ROS 패키지 의존성은 설치하며, JetPack·CUDA·PyTorch를 재설치하지 않는다.
+자세한 경로와 재실행 동작은 [음성 최초 준비](malbut_bringup/README_SPEECH.md#최초-준비)를 따른다.
+
+```zsh
+# 위 Humble·제조사 환경을 source한 같은 터미널에서 실행
+bash ~/ros2_ws/src/malbut/setup.sh
+```
+
+준비가 성공하면 빌드한다. 이후 코드만 갱신한 경우에는 아래 빌드부터 실행한다.
+`build.sh`는 긴 홈캠 빌드 전에 음성 소스·모델·CUDA 도구를 확인하고, 빠진 준비가 있으면
+`setup.sh` 실행을 안내한다. 음성 가상환경·CUDA 라이브러리·ROS 빌드는 여기서 처리한다.
 
 ```zsh
 cd ~/ros2_ws
-rosdep update
-rosdep install --from-paths src/malbut/malbut_* \
-  src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} \
-  src/malbut/homecam_agent/homecam_media_agent \
-  --ignore-src -r -y --rosdistro humble \
-  --skip-keys 'ament_python python3-torchvision-pip python3-ultralytics-pip'
-bash src/malbut/homecam_agent/scripts/install_dependencies.sh  # 최초 개발 의존성 준비
-bash src/malbut/build.sh
+bash src/malbut/build.sh --cmake-args -DBUILD_TESTING=OFF
 source ~/ros2_ws/install/malbut_test/local_setup.zsh
 ```
 
