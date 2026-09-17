@@ -101,7 +101,7 @@ def wake_up(harness, pipeline):
 
 
 def finish_command(pipeline):
-    pipeline.feed(VOICE + QUIET * 150)
+    pipeline.feed(VOICE + QUIET * 100)
 
 
 def interrupt(harness, pipeline):
@@ -111,7 +111,7 @@ def interrupt(harness, pipeline):
     uid = pipeline.session.utterance_id
     assert harness.controls == [('p1', 'pause')]
     assert harness.candidates == []
-    pipeline.feed(QUIET * 149)
+    pipeline.feed(QUIET * 99)
     assert harness.candidates == [] and not pipeline._busy
     pipeline.feed(QUIET)
     pump(pipeline, lambda: len(harness.candidates) == 1)
@@ -216,7 +216,7 @@ def test_capture_during_candidate_inference_remains_part_of_the_same_utterance(h
     harness.recorder.frames.put([0] * 320)
     wait_for(lambda: harness.recorder.reads >= 2)
     harness.allow_asr.clear()
-    pipeline.feed(VOICE + QUIET * 75)
+    pipeline.feed(VOICE + QUIET * 50)
     assert harness.entered_asr.wait(timeout=1.0)
     uid = pipeline.session.utterance_id
     assert not pipeline._busy and pipeline._endpoint_job is not None
@@ -228,11 +228,11 @@ def test_capture_during_candidate_inference_remains_part_of_the_same_utterance(h
     harness.allow_asr.set()
     pump(pipeline, lambda: pipeline._endpoint_job is None)
     assert harness.transcripts == []
-    pipeline.feed(QUIET * 150)
+    pipeline.feed(QUIET * 100)
     pump(pipeline, lambda: len(harness.transcripts) == 1)
     assert harness.transcripts == [(uid, '문장 2')]
     assert len(harness.command_calls) == 2
-    assert harness.command_calls[1][0] == VOICE + QUIET * 75 + VOICE + QUIET * 150
+    assert harness.command_calls[1][0] == VOICE + QUIET * 50 + VOICE + QUIET * 100
 
 
 def test_normal_tts_completion_ends_session_after_five_seconds(harness):
@@ -260,7 +260,7 @@ def test_predeadline_queued_onset_is_processed_before_late_status_callback(harne
     uid = pipeline.session.utterance_id
     assert pipeline.session.active and uid is not None
     assert pipeline.session.deadline is None
-    pipeline.feed(QUIET * 150)
+    pipeline.feed(QUIET * 100)
     pump(pipeline, lambda: len(harness.transcripts) == 1)
     assert harness.transcripts == [(uid, '문장 1')]
     assert len(harness.wake_calls) == 1
@@ -276,7 +276,7 @@ def test_busy_backlog_stays_discarded_after_result_is_ready(harness):
     pipeline.poll()
     assert harness.transcripts == [(uid, '이전 문장')]
     assert pipeline.session.utterance_id is None
-    pipeline.feed(VOICE * 20 + QUIET * 150)
+    pipeline.feed(VOICE * 20 + QUIET * 100)
     assert pipeline.jobs.empty() and harness.command_calls == []
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.transcripts) == 2)
@@ -287,7 +287,7 @@ def test_busy_capture_timestamp_tag_survives_a_result_accepted_before_enqueue(ha
     pipeline = harness.create()
     pipeline.session.activate()
     pipeline.feed(VOICE, busy_at_capture=True)
-    pipeline.feed(VOICE * 10 + QUIET * 150)
+    pipeline.feed(VOICE * 10 + QUIET * 100)
     assert pipeline.jobs.empty() and pipeline.session.utterance_id is None
     assert 'speech_discarded:busy' in harness.reports
 
@@ -324,7 +324,7 @@ def test_failed_command_waits_for_new_speech_without_another_wake(harness, failu
     pipeline.transcriber.transcribe = fail
     pipeline.feed(VOICE)
     first = pipeline.session.utterance_id
-    pipeline.feed(QUIET * 150)
+    pipeline.feed(QUIET * 100)
     expected = 'transcription_failed:RuntimeError' if isinstance(failure, Exception) else (
         'empty_transcript'
     )
@@ -358,7 +358,7 @@ def test_failed_interruption_keeps_actual_pause_and_waits_for_another_utterance(
     pipeline.feed(VOICE)
     first = pipeline.session.utterance_id
     pipeline.on_playback_status('p1', 'paused')
-    pipeline.feed(QUIET * 150)
+    pipeline.feed(QUIET * 100)
     pump(pipeline, lambda: pipeline.session.utterance_id is None)
     assert pipeline.session.active and pipeline.session.playback_state == 'paused'
     assert pipeline.session.playback_id == 'p1' and pipeline.session._control == 'pause'
@@ -407,7 +407,7 @@ def test_raw_playback_audio_and_queued_echo_are_suppressed_until_tail_guard(harn
     wake_up(harness, pipeline)
     pipeline.audio.put_nowait((pipeline._audio_generation, 0.0, QUIET, False))
     pipeline.on_playback_status('p1', 'playing')
-    pipeline.feed(VOICE + QUIET * 150)
+    pipeline.feed(VOICE + QUIET * 100)
     assert pipeline.jobs.empty() and harness.transcripts == [] and harness.controls == []
     assert 'barge_in_requires_aec' in harness.reports
     old_generation = pipeline._audio_generation
@@ -423,7 +423,7 @@ def test_raw_playback_audio_and_queued_echo_are_suppressed_until_tail_guard(harn
     assert uid is not None
     pipeline.on_playback_status('p1', 'playing')
     assert pipeline.session.utterance_id == uid  # Late duplicate cannot discard capture.
-    pipeline.feed(QUIET * 150)
+    pipeline.feed(QUIET * 100)
     pump(pipeline, lambda: len(harness.transcripts) == 1)
     assert harness.transcripts == [(uid, '문장 1')]
 

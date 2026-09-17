@@ -15,28 +15,28 @@ def collector(**kwargs):
     return StreamingUtteranceCollector(lambda frame, _: any(frame), **kwargs)
 
 
-def test_utterance_finishes_after_three_seconds_of_silence():
+def test_utterance_finishes_after_two_seconds_of_silence():
     stream = collector()
     assert [event.status for event in stream.feed(VOICE)] == ['speech_started']
-    assert stream.feed(QUIET * 149) == []
+    assert stream.feed(QUIET * 99) == []
     completed, = stream.feed(QUIET)
     assert completed.status == 'complete'
-    assert completed.pcm == VOICE + QUIET * 150
+    assert completed.pcm == VOICE + QUIET * 100
 
 
 def test_back_to_back_utterances_in_one_read_preserve_both_first_words():
     stream = collector()
-    events = stream.feed(VOICE + QUIET * 150 + SECOND + QUIET * 150)
+    events = stream.feed(VOICE + QUIET * 100 + SECOND + QUIET * 100)
     assert [event.status for event in events] == [
         'speech_started', 'complete', 'speech_started', 'complete',
     ]
-    assert events[1].pcm == VOICE + QUIET * 150
-    assert events[3].pcm == SECOND + QUIET * 150
+    assert events[1].pcm == VOICE + QUIET * 100
+    assert events[3].pcm == SECOND + QUIET * 100
 
 
 def test_device_chunk_boundaries_do_not_change_recorded_audio():
     stream = collector()
-    pcm = QUIET * 7 + VOICE * 2 + QUIET * 150
+    pcm = QUIET * 7 + VOICE * 2 + QUIET * 100
     events = []
     for offset in range(0, len(pcm), 1024):
         events.extend(stream.feed(pcm[offset:offset + 1024]))
@@ -45,11 +45,11 @@ def test_device_chunk_boundaries_do_not_change_recorded_audio():
     assert not stream.pending
 
 
-def test_a_pause_shorter_than_three_seconds_keeps_one_utterance():
+def test_a_pause_shorter_than_two_seconds_keeps_one_utterance():
     stream = collector()
-    events = stream.feed(VOICE + QUIET * 100 + SECOND + QUIET * 150)
+    events = stream.feed(VOICE + QUIET * 99 + SECOND + QUIET * 100)
     assert [event.status for event in events] == ['speech_started', 'complete']
-    assert events[1].pcm == VOICE + QUIET * 100 + SECOND + QUIET * 150
+    assert events[1].pcm == VOICE + QUIET * 99 + SECOND + QUIET * 100
 
 
 def test_idle_silence_does_not_create_a_command_or_grow_the_pending_buffer():
@@ -78,9 +78,9 @@ def test_reset_removes_pre_disconnect_audio_and_partial_frame():
     stream = collector()
     stream.feed(VOICE + SECOND[:20])
     stream.reset()
-    events = stream.feed(SECOND + QUIET * 150)
+    events = stream.feed(SECOND + QUIET * 100)
     assert [event.status for event in events] == ['speech_started', 'complete']
-    assert events[1].pcm == SECOND + QUIET * 150
+    assert events[1].pcm == SECOND + QUIET * 100
 
 
 def test_invalid_pcm_does_not_mutate_the_stream():

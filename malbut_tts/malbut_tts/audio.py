@@ -52,6 +52,24 @@ class StreamingPlayer:
         if self._closing.is_set():
             raise RuntimeError('Audio playback was closed.')
 
+    def wait_for_capacity(self, *, max_pending=2):
+        """Reserve producer time only when another complete sentence can fit.
+
+        Called by the single runtime producer *before* synthesis. The queue
+        includes the currently playing partial sentence. There is no second
+        writer, so its size can only decrease until that producer writes.
+        """
+        if type(max_pending) is not int or not 1 <= max_pending <= 32:
+            raise ValueError('max_pending must be an integer from 1 through 32')
+        with self._condition:
+            while True:
+                self._check()
+                if self._input_done:
+                    raise RuntimeError('Cannot write after finishing playback.')
+                if len(self._pending) < max_pending:
+                    return
+                self._condition.wait(0.05)
+
     def write(self, audio, sample_rate):
         """Queue PCM, waiting for buffer space while remaining cancellable."""
         chunk = np.array(audio, dtype=np.float32, order='C', copy=True)

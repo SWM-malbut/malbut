@@ -32,6 +32,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     initialized = False
     pipeline = None
     close_requests = None
+    close_transcriber = None
     phase = 'initializing_ros'
     try:
         rclpy.init(args=args)
@@ -42,43 +43,81 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         def parameter(name, default):
             return node.declare_parameter(name, default).value
 
+        backend = parameter('backend', 'faster_whisper')
         wake_model_path = parameter('wake_model_path', '')
         stt_model_path = parameter('stt_model_path', '') or wake_model_path
+        stt_library_path = parameter('stt_library_path', '')
+        cpp_use_gpu = parameter('cpp_use_gpu', True)
+        cpp_threads = parameter('cpp_threads', 6)
         compute_type = parameter('compute_type', 'int8')
         device_index = parameter('device_index', -1)
         vad_mode = parameter('vad_mode', 2)
         input_has_aec = parameter('input_has_aec', False)
         control_timeout = parameter('playback_control_timeout_s', 5.0)
+        max_utterance_s = parameter('max_utterance_s', 0.0)
+        endpoint_predecode_s = parameter('endpoint_predecode_s', 0.8)
+        if (type(max_utterance_s) not in (float, int)
+                or not isfinite(max_utterance_s) or max_utterance_s < 0):
+            raise ValueError('max_utterance_s must be finite and nonnegative; zero disables the limit')
+        if (type(endpoint_predecode_s) not in (float, int)
+                or not isfinite(endpoint_predecode_s)
+                or not 0 < endpoint_predecode_s <= 1.0):
+            raise ValueError('endpoint_predecode_s must be positive and at most one second')
         settings = CaptureSettings(
             start_timeout_s=parameter('start_timeout_s', 5.0),
-            silence_timeout_s=parameter('silence_timeout_s', 3.0),
-            max_utterance_s=parameter('max_utterance_s', 20.0),
+            silence_timeout_s=parameter('silence_timeout_s', 2.0),
+            max_utterance_s=None if max_utterance_s == 0 else max_utterance_s,
             pre_roll_s=parameter('pre_roll_s', 0.3),
         )
         if not isinstance(vad_mode, int) or vad_mode not in range(4):
             raise ValueError('vad_mode must be 0 through 3')
         if type(input_has_aec) is not bool:
             raise ValueError('input_has_aec must be a boolean')
-        if compute_type not in ('int8', 'float32'):
+        if backend not in ('faster_whisper', 'whisper_cpp'):
+            raise ValueError('backend must be faster_whisper or whisper_cpp')
+        if backend == 'faster_whisper' and compute_type not in ('int8', 'float32'):
             raise ValueError('compute_type must be int8 or float32')
         if (type(control_timeout) not in (float, int) or not isfinite(control_timeout)
                 or control_timeout <= 0):
             raise ValueError('playback_control_timeout_s must be finite and positive')
-        if not wake_model_path or not Path(wake_model_path).expanduser().is_dir():
-            node.get_logger().error('Missing local model directory for parameter: wake_model_path')
-            return 1
-        if not stt_model_path or not Path(stt_model_path).expanduser().is_dir():
-            node.get_logger().error('Missing local model directory for parameter: stt_model_path')
-            return 1
+        wake_path = Path(wake_model_path).expanduser()
+        stt_path = Path(stt_model_path).expanduser()
+        if backend == 'whisper_cpp':
+            if type(cpp_use_gpu) is not bool:
+                raise ValueError('cpp_use_gpu must be a boolean')
+            if type(cpp_threads) is not int or cpp_threads <= 0:
+                raise ValueError('cpp_threads must be a positive integer')
+            library_path = Path(stt_library_path).expanduser()
+            if not stt_model_path or not stt_path.is_file():
+                raise ValueError('whisper_cpp requires a local stt_model_path file')
+            if not stt_library_path or not library_path.is_file():
+                raise ValueError('whisper_cpp requires a local stt_library_path file')
+            if wake_model_path and (not wake_path.is_file() or not wake_path.samefile(stt_path)):
+                raise ValueError('whisper_cpp shares one model; wake_model_path must match stt_model_path')
+        else:
+            if not wake_model_path or not wake_path.is_dir():
+                node.get_logger().error('Missing local model directory for parameter: wake_model_path')
+                return 1
+            if not stt_model_path or not stt_path.is_dir():
+                node.get_logger().error('Missing local model directory for parameter: stt_model_path')
+                return 1
 
         phase = 'loading_runtime_dependencies'
         from pvrecorder import PvRecorder
         import webrtcvad
         from malbut_stt.wake import LocalWakeRecognizer
 
-        wake_path = Path(wake_model_path).expanduser()
-        stt_path = Path(stt_model_path).expanduser()
-        if wake_path.samefile(stt_path):
+        if backend == 'whisper_cpp':
+            from malbut_stt.cpp_transcription import CppWhisperTranscriber
+
+            phase = 'initializing_stt'
+            transcriber = CppWhisperTranscriber(
+                stt_path, library_path, use_gpu=cpp_use_gpu, n_threads=cpp_threads,
+            )
+            close_transcriber = transcriber.close
+            phase = 'initializing_wake'
+            wake = LocalWakeRecognizer.from_transcriber(transcriber)
+        elif wake_path.samefile(stt_path):
             phase = 'initializing_stt'
             transcriber = LocalWhisperTranscriber(stt_path, compute_type=compute_type)
             phase = 'initializing_wake'
@@ -277,6 +316,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             report=report,
             settings=settings,
             input_has_aec=input_has_aec,
+            # A shorter explicit fallback keeps its existing behavior without predecode.
+            endpoint_predecode_s=(endpoint_predecode_s
+                                  if settings.silence_timeout_s > 1.0 else None),
         )
 
         def playback_status(message):
@@ -312,7 +354,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         return 1
     finally:
         cleanup_failed = False
-        for cleanup in (close_requests, pipeline.close if pipeline is not None else None):
+        for cleanup in (close_requests, pipeline.close if pipeline is not None else None,
+                        close_transcriber):
             if cleanup is None:
                 continue
             try:
