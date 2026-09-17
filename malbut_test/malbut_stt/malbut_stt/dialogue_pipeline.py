@@ -116,6 +116,13 @@ class DialoguePipeline:
         self.phase = 'starting_microphone'
         self.recorder.start()
         self._started = True
+        self.phase = 'reading_microphone'
+        samples = self.recorder.read()
+        if len(samples) != 512:
+            raise ValueError('speech microphone returned an incomplete frame')
+        # Prove capture and VAD before the node publishes readiness. Discard this
+        # startup frame so validation cannot become a wake or user utterance.
+        self.wake_stream.is_speech(pcm_bytes(samples)[:640], 16000)
         self.capture_thread = Thread(target=self._capture, name='stt-capture', daemon=True)
         self.asr_thread = Thread(target=self._infer, name='stt-asr', daemon=True)
         self.capture_thread.start()

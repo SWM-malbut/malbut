@@ -156,7 +156,8 @@ def create_communication_node(
                 )
                 return
             if self.dialogue.startup_error:
-                self.get_logger().error('speech_dialogue startup failed')
+                self.get_logger().error(
+                    f'speech_dialogue startup failed: {self.dialogue.startup_error}')
                 self.say('대화 처리를 준비하지 못했어요. 실행 설정을 확인해 주세요.')
                 return
             if not self.dialogue.has_capacity():
@@ -225,7 +226,8 @@ def create_communication_node(
                 return
             self.weather_query.drain()
             if self.dialogue.startup_error:
-                self.get_logger().error('speech_dialogue startup failed')
+                self.get_logger().error(
+                    f'speech_dialogue startup failed: {self.dialogue.startup_error}')
                 raise RuntimeError('speech_dialogue_startup_failed')
             self._start_speech_inputs()
             for response in self.dialogue.drain():

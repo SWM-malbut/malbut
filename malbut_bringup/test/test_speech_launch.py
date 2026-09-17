@@ -87,6 +87,7 @@ def test_startup_waits_for_both_checks_and_preserves_jetson_settings(speech):
         '/runtime with space/bin/python', '-m', 'malbut_bringup.speech_process',
         '--startup-timeout-s', '120.0', '--',
         '/runtime with space/bin/python', '-m', 'malbut_bringup.speech_preflight',
+        '--prepare-peers',
         '--stt-model-path', '/models/ggml.bin', '--stt-library-path',
         '/native/libmalbut_whisper.so', '--input-device', '2', '--output-device', '3',
         '--cpp-threads', '4', '--agent-provider', 'mock',
@@ -234,6 +235,8 @@ def test_preflight_only_exits_without_constructing_peers(speech, monkeypatch):
     monkeypatch.setattr(speech, 'get_package_share_directory',
                         lambda _: pytest.fail('unnecessary runtime lookup'))
     actions = speech._setup(context)
+    assert '--prepare-peers' not in [
+        perform_substitutions(context, part) for part in _process(actions).cmd]
     _assert_shutdown(_exit(actions, context, _process(actions)))
     assert _timeout(actions, context) == []
 

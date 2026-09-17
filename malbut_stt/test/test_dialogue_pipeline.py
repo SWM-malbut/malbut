@@ -1,7 +1,7 @@
 """Continuous dialogue tests use deterministic PCM, local-model fakes, and no ROS."""
 
 from queue import Queue
-from threading import Event
+from threading import Event, Thread
 from time import monotonic, sleep
 from types import SimpleNamespace
 
@@ -33,6 +33,7 @@ def harness():
 
         def __init__(self):
             self.frames = Queue()
+            self.frames.put([0] * 512)
             self.active = False
             self.reads = 0
 
@@ -66,12 +67,12 @@ def harness():
         assert state.allow_asr.wait(timeout=3.0)
         return '문장 ' + str(len(state.command_calls))
 
-    def create(*, aec=True):
+    def create(*, aec=True, is_speech=None):
         pipeline = DialoguePipeline(
             recorder_factory=lambda: state.recorder,
             wake=SimpleNamespace(transcribe=wake),
             transcriber=SimpleNamespace(transcribe=transcribe),
-            is_speech=lambda frame, rate: frame[:2] != b'\x00\x00',
+            is_speech=is_speech or (lambda frame, rate: frame[:2] != b'\x00\x00'),
             publish_transcript=lambda uid, text: state.transcripts.append((uid, text)),
             publish_control=lambda pid, cmd: state.controls.append((pid, cmd)),
             publish_interruption=lambda uid, pid, text: state.candidates.append((uid, pid, text)),
@@ -214,7 +215,7 @@ def test_capture_during_candidate_inference_remains_part_of_the_same_utterance(h
     wake_up(harness, pipeline)
     # The read already blocked before wake belongs to the previous audio generation.
     harness.recorder.frames.put([0] * 320)
-    wait_for(lambda: harness.recorder.reads >= 2)
+    wait_for(lambda: harness.recorder.reads >= 3)
     harness.allow_asr.clear()
     pipeline.feed(VOICE + QUIET * 50)
     assert harness.entered_asr.wait(timeout=1.0)
@@ -439,7 +440,7 @@ def test_raw_external_pause_allows_new_wake_after_finite_drain(harness):
 
 def test_real_capture_thread_keeps_microphone_open_and_drops_playing_frames(harness):
     pipeline = harness.create(aec=False)
-    wait_for(lambda: harness.recorder.reads == 1)
+    wait_for(lambda: harness.recorder.reads == 2)
     harness.recorder.frames.put([1] * 320)
     wait_for(lambda: not pipeline.audio.empty())
     generation, _, pcm, busy = pipeline.audio.get_nowait()
@@ -464,7 +465,13 @@ def test_overflow_discards_incomplete_audio_without_inference(harness):
 
 
 def test_capture_worker_failure_reports_read_phase_and_releases_device(harness):
+    first_read = True
+
     def fail_read():
+        nonlocal first_read
+        if first_read:
+            first_read = False
+            return [0] * 512
         raise RuntimeError('private microphone details')
 
     harness.recorder.read = fail_read
@@ -477,6 +484,74 @@ def test_capture_worker_failure_reports_read_phase_and_releases_device(harness):
     assert harness.closed == ['stop', 'delete']
     assert not pipeline.capture_thread.is_alive() and not pipeline.asr_thread.is_alive()
     assert harness.transcripts == []
+
+
+def test_start_waits_for_first_microphone_frame_before_workers_or_ready(harness):
+    """Keep startup pending while the microphone has not delivered usable audio."""
+    harness.recorder.frames.get_nowait()
+    finished = Event()
+    failures = []
+    vad_frames = []
+
+    def start():
+        try:
+            harness.create(is_speech=lambda pcm, rate: vad_frames.append((pcm, rate)))
+        except Exception as error:
+            failures.append(error)
+        finally:
+            finished.set()
+
+    starter = Thread(target=start)
+    starter.start()
+    try:
+        wait_for(lambda: harness.recorder.reads == 1)
+        pipeline = harness.pipeline
+        assert not finished.wait(timeout=0.05)
+        assert pipeline.phase == 'reading_microphone'
+        assert pipeline.capture_thread is None and pipeline.asr_thread is None
+        assert harness.reports == [] and vad_frames == []
+        harness.recorder.frames.put([0] * 512)
+        assert finished.wait(timeout=2.0)
+        assert failures == []
+        assert pipeline.phase == 'running'
+        assert vad_frames == [(QUIET, 16000)]
+        assert harness.reports == ['waiting_for_wake']
+        assert pipeline.audio.empty() and harness.wake_calls == []
+    finally:
+        harness.recorder.frames.put([0] * 512)
+        starter.join(timeout=3.0)
+        harness.pipeline.close()
+    assert not starter.is_alive()
+
+
+@pytest.mark.parametrize('failure,exception', [
+    ('read', RuntimeError), ('short_frame', ValueError),
+    ('invalid_pcm', OverflowError), ('vad', RuntimeError),
+])
+def test_first_microphone_validation_failure_closes_without_workers(harness, failure, exception):
+    """Reject failed audio validation before publishing readiness or starting ASR."""
+    def read():
+        if failure == 'read':
+            raise RuntimeError('private microphone details')
+        if failure == 'short_frame':
+            return [0] * 320
+        return [40000 if failure == 'invalid_pcm' else 0] * 512
+
+    def vad(pcm, rate):
+        assert pcm == QUIET and rate == 16000
+        raise RuntimeError('private VAD details')
+
+    harness.recorder.read = read
+    with pytest.raises(exception):
+        harness.create(is_speech=vad if failure == 'vad' else None)
+    pipeline = harness.pipeline
+    assert pipeline.phase == 'reading_microphone'
+    assert pipeline.capture_thread is None and pipeline.asr_thread is None
+    assert harness.reports == harness.wake_calls == harness.command_calls == []
+    pipeline.close()
+    pipeline.close()
+    assert harness.closed == ['stop', 'delete']
+    assert not pipeline._started and pipeline.recorder is None
 
 
 def test_unsupported_microphone_rate_is_deleted_without_starting_workers(harness):

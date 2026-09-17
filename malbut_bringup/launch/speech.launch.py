@@ -1,4 +1,4 @@
-"""Preflight the robot speech runtime before starting Agent, TTS, then STT."""
+"""Prepare Agent and TTS before loading the live STT model once."""
 
 from math import isfinite
 from pathlib import Path
@@ -51,6 +51,7 @@ def _setup(context):
     ) if control_server != 'none' else None
     preflight = ExecuteProcess(
         cmd=[*supervised, '--', *command,
+             *([] if preflight_only else ['--prepare-peers']),
              '--stt-model-path', model, '--stt-library-path', library,
              '--input-device', str(input_device), '--output-device', str(output_device),
              '--cpp-threads', str(threads), '--agent-provider', agent_provider],

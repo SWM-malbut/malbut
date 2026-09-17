@@ -15,6 +15,10 @@ from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
 
 from malbut_agent_server import ros_communication  # noqa: E402
+from malbut_agent_server.config import Settings  # noqa: E402
+from malbut_agent_server.providers.openai_responses import (  # noqa: E402
+    OpenAIResponsesProvider,
+)
 from test_speech_dialogue import RuntimeFactory  # noqa: E402
 
 
@@ -117,7 +121,9 @@ def test_service_duplicate_and_shutdown_progress_on_single_executor(monkeypatch,
 
 
 @pytest.mark.parametrize('failed', [False, True])
-def test_agent_startup_does_not_advertise_unusable_speech_inputs(monkeypatch, tmp_path, failed):
+def test_agent_startup_does_not_advertise_unusable_speech_inputs(
+    monkeypatch, tmp_path, failed, capfd,
+):
     """Exercise actual DDS discovery while the real dialogue worker is blocked."""
     entered, release = Event(), Event()
     factory = RuntimeFactory()
@@ -126,7 +132,7 @@ def test_agent_startup_does_not_advertise_unusable_speech_inputs(monkeypatch, tm
         entered.set()
         assert release.wait(8)
         if failed:
-            raise RuntimeError('test startup failure')
+            raise PermissionError('private provider credential details')
         return factory()
 
     monkeypatch.setattr('malbut_agent_server.manager_client.ManagerClient',
@@ -158,6 +164,10 @@ def test_agent_startup_does_not_advertise_unusable_speech_inputs(monkeypatch, tm
             assert not client.service_is_ready()
             assert probe.get_subscriptions_info_by_topic(
                 ros_communication.TRANSCRIPT_TOPIC) == []
+            captured = capfd.readouterr()
+            logs = captured.out + captured.err
+            assert 'speech_dialogue startup failed: PermissionError' in logs
+            assert 'private provider credential details' not in logs
         else:
             while time.monotonic() < deadline and not client.service_is_ready():
                 executor.spin_once(timeout_sec=0.02)
@@ -170,6 +180,42 @@ def test_agent_startup_does_not_advertise_unusable_speech_inputs(monkeypatch, tm
             agent.destroy_node()
         if probe is not None:
             probe.destroy_node()
+        executor.shutdown(timeout_sec=0)
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+def test_openai_agent_initializes_real_session_without_network(monkeypatch, tmp_path):
+    """Start the production Agent locally before any model inference is needed."""
+    network_calls = []
+
+    def forbidden_transport(*args, **kwargs):
+        network_calls.append(True)
+        raise AssertionError('Network requests are forbidden during this test')
+
+    monkeypatch.setattr(OpenAIResponsesProvider, '_urllib_transport', forbidden_transport)
+    settings = Settings(
+        provider='openai', openai_api_key='non-secret-test-value',
+        database_path=str(tmp_path / 'conversation.sqlite3'),
+    )
+    rclpy.init()
+    executor = SingleThreadedExecutor()
+    agent = None
+    try:
+        agent = ros_communication.create_communication_node(
+            speech_db_path=str(tmp_path / 'receipts.sqlite3'),
+            dialogue_settings=settings,
+        )
+        executor.add_node(agent)
+        deadline = time.monotonic() + 5
+        while not agent._speech_ready and time.monotonic() < deadline:
+            executor.spin_once(timeout_sec=0.02)
+        assert agent._speech_ready and agent.dialogue.ready
+        assert agent.dialogue.startup_error is None
+        assert network_calls == []
+    finally:
+        if agent is not None:
+            agent.destroy_node()
         executor.shutdown(timeout_sec=0)
         if rclpy.ok():
             rclpy.shutdown()

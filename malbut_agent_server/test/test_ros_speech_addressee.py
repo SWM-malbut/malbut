@@ -56,6 +56,7 @@ class Invocation:
 @pytest.fixture
 def node(monkeypatch, tmp_path, request):
     messages, subscriptions, services = {}, {}, {}
+    errors = []
 
     class Node:
         def __init__(self, _name):
@@ -77,7 +78,7 @@ def node(monkeypatch, tmp_path, request):
             return None
 
         def get_logger(self):
-            return SimpleNamespace(info=lambda *_: None, error=lambda *_: None,
+            return SimpleNamespace(info=lambda *_: None, error=errors.append,
                                    warning=lambda *_: None)
 
         def destroy_node(self):
@@ -134,6 +135,7 @@ def node(monkeypatch, tmp_path, request):
     instance.sent = messages
     instance.subscriptions = subscriptions
     instance.services = services
+    instance.errors = errors
     yield instance
     instance.destroy_node()
 
@@ -166,6 +168,14 @@ def test_failed_initialization_never_advertises_speech_endpoints(node):
     with pytest.raises(RuntimeError, match='speech_dialogue_startup_failed'):
         node._drain_dialogue()
     assert node.subscriptions == node.services == {}
+    assert node.errors == ['speech_dialogue startup failed: DatabaseError']
+
+
+def test_transcript_during_startup_failure_reports_original_error_type(node):
+    """Retain the sanitized worker failure when a transcript is already queued."""
+    node.dialogue.startup_error = 'PermissionError'
+    node._receive_speech(SimpleNamespace(utterance_id='uid', text='안녕'))
+    assert node.errors == ['speech_dialogue startup failed: PermissionError']
 
 
 def test_service_yields_until_timer_drains_without_speech_or_receipt(node):

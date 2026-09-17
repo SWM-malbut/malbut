@@ -185,6 +185,8 @@ def runtime(monkeypatch, tmp_path):
             state.pipeline_args['recorder_factory']()
             self.phase = 'starting_microphone'
             fail(self.phase)
+            self.phase = 'reading_microphone'
+            fail(self.phase)
             self.phase = 'running'
             state.pipeline_args['report']('waiting_for_wake')
 
@@ -345,7 +347,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
         }
 
 
-def test_readiness_is_latched_only_after_microphone_start(runtime, capsys):
+def test_readiness_is_latched_only_after_microphone_startup(runtime, capsys):
     """Web readiness must represent successful capture startup, not just a publisher."""
     assert main() == 0
     assert runtime.statuses == [('ready', 'running')]
@@ -358,7 +360,7 @@ def test_readiness_is_latched_only_after_microphone_start(runtime, capsys):
 
 
 @pytest.mark.parametrize('phase', [
-    'initializing_stt', 'opening_microphone', 'starting_microphone',
+    'initializing_stt', 'opening_microphone', 'starting_microphone', 'reading_microphone',
 ])
 def test_failed_microphone_or_model_never_reports_ready(runtime, phase, capsys):
     """A loaded node name or DDS publisher alone cannot satisfy Bringup readiness."""

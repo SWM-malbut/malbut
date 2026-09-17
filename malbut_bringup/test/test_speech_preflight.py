@@ -83,6 +83,22 @@ def test_peer_mode_never_opens_microphone_or_audio_output(checks, capsys):
     assert json.loads(capsys.readouterr().out) == {'event': 'speech_peers_ready'}
 
 
+def test_integrated_startup_prepares_consumers_without_loading_stt(checks, capsys):
+    """Leave the one model load and microphone start to the actual STT process."""
+    checks.failure = 'check_stt'
+    assert preflight.main([
+        '--prepare-peers', '--agent-provider', 'mock', '--output-device', '3',
+    ]) == 0
+    assert checks.calls == [
+        ('check_interfaces', (), {}), ('check_agent', ('mock',), {}),
+        ('check_tts', (3,), {}),
+    ]
+    assert json.loads(capsys.readouterr().out) == {
+        'event': 'speech_dependencies_ready',
+        'stt_initialization_deferred': True, 'api_request_verified': False,
+    }
+
+
 @pytest.mark.parametrize('server', ['manager', 'autoslam'])
 def test_control_mode_never_opens_microphone_or_audio_output(checks, capsys, server):
     assert preflight.main(['--wait-for-control', server, '--timeout-s', '2']) == 0

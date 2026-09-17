@@ -140,6 +140,7 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--wait-for-peers', action='store_true')
     mode.add_argument('--wait-for-control', choices=('manager', 'autoslam'))
+    mode.add_argument('--prepare-peers', action='store_true')
     parser.add_argument('--timeout-s', type=float, default=30.0)
     args = parser.parse_args(argv)
     phase = 'configuration'
@@ -164,6 +165,12 @@ def main(argv=None):
         check_agent(args.agent_provider)
         phase = 'tts_output'
         check_tts(args.output_device)
+        if args.prepare_peers:
+            print(json.dumps({
+                'event': 'speech_dependencies_ready',
+                'stt_initialization_deferred': True, 'api_request_verified': False,
+            }), flush=True)
+            return 0
         phase = 'stt_model_and_microphone'
         from malbut_stt.preflight import check_stt
 

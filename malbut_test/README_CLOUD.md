@@ -78,8 +78,8 @@ ros2 launch malbut_bringup cloud.launch.py
   기존 드라이버가 준비되어 있다면 중복 기동 없이 재사용한다.
 - `homecam_media:=false`가 기본이므로 홈캠 미디어 agent와 KVS 영상·음성 전송은 시작하지 않는다.
   직접 `robot.launch.py`를 실행할 때 `homecam_media:=true`로 명시하면 다시 포함할 수 있다.
-- 시작은 센서·주행 준비 → Manager 또는 AutoSLAM 서버 준비 → 음성 점검 →
-  Agent·TTS 준비 → STT 마이크 시작 순서다. 웹은 음성 준비까지 끝나야 준비 완료로
+- 시작은 센서·주행 준비 → Manager 또는 AutoSLAM 서버 준비 → 의존성 점검 →
+  Agent·TTS 준비 → 실제 STT 모델 로딩 1회와 마이크 시작 순서다. 웹은 음성 준비까지 끝나야 준비 완료로
   표시하며, 그전에는 `음성 모델·마이크 준비 대기`를 표시한다.
 - 지도 작성 모드도 카메라를 먼저 켜고 센서 준비 후 AutoSLAM 요청을 받는다.
   SLAM·Nav2 탐색은 AutoSLAM Goal 이후 시작한다. 저장 지도 주행 모드와 합치지 않는다.
@@ -100,7 +100,8 @@ ros2 launch malbut_bringup cloud.launch.py
 4. 사람 추적·순찰·목적지 이동 요청 → 실행 상태 → 취소와 실제 정지 확인.
 5. 홈캠 미디어를 별도로 활성화한 경우에만 카메라 라이브 영상을 확인한다.
    연결 끊김이나 브라우저 종료를 정지 수단으로 사용하지 않는다.
-6. `speech_preflight_passed` → `speech_peers_ready` 확인 후 마이크에 말하고 스피커 응답을 확인한다.
+6. `speech_dependencies_ready` → `speech_dialogue_ready` → `speech_peers_ready` →
+   `malbut_speech_capture_ready` 확인 후 마이크에 말하고 스피커 응답을 확인한다.
    준비 로그만으로 실제 대화·CUDA 추론이 검증된 것은 아니다. 음성 기본 proposal 모드의
    대화와 이동 명령 실행은 별개다.
 
