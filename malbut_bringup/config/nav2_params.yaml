@@ -141,7 +141,7 @@ local_costmap:
       height: 3
       resolution: 0.03
       robot_radius: 0.18
-      plugins: ["obstacle_layer", "depth_voxel_layer", "inflation_layer"]
+      plugins: ["obstacle_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.0
@@ -212,7 +212,7 @@ global_costmap:
       robot_radius: 0.18
       resolution: 0.05
       track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "depth_voxel_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
