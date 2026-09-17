@@ -227,6 +227,7 @@ def _bridge(manager_ready=False, autoslam_ready=True):
     bridge.stopping_runtime = None
     bridge.runtime_message = ''
     bridge.startup_status = {}
+    bridge.speech_ready = False
     bridge.action_status = {}
     bridge.cancel_clients = {}
     bridge.cancel_request = SimpleNamespace
@@ -310,6 +311,20 @@ def test_runtime_start_reuses_ready_hardware_and_rejects_other_bringup(monkeypat
         bridge._start_runtime({'mode': 'mapping'})
 
 
+@pytest.mark.parametrize('name', [
+    'malbut_stt', 'malbut_tts', 'malbut_agent_communication',
+])
+def test_runtime_start_rejects_existing_speech_nodes(name):
+    """Another speech process must not share the microphone or satisfy new peers."""
+    bridge, _ = _bridge()
+    bridge.runtime = Mock()
+    bridge.node.get_node_names_and_namespaces.return_value = [(name, '/')]
+    bridge.node.count_publishers.return_value = 0
+    with pytest.raises(ValueError, match=name):
+        bridge._start_runtime({'mode': 'mapping'})
+    bridge.runtime.start.assert_not_called()
+
+
 def test_runtime_stop_waits_for_nav2_terminal_status():
     """Cancel acknowledgement alone must not shut down a moving controller."""
     bridge, _ = _bridge()
@@ -386,6 +401,60 @@ def test_readiness_reason_is_exposed_without_changing_manager(monkeypatch):
     assert runtime['message'] == '필수 입력 준비 대기'
     bridge._bringup_status(SimpleNamespace(data='invalid JSON'))
     assert bridge.startup_status['state'] == 'WAITING'
+
+
+@pytest.mark.parametrize('mode', ['mapping', 'navigation'])
+def test_action_server_is_not_ready_until_speech_capture_starts(monkeypatch, mode):
+    """The UI must wait through preflight/model loading after Manager appears."""
+    bridge, _ = _bridge(manager_ready=mode == 'navigation', autoslam_ready=mode == 'mapping')
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {
+        'state': 'RUNNING', 'mode': mode, 'message': 'process alive'}
+    monkeypatch.setattr(bridge, '_robot_pose', lambda: None)
+    bridge.node.count_publishers.return_value = 1
+    bridge._refresh()
+    status = bridge.data.snapshot()['runtime']
+    assert not status['ready']
+    assert status['waiting'] == ['speech: microphone startup']
+    # DDS data delivery can precede the graph cache's writer discovery.
+    bridge.node.count_publishers.return_value = 0
+    bridge._speech_status(SimpleNamespace(data='ready'))
+    bridge._refresh()
+    assert not bridge.data.snapshot()['runtime']['ready']
+    bridge.node.count_publishers.return_value = 1
+    bridge._refresh()
+    assert bridge.data.snapshot()['runtime']['ready']
+    bridge.node.count_publishers.return_value = 0
+    bridge._refresh()
+    assert not bridge.data.snapshot()['runtime']['ready']
+
+
+@pytest.mark.parametrize('state', ['STOPPED', 'STOPPING', 'ERROR', 'STARTING'])
+def test_stale_speech_and_action_readiness_cannot_mark_inactive_runtime_ready(monkeypatch, state):
+    """An old retained status cannot make a stopped or failed launch look ready."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {
+        'state': state, 'mode': 'navigation', 'message': 'process state'}
+    bridge.speech_ready = True
+    monkeypatch.setattr(bridge, '_robot_pose', lambda: None)
+    bridge.node.count_publishers.return_value = 1
+    bridge._refresh()
+    assert not bridge.data.snapshot()['runtime']['ready']
+    bridge._speech_status(SimpleNamespace(data='ready'))
+    if state != 'STARTING':
+        assert not bridge.speech_ready
+
+
+def test_new_bringup_clears_previous_speech_readiness():
+    """Every requested launch must announce its own microphone readiness."""
+    bridge, _ = _bridge()
+    bridge.runtime = Mock()
+    bridge.speech_ready = True
+    bridge.node.get_node_names_and_namespaces.return_value = []
+    bridge.node.count_publishers.return_value = 0
+    bridge._start_runtime({'mode': 'mapping'})
+    assert not bridge.speech_ready
 
 
 def test_direct_autoslam_blocks_other_panel_starts():

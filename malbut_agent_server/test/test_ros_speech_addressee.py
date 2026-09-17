@@ -54,7 +54,7 @@ class Invocation:
 
 
 @pytest.fixture
-def node(monkeypatch, tmp_path):
+def node(monkeypatch, tmp_path, request):
     messages, subscriptions, services = {}, {}, {}
 
     class Node:
@@ -85,6 +85,7 @@ def node(monkeypatch, tmp_path):
 
     class Worker:
         startup_error = None
+        ready = getattr(request, 'param', True)
         accept = True
 
         def __init__(self, *_args):
@@ -144,6 +145,27 @@ def request(uid='uid', pid='pid', text='  원문\n'):
 def result(uid='uid', pid='pid', decision='addressed'):
     return {'kind': 'addressee', 'utterance_id': uid,
             'playback_id': pid, 'decision': decision}
+
+
+@pytest.mark.parametrize('node', [False], indirect=True)
+def test_speech_endpoints_wait_for_worker_initialization(node):
+    """A peer probe must not admit STT while the dialogue DB is still opening."""
+    assert node.subscriptions == node.services == {}
+    node._drain_dialogue()
+    assert node.subscriptions == node.services == {}
+    node.dialogue.ready = True
+    node._drain_dialogue()
+    assert set(node.subscriptions) == {ros_communication.TRANSCRIPT_TOPIC}
+    assert set(node.services) == {ros_communication.ADDRESSEE_SERVICE}
+
+
+@pytest.mark.parametrize('node', [False], indirect=True)
+def test_failed_initialization_never_advertises_speech_endpoints(node):
+    """Failed startup remains fatal without momentarily passing discovery."""
+    node.dialogue.startup_error = 'DatabaseError'
+    with pytest.raises(RuntimeError, match='speech_dialogue_startup_failed'):
+        node._drain_dialogue()
+    assert node.subscriptions == node.services == {}
 
 
 def test_service_yields_until_timer_drains_without_speech_or_receipt(node):

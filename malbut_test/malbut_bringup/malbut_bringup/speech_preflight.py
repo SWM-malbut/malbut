@@ -42,6 +42,51 @@ def check_tts(output_device):
         stream.write(np.zeros((2400, 1), dtype=np.float32))
 
 
+def wait_for_control(server, timeout_s):
+    """Wait for the owning robot controller without sending a mission Goal."""
+    import rclpy
+    from rclpy.action import ActionClient
+    from rclpy.node import Node
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+    from malbut_interfaces.action import AutoSlam, ExecuteMission
+    from malbut_interfaces.msg import SystemState
+
+    action_type, name = {
+        'manager': (ExecuteMission, '/malbut/mission/execute'),
+        'autoslam': (AutoSlam, '/autoslam'),
+    }[server]
+    node = client = None
+    booted = server != 'manager'
+
+    def receive_state(message):
+        nonlocal booted
+        booted = message.system_state != SystemState.BOOTING
+
+    rclpy.init()
+    try:
+        node = Node('speech_control_check')
+        client = ActionClient(node, action_type, name)
+        if server == 'manager':
+            node.create_subscription(SystemState, '/malbut/state', receive_state, QoSProfile(
+                depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        deadline = time.monotonic() + timeout_s
+        while rclpy.ok() and time.monotonic() < deadline:
+            if booted and client.server_is_ready():
+                return
+            rclpy.spin_once(node, timeout_sec=0.1)
+        raise RuntimeError('robot_control_not_ready')
+    finally:
+        try:
+            if client is not None:
+                client.destroy()
+            if node is not None:
+                node.destroy_node()
+        finally:
+            if rclpy.ok():
+                rclpy.shutdown()
+
+
 def wait_for_peers(timeout_s):
     """Wait for typed Agent/TTS endpoints; do not issue requests or play speech."""
     import rclpy
@@ -92,7 +137,9 @@ def main(argv=None):
     parser.add_argument('--output-device', type=int, default=-1)
     parser.add_argument('--cpp-threads', type=int, default=6)
     parser.add_argument('--agent-provider', choices=('openai', 'mock'), default='openai')
-    parser.add_argument('--wait-for-peers', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--wait-for-peers', action='store_true')
+    mode.add_argument('--wait-for-control', choices=('manager', 'autoslam'))
     parser.add_argument('--timeout-s', type=float, default=30.0)
     args = parser.parse_args(argv)
     phase = 'configuration'
@@ -102,6 +149,12 @@ def main(argv=None):
             raise ValueError('invalid_preflight_configuration')
         phase = 'ros_interfaces'
         check_interfaces()
+        if args.wait_for_control:
+            phase = 'robot_control'
+            wait_for_control(args.wait_for_control, args.timeout_s)
+            print(json.dumps({'event': 'speech_control_ready',
+                              'server': args.wait_for_control}), flush=True)
+            return 0
         if args.wait_for_peers:
             phase = 'speech_peers'
             wait_for_peers(args.timeout_s)

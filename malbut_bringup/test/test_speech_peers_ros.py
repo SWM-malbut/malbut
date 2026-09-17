@@ -2,7 +2,7 @@
 
 import pytest
 
-from malbut_bringup.speech_preflight import check_interfaces, wait_for_peers
+from malbut_bringup.speech_preflight import check_interfaces, wait_for_control, wait_for_peers
 
 
 rclpy = pytest.importorskip('rclpy')
@@ -43,3 +43,46 @@ def test_real_speech_endpoints_are_discovered_and_released():
     with pytest.raises(RuntimeError, match='speech_peers_not_ready'):
         wait_for_peers(0.5)
     assert not rclpy.ok()
+
+
+@pytest.mark.parametrize('mode', ['manager', 'autoslam'])
+def test_control_gate_waits_for_real_action_server_and_manager_boot(mode, monkeypatch):
+    """Discover control readiness without submitting even a test motion Goal."""
+    from malbut_interfaces.action import AutoSlam, ExecuteMission
+    from rclpy.action import ActionClient, ActionServer
+    from rclpy.context import Context
+    from rclpy.node import Node
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('readiness must not send a mission Goal')
+
+    monkeypatch.setattr(ActionClient, 'send_goal_async', forbidden)
+    context = Context()
+    rclpy.init(context=context)
+    node = Node('control_gate_test', context=context)
+    server = None
+    try:
+        with pytest.raises(RuntimeError, match='robot_control_not_ready'):
+            wait_for_control(mode, 0.2)
+        assert not rclpy.ok()
+        action_type, name = {
+            'manager': (ExecuteMission, '/malbut/mission/execute'),
+            'autoslam': (AutoSlam, '/autoslam'),
+        }[mode]
+        server = ActionServer(node, action_type, name, execute_callback=forbidden)
+        if mode == 'manager':
+            state = node.create_publisher(messages.SystemState, '/malbut/state', QoSProfile(
+                depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL))
+            state.publish(messages.SystemState(system_state=messages.SystemState.BOOTING))
+            with pytest.raises(RuntimeError, match='robot_control_not_ready'):
+                wait_for_control(mode, 0.5)
+            state.publish(messages.SystemState(system_state=messages.SystemState.IDLE))
+        wait_for_control(mode, 5.0)
+        assert not rclpy.ok()
+    finally:
+        if server is not None:
+            server.destroy()
+        node.destroy_node()
+        rclpy.shutdown(context=context)

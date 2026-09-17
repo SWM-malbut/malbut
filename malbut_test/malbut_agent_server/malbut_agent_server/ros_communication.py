@@ -63,6 +63,7 @@ def create_communication_node(
             self.dialogue = None
             self._receipts = None
             self._closing = False
+            self._speech_ready = False
             self._addressee_waiters = {}
             self._addressee_callbacks = 0
             self.weather_query = None
@@ -72,6 +73,7 @@ def create_communication_node(
                     reliability=ReliabilityPolicy.RELIABLE,
                     durability=DurabilityPolicy.VOLATILE,
                 )
+                self._speech_qos = qos
                 self._speech = self.create_publisher(
                     SpeechRequest, RESPONSE_TOPIC, qos,
                 )
@@ -101,19 +103,28 @@ def create_communication_node(
                 self.dialogue = DialogueWorker(
                     runtime_factory, settings.user_id,
                 )
-                self.create_subscription(
-                    SpeechTranscript, TRANSCRIPT_TOPIC,
-                    self._receive_speech, qos,
-                )
-                self.create_service(
-                    ClassifySpeechAddressee, ADDRESSEE_SERVICE,
-                    self._classify_addressee,
-                    callback_group=ReentrantCallbackGroup(),
-                )
                 self.create_timer(0.05, self._drain_dialogue)
+                self._start_speech_inputs()
             except Exception:
                 self.destroy_node()
                 raise
+
+        def _start_speech_inputs(self):
+            # Bringup discovers these endpoints before starting the microphone.
+            # A running worker thread alone does not mean its DB/session is ready.
+            if self._speech_ready or not self.dialogue.ready:
+                return
+            self.create_subscription(
+                SpeechTranscript, TRANSCRIPT_TOPIC,
+                self._receive_speech, self._speech_qos,
+            )
+            self.create_service(
+                ClassifySpeechAddressee, ADDRESSEE_SERVICE,
+                self._classify_addressee,
+                callback_group=ReentrantCallbackGroup(),
+            )
+            self._speech_ready = True
+            self.get_logger().info('speech_dialogue_ready; speech input endpoints started')
 
         def say(self, text, request_type=SpeechRequest.DIALOGUE):
             """Publish text without claiming playback completion."""
@@ -216,6 +227,7 @@ def create_communication_node(
             if self.dialogue.startup_error:
                 self.get_logger().error('speech_dialogue startup failed')
                 raise RuntimeError('speech_dialogue_startup_failed')
+            self._start_speech_inputs()
             for response in self.dialogue.drain():
                 if response.get('kind') == 'addressee':
                     self._resolve_addressee(response)
@@ -386,7 +398,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         executor.add_node(node)
         node.get_logger().info(
-            'Agent communication ready; speech dialogue worker started. '
+            'Agent communication started; initializing speech dialogue worker. '
             'Enter JSON lines: '
             'say, submit, status, cancel. '
             'STT speech uses the existing dialogue policy; '

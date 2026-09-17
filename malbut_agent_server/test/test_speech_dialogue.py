@@ -103,6 +103,43 @@ class RuntimeFactory:
         return runtime
 
 
+@pytest.mark.parametrize('phase', ['runtime', 'session'])
+def test_ready_waits_for_runtime_and_session_initialization(phase):
+    """Expose readiness only after all asynchronous startup work has finished."""
+    entered, release = threading.Event(), threading.Event()
+    factory = RuntimeFactory()
+
+    def wait():
+        entered.set()
+        assert release.wait(5)
+
+    def delayed_runtime():
+        if phase == 'runtime':
+            wait()
+        runtime = factory()
+        if phase == 'session':
+            create = runtime.conversation_store.create
+
+            def delayed_session(user_id):
+                wait()
+                return create(user_id)
+
+            runtime.conversation_store.create = delayed_session
+        return runtime
+
+    worker = DialogueWorker(delayed_runtime, 'speaker')
+    try:
+        assert entered.wait(5)
+        assert not worker.ready
+        assert worker.startup_error is None
+        release.set()
+        wait_until(lambda: worker.ready)
+    finally:
+        release.set()
+        worker.close()
+    assert not worker.ready
+
+
 def test_same_worker_reuses_context_with_original_input_and_safe_ids():
     factory = RuntimeFactory()
     worker = DialogueWorker(factory, 'configured-speaker')
@@ -328,6 +365,7 @@ def test_startup_failure_returns_queued_error_and_stops_accepting():
             'kind': 'error', 'conversation_id': None,
         }
         assert worker.startup_error == 'RuntimeError'
+        assert not worker.ready
         assert not worker.has_capacity()
         assert not worker.submit('two', '다시 안녕')
     finally:
@@ -350,6 +388,7 @@ def test_session_startup_failure_closes_both_stores():
     worker = DialogueWorker(fail_session, 'speaker')
     try:
         wait_until(lambda: worker.startup_error is not None)
+        assert not worker.ready
     finally:
         worker.close()
     assert len(factory.closed) == 2
