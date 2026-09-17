@@ -41,9 +41,7 @@ for package_path in "${package_paths[@]}"; do
     exit 1
   fi
 done
-# The deployment copy includes cloud media; dependency failures stop before any
-# ROS build. Its helper prepares/reuses the SDK without installing OS packages.
-bash "$robot_source_dir/homecam_agent/scripts/build_robot_cloud.sh"
+# Check and prepare speech before the expensive cloud/ROS build.
 case "${MALBUT_BUILD_SPEECH:-1}" in
   0) ;;
   1)
@@ -51,19 +49,29 @@ case "${MALBUT_BUILD_SPEECH:-1}" in
     speech_runtime="${MALBUT_SPEECH_RUNTIME:-$speech_cache/runtime}"
     whisper_source="${WHISPER_CPP_SOURCE_DIR:-$speech_cache/whisper.cpp}"
     whisper_build="${MALBUT_STT_BUILD_DIR:-$speech_cache/whisper-cpp-build}"
+    speech_model="${MALBUT_STT_MODEL_PATH:-$speech_cache/models/ggml-small.bin}"
     /usr/bin/python3 -c '
 import sys
 if sys.version_info[:2] != (3, 10):
     raise SystemExit("Robot speech requires the ROS Humble system Python 3.10 (/usr/bin/python3).")
 '
+    if ! command -v nvcc >/dev/null && [[ -x /usr/local/cuda/bin/nvcc ]]; then
+      export PATH="/usr/local/cuda/bin:$PATH"
+    fi
     for prerequisite in cmake git nvcc; do
       if ! command -v "$prerequisite" >/dev/null; then
-        echo "Missing $prerequisite for robot CUDA speech build; prepare the JetPack build tools first." >&2
+        echo "Missing $prerequisite for robot CUDA speech build. Run: bash \"$robot_source_dir/setup.sh\"" >&2
         exit 1
       fi
     done
     if [[ ! -f "$whisper_source/include/whisper.h" ]]; then
       echo "Missing pinned whisper.cpp checkout: $whisper_source (no automatic download)." >&2
+      echo "Run: bash \"$robot_source_dir/setup.sh\"" >&2
+      exit 1
+    fi
+    if [[ ! -s "$speech_model" ]]; then
+      echo "Missing STT model: $speech_model (no automatic download)." >&2
+      echo "Run: bash \"$robot_source_dir/setup.sh\"" >&2
       exit 1
     fi
     /usr/bin/python3 -c '
@@ -110,6 +118,9 @@ if "include-system-site-packages=true" not in config.splitlines():
     echo 'MALBUT_BUILD_SPEECH must be 1 (robot default) or 0 (skip speech setup).' >&2
     exit 1 ;;
 esac
+# The deployment copy includes cloud media. Its helper prepares/reuses the SDK
+# without installing OS packages; setup.sh owns OS dependency installation.
+bash "$robot_source_dir/homecam_agent/scripts/build_robot_cloud.sh"
 colcon_executable="$(command -v colcon)"
 cd -- "$workspace_dir"
 # Keep factory build/install hooks intact and avoid upstream's optional uv sync.

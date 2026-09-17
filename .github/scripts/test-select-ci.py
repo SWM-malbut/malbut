@@ -116,6 +116,7 @@ class SpeechSelectionTests(unittest.TestCase):
     def test_bringup_builds_speech_dependencies_without_selecting_their_tests(self):
         for path in ('malbut_bringup/launch/robot.launch.py',
                      'malbut_test/malbut_bringup/launch/robot.launch.py',
+                     'malbut_test/setup.sh',
                      'malbut_test/build.sh'):
             with self.subTest(path=path):
                 result = SELECTOR.selection([path])

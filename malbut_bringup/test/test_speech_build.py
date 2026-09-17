@@ -60,13 +60,17 @@ elif name in ('system-python', 'python') and args[0] == '-c':
     whisper = cache / 'malbut_speech/whisper.cpp'
     (whisper / 'include').mkdir(parents=True)
     (whisper / 'include/whisper.h').touch()
+    model = cache / 'malbut_speech/models/ggml-small.bin'
+    model.parent.mkdir()
+    model.write_bytes(b'model fixture')
     events = tmp_path / 'events.jsonl'
     env = {**os.environ, 'ROS_DISTRO': 'humble',
            'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
            'BASH_ENV': str(bash_env), 'MOCK_COMMAND': str(command),
            'BUILD_EVENTS': str(events), 'XDG_CACHE_HOME': str(cache)}
     for variable in ('MALBUT_BUILD_SPEECH', 'MALBUT_SPEECH_RUNTIME',
-                     'MALBUT_STT_BUILD_DIR', 'WHISPER_CPP_SOURCE_DIR'):
+                     'MALBUT_STT_BUILD_DIR', 'WHISPER_CPP_SOURCE_DIR',
+                     'MALBUT_STT_MODEL_PATH'):
         env.pop(variable, None)
 
     def run(layout='malbut', overrides=None, missing_tool=None):
@@ -82,7 +86,7 @@ elif name in ('system-python', 'python') and args[0] == '-c':
         # Cloud behavior is covered separately by test_deployment.py.
         cloud_script = robot / 'homecam_agent/scripts/build_robot_cloud.sh'
         cloud_script.parent.mkdir(parents=True)
-        cloud_script.write_text('#!/bin/bash\nexit 0\n')
+        cloud_script.write_text('#!/bin/bash\n"$MOCK_COMMAND" cloud\n')
         script = robot / 'build.sh'
         shutil.copyfile(ROOT / 'build.sh', script)
         result = subprocess.run(['bash', str(script)], text=True,
@@ -118,6 +122,7 @@ def test_default_build_prepares_isolated_speech_before_colcon(robot_build, layou
         '-r', str(robot / 'malbut_tts/requirements-api.txt'),
     ]]
     assert calls[-1]['name'] == 'colcon'
+    assert calls[-2]['name'] == 'cloud'
     assert calls[-1]['path'] == '/usr/bin:/bin'
     assert all('pip' not in call['args'] for call in calls if call['name'] != 'python')
     assert not (robot / '.venv').exists()
@@ -150,6 +155,14 @@ def test_missing_source_does_not_download_or_install(robot_build, tmp_path):
         'WHISPER_CPP_SOURCE_DIR': str(tmp_path / 'missing checkout')})
     assert result.returncode != 0
     assert 'no automatic download' in result.stderr
+    assert all(call['name'] == 'system-python' for call in calls)
+
+
+def test_missing_model_stops_before_cloud_or_speech_build(robot_build, tmp_path):
+    result, calls, _, _ = robot_build(overrides={
+        'MALBUT_STT_MODEL_PATH': str(tmp_path / 'missing model.bin')})
+    assert result.returncode != 0
+    assert 'setup.sh' in result.stderr
     assert all(call['name'] == 'system-python' for call in calls)
 
 
@@ -189,8 +202,12 @@ def test_native_build_cannot_dirty_source_checkout(robot_build, tmp_path):
 
 
 def test_explicit_skip_does_not_touch_speech_environment(robot_build):
-    result, calls, _, cache = robot_build(overrides={'MALBUT_BUILD_SPEECH': '0'})
+    result, calls, _, cache = robot_build(overrides={
+        'MALBUT_BUILD_SPEECH': '0',
+        'WHISPER_CPP_SOURCE_DIR': '/missing source',
+        'MALBUT_STT_MODEL_PATH': '/missing model',
+    })
     assert result.returncode == 0, result.stderr
-    assert [call['name'] for call in calls] == ['colcon']
+    assert [call['name'] for call in calls] == ['cloud', 'colcon']
     assert not (cache / 'runtime').exists()
     assert not (cache / 'whisper-cpp-build').exists()
