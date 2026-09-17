@@ -33,7 +33,9 @@ elif name == 'python' and 'pip' in args:
     stage = 'pip'
 if os.environ.get('FAIL_STAGE') == stage:
     sys.exit(19)
-if name == 'system-python' and args[:2] == ['-m', 'venv']:
+if name == 'nproc':
+    print(os.environ.get('MOCK_NPROC', '6'))
+elif name == 'system-python' and args[:2] == ['-m', 'venv']:
     runtime = pathlib.Path(args[-1])
     (runtime / 'bin').mkdir(parents=True)
     shutil.copyfile(os.environ['MOCK_COMMAND'], runtime / 'bin/python')
@@ -50,7 +52,7 @@ elif name in ('system-python', 'python') and args[0] == '-c':
     exec(args[1])
 ''')
     command.chmod(0o755)
-    for name in ('cmake', 'git', 'nvcc', 'colcon'):
+    for name in ('cmake', 'git', 'nvcc', 'colcon', 'nproc'):
         (bin_dir / name).symlink_to(command)
     # BASH_ENV shadows the fixed system interpreter only in this test shell.
     bash_env = tmp_path / 'mock-system-python.sh'
@@ -99,8 +101,9 @@ elif name in ('system-python', 'python') and args[0] == '-c':
 
 
 @pytest.mark.parametrize('layout', ['malbut', 'malbut/malbut_test'])
-def test_default_build_prepares_isolated_speech_before_colcon(robot_build, layout):
-    result, calls, robot, cache = robot_build(layout)
+@pytest.mark.parametrize('cpu_count', [1, 6])
+def test_default_build_prepares_isolated_speech_before_colcon(robot_build, layout, cpu_count):
+    result, calls, robot, cache = robot_build(layout, {'MOCK_NPROC': str(cpu_count)})
     assert result.returncode == 0, result.stderr
     configure, native = [call['args'] for call in calls if call['name'] == 'cmake']
     assert configure == [
@@ -110,7 +113,7 @@ def test_default_build_prepares_isolated_speech_before_colcon(robot_build, layou
         '-DCMAKE_BUILD_TYPE=Release',
     ]
     assert native == ['--build', str(cache / 'whisper-cpp-build'),
-                      '--target', 'malbut_whisper', '--parallel', '2']
+                      '--target', 'malbut_whisper', '--parallel', str(cpu_count)]
     creation = [call['args'] for call in calls
                 if call['name'] == 'system-python' and '-m' in call['args']]
     assert creation == [['-m', 'venv', '--system-site-packages', str(cache / 'runtime')]]

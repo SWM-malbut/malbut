@@ -88,7 +88,7 @@ if runtime == source or source in runtime.parents:
       "-DWHISPER_CPP_SOURCE_DIR=$whisper_source" \
       -DGGML_CUDA=ON -DGGML_METAL=OFF -DCMAKE_CUDA_ARCHITECTURES=87 \
       -DCMAKE_BUILD_TYPE=Release
-    cmake --build "$whisper_build" --target malbut_whisper --parallel 2
+    cmake --build "$whisper_build" --target malbut_whisper --parallel "$(nproc)"
     speech_python="$speech_runtime/bin/python"
     if [[ ! -e "$speech_python" ]]; then
       /usr/bin/python3 -m venv --system-site-packages "$speech_runtime"

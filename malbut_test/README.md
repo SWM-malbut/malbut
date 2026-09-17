@@ -103,7 +103,7 @@ source ~/ros2_ws/install/malbut_test/local_setup.zsh
 위 경로 밖의 원본·제조사·시뮬레이션 패키지는 빌드 대상으로 잡지 않는다.
 YOLO 소스도 적용본 안에 있으므로 별도로 다운로드하지 않는다.
 메모리 부족 시 빌드 명령 뒤에 `--parallel-workers 1`을 붙여 colcon 동시 빌드를 줄일 수 있다.
-STT 네이티브 빌드는 별도로 `--parallel 2`를 사용한다.
+STT 네이티브 빌드는 `nproc`으로 현재 프로세스에서 사용 가능한 CPU 수를 확인해 자동으로 병렬 빌드한다.
 CUDA 없는 CI나 센서 전용 빌드는 `MALBUT_BUILD_SPEECH=0 bash src/malbut/build.sh`로
 음성 환경·네이티브 빌드를 생략할 수 있으며, 그 결과로 실행할 때는 `speech:=false`를 지정한다.
 
