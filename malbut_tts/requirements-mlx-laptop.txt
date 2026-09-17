@@ -1,5 +1,0 @@
-# Local synthesis backend for Apple Silicon; ROS/core tests do not need MLX.
-mlx-audio==0.5.3
-mlx==0.32.2
-numpy>=1.26,<3
-sounddevice>=0.5,<0.6

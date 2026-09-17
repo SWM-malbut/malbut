@@ -4,7 +4,7 @@
 <package format="3">
   <name>malbut_tts</name>
   <version>0.1.0</version>
-  <description>Queue and stream local speech with ROS playback controls.</description>
+  <description>Queue and stream speech with ROS playback controls.</description>
   <maintainer email="maintainers@example.com">SWM Malbut contributors</maintainer>
   <license>Apache-2.0</license>
 

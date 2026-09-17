@@ -1,0 +1,5 @@
+# Dependencies for the default OpenAI TTS backend; no local model or CUDA needed.
+# Install into an external virtualenv, not the system ROS Python environment.
+openai==2.54.0
+numpy>=1.26,<2
+sounddevice>=0.5,<0.6
