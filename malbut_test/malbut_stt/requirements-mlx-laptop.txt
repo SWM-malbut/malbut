@@ -1,0 +1,4 @@
+# Optional Apple Silicon notebook environment; independent of the ROS/CT2 runtime.
+mlx-whisper==0.4.3
+pvrecorder==1.2.7
+webrtcvad-wheels==2.0.14

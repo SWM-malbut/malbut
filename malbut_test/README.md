@@ -19,6 +19,9 @@ pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Br
 │   └── malbut/                                # malbut_test 내용의 복사 위치
 │       ├── malbut_bringup/
 │       ├── malbut_interfaces/
+│       ├── malbut_agent_server/
+│       ├── malbut_stt/
+│       ├── malbut_tts/
 │       ├── malbut_system_manager/
 │       ├── malbut_yolo/
 │       │   └── vendor/yolo_ros/                # 함께 포함된 upstream 소스
@@ -37,15 +40,17 @@ pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Br
 
 `COLCON_IGNORE`는 **삭제하지 않는다.** 기본 colcon 탐색에서 원본과 복사본의
 패키지 이름이 겹치지 않게 한다. `build.sh`는 홈캠 영상 노드와 필요한 KVS SDK,
-8개 로봇 패키지와 포함된 `yolo_ros`, `yolo_msgs`를 한 번에 빌드한다.
+11개 로봇·음성 패키지와 포함된 `yolo_ros`, `yolo_msgs`를 한 번에 빌드한다.
 경로를 직접 지정하므로 제조사 패키지를 재빌드하거나
 제조사의 `install/setup.zsh`를 덮어쓰지 않는다. 패키지명은 그대로 유지한다.
 
-Gazebo·actor·시나리오·벤치마크·독립 음성 응용 기능은 포함하지 않는다.
+Gazebo·actor·시나리오·벤치마크는 포함하지 않는다.
+STT·Agent·TTS 음성 기능과 실기기용 간단한 웹 테스트 패널은 포함한다.
+`build.sh` 하나가 음성 런타임·STT CUDA 라이브러리와 ROS 패키지를 빌드하고,
+`robot.launch.py` 하나가 선택한 로봇 구성과 STT·Agent·TTS를 기본으로 함께 실행한다.
 홈캠 영상 전송도 위 빌드에 포함한다. 서비스 웹 자체는 AWS에 별도 배포한다.
 클라우드 연결과 Bringup을 통한 영상 실행은 [README_CLOUD.md](README_CLOUD.md)를 따른다.
-실기기용 간단한 웹 테스트 패널은 Bringup에 포함한다. 제조사 하드웨어
-launch가 차체·센서·로봇 description과 TF를 제공하므로 시뮬레이션용 description을
+제조사 하드웨어 launch가 차체·센서·로봇 description과 TF를 제공하므로 시뮬레이션용 description을
 별도로 실행하지 않는다. 순찰은 기존 `malbut_autonomy/malbut_patrol`의 복사본이다.
 
 ## 1. 로봇 환경과 소스 준비
@@ -53,7 +58,9 @@ launch가 차체·센서·로봇 description과 TF를 제공하므로 시뮬레�
 실기기에서 확인된 값: **Zsh, L4T R36.4.7, Python 3.10.12,
 PyTorch 2.8.0, torchvision 0.23.0, CUDA available=True**.
 `slam`, `navigation`의 설치 경로도 확인됐다. 기존 PyTorch와 ROS를 재설치하지 않는다.
-CUDA 인식 확인은 아직 실제 YOLO/OSNet 추론 검증을 의미하지 않는다.
+이 기록과 현재 설정 기준으로 CUDA를 사용하는 구성이다. YOLO는 PyTorch CUDA,
+STT는 whisper.cpp CUDA를 사용하며 Agent와 TTS는 기본 OpenAI API 방식이다.
+이 기록은 이번 변경의 실기기 검증 결과가 아니며 실제 동시 GPU 추론은 별도 확인해야 한다.
 
 로봇의 Zsh 터미널에서:
 
@@ -72,6 +79,9 @@ Bringup이 제조사 실행에 필요한 `need_compile=False`를 자체 설정�
 ROS 의존성을 준비한다. 없는 도구는 `python3-rosdep`,
 `python3-colcon-common-extensions`, `python3-venv`,
 `python3-pip` 패키지로 준비한다. ROS/Gazebo 설치기를 다시 실행하지 않는다.
+첫 빌드 전에는 [음성 최초 준비](malbut_bringup/README_SPEECH.md#최초-준비)에 따라
+현재 JetPack의 CUDA 도구, PortAudio, 고정 버전 whisper.cpp 소스와 STT 모델을 준비한다.
+이후에는 아래 `build.sh` 하나로 음성 가상환경·CUDA 라이브러리·ROS 빌드를 처리한다.
 
 ```zsh
 cd ~/ros2_ws
@@ -88,7 +98,10 @@ source ~/ros2_ws/install/malbut_test/local_setup.zsh
 
 위 경로 밖의 원본·제조사·시뮬레이션 패키지는 빌드 대상으로 잡지 않는다.
 YOLO 소스도 적용본 안에 있으므로 별도로 다운로드하지 않는다.
-메모리 부족 시 빌드 명령 뒤에 `--parallel-workers 1`을 붙일 수 있다.
+메모리 부족 시 빌드 명령 뒤에 `--parallel-workers 1`을 붙여 colcon 동시 빌드를 줄일 수 있다.
+STT 네이티브 빌드는 별도로 `--parallel 2`를 사용한다.
+CUDA 없는 CI나 센서 전용 빌드는 `MALBUT_BUILD_SPEECH=0 bash src/malbut/build.sh`로
+음성 환경·네이티브 빌드를 생략할 수 있으며, 그 결과로 실행할 때는 `speech:=false`를 지정한다.
 
 실기기 비교에서 대용량 Depth 점군 수신과 TF 지연이 연결되어, 기본 Nav2는
 Depth 영상을 받고 내부에서만 점군을 만드는 `DepthVoxelLayer`를 사용한다.
@@ -129,7 +142,7 @@ Bringup도 `robot_name=/`, `master_name=/`를 전달한다.
 공식 실행을 운영자가 종료한 후 아래 기본 실행을 사용한다. 동시에 실행하지 않는다.
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py perception:=false
+ros2 launch malbut_bringup robot.launch.py perception:=false speech:=false
 ```
 
 실제 지도가 없다면 센서-only 실행을 종료하고 웹 패널을 한 번 실행한다.
@@ -170,8 +183,9 @@ Goal을 받으면 누락된 차체·센서·SLAM·Nav2·스캔 정규화기를 �
 
 ## 3. 공유 인식 준비
 
-ROS 빌드와 GPU 패키지 설치는 별개다. 다음은 로봇에서 필요한 최초 준비이며
-Bringup이 자동 실행하지 않는다. 이미 준비된 모델은 그대로 재사용할 수 있다.
+YOLO·ReID GPU 런타임과 모델은 기존 도구로 최초 준비한다. 음성 환경은 위
+`build.sh`가 별도 경로에 준비하며, Bringup은 설치 도구를 자동 실행하지 않는다.
+이미 준비된 인식 모델은 그대로 재사용할 수 있다.
 
 ```zsh
 bash "$(ros2 pkg prefix malbut_yolo)/share/malbut_yolo/scripts/prepare_runtime.sh"
@@ -186,6 +200,8 @@ Bringup은 인식용 Python 실행 파일·모델 누락을 미리 검사하고 
 
 - YOLO: 기존 Jetson PyTorch/torchvision을 유지하는 `~/.cache/malbut_yolo/runtime`.
 - ReID: `~/.cache/malbut_reid/runtime`. 로봇의 공용 NumPy·ONNX Runtime을 제거하거나 변경하지 않는다.
+- 음성: `~/.cache/malbut_speech/runtime`. YOLO의 NumPy 1.26.4, ReID의 NumPy 1.23.5와
+  분리된 환경에 음성 의존성의 NumPy `>=1.26,<2`를 설치한다.
 - OSNet 모델 변환: 별도 CPU export 환경. 로봇의 GPU Torch와 별개다.
 - 모델: `~/.cache/malbut_perception/yolo26n.pt`, `osnet_ain_x1_0_msmt17.onnx`.
 - `XDG_CACHE_HOME`, `MALBUT_YOLO_RUNTIME`, `MALBUT_REID_RUNTIME`을 바꾸면
@@ -200,7 +216,7 @@ OSNet 준비 중 GPU provider가 표시되더라도 실제 모델 추론까지 �
 평소에는 이 명령을 따로 실행할 필요 없다.
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py publish_debug_image:=true
+ros2 launch malbut_bringup robot.launch.py publish_debug_image:=true speech:=false
 ```
 
 ## 4. 저장 지도로 Bringup 및 기능 요청
@@ -263,6 +279,34 @@ ros2 service call /malbut/mission/execute/_action/cancel_goal \
 
 취소 수락과 실제 정지 완료는 다르다. 정지를 확인한 후 Bringup을 종료한다.
 최초 실기기 시험은 별도 정지 수단을 확보한 안전한 공간에서 한다.
+
+## 5. STT·Agent·TTS 음성 대화
+
+최초 준비와 위 `build.sh`를 마치고 실행 터미널에 `OPENAI_API_KEY`를 설정하면,
+기본 Bringup 명령 하나로 센서·인식과 음성 대화를 시작한다. 이미 실행 중인 Bringup에
+음성 launch를 중복 실행하지 않는다. 저장 지도 주행에는 위 4절의 같은 launch에
+`mode:=navigation map:=...`을 지정한다.
+
+```zsh
+ros2 launch malbut_bringup robot.launch.py
+```
+
+`speech:=true`가 모든 모드의 기본값이다. 센서·주행 모드에서는 로봇 준비 확인 후,
+매핑 모드에서는 대기 중인 AutoSLAM 서버와 함께 음성 점검을 시작한다.
+점검 → Agent·TTS → ROS 연결 확인 → STT 순서이며, 실패 시 Bringup 전체가 종료된다.
+STT는 로컬 whisper.cpp CUDA, Agent와 TTS는 기본 OpenAI API를 사용한다.
+말로 추적·순찰을 실행하는 연결은 별도 범위다.
+
+기본 모델 경로는 `~/.cache/malbut_speech/models/ggml-small.bin`, CUDA 라이브러리는
+`~/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so`다.
+장치 선택은 `speech_input_device`, `speech_output_device`를 사용한다.
+모델·경로 변경과 음성만 점검하는 하위 launch 사용법은
+[음성 실행 안내](malbut_bringup/README_SPEECH.md)에 정리했다.
+음성을 끄고 로봇 구성만 진단할 때는 `speech:=false`를 지정한다.
+
+Preflight는 유료 API 요청을 보내지 않으며, 통과만으로 실제 CUDA 추론·API 응답·
+마이크에서 스피커까지의 대화나 YOLO 동시 실행이 검증되지는 않는다.
+해당 시험 결과를 로봇에서 남겨야 한다.
 
 ## 변경할 설정과 남은 확인
 

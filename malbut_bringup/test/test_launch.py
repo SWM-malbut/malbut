@@ -6,7 +6,7 @@ from xml.etree import ElementTree
 
 from launch import LaunchContext
 from launch.actions import (
-    DeclareLaunchArgument, EmitEvent, GroupAction, IncludeLaunchDescription,
+    DeclareLaunchArgument, ExecuteProcess, GroupAction, IncludeLaunchDescription,
     RegisterEventHandler, SetEnvironmentVariable,
 )
 from launch.events.process import ProcessExited
@@ -87,6 +87,8 @@ def launch_module(tmp_path, monkeypatch):
 
 def _context(module, **overrides):
     context = LaunchContext()
+    # These legacy cases exercise the hardware graph independently of speech.
+    context.launch_configurations['speech'] = 'false'
     context.launch_configurations.update(overrides)
     for action in module.generate_launch_description().entities:
         if isinstance(action, DeclareLaunchArgument):
@@ -175,9 +177,8 @@ def test_mapping_prepares_camera_before_exposing_idle_autoslam(launch_module):
                 and item.node_executable == 'wait_for_robot')
     settings = evaluate_parameters(context, wait._Node__parameters)[0]
     assert settings['perception'] is False and settings['navigation'] is False
-    failed = _readiness_exit(actions, context, returncode=1)
-    assert not _includes(failed)
-    assert any(isinstance(item, EmitEvent) for item in failed)
+    with pytest.raises(RuntimeError, match='Robot readiness check failed'):
+        _readiness_exit(actions, context, returncode=1)
 
 
 @pytest.mark.parametrize('mode', ['mapping', 'navigation'])
@@ -271,11 +272,15 @@ def test_manager_only_starts_after_successful_readiness(
     context = _context(launch_module, mode='navigation', start_hardware='false',
                        start_navigation='false')
     actions = launch_module._setup(context)
-    result = _readiness_exit(actions, context, returncode=returncode)
+    result = []
+    if starts_manager:
+        result = _readiness_exit(actions, context, returncode=returncode)
+    else:
+        with pytest.raises(RuntimeError, match='Robot readiness check failed'):
+            _readiness_exit(actions, context, returncode=returncode)
     managers = [item for item in result if isinstance(item, Node)
                 and item.node_package == 'malbut_system_manager']
     assert len(managers) == int(starts_manager)
-    assert any(isinstance(item, EmitEvent) for item in result) != starts_manager
 
 
 def test_runtime_dependencies_do_not_pull_simulation_or_new_hardware_package():
@@ -285,3 +290,119 @@ def test_runtime_dependencies_do_not_pull_simulation_or_new_hardware_package():
     assert {'malbut_tracking', 'malbut_patrol', 'malbut_system_manager',
             'homecam_media_agent'} <= dependencies
     assert not {'malbut_gazebo', 'malbut_scenarios', 'malbut_hardware'} & dependencies
+
+
+@pytest.fixture
+def speech_assets(launch_module, tmp_path):
+    """Prepare only path fixtures; these tests never load a model or audio."""
+    runtime = tmp_path / 'speech runtime'
+    python = runtime / 'bin/python'
+    python.parent.mkdir(parents=True)
+    python.symlink_to('/bin/sh')
+    model = tmp_path / 'model.bin'
+    library = tmp_path / 'bridge.so'
+    model.touch()
+    library.touch()
+    return {
+        'speech': 'true', 'speech_python_executable': str(python),
+        'stt_model_path': str(model), 'stt_library_path': str(library),
+    }
+
+
+def _process_exit(actions, context, process, returncode=0):
+    event = ProcessExited(action=process, name='test_child', cmd=[],
+                          cwd=None, env=None, pid=1, returncode=returncode)
+    result = []
+    for action in actions:
+        if isinstance(action, RegisterEventHandler):
+            handler = action.event_handler
+            if handler.matches(event):
+                result.extend(handler.handle(event, context) or [])
+    return result
+
+
+def test_robot_defaults_enable_isolated_cuda_speech(launch_module, monkeypatch, tmp_path):
+    """The normal robot entrypoint selects the same cache paths as build.sh."""
+    for name in ('MALBUT_SPEECH_RUNTIME', 'MALBUT_STT_MODEL_PATH',
+                 'MALBUT_STT_BUILD_DIR', 'MALBUT_STT_LIBRARY_PATH'):
+        monkeypatch.delenv(name, raising=False)
+    context = LaunchContext()
+    for action in launch_module.generate_launch_description().entities:
+        if isinstance(action, DeclareLaunchArgument):
+            action.execute(context)
+    settings = context.launch_configurations
+    cache = tmp_path / 'home/.cache/malbut_speech'
+    assert settings['speech'] == 'true'
+    assert settings['speech_python_executable'] == str(cache / 'runtime/bin/python')
+    assert settings['stt_model_path'] == str(cache / 'models/ggml-small.bin')
+    assert settings['stt_library_path'] == str(
+        cache / 'whisper-cpp-build/bin/libmalbut_whisper.so')
+    assert settings['speech_python_executable'] != settings['python_executable']
+    assert settings['speech_python_executable'] != settings['reid_python_executable']
+
+
+@pytest.mark.parametrize('mode', ['sensors', 'navigation', 'mapping'])
+def test_all_modes_include_speech_after_their_readiness_gate(
+        launch_module, speech_assets, mode):
+    """Every mode must finish robot readiness before starting speech."""
+    context = _context(launch_module, **speech_assets, mode=mode, start_navigation='false',
+                       speech_input_device='2', speech_output_device='3',
+                       stt_cpp_threads='4', speech_input_has_aec='true',
+                       speech_agent_provider='mock', speech_preflight_timeout_s='55',
+                       speech_peer_timeout_s='12', preflight_only='true')
+    actions = launch_module._setup(context)
+    assert not any('stt_model_path' in dict(item.launch_arguments)
+                   for item in _includes(actions))
+    wait = next(item for item in actions if isinstance(item, Node)
+                and item.node_executable == 'wait_for_robot')
+    started = _process_exit(actions, context, wait)
+    speech = next(item for item in _includes(started)
+                  if 'stt_model_path' in dict(item.launch_arguments))
+    assert dict(speech.launch_arguments) == {
+        'python_executable': speech_assets['speech_python_executable'],
+        'stt_model_path': speech_assets['stt_model_path'],
+        'stt_library_path': speech_assets['stt_library_path'],
+        'input_device': '2', 'output_device': '3', 'cpp_threads': '4',
+        'input_has_aec': 'true', 'agent_provider': 'mock',
+        'preflight_timeout_s': '55', 'peer_timeout_s': '12',
+        'preflight_only': 'false', 'use_sim_time': 'false',
+    }
+    # Do not resolve the venv symlink or replace the parent's perception Python.
+    assert context.launch_configurations['python_executable'] != (
+        speech_assets['speech_python_executable'])
+    assert context.launch_configurations['model_path'].endswith('yolo26n.pt')
+    context._set_is_shutdown(True)
+    assert _process_exit(actions, context, wait) == []
+
+
+@pytest.mark.parametrize('path', [
+    'speech_python_executable', 'stt_model_path', 'stt_library_path',
+])
+def test_missing_speech_assets_fail_before_hardware(launch_module, speech_assets, path):
+    """Never start the robot with a known missing runtime, model or bridge."""
+    speech_assets[path] = '/not/prepared'
+    context = _context(launch_module, **speech_assets)
+    launch_module._include = lambda *_args, **_kwargs: pytest.fail('child constructed')
+    with pytest.raises(RuntimeError, match='file not found'):
+        launch_module._setup(context)
+
+
+@pytest.mark.parametrize('check', ['speech_preflight', 'speech_peer_readiness'])
+def test_parent_allows_successful_speech_checks_but_propagates_failure(launch_module, check):
+    """Nested one-shot checks may exit 0; failures must return nonzero to the shell."""
+    context = _context(launch_module, start_hardware='false', perception='false')
+    actions = launch_module._setup(context)
+    process = ExecuteProcess(cmd=['/bin/true'], name=check)
+    assert _process_exit(actions, context, process) == []
+    with pytest.raises(RuntimeError, match='Bringup child exited'):
+        _process_exit(actions, context, process, returncode=2)
+
+
+@pytest.mark.parametrize('package', ['malbut_stt', 'malbut_tts', 'malbut_agent_server'])
+def test_parent_never_leaves_partial_speech_pipeline(launch_module, package):
+    """Even a clean persistent-node exit terminates the unified launch as failure."""
+    context = _context(launch_module, start_hardware='false', perception='false')
+    actions = launch_module._setup(context)
+    node = Node(package=package, executable='test')
+    with pytest.raises(RuntimeError, match='Bringup child exited'):
+        _process_exit(actions, context, node)

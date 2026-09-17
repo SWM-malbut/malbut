@@ -1,0 +1,10 @@
+string PAUSE=pause
+string RESUME=resume
+string STOP=stop
+# 제어할 TTS 재생의 고유 ID
+string playback_id
+# 위 상수 중 하나
+string command
+---
+# 요청을 검증하고 접수했는지 여부. 실제 재생 상태는 SpeechPlaybackStatus로 알린다.
+bool accepted

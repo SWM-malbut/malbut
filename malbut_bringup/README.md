@@ -2,9 +2,14 @@
 
 ROSOrin / Jetson Orin NX / ROS 2 Humble용 최상위 실행 패키지다.
 제조사 드라이버·TF·Nav2 설정을 재사용하고, Malbut 응용 서버를 연결한다.
-Gazebo, 시나리오, LLM, 독립 음성 응용 서비스는 이 실행에 포함하지 않는다.
+기존 `build.sh` 하나로 음성 런타임·STT CUDA 라이브러리와 ROS 패키지를 빌드하고,
+`robot.launch.py` 하나로 선택한 로봇 구성과 STT·Agent·TTS를 함께 실행한다.
+Gazebo와 시나리오는 이 실행에 포함하지 않는다.
 클라우드 연결이 설정되어 있으면 기존 홈캠 KVS 영상·음성 전송 노드를 함께 실행한다.
 추적·순찰 알고리즘과 시스템 관리자의 정책은 변경하지 않는다.
+
+음성은 기본 `speech:=true`이며 [음성 준비·점검 안내](README_SPEECH.md)를 따른다.
+`speech.launch.py`는 이 최상위 launch가 포함하는 하위 구성으로, 음성만 점검할 때도 사용한다.
 
 ## 실행 구성
 
@@ -14,9 +19,14 @@ Gazebo, 시나리오, LLM, 독립 음성 응용 서비스는 이 실행에 포�
 | `mapping` | 공식 차체·센서·카메라 → 준비 확인 → AutoSLAM 대기 서버. Goal 수신 후 없는 SLAM·Nav2만 기동 | YOLO, 추적·순찰, 저장 지도 AMCL, 미션 자동 실행 |
 | `navigation` | 센서 구성 + Nav2 + 위치 저장·복원 + 추적·순찰 서버 → 준비 확인 → 관리자 | 미션 자동 실행 |
 
-기본은 `sensors`다. 시뮬레이션 지도를
-실로봇에 대신 넣지 않는다. 인식 환경 준비 전에는 `perception:=false`로
-센서만 확인한다. `navigation` 모드에서는 인식 파이프라인이 필요하다.
+모든 모드에 STT·Agent·TTS가 기본 포함된다. `sensors`·`navigation`은
+센서·인식 등 로봇 준비 확인 뒤 음성 점검을 시작하고, `mapping`은 대기 중인
+AutoSLAM 서버와 함께 음성 점검을 시작한다. 음성 점검 → Agent·TTS → ROS 연결
+확인 → STT 순서로 시작하며, 음성 구성 실패 시 Bringup 전체를 종료한다.
+
+기본은 `sensors`다. 시뮬레이션 지도를 실로봇에 대신 넣지 않는다.
+인식·음성 환경 준비 전에는 `perception:=false speech:=false`로 센서만 확인한다.
+`navigation` 모드에서는 인식 파이프라인이 필요하다.
 
 실기기 적용본은 `build.sh` 하나로 홈캠 미디어까지 빌드한다.
 `cloud.launch.py`는 웹 명령·상태 연결만 유지하고, 웹이 시작하는 `robot.launch.py`가
@@ -42,26 +52,32 @@ YAML은 로봇에서 제공된 설정에 아래의 확인된 보정을 적용한
 
 ## 로봇에서 처음 준비
 
-1. 제조사 ROS 환경을 먼저 source하고 별도의 Malbut workspace를 overlay한다.
-   `~/ros2_ws` 등 제조사 workspace를 Malbut로 덮어쓰거나 다시 빌드하지 않는다.
+1. 실로봇에는 `malbut_test` 내용을 `~/ros2_ws/src/malbut`에 복사한다.
+   제조사 ROS 환경 위에 `install/malbut_test`의 별도 빌드 결과를 overlay한다.
+   제조사 패키지를 재빌드하거나 제조사 설치 결과를 덮어쓰지 않는다.
 2. ROS 2 Humble과 JetPack은 그대로 유지한다. 저장소 루트의 데스크톱용
    ROS/Gazebo 설치기를 실로봇에서 실행하지 않는다.
 3. [YOLO 준비](../malbut_yolo/README.md)와 [OSNet 준비](../malbut_reid/README.md)를
    따라 **현재 JetPack에 맞는** GPU 런타임·모델을 준비한다.
    Bringup은 패키지·모델을 다운로드하거나 드라이버를 설치하지 않는다.
-4. 아래는 YOLO upstream을 포함한 Malbut 소스가
-   `~/malbut_ws/src/malbut`에 이미 준비되어 있다는 전제의 빌드 명령이다.
+4. 적용본 최상위 `README.md`의 ROS 의존성과 [음성 최초 준비](README_SPEECH.md#최초-준비)를
+   마친 뒤 아래처럼 빌드한다. `build.sh`가 별도 음성 Python 환경을 준비하고
+   STT CUDA 라이브러리·음성·인식·주행 ROS 패키지를 함께 빌드한다.
+   `COLCON_IGNORE`는 유지한다. 모델·외부 whisper.cpp 소스는 최초 준비에 필요하며
+   빌드 중 자동 다운로드하지 않는다.
 
-```bash
-cd ~/malbut_ws
-PATH=/usr/bin:/bin colcon build --symlink-install \
-  --base-paths src src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} \
-  --packages-up-to malbut_bringup
-source install/local_setup.bash
+```zsh
+source /opt/ros/humble/setup.zsh
+source ~/ros2_ws/install/setup.zsh
+cd ~/ros2_ws
+bash src/malbut/build.sh
+source install/malbut_test/local_setup.zsh
 ```
 
-위 명령은 Bash 기준이다. 로봇의 Zsh에서는 대응하는 `local_setup.zsh`를
-사용한다. 실제로 source할 제조사 setup 경로는 로봇 설치 상태를 따른다.
+전체 저장소를 `src/malbut`에 둔 경우 빌드 명령만
+`bash src/malbut/malbut_test/build.sh`로 바꾼다. 설치 경로는 동일하다.
+`ros2 pkg prefix malbut_bringup`이 `install/malbut_test/malbut_bringup` 아래인지 확인한다.
+실제로 source할 제조사 setup 경로는 로봇 설치 상태를 따른다.
 `slam`, `navigation`은 제조사 제공 선행 패키지다. 이름만 같은 임의의
 apt/pip 패키지를 설치하지 않는다. ROS 패키지 인덱스에서 찾을 수 있어야 한다.
 
@@ -138,10 +154,10 @@ RGB·Depth 영상, YOLO, 사람 거리 추정과 독립 LiDAR 레이어는 유�
 처음에는 GPU 준비와 독립적으로 센서를 확인할 수 있다.
 
 ```bash
-ros2 launch malbut_bringup robot.launch.py perception:=false
+ros2 launch malbut_bringup robot.launch.py perception:=false speech:=false
 ```
 
-인식 환경이 준비되면 기본 전체 센서 모드:
+인식·음성 환경과 API 키가 준비되면 센서·인식·음성 통합 실행:
 
 ```bash
 ros2 launch malbut_bringup robot.launch.py

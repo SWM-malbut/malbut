@@ -12,6 +12,7 @@ import pytest
 ROOT = Path(__file__).parents[2] / 'malbut_test'
 PACKAGES = (
     'malbut_bringup', 'malbut_interfaces', 'malbut_system_manager',
+    'malbut_agent_server', 'malbut_stt', 'malbut_tts',
     'malbut_yolo', 'malbut_reid', 'malbut_tracking', 'malbut_patrol',
     'malbut_autoslam',
 )
@@ -63,6 +64,7 @@ def test_build_selects_only_robot_copy_and_separate_output(tmp_path, layout):
     cloud_env = _cloud_build_fixture(robot, tmp_path, bin_dir)
     recorded = tmp_path / 'arguments.json'
     env = {**os.environ, **cloud_env, 'ROS_DISTRO': 'humble',
+           'MALBUT_BUILD_SPEECH': '0',
            'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
            'BUILD_ARGUMENTS': str(recorded)}
     result = subprocess.run(['bash', str(script), '--parallel-workers', '1'],

@@ -23,10 +23,11 @@ find_package(tf2_ros REQUIRED)
 ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   scripts/wait_for_robot scripts/pose_memory scripts/robot_web_panel scripts/robot_cloud_sync
+  scripts/speech_preflight
   DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME}
   PATTERN "__pycache__" EXCLUDE)
-install(FILES README.md README_WEB.md DESTINATION share/${PROJECT_NAME})
+install(FILES README.md README_WEB.md README_SPEECH.md DESTINATION share/${PROJECT_NAME})
 install(FILES depth_costmap/README.md DESTINATION share/${PROJECT_NAME}/depth_costmap)
 
 # This is an in-process Nav2 plugin, not another ROS node/package.

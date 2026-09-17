@@ -8,6 +8,7 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "action/GetWeather.action"
   "action/ExecuteMission.action"
   "action/AutoSlam.action"
   "action/FollowPerson.action"
@@ -16,10 +17,15 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/LidarClusterArray.msg"
   "msg/MissionStatus.msg"
   "msg/SensorProcessingTrace.msg"
+  "msg/SpeechPlaybackStatus.msg"
   "msg/SpeechRequest.msg"
   "msg/SpeechTranscript.msg"
   "msg/SystemState.msg"
   "msg/TrackingCommandTrace.msg"
+  "msg/WeatherForecast.msg"
+  "msg/WeatherState.msg"
+  "srv/ClassifySpeechAddressee.srv"
+  "srv/ControlSpeechPlayback.srv"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs
 )
 

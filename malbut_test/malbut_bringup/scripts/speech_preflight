@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Run the Bringup speech_preflight entrypoint."""
+
+from malbut_bringup.speech_preflight import main
+
+
+if __name__ == '__main__':
+    main()

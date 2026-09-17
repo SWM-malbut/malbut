@@ -1,4 +1,4 @@
-"""Compose vendor hardware, shared perception, and idle Action servers."""
+"""Compose vendor hardware, perception, speech, and idle Action servers."""
 
 import os
 from pathlib import Path
@@ -6,11 +6,10 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
-    DeclareLaunchArgument, EmitEvent, GroupAction, IncludeLaunchDescription,
+    DeclareLaunchArgument, GroupAction, IncludeLaunchDescription,
     LogInfo, OpaqueFunction, RegisterEventHandler, SetEnvironmentVariable,
 )
 from launch.event_handlers import OnProcessExit
-from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node, SetRemap
@@ -56,6 +55,27 @@ def _setup(context):
     navigation = value('start_navigation') == 'true'
     if navigating and not perception:
         raise RuntimeError('navigation mode requires perception for FollowPerson')
+    speech = None
+    if value('speech') == 'true':
+        # Preserve the venv executable path: resolving its symlink would select
+        # system Python and lose the isolated speech dependencies.
+        python = str(Path(value('speech_python_executable')).expanduser())
+        _file(python, 'speech Python')
+        if not os.access(python, os.X_OK):
+            raise RuntimeError(f'speech Python is not executable: {python}')
+        speech = _include(_package_file('malbut_bringup', 'launch/speech.launch.py'), {
+            'python_executable': python,
+            'stt_model_path': _file(value('stt_model_path'), 'STT model'),
+            'stt_library_path': _file(value('stt_library_path'), 'STT CUDA library'),
+            'input_device': value('speech_input_device'),
+            'output_device': value('speech_output_device'),
+            'cpp_threads': value('stt_cpp_threads'),
+            'input_has_aec': value('speech_input_has_aec'),
+            'agent_provider': value('speech_agent_provider'),
+            'preflight_timeout_s': value('speech_preflight_timeout_s'),
+            'peer_timeout_s': value('speech_peer_timeout_s'),
+            'preflight_only': 'false',
+        })
     web_parameters = {
         'use_sim_time': False, 'manage_bringup': False,
         'map_directory': value('map_directory'),
@@ -199,15 +219,19 @@ def _setup(context):
         if launch_context.is_shutdown:
             return []
         if event.returncode != 0:
-            return [EmitEvent(event=Shutdown(reason='Robot readiness check failed'))]
+            raise RuntimeError('Robot readiness check failed')
+        speech_actions = [speech] if speech else []
         if mapping:
             # Camera/driver startup belongs to Bringup. Only expose the Goal
             # server after sensors are ready so AutoSLAM won't start duplicates.
             # The Goal still starts missing SLAM/Nav2; it never runs by itself.
-            return [LogInfo(msg='Sensors ready; starting idle AutoSLAM server.'), autoslam]
+            return [LogInfo(msg='Sensors ready; starting idle AutoSLAM server.'),
+                    autoslam, *speech_actions]
         if navigating:
-            return [LogInfo(msg='Robot ready; starting system manager.'), manager]
-        return [LogInfo(msg='Sensors ready. No navigation or missions were started.')]
+            return [LogInfo(msg='Robot ready; starting system manager.'),
+                    manager, *speech_actions]
+        return [LogInfo(msg='Sensors ready. No navigation or missions were started.'),
+                *speech_actions]
 
     def child_exited(event, launch_context):
         if launch_context.is_shutdown or event.action is wait:
@@ -219,9 +243,9 @@ def _setup(context):
             and str(event.action.node_package).startswith('malbut_')
         )
         if event.returncode != 0 or is_malbut:
-            return [EmitEvent(event=Shutdown(
-                reason=f'Bringup child exited: {event.process_name}',
-            ))]
+            # Also covers nested speech failures. A plain Shutdown would mask
+            # a failed component as a successful shell exit (status 0).
+            raise RuntimeError(f'Bringup child exited: {event.process_name}')
         return []
 
     return [
@@ -239,6 +263,11 @@ def generate_launch_description():
         'MALBUT_YOLO_RUNTIME', cache_root / 'malbut_yolo/runtime')).expanduser()
     reid_runtime = Path(os.environ.get(
         'MALBUT_REID_RUNTIME', cache_root / 'malbut_reid/runtime')).expanduser()
+    speech_cache = cache_root / 'malbut_speech'
+    speech_runtime = Path(os.environ.get(
+        'MALBUT_SPEECH_RUNTIME', speech_cache / 'runtime')).expanduser()
+    stt_build = Path(os.environ.get(
+        'MALBUT_STT_BUILD_DIR', speech_cache / 'whisper-cpp-build')).expanduser()
     defaults = {
         'mode': 'sensors',
         'start_hardware': 'true',
@@ -247,6 +276,19 @@ def generate_launch_description():
         'restore_pose': 'true',
         'web_panel': 'false',
         'perception': 'true',
+        'speech': 'true',
+        'speech_python_executable': str(speech_runtime / 'bin/python'),
+        'stt_model_path': os.environ.get(
+            'MALBUT_STT_MODEL_PATH', str(speech_cache / 'models/ggml-small.bin')),
+        'stt_library_path': os.environ.get(
+            'MALBUT_STT_LIBRARY_PATH', str(stt_build / 'bin/libmalbut_whisper.so')),
+        'speech_input_device': '-1',
+        'speech_output_device': '-1',
+        'stt_cpp_threads': '6',
+        'speech_input_has_aec': 'false',
+        'speech_agent_provider': 'openai',
+        'speech_preflight_timeout_s': '120.0',
+        'speech_peer_timeout_s': '30.0',
         'hardware_launch_file': '',
         # The robot image installs only the top-level navigation launches.
         # Its existing source tree contains the lower, navigation-only launch.
@@ -285,8 +327,9 @@ def generate_launch_description():
         **{key: ['true', 'false'] for key in (
             'start_hardware', 'start_navigation', 'perception',
             'publish_debug_image', 'pose_memory',
-            'restore_pose', 'web_panel',
+            'restore_pose', 'web_panel', 'speech', 'speech_input_has_aec',
         )},
+        'speech_agent_provider': ['openai', 'mock'],
     }
     return LaunchDescription([
         # The supplied robot image keeps complete vendor launch includes in src.

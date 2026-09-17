@@ -41,6 +41,9 @@
   <exec_depend>malbut_autoslam</exec_depend>
   <exec_depend>malbut_system_manager</exec_depend>
   <exec_depend>homecam_media_agent</exec_depend>
+  <exec_depend>malbut_agent_server</exec_depend>
+  <exec_depend>malbut_stt</exec_depend>
+  <exec_depend>malbut_tts</exec_depend>
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_cmake_pytest</test_depend>
   <test_depend>ament_flake8</test_depend>
