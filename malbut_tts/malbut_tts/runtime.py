@@ -170,7 +170,16 @@ class SpeechRuntime:
                     request.text, request.cancel,
                 ))
                 has_audio = False
-                for audio, sample_rate in chunks:
+                sentence_mode = getattr(self._synthesizer, 'sentence_streaming', False)
+                while not request.cancel.is_set():
+                    if sentence_mode:
+                        # Do not start a third sentence when two are queued,
+                        # even if synthesis is faster than playback or paused.
+                        player.wait_for_capacity(max_pending=2)
+                    try:
+                        audio, sample_rate = next(chunks)
+                    except StopIteration:
+                        break
                     if request.cancel.is_set():
                         break
                     if not has_audio and request.validate is not None:

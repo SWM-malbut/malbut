@@ -32,10 +32,10 @@ class FakeRuntime:
 
 @pytest.fixture
 def fake_ros(monkeypatch):
-    """Provide ROS entity bookkeeping without importing ROS or MLX."""
+    """Provide ROS entity bookkeeping without importing optional backends."""
     entities = SimpleNamespace(
         subscriptions=[], services=[], timers=[], publishers=[],
-        published=[], destruction=[], parameters={},
+        published=[], destruction=[], parameters={}, logs=[],
     )
 
     class FakeNode:
@@ -50,7 +50,9 @@ def fake_ros(monkeypatch):
             return SimpleNamespace(value=self.parameters[name])
 
         def get_logger(self):
-            return SimpleNamespace(info=lambda _message: None)
+            return SimpleNamespace(
+                info=lambda message: entities.logs.append(message),
+            )
 
         def create_subscription(self, message_type, topic, callback, qos):
             entities.subscriptions.append((message_type, topic, callback, qos))
@@ -169,47 +171,101 @@ def test_destruction_closes_audio_before_ros_and_ignores_late_events(fake_ros):
     assert fake_ros.published == []
 
 
-def test_startup_failure_releases_constructed_ros_node(fake_ros):
-    """An absent model path yields actionable guidance and cleans up ROS."""
+def test_explicit_local_startup_failure_releases_node(fake_ros):
+    """An absent local model path yields guidance and cleans up ROS."""
+    fake_ros.parameters.update(backend='qwen-cuda')
     with pytest.raises(ValueError, match='model_path:=/absolute/model/path'):
         tts_node.create_tts_node()
     assert fake_ros.destruction == ['node']
 
 
-def test_configured_local_backend_receives_parameters(fake_ros, monkeypatch):
-    """The default runtime connects local synthesis to the selected device."""
+def test_unknown_backend_is_rejected_before_loading(fake_ros):
+    fake_ros.parameters.update(backend='legacy', model_path='/legacy/model')
+    with pytest.raises(ValueError, match='openai or qwen-cuda'):
+        tts_node.create_tts_node()
+    assert fake_ros.destruction == ['node']
+
+
+def test_cuda_node_uses_explicit_backend_without_changing_ros_contract(
+    fake_ros, monkeypatch,
+):
+    """Backend selection does not replace the queue, topics, or player."""
     fake_ros.parameters.update(
-        model_path='/local/model', speaker='Sohee',
-        language='Korean', output_device=3,
+        model_path='/local/cuda-model', backend='qwen-cuda',
+        cuda_dtype='float16', output_device=3,
     )
     received = {}
 
-    def synthesizer(model_path, **kwargs):
-        received['synthesizer'] = (model_path, kwargs)
-        return 'local-synthesizer'
+    def synthesizer(path, **kwargs):
+        received.update(path=path, **kwargs)
+        return object()
+
+    def runtime(synth, player_factory, on_status, logger=None):
+        received['device'] = player_factory(None, None)
+        return FakeRuntime(on_status)
+
+    monkeypatch.setattr('malbut_tts.backends.create_synthesizer', synthesizer)
+    monkeypatch.setitem(sys.modules, 'malbut_tts.audio', SimpleNamespace(
+        StreamingPlayer=lambda *args, **kwargs: kwargs['device'],
+    ))
+    monkeypatch.setitem(sys.modules, 'malbut_tts.runtime', SimpleNamespace(
+        SpeechRuntime=runtime,
+    ))
+    node = tts_node.create_tts_node()
+    assert received == dict(
+        path='/local/cuda-model', backend='qwen-cuda', cuda_dtype='float16',
+        cuda_sentence_mode=True, sentence_max_chars=80,
+        api_model='gpt-4o-mini-tts', api_voice='marin', api_timeout_seconds=8.0,
+        speaker='Sohee', language='Korean', device=3,
+    )
+    assert fake_ros.subscriptions[0][1] == tts_node.RESPONSE_TOPIC
+    assert fake_ros.services[0][1] == tts_node.CONTROL_SERVICE
+    node.destroy_node()
+
+
+@pytest.mark.parametrize('options,model,voice,timeout', [
+    ({}, 'gpt-4o-mini-tts', 'marin', 8.0),
+    ({'api_model': 'tts-1', 'api_voice': 'alloy', 'api_timeout_seconds': 4.5},
+     'tts-1', 'alloy', 4.5),
+])
+def test_default_openai_node_needs_no_model_and_reuses_ros_contract(
+    fake_ros, monkeypatch, options, model, voice, timeout,
+):
+    fake_ros.parameters.update(**options)
+    received = {}
+
+    def synthesizer(**kwargs):
+        received['options'] = kwargs
+        return 'api-synthesizer'
 
     def runtime(synth, player_factory, on_status, logger=None):
         received['synth'] = synth
-        received['player'] = player_factory('state-callback', 'cancel-event')
+        received['player'] = player_factory(None, None)
         return FakeRuntime(on_status)
 
-    monkeypatch.setitem(sys.modules, 'malbut_tts.synthesis', SimpleNamespace(
-        MlxSynthesizer=synthesizer,
+    monkeypatch.setitem(sys.modules, 'malbut_tts.api_synthesis', SimpleNamespace(
+        OpenAISynthesizer=synthesizer,
     ))
+    monkeypatch.setitem(sys.modules, 'malbut_tts.cuda_synthesis', None)
+    monkeypatch.setitem(sys.modules, 'malbut_tts.sentence_synthesis', None)
     monkeypatch.setitem(sys.modules, 'malbut_tts.audio', SimpleNamespace(
-        StreamingPlayer=lambda *args, **kwargs: (args, kwargs),
+        StreamingPlayer=lambda *args, **kwargs: kwargs['device'],
     ))
     monkeypatch.setitem(sys.modules, 'malbut_tts.runtime', SimpleNamespace(
         SpeechRuntime=runtime,
     ))
     node = tts_node.create_tts_node()
     assert received == {
-        'synthesizer': ('/local/model', {
-            'speaker': 'Sohee', 'language': 'Korean',
-        }),
-        'synth': 'local-synthesizer',
-        'player': (('state-callback', 'cancel-event'), {'device': 3}),
+        'options': {'model': model, 'voice': voice, 'timeout_seconds': timeout},
+        'synth': 'api-synthesizer', 'player': None,
     }
+    assert node.parameters['model_path'] == ''
+    assert node.parameters['backend'] == 'openai'
+    assert 'api_key' not in node.parameters
+    assert any('paid external API' in message for message in fake_ros.logs)
+    assert any('AI-generated' in message for message in fake_ros.logs)
+    assert fake_ros.subscriptions[0][1] == tts_node.RESPONSE_TOPIC
+    assert fake_ros.services[0][1] == tts_node.CONTROL_SERVICE
     node.destroy_node()
 
 
@@ -242,7 +298,7 @@ def test_main_closes_ros_after_interruption_or_backend_failure(
 
     def create():
         if failure:
-            raise failure('local backend unavailable')
+            raise failure('CUDA backend unavailable')
         return SimpleNamespace(
             get_logger=lambda: SimpleNamespace(info=lambda _: None),
             destroy_node=lambda: calls.append('destroy'),
@@ -254,12 +310,17 @@ def test_main_closes_ros_after_interruption_or_backend_failure(
         ExternalShutdownException=type('Shutdown', (Exception,), {}),
     ))
     monkeypatch.setattr(tts_node, 'create_tts_node', create)
-    code = tts_node.main(['--ros-args', '-p', 'model_path:=/model'])
-    assert calls[0] == ('init', ['--ros-args', '-p', 'model_path:=/model'])
+    code = tts_node.main([
+        '--ros-args', '-p', 'backend:=qwen-cuda', '-p', 'model_path:=/model',
+    ])
+    assert calls[0] == (
+        'init',
+        ['--ros-args', '-p', 'backend:=qwen-cuda', '-p', 'model_path:=/model'],
+    )
     assert calls[-1] == 'shutdown'
     if failure:
         assert code == 2
-        assert 'local backend unavailable' in capsys.readouterr().err
+        assert 'CUDA backend unavailable' in capsys.readouterr().err
     else:
         assert code == 0
         assert calls[1:3] == ['spin', 'destroy']

@@ -21,7 +21,7 @@ setup(
     zip_safe=True,
     maintainer='SWM Malbut contributors',
     maintainer_email='maintainers@example.com',
-    description='Queue and stream local speech with ROS playback controls.',
+    description='Queue and stream speech with ROS playback controls.',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={

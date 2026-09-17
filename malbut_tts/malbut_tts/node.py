@@ -30,6 +30,13 @@ def create_tts_node(runtime_factory=None):
             self._statuses = Queue()
             try:
                 self.declare_parameter('model_path', '')
+                self.declare_parameter('backend', 'openai')
+                self.declare_parameter('api_model', 'gpt-4o-mini-tts')
+                self.declare_parameter('api_voice', 'marin')
+                self.declare_parameter('api_timeout_seconds', 8.0)
+                self.declare_parameter('cuda_dtype', 'float32')
+                self.declare_parameter('cuda_sentence_mode', True)
+                self.declare_parameter('sentence_max_chars', 80)
                 self.declare_parameter('speaker', 'Sohee')
                 self.declare_parameter('language', 'Korean')
                 self.declare_parameter('output_device', -1)
@@ -59,7 +66,10 @@ def create_tts_node(runtime_factory=None):
 
         def _create_runtime(self):
             model_path = self.get_parameter('model_path').value
-            if not model_path.strip():
+            backend = self.get_parameter('backend').value
+            if backend not in ('openai', 'qwen-cuda'):
+                raise ValueError('backend must be openai or qwen-cuda')
+            if backend != 'openai' and not model_path.strip():
                 raise ValueError(
                     'Set the local TTS model directory with '
                     '--ros-args -p model_path:=/absolute/model/path'
@@ -69,13 +79,25 @@ def create_tts_node(runtime_factory=None):
                 raise ValueError('output_device must be -1 or a device index')
             from malbut_tts.audio import StreamingPlayer
             from malbut_tts.runtime import SpeechRuntime
-            from malbut_tts.synthesis import MlxSynthesizer
+            from malbut_tts.backends import create_synthesizer
 
-            synthesizer = MlxSynthesizer(
+            synthesizer = create_synthesizer(
                 model_path,
+                backend=backend,
+                api_model=self.get_parameter('api_model').value,
+                api_voice=self.get_parameter('api_voice').value,
+                api_timeout_seconds=self.get_parameter('api_timeout_seconds').value,
+                cuda_dtype=self.get_parameter('cuda_dtype').value,
+                cuda_sentence_mode=self.get_parameter('cuda_sentence_mode').value,
+                sentence_max_chars=self.get_parameter('sentence_max_chars').value,
                 speaker=self.get_parameter('speaker').value,
                 language=self.get_parameter('language').value,
             )
+            if backend == 'openai':
+                self.get_logger().info(
+                    'OpenAI TTS: speech text is sent to a paid external API; '
+                    'the output voice is AI-generated, not a human voice.'
+                )
             return SpeechRuntime(
                 synthesizer,
                 lambda on_state, cancel_event: StreamingPlayer(
@@ -128,12 +150,13 @@ def create_tts_node(runtime_factory=None):
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Run local streaming TTS with ROS parameters for model and device."""
+    """Run the selected streaming TTS backend with ROS playback controls."""
     parser = argparse.ArgumentParser(
         description=__doc__,
         epilog=(
-            'Example: tts_node --ros-args '
-            '-p model_path:=/absolute/model/path -p output_device:=1'
+            'OpenAI is the default. Example: tts_node --ros-args '
+            '-p output_device:=1. Local CUDA: tts_node --ros-args '
+            '-p backend:=qwen-cuda -p model_path:=/absolute/model/path'
         ),
     )
     _, ros_args = parser.parse_known_args(argv)
