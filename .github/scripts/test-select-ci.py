@@ -113,6 +113,19 @@ class SpeechSelectionTests(unittest.TestCase):
         self.assertTrue({'malbut_yolo', 'malbut_tracking'}
                         <= set(result['ros_packages'].split()))
 
+    def test_bringup_builds_speech_dependencies_without_selecting_their_tests(self):
+        for path in ('malbut_bringup/launch/robot.launch.py',
+                     'malbut_test/malbut_bringup/launch/robot.launch.py',
+                     'malbut_test/build.sh'):
+            with self.subTest(path=path):
+                result = SELECTOR.selection([path])
+                builds = set(result['ros_packages'].split())
+                self.assertTrue(SPEECH_BUILD <= builds)
+                self.assertFalse({'malbut_gazebo', 'malbut_scenarios'} & builds)
+                self.assertEqual(result['ros_test_packages'], 'malbut_bringup')
+                self.assertEqual(result['agent'], 'false')
+                self.assertEqual(result['ros_full'], 'false')
+
     def test_only_added_speech_registrations_are_narrow(self):
         after = CMAKE.replace('  DEPENDENCIES',
                               '  "msg/SpeechPlaybackStatus.msg"\n'

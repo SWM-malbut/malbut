@@ -126,11 +126,18 @@ assert_value assets true --paths malbut_gazebo/models/humanoid_actor/model.sdf
 assert_value ros_test_packages malbut_gazebo --paths homecam_agent/scripts/spawn_event_test_person.sh
 
 builds="$("$selector" --paths malbut_bringup/launch/robot.launch.py | sed -n 's/^ros_packages=//p')"
-for needed in malbut_interfaces malbut_tracking malbut_system_manager yolo_msgs; do
-  [[ " $builds " == *" $needed "* ]]
+for needed in malbut_interfaces malbut_tracking malbut_system_manager yolo_msgs \
+  malbut_agent_server malbut_stt malbut_tts; do
+  if [[ " $builds " != *" $needed "* ]]; then
+    printf 'Bringup builds: expected %s, got %s\n' "$needed" "$builds" >&2
+    exit 1
+  fi
 done
-for unrelated in malbut_gazebo malbut_scenarios malbut_agent_server; do
-  [[ " $builds " != *" $unrelated "* ]]
+for unrelated in malbut_gazebo malbut_scenarios; do
+  if [[ " $builds " == *" $unrelated "* ]]; then
+    printf 'Bringup builds: unexpected %s in %s\n' "$unrelated" "$builds" >&2
+    exit 1
+  fi
 done
 tests="$("$selector" --paths malbut_interfaces/action/FollowPerson.action | sed -n 's/^ros_test_packages=//p')"
 for consumer in malbut_system_manager malbut_tracking malbut_patrol; do
