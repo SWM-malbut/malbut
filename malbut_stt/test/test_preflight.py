@@ -72,7 +72,8 @@ def runtime(monkeypatch):
             event('vad')
             return False
 
-    monkeypatch.setitem(sys.modules, 'pvrecorder', SimpleNamespace(PvRecorder=Recorder))
+    monkeypatch.setitem(sys.modules, 'pvrecorder', None)
+    monkeypatch.setattr('malbut_stt.audio.SoundDeviceRecorder', Recorder)
     monkeypatch.setitem(sys.modules, 'webrtcvad', SimpleNamespace(Vad=Vad))
     monkeypatch.setattr('malbut_stt.cpp_transcription.CppWhisperTranscriber', Transcriber)
     monkeypatch.setattr(socket.socket, 'connect', forbidden)
@@ -82,6 +83,11 @@ def runtime(monkeypatch):
 
 def check(**options):
     return check_stt('/models/small.bin', '/lib/bridge.so', **options)
+
+
+def test_default_microphone_is_xfm_device_zero(runtime):
+    check()
+    assert runtime.calls['recorder'] == {'frame_length': 512, 'device_index': 0}
 
 
 def test_local_model_and_microphone_check_reports_only_verified_capabilities(runtime):

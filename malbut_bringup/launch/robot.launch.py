@@ -283,7 +283,7 @@ def generate_launch_description():
             'MALBUT_STT_MODEL_PATH', str(speech_cache / 'models/ggml-small.bin')),
         'stt_library_path': os.environ.get(
             'MALBUT_STT_LIBRARY_PATH', str(stt_build / 'bin/libmalbut_whisper.so')),
-        'speech_input_device': '-1',
+        'speech_input_device': '0',
         'speech_output_device': '-1',
         'stt_cpp_threads': '6',
         'speech_input_has_aec': 'false',

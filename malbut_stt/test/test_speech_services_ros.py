@@ -102,8 +102,8 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, decision
     monkeypatch.setattr(stt_node, 'LocalWhisperTranscriber', lambda *_, **__: object())
     monkeypatch.setattr(wake, 'LocalWakeRecognizer', SimpleNamespace(
         from_transcriber=lambda _: object()))
-    monkeypatch.setitem(sys.modules, 'pvrecorder', SimpleNamespace(
-        PvRecorder=lambda **_: object()))
+    monkeypatch.setitem(sys.modules, 'pvrecorder', None)
+    monkeypatch.setattr(stt_node, 'SoundDeviceRecorder', lambda **_: object())
     monkeypatch.setitem(sys.modules, 'webrtcvad', SimpleNamespace(
         Vad=lambda *_: SimpleNamespace(is_speech=lambda *_: False)))
 

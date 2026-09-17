@@ -154,7 +154,7 @@ def generate_launch_description():
     """Expose robot speech settings without starting navigation or missions."""
     defaults = {
         'stt_model_path': '', 'stt_library_path': '',
-        'input_device': '-1', 'output_device': '-1', 'cpp_threads': '6',
+        'input_device': '0', 'output_device': '-1', 'cpp_threads': '6',
         'input_has_aec': 'false', 'agent_provider': 'openai',
         'python_executable': sys.executable, 'preflight_only': 'false',
         'preflight_timeout_s': '120.0', 'peer_timeout_s': '30.0',

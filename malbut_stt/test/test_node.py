@@ -252,7 +252,7 @@ def runtime(monkeypatch, tmp_path):
         'malbut_interfaces.msg': state.messages,
         'malbut_interfaces.srv': state.services,
         'pvporcupine': None,
-        'pvrecorder': SimpleNamespace(PvRecorder=create_recorder),
+        'pvrecorder': None,
         'webrtcvad': SimpleNamespace(Vad=create_vad),
         'openai': None,
         'faster_whisper': None,
@@ -260,6 +260,7 @@ def runtime(monkeypatch, tmp_path):
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
     monkeypatch.setattr('malbut_stt.wake.LocalWakeRecognizer', create_wake)
+    monkeypatch.setattr('malbut_stt.node.SoundDeviceRecorder', create_recorder)
     monkeypatch.setattr('malbut_stt.node.LocalWhisperTranscriber', create_transcriber)
     monkeypatch.setattr(
         'malbut_stt.cpp_transcription.CppWhisperTranscriber', create_cpp_transcriber)
@@ -305,7 +306,8 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert 'api_timeout_s' not in defaults
     assert 'keyword_path' not in defaults and 'language_model_path' not in defaults
     assert runtime.calls['vad_mode'] == 2
-    assert runtime.calls['recorder'] == {'frame_length': 512, 'device_index': -1}
+    assert defaults['device_index'] == 0
+    assert runtime.calls['recorder'] == {'frame_length': 512, 'device_index': 0}
     assert runtime.calls['local_stt'] == Path(runtime.parameters['wake_model_path'])
     assert runtime.calls['local_stt_options'] == {'compute_type': 'int8'}
     assert 'wake' not in runtime.calls

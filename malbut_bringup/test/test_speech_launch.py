@@ -147,6 +147,21 @@ def test_scoped_include_captures_settings_before_parent_scope_restores(speech):
     assert evaluate_parameters(context, stt._Node__parameters)[1]['input_has_aec'] is True
 
 
+@pytest.mark.parametrize('input_device', [None, '7', '-1'])
+def test_input_device_reaches_preflight_and_stt(speech, input_device):
+    """Preflight and capture use the same XFM default or explicit device override."""
+    overrides = {} if input_device is None else {'input_device': input_device}
+    expected = '0' if input_device is None else input_device
+    context = _context(speech, **overrides)
+    actions = speech._setup(context)
+    preflight = _process(actions)
+    command = [perform_substitutions(context, part) for part in preflight.cmd]
+    assert command[command.index('--input-device') + 1] == expected
+    peers = _exit(actions, context, preflight)
+    stt = _exit(actions, context, _process(peers))[0]
+    assert evaluate_parameters(context, stt._Node__parameters)[1]['device_index'] == int(expected)
+
+
 @pytest.mark.parametrize('server', ['manager', 'autoslam'])
 def test_robot_control_must_be_ready_before_audio_preflight(speech, server):
     """Creating the manager process alone cannot start the speech pipeline."""

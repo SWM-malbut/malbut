@@ -445,7 +445,7 @@ python3 -m pip install --user -r malbut_stt/requirements.txt
 python3 -c 'from faster_whisper.utils import download_model; download_model("small", output_dir=".runtime/stt-robot/models/whisper-small")'
 colcon build --symlink-install --packages-select malbut_interfaces malbut_agent_server malbut_stt
 source install/setup.bash
-python3 -c 'from pvrecorder import PvRecorder; print(list(enumerate(PvRecorder.get_available_devices())))'
+python3 -m sounddevice
 ```
 
 Whisper·오디오 SDK는 ROS STT의 실제 음성 실행에 필요합니다. OpenAI SDK는 기존
@@ -507,7 +507,7 @@ export ROS_DOMAIN_ID=191
 export ROS_LOCALHOST_ONLY=1
 ros2 run malbut_stt stt --ros-args \
   -p wake_model_path:=/absolute/path/to/whisper-small \
-  -p device_index:=-1
+  -p device_index:=0
 ```
 
 `waiting_for_wake`가 나오면 호출어만 부르고, `wake_detected` 뒤 문장을 말합니다.
@@ -524,7 +524,7 @@ ros2 run malbut_stt stt --ros-args \
 | `stt_model_path` | 빈 문자열 | 문장 전사 모델 디렉터리 또는 `whisper_cpp` 모델 파일; 비어 있으면 `wake_model_path` 사용 |
 | `input_has_aec` | `false` | 선택한 마이크가 이미 AEC 처리된 입력을 제공하는지 여부 |
 | `playback_control_timeout_s` | `5.0` | 재생 제어 Service의 접수 응답을 기다리는 시간; 실제 재생 완료 후 대화 대기와 별개 |
-| `device_index` | `-1` | PvRecorder 기본 입력 장치 |
+| `device_index` | `0` | sounddevice 목록의 장치 번호; 현재 로봇의 XFM 입력. `-1`을 명시하면 시스템 기본 입력 |
 | `vad_mode` | `2` | WebRTC VAD의 음성 판단 모드, `0`~`3` |
 | `start_timeout_s` | `5.0` | 무음 수집 창; 발화가 없으면 새 창으로 이어서 대기 |
 | `silence_timeout_s` | `2.0` | 문장 종료 판단이 불확실할 때 기다리는 무음 시간 |

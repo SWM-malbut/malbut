@@ -130,20 +130,8 @@ class SoundDeviceRecorder:
         self._frame_length = frame_length
         self._sample_rate = 16000
 
-        # Keep the old PvRecorder semantics:
-        # -1 = default microphone
-        #  0..N = index among input-capable devices only.
-        if device_index == -1:
-            self._device = None
-        else:
-            input_devices = [
-                index
-                for index, info in enumerate(sd.query_devices())
-                if info['max_input_channels'] > 0
-            ]
-            if device_index >= len(input_devices):
-                raise ValueError('microphone device index is out of range')
-            self._device = input_devices[device_index]
+        # Use the same device IDs as `python -m sounddevice`.
+        self._device = None if device_index == -1 else device_index
 
         sd.check_input_settings(
             device=self._device,
@@ -192,10 +180,7 @@ class SoundDeviceRecorder:
 
     @staticmethod
     def get_available_devices():
+        """List all device names so enumeration preserves PortAudio device IDs."""
         import sounddevice as sd
 
-        return [
-            info['name']
-            for info in sd.query_devices()
-            if info['max_input_channels'] > 0
-        ]
+        return [info['name'] for info in sd.query_devices()]

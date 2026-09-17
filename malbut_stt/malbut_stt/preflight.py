@@ -3,7 +3,7 @@
 import struct
 
 
-def check_stt(model_path, library_path, *, device_index=-1, cpp_threads=6):
+def check_stt(model_path, library_path, *, device_index=0, cpp_threads=6):
     """
     Load the local ABI 2 model and read one 16 kHz microphone frame.
 

@@ -336,6 +336,7 @@ def test_robot_defaults_enable_isolated_cuda_speech(launch_module, monkeypatch, 
     settings = context.launch_configurations
     cache = tmp_path / 'home/.cache/malbut_speech'
     assert settings['speech'] == 'true'
+    assert settings['speech_input_device'] == '0'
     assert settings['speech_python_executable'] == str(cache / 'runtime/bin/python')
     assert settings['stt_model_path'] == str(cache / 'models/ggml-small.bin')
     assert settings['stt_library_path'] == str(
@@ -345,11 +346,13 @@ def test_robot_defaults_enable_isolated_cuda_speech(launch_module, monkeypatch, 
 
 
 @pytest.mark.parametrize('mode', ['sensors', 'navigation', 'mapping'])
+@pytest.mark.parametrize('input_device', [None, '2', '-1'])
 def test_all_modes_include_speech_after_their_readiness_gate(
-        launch_module, speech_assets, mode):
-    """Every mode must finish robot readiness before starting speech."""
+        launch_module, speech_assets, mode, input_device):
+    """Every mode forwards the XFM default or explicit override after readiness."""
+    input_options = {} if input_device is None else {'speech_input_device': input_device}
     context = _context(launch_module, **speech_assets, mode=mode, start_navigation='false',
-                       speech_input_device='2', speech_output_device='3',
+                       **input_options, speech_output_device='3',
                        stt_cpp_threads='4', speech_input_has_aec='true',
                        speech_agent_provider='mock', speech_preflight_timeout_s='55',
                        speech_peer_timeout_s='12', preflight_only='true')
@@ -365,7 +368,8 @@ def test_all_modes_include_speech_after_their_readiness_gate(
         'python_executable': speech_assets['speech_python_executable'],
         'stt_model_path': speech_assets['stt_model_path'],
         'stt_library_path': speech_assets['stt_library_path'],
-        'input_device': '2', 'output_device': '3', 'cpp_threads': '4',
+        'input_device': '0' if input_device is None else input_device,
+        'output_device': '3', 'cpp_threads': '4',
         'input_has_aec': 'true', 'agent_provider': 'mock',
         'control_server': {'navigation': 'manager', 'mapping': 'autoslam'}.get(mode, 'none'),
         'preflight_timeout_s': '55', 'peer_timeout_s': '12',
