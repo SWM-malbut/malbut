@@ -144,7 +144,7 @@ ros2 launch malbut_bringup robot.launch.py \
 | `stt_cpp_threads` | `6` CPU 보조 스레드 |
 | `speech_input_has_aec` | `false`; 검증된 에코 제거 입력일 때만 `true` |
 | `speech_agent_provider` | `openai`; `mock`으로 바꿔도 TTS는 OpenAI 사용 |
-| `speech_preflight_timeout_s` | `120.0`; 모델·장치 점검 전체 제한시간 |
+| `speech_preflight_timeout_s` | `120.0`; 점검과 실제 STT 시작 각각의 제한시간. 재시도 대기 포함 |
 | `speech_peer_timeout_s` | `30.0`; ROS 연결 대기 제한시간 |
 
 AEC 인자는 에코 제거 기능을 구현하거나 활성화하지 않는다. STT의 나머지 endpoint
@@ -170,9 +170,15 @@ AEC 인자는 에코 제거 기능을 구현하거나 활성화하지 않는다.
    Action 서버 발견만으로 완료 처리하지 않는다. 기존 Agent·STT·TTS가 실행 중이면
    웹의 새 Bringup 시작은 중복 실행 오류로 거부한다.
 
-`speech_preflight_passed`, `speech_peers_ready` 순서로 통과 로그를 확인한다.
-점검 실패·제한시간 초과·실행 중 음성 노드 종료 시 통합 Bringup 전체를 실패 코드로
-종료한다. Ctrl+C도 함께 실행한 로봇·음성 구성을 정리한다.
+`speech_preflight_passed`, `speech_peers_ready`, `malbut_speech_capture_ready` 순서로
+통과 로그를 확인한다.
+점검 또는 실제 STT 시작 중 CUDA 메모리 할당 부족 로그와 함께 프로세스가 종료되면,
+음성 프로세스만 5초, 10초 기다려 최대 3회 시도한다. 재시도 중에는 Bringup을 유지하고
+웹은 마이크 준비를 계속 기다린다. 각 단계의 제한시간은 재시도와 대기를 모두 포함한다.
+파일·설정 오류나 CUDA 메모리 부족으로 확인되지 않은 실패는 바로 보고한다.
+3회 모두 실패하거나 제한시간을 넘으면 통합 Bringup 전체를 실패 코드로 종료한다.
+마이크 준비 이후의 음성 노드 종료는 재시도하지 않는다. Ctrl+C 또는 웹의 Bringup
+종료는 진행 중인 시도와 대기를 취소하고 함께 실행한 로봇·음성 구성을 정리한다.
 점검에서 사용한 모델·마이크·출력 스트림은 반환 전에 해제하고,
 같은 Python 실행 파일·모델·장치 설정으로 실제 노드를 시작한다.
 실패 출력의 `phase`로 설정·ROS 타입·TTS 출력·STT 모델/마이크 중 실패 단계를 확인한다.

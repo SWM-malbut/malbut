@@ -341,6 +341,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 durability=DurabilityPolicy.TRANSIENT_LOCAL,
             ))
             ready_publisher.publish(String(data='ready'))
+            # The startup supervisor must never restart an active capture session.
+            print('malbut_speech_capture_ready', flush=True)
         while rclpy.ok():
             pipeline.poll()
             poll_requests()
