@@ -42,13 +42,16 @@ def _setup(context):
     input_has_aec = value('input_has_aec') == 'true'
     control_server = value('control_server')
     command = [python, '-m', 'malbut_bringup.speech_preflight']
+    supervised = [python, '-m', 'malbut_bringup.speech_process',
+                  '--startup-timeout-s', str(timeouts['preflight_timeout_s'])]
     control = ExecuteProcess(
         cmd=[*command, '--wait-for-control', control_server,
              '--timeout-s', str(timeouts['peer_timeout_s'])],
         name='speech_control_readiness', output='screen',
     ) if control_server != 'none' else None
     preflight = ExecuteProcess(
-        cmd=[*command, '--stt-model-path', model, '--stt-library-path', library,
+        cmd=[*supervised, '--', *command,
+             '--stt-model-path', model, '--stt-library-path', library,
              '--input-device', str(input_device), '--output-device', str(output_device),
              '--cpp-threads', str(threads), '--agent-provider', agent_provider],
         name='speech_preflight', output='screen',
@@ -98,7 +101,8 @@ def _setup(context):
             parameters=[{'backend': 'openai', 'output_device': output_device}],
         )
         stt = Node(
-            package='malbut_stt', executable='stt', prefix=prefix, output='screen',
+            package='malbut_stt', executable='stt', output='screen',
+            prefix=shlex.join([*supervised, '--wait-for-ready', '--', python]),
             parameters=[str(config), {
                 'stt_model_path': model, 'stt_library_path': library,
                 'device_index': input_device, 'cpp_threads': threads,

@@ -345,10 +345,11 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
         }
 
 
-def test_readiness_is_latched_only_after_microphone_start(runtime):
+def test_readiness_is_latched_only_after_microphone_start(runtime, capsys):
     """Web readiness must represent successful capture startup, not just a publisher."""
     assert main() == 0
     assert runtime.statuses == [('ready', 'running')]
+    assert capsys.readouterr().out.splitlines().count('malbut_speech_capture_ready') == 1
     _, qos = runtime.calls['publishers']['/malbut/speech/status']
     assert vars(qos) == {
         'history': 'keep_last', 'depth': 1,
@@ -359,11 +360,12 @@ def test_readiness_is_latched_only_after_microphone_start(runtime):
 @pytest.mark.parametrize('phase', [
     'initializing_stt', 'opening_microphone', 'starting_microphone',
 ])
-def test_failed_microphone_or_model_never_reports_ready(runtime, phase):
+def test_failed_microphone_or_model_never_reports_ready(runtime, phase, capsys):
     """A loaded node name or DDS publisher alone cannot satisfy Bringup readiness."""
     runtime.failure = phase
     assert main() == 1
     assert runtime.statuses == []
+    assert 'malbut_speech_capture_ready' not in capsys.readouterr().out
 
 
 def test_explicit_command_model_and_processed_microphone(runtime, tmp_path):

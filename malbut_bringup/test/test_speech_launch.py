@@ -84,6 +84,8 @@ def test_startup_waits_for_both_checks_and_preserves_jetson_settings(speech):
     assert not any(isinstance(action, Node) for action in actions)
     preflight = _process(actions)
     assert [perform_substitutions(context, part) for part in preflight.cmd] == [
+        '/runtime with space/bin/python', '-m', 'malbut_bringup.speech_process',
+        '--startup-timeout-s', '120.0', '--',
         '/runtime with space/bin/python', '-m', 'malbut_bringup.speech_preflight',
         '--stt-model-path', '/models/ggml.bin', '--stt-library-path',
         '/native/libmalbut_whisper.so', '--input-device', '2', '--output-device', '3',
@@ -114,9 +116,14 @@ def test_startup_waits_for_both_checks_and_preserves_jetson_settings(speech):
         'stt_library_path': '/native/libmalbut_whisper.so',
         'device_index': 2, 'cpp_threads': 4, 'input_has_aec': True,
     }
-    for node in [agent, tts, stt]:
+    for node in [agent, tts]:
         assert perform_substitutions(context, node.process_description.prefix) == shlex.quote(
             '/runtime with space/bin/python')
+    assert shlex.split(perform_substitutions(context, stt.process_description.prefix)) == [
+        '/runtime with space/bin/python', '-m', 'malbut_bringup.speech_process',
+        '--startup-timeout-s', '120.0', '--wait-for-ready', '--',
+        '/runtime with space/bin/python',
+    ]
     assert _timeout(actions, context) == []
     assert _timeout(peers, context) == []
 

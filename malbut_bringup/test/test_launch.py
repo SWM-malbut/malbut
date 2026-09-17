@@ -2,13 +2,16 @@
 
 import importlib.util
 from pathlib import Path
+import sys
 from xml.etree import ElementTree
 
-from launch import LaunchContext
+from launch import LaunchContext, LaunchDescription, LaunchService
 from launch.actions import (
-    DeclareLaunchArgument, ExecuteProcess, GroupAction, IncludeLaunchDescription,
+    DeclareLaunchArgument, EmitEvent, ExecuteProcess, GroupAction, IncludeLaunchDescription,
     RegisterEventHandler, SetEnvironmentVariable,
 )
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.events.process import ProcessExited
 from launch_ros.actions import Node, SetParameter
 from launch_ros.utilities import evaluate_parameters
@@ -399,6 +402,46 @@ def test_parent_allows_successful_speech_checks_but_propagates_failure(launch_mo
     assert _process_exit(actions, context, process) == []
     with pytest.raises(RuntimeError, match='Bringup child exited'):
         _process_exit(actions, context, process, returncode=2)
+
+
+@pytest.mark.parametrize('cuda_oom,expected_code,attempts', [(True, 0, 2), (False, 1, 1)])
+def test_parent_waits_for_supervised_cuda_oom_retry(
+        launch_module, tmp_path, cuda_oom, expected_code, attempts):
+    """Hide only an owned startup OOM retry from the real parent launch guard."""
+    counter = tmp_path / 'attempts'
+    child = tmp_path / 'speech_child.py'
+    failure = ('cudaMalloc failed: out of memory' if cuda_oom
+               else 'failed to load model: invalid header')
+    child.write_text(
+        'from pathlib import Path\nimport os, resource, signal\n'
+        'resource.setrlimit(resource.RLIMIT_CORE, (0, 0))\n'
+        f'counter = Path({str(counter)!r})\n'
+        'attempt = int(counter.read_text()) + 1 if counter.exists() else 1\n'
+        'counter.write_text(str(attempt))\n'
+        'if attempt == 1:\n'
+        f'    print({failure!r}, flush=True)\n'
+        '    os.kill(os.getpid(), signal.SIGABRT)\n')
+    process = ExecuteProcess(cmd=[
+        sys.executable, '-m', 'malbut_bringup.speech_process',
+        '--startup-timeout-s', '20', '--', sys.executable, str(child),
+    ], name='speech_preflight', output='screen')
+    context = _context(launch_module, start_hardware='false', perception='false')
+    event = ProcessExited(action=process, name='speech_preflight', cmd=[],
+                          cwd=None, env=None, pid=1, returncode=0)
+    guard = next(action for action in launch_module._setup(context)
+                 if isinstance(action, RegisterEventHandler)
+                 and action.event_handler.matches(event))
+    service = LaunchService()
+    service.include_launch_description(LaunchDescription([
+        guard,
+        RegisterEventHandler(OnProcessExit(
+            target_action=process,
+            on_exit=[EmitEvent(event=Shutdown(reason='supervised process completed'))],
+        )),
+        process,
+    ]))
+    assert service.run() == expected_code
+    assert int(counter.read_text()) == attempts
 
 
 @pytest.mark.parametrize('package', ['malbut_stt', 'malbut_tts', 'malbut_agent_server'])
