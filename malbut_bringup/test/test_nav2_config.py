@@ -73,14 +73,15 @@ def test_deployed_nav2_parameters_match_source(config):
     assert yaml.safe_load(path.read_text()) == config
 
 
-def test_nav2_projects_depth_locally_without_cloud_subscriptions(config):
-    """Restore camera obstacles without receiving the measured 8 MB cloud."""
+def test_nav2_keeps_depth_disabled_without_cloud_subscriptions(config):
+    """Use LiDAR-only costmaps and retain the inactive local-depth settings."""
     for scope in ('local_costmap', 'global_costmap'):
         costmap = config[scope][scope]['ros__parameters']
-        expected = ['obstacle_layer', 'depth_voxel_layer', 'inflation_layer']
+        expected = ['obstacle_layer', 'inflation_layer']
         if scope == 'global_costmap':
             expected.insert(0, 'static_layer')
         assert costmap['plugins'] == expected
+        # These settings remain available, but the depth plugin is not loaded.
         depth = costmap['depth_voxel_layer']
         assert depth['plugin'] == 'malbut_bringup::DepthVoxelLayer'
         assert depth['observation_sources'] == ''
@@ -103,7 +104,7 @@ def test_nav2_projects_depth_locally_without_cloud_subscriptions(config):
         }
         observations = [
             layer[source]
-            for layer in costmap.values() if isinstance(layer, dict)
+            for layer in (costmap[name] for name in costmap['plugins'])
             for source in layer.get('observation_sources', '').split()
         ]
         assert len(observations) == 1
@@ -113,7 +114,7 @@ def test_nav2_projects_depth_locally_without_cloud_subscriptions(config):
 
 
 def test_planar_lidar_uses_2d_layers_with_unchanged_observation_ranges(config):
-    """Retain independent LiDAR marking/clearing when depth is projected locally."""
+    """Retain LiDAR marking/clearing while depth obstacle processing is disabled."""
     for scope in ('local_costmap', 'global_costmap'):
         costmap = config[scope][scope]['ros__parameters']
         assert 'obstacle_layer' in costmap['plugins']
