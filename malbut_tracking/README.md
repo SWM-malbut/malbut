@@ -25,6 +25,8 @@ Canceling/restarting FollowPerson does not clear ReID identities. The gallery
 lives for the ReID process lifetime, not across process restarts.
 The localizer matches the original RGB stamp after asynchronous inference;
 it never substitutes a newer image/depth pair for an older detection.
+Depth conversion is restricted to each person's central ROI before the same
+median/dispersion calculation; it does not convert the whole frame per person.
 
 The follower's Action, target selection, fusion, navigation policy and LiDAR
 algorithm are unchanged in this packaging migration. Launch parameter scopes
@@ -43,8 +45,8 @@ to evaluate another compatible humanoid appearance without changing code.
 
 - Input detections: `/perception/person/detections_3d`
 - LiDAR foreground clusters: `/perception/lidar/foreground_clusters`
-- Cached static SLAM map: `/map` (fixed-route planning)
-- Global navigation grid: `/global_costmap/costmap_raw` (goal safety only)
+- Current static SLAM map: `/map` (bounded fixed-route planning)
+- Global navigation grid: `/global_costmap/costmap_raw` (goal and fallback safety)
 - Follow action: `/follow_person` (`malbut_interfaces/action/FollowPerson`)
 - State: `/tracking/person/status`
 - Estimated map pose: `/tracking/person/estimated_target_pose`
@@ -60,6 +62,10 @@ once per map, removes saved geometry through cached lookups, and publishes
 only compact foreground clusters. The Python follower therefore does not loop
 over raw rays or recompute scan TF, and it never searches Nav2's merged master
 costmap for dynamic objects.
+While measurement-time TF is pending, the C++ node retains that scan and only
+the newest successor (at most two scans). This prevents continuously replacing
+the waiting scan before its TF arrives. The original stamps and 0.30 s TF
+wait limit remain unchanged; intermediate successors are discarded.
 
 Map subtraction produces foreground *candidates*, not dynamic-object labels.
 Only clusters inside a bounded gate around the camera-confirmed person or its
@@ -75,22 +81,80 @@ paths.
 RGB-D is the primary long-range position source, so a visible person remains
 followable even outside the LiDAR/costmap observation area. Camera-only motion
 continuously derives targets from current sensor observations. The follower
-caches the already-built SLAM map and plans a fixed-geometry route from the
+keeps the current raw SLAM map and plans a fixed-geometry route from the
 robot to the observed person. It scans that route backward from the person and
 selects the first cell that is safe in the current global costmap. Nav2 then
-plans and controls the actual motion to that live-safe destination. The
-measured distance band still decides when to advance or hold. Nav2 owns
+plans the route to that live-safe destination. The follower keeps its prefix
+up to the first entry into the requested person-distance circle, with the
+endpoint facing the person; it never shortcuts across the planned detour.
+This prevents a full path toward the person's own position from continuing
+until a delayed observation cancels it. The measured distance band still
+decides when to advance or hold. Nav2 owns
 both translation and body rotation; there is no downstream camera-yaw mixer.
 A newer path directly preempts the
 running `FollowPath` goal without an explicit cancel/stop gap.
-A failed individual path is discarded so the next camera observation can try a
-better goal while the outer follow action remains active. A confirmed LiDAR
+Forward/retreat reversals are different: they cancel the old motion and
+invalidate its in-flight plan before planning the newest target. Uncertain
+bearing-only depth cannot leave an earlier retreat running.
+TF lookup never waits inside a sensor callback; only the newest pending image is retried
+briefly while the same ROS executor receives TF. Camera work keeps only the
+newest pending detection, and stamped observations older than the existing observation
+loss interval are discarded using their capture time. Separately, loss recovery
+waits for that interval without an accepted observation; a valid delayed frame
+does not cause TRACKING/RECOVERING oscillation just after receipt. Capture
+timestamps remain unchanged for TF, velocity estimation and plan freshness.
+Repeated tracking planning starts at most once per 200 ms (5 Hz), without
+slowing sensor/TF reception or target estimation. One deferred slot retains
+only the latest observation; new images do not postpone the deadline, and a
+slow job never creates catch-up work. The first plan, distance-band changes,
+HOLD/ALIGN, cancellation and recovery transitions remain immediate. A failed
+cycle can use its checked line fallback immediately once. Nav2's controller
+continues running at its configured frequency between path replacements.
+Fixed-map A* runs on one worker with a 50 ms computation budget, without
+additional static-map padding or a connectivity cache. Map updates replace
+the old snapshot. This route is only a directional hint; Nav2's robot radius,
+obstacle inflation and local collision checking remain unchanged.
+Nav2 planning has a 200 ms response deadline. A timeout invalidates late results
+and requests cancellation, but does not forcibly stop Navfn's remote CPU work.
+No second global-plan request is sent before that owned request ends.
+If either planning stage fails or times out, a short straight segment toward
+the current target standoff is checked against the live costmap, including
+every crossed cell and diagonal corner. It stops before obstacles/unknown
+space and is capped by `goal_safe_search_radius_m` (1 m). A costmap older than
+twice the observation-loss interval (1.5 s by default) cannot supply a fallback.
+This segment goes directly to Nav2 `FollowPath`; it does not wait for another
+global search. Nav2's controller still checks current obstacles while moving.
+No safe progress means canceling current motion, not choosing a point behind
+the obstacle. Observations keep replacing the latest target during retry
+backoff, but jitter or an unchanged target does not restart planning or extend
+the timer. Movement beyond the existing distance tolerance (at least one map
+cell), or a change of motion decision, releases the backoff early. HOLD/ALIGN
+remain immediate. A timed retry uses the latest still-valid observation.
+If the robot starts inside *soft* inflation (cost 81--252), this fallback may
+only move through non-increasing costs until it reaches the usual low-cost
+goal margin. Inscribed/occupied/unknown cells remain forbidden (253--255),
+and a segment that cannot exit the soft band is not dispatched. This is not
+a blind wall-escape maneuver or permission to ignore Nav2 collision checks.
+Fallback traces use the `:line_fallback` source suffix and zero Nav2 planning
+time because no `ComputePathToPose` request generated that segment.
+Alignment keeps an unchanged world heading, but a changed heading cancels the
+old Spin. After its terminal result, the next observation supplies a fresh
+relative angle. Motion-server switches likewise wait for the old goal to end.
+Explicit FollowPerson cancellation stops sensor-driven motion immediately
+but returns the canceled Action result only after every owned Nav2 motion goal
+is terminal. A cancellation acknowledgement alone is not a completed stop.
+New follow goals remain rejected until that result can be completed.
+A failed individual path is discarded while the outer follow action remains
+active; retry backoff prevents repeated failures from flooding Nav2. A confirmed LiDAR
 match supports only a short camera gap; RGB-D remains authoritative whenever
 it is visible. Saved walls and furniture, localization noise beside static
 geometry, and wall-sized components are excluded before association. The
 Action exposes only target selection and desired distance. Minimum safety
-distance, maximum speed, and recovery timeouts remain deployment policy in
-`config/person_following.yaml`.
+distance and recovery timeouts remain deployment policy in
+`config/person_following.yaml`. The follower no longer caps speed from path
+length: Nav2's controller and velocity-smoother settings remain authoritative.
+Starting/canceling a follow mission releases the old application cap using
+Nav2's `SpeedLimit=0` reset, not an unlimited hardware velocity command.
 
 ## Run on a robot
 
@@ -112,6 +176,10 @@ stack must publish `/scan`, `/map`, TF, and
 `/global_costmap/costmap_raw`.
 
 ## Start automatic person following
+
+`desired_distance_m` accepts 0.2 m or more; the default remains 1.0 m.
+Zero in a direct Action request retains the configured-default behavior.
+This is the person-following distance, not obstacle clearance or robot size.
 
 ```bash
 ros2 action send_goal \

@@ -1,0 +1,26 @@
+{
+  "name": "@malbut/homecam-aws-infra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AWS CDK infrastructure for the MALBUT homecam web backend",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "tsx --test test/**/*.test.ts",
+    "synth": "cdk synth",
+    "diff": "cdk diff"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.264.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "aws-cdk": "^2.1029.3",
+    "esbuild": "^0.25.10",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

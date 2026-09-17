@@ -6,6 +6,7 @@ from pathlib import Path
 from launch import LaunchContext
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch_ros.actions import Node
+from launch_ros.utilities import evaluate_parameters
 import pytest
 
 
@@ -41,22 +42,26 @@ def test_mapping_starts_independent_components(mapping):
     context = _context(mapping)
     actions = mapping._setup(context)
     nodes = [item for item in actions if isinstance(item, Node)]
-    assert [node.node_executable for node in nodes] == [
-        'scan_normalizer', 'sync_slam_toolbox_node']
+    assert [node.node_executable for node in nodes] == ['sync_slam_toolbox_node']
+    assert evaluate_parameters(context, nodes[0]._Node__parameters)[1]['scan_topic'] == '/scan_raw'
     includes = [child for action in actions if isinstance(action, GroupAction)
                 for child in action.get_sub_entities()
                 if isinstance(child, IncludeLaunchDescription)]
     assert len(includes) == 2
     assert dict(includes[0].launch_arguments)['robot_name'] == '/'
+    assert dict(includes[0].launch_arguments)['point_cloud_enable'] == 'false'
     assert dict(includes[1].launch_arguments)['rtabmap'] == 'true'
     assert dict(includes[1].launch_arguments)['use_teb'] == 'false'
+    # AutoSLAM must receive the same in-process depth costmap as navigation.
+    assert Path(dict(includes[1].launch_arguments)['params_file']) == (
+        Path(__file__).parents[1] / 'config/nav2_params.yaml').resolve()
 
 
 def test_reuse_does_not_load_vendor_files_or_start_processes(mapping):
-    """All four prerequisites can be supplied by an existing runtime."""
+    """All three prerequisites can be supplied by an existing runtime."""
     mapping.get_package_share_directory = lambda _: pytest.fail('unexpected lookup')
     context = _context(mapping, **{name: 'false' for name in (
-        'start_hardware', 'start_slam', 'start_navigation', 'start_scan_adapter')})
+        'start_hardware', 'start_slam', 'start_navigation')})
     actions = mapping._setup(context)
     assert not any(isinstance(action, (Node, GroupAction)) for action in actions)
 

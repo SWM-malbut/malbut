@@ -1,0 +1,5 @@
+#pragma once
+
+#cmakedefine01 HOMECAM_HAVE_CURL
+#cmakedefine01 HOMECAM_HAVE_GSTREAMER
+#cmakedefine01 HOMECAM_HAVE_KVS

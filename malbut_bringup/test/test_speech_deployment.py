@@ -46,7 +46,7 @@ def test_robot_speech_launch_and_native_assets_match_source():
         assert (SOURCE / path).read_bytes() == (ROBOT / path).read_bytes(), path
 
 
-@pytest.mark.parametrize('package', ('malbut_bringup', *SPEECH_PACKAGES))
+@pytest.mark.parametrize('package', SPEECH_PACKAGES)
 def test_robot_speech_install_metadata_is_self_contained(monkeypatch, package):
     """Resolve installed assets and console targets using only the robot folder."""
     metadata = {}
@@ -78,6 +78,29 @@ def test_robot_speech_install_metadata_is_self_contained(monkeypatch, package):
     monkeypatch.chdir(SOURCE / package)
     runpy.run_path(str(SOURCE / package / 'setup.py'))
     assert entries == source_metadata['entry_points']['console_scripts']
+
+
+def test_robot_bringup_installs_speech_with_cmake():
+    """The native Bringup package installs its Python speech entrypoint too."""
+    for base in (SOURCE, ROBOT):
+        root = base / 'malbut_bringup'
+        cmake = (root / 'CMakeLists.txt').read_text()
+        assert 'ament_python_install_package(${PROJECT_NAME})' in cmake
+        assert 'scripts/speech_preflight' in cmake
+        assert 'README_SPEECH.md' in cmake
+        assert 'install(DIRECTORY launch config' in cmake
+        script = root / 'scripts/speech_preflight'
+        assert script.stat().st_mode & 0o111
+        tree = ast.parse(script.read_text())
+        entry = next(node for node in tree.body if isinstance(node, ast.ImportFrom)
+                     and node.module == 'malbut_bringup.speech_preflight')
+        assert any(name.name == 'main' for name in entry.names)
+        assert (root / 'launch/speech.launch.py').is_file()
+        assert (root / 'README_SPEECH.md').is_file()
+        assert not (root / 'setup.py').exists()
+    for path in ('CMakeLists.txt', 'scripts/speech_preflight'):
+        assert ((SOURCE / 'malbut_bringup' / path).read_bytes() ==
+                (ROBOT / 'malbut_bringup' / path).read_bytes())
 
 
 def test_robot_speech_interfaces_are_generated_from_current_definitions():

@@ -40,8 +40,7 @@ def _setup(context):
         return value(name) == 'true'
 
     sim = enabled('use_sim_time')
-    raw = value('scan_topic')
-    scan = value('normalized_scan_topic')
+    scan = value('scan_topic')
     # Resolve everything before starting any process; missing vendor files must
     # not leave half a hardware stack running.
     hardware = (_vendor_file('slam', 'launch/include/robot.launch.py',
@@ -60,13 +59,8 @@ def _setup(context):
         actions.append(GroupAction([IncludeLaunchDescription(
             PythonLaunchDescriptionSource(hardware), launch_arguments={
                 'sim': str(sim).lower(), 'robot_name': '/', 'master_name': '/',
+                'point_cloud_enable': 'false',
             }.items())], scoped=True))
-    if enabled('start_scan_adapter'):
-        actions.append(Node(
-            package='malbut_bringup', executable='scan_normalizer',
-            name='scan_normalizer', output='screen', parameters=[{
-                'use_sim_time': sim, 'input_topic': raw, 'output_topic': scan,
-            }]))
     if slam:
         actions.append(Node(
             package='slam_toolbox', executable='sync_slam_toolbox_node',
@@ -77,7 +71,7 @@ def _setup(context):
             }]))
     if navigation:
         actions.append(GroupAction([
-            SetRemap(src='/scan_normalized', dst=scan),
+            SetRemap(src='/scan_raw', dst=scan),
             SetRemap(src='/odom', dst=value('odom_topic')),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(navigation), launch_arguments={
@@ -100,10 +94,9 @@ def generate_launch_description():
     """Expose independent components; launching this file sends no motion goal."""
     defaults = {
         'start_hardware': 'true', 'start_slam': 'true',
-        'start_navigation': 'true', 'start_scan_adapter': 'true',
+        'start_navigation': 'true',
         'use_sim_time': 'false', 'scan_topic': '/scan_raw',
         'odom_topic': '/odom',
-        'normalized_scan_topic': '/scan_normalized',
         'hardware_launch_file': '', 'navigation_launch_file': '',
         'slam_params_file': '', 'nav2_params_file': '',
     }

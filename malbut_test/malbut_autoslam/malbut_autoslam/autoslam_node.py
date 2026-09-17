@@ -7,10 +7,11 @@ import threading
 import time
 
 from action_msgs.msg import GoalStatus, GoalStatusArray
+from geometry_msgs.msg import Twist
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
 from malbut_interfaces.action import AutoSlam
-from nav2_msgs.action import NavigateToPose
+from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.srv import SaveMap
 from nav_msgs.msg import OccupancyGrid, Odometry
 import rclpy
@@ -25,7 +26,8 @@ from sensor_msgs.msg import LaserScan
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from malbut_autoslam.frontier import (
-    find_frontiers, map_grid_from_message, map_statistics,
+    blocked_approach, map_grid_from_message, map_statistics, path_avoids_blocks,
+    path_is_known_free, point_has_clearance, search_frontiers,
 )
 from malbut_autoslam.runtime import (
     DEFAULT_READY_TIMEOUT_S, OwnedRuntime, RuntimeGraph, missing_components,
@@ -35,6 +37,16 @@ from malbut_autoslam.saved_pose import write_mapping_pose
 
 class Interrupted(RuntimeError):
     """Execution was canceled or the server is shutting down."""
+
+
+def _pose_xy_yaw(position, orientation):
+    quaternion = (orientation.x, orientation.y, orientation.z, orientation.w)
+    norm = math.hypot(*quaternion)
+    if (not all(math.isfinite(value) for value in (*quaternion, position.x, position.y, norm))
+            or norm < 1e-6):
+        raise ValueError('invalid planar pose')
+    x, y, z, w = (value / norm for value in quaternion)
+    return position.x, position.y, math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 def map_base(directory, name):
@@ -104,6 +116,7 @@ class AutoSlamNode(Node):
         defaults = {
             'map_topic': '/map', 'base_frame': 'base_footprint',
             'navigation_action': '/navigate_to_pose',
+            'planning_action': '/compute_path_to_pose',
             'save_map_service': '/autoslam_map_saver/save_map',
             'map_directory': str(Path.home() / '.ros/malbut/maps'),
             'minimum_frontier_cells': 8, 'robot_clearance_m': 0.30,
@@ -111,9 +124,12 @@ class AutoSlamNode(Node):
             'exploration_period_s': 1.0, 'completion_delay_s': 12.0,
             'map_timeout_s': 10.0, 'tf_timeout_s': 3.0,
             'ready_timeout_s': DEFAULT_READY_TIMEOUT_S, 'navigation_timeout_s': 90.0,
+            'progress_timeout_s': 5.0, 'progress_distance_m': 0.05,
+            'progress_angle_rad': 0.15,
+            'max_exploration_time_s': 1200.0,
             'auto_start': False,
             'scan_topic': '/scan_raw', 'odom_topic': '/odom',
-            'normalized_scan_topic': '/scan_normalized',
+            'cmd_vel_topic': '/cmd_vel', 'progress_odom_topic': '/odom_rf2o',
             'runtime_directory': str(Path.home() / '.ros/malbut/autoslam'),
             'sensor_timeout_s': 3.0,
         }
@@ -121,7 +137,7 @@ class AutoSlamNode(Node):
             self.declare_parameter(name, default)
         self.settings = {name: self.get_parameter(name).value for name in defaults}
         for name in defaults:
-            if name.endswith(('_s', '_m', '_cells')):
+            if name.endswith(('_s', '_m', '_rad', '_cells')):
                 value = self.settings[name]
                 if not math.isfinite(value) or value <= 0:
                     raise ValueError(f'{name} must be positive and finite')
@@ -129,16 +145,31 @@ class AutoSlamNode(Node):
         self.wake = threading.Event()
         self.stopping = threading.Event()
         self.busy = False
+        self.save_uncertain = False
         self.message = None
         self.received_at = 0.0
+        self.map_revision = 0
         self.child = None
+        self.planned_path = []
+        self.blocked_approaches = []
+        self.blocked_targets = []
         self.runtime = None
         self.scan_received_at = 0.0
         self.odom_received_at = 0.0
+        self.command = None
+        self.command_received_at = 0.0
+        self.progress_odom = None
+        self.progress_odom_received_at = 0.0
         self.navigation_busy = False
         self.known_area_m2 = 0.0
         self.frontier_count = 0
         self.group = ReentrantCallbackGroup()
+        self.create_subscription(
+            Twist, self.settings['cmd_vel_topic'], self._receive_command,
+            qos_profile_sensor_data, callback_group=self.group)
+        self.create_subscription(
+            Odometry, self.settings['progress_odom_topic'], self._receive_progress_odom,
+            qos_profile_sensor_data, callback_group=self.group)
         self.lifecycle_clients = {}
         if self.settings['auto_start']:
             if self.get_parameter('use_sim_time').value:
@@ -169,6 +200,10 @@ class AutoSlamNode(Node):
             self, NavigateToPose, self.settings['navigation_action'],
             callback_group=self.group,
         )
+        self.planner = ActionClient(
+            self, ComputePathToPose, self.settings['planning_action'],
+            callback_group=self.group,
+        )
         self.saver = self.create_client(
             SaveMap, self.settings['save_map_service'], callback_group=self.group)
         self.server = ActionServer(
@@ -181,6 +216,7 @@ class AutoSlamNode(Node):
         with self.lock:
             self.message = message
             self.received_at = time.monotonic()
+            self.map_revision += 1
         self.wake.set()
 
     def _receive_scan(self, _message):
@@ -188,6 +224,46 @@ class AutoSlamNode(Node):
 
     def _receive_odom(self, _message):
         self.odom_received_at = time.monotonic()
+
+    def _receive_command(self, message):
+        with self.lock:
+            self.command, self.command_received_at = message, time.monotonic()
+
+    def _receive_progress_odom(self, message):
+        with self.lock:
+            self.progress_odom, self.progress_odom_received_at = message, time.monotonic()
+
+    def _command_mode(self):
+        with self.lock:
+            command, received = self.command, self.command_received_at
+        if command is None or time.monotonic() - received > self.settings['sensor_timeout_s']:
+            return None
+        x, y, yaw = command.linear.x, command.linear.y, command.angular.z
+        if not all(math.isfinite(value) for value in (x, y, yaw)):
+            return None
+        # Ignore zero/tiny commands: a deliberate Nav2 wait is not physical blockage.
+        timeout = self.settings['progress_timeout_s']
+        if math.hypot(x, y) * timeout >= self.settings['progress_distance_m']:
+            return 'translation'
+        if abs(yaw) * timeout >= self.settings['progress_angle_rad']:
+            return 'rotation'
+        return None
+
+    def _progress_pose(self, map_frame, fallback_pose):
+        # Reuse the driver's scan odometry; do not start a second estimator/TF publisher.
+        with self.lock:
+            odom, received = self.progress_odom, self.progress_odom_received_at
+        timeout = self.settings['sensor_timeout_s']
+        if (odom is not None and odom.header.frame_id and odom.child_frame_id
+                and time.monotonic() - received <= timeout):
+            age = (self.get_clock().now() - Time.from_msg(odom.header.stamp)).nanoseconds / 1e9
+            if abs(age) <= timeout:
+                try:
+                    pose = _pose_xy_yaw(odom.pose.pose.position, odom.pose.pose.orientation)
+                    return ('odom', odom.header.frame_id, odom.child_frame_id), pose
+                except ValueError:
+                    pass
+        return ('tf', map_frame), fallback_pose
 
     def _receive_navigation_status(self, message):
         self.navigation_busy = any(status.status in (
@@ -208,7 +284,6 @@ class AutoSlamNode(Node):
             map_publishers=publishers(self.settings['map_topic']),
             scan_publishers=publishers(self.settings['scan_topic']),
             odom_publishers=publishers(self.settings['odom_topic']),
-            normalized_scan_publishers=publishers(self.settings['normalized_scan_topic']),
             navigation_present=self.navigation.server_is_ready(),
         )
 
@@ -241,8 +316,7 @@ class AutoSlamNode(Node):
             with self.lock:
                 self.message = None  # Never reuse a map from the previous owned session.
         self.runtime.start(
-            components, self.settings['scan_topic'], self.settings['odom_topic'],
-            self.settings['normalized_scan_topic'])
+            components, self.settings['scan_topic'], self.settings['odom_topic'])
         if self.runtime.log_path is not None:
             self.get_logger().info(f'Mapping prerequisite log: {self.runtime.log_path}')
 
@@ -291,7 +365,7 @@ class AutoSlamNode(Node):
 
     def _goal(self, request):
         with self.lock:
-            if self.busy or self.stopping.is_set():
+            if self.busy or self.stopping.is_set() or self.save_uncertain:
                 return GoalResponse.REJECT
             try:
                 map_base(self.settings['map_directory'], request.map_name)
@@ -315,7 +389,7 @@ class AutoSlamNode(Node):
         self.wake.wait(0.2)
         self.wake.clear()
 
-    def _snapshot(self):
+    def _snapshot(self, with_heading=False):
         self._check_sensor_updates()
         with self.lock:
             message, received = self.message, self.received_at
@@ -327,9 +401,13 @@ class AutoSlamNode(Node):
             message.header.frame_id, self.settings['base_frame'], Time())
         stamp = Time.from_msg(transform.header.stamp)
         age = (self.get_clock().now() - stamp).nanoseconds / 1e9
-        if age > self.settings['tf_timeout_s']:
-            raise RuntimeError('robot transform is stale')
+        if abs(age) > self.settings['tf_timeout_s']:
+            raise RuntimeError('robot transform is stale or too far in the future')
         position = transform.transform.translation
+        if not all(math.isfinite(value) for value in (position.x, position.y)):
+            raise RuntimeError('robot position is not finite')
+        if with_heading:
+            return message, _pose_xy_yaw(position, transform.transform.rotation)
         return message, (position.x, position.y)
 
     def _feedback(self, handle, state, grid=None, frontier_count=None):
@@ -382,7 +460,7 @@ class AutoSlamNode(Node):
                 # could still publish commands. Each shutdown attempt is bounded.
                 self._pause()
 
-    def _navigate(self, handle, frontier, frame):
+    def _target_pose(self, frontier, frame):
         request = NavigateToPose.Goal()
         request.pose.header.frame_id = frame
         request.pose.header.stamp = self.get_clock().now().to_msg()
@@ -390,15 +468,123 @@ class AutoSlamNode(Node):
         request.pose.pose.position.y = frontier.y
         request.pose.pose.orientation.z = math.sin(frontier.yaw / 2.0)
         request.pose.pose.orientation.w = math.cos(frontier.yaw / 2.0)
+        return request.pose
+
+    def _can_reach(self, handle, frontier, frame):
+        # Let the actual Nav2 costmap/robot footprint decide path feasibility.
+        # Planning is read-only: an uncertain planning result never sends motion.
+        self.planned_path = []
+        request = ComputePathToPose.Goal()
+        request.goal = self._target_pose(frontier, frame)
+        request.use_start = False
+        self._check(handle)
+        planning = Navigation(self.planner, request)
+        deadline = time.monotonic() + self.settings['ready_timeout_s']
+        try:
+            while not planning.done.wait(0.2):
+                self._check(handle)
+                self._snapshot()
+                if planning.error:
+                    raise RuntimeError(f'Nav2 planning transport error: {planning.error}')
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Nav2 path planning did not respond in time')
+                self._feedback(handle, 'EXPLORING')
+            result = planning.result
+            self._check(handle)
+            if result is None:
+                raise RuntimeError('Nav2 planner rejected the planning request')
+            if result.status != GoalStatus.STATUS_SUCCEEDED:
+                return False
+            path = result.result.path
+            if path.header.frame_id != frame or not path.poses:
+                return False
+            points = [(pose.pose.position.x, pose.pose.position.y) for pose in path.poses]
+            # Navfn may accept an endpoint up to its tolerance away from the
+            # request. Do not mistake a path ending on this side of a wall for
+            # a route to the frontier on the other side.
+            message, robot = self._snapshot()
+            if message.header.frame_id != frame:
+                return False
+            grid = map_grid_from_message(message)
+            if math.hypot(points[-1][0] - frontier.x, points[-1][1] - frontier.y) > max(
+                    grid.resolution, self.settings['robot_clearance_m']):
+                return False
+            # SLAM may have discovered a wall while the planner was running.
+            # Recheck both the requested goal and Navfn's tolerated endpoint;
+            # a free center cell alone does not preserve the approach margin.
+            if not all(point_has_clearance(grid, point, self.settings['robot_clearance_m'])
+                       for point in (points[-1], (frontier.x, frontier.y))):
+                return False
+            points = [robot, *points, (frontier.x, frontier.y)]
+            if (not path_is_known_free(grid, points)
+                    or not path_avoids_blocks(points, self.blocked_approaches)):
+                return False
+            self.planned_path = points
+            return True
+        finally:
+            planning.cancel()  # Also cancels a goal that is accepted after timeout.
+
+    def _navigate(self, handle, frontier, frame, run_deadline):
+        request = NavigateToPose.Goal()
+        request.pose = self._target_pose(frontier, frame)
         self._check(handle)
         self.child = Navigation(self.navigation, request)
-        deadline = time.monotonic() + self.settings['navigation_timeout_s']
+        deadline = min(run_deadline,
+                       time.monotonic() + self.settings['navigation_timeout_s'])
+        baseline = None
+        baseline_key = None
+        last_progress = time.monotonic()
         while not self.child.done.wait(0.2):
             self._check(handle)
-            self._snapshot()  # Loss of SLAM/TF cancels before relinquishing BASE.
+            message, pose = self._snapshot(with_heading=True)
+            if message.header.frame_id != frame:
+                raise RuntimeError('SLAM frame changed during navigation')
             if self.child.error:
                 raise RuntimeError(f'Nav2 transport error: {self.child.error}')
             self._feedback(handle, 'NAVIGATING')
+            now = time.monotonic()
+            mode = self._command_mode()
+            source, pose = self._progress_pose(frame, pose)
+            key = (source, mode)
+            # A bump alone does not matter. Compare the requested type of motion
+            # with observed progress only while fresh nonzero commands persist.
+            if mode is None or self.child.handle is None or not self.child.handle.accepted:
+                baseline = None
+            else:
+                if baseline_key != key:
+                    baseline = None  # Never compare RF2O and map-frame origins.
+                    if baseline_key is None or baseline_key[0] != source:
+                        self.get_logger().info(f'Motion progress source: {source}')
+                baseline_key = key
+                angle = (0.0 if baseline is None else
+                         math.atan2(math.sin(pose[2] - baseline[2]),
+                                    math.cos(pose[2] - baseline[2])))
+                if (baseline is None
+                        or (mode == 'translation' and math.dist(pose[:2], baseline[:2])
+                            >= self.settings['progress_distance_m'])
+                        or (mode == 'rotation' and abs(angle)
+                            >= self.settings['progress_angle_rad'])):
+                    baseline, last_progress = pose, now
+                elif now - last_progress >= self.settings['progress_timeout_s']:
+                    self.get_logger().warning(
+                        f'Commanded {mode} without progress for {now - last_progress:.1f}s '
+                        f'({source}); '
+                        'canceling and excluding this approach for the current mapping run')
+                    child = self.child
+                    self._settle_child(handle)
+                    self._check(handle)
+                    if (child.result is not None
+                            and child.result.status == GoalStatus.STATUS_SUCCEEDED):
+                        return True  # Arrival raced with the cancellation request.
+                    self.blocked_targets.append((frontier.x, frontier.y))
+                    stopped_map, stopped_pose = self._snapshot()
+                    if stopped_map.header.frame_id != frame:
+                        raise RuntimeError('SLAM frame changed while stopping navigation')
+                    block = blocked_approach(
+                        self.planned_path, stopped_pose, self.settings['robot_clearance_m'])
+                    if block is not None:
+                        self.blocked_approaches.append(block)
+                    return False
             if time.monotonic() >= deadline:
                 self._settle_child(handle)
                 return False
@@ -406,6 +592,26 @@ class AutoSlamNode(Node):
         self.child = None
         self._check(handle)
         return result is not None and result.status == GoalStatus.STATUS_SUCCEEDED
+
+    def _observe(self, handle):
+        # A Nav2 result does not mean SLAM has published the observations from
+        # arrival yet. Wait for a new map before deciding whether this visit
+        # discovered anything or the run has finished.
+        with self.lock:
+            revision = self.map_revision
+        started = time.monotonic()
+        while True:
+            self._check(handle)
+            message, pose = self._snapshot()
+            now = time.monotonic()
+            with self.lock:
+                updated = self.map_revision > revision
+            if updated and now - started >= self.settings['exploration_period_s']:
+                return message, pose
+            if now - started >= self.settings['map_timeout_s']:
+                raise RuntimeError('SLAM did not publish a new map after navigation')
+            self._feedback(handle, 'EXPLORING')
+            self._pause()
 
     def _save(self, handle, base):
         self._check(handle)
@@ -421,15 +627,30 @@ class AutoSlamNode(Node):
         future = self.saver.call_async(request)
         done = threading.Event()
         future.add_done_callback(lambda _future: done.set())
+        deadline = time.monotonic() + self.settings['ready_timeout_s']
         while not done.wait(0.2):
             # Saving is a non-cancellable Service. Wait for its actual response.
-            if self.stopping.is_set():
+            if self.stopping.is_set() or time.monotonic() >= deadline:
                 # Parent launch also stops map_saver on SIGINT, so a response
                 # may never arrive. Still run owned mapping cleanup in finally.
-                raise Interrupted('server stopping; map save result is unconfirmed')
+                self.saver.remove_pending_request(future)
+                future.cancel()
+                # Keep ROS alive to deliver the failure result, but reject new
+                # goals until an operator resolves the possibly delayed write.
+                self.save_uncertain = True
+                self.get_logger().error(
+                    'Map save result is unconfirmed; restart after checking files')
+                raise Interrupted(
+                    'map save result is unconfirmed; check map files before restarting AutoSLAM')
             self._feedback(handle, 'CANCELING' if handle.is_cancel_requested
                            else 'SAVING')
-        response = future.result()
+        try:
+            response = future.result()
+        except Exception as error:
+            self.save_uncertain = True
+            raise RuntimeError(
+                'map save result is unconfirmed; '
+                'check map files before restarting AutoSLAM') from error
         if not response.result:
             raise RuntimeError('Nav2 map saver failed')
         yaml_path = Path(str(base) + '.yaml')
@@ -457,6 +678,27 @@ class AutoSlamNode(Node):
         yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
         write_mapping_pose(map_yaml, position.x, position.y, yaw)
 
+    def _finish_mapping(self, handle, result, base, reason, grid):
+        # A practical mapping run can finish with inaccessible/low-confidence
+        # space left over. Save what was observed and report why exploration
+        # stopped instead of claiming every part of the building was covered.
+        self._feedback(handle, 'SAVING', grid)
+        result.known_area_m2 = map_statistics(grid)['known_area_m2']
+        result.map_yaml = self._save(handle, base)
+        result.message = f'{reason}; navigation map saved'
+        if self.frontier_count:
+            result.message += f'; {self.frontier_count} frontier regions remain'
+        try:
+            self._save_pose(result.map_yaml)
+            result.message += '; initial robot pose saved'
+        except (OSError, ValueError, RuntimeError, TransformException) as error:
+            result.message += (
+                f'; WARNING: initial robot pose not saved ({error}); '
+                'set RViz 2D Pose Estimate before navigation')
+            self.get_logger().warning(result.message)
+        self._check(handle)
+        result.success = True
+
     def _explore(self, handle, result):
         base = map_base(self.settings['map_directory'], handle.request.map_name)
         self._prepare_runtime(handle)
@@ -467,8 +709,9 @@ class AutoSlamNode(Node):
                 message, _pose = self._snapshot()
                 map_grid_from_message(message)
                 if (not self.navigation.server_is_ready()
+                        or not self.planner.server_is_ready()
                         or not self.saver.service_is_ready()):
-                    raise RuntimeError('waiting for Nav2 and map saver')
+                    raise RuntimeError('waiting for Nav2 navigation/planner and map saver')
                 break
             except (RuntimeError, ValueError, TransformException) as error:
                 if time.monotonic() >= deadline:
@@ -479,10 +722,13 @@ class AutoSlamNode(Node):
         self._wait_active_navigation(handle, deadline)
 
         blacklist = []
-        completed = None
-        repeat_visits = 0
+        retried = False
         empty_since = None
+        empty_revision = None
         next_plan = 0.0
+        known_high_water = map_statistics(map_grid_from_message(message))['known_cells']
+        last_progress = time.monotonic()
+        run_deadline = last_progress + self.settings['max_exploration_time_s']
         while True:
             self._check(handle)
             message, pose = self._snapshot()
@@ -492,68 +738,82 @@ class AutoSlamNode(Node):
                 continue
             next_plan = now + self.settings['exploration_period_s']
             grid = map_grid_from_message(message)
-            result.known_area_m2 = map_statistics(grid)['known_area_m2']
-            candidates = find_frontiers(
+            statistics = map_statistics(grid)
+            result.known_area_m2 = statistics['known_area_m2']
+            if (statistics['known_cells']
+                    >= known_high_water + self.settings['minimum_frontier_cells']):
+                known_high_water = statistics['known_cells']
+                last_progress = now
+                empty_since = None
+            search = search_frontiers(
                 grid, pose,
                 minimum_cells=self.settings['minimum_frontier_cells'],
                 minimum_clearance_m=self.settings['robot_clearance_m'],
                 minimum_goal_distance_m=self.settings['minimum_goal_distance_m'],
-                blacklisted=tuple(blacklist),
+                blacklisted=tuple(blacklist + self.blocked_targets),
             )
-            self._feedback(handle, 'EXPLORING', grid, len(candidates))
+            candidates = search.candidates
+            self._feedback(handle, 'EXPLORING', grid, search.frontier_count)
+            if now >= run_deadline or now - last_progress >= self.settings['navigation_timeout_s']:
+                reason = ('Exploration time budget reached' if now >= run_deadline
+                          else 'No new mapped space within the progress limit')
+                self._finish_mapping(handle, result, base, reason, grid)
+                return
             if not candidates:
                 if empty_since is None:
                     empty_since = now
-                if now - empty_since >= self.settings['completion_delay_s']:
-                    if map_statistics(grid)['free_area_m2'] <= 0:
-                        raise RuntimeError('SLAM map contains no usable free space')
-                    self._feedback(handle, 'SAVING', grid)
-                    result.map_yaml = self._save(handle, base)
-                    try:
-                        self._save_pose(result.map_yaml)
-                        result.message = (
-                            'No more usable frontiers; navigation map and '
-                            'initial robot pose saved')
-                    except (OSError, ValueError, RuntimeError, TransformException) as error:
-                        result.message = (
-                            'No more usable frontiers; navigation map saved; WARNING: '
-                            f'initial robot pose not saved ({error}); '
-                            'set RViz 2D Pose Estimate before navigation')
-                        self.get_logger().warning(result.message)
-                    self._check(handle)
+                    with self.lock:
+                        empty_revision = self.map_revision
+                with self.lock:
+                    updated = self.map_revision > empty_revision
+                if updated and now - empty_since >= self.settings['completion_delay_s']:
+                    # A transient obstacle may clear while other regions are
+                    # explored. Retry ordinary failures once. Suspected blocked
+                    # approaches remain excluded until the next AutoSLAM request.
+                    if search.frontier_count and blacklist and not retried:
+                        blacklist.clear()
+                        retried = True
+                        empty_since = None
+                        continue
+                    reason = (
+                        'No remaining reachable frontiers' if not search.frontier_count
+                        else 'Remaining frontiers have no usable approach or made no progress')
+                    self._finish_mapping(handle, result, base, reason, grid)
                     return
                 self._pause()
                 continue
             empty_since = None
             target = candidates[0]
-            # Preserve the existing protection against unresolved frontier loops.
-            if completed is not None:
-                if math.hypot(target.x - completed[0], target.y - completed[1]) < 0.75:
-                    repeat_visits += 1
-                    if repeat_visits >= 2:
-                        blacklist.append(completed)
-                        blacklist = blacklist[-32:]
-                        completed = None
-                        repeat_visits = 0
-                        continue
-                else:
-                    repeat_visits = 0
-            completed = None
-            if self._navigate(handle, target, message.header.frame_id):
-                completed = (target.x, target.y)
-            else:
+            if not self._can_reach(handle, target, message.header.frame_id):
+                self.get_logger().info(
+                    f'Skipping unreachable frontier ({target.x:.2f}, {target.y:.2f})')
                 blacklist.append((target.x, target.y))
-                blacklist = blacklist[-32:]
+                continue
+            if time.monotonic() >= run_deadline:
+                self._finish_mapping(
+                    handle, result, base, 'Exploration time budget reached', grid)
+                return
+            reached = self._navigate(handle, target, message.header.frame_id, run_deadline)
+            observed, _pose = self._observe(handle)
+            after = map_statistics(map_grid_from_message(observed))['known_cells']
+            gained = after >= known_high_water + self.settings['minimum_frontier_cells']
+            if gained:
+                known_high_water = after
+                last_progress = time.monotonic()
+            if not reached or not gained:
+                # Do not drop old failures after 32 entries: that resurrected
+                # unreachable goals and allowed loops across a large map.
+                blacklist.append((target.x, target.y))
 
     def _execute(self, handle):
         result = AutoSlam.Result()
         self.known_area_m2 = 0.0
         self.frontier_count = 0
+        self.planned_path = []
+        self.blocked_approaches = []
+        self.blocked_targets = []
         try:
             self._explore(handle, result)
-            result.success = True
-            if not result.message:
-                result.message = 'No more usable frontiers; navigation map saved'
         except Interrupted as error:
             result.message = str(error)
         except Exception as error:

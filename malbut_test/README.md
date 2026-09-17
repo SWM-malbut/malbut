@@ -29,6 +29,8 @@ pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Br
 │       ├── malbut_tracking/
 │       ├── malbut_patrol/
 │       ├── malbut_autoslam/
+│       ├── homecam_agent/                     # 실제 카메라 → AWS KVS
+│       ├── homecam_web/                       # AWS에 배포하는 서비스 웹
 │       ├── build.sh
 │       └── COLCON_IGNORE
 ├── build/malbut_test/                          # 이 복사본의 빌드 결과
@@ -37,14 +39,17 @@ pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Br
 ```
 
 `COLCON_IGNORE`는 **삭제하지 않는다.** 기본 colcon 탐색에서 원본과 복사본의
-패키지 이름이 겹치지 않게 한다. `build.sh`는 이 안의 11개 패키지와 포함된
-`yolo_ros`, `yolo_msgs` 경로를 직접 지정한다. 제조사 패키지를 재빌드하거나
+패키지 이름이 겹치지 않게 한다. `build.sh`는 홈캠 영상 노드와 필요한 KVS SDK,
+11개 로봇·음성 패키지와 포함된 `yolo_ros`, `yolo_msgs`를 한 번에 빌드한다.
+경로를 직접 지정하므로 제조사 패키지를 재빌드하거나
 제조사의 `install/setup.zsh`를 덮어쓰지 않는다. 패키지명은 그대로 유지한다.
 
-Gazebo·actor·시나리오·벤치마크·기존 홈카메라 웹은 포함하지 않는다.
+Gazebo·actor·시나리오·벤치마크는 포함하지 않는다.
 STT·Agent·TTS 음성 기능과 실기기용 간단한 웹 테스트 패널은 포함한다.
 `build.sh` 하나가 음성 런타임·STT CUDA 라이브러리와 ROS 패키지를 빌드하고,
 `robot.launch.py` 하나가 선택한 로봇 구성과 STT·Agent·TTS를 기본으로 함께 실행한다.
+홈캠 영상 전송도 위 빌드에 포함한다. 서비스 웹 자체는 AWS에 별도 배포한다.
+클라우드 연결과 Bringup을 통한 영상 실행은 [README_CLOUD.md](README_CLOUD.md)를 따른다.
 제조사 하드웨어 launch가 차체·센서·로봇 description과 TF를 제공하므로 시뮬레이션용 description을
 별도로 실행하지 않는다. 순찰은 기존 `malbut_autonomy/malbut_patrol`의 복사본이다.
 
@@ -83,8 +88,10 @@ cd ~/ros2_ws
 rosdep update
 rosdep install --from-paths src/malbut/malbut_* \
   src/malbut/malbut_yolo/vendor/yolo_ros/{yolo_ros,yolo_msgs} \
+  src/malbut/homecam_agent/homecam_media_agent \
   --ignore-src -r -y --rosdistro humble \
   --skip-keys 'ament_python python3-torchvision-pip python3-ultralytics-pip'
+bash src/malbut/homecam_agent/scripts/install_dependencies.sh  # 최초 개발 의존성 준비
 bash src/malbut/build.sh
 source ~/ros2_ws/install/malbut_test/local_setup.zsh
 ```
@@ -96,6 +103,25 @@ STT 네이티브 빌드는 별도로 `--parallel 2`를 사용한다.
 CUDA 없는 CI나 센서 전용 빌드는 `MALBUT_BUILD_SPEECH=0 bash src/malbut/build.sh`로
 음성 환경·네이티브 빌드를 생략할 수 있으며, 그 결과로 실행할 때는 `speech:=false`를 지정한다.
 
+실기기 비교에서 대용량 Depth 점군 수신과 TF 지연이 연결되어, 기본 Nav2는
+Depth 영상을 받고 내부에서만 점군을 만드는 `DepthVoxelLayer`를 사용한다.
+원본 PointCloud2 구독은 없으며 카메라 장애물 감지는 유지한다.
+추가 의존성 `ros-humble-depth-image-proc`는 위 `rosdep install`에 포함된다.
+시스템 패키지 전체 업그레이드는 하지 않는다.
+재시작과 감지 범위 제한은 [Depth 점군 수신과 TF 지연](malbut_bringup/README.md#depth-점군-수신과-tf-지연)을 따른다.
+
+Depth 플러그인은 `malbut_bringup/depth_costmap` 안에 있으며 Bringup과 함께
+빌드된다. 별도 Depth 패키지나 실행 명령은 없다. 이전 분리 패키지 버전에서
+갱신할 때는 Bringup을 종료하고, 배포본을 완전히 교체한 뒤 아래 캐시만
+한 번 지우고 위 `build.sh`를 실행한다. 지도·모델·토큰은 지우지 않는다.
+
+```zsh
+rm -rf /home/ubuntu/ros2_ws/build/malbut_test/malbut_bringup \
+  /home/ubuntu/ros2_ws/install/malbut_test/malbut_bringup \
+  /home/ubuntu/ros2_ws/build/malbut_test/malbut_depth_costmap \
+  /home/ubuntu/ros2_ws/install/malbut_test/malbut_depth_costmap
+```
+
 새 터미널마다 위 제조사 환경을 설정한 다음
 `source ~/ros2_ws/install/malbut_test/local_setup.zsh`를 실행한다.
 `ros2 pkg prefix malbut_bringup` 결과가 **`install/malbut_test/malbut_bringup`**
@@ -105,7 +131,8 @@ CUDA 없는 CI나 센서 전용 빌드는 `MALBUT_BUILD_SPEECH=0 bash src/malbut
 
 사용자가 보낸 실기기 topic 목록과 기본값은 일치한다:
 `/scan_raw`, `/odom`, `/depth_cam/rgb0/image_raw`,
-`/depth_cam/depth0/image_raw`, `/depth_cam/rgb0/camera_info`.
+`/depth_cam/depth0/image_raw`, `/depth_cam/depth0/camera_info`,
+`/depth_cam/rgb0/camera_info`.
 Header의 frame·시각과 RGB-D 정렬은 추가 실기기 확인 대상이다.
 제조사 `robot.launch.py`의 루트 네임스페이스 인자는 빈 문자열이 아닌 `/`다.
 Bringup도 `robot_name=/`, `master_name=/`를 전달한다.
@@ -151,8 +178,8 @@ Goal을 받으면 누락된 차체·센서·SLAM·Nav2·스캔 정규화기를 �
 성공 결과의 `map_yaml`을 이후 Bringup의 `map` 인자로 사용한다. YAML과
 이미지가 모두 필요하다. 관리자를 통해 요청하려면 관리자와 `/autoslam` 서버를
 함께 실행한다. 저장 지도 Navigation 모드와 실시간 SLAM은 동시에 사용하지 않는다.
-준비된 외부 SLAM을 그대로 쓸 때는 기존 scan 설정도 유지되므로, 스캔 정규화
-수정까지 적용하려면 기존 SLAM을 종료하고 위 Mapping 모드로 새로 시작한다.
+준비된 외부 SLAM을 그대로 쓸 때는 해당 노드도 드라이버의 스캔 토픽을 직접
+사용하도록 설정되어 있는지 확인한다.
 
 ## 3. 공유 인식 준비
 
@@ -290,26 +317,26 @@ Nav2 공통 설정은 로봇에서 받은 파일을 `malbut_bringup/config/nav2_
 복사했다. 기본 BT의 Spin/Wait/BackUp, 숫자 표기와 임의의 원점 초기화를 정리했고,
 이번 실물 설정은 다음과 같다:
 
-- Local·Global 차체 반경 `0.18m`, 팽창 반경 `0.20m`.
+- Local·Global 차체 반경 `0.18m`, 팽창 반경 `0.30m`.
+  차체 바깥 12cm는 벽 근처 주행을 덜 선호하게 하는 비용 구간이며 전부 통행 금지는 아니다.
 - 속도 smoother를 제조사 DWB와 동일한 전후 `0.4m/s`, 회전 `1.0rad/s` 및
   가감속 제한으로 일치. 제조사 DWB의 횡이동 비활성 설정은 유지.
-- `/scan_raw`를 실제 각도 기준으로 `/scan_normalized`의 일정한 격자로 변환.
-  SLAM·AMCL·Nav2·사람 추적에서 사용. 빈 방향을 자유 공간으로 만들지 않는다.
+- SLAM·AMCL·Nav2·사람 추적은 드라이버의 `/scan_raw`를 직접 사용.
+  고정 각도 격자는 로봇 드라이버의 `bins` 설정으로 제공하며 별도 정규화 노드는 없다.
 - LiDAR는 Local/Global 모두 표준 2D ObstacleLayer 사용.
   스캔 토픽·관측 범위는 유지하며 LiDAR 전용 Voxel 저장·발행은 제거.
-- 두 costmap에 `/depth_cam/depth0/points` 기반 별도 VoxelLayer 연결.
-  바닥 위 `0.05~0.20m` 점을 장애물로 표시하며 바닥 관측은 지우기에만 사용.
-  사용자 확인 기본 구성과 제조사 높이 `0.166m`에 약 `0.034m` 여유를 둔
-  초기 상한이다. 실측·TF 확인이 끝난 값은 아니며 추가 장착 시 재검토한다.
-  Depth 저장 공간은 `0.03m × 16층 = 0.48m`다. Depth의
-  `-0.05~0.48m` 제거용 관측은 높은 선반을 장애물로 표시하지 않는다.
+- 두 costmap은 Bringup 내부 `malbut_bringup::DepthVoxelLayer`로 Depth 영상을 받아
+  내부에서 PointCloud2로 변환한다. 원본 `/depth_cam/depth0/points` 구독은 없다.
+  8.2MB 점군 수신으로 재현된 TF 지연 경로를 없애며 해상도는 줄이지 않는다.
+  장애물 추가 5~20cm, 제거용 광선 -5~48cm의 높이 기준은 유지한다.
+  AutoSLAM·저장 지도 주행에 공통 적용된다. RGB·Depth 영상과 사람 추적은 유지한다.
 
-5cm 바닥 기준은 실제 카메라 TF·바닥 높이로 검증할 필요가 있다. 5cm 미만,
-카메라 사각·최소 측정 거리·유리/반사체까지 검출된다는 의미는 아니다.
-스캔 정규화도 잘못된 드라이버 각도·TF·오도메트리까지 교정하지는 않는다.
-검토한 외부 binning 필터는 Humble 배포 여부와 동작 차이 때문에 그대로 교체하지 않았다.
-기존 구현 비교·Depth 표시/제거 설정의 근거는
-[Bringup 설명](malbut_bringup/README.md#기존-구현-검토)에 정리했다.
+LiDAR 평면 밖 물체도 위 높이 범위의 유효한 Depth가 있으면 장애물에 반영한다.
+검은색·반사·투명 물체 등에서 유효 Depth가 없으면 감지는 보장하지 않는다.
+원본 점군 발행 OFF 인자는 우리가 시작하는 하드웨어에만 전달하며, 외부에서
+이미 실행 중인 제조사 카메라의 설정은 변경하지 않는다.
+드라이버의 `bins` 설정·수정은 로봇에서 별도로 적용한다. Malbut은 스캔을 재가공하지 않는다.
+점군 통신 제거의 실측 근거와 적용 확인은 [Bringup 설명](malbut_bringup/README.md#depth-점군-수신과-tf-지연)에 정리했다.
 다른 검토한 복사본은 `nav2_params_file`로 지정할 수 있다.
 현재 제조사 설치 폴더에는 navigation 하위 launch가 누락되어 있으므로
 `navigation_launch_file` 기본값은 기존

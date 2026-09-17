@@ -2,6 +2,7 @@
 # A file stem under the server's map_directory; existing maps are not replaced.
 string map_name home
 ---
+# True when bounded exploration ends and a map is saved; unseen space may remain.
 bool success
 string message
 string map_yaml
@@ -9,5 +10,6 @@ float32 known_area_m2
 ---
 # WAITING, EXPLORING, NAVIGATING, SAVING, CANCELING
 string state
+# Remaining connected frontier regions, including temporarily skipped regions.
 uint32 frontier_count
 float32 known_area_m2

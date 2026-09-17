@@ -41,6 +41,9 @@ for package_path in "${package_paths[@]}"; do
     exit 1
   fi
 done
+# The deployment copy includes cloud media; dependency failures stop before any
+# ROS build. Its helper prepares/reuses the SDK without installing OS packages.
+bash "$robot_source_dir/homecam_agent/scripts/build_robot_cloud.sh"
 case "${MALBUT_BUILD_SPEECH:-1}" in
   0) ;;
   1)

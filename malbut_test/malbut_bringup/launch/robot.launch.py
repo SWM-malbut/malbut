@@ -50,7 +50,7 @@ def _setup(context):
 
     navigating = value('mode') == 'navigation'
     mapping = value('mode') == 'mapping'
-    perception = value('perception') == 'true'
+    perception = value('perception') == 'true' and not mapping
     hardware = value('start_hardware') == 'true'
     navigation = value('start_navigation') == 'true'
     if navigating and not perception:
@@ -83,25 +83,6 @@ def _setup(context):
         'robot_frame': value('robot_frame'), 'rgb_topic': value('rgb_topic'),
     }
 
-    if mapping:
-        # AutoSLAM starts missing prerequisites on a Goal, not on page load.
-        actions = [_include(_package_file(
-            'malbut_autoslam', 'launch/autoslam.launch.py'), {
-                'auto_start': 'true', 'scan_topic': value('raw_scan_topic'),
-                'normalized_scan_topic': value('scan_topic'),
-                'odom_topic': value('odom_topic'),
-                'map_directory': value('map_directory'),
-                'map_topic': value('static_map_topic'),
-                'base_frame': value('robot_frame'),
-            })]
-        if value('web_panel') == 'true':
-            actions.append(Node(
-                package='malbut_bringup', executable='robot_web_panel',
-                name='robot_web_panel', output='screen', parameters=[web_parameters]))
-        if speech:
-            actions.append(speech)
-        return actions
-
     # Validate paths before starting any child process. Never substitute a
     # small_house/test map or overwrite the vendor's calibration/parameters.
     perception_files = {}
@@ -128,25 +109,45 @@ def _setup(context):
             'autostart': 'true', 'use_teb': 'false',
         }
 
+    # Reuse the outbound bridge's configuration. Offline/LAN-only Bringup
+    # does not need cloud media; never put the device token in launch arguments.
+    backend_url = context.environment.get('HOMECAM_BACKEND_URL', '').strip()
+    media_path = (_package_file('homecam_media_agent', 'launch/homecam_robot.launch.py')
+                  if backend_url else None)
+    autoslam = None
+    if mapping:
+        autoslam = _include(_package_file(
+            'malbut_autoslam', 'launch/autoslam.launch.py'), {
+                'auto_start': 'true', 'scan_topic': value('scan_topic'),
+                'odom_topic': value('odom_topic'),
+                'map_directory': value('map_directory'),
+                'map_topic': value('static_map_topic'),
+                'base_frame': value('robot_frame'),
+            })
+
     actions = []
     if hardware_path:
         actions.append(_include(hardware_path, {
             # This vendor version uses '/' (not '') for unprefixed TF/topics.
             'sim': 'false', 'robot_name': '/', 'master_name': '/',
+            # Aurora's upstream launch accepts this inherited argument. Keep
+            # RGB/depth images; the costmap creates XYZ locally, not over DDS.
+            'point_cloud_enable': 'false',
+        }))
+    if media_path:
+        actions.append(_include(media_path, {
+            'backend_url': backend_url,
+            'device_id': context.environment.get('HOMECAM_DEVICE_ID', 'jetson-homecam'),
+            'image_topic': value('rgb_topic'),
+            'camera_info_topic': value('camera_info_topic'),
+            'odom_topic': value('odom_topic'),
         }))
     if navigation_path:
         actions.append(_include(navigation_path, navigation_arguments, remappings=[
-            ('/scan_normalized', value('scan_topic')),
+            ('/scan_raw', value('scan_topic')),
             ('/odom', value('odom_topic')),
         ]))
 
-    if value('start_scan_adapter') == 'true':
-        actions.append(Node(
-            package='malbut_bringup', executable='scan_normalizer',
-            name='scan_normalizer', output='screen', parameters=[{
-                'use_sim_time': False, 'input_topic': value('raw_scan_topic'),
-                'output_topic': value('scan_topic'),
-            }]))
     if navigating and value('map') and value('pose_memory') == 'true':
         actions.append(Node(
             package='malbut_bringup', executable='pose_memory',
@@ -220,6 +221,12 @@ def _setup(context):
         if event.returncode != 0:
             raise RuntimeError('Robot readiness check failed')
         speech_actions = [speech] if speech else []
+        if mapping:
+            # Camera/driver startup belongs to Bringup. Only expose the Goal
+            # server after sensors are ready so AutoSLAM won't start duplicates.
+            # The Goal still starts missing SLAM/Nav2; it never runs by itself.
+            return [LogInfo(msg='Sensors ready; starting idle AutoSLAM server.'),
+                    autoslam, *speech_actions]
         if navigating:
             return [LogInfo(msg='Robot ready; starting system manager.'),
                     manager, *speech_actions]
@@ -265,7 +272,6 @@ def generate_launch_description():
         'mode': 'sensors',
         'start_hardware': 'true',
         'start_navigation': 'true',
-        'start_scan_adapter': 'true',
         'pose_memory': 'true',
         'restore_pose': 'true',
         'web_panel': 'false',
@@ -296,8 +302,7 @@ def generate_launch_description():
         'rgb_topic': '/depth_cam/rgb0/image_raw',
         'depth_topic': '/depth_cam/depth0/image_raw',
         'camera_info_topic': '/depth_cam/rgb0/camera_info',
-        'raw_scan_topic': '/scan_raw',
-        'scan_topic': '/scan_normalized',
+        'scan_topic': '/scan_raw',
         'odom_topic': '/odom',
         'global_frame': 'map',
         'robot_frame': 'base_footprint',
@@ -321,7 +326,7 @@ def generate_launch_description():
         'mode': ['sensors', 'navigation', 'mapping'],
         **{key: ['true', 'false'] for key in (
             'start_hardware', 'start_navigation', 'perception',
-            'publish_debug_image', 'start_scan_adapter', 'pose_memory',
+            'publish_debug_image', 'pose_memory',
             'restore_pose', 'web_panel', 'speech', 'speech_input_has_aec',
         )},
         'speech_agent_provider': ['openai', 'mock'],

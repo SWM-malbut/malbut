@@ -49,6 +49,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     await database.exec(eventClipsMigration);
     await database.exec(dualMediaSessionsMigration);
     await database.exec(robotDriveModesMigration);
+    await database.exec(await readFile(new URL("../db/migrations/0008_managed_robot_commands.sql", import.meta.url), "utf8"));
     await database.exec(`
       CREATE TABLE homecam_schema_migrations (
         version TEXT PRIMARY KEY,
@@ -62,7 +63,8 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         ('0004_robot_map_semantics'),
         ('0005_event_clips'),
         ('0006_dual_media_sessions'),
-        ('0007_robot_drive_modes');
+        ('0007_robot_drive_modes'),
+        ('0008_managed_robot_commands');
     `);
     await seedDevice(database);
 
@@ -731,6 +733,31 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         operation: "room_merge",
         payload: { rooms: [room("room-a"), room("room-a")] },
       }), null);
+      await robotMap.storeRobotState("living-room", {
+        state: "ready", message: "real robot", pose: { x: 0, y: 0, yaw: 0 },
+        localization: { state: "ok", tfAgeS: 0.1 },
+        nav2: { robot_interface: "malbut_manager_v1", runtime_mode: "navigation" },
+        target: null, mapRevision: 1, observedAt: new Date().toISOString(),
+        // A currently active BASE task must not override the manager's preemption decision.
+        driveMode: { mode: "patrol", state: "active", sessionId: "mission_123456", message: null },
+      });
+      for (const operation of ["drive_mode_start", "start", "rooms_save"]) {
+        await assert.rejects(robotMap.createRobotCommand({
+          deviceId: "living-room", userEmail: "owner@example.com", operation,
+        }), /UNSUPPORTED_ROBOT_COMMAND/);
+      }
+      const realMission = await robotMap.createRobotCommand({
+        deviceId: "living-room", userEmail: "owner@example.com", operation: "mission_start",
+        payload: { capability: "follow_person", arguments: { target_mode: 0, target_person_id: "", desired_distance_m: 1 } },
+      });
+      assert.equal((await robotMap.claimRobotCommands("living-room"))[0].id, realMission.id);
+      await robotMap.completeRobotCommand({
+        deviceId: "living-room", commandId: realMission.id, ok: true,
+        result: { accepted: true, requestId: "request_123", status: "queued" },
+      });
+      await assert.rejects(robotMap.createRobotCommand({
+        deviceId: "living-room", userEmail: "stranger@example.com", operation: "mission_cancel",
+      }), /FORBIDDEN/);
     });
 
     const persisted = await database.query(`

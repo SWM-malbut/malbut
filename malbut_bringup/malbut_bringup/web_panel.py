@@ -7,6 +7,7 @@ import hmac
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import math
+import os
 from pathlib import Path
 import queue
 import re
@@ -69,15 +70,38 @@ def validate_command(payload):
             raise ValueError('Registered person mode requires a person ID')
         distance = args['desired_distance_m']
         if (type(distance) not in (float, int) or not math.isfinite(distance)
-                or distance <= 0):
-            raise ValueError('desired_distance_m must be positive and finite')
+                or distance < 0.2):
+            raise ValueError('desired_distance_m must be finite and at least 0.2 m')
     elif capability == 'patrol':
         if (set(args) != {'thoroughness'} or type(args['thoroughness']) is not int
                 or args['thoroughness'] not in (0, 1, 2)):
             raise ValueError('thoroughness must be 0, 1 or 2')
+    elif capability == 'navigate_to_pose':
+        if (set(args) != {'x', 'y', 'yaw'}
+                or any(type(args[key]) not in (float, int)
+                       or not math.isfinite(args[key]) for key in args)):
+            raise ValueError('Navigation requires finite x, y and yaw in map coordinates')
     else:
         raise ValueError('Unknown capability')
     return payload
+
+
+def mission_arguments(capability, arguments):
+    """Translate a bounded map-coordinate request to the public Nav2 Goal."""
+    if capability != 'navigate_to_pose':
+        return arguments
+    return {
+        'pose': {
+            'header': {'frame_id': 'map'},
+            'pose': {
+                'position': {'x': float(arguments['x']), 'y': float(arguments['y']), 'z': 0.0},
+                'orientation': {'x': 0.0, 'y': 0.0,
+                                'z': math.sin(arguments['yaw'] / 2.0),
+                                'w': math.cos(arguments['yaw'] / 2.0)},
+            },
+        },
+        'behavior_tree': '',
+    }
 
 
 def image_jpeg(message):
@@ -110,7 +134,7 @@ def image_jpeg(message):
 class PanelData:
     """Keep only latest sensor frames and bounded command/status history."""
 
-    def __init__(self):
+    def __init__(self, *, map_palette='costmap'):
         """Initialize bounded in-memory state without subscriptions or commands."""
         self.lock = threading.RLock()
         self.encode_lock = threading.Lock()
@@ -120,7 +144,7 @@ class PanelData:
         self.tracking = None
         self.frames = {}
         self.encoded = (None, b'')
-        self.map_cache = MapCache()
+        self.map_cache = MapCache(palette=map_palette)
         self.map_active = False
         self.robot_pose = None
         self.runtime = {'enabled': False, 'state': 'STOPPED', 'ready': False,
@@ -200,7 +224,8 @@ class PanelData:
 class RosBridge:
     """Own Action handles and execute all ROS commands on the ROS executor."""
 
-    def __init__(self, data):
+    def __init__(self, data, *, node_name='robot_web_panel',
+                 map_topic='/global_costmap/costmap'):
         """Subscribe to diagnostics/images and prepare nonblocking Action clients."""
         from malbut_interfaces.action import AutoSlam, ExecuteMission
         from malbut_interfaces.msg import SystemState
@@ -215,7 +240,7 @@ class RosBridge:
         from std_msgs.msg import String
         from tf2_ros import Buffer, TransformListener
 
-        self.node = Node('robot_web_panel')
+        self.node = Node(node_name)
         self.data = data
         self.commands = queue.Queue(maxsize=64)
         self.handles = {}
@@ -247,7 +272,7 @@ class RosBridge:
         topics = {
             'rgb_topic': '/depth_cam/rgb0/image_raw',
             'debug_topic': '/perception/person/debug_image/compressed',
-            'map_topic': '/global_costmap/costmap',
+            'map_topic': map_topic,
         }
         self.topics = {key: self.node.declare_parameter(key, value).value
                        for key, value in topics.items()}
@@ -373,8 +398,10 @@ class RosBridge:
             'bt_navigator', 'nav2_container', 'system_manager', 'autoslam',
             'person_follower', 'person_localizer', 'person_reidentifier', 'yolo_node',
         })
+        if os.environ.get('HOMECAM_BACKEND_URL', '').strip():
+            conflicts.update(names.intersection({'homecam_media_agent'}))
         if conflicts or self.node.count_publishers(self.topics['map_topic']):
-            raise ValueError('Stop existing mapping/navigation/perception first: '
+            raise ValueError('Stop existing mapping/navigation/perception/media first: '
                              + ', '.join(sorted(conflicts)))
         scan = self.node.count_publishers('/scan_raw')
         odom = self.node.count_publishers('/odom')
@@ -480,6 +507,11 @@ class RosBridge:
             self.cancel_pending.discard(request_id)
             return
         capability = payload['capability']
+        if capability == 'navigate_to_pose':
+            info = self.data.map_snapshot()
+            if (not info.get('active') or info.get('frame_id') != 'map'
+                    or self._robot_pose() is None):
+                raise ValueError('Navigation requires a live map and current robot pose')
         if capability == 'autoslam':
             if self.runtime and self.runtime.snapshot()['mode'] == 'navigation':
                 raise ValueError('저장 지도 주행을 종료하고 지도 만들기 모드를 켜세요')
@@ -507,7 +539,8 @@ class RosBridge:
         if route == 'manager':
             goal = self.mission_goal()
             goal.capability_id = capability
-            goal.arguments_yaml = json.dumps(payload['arguments'])
+            goal.arguments_yaml = json.dumps(mission_arguments(
+                capability, payload['arguments']))
         else:
             goal = self.auto_goal()
             goal.map_name = payload['arguments']['map_name']

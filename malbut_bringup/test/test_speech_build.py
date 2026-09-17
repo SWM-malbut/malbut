@@ -79,6 +79,10 @@ elif name in ('system-python', 'python') and args[0] == '-c':
             directory = robot / name
             directory.mkdir(parents=True, exist_ok=True)
             (directory / 'package.xml').write_text('<package/>')
+        # Cloud behavior is covered separately by test_deployment.py.
+        cloud_script = robot / 'homecam_agent/scripts/build_robot_cloud.sh'
+        cloud_script.parent.mkdir(parents=True)
+        cloud_script.write_text('#!/bin/bash\nexit 0\n')
         script = robot / 'build.sh'
         shutil.copyfile(ROOT / 'build.sh', script)
         result = subprocess.run(['bash', str(script)], text=True,

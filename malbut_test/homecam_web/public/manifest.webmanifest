@@ -1,0 +1,48 @@
+{
+  "id": "/",
+  "name": "MALBUT 홈캠",
+  "short_name": "MALBUT",
+  "description": "우리 집 홈캠의 실시간 영상, 이벤트와 최근 7일 녹화를 안전하게 확인합니다.",
+  "lang": "ko",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f5f2eb",
+  "theme_color": "#101916",
+  "categories": ["lifestyle", "utilities"],
+  "icons": [
+    {
+      "src": "/homecam-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "실시간 보기",
+      "short_name": "라이브",
+      "url": "/?view=live",
+      "icons": [
+        {
+          "src": "/homecam-icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "이벤트",
+      "short_name": "이벤트",
+      "url": "/?view=events",
+      "icons": [
+        {
+          "src": "/homecam-icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ]
+}

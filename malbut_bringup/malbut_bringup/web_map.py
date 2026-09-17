@@ -1,4 +1,4 @@
-"""Cache the Global Costmap's OccupancyGrid for the LAN test panel."""
+"""Cache native OccupancyGrid previews for the LAN costmap and cloud map."""
 
 import math
 import operator
@@ -61,22 +61,30 @@ def _metadata(message):
     }
 
 
-def _encode_png(message):
+def _encode_png(message, palette='costmap'):
     import cv2
     import numpy as np
 
     cells = np.asarray(message.data).reshape(message.info.height, message.info.width)
-    # Match RViz Humble's makeCostmapPalette; OpenCV encodes BGRA, not RGBA.
-    # ros2/rviz: rviz_default_plugins/displays/map/palette_builder.cpp
-    palette = np.zeros((102, 4), dtype=np.uint8)
-    red = np.arange(1, 99) * 255 // 100
-    palette[1:99, 0] = 255 - red
-    palette[1:99, 2] = red
-    palette[1:99, 3] = 255
-    palette[99] = (255, 255, 0, 255)  # Inscribed obstacle: cyan.
-    palette[100] = (255, 0, 255, 255)  # Lethal obstacle: magenta.
-    palette[101] = (134, 137, 112, 255)  # Unknown; free cells stay transparent.
-    pixels = palette[np.where(cells == -1, 101, cells)]
+    if palette == 'map':
+        # Match the existing user-facing live map (map_lifecycle.render_map_png)
+        # without importing Gazebo code or altering native grid geometry/cells.
+        pixels = np.full((*cells.shape, 3), (247, 242, 247), dtype=np.uint8)
+        pixels[(cells >= 0) & (cells <= 19)] = (255, 255, 255)
+        pixels[cells >= 65] = (39, 31, 25)
+        pixels[(cells > 19) & (cells < 65)] = (205, 205, 205)
+    else:
+        # Match RViz Humble's makeCostmapPalette; OpenCV encodes BGRA, not RGBA.
+        # ros2/rviz: rviz_default_plugins/displays/map/palette_builder.cpp
+        colors = np.zeros((102, 4), dtype=np.uint8)
+        red = np.arange(1, 99) * 255 // 100
+        colors[1:99, 0] = 255 - red
+        colors[1:99, 2] = red
+        colors[1:99, 3] = 255
+        colors[99] = (255, 255, 0, 255)  # Inscribed obstacle: cyan.
+        colors[100] = (255, 0, 255, 255)  # Lethal obstacle: magenta.
+        colors[101] = (134, 137, 112, 255)  # Unknown; free cells stay transparent.
+        pixels = colors[np.where(cells == -1, 101, cells)]
     # OccupancyGrid row zero is at the bottom; PNG row zero is at the top.
     success, encoded = cv2.imencode('.png', np.ascontiguousarray(pixels[::-1]))
     if not success:
@@ -99,8 +107,11 @@ def _pose(pose):
 class MapCache:
     """Keep the latest map and one PNG, without expiring a static map by age."""
 
-    def __init__(self):
-        """Initialize independent locks for state access and PNG encoding."""
+    def __init__(self, *, palette='costmap'):
+        """Choose display colors without changing the source grid or its scale."""
+        if palette not in ('costmap', 'map'):
+            raise ValueError('Map palette must be costmap or map')
+        self._palette = palette
         self._lock = threading.Lock()
         self._encode_lock = threading.Lock()
         self._version = 0
@@ -152,7 +163,7 @@ class MapCache:
                 metadata = {**self._metadata, 'version': current}
                 metadata['origin'] = dict(metadata['origin'])
             # Slow encoding must not block the ROS callback or metadata readers.
-            result = (metadata, _encode_png(message))
+            result = (metadata, _encode_png(message, self._palette))
             with self._lock:
                 if self._version == current:
                     self._png = result

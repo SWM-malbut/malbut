@@ -4,7 +4,8 @@ ROSOrin / Jetson Orin NX / ROS 2 Humble용 최상위 실행 패키지다.
 제조사 드라이버·TF·Nav2 설정을 재사용하고, Malbut 응용 서버를 연결한다.
 기존 `build.sh` 하나로 음성 런타임·STT CUDA 라이브러리와 ROS 패키지를 빌드하고,
 `robot.launch.py` 하나로 선택한 로봇 구성과 STT·Agent·TTS를 함께 실행한다.
-Gazebo, 시나리오, 기존 홈캠·AWS는 포함하지 않는다.
+Gazebo와 시나리오는 이 실행에 포함하지 않는다.
+클라우드 연결이 설정되어 있으면 기존 홈캠 KVS 영상·음성 전송 노드를 함께 실행한다.
 추적·순찰 알고리즘과 시스템 관리자의 정책은 변경하지 않는다.
 
 음성은 기본 `speech:=true`이며 [음성 준비·점검 안내](README_SPEECH.md)를 따른다.
@@ -14,8 +15,8 @@ Gazebo, 시나리오, 기존 홈캠·AWS는 포함하지 않는다.
 
 | 모드 | 시작하는 구성 | 시작하지 않는 구성 |
 | --- | --- | --- |
-| `sensors` (기본) | 공식 차체·센서·TF, 스캔 정규화, YOLO, ReID, RGB-D 위치 추정 | Nav2, 추적·순찰 서버, 관리자 |
-| `mapping` | AutoSLAM 대기 서버. Goal 수신 후 없는 매핑 구성만 기동 | YOLO, 추적·순찰, 저장 지도 AMCL, 미션 자동 실행 |
+| `sensors` (기본) | 공식 차체·센서·TF, YOLO, RGB-D 위치 추정 | Nav2, 추적·순찰 서버, 관리자 |
+| `mapping` | 공식 차체·센서·카메라 → 준비 확인 → AutoSLAM 대기 서버. Goal 수신 후 없는 SLAM·Nav2만 기동 | YOLO, 추적·순찰, 저장 지도 AMCL, 미션 자동 실행 |
 | `navigation` | 센서 구성 + Nav2 + 위치 저장·복원 + 추적·순찰 서버 → 준비 확인 → 관리자 | 미션 자동 실행 |
 
 모든 모드에 STT·Agent·TTS가 기본 포함된다. `sensors`·`navigation`은
@@ -26,6 +27,13 @@ AutoSLAM 서버와 함께 음성 점검을 시작한다. 음성 점검 → Agent
 기본은 `sensors`다. 시뮬레이션 지도를 실로봇에 대신 넣지 않는다.
 인식·음성 환경 준비 전에는 `perception:=false speech:=false`로 센서만 확인한다.
 `navigation` 모드에서는 인식 파이프라인이 필요하다.
+
+실기기 적용본은 `build.sh` 하나로 홈캠 미디어까지 빌드한다.
+`cloud.launch.py`는 웹 명령·상태 연결만 유지하고, 웹이 시작하는 `robot.launch.py`가
+카메라와 영상 노드를 함께 관리한다. `HOMECAM_BACKEND_URL`이 설정된 모든 모드에서
+기존 `homecam_robot.launch.py`를 한 번 포함하며 토큰 파일 환경을 그대로 전달한다.
+별도 미디어 launch나 systemd 서비스를 중복 실행하지 않는다.
+전체 절차는 [실기기 클라우드 연결](../malbut_test/README_CLOUD.md)을 따른다.
 
 공식 실행을 다음 두 부분으로 나누어 **각각 한 번만** include한다.
 
@@ -98,6 +106,49 @@ Bringup은 systemd 서비스·Wi-Fi·DDS 설정을 변경하거나 다른 프로
 드라이버를 유지하려는 경우 `start_hardware:=false`로 외부 실행을 재사용한다.
 같은 Bringup을 두 번 실행하지 않는다.
 
+### Depth 점군 수신과 TF 지연
+
+2026-09-16 전달받은 실기기 비교에서, 약 8.2MB Depth 점군을 처리 없이
+수신하기만 해도 같은 프로세스의 TF 수신이 최대 2.5초 지연됐다.
+Nav2의 Depth 구독을 제거한 비교에서는 약 4분간 TF 누락이 없었으며,
+수신 큐 확대는 해결하지 못했다. 앞서 검토한 TF 성공 통지 유실 버그는
+이 검사에서 재현되지 않았다. 따라서 이번 대응은 TF 패키지나 JetPack·Ubuntu
+업그레이드가 아니라 **Nav2의 대용량 점군 수신 경로 제거**다.
+
+기본 설정은 Bringup 내부 [depth_costmap](depth_costmap/README.md)의
+`DepthVoxelLayer`를 Local/Global costmap에 사용한다. 각 costmap은
+`/depth_cam/depth0/image_raw`와 `/depth_cam/depth0/camera_info`를 받고,
+공식 `depth_image_proc` 변환으로 PointCloud2를 **자기 프로세스 안에서만** 만든다.
+큰 점군 토픽을 재발행하거나 구독하지 않으며 해상도와 픽셀 수를 줄이지 않는다.
+AutoSLAM과 저장 지도 주행은 이 공통 설정을 사용한다.
+RGB·Depth 영상, YOLO, 사람 거리 추정과 독립 LiDAR 레이어는 유지한다.
+
+변환 결과는 기존 Nav2 VoxelLayer의 관측 버퍼에 직접 전달한다.
+장애물 추가는 지면 기준 5~20cm, 제거용 광선은 -5~48cm로 기존 기준을 유지한다.
+원시 영상은 CameraInfo에 따라 왜곡을 보정하고, 잘못된 보정값·서로 다른
+프레임·지원하지 않는 영상은 경고 후 사용하지 않는다. 영상 시각의 TF가 필요하며
+최신 TF로 시각을 바꿔치기하지 않는다. 영상/TF가 끊기면 레이어를 준비된 것으로
+취급하지 않는다. Depth만으로 모든 재질·높이의 장애물 감지를 보장하지는 않는다.
+
+적용하려면 기존 Bringup/Nav2를 종료하고 수정된 설정으로 다시 시작해야 한다.
+이미 실행 중인 외부 Nav2나 별도로 지정한 `nav2_params_file`에는 소급 적용되지 않는다.
+`ros2 topic info /depth_cam/depth0/points --verbose`에서 Nav2 구독자가 없는지
+확인한다. TF 비교 중 이 토픽에 `echo`/`hz`나 RViz PointCloud2를 붙이면 다시
+대용량 구독이 생기므로 실행하지 않는다.
+
+추가 ROS 의존성은 `ros-humble-depth-image-proc`이며 `rosdep install`로 준비한다.
+`malbut_test/build.sh`가 새 플러그인도 함께 빌드한다. 하드웨어를 직접 시작할 때는
+공식 Aurora launch 인자 `point_cloud_enable=false`를 전달한다(제조사 파일 수정 없음).
+공식 드라이버는 이 값으로 SDK 점군 스트림도 끄지만, 제조사 중간 launch가 값을
+강제로 덮는 버전이라면 해당 설정이 우선한다. 이미 외부에서 실행 중인 카메라는
+재시작하거나 설정을 바꾸지 않는다. 따라서 원본 점군 발행 중단은 실기기에서
+확인하고, 토픽 존재만으로 원본 점군을 Nav2가 받는다고 판단하지 않는다.
+
+실기기에서는 움직이기 전에 LiDAR보다 낮은 물체가 Local/Global costmap에
+표시되고 치우면 제거되는지, `DepthVoxelLayer` 경고와 TF 지연이 없는지 확인한다.
+이 경로는 대용량 점군 통신을 없애지만 투영·좌표 변환 계산은 남으므로,
+실제 로봇에서의 TF 지연 개선 폭은 별도로 측정해야 한다.
+
 ## 1. 지도가 없을 때
 
 처음에는 GPU 준비와 독립적으로 센서를 확인할 수 있다.
@@ -113,16 +164,16 @@ ros2 launch malbut_bringup robot.launch.py
 ```
 
 기본 토픽 이름은 사용자가 제공한 ROSOrin/Aurora 실기기 목록과 일치한다.
-센서 Header·TF·RGB-D 정렬은 별도 실측 대상이다. 원본 `/scan_raw`는 유지하며
-SLAM·Nav2용 `/scan_normalized`를 별도로 발행한다.
+센서 Header·TF·RGB-D 정렬은 별도 실측 대상이다.
+SLAM·AMCL·Nav2·사람 추적은 드라이버의 `/scan_raw`를 직접 사용한다.
+드라이버의 `bins` 설정으로 고정 각도 격자가 제공된다고 가정하며, 별도 정규화 노드는 없다.
 
 | 인자 | 초기값 |
 | --- | --- |
 | `rgb_topic` | `/depth_cam/rgb0/image_raw` |
 | `depth_topic` | `/depth_cam/depth0/image_raw` |
 | `camera_info_topic` | `/depth_cam/rgb0/camera_info` |
-| `raw_scan_topic` | `/scan_raw` |
-| `scan_topic` | `/scan_normalized` |
+| `scan_topic` | `/scan_raw` |
 | `odom_topic` | `/odom` |
 | `robot_frame` | `base_footprint` |
 | `global_frame` | `map` |
@@ -130,7 +181,7 @@ SLAM·Nav2용 `/scan_normalized`를 별도로 발행한다.
 예를 들어 LiDAR가 `/scan`을 제공한다면:
 
 ```bash
-ros2 launch malbut_bringup robot.launch.py raw_scan_topic:=/scan
+ros2 launch malbut_bringup robot.launch.py scan_topic:=/scan
 ```
 
 RGB-D 위치 추정은 **RGB에 정렬된 Depth와 해당 RGB CameraInfo**를 사용해야
@@ -240,51 +291,24 @@ ros2 launch navigation rviz_navigation.launch.py
   하며 초기 추정치일 뿐이다. 수동 초기화가 우선이다.
   `restore_pose:=false`면 복원 없이 저장만, `pose_memory:=false`면 노드를 켜지 않는다.
   복원은 위치 확인의 대체가 아니며, covariance가 유한하다는 것이 정확도를 보증하지 않는다.
-- Local/Global 차체 반경 **0.18m**, Local/Global inflation **0.20m**.
+- Local/Global 차체 반경 **0.18m**, Local/Global inflation **0.30m**.
+  차체 바깥의 비용 완충 구간을 2cm에서 12cm로 넓혀 벽에 붙는 경로를 덜 선호한다.
+  완충 구간 전체가 통행 금지는 아니며, 실제 충돌 반경과 제조사 속도 상한은 유지한다.
   사용자 실기기 확인값을 적용했다. 추가 장착물은 실제 외곽선을 다시 측정해야 한다.
 - Velocity smoother **전후 ±0.4m/s, 회전 ±1.0rad/s**, 가속도는 제공된 제조사 DWB의
   `2.5m/s²`, `3.2rad/s²`와 일치한다. 제조사 DWB 파일·최대속도는 수정하지 않는다.
   의도된 횡이동 0·AMCL Differential 모델·추적 거리별 속도 정책은 유지한다.
 - LiDAR는 Local/Global 모두 표준 2D `ObstacleLayer`를 사용한다.
   단일 평면 스캔에 불필요한 Voxel 저장·발행은 하지 않는다. 스캔 토픽과
-  관측 거리·높이 필터는 유지하며 Depth 레이어의 장애물을 직접 지우지 않는다.
+  관측 거리·높이 필터는 유지한다.
   기존 Local Voxel의 암묵적 48cm 저장 한계는 없어지므로 기울어진 스캔에서
   완전히 동일한 동작을 보장하는 변경은 아니다.
-- 작은 장애물 폭/최소 클러스터 크기 필터는 추가하지 않는다. Depth 점군
-  `/depth_cam/depth0/points`도 양쪽 costmap의 별도 표준 VoxelLayer에 반영한다.
-  유효 obstacle 높이 **5~20cm**는 costmap 좌표계 기준이다. 바닥은 표시하지 않되
-  floor clearing 관측을 별도로 사용해 사라진 낮은 장애물이 남는 것을 줄인다.
-  5cm 미만은 배제되며, 카메라 시야 밖/최소거리 안의 장애물을 보장하지 않는다.
-  20cm 상한은 사용자 확인 기본 구성과
-  [제조사 표준형 높이 16.6cm](https://www.hiwonder.com/products/rosorin)
-  에 약 3.4cm 여유를 둔 초기값이다. 실측·TF·바닥 노이즈 검증은 아직 필요하며,
-  추가 장착물/다른 기종에는 그대로 적용하지 않는다.
-  Depth Voxel 저장 공간은 3cm × 16층(0.48m)이며 제거용 관측은 -5~48cm다.
-  같은 점군에 표시용·제거용 높이 필터를 다르게 적용하는 Nav2 설정이다.
-  카메라 노드나 추론을 두 번 실행하는 구성이 아니지만, 점군 관측 처리는 각각 수행한다.
-  제거용 관측은 장애물을 등록하지 않으므로 20cm 위 선반을 통행 금지로 만들지 않는다.
-  장애물 표시 상한과 voxel 저장 높이가 반드시 같아야 하는 것은 아니다.
-- `scan_normalizer`는 원본 각도 정보로 고정 각도 격자에 재배치한다. 가변 점 개수를
-  단순 절단하지 않으며 미관측 방향은 NaN, 같은 칸의 장애물은 가까운 값을 유지한다.
-  타임스탬프는 원본이고 `time_increment=0`이다(운동 보정/deskew 기능 아님).
-  원본 각도 metadata 자체가 잘못됐거나 odometry가 밀리는 문제는 고치지 못한다.
-  외부 SLAM을 재사용하면 그 노드의 scan 입력도 운영자가 따로 확인해야 한다.
-
-### 기존 구현 검토
-
-- LiDAR `ObstacleLayer` + Depth `VoxelLayer` 조합은
-  [Linorobot2 Humble 설정](https://github.com/linorobot/linorobot2/blob/humble/linorobot2_navigation/config/navigation.yaml)을 참고한다.
-- 같은 Depth 토픽의 marking/clearing 분리는
-  [UBR-1 실제 적용 사례](https://www.robotandchisel.com/2020/09/01/navigation2/#tilting-head-node)가 있다.
-  이 구성을 유지하되 위 높이값을 현장 검증값으로 오해하지 않는다.
-- 스캔 정규화는 당장 교체 가능한 Humble 필터가 확인되지 않아 기존 adapter를 유지한다.
-  [laser_filters 2.0.9](https://github.com/ros-perception/laser_filters/blob/2.0.9/laser_filters_plugins.xml)에는
-  `LaserScanBinningFilter`가 없으며,
-  [검토한 후속 구현](https://github.com/ros-perception/laser_filters/blob/rolling/include/laser_filters/binning_filter.h)은
-  입력에 따라 시작 각도를 바꾸고, 겹치는 각도에서 최근접 대신 마지막 측정을 남기며,
-  빈 intensities 배열을 검사하지 않고 접근한다. 현재 adapter를 그대로 대체하지 않는다.
-  제조사 드라이버가 안정된 각도 격자를 직접 제공하는 것이 확인되면 navigation/sensors 모드에서
-  `start_scan_adapter:=false scan_topic:=/scan_raw`로 생략할 수 있다.
+- 작은 장애물 폭/최소 클러스터 크기 필터는 추가하지 않는다.
+  Depth는 영상과 CameraInfo를 받아 Nav2 내부 점군으로 처리하며,
+  위 실기기 수신 지연을 일으킨 원본 대용량 점군 구독은 하지 않는다.
+  LiDAR 장애물 표시·제거, 저장 지도, 차체 반경과 팽창은 유지한다.
+- LiDAR 입력은 드라이버가 발행한 LaserScan 그대로 사용한다. Malbut에서 점 개수,
+  각도, 타임스탬프를 바꾸지 않는다. 드라이버의 `bins` 적용은 로봇에서 별도로 수행한다.
 
 ## Mac에서 웹으로 확인
 
@@ -306,6 +330,9 @@ Bringup 시작/종료는 비활성화한다. 단독 패널과 같은 포트로 �
 
 - 모든 Malbut 노드는 `use_sim_time=false`. 제조사 include에도 이를 전달한다.
 - 준비 검사기는 최근 Scan·Odometry·RGB·Depth·CameraInfo와 TF를 확인한다.
+  Scan은 최신 TF의 존재만 보지 않고, 최근 서로 다른 두 스캔의 원본 시각에
+  `LiDAR → odom` 변환이 가능한지 확인한다. 주행 모드는 `LiDAR → map`도 확인한다.
+  최신 스캔보다 TF가 조금 늦게 도착해도 이전의 최근 헤더로 비동기 재확인한다.
   인식을 켰다면 3D 인식 결과 수신도 확인한다. 사람이 없는 빈 검출도 정상이다.
 - 주행 모드는 지도·costmap, `map ↔ base` TF, Nav2 lifecycle `ACTIVE`,
   필요한 Nav2·추적·순찰 Action 서버를 추가 확인한다.

@@ -5,13 +5,23 @@
   <description>ROSOrin hardware and Malbut application startup.</description>
   <maintainer email="sanggeunji0117@gmail.com">Malbut Team</maintainer>
   <license>Apache-2.0</license>
-  <buildtool_depend>ament_python</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <depend>depth_image_proc</depend>
+  <depend>image_geometry</depend>
+  <depend>libopencv-dev</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>nav2_util</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>action_msgs</exec_depend>
-  <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>rosidl_runtime_py</exec_depend>
@@ -23,7 +33,6 @@
   <exec_depend>nav2_msgs</exec_depend>
   <exec_depend>lifecycle_msgs</exec_depend>
   <exec_depend>vision_msgs</exec_depend>
-  <exec_depend>tf2_ros</exec_depend>
   <exec_depend>malbut_interfaces</exec_depend>
   <exec_depend>malbut_yolo</exec_depend>
   <exec_depend>malbut_reid</exec_depend>
@@ -31,6 +40,9 @@
   <exec_depend>malbut_patrol</exec_depend>
   <exec_depend>malbut_autoslam</exec_depend>
   <exec_depend>malbut_system_manager</exec_depend>
+  <exec_depend>homecam_media_agent</exec_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
   <exec_depend>malbut_agent_server</exec_depend>
   <exec_depend>malbut_stt</exec_depend>
   <exec_depend>malbut_tts</exec_depend>
@@ -38,5 +50,5 @@
   <test_depend>ament_pep257</test_depend>
   <test_depend>python3-pytest</test_depend>
   <test_depend>python3-yaml</test_depend>
-  <export><build_type>ament_python</build_type></export>
+  <export><build_type>ament_cmake</build_type></export>
 </package>

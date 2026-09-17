@@ -22,7 +22,7 @@ input:
       default: ""
     desired_distance_m:
       type: float32
-      description: 사람과 유지할 희망 거리
+      description: 사람과 유지할 희망 거리(m), 0.2 이상
       default: 1.0
 
 execution:

@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Run the Bringup robot_web_panel entrypoint."""
+
+from malbut_bringup.web_panel import main
+
+
+if __name__ == '__main__':
+    main()

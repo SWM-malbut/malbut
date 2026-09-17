@@ -73,18 +73,15 @@ person_follower:
     lidar_proximity_camera_guard_s: 0.30
     # Nominal one-metre standoff. The robot holds in the 0.90--1.10 m band.
     desired_distance_m: 1.00
-    minimum_distance_m: 0.65
+    minimum_distance_m: 0.20
     distance_tolerance_m: 0.10
     # Once translation is unnecessary, rotate only enough to center the
     # fixed forward camera.
     alignment_angle_tolerance_rad: 0.10
     # Translation, including reverse, remains collision checked by Nav2
     # ComputePathToPose and the configured holonomic controller.
-    # Nav2 receives a distance-dependent speed cap: short corrections stay
-    # near 0.10 m/s and paths of at least 1.5 m may use the full 0.40 m/s.
-    minimum_follow_speed_mps: 0.10
-    maximum_linear_speed_mps: 0.40
-    full_speed_travel_distance_m: 1.50
+    # Nav2's robot-specific controller/velocity smoother own speed limits;
+    # the follower no longer adds a distance-dependent 0.10--0.40 m/s cap.
     # Start backing away before an approaching person crosses the lower
     # distance bound. Forward and reverse paths use the same refresh policy.
     approach_prediction_horizon_s: 0.75
@@ -92,18 +89,19 @@ person_follower:
 
     # Past the 3 m depth limit, RGB supplies direction and a minimum range.
     # Each new sensor observation may request the next path. A single in-flight
-    # Nav2 plan remains the only concurrency guard, and newer observations are
+    # Nav2 plan is kept singly owned, and newer observations are
     # coalesced into one latest request when that plan completes.
     bearing_only_variance_threshold_m2: 1.0
 
-    # Accept destinations only beyond the global inflation gradient. With the
-    # current Nav2 inflation radius this preserves roughly the configured
-    # 0.55 m wall margin, while the search chooses the room side of a corner.
+    # Accept destinations only in the low-cost exterior of Nav2 inflation.
+    # The actual robot radius and clearance remain defined by Nav2.
     goal_maximum_cost: 80
-    # Match Nav2's global/local inflation radius before caching the static map.
-    # Fixed-map A* and live Nav2 therefore use the same obstacle clearance.
+    # Raw-map A* is only a directional hint, never a robot-clearance verdict.
+    # Nav2's live costmap/controller retain the actual obstacle inflation.
     static_occupied_threshold: 65
-    static_padding_radius_m: 0.35
+    static_planning_budget_s: 0.05
+    # Response deadline; late results are discarded, not remote CPU killed.
+    nav2_planning_timeout_s: 0.20
     goal_safe_search_radius_m: 1.00
     goal_openness_radius_m: 0.60
     goal_openness_preference_m: 0.30
@@ -129,6 +127,7 @@ person_follower:
 
     # Bounded prediction supports identity association and display only.
     prediction_horizon_s: 0.60
+    # Legacy override retained for compatibility; follower TF is non-blocking.
     transform_timeout_s: 0.10
     # ros_gz sensor messages can arrive just before their exact odom/TF
     # sample. Retry only the newest detection briefly instead of treating

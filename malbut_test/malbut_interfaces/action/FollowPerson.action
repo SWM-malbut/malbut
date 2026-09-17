@@ -3,6 +3,7 @@ uint8 VISIBLE_PERSON=0
 uint8 REGISTERED_PERSON=1
 uint8 target_mode
 string target_person_id
+# Desired distance in metres, at least 0.2. Zero uses the configured default.
 float32 desired_distance_m
 ---
 bool success

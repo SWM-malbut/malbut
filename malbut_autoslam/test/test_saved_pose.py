@@ -101,20 +101,11 @@ def test_action_saves_pose_before_teardown_and_keeps_map_on_warning(
         saved_map, monkeypatch, pose_error):
     """Pose handoff failure is explicit without turning a saved map into failure."""
     module = 'malbut_autoslam.autoslam_node.'
-    monkeypatch.setattr(module + 'map_base', lambda *_args: saved_map.with_suffix(''))
-    monkeypatch.setattr(module + 'map_grid_from_message', lambda _message: object())
     monkeypatch.setattr(module + 'map_statistics', lambda _grid: {
         'known_area_m2': 6.0, 'free_area_m2': 6.0})
-    monkeypatch.setattr(module + 'find_frontiers', lambda *_args, **_kwargs: [])
     node = Mock()
     node.lock = RLock()
-    node.settings = {
-        'map_directory': str(saved_map.parent), 'ready_timeout_s': 3.0,
-        'exploration_period_s': 1.0, 'completion_delay_s': 0.0,
-        'minimum_frontier_cells': 8, 'robot_clearance_m': 0.3,
-        'minimum_goal_distance_m': 0.45,
-    }
-    node._snapshot.return_value = (object(), (1.5, 2.0))
+    node.frontier_count = 0
     node._save.return_value = str(saved_map)
 
     def save_pose(map_yaml):
@@ -124,7 +115,9 @@ def test_action_saves_pose_before_teardown_and_keeps_map_on_warning(
         write_mapping_pose(map_yaml, 1.5, 2.0, 0.8)
 
     node._save_pose.side_effect = save_pose
-    node._explore.side_effect = lambda handle, result: AutoSlamNode._explore(node, handle, result)
+    node._explore.side_effect = lambda handle, result: AutoSlamNode._finish_mapping(
+        node, handle, result, saved_map.with_suffix(''),
+        'No remaining reachable frontiers', object())
     handle = Mock(is_cancel_requested=False)
     handle.request.map_name = 'home'
     result = AutoSlamNode._execute(node, handle)

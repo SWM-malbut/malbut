@@ -3,6 +3,9 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
+from malbut_tracking.follow_policy import FollowSettings
 from malbut_tracking.geometry import Point2D
 from malbut_tracking.navigation import MotionMode, Nav2MotionClient
 from malbut_tracking.person_follower_node import (
@@ -10,6 +13,26 @@ from malbut_tracking.person_follower_node import (
     PersonFollowerNode,
 )
 from tf2_ros import TransformException
+
+
+def test_goal_distance_accepts_minimum_and_retains_zero_as_default():
+    """Validate explicit close goals while preserving the omitted-distance default."""
+    defaults = FollowSettings(
+        desired_distance_m=1.0, minimum_distance_m=0.2, distance_tolerance_m=0.1,
+        observation_loss_debounce_s=0.75,
+    )
+    follower = SimpleNamespace(_default_settings=lambda: defaults)
+    for requested, expected in ((0.2, 0.2), (0.75, 0.75), (1.0, 1.0), (0.0, 1.0)):
+        actual = PersonFollowerNode._settings_for_goal(
+            follower, SimpleNamespace(desired_distance_m=requested),
+        )
+        assert actual.desired_distance_m == expected
+        assert actual.distance_tolerance_m == 0.1
+    for requested in (0.19, -1.0, float('nan'), float('inf')):
+        with pytest.raises(ValueError):
+            PersonFollowerNode._settings_for_goal(
+                follower, SimpleNamespace(desired_distance_m=requested),
+            )
 
 
 def test_nav2_feedback_forwards_only_the_current_goal():
@@ -98,8 +121,8 @@ def test_coalesced_observation_retries_when_robot_tf_is_temporarily_missing():
     follower._apply_tracking_motion.assert_not_called()
 
 
-def test_nav2_distance_feedback_updates_the_dynamic_speed_cap():
-    """Feedback events replace the old timer's periodic speed update."""
+def test_nav2_distance_feedback_does_not_reapply_an_application_speed_cap():
+    """Distance feedback tracks progress without throttling the controller."""
     follower = SimpleNamespace(
         _remaining_travel_distance_m=0.0,
         _state=FollowState.TRACKING,
@@ -113,7 +136,22 @@ def test_nav2_distance_feedback_updates_the_dynamic_speed_cap():
     )
 
     assert follower._remaining_travel_distance_m == 1.25
-    follower._publish_speed_limit.assert_called_once_with()
+    follower._publish_speed_limit.assert_not_called()
+
+
+def test_release_follow_speed_limit_restores_nav2_configured_limits():
+    """Zero is Nav2's cap-reset value, not a custom fixed robot speed."""
+    from builtin_interfaces.msg import Time
+    follower = SimpleNamespace(
+        _speed_publisher=Mock(),
+        get_clock=lambda: SimpleNamespace(
+            now=lambda: SimpleNamespace(to_msg=lambda: Time(sec=20)),
+        ),
+    )
+    PersonFollowerNode._reset_speed_limit(follower)
+    message = follower._speed_publisher.publish.call_args.args[0]
+    assert message.speed_limit == 0.0
+    assert not message.percentage
 
 
 def test_waiting_for_first_person_does_not_start_blind_search():
@@ -122,7 +160,7 @@ def test_waiting_for_first_person_does_not_start_blind_search():
         _loss_timer=Mock(),
         _active_goal=object(),
         _settings=SimpleNamespace(observation_loss_debounce_s=0.75),
-        _last_seen_s=None,
+        _last_target_received_s=None,
         _state=FollowState.IDLE,
         _now_seconds=Mock(),
         _begin_loss_recovery=Mock(),
@@ -144,7 +182,7 @@ def test_loss_deadline_is_one_shot_and_starts_recovery_once():
         _loss_timer=Mock(),
         _active_goal=object(),
         _settings=SimpleNamespace(observation_loss_debounce_s=0.75),
-        _last_seen_s=4.0,
+        _last_target_received_s=4.0,
         _state=FollowState.TRACKING,
         _now_seconds=Mock(return_value=5.0),
         _begin_loss_recovery=Mock(),
@@ -165,7 +203,7 @@ def test_loss_deadline_is_one_shot_and_starts_recovery_once():
     follower._publish_feedback.assert_called_once_with()
 
 
-def test_cancel_guard_finishes_only_the_requested_active_goal():
+def test_cancel_guard_starts_stopping_only_the_requested_active_goal():
     """The cancel event replaces polling ``is_cancel_requested``."""
     active_goal = object()
     follower = SimpleNamespace(
@@ -176,7 +214,7 @@ def test_cancel_guard_finishes_only_the_requested_active_goal():
 
     PersonFollowerNode._on_cancel_guard(follower)
 
-    assert follower._cancel_requested_goal is None
+    assert follower._cancel_requested_goal is active_goal
     follower._cancel_follow_action.assert_called_once_with(
         'follow action canceled'
     )

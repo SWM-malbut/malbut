@@ -12,7 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from malbut_bringup.web_panel import (
-    image_jpeg, PanelData, PanelServer, RosBridge, validate_command,
+    image_jpeg, mission_arguments, PanelData, PanelServer, RosBridge, validate_command,
 )
 
 
@@ -54,6 +54,20 @@ def test_valid_commands_are_not_launched_by_validation():
     assert validate_command({'command': 'bringup_stop'})
 
 
+def test_follow_distance_minimum_matches_the_web_input():
+    """The web request and displayed input both allow 0.2 m, not less."""
+    payload = _command('follow_person', {
+        'target_mode': 0, 'target_person_id': '', 'desired_distance_m': 0.2,
+    })
+    assert validate_command(payload) == payload
+    for distance in (0.19, 0.0, -1.0, float('nan'), float('inf')):
+        payload['arguments']['desired_distance_m'] = distance
+        with pytest.raises(ValueError, match='at least 0.2 m'):
+            validate_command(payload)
+    page = Path(__file__).parents[1] / 'malbut_bringup/web_panel.html'
+    assert 'id="distance" type="number" min="0.2"' in page.read_text()
+
+
 def test_history_and_pending_requests_are_bounded():
     """Never grow history indefinitely or forget outstanding requests."""
     data = PanelData()
@@ -66,6 +80,16 @@ def test_history_and_pending_requests_are_bounded():
     with pytest.raises(ValueError, match='outstanding'):
         data.register(_command())
     assert len(data.requests) <= 32
+
+
+def test_cloud_map_palette_is_explicit_and_lan_default_is_unchanged(monkeypatch):
+    """Only callers opting into the cloud map change the cache's display mode."""
+    cache = Mock()
+    monkeypatch.setattr('malbut_bringup.web_panel.MapCache', cache)
+    PanelData()
+    cache.assert_called_with(palette='costmap')
+    PanelData(map_palette='map')
+    cache.assert_called_with(palette='map')
 
 
 def test_frame_encoded_only_when_requested_and_once_per_frame(monkeypatch):
@@ -235,7 +259,35 @@ def test_autoslam_uses_manager_when_available():
     bridge.clients['autoslam'].send_goal_async.assert_not_called()
 
 
-def test_runtime_start_reuses_ready_hardware_and_rejects_other_bringup():
+def test_navigation_arguments_use_public_goal_without_arbitrary_behavior_tree():
+    """Translate finite map coordinates, leaving Nav2's default behavior intact."""
+    goal = mission_arguments('navigate_to_pose', {'x': 1, 'y': -2, 'yaw': 0})
+    assert goal['pose']['header'] == {'frame_id': 'map'}
+    assert goal['pose']['pose']['position'] == {'x': 1.0, 'y': -2.0, 'z': 0.0}
+    assert goal['pose']['pose']['orientation']['w'] == 1.0
+    assert goal['behavior_tree'] == ''
+
+
+def test_navigation_requires_fresh_pose_then_uses_manager():
+    """No direct Nav2 bypass exists when map/pose or the manager is unavailable."""
+    bridge, _ = _bridge(manager_ready=True)
+    command = _command('navigate_to_pose', {'x': 1, 'y': -2, 'yaw': 0})
+    request_id = bridge.submit(command)
+    bridge._drain()
+    assert bridge.data.requests[request_id]['state'] == 'ERROR'
+    bridge.clients['manager'].send_goal_async.assert_not_called()
+    bridge.data.map_snapshot = Mock(return_value={'active': True, 'frame_id': 'map'})
+    bridge._robot_pose = Mock(return_value={'x': 0, 'y': 0, 'yaw': 0})
+    request_id = bridge.submit(command)
+    bridge._drain()
+    assert bridge.data.requests[request_id]['state'] == 'RUNNING'
+    goal = bridge.clients['manager'].send_goal_async.call_args.args[0]
+    assert goal.capability_id == 'navigate_to_pose'
+    assert json.loads(goal.arguments_yaml)['pose']['header']['frame_id'] == 'map'
+    bridge.clients['autoslam'].send_goal_async.assert_not_called()
+
+
+def test_runtime_start_reuses_ready_hardware_and_rejects_other_bringup(monkeypatch):
     """Never launch another driver set over existing scan/odometry publishers."""
     bridge, _ = _bridge()
     bridge.runtime = Mock()
@@ -245,6 +297,11 @@ def test_runtime_start_reuses_ready_hardware_and_rejects_other_bringup():
     bridge.runtime.start.assert_called_once_with('mapping', map_id=None, start_hardware=False)
     bridge.node.get_node_names_and_namespaces.return_value += [('controller_server', '/')]
     with pytest.raises(ValueError, match='Stop existing'):
+        bridge._start_runtime({'mode': 'mapping'})
+    bridge.runtime.start.assert_called_once()
+    monkeypatch.setenv('HOMECAM_BACKEND_URL', 'https://robot.example.com')
+    bridge.node.get_node_names_and_namespaces.return_value = [('homecam_media_agent', '/')]
+    with pytest.raises(ValueError, match='homecam_media_agent'):
         bridge._start_runtime({'mode': 'mapping'})
     bridge.runtime.start.assert_called_once()
     bridge.node.get_node_names_and_namespaces.return_value = []
