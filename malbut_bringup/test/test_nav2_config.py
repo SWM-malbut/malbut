@@ -82,7 +82,7 @@ def test_nav2_projects_depth_locally_without_cloud_subscriptions(config):
             expected.insert(0, 'static_layer')
         assert costmap['plugins'] == expected
         depth = costmap['depth_voxel_layer']
-        assert depth['plugin'] == 'malbut_depth_costmap::DepthVoxelLayer'
+        assert depth['plugin'] == 'malbut_bringup::DepthVoxelLayer'
         assert depth['observation_sources'] == ''
         assert depth['depth_topic'] == '/depth_cam/depth0/image_raw'
         assert depth['camera_info_topic'] == '/depth_cam/depth0/camera_info'

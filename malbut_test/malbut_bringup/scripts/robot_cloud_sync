@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Run the Bringup robot_cloud_sync entrypoint."""
+
+from malbut_bringup.cloud_sync import main
+
+
+if __name__ == '__main__':
+    main()

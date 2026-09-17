@@ -99,7 +99,7 @@ Nav2의 Depth 구독을 제거한 비교에서는 약 4분간 TF 누락이 없�
 이 검사에서 재현되지 않았다. 따라서 이번 대응은 TF 패키지나 JetPack·Ubuntu
 업그레이드가 아니라 **Nav2의 대용량 점군 수신 경로 제거**다.
 
-기본 설정은 [malbut_depth_costmap](../malbut_depth_costmap/README.md)의
+기본 설정은 Bringup 내부 [depth_costmap](depth_costmap/README.md)의
 `DepthVoxelLayer`를 Local/Global costmap에 사용한다. 각 costmap은
 `/depth_cam/depth0/image_raw`와 `/depth_cam/depth0/camera_info`를 받고,
 공식 `depth_image_proc` 변환으로 PointCloud2를 **자기 프로세스 안에서만** 만든다.

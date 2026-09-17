@@ -166,7 +166,7 @@ local_costmap:
           obstacle_min_range: 0.0
       # Reuse Nav2 voxel marking/clearing, but build XYZ from depth in-process.
       depth_voxel_layer:
-        plugin: "malbut_depth_costmap::DepthVoxelLayer"
+        plugin: "malbut_bringup::DepthVoxelLayer"
         enabled: True
         publish_voxel_map: False
         observation_sources: ""
@@ -228,7 +228,7 @@ global_costmap:
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
       depth_voxel_layer:
-        plugin: "malbut_depth_costmap::DepthVoxelLayer"
+        plugin: "malbut_bringup::DepthVoxelLayer"
         enabled: True
         publish_voxel_map: False
         observation_sources: ""

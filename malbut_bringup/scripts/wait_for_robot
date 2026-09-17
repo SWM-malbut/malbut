@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Run the Bringup wait_for_robot entrypoint."""
+
+from malbut_bringup.readiness import main
+
+
+if __name__ == '__main__':
+    main()

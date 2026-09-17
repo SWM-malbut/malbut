@@ -26,7 +26,6 @@ pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Br
 │       ├── malbut_tracking/
 │       ├── malbut_patrol/
 │       ├── malbut_autoslam/
-│       ├── malbut_depth_costmap/                # Depth 영상 → Nav2 내부 점군
 │       ├── homecam_agent/                     # 실제 카메라 → AWS KVS
 │       ├── homecam_web/                       # AWS에 배포하는 서비스 웹
 │       ├── build.sh
@@ -38,7 +37,7 @@ pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Br
 
 `COLCON_IGNORE`는 **삭제하지 않는다.** 기본 colcon 탐색에서 원본과 복사본의
 패키지 이름이 겹치지 않게 한다. `build.sh`는 홈캠 영상 노드와 필요한 KVS SDK,
-9개 로봇 패키지와 포함된 `yolo_ros`, `yolo_msgs`를 한 번에 빌드한다.
+8개 로봇 패키지와 포함된 `yolo_ros`, `yolo_msgs`를 한 번에 빌드한다.
 경로를 직접 지정하므로 제조사 패키지를 재빌드하거나
 제조사의 `install/setup.zsh`를 덮어쓰지 않는다. 패키지명은 그대로 유지한다.
 
@@ -97,6 +96,18 @@ Depth 영상을 받고 내부에서만 점군을 만드는 `DepthVoxelLayer`를 
 추가 의존성 `ros-humble-depth-image-proc`는 위 `rosdep install`에 포함된다.
 시스템 패키지 전체 업그레이드는 하지 않는다.
 재시작과 감지 범위 제한은 [Depth 점군 수신과 TF 지연](malbut_bringup/README.md#depth-점군-수신과-tf-지연)을 따른다.
+
+Depth 플러그인은 `malbut_bringup/depth_costmap` 안에 있으며 Bringup과 함께
+빌드된다. 별도 Depth 패키지나 실행 명령은 없다. 이전 분리 패키지 버전에서
+갱신할 때는 Bringup을 종료하고, 배포본을 완전히 교체한 뒤 아래 캐시만
+한 번 지우고 위 `build.sh`를 실행한다. 지도·모델·토큰은 지우지 않는다.
+
+```zsh
+rm -rf /home/ubuntu/ros2_ws/build/malbut_test/malbut_bringup \
+  /home/ubuntu/ros2_ws/install/malbut_test/malbut_bringup \
+  /home/ubuntu/ros2_ws/build/malbut_test/malbut_depth_costmap \
+  /home/ubuntu/ros2_ws/install/malbut_test/malbut_depth_costmap
+```
 
 새 터미널마다 위 제조사 환경을 설정한 다음
 `source ~/ros2_ws/install/malbut_test/local_setup.zsh`를 실행한다.
@@ -270,7 +281,7 @@ Nav2 공통 설정은 로봇에서 받은 파일을 `malbut_bringup/config/nav2_
   고정 각도 격자는 로봇 드라이버의 `bins` 설정으로 제공하며 별도 정규화 노드는 없다.
 - LiDAR는 Local/Global 모두 표준 2D ObstacleLayer 사용.
   스캔 토픽·관측 범위는 유지하며 LiDAR 전용 Voxel 저장·발행은 제거.
-- 두 costmap은 `malbut_depth_costmap::DepthVoxelLayer`로 Depth 영상을 받아
+- 두 costmap은 Bringup 내부 `malbut_bringup::DepthVoxelLayer`로 Depth 영상을 받아
   내부에서 PointCloud2로 변환한다. 원본 `/depth_cam/depth0/points` 구독은 없다.
   8.2MB 점군 수신으로 재현된 TF 지연 경로를 없애며 해상도는 줄이지 않는다.
   장애물 추가 5~20cm, 제거용 광선 -5~48cm의 높이 기준은 유지한다.
