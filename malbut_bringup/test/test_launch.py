@@ -364,6 +364,7 @@ def test_all_modes_include_speech_after_their_readiness_gate(
         'stt_library_path': speech_assets['stt_library_path'],
         'input_device': '2', 'output_device': '3', 'cpp_threads': '4',
         'input_has_aec': 'true', 'agent_provider': 'mock',
+        'control_server': {'navigation': 'manager', 'mapping': 'autoslam'}.get(mode, 'none'),
         'preflight_timeout_s': '55', 'peer_timeout_s': '12',
         'preflight_only': 'false', 'use_sim_time': 'false',
     }
@@ -387,7 +388,9 @@ def test_missing_speech_assets_fail_before_hardware(launch_module, speech_assets
         launch_module._setup(context)
 
 
-@pytest.mark.parametrize('check', ['speech_preflight', 'speech_peer_readiness'])
+@pytest.mark.parametrize('check', [
+    'speech_control_readiness', 'speech_preflight', 'speech_peer_readiness',
+])
 def test_parent_allows_successful_speech_checks_but_propagates_failure(launch_module, check):
     """Nested one-shot checks may exit 0; failures must return nonzero to the shell."""
     context = _context(launch_module, start_hardware='false', perception='false')

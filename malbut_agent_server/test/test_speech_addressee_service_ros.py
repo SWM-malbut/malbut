@@ -64,7 +64,7 @@ def test_service_duplicate_and_shutdown_progress_on_single_executor(monkeypatch,
         client = client_node.create_client(
             ClassifySpeechAddressee, ros_communication.ADDRESSEE_SERVICE,
         )
-        assert client.wait_for_service(timeout_sec=5)
+        spin_until(client.service_is_ready)
         request = ClassifySpeechAddressee.Request(
             utterance_id='uid', playback_id='pid', text='  원문\n',
         )
@@ -111,6 +111,65 @@ def test_service_duplicate_and_shutdown_progress_on_single_executor(monkeypatch,
             agent.destroy_node()
         if client_node is not None:
             client_node.destroy_node()
+        executor.shutdown(timeout_sec=0)
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+@pytest.mark.parametrize('failed', [False, True])
+def test_agent_startup_does_not_advertise_unusable_speech_inputs(monkeypatch, tmp_path, failed):
+    """Exercise actual DDS discovery while the real dialogue worker is blocked."""
+    entered, release = Event(), Event()
+    factory = RuntimeFactory()
+
+    def delayed_runtime():
+        entered.set()
+        assert release.wait(8)
+        if failed:
+            raise RuntimeError('test startup failure')
+        return factory()
+
+    monkeypatch.setattr('malbut_agent_server.manager_client.ManagerClient',
+                        lambda *_args, **_kwargs: SimpleNamespace(close=lambda: None))
+    rclpy.init()
+    executor = SingleThreadedExecutor()
+    agent = probe = None
+    try:
+        agent = ros_communication.create_communication_node(
+            speech_db_path=str(tmp_path / 'receipts.sqlite3'),
+            dialogue_factory=delayed_runtime,
+        )
+        probe = Node('speech_startup_discovery_test')
+        executor.add_node(agent)
+        executor.add_node(probe)
+        client = probe.create_client(
+            ClassifySpeechAddressee, ros_communication.ADDRESSEE_SERVICE)
+        assert entered.wait(5)
+        for _ in range(10):
+            executor.spin_once(timeout_sec=0.02)
+        assert not client.service_is_ready()
+        assert probe.get_subscriptions_info_by_topic(ros_communication.TRANSCRIPT_TOPIC) == []
+        release.set()
+        deadline = time.monotonic() + 5
+        if failed:
+            with pytest.raises(RuntimeError, match='speech_dialogue_startup_failed'):
+                while time.monotonic() < deadline:
+                    executor.spin_once(timeout_sec=0.02)
+            assert not client.service_is_ready()
+            assert probe.get_subscriptions_info_by_topic(
+                ros_communication.TRANSCRIPT_TOPIC) == []
+        else:
+            while time.monotonic() < deadline and not client.service_is_ready():
+                executor.spin_once(timeout_sec=0.02)
+            assert client.service_is_ready()
+            assert agent.dialogue.ready
+            assert probe.get_subscriptions_info_by_topic(ros_communication.TRANSCRIPT_TOPIC)
+    finally:
+        release.set()
+        if agent is not None:
+            agent.destroy_node()
+        if probe is not None:
+            probe.destroy_node()
         executor.shutdown(timeout_sec=0)
         if rclpy.ok():
             rclpy.shutdown()

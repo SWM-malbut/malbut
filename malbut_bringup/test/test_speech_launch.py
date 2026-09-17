@@ -140,6 +140,41 @@ def test_scoped_include_captures_settings_before_parent_scope_restores(speech):
     assert evaluate_parameters(context, stt._Node__parameters)[1]['input_has_aec'] is True
 
 
+@pytest.mark.parametrize('server', ['manager', 'autoslam'])
+def test_robot_control_must_be_ready_before_audio_preflight(speech, server):
+    """Creating the manager process alone cannot start the speech pipeline."""
+    context = _context(speech, control_server=server)
+    actions = speech._setup(context)
+    control = _process(actions)
+    assert [perform_substitutions(context, part) for part in control.cmd][-4:] == [
+        '--wait-for-control', server, '--timeout-s', '30.0']
+    assert not any(isinstance(action, Node) for action in actions)
+    preflight = _exit(actions, context, control)
+    assert '--stt-model-path' in [
+        perform_substitutions(context, part) for part in _process(preflight).cmd]
+    assert _timeout(actions, context) == []
+    assert not any(isinstance(action, Node) for action in preflight)
+    peers = _exit(actions, context, _process(preflight))
+    assert [item.node_executable for item in peers if isinstance(item, Node)] == [
+        'agent_communication', 'tts_node']
+
+
+@pytest.mark.parametrize('outcome', ['failed', 'timeout', 'shutdown'])
+def test_unready_robot_control_never_starts_speech(speech, outcome):
+    """Failure, timeout and shutdown all close admission to the next stage."""
+    context = _context(speech, control_server='manager')
+    actions = speech._setup(context)
+    if outcome == 'shutdown':
+        context._set_is_shutdown(True)
+    else:
+        with pytest.raises(RuntimeError, match='failed' if outcome == 'failed' else 'timed out'):
+            if outcome == 'failed':
+                _exit(actions, context, _process(actions), returncode=2)
+            else:
+                _timeout(actions, context)
+    assert _exit(actions, context, _process(actions)) == []
+
+
 @pytest.mark.parametrize('name', ['stt_model_path', 'stt_library_path', 'python_executable'])
 def test_required_settings_fail_before_starting_processes(speech, name):
     """Empty runtime paths never silently select a development default."""
@@ -264,3 +299,25 @@ def test_real_launch_exit_status_and_preflight_only(speech, tmp_path, mode, expe
     assert 'agent_communication' not in result.stdout + result.stderr
     if mode == 'timeout':
         assert 'Speech preflight timed out' in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('control_code', [0, 2])
+def test_real_launch_runs_control_check_before_any_audio_check(tmp_path, control_code):
+    """Run the launch event loop; a rejected controller never opens audio."""
+    events = tmp_path / 'events'
+    wrapper = tmp_path / 'python'
+    wrapper.write_text(
+        '#!/usr/bin/python3\nimport pathlib, sys\n'
+        'control = "--wait-for-control" in sys.argv\n'
+        f'with pathlib.Path({str(events)!r}).open("a") as stream:\n'
+        '    stream.write("control\\n" if control else "preflight\\n")\n'
+        f'sys.exit({control_code} if control else 0)\n')
+    wrapper.chmod(0o755)
+    result = subprocess.run([
+        'ros2', 'launch', str(ROOT / 'malbut_bringup/launch/speech.launch.py'),
+        'stt_model_path:=/dummy/model.bin', 'stt_library_path:=/dummy/library.so',
+        f'python_executable:={wrapper}', 'preflight_only:=true', 'control_server:=manager',
+    ], capture_output=True, text=True, timeout=15)
+    assert result.returncode == (0 if control_code == 0 else 1), result.stdout + result.stderr
+    assert events.read_text().splitlines() == (
+        ['control', 'preflight'] if control_code == 0 else ['control'])

@@ -15,7 +15,7 @@ def runtime(monkeypatch, tmp_path):
     model = tmp_path / 'local-model'
     model.mkdir()
     state = SimpleNamespace(
-        ok=False, calls={}, logs=[], published=[], closed=[], failure=None,
+        ok=False, calls={}, logs=[], published=[], statuses=[], closed=[], failure=None,
         cleanup_failure=False, native_cleanup_failure=False,
         shutdown_before_publish=False, callbacks={},
         parameters={'wake_model_path': str(model)},
@@ -115,6 +115,9 @@ def runtime(monkeypatch, tmp_path):
 
         def create_publisher(self, message_type, topic, qos):
             state.calls.setdefault('publishers', {})[topic] = (message_type, qos)
+            if topic == '/malbut/speech/status':
+                return SimpleNamespace(publish=lambda msg: state.statuses.append(
+                    (msg.data, state.pipeline.phase)))
             return SimpleNamespace(publish=lambda msg: state.published.append((topic, msg)))
 
         def create_subscription(self, message_type, topic, callback, qos):
@@ -180,6 +183,8 @@ def runtime(monkeypatch, tmp_path):
             self.phase = 'opening_microphone'
             fail(self.phase)
             state.pipeline_args['recorder_factory']()
+            self.phase = 'starting_microphone'
+            fail(self.phase)
             self.phase = 'running'
             state.pipeline_args['report']('waiting_for_wake')
 
@@ -240,8 +245,10 @@ def runtime(monkeypatch, tmp_path):
             QoSProfile=SimpleNamespace,
             HistoryPolicy=SimpleNamespace(KEEP_LAST='keep_last'),
             ReliabilityPolicy=SimpleNamespace(RELIABLE='reliable'),
-            DurabilityPolicy=SimpleNamespace(VOLATILE='volatile'),
+            DurabilityPolicy=SimpleNamespace(
+                VOLATILE='volatile', TRANSIENT_LOCAL='transient_local'),
         ),
+        'std_msgs.msg': SimpleNamespace(String=SimpleNamespace),
         'malbut_interfaces.msg': state.messages,
         'malbut_interfaces.srv': state.services,
         'pvporcupine': None,
@@ -330,12 +337,33 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
         'utterance_id': 'u2', 'playback_id': 'p1', 'text': '로봇에게 한 말',
     }
     assert ('info', 'playback_control_accepted:pause') in runtime.logs
-    for _, qos in [*runtime.calls['publishers'].values(),
+    for _, qos in [runtime.calls['publishers']['/malbut/speech/transcript'],
                    *runtime.calls['subscriptions'].values()]:
         assert vars(qos) == {
             'history': 'keep_last', 'depth': 10,
             'reliability': 'reliable', 'durability': 'volatile',
         }
+
+
+def test_readiness_is_latched_only_after_microphone_start(runtime):
+    """Web readiness must represent successful capture startup, not just a publisher."""
+    assert main() == 0
+    assert runtime.statuses == [('ready', 'running')]
+    _, qos = runtime.calls['publishers']['/malbut/speech/status']
+    assert vars(qos) == {
+        'history': 'keep_last', 'depth': 1,
+        'reliability': 'reliable', 'durability': 'transient_local',
+    }
+
+
+@pytest.mark.parametrize('phase', [
+    'initializing_stt', 'opening_microphone', 'starting_microphone',
+])
+def test_failed_microphone_or_model_never_reports_ready(runtime, phase):
+    """A loaded node name or DDS publisher alone cannot satisfy Bringup readiness."""
+    runtime.failure = phase
+    assert main() == 1
+    assert runtime.statuses == []
 
 
 def test_explicit_command_model_and_processed_microphone(runtime, tmp_path):

@@ -258,6 +258,7 @@ class RosBridge:
             'manage_bringup', True).value else None)
         self.runtime_message = ''
         self.startup_status = {}
+        self.speech_ready = False
         self.stopping_runtime = None
         self.action_status = {}
         self.cancel_request = CancelGoal.Request
@@ -287,6 +288,9 @@ class RosBridge:
                                           self._tracking, 1),
             self.node.create_subscription(
                 String, '/malbut/bringup/status', self._bringup_status,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
+            self.node.create_subscription(
+                String, '/malbut/speech/status', self._speech_status,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
             self.node.create_subscription(
                 SystemState, '/malbut/state', self._system,
@@ -331,18 +335,31 @@ class RosBridge:
             'message': 'Embedded viewer: start a standalone web panel to control Bringup',
         })
         status['enabled'] = self.runtime is not None
-        status['ready'] = bool(self.data.servers[
+        server_ready = bool(self.data.servers[
             'autoslam' if status['mode'] == 'mapping' else 'manager'])
+        if self.runtime:
+            if status['state'] not in ('STARTING', 'RUNNING'):
+                self.speech_ready = False
+            status['ready'] = (status['state'] == 'RUNNING'
+                               and server_ready and self.speech_ready
+                               and bool(self.node.count_publishers('/malbut/speech/status')))
+        else:
+            status['ready'] = server_ready
         status['waiting'] = []
         if (self.runtime and status['state'] == 'RUNNING'
                 and not status['ready']):
-            status['waiting'] = self.startup_status.get('missing', [])
-            status['message'] = ('필수 입력 준비 대기' if status['waiting']
-                                 else 'Action 서버 준비 대기')
+            if server_ready:
+                status['waiting'] = ['speech: microphone startup']
+                status['message'] = '음성 모델·마이크 준비 대기'
+            else:
+                status['waiting'] = self.startup_status.get('missing', [])
+                status['message'] = ('필수 입력 준비 대기' if status['waiting']
+                                     else 'Action 서버 준비 대기')
         if self.runtime_message:
             status['message'] = self.runtime_message
         if self.stopping_runtime is not None:
-            status.update(state='STOPPING', message='Waiting for Action cancellation to finish')
+            status.update(state='STOPPING', ready=False,
+                          message='Waiting for Action cancellation to finish')
         with self.data.lock:
             self.data.runtime = status
 
@@ -360,6 +377,11 @@ class RosBridge:
                 self.startup_status = status
         except (ValueError, TypeError):
             pass
+
+    def _speech_status(self, message):
+        if (self.runtime and self.stopping_runtime is None
+                and self.runtime.snapshot()['state'] in ('STARTING', 'RUNNING')):
+            self.speech_ready = message.data == 'ready'
 
     def _robot_pose(self):
         from rclpy.time import Time
@@ -397,11 +419,12 @@ class RosBridge:
             'amcl', 'map_server', 'slam_toolbox', 'controller_server', 'planner_server',
             'bt_navigator', 'nav2_container', 'system_manager', 'autoslam',
             'person_follower', 'person_localizer', 'person_reidentifier', 'yolo_node',
+            'malbut_stt', 'malbut_tts', 'malbut_agent_communication',
         })
         if os.environ.get('HOMECAM_BACKEND_URL', '').strip():
             conflicts.update(names.intersection({'homecam_media_agent'}))
         if conflicts or self.node.count_publishers(self.topics['map_topic']):
-            raise ValueError('Stop existing mapping/navigation/perception/media first: '
+            raise ValueError('Stop existing mapping/navigation/perception/media/speech first: '
                              + ', '.join(sorted(conflicts)))
         scan = self.node.count_publishers('/scan_raw')
         odom = self.node.count_publishers('/odom')
@@ -417,6 +440,7 @@ class RosBridge:
         self.tf_buffer.clear()
         self.action_status.clear()
         self.startup_status = {}
+        self.speech_ready = False
         with self.data.lock:
             self.data.map_cache.clear()
             self.data.map_active = False
@@ -430,6 +454,7 @@ class RosBridge:
             raise ValueError('This panel has no running Bringup to stop')
         if self.stopping_runtime is not None:
             return
+        self.speech_ready = False
         self.cancel_owned()
         mode = self.runtime.snapshot()['mode']
         names = RUNTIME_ACTIONS.get(mode, ())

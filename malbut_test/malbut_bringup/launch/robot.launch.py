@@ -72,6 +72,7 @@ def _setup(context):
             'cpp_threads': value('stt_cpp_threads'),
             'input_has_aec': value('speech_input_has_aec'),
             'agent_provider': value('speech_agent_provider'),
+            'control_server': 'manager' if navigating else 'autoslam' if mapping else 'none',
             'preflight_timeout_s': value('speech_preflight_timeout_s'),
             'peer_timeout_s': value('speech_peer_timeout_s'),
             'preflight_only': 'false',

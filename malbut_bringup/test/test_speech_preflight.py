@@ -20,7 +20,8 @@ def checks(monkeypatch):
             raise RuntimeError('secret credential and private microphone content')
         return {'bridge_abi': 2, 'cuda_execution_verified': False}
 
-    for name in ('check_interfaces', 'check_agent', 'check_tts', 'wait_for_peers'):
+    for name in ('check_interfaces', 'check_agent', 'check_tts', 'wait_for_peers',
+                 'wait_for_control'):
         monkeypatch.setattr(preflight, name, lambda *args, _name=name, **kwargs:
                             check(_name, *args, **kwargs))
     monkeypatch.setattr('malbut_stt.preflight.check_stt',
@@ -80,6 +81,17 @@ def test_peer_mode_never_opens_microphone_or_audio_output(checks, capsys):
     assert preflight.main(['--wait-for-peers', '--timeout-s', '2']) == 0
     assert checks.calls == [('check_interfaces', (), {}), ('wait_for_peers', (2.0,), {})]
     assert json.loads(capsys.readouterr().out) == {'event': 'speech_peers_ready'}
+
+
+@pytest.mark.parametrize('server', ['manager', 'autoslam'])
+def test_control_mode_never_opens_microphone_or_audio_output(checks, capsys, server):
+    assert preflight.main(['--wait-for-control', server, '--timeout-s', '2']) == 0
+    assert checks.calls == [
+        ('check_interfaces', (), {}), ('wait_for_control', (server, 2.0), {}),
+    ]
+    assert json.loads(capsys.readouterr().out) == {
+        'event': 'speech_control_ready', 'server': server,
+    }
 
 
 def test_peer_mode_failure_is_sanitized(checks, capsys):

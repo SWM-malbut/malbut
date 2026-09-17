@@ -24,6 +24,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         from malbut_interfaces.srv import (
             ClassifySpeechAddressee, ControlSpeechPlayback,
         )
+        from std_msgs.msg import String
     except ImportError:
         print('STT requires sourced ROS 2 and built malbut_interfaces.', file=sys.stderr)
         return 1
@@ -333,6 +334,13 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             SpeechPlaybackStatus, '/malbut/speech/playback_status', playback_status, qos,
         )
         pipeline.start()
+        if rclpy.ok():
+            ready_publisher = node.create_publisher(String, '/malbut/speech/status', QoSProfile(
+                history=HistoryPolicy.KEEP_LAST, depth=1,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            ))
+            ready_publisher.publish(String(data='ready'))
         while rclpy.ok():
             pipeline.poll()
             poll_requests()

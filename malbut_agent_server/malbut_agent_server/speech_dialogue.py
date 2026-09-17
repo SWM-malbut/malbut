@@ -88,9 +88,16 @@ class DialogueWorker:
         self._outstanding = 0
         self._closing = False
         self._stopped = False
+        self._ready = False
         self._startup_error: Optional[str] = None
         self._thread = Thread(target=self._run, name='malbut-speech-dialogue')
         self._thread.start()
+
+    @property
+    def ready(self) -> bool:
+        """Report usable runtime and session initialization, not thread creation."""
+        with self._condition:
+            return self._ready and not self._closing and not self._stopped
 
     @property
     def startup_error(self) -> Optional[str]:
@@ -220,6 +227,8 @@ class DialogueWorker:
                     start_memory()
                 session = runtime.conversation_store.create(self._user_id)
                 conversation_id = session.conversation_id
+                with self._condition:
+                    self._ready = True
             except Exception as error:
                 with self._condition:
                     self._startup_error = type(error).__name__

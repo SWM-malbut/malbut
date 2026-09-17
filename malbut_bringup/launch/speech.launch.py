@@ -40,7 +40,13 @@ def _setup(context):
     agent_provider = value('agent_provider')
     preflight_only = value('preflight_only') == 'true'
     input_has_aec = value('input_has_aec') == 'true'
+    control_server = value('control_server')
     command = [python, '-m', 'malbut_bringup.speech_preflight']
+    control = ExecuteProcess(
+        cmd=[*command, '--wait-for-control', control_server,
+             '--timeout-s', str(timeouts['peer_timeout_s'])],
+        name='speech_control_readiness', output='screen',
+    ) if control_server != 'none' else None
     preflight = ExecuteProcess(
         cmd=[*command, '--stt-model-path', model, '--stt-library-path', library,
              '--input-device', str(input_device), '--output-device', str(output_device),
@@ -51,7 +57,7 @@ def _setup(context):
         cmd=[*command, '--wait-for-peers', '--timeout-s', str(timeouts['peer_timeout_s'])],
         name='speech_peer_readiness', output='screen',
     )
-    stage = 'preflight'
+    stage = 'control' if control else 'preflight'
     runtime_nodes = []
     stt = None
 
@@ -103,6 +109,15 @@ def _setup(context):
         stage = 'peers'
         return [agent, tts, peers, watchdog('peers', timeouts['peer_timeout_s'])]
 
+    def control_exited(event, launch_context):
+        nonlocal stage
+        if launch_context.is_shutdown or stage != 'control':
+            return []
+        if event.returncode != 0:
+            return fail('Speech robot control readiness failed')
+        stage = 'preflight'
+        return [preflight, watchdog('preflight', timeouts['preflight_timeout_s'])]
+
     def peers_exited(event, launch_context):
         nonlocal stage
         if launch_context.is_shutdown or stage != 'peers':
@@ -119,12 +134,16 @@ def _setup(context):
             return fail(f'Speech runtime child exited: {event.process_name}')
         return []
 
-    return [
+    registrations = [
         RegisterEventHandler(OnProcessExit(target_action=preflight, on_exit=preflight_exited)),
         RegisterEventHandler(OnProcessExit(target_action=peers, on_exit=peers_exited)),
         RegisterEventHandler(OnProcessExit(on_exit=child_exited)),
-        preflight, watchdog('preflight', timeouts['preflight_timeout_s']),
     ]
+    if control:
+        return [*registrations, RegisterEventHandler(OnProcessExit(
+            target_action=control, on_exit=control_exited)),
+            control, watchdog('control', timeouts['peer_timeout_s'])]
+    return [*registrations, preflight, watchdog('preflight', timeouts['preflight_timeout_s'])]
 
 
 def generate_launch_description():
@@ -135,10 +154,12 @@ def generate_launch_description():
         'input_has_aec': 'false', 'agent_provider': 'openai',
         'python_executable': sys.executable, 'preflight_only': 'false',
         'preflight_timeout_s': '120.0', 'peer_timeout_s': '30.0',
+        'control_server': 'none',
     }
     choices = {
         'input_has_aec': ['true', 'false'], 'preflight_only': ['true', 'false'],
         'agent_provider': ['openai', 'mock'],
+        'control_server': ['none', 'manager', 'autoslam'],
     }
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=default, choices=choices.get(name))

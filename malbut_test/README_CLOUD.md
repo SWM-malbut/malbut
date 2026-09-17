@@ -75,6 +75,9 @@ ros2 launch malbut_bringup cloud.launch.py
 
 - 웹의 **Bringup 준비**가 하드웨어·카메라·`homecam_media_agent`와 STT·Agent·TTS를 함께 켠다.
   기존 드라이버가 준비되어 있다면 중복 기동 없이 재사용한다.
+- 시작은 센서·주행 준비 → Manager 또는 AutoSLAM 서버 준비 → 음성 점검 →
+  Agent·TTS 준비 → STT 마이크 시작 순서다. 웹은 음성 준비까지 끝나야 준비 완료로
+  표시하며, 그전에는 `음성 모델·마이크 준비 대기`를 표시한다.
 - 지도 작성 모드도 카메라를 먼저 켜고 센서 준비 후 AutoSLAM 요청을 받는다.
   SLAM·Nav2 탐색은 AutoSLAM Goal 이후 시작한다. 저장 지도 주행 모드와 합치지 않는다.
 - **Bringup 종료**는 해당 Bringup이 켠 영상·음성 노드도 종료한다. 웹 연결은 남아 다시 준비할 수 있다.

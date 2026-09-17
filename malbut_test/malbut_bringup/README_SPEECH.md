@@ -60,7 +60,7 @@ source install/malbut_test/local_setup.zsh
 
 1. 고정 커밋의 깨끗한 whisper.cpp 소스와 CUDA 도구를 확인한 뒤 STT 브리지를
    `Release`, `GGML_CUDA=ON`, `GGML_METAL=OFF`, CUDA architecture `87`로 빌드한다.
-   빌드 대상은 `malbut_whisper`이고 네이티브 동시 빌드는 2개다.
+   빌드 대상은 `malbut_whisper`이고 `nproc`으로 가용 CPU 수를 확인해 병렬 빌드한다.
 2. 별도 음성 가상환경을 `--system-site-packages`로 생성하고 STT의
    `requirements-whisper-cpp.txt`와 TTS의 `requirements-api.txt`를 그 안에 설치한다.
 3. 적용본의 음성·인식·주행 ROS 패키지를 함께 colcon 빌드한다.
@@ -153,13 +153,22 @@ AEC 인자는 에코 제거 기능을 구현하거나 활성화하지 않는다.
 
 ## 시작 순서와 통과 의미
 
-1. **Preflight**: 생성된 ROS 음성 타입, Agent 설정, OpenAI SDK와 키 존재,
+1. **로봇 제어 준비**: 주행 모드에서는 Manager의 Action 서버와 BOOTING 이후 상태,
+   지도 작성 모드에서는 AutoSLAM Action 서버가 준비된 뒤 음성 준비를 시작한다.
+   준비 확인은 이동 Goal을 보내지 않는다. 단독 음성 실행에는 이 단계를 요구하지 않는다.
+2. **Preflight**: 생성된 ROS 음성 타입, Agent 설정, OpenAI SDK와 키 존재,
    출력 장치의 24 kHz mono float32 스트림, STT ABI 2 모델 로딩,
    마이크 16 kHz PCM 512 samples 읽기와 20 ms VAD 입력을 점검한다.
    출력에는 100 ms 무음만 쓰며, 입력을 전사·저장·전송하지 않는다.
-2. **Agent와 TTS**: 점검 프로세스가 성공 종료한 뒤 시작한다.
-3. **ROS 연결 확인**: 두 Service와 타입이 맞는 Topic의 발행자·구독자가
-   발견된 뒤 STT를 시작한다. 단순 프로세스 생성 시점을 준비 완료로 보지 않는다.
+3. **Agent와 TTS**: 점검 프로세스가 성공 종료한 뒤 시작한다. Agent는 대화 런타임과
+   DB 세션 초기화가 끝난 뒤 음성 입력 Topic·Service를 공개한다.
+4. **ROS 연결 확인**: 두 Service와 타입이 맞는 Topic의 발행자·구독자가
+   발견된 뒤 STT를 시작한다.
+5. **마이크 준비 완료**: STT 모델 로딩과 마이크 시작이 성공하면
+   `/malbut/speech/status`에 `ready`를 발행한다. 웹은 실행 중인 Bringup의 제어 서버와
+   이 준비 상태를 모두 확인해야 준비 완료로 표시한다. 단순 프로세스 생성이나
+   Action 서버 발견만으로 완료 처리하지 않는다. 기존 Agent·STT·TTS가 실행 중이면
+   웹의 새 Bringup 시작은 중복 실행 오류로 거부한다.
 
 `speech_preflight_passed`, `speech_peers_ready` 순서로 통과 로그를 확인한다.
 점검 실패·제한시간 초과·실행 중 음성 노드 종료 시 통합 Bringup 전체를 실패 코드로
@@ -173,8 +182,8 @@ Preflight는 **유료 API 요청을 보내지 않는다**. 키의 유효성·API
 실제 음성 합성은 검증하지 않는다. 모델 로딩 시 GPU를 요청하지만 CUDA에서 실제
 추론했음을 확인하지 않는다. 성공 출력에도 `cuda_execution_verified`,
 `api_request_verified`, `transcription_verified`를 `false`로 남긴다.
-ROS 연결 확인은 endpoint 발견이며 Agent 대화 worker의 DB 초기화나 LLM 응답 성공의
-증거가 아니다. 대화 worker 초기화가 실패하면 Agent는 종료 코드 2로 끝나고 launch가
+ROS 연결 확인은 초기화를 마친 Agent의 endpoint 발견이며 LLM 응답 성공의 증거는 아니다.
+대화 worker 초기화가 실패하면 Agent는 종료 코드 2로 끝나고 launch가
 전체 구성을 종료한다. 점검 성공 이후의 장치 분리나 네트워크 장애도 별도 실행 중 오류다.
 
 ## 음성만 진단하기
