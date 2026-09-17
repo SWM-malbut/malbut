@@ -184,22 +184,33 @@ def test_mapping_prepares_camera_before_exposing_idle_autoslam(launch_module):
         _readiness_exit(actions, context, returncode=1)
 
 
-@pytest.mark.parametrize('mode', ['mapping', 'navigation'])
-def test_cloud_bringup_includes_one_media_sender_on_real_topics(launch_module, mode):
-    """The bridge stays separate; media follows either Bringup mode's lifetime."""
+@pytest.mark.parametrize('mode', ['sensors', 'mapping', 'navigation'])
+@pytest.mark.parametrize('enabled', [False, True])
+def test_cloud_bringup_requires_explicit_media_opt_in(launch_module, mode, enabled):
+    """Keep cloud control configured while omitting the sender by default."""
+    options = {'homecam_media': 'true'} if enabled else {}
     context = _context(launch_module, mode=mode, start_hardware='false',
                        start_navigation='false', rgb_topic='/camera/color',
-                       camera_info_topic='/camera/info', odom_topic='/robot/odom')
+                       camera_info_topic='/camera/info', odom_topic='/robot/odom', **options)
     context.environment['HOMECAM_BACKEND_URL'] = 'https://robot.example.com'
     context.environment['HOMECAM_DEVICE_ID'] = 'robot-1'
+    package_share = launch_module.get_package_share_directory
+
+    def resolve_package(name):
+        if name == 'homecam_media_agent' and not enabled:
+            pytest.fail('disabled media must not require its launch package')
+        return package_share(name)
+
+    launch_module.get_package_share_directory = resolve_package
     options = [dict(item.launch_arguments)
                for item in _includes(launch_module._setup(context))]
     media = [item for item in options if 'backend_url' in item]
-    assert media == [{
+    assert media == ([{
         'backend_url': 'https://robot.example.com', 'device_id': 'robot-1',
         'image_topic': '/camera/color', 'camera_info_topic': '/camera/info',
         'odom_topic': '/robot/odom', 'use_sim_time': 'false',
-    }]
+    }] if enabled else [])
+    assert context.environment['HOMECAM_BACKEND_URL'] == 'https://robot.example.com'
     assert not any('auto_start' in item for item in options)
 
 

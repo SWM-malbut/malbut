@@ -110,11 +110,11 @@ def _setup(context):
             'autostart': 'true', 'use_teb': 'false',
         }
 
-    # Reuse the outbound bridge's configuration. Offline/LAN-only Bringup
-    # does not need cloud media; never put the device token in launch arguments.
+    # Cloud control does not require media capture. Start the sender only when
+    # explicitly enabled; never put the device token in launch arguments.
     backend_url = context.environment.get('HOMECAM_BACKEND_URL', '').strip()
     media_path = (_package_file('homecam_media_agent', 'launch/homecam_robot.launch.py')
-                  if backend_url else None)
+                  if value('homecam_media') == 'true' and backend_url else None)
     autoslam = None
     if mapping:
         autoslam = _include(_package_file(
@@ -276,6 +276,7 @@ def generate_launch_description():
         'pose_memory': 'true',
         'restore_pose': 'true',
         'web_panel': 'false',
+        'homecam_media': 'false',
         'perception': 'true',
         'speech': 'true',
         'speech_python_executable': str(speech_runtime / 'bin/python'),
@@ -328,7 +329,7 @@ def generate_launch_description():
         **{key: ['true', 'false'] for key in (
             'start_hardware', 'start_navigation', 'perception',
             'publish_debug_image', 'pose_memory',
-            'restore_pose', 'web_panel', 'speech', 'speech_input_has_aec',
+            'restore_pose', 'web_panel', 'homecam_media', 'speech', 'speech_input_has_aec',
         )},
         'speech_agent_provider': ['openai', 'mock'],
     }

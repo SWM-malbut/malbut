@@ -5,7 +5,7 @@ ROSOrin / Jetson Orin NX / ROS 2 Humble용 최상위 실행 패키지다.
 기존 `build.sh` 하나로 음성 런타임·STT CUDA 라이브러리와 ROS 패키지를 빌드하고,
 `robot.launch.py` 하나로 선택한 로봇 구성과 STT·Agent·TTS를 함께 실행한다.
 Gazebo와 시나리오는 이 실행에 포함하지 않는다.
-클라우드 연결이 설정되어 있으면 기존 홈캠 KVS 영상·음성 전송 노드를 함께 실행한다.
+홈캠 KVS 영상·음성 전송 노드는 기본 실행에서 제외한다(`homecam_media:=false`).
 추적·순찰 알고리즘과 시스템 관리자의 정책은 변경하지 않는다.
 
 음성은 기본 `speech:=true`이며 [음성 준비·점검 안내](README_SPEECH.md)를 따른다.
@@ -30,10 +30,12 @@ AutoSLAM 서버와 함께 음성 점검을 시작한다. 음성 점검 → Agent
 `navigation` 모드에서는 인식 파이프라인이 필요하다.
 
 실기기 적용본은 `build.sh` 하나로 홈캠 미디어까지 빌드한다.
-`cloud.launch.py`는 웹 명령·상태 연결만 유지하고, 웹이 시작하는 `robot.launch.py`가
-카메라와 영상 노드를 함께 관리한다. `HOMECAM_BACKEND_URL`이 설정된 모든 모드에서
-기존 `homecam_robot.launch.py`를 한 번 포함하며 토큰 파일 환경을 그대로 전달한다.
-별도 미디어 launch나 systemd 서비스를 중복 실행하지 않는다.
+`cloud.launch.py`는 웹 명령·상태 연결을 유지하고, 웹이 시작하는 `robot.launch.py`는
+카메라 드라이버와 STT·Agent·TTS를 실행한다. 클라우드 주소가 있어도 홈캠 미디어
+agent를 자동 시작하지 않으므로 기본 구성에서는 웹의 KVS 영상·음성 전송이 없다.
+직접 실행 시 `homecam_media:=true`와 `HOMECAM_BACKEND_URL`을 함께 설정해야
+기존 `homecam_robot.launch.py`를 포함한다. 별도 미디어 launch나 systemd 서비스를
+중복 실행하지 않는다.
 전체 절차는 [실기기 클라우드 연결](../malbut_test/README_CLOUD.md)을 따른다.
 
 공식 실행을 다음 두 부분으로 나누어 **각각 한 번만** include한다.
