@@ -122,17 +122,22 @@ ros2 launch malbut_bringup robot.launch.py
 
 ```zsh
 speech_python="${MALBUT_SPEECH_RUNTIME:-${XDG_CACHE_HOME:-$HOME/.cache}/malbut_speech/runtime}/bin/python"
-"$speech_python" -m malbut_stt.smoke --list-devices
-"$speech_python" -m malbut_tts.smoke --list-devices
+"$speech_python" -m sounddevice
 ros2 launch malbut_bringup robot.launch.py --show-args
 ```
 
-입력은 PvRecorder, 출력은 sounddevice의 번호이며 서로 다른 번호 체계다.
-기본값 `-1`은 각 라이브러리의 기본 장치다. 노트북의 장치 번호를 그대로 적용하지 않는다.
+입력과 출력 모두 위 sounddevice 목록의 장치 번호를 그대로 사용한다.
+입력 기본값은 `0`이며, 현재 로봇에서 확인한 `XFM-DP-V0.0.18: USB Audio`
+(ALSA `hw:0,0`)를 선택한다. 입력 채널이 있는 장치인지 확인한다.
+`-1`을 명시하면 시스템 기본 입력을 사용한다. 현장 점검에서 기본 입력은
+XFM이 아닌 Jetson card 3 쪽이었으므로 XFM을 쓸 때는 `0`을 사용한다.
+출력 기본값은 `-1`이다. 장비나 USB 구성을 바꾸면 목록을 다시 확인한다.
+기존 노트북 `malbut_stt.smoke --list-devices`는 PvRecorder 번호이므로
+ROS STT의 `device_index`에 사용하지 않는다.
 
 ```zsh
 ros2 launch malbut_bringup robot.launch.py \
-  speech_input_device:=-1 speech_output_device:=-1
+  speech_input_device:=0 speech_output_device:=-1
 ```
 
 | 음성 인자 | 기본값 / 역할 |
@@ -140,7 +145,8 @@ ros2 launch malbut_bringup robot.launch.py \
 | `speech` | `true`; `false`면 로봇 구성만 진단 |
 | `speech_python_executable` | 위 음성 환경의 `bin/python`; YOLO의 `python_executable`과 별개 |
 | `stt_model_path`, `stt_library_path` | 위 환경 변수 또는 기본 캐시 경로 |
-| `speech_input_device`, `speech_output_device` | 각각 `-1` |
+| `speech_input_device` | `0`; 현재 로봇의 XFM 마이크, sounddevice 장치 번호 |
+| `speech_output_device` | `-1`; 시스템 기본 출력 |
 | `stt_cpp_threads` | `6` CPU 보조 스레드 |
 | `speech_input_has_aec` | `false`; 검증된 에코 제거 입력일 때만 `true` |
 | `speech_agent_provider` | `openai`; `mock`으로 바꿔도 TTS는 OpenAI 사용 |
@@ -150,6 +156,33 @@ ros2 launch malbut_bringup robot.launch.py \
 AEC 인자는 에코 제거 기능을 구현하거나 활성화하지 않는다. STT의 나머지 endpoint
 설정은 `malbut_stt/config/jetson.yaml`을 사용한다. 다른 STT/TTS가 같은 마이크·출력
 장치를 사용 중이면 먼저 정리한다. 통합 Bringup과 별도 음성 launch를 중복 실행하지 않는다.
+
+## XFM 마이크 선점 해제
+
+현장 점검에서 `arecord -D plughw:0,0` 녹음으로 XFM의 실제 음성 입력을 확인했다.
+ALSA card 1의 `USB Audio Device`는 이번에 사용할 마이크가 아니다.
+제조사 `xf_mic_asr_offline/voice_control`이 `/dev/snd/pcmC0D0c`를 선점하면
+입력 번호가 `0`이어도 STT가 마이크를 열 수 없다. 로봇에서 먼저 확인한다:
+
+```bash
+sudo fuser -v /dev/snd/pcmC0D0c
+pgrep -af '[x]f_mic_asr_offline'
+```
+
+소유자가 아래 제조사 실행 파일인 경우 해당 음성 노드만 일회 종료한다:
+
+```bash
+pkill -TERM -f '^/home/ubuntu/ros2_ws/install/xf_mic_asr_offline/lib/xf_mic_asr_offline/voice_control([[:space:]]|$)'
+sudo fuser -v /dev/snd/pcmC0D0c
+```
+
+이 종료는 재부팅 후 자동실행을 해제하지 않는다. 영구 적용은 로봇의 제조사
+`startup_check`에서 `xf_mic_asr_offline/voice_control`을 실행하는 항목만
+제거하거나 비활성화한다. 해당 파일은 이 저장소에 포함되어 있지 않으므로,
+실제 등록부를 확인하고 수정 전 백업을 남긴다. `startup_check`의 다른 기능은 유지한다.
+재부팅 후 위 프로세스가 다시 실행되지 않고, STT 시작 전 XFM 캡처 장치가
+사용 가능한지 확인해야 자동실행 해제가 완료된 것이다.
+Bringup이 제조사 프로세스를 자동으로 종료하지는 않는다.
 
 ## 시작 순서와 통과 의미
 
@@ -203,11 +236,26 @@ ros2 launch malbut_bringup speech.launch.py \
   python_executable:="${MALBUT_SPEECH_RUNTIME:-$speech_cache/runtime}/bin/python" \
   stt_model_path:="${MALBUT_STT_MODEL_PATH:-$speech_cache/models/ggml-small.bin}" \
   stt_library_path:="${MALBUT_STT_LIBRARY_PATH:-${MALBUT_STT_BUILD_DIR:-$speech_cache/whisper-cpp-build}/bin/libmalbut_whisper.so}" \
-  input_device:=-1 output_device:=-1 preflight_only:=true
+  input_device:=0 output_device:=-1 preflight_only:=true
 ```
 
 이 진단은 성공 시 종료한다. 음성만 계속 시험하려면 같은 명령의 `preflight_only`를
 `false`로 바꾼다. 정상 로봇 운용에는 위 `robot.launch.py`를 사용한다.
+
+현재 로봇의 XFM으로 STT·Agent·TTS만 실행하는 명령은 다음과 같다.
+위 선점 해제를 마치고 ROS 및 빌드된 workspace 환경을 불러온 터미널에서 실행한다:
+
+```bash
+ros2 launch malbut_bringup speech.launch.py \
+  python_executable:=/home/ubuntu/.cache/malbut_speech/runtime/bin/python \
+  stt_model_path:=/home/ubuntu/.cache/malbut_speech/models/ggml-small.bin \
+  stt_library_path:=/home/ubuntu/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so \
+  agent_provider:=openai control_server:=none input_device:=0
+```
+
+실행 중 `ros2 param get /malbut_stt device_index`가 `0`인지 확인한다.
+기본값 변경은 재빌드 후 새 launch에 적용되며, 이미 실행 중인 STT의 parameter를
+자동으로 바꾸지는 않는다.
 
 ## 로봇에서 남겨야 할 시험 결과
 

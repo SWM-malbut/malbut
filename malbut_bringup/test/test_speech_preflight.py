@@ -29,6 +29,13 @@ def checks(monkeypatch):
     return state
 
 
+def test_default_preflight_checks_xfm_device_zero(checks):
+    assert preflight.main([]) == 0
+    assert checks.calls[-1] == (
+        'check_stt', ('', ''), {'device_index': 0, 'cpp_threads': 6},
+    )
+
+
 def test_success_checks_consumers_before_microphone_and_reports_proof_limits(checks, capsys):
     assert preflight.main([
         '--stt-model-path', '/model.bin', '--stt-library-path', '/bridge.so',

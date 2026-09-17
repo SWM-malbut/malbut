@@ -3,7 +3,7 @@
 import struct
 
 
-def check_stt(model_path, library_path, *, device_index=-1, cpp_threads=6):
+def check_stt(model_path, library_path, *, device_index=0, cpp_threads=6):
     """
     Load the local ABI 2 model and read one 16 kHz microphone frame.
 
@@ -12,7 +12,7 @@ def check_stt(model_path, library_path, *, device_index=-1, cpp_threads=6):
     """
     if type(device_index) is not int or device_index < -1:
         raise ValueError('device_index must be -1 or a microphone index')
-    from pvrecorder import PvRecorder
+    from malbut_stt.audio import SoundDeviceRecorder
     import webrtcvad
 
     from malbut_stt.cpp_transcription import CppWhisperTranscriber
@@ -21,7 +21,10 @@ def check_stt(model_path, library_path, *, device_index=-1, cpp_threads=6):
     with CppWhisperTranscriber(
         model_path, library_path, use_gpu=True, n_threads=cpp_threads,
     ) as transcriber:
-        recorder = PvRecorder(frame_length=512, device_index=device_index)
+        recorder = SoundDeviceRecorder(
+            frame_length=512,
+            device_index=device_index,
+        )
         started = False
         try:
             if recorder.sample_rate != 16000:

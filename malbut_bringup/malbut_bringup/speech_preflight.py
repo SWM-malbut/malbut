@@ -133,7 +133,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--stt-model-path', default='')
     parser.add_argument('--stt-library-path', default='')
-    parser.add_argument('--input-device', type=int, default=-1)
+    parser.add_argument('--input-device', type=int, default=0)
     parser.add_argument('--output-device', type=int, default=-1)
     parser.add_argument('--cpp-threads', type=int, default=6)
     parser.add_argument('--agent-provider', choices=('openai', 'mock'), default='openai')

@@ -1,5 +1,6 @@
 # Install only for the microphone/API runtime; pure tests and ROS build need none.
 faster-whisper==1.2.1
 pvrecorder>=1.2,<2
+sounddevice>=0.5,<0.6
 webrtcvad-wheels>=2.0.14,<3
 openai>=3.8,<4

@@ -114,3 +114,73 @@ class UtteranceCollector:
         """Associate an immutable audio snapshot with its last voiced frame."""
         return CaptureResult(status, bytes(self.audio), self.revision,
                              self.silent_frames * 0.02)
+
+class SoundDeviceRecorder:
+    """PvRecorder-compatible microphone wrapper using PortAudio/sounddevice."""
+
+    def __init__(self, frame_length=512, device_index=-1):
+        if type(frame_length) is not int or frame_length <= 0:
+            raise ValueError('frame_length must be a positive integer')
+        if type(device_index) is not int or device_index < -1:
+            raise ValueError('device_index must be -1 or a microphone index')
+
+        import sounddevice as sd
+
+        self._sd = sd
+        self._frame_length = frame_length
+        self._sample_rate = 16000
+
+        # Use the same device IDs as `python -m sounddevice`.
+        self._device = None if device_index == -1 else device_index
+
+        sd.check_input_settings(
+            device=self._device,
+            channels=1,
+            dtype='int16',
+            samplerate=self._sample_rate,
+        )
+
+        self._stream = sd.RawInputStream(
+            device=self._device,
+            samplerate=self._sample_rate,
+            channels=1,
+            dtype='int16',
+            blocksize=self._frame_length,
+        )
+
+    @property
+    def sample_rate(self):
+        return self._sample_rate
+
+    @property
+    def selected_device(self):
+        return self._sd.query_devices(self._device, 'input')['name']
+
+    def start(self):
+        self._stream.start()
+
+    def read(self):
+        import numpy as np
+
+        data, overflowed = self._stream.read(self._frame_length)
+        if overflowed:
+            raise RuntimeError('microphone input overflow')
+
+        samples = np.frombuffer(data, dtype='<i2')
+        if samples.size != self._frame_length:
+            raise RuntimeError('microphone returned an incomplete frame')
+
+        return samples.tolist()
+
+    def stop(self):
+        self._stream.stop()
+
+    def delete(self):
+        self._stream.close()
+
+    @staticmethod
+    def get_available_devices():
+        """List all device names so enumeration preserves PortAudio device IDs."""
+        import sounddevice as sd
+
+        return [info['name'] for info in sd.query_devices()]

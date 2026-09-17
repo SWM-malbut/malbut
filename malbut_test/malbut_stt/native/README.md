@@ -79,7 +79,13 @@ sentences eligible to finish after 1 second. A custom fallback of 1 second or
 less disables predecode and retains that shorter fallback behavior. Partial
 transcription continues at its existing 2-second interval.
 
-Choose `device_index` from the robot's PvRecorder device list. The Mac device
-index does not identify a Jetson microphone. `input_has_aec=false` remains the
+Choose `device_index` from `python -m sounddevice` in the robot speech runtime.
+The default is `0`: the current robot's `XFM-DP-V0.0.18: USB Audio`, ALSA
+`hw:0,0`. IDs are PortAudio device indices, not an input-only list position.
+An explicit `-1` selects the system default, which was a different Jetson input
+in the hardware check. Release the XFM from the manufacturer
+`xf_mic_asr_offline/voice_control` process and disable its entry in the external
+`startup_check` before use; see the [speech guide](../../malbut_bringup/README_SPEECH.md).
+Recheck device IDs when the hardware changes. `input_has_aec=false` remains the
 default; set it to true only for audio that already passed through a verified
 echo cancellation path. This profile does not install or enable AEC.

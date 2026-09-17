@@ -1,4 +1,4 @@
 # PCM, microphone and VAD dependencies. Build the native backend separately.
 numpy>=1.26,<3
-pvrecorder>=1.2,<2
+sounddevice>=0.5,<0.6
 webrtcvad-wheels>=2.0.14,<3

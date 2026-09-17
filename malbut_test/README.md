@@ -304,6 +304,10 @@ STT는 로컬 whisper.cpp CUDA, Agent와 TTS는 기본 OpenAI API를 사용한�
 기본 모델 경로는 `~/.cache/malbut_speech/models/ggml-small.bin`, CUDA 라이브러리는
 `~/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so`다.
 장치 선택은 `speech_input_device`, `speech_output_device`를 사용한다.
+입력 기본값은 `speech_input_device:=0`이며 현재 로봇의
+`XFM-DP-V0.0.18: USB Audio` (sounddevice index `0`, ALSA `hw:0,0`)를 선택한다.
+제조사 `xf_mic_asr_offline/voice_control`이 XFM을 선점하면 시작할 수 없으므로,
+먼저 음성 실행 안내의 선점 해제·`startup_check` 자동실행 해제 절차를 따른다.
 모델·경로 변경과 음성만 점검하는 하위 launch 사용법은
 [음성 실행 안내](malbut_bringup/README_SPEECH.md)에 정리했다.
 음성을 끄고 로봇 구성만 진단할 때는 `speech:=false`를 지정한다.

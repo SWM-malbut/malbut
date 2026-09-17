@@ -6,7 +6,7 @@ import sys
 from time import monotonic
 from typing import Optional, Sequence
 
-from malbut_stt.audio import CaptureSettings
+from malbut_stt.audio import CaptureSettings, SoundDeviceRecorder
 from malbut_stt.dialogue_pipeline import DialoguePipeline
 from malbut_stt.transcription import LocalWhisperTranscriber
 
@@ -51,7 +51,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         cpp_use_gpu = parameter('cpp_use_gpu', True)
         cpp_threads = parameter('cpp_threads', 6)
         compute_type = parameter('compute_type', 'int8')
-        device_index = parameter('device_index', -1)
+        device_index = parameter('device_index', 0)
         vad_mode = parameter('vad_mode', 2)
         input_has_aec = parameter('input_has_aec', False)
         control_timeout = parameter('playback_control_timeout_s', 5.0)
@@ -104,7 +104,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 return 1
 
         phase = 'loading_runtime_dependencies'
-        from pvrecorder import PvRecorder
+
         import webrtcvad
         from malbut_stt.wake import LocalWakeRecognizer
 
@@ -305,7 +305,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
         phase = 'creating_pipeline'
         pipeline = DialoguePipeline(
-            recorder_factory=lambda: PvRecorder(
+            recorder_factory=lambda: SoundDeviceRecorder(
                 frame_length=512, device_index=device_index,
             ),
             wake=wake,
