@@ -1,0 +1,12 @@
+malbut_stt:
+  ros__parameters:
+    backend: whisper_cpp
+    # Override with local model and the CUDA build/bin/libmalbut_whisper.so.
+    stt_model_path: ""
+    stt_library_path: ""
+    cpp_use_gpu: true
+    cpp_threads: 6
+    max_utterance_s: 0.0  # Zero disables the utterance length limit.
+    silence_timeout_s: 2.0
+    endpoint_predecode_s: 0.8
+    input_has_aec: false  # Enable only for an input that already provides AEC.

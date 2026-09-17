@@ -1,0 +1,812 @@
+"""Authenticated text routing for proposal and deterministic confirmation."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Sequence
+
+from malbut_agent_server.conversation import (
+    BeginTurnToken,
+    ConfirmationIntentNotFoundError,
+    ConversationConflictError,
+    ConversationTurn,
+    TextTurnRequestClaim,
+)
+from malbut_agent_server.named_target import NamedTargetResolver
+from malbut_agent_server.personal_memory import (
+    local_intent, management_request,
+)
+from malbut_agent_server.orchestrator import (
+    AgentOrchestrator,
+    OrchestrationResult,
+    ServerClarification,
+)
+from malbut_agent_server.safety import SafetyResult
+from malbut_agent_server.schemas import (
+    MAX_ID_LENGTH,
+    MAX_UTTERANCE_LENGTH,
+    AgentDecision,
+    AgentRequest,
+    RobotState,
+    ValidationError,
+    validate_conversation_id,
+    validate_turn_id,
+    validate_user_id,
+)
+from malbut_agent_server.text_confirmation import (
+    APPROVE,
+    APPROVED,
+    CANCELED,
+    DENIED,
+    INVALIDATED,
+    ConfirmationDraft,
+    ConfirmationRecord,
+    ConfirmationResolution,
+    classify_confirmation_text,
+)
+from malbut_agent_server.text_clarification import (
+    NAVIGATION_CLARIFICATION_POLICY_REVISION,
+    NAVIGATION_DESTINATION_QUESTION,
+    NavigationClarificationResolver,
+    is_deictic_navigation_request,
+)
+from malbut_agent_server.text_decision_policy import (
+    TextDecisionPolicy,
+    TextDecisionRoute,
+)
+
+
+_TEXT_TURN_MODEL_TOOLS = ('navigate',)
+_TEXT_TURN_CONFIRMABLE_TOOLS = ('navigate',)
+
+
+@dataclass(frozen=True)
+class TextTurnRequest:
+    """Minimal body whose user and robot state remain server-owned."""
+
+    request_id: str
+    conversation_id: str
+    turn_id: str
+    text: str
+
+    @classmethod
+    def from_dict(cls, value: Any) -> 'TextTurnRequest':
+        """Reject identity, state, approval, and execution injection."""
+        if type(value) is not dict:
+            raise ValidationError('text turn body must be an object')
+        allowed = {
+            'request_id',
+            'conversation_id',
+            'turn_id',
+            'text',
+        }
+        unknown = set(value) - allowed
+        if unknown:
+            names = ', '.join(sorted(unknown))
+            raise ValidationError(
+                f'text turn contains unknown fields: {names}'
+            )
+        request_id = _text(
+            value.get('request_id'),
+            'request_id',
+            MAX_ID_LENGTH,
+        )
+        if any(
+            ord(character) < 32 or ord(character) == 127
+            for character in request_id
+        ):
+            raise ValidationError(
+                'request_id must not contain control characters'
+            )
+        return cls(
+            request_id=request_id,
+            conversation_id=validate_conversation_id(
+                value.get('conversation_id')
+            ),
+            turn_id=validate_turn_id(value.get('turn_id')),
+            text=_text(
+                value.get('text'),
+                'text',
+                MAX_UTTERANCE_LENGTH,
+            ),
+        )
+
+    def fingerprint(self) -> str:
+        """Bind the full normalized HTTP text-turn envelope."""
+        canonical = json.dumps(
+            {
+                'schema_version': 1,
+                'request_id': self.request_id,
+                'conversation_id': self.conversation_id,
+                'turn_id': self.turn_id,
+                'text': self.text,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(',', ':'),
+            allow_nan=False,
+        )
+        return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+
+
+class TextTurnService:
+    """Keep pending responses out of the LLM and out of execution code."""
+
+    def __init__(
+        self,
+        orchestrator: AgentOrchestrator,
+        target_resolver: NamedTargetResolver,
+        *,
+        clock: Callable[[], float] = time.time,
+        maximum_confirmation_seconds: float = 30.0,
+        create_robot_actions: bool = False,
+        action_dispatch_window_seconds: float = 30.0,
+    ) -> None:
+        """Bind proposal, state, target, and durable confirmation services."""
+        if not isinstance(orchestrator, AgentOrchestrator):
+            raise TypeError('orchestrator must be an AgentOrchestrator')
+        if not callable(getattr(target_resolver, 'resolve', None)):
+            raise TypeError('target_resolver must implement resolve')
+        if not callable(clock):
+            raise TypeError('clock must be callable')
+        if type(maximum_confirmation_seconds) not in {int, float} or not (
+            1.0 <= float(maximum_confirmation_seconds) <= 120.0
+        ):
+            raise ValueError(
+                'maximum_confirmation_seconds must be from 1 to 120'
+            )
+        if type(create_robot_actions) is not bool:
+            raise TypeError('create_robot_actions must be a boolean')
+        if (
+            type(action_dispatch_window_seconds) not in {int, float}
+            or not 1.0 <= float(action_dispatch_window_seconds) <= 120.0
+        ):
+            raise ValueError(
+                'action_dispatch_window_seconds must be from 1 to 120'
+            )
+        self.orchestrator = orchestrator
+        self.store = orchestrator.conversation_store
+        self.target_resolver = target_resolver
+        self.clarification_resolver = NavigationClarificationResolver(
+            target_resolver
+        )
+        self.clock = clock
+        self.maximum_confirmation_seconds = float(
+            maximum_confirmation_seconds
+        )
+        self.create_robot_actions = create_robot_actions
+        self.action_dispatch_window_seconds = float(
+            action_dispatch_window_seconds
+        )
+        self.decision_policy = TextDecisionPolicy(
+            orchestrator.capability_registry,
+            confirmable_tool_names=_TEXT_TURN_CONFIRMABLE_TOOLS,
+        )
+
+    def handle(self, *, user_id: str, value: Any) -> dict[str, Any]:
+        """Handle exactly one normal or confirmation text input."""
+        owner = validate_user_id(user_id)
+        request = TextTurnRequest.from_dict(value)
+        request_fingerprint = request.fingerprint()
+        classified = classify_confirmation_text(request.text)
+
+        claimed = self.store.text_turn_request_claim(
+            owner,
+            request.request_id,
+            request_fingerprint,
+        )
+        if claimed is not None:
+            return self._replay_claim(request, *claimed)
+
+        replay = self._confirmation_for_response(
+            owner,
+            request.request_id,
+        )
+        if replay is not None:
+            return self._replay_response(owner, request, replay)
+
+        if self.store.has_agent_request(owner, request.request_id):
+            return self._handle_new_request(owner, request)
+
+        memory_question = self.orchestrator.personal_memory.pending_question(
+            owner, request.conversation_id,
+        )
+        memory_control = local_intent(request.text) is not None or (
+            management_request(request.text)
+            and any(word in request.text for word in ('기억', '개인화'))
+        )
+        if memory_question is not None or memory_control:
+            return self._handle_new_request(owner, request)
+
+        pending = self.store.pending_confirmation(
+            owner,
+            request.conversation_id,
+        )
+        if pending is not None:
+            return self._handle_pending(
+                owner,
+                request,
+                pending,
+                classified,
+                request_fingerprint,
+            )
+        if classified is not None:
+            self.store.claim_text_turn_response(
+                owner,
+                request.conversation_id,
+                request_id=request.request_id,
+                turn_id=request.turn_id,
+                request_fingerprint=request_fingerprint,
+                outcome='confirmation_not_pending',
+                now=float(self.clock()),
+            )
+            return self._no_pending_response(request)
+        return self._handle_new_request(owner, request)
+
+    def _replay_claim(
+        self,
+        request: TextTurnRequest,
+        claim: TextTurnRequestClaim,
+        record: ConfirmationRecord | None,
+    ) -> dict[str, Any]:
+        if claim.outcome == 'confirmation_not_pending':
+            if record is not None:
+                raise RuntimeError(
+                    'no-pending claim unexpectedly has a confirmation'
+                )
+            return self._no_pending_response(request)
+        if record is None:
+            raise RuntimeError('confirmation claim lost its record')
+        if claim.outcome == 'confirmation_unrecognized':
+            pending = ConfirmationRecord.pending(record.draft)
+            value = self._record_response(
+                request,
+                pending,
+                cached=True,
+            )
+            value['result_code'] = 'confirmation_response_unrecognized'
+            value['message'] = (
+                '네, 아니요, 또는 취소 중 하나로 답해 주세요.'
+            )
+            return value
+        if claim.outcome in {
+            'confirmation_resolved',
+            'confirmation_invalidated',
+        }:
+            return self._record_response(
+                request,
+                record,
+                cached=True,
+            )
+        raise RuntimeError('text turn claim outcome is unsupported')
+
+    def _confirmation_for_response(
+        self,
+        user_id: str,
+        response_id: str,
+    ) -> ConfirmationRecord | None:
+        return self.store.confirmation_for_response(
+            user_id,
+            response_id,
+        )
+
+    def _replay_response(
+        self,
+        user_id: str,
+        request: TextTurnRequest,
+        record: ConfirmationRecord,
+    ) -> dict[str, Any]:
+        resolution = ConfirmationResolution.create(
+            record,
+            caller_user_id=user_id,
+            caller_conversation_id=request.conversation_id,
+            caller_session_instance_id=record.session_instance_id,
+            caller_generation=record.generation,
+            response_id=request.request_id,
+            response_turn_id=request.turn_id,
+            response_text=request.text,
+        )
+        terminal = record.resolve(
+            resolution,
+            resolved_at=record.resolved_at or float(self.clock()),
+        )
+        return self._record_response(
+            request,
+            terminal,
+            cached=True,
+        )
+
+    def _handle_pending(
+        self,
+        user_id: str,
+        request: TextTurnRequest,
+        record: ConfirmationRecord,
+        classified: str | None,
+        request_fingerprint: str,
+    ) -> dict[str, Any]:
+        self.orchestrator._memory_guard(user_id, record.request_id)()
+        if classified is None:
+            self.store.claim_text_turn_response(
+                user_id,
+                request.conversation_id,
+                request_id=request.request_id,
+                turn_id=request.turn_id,
+                request_fingerprint=request_fingerprint,
+                outcome='confirmation_unrecognized',
+                confirmation_request_id=(
+                    record.confirmation_request_id
+                ),
+                now=float(self.clock()),
+            )
+            value = self._record_response(request, record, cached=False)
+            value['result_code'] = 'confirmation_response_unrecognized'
+            value['message'] = (
+                '네, 아니요, 또는 취소 중 하나로 답해 주세요.'
+            )
+            return value
+
+        if (
+            classified == APPROVE
+            and not self._pending_is_still_confirmable(record)
+        ):
+            invalidated = self._invalidate_pending(
+                user_id,
+                request.conversation_id,
+                record,
+                request,
+                request_fingerprint,
+                result_code='confirmation_policy_changed',
+            )
+            return self._record_response(
+                request,
+                invalidated,
+                cached=False,
+            )
+
+        current_target = self._resolve_record_target(record)
+        if (
+            current_target is None
+            or current_target.binding_digest
+            != record.target_binding_digest
+        ):
+            invalidated = self._invalidate_target_change(
+                user_id,
+                request.conversation_id,
+                record,
+                request,
+                request_fingerprint,
+            )
+            return self._record_response(
+                request,
+                invalidated,
+                cached=False,
+            )
+
+        resolution = ConfirmationResolution.create(
+            record,
+            caller_user_id=user_id,
+            caller_conversation_id=request.conversation_id,
+            caller_session_instance_id=record.session_instance_id,
+            caller_generation=record.generation,
+            response_id=request.request_id,
+            response_turn_id=request.turn_id,
+            response_text=request.text,
+        )
+        terminal = self.store.resolve_confirmation(
+            user_id,
+            request.conversation_id,
+            response_id=resolution.response_id,
+            response_fingerprint=resolution.response_fingerprint,
+            disposition=resolution.requested_disposition,
+            now=float(self.clock()),
+            current_target_binding_digest=(
+                current_target.binding_digest
+            ),
+            response_turn_id=resolution.response_turn_id,
+            text_turn_request_fingerprint=request_fingerprint,
+            create_robot_action=self.create_robot_actions,
+            action_dispatch_window_seconds=(
+                self.action_dispatch_window_seconds
+            ),
+            precommit_validator=(
+                lambda connection: self._validate_reply_context(
+                    user_id, request, record, connection,
+                )
+            ),
+        )
+        return self._record_response(
+            request,
+            terminal,
+            cached=False,
+        )
+
+    def _validate_reply_context(self, user_id, request, record, connection):
+        """Recheck memory authority in the confirmation write transaction."""
+        self.orchestrator._memory_guard(user_id, record.request_id)()
+        if self.orchestrator.personal_memory.pending_question(
+            user_id, request.conversation_id, connection=connection,
+        ) is not None:
+            raise ConversationConflictError(
+                'memory question changed; retry the current response',
+            )
+
+    def _resolve_record_target(
+        self,
+        record: ConfirmationRecord,
+    ) -> Any | None:
+        try:
+            location = record.arguments_dict()['location']
+            return self.target_resolver.resolve(location)
+        except Exception:
+            return None
+
+    def _pending_is_still_confirmable(
+        self,
+        record: ConfirmationRecord,
+    ) -> bool:
+        """Recheck the bound proposal, never the response text or the LLM."""
+        decision = AgentDecision(
+            type='tool_call',
+            message=record.message,
+            tool_name=record.tool_name,
+            arguments=record.arguments_dict(),
+            reason='durable_confirmation_revalidation',
+            confidence=1.0,
+        )
+        return self.decision_policy.classify(
+            decision,
+            available_tools=_TEXT_TURN_MODEL_TOOLS,
+        ).confirmable
+
+    def _invalidate_target_change(
+        self,
+        user_id: str,
+        conversation_id: str,
+        record: ConfirmationRecord,
+        request: TextTurnRequest,
+        request_fingerprint: str,
+    ) -> ConfirmationRecord:
+        return self._invalidate_pending(
+            user_id,
+            conversation_id,
+            record,
+            request,
+            request_fingerprint,
+            result_code='confirmation_target_changed',
+        )
+
+    def _invalidate_pending(
+        self,
+        user_id: str,
+        conversation_id: str,
+        record: ConfirmationRecord,
+        request: TextTurnRequest,
+        request_fingerprint: str,
+        *,
+        result_code: str,
+    ) -> ConfirmationRecord:
+        return self.store.invalidate_confirmation(
+            user_id,
+            conversation_id,
+            result_code=result_code,
+            now=float(self.clock()),
+            expected_target_binding_digest=(
+                record.target_binding_digest
+            ),
+            response_id=request.request_id,
+            response_turn_id=request.turn_id,
+            text_turn_request_fingerprint=request_fingerprint,
+        )
+
+    def _handle_new_request(
+        self,
+        user_id: str,
+        request: TextTurnRequest,
+    ) -> dict[str, Any]:
+        server_clarification = None
+        effective_tools = (
+            self.orchestrator.capability_registry.effective_names(
+                _TEXT_TURN_MODEL_TOOLS
+            )
+        )
+        if (
+            'navigate' in effective_tools
+            and is_deictic_navigation_request(request.text)
+        ):
+            server_clarification = ServerClarification(
+                message=NAVIGATION_DESTINATION_QUESTION,
+                code='navigation_destination_missing',
+                policy_revision=(
+                    NAVIGATION_CLARIFICATION_POLICY_REVISION
+                ),
+            )
+        clarification_context = {
+            'pending': False,
+            'resolved': False,
+        }
+
+        def resolve_utterance(
+            agent_request: AgentRequest,
+            conversation_turns: Sequence[ConversationTurn],
+            token: BeginTurnToken,
+        ) -> str | None:
+            pending = (
+                self.clarification_resolver
+                .has_pending_navigation_clarification(
+                    agent_request,
+                    conversation_turns,
+                    token,
+                )
+            )
+            if pending and self.store.has_text_turn_claim_at_revision(
+                token.user_id,
+                token.conversation_id,
+                token.session_instance_id,
+                token.generation,
+                token.revision,
+            ):
+                pending = False
+            clarification_context['pending'] = pending
+            if not pending:
+                return None
+            resolution = self.clarification_resolver.resolve(
+                agent_request,
+                conversation_turns,
+                token,
+            )
+            clarification_context['resolved'] = resolution is not None
+            return (
+                resolution.canonical_utterance
+                if resolution is not None
+                else None
+            )
+
+        def verify_proposal(
+            decision: AgentDecision,
+        ) -> SafetyResult | None:
+            rejection = self._verify_model_proposal(decision)
+            if rejection is not None:
+                return rejection
+            if (
+                clarification_context['pending']
+                and decision.type == 'clarification'
+            ):
+                return SafetyResult(
+                    False,
+                    'clarification_limit_reached',
+                    (
+                        '목적지를 확정하지 못해 요청을 종료합니다. '
+                        '등록된 공간 이름으로 다시 요청해 주세요.'
+                    ),
+                )
+            if (
+                clarification_context['pending']
+                and not clarification_context['resolved']
+            ):
+                return SafetyResult(
+                    False,
+                    'clarification_answer_invalid',
+                    (
+                        '목적지를 확정하지 못해 요청을 종료합니다. '
+                        '등록된 공간 이름 하나를 포함해 '
+                        '다시 요청해 주세요.'
+                    ),
+                )
+            return None
+
+        agent_request = AgentRequest(
+            request_id=request.request_id,
+            user_id=user_id,
+            conversation_id=request.conversation_id,
+            turn_id=request.turn_id,
+            utterance=request.text,
+            robot_state=RobotState(),
+            available_tools=_TEXT_TURN_MODEL_TOOLS,
+        )
+        result = self.orchestrator.handle(
+            agent_request,
+            utterance_resolver=resolve_utterance,
+            proposal_verifier=verify_proposal,
+            confirmation_factory=self._confirmation_factory,
+            server_clarification=server_clarification,
+        )
+        try:
+            confirmation = self.store.confirmation_for_request(
+                user_id,
+                request.request_id,
+            )
+        except ConfirmationIntentNotFoundError:
+            value = result.to_dict()
+            value['schema_version'] = 1
+            value['status'] = 'completed'
+            value['execution']['execution_authorized'] = False
+            value['execution']['physical_authorized'] = False
+            value['execution']['nav2_start_count'] = 0
+            value['execution']['nav2_cancel_count'] = 0
+            return value
+        return self._record_response(
+            request,
+            confirmation,
+            cached=False,
+        )
+
+    def _confirmation_factory(
+        self,
+        result: OrchestrationResult,
+        token: BeginTurnToken,
+    ) -> ConfirmationDraft | None:
+        decision = result.decision
+        classification = self.decision_policy.classify(
+            result.raw_decision,
+            available_tools=_TEXT_TURN_MODEL_TOOLS,
+        )
+        if classification.route is TextDecisionRoute.REJECTED:
+            self._reject_unroutable_decision(result, classification.code)
+            return None
+        if (
+            not classification.confirmable
+            or result.safety.allowed is not True
+            or result.state_trusted is not True
+        ):
+            return None
+        try:
+            location = decision.arguments['location']
+            target = self.target_resolver.resolve(location)
+        except Exception:
+            self._reject_unresolved_target(result)
+            return None
+        return ConfirmationDraft.from_orchestration(
+            result,
+            token,
+            target,
+            confirmation_expires_at=(
+                result.issued_at + self.maximum_confirmation_seconds
+            ),
+        )
+
+    def _verify_model_proposal(
+        self,
+        decision: AgentDecision,
+    ) -> SafetyResult | None:
+        """Reject invalid routes before authoritative RobotState is read."""
+        classification = self.decision_policy.classify(
+            decision,
+            available_tools=_TEXT_TURN_MODEL_TOOLS,
+        )
+        if classification.route is not TextDecisionRoute.REJECTED:
+            return None
+        return self._routing_rejection(classification.code)
+
+    @staticmethod
+    def _reject_unroutable_decision(
+        result: OrchestrationResult,
+        code: str,
+    ) -> None:
+        """Persist one rejected model proposal through the existing refusal."""
+        result.safety = TextTurnService._routing_rejection(code)
+        result.decision = AgentDecision(
+            type='refusal',
+            message=result.safety.reason,
+            reason=f'routing:{code}',
+            confidence=1.0,
+            expires_in_ms=result.raw_decision.expires_in_ms,
+        )
+
+    @staticmethod
+    def _routing_rejection(code: str) -> SafetyResult:
+        return SafetyResult(
+            False,
+            f'text_route_{code}',
+            (
+                '요청한 기능은 현재 텍스트 경로에서 사용할 수 없어 '
+                '실행하지 않습니다.'
+            ),
+        )
+
+    @staticmethod
+    def _reject_unresolved_target(result: OrchestrationResult) -> None:
+        reason = (
+            '현재 지도에서 해당 목적지를 확인할 수 없어 '
+            '이동하지 않습니다.'
+        )
+        result.safety = SafetyResult(
+            False,
+            'named_target_unavailable',
+            reason,
+        )
+        result.decision = AgentDecision(
+            type='refusal',
+            message=reason,
+            reason='safety:named_target_unavailable',
+            confidence=1.0,
+            expires_in_ms=result.decision.expires_in_ms,
+        )
+
+    def _record_response(
+        self,
+        request: TextTurnRequest,
+        record: ConfirmationRecord,
+        *,
+        cached: bool,
+    ) -> dict[str, Any]:
+        self.orchestrator._memory_guard(
+            record.user_id, record.request_id,
+        )()
+        value = record.to_public_dict()
+        value.update({
+            'schema_version': 1,
+            'request_id': request.request_id,
+            'turn_id': request.turn_id,
+            'conversation': {
+                'conversation_id': record.conversation_id,
+                'generation': record.generation,
+                'revision': record.revision,
+            },
+            'cached': cached,
+        })
+        if record.disposition == APPROVED:
+            # Keep this response independent from the current process mode.
+            # The same durable confirmation can be replayed after restart, so
+            # neither "queued" nor "not started" can be inferred here.
+            value['message'] = (
+                '승인을 기록했습니다. 이 응답 자체는 이동 실행 권한이 '
+                '아니며, 이동 여부는 별도 안전 재검사에서 결정됩니다.'
+            )
+        elif record.disposition == DENIED:
+            value['message'] = '요청을 거절했습니다.'
+        elif record.disposition == CANCELED:
+            value['message'] = '요청을 취소했습니다.'
+        elif record.disposition == INVALIDATED:
+            if record.result_code == 'confirmation_policy_changed':
+                value['message'] = (
+                    '현재 기능 정책이 바뀌어 기존 확인을 '
+                    '무효화했습니다.'
+                )
+            else:
+                value['message'] = (
+                    '목적지 정보가 바뀌어 기존 확인을 '
+                    '무효화했습니다.'
+                )
+        return value
+
+    @staticmethod
+    def _no_pending_response(
+        request: TextTurnRequest,
+    ) -> dict[str, Any]:
+        return {
+            'schema_version': 1,
+            'request_id': request.request_id,
+            'turn_id': request.turn_id,
+            'conversation': {
+                'conversation_id': request.conversation_id,
+            },
+            'status': 'no_pending_confirmation',
+            'result_code': 'confirmation_not_pending',
+            'message': '현재 확인할 요청이 없습니다.',
+            'execution': {
+                'authorized': False,
+                'execution_authorized': False,
+                'consume_once': False,
+                'tool_call_id': None,
+                'physical_authorized': False,
+                'nav2_start_count': 0,
+                'nav2_cancel_count': 0,
+            },
+        }
+
+
+def _text(value: Any, field_name: str, maximum: int) -> str:
+    if type(value) is not str:
+        raise ValidationError(f'{field_name} must be a string')
+    result = value.strip()
+    if not result or len(result) > maximum:
+        raise ValidationError(f'{field_name} is invalid')
+    if any(
+        ord(character) < 32 and character not in '\n\t'
+        for character in result
+    ):
+        raise ValidationError(f'{field_name} contains control characters')
+    return result

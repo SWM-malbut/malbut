@@ -121,9 +121,9 @@ def test_receipt_lookup_leaves_unaccepted_id_available(tmp_path):
         store.close()
 
 
-@pytest.mark.parametrize('context_shutdown', [False, True])
-def test_main_uses_explicit_executor_and_bounded_shutdown(monkeypatch, context_shutdown):
-    """SIGINT must not invoke an unbounded global-executor shutdown hook."""
+@pytest.mark.parametrize('shutdown_reason', ['interrupt', 'context', 'dialogue_startup'])
+def test_main_uses_explicit_executor_and_bounded_shutdown(monkeypatch, capsys, shutdown_reason):
+    """Interrupts and fatal worker startup must clean up the owned ROS runtime."""
     calls = []
     state = {'ok': True}
 
@@ -136,9 +136,11 @@ def test_main_uses_explicit_executor_and_bounded_shutdown(monkeypatch, context_s
 
         def spin_once(self, *, timeout_sec):
             calls.append('spin_once')
-            if context_shutdown:
+            if shutdown_reason == 'context':
                 state['ok'] = False
                 raise ExternalShutdownException()
+            if shutdown_reason == 'dialogue_startup':
+                raise RuntimeError('private startup details')
             raise KeyboardInterrupt()
 
         def shutdown(self, *, timeout_sec):
@@ -161,7 +163,12 @@ def test_main_uses_explicit_executor_and_bounded_shutdown(monkeypatch, context_s
             get_logger=lambda: SimpleNamespace(info=lambda *_: None),
             destroy_node=lambda: calls.append('destroy_node'),
         ))
-    ros_communication.main(['--provider', 'mock'])
+    result = ros_communication.main(['--provider', 'mock'])
+    assert result == (2 if shutdown_reason == 'dialogue_startup' else 0)
+    errors = capsys.readouterr().err
+    if shutdown_reason == 'dialogue_startup':
+        assert 'Agent communication failed: RuntimeError' in errors
+    assert 'private startup details' not in errors
     assert calls[:4] == ['init', 'add_node', 'spin_once', 'destroy_node']
     assert calls[4] == ('executor_shutdown', 0)
-    assert calls[5:] == ([] if context_shutdown else ['context_shutdown'])
+    assert calls[5:] == ([] if shutdown_reason == 'context' else ['context_shutdown'])

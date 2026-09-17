@@ -236,6 +236,14 @@ def test_normal_dialogue_answers_keep_the_existing_tts_path(node):
     assert list(node.sent) == [ros_communication.RESPONSE_TOPIC]
 
 
+def test_failed_dialogue_startup_is_fatal_to_executor(node):
+    """A permanently unusable worker must not leave advertised services alive."""
+    node.dialogue.startup_error = 'DatabaseError'
+    with pytest.raises(RuntimeError, match='speech_dialogue_startup_failed'):
+        node._drain_dialogue()
+    assert all(not messages for messages in node.sent.values())
+
+
 def test_mission_announcements_are_notification_requests(node):
     node._mission_event({
         'kind': 'succeeded', 'request_id': 'patrol-1',

@@ -12,7 +12,9 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages',
          ['resource/malbut_bringup']),
-        ('share/malbut_bringup', ['package.xml', 'README.md', 'README_WEB.md']),
+        ('share/malbut_bringup', [
+            'package.xml', 'README.md', 'README_WEB.md', 'README_SPEECH.md',
+        ]),
         ('share/malbut_bringup/launch', glob('launch/*.launch.py')),
         ('share/malbut_bringup/config', glob('config/*.yaml')),
     ],
@@ -29,5 +31,6 @@ setup(
         'pose_memory = malbut_bringup.pose_memory:main',
         'scan_normalizer = malbut_bringup.scan_normalizer:main',
         'robot_web_panel = malbut_bringup.web_panel:main',
+        'speech_preflight = malbut_bringup.speech_preflight:main',
     ]},
 )
