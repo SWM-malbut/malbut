@@ -6,7 +6,7 @@ import sys
 from time import monotonic
 from typing import Optional, Sequence
 
-from malbut_stt.audio import CaptureSettings
+from malbut_stt.audio import CaptureSettings, SoundDeviceRecorder
 from malbut_stt.dialogue_pipeline import DialoguePipeline
 from malbut_stt.transcription import LocalWhisperTranscriber
 
@@ -104,7 +104,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 return 1
 
         phase = 'loading_runtime_dependencies'
-        from pvrecorder import PvRecorder
+
         import webrtcvad
         from malbut_stt.wake import LocalWakeRecognizer
 
@@ -305,7 +305,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
         phase = 'creating_pipeline'
         pipeline = DialoguePipeline(
-            recorder_factory=lambda: PvRecorder(
+            recorder_factory=lambda: SoundDeviceRecorder(
                 frame_length=512, device_index=device_index,
             ),
             wake=wake,
