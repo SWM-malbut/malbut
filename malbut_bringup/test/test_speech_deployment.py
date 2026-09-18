@@ -27,7 +27,17 @@ def test_robot_speech_runtime_matches_source(package):
               if path.is_file() and path.suffix in suffixes}
     assert files == copied
     for path in files:
-        assert (source / path).read_bytes() == (deployed / path).read_bytes(), path
+        if package == 'malbut_stt' and path == Path('node.py'):
+            # The test deployment temporarily disables barge-in, even with AEC.
+            expected = (source / path).read_bytes()
+            original = b'            input_has_aec=input_has_aec,\n'
+            override = (b'            # Temporarily disable barge-in '
+                        b'in the robot test deployment.\n'
+                        b'            input_has_aec=False,\n')
+            assert expected.count(original) == 1
+            assert expected.replace(original, override, 1) == (deployed / path).read_bytes()
+        else:
+            assert (source / path).read_bytes() == (deployed / path).read_bytes(), path
 
 
 def test_robot_speech_launch_and_native_assets_match_source():

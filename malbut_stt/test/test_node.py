@@ -383,6 +383,21 @@ def test_explicit_command_model_and_processed_microphone(runtime, tmp_path):
     assert runtime.calls['recorder']['device_index'] == 2
 
 
+@pytest.mark.parametrize('input_has_aec', [False, True])
+def test_robot_deployment_disables_barge_in(runtime, input_has_aec):
+    import malbut_stt.node as source_node
+
+    path = Path(__file__).parents[2] / 'malbut_test/malbut_stt/malbut_stt/node.py'
+    # Load the deployment copy without leaving forbidden __pycache__ files in it.
+    robot_node = {'__name__': 'robot_stt_node', '__file__': str(path)}
+    exec(compile(path.read_text(), str(path), 'exec'), robot_node)
+    for name in ('DialoguePipeline', 'LocalWhisperTranscriber', 'SoundDeviceRecorder', 'monotonic'):
+        robot_node[name] = getattr(source_node, name)
+    runtime.parameters['input_has_aec'] = input_has_aec
+    assert robot_node['main']() == 0
+    assert runtime.pipeline_args['input_has_aec'] is False
+
+
 def test_symlink_to_same_model_reuses_one_local_model(runtime, tmp_path):
     alias = tmp_path / 'same-model-alias'
     alias.symlink_to(runtime.parameters['wake_model_path'], target_is_directory=True)

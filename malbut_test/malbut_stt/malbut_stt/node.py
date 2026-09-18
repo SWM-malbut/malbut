@@ -316,7 +316,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             publish_interruption=publish_interruption,
             report=report,
             settings=settings,
-            input_has_aec=input_has_aec,
+            # Temporarily disable barge-in in the robot test deployment.
+            input_has_aec=False,
             # A shorter explicit fallback keeps its existing behavior without predecode.
             endpoint_predecode_s=(endpoint_predecode_s
                                   if settings.silence_timeout_s > 1.0 else None),
