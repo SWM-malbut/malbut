@@ -31,7 +31,8 @@ def test_robot_speech_runtime_matches_source(package):
             # The test deployment temporarily disables barge-in, even with AEC.
             expected = (source / path).read_bytes()
             original = b'            input_has_aec=input_has_aec,\n'
-            override = (b'            # Temporarily disable barge-in in the robot test deployment.\n'
+            override = (b'            # Temporarily disable barge-in '
+                        b'in the robot test deployment.\n'
                         b'            input_has_aec=False,\n')
             assert expected.count(original) == 1
             assert expected.replace(original, override, 1) == (deployed / path).read_bytes()
