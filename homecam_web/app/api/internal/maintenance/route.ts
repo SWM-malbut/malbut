@@ -7,6 +7,7 @@ import {
 } from "../../../../db/homecam";
 import { noStore } from "../../../api-response";
 import { dispatchHomecamEventPush } from "../../../push-broker";
+import { deliverPendingFallPush } from "../../../fall-event-push";
 
 export const dynamic = "force-dynamic";
 
@@ -69,12 +70,24 @@ export async function POST(request: Request) {
   );
   const delivered = outcomes.filter(Boolean).length;
   const pending = outcomes.length - delivered;
+  const fallPushes = [];
+  for (let index = 0; index < 2; index += 1) {
+    try {
+      const result = await deliverPendingFallPush();
+      fallPushes.push(result);
+      if (!result.processed) break;
+    } catch {
+      fallPushes.push({ processed: false, accepted: false, reason: "fall_worker_unavailable" });
+      break;
+    }
+  }
   return noStore(
     {
       retentionCleanup: true,
       processedDevices: deviceIds.length,
       delivered,
       pending,
+      fallPushes,
     },
     200,
   );

@@ -1,7 +1,10 @@
 import {
   bigint,
+  boolean,
+  foreignKey,
   index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   real,
@@ -24,6 +27,47 @@ export const devices = pgTable(
   },
   (table) => [uniqueIndex("devices_kvs_channel_arn_idx").on(table.kvsChannelArn)],
 );
+
+export const fallIncidents = pgTable("fall_incidents", {
+  deviceId: text("device_id").notNull().references(() => devices.id, { onDelete: "cascade" }),
+  incidentId: text("incident_id").notNull(),
+  bootId: text("boot_id").notNull(),
+  latestSequence: bigint("latest_sequence", { mode: "number" }).notNull().default(0),
+  evidenceRevision: integer("evidence_revision").notNull(),
+  state: text("state").notNull(),
+  fallSeen: boolean("fall_seen").notNull().default(false),
+  assessment: text("assessment"),
+  answer: text("answer"),
+  notificationRank: integer("notification_rank").notNull().default(0),
+  occurredAt: timestampText("occurred_at").notNull(),
+  updatedAt: timestampText("updated_at").notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.deviceId, t.incidentId] }),
+  index("fall_incidents_recent_idx").on(t.deviceId, t.updatedAt)]);
+
+export const fallIncidentEvents = pgTable("fall_incident_events", {
+  deviceId: text("device_id").notNull(), eventId: text("event_id").notNull(),
+  incidentId: text("incident_id").notNull(),
+  sequence: bigint("sequence", { mode: "number" }).notNull(),
+  payloadJson: text("payload_json").notNull(),
+  receivedAt: timestampText("received_at").notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.deviceId, t.eventId] }),
+  uniqueIndex("fall_incident_events_sequence_idx").on(t.deviceId, t.incidentId, t.sequence),
+  foreignKey({ columns: [t.deviceId, t.incidentId], foreignColumns: [fallIncidents.deviceId, fallIncidents.incidentId] }).onDelete("cascade")]);
+
+export const fallPushOutbox = pgTable("fall_push_outbox", {
+  deviceId: text("device_id").notNull(), notificationId: text("notification_id").notNull(),
+  incidentId: text("incident_id").notNull(), level: text("level").notNull(), reason: text("reason").notNull(),
+  occurredAt: timestampText("occurred_at").notNull(), status: text("status").notNull().default("pending"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  nextAttemptAt: timestampText("next_attempt_at").notNull().defaultNow(),
+  leaseId: text("lease_id"), leaseUntil: timestampText("lease_until"),
+  subscriptionResults: jsonb("subscription_results").notNull().default({}),
+  lastError: text("last_error"), acceptedAt: timestampText("accepted_at"),
+  createdAt: timestampText("created_at").notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.deviceId, t.notificationId] }),
+  uniqueIndex("fall_push_outbox_incident_level_idx").on(t.deviceId, t.incidentId, t.level),
+  index("fall_push_due_idx").on(t.status, t.nextAttemptAt),
+  foreignKey({ columns: [t.deviceId, t.notificationId], foreignColumns: [fallIncidentEvents.deviceId, fallIncidentEvents.eventId] }).onDelete("cascade")]);
 
 export const deviceMemberships = pgTable(
   "device_memberships",

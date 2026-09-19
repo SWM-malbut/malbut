@@ -58,3 +58,19 @@ def test_navigation_suppresses_motion_and_requires_post_run_stabilization() -> N
     assert not gate.generic_motion_allowed(7.0)
     gate.update(0.0, 0.0, 7.1)
     assert gate.generic_motion_allowed(7.1)
+
+
+def test_pose_motion_context_distinguishes_missing_moving_and_stationary():
+    gate = MotionGate(stationary_after_sec=1, odom_timeout_sec=2)
+    assert gate.pose_motion_state(0) == "unknown"
+    gate.update(0, 0, 0)
+    assert gate.pose_motion_state(0.5) == "unknown"
+    assert gate.pose_motion_state(1) == "stationary"
+    gate.update(0.2, 0, 1.2)
+    assert gate.pose_motion_state(1.2) == "moving"
+    assert gate.pose_motion_state(3.3) == "unknown"
+    gate.update(float("nan"), 0, 3.4)
+    assert gate.pose_motion_state(3.4) == "unknown"
+    gate.update(0, 0, 4)
+    assert gate.pose_motion_state(3.9) == "unknown"
+    assert gate.pose_motion_state(float("inf")) == "unknown"

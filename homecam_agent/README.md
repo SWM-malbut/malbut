@@ -9,6 +9,10 @@ ROS 2 Humble 기반 이동형 홈캠 PoC 에이전트다. Gazebo 또는 Aurora R
 
 ## 현재 구현 상태
 
+낙상 모델 평가의 최신 데이터 구분·채점 기준·세 가지 주 평가지표는
+[낙상 평가 정리](docs/FALL_EVALUATION_SUMMARY.md)에 있다.
+사건 영상 확인 모델은 Gemma4 31B Cloud를 사용하기로 했으며, 운영 연결·응답 형식 처리·실물 검증은 남아 있다.
+
 | 기능 | 상태 |
 | --- | --- |
 | ROS Image/CameraInfo/Odometry 구독과 카메라 health | 구현 |
@@ -39,8 +43,9 @@ fail-closed로 막고 로컬 파이프라인·감지 개발만 허용한다. 실
 
 YOLO 모델 파일은 저장소에 포함하지 않는다. 현재 시뮬레이션 기본 모델은
 Ultralytics YOLO26n COCO end-to-end ONNX이며, 기존 YOLOv5/v8 호환 ONNX도
-`model_path`로 교체할 수 있다. 사람 자세는 일반 모델이 사람을 감지한 경우에만
-YOLO26n-pose를 최대 5 FPS로 실행하는 2단계 구조다. 모델 준비 스크립트를 한 번
+`model_path`로 교체할 수 있다. YOLO26n-pose는 일반 사람 검출 결과와 관계없이
+모니터링이 켜진 상태에서 수신한 RGB 프레임에 실행한다. 실행 주기는
+`pose_inference_fps`로 제한하며 기본값은 최대 5 FPS다. 모델 준비 스크립트를 한 번
 실행하면 `~/.cache/malbut_perception/yolo26n.onnx`와
 `~/.cache/malbut_perception/yolo26n-pose.onnx`를 실행 스크립트가 자동으로 찾는다.
 
@@ -57,11 +62,25 @@ Ultralytics 모델·코드의 상용 이용 조건은 배포 전에 별도로 �
 모니터링 중 `detectorHealthy`는 단순 모델 로드 여부가 아니라 최근 10초 내
 성공한 inference가 있는지를 나타낸다. 연속 세 번 inference가 실패하면 즉시
 false가 되고, 다음 성공 시 복구된다.
-pose 모델은 일반 사람·반려동물 이벤트와 독립적으로 동작한다.
+pose는 일반 모델보다 먼저 실행하며, 일반 모델이 없거나 사람을 찾지 못해도
+실행한다. pose 자체가 사람을 찾지 못하거나 추론에 실패한 경우에는 현재 자세를
+없음으로 표시한다. 일반 검출 실패만으로 자세 출력을 지우지는 않는다.
+두 모델은 아직 같은 이미지 콜백에서 순차 실행되므로 처리 지연과 자원 사용까지
+분리된 것은 아니다. 실행 스레드 분리와 Jetson 부하 검증은 별도 작업이다.
 `/homecam/pose_healthy`는 pose 모델 준비와 연속 실패 상태를,
-`/homecam/person_pose`는 정규화된 COCO 17개 사람 관절 관측 JSON을 제공한다.
-이 값은 자세 특징이지 낙상 판정이 아니다. 낙상 이벤트를 만들려면 시간 축
-분류기와 실제 카메라 데이터셋 기반 임계값 검증이 별도로 필요하다.
+`/homecam/person_poses`는 사람별 추적 ID와 정규화된 COCO 17개 관절 관측 JSON을
+제공한다. 모델은 프레임당 한 번 실행하고, 사람마다 따로 실행하지 않는다.
+낮은 신뢰도 후보는 `weak`, 잠시 안 보이는 ID는 `missing`, 누구인지 연결하기
+어려운 경우는 `ambiguous`로 구분한다. 현재 관측이 없으면 `pose`는 `null`이며,
+ID를 유지하기 위해 없는 자세를 만들어 넣지 않는다.
+기존 `/homecam/person_pose`는 호환용 단일 출력(신뢰도 0.45 이상 중 최상위)으로
+남겼다. 다인원 처리는 새 목록 토픽을 사용해야 한다.
+설정·출력 형식·검증 한계는 [사람별 Pose 추적](docs/PERSON_POSE_TRACKING.md)에 있다.
+이 값은 자세 특징이지 낙상 판정이 아니다. 별도 `fall_candidate` 모듈이 사람별
+자세 변화와 지속된 누운 자세를 확인해 `/homecam/fall_candidates`에 확인 후보와
+이유를 발행한다. 이는 실험용 로컬 출력이며, VLM·질문·이벤트 저장·알림·로봇
+제어에는 연결하지 않았다. 조건과 검증 한계는
+[낙상 의심 판단](docs/FALL_CANDIDATES.md)에 정리했다.
 카메라 또는 모니터링을 끄면 detector의 유효 monitoring 상태도 즉시 false가
 되며 대기 중 이벤트와 재시도를 폐기한다. 카메라 privacy 상태에서는 신규
 추론·이벤트 POST가 수행되지 않는다.
@@ -425,6 +444,12 @@ HOMECAM_BACKEND_URL=https://malbut.example.com
 HOMECAM_DEVICE_ID=registered-device-id
 HOMECAM_IMAGE_TOPIC=/discovered/rgb/image_raw
 HOMECAM_CAMERA_INFO_TOPIC=/discovered/rgb/camera_info
+# 아래 두 토픽이 RGB 정렬 depth임을 드라이버에서 확인한 경우만 설정
+HOMECAM_DEPTH_IMAGE_TOPIC=/discovered/aligned_depth/image_raw
+HOMECAM_DEPTH_CAMERA_INFO_TOPIC=/discovered/aligned_depth/camera_info
+HOMECAM_DEPTH_ALIGNED_TO_RGB=true
+HOMECAM_CAMERA_HEIGHT_M=0.091864
+HOMECAM_CAMERA_PITCH_RAD=0.0
 HOMECAM_MODEL_PATH=/opt/homecam/models/yolo26n.onnx
 HOMECAM_POSE_MODEL_PATH=/opt/homecam/models/yolo26n-pose.onnx
 ```

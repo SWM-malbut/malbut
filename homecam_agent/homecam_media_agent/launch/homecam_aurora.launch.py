@@ -16,6 +16,15 @@ def generate_launch_description() -> LaunchDescription:
     )
     image_topic = LaunchConfiguration("image_topic")
     camera_info_topic = LaunchConfiguration("camera_info_topic")
+    depth_image_topic = LaunchConfiguration("depth_image_topic")
+    depth_camera_info_topic = LaunchConfiguration("depth_camera_info_topic")
+    depth_aligned_to_rgb = LaunchConfiguration("depth_aligned_to_rgb")
+    depth_scale_m = LaunchConfiguration("depth_scale_m")
+    depth_max_stamp_delta_sec = LaunchConfiguration(
+        "depth_max_stamp_delta_sec"
+    )
+    camera_height_m = LaunchConfiguration("camera_height_m")
+    camera_pitch_rad = LaunchConfiguration("camera_pitch_rad")
     backend_url = LaunchConfiguration("backend_url")
     device_id = LaunchConfiguration("device_id")
     model_path = LaunchConfiguration("model_path")
@@ -77,6 +86,27 @@ def generate_launch_description() -> LaunchDescription:
                 "event_clips_enabled": ParameterValue(
                     event_clips_enabled, value_type=bool
                 ),
+                "depth_image_topic": ParameterValue(
+                    depth_image_topic, value_type=str
+                ),
+                "depth_camera_info_topic": ParameterValue(
+                    depth_camera_info_topic, value_type=str
+                ),
+                "depth_aligned_to_rgb": ParameterValue(
+                    depth_aligned_to_rgb, value_type=bool
+                ),
+                "depth_scale_m": ParameterValue(
+                    depth_scale_m, value_type=float
+                ),
+                "depth_max_stamp_delta_sec": ParameterValue(
+                    depth_max_stamp_delta_sec, value_type=float
+                ),
+                "camera_height_m": ParameterValue(
+                    camera_height_m, value_type=float
+                ),
+                "camera_pitch_rad": ParameterValue(
+                    camera_pitch_rad, value_type=float
+                ),
             },
         ],
     )
@@ -85,6 +115,21 @@ def generate_launch_description() -> LaunchDescription:
             # No default on purpose: the Aurora driver topic must be discovered.
             DeclareLaunchArgument("image_topic"),
             DeclareLaunchArgument("camera_info_topic", default_value=""),
+            DeclareLaunchArgument("depth_image_topic", default_value=""),
+            DeclareLaunchArgument(
+                "depth_camera_info_topic", default_value=""
+            ),
+            DeclareLaunchArgument(
+                "depth_aligned_to_rgb", default_value="false"
+            ),
+            DeclareLaunchArgument("depth_scale_m", default_value="0.0"),
+            DeclareLaunchArgument(
+                "depth_max_stamp_delta_sec", default_value="0.15"
+            ),
+            DeclareLaunchArgument(
+                "camera_height_m", default_value="0.091864"
+            ),
+            DeclareLaunchArgument("camera_pitch_rad", default_value="0.0"),
             DeclareLaunchArgument("odom_topic", default_value="/odom"),
             DeclareLaunchArgument(
                 "navigation_status_topic",

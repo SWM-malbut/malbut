@@ -319,6 +319,61 @@ PYTHONPATH=. python3 -m malbut_agent_server.eval_runner \
   --progress
 ```
 
+## 홈캠 VLM 평가
+
+VLM 비교는 모델 호출과 오프라인 채점을 분리한다. 고정 프롬프트와 공통
+로컬 검증 계약으로 만든 prediction JSONL을 입력하면 낙상 Recall/FPR, 대상·사건,
+시간 구간, 위험도, 캘리브레이션, 지연, 비용을 같은 기준으로 계산한다.
+임의 가중 점수는 만들지 않고 hard gate와 동일 프로토콜 내 Pareto
+frontier를 보고한다.
+
+후보는 `MALBUT_VLM_PROVIDER`만 바꿔 교체한다. 현재 `nova`, `gemini`,
+`qwen`, `openai_compatible` 어댑터가 같은 요청·응답 계약을 구현한다.
+공급자별 기본 모델·리전은 코드에 고정하며, 명시적으로 덮어쓸 때만
+`MALBUT_VLM_MODEL`과 `MALBUT_VLM_REGION`을 함께 설정한다. Qwen 싱가포르는
+JSON Object로 생성한 뒤 공통 스키마를 로컬에서 검증한다.
+파인튜닝 가중치는 사용하지 않으며, C0(영상), C1(+YOLO),
+C2(+Aurora RGB-D 요약·로봇 이동) 컨텍스트를 분리해 비교한다.
+
+실제 API 호출 전에는 정답 manifest와 별도의 관측 sidecar를 검증한다.
+`--execute`가 없으면 네트워크 호출이나 과금이 발생하지 않는다.
+
+```bash
+MALBUT_VLM_PROVIDER=nova \
+PYTHONPATH=. python3 -m malbut_agent_server.vlm_inference_runner \
+  --manifest /secure/eval/manifest.jsonl \
+  --observations /secure/eval/observations.jsonl
+```
+
+검증 후 `--execute`를 명시해 prediction을 생성한다.
+
+```bash
+MALBUT_VLM_PROVIDER=nova \
+PYTHONPATH=. python3 -m malbut_agent_server.vlm_inference_runner \
+  --manifest /secure/eval/manifest.jsonl \
+  --observations /secure/eval/observations.jsonl \
+  --output /secure/eval/nova-2-lite.jsonl \
+  --repetitions 3 \
+  --context-variant C2 \
+  --execute
+```
+
+자격 증명 없는 샘플 실행은 다음과 같다.
+
+```bash
+PYTHONPATH=. python3 -m malbut_agent_server.vlm_eval_runner \
+  --manifest malbut_agent_server/data/vlm_eval_pilot_sample.jsonl \
+  --predictions malbut_agent_server/data/vlm_eval_predictions_sample.jsonl \
+  --prices malbut_agent_server/data/vlm_eval_prices_sample.json \
+  --gates malbut_agent_server/data/vlm_eval_gates_sample.json \
+  --traffic-profile malbut_agent_server/data/vlm_eval_traffic_sample.json \
+  --output /tmp/malbut-vlm-eval.json
+```
+
+실제 영상 평가 형식과 종료 코드, 개인정보 처리 규칙은
+[홈캠 VLM 평가 하네스 문서](docs/evaluations/VLM_EVALUATION_HARNESS.md)에
+정리되어 있다.
+
 ## 사용자 컨텍스트
 
 모델 입력은 다음 영역을 서로 다른 데이터로 구성한다.
@@ -377,6 +432,8 @@ abstain한 요청도 기존 범용 체인을 사용한다. 명시적인 역할 m
 - [SWM25-152 역할별 OpenAI 모델 설정](docs/jira/SWM25-152_ROLE_MODEL_CONFIGURATION.md)
 - [SWM25-72 OpenAI baseline 평가](docs/evaluations/SWM25-72_OPENAI_EVALUATION_2026-08-05.md)
 - [SWM25-72 OpenAI post-fix parity 평가](docs/evaluations/SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md)
+- [홈캠 VLM 평가 하네스](docs/evaluations/VLM_EVALUATION_HARNESS.md)
+- [RGB-D 낙상 확인 요구사항](docs/evaluations/FALL_DETECTION_VLM_REQUIREMENTS.md)
 
 다중 프로세스 분산 잠금, Tool query cache의 재시작 후 보존, 주기적 만료
 sweeper, 독립 provider 장애 fallback과 ROS 2 대화 bridge는 이 MVP의 운영
