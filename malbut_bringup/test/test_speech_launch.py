@@ -115,6 +115,7 @@ def test_startup_waits_for_both_checks_and_preserves_jetson_settings(speech):
         'stt_model_path': '/models/ggml.bin',
         'stt_library_path': '/native/libmalbut_whisper.so',
         'device_index': 2, 'cpp_threads': 4, 'input_has_aec': True,
+        'wake_chime_device_index': 3,
     }
     for node in [agent, tts]:
         assert perform_substitutions(context, node.process_description.prefix) == shlex.quote(

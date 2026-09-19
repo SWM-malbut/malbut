@@ -10,7 +10,8 @@ from malbut_agent_server.conversation import (
 )
 from malbut_agent_server.orchestrator import MemoryChangedError
 from malbut_agent_server.schemas import (
-    AgentRequest, MAX_UTTERANCE_LENGTH, RobotState, validate_user_id,
+    MAX_SPEECH_TRANSCRIPT_LENGTH, RobotState, SpeechAgentRequest,
+    validate_user_id,
 )
 
 
@@ -35,14 +36,21 @@ class _DialogueReply(dict):
         self._memory_validator = memory_validator
 
 
+class SpeechInputTooLongError(ValueError):
+    """The complete transcript exceeds the supported speech turn size."""
+
+
 def validate_dialogue_input(utterance_id: str, text: str) -> None:
     """Reject unusable input before the caller commits a receipt."""
     if not isinstance(utterance_id, str) or not utterance_id.strip():
         raise ValueError('utterance_id must be a nonblank string')
     if not isinstance(text, str) or not text.strip():
         raise ValueError('text must be a nonblank string')
-    if len(text) > MAX_UTTERANCE_LENGTH:
-        raise ValueError(f'text exceeds {MAX_UTTERANCE_LENGTH} characters')
+    if len(text) > MAX_SPEECH_TRANSCRIPT_LENGTH:
+        raise SpeechInputTooLongError(
+            f'text exceeds {MAX_SPEECH_TRANSCRIPT_LENGTH} characters; '
+            'the complete transcript was not accepted',
+        )
     try:
         utterance_id.encode('utf-8')
         text.encode('utf-8')
@@ -271,7 +279,7 @@ class DialogueWorker:
                     digest = hashlib.sha256(
                         utterance_id.encode('utf-8'),
                     ).hexdigest()
-                    result = runtime.handle(AgentRequest(
+                    result = runtime.handle(SpeechAgentRequest(
                         request_id='speech-request-' + digest,
                         user_id=self._user_id,
                         conversation_id=conversation_id,

@@ -5,7 +5,9 @@ from uuid import uuid4
 
 from malbut_agent_server.conversation import ConversationSnapshot
 from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
-from malbut_agent_server.schemas import MAX_UTTERANCE_LENGTH
+from malbut_agent_server.schemas import (
+    MAX_SPEECH_TRANSCRIPT_LENGTH, MAX_UTTERANCE_LENGTH,
+)
 
 
 DECISIONS = ('addressed', 'not_addressed', 'unknown')
@@ -83,7 +85,7 @@ class SpeechAddresseeClassifier:
                 or not isinstance(snapshot, ConversationSnapshot)
                 or getattr(snapshot.session, 'status', None) != 'active'
                 or not isinstance(text, str) or not text.strip()
-                or len(text) > MAX_UTTERANCE_LENGTH):
+                or len(text) > MAX_SPEECH_TRANSCRIPT_LENGTH):
             return 'unknown'
         try:
             history = [
@@ -96,7 +98,11 @@ class SpeechAddresseeClassifier:
                     'conversation_summary_untrusted': summary,
                     'context_truncated': len(snapshot.turns) > len(history)}
             model_input = json.dumps(data, ensure_ascii=False)
-            while len(model_input) > provider.max_model_input_chars:
+            input_limit = provider.max_model_input_chars + max(
+                0, len(json.dumps(text, ensure_ascii=False))
+                - len(json.dumps(text[:MAX_UTTERANCE_LENGTH], ensure_ascii=False)),
+            )
+            while len(model_input) > input_limit:
                 if data['conversation_summary_untrusted']:
                     data['conversation_summary_untrusted'] = ''
                 elif history:

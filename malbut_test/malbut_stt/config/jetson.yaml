@@ -6,7 +6,9 @@ malbut_stt:
     stt_library_path: ""
     cpp_use_gpu: true
     cpp_threads: 6
-    max_utterance_s: 0.0  # Zero disables the utterance length limit.
+    max_utterance_s: 0.0  # No total duration limit; accumulate text until the endpoint.
+    max_buffer_s: 60.0  # Retained PCM/backlog only; acknowledged prefixes are released.
+    stt_decode_timeout_s: 30.0
     silence_timeout_s: 2.0
     endpoint_predecode_s: 0.8
     input_has_aec: false  # Enable only for an input that already provides AEC.

@@ -18,7 +18,7 @@ def checks(monkeypatch):
         state.calls.append((name, args, kwargs))
         if state.failure == name:
             raise RuntimeError('secret credential and private microphone content')
-        return {'bridge_abi': 2, 'cuda_execution_verified': False}
+        return {'bridge_abi': 3, 'cuda_execution_verified': False}
 
     for name in ('check_interfaces', 'check_agent', 'check_tts', 'wait_for_peers',
                  'wait_for_control'):
@@ -50,7 +50,7 @@ def test_success_checks_consumers_before_microphone_and_reports_proof_limits(che
     output = capsys.readouterr()
     assert output.err == ''
     assert json.loads(output.out) == {
-        'event': 'speech_preflight_passed', 'bridge_abi': 2,
+        'event': 'speech_preflight_passed', 'bridge_abi': 3,
         'cuda_execution_verified': False, 'api_request_verified': False,
         'transcription_verified': False,
     }

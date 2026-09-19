@@ -200,7 +200,8 @@ def runtime(monkeypatch, tmp_path):
             self.pending_addressee = ('u2', 'p1', state.now + 45.0)
             state.pipeline_args['publish_interruption']('u2', 'p1', '로봇에게 한 말')
             state.pipeline_args['report']('barge_in_requires_aec')
-            state.pipeline_args['report']('wake_chime_unavailable')
+            state.pipeline_args['on_wake']()
+            state.pipeline_args['on_endpoint']()
 
         def on_playback_status(self, pid, status):
             if status == 'invalid':
@@ -261,6 +262,11 @@ def runtime(monkeypatch, tmp_path):
         monkeypatch.setitem(sys.modules, name, module)
     monkeypatch.setattr('malbut_stt.wake.LocalWakeRecognizer', create_wake)
     monkeypatch.setattr('malbut_stt.node.SoundDeviceRecorder', create_recorder)
+    monkeypatch.setattr('malbut_stt.node.play_wake_chime',
+                        lambda device: state.calls.setdefault('chimes', []).append(device))
+    monkeypatch.setattr(
+        'malbut_stt.node.play_endpoint_chime',
+        lambda device: state.calls.setdefault('endpoint_chimes', []).append(device))
     monkeypatch.setattr('malbut_stt.node.LocalWhisperTranscriber', create_transcriber)
     monkeypatch.setattr(
         'malbut_stt.cpp_transcription.CppWhisperTranscriber', create_cpp_transcriber)
@@ -293,6 +299,9 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert defaults['silence_timeout_s'] == 2.0
     assert defaults['start_timeout_s'] == 5.0
     assert defaults['max_utterance_s'] == 0.0
+    assert defaults['max_buffer_s'] == 60.0
+    assert defaults['stt_decode_timeout_s'] == 30.0
+    assert defaults['wake_chime_device_index'] == -1
     assert defaults['pre_roll_s'] == 0.3
     assert defaults['wake_model_path'] == defaults['stt_model_path'] == ''
     assert defaults['compute_type'] == 'int8'
@@ -316,13 +325,15 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert runtime.pipeline_args['input_has_aec'] is False
     assert runtime.pipeline_args['settings'].silence_timeout_s == 2.0
     assert runtime.pipeline_args['settings'].max_utterance_s is None
+    assert runtime.pipeline_args['settings'].max_buffer_s == 60.0
     assert runtime.pipeline_args['endpoint_predecode_s'] == 0.8
     assert runtime.calls['spin_timeout'] == 0.02
     assert runtime.calls['playback_status'] == ('p1', 'playing')
     assert runtime.calls['addressee'] == ('u2', 'p1', 'addressed')
     assert ('warning', 'invalid_playback_status') in runtime.logs
     assert ('warning', 'barge_in_requires_aec') in runtime.logs
-    assert ('warning', 'wake_chime_unavailable') in runtime.logs
+    assert runtime.calls['chimes'] == [-1]
+    assert runtime.calls['endpoint_chimes'] == [-1]
     assert runtime.closed == ['pipeline', 'node', 'ros']
     assert [topic for topic, _ in runtime.published] == ['/malbut/speech/transcript']
     assert [vars(msg) for _, msg in runtime.published] == [
@@ -391,11 +402,13 @@ def test_robot_deployment_disables_barge_in(runtime, input_has_aec):
     # Load the deployment copy without leaving forbidden __pycache__ files in it.
     robot_node = {'__name__': 'robot_stt_node', '__file__': str(path)}
     exec(compile(path.read_text(), str(path), 'exec'), robot_node)
-    for name in ('DialoguePipeline', 'LocalWhisperTranscriber', 'SoundDeviceRecorder', 'monotonic'):
+    for name in ('DialoguePipeline', 'LocalWhisperTranscriber', 'SoundDeviceRecorder',
+                 'play_wake_chime', 'play_endpoint_chime', 'monotonic'):
         robot_node[name] = getattr(source_node, name)
     runtime.parameters['input_has_aec'] = input_has_aec
     assert robot_node['main']() == 0
     assert runtime.pipeline_args['input_has_aec'] is False
+    assert runtime.calls['endpoint_chimes'] == [-1]
 
 
 def test_symlink_to_same_model_reuses_one_local_model(runtime, tmp_path):
@@ -434,18 +447,22 @@ def test_cpp_backend_shares_one_native_model_and_closes_after_pipeline(cpp_runti
         runtime.parameters['wake_model_path'] = str(alias)
     assert main() == 0
     assert runtime.calls['cpp_stt'] == [(runtime.cpp_model, runtime.cpp_library)]
-    assert runtime.calls['cpp_stt_options'] == {'use_gpu': True, 'n_threads': 6}
+    assert runtime.calls['cpp_stt_options'] == {
+        'use_gpu': True, 'n_threads': 6, 'decode_timeout_s': 30.0}
     assert not {'local_stt', 'wake'} & runtime.calls.keys()
     assert runtime.calls['wake_shared'] is runtime.pipeline_args['transcriber']
     assert runtime.pipeline_args['wake'].model is runtime.pipeline_args['transcriber'].model
     assert runtime.pipeline_args['settings'].max_utterance_s is None
+    assert runtime.pipeline_args['settings'].max_buffer_s == 60.0
     assert runtime.closed == ['pipeline', 'cpp', 'node', 'ros']
 
 
 def test_cpp_backend_forwards_explicit_options_without_cpu_compute_type(cpp_runtime):
-    cpp_runtime.parameters.update(cpp_use_gpu=False, cpp_threads=2, compute_type='float16')
+    cpp_runtime.parameters.update(
+        cpp_use_gpu=False, cpp_threads=2, compute_type='float16', stt_decode_timeout_s=12.5)
     assert main() == 0
-    assert cpp_runtime.calls['cpp_stt_options'] == {'use_gpu': False, 'n_threads': 2}
+    assert cpp_runtime.calls['cpp_stt_options'] == {
+        'use_gpu': False, 'n_threads': 2, 'decode_timeout_s': 12.5}
     assert cpp_runtime.closed == ['pipeline', 'cpp', 'node', 'ros']
 
 
@@ -507,13 +524,30 @@ def test_cpp_cleanup_releases_native_model_and_ros_on_failures(cpp_runtime, fail
                for _, message in cpp_runtime.logs)
 
 
-@pytest.mark.parametrize('configured, expected', [(0, None), (0.0, None), (31.5, 31.5)])
-def test_max_utterance_parameter_disables_or_preserves_explicit_limit(
+@pytest.mark.parametrize('configured, expected', [(0.0, None), (30, 30), (31.5, 31.5)])
+def test_max_utterance_parameter_preserves_explicit_limit(
     runtime, configured, expected,
 ):
     runtime.parameters['max_utterance_s'] = configured
     assert main() == 0
     assert runtime.pipeline_args['settings'].max_utterance_s == expected
+
+
+def test_acknowledgement_chimes_use_selected_output_device(runtime):
+    runtime.parameters['wake_chime_device_index'] = 4
+    assert main() == 0
+    assert runtime.calls['chimes'] == [4]
+    assert runtime.calls['endpoint_chimes'] == [4]
+
+
+def test_endpoint_chime_failure_is_reported_as_warning(runtime):
+    def report_failure():
+        runtime.pipeline_args['report']('endpoint_chime_failed:RuntimeError')
+        raise KeyboardInterrupt
+
+    runtime.on_spin = report_failure
+    assert main() == 0
+    assert ('warning', 'endpoint_chime_failed:RuntimeError') in runtime.logs
 
 
 @pytest.mark.parametrize('predecode', [0.2, 1.0])
@@ -574,6 +608,14 @@ def test_publication_and_callbacks_are_guarded_after_ros_shutdown(runtime):
     ('max_utterance_s', -1.0), ('max_utterance_s', True), ('max_utterance_s', False),
     ('max_utterance_s', float('nan')), ('max_utterance_s', float('inf')),
     ('max_utterance_s', None), ('max_utterance_s', 2.0),
+    ('max_buffer_s', 0), ('max_buffer_s', -1), ('max_buffer_s', 2.0),
+    ('max_buffer_s', True), ('max_buffer_s', None),
+    ('max_buffer_s', float('inf')), ('max_buffer_s', float('nan')),
+    ('wake_chime_device_index', -2), ('wake_chime_device_index', True),
+    ('wake_chime_device_index', 1.5),
+    ('stt_decode_timeout_s', 0), ('stt_decode_timeout_s', -1),
+    ('stt_decode_timeout_s', None), ('stt_decode_timeout_s', True),
+    ('stt_decode_timeout_s', float('nan')), ('stt_decode_timeout_s', float('inf')),
     ('endpoint_predecode_s', 0.0), ('endpoint_predecode_s', -0.1),
     ('endpoint_predecode_s', 1.01), ('endpoint_predecode_s', True),
     ('endpoint_predecode_s', float('nan')), ('endpoint_predecode_s', float('inf')),

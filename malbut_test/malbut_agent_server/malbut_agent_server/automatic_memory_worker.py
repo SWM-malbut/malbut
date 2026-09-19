@@ -10,7 +10,9 @@ from malbut_agent_server.automatic_memory_policy import (
 )
 from malbut_agent_server.personal_memory import MemorySnapshot
 from malbut_agent_server.schemas import (
-    AgentDecision, AgentRequest, ProviderResult, RobotState, ValidationError,
+    AgentDecision, AgentRequest, MAX_SPEECH_TRANSCRIPT_LENGTH,
+    MAX_UTTERANCE_LENGTH, ProviderResult, RobotState, SpeechAgentRequest,
+    ValidationError,
 )
 
 
@@ -81,7 +83,13 @@ class AutomaticMemoryWorker:
         """Reconstruct only memory inputs; never restore robot capabilities."""
         payload = job['payload']
         source = copy.deepcopy(payload['source'])
-        request = AgentRequest(
+        if len(source['text']) > MAX_SPEECH_TRANSCRIPT_LENGTH:
+            raise ValidationError('automatic memory source exceeds speech limit')
+        # Only admitted speech can exceed the HTTP input ceiling. Older jobs
+        # need no migration or extra authority-bearing fields to recover it.
+        request_type = (SpeechAgentRequest if len(source['text']) > MAX_UTTERANCE_LENGTH
+                        else AgentRequest)
+        request = request_type(
             user_id=job['user_id'], request_id=job['request_id'],
             conversation_id=job['conversation_id'],
             turn_id=job['source_turn_id'], utterance=source['text'],

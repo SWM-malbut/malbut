@@ -14,23 +14,28 @@ class CaptureSettings:
     silence_timeout_s: float = 1.0
     max_utterance_s: Optional[float] = 20.0
     pre_roll_s: float = 0.3
+    max_buffer_s: float = 60.0
 
     def __post_init__(self) -> None:
         """Reject invalid durations before listening starts."""
         durations = (
             self.start_timeout_s, self.silence_timeout_s,
-            self.pre_roll_s,
+            self.pre_roll_s, self.max_buffer_s,
         )
         if self.max_utterance_s is not None:
             durations += (self.max_utterance_s,)
         for value in durations:
-            if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
+            if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
                 raise ValueError('capture durations must be finite and positive')
         if (self.max_utterance_s is not None
                 and self.silence_timeout_s >= self.max_utterance_s):
             raise ValueError('silence timeout must be shorter than utterance limit')
+        if self.silence_timeout_s >= self.max_buffer_s:
+            raise ValueError('silence timeout must be shorter than audio buffer limit')
         if self.pre_roll_s > self.start_timeout_s:
             raise ValueError('pre-roll must not exceed speech start timeout')
+        if self.pre_roll_s > self.max_buffer_s:
+            raise ValueError('pre-roll must not exceed audio buffer limit')
 
 
 @dataclass(frozen=True)
@@ -41,6 +46,7 @@ class CaptureResult:
     pcm: bytes = b''
     revision: int = 0
     silence_s: float = 0.0
+    audio_start_s: float = 0.0
 
 
 class UtteranceCollector:
@@ -62,6 +68,7 @@ class UtteranceCollector:
         self.pending = bytearray()
         self.pre_roll = deque(maxlen=max(1, math.ceil(settings.pre_roll_s / 0.02)))
         self.audio = bytearray()
+        self.audio_start_samples = 0
         self.wait_frames = 0
         self.speech_frames = 0
         self.silent_frames = 0
@@ -101,6 +108,9 @@ class UtteranceCollector:
                         and self.speech_frames > math.floor(
                             self.settings.max_utterance_s / 0.02)):
                     self.result = CaptureResult('too_long')
+                elif len(self.audio) > self.settings.max_buffer_s * self.sample_rate * 2:
+                    # This is unprocessed-audio backlog, not total speech duration.
+                    self.result = CaptureResult('buffer_overflow')
                 elif self.silent_frames >= math.ceil(self.settings.silence_timeout_s / 0.02):
                     self.result = self.snapshot('complete')
             if self.result is not None:
@@ -110,10 +120,29 @@ class UtteranceCollector:
                 return self.result
         return None
 
+    @property
+    def audio_start_s(self) -> float:
+        """Absolute start time of the PCM still retained for this utterance."""
+        return self.audio_start_samples / self.sample_rate
+
     def snapshot(self, status: str) -> CaptureResult:
         """Associate an immutable audio snapshot with its last voiced frame."""
         return CaptureResult(status, bytes(self.audio), self.revision,
-                             self.silent_frames * 0.02)
+                             self.silent_frames * 0.02,
+                             self.audio_start_s)
+
+    def discard_before(self, audio_start_s: float) -> None:
+        """Release PCM only up to a successfully transcribed stable boundary."""
+        if not math.isfinite(audio_start_s) or audio_start_s < 0:
+            raise ValueError('audio boundary must be finite and nonnegative')
+        start = round(audio_start_s * self.sample_rate)
+        if start <= self.audio_start_samples:
+            return
+        count = start - self.audio_start_samples
+        if count * 2 > len(self.audio):
+            raise ValueError('audio boundary exceeds retained recording')
+        del self.audio[:count * 2]
+        self.audio_start_samples = start
 
 class SoundDeviceRecorder:
     """PvRecorder-compatible microphone wrapper using PortAudio/sounddevice."""
