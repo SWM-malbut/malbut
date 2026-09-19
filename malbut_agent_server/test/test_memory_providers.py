@@ -22,7 +22,8 @@ from malbut_agent_server.providers.openai_responses import (
 from malbut_agent_server.providers.reliable import ReliableProvider
 from malbut_agent_server.providers.routed import RoutedAgentProvider
 from malbut_agent_server.schemas import (
-    AgentDecision, AgentRequest, ProviderResult, RobotState, ValidationError,
+    AgentDecision, AgentRequest, ProviderResult, RobotState, SpeechAgentRequest,
+    ValidationError,
 )
 
 
@@ -63,6 +64,31 @@ def _response(proposal):
             }],
         }],
     }
+
+
+@pytest.mark.parametrize('mode', [None, 'answer_only'])
+def test_mock_long_intro_can_reply_without_oversize_or_forbidden_memory_proposal(mode):
+    text = '앞선 이야기입니다. ' * 250 + '내 이름은 민수야'
+    source = SpeechAgentRequest.from_dict(dict(_request().to_dict(), utterance=text))
+    context = _context()
+    if mode:
+        context['mode'] = mode
+    result = MockProvider().complete(source, [], [], [], memory_context=context)
+    result.validate()
+    assert result.decision.type in {'message', 'clarification'}
+    assert result.decision.message
+    assert result.memory_proposal is None
+    assert result.context_metrics.current_utterance_included_chars == len(text)
+    if mode == 'answer_only':
+        assert result.memory_supported is False
+
+
+def test_mock_answer_only_never_proposes_even_a_short_name():
+    result = MockProvider().complete(
+        _request(), [], [], [], memory_context={**_context(), 'mode': 'answer_only'},
+    )
+    result.validate()
+    assert result.memory_proposal is None and not result.memory_supported
 
 
 def test_openai_returns_answer_and_proposal_with_one_call():

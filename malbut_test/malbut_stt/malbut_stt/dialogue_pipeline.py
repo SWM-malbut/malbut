@@ -20,6 +20,7 @@ class _StreamInput:
     stream: object
     final: bool
     speech_end_s: float
+    audio_start_s: float = 0.0
 
 
 class DialoguePipeline:
@@ -35,7 +36,8 @@ class DialoguePipeline:
                  publish_transcript, publish_control, publish_interruption,
                  report, settings=None, input_has_aec=False, clock=monotonic,
                  on_wake=None, endpoint_predecode_s: float | None = None,
-                 partial_interval_s: float | None = 2.0, on_partial=None):
+                 partial_interval_s: float | None = 2.0, on_partial=None,
+                 on_endpoint=None):
         self.recorder_factory = recorder_factory
         self.wake = wake
         self.transcriber = transcriber
@@ -45,6 +47,7 @@ class DialoguePipeline:
         self.clock = clock
         self._event_time = None
         self.on_wake = on_wake
+        self.on_endpoint = on_endpoint
         self.on_partial = on_partial
         self._stream_factory = getattr(transcriber, 'create_stream', None)
         self._stream = None
@@ -54,7 +57,10 @@ class DialoguePipeline:
             publish_transcript=publish_transcript,
             publish_control=self._publish_control,
         )
-        settings = settings or CaptureSettings(silence_timeout_s=2.0)
+        settings = settings or CaptureSettings(
+            silence_timeout_s=2.0,
+            max_utterance_s=None if callable(self._stream_factory) else 20.0,
+        )
         if endpoint_predecode_s is not None and (
             isinstance(endpoint_predecode_s, bool)
             or not math.isfinite(endpoint_predecode_s)
@@ -91,6 +97,8 @@ class DialoguePipeline:
         self._pending = None
         self._raw_playback_gate = False
         self._raw_gate_until = 0.0
+        self._chime_playing = False
+        self._chime_gate_until = 0.0
         self._tail_stream = None
         self._endpoint_job = None
         self._endpoint_is_partial = False
@@ -156,10 +164,19 @@ class DialoguePipeline:
             if self.stopping.is_set():
                 break
             text, error_name = None, None
+            retained_start_s = 0.0
             try:
+                # A reset can cancel a preview before the worker picks it up.
+                # Still return through results so endpoint ownership is released.
+                if generation != self._generation:
+                    raise RuntimeError('stale inference job')
                 if isinstance(pcm, _StreamInput):
+                    window = ({'audio_start_s': pcm.audio_start_s}
+                              if pcm.audio_start_s else {})
                     text = pcm.stream.transcribe(
-                        pcm.pcm, 16000, final=pcm.final, speech_end_s=pcm.speech_end_s)
+                        pcm.pcm, 16000, final=pcm.final,
+                        speech_end_s=pcm.speech_end_s, **window)
+                    retained_start_s = getattr(pcm.stream, 'retained_start_s', 0.0)
                 else:
                     engine = self.wake if kind == 'wake' else self.transcriber
                     text = engine.transcribe(pcm, 16000)
@@ -167,7 +184,7 @@ class DialoguePipeline:
                 error_name = type(error).__name__
             finally:
                 pcm = None
-            result = (kind, generation, uid, text, error_name)
+            result = (kind, generation, uid, text, error_name, retained_start_s)
             while not self.stopping.is_set():
                 try:
                     self.results.put(result, timeout=0.05)
@@ -210,6 +227,9 @@ class DialoguePipeline:
             tail.quiet_frames = stream.collector.silent_frames
         self.session.terminate()
         self._generation += 1
+        cancel = getattr(self.transcriber, 'cancel', None)
+        if callable(cancel):
+            cancel()
         self._pending = None
         self._utterance_playback_id = None
         self._reset_audio()
@@ -228,6 +248,18 @@ class DialoguePipeline:
         if self.overflow.is_set():
             self._terminate('audio_queue_overflow')
             self.overflow.clear()
+        try:
+            result = self.results.get_nowait()
+        except Empty:
+            result = None
+        if result is not None and result[0] in ('endpoint', 'partial'):
+            # Release an already acknowledged prefix before buffered capture can
+            # fill the PCM budget. Endpoint decisions still wait for that audio:
+            # queued resumed speech must invalidate a provisional endpoint.
+            _, generation, token, text, error, *retained = result
+            if (generation == self._generation and token[0] == self._capture_id
+                    and self.session.active and self._usable_text(text, error)):
+                self.command_stream.collector.discard_before(retained[0] if retained else 0.0)
         for _ in range(self.audio.maxsize):
             try:
                 generation, captured_at, pcm, busy = self.audio.get_nowait()
@@ -235,11 +267,7 @@ class DialoguePipeline:
                 break
             if generation == self._audio_generation:
                 self.feed(pcm, captured_at=captured_at, busy_at_capture=busy)
-        try:
-            result = self.results.get_nowait()
-        except Empty:
-            pass
-        else:
+        if result is not None:
             if result[0] in ('endpoint', 'partial'):
                 self._accept_endpoint(*result[1:], partial=result[0] == 'partial')
             else:
@@ -251,8 +279,10 @@ class DialoguePipeline:
             self._terminate('session_ended:tts_timeout')
 
     def _input_blocked(self, captured_at):
-        return not self.input_has_aec and (
-            self._raw_playback_gate or captured_at < self._raw_gate_until
+        return self._chime_playing or captured_at < self._chime_gate_until or (
+            not self.input_has_aec and (
+                self._raw_playback_gate or captured_at < self._raw_gate_until
+            )
         )
 
     def _publish_control(self, playback_id, command):
@@ -303,20 +333,24 @@ class DialoguePipeline:
                 if not self._discard_capture and self._capture_id is not None:
                     self._endpoint_candidate = (self._capture_id, event)
                     self._submit_endpoint()
-            elif event.status in ('complete', 'too_long'):
+            elif event.status in ('complete', 'too_long', 'buffer_overflow'):
                 if self._discard_capture:
                     self._discard_capture = False
                     continue
-                if event.status == 'too_long':
+                if event.status in ('too_long', 'buffer_overflow'):
                     if self.session.active:
-                        self._terminate('utterance_discarded:too_long')
+                        self._terminate('utterance_discarded:' + event.status)
                         stream.discarding = True
                         self._tail_stream = stream
                     else:
                         self.report('wake_too_long')
                     continue
                 kind = 'command' if self.session.active else 'wake'
+                audio_generation = self._audio_generation
                 self._complete_capture(kind, event)
+                if audio_generation != self._audio_generation:
+                    # The chime discarded this chunk's remaining capture events.
+                    break
 
     def _submit_endpoint(self):
         if (self._endpoint_candidate is None or self._endpoint_job is not None
@@ -351,7 +385,8 @@ class DialoguePipeline:
         try:
             kind = 'partial' if partial else 'endpoint'
             payload = self._inference_input(
-                event.pcm if self._stream is not None else pcm, silence_s=event.silence_s)
+                event.pcm if self._stream is not None else pcm, silence_s=event.silence_s,
+                audio_start_s=event.audio_start_s)
             self.jobs.put_nowait((kind, key[0], (uid, event.revision),
                                  payload))
         except Full:
@@ -367,11 +402,11 @@ class DialoguePipeline:
     def _usable_text(text, error):
         return error is None and isinstance(text, str) and bool(text.strip())
 
-    def _inference_input(self, pcm, *, final=False, silence_s=0.0):
+    def _inference_input(self, pcm, *, final=False, silence_s=0.0, audio_start_s=0.0):
         if self._stream is None:
             return pcm
-        speech_end_s = max(0.0, len(pcm) / 32000 - silence_s)
-        return _StreamInput(pcm, self._stream, final, speech_end_s)
+        speech_end_s = audio_start_s + max(0.0, len(pcm) / 32000 - silence_s)
+        return _StreamInput(pcm, self._stream, final, speech_end_s, audio_start_s)
 
     def _complete_capture(self, kind, event):
         uid = self._capture_id
@@ -382,6 +417,7 @@ class DialoguePipeline:
         self.report('transcribing' if kind == 'command' else 'recognizing_wake')
         if kind == 'command':
             self.report(f'endpoint_finalized:silence_s={event.silence_s:.2f}')
+            self._play_endpoint_chime()
             if (self._endpoint_result is not None and self._endpoint_result[0] == key
                     and self._usable_text(*self._endpoint_result[1:])):
                 _, text, error = self._endpoint_result
@@ -392,7 +428,8 @@ class DialoguePipeline:
             if self._endpoint_job == key and not self._endpoint_is_partial:
                 self._endpoint_final = key
                 self._final_input = self._inference_input(
-                    event.pcm, final=True, silence_s=event.silence_s)
+                    event.pcm, final=True, silence_s=event.silence_s,
+                    audio_start_s=event.audio_start_s)
                 return
         # A resumed utterance can finish before its obsolete candidate is taken
         # by the worker. Replace only that queued candidate with the final audio.
@@ -407,11 +444,33 @@ class DialoguePipeline:
                     return
                 if self._endpoint_job == (stale[1], *stale[2]):
                     self._endpoint_job = None
-        payload = (self._inference_input(event.pcm, final=True, silence_s=event.silence_s)
+        payload = (self._inference_input(event.pcm, final=True, silence_s=event.silence_s,
+                                         audio_start_s=event.audio_start_s)
                    if kind == 'command' else event.pcm)
         self.jobs.put_nowait((kind, self._generation, uid, payload))
 
-    def _accept_endpoint(self, generation, token, text, error_name, *, partial=False):
+    def _play_endpoint_chime(self):
+        """Acknowledge capture completion without resetting its pending inference."""
+        if self.on_endpoint is None or self.session.playback_state in ('playing', 'paused'):
+            return
+        self._chime_playing = True
+        self._audio_generation += 1
+        self._drain(self.audio)
+        try:
+            self.on_endpoint()
+        except Exception as error:
+            self.report('endpoint_chime_failed:' + type(error).__name__)
+        finally:
+            self._chime_gate_until = self.clock() + 0.3
+            self._audio_generation += 1
+            # Keep the completed PCM, stream, generation and endpoint job alive.
+            # Only unfinished capture fragments and speaker echo are discarded.
+            self.command_stream.reset()
+            self._drain(self.audio)
+            self._chime_playing = False
+
+    def _accept_endpoint(self, generation, token, text, error_name, retained_start_s=0.0,
+                         *, partial=False):
         uid, revision = token
         key = (generation, uid, revision)
         if self._endpoint_job == key:
@@ -434,6 +493,9 @@ class DialoguePipeline:
         if uid != self._capture_id or not self.session.active:
             return
         if self._usable_text(text, error_name):
+            # Apply only to this live utterance. Its VAD revision may advance
+            # during inference; the acknowledged prefix still remains valid.
+            self.command_stream.collector.discard_before(retained_start_s)
             self.report('partial_ready')
             if self.on_partial is not None:
                 self.on_partial(uid, text)
@@ -464,7 +526,7 @@ class DialoguePipeline:
             if event is not None:
                 self._complete_capture('command', event)
 
-    def _accept_result(self, kind, generation, uid, text, error_name):
+    def _accept_result(self, kind, generation, uid, text, error_name, retained_start_s=0.0):
         if generation != self._generation:
             return
         if kind != 'wake' and (not self.session.active or uid != self.session.utterance_id):
@@ -490,7 +552,17 @@ class DialoguePipeline:
                 if self.on_wake is None:
                     self.report('wake_chime_unavailable')
                 else:
-                    self.on_wake()
+                    # Never feed the acknowledgement or queued speaker tail to ASR,
+                    # including with AEC enabled on the microphone.
+                    self._chime_playing = True
+                    try:
+                        self.on_wake()
+                    except Exception as error:
+                        self._terminate('wake_chime_failed:' + type(error).__name__)
+                    finally:
+                        self._chime_gate_until = self.clock() + 0.3
+                        self._reset_audio()
+                        self._chime_playing = False
             else:
                 self.report('not_wake')
             return
@@ -552,6 +624,9 @@ class DialoguePipeline:
             return
         self._closed = True
         self.stopping.set()
+        cancel = getattr(self.transcriber, 'cancel', None)
+        if callable(cancel):
+            cancel()
         self.session.terminate()
         self._pending = None
         failure = None

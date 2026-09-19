@@ -106,6 +106,7 @@ def _setup(context):
             parameters=[str(config), {
                 'stt_model_path': model, 'stt_library_path': library,
                 'device_index': input_device, 'cpp_threads': threads,
+                'wake_chime_device_index': output_device,
                 'input_has_aec': input_has_aec,
             }],
         )

@@ -2,11 +2,12 @@
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 
 MAX_ID_LENGTH = 128
 MAX_UTTERANCE_LENGTH = 2000
+MAX_SPEECH_TRANSCRIPT_LENGTH = 16000
 DECISION_TYPES = {
     'message',
     'tool_call',
@@ -176,6 +177,7 @@ class AgentRequest:
     utterance: str
     robot_state: RobotState
     available_tools: Tuple[str, ...]
+    max_utterance_chars: ClassVar[int] = MAX_UTTERANCE_LENGTH
 
     @classmethod
     def from_dict(cls, value: Any) -> 'AgentRequest':
@@ -209,7 +211,7 @@ class AgentRequest:
         utterance = _required_string(
             value.get('utterance'),
             'utterance',
-            MAX_UTTERANCE_LENGTH,
+            cls.max_utterance_chars,
         )
         tools = value.get('available_tools', [])
         if not isinstance(tools, list):
@@ -249,6 +251,12 @@ class AgentRequest:
             'robot_state': self.robot_state.to_dict(),
             'available_tools': list(self.available_tools),
         }
+
+
+class SpeechAgentRequest(AgentRequest):
+    """An internal final speech turn; HTTP requests keep their shorter limit."""
+
+    max_utterance_chars: ClassVar[int] = MAX_SPEECH_TRANSCRIPT_LENGTH
 
 
 @dataclass

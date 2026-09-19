@@ -316,3 +316,126 @@ def test_invalid_vad_hint_is_rejected_before_inference(speech_end_s):
     with pytest.raises(ValueError, match='speech_end_s'):
         IncrementalWhisperStream(model).transcribe(pcm(2), 16000, speech_end_s=speech_end_s)
     assert model.calls == []
+
+
+def test_released_pcm_prefix_is_retained_as_text_with_absolute_timestamps():
+    model = Model(segments(12), segments(12),
+                  segments(14, first=10, offset=19.5))
+    stream = IncrementalWhisperStream(model)
+    stream.transcribe(pcm(24), 16000)
+    stream.transcribe(pcm(26), 16000)
+    assert stream.retained_start_s == 19.5
+    assert stream.transcribe(pcm(8.5), 16000, audio_start_s=19.5,
+                             speech_end_s=27.5, final=True) == expected(14)
+    assert len(model.calls[-1][0]) / 16000 == 8.5
+    assert stream._previous[-1].end == 27.5
+    assert stream.last_metrics['audio_start_s'] == 19.5
+
+
+@pytest.mark.parametrize('partition_changed', [False, True])
+def test_window_fallback_keeps_released_text_and_revises_only_available_suffix(partition_changed):
+    suffix = segments(14, first=10, offset=19.5, edits={10: '고쳤어요'})
+    if partition_changed:
+        suffix = [SimpleNamespace(text=''.join(segment.text for segment in suffix),
+                                  start=suffix[0].start, end=suffix[-1].end)]
+    model = Model(segments(12), segments(12), suffix)
+    stream = IncrementalWhisperStream(model)
+    stream.transcribe(pcm(24), 16000)
+    stream.transcribe(pcm(26), 16000)
+    assert stream.transcribe(pcm(8.5), 16000, audio_start_s=19.5,
+                             speech_end_s=27.5, final=True) == expected(14, **{'10': '고쳤어요'})
+    assert stream.retained_start_s == 19.5
+    assert stream.last_metrics['fallback_reason'] == 'overlap_changed'
+    assert len(model.calls) == 3  # Already decoded all available PCM; no pointless repeat.
+
+
+def test_window_fallback_can_redecode_earlier_retained_audio_without_losing_frozen_prefix():
+    model = Model(segments(12), segments(12),
+                  segments(14, first=10, offset=19.5, edits={10: '고쳤어요'}),
+                  segments(14, first=8, offset=15.5, edits={10: '고쳤어요'}))
+    stream = IncrementalWhisperStream(model)
+    stream.transcribe(pcm(24), 16000)
+    stream.transcribe(pcm(26), 16000)
+    assert stream.transcribe(pcm(12.5), 16000, audio_start_s=15.5,
+                             speech_end_s=27.5, final=True) == expected(14, **{'10': '고쳤어요'})
+    assert [len(audio) / 16000 for audio, _ in model.calls[-2:]] == [8.5, 12.5]
+    assert stream.retained_start_s == 15.5
+
+
+def test_identical_repeated_phrases_cross_released_window_without_deduplication():
+    repeated = {index: '다시' for index in range(14)}
+    model = Model(segments(12, edits=repeated), segments(12, edits=repeated),
+                  segments(14, first=10, offset=19.5, edits=repeated))
+    stream = IncrementalWhisperStream(model)
+    stream.transcribe(pcm(24), 16000)
+    stream.transcribe(pcm(26), 16000)
+    assert stream.transcribe(pcm(8.5), 16000, audio_start_s=19.5,
+                             speech_end_s=27.5, final=True).split() == ['다시'] * 14
+
+
+@pytest.mark.parametrize('failure', [[], RuntimeError('decode failed'),
+                                     segments(12, first=10, offset=19.5)])
+def test_released_prefix_survives_failure_but_never_becomes_stale_final(failure):
+    model = Model(segments(12), segments(12), failure,
+                  segments(14, first=10, offset=19.5))
+    stream = IncrementalWhisperStream(model)
+    stream.transcribe(pcm(24), 16000)
+    stream.transcribe(pcm(26), 16000)
+    arguments = dict(audio_start_s=19.5, speech_end_s=27.5, final=True)
+    if isinstance(failure, Exception):
+        with pytest.raises(RuntimeError, match='decode failed'):
+            stream.transcribe(pcm(8.5), 16000, **arguments)
+    elif failure:
+        with pytest.raises(ValueError, match='omitted recent speech'):
+            stream.transcribe(pcm(8.5), 16000, **arguments)
+    else:
+        assert stream.transcribe(pcm(8.5), 16000, **arguments) == ''
+    assert stream.transcribe(pcm(8.5), 16000, **arguments) == expected(14)
+
+
+@pytest.mark.parametrize('start', [-1, True, float('nan'), float('inf'), '1', 20, 18])
+def test_invalid_or_unsafe_window_start_is_rejected_before_decode(start):
+    model = Model(segments(12), segments(12))
+    stream = IncrementalWhisperStream(model)
+    stream.transcribe(pcm(24), 16000)
+    stream.transcribe(pcm(26), 16000)
+    with pytest.raises(ValueError):
+        stream.transcribe(pcm(8.5), 16000, audio_start_s=start)
+    assert len(model.calls) == 2
+
+
+def test_ten_minutes_of_speech_accumulates_all_text_from_bounded_pcm_windows():
+    class TimelineModel:
+        def __init__(self):
+            self.end_s = 0
+            self.largest_window_s = 0
+
+        def transcribe(self, audio, **_):
+            self.largest_window_s = max(self.largest_window_s, len(audio) / 16000)
+            offset = self.end_s - len(audio) / 16000
+            words = [SimpleNamespace(start=index * 2 + .1 - offset,
+                                     end=index * 2 + 1.8 - offset,
+                                     text=' ' + ('다시' if index % 3 == 0 else f'단어{index}'))
+                     for index in range(min(300, int(self.end_s // 2)))
+                     if index * 2 + 1.8 > offset + .01]
+            return iter(words), None
+
+    model = TimelineModel()
+    stream = IncrementalWhisperStream(model)
+    window_start = 0.0
+    largest_pcm = 0
+    for end_s in range(2, 601, 2):
+        model.end_s = end_s
+        snapshot = pcm(end_s - window_start)
+        largest_pcm = max(largest_pcm, len(snapshot))
+        preview = stream.transcribe(snapshot, 16000, audio_start_s=window_start,
+                                    speech_end_s=end_s - .2)
+        assert len(preview.split()) == end_s // 2
+        window_start = stream.retained_start_s
+    model.end_s = 602
+    final = stream.transcribe(pcm(602 - window_start), 16000,
+                              audio_start_s=window_start, speech_end_s=599.8, final=True)
+    assert final.split() == ['다시' if index % 3 == 0 else f'단어{index}'
+                             for index in range(300)]
+    assert window_start > 580
+    assert largest_pcm <= 60 * 32000 and model.largest_window_s <= 60

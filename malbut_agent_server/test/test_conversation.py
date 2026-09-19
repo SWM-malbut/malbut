@@ -357,6 +357,96 @@ def test_expiry_invalidates_in_flight_turn() -> None:
         store.close()
 
 
+@pytest.mark.parametrize('protected_status', ['active', 'closed'])
+def test_session_limit_reclaims_only_oldest_expired_for_same_user(
+    protected_status: str,
+) -> None:
+    """Admission reclaims one expired history without deleting other users."""
+    clock = FakeClock()
+    store = SQLiteConversationStore(
+        ':memory:', ttl_seconds=60, max_sessions_per_user=3, clock=clock,
+    )
+    try:
+        store.create('user-a', 'conversation-a')
+        store.create('user-b', 'conversation-a')
+        _complete(store, 1)
+        _complete(store, 1, user_id='user-b')
+        clock.advance(1)
+        store.create('user-a', 'newer-expired')
+        clock.advance(59)
+        store.create('user-a', 'protected')
+        if protected_status == 'closed':
+            store.close_session('user-a', 'protected')
+        clock.advance(1)
+
+        assert store.create('user-a', 'new-session').status == 'active'
+        with pytest.raises(ConversationNotFoundError):
+            store.get('user-a', 'conversation-a')
+        assert store.get('user-a', 'newer-expired').status == 'expired'
+        assert store.get('user-a', 'protected').status == protected_status
+        assert store.get('user-b', 'conversation-a').status == 'expired'
+        assert store._connection.execute(
+            'SELECT COUNT(*) FROM conversation_turns WHERE user_id = ?',
+            ('user-b',),
+        ).fetchone()[0] == 1
+        assert store._connection.execute(
+            'SELECT COUNT(*) FROM conversation_sessions WHERE user_id = ?',
+            ('user-a',),
+        ).fetchone()[0] == 3
+        assert store._connection.execute(
+            'SELECT COUNT(*) FROM conversation_turns WHERE user_id = ?',
+            ('user-a',),
+        ).fetchone()[0] == 0
+    finally:
+        store.close()
+
+
+def test_one_hundred_fresh_sessions_still_enforce_limit() -> None:
+    """The default quota never evicts a live conversation to admit another."""
+    store = SQLiteConversationStore(':memory:')
+    try:
+        for number in range(100):
+            store.create('user-a', f'conversation-{number}')
+        with pytest.raises(ConversationStateError, match='session limit'):
+            store.create('user-a', 'one-too-many')
+        assert store.create('user-a', 'conversation-0').status == 'active'
+        assert store._connection.execute(
+            'SELECT COUNT(*) FROM conversation_sessions',
+        ).fetchone()[0] == 100
+    finally:
+        store.close()
+
+
+def test_reclaimed_session_cannot_commit_old_inference_after_id_reuse() -> None:
+    """Reclaim and ID reuse preserve the opaque instance fence."""
+    clock = FakeClock()
+    store = SQLiteConversationStore(
+        ':memory:', ttl_seconds=60, max_sessions_per_user=1, clock=clock,
+    )
+    try:
+        original = store.create('user-a', 'conversation-a')
+        pending = _begin(store, 1)
+        assert pending.token is not None
+        clock.advance(60)
+        store.create('user-a', 'replacement')
+        clock.advance(60)
+        recreated = store.create('user-a', 'conversation-a')
+        assert recreated.session_instance_id != original.session_instance_id
+        commits = []
+        with pytest.raises(ConversationChangedError):
+            store.complete_turn(
+                pending.token, '늦은 답변', _response(1),
+                commit_callback=lambda connection: commits.append(connection),
+            )
+        assert commits == []
+        assert store.list_turns('user-a', 'conversation-a') == []
+        assert store._connection.execute(
+            'SELECT COUNT(*) FROM conversation_sessions',
+        ).fetchone()[0] == 1
+    finally:
+        store.close()
+
+
 def test_exact_retry_is_durable_and_changed_retry_conflicts(
     tmp_path,
 ) -> None:

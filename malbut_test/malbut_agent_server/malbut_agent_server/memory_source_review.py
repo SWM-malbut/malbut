@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from malbut_agent_server.memory_contract import MEMORY_KINDS
 from malbut_agent_server.providers.base import accepts_memory_context
 from malbut_agent_server.schemas import (
-    AgentRequest, ProviderResult, RobotState,
+    ProviderResult, RobotState,
 )
 
 
@@ -82,7 +82,7 @@ class MemorySourceReviewer:
             'source': request.utterance,
             'facts': candidates,
         })[:48]
-        review_request = AgentRequest(
+        review_request = type(request)(
             request_id=review_id,
             user_id=request.user_id,
             conversation_id=request.conversation_id,

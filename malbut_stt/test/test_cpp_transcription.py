@@ -26,27 +26,32 @@ def native(monkeypatch, tmp_path):
     model.write_bytes(b'model')
     bridge.write_bytes(b'library')
     state = SimpleNamespace(
-        model=model, bridge=bridge, loaded=[], freed=[], calls=[], abi=2,
+        model=model, bridge=bridge, loaded=[], freed=[], calls=[], abi=3,
         context=123, result=0, segments=[('  제이크야.', 10, 125)],
-        entered=None, release=None,
+        entered=None, release=None, cancelled=Event(), timeouts=[],
     )
 
     def create(path, gpu):
         state.loaded.append((path, gpu))
         return state.context
 
-    def decode(context, samples, count, threads, prompt):
+    def decode(context, samples, count, threads, prompt, timeout_s):
         state.calls.append((context, np.ctypeslib.as_array(samples, shape=(count,)).copy(),
                             threads, prompt))
+        state.timeouts.append(timeout_s)
         if state.entered is not None:
             state.entered.set()
             assert state.release.wait(2), 'test did not release fake inference'
+        if state.cancelled.is_set():
+            return -100
         return state.result
 
     functions = {
         'mb_whisper_abi_version': lambda: state.abi,
         'mb_whisper_create': create,
         'mb_whisper_free': lambda context: state.freed.append(context),
+        'mb_whisper_reset_cancel': lambda context: state.cancelled.clear(),
+        'mb_whisper_cancel': lambda context: state.cancelled.set(),
         'mb_whisper_transcribe': decode,
         'mb_whisper_segment_count': lambda context: len(state.segments),
         'mb_whisper_segment_text': lambda context, index: state.segments[index][0].encode(),
@@ -76,7 +81,9 @@ def test_one_local_context_preserves_samples_text_and_native_segments(native):
     assert audio.dtype == np.float32
     segment = transcriber.model.last_segments[0]
     assert (segment.start, segment.end, segment.text) == (0.1, 1.25, '  제이크야.')
-    assert transcriber.metadata['bridge_abi'] == 2
+    assert transcriber.metadata['bridge_abi'] == 3
+    assert transcriber.metadata['decode_timeout_s'] == 30.0
+    assert native.timeouts == [30.0]
     transcriber.close()
     transcriber.close()
     assert native.freed == [123]
@@ -135,7 +142,7 @@ def test_native_failure_does_not_expose_stale_segments(native):
         assert transcriber.model.last_segments == []
 
 
-def test_close_waits_for_inflight_decode_before_freeing_native_context(native):
+def test_close_signals_cancel_before_waiting_and_never_frees_active_context(native):
     native.entered, native.release = Event(), Event()
     transcriber = engine(native)
     close_started = Event()
@@ -150,10 +157,12 @@ def test_close_waits_for_inflight_decode_before_freeing_native_context(native):
             assert native.entered.wait(1)
             closing = executor.submit(close)
             assert close_started.wait(1)
+            assert native.cancelled.wait(1)
             assert not closing.done() and native.freed == []
         finally:
             native.release.set()
-        assert decode.result(timeout=1) == '제이크야.'
+        with pytest.raises(RuntimeError, match='cancelled'):
+            decode.result(timeout=1)
         closing.result(timeout=1)
     assert native.freed == [123]
     with pytest.raises(RuntimeError, match='closed'):
@@ -175,13 +184,13 @@ def test_invalid_thread_count_fails_before_model_loading(native, threads):
     assert native.loaded == []
 
 
-@pytest.mark.parametrize('old_abi', [True, False])
-def test_incompatible_bridge_cannot_receive_the_new_prompt_abi(native, old_abi):
-    if old_abi:
-        native.abi = 1
+@pytest.mark.parametrize('old_abi', [1, 2, None])
+def test_incompatible_bridge_cannot_receive_the_new_decode_abi(native, old_abi):
+    if old_abi is not None:
+        native.abi = old_abi
     else:
         del native.library.mb_whisper_abi_version
-    with pytest.raises(ValueError, match='ABI 2'):
+    with pytest.raises(ValueError, match='ABI 3'):
         engine(native)
     assert native.loaded == []
 
@@ -198,3 +207,52 @@ def test_metadata_failure_releases_the_already_loaded_context(native):
     with pytest.raises(AttributeError):
         engine(native)
     assert native.freed == [123]
+
+
+@pytest.mark.parametrize('timeout', [True, 0, -1, float('inf'), float('nan'), '30'])
+def test_invalid_deadline_fails_before_model_loading(native, timeout):
+    with pytest.raises(ValueError, match='finite and positive'):
+        engine(native, decode_timeout_s=timeout)
+    assert native.loaded == []
+
+
+def test_timeout_discards_partial_result_and_next_decode_reuses_context(native):
+    with engine(native, decode_timeout_s=0.5) as transcriber:
+        native.result = -101
+        with pytest.raises(TimeoutError, match='deadline exceeded'):
+            transcriber.transcribe(b'\x01\x00' * 320, 16000)
+        assert transcriber.model.last_segments == []
+        native.result = 0
+        assert transcriber.transcribe(b'\x01\x00' * 320, 16000) == '제이크야.'
+    assert native.timeouts == [0.5, 0.5]
+    assert len(native.loaded) == 1
+
+
+def test_cancel_does_not_wait_for_decode_lock_and_is_reset_for_next_call(native):
+    native.entered, native.release = Event(), Event()
+    with engine(native) as transcriber, ThreadPoolExecutor(max_workers=2) as executor:
+        decode = executor.submit(transcriber.transcribe, b'\x01\x00' * 320, 16000)
+        try:
+            assert native.entered.wait(1)
+            executor.submit(transcriber.cancel).result(timeout=1)
+            assert native.cancelled.is_set() and native.freed == []
+        finally:
+            native.release.set()
+        with pytest.raises(RuntimeError, match='cancelled'):
+            decode.result(timeout=1)
+        assert transcriber.model.last_segments == []
+        assert transcriber.transcribe(b'\x01\x00' * 320, 16000) == '제이크야.'
+
+
+def test_cancel_in_gap_before_native_entry_is_not_lost(native):
+    with engine(native) as transcriber:
+        decode = native.library.mb_whisper_transcribe.callback
+
+        def cancel_before_decode(*args):
+            transcriber.cancel()
+            return decode(*args)
+
+        native.library.mb_whisper_transcribe.callback = cancel_before_decode
+        with pytest.raises(RuntimeError, match='cancelled'):
+            transcriber.transcribe(b'\x01\x00' * 320, 16000)
+        assert transcriber.model.last_segments == []

@@ -3,7 +3,9 @@
 from dataclasses import dataclass, field
 import heapq
 import logging
+import math
 from threading import Condition, Event, Thread
+from time import monotonic
 from typing import Callable, Optional
 from uuid import uuid4
 
@@ -17,6 +19,7 @@ TERMINAL_STATES = frozenset(('finished', 'failed', 'stopped'))
 class _Request:
     playback_id: str
     text: str
+    expires_at: Optional[float]
     validate: Optional[Callable] = None
     cancel: Event = field(default_factory=Event)
     player: object = None
@@ -33,7 +36,16 @@ class SpeechRuntime:
     Status callbacks should be short (for example, put into a ROS queue).
     """
 
-    def __init__(self, synthesizer, player_factory, on_status, logger=None):
+    def __init__(self, synthesizer, player_factory, on_status, logger=None, *,
+                 max_pending_requests=32, pending_timeout_s=0.0,
+                 clock=monotonic):
+        if type(max_pending_requests) is not int or max_pending_requests < 1:
+            raise ValueError('max_pending_requests must be a positive integer')
+        if (isinstance(pending_timeout_s, bool)
+                or not isinstance(pending_timeout_s, (int, float))
+                or not math.isfinite(pending_timeout_s)
+                or pending_timeout_s < 0):
+            raise ValueError('pending_timeout_s must be finite and nonnegative; zero disables expiry')
         self._synthesizer = synthesizer
         self._player_factory = player_factory
         self._on_status = on_status
@@ -43,11 +55,21 @@ class SpeechRuntime:
         self._sequence = 0
         self._active = None
         self._closed = False
+        self._max_pending_requests = max_pending_requests
+        self._pending_timeout_s = pending_timeout_s
+        self._clock = clock
         self._worker = Thread(target=self._run, name='tts', daemon=True)
+        # Playback (including pause) blocks _worker inside player.finish().
+        # An explicitly enabled TTL expires waiting text during active playback.
+        self._expiry_worker = Thread(
+            target=self._expire_waiting, name='tts-expiry', daemon=True,
+        ) if pending_timeout_s > 0 else None
         self._worker.start()
+        if self._expiry_worker is not None:
+            self._expiry_worker.start()
 
     def submit(self, text, request_type=DIALOGUE, *, validate=None):
-        """Queue the original text and return its ID, or ignore invalid input."""
+        """Return an ID; full/expired waiting requests report failed once."""
         if not isinstance(text, str) or not text.strip():
             self._logger.warning('tts_text_ignored: blank response')
             return None
@@ -57,13 +79,55 @@ class SpeechRuntime:
         with self._condition:
             if self._closed:
                 return None
-            request = _Request(str(uuid4()), text, validate)
-            heapq.heappush(self._pending, (
-                request_type, self._sequence, request,
-            ))
-            self._sequence += 1
+            now = self._clock()
+            expired = self._expire_pending_locked(now)
+            request = _Request(
+                str(uuid4()), text,
+                now + self._pending_timeout_s if self._pending_timeout_s > 0 else None,
+                validate,
+            )
+            rejected = len(self._pending) >= self._max_pending_requests
+            if not rejected:
+                heapq.heappush(self._pending, (
+                    request_type, self._sequence, request,
+                ))
+                self._sequence += 1
             self._condition.notify_all()
-            return request.playback_id
+        self._fail_waiting(expired, 'expired')
+        if rejected:
+            self._fail_waiting([request], 'full')
+        return request.playback_id
+
+    def _expire_pending_locked(self, now):
+        if self._pending_timeout_s == 0:
+            return []
+        expired = [entry[2] for entry in self._pending
+                   if entry[2].expires_at <= now]
+        if expired:
+            self._pending = [entry for entry in self._pending
+                             if entry[2].expires_at > now]
+            heapq.heapify(self._pending)
+        return expired
+
+    def _fail_waiting(self, requests, reason):
+        for request in requests:
+            request.state = 'failed'
+            self._logger.warning(f'tts_pending_{reason}: {request.playback_id}')
+            self._report_status(request, 'failed')
+
+    def _expire_waiting(self):
+        while True:
+            with self._condition:
+                if self._closed:
+                    return
+                now = self._clock()
+                expired = self._expire_pending_locked(now)
+                if not expired:
+                    timeout = (min(entry[2].expires_at for entry in self._pending)
+                               - now) if self._pending else None
+                    self._condition.wait(timeout=timeout)
+                    continue
+            self._fail_waiting(expired, 'expired')
 
     def control(self, playback_id, command):
         """Accept a valid control for the active request without replacing it."""
@@ -119,8 +183,18 @@ class SpeechRuntime:
                 request.player.stop()
         finally:
             self._worker.join(timeout=10)
+            if self._expiry_worker is not None:
+                self._expiry_worker.join(timeout=10)
         if self._worker.is_alive():
             raise TimeoutError('TTS synthesis did not stop within 10 seconds')
+        if self._expiry_worker is not None and self._expiry_worker.is_alive():
+            raise TimeoutError('TTS expiry worker did not stop within 10 seconds')
+
+    def _report_status(self, request, state):
+        try:
+            self._on_status(request.playback_id, state)
+        except Exception as error:
+            self._logger.error(f'tts_status_failed: {error}')
 
     def _status(self, request, state):
         with self._condition:
@@ -134,10 +208,7 @@ class SpeechRuntime:
             if ((request.command == 'pause' and state == 'paused')
                     or (request.command == 'resume' and state == 'playing')):
                 request.command = None
-            try:
-                self._on_status(request.playback_id, state)
-            except Exception as error:
-                self._logger.error(f'tts_status_failed: {error}')
+            self._report_status(request, state)
 
     def _run(self):
         while True:
@@ -147,8 +218,13 @@ class SpeechRuntime:
                 )
                 if self._closed:
                     return
-                _, _, request = heapq.heappop(self._pending)
+                expired = self._expire_pending_locked(self._clock())
+                request = (heapq.heappop(self._pending)[2]
+                           if self._pending else None)
                 self._active = request
+            self._fail_waiting(expired, 'expired')
+            if request is None:
+                continue
             self._play(request)
             with self._condition:
                 self._active = None

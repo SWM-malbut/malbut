@@ -216,7 +216,7 @@ def test_rejected_interruption_returns_unknown_without_speaking(node, reason):
     elif reason == 'blank':
         message.text = ' '
     else:
-        message.text = 'x' * 2001
+        message.text = 'x' * 16001
     invocation = Invocation(node, message)
     assert vars(invocation.response) == {'decision': Response.UNKNOWN}
     assert node.sent[ros_communication.RESPONSE_TOPIC] == []
@@ -256,6 +256,15 @@ def test_normal_dialogue_answers_keep_the_existing_tts_path(node):
         (original, SpeechRequest.DIALOGUE),
     ]
     assert list(node.sent) == [ros_communication.RESPONSE_TOPIC]
+
+
+def test_overlong_final_speech_is_rejected_with_notice_without_receipt(node):
+    text = '가' * 16001
+    node._receive_speech(SimpleNamespace(utterance_id='too-long', text=text))
+    assert node._receipts.lookup('too-long', text) is None
+    messages = node.sent[ros_communication.RESPONSE_TOPIC]
+    assert len(messages) == 1 and '16000' in messages[0].text
+    assert node.dialogue.requests == []
 
 
 def test_failed_dialogue_startup_is_fatal_to_executor(node):

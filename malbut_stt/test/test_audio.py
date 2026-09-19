@@ -68,17 +68,10 @@ def test_overlong_utterance_is_discarded_instead_of_truncated():
     assert not collector.audio
 
 
-def test_unlimited_utterance_keeps_all_audio_until_ending_silence():
-    """An explicitly unlimited capture can cross 20 seconds without data loss."""
-    voice = b'\x01\x00' * 320
-    settings = CaptureSettings(silence_timeout_s=3.0, max_utterance_s=None)
-    collector = UtteranceCollector(16000, lambda frame, _: any(frame), settings)
-    for _ in range(1500):
-        assert collector.feed(voice) is None
-    assert collector.feed(FRAME * 149) is None
-    result = collector.feed(FRAME)
-    assert result.status == 'complete'
-    assert result.pcm == voice * 1500 + FRAME * 150
+@pytest.mark.parametrize('limit', [0, -1, True, float('inf'), float('nan')])
+def test_invalid_explicit_utterance_limit_is_rejected(limit):
+    with pytest.raises(ValueError, match='finite and positive'):
+        CaptureSettings(max_utterance_s=limit)
 
 
 @pytest.mark.parametrize('value', [0, -1, float('nan'), float('inf'), True])
@@ -101,6 +94,11 @@ def test_incompatible_durations_and_sample_format_are_rejected():
         collector.feed(b'\x00')
 
 
+def test_preroll_cannot_exceed_pcm_budget_before_the_first_speech_frame():
+    with pytest.raises(ValueError, match='pre-roll.*audio buffer'):
+        CaptureSettings(start_timeout_s=5.0, pre_roll_s=4.0, max_buffer_s=3.0)
+
+
 def test_real_webrtcvad_silence_when_runtime_library_is_installed():
     """Exercise the real VAD binding without a microphone or credentials."""
     webrtcvad = pytest.importorskip('webrtcvad')
@@ -108,3 +106,39 @@ def test_real_webrtcvad_silence_when_runtime_library_is_installed():
         16000, webrtcvad.Vad(2).is_speech, CaptureSettings(),
     )
     assert collector.feed(FRAME * 250).status == 'no_speech'
+
+
+def test_rolling_pcm_release_keeps_absolute_offsets_and_natural_endpoint():
+    voice = b'\x01\x00' * 320
+    settings = CaptureSettings(max_utterance_s=None, max_buffer_s=5.0)
+    collector = UtteranceCollector(16000, lambda frame, _: any(frame), settings)
+    for block in range(30):
+        assert collector.feed(voice * 100) is None  # Two seconds of new speech.
+        snapshot = collector.snapshot('partial_check')
+        assert snapshot.audio_start_s == max(0.0, block * 2 - 1)
+        assert len(snapshot.pcm) <= 3 * 32000
+        collector.discard_before(block * 2 + 1)  # Keep one second of overlap.
+    result = collector.feed(FRAME * 50)
+    assert result.status == 'complete'
+    assert result.audio_start_s == 59.0
+    assert result.pcm == voice * 50 + FRAME * 50
+
+
+def test_unprocessed_audio_overflow_is_distinct_from_total_utterance_duration():
+    collector = UtteranceCollector(
+        16000, lambda *_: True,
+        CaptureSettings(max_utterance_s=None, max_buffer_s=3.0),
+    )
+    assert collector.feed(FRAME * 150) is None
+    result = collector.feed(FRAME)
+    assert result.status == 'buffer_overflow' and result.pcm == b''
+    assert not collector.audio
+
+
+@pytest.mark.parametrize('boundary', [-1, float('nan'), float('inf'), 2.0])
+def test_bad_audio_release_boundary_does_not_destroy_retained_pcm(boundary):
+    collector = UtteranceCollector(16000, lambda *_: True, CaptureSettings())
+    collector.feed(FRAME * 50)
+    with pytest.raises(ValueError):
+        collector.discard_before(boundary)
+    assert len(collector.audio) == 32000

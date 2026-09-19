@@ -31,6 +31,7 @@ from malbut_agent_server.schemas import (
     AgentRequest,
     ProviderResult,
     RobotState,
+    SpeechAgentRequest,
 )
 from malbut_agent_server.tools import TOOL_SPECS, ToolSpec
 
@@ -245,7 +246,7 @@ def test_each_route_selects_only_its_owned_handler(
 
 
 def test_abstain_calls_only_the_existing_fallback_once() -> None:
-    """None is the sole normal path back to the universal Provider."""
+    """A router abstention delegates once to the universal Provider."""
     router = ScriptedFrontRouter(None)
     provider, general, planner, fallback = _routed(router)
 
@@ -256,6 +257,25 @@ def test_abstain_calls_only_the_existing_fallback_once() -> None:
     assert result is fallback.results[0]
     assert fallback.requests[0].available_tools == ('navigate',)
     assert fallback.tool_lists[0] == [TOOL_SPECS['navigate']]
+
+
+@pytest.mark.parametrize('length', [2000, 16000])
+def test_speech_keeps_short_routing_and_bypasses_short_projection_when_long(length):
+    router = ScriptedFrontRouter(FrontRouteMatch(
+        route=FrontRoute.GENERAL_CONVERSATION,
+    ))
+    provider, general, planner, fallback = _routed(router)
+    value = _request().to_dict()
+    value.update(utterance='가' * (length - 2) + '끝말', available_tools=[])
+    request = SpeechAgentRequest.from_dict(value)
+    result = provider.complete(request, [], [], [], None)
+    selected = general if length == 2000 else fallback
+    assert router.calls == (1 if length == 2000 else 0)
+    assert selected.calls == 1 and planner.calls == 0
+    assert general.calls + fallback.calls == 1
+    assert isinstance(selected.requests[0], SpeechAgentRequest)
+    assert selected.requests[0].utterance == value['utterance']
+    assert result is selected.results[0]
 
 
 @pytest.mark.parametrize(

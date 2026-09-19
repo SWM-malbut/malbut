@@ -40,6 +40,8 @@ def create_tts_node(runtime_factory=None):
                 self.declare_parameter('speaker', 'Sohee')
                 self.declare_parameter('language', 'Korean')
                 self.declare_parameter('output_device', -1)
+                self.declare_parameter('max_pending_requests', 32)
+                self.declare_parameter('pending_timeout_s', 0.0)
                 qos = QoSProfile(
                     history=HistoryPolicy.KEEP_LAST,
                     depth=10,
@@ -106,6 +108,8 @@ def create_tts_node(runtime_factory=None):
                 ),
                 self._queue_status,
                 logger=self.get_logger(),
+                max_pending_requests=self.get_parameter('max_pending_requests').value,
+                pending_timeout_s=self.get_parameter('pending_timeout_s').value,
             )
 
         def _receive(self, message):
