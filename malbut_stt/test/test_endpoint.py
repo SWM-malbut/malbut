@@ -116,6 +116,62 @@ def test_complete_candidate_finalizes_at_one_second_and_reuses_the_text(run):
     assert 'endpoint_finalized:silence_s=1.00' in run.reports
 
 
+def test_ready_partial_trim_precedes_queued_audio_that_would_fill_pcm_budget(run):
+    pipeline = run.pipeline
+    pipeline._stream_factory = lambda: object()
+    pipeline.command_stream = StreamingUtteranceCollector(
+        lambda frame, _: any(frame),
+        settings=CaptureSettings(silence_timeout_s=1.0, max_utterance_s=None,
+                                 max_buffer_s=3.0),
+        partial_interval_s=2.0,
+    )
+    pipeline.feed(VOICE * 100)
+    kind, generation, token, _ = pipeline.jobs.get_nowait()
+    assert kind == 'partial'
+    pipeline.results.put_nowait((kind, generation, token, '계속 말하는 중', None, 1.0))
+    pipeline.audio.put_nowait((pipeline._audio_generation, run.now, SECOND * 60, False))
+
+    pipeline.poll()
+
+    collector = pipeline.command_stream.collector
+    assert pipeline.session.active and pipeline._capture_id == token[0]
+    assert collector.audio_start_s == 1.0
+    assert collector.audio == VOICE * 50 + SECOND * 60
+    assert 'utterance_discarded:buffer_overflow' not in run.reports
+    assert run.transcripts == []
+
+
+def test_ready_endpoint_trim_does_not_accept_result_before_queued_resumed_speech(run):
+    pipeline = run.pipeline
+    pipeline._stream_factory = lambda: object()
+    pipeline.command_stream = StreamingUtteranceCollector(
+        lambda frame, _: any(frame),
+        settings=CaptureSettings(silence_timeout_s=2.0, max_utterance_s=None,
+                                 max_buffer_s=3.0),
+        early_endpoint_s=.8, partial_interval_s=2.0,
+    )
+    pipeline.feed(VOICE * 90 + QUIET * 40)
+    kind, generation, token, _ = pipeline.jobs.get_nowait()
+    assert kind == 'endpoint'
+    pipeline.feed(QUIET * 10)  # Current silence already permits early finalization.
+    pipeline.results.put_nowait((kind, generation, token, '문을 열어 주세요.', None, 1.0))
+    pipeline.audio.put_nowait((pipeline._audio_generation, run.now, SECOND * 30, False))
+
+    pipeline.poll()
+
+    collector = pipeline.command_stream.collector
+    assert pipeline.session.active and pipeline._capture_id == token[0]
+    assert collector.audio_start_s == 1.0
+    assert collector.audio == VOICE * 40 + QUIET * 50 + SECOND * 30
+    assert collector.revision != token[1] and collector.silent_frames == 0
+    assert 'utterance_discarded:buffer_overflow' not in run.reports
+    assert not any(report.startswith('endpoint_finalized:') for report in run.reports)
+    assert run.transcripts == []
+    fresh = pipeline.jobs.get_nowait()
+    assert fresh[0] == 'partial' and fresh[2][0] == token[0] and fresh[2][1] != token[1]
+    assert fresh[3].audio_start_s == 1.0 and SECOND in fresh[3].pcm
+
+
 @pytest.fixture
 def predecoded_run(run):
     run.pipeline.command_stream = StreamingUtteranceCollector(

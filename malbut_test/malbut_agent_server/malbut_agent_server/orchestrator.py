@@ -574,6 +574,7 @@ class AgentOrchestrator:
                 request_id=request.request_id,
                 request_fingerprint=fingerprint,
                 user_content=request.utterance,
+                max_user_content_chars=request.max_utterance_chars,
                 before_new_turn=lambda conn: self._admit_memory_turn(
                     conn, request,
                 ),
@@ -735,8 +736,8 @@ class AgentOrchestrator:
                 name for name in effective_value['available_tools']
                 if name != 'set_weather_location'
             ]
-        safety_request = AgentRequest.from_dict(effective_value)
-        model_request = AgentRequest.from_dict(effective_value)
+        safety_request = type(effective_request).from_dict(effective_value)
+        model_request = type(effective_request).from_dict(effective_value)
         local_memory = self.personal_memory.local_decision(
             request, memory_snapshot,
         )
@@ -963,7 +964,7 @@ class AgentOrchestrator:
         value = request.to_dict()
         value['available_tools'] = []
         answer = self.provider.complete(
-            AgentRequest.from_dict(value), list(memories),
+            type(request).from_dict(value), list(memories),
             copy.deepcopy(list(conversation_turns)), [],
             conversation_summary=copy.deepcopy(conversation_summary),
             weather_context=weather,
@@ -1014,7 +1015,7 @@ class AgentOrchestrator:
             raise TypeError('utterance_resolver must return str or None')
         value = request.to_dict()
         value['utterance'] = resolved
-        return AgentRequest.from_dict(value)
+        return type(request).from_dict(value)
 
     def _fresh_safety_request(
         self,
@@ -1048,7 +1049,7 @@ class AgentOrchestrator:
         value = request.to_dict()
         value['robot_state'] = state.to_dict()
         return (
-            AgentRequest.from_dict(value),
+            type(request).from_dict(value),
             trusted,
             evidence_id,
             observed_at,

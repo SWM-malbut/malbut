@@ -7,6 +7,7 @@ from time import monotonic
 from typing import Optional, Sequence
 
 from malbut_stt.audio import CaptureSettings, SoundDeviceRecorder
+from malbut_stt.chime import play_endpoint_chime, play_wake_chime
 from malbut_stt.dialogue_pipeline import DialoguePipeline
 from malbut_stt.transcription import LocalWhisperTranscriber
 
@@ -50,16 +51,24 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         stt_library_path = parameter('stt_library_path', '')
         cpp_use_gpu = parameter('cpp_use_gpu', True)
         cpp_threads = parameter('cpp_threads', 6)
+        stt_decode_timeout_s = parameter('stt_decode_timeout_s', 30.0)
         compute_type = parameter('compute_type', 'int8')
         device_index = parameter('device_index', 0)
+        wake_chime_device_index = parameter('wake_chime_device_index', -1)
         vad_mode = parameter('vad_mode', 2)
         input_has_aec = parameter('input_has_aec', False)
         control_timeout = parameter('playback_control_timeout_s', 5.0)
         max_utterance_s = parameter('max_utterance_s', 0.0)
+        max_buffer_s = parameter('max_buffer_s', 60.0)
         endpoint_predecode_s = parameter('endpoint_predecode_s', 0.8)
         if (type(max_utterance_s) not in (float, int)
                 or not isfinite(max_utterance_s) or max_utterance_s < 0):
-            raise ValueError('max_utterance_s must be finite and nonnegative; zero disables the limit')
+            raise ValueError('max_utterance_s must be finite and nonnegative; zero disables duration limit')
+        if (type(wake_chime_device_index) is not int or wake_chime_device_index < -1):
+            raise ValueError('wake_chime_device_index must be -1 or an output device index')
+        if (type(stt_decode_timeout_s) not in (int, float)
+                or not isfinite(stt_decode_timeout_s) or stt_decode_timeout_s <= 0):
+            raise ValueError('stt_decode_timeout_s must be finite and positive')
         if (type(endpoint_predecode_s) not in (float, int)
                 or not isfinite(endpoint_predecode_s)
                 or not 0 < endpoint_predecode_s <= 1.0):
@@ -68,6 +77,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             start_timeout_s=parameter('start_timeout_s', 5.0),
             silence_timeout_s=parameter('silence_timeout_s', 2.0),
             max_utterance_s=None if max_utterance_s == 0 else max_utterance_s,
+            max_buffer_s=max_buffer_s,
             pre_roll_s=parameter('pre_roll_s', 0.3),
         )
         if not isinstance(vad_mode, int) or vad_mode not in range(4):
@@ -114,6 +124,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             phase = 'initializing_stt'
             transcriber = CppWhisperTranscriber(
                 stt_path, library_path, use_gpu=cpp_use_gpu, n_threads=cpp_threads,
+                decode_timeout_s=stt_decode_timeout_s,
             )
             close_transcriber = transcriber.close
             phase = 'initializing_wake'
@@ -297,7 +308,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             if event.startswith((
                 'transcription_failed', 'empty_transcript', 'utterance_discarded',
                 'addressee_unknown', 'audio_queue_overflow', 'barge_in_requires_aec',
-                'speech_discarded', 'wake_chime_unavailable',
+                'speech_discarded', 'wake_chime_unavailable', 'wake_chime_failed',
+                'endpoint_chime_failed',
             )):
                 node.get_logger().warning(event)
             else:
@@ -315,6 +327,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             publish_control=publish_control,
             publish_interruption=publish_interruption,
             report=report,
+            on_wake=lambda: play_wake_chime(wake_chime_device_index),
+            on_endpoint=lambda: play_endpoint_chime(wake_chime_device_index),
             settings=settings,
             # Temporarily disable barge-in in the robot test deployment.
             input_has_aec=False,

@@ -5,7 +5,7 @@ import struct
 
 def check_stt(model_path, library_path, *, device_index=0, cpp_threads=6):
     """
-    Load the local ABI 2 model and read one 16 kHz microphone frame.
+    Load the local ABI 3 model and read one 16 kHz microphone frame.
 
     This requests GPU use but does not prove CUDA execution or transcription
     quality. The caller must bound the process lifetime for stalled drivers.

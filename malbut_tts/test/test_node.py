@@ -193,6 +193,7 @@ def test_cuda_node_uses_explicit_backend_without_changing_ros_contract(
     fake_ros.parameters.update(
         model_path='/local/cuda-model', backend='qwen-cuda',
         cuda_dtype='float16', output_device=3,
+        max_pending_requests=8, pending_timeout_s=12.0,
     )
     received = {}
 
@@ -200,8 +201,9 @@ def test_cuda_node_uses_explicit_backend_without_changing_ros_contract(
         received.update(path=path, **kwargs)
         return object()
 
-    def runtime(synth, player_factory, on_status, logger=None):
+    def runtime(synth, player_factory, on_status, logger=None, **kwargs):
         received['device'] = player_factory(None, None)
+        received.update(kwargs)
         return FakeRuntime(on_status)
 
     monkeypatch.setattr('malbut_tts.backends.create_synthesizer', synthesizer)
@@ -217,6 +219,7 @@ def test_cuda_node_uses_explicit_backend_without_changing_ros_contract(
         cuda_sentence_mode=True, sentence_max_chars=80,
         api_model='gpt-4o-mini-tts', api_voice='marin', api_timeout_seconds=8.0,
         speaker='Sohee', language='Korean', device=3,
+        max_pending_requests=8, pending_timeout_s=12.0,
     )
     assert fake_ros.subscriptions[0][1] == tts_node.RESPONSE_TOPIC
     assert fake_ros.services[0][1] == tts_node.CONTROL_SERVICE
@@ -238,9 +241,10 @@ def test_default_openai_node_needs_no_model_and_reuses_ros_contract(
         received['options'] = kwargs
         return 'api-synthesizer'
 
-    def runtime(synth, player_factory, on_status, logger=None):
+    def runtime(synth, player_factory, on_status, logger=None, **kwargs):
         received['synth'] = synth
         received['player'] = player_factory(None, None)
+        received.update(kwargs)
         return FakeRuntime(on_status)
 
     monkeypatch.setitem(sys.modules, 'malbut_tts.api_synthesis', SimpleNamespace(
@@ -258,6 +262,7 @@ def test_default_openai_node_needs_no_model_and_reuses_ros_contract(
     assert received == {
         'options': {'model': model, 'voice': voice, 'timeout_seconds': timeout},
         'synth': 'api-synthesizer', 'player': None,
+        'max_pending_requests': 32, 'pending_timeout_s': 0.0,
     }
     assert node.parameters['model_path'] == ''
     assert node.parameters['backend'] == 'openai'

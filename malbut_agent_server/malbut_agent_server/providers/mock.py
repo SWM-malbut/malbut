@@ -20,6 +20,7 @@ from malbut_agent_server.providers.base import AgentProvider
 from malbut_agent_server.schemas import (
     AgentDecision,
     AgentRequest,
+    MAX_UTTERANCE_LENGTH,
     ProviderResult,
 )
 from malbut_agent_server.tools import ToolSpec
@@ -71,9 +72,11 @@ class MockProvider(AgentProvider):
                 reason='mock_weather_result', confidence=1.0,
             )
         memory_proposal = None
-        if weather_context is None and memory_context is not None and decision.type in {
-            'message', 'clarification',
-        }:
+        answer_only = (
+            memory_context is not None and memory_context.get('mode') == 'answer_only'
+        )
+        if (weather_context is None and memory_context is not None
+                and not answer_only and decision.type in {'message', 'clarification'}):
             memory_proposal = self._memory_proposal(request.utterance)
             if memory_proposal is not None:
                 decision = AgentDecision(
@@ -102,12 +105,16 @@ class MockProvider(AgentProvider):
             input_chars=prepared.metrics.model_input_chars,
             context_metrics=prepared.metrics,
             memory_proposal=memory_proposal,
-            memory_supported=memory_context is not None,
+            memory_supported=memory_context is not None and not answer_only,
         )
 
     @staticmethod
     def _memory_proposal(utterance: str) -> Optional[dict]:
         """Recognize fixed direct-statement examples without guessing facts."""
+        # This mock emits the whole source as evidence. Do not fabricate a
+        # partial evidence record or fail an otherwise valid long dialogue.
+        if len(utterance) > MAX_UTTERANCE_LENGTH:
+            return None
         if any(marker in utterance for marker in (
             '"', "'", '“', '”', '‘', '’', '`', '예를 들', '만약',
             '라고 했', '라고 말했', '라고 적', '라는 문장', '인용',

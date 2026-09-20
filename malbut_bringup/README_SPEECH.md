@@ -146,7 +146,7 @@ ros2 launch malbut_bringup robot.launch.py \
 | `speech_python_executable` | 위 음성 환경의 `bin/python`; YOLO의 `python_executable`과 별개 |
 | `stt_model_path`, `stt_library_path` | 위 환경 변수 또는 기본 캐시 경로 |
 | `speech_input_device` | `0`; 현재 로봇의 XFM 마이크, sounddevice 장치 번호 |
-| `speech_output_device` | `-1`; 시스템 기본 출력 |
+| `speech_output_device` | `-1`; TTS와 호출 성공음이 함께 사용하는 시스템 기본 출력 |
 | `stt_cpp_threads` | `6` CPU 보조 스레드 |
 | `speech_input_has_aec` | `false`; 검증된 에코 제거 입력일 때만 `true` |
 | `speech_agent_provider` | `openai`; `mock`으로 바꿔도 TTS는 OpenAI 사용 |
@@ -190,7 +190,7 @@ Bringup이 제조사 프로세스를 자동으로 종료하지는 않는다.
    지도 작성 모드에서는 AutoSLAM Action 서버가 준비된 뒤 음성 준비를 시작한다.
    준비 확인은 이동 Goal을 보내지 않는다. 단독 음성 실행에는 이 단계를 요구하지 않는다.
 2. **Preflight**: 생성된 ROS 음성 타입, Agent 설정, OpenAI SDK와 키 존재,
-   출력 장치의 24 kHz mono float32 스트림, STT ABI 2 모델 로딩,
+   출력 장치의 24 kHz mono float32 스트림, STT ABI 3 모델 로딩,
    마이크 16 kHz PCM 512 samples 읽기와 20 ms VAD 입력을 점검한다.
    출력에는 100 ms 무음만 쓰며, 입력을 전사·저장·전송하지 않는다.
 3. **Agent와 TTS**: 점검 프로세스가 성공 종료한 뒤 시작한다. Agent는 대화 런타임과

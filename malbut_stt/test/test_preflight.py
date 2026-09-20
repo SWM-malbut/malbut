@@ -29,7 +29,7 @@ def runtime(monkeypatch):
         def __init__(self, model_path, library_path, **options):
             state.calls['model'] = (model_path, library_path, options)
             event('model_load')
-            self.metadata = {'bridge_abi': 2, 'model_type': 'small'}
+            self.metadata = {'bridge_abi': 3, 'model_type': 'small'}
 
         def __enter__(self):
             return self
@@ -100,7 +100,7 @@ def test_local_model_and_microphone_check_reports_only_verified_capabilities(run
     assert runtime.calls['vad_frame'] == (struct.pack('<320h', *runtime.samples[:320]), 16000)
     assert runtime.events[-3:] == ['stop', 'delete', 'model_close']
     assert result == {
-        'bridge_abi': 2, 'model_type': 'small', 'requested_use_gpu': True,
+        'bridge_abi': 3, 'model_type': 'small', 'requested_use_gpu': True,
         'cuda_execution_verified': False, 'microphone_sample_rate': 16000,
     }
 

@@ -65,13 +65,14 @@ class FakePlayer:
 class Harness:
     """Wait on observable events instead of guessing worker timing."""
 
-    def __init__(self, synth=None):
+    def __init__(self, synth=None, **runtime_options):
         self.synth = synth or FakeSynthesizer()
         self.players = Queue()
         self.events = []
         self.condition = Condition()
         self.runtime = SpeechRuntime(
             self.synth, self.make_player, self.status,
+            **runtime_options,
         )
 
     def make_player(self, **kwargs):
@@ -293,3 +294,136 @@ def test_close_cancels_active_and_drops_pending(h):
     assert h.events[-1] == (pid, 'stopped')
     assert h.synth.texts == ['active']
     assert h.runtime.submit('too late') is None
+
+
+def test_ten_thousand_waiting_requests_keep_only_default_capacity(h, caplog):
+    """Flooding a paused player cannot accumulate 10,000 pending texts."""
+    caplog.set_level('ERROR')
+    active = h.runtime.submit('active')
+    player = h.active(active)
+    assert h.runtime.control(active, 'pause')
+    submitted = [h.runtime.submit(f'request {index}') for index in range(10000)]
+    with h.runtime._condition:
+        retained = [entry[2].playback_id for entry in h.runtime._pending]
+    assert set(retained) == set(submitted[:32])
+    assert len(retained) == 32
+    assert h.events.count((active, 'paused')) == 1
+    assert h.synth.texts == ['active']
+    assert not player.cancel.is_set()
+    assert [(pid, state) for pid, state in h.events if state == 'failed'] == [
+        (pid, 'failed') for pid in submitted[32:]
+    ]
+
+
+@pytest.mark.parametrize('options', [
+    pytest.param({}, id='default'),
+    pytest.param({'pending_timeout_s': 0.0}, id='explicit-zero'),
+])
+def test_default_or_disabled_expiry_preserves_long_waits_and_priority(options):
+    """Long playback and pause preserve waiting speech until it can play."""
+    now = [0.0]
+    h = Harness(clock=lambda: now[0], **options)
+    try:
+        active = h.runtime.submit('active notice', NOTIFICATION)
+        player = h.active(active)
+        notice1 = h.runtime.submit('notice 1', NOTIFICATION)
+        dialogue1 = h.runtime.submit('dialogue 1', DIALOGUE)
+        # Admission runs expiry checks deterministically after long playback.
+        with h.runtime._condition:
+            now[0] += 120.0
+            notice2 = h.runtime.submit('notice 2', NOTIFICATION)
+            assert len(h.runtime._pending) == 3
+        assert h.events == [(active, 'playing')]
+        assert h.runtime.control(active, 'pause')
+        with h.runtime._condition:
+            now[0] += 600.0
+            dialogue2 = h.runtime.submit('dialogue 2', DIALOGUE)
+            assert len(h.runtime._pending) == 4
+            h.runtime._condition.notify_all()
+        assert h.events == [(active, 'playing'), (active, 'paused')]
+        assert h.synth.texts == ['active notice']
+        assert h.runtime.control(active, 'resume')
+        player.drain.set()
+        h.wait(active, 'finished')
+        for pid in (dialogue1, dialogue2, notice1, notice2):
+            h.active(pid).drain.set()
+            h.wait(pid, 'finished')
+        assert h.synth.texts == [
+            'active notice', 'dialogue 1', 'dialogue 2', 'notice 1', 'notice 2',
+        ]
+        assert not any(state == 'failed' for _, state in h.events)
+    finally:
+        h.runtime.close()
+
+
+def test_waiting_requests_expire_while_paused_without_new_submissions():
+    """A paused active job cannot retain or later speak expired waiting text."""
+    now = [100.0]
+    h = Harness(clock=lambda: now[0], pending_timeout_s=5.0)
+    try:
+        active = h.runtime.submit('active')
+        player = h.active(active)
+        assert h.runtime.control(active, 'pause')
+        pending = h.runtime.submit('stale answer')
+        with h.runtime._condition:
+            now[0] = 105.0
+            h.runtime._condition.notify_all()
+        h.wait(pending, 'failed')
+        with h.runtime._condition:
+            assert h.runtime._pending == []
+        assert h.synth.texts == ['active']
+        assert h.players.empty()
+        assert h.runtime.control(active, 'resume')
+        fresh = h.runtime.submit('fresh answer')
+        player.drain.set()
+        h.wait(active, 'finished')
+        h.active(fresh).drain.set()
+        h.wait(fresh, 'finished')
+        assert h.events.count((pending, 'failed')) == 1
+        assert h.synth.texts == ['active', 'fresh answer']
+    finally:
+        h.runtime.close()
+
+
+def test_expired_requests_free_capacity_before_admission_and_keep_priority():
+    """Expiry scans beyond heap priority and fresh admission can reuse slots."""
+    now = [0.0]
+    h = Harness(clock=lambda: now[0], max_pending_requests=3,
+                pending_timeout_s=5.0)
+    try:
+        active = h.runtime.submit('active')
+        player = h.active(active)
+        expired = h.runtime.submit('old notice', NOTIFICATION)
+        now[0] = 1.0
+        notice = h.runtime.submit('fresh notice', NOTIFICATION)
+        dialogue = h.runtime.submit('fresh dialogue', DIALOGUE)
+        # Keep the worker/reaper out so admission itself must reclaim space.
+        with h.runtime._condition:
+            now[0] = 5.0
+            admitted = h.runtime.submit('new dialogue', DIALOGUE)
+            assert len(h.runtime._pending) == 3
+        h.wait(expired, 'failed')
+        player.drain.set()
+        h.wait(active, 'finished')
+        for pid in (dialogue, admitted, notice):
+            h.active(pid).drain.set()
+            h.wait(pid, 'finished')
+        assert h.synth.texts == [
+            'active', 'fresh dialogue', 'new dialogue', 'fresh notice',
+        ]
+        assert h.events.count((expired, 'failed')) == 1
+    finally:
+        h.runtime.close()
+
+
+@pytest.mark.parametrize('option,value', [
+    ('max_pending_requests', 0), ('max_pending_requests', -1),
+    ('max_pending_requests', 1.5), ('max_pending_requests', True),
+    ('pending_timeout_s', -1.0),
+    ('pending_timeout_s', float('inf')), ('pending_timeout_s', float('nan')),
+    ('pending_timeout_s', True), ('pending_timeout_s', False),
+    ('pending_timeout_s', '30'),
+])
+def test_invalid_pending_limits_are_rejected_before_starting_workers(option, value):
+    with pytest.raises(ValueError, match=option):
+        SpeechRuntime(None, None, None, **{option: value})

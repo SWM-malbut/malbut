@@ -4,6 +4,8 @@ import json
 import threading
 from typing import Any, Dict, List, Optional
 
+import pytest
+
 from malbut_agent_server.conversation import (
     ConversationChangedError,
     ConversationSummary,
@@ -26,6 +28,7 @@ from malbut_agent_server.schemas import (
     AgentDecision,
     AgentRequest,
     ProviderResult,
+    SpeechAgentRequest,
 )
 from malbut_agent_server.summarization import (
     ExtractiveConversationSummarizer,
@@ -774,6 +777,16 @@ def test_escaped_utterance_overflow_keeps_a_nonempty_prefix() -> None:
     assert 'long_term_memory' not in (
         prepared.metrics.truncated_sections
     )
+
+
+def test_speech_budget_failure_never_sends_only_a_prefix() -> None:
+    request = SpeechAgentRequest.from_dict({
+        **_request().to_dict(), 'utterance': '"\\' * 1000,
+    })
+    # The configured minimum budget is too small for this escaped current text.
+    # Normal HTTP inputs retain their existing prefix policy; speech fails whole.
+    with pytest.raises(ValueError, match='complete speech transcript'):
+        prepare_model_input(request, [], max_model_input_chars=4096)
 
 
 def test_untrusted_sources_remain_separate_json_data() -> None:

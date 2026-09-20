@@ -114,7 +114,7 @@ class StreamingUtteranceCollector:
                 continue
             if result.status != 'no_speech':
                 events.append(result)
-            if result.status == 'too_long':
+            if result.status in ('too_long', 'buffer_overflow'):
                 self.discarding = True
                 self.quiet_frames = self.collector.silent_frames
             self.collector = self._new_collector()

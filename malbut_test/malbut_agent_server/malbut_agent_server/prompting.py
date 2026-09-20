@@ -13,6 +13,8 @@ from malbut_agent_server.memory import MemoryRecord
 from malbut_agent_server.schemas import (
     AgentRequest,
     ContextMetrics,
+    MAX_UTTERANCE_LENGTH,
+    SpeechAgentRequest,
 )
 
 
@@ -126,6 +128,15 @@ def prepare_model_input(
     ):
         raise ValueError(
             'max_model_input_chars must be an integer of at least 4096'
+        )
+    if isinstance(request, SpeechAgentRequest):
+        # Reserve only the extra serialized speech text, retaining the existing
+        # context budget and accounting for JSON escaping as well as Korean.
+        max_model_input_chars += max(
+            0,
+            len(json.dumps(request.utterance, ensure_ascii=False))
+            - len(json.dumps(request.utterance[:MAX_UTTERANCE_LENGTH],
+                             ensure_ascii=False)),
         )
     data_limit = max_model_input_chars - len(SYSTEM_INSTRUCTIONS)
     if data_limit < 1024:
@@ -241,6 +252,8 @@ def prepare_model_input(
         }
         text = _render_context(context)
     if len(text) > data_limit:
+        if isinstance(request, SpeechAgentRequest):
+            raise ValueError('complete speech transcript cannot fit model input budget')
         truncated_sections.add('current_user_utterance')
         context, text = _bounded_current_utterance_context(
             request.utterance,
