@@ -15,6 +15,71 @@ SPEECH_INTERFACES = {
     'srv/ClassifySpeechAddressee.srv',
 }
 SPEECH_CONSUMERS = {'malbut_agent_server', 'malbut_stt', 'malbut_tts'}
+# Only reviewed ROS-independent code can skip ROS builds. Unknown files,
+# package metadata, shared runtime types and ROS bridges retain the broad path.
+FALL_MODULES = {
+    'application/cloud_fall_monitor.py', 'application/fall_cloud_association.py',
+    'application/fall_frame_buffer.py', 'application/fall_normal_closure.py',
+    'application/fall_subject_evidence.py', 'application/vlm_analysis.py',
+    'adapters/outbound/bedrock_nova_vlm.py', 'adapters/outbound/gemini_vlm.py',
+    'adapters/outbound/ollama_cloud_fall.py', 'adapters/outbound/openai_compatible_vlm.py',
+    'adapters/outbound/homecam_fall_events.py', 'adapters/outbound/sqlite_fall_journal.py',
+    'domain/vlm.py', 'ports/cloud_fall.py', 'ports/fall_event_journal.py',
+    'ports/vlm_provider.py', 'vlm_eval_schema.py', 'vlm_eval_metrics.py',
+    'vlm_eval_prompt.py', 'vlm_eval_runner.py', 'vlm_inference_runner.py', 'vlm_factory.py',
+}
+FALL_TESTS = {
+    'test_cloud_fall_monitor.py', 'test_fall_cloud_association.py',
+    'test_fall_detector_input.py', 'test_fall_frame_buffer.py', 'test_fall_journal.py',
+    'test_fall_normal_closure.py', 'test_fall_subject_evidence.py',
+    'test_ollama_cloud_fall.py', 'test_vlm_eval.py', 'test_vlm_runtime.py',
+}
+FALL_EVAL_SCRIPTS = set('''
+audit_fall84_misses audit_pose_comparison audit_pose_requests cleanup_ollama_eval_models
+compare_pose_detectors diagnose_fall84_json_fences diagnose_fall_evidence_format
+diagnose_fall_misses evaluate_runtime_cloud_frames experimental_fall_recheck
+experimental_leg_change experimental_partial_pose experimental_pose_disagreement
+experimental_pose_gap experimental_pose_input experimental_pose_retention
+experimental_pose_stability experimental_request_coalescing experimental_request_continuity
+experimental_request_dedup experimental_roi_pose extend_ollama_suite_catalog
+fall_evaluation_v2 fall_evidence_decision finalize_partial_pose_review
+prepare_detection_comparison_model prepare_fall_evaluation_84 prepare_fall_evaluation_v2
+replay_fall84_cloud_pair replay_fall84_facts replay_fall84_model replay_fall84_prompt_ab
+replay_fall_baseline replay_fall_evidence_decision replay_fall_rechecks
+replay_improved_gemma_cloud replay_leg_change replay_parallel_pose_cloud replay_partial_pose
+replay_pose_retention replay_pose_stability replay_request_coalescing replay_request_continuity
+replay_request_dedup replay_roi_pose replay_vlm_frames review_additional_boxes
+review_candidate_associations review_fall_annotations review_fall_timing
+review_pose_detection_comparison review_request_coalescing review_request_dedup review_roi_pose
+run_fall84_realtime run_free_cloud_fall_suite run_ollama_fall_suite score_fall_baseline
+score_pose_comparison_review score_vlm_frames summarize_ollama_suite verify_pose_comparison_export
+'''.split())
+FALL_EVAL_TESTS = set('''
+candidate_association_review fall84_cloud_pair fall84_facts fall84_json_fences fall84_miss_audit
+fall84_model fall84_prompt_ab fall84_realtime fall_baseline fall_evaluation_v2
+fall_evaluation_v2_reports fall_evidence_decision fall_miss_diagnosis fall_recheck
+fall_timing_review fall_video_annotations free_cloud_fall_suite improved_gemma_cloud leg_change
+ollama_eval_cleanup ollama_fall_suite ollama_suite_report parallel_pose_cloud partial_pose
+pose_comparison_review pose_disagreement pose_gap pose_input_comparison pose_retention
+pose_stability prepare_fall_evaluation_84 prepare_fall_evaluation_v2 request_coalescing
+request_coalescing_replay request_continuity request_dedup review_additional_boxes roi_pose
+runtime_cloud_frames vlm_frames
+'''.split())
+SIMULATION_BRIDGES = {
+    'homecam_agent/homecam_media_agent/launch/homecam_sim.launch.py',
+    'homecam_agent/scripts/setup_portable_sim.sh',
+    'homecam_agent/scripts/lib/portable_runtime.sh',
+}
+
+
+def fall_python_only(path):
+    """Select the offline fall suite without guessing about new ROS modules."""
+    return (path in {'malbut_agent_server/malbut_agent_server/' + p for p in FALL_MODULES}
+            or path in {'malbut_agent_server/test/' + p for p in FALL_TESTS}
+            or path in {'homecam_agent/scripts/' + p + '.py' for p in FALL_EVAL_SCRIPTS}
+            or path in {'homecam_agent/test/test_' + p + '.py' for p in FALL_EVAL_TESTS}
+            or (path.startswith('homecam_agent/evaluations/')
+                and Path(path).suffix in {'.json', '.jsonl', '.csv'}))
 
 
 def speech_cmake_additions(path, base):
@@ -73,18 +138,24 @@ def selection(paths, full=False, base=None):
     selected = set()
     broad_interfaces = False
     flags = dict(web=False, infra=False, ros=False, ros_full=False, homecam=False,
-                 assets=False)
+                 assets=False, fall_python=False)
     for path in paths:
         original_path = path
-        if path == '.github/workflows/ci.yml' or path.startswith('.github/scripts/'):
+        if (path == '.github/workflows/ci.yml'
+                or path.startswith(('.github/scripts/', '.github/requirements/'))):
             full = True
         if path.endswith('.md'):
+            continue
+        if fall_python_only(path):
+            flags['fall_python'] = True
             continue
         if path.startswith('homecam_web/'):
             flags['web'] = True
             flags['infra'] |= path.startswith('homecam_web/infra/')
         if path.startswith('homecam_agent/'):
             flags['homecam'] = True
+        if path in SIMULATION_BRIDGES:
+            selected.add('malbut_gazebo')
         if (path.startswith(('malbut_gazebo/models/', 'malbut_gazebo/worlds/'))
                 or path in {'malbut_gazebo/launch/humanoid_demo.launch.py',
                             'malbut_gazebo/test/test_humanoid_route_collisions.py',
@@ -113,7 +184,7 @@ def selection(paths, full=False, base=None):
             if path.startswith('malbut_') and path.endswith('package.xml'):
                 full = True  # Removing/moving a package can break old dependents.
     if full:
-        flags.update(web=True, infra=True, homecam=True, assets=True)
+        flags.update(web=True, infra=True, homecam=True, assets=True, fall_python=True)
         selected.update(packages)
     consumers = selected.intersection({'malbut_interfaces', 'yolo_msgs'})
     if not full and not broad_interfaces:
