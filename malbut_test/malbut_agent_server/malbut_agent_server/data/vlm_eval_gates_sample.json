@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "gates": [
+    {
+      "id": "P1-example-only",
+      "metric": "fall.clear_recall.ci95.lower",
+      "operator": ">=",
+      "value": 0.1
+    },
+    {
+      "id": "P8-example-only",
+      "metric": "telemetry.semantic_valid_rate.value",
+      "operator": "==",
+      "value": 1.0
+    }
+  ]
+}

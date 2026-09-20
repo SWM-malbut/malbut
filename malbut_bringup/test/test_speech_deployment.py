@@ -89,6 +89,20 @@ def test_robot_speech_install_metadata_is_self_contained(monkeypatch, package):
     monkeypatch.chdir(SOURCE / package)
     runpy.run_path(str(SOURCE / package / 'setup.py'))
     assert entries == source_metadata['entry_points']['console_scripts']
+    for field in ('package_data', 'data_files', 'install_requires', 'extras_require'):
+        assert metadata.get(field) == source_metadata.get(field), field
+
+
+@pytest.mark.parametrize('package', SPEECH_PACKAGES)
+def test_robot_speech_runtime_dependencies_match_source(package):
+    """Include the ROS and Python dependencies required by mirrored runtime code."""
+    def runtime_dependencies(base):
+        manifest = ElementTree.parse(base / package / 'package.xml').getroot()
+        tags = {'depend', 'exec_depend', 'buildtool_depend'}
+        return {(node.tag, node.text, tuple(sorted(node.attrib.items())))
+                for node in manifest if node.tag in tags}
+
+    assert runtime_dependencies(ROBOT) == runtime_dependencies(SOURCE)
 
 
 def test_robot_bringup_installs_speech_with_cmake():
