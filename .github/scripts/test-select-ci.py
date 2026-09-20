@@ -168,5 +168,95 @@ class SpeechSelectionTests(unittest.TestCase):
                         SELECTOR.changed_paths(base), base=base))
 
 
+class FallSelectionTests(unittest.TestCase):
+    """Do not install ROS for reviewed fall code or lose checks on mixed PRs."""
+
+    def test_every_reviewed_module_uses_offline_tests(self):
+        paths = [*('malbut_agent_server/malbut_agent_server/' + p
+                   for p in SELECTOR.FALL_MODULES),
+                 *('malbut_agent_server/test/' + p for p in SELECTOR.FALL_TESTS),
+                 *('homecam_agent/scripts/' + p + '.py'
+                   for p in SELECTOR.FALL_EVAL_SCRIPTS),
+                 *('homecam_agent/test/test_' + p + '.py'
+                   for p in SELECTOR.FALL_EVAL_TESTS)]
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertTrue((SELECTOR.ROOT / path).is_file())
+                result = SELECTOR.selection([path])
+                self.assertEqual(result['fall_python'], 'true')
+                self.assertEqual(result['ros'], 'false')
+                self.assertEqual(result['homecam'], 'false')
+                self.assertEqual(result['ros_packages'], '')
+
+    def test_ros_wiring_shared_types_and_unknown_files_keep_ros(self):
+        for path in ('malbut_agent_server/malbut_agent_server/ros_fall_monitor.py',
+                     'malbut_agent_server/malbut_agent_server/fall_runtime.py',
+                     'malbut_agent_server/malbut_agent_server/domain/fall_monitoring.py',
+                     'malbut_agent_server/malbut_agent_server/application/fall_detector_input.py',
+                     'malbut_agent_server/malbut_agent_server/application/fall_new_node.py',
+                     'malbut_agent_server/test/test_fall_runtime.py',
+                     'malbut_agent_server/config/fall_runtime.example.json',
+                     'malbut_agent_server/package.xml', 'malbut_agent_server/setup.py'):
+            with self.subTest(path=path):
+                result = SELECTOR.selection([path])
+                self.assertEqual(result['ros'], 'true')
+                self.assertEqual(result['agent'], 'true')
+        for path in ('homecam_agent/test/test_robot_launch.py',
+                     'homecam_agent/scripts/new_fall_node.py',
+                     'homecam_agent/homecam_detector/homecam_detector/detector_node.py'):
+            with self.subTest(path=path):
+                self.assertEqual(SELECTOR.selection([path])['homecam'], 'true')
+
+    def test_mixed_order_keeps_all_required_jobs(self):
+        fall = 'malbut_agent_server/malbut_agent_server/adapters/outbound/ollama_cloud_fall.py'
+        for paths in ([fall, 'malbut_stt/malbut_stt/node.py'],
+                      ['malbut_stt/malbut_stt/node.py', fall]):
+            result = SELECTOR.selection(paths)
+            self.assertEqual(result['fall_python'], 'true')
+            self.assertEqual(result['ros'], 'true')
+            self.assertIn('malbut_stt', result['ros_test_packages'].split())
+        result = SELECTOR.selection([fall, 'homecam_web/app/page.tsx'])
+        self.assertEqual(result['web'], 'true')
+        self.assertEqual(result['fall_python'], 'true')
+        self.assertEqual(result['ros'], 'false')
+
+    def test_simulation_bridges_still_select_gazebo(self):
+        for path in SELECTOR.SIMULATION_BRIDGES:
+            with self.subTest(path=path):
+                self.assertTrue((SELECTOR.ROOT / path).is_file())
+                result = SELECTOR.selection([path])
+                self.assertIn('malbut_gazebo', result['ros_packages'].split())
+                self.assertIn('malbut_gazebo', result['ros_test_packages'].split())
+                self.assertEqual(result['homecam'], 'true')
+
+    def test_documents_data_and_full_ci(self):
+        self.assertEqual(SELECTOR.selection([
+            'malbut_agent_server/docs/fall_runtime.md'])['fall_python'], 'false')
+        self.assertEqual(SELECTOR.selection([
+            'homecam_agent/evaluations/synthetic_fall_v1/labels.jsonl'
+        ])['fall_python'], 'true')
+        for path in ('.github/workflows/ci.yml', '.github/requirements/fall-tests.txt'):
+            result = SELECTOR.selection([path])
+            self.assertEqual(result['ros_full'], 'true')
+            self.assertEqual(result['fall_python'], 'true')
+        self.assertEqual(SELECTOR.selection([], full=True)['fall_python'], 'true')
+
+    def test_deleted_renamed_and_earlier_pr_files_are_not_lost(self):
+        old = 'malbut_agent_server/malbut_agent_server/adapters/outbound/ollama_cloud_fall.py'
+        new = 'malbut_agent_server/malbut_agent_server/ros_fall_monitor.py'
+        # --no-renames gives both the removed and added names to the selector.
+        result = SELECTOR.selection([old, new])
+        self.assertEqual(result['fall_python'], 'true')
+        self.assertEqual(result['ros'], 'true')
+        with cmake_diff('', path=old, before='old provider') as base:
+            self.assertIn(old, SELECTOR.changed_paths(base))
+            Path('notes.md').write_text('later documentation change')
+            subprocess.run(['git', 'add', 'notes.md'], check=True)
+            subprocess.run(['git', 'commit', '--quiet', '-m', 'Documentation'], check=True)
+            self.assertIn(old, SELECTOR.changed_paths(base))
+            self.assertEqual(SELECTOR.selection(
+                SELECTOR.changed_paths(base), base=base)['fall_python'], 'true')
+
+
 if __name__ == '__main__':
     unittest.main()

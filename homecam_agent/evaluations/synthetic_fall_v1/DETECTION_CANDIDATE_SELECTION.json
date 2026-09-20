@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "selected_on": "2026-09-18",
+  "scope": "next_offline_validation_candidate_not_production_configuration",
+  "selected_arm": "s_letterbox",
+  "selection_reason": "User agreed to prioritize this candidate for further validation, retaining n as comparator. Not a declaration of best overall model.",
+  "comparators": ["n_stretch", "n_letterbox"],
+  "model": {
+    "name": "YOLO26s-Pose",
+    "onnx_sha256": "324afc556c8c4dc15b91cce773b3165558796e889a63988e612edb86698b3023",
+    "checkpoint_sha256": "a083adb42303728ae14c4bd6bd56d80da46f82fb2564dbd6f31dcc92ea321646"
+  },
+  "input": {
+    "size": [640, 640],
+    "preprocessing": "aspect_preserving_letterbox",
+    "padding_value": 114,
+    "source_coordinate_restore": true,
+    "padding_keypoint_confidence": 0,
+    "super_resolution": false
+  },
+  "candidate_confidence": 0.1,
+  "strong_detection_confidence": 0.45,
+  "keypoint_confidence": 0.5,
+  "sample_fps": 5,
+  "comparison_result": "/home/jisanggeun/.local/share/malbut-evaluations/fall84-detection-comparison-20260917-r2",
+  "summary_sha256": "dddd1d2674a16a626e4fb32b47cbde813388f6a2f84928250972814c1697ace7",
+  "approved_spatial_freeze_sha256": "c8bbb590e9e48b88969b1610c1fa3d844ef77d8d63095352fd3d72a6eb79a03a",
+  "downstream_rules": "Unchanged from the hash-bound comparison plan.json; do not tune against individual clip IDs.",
+  "production_changed": false,
+  "robot_changed": false,
+  "vlm_called": false,
+  "pending": [
+    "Resolve observed regressions in V023, V027 and V048 without increasing background triggers unchecked",
+    "Review blanket/bed evidence in 413, cat trigger in 425 and duplicate request in 108",
+    "Complete target/time auditing before claiming full-set target-verified recall",
+    "Measure on Jetson with existing navigation and voice workloads; PC timings are not device results"
+  ]
+}

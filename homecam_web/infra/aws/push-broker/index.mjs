@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import webpush from "web-push";
+import { isFallNotification } from "./fall-notification.mjs";
 
 const sharedSecret = process.env.BROKER_SHARED_SECRET;
 const vapidSubject = process.env.PUSH_VAPID_SUBJECT;
@@ -53,7 +54,8 @@ export async function handler(event) {
             keys: subscription.keys,
           },
           notification,
-          { TTL: 60, urgency: "high" },
+          { TTL: 60, urgency: input.notification.data.kind === "fall" &&
+              input.notification.data.level === "info" ? "normal" : "high" },
         );
         return {
           subscriptionId: subscription.subscriptionId,
@@ -87,25 +89,7 @@ function validatePushRequest(value) {
     value.notification.body.length < 1 ||
     value.notification.body.length > 160 ||
     !isRecord(value.notification.data) ||
-    !hasOnlyKeys(value.notification.data, [
-      "deviceId",
-      "eventId",
-      "eventType",
-      "occurredAt",
-      "url",
-    ]) ||
-    typeof value.notification.data.deviceId !== "string" ||
-    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(
-      value.notification.data.deviceId,
-    ) ||
-    typeof value.notification.data.eventId !== "string" ||
-    !uuidPattern.test(value.notification.data.eventId) ||
-    !eventTypes.has(value.notification.data.eventType) ||
-    !isCanonicalTimestamp(value.notification.data.occurredAt) ||
-    typeof value.notification.data.url !== "string" ||
-    !/^\/\?view=events&device=[^&]{1,384}&event=[^&]{1,128}$/.test(
-      value.notification.data.url,
-    ) ||
+    !(isFallNotification(value.notification) || isHomecamNotificationData(value.notification.data)) ||
     !Array.isArray(value.subscriptions) ||
     value.subscriptions.length < 1 ||
     value.subscriptions.length > 100
@@ -120,6 +104,24 @@ function validatePushRequest(value) {
     notification: value.notification,
     subscriptions,
   };
+}
+
+function isHomecamNotificationData(data) {
+  return (
+    hasOnlyKeys(data, [
+      "deviceId",
+      "eventId",
+      "eventType",
+      "occurredAt",
+      "url",
+    ]) &&
+    typeof data.deviceId === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(data.deviceId) &&
+    typeof data.eventId === "string" && uuidPattern.test(data.eventId) &&
+    eventTypes.has(data.eventType) && isCanonicalTimestamp(data.occurredAt) &&
+    typeof data.url === "string" &&
+    /^\/\?view=events&device=[^&]{1,384}&event=[^&]{1,128}$/.test(data.url)
+  );
 }
 
 function validateSubscription(value) {

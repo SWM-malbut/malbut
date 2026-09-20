@@ -1,0 +1,22 @@
+{
+  "device_id": "REPLACE_WITH_REGISTERED_DEVICE_ID",
+  "journal_path": "/var/lib/malbut-falls/events.sqlite",
+  "cloud_key_file": "/etc/malbut/ollama-cloud.key",
+  "model": "gemma4:31b",
+  "image_topic": "/camera/color/image_raw",
+  "retention_s": null,
+  "buffer_bytes": null,
+  "buffer_frames": null,
+  "input_fps": null,
+  "max_source_age_s": null,
+  "control_lease_s": null,
+  "policy": {
+    "retry_interval_s": null,
+    "max_person_observation_age_s": null,
+    "clip_window_s": 5,
+    "max_frame_age_s": null,
+    "max_calls_per_minute": null,
+    "max_incidents": null,
+    "max_images": 12
+  }
+}

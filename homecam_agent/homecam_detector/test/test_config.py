@@ -42,6 +42,11 @@ def test_rejects_nan_and_infinite_motion_parameters() -> None:
         "pose_confidence_threshold",
         "pose_keypoint_threshold",
         "pose_inference_fps",
+        "pose_candidate_confidence_threshold",
+        "pose_track_max_gap_sec",
+        "fall_temporal_window_sec",
+        "fall_found_down_hold_sec",
+        "fall_max_frame_gap_sec",
         "event_cooldown_sec",
         "max_frame_gap_sec",
         "stationary_after_sec",
@@ -49,6 +54,10 @@ def test_rejects_nan_and_infinite_motion_parameters() -> None:
         "linear_motion_threshold",
         "angular_motion_threshold",
         "motion_area_ratio",
+        "depth_scale_m",
+        "depth_max_stamp_delta_sec",
+        "camera_height_m",
+        "camera_pitch_rad",
     ]
     defaults = DetectorConfig()
     for field in float_fields:
@@ -63,6 +72,49 @@ def test_pose_rate_is_bounded() -> None:
     assert validate_config(DetectorConfig(pose_inference_fps=30.1)) == [
         "pose_inference_fps must be in (0, 30]"
     ]
+
+
+def test_pose_tracking_limits_and_threshold_order() -> None:
+    for field, values in {
+        "pose_candidate_confidence_threshold": (0, -0.1, 0.46),
+        "pose_track_max_gap_sec": (0, -1),
+        "pose_track_min_observations": (1, 0, True, 2.5),
+        "pose_track_max_people": (0, 129, True, 2.5),
+    }.items():
+        for value in values:
+            assert validate_config(replace(DetectorConfig(), **{field: value}))
+
+
+def test_fall_candidate_window_parameters_are_validated():
+    for name in ("fall_temporal_window_sec", "fall_found_down_hold_sec", "fall_max_frame_gap_sec"):
+        assert validate_config(replace(DetectorConfig(), **{name: 0}))
+    assert validate_config(DetectorConfig(fall_found_down_hold_sec=3))
+    assert validate_config(DetectorConfig(fall_max_frame_gap_sec=3))
+
+
+def test_depth_topics_must_be_paired_and_explicitly_aligned() -> None:
+    assert validate_config(DetectorConfig(depth_image_topic="relative"))
+    assert validate_config(
+        DetectorConfig(depth_image_topic="/camera/depth/aligned")
+    ) == [
+        "depth_image_topic and depth_camera_info_topic must be set together"
+    ]
+    assert validate_config(DetectorConfig(depth_aligned_to_rgb=True)) == [
+        "depth_aligned_to_rgb requires configured depth topics"
+    ]
+    assert "explicitly aligned" in validate_config(
+        DetectorConfig(
+            depth_image_topic="/camera/depth/aligned",
+            depth_camera_info_topic="/camera/depth/camera_info",
+        )
+    )[0]
+    assert validate_config(
+        DetectorConfig(
+            depth_image_topic="/camera/depth/aligned",
+            depth_camera_info_topic="/camera/depth/camera_info",
+            depth_aligned_to_rgb=True,
+        )
+    ) == []
 
 
 def test_allows_local_development_http() -> None:

@@ -24,6 +24,7 @@ jobs:
       ros_full: ${{ steps.modules.outputs.ros_full }}
       homecam: ${{ steps.modules.outputs.homecam }}
       agent: ${{ steps.modules.outputs.agent }}
+      fall_python: ${{ steps.modules.outputs.fall_python }}
       assets: ${{ steps.modules.outputs.assets }}
       ros_packages: ${{ steps.modules.outputs.ros_packages }}
       ros_paths: ${{ steps.modules.outputs.ros_paths }}
@@ -179,15 +180,35 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+          cache: pip
+          cache-dependency-path: .github/requirements/agent-tests.txt
 
       - name: Install Python test dependencies
-        run: python -m pip install pytest PyYAML
+        run: python -m pip install -r .github/requirements/agent-tests.txt
 
       - name: Run Agent tests without ROS
         working-directory: malbut_agent_server
         env:
           PYTHONPATH: .
         run: python -m pytest -q -rs test
+
+  fall-python:
+    name: Fall Python tests (no ROS or Cloud)
+    runs-on: ubuntu-22.04
+    needs: changes
+    if: needs.changes.outputs.fall_python == 'true'
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: .github/requirements/*-tests.txt
+      - name: Install offline test dependencies
+        run: python -m pip install -r .github/requirements/fall-tests.txt
+      - name: Test fall processing and evaluation without providers
+        run: bash .github/scripts/test-fall-python.sh
 
   test:
     name: Test
@@ -351,7 +372,7 @@ jobs:
           PYTHONPATH=".:${PYTHONPATH}" python3 -m pytest -q -rs \
             test/test_node_communication_ros.py test/test_ros_memory_communication.py \
             test/test_ros_weather_communication.py test/test_weather_action.py \
-            test/test_speech_addressee_service_ros.py
+            test/test_speech_addressee_service_ros.py test/test_fall_runtime.py
 
       - name: Validate robot Xacro
         if: needs.changes.outputs.ros_full == 'true'
@@ -450,9 +471,7 @@ jobs:
           # ament_python is provided by colcon's build plugin.
           python3 -c 'import colcon_ros.task.ament_python.build'
           rosdep install \
-            --from-paths src \
-              src/malbut/malbut_yolo/vendor/yolo_ros/yolo_ros \
-              src/malbut/malbut_yolo/vendor/yolo_ros/yolo_msgs \
+            --from-paths src/malbut/homecam_agent \
             --ignore-src \
             --skip-keys "ament_python python3-torchvision-pip python3-ultralytics-pip" \
             --rosdistro humble \
@@ -462,13 +481,13 @@ jobs:
             --dependency-types exec \
             --dependency-types test \
             -r -y
+          bash src/malbut/homecam_agent/scripts/install_dependencies.sh
+          sudo apt-get install -y python3-pil python3-aiohttp python3-yaml
 
       - name: Build and test homecam
         if: needs.changes.outputs.homecam == 'true'
         shell: bash
         working-directory: src/malbut
         run: |
-          # Do not let yolo_ros's optional uv build hook install GPU runtimes.
           export PATH=/usr/bin:/bin
-          ./homecam_agent/scripts/setup_portable_sim.sh \
-            --workspace "$GITHUB_WORKSPACE"
+          HOMECAM_CI_WORKSPACE="$GITHUB_WORKSPACE" bash .github/scripts/test-homecam.sh

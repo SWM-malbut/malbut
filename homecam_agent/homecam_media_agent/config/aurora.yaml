@@ -21,6 +21,18 @@ homecam_media_agent:
 
 homecam_detector:
   ros__parameters:
+    # Fill these only with an RGB-aligned Aurora depth stream and its matching
+    # CameraInfo topic. Unaligned depth is deliberately never projected onto
+    # RGB pose keypoints.
+    depth_image_topic: ""
+    depth_camera_info_topic: ""
+    depth_aligned_to_rgb: false
+    depth_scale_m: 0.0
+    depth_max_stamp_delta_sec: 0.15
+    camera_height_m: 0.091864
+    # REP-103 optical-frame convention: positive pitch points the optical
+    # axis downward. Measure the installed camera pose; do not trust defaults.
+    camera_pitch_rad: 0.0
     odom_topic: /odom
     navigation_status_topic: /navigate_to_pose/_action/status
     model_path: ""
@@ -31,6 +43,16 @@ homecam_detector:
     pose_confidence_threshold: 0.45
     pose_keypoint_threshold: 0.5
     pose_inference_fps: 5.0
+    # Candidate retention for multi-person tracking, NOT a fall threshold.
+    # Experimental floor: retains weak/possibly false detections separately.
+    pose_candidate_confidence_threshold: 0.10
+    pose_track_max_gap_sec: 1.0
+    pose_track_min_observations: 3
+    pose_track_max_people: 32
+    # Pilot fall-candidate timings. Verification candidates only; no alerts/control.
+    fall_temporal_window_sec: 2.0
+    fall_found_down_hold_sec: 0.6
+    fall_max_frame_gap_sec: 0.5
     consecutive_frames: 3
     event_cooldown_sec: 30.0
     event_confirmation_window_frames: 5

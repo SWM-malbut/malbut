@@ -1,0 +1,271 @@
+{
+  "schema_version": "malbut.fall-video-spatial-temporal.v1",
+  "annotation_status": "assistant_draft_pending_user_review",
+  "created_date": "2026-09-09",
+  "dataset_usage": "development_only_previously_inspected_and_tuned",
+  "source_labels_relative_path": "vlm_review_v1/labels.json",
+  "source_labels_sha256": "336080d382411d4d1a5f485a8e301361fbe3f0fe86df0a66e93c97c8e57f1630",
+  "annotation_basis": "RGB contact sheets reviewed by assistant; not a blinded review. No detector boxes or predictions imported. Existing user-approved clip labels remain authoritative.",
+  "box_format": "source_pixel_xyxy_visible_extent",
+  "box_interpolation": "forbidden_for_scoring",
+  "time_format": "inclusive_zero_based_frame_interval",
+  "new_labels_user_approved": false,
+  "cases": [
+    {
+      "case_id": "SYN001", "reviewed_frames": "all", "entry_state": "crouching", "target_person_id": "P01",
+      "onset_frames": [30, 46], "onset_status": "uncertain_staged_descent", "landing_frames": [46, 49], "landing_status": "visible_interval", "first_down_frames": [47, 49],
+      "notes": "검은 상의의 사람이 낮은 자세에서 일어났다가 다시 몸을 낮추고 옆으로 쓰러진다. 몸을 숙이는 시작과 최종 균형 상실을 구분하기 어려워 시작 범위를 넓게 둠.",
+      "persons": [{"person_id":"P01","description":"화면 중앙 뒤쪽 검은 상의의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,320,145,425,232],[12,308,120,425,234],[24,298,87,393,232],[36,267,121,378,236],[48,214,177,369,239],[60,194,174,380,242]]}]
+    },
+    {
+      "case_id":"SYN002", "reviewed_frames":"all", "entry_state":"standing", "target_person_id":"P01",
+      "onset_frames":[23,27], "onset_status":"suspected_motion_interval", "landing_frames":[36,41], "landing_status":"visible_interval", "first_down_frames":[36,41],
+      "notes":"붉은 상의의 사람이 벽을 따라 주저앉는다. 낙상 의심이라는 기존 분류 유지. 바닥에 앉는 것은 보이지만 의도와 실제 낙상 여부는 확정하지 않음.",
+      "persons":[{"person_id":"P01","description":"오른쪽 벽 옆 붉은 상의의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"none","boxes":[[0,351,41,418,230],[12,374,42,439,232],[24,397,49,463,235],[36,380,104,480,239],[48,356,126,476,242],[60,318,121,481,245]]}]
+    },
+    {
+      "case_id":"SYN003", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"already_down", "target_person_id":"P01",
+      "onset_frames":null, "onset_status":"not_visible_before_clip", "landing_frames":null, "landing_status":"not_visible_before_clip", "first_down_frames":[0,0],
+      "notes":"처음부터 소파 앞 바닥에 누워 있음. 팔 움직임을 회복이나 도움 요청으로 단정하지 않음. 낙상 시각은 영상에 없음.",
+      "persons":[{"person_id":"P01","description":"소파 앞 바닥에 누워 팔을 뻗는 사람","role":"target","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,188,151,440,242],[12,188,151,440,242],[24,188,151,440,242],[36,188,151,440,244],[48,188,151,448,242],[60,188,151,441,242]]}]
+    },
+    {
+      "case_id":"SYN004", "reviewed_frames":"all", "entry_state":"crouching", "target_person_id":"P01",
+      "onset_frames":[8,10], "onset_status":"visible_interval", "landing_frames":[10,13], "landing_status":"visible_interval", "first_down_frames":[12,15],
+      "notes":"복도에서 쪼그려 있던 사람이 뒤로 주저앉고 몸을 눕힌다. 8–10프레임에 뒤로 내려가기 시작하고 10–13프레임에 골반이 먼저 바닥에 닿음. 18프레임 이후 상체를 눕히는 동작을 첫 접촉 시각으로 잡지 않음.",
+      "persons":[{"person_id":"P01","description":"복도 끝 어두운 자주색 상의의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"none","boxes":[[0,268,74,383,200],[12,277,100,374,201],[24,268,132,352,194],[36,265,153,363,194],[48,263,153,372,194],[60,263,153,372,194]]}]
+    },
+    {
+      "case_id":"SYN005", "reviewed_frames":"all", "entry_state":"standing", "target_person_id":"P01",
+      "onset_frames":[9,14], "onset_status":"visible_interval", "landing_frames":[25,30], "landing_status":"visible_interval", "first_down_frames":[28,32],
+      "notes":"회색 겉옷·파란 바지. 처음에는 식탁 몸을 숙여 얼굴 일부가 가려짐. 쓰러진 뒤 왼쪽 화면 밖으로 일부 잘림.",
+      "persons":[{"person_id":"P01","description":"회색 겉옷과 파란 바지의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,176,70,327,340],[12,161,74,330,345],[24,95,173,311,385],[36,0,235,301,398],[48,0,264,301,399],[60,0,264,301,399]]}]
+    },
+    {
+      "case_id":"SYN006", "reviewed_frames":"all", "entry_state":"standing", "target_person_id":"P01",
+      "onset_frames":[7,12], "onset_status":"visible_interval", "landing_frames":[19,23], "landing_status":"visible_interval", "first_down_frames":[22,25],
+      "notes":"33 H3와 같은 장면 계열의 LTX 변형. 독립적인 최종 평가 표본처럼 나누지 않음.",
+      "persons":[{"person_id":"P01","description":"회색 겉옷과 파란 바지의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,176,69,325,340],[12,185,106,366,346],[24,139,267,527,354],[36,123,269,549,349],[48,123,267,551,349],[60,123,267,551,349]]}]
+    },
+    {
+      "case_id":"SYN007", "reviewed_frames":"all", "entry_state":"standing", "target_person_id":"P01",
+      "onset_frames":[29,33], "onset_status":"visible_interval", "landing_frames":null, "landing_status":"occluded", "first_down_frames":[38,42],
+      "notes":"주방의 분홍 상의 사람. 넘어지는 후반과 바닥 접촉이 의자 다리에 가려져 정확한 착지 시각은 미정.",
+      "persons":[{"person_id":"P01","description":"주방 뒤쪽 분홍 상의·검은 바지의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,201,78,290,236],[12,201,78,290,236],[24,230,75,310,239],[36,260,126,357,242],[48,274,181,421,245],[60,272,181,423,247]]}]
+    },
+    {
+      "case_id":"SYN008", "reviewed_frames":"all", "entry_state":"standing", "target_person_id":"P01",
+      "onset_frames":[7,10], "onset_status":"visible_interval", "landing_frames":[15,18], "landing_status":"visible_interval", "first_down_frames":[17,20],
+      "notes":"문 앞 흰 상의의 사람이 앞으로 내려가 옆으로 누움.",
+      "persons":[{"person_id":"P01","description":"문 앞 흰 상의와 어두운 바지의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"none","boxes":[[0,302,76,365,247],[12,274,100,365,251],[24,235,204,380,252],[36,231,204,378,252],[48,231,204,378,252],[60,231,204,378,252]]}]
+    },
+    {
+      "case_id":"SYN009", "reviewed_frames":"all", "entry_state":"low_posture", "target_person_id":"P01",
+      "onset_frames":[19,25], "onset_status":"suspected_motion_interval", "landing_frames":null, "landing_status":"occluded", "first_down_frames":[28,33],
+      "notes":"의자 뒤 낮은 자세에서 뒤로 내려감. 관절과 접촉점이 가려져 기존 낙상 의심 분류 유지.",
+      "persons":[{"person_id":"P01","description":"창가 의자 뒤 어두운 상의의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,251,133,340,225],[12,250,132,341,225],[24,214,126,333,231],[36,183,181,350,236],[48,183,181,350,236],[60,183,181,350,236]]}]
+    },
+    {
+      "case_id":"SYN010", "reviewed_frames":"all", "entry_state":"standing", "target_person_id":"P01",
+      "onset_frames":[8,11], "onset_status":"visible_interval", "landing_frames":[17,21], "landing_status":"visible_interval", "first_down_frames":[19,22],
+      "notes":"정면으로 쓰러져 몸통 길이가 짧게 투영되는 사례. 얼굴과 양팔이 보이는 가로 범위를 표시.",
+      "persons":[{"person_id":"P01","description":"정면 문 앞 밝은 잠옷의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"none","boxes":[[0,288,77,360,253],[12,274,99,366,256],[24,276,199,428,260],[36,266,215,416,261],[48,266,215,416,261],[60,266,215,416,261]]}]
+    },
+    {
+      "case_id":"SYN011", "reviewed_frames":"all", "entry_state":"lying_on_raised_surface", "target_person_id":"P01",
+      "onset_frames":[7,13], "onset_status":"visible_interval", "landing_frames":null, "landing_status":"covered_and_occluded", "first_down_frames":[23,29],
+      "notes":"침대 쪽에서 바닥으로 내려옴. 이불에 가려 몸통의 실제 바닥 접촉은 확인 불가. 상자에는 보이는 머리·팔·옷만 포함하고 이불 전체를 사람 몸으로 보지 않음.",
+      "persons":[{"person_id":"P01","description":"오른쪽 침대 가장자리에서 내려오는 사람","spatial_unknown_frames":[36,48,60],"spatial_unknown_reason":"이불에 가려 보이는 인체의 경계를 확정할 수 없음. 부재를 뜻하지 않음.","role":"target","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,381,121,429,160],[12,373,131,430,200],[24,334,152,423,235]]}]
+    },
+    {
+      "case_id":"SYN012", "reviewed_frames":"all", "entry_state":"already_down", "target_person_id":"P01",
+      "onset_frames":null, "onset_status":"not_visible_before_clip", "landing_frames":null, "landing_status":"not_visible_before_clip", "first_down_frames":[0,0],
+      "notes":"P01은 바닥에 누운 분홍 상의 사람, P02는 옆에서 확인하는 어두운 상의 사람. P02만 감지한 결과는 P01 감지 성공이 아님. 다른 사람이 확인 중이라는 사실만으로 회복·안전을 단정하지 않음.",
+      "persons":[
+        {"person_id":"P01","description":"바닥에 누워 있는 분홍 상의의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,220,147,438,210],[12,220,147,438,210],[24,220,147,438,210],[36,220,147,438,210],[48,220,147,438,210],[60,220,147,438,210]]},
+        {"person_id":"P02","description":"옆에 앉아 확인하는 어두운 상의의 사람","role":"other","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,199,71,342,208],[12,199,71,342,208],[24,199,71,342,208],[36,199,71,342,208],[48,199,71,342,208],[60,199,71,342,208]]}
+      ]
+    },
+    {
+      "case_id":"SYN013", "reviewed_frames":"all", "entry_state":"standing", "target_person_id":"P01",
+      "onset_frames":[7,10], "onset_status":"visible_interval", "landing_frames":[18,23], "landing_status":"visible_interval", "first_down_frames":[20,24],
+      "notes":"주방에서 몸을 낮추다 옆으로 쓰러짐. 바닥에 닿은 후 다리를 움직이지만 일어서는 회복은 보이지 않음.",
+      "persons":[{"person_id":"P01","description":"주방 창문 앞 회색 상의와 검은 바지의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,280,41,355,202],[12,267,71,357,207],[24,249,157,402,208],[36,244,160,410,208],[48,244,160,410,208],[60,244,160,410,208]]}]
+    },
+    {
+      "case_id":"SYN014", "reviewed_frames":"all", "entry_state":"standing_partly_hidden", "target_person_id":"P01",
+      "onset_frames":[11,18], "onset_status":"occlusion_limited_interval", "landing_frames":null, "landing_status":"occluded", "first_down_frames":[28,32],
+      "notes":"의자 뒤에서 아래로 내려와 옆으로 누움. 시작 자세의 상체와 착지 부위가 가려짐.",
+      "persons":[{"person_id":"P01","description":"중앙 의자 뒤에서 왼쪽으로 쓰러지는 사람","role":"target","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,282,118,375,190],[12,287,122,373,191],[24,261,60,378,195],[36,198,148,387,200],[48,198,148,387,200],[60,198,148,387,200]]}]
+    },
+    {
+      "case_id":"SYN015", "reviewed_frames":"all", "entry_state":"bending", "target_person_id":"P01",
+      "onset_frames":[26,30], "onset_status":"visible_interval", "landing_frames":[27,31], "landing_status":"visible_interval", "first_down_frames":[29,32],
+      "notes":"앞부분의 몸 숙이기·쪼그려 앉기를 곧바로 낙상 시작으로 보지 않음. 낮은 자세에서 옆으로 무너지며 골반이 먼저 내려옴. 27–31프레임의 첫 몸 접촉과 32프레임 이후 머리까지 눕는 동작을 구분.",
+      "persons":[{"person_id":"P01","description":"의자 왼쪽 어두운 상의의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,278,52,379,239],[12,279,71,374,241],[24,261,76,386,243],[36,130,183,372,249],[48,125,178,375,249],[60,124,178,375,249]]}]
+    },
+    {
+      "case_id":"SYN016", "reviewed_frames":"all", "entry_state":"already_down", "target_person_id":"P01",
+      "onset_frames":null, "onset_status":"not_visible_before_clip", "landing_frames":null, "landing_status":"not_visible_before_clip", "first_down_frames":[0,0],
+      "additional_motion":{"onset_frames":[24,28],"settled_low_frames":[29,34],"meaning":"상체를 잠시 들었다가 다시 낮추는 동작. 최초 낙상이나 두 번째 사건으로 자동 집계하지 않음."},
+      "notes":"기존 영상 분류는 낙상 의심으로 유지. 그러나 첫 장면부터 바닥에 있는 사람을 확인할 수 있으므로 발견 지연의 기준은 0초. 뒤의 상체 들기·내리기만 감지해서 처음 발견까지 성공한 것으로 세면 안 됨.",
+      "persons":[{"person_id":"P01","description":"의자 다리 뒤 바닥에 누운 흰 상의·검은 바지의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,252,117,566,200],[12,252,117,566,200],[24,226,103,566,203],[36,164,139,572,209],[48,164,139,572,209],[60,164,139,572,209]]}]
+    },
+    {
+      "case_id":"SYN017", "reviewed_frames":"all", "entry_state":"standing", "target_person_id":"P01",
+      "onset_frames":[14,18], "onset_status":"occlusion_limited_interval", "landing_frames":[25,31], "landing_status":"visible_interval", "first_down_frames":[28,33],
+      "notes":"문에서 나오며 식탁 다리 뒤로 쓰러짐. 기둥에 가려진 부분은 실제 몸 형태로 복원하지 않음.",
+      "persons":[{"person_id":"P01","description":"왼쪽 문에서 나오는 밝은 상의의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,178,87,236,249],[12,178,75,240,253],[24,130,94,275,260],[36,20,186,293,269],[48,20,191,298,269],[60,20,191,298,269]]}]
+    },
+    {
+      "case_id":"SYN018", "reviewed_frames":"all", "entry_state":"person_initially_hidden", "target_person_id":"P01",
+      "onset_frames":[23,27], "onset_status":"suspected_motion_interval", "landing_frames":[28,32], "landing_status":"visible_interval", "first_down_frames":[30,34],
+      "notes":"의자 뒤에서 나와 이부자리로 내려감. 의도적으로 눕는지 판단 불가이므로 기존 낙상 의심 분류 유지. 사람 첫 노출 시각도 의자 가림 때문에 범위로 둠.",
+      "persons":[{"person_id":"P01","description":"의자 뒤에서 나와 이부자리로 내려가는 푸른 상의의 사람","spatial_unknown_frames":[12],"spatial_unknown_reason":"의자 뒤에서 일부만 노출되어 인체 경계를 확정하기 어려움.","role":"target","first_visible_frames":[8,16],"occlusion":"heavy","boxes":[[24,224,0,358,213],[36,89,121,362,197],[48,82,137,343,197],[60,82,137,343,197]]}]
+    },
+    {
+      "case_id":"SYN019", "reviewed_frames":"all", "entry_state":"seated_on_sofa", "target_person_id":"P01",
+      "onset_frames":[6,15], "onset_status":"suspected_motion_interval", "landing_frames":null, "landing_status":"occluded", "first_down_frames":[27,31],
+      "notes":"소파에서 서서히 미끄러져 바닥에 앉음. 21–26프레임은 아직 소파에서 내려오는 도중이며 27–31프레임에 바닥에 내려앉은 상태가 보임. 가려진 골반 접촉점과 행동 의도는 확정하지 않고 기존 낙상 의심 유지.",
+      "persons":[{"person_id":"P01","description":"오른쪽 소파에서 바닥으로 내려오는 어두운 옷의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,292,142,387,244],[12,243,135,386,249],[24,206,124,385,252],[36,194,145,380,252],[48,172,149,381,254],[60,174,142,381,254]]}]
+    },
+    {
+      "case_id":"SYN020", "reviewed_frames":"all", "entry_state":"standing", "target_person_id":"P01",
+      "onset_frames":[40,44], "onset_status":"occlusion_limited_interval", "landing_frames":null, "landing_status":"occluded", "first_down_frames":[47,51],
+      "notes":"주방 안으로 멀어지다 식탁 다리 뒤로 쓰러짐. 접촉점은 안 보임. 작은 사람·낮은 대비·가림 때문에 시작과 누운 상태 시각의 추가 검토가 필요함.",
+      "persons":[{"person_id":"P01","description":"푸른 주방 문 안쪽으로 이동하는 밝은 잠옷의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,262,2,337,207],[12,270,30,334,207],[24,275,57,328,207],[36,257,65,317,208],[48,263,172,329,204],[60,263,176,329,204]]}]
+    },
+    {
+      "case_id":"SYN021", "reviewed_frames":"all", "entry_state":"standing", "target_person_id":"P01",
+      "onset_frames":[23,27], "onset_status":"visible_interval", "landing_frames":[30,34], "landing_status":"visible_interval", "first_down_frames":[32,35],
+      "notes":"걸어오다 의자 옆에서 몸을 낮추고 옆으로 쓰러짐. 30–34프레임에 골반·몸통이 먼저 내려오고 이후 옆으로 구름. 마지막으로 누운 자세가 완성된 시각과 첫 접촉을 구분. 사용자 확정 낙상 분류를 유지.",
+      "persons":[{"person_id":"P01","description":"중앙에서 걸어오는 남색 상의의 사람","role":"target","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,207,51,278,229],[12,246,46,322,233],[24,265,26,348,235],[36,141,124,355,244],[48,111,162,346,253],[60,109,169,346,253]]}]
+    },
+    {
+      "case_id":"SYN022", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"resting_under_blanket", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"기존 정상 휴식 분류. 이불 전체가 아닌 보이는 얼굴·손 위주로 위치 표시. 누워 있다는 사실만으로 낙상 정답을 추가하지 않음.",
+      "persons":[{"person_id":"P01","description":"이부자리 오른쪽 끝에 얼굴이 보이는 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,400,157,466,201],[12,400,157,466,201],[24,400,157,466,201],[36,400,157,466,201],[48,400,157,466,201],[60,400,157,466,201]]}]
+    },
+    {
+      "case_id":"SYN023", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"resting_under_blanket", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"이불을 정리하며 누워 있는 정상 행동. 이불 안의 몸통·다리 위치는 추정하지 않음.",
+      "persons":[{"person_id":"P01","description":"이부자리 오른쪽에 머리를 둔 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,414,176,511,229],[12,414,176,511,229],[24,349,145,511,231],[36,350,141,511,231],[48,350,154,511,232],[60,391,164,511,232]]}]
+    },
+    {
+      "case_id":"SYN024", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"seated", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"낮은 상 앞에 앉아 손을 움직이는 정상 행동. 의자·상에 가려짐.",
+      "persons":[{"person_id":"P01","description":"화면 중앙 뒤쪽 낮은 상 앞에 앉은 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,251,143,337,253],[12,251,143,346,253],[24,251,143,349,253],[36,251,143,349,253],[48,251,143,349,253],[60,251,143,349,253]]}]
+    },
+    {
+      "case_id":"SYN025", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"seated_stretching", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"다리를 뻗고 스트레칭. 상체와 머리가 식탁에 크게 가려짐.",
+      "persons":[{"person_id":"P01","description":"의자 뒤 바닥에서 다리를 뻗은 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,327,35,507,186],[12,327,46,507,186],[24,327,60,507,186],[36,327,65,507,186],[48,327,65,507,186],[60,327,65,507,186]]}]
+    },
+    {
+      "case_id":"SYN026", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"no_visible_person", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"검토 프레임에서 사람은 보이지 않음. 반려동물·쿠션·가구를 사람으로 표시하지 않음. 확인하지 않은 프레임까지 사람 부재 정답으로 확장하지 않음.","persons":[]
+    },
+    {
+      "case_id":"SYN027", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"kneeling_cleaning", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"무릎을 꿇고 손으로 바닥을 닦는 정상 행동. 몸이 낮다고 낙상으로 바꾸지 않음.",
+      "persons":[{"person_id":"P01","description":"밝은 상의를 입고 바닥을 닦는 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,240,96,356,215],[12,235,96,348,215],[24,180,96,326,215],[36,230,96,329,215],[48,153,96,325,215],[60,189,94,325,215]]}]
+    },
+    {
+      "case_id":"SYN028", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"resting_under_blanket", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"이불 속에서 뒤척이는 정상 행동. 보이는 머리·팔을 표시하며 이불 전체를 사람 상자로 만들지 않음.",
+      "persons":[{"person_id":"P01","description":"이부자리 왼쪽에 머리를 둔 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,142,136,236,215],[12,142,130,250,215],[24,146,124,239,216],[36,146,124,239,216],[48,146,124,239,216],[60,146,124,239,216]]}]
+    },
+    {
+      "case_id":"SYN029", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"two_people_seated", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"낮은 상 양쪽에 앉은 두 사람을 구분. 두 사람 모두 기존 정상 행동 분류.",
+      "persons":[
+        {"person_id":"P01","description":"상 왼쪽 밝은 상의의 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,211,97,304,214],[12,211,97,304,214],[24,211,97,304,214],[36,211,97,320,214],[48,211,97,320,214],[60,211,97,320,214]]},
+        {"person_id":"P02","description":"상 오른쪽 흰 상의의 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,344,99,431,216],[12,344,99,431,216],[24,333,99,431,216],[36,318,99,431,216],[48,329,99,431,216],[60,329,99,431,216]]}
+      ]
+    },
+    {
+      "case_id":"SYN030", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"seated", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"TV 옆 바닥에 앉아 다리를 뻗은 정상 행동.",
+      "persons":[{"person_id":"P01","description":"TV 왼쪽 바닥에 앉은 파란 상의의 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,266,110,435,232],[12,266,110,435,232],[24,266,110,435,232],[36,266,110,435,232],[48,266,110,435,232],[60,266,110,435,232]]}]
+    },
+    {
+      "case_id":"SYN031", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"standing_cleaning", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"청소기를 움직이는 정상 행동. 청소기 봉·헤드를 사람 상자에 포함하지 않음.",
+      "persons":[{"person_id":"P01","description":"창문 앞 청소 중인 무늬 상의의 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,282,48,353,185],[12,269,48,335,185],[24,244,49,310,185],[36,217,49,295,186],[48,206,48,278,186],[60,184,46,246,186]]}]
+    },
+    {
+      "case_id":"SYN032", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"standing_hanging_laundry", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"빨래를 널며 서 있는 정상 행동. 손에 든 옷은 인체로 확장하지 않음.",
+      "persons":[{"person_id":"P01","description":"창가 왼쪽에서 빨래를 널고 있는 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,144,27,232,237],[12,144,27,230,237],[24,144,27,235,237],[36,144,23,242,237],[48,144,23,244,237],[60,144,23,244,237]]}]
+    },
+    {
+      "case_id":"SYN033", "reviewed_frames":"all", "entry_state":"no_visible_person", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"프레임 전체 확인에서 사람은 보이지 않음. 쿠션·동물·의자 등 배경 오검출 확인용.","persons":[]
+    },
+    {
+      "case_id":"SYN034", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"bending_collecting_objects", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"바닥 물건을 집고 다시 올라오는 정상 행동. 이번 단계에서는 별도의 낙상·회복 사건을 만들지 않음.",
+      "persons":[{"person_id":"P01","description":"왼쪽에서 바닥 물건을 집는 검은 옷의 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"none","boxes":[[0,99,25,220,229],[12,94,105,252,234],[24,113,116,278,241],[36,113,116,278,241],[48,113,116,278,241],[60,115,50,259,234]]}]
+    },
+    {
+      "case_id":"SYN035", "reviewed_frames":"all", "entry_state":"two_people_seated", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"먼 곳에서 바닥 물건을 다루는 두 사람. 왼쪽 사람은 의자 다리에 가려졌다가 상체를 숙이며 더 잘 보임.",
+      "persons":[
+        {"person_id":"P01","description":"뒤쪽 오른편 푸른 상의의 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,325,144,373,226],[12,324,144,373,227],[24,324,144,373,226],[36,324,145,373,226],[48,324,145,373,232],[60,324,145,373,232]]},
+        {"person_id":"P02","description":"뒤쪽 왼편 밝은 상의의 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,238,151,298,232],[12,241,151,309,232],[24,239,151,317,232],[36,246,154,332,232],[48,241,157,324,232],[60,243,154,332,232]]}
+      ]
+    },
+    {
+      "case_id":"SYN036", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"crouching", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"창문 앞에서 낮게 앉아 손을 움직이는 정상 행동.",
+      "persons":[{"person_id":"P01","description":"창문 앞 어두운 옷의 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"none","boxes":[[0,211,124,304,267],[12,211,124,311,267],[24,211,124,311,267],[36,211,124,311,267],[48,211,124,311,267],[60,211,124,311,267]]}]
+    },
+    {
+      "case_id":"SYN037", "reviewed_frames":"all", "entry_state":"no_visible_person", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"동물이 움직이는 장면. 전체 프레임에서 사람은 보이지 않음.","persons":[]
+    },
+    {
+      "case_id":"SYN038", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"two_people_seated", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"낮은 상 양쪽에 앉아 손을 주고받는 두 사람. 낙상 장면 아님.",
+      "persons":[
+        {"person_id":"P01","description":"상 왼쪽 어두운 무늬 상의의 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,174,124,263,239],[12,174,127,280,238],[24,175,125,271,239],[36,174,129,264,238],[48,173,126,267,238],[60,174,127,282,238]]},
+        {"person_id":"P02","description":"상 오른쪽 분홍 상의의 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,317,120,392,238],[12,316,120,393,238],[24,290,121,393,238],[36,287,119,394,238],[48,316,120,394,238],[60,316,120,394,238]]}
+      ]
+    },
+    {
+      "case_id":"SYN039", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"seated", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"오른쪽 소파 앞 낮은 자리에 앉은 정상 행동. 의자 다리와 등받이에 부분 가림.",
+      "persons":[{"person_id":"P01","description":"오른쪽 소파 앞 밝은 상의의 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,320,117,402,215],[12,320,117,402,215],[24,320,117,402,215],[36,320,117,402,215],[48,320,117,402,215],[60,320,117,402,215]]}]
+    },
+    {
+      "case_id":"SYN040", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"standing_watering_plants", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"창문 앞에 서서 화분을 돌보는 정상 행동. 상판에 머리가 가려짐.",
+      "persons":[{"person_id":"P01","description":"창문 앞 밝은 상의·검은 바지의 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"partial","boxes":[[0,306,34,385,230],[12,306,34,385,230],[24,306,34,385,230],[36,306,34,385,230],[48,306,34,385,230],[60,306,34,385,230]]}]
+    },
+    {
+      "case_id":"SYN041", "reviewed_frames":[0,12,24,36,48,60], "entry_state":"resting_under_blanket", "target_person_id":null,
+      "onset_frames":null,"onset_status":"not_applicable","landing_frames":null,"landing_status":"not_applicable","first_down_frames":null,
+      "notes":"이불을 덮고 쉬는 정상 행동. 움직임이 적다는 이유만으로 사람을 제거하거나 낙상으로 확정하지 않음.",
+      "persons":[{"person_id":"P01","description":"이부자리 왼쪽에 얼굴이 보이는 사람","role":"normal_activity","first_visible_frames":[0,0],"occlusion":"heavy","boxes":[[0,147,131,263,208],[12,147,131,263,208],[24,147,131,263,208],[36,147,131,263,208],[48,147,131,263,208],[60,147,131,263,208]]}]
+    }
+  ]
+}
