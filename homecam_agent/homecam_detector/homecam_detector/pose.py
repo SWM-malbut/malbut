@@ -1,6 +1,7 @@
-"""Person-gated YOLO26 pose inference and normalized observations."""
+"""Rate-limited YOLO26 pose inference and normalized observations."""
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -41,7 +42,7 @@ class PoseKeypoint:
 
 @dataclass(frozen=True)
 class PersonPose:
-    """Highest-confidence person pose returned by the secondary model."""
+    """One person's pose in normalized source-image coordinates."""
 
     box_confidence: float
     box: Tuple[float, float, float, float]
@@ -73,7 +74,7 @@ class PersonPose:
 
 
 class PersonPoseEstimator:
-    """Run a YOLO26 pose model after the general detector sees a person."""
+    """Run a YOLO26 pose model independently of general object detection."""
 
     def __init__(
         self,
@@ -108,7 +109,21 @@ class PersonPoseEstimator:
         self._input_size = input_size
 
     def estimate(self, bgr_frame: np.ndarray) -> Optional[PersonPose]:
-        """Return the highest-confidence pose, or None when none qualifies."""
+        """Compatibility API: return the strongest qualifying pose."""
+        poses = self.estimate_all(bgr_frame)
+        return poses[0] if poses else None
+
+    def estimate_all(
+        self, bgr_frame: np.ndarray, *, confidence_threshold: Optional[float] = None
+    ) -> Tuple[PersonPose, ...]:
+        """Infer once and retain distinct person poses above the given floor.
+
+        A lower floor is for tracking candidates, not confirmed detections.
+        The default preserves the existing confidence threshold.
+        """
+        threshold = self._confidence if confidence_threshold is None else confidence_threshold
+        if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+            raise ValueError("pose confidence threshold must be in [0, 1]")
         if (
             not isinstance(bgr_frame, np.ndarray)
             or bgr_frame.ndim != 3
@@ -140,7 +155,7 @@ class PersonPoseEstimator:
         if predictions.ndim == 1 and predictions.shape[0] == 57:
             predictions = predictions.reshape(1, -1)
         if predictions.ndim != 2:
-            return None
+            raise ValueError("YOLO26 pose output must be a detection matrix")
         if predictions.shape[0] == 57 and predictions.shape[1] != 57:
             predictions = predictions.T
         if predictions.shape[1] != 57:
@@ -148,7 +163,7 @@ class PersonPoseEstimator:
                 "YOLO26 pose output must contain 57 values per detection"
             )
 
-        best = None
+        poses = []
         for row in predictions:
             if not np.all(np.isfinite(row)):
                 continue
@@ -158,21 +173,29 @@ class PersonPoseEstimator:
             if (
                 abs(class_value - class_id) > 1e-6
                 or class_id != 0
-                or confidence < self._confidence
+                or confidence < threshold
                 or confidence > 1.0
             ):
                 continue
-            if best is None or confidence > float(best[4]):
-                best = row
-        if best is None:
-            return None
+            pose = self._parse_pose(row)
+            if pose.box[0] < pose.box[2] and pose.box[1] < pose.box[3]:
+                poses.append(pose)
+        poses.sort(key=lambda pose: (-pose.box_confidence, pose.box))
+        # Low-score end-to-end outputs can contain near-identical duplicates.
+        # Keep overlapping people unless their boxes are almost identical.
+        distinct = []
+        for pose in poses:
+            if not any(box_iou(pose.box, kept.box) >= 0.85 for kept in distinct):
+                distinct.append(pose)
+        return tuple(distinct)
 
+    def _parse_pose(self, row: np.ndarray) -> PersonPose:
         scale = float(self._input_size)
         box = tuple(
             min(1.0, max(0.0, float(value) / scale))
-            for value in best[:4]
+            for value in row[:4]
         )
-        raw_keypoints = best[6:].reshape(len(COCO_KEYPOINT_NAMES), 3)
+        raw_keypoints = row[6:].reshape(len(COCO_KEYPOINT_NAMES), 3)
         keypoints = tuple(
             PoseKeypoint(
                 name=name,
@@ -183,7 +206,7 @@ class PersonPoseEstimator:
             for name, values in zip(COCO_KEYPOINT_NAMES, raw_keypoints)
         )
         return PersonPose(
-            box_confidence=float(best[4]),
+            box_confidence=float(row[4]),
             box=box,
             keypoints=keypoints,
             visible_keypoints=sum(
@@ -193,18 +216,26 @@ class PersonPoseEstimator:
         )
 
 
+def box_iou(left: Tuple[float, ...], right: Tuple[float, ...]) -> float:
+    """Intersection over union of two normalized XYXY boxes."""
+    intersection = max(0.0, min(left[2], right[2]) - max(left[0], right[0])) * max(
+        0.0, min(left[3], right[3]) - max(left[1], right[1])
+    )
+    union = ((left[2] - left[0]) * (left[3] - left[1])
+             + (right[2] - right[0]) * (right[3] - right[1]) - intersection)
+    return intersection / union if union > 0 else 0.0
+
+
 class PersonPoseGate:
-    """Limit pose work to person frames and a configured maximum rate."""
+    """Limit pose inference rate without requiring a person detection."""
 
     def __init__(self, inference_fps: float) -> None:
         """Create a monotonic-time gate for the requested maximum rate."""
         self._interval_sec = 1.0 / inference_fps
         self._last_inference_at: Optional[float] = None
 
-    def should_infer(self, person_present: bool, now: float) -> bool:
+    def should_infer(self, now: float) -> bool:
         """Reserve this frame for pose inference when it is due."""
-        if not person_present:
-            return False
         if (
             self._last_inference_at is not None
             and now - self._last_inference_at + 1e-9 < self._interval_sec

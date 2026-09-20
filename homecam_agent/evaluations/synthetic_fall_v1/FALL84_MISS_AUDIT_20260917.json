@@ -1,0 +1,37 @@
+{
+  "schema_version": "fall84-miss-review-v1",
+  "method": "assistant_nonblind_RGB_review_of_all_528_sampled_frames_and_cached_diagnostics",
+  "status": "engineering_triage_not_new_ground_truth_or_user_approval",
+  "summary_path": "/home/jisanggeun/.local/share/malbut-evaluations/fall84-miss-audit-20260917.nQnaRb/review/summary.json",
+  "summary_sha256": "6f057672071cec91773196c9a85ef4577fb96528ea9b7c1566bd9b2a6210e469",
+  "completed_sha256": "79e8f100a68c63e4e1f129b1c6291eb3d34db563d0838bd713c468401698a62a",
+  "primary_area_meaning": "First engineering area to investigate. Causes overlap; this is not an exclusive causal attribution or a changed model score.",
+  "areas": {
+    "target_pose_missing": "쓰러진 대상의 Pose 검출 끊김",
+    "partial_body_quality": "몸 일부 검출·관절 부족",
+    "temporal_or_assignment": "짧은 관측·연결·누적 실패",
+    "posture_rule_or_projection": "현재 자세 조건·카메라 시점과의 불일치"
+  },
+  "cases": [
+    {"case_id":"SYN002","display":"207","primary_area":"posture_rule_or_projection","evidence_frames":[24,36,48,60],"note":"동일 대상 관절은 유지된다. 벽을 따라 내려앉아 상체가 비교적 세워진 자세이며 낮은 자세 조건을 통과한 표본이 없다. 확인 대상과 정상 착석의 구분은 후속 검증 문제다."},
+    {"case_id":"SYN007","display":"404","primary_area":"target_pose_missing","evidence_frames":[34,36,38,48,60],"note":"서 있거나 내려가는 f36까지는 대상 Pose가 있다. f38 이후 바닥의 사람은 보이지만 의자에 일부 가려지고 Pose 출력이 없다."},
+    {"case_id":"SYN009","display":"411","primary_area":"temporal_or_assignment","evidence_frames":[26,29,36,53,60],"note":"누운 뒤 골반 관절 부족·미검출이 이어지고 f53의 낮은 자세는 한 표본뿐이다. 화면 왼쪽의 작은 배경 박스도 있어 전체 검출 건수를 대상 관측으로 읽으면 안 된다.","secondary":["partial_body_quality"]},
+    {"case_id":"SYN011","display":"413","primary_area":"partial_body_quality","evidence_frames":[7,10,14,24,29,31,36],"note":"침대와 가림 때문에 초기 넓은 예측 박스에는 침구가 포함된다. 바닥 상태 경계 f29 이후 두 번의 출력도 유효 자세가 아니며 이후에는 검출이 없다. 초기 low 표본을 신뢰할 수 있는 전신 관측으로 간주하지 않는다.","secondary":["target_pose_missing","temporal_or_assignment"]},
+    {"case_id":"SYN014","display":"422","primary_area":"partial_body_quality","evidence_frames":[24,26,36,48,55,60],"note":"책상·의자 아래 대상이 부분적으로 보인다. 머리 쪽과 몸 일부의 예측이 나뉘며 골반·어깨 부족이 반복된다. 검토 구간의 유효 기하 표본은 1회뿐이고 낮은 자세는 0회다."},
+    {"case_id":"SYN016","display":"431","primary_area":"target_pose_missing","evidence_frames":[0,12,24,36,48,60],"note":"바닥에 엎드린 대상이 의자 아래 보이지만 실제 추론 27표본 전부 Pose 출력이 없다."},
+    {"case_id":"SYN019","display":"441","primary_area":"posture_rule_or_projection","evidence_frames":[12,24,36,48,60],"note":"소파에서 내려온 뒤에도 상체가 세워진 자세로 추정된다. 대상 관절과 추적은 남지만 낮은 자세 조건이 한 번도 맞지 않는다. 중복된 머리·상체 예측도 일부 존재한다."},
+    {"case_id":"SYN020","display":"442","primary_area":"target_pose_missing","evidence_frames":[41,43,48,60,62],"note":"쓰러지는 구간 f43부터 대상 검출이 사라진다. f60의 유효 기하 1개는 바닥의 대상이 아니라 오른쪽 배경에 붙은 예측이다. 자동 any-pose 집계와 대상 검출을 구분해야 한다."},
+    {"case_id":"SYN042","display":"V001","primary_area":"posture_rule_or_projection","evidence_frames":[48,58,67,72,96,120],"note":"넘어지는 중 상체 가림과 미검출이 있고, 이후 대상에 붙은 박스는 주로 머리·상체 일부다. 눕고 나서도 추정 몸통 각도가 수평 조건을 통과하지 않는다.","secondary":["partial_body_quality","target_pose_missing"]},
+    {"case_id":"SYN043","display":"V002","primary_area":"posture_rule_or_projection","evidence_frames":[24,38,48,72,96,120],"note":"의자에서 미끄러진 뒤 상체를 세운 채 바닥에 앉은 자세가 이어진다. 대상 Pose는 대부분 있으나 낮은 자세 조건은 0회다. 중간 중복 관측 때문에 미할당도 발생한다.","secondary":["temporal_or_assignment"]},
+    {"case_id":"SYN050","display":"V009","primary_area":"posture_rule_or_projection","evidence_frames":[34,38,48,58,72,96,120],"note":"초반에는 상체가 가려져 검출되지 않는다. 쓰러진 뒤 전면의 얼굴·상체 중심 Pose는 계속 있지만 몸통 각도·다리 관절/배치 조건을 통과하지 못한다.","secondary":["partial_body_quality"]},
+    {"case_id":"SYN051","display":"V010","primary_area":"posture_rule_or_projection","evidence_frames":[24,48,72,96,120],"note":"26표본 모두 유효 기하가 있지만 벽을 따라 내려앉는 동안 상체가 세워져 있고 박스가 세로로 길다. 낮은 자세 조건은 0회다."},
+    {"case_id":"SYN052","display":"V011","primary_area":"posture_rule_or_projection","evidence_frames":[24,48,72,96,120],"note":"26표본 모두 유효 기하가 있지만 벽을 따라 내려앉는 동안 상체가 세워져 있고 박스가 세로로 길다. 낮은 자세 조건은 0회다."},
+    {"case_id":"SYN062","display":"V022","primary_area":"temporal_or_assignment","evidence_frames":[72,86,96,106,120],"note":"머리·상체 위주의 주 관측과 더 넓은 약한 관측이 중복된다. 낮은 자세 3표본 중 f86·106은 ID 미할당이고, 할당된 f120 한 표본은 영상 끝이어서 누적되지 않는다.","secondary":["partial_body_quality"]},
+    {"case_id":"SYN071","display":"V031","primary_area":"partial_body_quality","evidence_frames":[0,48,72,77,96,120],"note":"예측 점수는 높아도 박스가 상체 일부에 머문다. 골반 관절이 약해지고 추정 몸통 각도도 누운 자세와 맞지 않는다. 유효 기하를 통과했다는 것이 해부학적으로 정확한 Pose라는 보장은 아니다.","secondary":["posture_rule_or_projection"]},
+    {"case_id":"SYN073","display":"V033","primary_area":"partial_body_quality","evidence_frames":[5,10,14,24,48,120],"note":"발 쪽에서 본 가려진 대상이다. f5·10 낮은 자세가 약 0.208초만 이어진 뒤 어깨·골반 관절 부족이 지속된다. 어깨 anchor도 바뀌어 보조 경로의 누적은 더 짧다.","secondary":["temporal_or_assignment"]},
+    {"case_id":"SYN076","display":"V037","primary_area":"partial_body_quality","evidence_frames":[24,34,48,72,96,120],"note":"검출이 시작된 후에도 얼굴·어깨 쪽에 작은 박스가 붙는다. 전체 26표본 중 유효 기하는 1회이고 대부분 골반이 없어 자세 계산이 중단된다."},
+    {"case_id":"SYN078","display":"V040","primary_area":"temporal_or_assignment","evidence_frames":[72,86,91,96,120],"note":"f91에서만 낮은 자세와 급격한 자세 변화 조건이 맞는다. 낮은 자세 누적 1회·변화 누적 1회 뒤 조건이 풀려 후보가 없다. 이후 누워 있어도 관절 기하가 낮은 자세 조건과 불일치한다.","secondary":["posture_rule_or_projection"]},
+    {"case_id":"SYN080","display":"V044","primary_area":"posture_rule_or_projection","evidence_frames":[38,48,72,86,96,120],"note":"쓰러지는 중 어깨가 가려져 자세 기록이 끊기며, 이후 벽에 등을 댄 자세는 몸통/다리 각도 조건에서 탈락한다. 유효 기하가 재개돼도 낮은 자세는 0회다.","secondary":["partial_body_quality"]},
+    {"case_id":"SYN081","display":"V045","primary_area":"temporal_or_assignment","evidence_frames":[62,67,72,86,96,110,120],"note":"어두운 바닥의 대상이 낮은 자세로 잡히는 표본은 f72·86·96·110 네 번이다. 각각 사이에 실제 미검출이 있어 연속 관측으로 누적되지 않는다. 검출 신뢰도는 약 0.10~0.13이다.","secondary":["target_pose_missing"]}
+  ]
+}

@@ -4,6 +4,7 @@ import {
   revokePushSubscriptionsById,
 } from "../db/homecam";
 import { shouldPrunePushSubscription } from "../db/homecam-validation";
+import { buildFallNotification } from "../infra/aws/push-broker/fall-notification.mjs";
 
 type PushBrokerEnv = {
   PUSH_BROKER_URL?: string;
@@ -19,6 +20,34 @@ type PushTarget = {
 
 const PUSH_BROKER_BATCH_SIZE = 100;
 
+type PushNotification = {
+  title: string;
+  body: string;
+  data: Record<string, string>;
+};
+
+type PushDispatchHooks = {
+  excludeSubscriptionIds?: readonly string[];
+  beforeBatch?: () => Promise<void>;
+  onResults?: (results: Array<{ subscriptionId: string; status: number }>) => Promise<void>;
+};
+
+/** Trusted server boundary only. The caller must persist/deduplicate the intent
+ * and authenticate the device before dispatch. No public route is exposed. */
+export async function dispatchFallPush(input: {
+  deviceId: string;
+  notificationId: string;
+  incidentId: string;
+  level: "info" | "check" | "urgent";
+  reason: "fall_observed_person_okay" | "person_no_response" |
+    "check_required_not_confirmed_fall" | "help_requested";
+  occurredAt: string;
+}, hooks: PushDispatchHooks = {}) {
+  const notification = buildFallNotification(input);
+  if (!notification) throw new Error("FALL_NOTIFICATION_INVALID");
+  return dispatchDevicePush(input.deviceId, (title) => ({ title, ...notification }), hooks);
+}
+
 export async function dispatchHomecamEventPush(input: {
   deviceId: string;
   event: {
@@ -27,20 +56,8 @@ export async function dispatchHomecamEventPush(input: {
     occurredAt: string;
   };
 }) {
-  const targets = (await listActivePushTargets(input.deviceId)) as PushTarget[];
-  if (targets.length === 0) {
-    return { dispatched: false, delivered: 0, pruned: 0, reason: "no_subscribers" };
-  }
-  const runtime = getRuntimeEnvironment() as PushBrokerEnv;
-  if (!runtime.PUSH_BROKER_URL || !runtime.PUSH_BROKER_SECRET) {
-    return { dispatched: false, delivered: 0, pruned: 0, reason: "not_configured" };
-  }
-  const brokerUrl = new URL(runtime.PUSH_BROKER_URL);
-  if (brokerUrl.protocol !== "https:") throw new Error("PUSH_BROKER_URL_INVALID");
-
-  const displayName = targets[0].displayName;
-  const notification = {
-    title: displayName,
+  return dispatchDevicePush(input.deviceId, (title) => ({
+    title,
     body: eventMessage(input.event.eventType, input.event.occurredAt),
     data: {
       deviceId: input.deviceId,
@@ -49,18 +66,43 @@ export async function dispatchHomecamEventPush(input: {
       occurredAt: input.event.occurredAt,
       url: `/?view=events&device=${encodeURIComponent(input.deviceId)}&event=${encodeURIComponent(input.event.id)}`,
     },
-  };
+  }));
+}
+
+async function dispatchDevicePush(
+  deviceId: string,
+  buildNotification: (title: string) => PushNotification,
+  hooks: PushDispatchHooks = {},
+) {
+  const activeTargets = (await listActivePushTargets(deviceId)) as PushTarget[];
+  if (activeTargets.length === 0) {
+    return { dispatched: false, delivered: 0, pruned: 0, reason: "no_subscribers" };
+  }
+  const excluded = new Set(hooks.excludeSubscriptionIds ?? []);
+  const targets = activeTargets.filter((target) => !excluded.has(target.id));
+  if (targets.length === 0) {
+    return { dispatched: false, delivered: 0, pruned: 0, reason: "already_processed" };
+  }
+  const runtime = getRuntimeEnvironment() as PushBrokerEnv;
+  if (!runtime.PUSH_BROKER_URL || !runtime.PUSH_BROKER_SECRET) {
+    return { dispatched: false, delivered: 0, pruned: 0, reason: "not_configured" };
+  }
+  const brokerUrl = new URL(runtime.PUSH_BROKER_URL);
+  if (brokerUrl.protocol !== "https:") throw new Error("PUSH_BROKER_URL_INVALID");
+
+  const notification = buildNotification(targets[0].displayName);
   const results: Array<{ subscriptionId: string; status: number }> = [];
   for (let offset = 0; offset < targets.length; offset += PUSH_BROKER_BATCH_SIZE) {
     const batch = targets.slice(offset, offset + PUSH_BROKER_BATCH_SIZE);
-    results.push(
-      ...(await sendPushBatch({
+    await hooks.beforeBatch?.();
+    const batchResults = await sendPushBatch({
         brokerUrl,
         secret: runtime.PUSH_BROKER_SECRET,
         notification,
         targets: batch,
-      })),
-    );
+      });
+    await hooks.onResults?.(batchResults);
+    results.push(...batchResults);
   }
   if (results.length !== targets.length) {
     throw new Error("PUSH_BROKER_RESPONSE_INVALID");
@@ -86,17 +128,7 @@ export async function dispatchHomecamEventPush(input: {
 async function sendPushBatch(input: {
   brokerUrl: URL;
   secret: string;
-  notification: {
-    title: string;
-    body: string;
-    data: {
-      deviceId: string;
-      eventId: string;
-      eventType: string;
-      occurredAt: string;
-      url: string;
-    };
-  };
+  notification: PushNotification;
   targets: PushTarget[];
 }) {
   const body = JSON.stringify({

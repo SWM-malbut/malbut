@@ -1,0 +1,35 @@
+{
+  "review_id": "judgment-evidence-v2-r1-20260912",
+  "criteria_version": "fall-evaluation-v2-20260912-r1",
+  "approval_source": "user_conversation",
+  "applies_to": "all_evaluation_videos_and_all_three_labels",
+  "decision": "근거가 제한적인 사례도 기존 정답으로 채점하고 한계는 설명에만 남긴다. 모델 답에 맞춰 점수·분모·라벨을 바꾸지 않는다.",
+  "previous_review_path": "annotations/evaluation_v2_clarifications_20260912/v008_v010_v011_v014_v020_v021_v022_v026_v039/label_consistency_review.json",
+  "previous_review_sha256": "cb8fedeea094ecff8a838dc20336cec86af4ce0c2091d5a82b4354aaef24bcda",
+  "cases": [
+    {
+      "case_id": "GAP-V020",
+      "video": "V020.mp4",
+      "label": "normal_activity",
+      "label_changed": false,
+      "judgment_evidence_limited": true,
+      "judgment_note": "속도 외에 정상적인 눕기라는 판단을 뒷받침할 단서는 부족함.",
+      "agreed_reason": "뒤로 눕는 과정이 보이며, 내려가는 속도가 정상적으로 눕는 동작에 가깝다고 판단함. 따라서 정상으로 분류함. 다만, 속도 외에 이를 뒷받침할 단서는 부족함."
+    },
+    {
+      "case_id": "GAP-V021",
+      "video": "V021.mp4",
+      "label": "normal_activity",
+      "label_changed": false,
+      "judgment_evidence_limited": true,
+      "judgment_note": "속도 외에 정상적인 눕기라는 판단을 뒷받침할 단서는 부족함.",
+      "agreed_reason": "뒤로 눕는 과정이 보이며, 내려가는 속도가 정상적으로 눕는 동작에 가깝다고 판단함. 따라서 정상으로 분류함. 다만, 속도 외에 이를 뒷받침할 단서는 부족함."
+    }
+  ],
+  "labels_changed": 0,
+  "pending_criteria_questions": [],
+  "dataset_finalized": false,
+  "video_rewatched": false,
+  "model_evaluation_run": false,
+  "not_sent_to_model": true
+}

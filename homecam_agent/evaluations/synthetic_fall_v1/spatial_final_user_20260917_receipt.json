@@ -1,0 +1,22 @@
+{
+  "schema_version": "malbut.spatial-review-receipt.v1",
+  "spatial_revision": "fall84-spatial-user-final-20260917",
+  "approval": "User finished manual box review and explicitly requested applying it and rerunning YOLO-Pose.",
+  "scope": "Visible-extent boxes only. Classifications, timing intervals and target IDs unchanged. No interpolation.",
+  "parent_frozen": "/home/jisanggeun/.local/share/malbut-evaluations/eval84-gemma-20260917.fiHWKe/fall84-v2-r1-20260917",
+  "parent_freeze_sha256": "8cb8a2c97906cfccb84f040919951abc61bed0ee8da7864354d51c2ede0a34a2",
+  "spatial_overlay": "/home/jisanggeun/.local/share/malbut-evaluations/fall84-user-boxes-yolo-20260917.9UdJDF/spatial-final",
+  "spatial_freeze_sha256": "c8bbb590e9e48b88969b1610c1fa3d844ef77d8d63095352fd3d72a6eb79a03a",
+  "manual_patches_sha256": "1f88a4a7ed1e6113d51854c976c54dac2bbf7376114e9ade729b78aca521a2c5",
+  "effective_labels": "spatial-final/evaluation_labels.json in the run directory",
+  "evaluation_input_note": "Use the parent media with this spatial overlay for scoring. Do not use the old parent boxes or unfinished assistant v8. Ground-truth boxes never enter inference.",
+  "run_directory": "/home/jisanggeun/.local/share/malbut-evaluations/fall84-user-boxes-yolo-20260917.9UdJDF",
+  "fresh_inference": true,
+  "videos": 84,
+  "frames": 2224,
+  "boxes": 533,
+  "candidate_videos": {"observed_fall": 15, "suspected_fall": 15, "normal_activity": 10},
+  "metric_scope": "Video-level candidate occurrence, not confirmed target recall or VLM accuracy.",
+  "vlm_calls": 0,
+  "paid_calls": 0
+}

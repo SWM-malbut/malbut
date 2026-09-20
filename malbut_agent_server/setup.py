@@ -8,7 +8,7 @@ setup(
     name=package_name,
     version='0.5.0',
     packages=find_packages(exclude=['test']),
-    package_data={package_name: ['data/*.jsonl', 'data/weather_regions.json']},
+    package_data={package_name: ['data/*.json', 'data/*.jsonl']},
     data_files=[
         (
             'share/ament_index/resource_index/packages',
@@ -40,16 +40,31 @@ setup(
             ],
         ),
         (
+            'share/' + package_name + '/docs',
+            ['docs/fall_detection.md', 'docs/fall_storage_api.md', 'docs/fall_runtime.md',
+             'docs/fall_decision_policy.md', 'docs/fall_subject_observation.md'],
+        ),
+        (
+            'share/' + package_name + '/config',
+            ['config/fall_runtime.example.json'],
+        ),
+        (
             'share/' + package_name + '/docs/evaluations',
             [
                 'docs/evaluations/'
                 'SWM25-72_OPENAI_EVALUATION_2026-08-05.md',
                 'docs/evaluations/'
                 'SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md',
+                'docs/evaluations/FALL_DETECTION_VLM_REQUIREMENTS.md',
+                'docs/evaluations/VLM_EVALUATION_HARNESS.md',
             ],
         ),
     ],
     install_requires=['setuptools'],
+    extras_require={
+        'vlm-nova': ['boto3>=1.35.0,<2'],
+        'fall-cloud': ['aiohttp>=3.9,<4', 'Pillow>=9'],
+    },
     zip_safe=True,
     maintainer='SWM Malbut contributors',
     maintainer_email='maintainers@example.com',
@@ -84,6 +99,22 @@ setup(
             (
                 'malbut-front-route-inspect = '
                 'malbut_agent_server.front_route_inspector:main'
+            ),
+            (
+                'malbut-vlm-eval = '
+                'malbut_agent_server.vlm_eval_runner:main'
+            ),
+            (
+                'malbut-vlm-infer = '
+                'malbut_agent_server.vlm_inference_runner:main'
+            ),
+            (
+                'malbut-fall-upload = '
+                'malbut_agent_server.fall_upload_worker:main'
+            ),
+            (
+                'malbut-fall-monitor = '
+                'malbut_agent_server.ros_fall_monitor:main'
             ),
         ],
     },
