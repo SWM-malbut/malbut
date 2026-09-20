@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "profile": {
+    "name": "example-only",
+    "false_alert_budget_per_camera_day": 0.1,
+    "clips_per_camera_day": {
+      "hard_negative": 10,
+      "robot_motion_only": 40
+    }
+  }
+}

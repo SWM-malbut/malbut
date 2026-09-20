@@ -76,6 +76,11 @@ self.addEventListener("push", (event) => {
       tag:
         typeof payload.tag === "string"
           ? payload.tag
+          : payloadData.kind === "fall" &&
+              typeof payloadData.deviceId === "string" &&
+              typeof payloadData.incidentId === "string" &&
+              typeof payloadData.level === "string"
+            ? `fall-${payloadData.deviceId}-${payloadData.incidentId}-${payloadData.level}`
           : typeof payloadData.eventId === "string"
             ? `homecam-event-${payloadData.eventId}`
             : "homecam-event",

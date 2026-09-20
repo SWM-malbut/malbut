@@ -1,0 +1,128 @@
+{
+  "method": "manual_RGB_output_association_not_blind",
+  "reviewer": "Codex actual RGB review, not independent human review",
+  "review_date": "2026-09-10",
+  "reference_audit_sha256": "690e2771a594f8b440382d5b2d8ef6e9b7606d20395026ad579496f46b53ff12",
+  "reference_frames_sha256": "109d752aa9da4a0d904f9eb5fa83787e349cb8df3552704d98b6b7b19cb2a5c8",
+  "review_images": {
+    "/home/jisanggeun/.local/share/malbut-evaluations/roi-pose-20260910-final-404/SYN007-roi.jpg": "dc1341197e8e326ab94bc79b6a1621c51cfcf2f09e3c3b9d7b78c32f0ab88daa",
+    "/home/jisanggeun/.local/share/malbut-evaluations/roi-pose-20260910-final-442/SYN020-roi.jpg": "6a88ee6d3c2b4a676b6ffa4027d87407f566ecd4378f88b6aad90fe3b6560887",
+    "/home/jisanggeun/.local/share/malbut-evaluations/roi-pose-20260910-final-435/SYN035-roi.jpg": "fcdf6b707ab19598acf480d4e50f14f0a771e82836dcecf1b28d6d513d6c2bf7",
+    "/home/jisanggeun/.local/share/malbut-evaluations/roi-pose-20260910-final-33h3/SYN005-roi.jpg": "9583fb5026189374c6bf57c390fa4d3136ac7ed08a580668c599d2c2f4b4ace0"
+  },
+  "frames_sha256": "7a108453dab18eecd5e10defa4b63dcbe50acd8f491f914828fc7e6e2baf9c56",
+  "binding": "15 events preserve complete source evidence after deterministic per-case ID-prefix substitution. One changed event manually reviewed. GT, event times and labels never enter ROI selection.",
+  "events": [
+    {
+      "key": "SYN001:62:pose-gap-roi-SYN001-1:1",
+      "association": "target",
+      "note": "107: 실험 근거 53·58프레임의 주황 상자는 바닥에 누운 검은 옷 P01이다. 요청한 62프레임에는 Pose 관측이 없어 상자를 그리지 않았다. 낙상 동작 목격이 아니라 마지막 실제 낮은 자세 뒤 관측 불가에 따른 확인 요청이다.",
+      "inherited_from": "SYN001:62:pose-gap-7c6cd41db4bc-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN003:10:roi-SYN003-candidate-1:1",
+      "association": "target",
+      "note": "208: frame 0과 10의 주황 상자는 소파 앞 바닥에 누운 회색 상의 P01을 가리킨다.",
+      "inherited_from": "SYN003:10:17bcfc3a40df4422a69ec1946aa47540-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN004:50:roi-SYN004-candidate-1:1",
+      "association": "target",
+      "note": "307: frame 41과 50의 주황 상자는 문 앞 바닥에 누운 검은 옷 P01을 가리킨다. 중간에 박스가 사라졌다가 후반 다시 검출됨.",
+      "inherited_from": "SYN004:50:a189c4f93a714b1ca7e6ae492e67ffcb-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN005:43:roi-SYN005-candidate-1:1",
+      "association": "target",
+      "note": "33 H3: 실제 RGB 26/29/41/43프레임 확인. 29프레임 분홍 ROI 상자는 바닥으로 내려오는 회색 상의 P01이며 41·43프레임 전체 화면 상자도 같은 P01이다. 43프레임 fall_suspected 확인 요청이 50프레임 found_down보다 7프레임(0.583초) 빨라졌다. 자동 낙상 확정·보호자 알림 아님.",
+      "binding": "Changed request: separately reviewed actual RGB including ROI evidence f29 and emitted frame f43."
+    },
+    {
+      "key": "SYN006:24:roi-SYN006-candidate-1:1",
+      "association": "target",
+      "note": "33 LTX: frame 5에 서 있고 24에 오른쪽으로 누운 회색 상의 P01이다. 출력 프레임의 수동 상자와도 일치.",
+      "inherited_from": "SYN006:24:ab55f25e64374916acaf7a641593cf4f-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN008:31:roi-SYN008-candidate-1:1",
+      "association": "target",
+      "note": "405: frame 22와 31의 주황 상자는 문 앞 바닥에 누운 밝은 상의 P01을 가리킨다.",
+      "inherited_from": "SYN008:31:83fa4965b15048f3ac93b9427cdfabaa-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN010:55:roi-SYN010-candidate-1:1",
+      "association": "target",
+      "note": "412: frame 46과 55의 주황 상자는 정면 바닥에 엎드린 밝은 잠옷 P01의 머리와 상체를 포함한다.",
+      "inherited_from": "SYN010:55:b5d1b2a7cf584ecd9185dd053b6536f3-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN012:10:roi-SYN012-candidate-1:1",
+      "association": "target",
+      "note": "414: frame 2와 10에서 출력 대상 ID2는 누운 분홍 상의 P01이다. 앉아 확인하는 검은 상의 P02(ID1)와 구분됨.",
+      "inherited_from": "SYN012:10:7bfcaa8d8d234972a38b746dfdf98523-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN013:24:roi-SYN013-candidate-1:1",
+      "association": "target",
+      "note": "421: frame 0의 서 있는 사람과 24의 주황 상자 속 누운 회색 상의 P01이 대응한다. 출력 프레임에 수동 상자도 있음.",
+      "inherited_from": "SYN013:24:2167acf5be0b4fd984daa48b6ea032c0-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN015:36:roi-SYN015-candidate-1:1",
+      "association": "target",
+      "note": "423: frame 29의 낮은 자세와 36의 옆으로 누운 검은 옷 P01이 대응한다. 출력 프레임에 수동 상자도 있음.",
+      "inherited_from": "SYN015:36:33257aff08fd48e0802847e8e8126476-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN017:41:roi-SYN017-candidate-1:1",
+      "association": "target",
+      "note": "432: frame 34와 41의 주황 상자는 식탁 다리 옆 바닥에 누운 밝은 상의 P01을 가리킨다.",
+      "inherited_from": "SYN017:41:4431c51954324e258bf214333ac114f5-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN018:46:roi-SYN018-candidate-1:1",
+      "association": "target",
+      "note": "433: frame 36과 46의 주황 상자는 이불 위로 내려온 P01의 얼굴과 몸통을 포함한다. 출력 신뢰도 0.14. 사건은 기존대로 낙상 의심이며 확정 낙상으로 승격하지 않음.",
+      "inherited_from": "SYN018:46:c69bc472963a4a1c94c3d0dba946827d-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN021:41:roi-SYN021-candidate-1:1",
+      "association": "target",
+      "note": "443: frame 29의 서서 낮아지는 사람과 41의 옆으로 누운 어두운 옷 P01이 대응한다.",
+      "inherited_from": "SYN021:41:c7a454a76709476cb6cdf3d2a4aeeebb-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN022:46:roi-SYN022-candidate-1:1",
+      "association": "other_person",
+      "note": "108: 정상 영상의 P01이며 낙상 확인 대상은 없다. frame 36과 46에서 이불을 덮고 누운 사람과 이불에 전신 관절을 배치한 상자가 출력 대상이다.",
+      "inherited_from": "SYN022:46:43ecd37b36034b819fb37fc8736ba9d3-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN023:46:roi-SYN023-candidate-1:1",
+      "association": "other_person",
+      "note": "308: 정상 영상의 P01이며 낙상 확인 대상은 없다. frame 38과 46의 주황 상자는 이불을 덮고 옆으로 누운 사람의 얼굴과 상체다.",
+      "inherited_from": "SYN023:46:c29e58f6f6964154b5a197d868c7ba67-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    },
+    {
+      "key": "SYN028:34:roi-SYN028-candidate-1:1",
+      "association": "other_person",
+      "note": "410: 정상 영상의 P01이며 낙상 확인 대상은 없다. frame 26과 34의 주황 상자는 베개를 베고 이불을 덮은 사람과 이불 전체를 포함한다.",
+      "inherited_from": "SYN028:34:0628c2ee25c94f05b5dc62d4038f83dd-candidate-1:1",
+      "binding": "Exact entire event equality after replacing only per-case generated tracker/detector ID prefixes; ID sequence, pose, candidate, frame, timestamps unchanged."
+    }
+  ]
+}

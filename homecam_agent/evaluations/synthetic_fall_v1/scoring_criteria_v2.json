@@ -1,0 +1,112 @@
+{
+  "criteria_version": "fall-evaluation-v2-20260912",
+  "status": "agreed_frozen",
+  "approval_source": "user_conversation",
+  "scope": "synthetic_rgb_development_evaluation",
+  "unit": "video",
+  "runtime_schema_changed": false,
+  "scorer_implemented": false,
+  "dataset_finalized": false,
+  "model_evaluation_run": false,
+  "labels": {
+    "observed_fall": {"name": "낙상", "definition": "넘어지는 과정을 봤고 균형 상실이나 의도치 않은 떨어짐이 뚜렷함", "needs_check": true},
+    "suspected_fall": {"name": "낙상 의심", "definition": "넘어지는 듯한 동작이 애매하거나 처음부터 쓰러진 듯한 상태여서 사고와 휴식을 구분하기 어려움", "needs_check": true},
+    "normal_activity": {"name": "정상 행동", "definition": "자발적인 자세 변경·휴식·일상 활동이 명확함. 사람이 없는 영상도 포함", "needs_check": false}
+  },
+  "label_aliases": {"정상": "정상 행동"},
+  "judgment_rules": {
+    "generation_intent_is_ground_truth": false,
+    "unobserved_transition_alone_implies_suspected_fall": false,
+    "single_cue_decides_label": false,
+    "recovery_erases_observed_fall": false,
+    "immobility_implies_unresponsive": false,
+    "found_down_is_action_class": false,
+    "quality_exclusion_is_action_class": false,
+    "preserve_user_reasons_verbatim": true,
+    "quality_exclusions_decided_before_model_comparison": true,
+    "model_errors_are_exclusion_reason": false
+  },
+  "dataset_snapshot": {
+    "legacy": {"observed_fall": 14, "suspected_fall": 7, "normal_activity": 20},
+    "additional_accepted": {"observed_fall": 4, "suspected_fall": 18, "normal_activity": 14},
+    "total": 77,
+    "counts": {"observed_fall": 18, "suspected_fall": 25, "normal_activity": 34},
+    "needs_check": 43,
+    "normal": 34,
+    "additional_quality_exclusions": ["V013.mp4", "V036.mp4", "V038.mp4"],
+    "legacy_rechecked": ["SYN003", "SYN012"],
+    "legacy_carried_forward_pending_consistency_check": 39,
+    "source_sha256": {
+      "annotations/vlm_review_v2/labels.json": "e42f274bfafd66bcf95112bf829e9cda3ea04f6e4ab67206748bfffd06408198",
+      "annotations/gap_review_20260912/accepted_labels_v2_20260912.csv": "b50232782a703455bfc0e0a7c101b2694efdcb421d65a2963b724c3af72e42f9",
+      "annotations/gap_review_20260912/excluded_videos.json": "3ed766eee81c11afe90b147f33d57f2b1138cd4c746322b79acbc57265b57e35"
+    }
+  },
+  "classification_scoring": {
+    "rule": "valid_prediction_label_equals_ground_truth_label",
+    "correct_score": 1,
+    "incorrect_or_failed_score": 0,
+    "include_suspected_fall": true,
+    "standalone_denominator": "all_cases_in_selected_evaluation_list",
+    "invoked_denominator": "all_cases_selected_for_vlm_call_including_failed_calls",
+    "report_per_class_recall_and_confusion_counts": true,
+    "explanation_partial_credit": false,
+    "weighted_combined_score": false,
+    "ranking": false
+  },
+  "pairwise_scoring": [
+    {"truth": "observed_fall", "prediction": "observed_fall", "exact": 1, "checking_outcome": "caught"},
+    {"truth": "observed_fall", "prediction": "suspected_fall", "exact": 0, "checking_outcome": "caught"},
+    {"truth": "observed_fall", "prediction": "normal_activity", "exact": 0, "checking_outcome": "missed_as_normal"},
+    {"truth": "suspected_fall", "prediction": "observed_fall", "exact": 0, "checking_outcome": "caught", "overconfirmed": true},
+    {"truth": "suspected_fall", "prediction": "suspected_fall", "exact": 1, "checking_outcome": "caught"},
+    {"truth": "suspected_fall", "prediction": "normal_activity", "exact": 0, "checking_outcome": "missed_as_normal"},
+    {"truth": "normal_activity", "prediction": "observed_fall", "exact": 0, "checking_outcome": "unnecessary_check"},
+    {"truth": "normal_activity", "prediction": "suspected_fall", "exact": 0, "checking_outcome": "unnecessary_check"},
+    {"truth": "normal_activity", "prediction": "normal_activity", "exact": 1, "checking_outcome": "correct_normal"}
+  ],
+  "checking_scoring": {
+    "caught_rate": "valid_check_needed_predictions_on_check_needed_truth / check_needed_truth_count",
+    "missed_as_normal_rate": "normal_predictions_on_check_needed_truth / check_needed_truth_count",
+    "unresolved_rate": "not_called_or_failed_or_unobservable_on_check_needed_truth / check_needed_truth_count",
+    "unnecessary_check_rate": "check_needed_predictions_on_normal_truth / normal_truth_count",
+    "failure_is_caught": false,
+    "failure_is_correct_normal": false,
+    "check_needed_means_emergency_notification": false,
+    "zero_denominator": "not_available"
+  },
+  "paths": {
+    "yolo_pose": {"run_on": "all_selected_cases", "metric": "candidate_present_per_video_per_truth_class", "candidate_anywhere_proves_correct_person": false},
+    "vlm_only": {"run_on": "all_selected_cases", "metrics": ["exact_classification", "checking_outcomes"]},
+    "yolo_then_vlm": {
+      "run_on": "actual_yolo_selected_cases",
+      "must_use_actual_pipeline_calls": true,
+      "entire_path_metric": "checking_outcomes_on_all_selected_cases",
+      "include_gate_misses": true,
+      "invoked_classification_reported_separately": true,
+      "not_called_means_normal": false,
+      "whole_path_three_class_accuracy": "not_defined_without_explicit_no_call_decision_policy"
+    }
+  },
+  "non_label_outcomes": ["not_called", "request_failed", "timeout", "invalid_response", "unobservable"],
+  "failure_handling": {
+    "keep_selected_cases_in_denominator": true,
+    "convert_to_normal": false,
+    "report_reason_counts": true,
+    "unobservable_equals_suspected_fall": false,
+    "unfinished_run_can_be_reported_as_complete": false,
+    "dataset_integrity_error_is_model_error": false
+  },
+  "execution_requirements_before_run": [
+    "review_label_consistency_and_freeze_case_list_media_and_label_hashes",
+    "implement_and_test_three_class_response_contract_and_non_label_outcomes",
+    "fix_model_versions_prompts_frame_sampling_and_input_conditions",
+    "fix_timeout_retry_and_multiple_candidate_final_response_selection",
+    "keep_ground_truth_reasons_generation_prompts_and_label_bearing_filenames_out_of_model_input",
+    "specify_target_association_before_claiming_correct_person_recall",
+    "do_not_relabel_or_pick_best_response_using_ground_truth"
+  ],
+  "not_fixed_here": ["timeout_seconds", "retry_count", "target_matching_details", "time_annotation_and_latency_scoring", "new_class_balance_target", "legacy_output_conversion"],
+  "preservation": {"original_media": true, "old_labels": true, "old_results": true},
+  "change_policy": "new_criteria_version_with_reason_before_comparing_model_results"
+}

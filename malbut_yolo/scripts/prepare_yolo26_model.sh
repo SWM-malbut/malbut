@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Export the official YOLO26n detection and human-pose weights to portable
-# FP32 ONNX models. General detection remains the primary person/pet stage;
-# pose is a person-gated secondary stage and is not a fall classifier.
+# FP32 ONNX models. General detection provides person/pet events;
+# pose runs without that detector's person gate and is not a fall classifier.
 
 cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/malbut_perception"
 export_env="$cache_root/yolo26-export-env"

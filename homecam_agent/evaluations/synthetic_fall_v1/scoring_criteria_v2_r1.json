@@ -1,0 +1,41 @@
+{
+  "criteria_version": "fall-evaluation-v2-20260912-r1",
+  "base_criteria_version": "fall-evaluation-v2-20260912",
+  "base_file": "scoring_criteria_v2.json",
+  "base_sha256": "8b5328329f3d0e4e5ad58006bbacc0341abb0682e8034b381b82e234b8ccaa5d",
+  "status": "agreed_frozen_addendum",
+  "approval_source": "user_conversation",
+  "applies_to": "all_evaluation_videos_and_all_three_labels",
+  "change_reason": "단서 하나를 자동 판정 규칙으로 쓰지 않는 것과, 제한된 근거로 사람이 판단한 사례를 구분한다. 모든 영상에 동일한 채점을 적용한다.",
+  "judgment_rules": {
+    "automatic_label_from_single_cue": false,
+    "minimum_number_of_cues_required": null,
+    "judge_visible_action_and_record_evidence_limits": true,
+    "evidence_limit_automatically_changes_label": false,
+    "missing_limit_note_proves_strong_evidence": false
+  },
+  "classification_scoring": {
+    "unchanged_from_base": true,
+    "valid_prediction_label_equals_ground_truth_label": true,
+    "limited_evidence_changes_score_or_denominator": false,
+    "limited_evidence_exempts_false_positive": false,
+    "partial_credit_for_explanation": false,
+    "change_truth_after_model_result": false
+  },
+  "annotation_metadata": {
+    "judgment_evidence_limited": "optional boolean; true requires a nonempty judgment_note",
+    "judgment_note": "optional human-review note, at most 4000 characters; report only",
+    "sent_to_model": false,
+    "changes_class_label": false,
+    "unmarked_case_is_not_proof_of_high_confidence": true
+  },
+  "review_outcome": {
+    "labels_changed": 0,
+    "counts": {"observed_fall": 18, "suspected_fall": 25, "normal_activity": 34},
+    "pending_text_questions": 0,
+    "pending_criteria_questions": 0,
+    "dataset_finalized": false,
+    "model_evaluation_run": false
+  },
+  "preservation": {"base_criteria": true, "original_reasons": true, "previous_results": true}
+}

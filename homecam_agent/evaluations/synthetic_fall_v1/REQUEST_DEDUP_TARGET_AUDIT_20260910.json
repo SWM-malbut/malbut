@@ -1,0 +1,109 @@
+{
+  "frames_sha256": "109d752aa9da4a0d904f9eb5fa83787e349cb8df3552704d98b6b7b19cb2a5c8",
+  "method": "manual_RGB_output_association_not_blind",
+  "reviewer": "Codex actual RGB review; not independent human review",
+  "review_date": "2026-09-10",
+  "scope": "Request coalescing only. No labels, boxes, times or original candidate payloads changed.",
+  "inherited_audit_sha256": "27fba530fb1e3f827bee8ee69de4e2c3cd78cd11b901c53b9e38e09c09e633c0",
+  "upstream_frames_sha256": "6274a53e2c2c4dd54275a14c104dad6aae26162e9b3b7760d3d1fa50d585bd03",
+  "binding": "Each retained event exactly matches its previously audited event including actual observation, candidate payload, frame and timestamps. The single coalesced candidate was separately checked in actual RGB and preserved in verification_updates.",
+  "review_images": {
+    "/home/jisanggeun/.local/share/malbut-evaluations/request-dedup-20260910-review-107/SYN001-dedup.jpg": "26bf5bc4c9d6819e2dfc54a8c2a6921ee4927a267fabafe4ad53a910f62d015c",
+    "/home/jisanggeun/.local/share/malbut-evaluations/request-dedup-20260910-review-108/SYN022-dedup.jpg": "7440d9e3db468e4d64f32f5dd6f731372fe792687d219c7d792145a2f2b0f88c",
+    "/home/jisanggeun/.local/share/malbut-evaluations/request-dedup-20260910-review-414/SYN012-dedup.jpg": "eafc4f4662b7216cf0495a4647af693890fb720f5cfd45a08e9a2ae2ccac8692"
+  },
+  "events": [
+    {
+      "key": "SYN001:62:pose-gap-7c6cd41db4bc-1:1",
+      "association": "target",
+      "note": "107: 실험 근거 53·58프레임의 주황 상자는 바닥에 누운 검은 옷 P01이다. 요청한 62프레임에는 Pose 관측이 없어 상자를 그리지 않았다. 낙상 동작 목격이 아니라 마지막 실제 낮은 자세 뒤 관측 불가에 따른 확인 요청이다."
+    },
+    {
+      "key": "SYN003:10:17bcfc3a40df4422a69ec1946aa47540-candidate-1:1",
+      "association": "target",
+      "note": "208: frame 0과 10의 주황 상자는 소파 앞 바닥에 누운 회색 상의 P01을 가리킨다."
+    },
+    {
+      "key": "SYN004:50:a189c4f93a714b1ca7e6ae492e67ffcb-candidate-1:1",
+      "association": "target",
+      "note": "307: frame 41과 50의 주황 상자는 문 앞 바닥에 누운 검은 옷 P01을 가리킨다. 중간에 박스가 사라졌다가 후반 다시 검출됨."
+    },
+    {
+      "key": "SYN005:50:015e1e926e7e4119bec7dd0548b295ad-candidate-1:1",
+      "association": "target",
+      "note": "33 H3: frame 41과 50의 주황 상자는 화면 왼쪽 아래에 누운 회색 상의 P01을 가리킨다. 머리 일부는 영상 경계 밖이다."
+    },
+    {
+      "key": "SYN006:24:ab55f25e64374916acaf7a641593cf4f-candidate-1:1",
+      "association": "target",
+      "note": "33 LTX: frame 5에 서 있고 24에 오른쪽으로 누운 회색 상의 P01이다. 출력 프레임의 수동 상자와도 일치."
+    },
+    {
+      "key": "SYN008:31:83fa4965b15048f3ac93b9427cdfabaa-candidate-1:1",
+      "association": "target",
+      "note": "405: frame 22와 31의 주황 상자는 문 앞 바닥에 누운 밝은 상의 P01을 가리킨다."
+    },
+    {
+      "key": "SYN010:55:b5d1b2a7cf584ecd9185dd053b6536f3-candidate-1:1",
+      "association": "target",
+      "note": "412: frame 46과 55의 주황 상자는 정면 바닥에 엎드린 밝은 잠옷 P01의 머리와 상체를 포함한다."
+    },
+    {
+      "key": "SYN012:10:7bfcaa8d8d234972a38b746dfdf98523-candidate-1:1",
+      "association": "target",
+      "note": "414: frame 2와 10에서 출력 대상 ID2는 누운 분홍 상의 P01이다. 앉아 확인하는 검은 상의 P02(ID1)와 구분됨."
+    },
+    {
+      "key": "SYN013:24:2167acf5be0b4fd984daa48b6ea032c0-candidate-1:1",
+      "association": "target",
+      "note": "421: frame 0의 서 있는 사람과 24의 주황 상자 속 누운 회색 상의 P01이 대응한다. 출력 프레임에 수동 상자도 있음."
+    },
+    {
+      "key": "SYN015:36:33257aff08fd48e0802847e8e8126476-candidate-1:1",
+      "association": "target",
+      "note": "423: frame 29의 낮은 자세와 36의 옆으로 누운 검은 옷 P01이 대응한다. 출력 프레임에 수동 상자도 있음."
+    },
+    {
+      "key": "SYN017:41:4431c51954324e258bf214333ac114f5-candidate-1:1",
+      "association": "target",
+      "note": "432: frame 34와 41의 주황 상자는 식탁 다리 옆 바닥에 누운 밝은 상의 P01을 가리킨다."
+    },
+    {
+      "key": "SYN018:46:c69bc472963a4a1c94c3d0dba946827d-candidate-1:1",
+      "association": "target",
+      "note": "433: frame 36과 46의 주황 상자는 이불 위로 내려온 P01의 얼굴과 몸통을 포함한다. 출력 신뢰도 0.14. 사건은 기존대로 낙상 의심이며 확정 낙상으로 승격하지 않음."
+    },
+    {
+      "key": "SYN021:41:c7a454a76709476cb6cdf3d2a4aeeebb-candidate-1:1",
+      "association": "target",
+      "note": "443: frame 29의 서서 낮아지는 사람과 41의 옆으로 누운 어두운 옷 P01이 대응한다."
+    },
+    {
+      "key": "SYN022:46:43ecd37b36034b819fb37fc8736ba9d3-candidate-1:1",
+      "association": "other_person",
+      "note": "108: 정상 영상의 P01이며 낙상 확인 대상은 없다. frame 36과 46에서 이불을 덮고 누운 사람과 이불에 전신 관절을 배치한 상자가 출력 대상이다."
+    },
+    {
+      "key": "SYN023:46:c29e58f6f6964154b5a197d868c7ba67-candidate-1:1",
+      "association": "other_person",
+      "note": "308: 정상 영상의 P01이며 낙상 확인 대상은 없다. frame 38과 46의 주황 상자는 이불을 덮고 옆으로 누운 사람의 얼굴과 상체다."
+    },
+    {
+      "key": "SYN028:34:0628c2ee25c94f05b5dc62d4038f83dd-candidate-1:1",
+      "association": "other_person",
+      "note": "410: 정상 영상의 P01이며 낙상 확인 대상은 없다. frame 26과 34의 주황 상자는 베개를 베고 이불을 덮은 사람과 이불 전체를 포함한다."
+    }
+  ],
+  "coalesced_events": [
+    {
+      "key": "SYN022:58:pose-gap-49f23a3fbebc-2:1",
+      "request_candidate_id": "43ecd37b36034b819fb37fc8736ba9d3-candidate-1",
+      "association": "same_person_as_existing_request",
+      "note": "108: 46·50·53프레임에서 ID1은 이불을 덮은 전신, ID2는 같은 사람의 얼굴·상체다. 58프레임의 ID2 마지막 관측 근거는 53프레임이며 현재 박스를 만들어 넣지 않았다. 원래 요청 원문은 추가 근거로 보존했다. 정상 영상에 최초 확인 요청 1건은 여전히 남는다."
+    }
+  ],
+  "additional_review": [
+    "107: actual target ID1 and request frame 62 unchanged; no cross-track relation.",
+    "414: seated helper ID1 and lying target ID2 remain separate; no eligible pair in any of the 27 sampled frames. Request frame 10 and subsequent evidence unchanged."
+  ]
+}

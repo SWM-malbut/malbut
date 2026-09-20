@@ -1,0 +1,119 @@
+{
+  "date": "2026-09-10",
+  "reviewer": "Codex actual RGB frames; not independent human review",
+  "scope": "Diagnosis only. No detection rule, model, threshold, track, label or source-video edits.",
+  "input_run": "request-dedup-20260910-run-v1",
+  "input_frames_sha256": "109d752aa9da4a0d904f9eb5fa83787e349cb8df3552704d98b6b7b19cb2a5c8",
+  "diagnostic_script_sha256": "fba9880c3ff9bf4132c5afca05dcd223252a7ba6153a15feb82357e29d4abc53",
+  "sampled_frames_analyzed": 108,
+  "source_frames_decoded": 252,
+  "key_frames_visually_reviewed": 24,
+  "baseline_replay_parity_frames": 108,
+  "source_hashes_and_private_permissions_verified": true,
+  "cases": [
+    {
+      "video": "404",
+      "case_id": "SYN007",
+      "diagnostic_path": "/home/jisanggeun/.local/share/malbut-evaluations/miss-diagnosis-20260910-final-404/diagnostic.json",
+      "diagnostic_sha256": "a134bb845d9e4b9ff602a51826bb487b9d9c68624ab140a8f2e8b33566a14e51",
+      "completed_sha256": "5f461c5b0500eb37487db2966c9f5d1f51072782fd30a709786d43b599fa3fad",
+      "counts": {
+        "frames": 27,
+        "frames_with_any_pose": 16,
+        "frames_with_any_usable_geometry": 16,
+        "frames_with_unassigned": 0,
+        "actual_requests": 0
+      },
+      "baseline_parity_frames": 27,
+      "reviewed_frames": [
+        29,
+        36,
+        38,
+        43,
+        48,
+        60
+      ],
+      "review_image": "/home/jisanggeun/.local/share/malbut-evaluations/miss-diagnosis-20260910-final-404/SYN007-key.jpg",
+      "review_image_sha256": "27360b59a1f0abaad5466fc0e4148c3e501ffc0f6a97b2f8fa269ce36e20e80e",
+      "rgb_review": "RGB 주요 프레임에서 실제 분홍 상의 대상은 36프레임까지 ID1과 대응한다. 38프레임 이후 누운 대상이 의자 다리 뒤로 보이지만 Pose 출력이 없다."
+    },
+    {
+      "video": "413",
+      "case_id": "SYN011",
+      "diagnostic_path": "/home/jisanggeun/.local/share/malbut-evaluations/miss-diagnosis-20260910-final-413/diagnostic.json",
+      "diagnostic_sha256": "89c594d6ab21747fdb3e195f7ee10aa741edbce559fa44228c3379cd055be36a",
+      "completed_sha256": "6dd96ba00b9388f38da63c4a652294d1741d24d65691fbf0275e94abe4b35903",
+      "counts": {
+        "frames": 27,
+        "frames_with_any_pose": 8,
+        "frames_with_any_usable_geometry": 6,
+        "frames_with_unassigned": 3,
+        "actual_requests": 0
+      },
+      "baseline_parity_frames": 27,
+      "reviewed_frames": [
+        7,
+        12,
+        17,
+        24,
+        29,
+        31
+      ],
+      "review_image": "/home/jisanggeun/.local/share/malbut-evaluations/miss-diagnosis-20260910-final-413/SYN011-key.jpg",
+      "review_image_sha256": "e40aaaf6eab050bed6e61560afe6586262e0f0180cb4d9a921574775eced44af",
+      "rgb_review": "12프레임의 작은 미할당 박스가 수동 대상 박스와 맞는다. 큰 ID1은 이불/침대까지 포함한다. 24프레임의 보이는 머리/상체에는 박스가 없고, 29·31프레임은 넓은 박스와 관절 부족 상태다."
+    },
+    {
+      "video": "422",
+      "case_id": "SYN014",
+      "diagnostic_path": "/home/jisanggeun/.local/share/malbut-evaluations/miss-diagnosis-20260910-final-422/diagnostic.json",
+      "diagnostic_sha256": "3c372db31033b4ae8aff29a00b9710848ce7cb96447c82f93ccc3a5a685ece57",
+      "completed_sha256": "09fa466d8d1b29052ad339d8a44b525d0f6137ff29e44feda32d2bc583ec531e",
+      "counts": {
+        "frames": 27,
+        "frames_with_any_pose": 14,
+        "frames_with_any_usable_geometry": 2,
+        "frames_with_unassigned": 5,
+        "actual_requests": 0
+      },
+      "baseline_parity_frames": 27,
+      "reviewed_frames": [
+        24,
+        26,
+        31,
+        36,
+        50,
+        55
+      ],
+      "review_image": "/home/jisanggeun/.local/share/malbut-evaluations/miss-diagnosis-20260910-final-422/SYN014-key.jpg",
+      "review_image_sha256": "13a2eb88972176d44e2a8f3054c5b5ede29c28189730aec5cb702a796159de80",
+      "rgb_review": "31·36프레임의 누운 사람에 넓은 박스가 있지만 골반 관절이 부족하다. 후반 ID1은 얼굴 쪽 작은 박스에 붙으며 넓은 부분 관측이 미할당/새 ID로 나온다. ID가 같다는 이유로 전신 관측을 이어 보지 않았다."
+    },
+    {
+      "video": "442",
+      "case_id": "SYN020",
+      "diagnostic_path": "/home/jisanggeun/.local/share/malbut-evaluations/miss-diagnosis-20260910-final-442/diagnostic.json",
+      "diagnostic_sha256": "582ddac1a022efc892db54defbafb3b24f0904195091718eeaaf5cd401c13d4f",
+      "completed_sha256": "7ad88c0b90667b915ad6eb608484df7a62dc66a9dafe7506bc184948534bab99",
+      "counts": {
+        "frames": 27,
+        "frames_with_any_pose": 19,
+        "frames_with_any_usable_geometry": 19,
+        "frames_with_unassigned": 0,
+        "actual_requests": 0
+      },
+      "baseline_parity_frames": 27,
+      "reviewed_frames": [
+        36,
+        41,
+        43,
+        48,
+        60,
+        62
+      ],
+      "review_image": "/home/jisanggeun/.local/share/malbut-evaluations/miss-diagnosis-20260910-final-442/SYN020-key.jpg",
+      "review_image_sha256": "b37fd2ccddc321c764da2438b70164664cae2ab3464eb4bb2b0a9ce5e5ba2b0c",
+      "rgb_review": "36·41프레임의 실제 대상 ID1은 주방 안쪽이다. 43·48프레임에는 내려앉고 누운 대상이 보이지만 Pose가 없다. 60프레임의 ID3은 실제 대상과 떨어진 오른쪽 의자 다리 쪽 오탐이다."
+    }
+  ]
+}
