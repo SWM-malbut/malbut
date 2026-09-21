@@ -146,5 +146,45 @@ def test_unavailable_or_failing_mask_server_is_reported_and_retried(tmp_path, cl
     node._tick()
     node._tick()
     state = json.loads(node.status.publish.call_args.args[0].data)
-    assert state['state'] == 'ERROR' and 'rejected' in state['message']
+    assert state['state'] == 'ERROR'
+    assert 'rejected the mask: invalid mask image' in state['message']
     assert node.applied == ()
+
+
+def test_mask_server_that_is_not_active_yet_is_waited_for(tmp_path, clock):
+    """A slow container answers UNDEFINED_FAILURE before ACTIVE; that is not an error."""
+    node = _node(tmp_path, clock)
+    node.client.call_async.side_effect = lambda _: _done(LoadMap.Response.RESULT_UNDEFINED_FAILURE)
+    node._tick()
+    node._tick()
+    state = json.loads(node.status.publish.call_args.args[0].data)
+    assert state['state'] == 'WAITING' and 'activate' in state['message']
+    node._tick()
+    assert node.client.call_async.call_count == 1
+    clock.value += 1.5
+    node.client.call_async.side_effect = lambda _: _done(LoadMap.Response.RESULT_SUCCESS)
+    node._tick()
+    node._tick()
+    assert json.loads(node.status.publish.call_args.args[0].data)['state'] == 'CLEARED'
+    assert node.applied is None  # The empty mask for 'no saved map' is now in place.
+
+
+def test_reports_of_different_severity_use_a_real_logger(tmp_path, clock):
+    """The rclpy logger rejects a call site that changes severity; each state must log."""
+    import rclpy
+
+    context = rclpy.Context()
+    rclpy.init(context=context, domain_id=100 + os.getpid() % 30)
+    real = None
+    try:
+        real = ZoneFilter(context=context, parameter_overrides=[
+            rclpy.parameter.Parameter('cache_directory', value=str(tmp_path / 'cache'))])
+        node = _node(tmp_path, clock)
+        node.get_logger = real.get_logger
+        node._report('WAITING', None, 0, 'waiting for the zone mask server')
+        node._report('ERROR', None, 0, 'zone mask server rejected the mask: result 3')
+        node._report('CLEARED', None, 0, 'no saved map selected')
+    finally:
+        if real is not None:
+            real.destroy_node()
+        context.try_shutdown()

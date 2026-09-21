@@ -19,6 +19,14 @@ STATE_TOPIC = '/malbut/zones/state'
 LOCALIZATION_STATE_TOPIC = '/malbut/localization/state'
 RESPONSE_TIMEOUT_S = 10.0
 RETRY_DELAY_S = 5.0
+# map_server answers this before its lifecycle reaches ACTIVE; the service
+# exists from configure, so a slow container makes the first load land early.
+ACTIVATION_RETRY_S = 1.0
+RESULT_NAMES = {
+    LoadMap.Response.RESULT_MAP_DOES_NOT_EXIST: 'mask file not found',
+    LoadMap.Response.RESULT_INVALID_MAP_DATA: 'invalid mask image',
+    LoadMap.Response.RESULT_INVALID_MAP_METADATA: 'invalid mask metadata',
+}
 
 
 class ZoneFilter(Node):
@@ -116,12 +124,17 @@ class ZoneFilter(Node):
             return
         self.pending = None
         try:
-            loaded = future.result().result == LoadMap.Response.RESULT_SUCCESS
-        except Exception:  # noqa: B902 - rclpy future boundary
-            loaded = False
-        if not loaded:
+            result = future.result().result
+        except Exception as error:  # noqa: B902 - rclpy future boundary
+            result = f'no reply: {error}'
+        if result == LoadMap.Response.RESULT_UNDEFINED_FAILURE:
+            self.retry_at = time.monotonic() + ACTIVATION_RETRY_S
+            self._report('WAITING', target, 0, 'waiting for the zone mask server to activate')
+            return
+        if result != LoadMap.Response.RESULT_SUCCESS:
             self.retry_at = time.monotonic() + RETRY_DELAY_S
-            self._report('ERROR', target, 0, 'zone mask server rejected the mask')
+            reason = RESULT_NAMES.get(result, f'result {result}')
+            self._report('ERROR', target, 0, f'zone mask server rejected the mask: {reason}')
             return
         self.applied = target
         self._report(*report)
@@ -132,8 +145,12 @@ class ZoneFilter(Node):
         if report == self.last_report:
             return
         self.last_report = report
-        (self.get_logger().warning if state == 'ERROR' else self.get_logger().info)(
-            f'Zones: {message}' + (f' ({report["map"]})' if report['map'] else ''))
+        text = f'Zones: {message}' + (f' ({report["map"]})' if report['map'] else '')
+        # rclpy binds a severity to each call site; one line must not switch levels.
+        if state == 'ERROR':
+            self.get_logger().warning(text)
+        else:
+            self.get_logger().info(text)
         self.status.publish(String(data=json.dumps(report)))
 
 
