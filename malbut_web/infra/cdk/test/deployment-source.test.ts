@@ -29,11 +29,13 @@ test("deployment sources stay inside the repository and contain the build entryp
   }
 });
 
-test("source assets omit environment files, local credentials, dependencies and infrastructure", () => {
+test("source assets omit environment files, local credentials, dependencies and CDK", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "malbut-source-excludes-"));
   try {
     for (const file of ["app/page.tsx", ".env.local", ".local/device-token", "app/.env.production",
-      "node_modules/dependency/index.js", "infra/cdk/cdk.out/template.json"]) {
+      "node_modules/dependency/index.js", "infra/cdk/cdk.out/template.json",
+      "infra/aws/push-broker/fall-notification.mjs", "infra/aws/push-broker/.env.example",
+      "infra/aws/push-broker/node_modules/web-push/index.js"]) {
       fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
       fs.writeFileSync(path.join(root, file), "fixture");
     }
@@ -46,7 +48,10 @@ test("source assets omit environment files, local credentials, dependencies and 
     });
     const stagedPath = path.resolve(app.outdir, asset.assetPath);
     assert.ok(fs.existsSync(path.join(stagedPath, "app/page.tsx")));
-    for (const name of [".env.local", ".local", "app/.env.production", "node_modules", "infra"]) {
+    // The web build imports the push broker's notification module from infra/aws.
+    assert.ok(fs.existsSync(path.join(stagedPath, "infra/aws/push-broker/fall-notification.mjs")));
+    for (const name of [".env.local", ".local", "app/.env.production", "node_modules", "infra/cdk",
+      "infra/aws/push-broker/.env.example", "infra/aws/push-broker/node_modules"]) {
       assert.equal(fs.existsSync(path.join(stagedPath, name)), false, `${name} entered the deploy asset`);
     }
   } finally {

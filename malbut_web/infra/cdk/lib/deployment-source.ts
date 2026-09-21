@@ -7,11 +7,13 @@ import { Construct } from "constructs";
 // Build artifacts, local credentials and CDK itself must never enter the image
 // source asset. The image is built from the selected working-tree snapshot,
 // independently of whether those changes have been committed or pushed.
+// The Lambda sources under infra/aws stay in: the web imports the push
+// broker's notification module at build time.
 export const DEPLOYMENT_SOURCE_EXCLUDES = [
   ".git", "**/.git", ".github", "**/node_modules", "node_modules",
   ".next", ".vinext", ".wrangler", "coverage", "dist", "artifacts", "*.tsbuildinfo",
   ".env", ".env.*", "**/.env", "**/.env.*", ".local", "**/.local",
-  "infra", "npm-debug.log*", "design-qa.md",
+  "infra/cdk", "npm-debug.log*", "design-qa.md",
 ];
 
 export function resolveDeploymentSource(

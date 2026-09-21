@@ -38,7 +38,8 @@ CloudFront distribution/VPC origin 및 해당 service-linked role 생성 권한�
 실제 내용으로 이미지 source asset을 만든다. 기존 Git SHA 빌드와 달리 원격
 저장소에 commit/push할 필요가 없다. 상대 경로는 저장소 내부의 완성된 Next.js
 Docker build directory만 허용하며 `.env*`, `.local`, node_modules, 빌드 결과,
-`infra`는 source asset에서 제외한다.
+`infra/cdk`는 source asset에서 제외한다. `infra/aws`의 Lambda 소스는 웹 빌드가
+알림 모듈을 import하므로 포함한다.
 
 ```bash
 npm run synth -- \
