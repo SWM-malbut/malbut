@@ -21,6 +21,7 @@ execution:
   mode: FOREGROUND
   priority: NORMAL
   resources: [BASE]
+  map_requirement: SELECTED
 
 # /map은 현재 Nav2가 사용하는 저장 지도이며, 방 라벨은 선택적 GeoJSON이다.
 # 지도·카메라·TF·Nav2 준비 후 실행하며 같은 서버의 중복 요청은 거부한다.

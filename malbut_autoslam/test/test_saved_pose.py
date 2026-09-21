@@ -109,7 +109,7 @@ def test_action_saves_pose_before_teardown_and_keeps_map_on_warning(
     node._save.return_value = str(saved_map)
 
     def save_pose(map_yaml):
-        node._close_runtime.assert_not_called()
+        node._settle_child.assert_not_called()
         if pose_error is not None:
             raise pose_error
         write_mapping_pose(map_yaml, 1.5, 2.0, 0.8)
@@ -124,7 +124,7 @@ def test_action_saves_pose_before_teardown_and_keeps_map_on_warning(
     assert result.success
     assert result.map_yaml == str(saved_map)
     handle.succeed.assert_called_once_with()
-    node._close_runtime.assert_called_once_with(handle)
+    node._settle_child.assert_called_once_with(handle)
     node._save_pose.assert_called_once_with(str(saved_map))
     if pose_error is None:
         assert saved_map.with_suffix('.pose.yaml').is_file()

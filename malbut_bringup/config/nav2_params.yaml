@@ -1,7 +1,11 @@
-# ROSOrin parameters maintained in Malbut, based on the robot-provided config.
-# Keep the manufacturer's DWB motion model; match its velocity and acceleration
-# limits in the smoother. Depth images are projected inside the costmap plugin:
-# no full-resolution PointCloud2 is sent through DDS into the Nav2 process.
+# ROSOrin parameters maintained in Malbut, based on the robot-provided config
+# (Hiwonder ROSOrin ROS2 navigation/config: nav2_params.yaml, nav2_controller_dwb.yaml).
+# malbut_bringup/nav2_stack.py composes every server below with this file.
+# The vendor driver clamps /cmd_vel to 0.2 m/s and 0.5 rad/s; DWB, the smoother and
+# behaviors use those limits. Other DWB values are the vendor's, plus a footprint
+# critic that rejects trajectories whose rectangular outline would hit an obstacle.
+# Costmaps are LiDAR-only: the depth layer is not built or loaded because its depth
+# input delayed TF on the robot (see depth_costmap/README.md to restore it).
 amcl:
   ros__parameters:
     use_sim_time: False
@@ -30,7 +34,8 @@ amcl:
     recovery_alpha_fast: 0.0
     recovery_alpha_slow: 0.0
     resample_interval: 1
-    robot_model_type: "nav2_amcl::DifferentialMotionModel"
+    # Mecanum base: joystick and manual driving command lateral motion.
+    robot_model_type: "nav2_amcl::OmniMotionModel"
     save_pose_rate: 0.5
     sigma_hit: 0.2
     tf_broadcast: true
@@ -128,6 +133,76 @@ bt_navigator_navigate_to_pose_rclcpp_node:
   ros__parameters:
     use_sim_time: False
 
+controller_server:
+  ros__parameters:
+    use_sim_time: False
+    controller_frequency: 10.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5
+      movement_time_allowance: 10.0
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.25
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: True
+      # Driver /cmd_vel limits instead of the vendor's 0.4 m/s and 1.0 rad/s.
+      min_vel_x: -0.2
+      min_vel_y: 0.0
+      max_vel_x: 0.2
+      max_vel_y: 0.0
+      max_vel_theta: 0.5
+      min_speed_xy: 0.0
+      max_speed_xy: 0.2
+      min_speed_theta: 0.0
+      acc_lim_x: 2.5
+      acc_lim_y: 0.0
+      acc_lim_theta: 3.2
+      decel_lim_x: -2.5
+      decel_lim_y: 0.0
+      decel_lim_theta: -3.2
+      vx_samples: 20
+      vy_samples: 5
+      vtheta_samples: 20
+      sim_time: 1.7
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.2
+      xy_goal_tolerance: 0.25
+      trans_stopped_velocity: 0.25
+      short_circuit_trajectory_evaluation: True
+      stateful: True
+      # BaseObstacle (vendor): the robot-centre cell rejects the 0.106 m inscribed
+      # circle and its cost is the graded preference for staying clear of walls.
+      # ObstacleFootprint: the padded rectangular outline, rotated along the
+      # trajectory, rejects front, back and corner contact that the centre cell
+      # misses. Its score stays negligible on purpose: under the outline the
+      # inflated cost reads 174-253 for any body clearance up to 0.35 m, so as a
+      # preference it made standing still cheaper than driving along a wall.
+      # Scale 0 would skip the critic entirely.
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      BaseObstacle.scale: 0.02
+      ObstacleFootprint.scale: 0.01
+      PathAlign.scale: 32.0
+      PathAlign.forward_point_distance: 0.1
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.1
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+      RotateToGoal.scale: 32.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: -1.0
+
 local_costmap:
   local_costmap:
     ros__parameters:
@@ -140,15 +215,24 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.03
-      robot_radius: 0.18
+      # Official ROSOrin mecanum outline: 0.277 m long, 0.212 m wide.
+      footprint: "[[0.1385, 0.106], [0.1385, -0.106], [-0.1385, -0.106], [-0.1385, 0.106]]"
+      # The one fixed margin around the outline (Nav2 default). DWB's footprint
+      # critic, AssistedTeleop and the Collision Monitor all use the padded outline;
+      # the inflation layer adds the graded preference beyond it.
+      footprint_padding: 0.01
       plugins: ["obstacle_layer", "inflation_layer"]
+      # Saved-map Zones: zone_filter loads the mask for the selected map.
+      filters: ["keepout_filter"]
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: True
+        filter_info_topic: "/keepout_costmap_filter_info"
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 2.0
-        # Keep a graded wall-clearance band beyond the 0.18 m collision radius.
-        # The former 0.02 m band was narrower than one local costmap cell.
+        # Keep a graded wall-clearance band beyond the 0.174 m footprint corner.
         inflation_radius: 0.30
-      # Keep planar LiDAR separate: its rays must not erase lower depth obstacles.
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -164,31 +248,6 @@ local_costmap:
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
-      # Reuse Nav2 voxel marking/clearing, but build XYZ from depth in-process.
-      depth_voxel_layer:
-        plugin: "malbut_bringup::DepthVoxelLayer"
-        enabled: True
-        publish_voxel_map: False
-        observation_sources: ""
-        depth_topic: /depth_cam/depth0/image_raw
-        camera_info_topic: /depth_cam/depth0/camera_info
-        depth_is_rectified: False
-        expected_update_rate: 0.5  # seconds, not Hz; stale depth makes the layer non-current
-        origin_z: 0.0
-        z_resolution: 0.03
-        z_voxels: 16
-        max_obstacle_height: 0.20
-        mark_threshold: 0
-        marking:
-          min_obstacle_height: 0.05
-          max_obstacle_height: 0.20
-          obstacle_min_range: 0.0
-          obstacle_max_range: 2.5
-        clearing:
-          min_obstacle_height: -0.05
-          max_obstacle_height: 0.48
-          raytrace_min_range: 0.0
-          raytrace_max_range: 3.0
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
@@ -209,10 +268,21 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_footprint
       use_sim_time: False
-      robot_radius: 0.18
+      # Official ROSOrin mecanum outline: 0.277 m long, 0.212 m wide.
+      footprint: "[[0.1385, 0.106], [0.1385, -0.106], [-0.1385, -0.106], [-0.1385, 0.106]]"
+      # The one fixed margin around the outline (Nav2 default). DWB's footprint
+      # critic, AssistedTeleop and the Collision Monitor all use the padded outline;
+      # the inflation layer adds the graded preference beyond it.
+      footprint_padding: 0.01
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      # Saved-map Zones: zone_filter loads the mask for the selected map.
+      filters: ["keepout_filter"]
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: True
+        filter_info_topic: "/keepout_costmap_filter_info"
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -227,30 +297,6 @@ global_costmap:
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
-      depth_voxel_layer:
-        plugin: "malbut_bringup::DepthVoxelLayer"
-        enabled: True
-        publish_voxel_map: False
-        observation_sources: ""
-        depth_topic: /depth_cam/depth0/image_raw
-        camera_info_topic: /depth_cam/depth0/camera_info
-        depth_is_rectified: False
-        expected_update_rate: 0.5
-        origin_z: 0.0
-        z_resolution: 0.03
-        z_voxels: 16
-        max_obstacle_height: 0.20
-        mark_threshold: 0
-        marking:
-          min_obstacle_height: 0.05
-          max_obstacle_height: 0.20
-          obstacle_min_range: 0.0
-          obstacle_max_range: 2.5
-        clearing:
-          min_obstacle_height: -0.05
-          max_obstacle_height: 0.48
-          raytrace_min_range: 0.0
-          raytrace_max_range: 3.0
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
@@ -273,6 +319,24 @@ map_server:
     #topic_name: map
     #frame_id: map
     yaml_filename: ""
+
+# Zone mask (raw costs: 0 allow, 70 avoid, 100 restricted) in the saved map's
+# frame. zone_filter loads it through load_map; see malbut_bringup/zones.py.
+zone_filter_mask_server:
+  ros__parameters:
+    use_sim_time: False
+    frame_id: map
+    topic_name: /keepout_filter_mask
+    yaml_filename: ""
+
+zone_filter_info_server:
+  ros__parameters:
+    use_sim_time: False
+    type: 0  # keepout
+    filter_info_topic: /keepout_costmap_filter_info
+    mask_topic: /keepout_filter_mask
+    base: 0.0
+    multiplier: 1.0
 
 map_saver:
   ros__parameters:
@@ -325,9 +389,24 @@ behavior_server:
     transform_tolerance: 0.1
     use_sim_time: false
     simulate_ahead_time: 2.0
-    max_rotational_vel: 1.0
+    max_rotational_vel: 0.5
     min_rotational_vel: 0.4
     rotational_acc_lim: 3.2
+
+# manual_drive: AssistedTeleop from /cmd_vel_teleop, in its own server so that only
+# manual driving goes through the Collision Monitor (see nav2_stack.py).
+teleop_behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: [assisted_teleop]
+    assisted_teleop:
+      plugin: "nav2_behaviors/AssistedTeleop"
+    global_frame: odom
+    robot_base_frame: base_footprint
+    transform_tolerance: 0.1
+    use_sim_time: false
 
 waypoint_follower:
   ros__parameters:
@@ -345,11 +424,42 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.4, 0.0, 1.0]
-    min_velocity: [-0.4, 0.0, -1.0]
+    max_velocity: [0.2, 0.0, 0.5]
+    min_velocity: [-0.2, 0.0, -0.5]
     max_accel: [2.5, 0.0, 3.2]
     max_decel: [-2.5, 0.0, -3.2]
     odom_topic: odom
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0
+
+# Last check on manual driving (AssistedTeleop) before the driver's /cmd_vel.
+# Navigation and Spin/BackUp publish /cmd_vel directly: DWB's footprint critic and
+# the behaviors' own costmap checks avoid obstacles there. The approach model
+# scales a command down so the footprint would not reach a LiDAR point within
+# time_before_collision; motion away from an obstacle is unchanged. Humble ignores
+# scans older than source_timeout instead of stopping: not an emergency stop.
+collision_monitor:
+  ros__parameters:
+    use_sim_time: False
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_pre_collision"
+    cmd_vel_out_topic: "cmd_vel"
+    transform_tolerance: 0.2
+    source_timeout: 1.0
+    stop_pub_timeout: 1.0
+    polygons: ["FootprintApproach"]
+    FootprintApproach:
+      type: "polygon"
+      action_type: "approach"
+      footprint_topic: "/local_costmap/published_footprint"
+      time_before_collision: 1.0
+      simulation_time_step: 0.1
+      # Up to this many points inside the footprint are treated as noise.
+      max_points: 3
+      visualize: False
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "/scan_raw"

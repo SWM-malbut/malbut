@@ -26,6 +26,11 @@ def test_web_receives_latched_speech_ready_and_clears_it_after_publisher_exit(mo
     publisher = speech.create_publisher(String, '/malbut/speech/status', QoSProfile(
         depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
     publisher.publish(String(data='ready'))
+    # Missions open only after the manager leaves BOOTING.
+    from malbut_interfaces.msg import SystemState
+    state_publisher = manager.create_publisher(SystemState, '/malbut/state', QoSProfile(
+        depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+    state_publisher.publish(SystemState(system_state=SystemState.IDLE))
     bridge = RosBridge(PanelData(), node_name='speech_readiness_test_web')
     # Represent an owned launch without spawning any child process.
     bridge.runtime._status.update(state='RUNNING', mode='navigation')

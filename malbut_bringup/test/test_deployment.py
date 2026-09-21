@@ -14,7 +14,7 @@ PACKAGES = (
     'malbut_bringup', 'malbut_interfaces', 'malbut_system_manager',
     'malbut_agent_server', 'malbut_stt', 'malbut_tts',
     'malbut_yolo', 'malbut_reid', 'malbut_tracking', 'malbut_patrol',
-    'malbut_autoslam',
+    'malbut_autoslam', 'malbut_relocalization',
 )
 
 

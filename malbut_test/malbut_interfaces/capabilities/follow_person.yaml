@@ -29,3 +29,4 @@ execution:
   mode: FOREGROUND
   priority: NORMAL
   resources: [BASE]
+  map_requirement: SELECTED

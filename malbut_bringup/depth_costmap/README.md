@@ -1,7 +1,49 @@
 # Bringup depth costmap plugin
 
+**Status: kept for later use, not built or loaded.** On the robot, depth input
+delayed TF (2026-09-16/17), so both costmaps are LiDAR-only and the default
+build skips this plugin. The Aurora depth image itself is still used by person
+tracking; only this costmap path is off. To restore it:
+
+1. Add these back to `malbut_bringup/package.xml` as `<depend>` and install them
+   with rosdep: `depth_image_proc`, `image_geometry`, `libopencv-dev`,
+   `nav2_costmap_2d`, `nav2_util`, `pluginlib`, `rclcpp`, `sensor_msgs`, `tf2`,
+   `tf2_ros`.
+2. Build with `--cmake-args -DMALBUT_DEPTH_COSTMAP=ON`. This also builds the
+   `test_depth_projector` and `test_depth_voxel_layer` gtests.
+3. Add `depth_voxel_layer` to both costmaps' `plugins` in
+   `config/nav2_params.yaml` with the settings below, then measure TF delay on
+   the robot again.
+
+```yaml
+      depth_voxel_layer:
+        plugin: "malbut_bringup::DepthVoxelLayer"
+        enabled: True
+        publish_voxel_map: False
+        observation_sources: ""
+        depth_topic: /depth_cam/depth0/image_raw
+        camera_info_topic: /depth_cam/depth0/camera_info
+        depth_is_rectified: False
+        expected_update_rate: 0.5  # seconds, not Hz; stale depth makes the layer non-current
+        origin_z: 0.0
+        z_resolution: 0.03
+        z_voxels: 16
+        max_obstacle_height: 0.20
+        mark_threshold: 0
+        marking:
+          min_obstacle_height: 0.05
+          max_obstacle_height: 0.20
+          obstacle_min_range: 0.0
+          obstacle_max_range: 2.5
+        clearing:
+          min_obstacle_height: -0.05
+          max_obstacle_height: 0.48
+          raytrace_min_range: 0.0
+          raytrace_max_range: 3.0
+```
+
 `malbut_bringup::DepthVoxelLayer` is an internal Nav2 costmap plugin built
-and installed by Bringup, not a separate ROS package or point-cloud node.
+by Bringup, not a separate ROS package or point-cloud node.
 It projects a complete depth image once with the official
 `depth_image_proc::convertDepth`, then passes that in-process cloud to two
 standard Nav2 ObservationBuffers. The inherited VoxelLayer retains voxel

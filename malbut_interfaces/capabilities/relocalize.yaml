@@ -1,0 +1,33 @@
+schema_version: 1
+
+capability:
+  id: relocalize
+  title: 위치 보정
+  description: 선택한 저장 지도에서 로봇의 현재 위치를 찾는다. 저장된 위치가 맞으면 그대로 쓰고, 틀리면 제자리 회전하며 지도 전체에서 찾는다.
+
+command:
+  kind: ACTION
+  name: /relocalize
+  type: malbut_interfaces/action/Relocalize
+
+input:
+  fields:
+    method:
+      type: uint8
+      description: 0 AUTO(저장 위치 확인 후 필요하면 전역 탐색), 1 GIVEN_POSE(initial_pose 사용), 2 GLOBAL_SEARCH(바로 전역 탐색).
+      default: 0
+    initial_pose:
+      type: geometry_msgs/PoseWithCovarianceStamped
+      description: method가 1일 때 사용하는 map 좌표의 위치와 공분산.
+      default: {}
+
+execution:
+  mode: FOREGROUND
+  priority: NORMAL
+  resources: [BASE]
+  map_requirement: SELECTED
+
+# malbut_relocalization 패키지의 relocalization 노드가 /relocalize Action을 제공한다.
+# 전역 탐색은 Nav2 Spin으로 제자리에서 회전하므로 BASE를 쓴다.
+# 시스템 관리자는 저장 지도로 전환할 때마다 이 Action을 직접 요청(AUTO)하고,
+# 위치를 찾는 동안 위치 추정 상태를 SWITCHING으로 유지한다.

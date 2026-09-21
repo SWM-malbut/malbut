@@ -13,6 +13,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/AutoSlam.action"
   "action/FollowPerson.action"
   "action/Patrol.action"
+  "action/Relocalize.action"
   "msg/LidarCluster.msg"
   "msg/LidarClusterArray.msg"
   "msg/MissionStatus.msg"

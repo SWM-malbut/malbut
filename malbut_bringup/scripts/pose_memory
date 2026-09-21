@@ -1,8 +1,0 @@
-#!/usr/bin/env python3
-"""Run the Bringup pose_memory entrypoint."""
-
-from malbut_bringup.pose_memory import main
-
-
-if __name__ == '__main__':
-    main()

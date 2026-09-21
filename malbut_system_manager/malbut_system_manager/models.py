@@ -29,6 +29,22 @@ class ExecutionResource(str, Enum):
     DISPLAY = 'DISPLAY'
 
 
+class MapRequirement(str, Enum):
+    """Localization a capability needs: a selected saved map, or mapping."""
+
+    SELECTED = 'SELECTED'
+    NOT_SELECTED = 'NOT_SELECTED'
+
+
+class LocalizationMode(str, Enum):
+    """Runtime localization owned by the manager when enabled."""
+
+    SWITCHING = 'SWITCHING'
+    MAPPING = 'MAPPING'
+    LOCALIZATION = 'LOCALIZATION'
+    ERROR = 'ERROR'
+
+
 class MissionPriority(IntEnum):
     """Ordering used only after missions are known to conflict."""
 
@@ -107,6 +123,7 @@ class CapabilityManifest:
     interface_type: Any = field(repr=False, compare=False)
     resources: frozenset[ExecutionResource]
     source_path: str = ''
+    map_requirement: MapRequirement | None = None
 
 
 @dataclass

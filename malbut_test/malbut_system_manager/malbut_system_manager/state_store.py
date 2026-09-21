@@ -6,10 +6,15 @@ from collections.abc import Iterable
 from .models import (
     ControlMode,
     ExecutionMode,
+    LocalizationMode,
     MissionRecord,
     MissionState,
     SystemState,
 )
+
+
+# Nav2 teleoperation: a mission running it hands the base to a person.
+TELEOP_COMMAND_TYPES = frozenset({'nav2_msgs/action/AssistedTeleop'})
 
 
 class StateStore:
@@ -19,7 +24,8 @@ class StateStore:
         self.ready = False
         self.recharging = False
         self.emergency = False
-        self.control_mode = ControlMode.AUTONOMOUS
+        # None: localization is not managed here, so maps never gate missions.
+        self.localization: LocalizationMode | None = None
         self.active_foreground: OrderedDict[str, MissionRecord] = (
             OrderedDict()
         )
@@ -41,6 +47,16 @@ class StateStore:
         if self.active_foreground:
             return SystemState.EXECUTING_MISSION
         return SystemState.IDLE
+
+    @property
+    def control_mode(self) -> ControlMode:
+        """Derive MANUAL from the active teleoperation mission, never set it."""
+        if any(
+            mission.capability.command_type in TELEOP_COMMAND_TYPES
+            for mission in self.active()
+        ):
+            return ControlMode.MANUAL
+        return ControlMode.AUTONOMOUS
 
     def add_pending(self, mission: MissionRecord) -> None:
         """Store a validated mission until conflicts have stopped."""

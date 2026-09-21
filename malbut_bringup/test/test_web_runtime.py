@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 import yaml
 
-from malbut_bringup.web_runtime import RuntimeSupervisor, SavedMapCatalog
+from malbut_bringup.web_runtime import failure_summary, RuntimeSupervisor, SavedMapCatalog
 
 
 def _map(directory, name='home.yaml', **changes):
@@ -59,6 +59,21 @@ def test_catalog_rejects_path_traversal_symlinks_and_unsafe_yaml(tmp_path):
         catalog.resolve('home.yaml')
 
 
+def test_delete_removes_the_map_and_its_named_files_but_keeps_shared_images(tmp_path):
+    """A deleted map leaves the list; an image another map still uses remains."""
+    catalog = SavedMapCatalog(tmp_path / 'maps')
+    _map(catalog.directory)
+    (catalog.directory / 'home.pose.yaml').write_text('x: 0.0\n')
+    (catalog.directory / 'home.zones.geojson').write_text('{}')
+    _map(catalog.directory, 'office.yaml')
+    assert catalog.delete('home.yaml') == ['home.yaml', 'home.pose.yaml', 'home.zones.geojson']
+    assert [item['id'] for item in catalog.list_maps()] == ['office.yaml']
+    assert catalog.delete('office.yaml') == ['office.yaml', 'home.pgm']
+    assert catalog.list_maps() == []
+    with pytest.raises(ValueError):
+        catalog.delete('../outside.yaml')
+
+
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
     """Replace all process creation and group signals with in-memory mocks."""
@@ -94,10 +109,12 @@ def test_navigation_launch_uses_only_fixed_argv_and_explicit_selected_map(runtim
         supervisor.start('anything')
     assert supervisor.start('navigation', 'home.yaml', False).result()['state'] == 'RUNNING'
     args, kwargs = popen.call_args
+    # One Bringup; the requested mode only selects the first localization.
     assert args[0] == [
-        'ros2', 'launch', 'malbut_bringup', 'robot.launch.py', 'mode:=navigation',
-        'web_panel:=false', 'start_hardware:=false',
-        f'map:={supervisor.catalog.resolve("home.yaml")}', 'publish_debug_image:=true']
+        'ros2', 'launch', 'malbut_bringup', 'robot.launch.py',
+        'web_panel:=false', 'publish_debug_image:=true', 'start_hardware:=false',
+        f'map_directory:={supervisor.catalog.directory}',
+        f'map:={supervisor.catalog.resolve("home.yaml")}']
     assert kwargs['start_new_session'] is True
     assert not kwargs.get('shell', False)
     with pytest.raises(RuntimeError, match='Stop'):
@@ -180,15 +197,47 @@ def test_failed_spawn_reports_error_without_claiming_external_processes(runtime)
     signals.assert_not_called()
 
 
-def test_error_exposes_only_bounded_owned_log_tail(runtime):
+LAUNCH_LOG = '''[INFO] [speech_preflight-12]: process started with pid [4321]
+[speech_preflight-12] Checking microphone
+[speech_preflight-12] RuntimeError: no input device matches speech_input_device 0
+[ERROR] [speech_preflight-12]: process has died [pid 4321, exit code 1, cmd '/x/speech_preflight'].
+[ERROR] [launch]: Caught exception in launch (see debug for traceback): \
+Bringup child exited: speech_preflight-12
+[ERROR] [launch]: Caught exception in launch (see debug for traceback): \
+Cannot shutdown a ROS adapter that is not running
+[ERROR] [nav2_container-1]: process has died [pid 4300, exit code -2, cmd '/x/container'].
+[ERROR] [system_manager-8]: process has died [pid 4310, exit code -15, cmd '/x/manager'].
+'''
+
+
+def test_failure_summary_names_the_first_failed_node_and_its_error():
+    """Nodes the launch stopped afterwards (SIGINT/SIGTERM) are effects, not causes."""
+    assert failure_summary(LAUNCH_LOG) == (
+        'speech_preflight-12 exited with code 1; '
+        'RuntimeError: no input device matches speech_input_device 0; '
+        'Bringup child exited: speech_preflight-12')
+    # A launch-time check that fails before any node starts.
+    assert failure_summary(
+        '\x1b[1;31m[ERROR] [launch]: Caught exception in launch (see debug for traceback): '
+        'speech Python is not executable: /x/venv/bin/python\x1b[0m\n'
+    ) == 'speech Python is not executable: /x/venv/bin/python'
+    assert failure_summary('[INFO] [launch]: All log files can be found below /x\n') == ''
+    assert len(failure_summary('[ERROR] [launch]: ' + 'x' * 2000)) == 400
+
+
+def test_error_exposes_the_failed_node_and_a_bounded_log_tail(runtime):
     """Bringup startup failure details must reach the web without unbounded reads."""
     supervisor, _, process, _, _ = runtime
     supervisor.start('mapping').result()
     path = Path(supervisor.snapshot()['log_path'])
-    path.write_text('old line\n' * 2000 + 'missing runtime Python\n')
+    path.write_text('old line\n' * 2000 + LAUNCH_LOG)
     assert supervisor.snapshot()['log_tail'] == ''
     process.poll.return_value = 1
     status = supervisor.snapshot()
     assert status['state'] == 'ERROR'
-    assert status['log_tail'].endswith('missing runtime Python\n')
+    assert status['message'] == (
+        'Bringup exited (1): speech_preflight-12 exited with code 1; '
+        'RuntimeError: no input device matches speech_input_device 0; '
+        'Bringup child exited: speech_preflight-12; stop before retrying')
+    assert status['log_tail'].endswith('exit code -15, cmd \'/x/manager\'].\n')
     assert len(status['log_tail'].encode()) <= 8192

@@ -1,11 +1,13 @@
 """ROS node exposing the unified Malbut mission execution contract."""
 
 from dataclasses import dataclass
+import json
 import math
 import signal
 from threading import RLock
 import time
 
+from ament_index_python.packages import get_package_prefix
 import rclpy
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -17,7 +19,9 @@ from rclpy.task import Future
 
 from malbut_interfaces.action import ExecuteMission
 from malbut_interfaces.msg import MissionStatus, SystemState as SystemStateMsg
+from std_msgs.msg import String
 
+from .localization import LocalizationController, SlamProcess
 from .manifest_registry import (
     ManifestError,
     ManifestRegistry,
@@ -28,6 +32,7 @@ from .mission_scheduler import MissionScheduler
 from .models import (
     ControlMode,
     ExecutionMode,
+    LocalizationMode,
     MissionCompletion,
     MissionPriority,
     MissionRecord,
@@ -98,6 +103,12 @@ class SystemManagerNode(Node):
             'cancel_completion_timeout_s',
             cancel_completion_timeout_s,
         )
+        # Bringup gates admission on its readiness report; standalone use
+        # (simulation experiments, tests) stays ready immediately.
+        ready_topic = self.declare_parameter('ready_topic', '').value
+        localization_control = bool(
+            self.declare_parameter('localization_control', False).value
+        )
         state_qos = QoSProfile(depth=1)
         state_qos.reliability = ReliabilityPolicy.RELIABLE
         state_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
@@ -129,8 +140,23 @@ class SystemManagerNode(Node):
             callback_group=self._server_group,
         )
 
+        self._localization = None
+        if localization_control:
+            self._localization = self._create_localization()
+        self._ready_subscription = None
+        if ready_topic:
+            ready_qos = QoSProfile(depth=1)
+            ready_qos.reliability = ReliabilityPolicy.RELIABLE
+            ready_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+            self._ready_subscription = self.create_subscription(
+                String, ready_topic, self._on_readiness, ready_qos,
+                callback_group=self._server_group,
+            )
         with self._lock:
-            effects = self._scheduler.set_ready(True)
+            effects = (
+                SchedulerEffects() if ready_topic
+                else self._scheduler.set_ready(True)
+            )
             self._accepting_goals = True
         self._apply_effects(effects)
         self._publish_state()
@@ -141,9 +167,91 @@ class SystemManagerNode(Node):
             f'System manager ready with capabilities: {capabilities}'
         )
 
+    def _create_localization(self) -> LocalizationController:
+        """Own SLAM and saved-map AMCL so only one map->odom source runs."""
+        params_file = self.declare_parameter('slam_params_file', '').value
+        if not params_file:
+            raise ValueError('localization_control requires slam_params_file')
+        scan_topic = self.declare_parameter('scan_topic', '/scan_raw').value
+        stop_timeout_s = float(
+            self.declare_parameter('slam_stop_timeout_s', 10.0).value
+        )
+        service_timeout_s = float(
+            self.declare_parameter('localization_timeout_s', 30.0).value
+        )
+        relocalize_timeout_s = float(
+            self.declare_parameter('relocalize_timeout_s', 90.0).value
+        )
+        _require_positive_finite('slam_stop_timeout_s', stop_timeout_s)
+        _require_positive_finite('localization_timeout_s', service_timeout_s)
+        _require_positive_finite('relocalize_timeout_s', relocalize_timeout_s)
+        executable = (
+            f'{get_package_prefix("slam_toolbox")}'
+            '/lib/slam_toolbox/sync_slam_toolbox_node'
+        )
+        slam = SlamProcess([
+            executable, '--ros-args', '-r', '__node:=slam_toolbox',
+            '--params-file', params_file,
+            '-p', 'use_sim_time:=false', '-p', f'scan_topic:={scan_topic}',
+        ], stop_timeout_s)
+        group = ReentrantCallbackGroup()
+        controller = LocalizationController(
+            self, group, slam=slam,
+            on_mode=self._on_localization_mode,
+            can_switch=self._base_is_free,
+            lifecycle_service=self.declare_parameter(
+                'localization_lifecycle_service',
+                '/lifecycle_manager_localization/manage_nodes',
+            ).value,
+            map_server_load_service=self.declare_parameter(
+                'map_server_load_service', '/map_server/load_map'
+            ).value,
+            service_timeout_s=service_timeout_s,
+            # Bringup sets /relocalize to find the robot on each loaded map.
+            relocalize_action=self.declare_parameter(
+                'relocalize_action', ''
+            ).value,
+            relocalize_timeout_s=relocalize_timeout_s,
+        )
+        initial_map = self.declare_parameter('initial_map', '').value
+
+        def start_once() -> None:
+            timer.cancel()
+            controller.start(initial_map)
+
+        timer = self.create_timer(0.1, start_once, callback_group=group)
+        return controller
+
+    def _on_localization_mode(self, mode: LocalizationMode) -> None:
+        with self._effects_lock:
+            with self._lock:
+                effects = self._scheduler.set_localization(mode)
+            self._apply_effects(effects)
+            self._publish_state()
+
+    def _base_is_free(self) -> bool:
+        with self._lock:
+            return not self._scheduler.base_busy()
+
+    def _on_readiness(self, message: String) -> None:
+        try:
+            ready = json.loads(message.data).get('state') == 'READY'
+        except (AttributeError, ValueError):
+            return
+        with self._effects_lock:
+            with self._lock:
+                if not ready or self._state.ready:
+                    return
+                effects = self._scheduler.set_ready(True)
+            self.get_logger().info('Bringup reported READY; accepting missions')
+            self._apply_effects(effects)
+            self._publish_state()
+
     def destroy_node(self) -> bool:
         """Stop accepting work and release dynamic Action clients."""
         self._accepting_goals = False
+        if getattr(self, '_localization', None) is not None:
+            self._localization.close()
         if hasattr(self, '_action_server'):
             self._action_server.destroy()
         if hasattr(self, '_executor_bridge'):
