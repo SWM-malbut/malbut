@@ -172,6 +172,9 @@ def _setup(context):
             'scan_topic', 'global_frame', 'robot_frame', 'static_map_topic',
             'global_costmap_topic',
         )}
+        # FollowPath penalizes reverse driving; a retreat from an approaching
+        # person backs straight away on the copy without that critic.
+        follower['retreat_controller_id'] = 'FollowPathReverse'
         if value('following_config'):
             follower['config'] = _file(value('following_config'), 'follower config')
         # An empty parent LaunchConfiguration otherwise shadows the child's

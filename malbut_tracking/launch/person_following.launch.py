@@ -37,6 +37,8 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument('global_frame', default_value='map'),
         DeclareLaunchArgument('robot_frame', default_value='base_footprint'),
+        # Empty reuses the tracking controller for retreat paths.
+        DeclareLaunchArgument('retreat_controller_id', default_value=''),
     ]
     node = Node(
         package='malbut_tracking',
@@ -51,12 +53,14 @@ def generate_launch_description():
                 'global_costmap_topic': LaunchConfiguration(
                     'global_costmap_topic'
                 ),
-                'static_map_topic': LaunchConfiguration('static_map_topic'),
                 'lidar_clusters_topic': LaunchConfiguration(
                     'lidar_clusters_topic'
                 ),
                 'global_frame': LaunchConfiguration('global_frame'),
                 'robot_frame': LaunchConfiguration('robot_frame'),
+                'retreat_controller_id': LaunchConfiguration(
+                    'retreat_controller_id'
+                ),
             },
         ],
     )

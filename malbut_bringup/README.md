@@ -249,8 +249,11 @@ ros2 launch malbut_bringup robot.launch.py \
 ```
 
 추적 서버의 planner/controller/goal-checker ID(`GridBased`, `FollowPath`,
-`general_goal_checker`)는 `nav2_params.yaml`과 일치한다. 필요하면 `following_config`와
-`lidar_config`로 기존 응용 설정을 지정한다. 시뮬레이션 튜닝을 실기기 Nav2에 덮어쓰지 않는다.
+`general_goal_checker`)는 `nav2_params.yaml`과 일치한다. 추적기는 사람 위치 자체를 목표로
+경로를 요청하고, 사람 몸이 차지한 칸은 planner의 `GridBased.tolerance`(0.5 m)가 가장 가까운
+갈 수 있는 칸으로 옮긴다. 후퇴 경로는 `retreat_controller_id`(=`FollowPathReverse`)로
+보낸다. 필요하면 `following_config`와 `lidar_config`로 기존 응용 설정을 지정한다.
+시뮬레이션 튜닝을 실기기 Nav2에 덮어쓰지 않는다.
 
 저장 지도로 바꿀 때마다 관리자가 [위치 보정](#위치-보정)을 요청한다. 이 지도의 마지막
 AMCL 위치나 AutoSLAM이 저장한 `<지도이름>.pose.yaml`을 먼저 확인하고, 맞지 않거나
@@ -335,6 +338,14 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
   앞뒤(0.139 m)와 모서리(0.174 m)가 검사되지 않기 때문이다. 외곽선 아래 팽창 비용은
   차체 여유 0.35 m 안에서 174~253으로 거의 같아 거리 점수로 쓸 수 없으므로, 이 critic의
   가중치는 거부 판정만 남도록 작게 둔다(0이면 critic을 건너뛴다).
+- `FollowPath`의 `PreferForward` critic(Nav2 기본 제공)은 후진 궤적에만 벌점(1000)을 더한다.
+  회전·전진은 벌점이 없고, 전진 궤적이 모두 장애물에 걸리면 여전히 후진한다. 1.7초 안에
+  후진으로 얻는 거리 점수는 최대 약 1250이라 바로 뒤의 목표는 후진하고, 뒤쪽 사분면의
+  목표는 돌아서 전진한다. 사람 추적의 후퇴는 이 벌점이 없는 복사본 `FollowPathReverse`로
+  실행한다(사람을 보면서 곧게 물러나야 하므로).
+- 도착 판정 `xy_goal_tolerance`는 0.12 m다(제조사 0.25 m는 차체 길이만큼 앞에서 멈추고,
+  사람 추적의 0.90~1.10 m 거리 띠 밖에서 멈췄다). `GridBased.tolerance` 0.5 m는 목표 칸이
+  벽·가구·사람 안이면 그 반경 안의 가장 가까운 갈 수 있는 칸으로 목표를 옮긴다.
 - Spin·BackUp은 behavior 서버가 local costmap으로 앞을 검사한 뒤 움직인다.
 - Collision Monitor 최소 구성: 다각형 하나(`FootprintApproach`, `approach`). 수동 조작 명령
   방향으로 차체 외곽(`/local_costmap/published_footprint`)을 1초 앞까지 옮겨 보고, LiDAR

@@ -46,6 +46,8 @@ def test_localization_uses_actual_initial_pose_and_vendor_frames(config):
     planner = config['planner_server']['ros__parameters']
     assert planner['planner_plugins'] == ['GridBased']
     assert planner['GridBased']['plugin'] == 'nav2_navfn_planner/NavfnPlanner'
+    # The person follower plans to the person's own cells and needs a search
+    # radius wider than two legs plus the 0.106 m inscribed inflation.
     assert planner['GridBased']['tolerance'] == 0.5
 
 
@@ -107,7 +109,7 @@ def test_dwb_rejects_footprint_contact_and_keeps_the_vendor_distance_score(confi
     follow = config['controller_server']['ros__parameters']['FollowPath']
     assert follow['critics'] == ['RotateToGoal', 'Oscillation', 'BaseObstacle',
                                  'ObstacleFootprint', 'GoalAlign', 'PathAlign',
-                                 'PathDist', 'GoalDist']
+                                 'PathDist', 'GoalDist', 'PreferForward']
     assert follow['BaseObstacle.scale'] == 0.02
     resolution = config['local_costmap']['local_costmap']['ros__parameters']['resolution']
     # DWB skips a critic at scale 0; at 254 the outline score must still stay
@@ -157,3 +159,37 @@ def test_planar_lidar_uses_2d_layers_with_unchanged_observation_ranges(config):
         assert scan['obstacle_min_range'] == scan['raytrace_min_range'] == 0.0
         assert scan['obstacle_max_range'] == 2.5
         assert scan['raytrace_max_range'] == 3.0
+
+
+def test_goals_stop_within_the_follower_distance_band(config):
+    """0.25 m left a web goal a body length short and outside 0.90-1.10 m."""
+    controller = config['controller_server']['ros__parameters']
+    checker = controller['general_goal_checker']
+    assert checker['xy_goal_tolerance'] == 0.12
+    assert checker['stateful'] is True
+    for name in ('FollowPath', 'FollowPathReverse'):
+        assert controller[name]['xy_goal_tolerance'] == checker['xy_goal_tolerance']
+
+
+def test_autonomous_driving_prefers_forward_and_the_retreat_copy_does_not(config):
+    """Only the reverse penalty differs; the person follower retreats on the copy."""
+    controller = config['controller_server']['ros__parameters']
+    assert controller['controller_plugins'] == ['FollowPath', 'FollowPathReverse']
+    follow, reverse = controller['FollowPath'], controller['FollowPathReverse']
+    assert follow['min_vel_x'] < 0  # Reverse stays possible when forward is blocked.
+    assert follow['PreferForward.penalty'] == 1.0
+    assert follow['PreferForward.strafe_x'] == 0.0
+    assert follow['PreferForward.theta_scale'] == 0.0
+    # A reverse trajectory gains at most 0.34 m = 11 cells x 112 points on the
+    # four distance critics; the penalty must sit below that so a goal directly
+    # behind still reverses, and above a rear-quarter goal's smaller gain.
+    cells = follow['max_vel_x'] * follow['sim_time'] / config[
+        'local_costmap']['local_costmap']['ros__parameters']['resolution']
+    gain = cells * sum(follow[f'{critic}.scale'] for critic in
+                       ('PathDist', 'GoalDist', 'PathAlign', 'GoalAlign'))
+    assert 0.5 * gain < follow['PreferForward.scale'] < gain
+    forward_only = {key for key in follow if key.startswith('PreferForward')}
+    assert 'PreferForward' not in reverse['critics']
+    assert reverse['critics'] == [c for c in follow['critics'] if c != 'PreferForward']
+    assert {k: v for k, v in follow.items() if k not in forward_only and k != 'critics'} == {
+        k: v for k, v in reverse.items() if k != 'critics'}

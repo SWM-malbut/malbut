@@ -1,6 +1,5 @@
 """Follow one RGB-D person track safely by delegating motion to Nav2."""
 
-from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import sys
@@ -10,7 +9,7 @@ from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Pose, PoseStamped
 from malbut_interfaces.action import FollowPerson
 from malbut_interfaces.msg import LidarClusterArray, TrackingCommandTrace
-from nav_msgs.msg import OccupancyGrid, Path
+from nav_msgs.msg import Path
 from nav2_msgs.msg import Costmap, SpeedLimit
 import rclpy
 from rclpy.action import (
@@ -22,11 +21,7 @@ from rclpy.clock import Clock, ClockType
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import (
-    DurabilityPolicy,
-    QoSProfile,
-    ReliabilityPolicy,
-)
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.task import Future
 from rclpy.time import Time
 from std_msgs.msg import String
@@ -58,12 +53,14 @@ from .geometry import (
 from .goal_safety import (
     find_reachable_approach_goal,
     first_admissible_point_on_ray,
-    plan_static_path,
-    project_navigation_goal,
-    StaticPlanningTimeout,
 )
 from .motion_estimator import TargetMotionEstimator
-from .navigation import MotionMode, Nav2MotionClient, Nav2PathClient
+from .navigation import (
+    MotionMode,
+    Nav2MotionClient,
+    Nav2PathClient,
+    PATH_TIMEOUT_PREFIX,
+)
 from .path_sampling import path_length_m, path_to_standoff
 from .target_association import (
     TargetCandidate,
@@ -135,16 +132,8 @@ class PersonFollowerNode(Node):
         # One executor owns this node. All TF lookups are non-blocking so its
         # subscriptions can fill the buffer before the pending-frame retry.
         self._tf_listener = TransformListener(self._tf_buffer, self)
-        self._static_worker = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix='tracking_path',
-        )
-        self._static_job = None
-        self._static_job_context = None
         self._line_fallback_pending = False
         self._planning_shutdown = False
-        self._static_plan_guard = self.create_guard_condition(
-            self._on_static_plan_ready,
-        )
 
         self._obstacle_tracker = ObstacleTargetTracker(
             process_variance=float(
@@ -233,15 +222,6 @@ class PersonFollowerNode(Node):
             self._on_global_costmap,
             1,
         )
-        static_map_qos = QoSProfile(depth=1)
-        static_map_qos.reliability = ReliabilityPolicy.RELIABLE
-        static_map_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-        self._static_map_subscription = self.create_subscription(
-            OccupancyGrid,
-            str(self.get_parameter('static_map_topic').value),
-            self._on_static_map,
-            static_map_qos,
-        )
         self._action_server = ActionServer(
             self,
             FollowPerson,
@@ -273,7 +253,10 @@ class PersonFollowerNode(Node):
         self._last_lidar_stamp_s: float | None = None
         self._lidar_proximity_guard_until_s = 0.0
         self._latest_global_costmap: CostmapGrid | None = None
-        self._latest_static_map: CostmapGrid | None = None
+        # Planner-tolerance steps taken from the person toward the robot after
+        # Nav2 reported no path to the person's own position.
+        self._goal_pullback_m = 0.0
+        self._goal_pullback_anchor: Point2D | None = None
         self._lidar_clusters_received = False
         self._last_goal_position: Point2D | None = None
         self._last_target_pose = PoseStamped()
@@ -358,7 +341,6 @@ class PersonFollowerNode(Node):
         self.declare_parameter(
             'global_costmap_topic', '/global_costmap/costmap_raw'
         )
-        self.declare_parameter('static_map_topic', '/map')
         self.declare_parameter(
             'lidar_clusters_topic',
             '/perception/lidar/foreground_clusters',
@@ -377,10 +359,12 @@ class PersonFollowerNode(Node):
         self.declare_parameter('compute_path_action', 'compute_path_to_pose')
         self.declare_parameter('planner_id', 'GridBased')
         self.declare_parameter('tracking_controller_id', 'FollowPath')
+        # Retreat paths run backwards. When the tracking controller penalizes
+        # reverse driving, name one without that penalty; empty reuses it.
+        self.declare_parameter('retreat_controller_id', '')
         self.declare_parameter('goal_checker_id', 'general_goal_checker')
         self.declare_parameter('spin_action', 'spin')
         self.declare_parameter('navigation_retry_delay_s', 0.75)
-        self.declare_parameter('static_planning_budget_s', 0.05)
         self.declare_parameter('nav2_planning_timeout_s', 0.20)
         self.declare_parameter('speed_limit_topic', 'speed_limit')
         self.declare_parameter('global_frame', 'map')
@@ -421,16 +405,14 @@ class PersonFollowerNode(Node):
         self.declare_parameter('approach_prediction_horizon_s', 0.75)
         self.declare_parameter('approach_speed_threshold_mps', 0.10)
         self.declare_parameter('bearing_only_variance_threshold_m2', 1.0)
-        # Nav2 owns robot clearance. Send goals in its low-cost exterior and prefer
-        # room-side cells when the raw tracking point falls near geometry.
+        # Nav2's planner owns goal placement: the follower plans to the person's
+        # own position and the planner `tolerance` picks the nearest reachable
+        # cell. These two only bound the camera-ray target and the line fallback.
         self.declare_parameter('goal_maximum_cost', 80)
-        self.declare_parameter('static_occupied_threshold', 65)
         self.declare_parameter('goal_safe_search_radius_m', 1.00)
-        self.declare_parameter('goal_openness_radius_m', 0.60)
-        self.declare_parameter('goal_openness_preference_m', 0.30)
-        self.declare_parameter('heading_probe_distance_m', 0.90)
-        self.declare_parameter('minimum_heading_clearance_m', 0.45)
-        self.declare_parameter('require_global_costmap_for_goal', True)
+        # After Nav2 reports no path to the person, move the goal this far
+        # toward the robot per attempt (one planner tolerance) up to the standoff.
+        self.declare_parameter('goal_pullback_step_m', 0.50)
         self.declare_parameter('observation_loss_debounce_s', 0.75)
         self.declare_parameter('recovery_direction_minimum_turn_rad', 0.70)
         self.declare_parameter('recovery_waypoint_tolerance_m', 0.08)
@@ -450,8 +432,6 @@ class PersonFollowerNode(Node):
             self.get_parameter('global_costmap_topic').value
         ).startswith('/'):
             raise ValueError('global_costmap_topic must be absolute')
-        if not str(self.get_parameter('static_map_topic').value).startswith('/'):
-            raise ValueError('static_map_topic must be absolute')
         if not str(
             self.get_parameter('lidar_clusters_topic').value
         ).startswith('/'):
@@ -462,7 +442,6 @@ class PersonFollowerNode(Node):
             raise ValueError('minimum_confidence must be non-negative')
         for parameter_name in (
             'navigation_retry_delay_s',
-            'static_planning_budget_s',
             'nav2_planning_timeout_s',
             'camera_position_alpha',
             'camera_velocity_alpha',
@@ -479,9 +458,7 @@ class PersonFollowerNode(Node):
             'approach_prediction_horizon_s',
             'approach_speed_threshold_mps',
             'goal_safe_search_radius_m',
-            'goal_openness_radius_m',
-            'heading_probe_distance_m',
-            'minimum_heading_clearance_m',
+            'goal_pullback_step_m',
             'alignment_angle_tolerance_rad',
             'recovery_direction_minimum_turn_rad',
             'recovery_waypoint_tolerance_m',
@@ -491,11 +468,6 @@ class PersonFollowerNode(Node):
         ):
             if float(self.get_parameter(parameter_name).value) <= 0.0:
                 raise ValueError(f'{parameter_name} must be positive')
-        static_occupied_threshold = int(
-            self.get_parameter('static_occupied_threshold').value
-        )
-        if not 0 <= static_occupied_threshold <= 100:
-            raise ValueError('static_occupied_threshold must be in [0, 100]')
         if float(
             self.get_parameter('camera_lidar_extent_padding_m').value
         ) < 0.0:
@@ -512,10 +484,6 @@ class PersonFollowerNode(Node):
             raise ValueError('camera_horizontal_fov_rad must be below pi')
         if not 0 <= int(self.get_parameter('goal_maximum_cost').value) < 255:
             raise ValueError('goal_maximum_cost must be in [0, 254]')
-        if float(
-            self.get_parameter('goal_openness_preference_m').value
-        ) < 0.0:
-            raise ValueError('goal_openness_preference_m must be non-negative')
         if float(
             self.get_parameter('camera_rebind_margin_m').value
         ) < 0.0:
@@ -958,7 +926,7 @@ class PersonFollowerNode(Node):
         )
 
     def _on_global_costmap(self, message: Costmap) -> None:
-        """Cache the merged Nav2 grid only for collision-safe goal selection."""
+        """Cache the merged Nav2 grid for the camera-ray target and fallback."""
         try:
             grid = self._costmap_grid(message)
         except ValueError as error:
@@ -967,20 +935,6 @@ class PersonFollowerNode(Node):
             )
             return
         self._latest_global_costmap = grid
-
-    def _on_static_map(self, message: OccupancyGrid) -> None:
-        """Keep the current raw map snapshot; no extra obstacle padding."""
-        try:
-            grid = self._occupancy_grid(message)
-        except ValueError as error:
-            self._warn_periodically(
-                'invalid_static_map', f'Ignoring invalid static map: {error}'
-            )
-            return
-        first_map = self._latest_static_map is None
-        self._latest_static_map = grid
-        if first_map:
-            self.get_logger().info('Received raw map for bounded background planning')
 
     def _on_lidar_clusters(self, message: LidarClusterArray) -> None:
         """Track compact map-frame clusters produced by the C++ front end."""
@@ -1486,34 +1440,6 @@ class PersonFollowerNode(Node):
         grid.validate()
         return grid
 
-    def _occupancy_grid(self, message: OccupancyGrid) -> CostmapGrid:
-        if message.header.frame_id != self._global_frame:
-            raise ValueError(
-                f'expected frame {self._global_frame}, '
-                f'got {message.header.frame_id or "<empty>"}'
-            )
-        orientation = message.info.origin.orientation
-        grid = CostmapGrid(
-            frame_id=message.header.frame_id,
-            stamp_seconds=_stamp_seconds(message.header.stamp),
-            resolution=float(message.info.resolution),
-            width=int(message.info.width),
-            height=int(message.info.height),
-            origin=Point2D(
-                float(message.info.origin.position.x),
-                float(message.info.origin.position.y),
-            ),
-            origin_yaw=quaternion_to_yaw(
-                orientation.x,
-                orientation.y,
-                orientation.z,
-                orientation.w,
-            ),
-            costs=tuple(int(value) for value in message.data),
-        )
-        grid.validate()
-        return grid
-
     def _record_observed_bearing(
         self,
         robot_position: Point2D,
@@ -1750,9 +1676,9 @@ class PersonFollowerNode(Node):
             self._reset_tracking_plan_cadence()
         self._last_motion_command = decision.command
         if decision.command != FollowCommand.NAVIGATE:
-            # An unfinished forward search must not undo HOLD, ALIGN or retreat.
-            self._static_job_context = None
+            # A pending forward fallback must not undo HOLD, ALIGN or retreat.
             self._line_fallback_pending = False
+            self._reset_goal_pullback()
         if (
             self._tracking_source in {'camera', 'bearing'}
             and now_s < self._lidar_proximity_guard_until_s
@@ -1805,7 +1731,6 @@ class PersonFollowerNode(Node):
             # A forward path cannot serve a retreat (or vice versa). Invalidate
             # both pending results and active motion before waiting for the
             # planner to become idle; its idle callback plans the latest input.
-            self._static_job_context = None
             self._line_fallback_pending = False
             self._path_planner.cancel()
             self._nav2.cancel()
@@ -1843,180 +1768,73 @@ class PersonFollowerNode(Node):
             # in-flight plan completes, exactly one newest observation is
             # planned next instead of polling stale sensor data.
             return
-        if planning_to_target and self._latest_global_costmap is not None:
-            static_map = self._latest_static_map
-            if static_map is None:
-                self._warn_periodically(
-                    'static_map_unavailable',
-                    'Waiting for the cached static SLAM map before '
-                    'selecting a tracking goal',
-                )
-                return
-            if self._static_job is not None:
-                return  # One job; sensor callbacks retain only the latest target.
-            if not recovery and not self._tracking_plan_due():
-                return
-            self._static_job_context = (
-                self._active_goal, recovery, robot_position, target_position,
-                decision, self._tracking_source,
-                self._last_motion_source_stamp_ns, self._motion_generation,
-                static_map,
-            )
-            self._static_job = self._static_worker.submit(
-                self._compute_static_path, static_map, robot_position,
-                target_position,
-                int(self.get_parameter('static_occupied_threshold').value),
-                float(self.get_parameter('static_planning_budget_s').value),
-            )
-            self._static_job.add_done_callback(self._wake_static_plan)
-            return
-        self._static_job_context = None  # A retreat supersedes forward planning.
+        if planning_to_target:
+            self._update_goal_pullback(target_position)
         if not recovery and not self._tracking_plan_due():
             return
         self._request_tracking_path(
-            robot_position, target_position, decision, recovery, None,
+            robot_position, target_position, decision, recovery,
             self._tracking_source, self._last_motion_source_stamp_ns,
             self._motion_generation,
         )
 
-    def _compute_static_path(self, grid, start, target, threshold, budget_s):
-        """Search raw geometry within a budget, without global preprocessing."""
-        return plan_static_path(
-            grid, start, target, threshold, time_budget_s=budget_s,
+    def _reset_goal_pullback(self) -> None:
+        self._goal_pullback_m = 0.0
+        self._goal_pullback_anchor = None
+
+    def _update_goal_pullback(self, target_position: Point2D) -> None:
+        """Forget the pullback once the person has clearly left the failed spot."""
+        anchor = self._goal_pullback_anchor
+        if anchor is not None and distance(anchor, target_position) > float(
+            self.get_parameter('goal_pullback_step_m').value
+        ):
+            self._reset_goal_pullback()
+
+    def _raise_goal_pullback(self, target_position: Point2D) -> bool:
+        """Step the goal one planner tolerance toward the robot; False at the standoff."""
+        limit = self._settings.desired_distance_m
+        if self._goal_pullback_m >= limit - 1e-9:
+            return False
+        step = float(self.get_parameter('goal_pullback_step_m').value)
+        self._goal_pullback_m = min(limit, self._goal_pullback_m + step)
+        self._goal_pullback_anchor = target_position
+        self.get_logger().info(
+            'No Nav2 path to the person; planning to a point '
+            f'{self._goal_pullback_m:.2f} m closer to the robot'
+        )
+        return True
+
+    def _pulled_back_goal(self, robot_position: Point2D, target_position: Point2D) -> Point2D:
+        target_distance = distance(robot_position, target_position)
+        pullback = min(self._goal_pullback_m, max(0.0, target_distance - 1e-3))
+        if pullback <= 0.0:
+            return target_position
+        fraction = pullback / target_distance
+        return Point2D(
+            target_position.x + fraction * (robot_position.x - target_position.x),
+            target_position.y + fraction * (robot_position.y - target_position.y),
         )
 
-    def _wake_static_plan(self, _future) -> None:
-        """Wake the ROS executor; never dispatch motion on the worker thread."""
-        if not self._planning_shutdown:
-            self._static_plan_guard.trigger()
-
-    def _on_static_plan_ready(self) -> None:
-        future = self._static_job
-        if future is None or not future.done():
-            return
-        context = self._static_job_context
-        self._static_job = None
-        self._static_job_context = None
-        if context is None:
-            self._plan_latest_observation_if_pending(-1)
-            return
-        goal, recovery, robot, target, decision, source, stamp, generation, grid = context
-        expected_state = FollowState.RECOVERING if recovery else FollowState.TRACKING
-        if (goal is not self._active_goal or self._state != expected_state):
-            self._plan_latest_observation_if_pending(-1)
-            return
-        if grid is not self._latest_static_map:
-            self._plan_latest_observation_if_pending(-1)
-            return
-        if recovery and self._recovery_phase != RecoveryPhase.REACHING_LAST_POSITION:
-            return
-        if not recovery and not self._observation_is_current(stamp, self._now_seconds()):
-            self._plan_latest_observation_if_pending(generation)
-            return
-        try:
-            path = future.result()
-        except StaticPlanningTimeout:
-            self._warn_periodically(
-                'static_path_timeout',
-                'Static route budget exhausted; trying the live approach corridor',
-            )
-            path = None
-        except Exception as error:  # noqa: B902 - worker future boundary
-            self._warn_periodically('static_path_failed', str(error))
-            path = None
-        if path is None:
-            if recovery:
-                self._schedule_recovery_navigation_retry()
-            else:
-                self._line_fallback_pending = True
-                self._line_fallback_immediate = True
-                self._plan_latest_observation_if_pending(-1)
-            return
-        if not self._path_planner.busy:
-            self._request_tracking_path(
-                robot, target, decision, recovery, path, source, stamp, generation,
-            )
-
     def _request_tracking_path(
-        self, robot_position, target_position, decision, recovery, static_path,
+        self, robot_position, target_position, decision, recovery,
         plan_source, plan_source_stamp_ns, plan_generation,
     ) -> None:
-        """Project against the current live costmap, then ask Nav2 for a path."""
+        """Ask Nav2 for a path to the person or the retreat point itself."""
         planning_to_target = decision.command == FollowCommand.NAVIGATE
-        requested_position = target_position if planning_to_target else decision.goal.position
+        # Nav2's planner tolerance moves a goal inside the person's own obstacle
+        # cells (or furniture) to the nearest reachable cell, and the route is
+        # cut at the standoff afterwards. Only a "no path" result pulls the
+        # goal toward the robot along the line of sight.
+        goal_position = (
+            self._pulled_back_goal(robot_position, target_position)
+            if planning_to_target else decision.goal.position
+        )
         final_pose = PoseStamped()
-        grid = self._latest_global_costmap
-        if grid is None:
-            if bool(
-                self.get_parameter('require_global_costmap_for_goal').value
-            ):
-                self._warn_periodically(
-                    'goal_costmap_unavailable',
-                    'Waiting for global costmap before dispatching a '
-                    'tracking goal',
-                )
-                return
-            safe_goal_position = requested_position
-            safe_goal_yaw = decision.goal.yaw
-        else:
-            safe_goal = project_navigation_goal(
-                grid,
-                requested_position,
-                decision.goal.yaw,
-                int(self.get_parameter('goal_maximum_cost').value),
-                float(
-                    self.get_parameter('goal_safe_search_radius_m').value
-                ),
-                float(self.get_parameter('goal_openness_radius_m').value),
-                0.0
-                if planning_to_target
-                else float(
-                    self.get_parameter('goal_openness_preference_m').value
-                ),
-                float(
-                    self.get_parameter('heading_probe_distance_m').value
-                ),
-                float(
-                    self.get_parameter('minimum_heading_clearance_m').value
-                ),
-                approach_origin=(
-                    robot_position if planning_to_target else None
-                ),
-                static_path=static_path,
-            )
-            if safe_goal is None:
-                if self._nav2.mode == MotionMode.NAVIGATE:
-                    self._nav2.cancel()
-                self._path_planner.cancel()
-                self._last_goal_position = None
-                self._warn_periodically(
-                    'no_safe_tracking_goal',
-                    'No global-costmap goal with the configured margin; '
-                    'holding instead of entering obstacle inflation',
-                )
-                if recovery:
-                    self._schedule_recovery_navigation_retry()
-                elif not planning_to_target:
-                    self._schedule_tracking_navigation_retry()
-                else:
-                    self._line_fallback_pending = True
-                    self._line_fallback_immediate = True
-                    self._plan_latest_observation_if_pending(-1)
-                return
-            safe_goal_position = safe_goal.position
-            safe_goal_yaw = safe_goal.yaw
-            if safe_goal.position_adjusted or safe_goal.heading_adjusted:
-                self.get_logger().info(
-                    'Adjusted follow goal toward open space: '
-                    f'position={safe_goal.position_adjusted}, '
-                    f'heading={safe_goal.heading_adjusted}, '
-                    f'openness={safe_goal.openness:.2f}'
-                )
         final_pose.header.frame_id = self._global_frame
         final_pose.header.stamp = self.get_clock().now().to_msg()
-        final_pose.pose.position.x = safe_goal_position.x
-        final_pose.pose.position.y = safe_goal_position.y
-        quaternion = yaw_to_quaternion(safe_goal_yaw)
+        final_pose.pose.position.x = goal_position.x
+        final_pose.pose.position.y = goal_position.y
+        quaternion = yaw_to_quaternion(decision.goal.yaw)
         final_pose.pose.orientation.x = quaternion[0]
         final_pose.pose.orientation.y = quaternion[1]
         final_pose.pose.orientation.z = quaternion[2]
@@ -2053,8 +1871,7 @@ class PersonFollowerNode(Node):
                 self._schedule_tracking_navigation_retry()
 
     def _request_line_fallback(self, robot, target, decision) -> None:
-        """Give Nav2's controller a short checked segment, not another A* job."""
-        self._static_job_context = None
+        """Give Nav2's controller a short checked segment while planning fails."""
         grid = self._latest_global_costmap
         now_s = self._now_seconds()
         # The deployed global costmap publishes at 1 Hz. Do not build a local
@@ -2167,6 +1984,15 @@ class PersonFollowerNode(Node):
                 self._schedule_recovery_navigation_retry()
             elif target_position is None:
                 self._schedule_tracking_navigation_retry()
+            elif (
+                path is None
+                and not detail.startswith(PATH_TIMEOUT_PREFIX)
+                and self._raise_goal_pullback(target_position)
+            ):
+                # Nav2 found nothing reachable within its tolerance around the
+                # person (for example someone sitting inside furniture inflation).
+                self._cancel_tracking_retry()
+                self._plan_latest_observation_if_pending(-1)
             else:
                 self._line_fallback_pending = True
                 self._line_fallback_immediate = True
@@ -2207,6 +2033,7 @@ class PersonFollowerNode(Node):
             planning_started_ns,
             planning_finished_ns,
             recovery,
+            reverse=not recovery and target_position is None,
         ):
             if not recovery:
                 self._plan_latest_observation_if_pending(
@@ -2233,11 +2060,19 @@ class PersonFollowerNode(Node):
         planning_started_ns: int,
         planning_finished_ns: int,
         recovery: bool,
+        *,
+        reverse: bool = False,
     ) -> bool:
         """Send one already computed route to Nav2 FollowPath."""
+        controller_id = str(self.get_parameter('tracking_controller_id').value)
+        if reverse:
+            controller_id = (
+                str(self.get_parameter('retreat_controller_id').value)
+                or controller_id
+            )
         if not self._nav2.follow_path(
             path,
-            str(self.get_parameter('tracking_controller_id').value),
+            controller_id,
             str(self.get_parameter('goal_checker_id').value),
         ):
             return False
@@ -2613,44 +2448,13 @@ class PersonFollowerNode(Node):
             target_position.y - robot_position.y,
             target_position.x - robot_position.x,
         )
-        safe_position = target_position
-        safe_yaw = target_yaw
-        grid = self._latest_global_costmap
-        if grid is not None:
-            safe_goal = project_navigation_goal(
-                grid,
-                target_position,
-                target_yaw,
-                int(self.get_parameter('goal_maximum_cost').value),
-                float(
-                    self.get_parameter('goal_safe_search_radius_m').value
-                ),
-                float(self.get_parameter('goal_openness_radius_m').value),
-                0.0,
-                float(
-                    self.get_parameter('heading_probe_distance_m').value
-                ),
-                float(
-                    self.get_parameter('minimum_heading_clearance_m').value
-                ),
-                approach_origin=robot_position,
-            )
-            if safe_goal is None:
-                self._warn_periodically(
-                    'last_seen_goal_unavailable',
-                    'No safe costmap cell exists near the last person '
-                    'position; retrying the frozen recovery goal',
-                )
-                self._schedule_recovery_navigation_retry()
-                return
-            safe_position = safe_goal.position
-            safe_yaw = safe_goal.yaw
         recovery_pose = PoseStamped()
         recovery_pose.header.frame_id = self._global_frame
         recovery_pose.header.stamp = self.get_clock().now().to_msg()
-        recovery_pose.pose.position.x = safe_position.x
-        recovery_pose.pose.position.y = safe_position.y
-        quaternion = yaw_to_quaternion(safe_yaw)
+        # Nav2's planner tolerance handles a last position inside inflation.
+        recovery_pose.pose.position.x = target_position.x
+        recovery_pose.pose.position.y = target_position.y
+        quaternion = yaw_to_quaternion(target_yaw)
         recovery_pose.pose.orientation.x = quaternion[0]
         recovery_pose.pose.orientation.y = quaternion[1]
         recovery_pose.pose.orientation.z = quaternion[2]
@@ -3091,6 +2895,7 @@ class PersonFollowerNode(Node):
         self._loss_timer.cancel()
         self._pending_detection_timer.cancel()
         self._cancel_tracking_retry()
+        self._reset_goal_pullback()
         self._reset_recovery()
         self._tracking_source = 'none'
         self.get_logger().info(f'{message}; waiting for Nav2 motion to stop')
@@ -3132,7 +2937,6 @@ class PersonFollowerNode(Node):
         self._nav2.destroy()
         self._path_planner.destroy()
         self._action_server.destroy()
-        self._static_worker.shutdown(wait=True, cancel_futures=True)
         return super().destroy_node()
 
 
