@@ -1,7 +1,7 @@
 """Show robot data and supervise explicitly requested Bringup on a trusted LAN."""
 
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 import copy
 import hmac
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -20,14 +20,45 @@ import uuid
 
 from .web_map import MapCache
 from .web_runtime import RuntimeSupervisor, SavedMapCatalog
+from .zones import COSTS, MAX_POINTS, MAX_ZONES, read_zones, write_zones, zone_feature, ZoneError
 
 
 TERMINAL = {'SUCCEEDED', 'CANCELED', 'ABORTED', 'REJECTED', 'ERROR'}
-RUNTIME_ACTIONS = {
-    'mapping': ('/autoslam', '/navigate_to_pose', '/follow_path', '/spin', '/backup', '/wait'),
-    'navigation': ('/malbut/mission/execute', '/follow_person', '/patrol',
-                   '/navigate_to_pose', '/follow_path', '/spin', '/backup', '/wait'),
+# One Bringup runs every server; stopping it cancels all of their goals.
+RUNTIME_ACTIONS = ('/malbut/mission/execute', '/autoslam', '/follow_person', '/patrol',
+                   '/navigate_to_pose', '/follow_path', '/spin', '/backup', '/wait',
+                   '/assisted_teleop', '/relocalize')
+LOAD_MAP_SERVICE = '/malbut/localization/load_map'
+START_MAPPING_SERVICE = '/malbut/localization/start_mapping'
+LOCALIZATION_MODES = {'MAPPING': 'mapping', 'LOCALIZATION': 'navigation'}
+# manual_drive input: bounded by the vendor driver's /cmd_vel limits (m/s, m/s, rad/s).
+TELEOP_TOPIC = '/cmd_vel_teleop'
+TELEOP_LIMITS = {'linear_x': 0.2, 'linear_y': 0.2, 'angular_z': 0.5}
+# The page repeats a held command; if it stops (closed page, lost Wi-Fi), stop once.
+TELEOP_TIMEOUT_S = 0.5
+ZONES_STATE_TOPIC = '/malbut/zones/state'
+MAX_ZONE_REQUEST_BYTES = 64 * 1024
+# One remote manual step (about 12 cm or 23 degrees), inside TELEOP_LIMITS.
+NUDGES = {
+    'forward': (0.15, 0.0, 0.0), 'backward': (-0.15, 0.0, 0.0),
+    'left': (0.0, 0.15, 0.0), 'right': (0.0, -0.15, 0.0),
+    'turn_left': (0.0, 0.0, 0.5), 'turn_right': (0.0, 0.0, -0.5),
 }
+NUDGE_S = 0.8
+# manual_control requests manual_drive on the first input; the step starts once
+# /malbut/state reports MANUAL, so a slow start does not shorten it.
+NUDGE_START_TIMEOUT_S = 3.0
+# RViz's 2D Pose Estimate spread: 0.5 m and about 15 degrees.
+GIVEN_POSE_COVARIANCE = [0.0] * 36
+GIVEN_POSE_COVARIANCE[0] = GIVEN_POSE_COVARIANCE[7] = 0.25
+GIVEN_POSE_COVARIANCE[35] = 0.0685
+DEBUG_ARGUMENT_BYTES = 8 * 1024
+DIAGNOSTIC_TOPICS = (
+    '/scan_raw', '/odom', '/tf', '/map', '/cmd_vel', '/cmd_vel_pre_collision',
+    '/cmd_vel_teleop', '/amcl_pose', '/initialpose', '/malbut/state',
+    '/malbut/localization/state', '/malbut/zones/state', '/malbut/bringup/status',
+    '/depth_cam/rgb0/image_raw', '/perception/person/debug_image/compressed',
+)
 
 
 def validate_command(payload):
@@ -48,6 +79,34 @@ def validate_command(payload):
                 and Path(payload['map']).suffix in ('.yaml', '.yml')):
             return payload
         raise ValueError('Choose mapping, or navigation with a listed map filename')
+    if payload.get('command') == 'nudge':
+        if set(payload) != {'command', 'direction'} or payload['direction'] not in (
+                *NUDGES, 'stop'):
+            raise ValueError('Manual step needs one of: ' + ', '.join((*NUDGES, 'stop')))
+        return payload
+    if payload.get('command') == 'debug_start':
+        # Any registered capability; the manager validates fields against its manifest.
+        if (set(payload) != {'command', 'capability', 'arguments'}
+                or not isinstance(payload['capability'], str)
+                or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', payload['capability'])
+                or not isinstance(payload['arguments'], dict)):
+            raise ValueError('Debug mission needs a capability ID and an arguments object')
+        try:
+            size = len(json.dumps(payload['arguments'], allow_nan=False).encode('utf-8'))
+        except (TypeError, ValueError) as error:
+            raise ValueError('Debug arguments must be finite JSON') from error
+        if size > DEBUG_ARGUMENT_BYTES:
+            raise ValueError(f'Debug arguments exceed {DEBUG_ARGUMENT_BYTES} bytes')
+        return payload
+    if payload.get('command') == 'teleop':
+        if set(payload) != {'command', *TELEOP_LIMITS}:
+            raise ValueError('Teleop requires linear_x, linear_y and angular_z')
+        for key, limit in TELEOP_LIMITS.items():
+            value = payload[key]
+            if (type(value) not in (float, int) or not math.isfinite(value)
+                    or abs(value) > limit):
+                raise ValueError(f'{key} must be finite and within ±{limit}')
+        return payload
     if set(payload) != {'command', 'capability', 'arguments'}:
         raise ValueError('Expected command, capability, arguments')
     if payload['command'] != 'start' or not isinstance(payload['arguments'], dict):
@@ -81,27 +140,104 @@ def validate_command(payload):
                 or any(type(args[key]) not in (float, int)
                        or not math.isfinite(args[key]) for key in args)):
             raise ValueError('Navigation requires finite x, y and yaw in map coordinates')
+    elif capability == 'manual_drive':
+        if args:
+            raise ValueError('manual_drive uses the registered time limit; send no arguments')
+    elif capability == 'relocalize':
+        method = args.get('method')
+        if type(method) is not int or method not in (0, 1, 2):
+            raise ValueError('method must be 0 (saved pose first), 1 (given pose) or 2 (search)')
+        pose = {'x', 'y', 'yaw'} if method == 1 else set()
+        if (set(args) != {'method', *pose}
+                or any(type(args[key]) not in (float, int)
+                       or not math.isfinite(args[key]) for key in pose)):
+            raise ValueError('A given pose needs finite x, y and yaw in map coordinates')
     else:
         raise ValueError('Unknown capability')
     return payload
 
 
-def mission_arguments(capability, arguments):
-    """Translate a bounded map-coordinate request to the public Nav2 Goal."""
-    if capability != 'navigate_to_pose':
-        return arguments
+def live_zone_map(runtime, catalog):
+    """Return the saved map in use when this panel may edit its Zones."""
+    localization = runtime.get('localization') or {}
+    if localization.get('mode') != 'LOCALIZATION' or not localization.get('map'):
+        raise ValueError('Zones belong to a saved map; drive on a saved map first')
+    if catalog is None:
+        raise ValueError('This panel has no map directory')
+    path = Path(localization['map'])
+    if catalog.resolve(path.name) != path.resolve():
+        raise ValueError('The saved map in use is outside this panel\'s map directory')
+    return path.resolve()
+
+
+def zone_view(runtime, catalog):
+    """Describe the Zones of the saved map in use as editable polygons."""
+    try:
+        path = live_zone_map(runtime, catalog)
+    except ValueError as error:
+        return {'map': None, 'editable': False, 'zones': [], 'message': str(error)}
+    try:
+        features, message = read_zones(path), ''
+    except ZoneError as error:
+        features, message = [], f'{error}; applying replaces it'
+    zones = [{'behavior': item['properties']['behavior'],
+              'name': item['properties'].get('name', ''),
+              'points': [point[:2] for point in item['geometry']['coordinates'][0][:-1]]}
+             for item in features]
+    return {'map': path.name, 'editable': True, 'zones': zones, 'message': message}
+
+
+def save_zones(runtime, catalog, payload):
+    """Validate the editor's polygons and replace the map's Zone file."""
+    if not isinstance(payload, dict) or set(payload) != {'map', 'zones'}:
+        raise ValueError('Expected map and zones')
+    path = live_zone_map(runtime, catalog)
+    if payload['map'] != path.name:
+        raise ValueError('The saved map in use changed; reload the Zones')
+    zones = payload['zones']
+    if not isinstance(zones, list) or len(zones) > MAX_ZONES:
+        raise ValueError(f'Use at most {MAX_ZONES} Zones')
+    features = []
+    for zone in zones:
+        if (not isinstance(zone, dict) or not {'behavior', 'points'} <= set(zone)
+                or set(zone) - {'behavior', 'points', 'name'}
+                or zone['behavior'] not in COSTS):
+            raise ValueError('Each Zone needs a behavior and points')
+        points, name = zone['points'], zone.get('name', '')
+        if (not isinstance(points, list) or not 3 <= len(points) <= MAX_POINTS
+                or not all(isinstance(point, list) and len(point) == 2
+                           and all(type(value) in (int, float) and math.isfinite(value)
+                                   for value in point) for point in points)):
+            raise ValueError(f'Zone corners must be 3 to {MAX_POINTS} finite [x, y] points')
+        if not isinstance(name, str) or len(name) > 64:
+            raise ValueError('Zone names are at most 64 characters')
+        features.append(zone_feature(zone['behavior'], points, name))
+    write_zones(path, features)
+    return len(features)
+
+
+def _map_pose(arguments):
     return {
-        'pose': {
-            'header': {'frame_id': 'map'},
-            'pose': {
-                'position': {'x': float(arguments['x']), 'y': float(arguments['y']), 'z': 0.0},
-                'orientation': {'x': 0.0, 'y': 0.0,
-                                'z': math.sin(arguments['yaw'] / 2.0),
-                                'w': math.cos(arguments['yaw'] / 2.0)},
-            },
-        },
-        'behavior_tree': '',
+        'position': {'x': float(arguments['x']), 'y': float(arguments['y']), 'z': 0.0},
+        'orientation': {'x': 0.0, 'y': 0.0,
+                        'z': math.sin(arguments['yaw'] / 2.0),
+                        'w': math.cos(arguments['yaw'] / 2.0)},
     }
+
+
+def mission_arguments(capability, arguments):
+    """Translate a bounded map-coordinate request to the public Goal fields."""
+    if capability == 'navigate_to_pose':
+        return {
+            'pose': {'header': {'frame_id': 'map'}, 'pose': _map_pose(arguments)},
+            'behavior_tree': '',
+        }
+    if capability == 'relocalize' and arguments['method'] == 1:
+        return {'method': 1, 'initial_pose': {
+            'header': {'frame_id': 'map'},
+            'pose': {'pose': _map_pose(arguments), 'covariance': GIVEN_POSE_COVARIANCE},
+        }}
+    return arguments
 
 
 def image_jpeg(message):
@@ -142,6 +278,8 @@ class PanelData:
         self.servers = {'manager': False, 'autoslam': False}
         self.system = None
         self.tracking = None
+        self.zones = None
+        self.manual = {'state': 'IDLE', 'direction': None, 'message': ''}
         self.frames = {}
         self.encoded = (None, b'')
         self.map_cache = MapCache(palette=map_palette)
@@ -215,7 +353,7 @@ class PanelData:
             return copy.deepcopy({
                 'servers': self.servers, 'system': self.system,
                 'tracking': self.tracking, 'requests': list(self.requests.values()),
-                'runtime': self.runtime,
+                'runtime': self.runtime, 'zones': self.zones, 'manual': self.manual,
                 'video_age_s': {key: round(time.monotonic() - frame[0], 1)
                                 for key, frame in self.frames.items()},
             })
@@ -231,6 +369,9 @@ class RosBridge:
         from malbut_interfaces.msg import SystemState
         from action_msgs.msg import GoalStatusArray
         from action_msgs.srv import CancelGoal
+        from geometry_msgs.msg import Twist
+        from nav2_msgs.srv import LoadMap
+        from std_srvs.srv import Trigger
         from nav_msgs.msg import OccupancyGrid
         from rclpy.action import ActionClient
         from rclpy.node import Node
@@ -248,6 +389,10 @@ class RosBridge:
         self.auto_goal = AutoSlam.Goal
         self.mission_goal = ExecuteMission.Goal
         self.to_dict = message_to_ordereddict
+        self.twist = Twist
+        self.teleop_publisher = self.node.create_publisher(Twist, TELEOP_TOPIC, 10)
+        self.teleop_received = None
+        self.nudge = None
         self.clients = {
             'manager': ActionClient(self.node, ExecuteMission, '/malbut/mission/execute'),
             'autoslam': ActionClient(self.node, AutoSlam, '/autoslam'),
@@ -264,8 +409,13 @@ class RosBridge:
         self.cancel_request = CancelGoal.Request
         self.cancel_clients = {
             name: self.node.create_client(CancelGoal, name + '/_action/cancel_goal')
-            for name in set(sum(RUNTIME_ACTIONS.values(), ()))
+            for name in RUNTIME_ACTIONS
         }
+        self.load_map = self.node.create_client(LoadMap, LOAD_MAP_SERVICE)
+        self.load_map_request = LoadMap.Request
+        self.start_mapping = self.node.create_client(Trigger, START_MAPPING_SERVICE)
+        self.start_mapping_request = Trigger.Request
+        self.localization = {}
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self.node)
         self.robot_frame = self.node.declare_parameter('robot_frame', 'base_footprint').value
@@ -296,6 +446,12 @@ class RosBridge:
                 SystemState, '/malbut/state', self._system,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
             self.node.create_subscription(
+                String, '/malbut/localization/state', self._localization,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
+            self.node.create_subscription(
+                String, ZONES_STATE_TOPIC, self._zones,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
+            self.node.create_subscription(
                 OccupancyGrid, self.topics['map_topic'], self._map,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
         ]
@@ -306,13 +462,14 @@ class RosBridge:
             for name in self.cancel_clients)
         self.guard = self.node.create_guard_condition(self._drain)
         self.timer = self.node.create_timer(1.0, self._refresh)
+        self.teleop_timer = self.node.create_timer(0.1, self._teleop_watchdog)
         self._refresh()
 
     def submit(self, payload):
         """Queue authenticated commands without blocking an HTTP worker on DDS."""
         payload = validate_command(payload)
         request_id = None
-        if payload['command'] == 'start':
+        if payload['command'] in ('start', 'debug_start'):
             request_id = self.data.register(payload)
         try:
             self.commands.put_nowait((request_id, payload))
@@ -335,8 +492,16 @@ class RosBridge:
             'message': 'Embedded viewer: start a standalone web panel to control Bringup',
         })
         status['enabled'] = self.runtime is not None
-        server_ready = bool(self.data.servers[
-            'autoslam' if status['mode'] == 'mapping' else 'manager'])
+        # The running mode is the manager's localization, not the start request.
+        mode = LOCALIZATION_MODES.get(self.localization.get('mode'))
+        if mode and status['state'] in ('STARTING', 'RUNNING') or not self.runtime:
+            status['mode'] = mode
+            status['map'] = (Path(self.localization['map']).name
+                             if mode == 'navigation' and self.localization.get('map') else None)
+        status['localization'] = dict(self.localization)
+        with self.data.lock:
+            booting = (self.data.system or {}).get('system_state', 0) == 0
+        server_ready = bool(self.data.servers['manager']) and not booting
         if self.runtime:
             if status['state'] not in ('STARTING', 'RUNNING'):
                 self.speech_ready = False
@@ -409,11 +574,32 @@ class RosBridge:
         self.action_status[name] = {
             bytes(item.goal_info.goal_id.uuid): item.status for item in message.status_list}
 
+    def _localization(self, message):
+        try:
+            state = json.loads(message.data)
+        except ValueError:
+            return
+        if isinstance(state, dict):
+            self.localization = state
+
+    def _zones(self, message):
+        try:
+            state = json.loads(message.data)
+        except ValueError:
+            return
+        if isinstance(state, dict):
+            with self.data.lock:
+                self.data.zones = state
+
     def _start_runtime(self, payload):
-        if self.runtime is None:
-            raise ValueError('Start a standalone robot_web_panel to control Bringup')
         if self.stopping_runtime is not None:
             raise ValueError('Wait for Bringup shutdown to finish')
+        if self.load_map.service_is_ready() and self.start_mapping.service_is_ready():
+            # Bringup is already running: switch localization, never relaunch.
+            self._switch_localization(payload)
+            return
+        if self.runtime is None:
+            raise ValueError('Start a standalone robot_web_panel to control Bringup')
         names = {name for name, _ in self.node.get_node_names_and_namespaces()}
         conflicts = names.intersection({
             'amcl', 'map_server', 'slam_toolbox', 'controller_server', 'planner_server',
@@ -441,6 +627,7 @@ class RosBridge:
         self.action_status.clear()
         self.startup_status = {}
         self.speech_ready = False
+        self.localization = {}
         with self.data.lock:
             self.data.map_cache.clear()
             self.data.map_active = False
@@ -449,6 +636,32 @@ class RosBridge:
             self.data.tracking = None
             self.data.frames.clear()
 
+    def _switch_localization(self, payload):
+        if payload['mode'] == 'mapping':
+            future = self.start_mapping.call_async(self.start_mapping_request())
+        else:
+            request = self.load_map_request()
+            request.map_url = str(self.catalog.resolve(payload['map']))
+            future = self.load_map.call_async(request)
+        self.runtime_message = 'Switching localization; missions using the base must be stopped'
+        future.add_done_callback(lambda done: self._switched(payload, done))
+
+    def _switched(self, payload, future):
+        try:
+            response = future.result()
+        except Exception as error:
+            self.runtime_message = f'Localization switch failed: {error}'
+            return
+        if payload['mode'] == 'mapping':
+            ok, message = response.success, response.message
+        else:
+            # The manager's localization message tells whether the pose was found.
+            ok = response.result == 0
+            message = ('Saved map loaded' if ok else
+                       f'Map was not loaded (result {response.result}); '
+                       'cancel base missions or check the map')
+        self.runtime_message = message if ok else f'Localization switch failed: {message}'
+
     def _stop_runtime(self):
         if self.runtime is None or self.runtime.snapshot()['state'] == 'STOPPED':
             raise ValueError('This panel has no running Bringup to stop')
@@ -456,8 +669,7 @@ class RosBridge:
             return
         self.speech_ready = False
         self.cancel_owned()
-        mode = self.runtime.snapshot()['mode']
-        names = RUNTIME_ACTIONS.get(mode, ())
+        names = RUNTIME_ACTIONS
         self.stopping_runtime = {
             'since': time.monotonic(), 'names': names,
             'futures': {name: self.cancel_clients[name].call_async(self.cancel_request())
@@ -504,11 +716,57 @@ class RosBridge:
         with self.data.lock:
             self.data.tracking = message.data[:8192]
 
+    def call(self, function, timeout=3.0):
+        """Run a read-only query on the ROS executor and wait for its result."""
+        future = Future()
+        try:
+            self.commands.put_nowait((None, {'command': 'call', 'function': function,
+                                             'future': future}))
+        except queue.Full:
+            raise ValueError('Command queue full') from None
+        self.guard.trigger()
+        return future.result(timeout=timeout)
+
+    def diagnostics(self):
+        """Describe the ROS graph and runtime state for remote debugging."""
+        node = self.node
+        with self.data.lock:
+            data = copy.deepcopy({
+                'servers': self.data.servers, 'system': self.data.system,
+                'zones': self.data.zones, 'manual': self.data.manual,
+                # Local log files stay on the robot, as in the state upload.
+                'runtime': {key: value for key, value in self.data.runtime.items()
+                            if key not in ('log_path', 'log_tail')}})
+        return {
+            'nodes': sorted(namespace.rstrip('/') + '/' + name
+                            for name, namespace in node.get_node_names_and_namespaces())[:256],
+            'topics': {topic: {'publishers': node.count_publishers(topic),
+                               'subscribers': node.count_subscribers(topic)}
+                       for topic in DIAGNOSTIC_TOPICS},
+            'actions': {name: client.service_is_ready()
+                        for name, client in self.cancel_clients.items()},
+            'localization': dict(self.localization),
+            'startup': dict(self.startup_status), 'speech_ready': self.speech_ready,
+            'pose': self._robot_pose(),
+            'map': {key: value for key, value in self.data.map_snapshot().items()
+                    if key != 'pose'},
+            **data,
+        }
+
     def _drain(self):
         while not self.commands.empty():
             request_id, payload = self.commands.get_nowait()
-            if payload['command'] == 'cancel':
+            if payload['command'] == 'call':
+                try:
+                    payload['future'].set_result(payload['function']())
+                except Exception as error:
+                    payload['future'].set_exception(error)
+            elif payload['command'] == 'cancel':
                 self.cancel_owned()
+            elif payload['command'] == 'teleop':
+                self._teleop(payload)
+            elif payload['command'] == 'nudge':
+                self._nudge(payload['direction'])
             elif payload['command'] in ('bringup_start', 'bringup_stop'):
                 try:
                     if payload['command'] == 'bringup_start':
@@ -522,6 +780,67 @@ class RosBridge:
                     self._start(request_id, payload)
                 except Exception as error:
                     self.data.update(request_id, state='ERROR', message=str(error))
+
+    def _teleop(self, payload):
+        """Forward one web command; AssistedTeleop keeps the latest input."""
+        self.nudge = None
+        message = self.twist()
+        message.linear.x = float(payload['linear_x'])
+        message.linear.y = float(payload['linear_y'])
+        message.angular.z = float(payload['angular_z'])
+        moving = any(payload[key] for key in TELEOP_LIMITS)
+        self.teleop_received = time.monotonic() if moving else None
+        self.teleop_publisher.publish(message)
+
+    def _nudge(self, direction):
+        """Start one bounded step, or stop the current one."""
+        if direction == 'stop':
+            self.stop_teleop()
+            self._manual_state('IDLE', None, 'Stopped')
+            return
+        self.nudge = {'direction': direction, 'requested': time.monotonic(), 'moving': None}
+        self._manual_state('STARTING', direction, 'Waiting for manual control')
+
+    def _manual_state(self, state, direction, message):
+        with self.data.lock:
+            self.data.manual = {'state': state, 'direction': direction, 'message': message}
+
+    def _step_nudge(self):
+        nudge, now = self.nudge, time.monotonic()
+        with self.data.lock:
+            manual = (self.data.system or {}).get('control_mode') == 1  # SystemState.MANUAL
+        if nudge['moving'] is None and manual:
+            nudge['moving'] = now
+            self._manual_state('MOVING', nudge['direction'], 'Moving one step')
+        if nudge['moving'] is None and now - nudge['requested'] > NUDGE_START_TIMEOUT_S:
+            self.stop_teleop()
+            self._manual_state('IDLE', None, 'Manual control did not start; '
+                               'the manager may be switching localization')
+            return
+        if nudge['moving'] is not None and now - nudge['moving'] >= NUDGE_S:
+            self.stop_teleop()
+            self._manual_state('IDLE', None, 'Step finished')
+            return
+        # Before MANUAL this only wakes manual_control; AssistedTeleop is not running.
+        message = self.twist()
+        (message.linear.x, message.linear.y,
+         message.angular.z) = NUDGES[nudge['direction']]
+        self.teleop_publisher.publish(message)
+
+    def _teleop_watchdog(self):
+        """Stop once when a held web command is no longer repeated."""
+        if self.nudge is not None:
+            self._step_nudge()
+        elif (self.teleop_received is not None
+                and time.monotonic() - self.teleop_received > TELEOP_TIMEOUT_S):
+            self.stop_teleop()
+
+    def stop_teleop(self):
+        """Publish zero if this panel last commanded motion."""
+        if self.teleop_received is not None or self.nudge is not None:
+            self.teleop_received = None
+            self.nudge = None
+            self.teleop_publisher.publish(self.twist())
 
     def _start(self, request_id, payload):
         if (self.stopping_runtime is not None
@@ -537,13 +856,11 @@ class RosBridge:
             if (not info.get('active') or info.get('frame_id') != 'map'
                     or self._robot_pose() is None):
                 raise ValueError('Navigation requires a live map and current robot pose')
-        if capability == 'autoslam':
-            if self.runtime and self.runtime.snapshot()['mode'] == 'navigation':
-                raise ValueError('저장 지도 주행을 종료하고 지도 만들기 모드를 켜세요')
-            if not self.clients['autoslam'].server_is_ready():
-                raise ValueError('AutoSLAM 서버가 없습니다. 지도 만들기 모드를 먼저 켜세요')
+        if capability == 'autoslam' and not self.clients['autoslam'].server_is_ready():
+            raise ValueError('AutoSLAM 서버가 없습니다. Bringup 준비를 확인하세요')
         route = 'manager' if self.clients['manager'].server_is_ready() else 'autoslam'
-        if route == 'autoslam' and capability != 'autoslam':
+        raw = payload['command'] == 'debug_start'
+        if route == 'autoslam' and (raw or capability != 'autoslam'):
             raise ValueError('System manager is not available')
         if not self.clients[route].server_is_ready():
             raise ValueError(f'{route} Action server is not available')
@@ -564,7 +881,7 @@ class RosBridge:
         if route == 'manager':
             goal = self.mission_goal()
             goal.capability_id = capability
-            goal.arguments_yaml = json.dumps(mission_arguments(
+            goal.arguments_yaml = json.dumps(payload['arguments'] if raw else mission_arguments(
                 capability, payload['arguments']))
         else:
             goal = self.auto_goal()
@@ -718,6 +1035,9 @@ class PanelHandler(BaseHTTPRequestHandler):
                 self._reply(503, {'error': str(error)})
         elif self.path == '/api/map':
             self._reply(200, self.server.data.map_snapshot())
+        elif self.path == '/api/zones':
+            self._reply(200, zone_view(self.server.data.snapshot()['runtime'],
+                                       self.server.catalog))
         elif self.path == '/api/map/image':
             rendered = self.server.data.map_cache.png()
             if rendered is None:
@@ -744,18 +1064,29 @@ class PanelHandler(BaseHTTPRequestHandler):
         if origin and origin != f'http://{self.headers.get("Host", "")}':
             self._reply(403, {'error': 'Cross-origin requests are not allowed'})
             return
-        if urlsplit(self.path).path != '/api/command' or '?' in self.path:
+        path = urlsplit(self.path).path
+        limits = {'/api/command': 4096, '/api/zones': MAX_ZONE_REQUEST_BYTES}
+        if path not in limits or '?' in self.path:
             self._reply(404, {'error': 'Not found'})
             return
         try:
             size = int(self.headers.get('Content-Length', '0'))
-            if not 0 < size <= 4096 or self.headers.get('Content-Type') != 'application/json':
+            if (not 0 < size <= limits[path]
+                    or self.headers.get('Content-Type') != 'application/json'):
                 raise ValueError('Expected bounded application/json request')
-            payload = validate_command(json.loads(self.rfile.read(size)))
-            request_id = self.server.submit(payload)
+            payload = json.loads(self.rfile.read(size))
+            if path == '/api/zones':
+                # A file edit, not a robot command; zone_filter applies it to Nav2.
+                count = save_zones(self.server.data.snapshot()['runtime'],
+                                   self.server.catalog, payload)
+                self._reply(200, {'saved': count, 'message': 'Zones saved; applying to Nav2'})
+                return
+            request_id = self.server.submit(validate_command(payload))
             self._reply(202, {'id': request_id, 'message': 'Request queued, not yet completed'})
         except (ValueError, UnicodeError) as error:
             self._reply(400, {'error': str(error)})
+        except OSError as error:
+            self._reply(503, {'error': f'Cannot save Zones: {error}'})
 
 
 def main(args=None):
@@ -789,6 +1120,7 @@ def main(args=None):
         worker.join(timeout=2.0)
         server.server_close()
         if rclpy.ok():
+            bridge.stop_teleop()
             bridge.cancel_owned()
             if bridge.runtime and bridge.runtime.snapshot()['state'] != 'STOPPED':
                 bridge._stop_runtime()

@@ -1,6 +1,7 @@
-"""Connect the real robot to homecam_web using outbound authenticated HTTPS."""
+"""Connect the real robot to malbut_web using outbound authenticated HTTPS."""
 
 from collections import OrderedDict
+from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import datetime, timezone
 import base64
 import fcntl
@@ -17,7 +18,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .web_panel import PanelData, RosBridge, TERMINAL, _terminate, validate_command
+import yaml
+
+from .web_panel import (
+    PanelData, RosBridge, save_zones, TERMINAL, _terminate, validate_command, zone_view,
+)
+from .zones import ZONE_FORMAT
 
 
 TOKEN_PATTERN = re.compile(
@@ -27,6 +33,10 @@ COMMAND_ID_PATTERN = re.compile(
     r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-'
     r'[89ab][0-9a-f]{3}-[0-9a-f]{12}', re.IGNORECASE)
 ROBOT_INTERFACE = 'malbut_manager_v1'
+# Answered by this bridge from files and state; no Goal is sent for them.
+LOCAL_OPERATIONS = ('map_delete', 'zones_save', 'robot_ping', 'robot_diagnostics')
+# The server accepts device request bodies up to 64 KiB.
+MAX_RESULT_BYTES = 60 * 1024
 
 
 def validate_backend_url(value):
@@ -140,9 +150,60 @@ def panel_command(operation, payload):
         command = {'command': 'start', **payload}
     elif operation == 'mission_cancel' and not payload:
         command = {'command': 'cancel'}
+    elif operation == 'manual_move' and set(payload) == {'direction'}:
+        command = {'command': 'nudge', **payload}
+    elif operation == 'debug_mission_start' and set(payload) == {'capability', 'arguments'}:
+        command = {'command': 'debug_start', **payload}
     else:
         raise ValueError('Operation is not supported by the real robot')
     return validate_command(command)
+
+
+def delete_map(runtime, catalog, map_id):
+    """Delete a saved map that no running or starting localization uses."""
+    localization = runtime.get('localization') or {}
+    in_use = {Path(name).name for name in (runtime.get('map'), localization.get('map')) if name}
+    if map_id in in_use:
+        raise ValueError('The map in use cannot be deleted; switch maps or stop Bringup first')
+    return catalog.delete(map_id)
+
+
+def zones_document(runtime, catalog):
+    """Describe the Zones of the saved map in use, as the web editor edits them."""
+    if (runtime.get('localization') or {}).get('mode') != 'LOCALIZATION':
+        return None
+    view = zone_view(runtime, catalog)
+    return {'format': ZONE_FORMAT, **view}
+
+
+def capability_manifests(directory=None):
+    """List registered capabilities and their input defaults for remote debugging."""
+    if directory is None:
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            directory = Path(get_package_share_directory('malbut_interfaces')) / 'capabilities'
+        except (ImportError, KeyError):
+            return []
+    result = []
+    for path in sorted(Path(directory).glob('*.yaml')):
+        try:
+            document = yaml.safe_load(path.read_text(encoding='utf-8'))
+            capability, command = document['capability'], document['command']
+            execution = document['execution']
+            fields = (document.get('input') or {}).get('fields') or {}
+            result.append({
+                'id': capability['id'], 'title': capability.get('title', ''),
+                'command': command['name'], 'type': command['type'],
+                'mode': execution.get('mode'), 'priority': execution.get('priority'),
+                'resources': execution.get('resources', []),
+                'map_requirement': execution.get('map_requirement'),
+                'fields': {name: {'type': spec.get('type'),
+                                  **({'default': spec['default']} if 'default' in spec else {})}
+                           for name, spec in fields.items()},
+            })
+        except (OSError, KeyError, TypeError, AttributeError, yaml.YAMLError):
+            continue
+    return result
 
 
 def bounded_value(value, limit=2048):
@@ -160,6 +221,12 @@ def state_payload(snapshot, map_info, maps, observed_at=None):
         'state', 'mode', 'map', 'ready', 'message', 'waiting', 'enabled')}
     runtime['message'] = str(runtime.get('message') or '')[:512]
     runtime['waiting'] = bounded_value(runtime.get('waiting') or [], 2048)
+    localization = snapshot.get('runtime', {}).get('localization') or {}
+    runtime['localization'] = {
+        'mode': localization.get('mode'),
+        'map': Path(localization['map']).name if localization.get('map') else None,
+        'message': str(localization.get('message') or '')[:512],
+    }
     mode = runtime.get('mode') if runtime.get('state') not in ('STOPPED', 'ERROR') else None
     servers = snapshot.get('servers', {})
     pose = map_info.get('pose') if map_info.get('active') else None
@@ -188,6 +255,8 @@ def state_payload(snapshot, map_info, maps, observed_at=None):
             'servers': {key: bool(servers.get(key)) for key in ('manager', 'autoslam')},
             'system': bounded_value(snapshot.get('system'), 4096),
             'tracking': bounded_value(snapshot.get('tracking'), 1024),
+            'zones': bounded_value(_without_path(snapshot.get('zones')), 1024),
+            'manual': bounded_value(snapshot.get('manual'), 512),
         },
         'driveMode': {'mode': 'idle', 'state': 'idle', 'sessionId': None, 'message': None},
         'mapRevision': int(map_info.get('version', 0)),
@@ -205,14 +274,22 @@ def state_payload(snapshot, map_info, maps, observed_at=None):
     return result
 
 
-def map_payload(metadata, png, runtime):
+def _without_path(state):
+    """Report a Zone state's map by filename, not its local path."""
+    if not isinstance(state, dict) or not state.get('map'):
+        return state
+    return {**state, 'map': Path(str(state['map'])).name}
+
+
+def map_payload(metadata, png, runtime, zones=None):
     """Preserve /map geometry and its native-size, neutral occupancy PNG."""
     if (not 1 <= metadata['width'] <= 8192 or not 1 <= metadata['height'] <= 8192
             or not 0.001 <= metadata['resolution'] <= 1.0):
         raise ValueError('Robot map geometry exceeds the cloud contract')
     geometry = {key: value for key, value in metadata.items() if key != 'version'}
+    # Zone edits are uploaded with the saved map they belong to.
     fingerprint = hashlib.sha256(png + json.dumps(
-        [geometry, runtime.get('map')], sort_keys=True, default=str).encode()).hexdigest()
+        [geometry, runtime.get('map'), zones], sort_keys=True, default=str).encode()).hexdigest()
     finalized = runtime.get('mode') == 'navigation'
     map_name = str(runtime.get('map') or 'mapping').encode()
     map_id = 'real-' + hashlib.sha256(map_name).hexdigest()[:24]
@@ -225,7 +302,7 @@ def map_payload(metadata, png, runtime):
                      'resolution': metadata['resolution'], 'originX': origin['x'],
                      'originY': origin['y'], 'originYaw': origin['yaw']},
         'previewBase64': base64.b64encode(png).decode('ascii'),
-        'userMap': None, 'semanticZones': None,
+        'userMap': None, 'semanticZones': zones,
     }
 
 
@@ -248,6 +325,7 @@ class CloudSync:
         self.maps_at = 0.0
         self.last_warning = ''
         self.last_warning_at = 0.0
+        self.capabilities = None
         self.thread = threading.Thread(target=self.run, name='robot-cloud-sync', daemon=True)
 
     def _complete_pending(self):
@@ -264,7 +342,7 @@ class CloudSync:
             del self.pending[command_id]
 
     def dispatch(self, command):
-        """Acknowledge queue acceptance only; Goal results arrive in state.requests."""
+        """Acknowledge queued Goals; map, Zone and query requests answer directly."""
         if not isinstance(command, dict):
             return
         command_id = command.get('id')
@@ -273,19 +351,55 @@ class CloudSync:
         if command_id in self.seen:
             self.pending[command_id] = self.seen[command_id]
             return
+        operation, payload = command.get('operation'), command.get('payload', {})
         try:
-            local = panel_command(command.get('operation'), command.get('payload', {}))
-            request_id = self.bridge.submit(local)
-            result = {'ok': True, 'result': {
-                'accepted': True, 'requestId': request_id,
-                'status': 'queued', 'robotInterface': ROBOT_INTERFACE,
-            }}
-        except (ValueError, RuntimeError) as error:
-            result = {'ok': False, 'result': {'error': str(error)[:512]}}
+            if operation in LOCAL_OPERATIONS:
+                result = {'ok': True, 'result': self._local(operation, payload)}
+            else:
+                request_id = self.bridge.submit(panel_command(operation, payload))
+                result = {'ok': True, 'result': {
+                    'accepted': True, 'requestId': request_id,
+                    'status': 'queued', 'robotInterface': ROBOT_INTERFACE,
+                }}
+        except (ValueError, RuntimeError, OSError, FutureTimeout) as error:
+            message = str(error)[:512] or 'Robot query timed out'
+            result = {'ok': False, 'result': {'error': message}}
+        if len(json.dumps(result, ensure_ascii=False, default=str).encode('utf-8')) > (
+                MAX_RESULT_BYTES):
+            result = {'ok': False, 'result': {'error': 'Result exceeds the cloud size limit'}}
         self.seen[command_id] = result
         self.pending[command_id] = result
         while len(self.seen) > 256:
             self.seen.popitem(last=False)
+
+    def _local(self, operation, payload):
+        if not isinstance(payload, dict):
+            raise ValueError('Command payload must be an object')
+        runtime = self.bridge.data.snapshot()['runtime']
+        if operation == 'map_delete':
+            if set(payload) != {'map'}:
+                raise ValueError('Map deletion needs only the map ID')
+            removed = delete_map(runtime, self.bridge.catalog, payload['map'])
+            self.maps_at = 0.0  # List the catalog again on the next tick.
+            return {'deleted': payload['map'], 'files': removed}
+        if operation == 'zones_save':
+            count = save_zones(runtime, self.bridge.catalog, payload)
+            self.last_map_at = 0.0  # Upload the saved map with its new Zones.
+            return {'saved': count, 'map': payload['map']}
+        if payload:
+            raise ValueError('This request takes no payload')
+        now = datetime.now(timezone.utc).isoformat()
+        if operation == 'robot_ping':
+            return {'pong': True, 'robotTime': now}
+        if self.capabilities is None:
+            self.capabilities = capability_manifests()
+        diagnostics = self.bridge.call(self.bridge.diagnostics)
+        diagnostics.update(
+            robotTime=now, capabilities=self.capabilities,
+            maps=[{'id': item['id'], 'name': item['name']} for item in self.maps[:64]],
+            cloud={'interval_s': self.interval, 'pending_receipts': len(self.pending),
+                   'last_warning': self.last_warning})
+        return json.loads(json.dumps(diagnostics, default=str))
 
     def tick(self):
         """Flush receipts before claiming another command; never replay a mission."""
@@ -306,7 +420,9 @@ class CloudSync:
             try:
                 pair = self.bridge.data.map_cache.png()
                 if pair is not None:
-                    payload = map_payload(*pair, snapshot.get('runtime', {}))
+                    runtime = snapshot.get('runtime', {})
+                    payload = map_payload(*pair, runtime, zones_document(
+                        runtime, self.bridge.catalog))
                     if len(payload['previewBase64']) > 1_500_000:
                         raise ValueError('Robot map exceeds the cloud preview size limit')
                     if payload['revision'] != self.last_map:
@@ -393,6 +509,7 @@ def main(args=None):
         if sync is not None:
             sync.close()
         if rclpy.ok():
+            bridge.stop_teleop()
             bridge.cancel_owned()
             if bridge.runtime and bridge.runtime.snapshot()['state'] != 'STOPPED':
                 bridge._stop_runtime()

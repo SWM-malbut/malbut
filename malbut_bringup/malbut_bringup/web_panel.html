@@ -10,6 +10,8 @@ h1{font-size:24px}h2{font-size:18px;margin-top:0}.card{background:white;border:1
 button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid #aebac4}button{cursor:pointer;background:#164e88;color:white}button:disabled{opacity:.4;cursor:default}
 .stop{background:#b32c2c}input[type=number]{width:90px}input[type=password]{width:290px}.note{font-size:14px;color:#48556a;line-height:1.5}.warning{color:#a23023}.video{width:100%;min-height:120px;background:#192331;border-radius:6px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;max-height:340px;overflow:auto}#message{min-height:24px;white-space:pre-wrap}
 #savedMap{max-width:100%;min-width:180px}#runtimeInfo{white-space:pre-wrap}#mapCanvas{display:block;width:100%;aspect-ratio:16/10;background:#e6eaee;border-radius:6px}#mapInfo{overflow-wrap:anywhere}
+.pad{display:grid;grid-template-columns:repeat(3,76px);gap:8px;margin-top:10px}.pad button{height:56px;touch-action:none;user-select:none}
+#mapCanvas.drawing{touch-action:none;cursor:crosshair}.zone-restricted{color:#c0402f}.zone-avoid{color:#b07a12}
 @media(max-width:720px){.grid{grid-template-columns:1fr}body{margin:12px auto}}
 </style>
 <h1>Malbut 로봇 테스트</h1>
@@ -25,23 +27,31 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
   <p class="note" id="runtimeInfo">연결 후 Bringup 상태를 확인합니다.</p>
   <details id="runtimeError" hidden><summary>Bringup 오류 로그</summary><pre id="runtimeLog"></pre></details>
   <div class="row">
-    <button id="mappingStart" disabled>지도 만들기 모드 켜기</button>
+    <button id="mappingStart" disabled>지도 만들기 모드</button>
     <button class="stop" id="bringupStop" disabled>Bringup 종료</button>
   </div><br>
   <div class="row">
     <label>저장 지도 <select id="savedMap" disabled><option value="">지도 목록 수신 대기</option></select></label>
     <button id="refreshMaps" disabled>지도 목록 새로고침</button>
-    <button id="navigationStart" disabled>선택한 지도로 주행 모드 켜기</button>
+    <button id="navigationStart" disabled>선택한 지도로 주행</button>
   </div>
   <p class="note" id="mapsInfo">지도 선택만으로는 실행되지 않습니다.</p>
-  <p class="note">모드를 바꾸려면 기존 Bringup을 종료한 뒤 다시 켜세요. Bringup 종료는 이 패널이 켠 스택의 미션을 취소한 뒤 처리하며, CLI 등 다른 곳에서 요청한 미션도 중지될 수 있습니다. 아래 기능 시작 버튼을 누르기 전까지 자동 주행하지 않습니다.</p>
+  <p class="note">Bringup이 꺼져 있으면 해당 모드로 켜고, 켜져 있으면 다시 켜지 않고 위치 추정만 바꿉니다. 바꾸기 전에 이동 미션을 취소하세요. Bringup 종료는 이 패널이 켠 스택의 미션을 취소한 뒤 처리하며, CLI 등 다른 곳에서 요청한 미션도 중지될 수 있습니다. 아래 기능 시작 버튼을 누르기 전까지 자동 주행하지 않습니다.</p>
 </section>
 <section class="card">
   <h2>Global Costmap과 로봇 위치</h2>
-  <canvas id="mapCanvas" role="img" aria-label="Global Costmap과 로봇 위치. 위치 지정이나 이동 명령 기능은 없습니다."></canvas>
+  <canvas id="mapCanvas" role="img" aria-label="Global Costmap과 로봇 위치. 구역 그리기 외에 위치 지정이나 이동 명령 기능은 없습니다."></canvas>
   <p class="note" id="mapInfo">지도 수신 대기</p>
-  <p class="note">/global_costmap/costmap · RViz의 Costmap 색상: 자홍색: 장애물 · 청록색: 차체 진입 불가 영역 · 파랑→빨강: 낮은→높은 팽창 비용 · 흰색: 빈 공간 · 회녹색: 미확인 · 파란 화살표: 로봇 위치·방향. 저장 지도 원본이 아닌 현재 주행용 지도입니다.</p>
-  <p class="note">AutoSLAM이 저장한 위치는 같은 지도의 주행 모드에서 초기 추정 위치로 복원합니다. 로봇을 다른 곳으로 옮겼거나 저장된 위치가 없다면, RViz의 <strong>2D Pose Estimate</strong>로 실제 위치를 지정하세요. 복원 후에도 지도 위 위치가 실제와 맞는지 확인하세요.</p>
+  <p class="note">/global_costmap/costmap · RViz의 Costmap 색상: 자홍색: 장애물 · 청록색: 차체 진입 불가 영역 · 파랑→빨강: 낮은→높은 팽창 비용 · 흰색: 빈 공간 · 회녹색: 미확인 · 파란 화살표: 로봇 위치·방향 · <span class="zone-restricted">빨간 테두리: 진입 금지 구역</span> · <span class="zone-avoid">주황 테두리: 우회 권장 구역</span>. 저장 지도 원본이 아닌 현재 주행용 지도입니다.</p>
+  <div class="row">
+    <label>구역 <select id="zoneBehavior"><option value="restricted">진입 금지</option><option value="avoid">우회 권장</option></select></label>
+    <button id="zoneDraw" disabled>구역 그리기</button>
+    <button id="zoneDelete" disabled>선택 구역 삭제</button>
+    <button id="zoneSave" disabled>주행에 적용</button>
+  </div>
+  <p class="note" id="zoneInfo">구역은 저장 지도로 주행할 때 그 지도에 저장합니다.</p>
+  <p class="note">구역 그리기를 누른 뒤 지도에서 드래그하면 사각형 구역이 생깁니다. 구역을 누르면 선택됩니다. <strong>주행에 적용</strong>을 눌러야 저장되고 Nav2 costmap에 반영됩니다. 진입 금지는 차체가 걸치지 않도록 0.2m 여유를 더해 통과할 수 없고, 우회 권장은 비용을 높여 가능하면 피합니다.</p>
+  <p class="note">저장 지도로 바꾸면 그 지도에서 마지막으로 저장한 위치를 먼저 확인합니다. LiDAR가 지도와 맞지 않거나 저장된 위치가 없으면, 로봇이 제자리에서 한 바퀴 돌며 지도 전체에서 위치를 찾습니다. 결과는 위의 <strong>위치 추정</strong> 줄에 표시됩니다. 찾지 못하면 RViz의 <strong>2D Pose Estimate</strong>로 실제 위치를 지정하세요.</p>
 </section>
 <div class="grid">
   <section class="card"><h2>원본 카메라</h2><img class="video" id="raw" alt="카메라 수신 대기"><p class="note" id="rawInfo">/depth_cam/rgb0/image_raw</p></section>
@@ -66,6 +76,12 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
     <label>순찰 <select id="thoroughness"><option value="0">가볍게</option><option value="1" selected>보통</option><option value="2">꼼꼼히</option></select></label>
     <button class="motion" id="patrol" disabled>순찰 시작</button>
     <button class="stop" id="cancel" disabled>이 웹 패널의 요청 모두 취소</button>
+  </div><br>
+  <p class="note"><strong id="manualState"></strong>수동 조작: 아래 버튼이나 조이스틱을 조작하면 진행 중인 이동 미션을 멈추고 수동 조작으로 바뀝니다. 5초 동안 조작이 없으면 수동 조작이 끝납니다.</p>
+  <div class="pad" aria-label="수동 조작: 누르고 있는 동안만 움직입니다">
+    <button data-move="0,0,0.45" disabled>↺ 좌회전</button><button data-move="0.15,0,0" disabled>↑ 전진</button><button data-move="0,0,-0.45" disabled>↻ 우회전</button>
+    <button data-move="0,0.15,0" disabled>← 왼쪽</button><button class="stop" id="manualStop" disabled>정지</button><button data-move="0,-0.15,0" disabled>→ 오른쪽</button>
+    <span></span><button data-move="-0.15,0,0" disabled>↓ 후진</button>
   </div>
   <p class="note warning">이 패널의 요청 취소 버튼은 다른 클라이언트가 보낸 요청을 취소하지 않습니다. 취소는 비상 정지가 아니므로 CANCELED 등 최종 결과와 실제 정지를 확인하세요. 창 닫기·Wi-Fi 끊김은 로봇 정지를 의미하지 않습니다.</p>
 </section>
@@ -77,7 +93,9 @@ button,input,select{font:inherit;padding:9px;border-radius:6px;border:1px solid 
 'use strict';
 let token='', connected=false, requestBusy=false, mapsBusy=false, mapBusy=false;
 let lastServers={}, lastRuntime={}, mapData=null, mapImage=null, mapError='';
-let completedAutoslam='';
+let completedAutoslam='', manualActive=false, teleopTimer=null;
+let zoneData={map:null,editable:false,zones:[],message:''}, zones=[], zoneDirty=false;
+let zoneSelected=-1, zoneDrawing=false, zoneDrag=null, zoneBusy=false, mapLayout=null, zoneState=null;
 const terminalStates=new Set(['SUCCEEDED','ABORTED','CANCELED','REJECTED','ERROR']);
 const objectUrls={};
 const el=id=>document.getElementById(id);
@@ -95,13 +113,22 @@ function lockControls() {
   el('follow').disabled=!(missionReady&&servers.manager);
   el('patrol').disabled=!(missionReady&&servers.manager);
   el('autoslam').disabled=!(missionReady&&servers.autoslam&&runtime.mode!=='navigation');
+  const teleopReady=connected&&servers.manager&&!stopping;
+  if(!teleopReady&&teleopTimer)teleopStop();
+  for(const button of document.querySelectorAll('[data-move],#manualStop'))button.disabled=!teleopReady;
   el('cancel').disabled=!connected;
-  const canStart=connected&&runtime.enabled&&!requestBusy&&['STOPPED','ERROR'].includes(runtime.state);
+  // Starts a stopped Bringup, or switches localization in a running one.
+  const canStart=connected&&!requestBusy&&!stopping&&(runtime.enabled||servers.manager);
   el('mappingStart').disabled=!canStart;
   el('navigationStart').disabled=!(canStart&&el('savedMap').value&&!mapsBusy);
   el('bringupStop').disabled=!(connected&&runtime.enabled&&!requestBusy&&['STARTING','RUNNING','ERROR'].includes(runtime.state));
   el('savedMap').disabled=!connected||mapsBusy;
   el('refreshMaps').disabled=!connected||mapsBusy;
+  const zoneReady=connected&&zoneData.editable&&!zoneBusy;
+  el('zoneDraw').disabled=!zoneReady;
+  el('zoneDelete').disabled=!(zoneReady&&zoneSelected>=0);
+  el('zoneSave').disabled=!(zoneReady&&zoneDirty);
+  if(!zoneReady&&zoneDrawing)setDrawing(false);
 }
 function showRuntime(runtime) {
   const stateNames={STOPPED:'꺼짐',STARTING:'준비 중',RUNNING:runtime.ready?'준비 완료':'준비 대기',STOPPING:'종료 중',ERROR:'확인 필요'};
@@ -110,6 +137,7 @@ function showRuntime(runtime) {
   if(runtime.mode)lines.push('모드: '+(modeNames[runtime.mode]||runtime.mode));
   if(runtime.map)lines.push('지도: '+runtime.map);
   if(runtime.message)lines.push(runtime.message);
+  if(runtime.localization&&runtime.localization.message)lines.push('위치 추정: '+runtime.localization.message);
   if(!runtime.ready&&Array.isArray(runtime.waiting)&&runtime.waiting.length){
     lines.push('준비 대기 사유:');
     for(const reason of runtime.waiting)lines.push('· '+reason);
@@ -147,6 +175,8 @@ async function status() {
   try {
     const data=await(await api('/api/status')).json();
     connected=true;lastServers=data.servers;lastRuntime=data.runtime||{};
+    manualActive=Boolean(data.system&&data.system.control_mode===1);
+    el('manualState').textContent=manualActive?'[수동 조작 중] ':'';
     el('connection').textContent='연결됨';
     showRuntime(lastRuntime);
     el('system').textContent=pretty({servers:data.servers,system:data.system,video_age_s:data.video_age_s});
@@ -156,6 +186,10 @@ async function status() {
     el('requests').textContent=data.requests.length?pretty(data.requests.slice().reverse()):'요청 없음';
     const finished=data.requests.filter(item=>item.capability==='autoslam'&&terminalStates.has(item.state)).map(item=>item.id+':'+item.state).join(',');
     if(finished!==completedAutoslam){completedAutoslam=finished;await refreshMaps();}
+    const liveMap=lastRuntime.localization&&lastRuntime.localization.mode==='LOCALIZATION'?lastRuntime.localization.map:null;
+    zoneState=data.zones;
+    if((liveMap||null)!==(zoneData.path||null))await refreshZones();
+    showZoneInfo();
   } catch(error) {
     connected=false;
     el('connection').textContent='연결 확인 필요';
@@ -171,6 +205,73 @@ function worldToGrid(pose, map) {
   const c=Math.cos(map.origin.yaw), s=Math.sin(map.origin.yaw);
   return {x:(c*dx+s*dy)/map.resolution,y:(-s*dx+c*dy)/map.resolution,
     heading:-(pose.yaw-map.origin.yaw)};
+}
+function showZoneInfo() {
+  const lines=[], state=zoneState;
+  if(!zoneData.editable)lines.push(zoneData.message||'구역은 저장 지도로 주행할 때 편집합니다.');
+  else {
+    lines.push(zoneData.map+' 구역 '+zones.length+'개'+(zoneDirty?' · 적용하지 않은 변경 있음':''));
+    if(zoneData.message)lines.push(zoneData.message);
+  }
+  if(state&&state.message)lines.push('Nav2 반영: '+state.message);
+  if(zoneDrawing)lines.push('지도에서 드래그해 구역을 그리세요.');
+  el('zoneInfo').textContent=lines.join(' · ');
+}
+async function refreshZones() {
+  if(!connected)return;
+  try {
+    const data=await(await api('/api/zones')).json();
+    const localization=lastRuntime.localization||{};
+    zoneData={...data,path:localization.mode==='LOCALIZATION'&&localization.map||null};
+    zones=data.zones.map(zone=>({...zone,points:zone.points.map(point=>[...point])}));
+    zoneDirty=false;zoneSelected=-1;
+  } catch(error) {
+    zoneData={map:null,editable:false,zones:[],message:'구역 수신 실패: '+error.message};
+  }
+  lockControls();showZoneInfo();drawMap();
+}
+function setDrawing(active) {
+  zoneDrawing=active;zoneDrag=null;
+  el('mapCanvas').classList.toggle('drawing',active);
+  el('zoneDraw').textContent=active?'그리기 취소':'구역 그리기';
+  showZoneInfo();drawMap();
+}
+function canvasToWorld(event) {
+  if(!mapLayout)return null;
+  const box=el('mapCanvas').getBoundingClientRect(), map=mapData;
+  const gx=(event.clientX-box.left-mapLayout.left)/mapLayout.scale;
+  const gy=map.height-(event.clientY-box.top-mapLayout.top)/mapLayout.scale;
+  const c=Math.cos(map.origin.yaw), s=Math.sin(map.origin.yaw);
+  return {x:map.origin.x+(c*gx-s*gy)*map.resolution,y:map.origin.y+(s*gx+c*gy)*map.resolution};
+}
+function insideZone(point, polygon) {
+  let inside=false;
+  for(let i=0,j=polygon.length-1;i<polygon.length;j=i++){
+    const [xi,yi]=polygon[i], [xj,yj]=polygon[j];
+    if((yi>point.y)!==(yj>point.y)&&point.x<(xj-xi)*(point.y-yi)/(yj-yi)+xi)inside=!inside;
+  }
+  return inside;
+}
+function dragCorners(drag) {
+  const x0=Math.min(drag.start.x,drag.end.x), x1=Math.max(drag.start.x,drag.end.x);
+  const y0=Math.min(drag.start.y,drag.end.y), y1=Math.max(drag.start.y,drag.end.y);
+  return [[x0,y0],[x1,y0],[x1,y1],[x0,y1]];
+}
+function drawZones(ctx, map) {
+  const shapes=zones.map((zone,index)=>({points:zone.points,behavior:zone.behavior,selected:index===zoneSelected}));
+  if(zoneDrag)shapes.push({points:dragCorners(zoneDrag),behavior:el('zoneBehavior').value,selected:true});
+  for(const shape of shapes){
+    ctx.beginPath();
+    shape.points.forEach(([x,y],index)=>{
+      const point=worldToGrid({x,y,yaw:0},map);
+      const cx=mapLayout.left+point.x*mapLayout.scale, cy=mapLayout.top+(map.height-point.y)*mapLayout.scale;
+      if(index)ctx.lineTo(cx,cy);else ctx.moveTo(cx,cy);
+    });
+    ctx.closePath();
+    const color=shape.behavior==='restricted'?'192,64,47':'200,144,26';
+    ctx.fillStyle='rgba('+color+','+(shape.selected?0.35:0.2)+')';ctx.fill();
+    ctx.strokeStyle='rgb('+color+')';ctx.lineWidth=shape.selected?3:2;ctx.stroke();
+  }
 }
 function drawMap() {
   const canvas=el('mapCanvas'), box=canvas.getBoundingClientRect();
@@ -191,6 +292,8 @@ function drawMap() {
   // RViz costmap free cells are transparent; give this standalone layer a base.
   ctx.fillStyle='white';ctx.fillRect(left,top,map.width*scale,map.height*scale);
   ctx.drawImage(mapImage,left,top,map.width*scale,map.height*scale);ctx.restore();
+  mapLayout={left,top,scale};
+  if(map.frame_id==='map'&&(zoneData.editable||zones.length))drawZones(ctx,map);
   if(live&&map.pose_available&&map.pose){
     const point=worldToGrid(map.pose,map);
     if(point.x>=0&&point.y>=0&&point.x<=map.width&&point.y<=map.height){
@@ -253,17 +356,17 @@ async function command(payload) {
   const runtimeCommand=payload.command==='bringup_start'||payload.command==='bringup_stop';
   if((starting||runtimeCommand)&&requestBusy)return;
   if(starting&&!confirm('이 요청으로 로봇이 움직일 수 있습니다. 실행할까요?'))return;
-  if(payload.command==='bringup_start'&&!confirm((payload.mode==='mapping'?'지도 만들기':'선택한 저장 지도의 주행')+' 모드를 켤까요? 기능 시작은 아래에서 별도로 요청합니다.'))return;
+  if(payload.command==='bringup_start'&&!confirm((payload.mode==='mapping'?'지도 만들기':'선택한 저장 지도의 주행')+' 모드로 바꿀까요? 이동 미션이 남아 있으면 거부됩니다. 기능 시작은 아래에서 별도로 요청합니다.'))return;
   if(payload.command==='bringup_stop'&&!confirm('이 패널이 켠 스택의 미션을 취소한 뒤 Bringup을 종료할까요? CLI 등 다른 곳에서 요청한 미션도 중지될 수 있습니다. 실제 정지는 반드시 확인하세요.'))return;
   if(starting||runtimeCommand)requestBusy=true;lockControls();
   try {
     await api('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    const messages={cancel:'취소 요청 전달됨. 최종 결과와 실제 정지를 확인하세요.',bringup_start:'Bringup 시작 요청 전달됨. 준비 상태를 확인하세요.',bringup_stop:'Bringup 종료 요청 전달됨. 종료 상태와 실제 정지를 확인하세요.'};
+    const messages={cancel:'취소 요청 전달됨. 최종 결과와 실제 정지를 확인하세요.',bringup_start:'Bringup 시작·모드 전환 요청 전달됨. 준비 상태를 확인하세요.',bringup_stop:'Bringup 종료 요청 전달됨. 종료 상태와 실제 정지를 확인하세요.'};
     report(messages[payload.command]||'실행 요청 전달됨. 아래 요청·결과에서 수락 여부를 확인하세요.');
   } catch(error) {report('요청 응답 확인 실패: '+error.message+'\n자동 재전송하지 않습니다. 요청·결과를 확인하세요.');}
   finally {if(starting||runtimeCommand)requestBusy=false;await status();}
 }
-el('connect').onclick=async()=>{token=el('token').value.trim();el('token').value='';await status();await refreshMaps();await refreshMap(true);};
+el('connect').onclick=async()=>{token=el('token').value.trim();el('token').value='';await status();await refreshMaps();await refreshMap(true);await refreshZones();};
 el('refreshMaps').onclick=refreshMaps;
 el('savedMap').onchange=()=>lockControls();
 el('mappingStart').onclick=()=>command({command:'bringup_start',mode:'mapping'});
@@ -273,6 +376,62 @@ el('autoslam').onclick=()=>command({command:'start',capability:'autoslam',argume
 el('follow').onclick=()=>command({command:'start',capability:'follow_person',arguments:{target_mode:Number(el('targetMode').value),target_person_id:el('personId').value.trim(),desired_distance_m:Number(el('distance').value)}});
 el('patrol').onclick=()=>command({command:'start',capability:'patrol',arguments:{thoroughness:Number(el('thoroughness').value)}});
 el('cancel').onclick=()=>command({command:'cancel'});
+function teleopSend(move){
+  const [linear_x,linear_y,angular_z]=move;
+  api('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:'teleop',linear_x,linear_y,angular_z})})
+    .catch(error=>report('수동 조작 전송 실패: '+error.message+'\n로봇은 0.5초 안에 정지합니다.'));
+}
+function teleopStop(){if(teleopTimer){clearInterval(teleopTimer);teleopTimer=null;}teleopSend([0,0,0]);}
+for(const button of document.querySelectorAll('[data-move]')){
+  const move=button.dataset.move.split(',').map(Number);
+  button.addEventListener('pointerdown',event=>{
+    event.preventDefault();button.setPointerCapture(event.pointerId);
+    if(teleopTimer)clearInterval(teleopTimer);
+    teleopSend(move);teleopTimer=setInterval(()=>teleopSend(move),150);
+  });
+  for(const type of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(type,()=>{if(teleopTimer)teleopStop();});
+}
+el('manualStop').onclick=teleopStop;
+el('zoneDraw').onclick=()=>setDrawing(!zoneDrawing);
+el('zoneDelete').onclick=()=>{if(zoneSelected<0)return;zones.splice(zoneSelected,1);zoneSelected=-1;zoneDirty=true;lockControls();showZoneInfo();drawMap();};
+el('zoneSave').onclick=async()=>{
+  if(!zoneDirty||zoneBusy)return;
+  zoneBusy=true;lockControls();
+  try {
+    const response=await api('/api/zones',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({map:zoneData.map,zones})});
+    const data=await response.json();
+    zoneDirty=false;report('구역 '+data.saved+'개를 저장했습니다. Nav2 반영 상태를 확인하세요.');
+  } catch(error) {report('구역 저장 실패: '+error.message);}
+  finally {zoneBusy=false;lockControls();showZoneInfo();}
+};
+el('mapCanvas').addEventListener('pointerdown',event=>{
+  const point=mapData&&canvasToWorld(event);
+  if(!point)return;
+  if(zoneDrawing){
+    event.preventDefault();el('mapCanvas').setPointerCapture(event.pointerId);
+    zoneDrag={start:point,end:point};return;
+  }
+  if(!zoneData.editable)return;
+  zoneSelected=zones.findIndex(zone=>insideZone(point,zone.points));
+  lockControls();drawMap();
+});
+el('mapCanvas').addEventListener('pointermove',event=>{
+  if(!zoneDrag)return;
+  const point=canvasToWorld(event);
+  if(point){zoneDrag.end=point;drawMap();}
+});
+el('mapCanvas').addEventListener('pointerup',()=>{
+  if(!zoneDrag)return;
+  const corners=dragCorners(zoneDrag);
+  if(corners[1][0]-corners[0][0]>=0.1&&corners[2][1]-corners[1][1]>=0.1){
+    zones.push({behavior:el('zoneBehavior').value,name:'',points:corners});
+    zoneSelected=zones.length-1;zoneDirty=true;
+  }
+  setDrawing(false);lockControls();
+});
+el('mapCanvas').addEventListener('pointercancel',()=>{if(zoneDrag)setDrawing(false);});
+window.addEventListener('blur',()=>{if(teleopTimer)teleopStop();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&teleopTimer)teleopStop();});
 async function pollStatus(){await status();setTimeout(pollStatus,1000);}
 async function pollVideo(){await Promise.all([video('raw'),video('debug')]);setTimeout(pollVideo,200);}
 async function pollMap(){await refreshMap();setTimeout(pollMap,1000);}

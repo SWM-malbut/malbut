@@ -59,6 +59,21 @@ def test_catalog_rejects_path_traversal_symlinks_and_unsafe_yaml(tmp_path):
         catalog.resolve('home.yaml')
 
 
+def test_delete_removes_the_map_and_its_named_files_but_keeps_shared_images(tmp_path):
+    """A deleted map leaves the list; an image another map still uses remains."""
+    catalog = SavedMapCatalog(tmp_path / 'maps')
+    _map(catalog.directory)
+    (catalog.directory / 'home.pose.yaml').write_text('x: 0.0\n')
+    (catalog.directory / 'home.zones.geojson').write_text('{}')
+    _map(catalog.directory, 'office.yaml')
+    assert catalog.delete('home.yaml') == ['home.yaml', 'home.pose.yaml', 'home.zones.geojson']
+    assert [item['id'] for item in catalog.list_maps()] == ['office.yaml']
+    assert catalog.delete('office.yaml') == ['office.yaml', 'home.pgm']
+    assert catalog.list_maps() == []
+    with pytest.raises(ValueError):
+        catalog.delete('../outside.yaml')
+
+
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
     """Replace all process creation and group signals with in-memory mocks."""
@@ -94,10 +109,12 @@ def test_navigation_launch_uses_only_fixed_argv_and_explicit_selected_map(runtim
         supervisor.start('anything')
     assert supervisor.start('navigation', 'home.yaml', False).result()['state'] == 'RUNNING'
     args, kwargs = popen.call_args
+    # One Bringup; the requested mode only selects the first localization.
     assert args[0] == [
-        'ros2', 'launch', 'malbut_bringup', 'robot.launch.py', 'mode:=navigation',
-        'web_panel:=false', 'start_hardware:=false',
-        f'map:={supervisor.catalog.resolve("home.yaml")}', 'publish_debug_image:=true']
+        'ros2', 'launch', 'malbut_bringup', 'robot.launch.py',
+        'web_panel:=false', 'publish_debug_image:=true', 'start_hardware:=false',
+        f'map_directory:={supervisor.catalog.directory}',
+        f'map:={supervisor.catalog.resolve("home.yaml")}']
     assert kwargs['start_new_session'] is True
     assert not kwargs.get('shell', False)
     with pytest.raises(RuntimeError, match='Stop'):

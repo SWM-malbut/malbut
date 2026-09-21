@@ -12,7 +12,8 @@ from unittest.mock import Mock
 import pytest
 
 from malbut_bringup.web_panel import (
-    image_jpeg, mission_arguments, PanelData, PanelServer, RosBridge, validate_command,
+    image_jpeg, live_zone_map, mission_arguments, PanelData, PanelServer, RosBridge,
+    save_zones, validate_command, zone_view,
 )
 
 
@@ -35,6 +36,14 @@ def _command(capability='autoslam', arguments=None):
     {'command': 'bringup_start', 'mode': 'navigation', 'map': '/tmp/home.yaml'},
     {'command': 'bringup_start', 'mode': 'shell'},
     {'command': 'bringup_stop', 'pid': 1},
+    {'command': 'nudge', 'direction': 'spin'},
+    {'command': 'nudge', 'direction': 'forward', 'speed': 1.0},
+    _command('relocalize', {'method': 1}),
+    _command('relocalize', {'method': 0, 'x': 1.0, 'y': 0.0, 'yaw': 0.0}),
+    _command('relocalize', {'method': 3}),
+    {'command': 'debug_start', 'capability': '../shell', 'arguments': {}},
+    {'command': 'debug_start', 'capability': 'patrol', 'arguments': ['thoroughness']},
+    {'command': 'debug_start', 'capability': 'patrol', 'arguments': {'note': 'x' * 9000}},
 ])
 def test_invalid_commands_cannot_reach_ros(payload):
     """Reject arbitrary ROS commands, paths and invalid typed inputs."""
@@ -231,9 +240,17 @@ def _bridge(manager_ready=False, autoslam_ready=True):
     bridge.action_status = {}
     bridge.cancel_clients = {}
     bridge.cancel_request = SimpleNamespace
+    bridge.localization = {}
+    bridge.load_map = Mock()
+    bridge.load_map.service_is_ready.return_value = False
+    bridge.load_map_request = SimpleNamespace
+    bridge.start_mapping = Mock()
+    bridge.start_mapping.service_is_ready.return_value = False
+    bridge.start_mapping_request = SimpleNamespace
     bridge.tf_buffer = Mock()
     bridge.topics = {'map_topic': '/map'}
     bridge.guard = Mock()
+    bridge.nudge = None
     bridge.to_dict = lambda message: vars(message)
     bridge.auto_goal = SimpleNamespace
     bridge.mission_goal = SimpleNamespace
@@ -333,7 +350,7 @@ def test_runtime_stop_waits_for_nav2_terminal_status():
     uuid = bytes(range(16))
     goal = SimpleNamespace(goal_id=SimpleNamespace(uuid=uuid))
     from malbut_bringup.web_panel import RUNTIME_ACTIONS
-    for name in RUNTIME_ACTIONS['mapping']:
+    for name in RUNTIME_ACTIONS:
         client = Mock()
         client.service_is_ready.return_value = name == '/follow_path'
         client.call_async.return_value = _future(
@@ -406,10 +423,11 @@ def test_readiness_reason_is_exposed_without_changing_manager(monkeypatch):
 @pytest.mark.parametrize('mode', ['mapping', 'navigation'])
 def test_action_server_is_not_ready_until_speech_capture_starts(monkeypatch, mode):
     """The UI must wait through preflight/model loading after Manager appears."""
-    bridge, _ = _bridge(manager_ready=mode == 'navigation', autoslam_ready=mode == 'mapping')
+    bridge, _ = _bridge(manager_ready=True)
     bridge.runtime = Mock()
     bridge.runtime.snapshot.return_value = {
         'state': 'RUNNING', 'mode': mode, 'message': 'process alive'}
+    bridge.data.system = {'system_state': 1}
     monkeypatch.setattr(bridge, '_robot_pose', lambda: None)
     bridge.node.count_publishers.return_value = 1
     bridge._refresh()
@@ -444,6 +462,59 @@ def test_stale_speech_and_action_readiness_cannot_mark_inactive_runtime_ready(mo
     bridge._speech_status(SimpleNamespace(data='ready'))
     if state != 'STARTING':
         assert not bridge.speech_ready
+
+
+def test_booting_manager_is_not_ready_and_live_localization_sets_mode(monkeypatch):
+    """Missions open after READY; the shown mode follows the manager, not the request."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {
+        'state': 'RUNNING', 'mode': 'mapping', 'map': None, 'message': 'process alive'}
+    monkeypatch.setattr(bridge, '_robot_pose', lambda: None)
+    bridge.node.count_publishers.return_value = 1
+    bridge.speech_ready = True
+    bridge.data.system = {'system_state': 0}
+    bridge._refresh()
+    assert not bridge.data.snapshot()['runtime']['ready']
+    bridge.data.system = {'system_state': 1}
+    bridge._localization(SimpleNamespace(data=json.dumps({
+        'mode': 'LOCALIZATION', 'map': '/maps/home.yaml', 'message': 'loaded'})))
+    bridge._refresh()
+    runtime = bridge.data.snapshot()['runtime']
+    assert runtime['ready']
+    assert runtime['mode'] == 'navigation' and runtime['map'] == 'home.yaml'
+
+
+@pytest.mark.parametrize('mode,service', [('mapping', 'start_mapping'),
+                                          ('navigation', 'load_map')])
+def test_running_bringup_switches_localization_instead_of_relaunching(mode, service):
+    """Map selection in a running Bringup never starts a second robot stack."""
+    bridge, _ = _bridge()
+    bridge.runtime = Mock()
+    bridge.catalog = Mock()
+    bridge.catalog.resolve.return_value = Path('/maps/home.yaml')
+    for client in (bridge.load_map, bridge.start_mapping):
+        client.service_is_ready.return_value = True
+    response = (SimpleNamespace(success=True, message='mapping') if mode == 'mapping'
+                else SimpleNamespace(result=0))
+    getattr(bridge, service).call_async.return_value = _future(response)
+    payload = {'command': 'bringup_start', 'mode': mode}
+    if mode == 'navigation':
+        payload['map'] = 'home.yaml'
+    bridge.submit(payload)
+    bridge._drain()
+    bridge.runtime.start.assert_not_called()
+    request = getattr(bridge, service).call_async.call_args.args[0]
+    if mode == 'navigation':
+        assert request.map_url == '/maps/home.yaml'
+    assert 'failed' not in bridge.runtime_message
+    failed = SimpleNamespace(success=False, message='cancel missions that use the base')
+    if mode == 'navigation':
+        failed = SimpleNamespace(result=255)
+    getattr(bridge, service).call_async.return_value = _future(failed)
+    bridge.submit(payload)
+    bridge._drain()
+    assert 'failed' in bridge.runtime_message
 
 
 def test_new_bringup_clears_previous_speech_readiness():
@@ -555,3 +626,253 @@ def test_html_uses_token_headers_and_explicit_start_confirmation():
     assert 'confirm(' in page
     assert 'setTimeout(pollVideo,200)' in page
     assert 'cmd_vel' not in page
+
+
+@pytest.mark.parametrize('payload', [
+    {'command': 'teleop', 'linear_x': 0.25, 'linear_y': 0.0, 'angular_z': 0.0},
+    {'command': 'teleop', 'linear_x': 0.0, 'linear_y': 0.0, 'angular_z': -0.6},
+    {'command': 'teleop', 'linear_x': float('nan'), 'linear_y': 0.0, 'angular_z': 0.0},
+    {'command': 'teleop', 'linear_x': True, 'linear_y': 0.0, 'angular_z': 0.0},
+    {'command': 'teleop', 'linear_x': 0.1, 'linear_y': 0.0},
+    {'command': 'teleop', 'linear_x': 0.1, 'linear_y': 0.0, 'angular_z': 0.0, 'topic': 'x'},
+    _command('manual_drive', {'time_allowance': {'sec': 3600}}),
+])
+def test_manual_drive_rejects_unbounded_or_extra_input(payload):
+    """Web teleop stays within the driver limits and the registered time limit."""
+    with pytest.raises(ValueError):
+        validate_command(payload)
+
+
+def _teleop_bridge(monkeypatch, now):
+    from malbut_bringup import web_panel
+    monkeypatch.setattr(web_panel.time, 'monotonic', lambda: now[0])
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.twist = lambda: SimpleNamespace(
+        linear=SimpleNamespace(x=0.0, y=0.0), angular=SimpleNamespace(z=0.0))
+    bridge.teleop_publisher = Mock()
+    bridge.teleop_received = None
+    return bridge
+
+
+def _published(bridge):
+    return [(call.args[0].linear.x, call.args[0].linear.y, call.args[0].angular.z)
+            for call in bridge.teleop_publisher.publish.call_args_list]
+
+
+def test_held_teleop_stops_once_when_the_page_stops_repeating(monkeypatch):
+    """A closed page or lost Wi-Fi must not leave AssistedTeleop moving."""
+    now = [100.0]
+    bridge = _teleop_bridge(monkeypatch, now)
+    assert bridge.submit({'command': 'teleop', 'linear_x': 0.15,
+                          'linear_y': 0.0, 'angular_z': 0.0}) is None
+    bridge._drain()
+    assert not bridge.data.requests
+    now[0] += 0.4
+    bridge._teleop_watchdog()
+    assert _published(bridge) == [(0.15, 0.0, 0.0)]
+    now[0] += 0.2
+    bridge._teleop_watchdog()
+    bridge._teleop_watchdog()
+    assert _published(bridge) == [(0.15, 0.0, 0.0), (0.0, 0.0, 0.0)]
+
+
+def test_released_teleop_publishes_zero_without_a_later_stop(monkeypatch):
+    """Joystick input keeps working after the web page releases its button."""
+    now = [100.0]
+    bridge = _teleop_bridge(monkeypatch, now)
+    for move in ((0.0, 0.15, 0.0), (0.0, 0.0, 0.0)):
+        bridge.submit({'command': 'teleop', 'linear_x': move[0],
+                       'linear_y': move[1], 'angular_z': move[2]})
+    bridge._drain()
+    now[0] += 5.0
+    bridge._teleop_watchdog()
+    bridge.stop_teleop()
+    assert _published(bridge) == [(0.0, 0.15, 0.0), (0.0, 0.0, 0.0)]
+
+
+def test_manual_drive_starts_through_the_manager_with_registered_defaults():
+    """The panel sends no time limit; the capability manifest owns it."""
+    bridge, _ = _bridge(manager_ready=True)
+    request_id = bridge.submit({'command': 'start', 'capability': 'manual_drive',
+                                'arguments': {}})
+    bridge._drain()
+    assert bridge.data.requests[request_id]['route'] == 'manager'
+    goal = bridge.clients['manager'].send_goal_async.call_args.args[0]
+    assert goal.capability_id == 'manual_drive'
+    assert json.loads(goal.arguments_yaml) == {}
+
+
+@pytest.mark.parametrize('payload', [
+    {'command': 'nudge', 'direction': 'forward'},
+    {'command': 'nudge', 'direction': 'stop'},
+    _command('relocalize', {'method': 0}),
+    _command('relocalize', {'method': 1, 'x': 1.0, 'y': -2, 'yaw': 0.5}),
+    {'command': 'debug_start', 'capability': 'get_weather', 'arguments': {}},
+])
+def test_remote_tools_are_bounded_commands(payload):
+    """Steps, pose finding and debug missions pass as fixed command shapes."""
+    assert validate_command(payload) == payload
+
+
+def test_given_pose_becomes_a_map_frame_initial_pose_with_a_spread():
+    """The operator's pose reaches /relocalize like RViz's 2D Pose Estimate."""
+    arguments = mission_arguments('relocalize', {'method': 1, 'x': 1.0, 'y': 2.0, 'yaw': 0.0})
+    pose = arguments['initial_pose']
+    assert arguments['method'] == 1 and pose['header']['frame_id'] == 'map'
+    assert pose['pose']['pose']['position'] == {'x': 1.0, 'y': 2.0, 'z': 0.0}
+    covariance = pose['pose']['covariance']
+    assert len(covariance) == 36 and covariance[0] == covariance[7] == 0.25
+    assert covariance[35] > 0
+    assert mission_arguments('relocalize', {'method': 2}) == {'method': 2}
+
+
+def test_debug_mission_reaches_only_the_manager_with_raw_arguments():
+    """The manager's manifest validation is the only way a debug mission runs."""
+    bridge, _ = _bridge(manager_ready=True)
+    request_id = bridge.submit({'command': 'debug_start', 'capability': 'relocalize',
+                                'arguments': {'method': 2}})
+    bridge._drain()
+    goal = bridge.clients['manager'].send_goal_async.call_args.args[0]
+    assert (goal.capability_id, json.loads(goal.arguments_yaml)) == ('relocalize', {'method': 2})
+    assert bridge.data.requests[request_id]['capability'] == 'relocalize'
+    bridge, _ = _bridge(manager_ready=False)
+    request_id = bridge.submit({'command': 'debug_start', 'capability': 'autoslam',
+                                'arguments': {'map_name': 'home2'}})
+    bridge._drain()
+    assert bridge.data.requests[request_id]['state'] == 'ERROR'
+    bridge.clients['autoslam'].send_goal_async.assert_not_called()
+
+
+def test_diagnostics_report_the_graph_and_state_without_local_logs():
+    """Remote debugging sees nodes, publishers and Actions, never Bringup log files."""
+    bridge, _ = _bridge()
+    bridge.node.get_node_names_and_namespaces.return_value = [('system_manager', '/')]
+    bridge.node.count_publishers.return_value = 1
+    bridge.node.count_subscribers.return_value = 0
+    bridge.cancel_clients = {'/relocalize': Mock(**{'service_is_ready.return_value': True})}
+    bridge.data.runtime = {**bridge.data.runtime, 'log_path': '/secret/run.log',
+                           'log_tail': 'private contents'}
+    report = bridge.diagnostics()
+    assert report['nodes'] == ['/system_manager']
+    assert report['actions'] == {'/relocalize': True}
+    assert report['topics']['/scan_raw'] == {'publishers': 1, 'subscribers': 0}
+    assert '/secret' not in json.dumps(report) and 'private' not in json.dumps(report)
+
+
+def test_step_waits_for_manual_control_then_moves_for_a_fixed_time(monkeypatch):
+    """A remote step starts when the manager reports MANUAL and stops by itself."""
+    now = [100.0]
+    bridge = _teleop_bridge(monkeypatch, now)
+    bridge.submit({'command': 'nudge', 'direction': 'forward'})
+    bridge._drain()
+    bridge._teleop_watchdog()
+    assert bridge.data.snapshot()['manual']['state'] == 'STARTING'
+    now[0] += 1.0
+    bridge.data.system = {'control_mode': 1}
+    bridge._teleop_watchdog()
+    now[0] += 0.7
+    bridge._teleop_watchdog()
+    assert bridge.data.snapshot()['manual']['state'] == 'MOVING'
+    now[0] += 0.2
+    bridge._teleop_watchdog()
+    assert _published(bridge) == [(0.15, 0.0, 0.0)] * 3 + [(0.0, 0.0, 0.0)]
+    assert bridge.data.snapshot()['manual']['state'] == 'IDLE'
+
+
+def test_step_is_dropped_when_manual_control_does_not_start(monkeypatch):
+    """While the manager rejects manual_drive (switching maps) nothing moves later."""
+    now = [100.0]
+    bridge = _teleop_bridge(monkeypatch, now)
+    bridge.submit({'command': 'nudge', 'direction': 'turn_left'})
+    bridge._drain()
+    now[0] += 3.5
+    bridge._teleop_watchdog()
+    bridge._teleop_watchdog()
+    assert _published(bridge) == [(0.0, 0.0, 0.0)]
+    assert 'did not start' in bridge.data.snapshot()['manual']['message']
+
+
+@pytest.fixture
+def zone_map(tmp_path):
+    """Write a saved map in the panel's map directory, in use by the manager."""
+    import cv2
+    import numpy as np
+
+    from malbut_bringup.web_runtime import SavedMapCatalog
+
+    cv2.imwrite(str(tmp_path / 'home.pgm'), np.full((40, 80), 254, dtype=np.uint8))
+    path = tmp_path / 'home.yaml'
+    path.write_text('image: home.pgm\nresolution: 0.05\norigin: [-1.0, -1.0, 0.0]\n'
+                    'negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\n')
+    runtime = {'localization': {'mode': 'LOCALIZATION', 'map': str(path)}}
+    return SavedMapCatalog(tmp_path), runtime, path
+
+
+def test_zones_are_edited_only_on_the_saved_map_in_use(zone_map, tmp_path):
+    """Mapping, switching or a map outside the directory is not editable."""
+    catalog, runtime, path = zone_map
+    assert live_zone_map(runtime, catalog) == path.resolve()
+    for localization in ({'mode': 'MAPPING', 'map': None},
+                         {'mode': 'SWITCHING', 'map': str(path)}, {}):
+        view = zone_view({'localization': localization}, catalog)
+        assert not view['editable'] and view['zones'] == []
+    other = tmp_path / 'elsewhere'
+    other.mkdir()
+    (other / 'home.yaml').write_text(path.read_text())
+    (other / 'home.pgm').write_bytes((tmp_path / 'home.pgm').read_bytes())
+    view = zone_view({'localization': {'mode': 'LOCALIZATION',
+                                       'map': str(other / 'home.yaml')}}, catalog)
+    assert not view['editable'] and 'outside' in view['message']
+
+
+def test_saved_zones_round_trip_to_the_map_zone_file(zone_map):
+    """The editor's rectangles become the map's Zone GeoJSON."""
+    catalog, runtime, path = zone_map
+    rectangle = [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]]
+    assert save_zones(runtime, catalog, {'map': 'home.yaml', 'zones': [
+        {'behavior': 'restricted', 'points': rectangle},
+        {'behavior': 'avoid', 'name': 'rug', 'points': rectangle}]}) == 2
+    view = zone_view(runtime, catalog)
+    assert view['editable'] and view['map'] == 'home.yaml'
+    assert view['zones'] == [
+        {'behavior': 'restricted', 'name': '', 'points': rectangle},
+        {'behavior': 'avoid', 'name': 'rug', 'points': rectangle}]
+    assert save_zones(runtime, catalog, {'map': 'home.yaml', 'zones': []}) == 0
+    assert zone_view(runtime, catalog)['zones'] == []
+
+
+@pytest.mark.parametrize('payload, message', [
+    ({'map': 'other.yaml', 'zones': []}, 'changed'),
+    ({'map': 'home.yaml', 'zones': [{'behavior': 'lava', 'points': [[0, 0], [1, 0], [1, 1]]}]},
+     'behavior'),
+    ({'map': 'home.yaml', 'zones': [{'behavior': 'avoid', 'points': [[0, 0], [1, 0]]}]},
+     'corners'),
+    ({'map': 'home.yaml', 'zones': [{'behavior': 'avoid', 'points': [[0, 0], [1, 0], [1, 1]],
+                                     'shell': 'rm -rf'}]}, 'behavior'),
+    ({'map': 'home.yaml'}, 'Expected map and zones'),
+])
+def test_invalid_zone_requests_change_nothing(zone_map, payload, message):
+    """Only bounded polygons for the map in use are written."""
+    catalog, runtime, path = zone_map
+    with pytest.raises(ValueError, match=message):
+        save_zones(runtime, catalog, payload)
+    assert not path.with_suffix('.zones.geojson').exists()
+
+
+def test_zone_api_is_authenticated_and_never_dispatches_a_command(http_server, zone_map):
+    """Zone edits are file writes for zone_filter, never robot commands."""
+    server, submit = http_server
+    catalog, runtime, _ = zone_map
+    server.catalog = catalog
+    server.data.runtime = runtime
+    assert _request(server, 'GET', '/api/zones')[0] == 401
+    headers = {'Authorization': 'Bearer test-secret', 'Content-Type': 'application/json'}
+    status, content = _request(server, 'GET', '/api/zones', **headers)
+    assert status == 200 and json.loads(content)['editable']
+    rectangle = [[0.0, 0.0], [0.5, 0.0], [0.5, 0.5], [0.0, 0.5]]
+    body = {'map': 'home.yaml', 'zones': [{'behavior': 'restricted', 'points': rectangle}]}
+    status, content = _request(server, 'POST', '/api/zones', body, **headers)
+    assert status == 200 and json.loads(content)['saved'] == 1
+    status, _ = _request(server, 'POST', '/api/zones', {'map': 'home.yaml'}, **headers)
+    assert status == 400
+    submit.assert_not_called()

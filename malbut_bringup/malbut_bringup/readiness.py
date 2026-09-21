@@ -8,8 +8,10 @@ import time
 
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
-from malbut_interfaces.action import FollowPerson, Patrol
-from nav2_msgs.action import BackUp, ComputePathToPose, FollowPath, NavigateToPose, Spin, Wait
+from malbut_interfaces.action import AutoSlam, FollowPerson, Patrol, Relocalize
+from nav2_msgs.action import (
+    AssistedTeleop, BackUp, ComputePathToPose, FollowPath, NavigateToPose, Spin, Wait,
+)
 from nav2_msgs.msg import Costmap
 from nav_msgs.msg import OccupancyGrid, Odometry
 import rclpy
@@ -27,10 +29,10 @@ from vision_msgs.msg import Detection3DArray
 class RobotReadiness(Node):
     """Wait for actual data, transforms, and active Nav2 servers at startup."""
 
-    def __init__(self):
-        super().__init__('bringup_readiness')
+    def __init__(self, **kwargs):
+        super().__init__('bringup_readiness', **kwargs)
         defaults = {
-            'navigation': False, 'perception': True,
+            'navigation': False, 'perception': True, 'relocalization': False,
             'scan_topic': '/scan_raw', 'odom_topic': '/odom',
             'rgb_topic': '/depth_cam/rgb0/image_raw',
             'depth_topic': '/depth_cam/depth0/image_raw',
@@ -93,21 +95,32 @@ class RobotReadiness(Node):
                 self.seen[label] = None
                 self.subscriptions_.append(self.create_subscription(
                     message_type, topic, partial(self._receive, label), static_qos))
+            actions = [
+                ('/navigate_to_pose', NavigateToPose),
+                ('/compute_path_to_pose', ComputePathToPose),
+                ('/follow_path', FollowPath), ('/spin', Spin),
+                ('/wait', Wait), ('/backup', BackUp),
+                ('/patrol', Patrol), ('/assisted_teleop', AssistedTeleop),
+                ('/autoslam', AutoSlam),
+            ]
+            if self.settings['perception']:
+                actions.append(('/follow_person', FollowPerson))
+            if self.settings['relocalization']:
+                actions.append(('/relocalize', Relocalize))
             self.action_clients = [
                 (name, ActionClient(self, action_type, name))
-                for name, action_type in (
-                    ('/navigate_to_pose', NavigateToPose),
-                    ('/compute_path_to_pose', ComputePathToPose),
-                    ('/follow_path', FollowPath), ('/spin', Spin),
-                    ('/wait', Wait), ('/backup', BackUp),
-                    ('/follow_person', FollowPerson), ('/patrol', Patrol),
-                )
+                for name, action_type in actions
             ]
+            # SLAM or AMCL is selected by the system manager, so readiness
+            # checks the resulting map and TF rather than AMCL's lifecycle.
+            # Navigation reaches /cmd_vel through the smoother, manual driving
+            # through its AssistedTeleop server and the Collision Monitor.
             self.lifecycle = {
                 name: [self.create_client(GetState, f'/{name}/get_state'),
                        None, False]
-                for name in ('amcl', 'map_server', 'controller_server',
-                             'planner_server', 'behavior_server', 'bt_navigator')
+                for name in ('controller_server', 'planner_server',
+                             'behavior_server', 'teleop_behavior_server', 'bt_navigator',
+                             'velocity_smoother', 'collision_monitor')
             }
         self.last_missing = None
         self.timer = self.create_timer(1.0, self.check)

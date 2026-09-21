@@ -14,7 +14,7 @@ import yaml
 
 
 class SavedMapCatalog:
-    """Resolve map IDs inside one directory without modifying any saved file."""
+    """Resolve map IDs inside one directory; only an explicit delete changes files."""
 
     def __init__(self, directory):
         self.directory = Path(directory).expanduser().resolve()
@@ -59,6 +59,33 @@ class SavedMapCatalog:
             return path
         except (OSError, RuntimeError, yaml.YAMLError) as error:
             raise ValueError(f'Cannot read saved map: {error}') from error
+
+    def _image(self, path):
+        try:
+            with path.open(encoding='utf-8') as stream:
+                return self._file(path.parent / yaml.safe_load(stream)['image'])
+        except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError):
+            return None
+
+    def delete(self, map_id):
+        """Remove a saved map and the pose/Zone files named after it."""
+        path = self.resolve(map_id)
+        image = self._image(path)
+        shared = any(other != path and self._image(other) == image
+                     for other in self.directory.iterdir()
+                     if other.suffix.lower() in ('.yaml', '.yml'))
+        stem = str(path.with_suffix(''))
+        files = [path, *([] if shared else [image]),
+                 Path(stem + '.pose.yaml'), Path(stem + '.zones.geojson')]
+        removed = []
+        # The YAML goes first: from then on the map is neither listed nor loadable.
+        for item in files:
+            try:
+                item.unlink()
+            except FileNotFoundError:
+                continue
+            removed.append(item.name)
+        return removed
 
     def list_maps(self):
         """List valid maps only; an absent map directory is an empty catalog."""
@@ -152,14 +179,13 @@ class RuntimeSupervisor:
             with self._lock:
                 if self._status['state'] == 'STOPPING':
                     raise RuntimeError('Bringup start canceled before launch')
+            # One Bringup for both: the mode only picks the first localization.
             command = ['ros2', 'launch', 'malbut_bringup', 'robot.launch.py',
-                       f'mode:={mode}', 'web_panel:=false',
-                       f'start_hardware:={str(start_hardware).lower()}']
+                       'web_panel:=false', 'publish_debug_image:=true',
+                       f'start_hardware:={str(start_hardware).lower()}',
+                       f'map_directory:={self.catalog.directory}']
             if mode == 'navigation':
-                command += [f'map:={self.catalog.resolve(map_id)}',
-                            'publish_debug_image:=true']
-            else:
-                command.append(f'map_directory:={self.catalog.directory}')
+                command.append(f'map:={self.catalog.resolve(map_id)}')
             self.log_directory.mkdir(parents=True, exist_ok=True)
             self._log = tempfile.NamedTemporaryFile(
                 mode='w', prefix=f'{mode}-', suffix='.log',

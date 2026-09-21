@@ -226,3 +226,29 @@ def test_navigation_also_requires_stamped_scan_transform_into_map(monkeypatch):
     assert not node.ready
     assert 'TF:scan->map@stamp' in node.last_missing
     assert 'TF:scan->odom@stamp' not in node.last_missing
+
+
+def test_navigation_readiness_covers_the_motion_chain_and_pose_finding():
+    """Navigation needs the smoother; manual driving its server and the Collision Monitor."""
+    import os
+
+    import rclpy
+    from rclpy.parameter import Parameter
+
+    context = rclpy.Context()
+    rclpy.init(context=context, domain_id=100 + os.getpid() % 30)
+    node = None
+    try:
+        node = RobotReadiness(context=context, parameter_overrides=[
+            Parameter('navigation', value=True), Parameter('perception', value=False),
+            Parameter('relocalization', value=True)])
+        assert {'velocity_smoother', 'collision_monitor', 'controller_server',
+                'planner_server', 'behavior_server', 'teleop_behavior_server',
+                'bt_navigator'} == set(node.lifecycle)
+        actions = {name for name, _client in node.action_clients}
+        assert {'/relocalize', '/assisted_teleop', '/autoslam'} <= actions
+        assert '/follow_person' not in actions
+    finally:
+        if node is not None:
+            node.destroy_node()
+        rclpy.shutdown(context=context)

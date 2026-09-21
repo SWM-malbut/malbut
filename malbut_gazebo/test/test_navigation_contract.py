@@ -72,33 +72,33 @@ def test_nav2_uses_omnidirectional_motion_limits():
 
 
 def test_costmap_footprints_cover_the_published_robot_envelope():
-    """Both costmaps must cover the selected variant's length and width."""
+    """Use the official outline; padding must cover the sphere wheel proxies."""
     config = yaml.safe_load(NAV2_PARAMS.read_text(encoding='utf-8'))
     profile = yaml.safe_load(ROBOT_PROFILE.read_text(encoding='utf-8'))
     arguments = profile['xacro']['arguments']
-    half_length = max(
-        arguments['overall_length'] / 2.0,
-        arguments['wheelbase'] / 2.0 + arguments['wheel_radius'],
+    # Fortress uses sphere contact proxies, wider than the real wheel tread.
+    proxy_half_length = (
+        arguments['wheelbase'] / 2.0 + arguments['wheel_radius']
     )
-    half_width = max(
-        arguments['overall_width'] / 2.0,
-        arguments['wheel_separation'] / 2.0
-        + arguments['wheel_radius'],
+    proxy_half_width = (
+        arguments['wheel_separation'] / 2.0 + arguments['wheel_radius']
     )
 
-    footprints = []
     for costmap_name in ('local_costmap', 'global_costmap'):
         costmap = config[costmap_name][costmap_name]['ros__parameters']
         assert 'robot_radius' not in costmap
-        footprints.append(yaml.safe_load(costmap['footprint']))
-
-    assert footprints[0] == footprints[1]
-    x_values = [point[0] for point in footprints[0]]
-    y_values = [point[1] for point in footprints[0]]
-    assert min(x_values) <= -half_length
-    assert max(x_values) >= half_length
-    assert min(y_values) <= -half_width
-    assert max(y_values) >= half_width
+        footprint = yaml.safe_load(costmap['footprint'])
+        x_values = [point[0] for point in footprint]
+        y_values = [point[1] for point in footprint]
+        assert max(x_values) == -min(x_values) == pytest.approx(
+            arguments['overall_length'] / 2.0
+        )
+        assert max(y_values) == -min(y_values) == pytest.approx(
+            arguments['overall_width'] / 2.0
+        )
+        padding = costmap['footprint_padding']
+        assert max(x_values) + padding >= proxy_half_length
+        assert max(y_values) + padding >= proxy_half_width
 
 
 def test_navigation_has_one_public_upstream_bringup_entry_point():

@@ -32,6 +32,7 @@ package_paths=(
   "$robot_source_dir/malbut_tracking"
   "$robot_source_dir/malbut_patrol"
   "$robot_source_dir/malbut_autoslam"
+  "$robot_source_dir/malbut_relocalization"
   "$robot_source_dir/malbut_yolo/vendor/yolo_ros/yolo_ros"
   "$robot_source_dir/malbut_yolo/vendor/yolo_ros/yolo_msgs"
 )

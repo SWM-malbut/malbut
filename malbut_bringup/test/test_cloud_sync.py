@@ -3,6 +3,7 @@
 import base64
 from contextlib import contextmanager
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 from urllib.error import HTTPError
@@ -10,14 +11,16 @@ from urllib.error import HTTPError
 import pytest
 
 from malbut_bringup.cloud_sync import (
-    CloudClient, CloudError, CloudSync, NoRedirect, map_payload, panel_command,
-    read_device_token, state_payload, validate_backend_url,
+    capability_manifests, CloudClient, CloudError, CloudSync, map_payload, NoRedirect,
+    panel_command, read_device_token, state_payload, validate_backend_url,
 )
 from malbut_bringup.web_panel import PanelData
+from malbut_bringup.web_runtime import SavedMapCatalog
 
 
 TOKEN = 'hc1.11111111-1111-4111-8111-111111111111.' + 'a' * 64
 COMMAND_ID = '22222222-2222-4222-8222-222222222222'
+OTHER_ID = '33333333-3333-4333-8333-333333333333'
 
 
 @pytest.mark.parametrize('url', [
@@ -106,6 +109,13 @@ def test_client_uses_bounded_json_and_bearer_auth():
                        'arguments': {'x': 1, 'y': -2, 'yaw': 0}},
      {'command': 'start', 'capability': 'navigate_to_pose',
       'arguments': {'x': 1, 'y': -2, 'yaw': 0}}),
+    ('mission_start', {'capability': 'relocalize',
+                       'arguments': {'method': 1, 'x': 1, 'y': 2, 'yaw': 0}},
+     {'command': 'start', 'capability': 'relocalize',
+      'arguments': {'method': 1, 'x': 1, 'y': 2, 'yaw': 0}}),
+    ('manual_move', {'direction': 'left'}, {'command': 'nudge', 'direction': 'left'}),
+    ('debug_mission_start', {'capability': 'get_weather', 'arguments': {}},
+     {'command': 'debug_start', 'capability': 'get_weather', 'arguments': {}}),
 ])
 def test_real_robot_commands_reuse_existing_validation(operation, payload, expected):
     """No Gazebo HTTP API, arbitrary launch command, or manager modification."""
@@ -125,6 +135,10 @@ def test_real_robot_commands_reuse_existing_validation(operation, payload, expec
                        'arguments': {'x': 1, 'y': 0, 'yaw': float('inf')}}),
     ('mission_start', {'capability': 'navigate_to_pose',
                        'arguments': {'x': 1, 'y': 0, 'yaw': 0, 'behavior_tree': '/tmp/tree'}}),
+    ('mission_start', {'capability': 'relocalize', 'arguments': {'method': 1}}),
+    ('manual_move', {'direction': 'forward', 'duration_s': 60}),
+    ('manual_move', {'linear_x': 1.0}),
+    ('debug_mission_start', {'capability': 'patrol'}),
 ])
 def test_unsupported_or_unsafe_commands_fail_closed(operation, payload):
     """Do not translate unsupported simulator controls to physical commands."""
@@ -164,6 +178,76 @@ def test_receipts_report_queue_acceptance_and_retries_never_resubmit_goals():
     bridge.submit.assert_called_once()
 
 
+def _saved_map(directory, name):
+    (directory / f'{name}.pgm').write_bytes(b'P5\n2 2\n255\n\xff\xff\x00\x80')
+    (directory / f'{name}.yaml').write_text(
+        f'image: {name}.pgm\nresolution: 0.05\norigin: [0, 0, 0]\nnegate: 0\n'
+        'occupied_thresh: 0.65\nfree_thresh: 0.25\n')
+
+
+def test_map_deletion_answers_directly_and_keeps_the_map_in_use(tmp_path):
+    """Deleting a map is a file request; the saved map being driven on stays."""
+    sync, bridge, _client = _sync()
+    bridge.catalog = SavedMapCatalog(tmp_path)
+    for name in ('home', 'office'):
+        _saved_map(tmp_path, name)
+    bridge.data.runtime = {**bridge.data.runtime, 'localization': {
+        'mode': 'LOCALIZATION', 'map': str(tmp_path / 'home.yaml')}}
+    sync.dispatch({'id': COMMAND_ID, 'operation': 'map_delete',
+                   'payload': {'map': 'home.yaml'}})
+    assert not sync.pending[COMMAND_ID]['ok']
+    assert 'in use' in sync.pending[COMMAND_ID]['result']['error']
+    sync.dispatch({'id': OTHER_ID, 'operation': 'map_delete',
+                   'payload': {'map': 'office.yaml'}})
+    assert sync.pending[OTHER_ID] == {'ok': True, 'result': {
+        'deleted': 'office.yaml', 'files': ['office.yaml', 'office.pgm']}}
+    assert (tmp_path / 'home.yaml').exists() and not (tmp_path / 'office.yaml').exists()
+    bridge.submit.assert_not_called()
+
+
+def test_zone_edits_are_saved_on_the_robot_and_uploaded_with_the_map(monkeypatch):
+    """The robot writes the Zone file; the next map upload carries it back."""
+    sync, bridge, _client = _sync()
+    saved = Mock(return_value=2)
+    monkeypatch.setattr('malbut_bringup.cloud_sync.save_zones', saved)
+    sync.last_map_at = 50.0
+    payload = {'map': 'home.yaml', 'zones': []}
+    sync.dispatch({'id': COMMAND_ID, 'operation': 'zones_save', 'payload': payload})
+    assert sync.pending[COMMAND_ID] == {'ok': True, 'result': {'saved': 2, 'map': 'home.yaml'}}
+    assert saved.call_args.args[1:] == (bridge.catalog, payload)
+    assert sync.last_map_at == 0.0
+    bridge.submit.assert_not_called()
+
+
+def test_diagnostics_and_ping_stay_within_the_device_body_limit():
+    """Graph queries run on the ROS executor; oversized results become an error."""
+    sync, bridge, _client = _sync()
+    bridge.call = Mock(return_value={'nodes': ['/system_manager']})
+    bridge.diagnostics = Mock()
+    sync.capabilities = [{'id': 'patrol'}]
+    sync.dispatch({'id': COMMAND_ID, 'operation': 'robot_diagnostics', 'payload': {}})
+    result = sync.pending[COMMAND_ID]
+    assert result['ok'] and result['result']['nodes'] == ['/system_manager']
+    assert result['result']['capabilities'] == [{'id': 'patrol'}]
+    bridge.call.assert_called_once_with(bridge.diagnostics)
+    bridge.call.return_value = {'nodes': ['x' * 1000] * 100}
+    sync.dispatch({'id': OTHER_ID, 'operation': 'robot_diagnostics', 'payload': {}})
+    assert sync.pending[OTHER_ID] == {
+        'ok': False, 'result': {'error': 'Result exceeds the cloud size limit'}}
+    ping = '44444444-4444-4444-8444-444444444444'
+    sync.dispatch({'id': ping, 'operation': 'robot_ping', 'payload': {}})
+    assert sync.pending[ping]['result']['pong'] is True
+    bridge.submit.assert_not_called()
+
+
+def test_capability_list_carries_manifest_inputs_for_the_debug_runner():
+    """The debug runner starts from each registered capability's defaults."""
+    directory = Path(__file__).parents[2] / 'malbut_interfaces/capabilities'
+    capabilities = {item['id']: item for item in capability_manifests(directory)}
+    assert capabilities['relocalize']['fields']['method'] == {'type': 'uint8', 'default': 0}
+    assert capabilities['patrol']['resources'] == ['BASE']
+
+
 def test_read_only_tick_sends_status_but_no_goal():
     """Starting a bridge and viewing the app never starts Bringup or movement."""
     sync, bridge, client = _sync()
@@ -176,8 +260,12 @@ def test_read_only_tick_sends_status_but_no_goal():
 def test_state_contract_omits_local_log_files_and_map_paths():
     """Expose runtime progress, own requests and map IDs, not local file contents."""
     snapshot = PanelData().snapshot()
+    snapshot['zones'] = {'state': 'APPLIED', 'map': '/secret/home.yaml', 'zones': 2}
     snapshot['runtime'].update(state='RUNNING', mode='navigation', ready=True,
-                               log_path='/secret/runtime.log', log_tail='private contents')
+                               log_path='/secret/runtime.log', log_tail='private contents',
+                               localization={'mode': 'LOCALIZATION',
+                                             'map': '/secret/home.yaml',
+                                             'message': 'saved pose confirmed'})
     pose = {'x': 1, 'y': 2, 'yaw': 0}
     payload = state_payload(snapshot, {'active': True, 'pose': pose, 'version': 7},
                             [{'id': 'home.yaml', 'name': 'home', 'path': '/secret/home.yaml'}])
@@ -185,6 +273,9 @@ def test_state_contract_omits_local_log_files_and_map_paths():
     assert payload['nav2']['runtime_mode'] == 'navigation'
     assert payload['pose'] == pose
     assert payload['mapRevision'] == 7
+    assert payload['target']['runtime']['localization'] == {
+        'mode': 'LOCALIZATION', 'map': 'home.yaml', 'message': 'saved pose confirmed'}
+    assert payload['target']['zones'] == {'state': 'APPLIED', 'map': 'home.yaml', 'zones': 2}
     assert '/secret' not in json.dumps(payload)
     assert 'private contents' not in json.dumps(payload)
     assert state_payload(snapshot, {'active': False, 'pose': pose}, [])['pose'] is None
@@ -217,6 +308,10 @@ def test_map_contract_uses_matching_geometry_and_stable_content_revision():
         'originX': -1, 'originY': -2, 'originYaw': 0.5,
     }
     assert base64.b64decode(first['previewBase64']) == b'png bytes'
+    zones = {'format': 'malbut-semantic-zones-v1', 'map': 'home.yaml',
+             'editable': True, 'zones': [], 'message': ''}
+    edited = map_payload(metadata, b'png bytes', runtime, zones)
+    assert edited['semanticZones'] == zones and edited['revision'] != first['revision']
     draft = map_payload(metadata, b'png bytes', {'mode': 'mapping'})
     assert not draft['finalized'] and draft['revision'].startswith('live-')
     with pytest.raises(ValueError, match='geometry'):
