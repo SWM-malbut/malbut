@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 import yaml
 
-from malbut_bringup.web_runtime import RuntimeSupervisor, SavedMapCatalog
+from malbut_bringup.web_runtime import failure_summary, RuntimeSupervisor, SavedMapCatalog
 
 
 def _map(directory, name='home.yaml', **changes):
@@ -197,15 +197,45 @@ def test_failed_spawn_reports_error_without_claiming_external_processes(runtime)
     signals.assert_not_called()
 
 
-def test_error_exposes_only_bounded_owned_log_tail(runtime):
+LAUNCH_LOG = '''[INFO] [speech_preflight-12]: process started with pid [4321]
+[speech_preflight-12] Checking microphone
+[speech_preflight-12] RuntimeError: no input device matches speech_input_device 0
+[ERROR] [speech_preflight-12]: process has died [pid 4321, exit code 1, cmd '/x/speech_preflight'].
+[ERROR] [launch]: Caught exception in launch (see debug for traceback): \
+Bringup child exited: speech_preflight-12
+[ERROR] [nav2_container-1]: process has died [pid 4300, exit code -2, cmd '/x/container'].
+[ERROR] [system_manager-8]: process has died [pid 4310, exit code -15, cmd '/x/manager'].
+'''
+
+
+def test_failure_summary_names_the_first_failed_node_and_its_error():
+    """Nodes the launch stopped afterwards (SIGINT/SIGTERM) are effects, not causes."""
+    assert failure_summary(LAUNCH_LOG) == (
+        'speech_preflight-12 exited with code 1; '
+        'RuntimeError: no input device matches speech_input_device 0; '
+        'Bringup child exited: speech_preflight-12')
+    # A launch-time check that fails before any node starts.
+    assert failure_summary(
+        '\x1b[1;31m[ERROR] [launch]: Caught exception in launch (see debug for traceback): '
+        'speech Python is not executable: /x/venv/bin/python\x1b[0m\n'
+    ) == 'speech Python is not executable: /x/venv/bin/python'
+    assert failure_summary('[INFO] [launch]: All log files can be found below /x\n') == ''
+    assert len(failure_summary('[ERROR] [launch]: ' + 'x' * 2000)) == 400
+
+
+def test_error_exposes_the_failed_node_and_a_bounded_log_tail(runtime):
     """Bringup startup failure details must reach the web without unbounded reads."""
     supervisor, _, process, _, _ = runtime
     supervisor.start('mapping').result()
     path = Path(supervisor.snapshot()['log_path'])
-    path.write_text('old line\n' * 2000 + 'missing runtime Python\n')
+    path.write_text('old line\n' * 2000 + LAUNCH_LOG)
     assert supervisor.snapshot()['log_tail'] == ''
     process.poll.return_value = 1
     status = supervisor.snapshot()
     assert status['state'] == 'ERROR'
-    assert status['log_tail'].endswith('missing runtime Python\n')
+    assert status['message'] == (
+        'Bringup exited (1): speech_preflight-12 exited with code 1; '
+        'RuntimeError: no input device matches speech_input_device 0; '
+        'Bringup child exited: speech_preflight-12; stop before retrying')
+    assert status['log_tail'].endswith('exit code -15, cmd \'/x/manager\'].\n')
     assert len(status['log_tail'].encode()) <= 8192

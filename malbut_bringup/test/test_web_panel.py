@@ -464,6 +464,25 @@ def test_stale_speech_and_action_readiness_cannot_mark_inactive_runtime_ready(mo
         assert not bridge.speech_ready
 
 
+@pytest.mark.parametrize('state', ['ERROR', 'STOPPED'])
+def test_dead_bringup_does_not_keep_showing_its_managers_last_state(monkeypatch, state):
+    """Retained localization, system and zone topics vanish with the owned Bringup."""
+    bridge, _ = _bridge(manager_ready=False)
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {'state': state, 'mode': None, 'map': None,
+                                            'message': 'Bringup exited (1): x; stop'}
+    bridge.localization = {'mode': 'MAPPING', 'map': None, 'message': 'mapping'}
+    bridge.data.system = {'system_state': 1, 'control_mode': 0}
+    bridge.data.zones = {'state': 'CLEARED'}
+    monkeypatch.setattr(bridge, '_robot_pose', lambda: None)
+    bridge.node.count_publishers.return_value = 0
+    bridge._refresh()
+    runtime = bridge.data.snapshot()['runtime']
+    assert runtime['localization'] == {} and runtime['mode'] is None
+    assert runtime['message'] == 'Bringup exited (1): x; stop'
+    assert bridge.data.snapshot()['system'] is None and bridge.data.snapshot()['zones'] is None
+
+
 def test_booting_manager_is_not_ready_and_live_localization_sets_mode(monkeypatch):
     """Missions open after READY; the shown mode follows the manager, not the request."""
     bridge, _ = _bridge(manager_ready=True)

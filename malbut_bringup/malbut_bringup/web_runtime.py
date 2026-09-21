@@ -4,6 +4,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 import math
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import tempfile
@@ -11,6 +12,37 @@ import threading
 import time
 
 import yaml
+
+
+ANSI = re.compile(r'\x1b\[[0-9;]*m')
+LAUNCH_ERROR = re.compile(r'\[ERROR\] \[launch\]: (?:Caught exception in launch[^:]*: )?(.+)')
+PROCESS_DIED = re.compile(r'\[ERROR\] \[([^\]]+)\]: process has died \[pid \d+, exit code (-?\d+)')
+# Exit codes of processes stopped by the launch itself while it shut down.
+SHUTDOWN_CODES = (0, -2, -15)
+ERROR_WORDS = re.compile(r'error|exception|traceback|failed|not found|denied|refused', re.I)
+
+
+def failure_summary(text, limit=400):
+    """Name the process that ended a launch and its last error line, from the log."""
+    lines = [ANSI.sub('', line).rstrip() for line in text.splitlines()]
+    parts = []
+    for index, line in enumerate(lines):
+        died = PROCESS_DIED.search(line)
+        if died and int(died.group(2)) not in SHUTDOWN_CODES:
+            name = died.group(1)
+            parts.append(f'{name} exited with code {died.group(2)}')
+            prefix = f'[{name}] '
+            own = [item[len(prefix):].strip() for item in lines[:index]
+                   if item.startswith(prefix) and ERROR_WORDS.search(item)]
+            if own:
+                parts.append(own[-1])
+            break
+    reasons = [match.group(1).strip() for line in lines
+               if (match := LAUNCH_ERROR.search(line))]
+    if reasons:
+        parts.append(reasons[-1])
+    summary = '; '.join(dict.fromkeys(part for part in parts if part))
+    return summary[:limit]
 
 
 class SavedMapCatalog:
@@ -141,19 +173,26 @@ class RuntimeSupervisor:
                     and self._status['state'] not in ('STOPPING', 'ERROR')):
                 code = self._process.poll()
                 if code is not None:
-                    self._status.update(
-                        state='ERROR', message=f'Bringup exited ({code}); stop before retrying')
+                    # Name the failing node for the web; the log file stays local.
+                    reason = failure_summary(self._read_log_tail(65536))
+                    self._status.update(state='ERROR', message=(
+                        f'Bringup exited ({code}): {reason}; stop before retrying' if reason
+                        else f'Bringup exited ({code}); stop before retrying'))
             status = dict(self._status)
-        status['log_tail'] = ''
-        if status['state'] == 'ERROR' and status['log_path']:
-            try:
-                with Path(status['log_path']).open('rb') as stream:
-                    stream.seek(0, os.SEEK_END)
-                    stream.seek(max(0, stream.tell() - 8192))
-                    status['log_tail'] = stream.read().decode('utf-8', errors='replace')
-            except OSError:
-                pass
+        status['log_tail'] = self._read_log_tail(8192) if status['state'] == 'ERROR' else ''
         return status
+
+    def _read_log_tail(self, size):
+        path = self._status.get('log_path')
+        if not path:
+            return ''
+        try:
+            with Path(path).open('rb') as stream:
+                stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, stream.tell() - size))
+                return stream.read().decode('utf-8', errors='replace')
+        except OSError:
+            return ''
 
     def start(self, mode, map_id=None, start_hardware=True):
         """Queue one fixed Bringup command, rejecting overlapping transitions."""

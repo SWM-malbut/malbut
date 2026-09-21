@@ -498,6 +498,14 @@ class RosBridge:
             status['mode'] = mode
             status['map'] = (Path(self.localization['map']).name
                              if mode == 'navigation' and self.localization.get('map') else None)
+        if self.runtime and status['state'] not in ('STARTING', 'RUNNING'):
+            # The manager that published these is gone with the owned Bringup;
+            # retained topics would otherwise keep showing its last state.
+            self.localization = {}
+            with self.data.lock:
+                self.data.system = None
+                self.data.tracking = None
+                self.data.zones = None
         status['localization'] = dict(self.localization)
         with self.data.lock:
             booting = (self.data.system or {}).get('system_state', 0) == 0
