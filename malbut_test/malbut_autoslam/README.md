@@ -9,36 +9,21 @@ YAML·PGM을 저장한다.
 
 ## 실행
 
-실기기에서는 **아래 서버를 켜고 Goal을 요청하면 필요한 구성도 준비한다.**
-Goal을 받으면 ROS 그래프를 확인하고, 드라이버·실시간 SLAM·Nav2 중 없는 구성만
-`malbut_bringup/mapping_backend.launch.py`로 실행한다. 이미 실행 중인 구성은
-재사용한다. 센서·지도·TF 수신 및 Nav2 활성 상태를 확인한 뒤 탐색한다.
-기존 웹 자동 탐색기는 동시에 시작하지 않는다.
+실로봇 Bringup(`malbut_bringup/robot.launch.py`)이 이 서버를 포함한다. Bringup과
+시스템 관리자가 켠 SLAM·Nav2를 그대로 사용하며, 관리자는 저장 지도가 선택되지 않은
+동안에만 자동 지도 만들기를 받는다. 이 서버는 SLAM·Nav2·드라이버를 직접 켜지 않는다.
+
+다른 환경(시뮬레이션 등)에서 이미 켠 SLAM·Nav2에 붙여 쓸 때는 서버만 실행한다.
 
 ```bash
-ros2 launch malbut_autoslam autoslam.launch.py
+ros2 launch malbut_autoslam autoslam.launch.py use_sim_time:=true
 ```
 
 이 명령은 대기 중인 Action 서버와 지도 저장 서버만 켠다. 실제 로봇이 움직이는
-것은 아래 요청 이후다. 완료·취소·실패하면 **이번 요청이 켠 구성만 종료**한다.
-시뮬레이션에서는 `use_sim_time:=true`를 지정한다. 이때는 자동 기동이 기본으로
-꺼지고 기존 시뮬레이션의 SLAM·Nav2를 그대로 사용한다.
-환경이 다르면 `map_topic`, `base_frame`, `navigation_action`, `planning_action`, `map_directory`를
-launch 인자로 지정한다. 기본 저장 폴더는 `~/.ros/malbut/maps`다.
-
-이미 별도로 준비한 매핑 구성을 그대로 사용할 때는 다음과 같이 실행한다.
-
-```bash
-ros2 launch malbut_autoslam autoslam.launch.py auto_start:=false
-```
-
-자동 기동은 실기기의 제조사 드라이버와 `slam_toolbox`/Nav2 구성용이다.
-AMCL·저장 지도 서버가 켜져 있으면 매핑으로 임의 전환하지 않고 오류를 반환한다.
-기존 주행 Bringup을 먼저 종료해야 한다. 알 수 없는 지도 발행자, 중복 발행자,
-일부만 켜진 하드웨어도 임의로 덧붙이지 않는다. 사용자 정의 매핑 시스템은
-`auto_start:=false`로 외부에서 준비한다. `scan_topic`과 `odom_topic`은 실제
-드라이버 토픽이며, 자동 기동 SLAM/Nav2도 같은 `scan_topic`을 직접 사용한다.
-자동 기동 로그는 `~/.ros/malbut/autoslam/mapping-*.log`에 남는다.
+것은 아래 요청 이후다. 지도·TF·Nav2가 `ready_timeout_s`(30초) 안에 준비되지 않으면
+요청을 실패로 끝낸다. 환경이 다르면 `map_topic`, `base_frame`, `navigation_action`,
+`planning_action`, `map_directory`를 launch 인자로 지정한다. 기본 저장 폴더는
+`~/.ros/malbut/maps`다.
 
 관리자 없이 직접 실행:
 
@@ -98,16 +83,11 @@ ros2 action send_goal /malbut/mission/execute \
 - 도착 후 새 SLAM 지도를 기다리고, 알려진 지도 셀 증가량으로 진전을 확인한다.
   실패하거나 새 공간을 관측하지 못한 지점은 제외한다. 전체 제외 목록 재시도는
   다른 후보가 소진된 뒤 한 번만 하며, 오래된 실패를 삭제해 무한 순회하지 않는다.
-- 이동 Goal 수락 후 **Nav2의 유효한 이동 명령이 지속되는데도** 5초 동안
-  5cm 이동이 없으면 진행 불가로 추정하고 Nav2 취소 완료를 기다린다.
-  제자리 회전 명령은 별도로 0.15rad(약 9도) 회전 여부를 본다. 계획 대기·정지
-  명령·명령 미수신은 이 장애물 추정에서 제외하며, 기존 전체 이동 제한은 유지한다.
-  얇은 물체를 밟는 IMU 충격만을 이유로 중단하지 않는다.
-  실패 목표와 사전 경로의
-  현재 위치 앞쪽 접근 구간은 **이번 요청이 끝날 때까지** 제외한다. 다른 후보의
-  사전 경로도 이 구간을 통과하면 보내지 않으며, 새 요청에서는 기록을 초기화한다.
-  이 기록은 저장 지도나 costmap을 바꾸지 않는다. Nav2 자체 재계획의 강제 금지구역은
-  아니며, TF 기반 추정이므로 충돌 센서나 비상 정지를 대체하지 않는다.
+- 이동 중 장애물과 막힘은 Nav2가 처리한다. Collision Monitor가 LiDAR 장애물
+  쪽으로 가는 명령을 줄이고, controller의 progress checker가 움직이지 못하는 Goal을
+  실패시킨다. Nav2가 실패하거나 `navigation_timeout_s` 안에 끝나지 않은 경계는 이번
+  요청에서 제외한다(위의 재시도 규칙). 예전의 자체 정체 감지(`/cmd_vel`과
+  `/odom_rf2o` 비교, 5초)는 Collision Monitor 도입과 함께 없앴다.
 - 같은 서버의 중복 요청은 거부한다. Manifest는 `FOREGROUND/NORMAL/[BASE]`다.
 - 취소·선점·Ctrl+C 시 하위 Nav2 Goal을 취소하고 **실제 종료까지 기다린다**.
   외부 Nav2의 응답이 불명확하면 이동이 끝났다고 간주해 새 작업을 받지 않는다.
@@ -130,7 +110,6 @@ ros2 action send_goal /malbut/mission/execute \
 - `frontier.py`: 기존 탐색 경계 추출·정렬과 지도 통계. 기존 Gazebo 웹 코드도
   이 공통 구현을 재사용한다.
 - `autoslam_node.py`: Action 수명주기, Nav2 호출·취소, 지도 저장.
-- `runtime.py`: 중복·저장 지도 충돌 검사, 요청 소유 프로세스 기동·정리.
 - `launch/autoslam.launch.py`: Action 서버와 공식 Nav2 지도 저장 서버 실행.
 
 탐색 주기는 `exploration_period_s=1.0`, 경계가 없을 때 재확인 시간은
@@ -139,18 +118,7 @@ ros2 action send_goal /malbut/mission/execute \
 `minimum_frontier_cells=8`은 작은 경계 잡음을 제외하는 기준이다.
 통신 준비·지도/TF 신선도·개별 이동 제한은 각각 `ready_timeout_s`,
 `map_timeout_s`, `tf_timeout_s`, `navigation_timeout_s`로 조정한다.
-짧은 정체 판단의 ROS parameter는 `progress_timeout_s=5.0`,
-`progress_distance_m=0.05`, `progress_angle_rad=0.15`다. Goal 수락 대기 시간은
-정체 시간에 포함하지 않는다. `cmd_vel_topic=/cmd_vel`은 제조사 Nav2 smoother와
-behavior 서버의 출력이며, 별도 조이스틱 입력 `/controller/cmd_vel`과 다르다.
-기존 드라이버의 `progress_odom_topic=/odom_rf2o`가 신선하고 유효하면 그 이동량을
-우선 사용한다. 수신하지 못하면 기존 SLAM TF로 대체하며, 이때 바퀴 미끄러짐을
-독립적으로 구분할 수 있다고 보장하지 않는다. 입력 전환 시 기준 위치를 초기화하고
-로그에 사용 소스를 표시한다. 토픽 이름은 launch 인자로 변경할 수 있다.
-RF2O를 새로 기동하거나 LiDAR 정합 알고리즘을 추가하지 않는다.
-`ready_timeout_s`는 launch 인자로도 설정할 수 있다. 부모 launch의 종료 유예도
-같은 값에 프로세스 정리 시간을 더해 적용하므로, Ctrl+C가 Action 서버를 먼저
-강제 종료해 자동 기동한 매핑 프로세스를 남기지 않도록 한다.
+`ready_timeout_s`는 launch 인자로도 설정할 수 있다.
 `navigation_timeout_s=90.0` 동안 새로 알려진 공간이 늘지 않으면 확보한 지도를
 저장하고 종료한다. 전체 탐색 예산은 `max_exploration_time_s=1200.0`(20분)이며,
 계속 생기는 센서 잡음으로 종료가 미뤄지는 것을 제한한다. 큰 공간은 아래처럼
