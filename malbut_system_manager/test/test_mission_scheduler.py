@@ -9,6 +9,8 @@ from malbut_system_manager.models import (
     ControlMode,
     ExecutionMode,
     ExecutionResource,
+    LocalizationMode,
+    MapRequirement,
     MissionPriority,
     MissionRecord,
     MissionState,
@@ -24,6 +26,8 @@ def _mission(
     mode=ExecutionMode.FOREGROUND,
     priority=MissionPriority.NORMAL,
     resources=None,
+    command_type='test_interfaces/action/Test',
+    map_requirement=None,
 ):
     if resources is None:
         resources = (
@@ -36,13 +40,14 @@ def _mission(
         description=f'Test capability for {mission_id}',
         command_kind=CommandKind.ACTION,
         command_name=f'/test/{mission_id}',
-        command_type='test_interfaces/action/Test',
+        command_type=command_type,
         execution_mode=mode,
         priority=priority,
         resources=frozenset(resources),
         input_fields={},
         interface_type=object,
         source_path=f'/test/{mission_id}.yaml',
+        map_requirement=map_requirement,
     )
     return MissionRecord(
         mission_id=mission_id,
@@ -567,8 +572,73 @@ def test_system_state_uses_documented_precedence():
     state.remove('foreground')
     assert state.system_state is SystemState.IDLE
 
-    state.control_mode = ControlMode.MANUAL
+
+def test_high_priority_manual_drive_reports_manual_and_blocks_normal_motion():
+    """Teleop preempts NORMAL motion; its priority, not a mode gate, blocks others."""
+    state, scheduler = _ready_scheduler()
+    patrol = _mission('patrol')
+    manual = _mission(
+        'manual',
+        priority=MissionPriority.HIGH,
+        command_type='nav2_msgs/action/AssistedTeleop',
+    )
+    scheduler.submit(patrol)
+    assert state.control_mode is ControlMode.AUTONOMOUS
+
+    effects = scheduler.submit(manual)
+    assert effects.cancel == ['patrol']
+    assert state.control_mode is ControlMode.AUTONOMOUS
+    effects = scheduler.handle_terminal('patrol', TerminalOutcome.CANCELED)
+    assert effects.start == ['manual']
+    assert state.control_mode is ControlMode.MANUAL
+
+    rejected = scheduler.submit(_mission('follow'))
+    assert 'higher priority HIGH' in _completion(rejected, 'follow').message
+    replacement = scheduler.submit(_mission(
+        'manual-2',
+        priority=MissionPriority.HIGH,
+        command_type='nav2_msgs/action/AssistedTeleop',
+    ))
+    assert replacement.cancel == ['manual']
+
+    scheduler.handle_terminal('manual', TerminalOutcome.CANCELED)
+    scheduler.handle_terminal('manual-2', TerminalOutcome.SUCCEEDED)
+    assert state.control_mode is ControlMode.AUTONOMOUS
     assert state.system_state is SystemState.IDLE
+
+
+@pytest.mark.parametrize('localization,allowed', [
+    (None, {'map', 'mapping', 'any', 'speak'}),
+    (LocalizationMode.MAPPING, {'mapping', 'any', 'speak'}),
+    (LocalizationMode.LOCALIZATION, {'map', 'any', 'speak'}),
+    # Finding the pose may rotate the robot: nothing that drives starts meanwhile.
+    (LocalizationMode.SWITCHING, {'speak'}),
+    (LocalizationMode.ERROR, {'any', 'speak'}),
+])
+def test_map_requirement_gates_only_declared_capabilities(localization, allowed):
+    """Without a selected map only mapping runs; unmanaged maps never gate."""
+    requirements = {
+        'map': (MapRequirement.SELECTED, None),
+        'mapping': (MapRequirement.NOT_SELECTED, None),
+        'any': (None, None),
+        'speak': (None, [ExecutionResource.SPEAKER]),
+    }
+    for name, (requirement, resources) in requirements.items():
+        state, scheduler = _ready_scheduler()
+        scheduler.set_localization(localization)
+        effects = scheduler.submit(_mission(
+            name, map_requirement=requirement, resources=resources))
+        assert (effects.start == [name]) is (name in allowed), name
+
+
+def test_base_busy_counts_pending_and_active_base_missions():
+    """Localization switches must wait until nothing claims the base."""
+    state, scheduler = _ready_scheduler()
+    assert not scheduler.base_busy()
+    scheduler.submit(_mission('weather', mode=ExecutionMode.BACKGROUND))
+    assert not scheduler.base_busy()
+    scheduler.submit(_mission('patrol'))
+    assert scheduler.base_busy()
 
 
 def test_shutdown_aborts_waiting_work_and_cancels_active_work():

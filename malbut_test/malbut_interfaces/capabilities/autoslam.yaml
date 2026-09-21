@@ -21,6 +21,7 @@ execution:
   mode: FOREGROUND
   priority: NORMAL
   resources: [BASE]
+  map_requirement: NOT_SELECTED
 
 # 기본 실기기 실행은 Goal 수신 후 없는 드라이버·SLAM·Nav2 구성만 준비한다.
 # 관리자를 켜지 않아도 /autoslam Action을 직접 요청할 수 있다.

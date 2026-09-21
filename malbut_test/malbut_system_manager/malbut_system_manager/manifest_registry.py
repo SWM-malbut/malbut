@@ -16,6 +16,7 @@ from .models import (
     ExecutionMode,
     ExecutionResource,
     InputField,
+    MapRequirement,
     MissionPriority,
 )
 
@@ -269,6 +270,7 @@ class ManifestRegistry:
         _expect_keys(
             execution,
             required={'mode', 'priority', 'resources'},
+            optional={'map_requirement'},
             context=f'{path}: execution',
         )
         try:
@@ -311,6 +313,17 @@ class ManifestRegistry:
                 )
             resources.add(resource)
 
+        map_requirement = None
+        if 'map_requirement' in execution:
+            try:
+                map_requirement = MapRequirement(_string(
+                    execution['map_requirement'], path, 'execution.map_requirement'))
+            except ValueError as error:
+                raise ManifestError(
+                    f'{path}: execution.map_requirement must be SELECTED '
+                    'or NOT_SELECTED'
+                ) from error
+
         input_section = _mapping(document['input'], path, 'input')
         _expect_keys(
             input_section,
@@ -341,6 +354,7 @@ class ManifestRegistry:
             interface_type=interface_type,
             resources=frozenset(resources),
             source_path=str(path),
+            map_requirement=map_requirement,
         )
 
     def _resolve_type(
