@@ -8,6 +8,7 @@ whose output passes the Collision Monitor, and saved-map Zones reach both
 costmaps through the keepout filter servers.
 """
 
+from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
 from launch_ros.actions import LoadComposableNodes, Node
 from launch_ros.descriptions import ComposableNode
 
@@ -54,8 +55,29 @@ MOTION_REMAPPINGS = {
 }
 
 
+def missing_packages(names=None):
+    """Return the composed Nav2 packages that are not installed."""
+    if names is None:
+        names = {package for package, _plugin in COMPONENTS.values()}
+        names |= {'rclcpp_components', 'nav2_lifecycle_manager'}
+    absent = []
+    for name in sorted(names):
+        try:
+            get_package_share_directory(name)
+        except PackageNotFoundError:
+            absent.append(name)
+    return absent
+
+
 def nav2_actions(params_file, *, scan_topic, odom_topic):
     """Return the container, its components and the Zone mask loader."""
+    absent = missing_packages()
+    if absent:
+        # The lifecycle manager would otherwise wait forever for the component.
+        raise RuntimeError(
+            'Nav2 packages are not installed: ' + ', '.join(absent)
+            + ' (sudo apt install ' + ' '.join(
+                'ros-humble-' + name.replace('_', '-') for name in absent) + ')')
     remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static'),
                   ('/scan_raw', scan_topic), ('/odom', odom_topic)]
 

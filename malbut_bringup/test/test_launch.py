@@ -186,6 +186,24 @@ def _components(context, actions):
     return result
 
 
+def test_missing_nav2_package_fails_the_launch_by_name(launch_module, monkeypatch):
+    """Without this the lifecycle manager waits forever for the absent component."""
+    from ament_index_python.packages import PackageNotFoundError
+    from malbut_bringup import nav2_stack
+
+    def share(name):
+        if name == 'nav2_collision_monitor':
+            raise PackageNotFoundError(name)
+        return f'/opt/ros/humble/share/{name}'
+
+    monkeypatch.setattr(nav2_stack, 'get_package_share_directory', share)
+    assert nav2_stack.missing_packages() == ['nav2_collision_monitor']
+    with pytest.raises(RuntimeError, match='ros-humble-nav2-collision-monitor'):
+        launch_module._setup(_context(launch_module))
+    monkeypatch.setattr(nav2_stack, 'get_package_share_directory', lambda name: f'/x/{name}')
+    assert nav2_stack.missing_packages() == []
+
+
 def test_nav2_is_composed_with_collision_monitor_and_zone_filter(launch_module):
     """Navigation publishes /cmd_vel; manual driving passes the Collision Monitor."""
     context = _context(launch_module, scan_topic='/laser_raw')

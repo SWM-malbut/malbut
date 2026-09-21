@@ -115,9 +115,10 @@ class RobotReadiness(Node):
             # checks the resulting map and TF rather than AMCL's lifecycle.
             # Navigation reaches /cmd_vel through the smoother, manual driving
             # through its AssistedTeleop server and the Collision Monitor.
+            # entry: [client, pending GetState future, active, last known label]
             self.lifecycle = {
                 name: [self.create_client(GetState, f'/{name}/get_state'),
-                       None, False]
+                       None, False, 'missing']
                 for name in ('controller_server', 'planner_server',
                              'behavior_server', 'teleop_behavior_server', 'bt_navigator',
                              'velocity_smoother', 'collision_monitor')
@@ -201,7 +202,7 @@ class RobotReadiness(Node):
             if not client.server_is_ready():
                 missing.append(f'Action:{name}')
         for name, entry in self.lifecycle.items():
-            client, future, active = entry
+            client, future, active = entry[:3]
             if (future is not None and not future.done()
                     and now - self.lifecycle_requested.get(name, now) >= self.timeout):
                 # A lost GetState response must not block startup forever.
@@ -216,16 +217,24 @@ class RobotReadiness(Node):
                     future.cancel()
                 entry[1] = None
                 entry[2] = False
+                # No get_state service: the component never loaded into the container.
+                entry[3] = 'missing'
             elif future is None or future.done():
                 if future is not None:
                     try:
-                        entry[2] = future.result().current_state.id == State.PRIMARY_STATE_ACTIVE
+                        state = future.result().current_state
+                        entry[2] = state.id == State.PRIMARY_STATE_ACTIVE
+                        entry[3] = state.label
                     except Exception:  # A disconnected lifecycle service is not ready.
                         entry[2] = False
+                        entry[3] = 'no reply'
                 entry[1] = client.call_async(GetState.Request())
                 self.lifecycle_requested[name] = now
             if not entry[2]:
-                missing.append(f'lifecycle:{name}')
+                # The Nav2 lifecycle manager configures nodes in order and waits
+                # forever for one whose services never appear; the labels show
+                # where it stopped (e.g. inactive up to the missing node).
+                missing.append(f'lifecycle:{name}={entry[3]}')
         if missing:
             summary = ', '.join(missing)
             if summary != self.last_missing:

@@ -81,9 +81,10 @@ def test_restarted_lifecycle_server_can_be_queried_again(monkeypatch):
     pending = Future()
     service = Mock()
     service.service_is_ready.return_value = False
-    node.lifecycle['controller_server'] = [service, pending, False]
+    node.lifecycle['controller_server'] = [service, pending, False, 'inactive']
     node.check()
     assert pending.cancelled()
+    assert node.lifecycle['controller_server'][3] == 'missing'
     assert node.lifecycle['controller_server'][1] is None
     assert not node.ready
     service.service_is_ready.return_value = True
@@ -112,7 +113,7 @@ def test_lost_lifecycle_response_retries_without_restarting_server(monkeypatch):
     service = Mock()
     service.service_is_ready.return_value = True
     service.call_async.side_effect = [pending, retry, Future()]
-    node.lifecycle['amcl'] = [service, None, False]
+    node.lifecycle['amcl'] = [service, None, False, 'missing']
     node.check()
     assert not node.ready
     node.check()
@@ -160,14 +161,18 @@ def test_navigation_needs_matching_map_and_active_nav2(monkeypatch):
     assert not node.ready
     node.frames['map'] = 'map'
     future = Future()
-    future.set_result(SimpleNamespace(current_state=State(id=State.PRIMARY_STATE_INACTIVE)))
+    future.set_result(SimpleNamespace(
+        current_state=State(id=State.PRIMARY_STATE_INACTIVE, label='inactive')))
     service = Mock()
     service.service_is_ready.return_value = True
-    node.lifecycle['controller_server'] = [service, future, False]
+    node.lifecycle['controller_server'] = [service, future, False, 'missing']
     node.check()
     assert not node.ready
+    # The web shows where the Nav2 lifecycle manager stopped, not just a name.
+    assert 'lifecycle:controller_server=inactive' in node.last_missing
     future = Future()
-    future.set_result(SimpleNamespace(current_state=State(id=State.PRIMARY_STATE_ACTIVE)))
+    future.set_result(SimpleNamespace(
+        current_state=State(id=State.PRIMARY_STATE_ACTIVE, label='active')))
     node.lifecycle['controller_server'][1] = future
     node.check()
     assert node.ready
