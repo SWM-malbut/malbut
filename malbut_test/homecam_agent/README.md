@@ -142,7 +142,7 @@ AWS KVS 세션 시작·종료와 카메라·모니터링 설정은 이 지도를
 교체하지 않는다.
 
 기본값인 `HOMECAM_CLOUD_MAP_ENABLED=true`에서는 같은 bearer token으로
-저장 지도와 현재 위치를 AWS `homecam_web`에 동기화한다. AWS 웹의 지도
+저장 지도와 현재 위치를 AWS `malbut_web`에 동기화한다. AWS 웹의 지도
 생성·저장 명령은 로컬 onboarding API로, 목적지 미리보기·이동·취소 명령은
 로컬 Nav2 웹 API로 전달된다. 목적지 좌표를 받은 장치는 반드시 로컬의 최신
 costmap·Zone 안전 검사를 통과한 preview token으로만 주행을 시작한다.

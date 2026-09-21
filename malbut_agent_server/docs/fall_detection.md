@@ -325,10 +325,10 @@ Cloud가 만든 인물 이름이나 순번을 동일 인물 ID로 믿지 않는�
 - [Cloud 인터페이스](../malbut_agent_server/ports/cloud_fall.py)
 - [RGB 버퍼](../malbut_agent_server/application/fall_frame_buffer.py)
 - [실행 코어](../malbut_agent_server/application/cloud_fall_monitor.py)
-- [웹 푸시 전송](../../homecam_web/app/push-broker.ts)
-- [낙상 알림 문구·검증](../../homecam_web/infra/aws/push-broker/fall-notification.mjs)
+- [웹 푸시 전송](../../malbut_web/app/push-broker.ts)
+- [낙상 알림 문구·검증](../../malbut_web/infra/aws/push-broker/fall-notification.mjs)
 - [로봇 영속 저널](../malbut_agent_server/adapters/outbound/sqlite_fall_journal.py)
-- [장치 사건 수신 API](../../homecam_web/app/api/device/v1/fall-events/route.ts)
+- [장치 사건 수신 API](../../malbut_web/app/api/device/v1/fall-events/route.ts)
 - [저장·전송 계약](fall_storage_api.md)
 - [Cloud·ROS 실행 연결과 제한](fall_runtime.md)
 

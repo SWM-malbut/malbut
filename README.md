@@ -15,7 +15,7 @@ ROS 2 Humble과 Gazebo Fortress에서 Malbut 로봇 모델과 시뮬레이션 �
 - 공통 ROS 인터페이스: `malbut_interfaces`
 - 실로봇 기동: `malbut_bringup` ([ROSOrin 실행 안내](malbut_bringup/README.md))
 - 홈캠 패키지: `homecam_media_agent`, `homecam_detector`
-- 홈캠 웹·백엔드: `homecam_web`
+- 홈캠 웹·백엔드: `malbut_web`
 - 대화·에이전트 계약 패키지: `malbut_agent_server`
 
 `malbut_description`의 차체, 메카넘 휠, 깊이 카메라, LiDAR, 마이크
@@ -738,7 +738,7 @@ clock이 모두 이어진 경우에만 허용하므로 전원 OFF 중 이동 후
 
 ## 9. 홈캠 웹·백엔드
 
-`homecam_web`에는 모바일 PWA, 장치 API, 이벤트·녹화 데이터 모델과 AWS KVS·
+`malbut_web`에는 모바일 PWA, 장치 API, 이벤트·녹화 데이터 모델과 AWS KVS·
 Web Push broker 참조 구현이 함께 있습니다. ROS 장치 측 `homecam_agent`는
 배포된 백엔드의 HTTPS 주소와 관리자가 발급한 장치 token을 사용해 heartbeat,
 세션 발급, 이벤트, 지도·현재 위치와 목적지 주행 명령 API를 호출합니다.
@@ -747,14 +747,14 @@ Web Push broker 참조 구현이 함께 있습니다. ROS 장치 측 `homecam_ag
 탐색에서 제외합니다. 웹 검증은 Node.js 22.13 이상에서 별도로 실행합니다.
 
 ```bash
-cd ~/ros2_ws/src/malbut/homecam_web
+cd ~/ros2_ws/src/malbut/malbut_web
 npm ci
 npm run lint
 npm test
 ```
 
 PostgreSQL을 포함한 로컬 실행, ALB Cognito 인증 환경 변수와 AWS CDK 사용법은
-[`homecam_web/README.md`](homecam_web/README.md)를 확인합니다.
+[`malbut_web/README.md`](malbut_web/README.md)를 확인합니다.
 
 AWS 계정 ID, ARN, 장치 token, IAM 자격 정보, broker secret과 VAPID private key는
 Git에 저장하지 않습니다. 실제 운영값은 팀의 AWS 비밀 관리 서비스와 배포
@@ -843,7 +843,7 @@ GitHub Actions의 **Run workflow**는 전체 검사를 수행한다. 오래 걸�
 문구·주석·CSS 모양만 고정하는 검사는 추가하지 않는다. 수동 GPU 검사는 명시적으로
 실행하며 기본 CI에서 모델 다운로드·실제 추론을 하지 않는다.
 
-웹 단위 검사: `cd homecam_web && npm test`. 빌드까지 검사하려면 `npm run test:full`.
+웹 단위 검사: `cd malbut_web && npm test`. 빌드까지 검사하려면 `npm run test:full`.
 
 ```bash
 ros2 topic list
