@@ -213,7 +213,9 @@ Bringup이 제조사 프로세스를 자동으로 종료하지는 않는다.
 점검에서 사용한 모델·마이크·출력 스트림은 반환 전에 해제하고,
 같은 Python 실행 파일·모델·장치 설정으로 실제 노드를 시작한다.
 실패 출력의 `phase`로 설정·ROS 타입·TTS 출력·STT 모델/마이크 중 실패 단계를 확인한다.
-예외 원문, API 키, 마이크 샘플은 로그에 출력하지 않는다.
+예외 원문, API 키, 마이크 샘플은 로그에 출력하지 않는다. 단, Malbut 코드가 정한
+고정 메시지(예: `whisper.cpp requires rebuilding the packaged ABI 3 bridge`)와
+PortAudio 장치 오류는 `detail`로 함께 출력해 웹의 Bringup 종료 메시지에 나온다.
 
 Preflight는 **유료 API 요청을 보내지 않는다**. 키의 유효성·API 접근 권한·네트워크·
 실제 음성 합성은 검증하지 않는다. 모델 로딩 시 GPU를 요청하지만 CUDA에서 실제

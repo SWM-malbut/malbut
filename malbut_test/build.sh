@@ -44,7 +44,32 @@ for package_path in "${package_paths[@]}"; do
 done
 # Check and prepare speech before the expensive cloud/ROS build.
 case "${MALBUT_BUILD_SPEECH:-1}" in
-  0) ;;
+  0)
+    # Skipping the speech build keeps the cached whisper bridge. Python rejects
+    # an older ABI at speech preflight, so fail here with the remedy instead.
+    speech_cache="${XDG_CACHE_HOME:-$HOME/.cache}/malbut_speech"
+    whisper_build="${MALBUT_STT_BUILD_DIR:-$speech_cache/whisper-cpp-build}"
+    bridge_library="$whisper_build/bin/libmalbut_whisper.so"
+    if [[ -e "$bridge_library" ]]; then
+      /usr/bin/python3 - "$bridge_library" "$robot_source_dir/malbut_stt/malbut_stt/cpp_transcription.py" <<'PY'
+import ctypes, pathlib, re, sys
+library_path, adapter_path = sys.argv[1], sys.argv[2]
+expected = int(re.search(r'mb_whisper_abi_version\(\) != (\d+)', pathlib.Path(adapter_path).read_text()).group(1))
+try:
+    library = ctypes.CDLL(library_path)
+    library.mb_whisper_abi_version.restype = ctypes.c_int
+    actual = library.mb_whisper_abi_version()
+except (OSError, AttributeError) as error:
+    raise SystemExit(f"Cached speech bridge cannot be checked ({error}); rebuild it: MALBUT_BUILD_SPEECH=1")
+if actual != expected:
+    raise SystemExit(f"Cached speech bridge is ABI {actual}, malbut_stt needs ABI {expected}. "
+                     "Run build.sh once with MALBUT_BUILD_SPEECH=1 (needs cmake, nvcc; see setup.sh).")
+print(f"Cached speech bridge ABI {actual} matches malbut_stt.")
+PY
+    else
+      echo "No cached speech bridge at $bridge_library; Bringup needs speech:=false or MALBUT_BUILD_SPEECH=1." >&2
+    fi
+    ;;
   1)
     speech_cache="${XDG_CACHE_HOME:-$HOME/.cache}/malbut_speech"
     speech_runtime="${MALBUT_SPEECH_RUNTIME:-$speech_cache/runtime}"

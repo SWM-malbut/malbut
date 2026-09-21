@@ -203,6 +203,8 @@ LAUNCH_LOG = '''[INFO] [speech_preflight-12]: process started with pid [4321]
 [ERROR] [speech_preflight-12]: process has died [pid 4321, exit code 1, cmd '/x/speech_preflight'].
 [ERROR] [launch]: Caught exception in launch (see debug for traceback): \
 Bringup child exited: speech_preflight-12
+[ERROR] [launch]: Caught exception in launch (see debug for traceback): \
+Cannot shutdown a ROS adapter that is not running
 [ERROR] [nav2_container-1]: process has died [pid 4300, exit code -2, cmd '/x/container'].
 [ERROR] [system_manager-8]: process has died [pid 4310, exit code -15, cmd '/x/manager'].
 '''

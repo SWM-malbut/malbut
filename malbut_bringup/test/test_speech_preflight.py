@@ -81,7 +81,27 @@ def test_invalid_configuration_rejects_before_runtime_checks(checks, capsys, arg
     assert checks.calls == []
     assert json.loads(capsys.readouterr().err) == {
         'event': 'speech_preflight_failed', 'phase': 'configuration', 'error_type': 'ValueError',
+        'detail': 'invalid_preflight_configuration',
     }
+
+
+def test_known_local_failures_are_named_and_others_stay_hidden(checks, capsys, monkeypatch):
+    """A stale whisper bridge is a common robot failure; its fixed message may be shown."""
+    def stale(*_args, **_kwargs):
+        raise ValueError('whisper.cpp requires rebuilding the packaged ABI 3 bridge')
+
+    monkeypatch.setattr('malbut_stt.preflight.check_stt', stale)
+    assert preflight.main([]) == 2
+    assert json.loads(capsys.readouterr().err) == {
+        'event': 'speech_preflight_failed', 'phase': 'stt_model_and_microphone',
+        'error_type': 'ValueError',
+        'detail': 'whisper.cpp requires rebuilding the packaged ABI 3 bridge',
+    }
+    assert preflight.safe_detail(ValueError('sk-secret was rejected by the API')) == ''
+    assert preflight.safe_detail(RuntimeError('invalid_agent_configuration x')) == ''
+    device_error = type('PortAudioError', (Exception,), {'__module__': 'sounddevice'})
+    assert preflight.safe_detail(device_error('Error querying device 0')) == (
+        'PortAudioError: Error querying device 0')
 
 
 def test_peer_mode_never_opens_microphone_or_audio_output(checks, capsys):

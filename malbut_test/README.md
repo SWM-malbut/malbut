@@ -108,6 +108,11 @@ YOLO 소스도 적용본 안에 있으므로 별도로 다운로드하지 않는
 STT 네이티브 빌드는 `nproc`으로 현재 프로세스에서 사용 가능한 CPU 수를 확인해 자동으로 병렬 빌드한다.
 CUDA 없는 CI나 센서 전용 빌드는 `MALBUT_BUILD_SPEECH=0 bash src/malbut/build.sh`로
 음성 환경·네이티브 빌드를 생략할 수 있으며, 그 결과로 실행할 때는 `speech:=false`를 지정한다.
+`0`은 캐시된 whisper 브리지(`~/.cache/malbut_speech/whisper-cpp-build`)를 그대로 쓴다.
+`malbut_stt`가 요구하는 브리지 ABI가 바뀌면(예: 2→3) `build.sh`가 이 불일치를 찾아
+실패하므로, 그때는 `MALBUT_BUILD_SPEECH=1`로 한 번 빌드한다(`cmake`·`nvcc` 필요, 없으면
+`setup.sh`). 그렇지 않으면 음성 사전 점검이 `whisper.cpp requires rebuilding the
+packaged ABI 3 bridge`로 실패해 Bringup이 종료된다.
 
 실기기 비교에서 대용량 Depth 점군 수신과 TF 지연이 연결되어, costmap은 LiDAR만
 사용한다([Depth costmap을 쓰지 않는 이유](malbut_bringup/README.md#depth-costmap을-쓰지-않는-이유)).

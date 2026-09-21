@@ -40,7 +40,8 @@ def failure_summary(text, limit=400):
     reasons = [match.group(1).strip() for line in lines
                if (match := LAUNCH_ERROR.search(line))]
     if reasons:
-        parts.append(reasons[-1])
+        # The first launch error is the cause; later ones come from the shutdown.
+        parts.append(reasons[0])
     summary = '; '.join(dict.fromkeys(part for part in parts if part))
     return summary[:limit]
 
