@@ -13,6 +13,7 @@
   <depend>ament_index_python</depend>
   <depend>malbut_interfaces</depend>
   <depend>rclpy</depend>
+  <depend>rcl_interfaces</depend>
   <depend>rosidl_runtime_py</depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>

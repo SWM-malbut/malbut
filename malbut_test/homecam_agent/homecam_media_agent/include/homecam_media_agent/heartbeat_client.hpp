@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <nlohmann/json.hpp>
 
 namespace homecam_media_agent
 {
@@ -24,6 +25,15 @@ struct HeartbeatStatus
   std::string source_profile{"unknown"};
   std::string image_topic;
   std::uint64_t frames_received{0};
+  std::optional<nlohmann::json> fall_settings_report;
+};
+
+struct FallServerSettings
+{
+  std::uint64_t revision{0};
+  bool enabled{false};
+  bool camera_enabled{false};
+  bool cloud_consent{false};
 };
 
 struct DesiredDeviceSettings
@@ -31,6 +41,8 @@ struct DesiredDeviceSettings
   std::optional<bool> camera_enabled;
   std::optional<bool> microphone_enabled;
   std::optional<bool> monitoring_enabled;
+  std::optional<FallServerSettings> fall;
+  std::string fall_reason{"server_settings_missing"};
 };
 
 class HeartbeatClient
@@ -41,7 +53,8 @@ public:
   bool post(
     const HeartbeatStatus & status,
     DesiredDeviceSettings * desired,
-    std::string * error) const;
+    std::string * error,
+    std::string * failure_code = nullptr) const;
 
 private:
   std::string backend_url_;

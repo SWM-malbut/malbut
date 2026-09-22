@@ -471,7 +471,7 @@ jobs:
           # ament_python is provided by colcon's build plugin.
           python3 -c 'import colcon_ros.task.ament_python.build'
           rosdep install \
-            --from-paths src/malbut/homecam_agent \
+            --from-paths src/malbut/homecam_agent src/malbut/malbut_interfaces \
             --ignore-src \
             --skip-keys "ament_python python3-torchvision-pip python3-ultralytics-pip" \
             --rosdistro humble \

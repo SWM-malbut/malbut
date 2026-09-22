@@ -28,7 +28,9 @@ def _launch(name, **overrides):
 
 
 def test_robot_reuses_media_with_real_camera_and_no_duplicate_detector():
-    actions, context = _launch("homecam_robot.launch.py", device_id="registered-robot")
+    actions, context = _launch("homecam_robot.launch.py", device_id="registered-robot",
+                               fall_bridge_runtime_id="bridge", fall_manager_runtime_id="manager",
+                               fall_vlm_runtime_id="vlm")
     include = next(action for action in actions if isinstance(action, IncludeLaunchDescription))
     options = {
         name: perform_substitutions(context, normalize_to_list_of_substitutions(value))
@@ -48,6 +50,9 @@ def test_robot_reuses_media_with_real_camera_and_no_duplicate_detector():
     assert parameters["odom_topic"] == "/odom"
     assert parameters["device_id"] == "registered-robot"
     assert parameters["use_sim_time"] is False
+    assert parameters["fall_bridge_runtime_id"] == "bridge"
+    assert parameters["fall_manager_runtime_id"] == "manager"
+    assert parameters["fall_vlm_runtime_id"] == "vlm"
 
 
 def test_standalone_aurora_keeps_optional_detector_compatibility():

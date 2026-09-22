@@ -495,7 +495,17 @@ def test_fall_monitor_starts_once_after_readiness(launch_module, fall_config, en
     assert len(nodes) == 1
     node = nodes[0]
     assert node.node_package == 'malbut_agent_server'
-    assert evaluate_parameters(context, node._Node__parameters)[0] == {'use_sim_time': False}
+    parameters = evaluate_parameters(context, node._Node__parameters)[0]
+    assert parameters['use_sim_time'] is False
+    from uuid import UUID
+    assert UUID(parameters['runtime_id'])
+    assert UUID(parameters['manager_runtime_id'])
+    manager = next(item for item in ready if isinstance(item, Node)
+                   and item.node_executable == 'system_manager')
+    bindings = evaluate_parameters(context, manager._Node__parameters)[0]
+    assert bindings['fall_vlm_runtime_id'] == parameters['runtime_id']
+    assert bindings['fall_manager_runtime_id'] == parameters['manager_runtime_id']
+    assert UUID(bindings['fall_bridge_runtime_id'])
     arguments = [perform_substitutions(context, arg) for arg in node.cmd[1:]]
     assert arguments[:3] == ['--config', str(fall_config), '--execute']
     remaps = [(perform_substitutions(context, src), perform_substitutions(context, dst))
@@ -505,6 +515,27 @@ def test_fall_monitor_starts_once_after_readiness(launch_module, fall_config, en
     assert not (fall_config.parent / 'journal.sqlite').exists()
     with pytest.raises(RuntimeError, match='Robot readiness check failed'):
         _readiness_exit(actions, context, returncode=1)
+
+
+def test_startup_binding_is_shared_with_media_and_changes_on_new_launch(
+        launch_module, fall_config):
+    context = _context(launch_module, mode='navigation', start_navigation='false',
+                       fall_monitor='true', fall_config=str(fall_config))
+    context.environment['HOMECAM_BACKEND_URL'] = 'https://robot.example.com'
+    bindings = []
+    for _ in range(2):
+        actions = launch_module._setup(context)
+        media = next(dict(item.launch_arguments) for item in _includes(actions)
+                     if 'fall_bridge_runtime_id' in dict(item.launch_arguments))
+        ready = _readiness_exit(actions, context)
+        manager = next(item for item in ready if isinstance(item, Node)
+                       and item.node_executable == 'system_manager')
+        params = evaluate_parameters(context, manager._Node__parameters)[0]
+        for peer in ('bridge', 'manager', 'vlm'):
+            field = 'fall_' + peer + '_runtime_id'
+            assert params[field] == media[field]
+        bindings.append(params)
+    assert bindings[0]['fall_bridge_runtime_id'] != bindings[1]['fall_bridge_runtime_id']
 
 
 @pytest.mark.parametrize('mode', ['sensors', 'mapping'])

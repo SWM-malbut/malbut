@@ -17,6 +17,9 @@ def generate_launch_description() -> LaunchDescription:
         "audio_source": "default",
         "audio_sink": "default",
         "microphone_enabled": "true",
+        "fall_bridge_runtime_id": "",
+        "fall_manager_runtime_id": "",
+        "fall_vlm_runtime_id": "",
     }
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=value)

@@ -170,6 +170,8 @@ def selection(paths, full=False, base=None):
                 path = 'malbut_autonomy/' + path
         if path.startswith('malbut_interfaces/'):
             interface = path.removeprefix('malbut_interfaces/')
+            if interface in {'msg/FallSettingsSnapshot.msg', 'msg/FallSettingsReport.msg'}:
+                flags['homecam'] = True
             speech_only = interface in SPEECH_INTERFACES or (
                 interface == 'CMakeLists.txt' and speech_cmake_additions(original_path, base))
             if speech_only:

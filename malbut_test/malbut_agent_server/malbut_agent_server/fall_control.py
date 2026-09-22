@@ -33,11 +33,13 @@ def _time(value):
 class FallSettingsControl:
     """Event-loop confined control; replayed messages cannot renew consent."""
 
-    def __init__(self, adapter, *, manager_runtime_id='', clock=time.monotonic):
+    def __init__(self, adapter, *, manager_runtime_id='', runtime_id='', clock=time.monotonic):
         if manager_runtime_id != '' and not _id(manager_runtime_id):
             raise ValueError('invalid startup Manager ID')
         self.adapter, self._clock = adapter, clock
-        self.runtime_id = str(uuid4())
+        if runtime_id != '' and not _id(runtime_id):
+            raise ValueError('invalid startup VLM ID')
+        self.runtime_id = runtime_id or str(uuid4())
         self.manager_runtime_id = manager_runtime_id
         now = clock()
         if not _time(now):

@@ -1,14 +1,18 @@
 # 낙상 감지 Manager–VLM 호출 명세
 
 작성일: 2026-09-20
-수정일: 2026-09-23 — VLM 설정 Service·상태 발행·연결 확인 수신과 5초/15초 중단 구현.
+수정일: 2026-09-23 — 홈캠 → Manager → VLM 설정 전달과 적용 결과 회신 연결.
 
-상태: **VLM 쪽 수신·회신 구현. 웹·홈캠·Manager 쪽 전달은 미구현**.
+상태: **로봇 안의 설정 전달·적용 회신 구현. 서버 응답 확장·웹 저장과 표시는 미구현**.
 `ApplyFallSettings.srv`, `FallRuntimeStatus.msg`, `FallControlHeartbeat.msg`,
 `FallSettingsSnapshot.msg`, `FallSettingsReport.msg`를 `malbut_interfaces`에 만들고 빌드 목록에 추가했다.
 필드 이름·타입은 아래 표와 같으며 `malbut_test` 적용본에도 반영했다.
 VLM은 설정 Service를 열고 연결 확인 메시지를 받으며, 1초마다 실행 상태를 보낸다.
-웹 저장·HTTP 추가 필드·홈캠/Manager 발행·회신 전달은 아직 연결하지 않았다.
+홈캠은 기존 heartbeat 응답에서 `fallSettings`를 읽어 Manager에 보내며,
+Manager는 설정 적용 Service를 호출하고 실제 회신만 홈캠에 돌려보낸다.
+홈캠은 그 결과를 다음 heartbeat의 `fallSettingsReport`에 넣는다.
+서버가 유효한 `fallSettings`를 보내지 않으면 감지를 켜거나 보고 필드를 추가하지 않는다.
+서버의 소유자 설정 저장·응답 확장·보고 저장·웹 표시는 아직 구현하지 않았다.
 Manifest는 대화 Agent가 설정을 바꾸는 경로가 되지 않도록 실제 등록 폴더에 추가하지 않았다.
 기존 JSON 설정·상태 토픽은 실행기에서 제거했다. 질문·답변·사건 이벤트는 기존 JSON 형식을 유지한다.
 
@@ -20,9 +24,9 @@ Manifest는 대화 Agent가 설정을 바꾸는 경로가 되지 않도록 실�
 |---|---|---|
 | 낙상 감지 설정 적용 | Service / Capability Manifest | Manager가 전달한 설정을 적용하고 결과를 회신 |
 | 실행 상태 보고 | Topic | 적용 설정·실행기·Cloud 요청의 현재 상태 보고 |
-| Manager 연결 확인 | Topic, VLM 수신 구현, 3.5절 | Manager 연결과 서버 설정을 마지막으로 확인한 시각 전달 |
-| 서버 설정 전달 | 홈캠 → Manager Topic 제안, 3.7절 | 인증된 서버에서 받은 설정과 확인 시각 전달 |
-| 적용 결과 회신 | Manager → 홈캠 Topic → 서버 제안, 3.8절 | VLM의 설정 적용 결과를 웹에 전달 |
+| Manager 연결 확인 | Topic, 양쪽 구현, 3.5절 | Manager 연결과 서버 설정을 마지막으로 확인한 시각 전달 |
+| 서버 설정 전달 | 홈캠 → Manager Topic 구현, 3.7절 | 인증된 서버에서 받은 설정과 확인 시각 전달 |
+| 적용 결과 회신 | Manager → 홈캠·HTTP 요청 구현, 3.8절 | VLM의 실제 적용 결과 전달. 서버 저장·웹 표시는 남음 |
 | 영상 분석 | 기존 실행 코어 → Cloud 어댑터 | 낙상 후보와 주기적 확인에 필요한 실제 영상 분석 |
 
 설정 적용 Service는 영상 분석이 끝날 때까지 기다리지 않는다.
@@ -196,10 +200,14 @@ string reason_code
 - 실행 ID는 프로세스를 켤 때 새로 만든다. 실행 ID 자체에는 앞뒤 순서가 없고 인증 정보도 아니다.
   새 실행을 등록하는 경로는 일반 상태 메시지 수신과 구분한다. 메시지가 왔다는 이유로 현재 실행을 교체하지 않는다.
 
-현재 VLM 구현은 시작 시 읽기 전용 ROS 파라미터 `manager_runtime_id`로 Manager 실행 ID를 받는다.
+Bringup은 VLM이 켜지는 navigation 실행마다 Manager·홈캠·VLM ID를 새로 만들어
+각 노드의 읽기 전용 파라미터로 전달한다. VLM은 `manager_runtime_id`, `runtime_id`를,
+Manager와 홈캠은 `fall_manager_runtime_id`, `fall_bridge_runtime_id`, `fall_vlm_runtime_id`를 받는다.
+다른 실행의 상태 메시지를 받았다고 ID를 바꾸지 않는다. 단독 실행에서 ID를 생략하면
+설정 전달은 켜지지 않는다. 독립 재시작은 기존 Bringup 전체 종료·재시작 정책을 따른다.
 값이 없으면 설정을 거부하고 대기한다. 다른 Manager ID의 메시지가 와도 바꿔 받지 않는다.
 Manager가 재시작하면 배포 제어부가 새 ID를 확인하고 VLM도 새 ID로 다시 시작해야 한다.
-이 파라미터 전달·실행 등록 자동화와 ROS 접근 권한 제한은 아직 연결하지 않았다.
+로봇 안의 ID 전달은 구현했고, 서버의 현재 실행 등록과 ROS 접근 권한 제한은 남아 있다.
 ID 일치 검사는 이전 실행의 메시지를 거르는 용도이며 호출자 인증이 아니다.
 
 | 재시작한 프로그램 | 재개 전에 확인할 것 |
@@ -351,7 +359,7 @@ Manager가 살아 있는 것과 설정 서버에서 최신 설정을 확인할 �
 
 ### 3.5 Manager → VLM 연결 확인 메시지
 
-아래 자료형과 VLM 수신 코드를 구현했다. Manager의 발행 코드는 아직 없으며 설정 요청과 구분한다.
+아래 자료형과 Manager 발행·VLM 수신 코드를 구현했다. 설정 요청과 별도로 1초마다 보낸다.
 
 - Topic: `/malbut/falls/control/heartbeat`
 - 타입: `malbut_interfaces/msg/FallControlHeartbeat`
@@ -442,8 +450,8 @@ float64 sent_at
 - HTTP 인증 실패나 잘못된 설정 응답은 현재 확인을 무효로 처리하고 새 Cloud 전송을 바로 막는다.
   일시적인 연결 오류·시간 초과는 이전 확인 시각을 유지하되 갱신하지 않는다.
   이후 중단 여부는 아래 15초 기준으로 판단한다.
-- HTTP 응답과 원래 수신 시각을 Manager로 전달하는 ROS 연결, 설정 저장·적용 회신 API의 확장은
-  3.7~3.8절에 제안했으며 아직 구현하지 않았다.
+- HTTP 응답과 원래 수신 시각을 Manager로 전달하는 ROS 연결은 구현했다.
+  설정 저장·적용 회신 API의 서버 쪽 확장은 3.7~3.8절의 제안이며 아직 구현하지 않았다.
   기존 `desired_state_confirmed_` 값이나 저장 허용 Bool만으로 이 확인을 대신하지 않는다.
 
 #### 중단·재개
@@ -477,7 +485,8 @@ float64 sent_at
 
 서버 통신은 기존 홈캠이 담당한다. Manager는 서버 인증키를 받거나 별도 HTTP 조회를 하지 않는다.
 아래 메시지는 인증된 서버 응답을 로봇 안에서 옮기는 용도이며, 사용자가 직접 설정을 바꾸는 창구가 아니다.
-자료형은 구현했고 발행·수신 코드는 아직 연결하지 않았다.
+자료형과 홈캠 발행·Manager 수신을 구현했다. HTTP 작업이 끝난 원래 시각을 기록한다.
+ROS 콜백에서 결과를 늦게 가져오더라도 확인 시각을 새로 찍지 않는다.
 
 - Topic 제안: `/malbut/falls/settings/snapshot`
 - 타입 제안: `malbut_interfaces/msg/FallSettingsSnapshot`
@@ -539,7 +548,10 @@ string reason_code
 
 Manager가 VLM의 설정 적용 응답을 받고, 현재 요청의 실행 ID·설정 번호와 맞는지 확인한 뒤 보낸다.
 설정을 보냈다는 이유만으로 성공을 만들지 않는다. Service 회신이 없으면 적용 결과도 만들지 않는다.
-자료형은 구현했고 발행·수신·HTTP 전송 코드는 아직 연결하지 않았다.
+자료형·Manager 발행·홈캠 수신·HTTP 요청 포함을 구현했다. 서버의 보고 저장은 남아 있다.
+Manager는 Service를 비동기로 호출하며 3초 안에 회신이 없으면 그 요청의 대기를 끝낸다.
+실제 회신 없이 성공·실패 보고를 만들지 않는다. 늦은 회신은 버리고 같은 설정 번호로
+다시 확인할 수 있다. 이 내부 대기 시간은 웹의 6초 ‘회신 없음’ 표시와 별개다.
 
 - Topic 제안: `/malbut/falls/settings/report`
 - 타입 제안: `malbut_interfaces/msg/FallSettingsReport`
@@ -902,26 +914,26 @@ sequenceDiagram
     end
 ```
 
-설정 전달·적용 회신의 연결 형식은 3.5~3.8절의 제안이다.
+설정 전달·적용 회신의 로봇 쪽 코드는 3.5~3.8절을 따른다. HTTP 확장의 서버 쪽 처리는 제안이다.
 그림에서 Manager → 웹 상태 전달도 홈캠의 서버 통신부를 거친다. Manager가 직접 HTTP를 호출하지 않는다.
-현재 실행 등록·발행 권한·실행 상태의 웹 전달은 담당자와 맞춰야 한다.
-그림 중 VLM의 Service 수신·회신, 상태 발행, 연결 확인 수신은 구현했다.
-웹·홈캠·Manager의 송수신과 새 HTTP 필드는 아직 미구현이다.
+Bringup에서 실행 ID를 함께 전달하며, 실제 발행 권한과 서버의 현재 실행 등록은 담당자와 맞춰야 한다.
+그림 중 로봇 안의 설정 전달·적용 회신·양방향 연결 확인은 구현했다.
+웹 저장·서버의 새 HTTP 필드 처리와 실행 상태의 웹 전달은 아직 미구현이다.
 
 ## 6. 현재 코드와의 차이·남은 합의
 
 | 항목 | 현재 코드 | 이번 초안 |
 |---|---|---|
-| 설정 전달 | ApplyFallSettings Service 수신·응답 | Manager 호출부 연결 필요 |
-| 실행 ID·설정 번호 | `runtime_id`, `settings_revision` 검사 | 실행 등록과 Manager ID 전달 자동화 필요 |
+| 설정 전달 | 홈캠 Snapshot → Manager Service 호출 → VLM 적용 | 실제 서버 설정 응답과 검증 필요 |
+| 실행 ID·설정 번호 | Bringup에서 ID 전달, 각 수신부에서 번호 검사 | 서버의 현재 실행 등록·ROS 권한 설정 필요 |
 | 카메라 허용 | VLM은 `camera_enabled`로 판단, 저장 Bool 구독 제거 | 상위 카메라·YOLO 발행 조건 분리 확인 필요 |
-| Cloud 허용 | 동의·Manager 연결·서버 확인 시각·설정 번호 검사 | 서버/홈캠이 실제 확인 시각을 전달해야 함 |
-| 상태 보고 | FallRuntimeStatus를 1초마다 발행 | Manager 수신·웹 표시 연결 필요 |
-| 연결 유지 확인 | VLM은 새 heartbeat 없이 5초가 지나면 중단 | Manager 발행과 VLM 미회신 처리 필요 |
-| 서버 설정 확인 | 확인 시각에서 15초가 지나면 Cloud만 중단 | 서버 fallSettings 필드·홈캠 전달 필요 |
-| 홈캠 → Manager 설정 전달 | 없음 | FallSettingsSnapshot으로 조회 결과·설정·원래 확인 시각 전달 제안 |
-| Manager → 홈캠 → 웹 적용 회신 | 없음 | FallSettingsReport와 heartbeat의 fallSettingsReport 추가 제안 |
-| 새 ROS 타입 | Service 1개·메시지 4개 생성 및 빌드 등록 | VLM 수신·응답에 사용. 홈캠/Manager 연결은 다음 단계 |
+| Cloud 허용 | 동의·Manager 연결·원래 서버 확인 시각·설정 번호 검사 | 실제 서버 연결 검증 필요 |
+| 상태 보고 | VLM 1초 발행·Manager 수신 및 5초 만료 처리 | 실행 상태의 서버 전달·웹 표시 필요 |
+| 연결 유지 확인 | Manager 1초 발행·VLM 5초 만료 시 중단 | 실물에서 재시작·연결 끊김 검증 필요 |
+| 서버 설정 확인 | 홈캠 확인 시각 전달, 15초 경과 시 Cloud만 중단 | 서버 fallSettings 필드 구현 필요 |
+| 홈캠 → Manager 설정 전달 | FallSettingsSnapshot 발행·수신 | 서버 누락·오류 응답에서 임의로 ON 하지 않음 |
+| Manager → 홈캠 → 웹 적용 회신 | 실제 Service 회신을 FallSettingsReport·HTTP로 전달 | 서버 저장·현재 실행 대조·웹 표시 필요 |
+| 새 ROS 타입 | Service 1개·메시지 4개 생성 및 빌드 등록 | 로봇 연결에 사용, 자료형을 홈캠 빌드보다 먼저 생성 |
 | Capability Manifest 등록 | 문서에만 있음 | 전용 설정 연결부를 사용하며 대화 Agent의 일반 명령으로 등록하지 않음 |
 
 - **양방향 1초 확인·5초 미수신 시 끊김은 확정했다.** VLM → Manager 상태 보고와 별도로
@@ -967,3 +979,19 @@ sequenceDiagram
   실패는 메모리 기능의 로그 검사이며 이 작업에서 해당 코드는 수정하지 않았다.
   같은 메모리 테스트를 ROS 환경 없이 별도로 실행하면 42개 모두 통과했다.
   전체 테스트가 통과했다고 보고하지 않으며, 낙상 기능 검사 결과와 구분한다.
+
+### 홈캠–Manager 연결 검증 결과 — 2026-09-23
+
+- 홈캠의 서버 응답 해석·Snapshot 발행, Manager의 비동기 Service 호출·실제 회신 보고,
+  홈캠의 heartbeat 보고 필드 구성을 연결했다.
+- Bringup이 같은 실행 ID 묶음을 홈캠·Manager·VLM에 전달하는지 확인했다.
+  메시지가 도착했다는 이유로 다른 실행 ID를 받아들이지는 않는다.
+- 관련 Python 검사 **495개 통과, 8개 생략**. 생략한 항목은 `aiohttp`가 필요한
+  기존 HTTP 어댑터 모의 테스트다. Manager의 새 순수 로직·ROS 콜백 검사는 40개다.
+- 홈캠 C++ 코드와 실행 파일을 별도 임시 경로에 빌드했다.
+  GStreamer·KVS를 끈 빌드에서 5개 검사 묶음, 총 **47개 테스트**가 통과했다.
+  새 설정·회신 검사는 이 중 8개다. 실제 카메라·KVS·Cloud를 호출하지 않았다.
+- CI 선택 검사 16개·빌드 명령 검사 3개와 변경 코드의 lint·diff 검사를 통과했다.
+  홈캠 빌드가 새 메시지 패키지를 먼저 빌드하도록 배포·CI 명령도 수정했다.
+- 서버 응답·웹 저장·현재 실행 등록·실행 상태의 웹 표시, 실제 DDS 송수신과 실물
+  연결 끊김 시험은 남아 있다. 웹 저장부터 3초 이내 적용을 실측했다는 뜻은 아니다.

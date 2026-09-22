@@ -36,9 +36,9 @@ bash "$script_dir/build_kvs_webrtc_sdk.sh" "$sdk_root"
 colcon_executable="$(command -v colcon)"
 cd -- "$workspace_dir"
 PATH=/usr/bin:/bin "$colcon_executable" --log-base log/malbut_test build \
-  --base-paths "$source_root/homecam_agent/homecam_media_agent" \
+  --base-paths "$source_root/malbut_interfaces" "$source_root/homecam_agent/homecam_media_agent" \
   --build-base build/malbut_test --install-base install/malbut_test \
-  --symlink-install --packages-select homecam_media_agent --cmake-force-configure \
+  --symlink-install --packages-up-to homecam_media_agent --cmake-force-configure \
   --cmake-args -DBUILD_TESTING=OFF -DHOMECAM_ENABLE_KVS=ON -DHOMECAM_ENABLE_GSTREAMER=ON \
   -DHOMECAM_ENABLE_CURL=ON "-DKVS_WEBRTC_SDK_ROOT=$sdk_root" \
   "-DHOMECAM_KVS_CA_CERT_PATH=$sdk_root/certs/cert.pem" "$@"

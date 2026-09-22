@@ -14,6 +14,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 from rclpy.task import Future
+from rcl_interfaces.msg import ParameterDescriptor
 
 from malbut_interfaces.action import ExecuteMission
 from malbut_interfaces.msg import MissionStatus, SystemState as SystemStateMsg
@@ -69,6 +70,16 @@ class SystemManagerNode(Node):
         self._scheduler = MissionScheduler(self._state)
         self._server_group = ReentrantCallbackGroup()
         self._client_group = ReentrantCallbackGroup()
+        self._fall_link = None
+        fall_ids = {
+            key: self.declare_parameter(
+                'fall_' + key + '_runtime_id', '',
+                descriptor=ParameterDescriptor(read_only=True),
+            ).value
+            for key in ('manager', 'bridge', 'vlm')
+        }
+        if any(fall_ids.values()) and not all(fall_ids.values()):
+            raise ValueError('all fall startup IDs must be provided together')
 
         configured_directory = self.declare_parameter(
             'manifest_directory',
@@ -129,6 +140,13 @@ class SystemManagerNode(Node):
             callback_group=self._server_group,
         )
 
+        if all(fall_ids.values()):
+            from .fall_settings_link import FallSettingsLink
+            self._fall_link = FallSettingsLink(
+                self, manager_id=fall_ids['manager'],
+                bridge_id=fall_ids['bridge'], vlm_id=fall_ids['vlm'],
+            )
+
         with self._lock:
             effects = self._scheduler.set_ready(True)
             self._accepting_goals = True
@@ -144,6 +162,8 @@ class SystemManagerNode(Node):
     def destroy_node(self) -> bool:
         """Stop accepting work and release dynamic Action clients."""
         self._accepting_goals = False
+        if self._fall_link is not None:
+            self._fall_link.close()
         if hasattr(self, '_action_server'):
             self._action_server.destroy()
         if hasattr(self, '_executor_bridge'):
@@ -152,6 +172,8 @@ class SystemManagerNode(Node):
 
     def begin_shutdown(self) -> int:
         """Stop admission and cancel every non-terminal managed mission."""
+        if self._fall_link is not None:
+            self._fall_link.close()
         with self._effects_lock:
             self._accepting_goals = False
             with self._lock:

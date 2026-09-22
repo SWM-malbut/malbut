@@ -72,8 +72,9 @@ def test_build_selects_only_robot_copy_and_separate_output(tmp_path, layout):
     assert result.returncode == 0, result.stderr
     cloud_arguments, arguments = [json.loads(line)
                                   for line in recorded.read_text().splitlines()]
-    assert cloud_arguments[cloud_arguments.index('--packages-select') + 1] == \
+    assert cloud_arguments[cloud_arguments.index('--packages-up-to') + 1] == \
         'homecam_media_agent'
+    assert str(robot / 'malbut_interfaces') in cloud_arguments
     assert '-DHOMECAM_ENABLE_KVS=ON' in cloud_arguments
     assert '-DHOMECAM_ENABLE_GSTREAMER=ON' in cloud_arguments
     assert cloud_arguments[cloud_arguments.index('--install-base') + 1] == \

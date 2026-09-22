@@ -49,8 +49,10 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
                 self.monitor, max_source_age_s=settings.max_source_age_s)
             manager = self.declare_parameter(
                 'manager_runtime_id', '', descriptor=ParameterDescriptor(read_only=True)).value
+            runtime = self.declare_parameter(
+                'runtime_id', '', descriptor=ParameterDescriptor(read_only=True)).value
             self.control = FallSettingsControl(
-                self.inputs, manager_runtime_id=manager, clock=clock)
+                self.inputs, manager_runtime_id=manager, runtime_id=runtime, clock=clock)
             self._bridge = CvBridge()
             self._last_image = -float('inf')
             self._last_processed_image = None

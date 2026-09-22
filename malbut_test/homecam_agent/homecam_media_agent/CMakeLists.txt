@@ -18,6 +18,7 @@ set(HOMECAM_KVS_CA_CERT_PATH "" CACHE FILEPATH
   "CA bundle passed to the upstream KVS sample support code")
 
 find_package(ament_cmake REQUIRED)
+find_package(malbut_interfaces REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -166,6 +167,7 @@ add_library(homecam_media_core
   src/pipeline_builder.cpp
   src/http_runtime.cpp
   src/heartbeat_client.cpp
+  src/fall_settings_bridge.cpp
   src/session_client.cpp
   src/kvs_transport.cpp
   ${HOMECAM_KVS_COMMON_SOURCE})
@@ -185,7 +187,7 @@ if(KVS_WEBRTC_SAMPLE_INCLUDE_DIR)
       "${KVS_WEBRTC_SAMPLE_INCLUDE_DIR}"
       "${KVS_WEBRTC_DEPENDENCY_INCLUDE_DIR}")
 endif()
-ament_target_dependencies(homecam_media_core rclcpp)
+ament_target_dependencies(homecam_media_core rclcpp malbut_interfaces)
 
 add_executable(homecam_media_agent_node src/media_agent_node.cpp)
 target_link_libraries(
@@ -193,7 +195,7 @@ target_link_libraries(
 target_include_directories(homecam_media_agent_node
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 ament_target_dependencies(
-  homecam_media_agent_node nav_msgs rclcpp sensor_msgs std_msgs)
+  homecam_media_agent_node nav_msgs rclcpp sensor_msgs std_msgs malbut_interfaces)
 if(HOMECAM_HAVE_KVS)
   # SDK-enabled deployment keeps the pinned SDK tree at this exact path.
   # Embed it so systemd does not depend on a shell LD_LIBRARY_PATH.
@@ -233,8 +235,13 @@ if(BUILD_TESTING)
   target_link_libraries(test_kvs_transport homecam_media_core)
   ament_add_gtest(test_session_client test/test_session_client.cpp)
   target_link_libraries(test_session_client homecam_media_core)
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/test_fall_settings_bridge.cpp")
+    ament_add_gtest(test_fall_settings_bridge test/test_fall_settings_bridge.cpp)
+    target_link_libraries(test_fall_settings_bridge homecam_media_core)
+  endif()
 endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(homecam_media_core)
+ament_export_dependencies(rclcpp malbut_interfaces)
 ament_package()

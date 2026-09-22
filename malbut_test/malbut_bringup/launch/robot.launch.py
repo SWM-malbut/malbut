@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from uuid import uuid4
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -60,12 +61,14 @@ def _setup(context):
     fall_inputs = (prepare_fall_monitor(value('fall_monitor'), value('fall_config'))
                    if navigating else None)
     fall_monitor = None
+    fall_ids = {key: str(uuid4()) for key in ('manager', 'bridge', 'vlm')} if fall_inputs else {}
     if fall_inputs is not None:
         fall_config, fall_image_topic = fall_inputs
         fall_monitor = Node(
             package='malbut_agent_server', executable='malbut-fall-monitor',
             output='screen', arguments=['--config', fall_config, '--execute'],
-            parameters=[{'use_sim_time': False}],
+            parameters=[{'use_sim_time': False, 'manager_runtime_id': fall_ids['manager'],
+                         'runtime_id': fall_ids['vlm']}],
             remappings=[(fall_image_topic, value('rgb_topic'))],
         )
     speech = None
@@ -160,6 +163,7 @@ def _setup(context):
             'image_topic': value('rgb_topic'),
             'camera_info_topic': value('camera_info_topic'),
             'odom_topic': value('odom_topic'),
+            **{'fall_' + key + '_runtime_id': value for key, value in fall_ids.items()},
         }))
     if navigation_path:
         actions.append(_include(navigation_path, navigation_arguments, remappings=[
@@ -231,7 +235,8 @@ def _setup(context):
     manager = Node(
         package='malbut_system_manager', executable='system_manager',
         name='system_manager', output='screen',
-        parameters=[{'use_sim_time': False}],
+        parameters=[{'use_sim_time': False, **{
+            'fall_' + key + '_runtime_id': val for key, val in fall_ids.items()}}],
     )
 
     def ready(event, launch_context):

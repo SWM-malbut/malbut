@@ -200,8 +200,9 @@ def test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose(tmp_pat
             self.timers = []
 
         def declare_parameter(self, name, default, descriptor):
-            assert name == 'manager_runtime_id' and default == '' and descriptor.read_only
-            return SimpleNamespace(value='manager-1')
+            assert default == '' and descriptor.read_only
+            return SimpleNamespace(value={'manager_runtime_id': 'manager-1',
+                                          'runtime_id': 'vlm-1'}[name])
 
         def create_service(self, srv, name, callback):
             self.services[name] = callback
