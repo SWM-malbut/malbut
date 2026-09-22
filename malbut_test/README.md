@@ -50,6 +50,8 @@ STT·Agent·TTS 음성 기능과 실기기용 간단한 웹 테스트 패널은 
 `build.sh` 하나가 음성 런타임·STT CUDA 라이브러리와 ROS 패키지를 빌드하고,
 `robot.launch.py` 하나가 선택한 로봇 구성과 STT·Agent·TTS를 기본으로 함께 실행한다.
 홈캠 영상 전송도 위 빌드에 포함한다. 서비스 웹 자체는 AWS에 별도 배포한다.
+Cloud VLM도 설정 파일이 준비되면 센서 준비 후 함께 시작한다. 설정 경로와
+감지·전송 전 대기 조건은 [Bringup 안내](malbut_bringup/README.md#cloud-vlm-자동-실행)를 따른다.
 클라우드 연결과 Bringup을 통한 영상 실행은 [README_CLOUD.md](README_CLOUD.md)를 따른다.
 제조사 하드웨어 launch가 차체·센서·로봇 description과 TF를 제공하므로 시뮬레이션용 description을
 별도로 실행하지 않는다. 순찰은 기존 `malbut_autonomy/malbut_patrol`의 복사본이다.

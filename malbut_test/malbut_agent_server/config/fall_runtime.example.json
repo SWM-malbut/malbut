@@ -9,7 +9,7 @@
   "buffer_frames": null,
   "input_fps": null,
   "max_source_age_s": null,
-  "control_lease_s": null,
+  "control_lease_s": 5,
   "policy": {
     "retry_interval_s": null,
     "max_person_observation_age_s": null,

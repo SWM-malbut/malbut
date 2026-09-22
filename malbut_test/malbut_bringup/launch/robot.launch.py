@@ -14,6 +14,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node, SetRemap
 
+from malbut_bringup.fall_setup import prepare_fall_monitor
 from malbut_bringup.perception_setup import validate_perception_files
 
 
@@ -55,6 +56,18 @@ def _setup(context):
     navigation = value('start_navigation') == 'true'
     if navigating and not perception:
         raise RuntimeError('navigation mode requires perception for FollowPerson')
+    # Fall analysis belongs to normal operation, never mapping or sensor checks.
+    fall_inputs = (prepare_fall_monitor(value('fall_monitor'), value('fall_config'))
+                   if navigating else None)
+    fall_monitor = None
+    if fall_inputs is not None:
+        fall_config, fall_image_topic = fall_inputs
+        fall_monitor = Node(
+            package='malbut_agent_server', executable='malbut-fall-monitor',
+            output='screen', arguments=['--config', fall_config, '--execute'],
+            parameters=[{'use_sim_time': False}],
+            remappings=[(fall_image_topic, value('rgb_topic'))],
+        )
     speech = None
     if value('speech') == 'true':
         # Preserve the venv executable path: resolving its symlink would select
@@ -127,6 +140,11 @@ def _setup(context):
             })
 
     actions = []
+    if fall_monitor is None:
+        reason = ('navigation mode only' if not navigating
+                  else 'fall_monitor=false' if value('fall_monitor') == 'false'
+                  else 'fall_config is missing; set fall_config or MALBUT_FALL_CONFIG')
+        actions.append(LogInfo(msg=f'Cloud VLM startup disabled: {reason}.'))
     if hardware_path:
         actions.append(_include(hardware_path, {
             # This vendor version uses '/' (not '') for unprefixed TF/topics.
@@ -222,17 +240,23 @@ def _setup(context):
         if event.returncode != 0:
             raise RuntimeError('Robot readiness check failed')
         speech_actions = [speech] if speech else []
+        fall_actions = []
+        if fall_monitor is not None:
+            fall_actions = [
+                LogInfo(msg='Starting Cloud VLM; waiting for permissions and Manager settings.'),
+                fall_monitor,
+            ]
         if mapping:
             # Camera/driver startup belongs to Bringup. Only expose the Goal
             # server after sensors are ready so AutoSLAM won't start duplicates.
             # The Goal still starts missing SLAM/Nav2; it never runs by itself.
             return [LogInfo(msg='Sensors ready; starting idle AutoSLAM server.'),
-                    autoslam, *speech_actions]
+                    autoslam, *fall_actions, *speech_actions]
         if navigating:
             return [LogInfo(msg='Robot ready; starting system manager.'),
-                    manager, *speech_actions]
+                    manager, *fall_actions, *speech_actions]
         return [LogInfo(msg='Sensors ready. No navigation or missions were started.'),
-                *speech_actions]
+                *fall_actions, *speech_actions]
 
     def child_exited(event, launch_context):
         if launch_context.is_shutdown or event.action is wait:
@@ -277,6 +301,8 @@ def generate_launch_description():
         'restore_pose': 'true',
         'web_panel': 'false',
         'perception': 'true',
+        'fall_monitor': 'auto',
+        'fall_config': os.environ.get('MALBUT_FALL_CONFIG', '/etc/malbut/fall_runtime.json'),
         'speech': 'true',
         'speech_python_executable': str(speech_runtime / 'bin/python'),
         'stt_model_path': os.environ.get(
@@ -325,6 +351,7 @@ def generate_launch_description():
     }
     choices = {
         'mode': ['sensors', 'navigation', 'mapping'],
+        'fall_monitor': ['auto', 'true', 'false'],
         **{key: ['true', 'false'] for key in (
             'start_hardware', 'start_navigation', 'perception',
             'publish_debug_image', 'pose_memory',

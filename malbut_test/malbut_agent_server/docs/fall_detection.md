@@ -1,10 +1,14 @@
 # 낙상 감지 명세
 
-작성일: 2026-09-18 / 실행 연결 갱신: 2026-09-19
+작성일: 2026-09-18 / 웹 설정·적용 기준 갱신: 2026-09-20
 
 이 문서는 이번에 합의한 **Cloud VLM 전용 흐름**을 기준으로 한다.
 기존 `FALL_DETECTION_FUNCTION_SPEC.md`의 Local VLM 상시 확인·대체 실행은 이번 범위에서 제외한다.
 아래 기능 전체가 구현됐다는 뜻은 아니다. 현재 구현 범위는 5절에서 구분한다.
+
+낙상 감지/VLM의 로봇 자동 실행은 `navigation` 모드만 대상으로 한다.
+`sensors` 모드 제거와 기본 모드 변경은 Bringup 담당자가 진행한다.
+이 문서의 VLM 연결 작업에서 공통 Bringup 모드 목록을 변경하지 않는다.
 
 ## 1. 기능
 
@@ -115,12 +119,187 @@ Cloud가 만든 인물 이름이나 순번을 동일 인물 ID로 믿지 않는�
 
 ### 공통 설정
 
+Capability Manifest와 필드·타입·의미 표는
+[Manager–VLM 호출 명세 초안](fall_manager_contract.md)을 참고한다.
+VLM의 설정 Service·상태 발행·연결 확인 수신은 구현했고, 웹·Manager 전달은 남아 있다.
+
 - 낙상 감지 사용 여부, 카메라 사용 여부, Cloud 영상 전송 동의, 연결 상태를 받는다.
 - 시작 시 모두 꺼진 상태다. 외부 설정을 확인하기 전에 영상을 전송하지 않는다.
 - Cloud 전송 동의는 한 곳에서 관리한다. 주기적 확인과 사건 확인이 전송 직전에 같은 값을 확인한다.
 
+#### 웹에서 설정하고 저장 후 적용
+
+웹에서 아래 두 항목을 따로 설정한다. 저장하면 재부팅이나 Bringup 재실행 없이
+실행 중인 로봇에 적용한다. 이 절은 정한 동작이며, 웹 설정 화면·저장 API·Manager 전달은
+아직 구현하지 않았다.
+
+- **낙상 감지 ON/OFF:** 낙상 감지 기능 사용 여부.
+- **Cloud 영상 전송 동의:** 낙상 확인을 위해 RGB 이미지와 카메라·센서 정보 요약을
+  Cloud VLM으로 보내는 데 대한 동의. 주기적 확인과 사건 확인에 같은 동의를 사용한다.
+- 두 설정은 해당 로봇의 소유자만 변경할 수 있다. 웹에서 버튼을 숨기는 것뿐 아니라
+  저장 API에서도 소유자 여부를 확인한다. 공유받은 사용자의 변경 요청은 거부한다.
+- 영상 저장 동의나 API 키 보유 여부를 Cloud VLM 전송 동의로 대신하지 않는다.
+  기존 사용자의 동의를 임의로 ON으로 만들지 않는다.
+- Cloud 전송 동의가 OFF이면, 낙상 감지가 ON이어도 Cloud에는 보내지 않는다.
+  다른 감지 허용 조건을 만족하는 동안 YOLO-Pose 경로는 유지한다.
+- **영상 저장과 낙상 감지는 분리한다.** 영상 저장 OFF는 KVS 녹화를 끄는 설정이며,
+  낙상 감지나 Cloud VLM 전송까지 끄는 설정으로 사용하지 않는다.
+- 카메라·낙상 감지가 ON이고 실행 조건이 맞으면, 저장 OFF에서도 최근 RGB를 메모리에
+  잠깐 보관한다. Cloud 전송 동의가 ON이면 분석에 보내고, OFF이면 YOLO-Pose로
+  의심 동작만 찾는다. 이 버퍼는 KVS 녹화나 원본 영상의 영구 보관을 대신하지 않는다.
+
+##### 설정 저장부터 로봇 적용까지
+
+아래 흐름은 구현할 동작이다. 웹 → 로봇 전달 방식과 API 필드는 아직 정하지 않았다.
+‘적용 완료’는 설정이 반영됐다는 뜻이지 Cloud 분석이 성공했다는 뜻은 아니다.
+온라인인 로봇을 기준으로 **서버 저장 성공 후 3초 이내 적용·회신 확인**을 목표로 한다.
+저장 성공부터 **6초 동안 최신 설정의 적용 회신이 없으면 ‘회신 없음’**을 표시한다.
+3초는 적용 목표이고, 6초는 웹의 상태 표시 기준이다. 실물에서 검증한 시간은 아니다.
+3초가 지나도 적용을 중단하지 않으며, 6초가 지났다는 이유만으로 저장을 취소하거나
+로봇에서 적용이 실패했다고 단정하지 않는다. 뒤늦은 회신도 현재 실행·최신 설정에
+대한 결과인지 확인한 뒤 반영한다.
+
+```mermaid
+flowchart TD
+    WEB["웹에서 따로 설정<br/>낙상 감지 ON/OFF · Cloud 전송 동의"] --> SAVE{"서버에 저장됐나?"}
+    SAVE -->|아니오| SAVE_ERROR["저장 실패 표시<br/>기존 설정 유지"]
+    SAVE -->|예| PENDING["저장됨 · 로봇 적용 대기<br/>온라인이면 저장 후 3초 이내 적용·회신 목표"]
+    PENDING -. "저장 후 6초 동안 최신 적용 회신 없음" .-> NO_REPLY["웹에 회신 없음 표시<br/>저장한 설정은 유지"]
+    PENDING --> ONLINE{"로봇에 전달할 수 있나?"}
+    ONLINE -->|아니오| WAIT["연결될 때까지 대기"]
+    WAIT -->|다시 연결됨| LATEST["마지막으로 저장한 설정 전달"]
+    ONLINE -->|예| LATEST
+    LATEST --> MANAGER["Manager가 최신 설정을<br/>현재 VLM 실행에 전달"]
+    MANAGER --> APPLY["VLM 실행기가 설정 적용<br/>재시작 없이 반영"]
+    APPLY --> REPLY["적용한 설정 번호와<br/>성공·실패 결과 회신"]
+    APPLY -. "아직 회신이 없고 저장 후 6초 미만" .-> WAIT_REPLY["로봇 적용 대기 유지<br/>적용 완료로 표시하지 않음"]
+    WAIT_REPLY -->|회신 도착| REPLY
+    NO_REPLY -->|뒤늦게 회신 도착| REPLY
+    REPLY --> MATCH{"현재 실행의<br/>최신 설정에 대한 회신인가?"}
+    MATCH -->|아니오| IGNORE["오래된 회신 무시<br/>웹의 최신 상태는 유지"]
+    MATCH -->|예| RESULT{"적용됐나?"}
+    RESULT -->|예| DONE["웹에 적용 완료 표시"]
+    RESULT -->|아니오| APPLY_ERROR["웹에 적용 실패와 이유 표시<br/>저장한 설정은 유지"]
+    classDef settings fill:#eaf0fa,stroke:#6c86b2,color:#283f64;
+    classDef decision fill:#fff4df,stroke:#bd9754,color:#61491d;
+    classDef attention fill:#fbeaea,stroke:#ba7474,color:#742f2f;
+    classDef completed fill:#e9f3ec,stroke:#56866d,color:#173f34;
+    class WEB,LATEST,MANAGER,APPLY,REPLY settings;
+    class SAVE,PENDING,ONLINE,WAIT,WAIT_REPLY,MATCH,RESULT decision;
+    class SAVE_ERROR,IGNORE,APPLY_ERROR,NO_REPLY attention;
+    class DONE completed;
+```
+
+##### 적용된 설정에 따른 동작
+
+설정 변경·연결·모드 변화, Manager 확인 메시지 미수신 5초,
+서버 설정 미확인 15초가 되면 아래 조건을 다시 확인한다.
+오래된 설정 메시지는 무시하며, 이미 적용한 유효한 설정을 그것만으로 끄지는 않는다.
+Cloud 전송 직전에도 같은 조건을 확인한다.
+지도 작성 중에는 낙상 감지를 중단한다. 지도 작성에 필요한 카메라·센서는 계속 사용하며,
+웹에 저장한 감지 ON/OFF·동의 값은 바꾸지 않는다. 웹에는 ‘지도 작성 중 · 낙상 감지 중지’를
+표시한다. 지도 작성이 끝났다는 이유만으로 시작하지 않고, 정상 운용 모드로 전환한 뒤
+최신 설정과 실행 조건을 다시 확인한다. Bringup에서 VLM을 `navigation`에만 시작하는
+제한은 구현했다. 웹의 모드별 상태 표시·Manager 설정 전달은 아직 구현하지 않았다.
+
+```mermaid
+flowchart TD
+    CHECK["부팅·설정 변경·연결·모드 변화<br/>Manager 확인 미수신 5초 / 서버 설정 미확인 15초"] --> VALID{"이번 실행에 적용된 설정이고<br/>Manager 연결 확인이 유지되는가?"}
+    VALID -->|아니오| WAIT_SETTINGS["새 설정을 기다림<br/>낙상용 수집·분석 중단, 버퍼 비움"]
+    VALID -->|예| MAPPING{"지도 작성 모드인가?"}
+    MAPPING -->|예| MAPPING_PAUSE["지도 작성 중 낙상 감지 중지 표시<br/>낙상용 수집·분석 중단, 버퍼 비움"]
+    MAPPING -->|아니오| NAVIGATION{"navigation으로 준비됐나?"}
+    NAVIGATION -->|아니오| MODE_WAIT["navigation 준비 전에는<br/>낙상 감지/VLM 시작 안 함"]
+    NAVIGATION -->|예| ENABLED{"낙상 감지와 카메라가 ON인가?<br/>영상 저장 ON/OFF와는 별개"}
+    ENABLED -->|아니오| STOP["낙상용 수집·분석 중단<br/>낙상용 버퍼 비움"]
+    ENABLED -->|예| DETECT["최근 영상 보관<br/>YOLO-Pose 감지"]
+    DETECT --> CONSENT{"Cloud VLM 전송에 동의했나?"}
+    CONSENT -->|아니오| NO_CLOUD["Cloud 전송 중단<br/>YOLO-Pose 감지는 유지"]
+    CONSENT -->|예| SERVER_SETTINGS{"서버에서 설정을 확인한 지 15초 미만이고<br/>확인한 번호와 적용 번호가 같은가?"}
+    SERVER_SETTINGS -->|아니오| STALE_SETTINGS["새 Cloud 전송 중단<br/>YOLO-Pose 감지는 유지"]
+    SERVER_SETTINGS -->|예| CONNECTED{"Cloud 연결 가능한가?"}
+    CONNECTED -->|아니오| NO_CONNECTION["Cloud 확인을 못한 이유 기록<br/>YOLO-Pose 감지는 유지"]
+    CONNECTED -->|예| READY["Cloud 확인 가능<br/>낙상 후보가 생기거나 확인 주기가 되면 요청"]
+    WAIT_SETTINGS --> CANCEL["대기 중 전송 취소<br/>진행 중 요청도 취소 시도"]
+    MAPPING_PAUSE --> CANCEL
+    STOP --> CANCEL
+    NO_CLOUD --> CANCEL
+    STALE_SETTINGS --> CANCEL
+    classDef detection fill:#e9f3ec,stroke:#56866d,color:#173f34;
+    classDef analysis fill:#eaf0fa,stroke:#6c86b2,color:#283f64;
+    classDef decision fill:#fff4df,stroke:#bd9754,color:#61491d;
+    classDef attention fill:#fbeaea,stroke:#ba7474,color:#742f2f;
+    class CHECK,VALID,MAPPING,NAVIGATION,ENABLED,CONSENT,SERVER_SETTINGS,CONNECTED decision;
+    class DETECT detection;
+    class READY analysis;
+    class WAIT_SETTINGS,MAPPING_PAUSE,MODE_WAIT,STOP,NO_CLOUD,NO_CONNECTION,STALE_SETTINGS,CANCEL attention;
+```
+
+- VLM은 `/homecam/monitoring_enabled` 대신 별도의 `camera_enabled`를 받도록 바꿨다.
+  상위 카메라·YOLO 발행 조건과 Manager 전달은 아직 별도 확인이 필요하다.
+  VLM 수신부 변경만으로 저장 OFF에서 전체 감지가 동작한다고 볼 수 없다.
+- Manager 확인 메시지가 5초 동안 오지 않은 경우와, Cloud 분석 연결만 끊긴 경우를 구분한다.
+  전자는 낙상용 수집도 중단하고, 후자는 다른 허용 조건이 유효하면 YOLO-Pose 감지를 유지한다.
+- 감지 중단·동의 철회로 기존 사건 기록을 지우거나 정상으로 바꾸지 않는다.
+  이미 Cloud로 전송한 영상까지 회수할 수 있다는 뜻은 아니다.
+
+- 저장 직후 설정 전달을 시작한다. 60초/5분의 영상 확인 주기를 기다리지 않는다.
+  설정 적용과 영상 분석 완료는 별개이며, 저장할 때마다 Cloud를 호출하지 않는다.
+- 웹 서버에 저장됐다는 이유만으로 로봇에도 적용됐다고 표시하지 않는다.
+  로봇이 현재 실행에서 최신 설정 번호를 적용했다고 회신해야 **적용 완료**로 표시한다.
+- 로봇이 꺼져 있거나 연결이 끊기면 **저장됨 · 로봇 적용 대기**로 표시한다.
+  저장 후 6초 동안 회신이 없으면 **회신 없음**을 함께 표시하며, 오프라인 여부도 남긴다.
+  다시 연결되면 중간 변경을 차례로 실행하지 않고 마지막으로 저장한 설정을 적용한다.
+- 저장 실패 시 기존 설정을 유지하고 실패를 표시한다. 저장 성공 후 적용만 실패한 경우는
+  저장된 값을 취소하지 않고 **적용 실패**와 이유를 표시한다.
+- 로봇이 감지 OFF 또는 카메라 OFF를 적용하면 낙상용 영상 수집·새 분석을 중단하고
+  낙상용 버퍼를 비운다. 기존 사건 기록은 지우거나 정상으로 바꾸지 않는다.
+- Cloud 동의 철회를 적용하면 새 Cloud 전송을 막고 대기 중인 전송을 취소한다.
+  진행 중 요청도 가능한 범위에서 취소하되, 이미 전송한 영상의 회수까지 보장하지 않는다.
+- 오래된 설정·이전 실행의 적용 회신이 최신 상태를 덮어쓰지 않게 한다.
+  설정 전달이 끊겼는데 Manager가 예전 허용값만 반복해서 보내 계속 켜 두지 않도록 한다.
+
+##### Manager와 VLM의 연결 확인
+
+2026-09-23에 양방향 확인 주기를 **1초**, 새 메시지가 없을 때 끊김으로 판단하는 시간을
+**5초**로 정했다. VLM의 수신·상태 발행·중단은 구현했고 Manager 발행·수신은 남아 있다.
+
+| 확인 방향 | 5초 동안 새 메시지가 없을 때 |
+|---|---|
+| VLM → Manager 실행 상태 | 웹에 ‘낙상 감지 상태 확인 불가’ 표시. 저장된 ON/OFF·동의 값은 유지 |
+| Manager → VLM 연결 확인 | 낙상 분석용 영상 수집·새 Cloud 전송 중단, 전송 대기 요청 취소 |
+
+- 상태·연결 확인만 1초마다 한다. 같은 설정을 매초 다시 적용하거나 Cloud를 시험 호출하지 않는다.
+- 수신한 쪽의 단조 시계로 경과 시간을 잰다. 이전 실행·역순·중복 메시지는 시간을 갱신하지 않는다.
+- 낙상용 일시 버퍼는 비우고 진행 중 요청은 취소를 시도한다. 이미 전송한 영상은 회수할 수 없다.
+- 연결 복구 후 최신 서버 설정과 현재 실행의 적용 결과·양방향 확인을 확인한 뒤 재개한다.
+- Manager가 살아 있어도 서버의 최신 설정을 확인할 수 없는 상태는 별도로 다룬다.
+  마지막 정상 설정 응답을 받은 지 **15초가 되면 새 Cloud 전송을 중단**한다(사용자 확정).
+  같은 확인 시각을 반복 전송해 시간을 늘리지 않는다.
+- 서버 설정만 확인하지 못하는 동안에는 내부 연결·카메라·감지 허용이 유지되면 YOLO-Pose와 최근 영상 버퍼를 유지한다.
+  Cloud 대기 요청은 취소하며 진행 중 요청도 취소를 시도한다. 저장된 동의 값을 바꾸거나 이전 영상을 전송 대기열에 쌓지 않는다.
+- 서버 연결이 돌아오면 최신 설정을 다시 확인한다. 적용 번호와 일치하고 Cloud 전송 동의가 켜져 있어야 전송을 재개한다.
+- 웹 설정 적용의 3초·6초, 영상 분석 응답의 20초와는 별개다.
+  구체적인 연결 규칙은 [Manager–VLM 호출 명세](fall_manager_contract.md)를 따른다.
+
+**추가로 정할 부분**
+
+- Manager → VLM 확인 메시지의 제안 형식은 호출 명세 3.5절에 작성했다. ROS 접근 권한은 담당자와 맞춘다.
+- 기존 홈캠 heartbeat 응답에 `fallSettings`를 추가하고 확인 시각을 전달하는 안은 호출 명세 3.6절에 작성했다.
+  홈캠 → Manager는 `FallSettingsSnapshot`, 적용 결과는 `FallSettingsReport`로 홈캠에 돌려주고
+  기존 heartbeat 요청으로 서버에 보내는 안을 3.7~3.8절에 작성했다. 실제 연결은 미구현이다.
+- 소유자 설정 저장 필드·설정 번호의 서버 저장, 현재 실행 확인·ROS 발행 권한·실행 상태의 웹 전달을 연결해야 한다.
+- 저장 설정과 별개로 카메라·낙상 감지 허용을 전달하는 메시지 형식과 기존 감지기 연결.
+- `navigation`에서 Manager가 최신 설정을 전달하고 적용 결과를 회신하는 연결.
+  VLM 노드의 자동 시작과 실제 감지 허용은 별개다. `sensors` 지원은 추가하지 않는다.
+
 | 설정 | 값 | 상태 |
 |---|---:|---|
+| 웹 설정 저장 후 적용·회신 목표 | 3초 이내 | 사용자 확정, 온라인 로봇 기준·실측 전 |
+| 최신 적용 회신이 없을 때 웹에 표시 | 저장 후 6초 | 사용자 확정, ‘회신 없음’ 표시 |
+| Manager–VLM 양방향 확인 주기 | 1초 | 사용자 확정, Cloud 시험 호출 없음 |
+| Manager–VLM 연결 끊김 판단 | 5초 동안 새 메시지 없음 | 사용자 확정, 실물 검증 전·웹의 6초와 별개 |
+| 서버 설정 미확인 시 Cloud 전송 중단 | 마지막 정상 확인 후 15초 | 사용자 확정, 실물 검증 전. 기존 서버 응답 확장은 제안 |
 | 사람이 보일 때 Cloud 확인 간격 | 60초 | 사용자 확정 |
 | 마지막 사람 검출 뒤 빠른 주기 유지 | 2분 | 사용자 확정, 실측 전 |
 | 유지 시간이 지나도 사람이 안 보일 때 | 5분 | 사용자 확정, 실측 전 |
@@ -300,6 +479,14 @@ Cloud가 만든 인물 이름이나 순번을 동일 인물 ID로 믿지 않는�
 | 부분 | 현재 상태 |
 |---|---|
 | 입력·출력 Python 자료형, 필수 설정 검증 | 구현 |
+| 웹 감지·Cloud 동의 설정, 저장 후 로봇 적용·결과 표시 | 동작 명세·Mermaid 작성. 웹 UI/API·Manager 전달·적용 회신은 미구현 |
+| 홈캠–Manager 설정 전달·적용 회신 | Topic 자료형 생성. 실제 송수신·HTTP 전송은 미구현 |
+| 설정 연결용 ROS 자료형 | ApplyFallSettings 및 메시지 4개 생성·빌드. 명세 대조·기본값·직렬화 등 테스트 33개 통과 |
+| VLM 설정 적용 Service | 현재 실행·설정 번호 검사, 적용 결과 회신 구현. Manager 호출부는 미구현 |
+| KVS 영상 저장과 낙상 감지 분리 | VLM은 camera_enabled 사용, 저장 Bool 구독 제거. 상위 카메라·YOLO 발행 조건은 별도 확인 필요 |
+| Manager–VLM 양방향 연결 확인 | VLM의 1초 상태 발행·heartbeat 수신·5초 중단 구현. Manager 연결·웹 상태 전달은 미구현 |
+| 서버 설정 미확인 시 Cloud 중단 | VLM의 15초 차단 구현. 기존 서버 응답 확장·홈캠/Manager 확인 시각 전달은 미구현 |
+| navigation에서만 VLM 자동 시작 | 로봇 준비 후 Manager와 함께 한 번 시작. 다른 모드에서는 VLM 설정 확인·노드 시작을 생략 |
 | YOLO와 독립된 용량 제한 RGB 버퍼 | 구현 |
 | 사람 관측에 따른 60초/5분 전환·2분 유지 | 구현. ROS 입력 변환 테스트 완료, 실물 연동은 미검증 |
 | 공통 동의 검사·요청 우선순위·시간 초과·호출 상한 | 실행 코어 구현, 시험용 공급자로 검증 |

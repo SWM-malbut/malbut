@@ -1,6 +1,7 @@
 """Check composition without launching hardware, inference, or navigation."""
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
 from xml.etree import ElementTree
@@ -13,6 +14,7 @@ from launch.actions import (
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.events.process import ProcessExited
+from launch.utilities import perform_substitutions
 from launch_ros.actions import Node, SetParameter
 from launch_ros.utilities import evaluate_parameters
 import pytest
@@ -49,6 +51,7 @@ def test_cloud_launch_starts_only_outbound_bridge():
 def launch_module(tmp_path, monkeypatch):
     """Supply fake vendor assets, but use the real Malbut launch files."""
     monkeypatch.delenv('HOMECAM_BACKEND_URL', raising=False)
+    monkeypatch.setenv('MALBUT_FALL_CONFIG', str(tmp_path / 'unconfigured-fall.json'))
     for name in ('slam/launch/include/robot.launch.py',
                  'home/ros2_ws/src/navigation/launch/include/bringup.launch.py'):
         path = tmp_path / name
@@ -456,3 +459,119 @@ def test_parent_never_leaves_partial_speech_pipeline(launch_module, package):
     node = Node(package=package, executable='test')
     with pytest.raises(RuntimeError, match='Bringup child exited'):
         _process_exit(actions, context, node)
+
+
+@pytest.fixture
+def fall_config(tmp_path):
+    """Use test-only limits; never create a key, database or Cloud connection."""
+    path = tmp_path / 'fall settings.json'
+    path.write_text(json.dumps({
+        'device_id': 'test-robot', 'journal_path': str(tmp_path / 'journal.sqlite'),
+        'cloud_key_file': str(tmp_path / 'not-read.key'), 'model': 'gemma4:31b',
+        'image_topic': '/configured/rgb', 'retention_s': 10,
+        'buffer_bytes': 10000000, 'buffer_frames': 100, 'input_fps': 5,
+        'max_source_age_s': 1, 'control_lease_s': 5,
+        'policy': {'retry_interval_s': 3, 'max_person_observation_age_s': 2,
+                   'clip_window_s': 5, 'max_frame_age_s': 2, 'max_calls_per_minute': 5,
+                   'max_incidents': 10, 'max_images': 12},
+    }))
+    return path
+
+
+@pytest.mark.parametrize('enabled', ['auto', 'true'])
+def test_fall_monitor_starts_once_after_readiness(launch_module, fall_config, enabled):
+    """Start VLM alongside Manager only after navigation readiness, without extra I/O."""
+    context = _context(launch_module, mode='navigation', start_navigation='false',
+                       fall_monitor=enabled, fall_config=str(fall_config),
+                       rgb_topic='/robot/camera/rgb')
+    actions = launch_module._setup(context)
+    assert not any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
+                   for item in actions)
+    ready = _readiness_exit(actions, context)
+    assert sum(isinstance(item, Node) and item.node_executable == 'system_manager'
+               for item in ready) == 1
+    nodes = [item for item in ready if isinstance(item, Node)
+             and item.node_executable == 'malbut-fall-monitor']
+    assert len(nodes) == 1
+    node = nodes[0]
+    assert node.node_package == 'malbut_agent_server'
+    assert evaluate_parameters(context, node._Node__parameters)[0] == {'use_sim_time': False}
+    arguments = [perform_substitutions(context, arg) for arg in node.cmd[1:]]
+    assert arguments[:3] == ['--config', str(fall_config), '--execute']
+    remaps = [(perform_substitutions(context, src), perform_substitutions(context, dst))
+              for src, dst in node._Node__remappings]
+    assert remaps == [('/configured/rgb', '/robot/camera/rgb')]
+    assert not (fall_config.parent / 'not-read.key').exists()
+    assert not (fall_config.parent / 'journal.sqlite').exists()
+    with pytest.raises(RuntimeError, match='Robot readiness check failed'):
+        _readiness_exit(actions, context, returncode=1)
+
+
+@pytest.mark.parametrize('mode', ['sensors', 'mapping'])
+@pytest.mark.parametrize('enabled', ['auto', 'true', 'false'])
+def test_non_navigation_never_prepares_fall_monitor(
+        launch_module, fall_config, monkeypatch, mode, enabled):
+    """Ignore VLM config even if explicitly enabled outside normal operation."""
+    monkeypatch.setattr(launch_module, 'prepare_fall_monitor',
+                        lambda *_: pytest.fail('VLM config read outside navigation'))
+    context = _context(launch_module, mode=mode, fall_monitor=enabled,
+                       fall_config=str(fall_config))
+    actions = launch_module._setup(context)
+    ready = _readiness_exit(actions, context)
+    assert not any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
+                   for item in [*actions, *ready])
+    assert not (fall_config.parent / 'not-read.key').exists()
+    assert not (fall_config.parent / 'journal.sqlite').exists()
+
+
+def test_fall_monitor_auto_uses_environment_configuration(launch_module, fall_config, monkeypatch):
+    """A prepared robot needs no second command or explicit enable flag."""
+    monkeypatch.setenv('MALBUT_FALL_CONFIG', str(fall_config))
+    context = _context(launch_module, mode='navigation', start_hardware='false',
+                       start_navigation='false')
+    assert context.launch_configurations['fall_monitor'] == 'auto'
+    ready = _readiness_exit(launch_module._setup(context), context)
+    assert any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
+               for item in ready)
+
+
+@pytest.mark.parametrize('enabled', ['auto', 'true'])
+def test_fall_monitor_rejects_invalid_configuration(launch_module, fall_config, enabled):
+    """A present but unfinished config must fail before any hardware is launched."""
+    data = json.loads(fall_config.read_text())
+    data['input_fps'] = None
+    fall_config.write_text(json.dumps(data))
+    context = _context(launch_module, mode='navigation', start_navigation='false',
+                       fall_monitor=enabled, fall_config=str(fall_config))
+    with pytest.raises(RuntimeError, match='Invalid fall_config'):
+        launch_module._setup(context)
+
+
+def test_fall_monitor_false_does_not_read_configuration(launch_module, fall_config):
+    """Operators can disable this process even when its config needs repair."""
+    fall_config.write_text('not JSON')
+    context = _context(launch_module, mode='navigation', start_navigation='false',
+                       fall_monitor='false', fall_config=str(fall_config))
+    ready = _readiness_exit(launch_module._setup(context), context)
+    assert not any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
+                   for item in ready)
+
+
+def test_fall_monitor_true_requires_configuration(launch_module):
+    """Explicit enable must not silently skip a missing configuration."""
+    context = _context(launch_module, mode='navigation', start_navigation='false',
+                       fall_monitor='true')
+    with pytest.raises(RuntimeError, match='Fall configuration is missing'):
+        launch_module._setup(context)
+
+
+@pytest.mark.parametrize('code', [0, 2])
+def test_fall_monitor_exit_stops_bringup(launch_module, fall_config, code):
+    """Do not report a healthy launch after its configured fall monitor exits."""
+    context = _context(launch_module, mode='navigation', start_navigation='false',
+                       fall_config=str(fall_config))
+    actions = launch_module._setup(context)
+    node = next(item for item in _readiness_exit(actions, context)
+                if isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor')
+    with pytest.raises(RuntimeError, match='Bringup child exited'):
+        _process_exit(actions, context, node, returncode=code)

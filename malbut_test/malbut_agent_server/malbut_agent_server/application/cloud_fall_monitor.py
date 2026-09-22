@@ -8,7 +8,7 @@ closure rule is automatic; other closure decisions remain explicit.
 
 import asyncio
 from collections import deque
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import time
 from typing import Callable, Optional
 from uuid import uuid4
@@ -29,6 +29,14 @@ from malbut_agent_server.domain.fall_monitoring import (
 )
 from malbut_agent_server.ports.cloud_fall import CloudFallProvider, CloudFallProviderError
 from malbut_agent_server.ports.fall_event_journal import FallEventJournal, FallJournalError
+
+
+@dataclass(frozen=True)
+class CloudAnalysisStatus:
+    state: str = 'idle'
+    request_id: str = ''
+    request_purpose: str = ''
+    last_error_code: str = ''
 
 
 class CloudFallMonitor:
@@ -61,6 +69,8 @@ class CloudFallMonitor:
         self._task: Optional[asyncio.Task] = None
         self._active_incident: Optional[str] = None
         self._running = False
+        self._runtime_cloud_block = None
+        self._analysis_status = CloudAnalysisStatus()
         self._scan_anchor = 0.0
         self._person_observation: Optional[PersonObservation] = None
         self._last_person_seen: Optional[float] = None
@@ -105,6 +115,41 @@ class CloudFallMonitor:
     def incident(self, incident_id: str) -> FallIncident:
         return replace(self._incidents[incident_id])
 
+    @property
+    def analysis_status(self):
+        if (self._analysis_status.state == 'cancel_requested'
+                and self._task is not None and self._task.done()):
+            self._analysis_status = replace(self._analysis_status, state='canceled')
+        return self._analysis_status
+
+    def _cancel_analysis(self):
+        if self._task is not None and not self._task.done():
+            self._analysis_status = replace(
+                self._analysis_status, state='cancel_requested', last_error_code='')
+            self._task.cancel()
+
+    def set_cloud_block(self, reason):
+        """Suspend transmission, retaining incidents but not an offline request queue."""
+        if reason is not None and reason not in {
+            'waiting_settings', 'disabled', 'camera_off', 'control_unavailable',
+            'runtime_error', 'cloud_consent_missing', 'settings_pending',
+            'server_settings_unavailable', 'server_settings_stale',
+        }:
+            raise ValueError('invalid runtime Cloud block')
+        if reason == self._runtime_cloud_block:
+            return
+        self._runtime_cloud_block = reason
+        self._epoch += 1
+        if reason is not None:
+            self._cancel_analysis()
+            for incident in self._incidents.values():
+                if incident.pending:
+                    incident.pending = False
+                    self._failure(incident, reason)
+        else:
+            # Recovery starts a new periodic interval, not a delayed upload.
+            self._scan_anchor = self._now()
+
     def configure(self, *, enabled: bool, camera_enabled: bool,
                   cloud_consent: bool, connected: bool) -> None:
         if enabled and self._storage_failed:
@@ -116,8 +161,8 @@ class CloudFallMonitor:
         if previous != values:
             self._epoch += 1
         self._enabled, self._camera, self._consent, self._connected = values
-        if not all(values) and self._task is not None:
-            self._task.cancel()
+        if not all(values):
+            self._cancel_analysis()
         if not enabled or not camera_enabled:
             self.buffer.clear()
             self._subject_evidence.clear()
@@ -319,6 +364,9 @@ class CloudFallMonitor:
         self._incidents[current.incident_id] = current
         self._emit('incident_opened', current)
         self.ask_question(current.incident_id)
+        if self._runtime_cloud_block is not None:
+            current.pending = False
+            self._failure(current, self._runtime_cloud_block)
         return current.incident_id
 
     def ask_question(self, incident_id: str) -> Optional[str]:
@@ -399,6 +447,9 @@ class CloudFallMonitor:
     def request_recheck(self, incident_id: str) -> bool:
         incident = self._incidents[incident_id]
         if incident.state is IncidentState.RESOLVED:
+            return False
+        if self._runtime_cloud_block is not None:
+            self._emit('recheck_unavailable', incident, reason=self._runtime_cloud_block)
             return False
         if incident.attempts > 0 and incident.rechecks >= self.policy.max_rechecks:
             self._emit('recheck_unavailable', incident, reason='recheck_limit')
@@ -566,7 +617,8 @@ class CloudFallMonitor:
 
     async def run_once(self) -> bool:
         """One attempt/scan; queued normal rechecks obey the existing budget."""
-        if self._running or (self._task is not None and not self._task.done()):
+        if (self._runtime_cloud_block is not None or self._running
+                or (self._task is not None and not self._task.done())):
             return False
         self._running = True
         try:
@@ -641,16 +693,18 @@ class CloudFallMonitor:
         self._active_incident = request.incident_id
         self._calls.append(now)
         self._task = None
+        self._analysis_status = CloudAnalysisStatus(
+            'waiting_response', request.request_id, request.purpose)
         try:
             self._task = asyncio.create_task(self._provider.analyze(request))
             self._task.add_done_callback(self._consume_exception)
             done, _ = await asyncio.wait({self._task}, timeout=self.policy.cloud_timeout_s)
+            if self._epoch != epoch or self._task.cancelled():
+                self._failure(incident, 'cloud_permission_changed', request=request)
+                return True
             if not done:
                 self._task.cancel()
-                self._failure(incident, 'cloud_timeout')
-                return True
-            if self._epoch != epoch or self._task.cancelled():
-                self._failure(incident, 'cloud_permission_changed')
+                self._failure(incident, 'cloud_timeout', request=request)
                 return True
             reply = self._task.result()
             if not isinstance(reply, CloudFallReply):
@@ -658,16 +712,18 @@ class CloudFallMonitor:
         except asyncio.CancelledError:
             if self._task is not None:
                 self._task.cancel()
-            self._failure(incident, 'worker_cancelled')
+            self._failure(incident, 'worker_cancelled', request=request)
             raise
         except CloudFallProviderError as error:
-            self._failure(incident, error.code)
+            self._failure(incident, error.code, request=request)
             return True
         except Exception:
-            self._failure(incident, 'cloud_failed_or_invalid_response')
+            self._failure(incident, 'cloud_failed_or_invalid_response', request=request)
             return True
         finally:
             self._active_incident = None
+        self._analysis_status = CloudAnalysisStatus(
+            'completed', request.request_id, request.purpose)
         if incident:
             # A late result cannot clear new evidence, but an observed fall
             # in this incident's earlier video must not disappear from history.
@@ -702,7 +758,16 @@ class CloudFallMonitor:
             self._emit('crosscheck_completed', request=request, reply=reply)
         return True
 
-    def _failure(self, incident: Optional[FallIncident], reason: str) -> None:
+    def _failure(self, incident: Optional[FallIncident], reason: str, *, request=None) -> None:
+        if request is not None:
+            state = 'failed'
+            error = reason
+            if reason in {'cloud_permission_changed', 'worker_cancelled'}:
+                state = ('cancel_requested' if self._task is not None
+                         and not self._task.done() else 'canceled')
+                error = ''
+            self._analysis_status = CloudAnalysisStatus(
+                state, request.request_id, request.purpose, error)
         if incident:
             incident.last_failure = reason
             # Earlier normal must not stand in for a failed new attempt.

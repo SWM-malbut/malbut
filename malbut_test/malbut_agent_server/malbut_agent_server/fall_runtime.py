@@ -59,7 +59,7 @@ class FallNodeSettings:
             if type(data[name]) is not int or not 1 <= data[name] <= maximum:
                 raise ValueError('invalid bounded buffer configuration')
         if (data['retention_s'] < policy.clip_window_s or data['retention_s'] > 300
-                or data['input_fps'] > 30 or data['control_lease_s'] > 60
+                or data['input_fps'] > 30 or data['control_lease_s'] != 5
                 or data['buffer_frames'] < policy.max_images or policy.max_images > 64
                 or data['max_source_age_s'] > policy.max_frame_age_s):
             raise ValueError('inconsistent runtime limits')
@@ -68,7 +68,7 @@ class FallNodeSettings:
 
 
 class FallRuntimeControl:
-    """Experimental Manager boundary; OFF until a fresh runtime-bound lease.
+    """Legacy JSON test helper; the ROS node uses FallSettingsControl instead.
 
     It does not replace authentication/SROS2 on a shared ROS graph. Stored
     messages from a previous process cannot enable a newly started process.

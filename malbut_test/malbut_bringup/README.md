@@ -36,6 +36,49 @@ AutoSLAM 서버와 함께 음성 점검을 시작한다. 음성 점검 → Agent
 별도 미디어 launch나 systemd 서비스를 중복 실행하지 않는다.
 전체 절차는 [실기기 클라우드 연결](../malbut_test/README_CLOUD.md)을 따른다.
 
+### Cloud VLM 자동 실행
+
+`robot.launch.py`는 **`navigation` 모드에서만** Cloud VLM 실행기
+`malbut-fall-monitor`를 함께 시작한다. 설정이 준비되어 있으면 로봇 준비 확인 뒤
+Manager와 함께 한 번만 실행한다. 카메라는 추가로 띄우지 않고 Bringup의
+`rgb_topic`을 사용한다. 음성을 꺼도 VLM 노드는 별도로 시작할 수 있다.
+
+`mapping`과 현재 남아 있는 `sensors` 모드에서는 VLM을 시작하지 않는다.
+`fall_monitor:=true`여도 이 제한을 우회하지 못하며, 해당 모드에서는 VLM 설정 파일도
+읽지 않는다. `sensors` 제거와 Bringup 기본 모드 변경은 Bringup 담당 범위로 남긴다.
+
+| 설정 | 동작 |
+| --- | --- |
+| `fall_monitor:=auto` (기본) | 설정 파일이 있으면 시작. 없으면 이유를 출력하고 건너뜀 |
+| `fall_monitor:=true` | 설정 파일 필수. 없거나 잘못되면 Bringup 시작 거부 |
+| `fall_monitor:=false` | VLM 노드를 띄우지 않음 |
+| `fall_config:=/절대경로/fall_runtime.json` | 사용할 설정 파일 지정 |
+
+위 실행 옵션은 `navigation` 모드 안에서만 적용된다.
+
+설정 파일 기본 위치는 `/etc/malbut/fall_runtime.json`이다.
+`MALBUT_FALL_CONFIG` 환경변수로 기본 위치를 바꿀 수 있다.
+어느 경로든 파일이 있는데 값이 잘못됐으면 조용히 건너뛰지 않고 시작을 거부한다.
+설정 양식은 Agent 패키지의 `config/fall_runtime.example.json`이며,
+`null` 항목은 운영값을 정해 채워야 한다. 예시를 그대로 실행할 수는 없다.
+
+```bash
+ros2 launch malbut_bringup robot.launch.py mode:=navigation map:=/실제/지도.yaml fall_monitor:=true fall_config:=/etc/malbut/fall_runtime.json
+```
+
+이 명령은 **VLM 노드 시작**이지 전송 동의가 아니다. 실제 영상 수집에는
+시작 시 지정한 Manager 실행 ID, 현재 VLM에 적용한 감지·카메라 허용 설정,
+Manager의 새 연결 확인 메시지가 필요하다. VLM은 KVS 저장 허용 Bool을 더 이상 받지 않는다.
+Cloud 전송에는 `cloud_consent`와 15초 안의 서버 설정 확인도 필요하다.
+Manager 실행 ID 지정·설정 전달 연결은 아직 없으므로, Bringup 연결만으로 분석이
+자동 시작됐다고 보지 않는다. 질문·답변·웹 푸시도 이번 실행 연결에 추가하지 않았다.
+
+API 키는 런타임 설정의 `cloud_key_file`에서 읽으며 launch 인자로 전달하지 않는다.
+설정 검사는 키를 읽거나 DB를 만들지 않는다. 실제 노드가 시작될 때 키와 의존성을
+확인하며, 실패하거나 실행 중 노드가 종료되면 기존 정책대로 Bringup 전체를 종료한다.
+Bringup과 별도의 `malbut-fall-monitor --execute`를 동시에 실행하지 않는다.
+실물 카메라·Cloud 인증·Manager 연결을 합친 동작 검증은 별도로 필요하다.
+
 공식 실행을 다음 두 부분으로 나누어 **각각 한 번만** include한다.
 
 - 하드웨어: `slam/launch/include/robot.launch.py`
