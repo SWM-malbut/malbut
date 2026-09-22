@@ -192,9 +192,12 @@ export async function getRobotSnapshot(deviceId: string, userEmail: string) {
       .first<MapRow>(),
     getD1()
       .prepare(
+        // Held joystick velocities repeat at 5 Hz and are trimmed after two
+        // minutes; they would hide the last real result and, once trimmed,
+        // bring an old one back as "new".
         `SELECT id, operation, payload_json, status, requested_by, requested_at, claimed_at,
                 completed_at, result_json
-         FROM robot_commands WHERE device_id = ?
+         FROM robot_commands WHERE device_id = ? AND operation <> 'manual_move'
          ORDER BY requested_at DESC LIMIT 1`,
       )
       .bind(deviceId)
@@ -460,9 +463,10 @@ export async function listRobotCommands(deviceId: string, userEmail: string, lim
   if (!(await userCanManageDevice(deviceId, userEmail))) return null;
   const result = await getD1()
     .prepare(
+      // Held joystick velocities (5 Hz) would fill the list; the pad reports them.
       `SELECT id, operation, payload_json, status, requested_by, requested_at, claimed_at,
               completed_at, result_json
-       FROM robot_commands WHERE device_id = ?
+       FROM robot_commands WHERE device_id = ? AND operation <> 'manual_move'
        ORDER BY requested_at DESC LIMIT ?`,
     )
     .bind(deviceId, Math.max(1, Math.min(50, Math.trunc(limit))))

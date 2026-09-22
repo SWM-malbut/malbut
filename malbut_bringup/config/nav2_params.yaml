@@ -155,7 +155,13 @@ controller_server:
       # outside the person follower's 0.90-1.10 m standoff band. AMCL jitter
       # and the 0.03 m local grid make anything below ~0.10 m hunt back and forth.
       xy_goal_tolerance: 0.12
-      yaw_goal_tolerance: 0.25
+      # Arrival is position only: 6.28 rad accepts any heading (the checker has
+      # no switch to skip yaw). Inside the goal tolerance DWB may only turn in
+      # place, and its footprint critic refuses a turn that sweeps the
+      # rectangular body into a wall, so a required final heading near a wall
+      # held the goal until the BT's BackUp recovery (~80 s). Facing a person
+      # is the follower's own Spin; patrol spins a full turn at each viewpoint.
+      yaw_goal_tolerance: 6.28
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
       debug_trajectory_details: True

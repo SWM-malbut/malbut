@@ -167,6 +167,8 @@ def test_goals_stop_within_the_follower_distance_band(config):
     checker = controller['general_goal_checker']
     assert checker['xy_goal_tolerance'] == 0.12
     assert checker['stateful'] is True
+    # Position-only arrival: no final in-place turn near walls.
+    assert checker['yaw_goal_tolerance'] >= 2 * math.pi - 0.01
     assert controller['FollowPath']['xy_goal_tolerance'] == checker['xy_goal_tolerance']
 
 

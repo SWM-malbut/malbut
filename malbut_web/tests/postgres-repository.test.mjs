@@ -787,12 +787,18 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         new Date(Date.now() - 3_000).toISOString(), overlapping.id,
       ]);
       assert.deepEqual(plain(await robotMap.claimRobotCommands("living-room")), []);
-      const history = new Map((await robotMap.listRobotCommands("living-room", "owner@example.com"))
-        .map((item) => [item.id, item]));
-      assert.equal(history.has(superseded.id), false);
-      assert.equal(history.get(overlapping.id).status, "failed");
-      assert.equal(history.get(held.id).status, "completed");
-      assert.deepEqual(plain(history.get(ping.id).result), { pong: true });
+      const manual = new Map((await database.query(
+        "SELECT id, status FROM robot_commands WHERE operation = 'manual_move'",
+      )).rows.map((row) => [row.id, row.status]));
+      assert.equal(manual.has(superseded.id), false);
+      assert.equal(manual.get(overlapping.id), "failed");
+      assert.equal(manual.get(held.id), "completed");
+      // Velocities stay out of the latest result and the debugging history.
+      const history = await robotMap.listRobotCommands("living-room", "owner@example.com");
+      assert.equal(history.some((item) => item.operation === "manual_move"), false);
+      assert.deepEqual(plain(history.find((item) => item.id === ping.id).result), { pong: true });
+      const latest = await robotMap.getRobotSnapshot("living-room", "owner@example.com");
+      assert.equal(latest.command.id, ping.id);
       const audits = await database.query(
         "SELECT COUNT(*)::int AS count FROM access_audit_log WHERE action = 'robot.manual_move'",
       );

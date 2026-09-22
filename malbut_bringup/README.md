@@ -346,7 +346,11 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
   전진 궤적이 모두 장애물에 걸리면 여전히 후진한다. 사람 추적의 후퇴는 DWB 경로가 아니라
   `BackUp` behavior라서 이 벌점과 무관하다.
 - 도착 판정 `xy_goal_tolerance`는 0.12 m다(제조사 0.25 m는 차체 길이만큼 앞에서 멈추고,
-  사람 추적의 0.90~1.10 m 거리 띠 밖에서 멈췄다). `GridBased.tolerance` 0.5 m는 목표 칸이
+  사람 추적의 0.90~1.10 m 거리 띠 밖에서 멈췄다). 방향은 보지 않는다(`yaw_goal_tolerance`
+  6.28 rad). 도착 반경 안에서 DWB는 제자리 회전만 하고, footprint critic은 직사각형 차체가
+  벽을 쓸고 지나가는 회전을 거부하므로, 벽 옆 목표에서 방향을 맞추려다 BT의 BackUp 복구
+  (약 80초)까지 멈춰 있었다. 사람을 바라보는 것은 추적기의 Spin이, 순찰 지점의 둘러보기는
+  순찰의 한 바퀴 회전이 맡는다. `GridBased.tolerance` 0.5 m는 목표 칸이
   벽·가구·사람 안이면 그 반경 안의 가장 가까운 갈 수 있는 칸으로 목표를 옮긴다.
 - Spin·BackUp은 behavior 서버가 local costmap으로 앞을 검사한 뒤 움직인다.
 - Collision Monitor 최소 구성: 다각형 하나(`FootprintApproach`, `approach`). 수동 조작 명령
