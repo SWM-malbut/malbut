@@ -173,6 +173,7 @@ class PersonFollowerNode(Node):
             self._on_nav2_result,
             self._on_nav2_feedback,
             on_idle=lambda: self._cancel_guard.trigger(),
+            backup_action=str(self.get_parameter('backup_action').value),
         )
         self._path_planner = Nav2PathClient(
             self,
@@ -257,6 +258,9 @@ class PersonFollowerNode(Node):
         # Nav2 reported no path to the person's own position.
         self._goal_pullback_m = 0.0
         self._goal_pullback_anchor: Point2D | None = None
+        # The BackUp goal in progress and Nav2's reported progress on it.
+        self._backup_target_m = 0.0
+        self._backup_traveled_m = 0.0
         self._lidar_clusters_received = False
         self._last_goal_position: Point2D | None = None
         self._last_target_pose = PoseStamped()
@@ -359,11 +363,14 @@ class PersonFollowerNode(Node):
         self.declare_parameter('compute_path_action', 'compute_path_to_pose')
         self.declare_parameter('planner_id', 'GridBased')
         self.declare_parameter('tracking_controller_id', 'FollowPath')
-        # Retreat paths run backwards. When the tracking controller penalizes
-        # reverse driving, name one without that penalty; empty reuses it.
-        self.declare_parameter('retreat_controller_id', '')
         self.declare_parameter('goal_checker_id', 'general_goal_checker')
         self.declare_parameter('spin_action', 'spin')
+        # A too-close person is answered with Nav2's BackUp behavior: a straight,
+        # footprint-checked reverse along the robot's own axis. It keeps the
+        # camera on the person and needs no planner or reverse controller.
+        self.declare_parameter('backup_action', 'backup')
+        # Slower than the 0.2 m/s driver limit; same as the remote joystick.
+        self.declare_parameter('retreat_speed_mps', 0.15)
         self.declare_parameter('navigation_retry_delay_s', 0.75)
         self.declare_parameter('nav2_planning_timeout_s', 0.20)
         self.declare_parameter('speed_limit_topic', 'speed_limit')
@@ -443,6 +450,7 @@ class PersonFollowerNode(Node):
         for parameter_name in (
             'navigation_retry_delay_s',
             'nav2_planning_timeout_s',
+            'retreat_speed_mps',
             'camera_position_alpha',
             'camera_velocity_alpha',
             'maximum_person_speed_mps',
@@ -1754,6 +1762,9 @@ class PersonFollowerNode(Node):
         if self._nav2.mode == MotionMode.SPIN:
             self._nav2.cancel()
         self._alignment_target_yaw = None
+        if decision.command == FollowCommand.RETREAT:
+            self._request_retreat(robot_position, decision, recovery)
+            return
         planning_to_target = decision.command == FollowCommand.NAVIGATE
         if planning_to_target and self._line_fallback_pending:
             # A failed in-flight cycle may fall back immediately once. Later
@@ -1777,6 +1788,54 @@ class PersonFollowerNode(Node):
             self._tracking_source, self._last_motion_source_stamp_ns,
             self._motion_generation,
         )
+
+    def _request_retreat(self, robot_position, decision, recovery: bool) -> None:
+        """Back straight away with Nav2's BackUp behavior, not a reverse path."""
+        self._path_planner.cancel()
+        needed = distance(robot_position, decision.goal.position)
+        tolerance = self._settings.distance_tolerance_m
+        remaining = self._backup_target_m - self._backup_traveled_m
+        if (
+            self._nav2.mode == MotionMode.BACKUP
+            and not self._nav2.stopping
+            and remaining + tolerance >= needed
+        ):
+            # Humble's BackUp cannot be preempted; replacing it would stop the
+            # base for a moment. The running one already covers the distance.
+            self._last_goal_position = decision.goal.position
+            self._publish_track_markers()
+            return
+        # Ask for a whole standoff at once: the distance band cancels the
+        # reverse the moment it is restored, and a person who keeps walking in
+        # would otherwise restart (and briefly stop) the behavior every cycle.
+        target = max(needed, self._settings.desired_distance_m)
+        speed = float(self.get_parameter('retreat_speed_mps').value)
+        # Generous like the Spin allowance: twice the nominal time plus start-up.
+        allowance = max(3.0, 2.0 * target / speed + 1.0)
+        if not self._nav2.backup(target, speed, allowance):
+            self._warn_periodically(
+                'backup_unavailable', 'Nav2 BackUp action is not ready for the retreat',
+            )
+            if recovery:
+                self._schedule_recovery_navigation_retry()
+            else:
+                self._schedule_tracking_navigation_retry()
+            return
+        self._backup_target_m, self._backup_traveled_m = target, 0.0
+        self._remaining_travel_distance_m = needed
+        self._last_goal_position = decision.goal.position
+        self._cancel_tracking_retry()
+        self._goal_dispatch_count += 1
+        now_ns = _monotonic_nanoseconds()
+        # No ComputePathToPose is involved: report zero planning time.
+        self._publish_command_trace(
+            self._last_motion_source_stamp_ns, self._tracking_source + ':backup',
+            self._goal_dispatch_count, now_ns, now_ns, now_ns,
+        )
+        self.get_logger().info(
+            f'Backing {needed:.2f} m away from the person: {decision.reason}'
+        )
+        self._publish_track_markers()
 
     def _reset_goal_pullback(self) -> None:
         self._goal_pullback_m = 0.0
@@ -1819,16 +1878,12 @@ class PersonFollowerNode(Node):
         self, robot_position, target_position, decision, recovery,
         plan_source, plan_source_stamp_ns, plan_generation,
     ) -> None:
-        """Ask Nav2 for a path to the person or the retreat point itself."""
-        planning_to_target = decision.command == FollowCommand.NAVIGATE
+        """Ask Nav2 for a path to the person's own position."""
         # Nav2's planner tolerance moves a goal inside the person's own obstacle
         # cells (or furniture) to the nearest reachable cell, and the route is
         # cut at the standoff afterwards. Only a "no path" result pulls the
         # goal toward the robot along the line of sight.
-        goal_position = (
-            self._pulled_back_goal(robot_position, target_position)
-            if planning_to_target else decision.goal.position
-        )
+        goal_position = self._pulled_back_goal(robot_position, target_position)
         final_pose = PoseStamped()
         final_pose.header.frame_id = self._global_frame
         final_pose.header.stamp = self.get_clock().now().to_msg()
@@ -1849,7 +1904,7 @@ class PersonFollowerNode(Node):
             generation=plan_generation: self._on_tracking_path(
                 path,
                 detail,
-                target_position if planning_to_target else None,
+                target_position,
                 source,
                 recovery,
                 source_stamp_ns,
@@ -1982,8 +2037,6 @@ class PersonFollowerNode(Node):
             )
             if recovery:
                 self._schedule_recovery_navigation_retry()
-            elif target_position is None:
-                self._schedule_tracking_navigation_retry()
             elif (
                 path is None
                 and not detail.startswith(PATH_TIMEOUT_PREFIX)
@@ -2005,7 +2058,7 @@ class PersonFollowerNode(Node):
             waypoint_position = Point2D(float(endpoint.x), float(endpoint.y))
             travel_description = 'full recovery path'
             travel_distance_m = path_length_m(selected_path)
-        elif target_position is not None:
+        else:
             # Planning to the person gives Nav2 the complete route around
             # furniture, but execution must stop at the requested distance.
             # Previously the full route ran into that distance band until a
@@ -2017,12 +2070,6 @@ class PersonFollowerNode(Node):
             waypoint_position = Point2D(float(endpoint.x), float(endpoint.y))
             travel_distance_m = path_length_m(selected_path)
             travel_description = 'safe tracking goal at requested standoff'
-        else:
-            selected_path = path
-            endpoint = path.poses[-1].pose.position
-            waypoint_position = Point2D(float(endpoint.x), float(endpoint.y))
-            travel_description = 'full retreat path'
-            travel_distance_m = path_length_m(selected_path)
         if self._dispatch_tracking_path(
             selected_path,
             waypoint_position,
@@ -2033,7 +2080,6 @@ class PersonFollowerNode(Node):
             planning_started_ns,
             planning_finished_ns,
             recovery,
-            reverse=not recovery and target_position is None,
         ):
             if not recovery:
                 self._plan_latest_observation_if_pending(
@@ -2060,19 +2106,11 @@ class PersonFollowerNode(Node):
         planning_started_ns: int,
         planning_finished_ns: int,
         recovery: bool,
-        *,
-        reverse: bool = False,
     ) -> bool:
         """Send one already computed route to Nav2 FollowPath."""
-        controller_id = str(self.get_parameter('tracking_controller_id').value)
-        if reverse:
-            controller_id = (
-                str(self.get_parameter('retreat_controller_id').value)
-                or controller_id
-            )
         if not self._nav2.follow_path(
             path,
-            controller_id,
+            str(self.get_parameter('tracking_controller_id').value),
             str(self.get_parameter('goal_checker_id').value),
         ):
             return False
@@ -2554,6 +2592,12 @@ class PersonFollowerNode(Node):
 
     def _on_nav2_feedback(self, mode: MotionMode, feedback) -> None:
         """Advance recovery from Nav2 distance feedback, not TF polling."""
+        if mode == MotionMode.BACKUP:
+            self._backup_traveled_m = float(feedback.distance_traveled)
+            self._remaining_travel_distance_m = max(
+                0.0, self._backup_target_m - self._backup_traveled_m,
+            )
+            return
         if mode != MotionMode.NAVIGATE:
             return
         self._remaining_travel_distance_m = max(
@@ -2619,6 +2663,21 @@ class PersonFollowerNode(Node):
                 self._navigation_failure_count += 1
                 self._schedule_tracking_navigation_retry()
                 self._warn_periodically('navigate_failed', detail)
+            else:
+                self._navigation_failure_count = 0
+        elif mode == MotionMode.BACKUP:
+            self._backup_target_m = self._backup_traveled_m = 0.0
+            self._remaining_travel_distance_m = 0.0
+            if status not in {
+                GoalStatus.STATUS_SUCCEEDED,
+                GoalStatus.STATUS_CANCELED,
+            }:
+                # BackUp stops itself before a projected collision or when its
+                # time allowance ends. Hold, then let a later observation retry.
+                self._last_goal_position = None
+                self._navigation_failure_count += 1
+                self._schedule_tracking_navigation_retry()
+                self._warn_periodically('retreat_failed', detail)
             else:
                 self._navigation_failure_count = 0
         elif mode == MotionMode.SPIN:

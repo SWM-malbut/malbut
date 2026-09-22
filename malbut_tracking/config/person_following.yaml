@@ -17,13 +17,13 @@ person_follower:
     compute_path_action: compute_path_to_pose
     planner_id: GridBased
     tracking_controller_id: FollowPath
-    # Retreat paths run backwards. When FollowPath penalizes reverse driving
-    # (the robot's PreferForward critic), name a controller without that
-    # penalty; the robot Bringup passes FollowPathReverse. Empty reuses
-    # tracking_controller_id, as the Gazebo stack does.
-    retreat_controller_id: ""
     goal_checker_id: general_goal_checker
     spin_action: spin
+    # A too-close person is answered with Nav2's BackUp behavior: a straight,
+    # footprint-checked reverse along the robot's axis while the camera keeps
+    # facing the person. No reverse path or second controller is involved.
+    backup_action: backup
+    retreat_speed_mps: 0.15
     navigation_retry_delay_s: 0.75
     speed_limit_topic: speed_limit
     global_frame: map

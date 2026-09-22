@@ -12,8 +12,12 @@ import {
 } from "./homecam";
 
 const ROBOT_ONLINE_MS = 15_000;
-// A manual step the robot has not claimed quickly is dropped, never run late.
-const MANUAL_MOVE_QUEUE_MS = 5_000;
+// A held velocity the robot has not claimed quickly is dropped, never run late.
+const MANUAL_MOVE_QUEUE_MS = 2_000;
+// Velocities arrive several times a second while driving; finished ones are trimmed.
+const MANUAL_MOVE_RETENTION_MS = 120_000;
+// One audit entry per manual driving session, not one per repeated velocity.
+const MANUAL_SESSION_GAP_MS = 10_000;
 const MANAGED_OPERATIONS = new Set<RobotOperation>([
   "runtime_start", "runtime_stop", "mission_start", "mission_cancel",
   "map_delete", "manual_move", "zones_save",
@@ -263,10 +267,31 @@ export async function createRobotCommand(input: {
   }
   await assertDriveCommandAllowed(input);
   await expireStaleRobotCommands(input.deviceId);
+  const manual = input.operation === "manual_move";
+  let sessionStart = false;
+  if (manual) {
+    sessionStart = !(await getD1()
+      .prepare(
+        `SELECT 1 FROM robot_commands
+         WHERE device_id = ? AND operation = 'manual_move' AND requested_at > ? LIMIT 1`,
+      )
+      .bind(input.deviceId, new Date(Date.now() - MANUAL_SESSION_GAP_MS).toISOString())
+      .first());
+    // Only the newest held velocity matters; ones the robot has not taken are dropped.
+    await getD1()
+      .prepare(
+        `DELETE FROM robot_commands
+         WHERE device_id = ? AND operation = 'manual_move' AND status = 'queued'`,
+      )
+      .bind(input.deviceId)
+      .run();
+  }
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   let result: CommandRow | null;
   try {
+    // Repeated velocities may overlap the robot's claim of the previous one; every
+    // other command still waits for the single slot.
     result = await getD1().prepare(
       `INSERT INTO robot_commands
        (id, device_id, operation, payload_json, requested_by, status, requested_at)
@@ -274,6 +299,7 @@ export async function createRobotCommand(input: {
        WHERE NOT EXISTS (
          SELECT 1 FROM robot_commands
          WHERE device_id = ? AND status IN ('queued', 'claimed')
+         ${manual ? "AND operation <> 'manual_move'" : ""}
        )
        RETURNING id, operation, payload_json, status, requested_by, requested_at,
                  claimed_at, completed_at, result_json`,
@@ -295,13 +321,15 @@ export async function createRobotCommand(input: {
     throw error;
   }
   if (!result) throw new Error("COMMAND_IN_PROGRESS");
-  await writeAuditLog({
-    deviceId: input.deviceId,
-    actorType: "user",
-    actorId: input.userEmail,
-    action: `robot.${input.operation}`,
-    metadata: { commandId: id },
-  });
+  if (!manual || sessionStart) {
+    await writeAuditLog({
+      deviceId: input.deviceId,
+      actorType: "user",
+      actorId: input.userEmail,
+      action: `robot.${input.operation}`,
+      metadata: { commandId: id },
+    });
+  }
   return mapCommand(result);
 }
 
@@ -392,6 +420,14 @@ export async function claimRobotCommands(deviceId: string) {
 
 async function expireStaleRobotCommands(deviceId: string) {
   const cutoff = new Date(Date.now() - 60_000).toISOString();
+  await getD1()
+    .prepare(
+      `DELETE FROM robot_commands
+       WHERE device_id = ? AND operation = 'manual_move'
+         AND status IN ('completed', 'failed') AND requested_at < ?`,
+    )
+    .bind(deviceId, new Date(Date.now() - MANUAL_MOVE_RETENTION_MS).toISOString())
+    .run();
   await getD1()
     .prepare(
       `UPDATE robot_commands

@@ -51,8 +51,8 @@ to evaluate another compatible humanoid appearance without changing code.
 - State: `/tracking/person/status`
 - Estimated map pose: `/tracking/person/estimated_target_pose`
 - RViz LiDAR track labels: `/tracking/person/lidar_tracks`
-- Motion: Nav2 `ComputePathToPose`, `FollowPath` (`retreat_controller_id` for
-  reverse paths when configured), `Spin`, and `SpeedLimit`
+- Motion: Nav2 `ComputePathToPose`, `FollowPath`, `BackUp` (retreat), `Spin`,
+  and `SpeedLimit`
 
 The package's `lidar_foreground_preprocessor` receives `/scan`, `/map`, and TF.
 It lives in `src/` alongside the Python follower, and both executables are
@@ -213,11 +213,16 @@ explicitly canceled. A current camera observation immediately updates the
 green target even if its detector ID changed; LiDAR is used to refine its
 range and continue it through temporary camera loss.
 The robot advances when the person is beyond the configured distance band and
-holds inside it. When the person approaches too closely, the same Nav2 planner
-computes the reverse path, which is sent to `retreat_controller_id` when set
-(the robot Bringup names `FollowPathReverse`, a DWB copy without the
-PreferForward penalty that autonomous driving uses; empty reuses
-`tracking_controller_id`). Each accepted camera or LiDAR observation may
+holds inside it. When the person approaches too closely, the follower asks
+Nav2's `BackUp` behavior to reverse straight along the robot's own axis at
+`retreat_speed_mps`; the behavior server checks the footprint against the
+local costmap on the way. No reverse path is planned and the camera keeps
+facing the person. One whole standoff distance is requested at once, because
+Humble's BackUp cannot be preempted and restarting it for every step of an
+approaching person would stop the base each time; the distance band cancels
+the reverse as soon as the standoff is restored, and a fresh goal is sent only
+when the running one cannot cover what is still needed. Each accepted camera
+or LiDAR observation may
 request a fresh route; while one `ComputePathToPose` request is in flight, only
 the newest observation is retained and planned immediately afterward. The
 normal holonomic `FollowPath` controller follows all planner-produced positions

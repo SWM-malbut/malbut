@@ -37,8 +37,6 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument('global_frame', default_value='map'),
         DeclareLaunchArgument('robot_frame', default_value='base_footprint'),
-        # Empty reuses the tracking controller for retreat paths.
-        DeclareLaunchArgument('retreat_controller_id', default_value=''),
     ]
     node = Node(
         package='malbut_tracking',
@@ -58,9 +56,6 @@ def generate_launch_description():
                 ),
                 'global_frame': LaunchConfiguration('global_frame'),
                 'robot_frame': LaunchConfiguration('robot_frame'),
-                'retreat_controller_id': LaunchConfiguration(
-                    'retreat_controller_id'
-                ),
             },
         ],
     )

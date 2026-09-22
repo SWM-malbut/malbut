@@ -167,29 +167,21 @@ def test_goals_stop_within_the_follower_distance_band(config):
     checker = controller['general_goal_checker']
     assert checker['xy_goal_tolerance'] == 0.12
     assert checker['stateful'] is True
-    for name in ('FollowPath', 'FollowPathReverse'):
-        assert controller[name]['xy_goal_tolerance'] == checker['xy_goal_tolerance']
+    assert controller['FollowPath']['xy_goal_tolerance'] == checker['xy_goal_tolerance']
 
 
-def test_autonomous_driving_prefers_forward_and_the_retreat_copy_does_not(config):
-    """Only the reverse penalty differs; the person follower retreats on the copy."""
+def test_autonomous_driving_prefers_forward_without_forbidding_reverse(config):
+    """The person follower retreats with BackUp, so one DWB instance is enough."""
     controller = config['controller_server']['ros__parameters']
-    assert controller['controller_plugins'] == ['FollowPath', 'FollowPathReverse']
-    follow, reverse = controller['FollowPath'], controller['FollowPathReverse']
+    assert controller['controller_plugins'] == ['FollowPath']
+    follow = controller['FollowPath']
     assert follow['min_vel_x'] < 0  # Reverse stays possible when forward is blocked.
     assert follow['PreferForward.penalty'] == 1.0
     assert follow['PreferForward.strafe_x'] == 0.0
     assert follow['PreferForward.theta_scale'] == 0.0
-    # A reverse trajectory gains at most 0.34 m = 11 cells x 112 points on the
-    # four distance critics; the penalty must sit below that so a goal directly
-    # behind still reverses, and above a rear-quarter goal's smaller gain.
-    cells = follow['max_vel_x'] * follow['sim_time'] / config[
-        'local_costmap']['local_costmap']['ros__parameters']['resolution']
-    gain = cells * sum(follow[f'{critic}.scale'] for critic in
-                       ('PathDist', 'GoalDist', 'PathAlign', 'GoalAlign'))
-    assert 0.5 * gain < follow['PreferForward.scale'] < gain
-    forward_only = {key for key in follow if key.startswith('PreferForward')}
-    assert 'PreferForward' not in reverse['critics']
-    assert reverse['critics'] == [c for c in follow['critics'] if c != 'PreferForward']
-    assert {k: v for k, v in follow.items() if k not in forward_only and k != 'critics'} == {
-        k: v for k, v in reverse.items() if k != 'critics'}
+    # A soft preference in the range public DWB configs use (1-40 next to
+    # PathDist 32 / GoalDist 24); reverse stays available, not banned.
+    assert follow['PreferForward.scale'] == 40.0
+    assert follow['PreferForward.scale'] <= follow['PathDist.scale'] + follow['GoalDist.scale']
+    behavior = config['behavior_server']['ros__parameters']
+    assert behavior['backup']['plugin'] == 'nav2_behaviors/BackUp'

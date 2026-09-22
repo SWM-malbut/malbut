@@ -288,7 +288,7 @@ ros2 action send_goal /malbut/mission/execute \
   "{capability_id: patrol, arguments_yaml: '{thoroughness: 0}'}" --feedback
 ```
 
-수동 조작은 조이스틱이나 웹 방향 버튼을 조작하면 시작되어(Nav2 AssistedTeleop)
+수동 조작은 조이스틱이나 웹 조작 패드를 움직이면 시작되어(Nav2 AssistedTeleop)
 진행 중인 추적·순찰을 멈추고, 5초 동안 조작이 없으면 끝난다. 수동 조작 중에는
 추적·순찰 요청이 거부된다. 자세한 동작은 [수동 조작](malbut_bringup/README.md#수동-조작)을 따른다.
 

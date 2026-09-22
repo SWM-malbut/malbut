@@ -143,7 +143,7 @@ controller_server:
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
-    controller_plugins: ["FollowPath", "FollowPathReverse"]
+    controller_plugins: ["FollowPath"]
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.5
@@ -156,11 +156,6 @@ controller_server:
       # and the 0.03 m local grid make anything below ~0.10 m hunt back and forth.
       xy_goal_tolerance: 0.12
       yaw_goal_tolerance: 0.25
-    # FollowPath drives every autonomous route (web goals, patrol, the person
-    # follower's approach). FollowPathReverse is the same controller without
-    # the reverse penalty; only the follower's retreat uses it, because backing
-    # straight away from an approaching person must not turn into a 180-degree
-    # spin while the camera has to keep facing them.
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
       debug_trajectory_details: True
@@ -201,61 +196,18 @@ controller_server:
       # Scale 0 would skip the critic entirely.
       # PreferForward (built-in dwb_critics) adds `penalty` x `scale` to every
       # trajectory that drives backwards; strafe_x/theta_scale are zeroed so
-      # forward turning and rotating in place stay free. Reverse is still
-      # allowed when every forward sample is rejected by the obstacle critics.
-      # Sizing: within the 1.7 s horizon a reverse trajectory gains up to
-      # 0.34 m = 11 cells on PathDist+GoalDist+PathAlign+GoalAlign (112/cell,
-      # about 1250), so 1000 keeps a straight reverse for a goal directly behind
-      # while a rear-quarter goal turns and drives forward instead.
+      # forward turning and rotating in place stay free. 40 is the upper end of
+      # the range public DWB configs use next to PathDist 32 / GoalDist 24: a
+      # soft preference for driving forward, not a ban. Reverse still wins when
+      # it saves clearly more path distance or when every forward sample is
+      # rejected by the obstacle critics. The person follower backs away from a
+      # too-close person with the BackUp behavior, not through this controller.
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist", "PreferForward"]
-      PreferForward.scale: 1000.0
+      PreferForward.scale: 40.0
       PreferForward.penalty: 1.0
       PreferForward.strafe_x: 0.0
       PreferForward.strafe_theta: 0.2
       PreferForward.theta_scale: 0.0
-      BaseObstacle.scale: 0.02
-      ObstacleFootprint.scale: 0.01
-      PathAlign.scale: 32.0
-      PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 24.0
-      GoalAlign.forward_point_distance: 0.1
-      PathDist.scale: 32.0
-      GoalDist.scale: 24.0
-      RotateToGoal.scale: 32.0
-      RotateToGoal.slowing_factor: 5.0
-      RotateToGoal.lookahead_time: -1.0
-
-    FollowPathReverse:
-      plugin: "dwb_core::DWBLocalPlanner"
-      debug_trajectory_details: True
-      min_vel_x: -0.2
-      min_vel_y: 0.0
-      max_vel_x: 0.2
-      max_vel_y: 0.0
-      max_vel_theta: 0.5
-      min_speed_xy: 0.0
-      max_speed_xy: 0.2
-      min_speed_theta: 0.0
-      acc_lim_x: 2.5
-      acc_lim_y: 0.0
-      acc_lim_theta: 3.2
-      decel_lim_x: -2.5
-      decel_lim_y: 0.0
-      decel_lim_theta: -3.2
-      vx_samples: 20
-      vy_samples: 5
-      vtheta_samples: 20
-      sim_time: 1.7
-      linear_granularity: 0.05
-      angular_granularity: 0.025
-      transform_tolerance: 0.2
-      # DWB switches to RotateToGoal here; keep it equal to the goal checker.
-      xy_goal_tolerance: 0.12
-      trans_stopped_velocity: 0.25
-      short_circuit_trajectory_evaluation: True
-      stateful: True
-      # Same obstacle handling as FollowPath, without PreferForward.
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
       BaseObstacle.scale: 0.02
       ObstacleFootprint.scale: 0.01
       PathAlign.scale: 32.0

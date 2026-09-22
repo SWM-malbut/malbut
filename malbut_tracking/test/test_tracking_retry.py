@@ -40,6 +40,7 @@ def _follower():
         _goal_pullback_m=0.0, _goal_pullback_anchor=None,
         _nav2=Mock(mode=MotionMode.NAVIGATE), _path_planner=Mock(busy=False),
         _request_tracking_path=Mock(), _request_line_fallback=Mock(),
+        _request_retreat=Mock(),
         _align_with_target=Mock(), _publish_track_markers=Mock(),
         _warn_periodically=Mock(),
         _robot_pose=Mock(return_value=(Point2D(0.0, 0.0), 0.0)),
@@ -148,7 +149,8 @@ def test_hold_alignment_and_retreat_do_not_wait_for_forward_retry(robot_x, comma
         node._align_with_target.assert_called_once()
         node._request_tracking_path.assert_not_called()
     else:
-        assert node._request_tracking_path.call_args.args[2].command == command
+        node._request_tracking_path.assert_not_called()
+        assert node._request_retreat.call_args.args[1].command == command
 
 
 def test_retry_timer_uses_latest_observation_not_original_failure_snapshot():
@@ -289,7 +291,8 @@ def test_motion_regime_changes_bypass_slot_and_clear_deferred_plan(
     elif command == FollowCommand.ALIGN:
         node._align_with_target.assert_called_once()
     else:
-        assert node._request_tracking_path.call_count == 2
+        node._request_tracking_path.assert_called_once()
+        node._request_retreat.assert_called_once()
     calls = node._request_tracking_path.call_count
     advance(0.2)
     node._on_tracking_plan_timer()
@@ -385,6 +388,9 @@ def test_direction_reversal_invalidates_inflight_plan_and_stops_old_motion(
     handle.cancel_goal_async.assert_called_once()
     assert node._path_planner.busy  # Cancellation request is not completion.
     node._request_tracking_path.assert_not_called()
+    if command == FollowCommand.RETREAT:
+        # BackUp needs no plan: it is requested at once and queues behind the stop.
+        node._request_retreat.assert_called_once()
     _observe(node, latest_x)
     node._nav2.cancel.assert_called_once()  # Same direction does not cancel again.
 
@@ -393,6 +399,10 @@ def test_direction_reversal_invalidates_inflight_plan_and_stops_old_motion(
     ))
     old_callback.assert_not_called()
     assert not node._path_planner.busy
+    if command == FollowCommand.RETREAT:
+        node._request_tracking_path.assert_not_called()
+        assert node._request_retreat.call_args.args[1].command == command
+        return
     node._request_tracking_path.assert_called_once()
     args = node._request_tracking_path.call_args.args
     assert args[1] == Point2D(latest_x, 0.0)
@@ -421,6 +431,7 @@ def test_bearing_only_close_observation_stops_an_existing_retreat(monkeypatch):
     node._path_planner.cancel.assert_called_once()
     node._nav2.cancel.assert_called_once()
     node._request_tracking_path.assert_not_called()
+    node._request_retreat.assert_not_called()
     assert not node._tracking_plan_pending
 
 
@@ -440,7 +451,6 @@ def test_person_moving_one_planner_step_clears_the_goal_pullback():
     assert node._goal_pullback_m == 0.5  # Jitter below one step keeps it.
     _observe(node, 3.6)
     assert node._goal_pullback_m == 0.0 and node._goal_pullback_anchor is None
-    assert node._request_tracking_path.call_count == 2
     # Retreat, hold and alignment never carry a forward pullback along.
     assert node._raise_goal_pullback(Point2D(3.6, 0.0))
     _observe(node, robot_x=2.5)

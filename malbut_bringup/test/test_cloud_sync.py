@@ -113,7 +113,9 @@ def test_client_uses_bounded_json_and_bearer_auth():
                        'arguments': {'method': 1, 'x': 1, 'y': 2, 'yaw': 0}},
      {'command': 'start', 'capability': 'relocalize',
       'arguments': {'method': 1, 'x': 1, 'y': 2, 'yaw': 0}}),
-    ('manual_move', {'direction': 'left'}, {'command': 'nudge', 'direction': 'left'}),
+    ('manual_move', {'vx': 0.15, 'vy': 0.0, 'wz': -0.5},
+     {'command': 'teleop', 'linear_x': 0.15, 'linear_y': 0.0, 'angular_z': -0.5,
+      'hold_s': 1.0}),
     ('debug_mission_start', {'capability': 'get_weather', 'arguments': {}},
      {'command': 'debug_start', 'capability': 'get_weather', 'arguments': {}}),
 ])
@@ -136,7 +138,9 @@ def test_real_robot_commands_reuse_existing_validation(operation, payload, expec
     ('mission_start', {'capability': 'navigate_to_pose',
                        'arguments': {'x': 1, 'y': 0, 'yaw': 0, 'behavior_tree': '/tmp/tree'}}),
     ('mission_start', {'capability': 'relocalize', 'arguments': {'method': 1}}),
-    ('manual_move', {'direction': 'forward', 'duration_s': 60}),
+    ('manual_move', {'direction': 'forward'}),
+    ('manual_move', {'vx': 0.25, 'vy': 0.0, 'wz': 0.0}),
+    ('manual_move', {'vx': 0.1, 'vy': 0.0, 'wz': 0.0, 'hold_s': 2.0}),
     ('manual_move', {'linear_x': 1.0}),
     ('debug_mission_start', {'capability': 'patrol'}),
 ])
@@ -336,3 +340,29 @@ def test_stopping_bridge_does_not_claim_or_dispatch_more_commands():
     sync.tick()
     client.request.assert_not_called()
     bridge.submit.assert_not_called()
+
+
+def test_manual_input_polls_commands_fast_without_extra_state_uploads(monkeypatch):
+    """Held driving needs quick claims; state and map uploads keep their cadence."""
+    from malbut_bringup import cloud_sync
+    clock = [100.0]
+    monkeypatch.setattr(cloud_sync.time, 'monotonic', lambda: clock[0])
+    sync, bridge, client = _sync()
+    assert sync.wait_seconds(0.3) == pytest.approx(0.7)
+    sync.tick()
+    sync.dispatch({'id': COMMAND_ID, 'operation': 'manual_move',
+                   'payload': {'vx': 0.15, 'vy': 0.0, 'wz': 0.0}})
+    assert bridge.submit.call_args.args[0]['hold_s'] == 1.0
+    assert sync.wait_seconds(0.05) == pytest.approx(0.15)
+    clock[0] += 0.2
+    client.request.reset_mock()
+    sync.tick()
+    paths = [call.args[0] for call in client.request.call_args_list]
+    assert '/api/device/v1/robot/state' not in paths
+    assert '/api/device/v1/robot/commands' in paths
+    clock[0] += 0.9
+    client.request.reset_mock()
+    sync.tick()
+    assert client.request.call_args_list[0].args[:2] == ('/api/device/v1/robot/state', 'POST')
+    clock[0] += 3.0
+    assert sync.wait_seconds(0.0) == pytest.approx(1.0)

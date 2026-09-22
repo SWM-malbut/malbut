@@ -51,6 +51,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     await database.exec(robotDriveModesMigration);
     await database.exec(await readFile(new URL("../db/migrations/0008_managed_robot_commands.sql", import.meta.url), "utf8"));
     await database.exec(await readFile(new URL("../db/migrations/0010_managed_robot_tools.sql", import.meta.url), "utf8"));
+    await database.exec(await readFile(new URL("../db/migrations/0011_manual_move_stream.sql", import.meta.url), "utf8"));
     await database.exec(`
       CREATE TABLE homecam_schema_migrations (
         version TEXT PRIMARY KEY,
@@ -66,7 +67,8 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         ('0006_dual_media_sessions'),
         ('0007_robot_drive_modes'),
         ('0008_managed_robot_commands'),
-        ('0010_managed_robot_tools');
+        ('0010_managed_robot_tools'),
+        ('0011_manual_move_stream');
     `);
     await seedDevice(database);
 
@@ -760,26 +762,41 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       await assert.rejects(robotMap.createRobotCommand({
         deviceId: "living-room", userEmail: "stranger@example.com", operation: "mission_cancel",
       }), /FORBIDDEN/);
-      // Real-robot tools share the queue; an unclaimed manual step is dropped, not run late.
+      // Real-robot tools share the queue; held velocities coalesce and never run late.
       const ping = await robotMap.createRobotCommand({
         deviceId: "living-room", userEmail: "owner@example.com", operation: "robot_ping",
       });
+      const drive = (vx) => robotMap.createRobotCommand({
+        deviceId: "living-room", userEmail: "owner@example.com", operation: "manual_move",
+        payload: { vx, vy: 0, wz: 0 },
+      });
+      await assert.rejects(drive(0.1), /COMMAND_IN_PROGRESS/);  // A queued query still owns the slot.
       assert.equal((await robotMap.claimRobotCommands("living-room"))[0].id, ping.id);
       await robotMap.completeRobotCommand({
         deviceId: "living-room", commandId: ping.id, ok: true, result: { pong: true },
       });
-      const step = await robotMap.createRobotCommand({
-        deviceId: "living-room", userEmail: "owner@example.com", operation: "manual_move",
-        payload: { direction: "forward" },
+      const superseded = await drive(0.1);
+      const held = await drive(0.15);  // Repeats replace the unclaimed velocity, no 409.
+      const claimedHeld = await robotMap.claimRobotCommands("living-room");
+      assert.deepEqual(claimedHeld.map((item) => item.id), [held.id]);
+      const overlapping = await drive(0.15);  // Allowed while the robot completes the claimed one.
+      await robotMap.completeRobotCommand({
+        deviceId: "living-room", commandId: held.id, ok: true, result: { accepted: true },
       });
       await database.query("UPDATE robot_commands SET requested_at = $1 WHERE id = $2", [
-        new Date(Date.now() - 6_000).toISOString(), step.id,
+        new Date(Date.now() - 3_000).toISOString(), overlapping.id,
       ]);
       assert.deepEqual(plain(await robotMap.claimRobotCommands("living-room")), []);
       const history = new Map((await robotMap.listRobotCommands("living-room", "owner@example.com"))
         .map((item) => [item.id, item]));
-      assert.equal(history.get(step.id).status, "failed");
+      assert.equal(history.has(superseded.id), false);
+      assert.equal(history.get(overlapping.id).status, "failed");
+      assert.equal(history.get(held.id).status, "completed");
       assert.deepEqual(plain(history.get(ping.id).result), { pong: true });
+      const audits = await database.query(
+        "SELECT COUNT(*)::int AS count FROM access_audit_log WHERE action = 'robot.manual_move'",
+      );
+      assert.equal(audits.rows[0].count, 1);  // One entry per driving session, not per repeat.
       assert.equal(await robotMap.listRobotCommands("living-room", "family@example.com"), null);
     });
 

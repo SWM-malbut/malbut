@@ -155,10 +155,7 @@ def test_one_bringup_starts_everything_and_maps_without_a_saved_map(launch_modul
     assert _parameters(context, joystick[0])['max_linear'] == 0.15
     assert _parameters(context, joystick[0])['max_angular'] == 0.45
     assert sum('reid_backend' in item for item in options) == 1
-    following = [item for item in options if 'lidar_config' in item]
-    assert len(following) == 1
-    # Retreats back straight away on the DWB copy without the reverse penalty.
-    assert following[0]['retreat_controller_id'] == 'FollowPathReverse'
+    assert sum('lidar_config' in item for item in options) == 1
     assert sum('camera_image_topic' in item for item in options) == 1
     manager = _parameters(context, _nodes(actions, 'system_manager')[0])
     assert manager['localization_control'] is True
