@@ -1,0 +1,23 @@
+# Find the robot's pose on the saved map the system manager selected (AMCL).
+# AUTO tries the pose saved for this map and keeps it when the LiDAR scan
+# matches the map there; otherwise it searches the whole map (AMCL global
+# localization while rotating in place). GLOBAL_SEARCH skips the saved pose.
+# GIVEN_POSE applies initial_pose, e.g. an operator's correction.
+uint8 AUTO=0
+uint8 GIVEN_POSE=1
+uint8 GLOBAL_SEARCH=2
+uint8 method
+# GIVEN_POSE only; header.frame_id must be map.
+geometry_msgs/PoseWithCovarianceStamped initial_pose
+---
+# True when AMCL's final estimate matches the map (GIVEN_POSE: when AMCL took it).
+bool success
+string message
+# AMCL's estimate after the correction; empty when AMCL reported none.
+geometry_msgs/PoseWithCovarianceStamped pose
+# Share of LiDAR points that land on mapped obstacles at that estimate (0 to 1).
+float32 match_ratio
+---
+# WAITING, CHECKING_SAVED_POSE, SEARCHING, APPLYING
+string state
+float32 match_ratio

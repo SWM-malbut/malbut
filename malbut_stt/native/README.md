@@ -1,4 +1,4 @@
-# Local whisper.cpp bridge (ABI 2)
+# Local whisper.cpp bridge (ABI 3)
 
 This builds the resident STT bridge against an explicitly supplied local
 [whisper.cpp checkout](https://github.com/ggml-org/whisper.cpp/tree/da54572229bcf64ba367d96c7ef15770376c4280).
@@ -31,6 +31,10 @@ CMake records build-tree library search paths. Keep that build tree intact.
 Copying the bridge alone or using the Mac `.dylib` does not provide a Linux
 runtime. Model files are independent of this build.
 
+Rebuild the bridge when updating from ABI 2. The Python adapter rejects older
+libraries before model creation because ABI 3 adds cancellation and a decode
+deadline to the native call.
+
 Use the already acquired multilingual `ggml-small.bin` from the
 [official model location](https://huggingface.co/ggerganov/whisper.cpp/blob/main/ggml-small.bin):
 
@@ -43,14 +47,23 @@ Use the already acquired multilingual `ggml-small.bin` from the
 `GGML_CUDA=ON` and `use_gpu=True` express intent, not proof of GPU execution.
 On the robot, check the model initialization log for the selected CUDA device
 and CUDA backend, then run a fixed local PCM fixture and record its transcript,
-latency, and device memory use. Confirm ABI 2 loading and inference before adding
+latency, and device memory use. Confirm ABI 3 loading and inference before adding
 TTS and YOLO. A Mac CPU build or a successful link does not establish Jetson CUDA
 compatibility, simultaneous-workload capacity, or real microphone performance.
 
 For a build-only host check, use a separate directory and replace the CUDA flags
 with `-DGGML_CUDA=OFF -DGGML_METAL=OFF`; omit the CUDA architecture flag. This can
 verify the bridge ABI and library resolution without loading a model or using a
-GPU. Stop and join the ASR worker before closing its resident transcriber.
+GPU. Signal `transcriber.cancel()` before joining the ASR worker. `close()` also
+signals cancellation and waits for the native call to return before freeing its
+context; repeated close is safe.
+
+Each native decode has a finite `decode_timeout_s` (default: 30 seconds), exposed
+as the ROS parameter `stt_decode_timeout_s`. Cancellation raises `RuntimeError`
+and timeout raises `TimeoutError`; neither returns partial text. A later decode
+can reuse the context. Whisper's abort and encoder callbacks enforce this
+cooperatively: a GPU kernel or driver that never returns cannot be interrupted
+by this deadline and still requires the process supervisor's shutdown boundary.
 
 ## ROS node
 
@@ -72,9 +85,15 @@ CPU helper threads. Wake recognition and ordinary/partial transcription share
 one model; leave `wake_model_path` empty or point it at that same model file.
 The default backend without this profile remains `faster_whisper` on CPU.
 
-`max_utterance_s=0.0` disables the duration limit at the ROS boundary; a positive
-value preserves an explicitly requested limit. The default fallback silence is
-2 seconds, with endpoint inference starting at 0.8 seconds and completed
+`max_utterance_s=0.0` leaves total utterance duration unlimited. The
+`max_buffer_s=60.0` limit applies only to retained PCM: successful incremental
+results acknowledge stable segment boundaries, release older audio, and keep
+the full accumulated text until one final publication at the natural endpoint.
+Repeated words are preserved using timed overlap rather than text deduplication.
+If inference stalls or no stable boundary can be established before unprocessed
+audio fills the buffer, capture reports `utterance_discarded:buffer_overflow`;
+it never sends an incomplete prefix as a successful command. The default
+fallback silence is 2 seconds, with endpoint inference starting at 0.8 seconds and completed
 sentences eligible to finish after 1 second. A custom fallback of 1 second or
 less disables predecode and retains that shorter fallback behavior. Partial
 transcription continues at its existing 2-second interval.

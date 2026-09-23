@@ -244,7 +244,7 @@ def test_startup_failure_returns_unknown_for_queued_interruption():
 
 @pytest.mark.parametrize('uid,pid,text', [
     ('', 'pid', '발화'), ('uid', '', '발화'), ('uid', ' \n', '발화'),
-    ('uid', 'pid', ''), ('uid', 'pid', 'x' * 2001),
+    ('uid', 'pid', ''), ('uid', 'pid', 'x' * 16001),
     ('x' * 257, 'pid', '발화'), ('uid', 'x' * 257, '발화'),
     ('uid', '\ud800', '발화'), ('uid', 'pid', '\ud800'),
 ])

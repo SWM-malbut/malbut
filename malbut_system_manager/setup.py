@@ -35,6 +35,8 @@ setup(
         'console_scripts': [
             'system_manager = '
             'malbut_system_manager.system_manager_node:main',
+            'manual_control = '
+            'malbut_system_manager.manual_control_node:main',
         ],
     },
 )

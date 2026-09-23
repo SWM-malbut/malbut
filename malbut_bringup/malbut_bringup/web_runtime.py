@@ -4,6 +4,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 import math
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import tempfile
@@ -13,8 +14,40 @@ import time
 import yaml
 
 
+ANSI = re.compile(r'\x1b\[[0-9;]*m')
+LAUNCH_ERROR = re.compile(r'\[ERROR\] \[launch\]: (?:Caught exception in launch[^:]*: )?(.+)')
+PROCESS_DIED = re.compile(r'\[ERROR\] \[([^\]]+)\]: process has died \[pid \d+, exit code (-?\d+)')
+# Exit codes of processes stopped by the launch itself while it shut down.
+SHUTDOWN_CODES = (0, -2, -15)
+ERROR_WORDS = re.compile(r'error|exception|traceback|failed|not found|denied|refused', re.I)
+
+
+def failure_summary(text, limit=400):
+    """Name the process that ended a launch and its last error line, from the log."""
+    lines = [ANSI.sub('', line).rstrip() for line in text.splitlines()]
+    parts = []
+    for index, line in enumerate(lines):
+        died = PROCESS_DIED.search(line)
+        if died and int(died.group(2)) not in SHUTDOWN_CODES:
+            name = died.group(1)
+            parts.append(f'{name} exited with code {died.group(2)}')
+            prefix = f'[{name}] '
+            own = [item[len(prefix):].strip() for item in lines[:index]
+                   if item.startswith(prefix) and ERROR_WORDS.search(item)]
+            if own:
+                parts.append(own[-1])
+            break
+    reasons = [match.group(1).strip() for line in lines
+               if (match := LAUNCH_ERROR.search(line))]
+    if reasons:
+        # The first launch error is the cause; later ones come from the shutdown.
+        parts.append(reasons[0])
+    summary = '; '.join(dict.fromkeys(part for part in parts if part))
+    return summary[:limit]
+
+
 class SavedMapCatalog:
-    """Resolve map IDs inside one directory without modifying any saved file."""
+    """Resolve map IDs inside one directory; only an explicit delete changes files."""
 
     def __init__(self, directory):
         self.directory = Path(directory).expanduser().resolve()
@@ -59,6 +92,33 @@ class SavedMapCatalog:
             return path
         except (OSError, RuntimeError, yaml.YAMLError) as error:
             raise ValueError(f'Cannot read saved map: {error}') from error
+
+    def _image(self, path):
+        try:
+            with path.open(encoding='utf-8') as stream:
+                return self._file(path.parent / yaml.safe_load(stream)['image'])
+        except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError):
+            return None
+
+    def delete(self, map_id):
+        """Remove a saved map and the pose/Zone files named after it."""
+        path = self.resolve(map_id)
+        image = self._image(path)
+        shared = any(other != path and self._image(other) == image
+                     for other in self.directory.iterdir()
+                     if other.suffix.lower() in ('.yaml', '.yml'))
+        stem = str(path.with_suffix(''))
+        files = [path, *([] if shared else [image]),
+                 Path(stem + '.pose.yaml'), Path(stem + '.zones.geojson')]
+        removed = []
+        # The YAML goes first: from then on the map is neither listed nor loadable.
+        for item in files:
+            try:
+                item.unlink()
+            except FileNotFoundError:
+                continue
+            removed.append(item.name)
+        return removed
 
     def list_maps(self):
         """List valid maps only; an absent map directory is an empty catalog."""
@@ -114,19 +174,26 @@ class RuntimeSupervisor:
                     and self._status['state'] not in ('STOPPING', 'ERROR')):
                 code = self._process.poll()
                 if code is not None:
-                    self._status.update(
-                        state='ERROR', message=f'Bringup exited ({code}); stop before retrying')
+                    # Name the failing node for the web; the log file stays local.
+                    reason = failure_summary(self._read_log_tail(65536))
+                    self._status.update(state='ERROR', message=(
+                        f'Bringup exited ({code}): {reason}; stop before retrying' if reason
+                        else f'Bringup exited ({code}); stop before retrying'))
             status = dict(self._status)
-        status['log_tail'] = ''
-        if status['state'] == 'ERROR' and status['log_path']:
-            try:
-                with Path(status['log_path']).open('rb') as stream:
-                    stream.seek(0, os.SEEK_END)
-                    stream.seek(max(0, stream.tell() - 8192))
-                    status['log_tail'] = stream.read().decode('utf-8', errors='replace')
-            except OSError:
-                pass
+        status['log_tail'] = self._read_log_tail(8192) if status['state'] == 'ERROR' else ''
         return status
+
+    def _read_log_tail(self, size):
+        path = self._status.get('log_path')
+        if not path:
+            return ''
+        try:
+            with Path(path).open('rb') as stream:
+                stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, stream.tell() - size))
+                return stream.read().decode('utf-8', errors='replace')
+        except OSError:
+            return ''
 
     def start(self, mode, map_id=None, start_hardware=True):
         """Queue one fixed Bringup command, rejecting overlapping transitions."""
@@ -152,14 +219,13 @@ class RuntimeSupervisor:
             with self._lock:
                 if self._status['state'] == 'STOPPING':
                     raise RuntimeError('Bringup start canceled before launch')
+            # One Bringup for both: the mode only picks the first localization.
             command = ['ros2', 'launch', 'malbut_bringup', 'robot.launch.py',
-                       f'mode:={mode}', 'web_panel:=false',
-                       f'start_hardware:={str(start_hardware).lower()}']
+                       'web_panel:=false', 'publish_debug_image:=true',
+                       f'start_hardware:={str(start_hardware).lower()}',
+                       f'map_directory:={self.catalog.directory}']
             if mode == 'navigation':
-                command += [f'map:={self.catalog.resolve(map_id)}',
-                            'publish_debug_image:=true']
-            else:
-                command.append(f'map_directory:={self.catalog.directory}')
+                command.append(f'map:={self.catalog.resolve(map_id)}')
             self.log_directory.mkdir(parents=True, exist_ok=True)
             self._log = tempfile.NamedTemporaryFile(
                 mode='w', prefix=f'{mode}-', suffix='.log',

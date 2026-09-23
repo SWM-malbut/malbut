@@ -16,7 +16,8 @@ from malbut_agent_server.config import Settings, load_env_file
 from malbut_agent_server.factory import build_orchestrator
 from malbut_agent_server.mission_speech import MissionAnnouncer
 from malbut_agent_server.speech_dialogue import (
-    DialogueWorker, validate_dialogue_input, validate_interruption_input,
+    DialogueWorker, SpeechInputTooLongError,
+    validate_dialogue_input, validate_interruption_input,
 )
 from malbut_agent_server.speech_receipts import SpeechReceiptStore
 from malbut_agent_server.speech_receiver import (
@@ -144,6 +145,10 @@ def create_communication_node(
             try:
                 validate_dialogue_input(utterance_id, text)
                 previous = self._receipts.lookup(utterance_id, text)
+            except SpeechInputTooLongError as error:
+                self.get_logger().warning(f'speech_dialogue invalid input: {error}')
+                self.say('한 번에 처리할 수 있는 16000자를 넘었어요. 나누어 말씀해 주세요.')
+                return
             except ValueError:
                 self.get_logger().warning('speech_dialogue invalid input')
                 return

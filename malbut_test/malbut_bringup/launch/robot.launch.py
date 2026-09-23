@@ -1,4 +1,4 @@
-"""Compose vendor hardware, perception, speech, and idle Action servers."""
+"""Start the whole robot once: vendor hardware, Nav2, applications and manager."""
 
 import os
 from pathlib import Path
@@ -13,10 +13,17 @@ from launch.actions import (
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node, SetRemap
+from launch_ros.actions import Node
 
 from malbut_bringup.fall_setup import prepare_fall_monitor
+from malbut_bringup.nav2_stack import nav2_actions
 from malbut_bringup.perception_setup import validate_perception_files
+
+# Nav2 AssistedTeleop input used by the manual_drive capability.
+TELEOP_TOPIC = '/cmd_vel_teleop'
+# The readiness checker's report; the manager accepts missions after READY.
+READY_TOPIC = '/malbut/bringup/status'
+RELOCALIZE_ACTION = '/relocalize'
 
 
 def _file(value, label):
@@ -31,12 +38,11 @@ def _package_file(package, relative):
                  f'{package}/{relative}')
 
 
-def _include(path, arguments, remappings=()):
+def _include(path, arguments):
     # In particular, a child's generic "config" must not affect its siblings.
     # Pass clock mode through the child launch, not a global SetParameter:
     # creating /** first lets named YAML values override later inline wiring.
     return GroupAction([
-        *[SetRemap(src=source, dst=destination) for source, destination in remappings],
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(path),
             launch_arguments={
@@ -50,16 +56,12 @@ def _setup(context):
     def value(name):
         return LaunchConfiguration(name).perform(context)
 
-    navigating = value('mode') == 'navigation'
-    mapping = value('mode') == 'mapping'
-    perception = value('perception') == 'true' and not mapping
+    perception = value('perception') == 'true'
     hardware = value('start_hardware') == 'true'
-    navigation = value('start_navigation') == 'true'
-    if navigating and not perception:
-        raise RuntimeError('navigation mode requires perception for FollowPerson')
-    # Fall analysis belongs to normal operation, never mapping or sensor checks.
-    fall_inputs = (prepare_fall_monitor(value('fall_monitor'), value('fall_config'))
-                   if navigating else None)
+    relocalization = value('relocalization') == 'true'
+    # The unified robot launch always starts navigation. The separate mapping
+    # backend does not own fall analysis. Permissions still gate all collection.
+    fall_inputs = prepare_fall_monitor(value('fall_monitor'), value('fall_config'))
     fall_monitor = None
     fall_ids = {key: str(uuid4()) for key in ('manager', 'bridge', 'vlm')} if fall_inputs else {}
     if fall_inputs is not None:
@@ -88,7 +90,7 @@ def _setup(context):
             'cpp_threads': value('stt_cpp_threads'),
             'input_has_aec': value('speech_input_has_aec'),
             'agent_provider': value('speech_agent_provider'),
-            'control_server': 'manager' if navigating else 'autoslam' if mapping else 'none',
+            'control_server': 'manager',
             'preflight_timeout_s': value('speech_preflight_timeout_s'),
             'peer_timeout_s': value('speech_peer_timeout_s'),
             'preflight_only': 'false',
@@ -112,50 +114,46 @@ def _setup(context):
         hardware_path = (_file(value('hardware_launch_file'), 'hardware launch')
                          if value('hardware_launch_file') else _package_file(
                              'slam', 'launch/include/robot.launch.py'))
-    navigation_path = None
-    navigation_arguments = {}
-    if navigating and navigation:
-        map_path = _file(value('map'), 'real saved map YAML')
-        navigation_path = _file(value('navigation_launch_file'), 'navigation launch')
-        params = (_file(value('nav2_params_file'), 'Nav2 parameters')
-                  if value('nav2_params_file') else _package_file(
-                      'malbut_bringup', 'config/nav2_params.yaml'))
-        navigation_arguments = {
-            'map': map_path, 'params_file': params,
-            'namespace': '', 'use_namespace': 'false',
-            'autostart': 'true', 'use_teb': 'false',
-        }
+    params = (_file(value('nav2_params_file'), 'Nav2 parameters')
+              if value('nav2_params_file') else _package_file(
+                  'malbut_bringup', 'config/nav2_params.yaml'))
+    slam_params = (_file(value('slam_params_file'), 'SLAM parameters')
+                   if value('slam_params_file') else _package_file(
+                       'malbut_bringup', 'config/slam_toolbox.yaml'))
+    # No map starts SLAM mapping; a map starts saved-map AMCL. The manager
+    # switches between them at runtime, so this only picks the first state.
+    initial_map = _file(value('map'), 'saved map YAML') if value('map') else ''
 
     # Reuse the outbound bridge's configuration. Offline/LAN-only Bringup
     # does not need cloud media; never put the device token in launch arguments.
     backend_url = context.environment.get('HOMECAM_BACKEND_URL', '').strip()
     media_path = (_package_file('homecam_media_agent', 'launch/homecam_robot.launch.py')
                   if backend_url else None)
-    autoslam = None
-    if mapping:
-        autoslam = _include(_package_file(
-            'malbut_autoslam', 'launch/autoslam.launch.py'), {
-                'auto_start': 'true', 'scan_topic': value('scan_topic'),
-                'odom_topic': value('odom_topic'),
-                'map_directory': value('map_directory'),
-                'map_topic': value('static_map_topic'),
-                'base_frame': value('robot_frame'),
-            })
 
     actions = []
     if fall_monitor is None:
-        reason = ('navigation mode only' if not navigating
-                  else 'fall_monitor=false' if value('fall_monitor') == 'false'
+        reason = ('fall_monitor=false' if value('fall_monitor') == 'false'
                   else 'fall_config is missing; set fall_config or MALBUT_FALL_CONFIG')
         actions.append(LogInfo(msg=f'Cloud VLM startup disabled: {reason}.'))
     if hardware_path:
         actions.append(_include(hardware_path, {
             # This vendor version uses '/' (not '') for unprefixed TF/topics.
             'sim': 'false', 'robot_name': '/', 'master_name': '/',
-            # Aurora's upstream launch accepts this inherited argument. Keep
-            # RGB/depth images; the costmap creates XYZ locally, not over DDS.
+            # Aurora's upstream launch accepts this inherited argument. Person
+            # tracking uses the RGB/depth images; nothing needs a point cloud.
             'point_cloud_enable': 'false',
+            # The joystick feeds manual_drive instead of the driver, so its
+            # commands can no longer mix with autonomous /cmd_vel output.
+            'use_joy': 'false',
         }))
+        # Same vendor node and speeds as its hardware launch; only the output moves.
+        actions.append(Node(
+            package='peripherals', executable='joystick_control',
+            name='joystick_control', output='screen', parameters=[{
+                'use_sim_time': False, 'max_linear': 0.15, 'max_angular': 0.45,
+                'disable_servo_control': True,
+            }],
+            remappings=[('controller/cmd_vel', TELEOP_TOPIC)]))
     if media_path:
         actions.append(_include(media_path, {
             'backend_url': backend_url,
@@ -165,19 +163,17 @@ def _setup(context):
             'odom_topic': value('odom_topic'),
             **{'fall_' + key + '_runtime_id': value for key, value in fall_ids.items()},
         }))
-    if navigation_path:
-        actions.append(_include(navigation_path, navigation_arguments, remappings=[
-            ('/scan_raw', value('scan_topic')),
-            ('/odom', value('odom_topic')),
-        ]))
 
-    if navigating and value('map') and value('pose_memory') == 'true':
+    # Nav2 servers with Malbut-owned parameters, composed like the vendor stack,
+    # plus the Collision Monitor and Zone mask. Localization stays unconfigured
+    # until the manager selects SLAM or a saved map.
+    actions.extend(nav2_actions(
+        params, scan_topic=value('scan_topic'), odom_topic=value('odom_topic')))
+
+    if relocalization:
         actions.append(Node(
-            package='malbut_bringup', executable='pose_memory',
-            name='pose_memory', output='screen', parameters=[{
-                'use_sim_time': False, 'map': value('map'),
-                'restore_pose': value('restore_pose') == 'true',
-            }]))
+            package='malbut_relocalization', executable='relocalization',
+            name='relocalization', output='screen', parameters=[{'use_sim_time': False}]))
     if value('web_panel') == 'true':
         actions.append(Node(
             package='malbut_bringup', executable='robot_web_panel',
@@ -193,8 +189,6 @@ def _setup(context):
         options['reid_backend'] = 'osnet'
         actions.append(_include(_package_file(
             'malbut_tracking', 'launch/person_detection.launch.py'), options))
-
-    if navigating:
         follower = {name: value(name) for name in (
             'scan_topic', 'global_frame', 'robot_frame', 'static_map_topic',
             'global_costmap_topic',
@@ -208,22 +202,50 @@ def _setup(context):
             else _package_file('malbut_tracking', 'config/lidar_foreground.yaml'))
         actions.append(_include(_package_file(
             'malbut_tracking', 'launch/person_following.launch.py'), follower))
-        actions.append(_include(_package_file(
-            'malbut_patrol', 'launch/patrol.launch.py'), {
-                'map_topic': value('static_map_topic'),
-                'costmap_topic': value('patrol_costmap_topic'),
-                'base_frame': value('robot_frame'),
-                'camera_image_topic': value('rgb_topic'),
-                'camera_info_topic': value('camera_info_topic'),
-                'room_map_file': value('room_map_file'),
-            }))
+    actions.append(_include(_package_file(
+        'malbut_patrol', 'launch/patrol.launch.py'), {
+            'map_topic': value('static_map_topic'),
+            'costmap_topic': value('patrol_costmap_topic'),
+            'base_frame': value('robot_frame'),
+            'camera_image_topic': value('rgb_topic'),
+            'camera_info_topic': value('camera_info_topic'),
+            'room_map_file': value('room_map_file'),
+        }))
+    # Bringup owns SLAM and Nav2 here; the Goal never starts a second stack.
+    actions.append(_include(_package_file(
+        'malbut_autoslam', 'launch/autoslam.launch.py'), {
+            'map_directory': value('map_directory'),
+            'map_topic': value('static_map_topic'),
+            'base_frame': value('robot_frame'),
+        }))
+
+    # The manager starts immediately: it owns localization, which Nav2 needs
+    # before it can activate. Missions wait for the readiness report instead.
+    actions.append(Node(
+        package='malbut_system_manager', executable='system_manager',
+        name='system_manager', output='screen',
+        parameters=[{
+            'use_sim_time': False, 'ready_topic': READY_TOPIC,
+            'localization_control': True, 'initial_map': initial_map,
+            **{'fall_' + key + '_runtime_id': val for key, val in fall_ids.items()},
+            'slam_params_file': slam_params, 'scan_topic': value('scan_topic'),
+            # Each saved-map load finds the robot through the Action, saved pose first.
+            'relocalize_action': (RELOCALIZE_ACTION if relocalization
+                                  and value('restore_pose') == 'true' else ''),
+        }],
+    ))
+    actions.append(Node(
+        package='malbut_system_manager', executable='manual_control',
+        name='manual_control', output='screen',
+        parameters=[{'use_sim_time': False, 'teleop_topic': TELEOP_TOPIC}],
+    ))
 
     wait = Node(
         package='malbut_bringup', executable='wait_for_robot',
         name='bringup_readiness', output='screen',
         parameters=[{
-            'use_sim_time': False, 'navigation': navigating,
-            'perception': perception,
+            'use_sim_time': False, 'navigation': True,
+            'perception': perception, 'relocalization': relocalization,
             **{name: value(name) for name in (
                 'scan_topic', 'odom_topic', 'rgb_topic', 'depth_topic',
                 'camera_info_topic', 'global_frame', 'robot_frame',
@@ -231,12 +253,6 @@ def _setup(context):
             )},
             'sensor_timeout_s': float(value('sensor_timeout_s')),
         }],
-    )
-    manager = Node(
-        package='malbut_system_manager', executable='system_manager',
-        name='system_manager', output='screen',
-        parameters=[{'use_sim_time': False, **{
-            'fall_' + key + '_runtime_id': val for key, val in fall_ids.items()}}],
     )
 
     def ready(event, launch_context):
@@ -251,16 +267,7 @@ def _setup(context):
                 LogInfo(msg='Starting Cloud VLM; waiting for permissions and Manager settings.'),
                 fall_monitor,
             ]
-        if mapping:
-            # Camera/driver startup belongs to Bringup. Only expose the Goal
-            # server after sensors are ready so AutoSLAM won't start duplicates.
-            # The Goal still starts missing SLAM/Nav2; it never runs by itself.
-            return [LogInfo(msg='Sensors ready; starting idle AutoSLAM server.'),
-                    autoslam, *fall_actions, *speech_actions]
-        if navigating:
-            return [LogInfo(msg='Robot ready; starting system manager.'),
-                    manager, *fall_actions, *speech_actions]
-        return [LogInfo(msg='Sensors ready. No navigation or missions were started.'),
+        return [LogInfo(msg='Robot ready; the system manager accepts missions.'),
                 *fall_actions, *speech_actions]
 
     def child_exited(event, launch_context):
@@ -299,10 +306,8 @@ def generate_launch_description():
     stt_build = Path(os.environ.get(
         'MALBUT_STT_BUILD_DIR', speech_cache / 'whisper-cpp-build')).expanduser()
     defaults = {
-        'mode': 'sensors',
         'start_hardware': 'true',
-        'start_navigation': 'true',
-        'pose_memory': 'true',
+        'relocalization': 'true',
         'restore_pose': 'true',
         'web_panel': 'false',
         'perception': 'true',
@@ -322,13 +327,10 @@ def generate_launch_description():
         'speech_preflight_timeout_s': '120.0',
         'speech_peer_timeout_s': '30.0',
         'hardware_launch_file': '',
-        # The robot image installs only the top-level navigation launches.
-        # Its existing source tree contains the lower, navigation-only launch.
-        'navigation_launch_file': str(
-            Path.home() / 'ros2_ws/src/navigation/launch/include/bringup.launch.py'),
         'map': '',
         'map_directory': str(Path.home() / '.ros/malbut/maps'),
         'nav2_params_file': '',
+        'slam_params_file': '',
         # Topic names match the robot's supplied topic list. Header frames and
         # RGB-D alignment still require device verification; do not invent TF.
         'rgb_topic': '/depth_cam/rgb0/image_raw',
@@ -355,17 +357,16 @@ def generate_launch_description():
         'sensor_timeout_s': '3.0',
     }
     choices = {
-        'mode': ['sensors', 'navigation', 'mapping'],
         'fall_monitor': ['auto', 'true', 'false'],
         **{key: ['true', 'false'] for key in (
-            'start_hardware', 'start_navigation', 'perception',
-            'publish_debug_image', 'pose_memory',
+            'start_hardware', 'perception',
+            'publish_debug_image', 'relocalization',
             'restore_pose', 'web_panel', 'speech', 'speech_input_has_aec',
         )},
         'speech_agent_provider': ['openai', 'mock'],
     }
     return LaunchDescription([
-        # The supplied robot image keeps complete vendor launch includes in src.
+        # The vendor hardware launch reads its complete includes from src.
         SetEnvironmentVariable('need_compile', 'False'),
         *[DeclareLaunchArgument(
             key, default_value=default, choices=choices.get(key))

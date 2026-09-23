@@ -106,18 +106,18 @@ ID를 아는 것만으로 호출자를 인증하지 않으며, ROS 접근 권한
 
 ### Bringup에서 함께 시작
 
-`robot.launch.py`는 **`navigation` 모드에서만** 실행기를 시작한다.
+`robot.launch.py`의 통합 navigation 실행에서 VLM을 시작한다.
 `fall_monitor:=auto`가 기본이며,
-`/etc/malbut/fall_runtime.json`이 있으면 로봇 준비 후 Manager와 함께 한 번 시작하고,
+`/etc/malbut/fall_runtime.json`이 있으면 로봇 준비 후 VLM을 한 번 시작하고,
 없으면 이유를 표시하고 건너뛴다. 설정 경로는 `MALBUT_FALL_CONFIG` 또는
 `fall_config` 인자로 지정한다. `fall_monitor:=true`는 설정 누락도 오류로 처리하고,
 `fall_monitor:=false`는 노드를 시작하지 않는다. 파일이 있는데 설정이 잘못된 경우는
 `auto`에서도 시작을 거부한다.
 
-`mapping`이나 현재 남아 있는 `sensors` 모드에서는 `fall_monitor:=true`여도
-VLM 노드를 시작하지 않으며, VLM 설정 파일을 확인하지 않는다.
-`sensors` 제거·기본 실행 모드 변경은 Bringup 담당자가 진행하고,
-여기서는 VLM 자동 시작 범위만 제한한다. 수동 단독 실행기의 모드 검사를 추가한 것은 아니다.
+최신 Bringup은 별도 `mode` 인자를 없앴다. Manager는 위치 추정을 위해 먼저 시작하고,
+VLM은 준비 완료 뒤 시작한다. Manager를 두 번 띄우지 않는다.
+별도 `mapping_backend.launch.py`는 VLM을 시작하지 않는다.
+실제 수집·전송에는 여전히 최신 설정·연결 확인·동의가 필요하다.
 
 설정의 `image_topic`은 Bringup의 `rgb_topic`으로 remap하므로 같은 카메라를 사용한다.
 새 카메라나 별도 VLM 서버를 띄우지 않으며, 기존 직접 Cloud API 실행기를 사용한다.
@@ -140,7 +140,7 @@ VLM은 낙상 분석용 수집·새 전송을 중단하고 대기 요청을 취�
 Cloud 대기 요청은 취소하고 진행 중 요청도 취소를 시도한다. 복구 후 최신 설정과 동의를 다시 확인한다.
 VLM의 5초·15초 중단과 연결 확인 수신은 구현했다. 상태 보고 자체로 Cloud를 호출하지 않는다.
 서버 확인 시각을 전달하는 Manager 발행부와 서버 응답의 `fallSettings` 확장을 구현했다.
-[호출 명세 3.5~3.6절](fall_manager_contract.md)을 따르며, 실제 사용 전 `0010_fall_settings` DB 적용과 서버 배포가 필요하다.
+[호출 명세 3.5~3.6절](fall_manager_contract.md)을 따르며, 실제 사용 전 `0011_fall_settings` DB 적용과 서버 배포가 필요하다.
 홈캠 → Manager 설정 전달(`FallSettingsSnapshot`)과 Manager → 홈캠 적용 회신(`FallSettingsReport`),
 기존 heartbeat 요청으로 서버에 결과를 보내는 형식은 같은 명세 3.7~3.8절에 작성했다.
 새 ROS 타입 5종은 `malbut_interfaces`와 실기기 적용본에 만들었다.

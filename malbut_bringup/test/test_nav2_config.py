@@ -1,5 +1,6 @@
 """Check the robot Nav2 deployment settings without starting navigation."""
 
+import math
 from pathlib import Path
 
 import pytest
@@ -14,14 +15,20 @@ def config():
 
 
 def test_default_navigation_recovery_behaviors_are_available(config):
-    """Patrol's default BT requires all three servers during tree creation."""
+    """Patrol's BT needs the recovery servers; manual_drive has its own AssistedTeleop."""
     behavior = config['behavior_server']['ros__parameters']
     assert behavior['behavior_plugins'] == ['spin', 'wait', 'backup']
     for name, plugin in (('spin', 'Spin'), ('wait', 'Wait'), ('backup', 'BackUp')):
         assert behavior[name]['plugin'] == f'nav2_behaviors/{plugin}'
+    teleop = config['teleop_behavior_server']['ros__parameters']
+    assert teleop['behavior_plugins'] == ['assisted_teleop']
+    assert teleop['assisted_teleop']['plugin'] == 'nav2_behaviors/AssistedTeleop'
+    for key in ('costmap_topic', 'footprint_topic', 'global_frame', 'robot_base_frame'):
+        assert teleop[key] == behavior[key]
     assert type(behavior['rotational_acc_lim']) is float
     assert behavior['rotational_acc_lim'] == 3.2
-    assert behavior['max_rotational_vel'] == 1.0
+    # The vendor driver clamps /cmd_vel rotation to 0.5 rad/s.
+    assert behavior['max_rotational_vel'] == 0.5
     assert behavior['min_rotational_vel'] == 0.4
 
 
@@ -34,6 +41,7 @@ def test_localization_uses_actual_initial_pose_and_vendor_frames(config):
     assert amcl['odom_frame_id'] == 'odom'
     assert amcl['global_frame_id'] == 'map'
     assert amcl['scan_topic'] == '/scan_raw'
+    assert amcl['robot_model_type'] == 'nav2_amcl::OmniMotionModel'
     assert config['map_server']['ros__parameters']['yaml_filename'] == ''
     planner = config['planner_server']['ros__parameters']
     assert planner['planner_plugins'] == ['GridBased']
@@ -41,8 +49,8 @@ def test_localization_uses_actual_initial_pose_and_vendor_frames(config):
     assert planner['GridBased']['tolerance'] == 0.5
 
 
-def test_robot_costmap_radii_and_vendor_matched_velocity_limits(config):
-    """Use robot-tested radii and match the manufacturer's DWB limits."""
+def test_robot_costmap_footprint_and_driver_velocity_limits(config):
+    """Use the official mecanum outline and the vendor driver's /cmd_vel clamp."""
     for scope, frame, resolution in (
             ('local_costmap', 'odom', 0.03),
             ('global_costmap', 'map', 0.05)):
@@ -50,19 +58,23 @@ def test_robot_costmap_radii_and_vendor_matched_velocity_limits(config):
         assert costmap['global_frame'] == frame
         assert costmap['robot_base_frame'] == 'base_footprint'
         assert costmap['use_sim_time'] is False
-        assert costmap['robot_radius'] == 0.18
+        assert costmap['footprint_padding'] == 0.01
+        corners = yaml.safe_load(costmap['footprint'])
+        assert corners == [[0.1385, 0.106], [0.1385, -0.106],
+                           [-0.1385, -0.106], [-0.1385, 0.106]]
         assert costmap['resolution'] == resolution
         inflation = costmap['inflation_layer']['inflation_radius']
         assert inflation == 0.30
         # A sub-cell soft band cannot provide a useful wall-clearance gradient.
-        assert inflation - costmap['robot_radius'] >= 2 * resolution
+        corner = max(math.hypot(x, y) for x, y in corners)
+        assert inflation - corner >= 2 * resolution
         scan = costmap['obstacle_layer']['scan']
         assert scan['topic'] == '/scan_raw'
         assert scan['marking'] is True
         assert scan['clearing'] is True
     smoother = config['velocity_smoother']['ros__parameters']
-    assert smoother['max_velocity'] == [0.4, 0.0, 1.0]
-    assert smoother['min_velocity'] == [-0.4, 0.0, -1.0]
+    assert smoother['max_velocity'] == [0.2, 0.0, 0.5]
+    assert smoother['min_velocity'] == [-0.2, 0.0, -0.5]
     assert smoother['max_accel'] == [2.5, 0.0, 3.2]
     assert smoother['max_decel'] == [-2.5, 0.0, -3.2]
 
@@ -73,44 +85,62 @@ def test_deployed_nav2_parameters_match_source(config):
     assert yaml.safe_load(path.read_text()) == config
 
 
-def test_nav2_keeps_depth_disabled_without_cloud_subscriptions(config):
-    """Use LiDAR-only costmaps and retain the inactive local-depth settings."""
+def test_saved_map_zones_reach_both_costmaps_through_keepout_filter(config):
+    """zone_filter loads the mask; both costmaps read it through filter info."""
+    mask = config['zone_filter_mask_server']['ros__parameters']
+    info = config['zone_filter_info_server']['ros__parameters']
+    assert mask['yaml_filename'] == '' and mask['frame_id'] == 'map'
+    assert info['type'] == 0  # keepout
+    assert info['mask_topic'] == mask['topic_name']
+    assert info['base'] == 0.0 and info['multiplier'] == 1.0
     for scope in ('local_costmap', 'global_costmap'):
         costmap = config[scope][scope]['ros__parameters']
-        expected = ['obstacle_layer', 'inflation_layer']
-        if scope == 'global_costmap':
-            expected.insert(0, 'static_layer')
-        assert costmap['plugins'] == expected
-        # These settings remain available, but the depth plugin is not loaded.
-        depth = costmap['depth_voxel_layer']
-        assert depth['plugin'] == 'malbut_bringup::DepthVoxelLayer'
-        assert depth['observation_sources'] == ''
-        assert depth['depth_topic'] == '/depth_cam/depth0/image_raw'
-        assert depth['camera_info_topic'] == '/depth_cam/depth0/camera_info'
-        assert depth['depth_is_rectified'] is False
-        assert depth['publish_voxel_map'] is False
-        assert depth['expected_update_rate'] == 0.5
-        assert depth['max_obstacle_height'] == 0.20
-        assert depth['origin_z'] == 0.0
-        assert depth['z_resolution'] == 0.03 and depth['z_voxels'] == 16
-        assert depth['mark_threshold'] == 0
-        assert depth['marking'] == {
-            'min_obstacle_height': 0.05, 'max_obstacle_height': 0.20,
-            'obstacle_min_range': 0.0, 'obstacle_max_range': 2.5,
-        }
-        assert depth['clearing'] == {
-            'min_obstacle_height': -0.05, 'max_obstacle_height': 0.48,
-            'raytrace_min_range': 0.0, 'raytrace_max_range': 3.0,
-        }
-        observations = [
-            layer[source]
-            for layer in (costmap[name] for name in costmap['plugins'])
-            for source in layer.get('observation_sources', '').split()
-        ]
-        assert len(observations) == 1
-        assert observations[0]['data_type'] == 'LaserScan'
-        assert observations[0]['topic'] == '/scan_raw'
-    assert '/depth_cam/depth0/points' not in yaml.safe_dump(config)
+        assert costmap['filters'] == ['keepout_filter']
+        keepout = costmap['keepout_filter']
+        assert keepout['plugin'] == 'nav2_costmap_2d::KeepoutFilter'
+        assert keepout['enabled'] is True
+        assert keepout['filter_info_topic'] == info['filter_info_topic']
+
+
+def test_dwb_rejects_footprint_contact_and_keeps_the_vendor_distance_score(config):
+    """The centre cell alone would protect only the 0.106 m inscribed circle."""
+    follow = config['controller_server']['ros__parameters']['FollowPath']
+    assert follow['critics'] == ['RotateToGoal', 'Oscillation', 'BaseObstacle',
+                                 'ObstacleFootprint', 'GoalAlign', 'PathAlign',
+                                 'PathDist', 'GoalDist']
+    assert follow['BaseObstacle.scale'] == 0.02
+    resolution = config['local_costmap']['local_costmap']['ros__parameters']['resolution']
+    # DWB skips a critic at scale 0; at 254 the outline score must still stay
+    # far below one cell of path distance (32 * resolution / 2).
+    assert follow['ObstacleFootprint.scale'] > 0
+    assert follow['ObstacleFootprint.scale'] * resolution * 254 < 0.1
+
+
+def test_only_manual_driving_passes_the_collision_monitor(config):
+    """Navigation and Spin/BackUp publish /cmd_vel; AssistedTeleop goes through it."""
+    from malbut_bringup.nav2_stack import MOTION_REMAPPINGS, PRE_COLLISION_TOPIC
+
+    monitor = config['collision_monitor']['ros__parameters']
+    assert monitor['cmd_vel_in_topic'] == PRE_COLLISION_TOPIC
+    assert monitor['cmd_vel_out_topic'] == 'cmd_vel'
+    assert (monitor['base_frame_id'], monitor['odom_frame_id']) == ('base_footprint', 'odom')
+    assert monitor['polygons'] == ['FootprintApproach']
+    polygon = monitor['FootprintApproach']
+    # Approach follows the mecanum base's direction of travel; moving away is free.
+    assert polygon['action_type'] == 'approach' and polygon['type'] == 'polygon'
+    assert polygon['footprint_topic'] == '/local_costmap/published_footprint'
+    assert 0 < polygon['time_before_collision'] <= 2.0
+    assert monitor['observation_sources'] == ['scan']
+    assert monitor['scan'] == {'type': 'scan', 'topic': '/scan_raw'}
+    outputs = {name: dict(MOTION_REMAPPINGS.get(name, [])).get(topic, topic)
+               for name, topic in (('controller_server', 'cmd_vel'),
+                                   ('velocity_smoother', 'cmd_vel_smoothed'),
+                                   ('behavior_server', 'cmd_vel'),
+                                   ('teleop_behavior_server', 'cmd_vel'))}
+    assert outputs == {'controller_server': 'cmd_vel_nav',
+                       'velocity_smoother': 'cmd_vel',
+                       'behavior_server': 'cmd_vel',
+                       'teleop_behavior_server': PRE_COLLISION_TOPIC}
 
 
 def test_planar_lidar_uses_2d_layers_with_unchanged_observation_ranges(config):

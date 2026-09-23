@@ -50,6 +50,7 @@ execution:                           # object
   mode: enum(FOREGROUND, BACKGROUND)
   priority: enum(LOW, NORMAL, HIGH, URGENT)
   resources: list[enum(BASE, SPEAKER, BUZZER, LED, DISPLAY)]
+  map_requirement: enum(SELECTED, NOT_SELECTED)  # 선택, 없으면 지도와 무관
 ```
 
 | 항목 | 의미 |
@@ -60,12 +61,15 @@ execution:                           # object
 | `execution.mode` | 전경 미션 또는 병행 백그라운드 작업 구분 |
 | `execution.priority` | 충돌하는 미션 사이의 선점 우선순위 |
 | `execution.resources` | 기능 실행 중 독점 제어하는 출력 자원 목록. 없으면 `[]` |
+| `execution.map_requirement` | 선택. 저장 지도 선택이 필요하면 `SELECTED`, 지도 작성 중에만 가능하면 `NOT_SELECTED` |
 
 `default`가 없으면 반드시 전달해야 하는 입력입니다. 선택 가능한 값은 `.action/.srv`에 선언된 상수를 직접 확인하며 Manifest에 중복하지 않습니다. 조건부 입력과 수치 범위는 해당 Action·Service 서버가 검사합니다.
 
 `FOREGROUND`는 로봇의 주 임무, `BACKGROUND`는 병행 백그라운드 기능을 의미합니다. Action인지 Service인지는 실행 형태의 구분 기준이 아닙니다. 전경·백그라운드와 무관하게 `resources`가 하나라도 겹치면 충돌하며, 겹치지 않으면 전경 미션도 함께 실행할 수 있습니다.
 
 자원은 `BASE`(차체 이동·회전), `SPEAKER`(스피커), `BUZZER`(부저), `LED`(표시등), `DISPLAY`(화면)입니다. 여러 자원을 제어하면 `resources: [BASE, SPEAKER]`처럼 모두 적습니다. 센서·지도 토픽을 읽는 것은 독점 자원이 아닙니다. 실제 제어하는 자원을 빠짐없이 선언하고, 독점 제어가 없는 기능만 `resources: []`로 작성합니다.
+
+실로봇 Bringup에서는 시스템 관리자가 위치 추정을 소유합니다. 저장 지도가 선택되지 않으면 SLAM으로 지도를 작성하고, 선택되면 저장 지도와 AMCL을 사용하며 위치 보정(`relocalize`)으로 로봇 위치를 찾습니다. `map_requirement: SELECTED` 기능은 저장 지도 선택 후에만, `NOT_SELECTED` 기능(자동 지도 만들기)은 지도 작성 중에만 실행합니다. 항목이 없는 기능(수동 조작, 날씨 등)은 지도와 무관합니다. 위치 추정 전환 중에는 위치 보정이 차체를 회전시킬 수 있으므로 `BASE`를 쓰는 기능을 모두 거부합니다. 위치 추정을 관리하지 않는 단독 관리자 실행에서는 이 항목으로 거부하지 않습니다.
 
 우선순위는 충돌하는 미션 사이에서만 비교합니다. 새 요청이 모든 충돌 미션보다 우선순위가 높거나 같으면 해당 미션만 취소하고, 실제 종료를 확인한 후 새 요청을 실행합니다. 하나라도 더 높은 우선순위의 충돌 미션이 있으면 새 요청을 거부합니다. 교체된 미션은 완전히 종료하며 보류하거나 자동 재개하지 않습니다. 다시 실행하려면 새 요청을 보내야 합니다.
 

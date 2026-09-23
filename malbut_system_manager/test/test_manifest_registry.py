@@ -14,6 +14,7 @@ from malbut_system_manager.models import (
     CommandKind,
     ExecutionMode,
     ExecutionResource,
+    MapRequirement,
     MissionPriority,
 )
 
@@ -197,6 +198,29 @@ def test_rejects_invalid_resource_lists(tmp_path, resources, message) -> None:
     _write_manifest(tmp_path, document)
 
     with pytest.raises(ManifestError, match=message):
+        _registry(tmp_path)
+
+
+@pytest.mark.parametrize('value,expected', [
+    (None, None),
+    ('SELECTED', MapRequirement.SELECTED),
+    ('NOT_SELECTED', MapRequirement.NOT_SELECTED),
+])
+def test_optional_map_requirement(tmp_path, value, expected) -> None:
+    """Map needs are opt-in so existing capabilities keep their meaning."""
+    document = _document()
+    if value is not None:
+        document['execution']['map_requirement'] = value
+    _write_manifest(tmp_path, document)
+    assert _registry(tmp_path).get('follow_person').map_requirement is expected
+
+
+def test_rejects_unknown_map_requirement(tmp_path) -> None:
+    """A typo must not silently allow a mission without its map."""
+    document = _document()
+    document['execution']['map_requirement'] = 'ALWAYS'
+    _write_manifest(tmp_path, document)
+    with pytest.raises(ManifestError, match='map_requirement'):
         _registry(tmp_path)
 
 

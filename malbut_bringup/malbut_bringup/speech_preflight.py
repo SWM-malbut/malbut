@@ -7,6 +7,31 @@ import sys
 import time
 
 
+# Fixed messages raised by Malbut's own speech code. Anything else (API errors,
+# device text) stays out of the log; only these exact strings are reported.
+SAFE_DETAILS = frozenset({
+    'whisper.cpp requires rebuilding the packaged ABI 3 bridge',
+    'whisper.cpp requires existing local model and bridge library files',
+    'whisper.cpp failed to load the local model',
+    'STT microphone must provide 16 kHz PCM',
+    'STT microphone returned an incomplete frame',
+    'device_index must be -1 or a microphone index',
+    'invalid_agent_configuration',
+    'invalid_preflight_configuration',
+})
+
+
+def safe_detail(error):
+    """Return a known Malbut failure message, or a PortAudio device error, else ''."""
+    text = str(error)
+    if text in SAFE_DETAILS:
+        return text
+    if type(error).__module__ == 'sounddevice':
+        # Device index and PortAudio status only; no credentials or audio pass here.
+        return f'{type(error).__name__}: {text[:120]}'
+    return ''
+
+
 def check_interfaces():
     """Require generated ROS speech types with usable native type support."""
     from malbut_interfaces.msg import SpeechPlaybackStatus, SpeechRequest, SpeechTranscript
@@ -179,9 +204,11 @@ def main(argv=None):
     except KeyboardInterrupt:
         return 130
     except Exception as error:
+        detail = safe_detail(error)
         print(json.dumps({
             'event': 'speech_preflight_failed', 'phase': phase,
             'error_type': type(error).__name__,
+            **({'detail': detail} if detail else {}),
         }), file=sys.stderr, flush=True)
         return 2
 

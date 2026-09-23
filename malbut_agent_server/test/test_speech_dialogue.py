@@ -1,15 +1,21 @@
 """Conversation reuse, bounded admission and worker-owned store lifetime."""
 
 import hashlib
+import json
 import threading
 import time
 
 import pytest
 
 from malbut_agent_server.config import Settings
+from malbut_agent_server.conversation import SQLiteConversationStore
 from malbut_agent_server.factory import build_orchestrator
 from malbut_agent_server.providers.base import ProviderError
-from malbut_agent_server.schemas import AgentDecision, ProviderResult
+from malbut_agent_server.providers.mock import MockProvider
+from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
+from malbut_agent_server.schemas import (
+    AgentDecision, AgentRequest, ProviderResult, SpeechAgentRequest, ValidationError,
+)
 from malbut_agent_server.speech_dialogue import (
     DialogueWorker, ERROR_RESPONSE, SESSION_ERROR_RESPONSE,
     validate_dialogue_input,
@@ -394,13 +400,107 @@ def test_session_startup_failure_closes_both_stores():
     assert len(factory.closed) == 2
 
 
+def test_worker_starts_after_one_hundred_expired_sessions(tmp_path):
+    """A persisted quota of old sessions cannot permanently block speech."""
+    database = str(tmp_path / 'speech.sqlite3')
+    store = SQLiteConversationStore(database, clock=lambda: 1000.0)
+    try:
+        for number in range(100):
+            store.create('speaker', f'expired-{number}')
+    finally:
+        store.close()
+
+    factory = RuntimeFactory(database_path=database)
+    worker = DialogueWorker(factory, 'speaker')
+    try:
+        wait_until(lambda: worker.ready or worker.startup_error is not None)
+        assert worker.ready
+        assert worker.startup_error is None
+        assert worker.submit('fresh-utterance', '안녕')
+        assert collect(worker, 1)[0]['kind'] == 'answer'
+        assert factory.runtime.conversation_store._connection.execute(
+            'SELECT COUNT(*) FROM conversation_sessions WHERE user_id = ?',
+            ('speaker',),
+        ).fetchone()[0] == 100
+    finally:
+        worker.close()
+
+
 @pytest.mark.parametrize('utterance_id,text', [
     ('', '안녕'), (' \n', '안녕'), ('id', ''), ('id', ' \n'),
-    ('id', 'x' * 2001), ('id', '\ud800'), ('\ud800', '안녕'),
+    ('id', 'x' * 16001), ('id', '\ud800'), ('\ud800', '안녕'),
 ])
 def test_invalid_input_is_rejected_before_queue_admission(utterance_id, text):
     with pytest.raises(ValueError):
         validate_dialogue_input(utterance_id, text)
+
+
+@pytest.mark.parametrize('length', [2001, 16000])
+def test_complete_long_speech_reaches_provider_and_sqlite_once(length):
+    """The final tail survives request copies, history, and JSON escaping."""
+    marker = '마지막에 한 말까지 전부 전달됐습니다.'
+    text = ('시작 ' + '가"\\\n' * length)[:length - len(marker)] + marker
+    payloads = []
+
+    def transport(_url, _headers, payload, _timeout):
+        payloads.append(payload)
+        decision = {'type': 'message', 'message': '모두 확인했어요.',
+                    'reason': 'test', 'confidence': 1.0}
+        if 'memory_proposal' in payload['text']['format']['schema']['properties']:
+            decision['memory_proposal'] = None
+        return {'status': 'completed', 'output': [{
+            'type': 'message', 'role': 'assistant', 'status': 'completed',
+            'content': [{'type': 'output_text', 'text': json.dumps(decision)}],
+        }]}
+
+    factory = RuntimeFactory(provider=OpenAIResponsesProvider(
+        api_key='unused-test-key', model='test-model', transport=transport,
+    ))
+    worker = DialogueWorker(factory, 'speaker')
+    try:
+        assert worker.submit('first', '이전 대화도 있습니다.')
+        assert collect(worker, 1)[0]['kind'] == 'answer'
+        assert worker.submit('long', text)
+        reply = collect(worker, 1)[0]
+        assert reply['kind'] == 'answer'
+        assert len(payloads) == 2
+        assert isinstance(factory.handled[-1], SpeechAgentRequest)
+        data = json.loads(payloads[-1]['input'].split('\n', 1)[1])
+        assert data['current_user_utterance'] == text
+        assert data['conversation_history_untrusted'][0]['user'] == '이전 대화도 있습니다.'
+        turns = factory.runtime.conversation_store.list_turns(
+            'speaker', reply['conversation_id'],
+        )
+        assert len(turns) == 2
+        assert turns[-1].user_content == text
+        metrics = factory.completed[-1].provider_result.context_metrics
+        assert metrics.current_utterance_included_chars == length
+        assert 'current_user_utterance' not in metrics.truncated_sections
+        assert metrics.model_input_chars <= metrics.max_model_input_chars
+        # Speech support does not enlarge public HTTP input or spoken answers.
+        with pytest.raises(ValidationError):
+            AgentRequest.from_dict(factory.handled[-1].to_dict())
+        with pytest.raises(ValidationError):
+            AgentDecision(type='message', message='가' * 2001).validate()
+    finally:
+        worker.close()
+
+
+def test_mock_dialogue_accepts_long_intro_without_optional_memory_failure():
+    factory = RuntimeFactory(provider=MockProvider())
+    worker = DialogueWorker(factory, 'speaker')
+    text = '앞선 이야기입니다. ' * 250 + '내 이름은 민수야'
+    try:
+        assert worker.submit('long-intro', text)
+        reply = collect(worker, 1)[0]
+        assert reply['kind'] == 'answer'
+        turns = factory.runtime.conversation_store.list_turns(
+            'speaker', reply['conversation_id'],
+        )
+        assert len(turns) == 1 and turns[0].user_content == text
+        assert factory.completed[0].provider_result.memory_proposal is None
+    finally:
+        worker.close()
 
 
 @pytest.mark.parametrize('capacity', [0, -1, True, 1.5])

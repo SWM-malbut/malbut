@@ -70,6 +70,15 @@ PC에 없던 `aiohttp`는 테스트 전용 경로에 설치했으며 시스템 P
 
 ## 로봇을 받으면 할 순서
 
+최신 main 병합 뒤에도 기능 검사를 다시 했다. 관련 Python·ROS·Manager·Bringup
+검사 518개와 Manager 패키지의 린트·문서 검사 2개가 통과했다.
+웹 테스트 109개, 린트·TypeScript·웹 빌드도 통과했다.
+이는 로컬 결과이며 Jetson 실물 확인과 구분한다.
+
+병합 과정에서 웹 경로를 `malbut_web`으로 맞추고,
+낙상 설정 DB 변경 파일은 기존 main의 0010번과 겹치지 않게 `0011_fall_settings.sql`로 옮겼다.
+운영 DB에는 적용하지 않았다.
+
 ### 1. 의존성과 패키지 빌드
 
 제조사 ROS Humble 환경을 먼저 불러오고 배포용 `malbut_test/README.md`와

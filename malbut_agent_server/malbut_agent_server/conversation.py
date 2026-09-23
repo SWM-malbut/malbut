@@ -21,6 +21,7 @@ from typing import (
 )
 
 from malbut_agent_server.schemas import (
+    MAX_SPEECH_TRANSCRIPT_LENGTH,
     MAX_UTTERANCE_LENGTH,
     ValidationError,
     validate_conversation_id,
@@ -849,10 +850,29 @@ class SQLiteConversationStore:
                     ''',
                     (normalized_user,),
                 ).fetchone()
-                if (
-                    int(count_row['session_count'])
-                    >= self.max_sessions_per_user
-                ):
+                session_count = int(count_row['session_count'])
+                if session_count >= self.max_sessions_per_user:
+                    # Retain expired history until admission needs its space.
+                    # The existing expiry and instance fences reject late turns.
+                    removed = self._connection.execute(
+                        '''
+                        DELETE FROM conversation_sessions
+                        WHERE user_id = ? AND conversation_id IN (
+                            SELECT conversation_id
+                            FROM conversation_sessions
+                            WHERE user_id = ? AND status = 'expired'
+                            ORDER BY expires_at, created_at, conversation_id
+                            LIMIT ?
+                        )
+                        ''',
+                        (
+                            normalized_user,
+                            normalized_user,
+                            session_count - self.max_sessions_per_user + 1,
+                        ),
+                    ).rowcount
+                    session_count -= removed
+                if session_count >= self.max_sessions_per_user:
                     raise ConversationStateError(
                         'conversation session limit reached; '
                         'delete an old session'
@@ -998,10 +1018,16 @@ class SQLiteConversationStore:
         request_fingerprint: str,
         user_content: str,
         before_new_turn: Optional[Callable] = None,
+        *,
+        max_user_content_chars: int = MAX_UTTERANCE_LENGTH,
     ) -> BeginTurnResult:
         """Reserve one ordered turn or return its durable response."""
         if before_new_turn is not None and not callable(before_new_turn):
             raise TypeError('before_new_turn must be callable')
+        max_user_content_chars = self._bounded_integer(
+            max_user_content_chars, 'max_user_content_chars',
+            1, MAX_SPEECH_TRANSCRIPT_LENGTH,
+        )
         normalized_user = validate_user_id(user_id)
         normalized_id = validate_conversation_id(conversation_id)
         normalized_turn = validate_turn_id(turn_id)
@@ -1018,7 +1044,7 @@ class SQLiteConversationStore:
         normalized_content = self._required_text(
             user_content,
             'user_content',
-            MAX_UTTERANCE_LENGTH,
+            max_user_content_chars,
         )
         now = self._now()
         with self._lock:

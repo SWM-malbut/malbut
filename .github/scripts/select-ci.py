@@ -149,9 +149,9 @@ def selection(paths, full=False, base=None):
         if fall_python_only(path):
             flags['fall_python'] = True
             continue
-        if path.startswith('homecam_web/'):
+        if path.startswith('malbut_web/'):
             flags['web'] = True
-            flags['infra'] |= path.startswith('homecam_web/infra/')
+            flags['infra'] |= path.startswith('malbut_web/infra/')
         if path.startswith('homecam_agent/'):
             flags['homecam'] = True
         if path in SIMULATION_BRIDGES:

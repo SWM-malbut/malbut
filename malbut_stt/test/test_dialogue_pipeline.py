@@ -66,7 +66,7 @@ def harness():
         assert state.allow_asr.wait(timeout=3.0)
         return '문장 ' + str(len(state.command_calls))
 
-    def create(*, aec=True):
+    def create(*, aec=True, **options):
         pipeline = DialoguePipeline(
             recorder_factory=lambda: state.recorder,
             wake=SimpleNamespace(transcribe=wake),
@@ -76,6 +76,7 @@ def harness():
             publish_control=lambda pid, cmd: state.controls.append((pid, cmd)),
             publish_interruption=lambda uid, pid, text: state.candidates.append((uid, pid, text)),
             report=state.reports.append, clock=lambda: state.now, input_has_aec=aec,
+            **options,
         )
         state.pipeline = pipeline
         pipeline.start()
@@ -520,3 +521,92 @@ def test_device_cleanup_failure_still_joins_workers_and_close_is_idempotent(harn
     assert not pipeline._started
     assert not pipeline.capture_thread.is_alive() and not pipeline.asr_thread.is_alive()
     assert pipeline.audio.empty() and pipeline.jobs.empty() and pipeline.results.empty()
+
+
+@pytest.mark.parametrize('aec', [False, True])
+def test_wake_chime_and_queued_echo_are_excluded_before_command_capture(harness, aec):
+    chimes = []
+
+    def chime():
+        chimes.append('played')
+        pipeline.feed(VOICE)
+        assert not pipeline.command_stream.collector.started
+        pipeline.audio.put_nowait((pipeline._audio_generation, harness.now, VOICE, False))
+        harness.now += 0.18
+
+    pipeline = harness.create(aec=aec, on_wake=chime)
+    wake_up(harness, pipeline)
+    assert chimes == ['played'] and pipeline.audio.empty()
+    pipeline.feed(VOICE)
+    assert not pipeline.command_stream.collector.started
+    harness.now += 0.3
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    assert len(harness.command_calls) == 1
+    assert 'wake_chime_unavailable' not in harness.reports
+
+
+def test_failed_wake_chime_reports_failure_and_returns_to_wake(harness):
+    def chime():
+        raise RuntimeError('private device detail')
+
+    pipeline = harness.create(on_wake=chime)
+    pipeline.feed(VOICE + QUIET * 20)
+    pump(pipeline, lambda: 'wake_chime_failed:RuntimeError' in harness.reports)
+    assert not pipeline.session.active and not pipeline._chime_playing
+    assert harness.transcripts == [] and not pipeline.command_stream.collector.audio
+    assert all('private' not in report for report in harness.reports)
+
+
+def test_close_cancels_decode_before_joining_worker(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    harness.allow_asr.clear()
+    finish_command(pipeline)
+    assert harness.entered_asr.wait(timeout=1)
+    cancelled = []
+
+    def cancel():
+        cancelled.append(True)
+        harness.allow_asr.set()
+
+    pipeline.transcriber.cancel = cancel
+    pipeline.close()
+    assert cancelled == [True]
+    assert not pipeline.asr_thread.is_alive()
+    assert harness.transcripts == []
+    assert 'asr_shutdown_pending' not in harness.reports
+
+
+def test_overlong_capture_cancels_inflight_preview_and_drops_late_result(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    harness.allow_asr.clear()
+    pipeline.feed(VOICE + QUIET * 50)
+    assert harness.entered_asr.wait(timeout=1)
+    cancelled = []
+
+    def cancel():
+        cancelled.append(True)
+        harness.allow_asr.set()
+
+    pipeline.transcriber.cancel = cancel
+    pipeline.feed(VOICE * 1001)
+    assert cancelled == [True]
+    pump(pipeline, lambda: pipeline._endpoint_job is None)
+    assert harness.transcripts == [] and not pipeline.session.active
+
+
+def test_cancelled_queued_preview_releases_bookkeeping_without_decoding(harness):
+    pipeline = harness.create()
+    pipeline._endpoint_job = (0, 'old', 1)
+    pipeline._endpoint_requested_at = harness.now
+    pipeline._terminate('utterance_discarded:too_long')
+    # Simulate a job dequeued after termination, before it reaches native decode.
+    pipeline.jobs.put_nowait(('partial', 0, ('old', 1), VOICE))
+    pump(pipeline, lambda: pipeline._endpoint_job is None)
+    assert harness.command_calls == [] and harness.transcripts == []
+    assert pipeline._endpoint_requested_at is None
+    wake_up(harness, pipeline)
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)

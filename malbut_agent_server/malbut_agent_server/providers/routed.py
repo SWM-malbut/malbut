@@ -17,6 +17,7 @@ from malbut_agent_server.domain.front_route import (
     MAX_FRONT_HISTORY_CHARS,
     MAX_FRONT_HISTORY_MESSAGES,
     MAX_FRONT_HISTORY_MESSAGE_CHARS,
+    MAX_FRONT_MESSAGE_CHARS,
     FrontMessage,
     FrontMessageRole,
     FrontRoute,
@@ -32,6 +33,7 @@ from malbut_agent_server.providers.base import (
 from malbut_agent_server.schemas import (
     AgentDecision,
     AgentRequest,
+    SpeechAgentRequest,
     ProviderResult,
     ValidationError,
 )
@@ -102,6 +104,14 @@ class RoutedAgentProvider(AgentProvider):
         weather_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Route once and return without trying a second provider."""
+        if (isinstance(request, SpeechAgentRequest)
+                and len(request.utterance) > MAX_FRONT_MESSAGE_CHARS):
+            # The front router has a shorter text contract. Preserve the whole
+            # speech turn through the existing provider instead of projecting a prefix.
+            return self._delegate(
+                self.fallback_provider, request, memories, conversation_turns,
+                tools, conversation_summary, memory_context, weather_context,
+            )
         front_request = self._front_request(
             request,
             conversation_turns,
@@ -259,7 +269,7 @@ class RoutedAgentProvider(AgentProvider):
             name for name in request.available_tools
             if name in {'get_weather', 'set_weather_location'}
         ]
-        return AgentRequest.from_dict(value)
+        return type(request).from_dict(value)
 
     @staticmethod
     def _delegate(

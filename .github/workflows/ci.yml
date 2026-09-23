@@ -74,17 +74,17 @@ jobs:
           fi
           python3 -m py_compile "${files[@]}"
 
-  homecam-web:
-    name: Homecam web lint and test
+  malbut-web:
+    name: Malbut web lint and test
     runs-on: ubuntu-22.04
     needs: changes
     defaults:
       run:
-        working-directory: homecam_web
+        working-directory: malbut_web
     steps:
-      - name: Skip unchanged Homecam web
+      - name: Skip unchanged Malbut web
         if: needs.changes.outputs.web != 'true'
-        run: echo "No Homecam web files changed."
+        run: echo "No Malbut web files changed."
         working-directory: .
 
       - uses: actions/checkout@v6
@@ -96,7 +96,7 @@ jobs:
         with:
           node-version: "22.13.0"
           cache: npm
-          cache-dependency-path: homecam_web/package-lock.json
+          cache-dependency-path: malbut_web/package-lock.json
 
       - name: Install dependencies
         if: needs.changes.outputs.web == 'true'
@@ -122,17 +122,17 @@ jobs:
         if: needs.changes.outputs.web == 'true'
         run: npm test
 
-  homecam-web-infra:
-    name: Homecam web CDK build and test
+  malbut-web-infra:
+    name: Malbut web CDK build and test
     runs-on: ubuntu-22.04
     needs: changes
     defaults:
       run:
-        working-directory: homecam_web/infra/cdk
+        working-directory: malbut_web/infra/cdk
     steps:
-      - name: Skip unchanged Homecam infrastructure
+      - name: Skip unchanged Malbut web infrastructure
         if: needs.changes.outputs.infra != 'true'
-        run: echo "No Homecam infrastructure files changed."
+        run: echo "No Malbut web infrastructure files changed."
         working-directory: .
 
       - uses: actions/checkout@v6
@@ -145,9 +145,9 @@ jobs:
           node-version: "22.13.0"
           cache: npm
           cache-dependency-path: |
-            homecam_web/infra/cdk/package-lock.json
-            homecam_web/infra/aws/kvs-broker/package-lock.json
-            homecam_web/infra/aws/push-broker/package-lock.json
+            malbut_web/infra/cdk/package-lock.json
+            malbut_web/infra/aws/kvs-broker/package-lock.json
+            malbut_web/infra/aws/push-broker/package-lock.json
 
       - name: Install dependencies
         if: needs.changes.outputs.infra == 'true'

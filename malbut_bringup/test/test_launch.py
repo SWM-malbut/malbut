@@ -15,7 +15,7 @@ from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.events.process import ProcessExited
 from launch.utilities import perform_substitutions
-from launch_ros.actions import Node, SetParameter
+from launch_ros.actions import LoadComposableNodes, Node, SetParameter
 from launch_ros.utilities import evaluate_parameters
 import pytest
 
@@ -52,8 +52,7 @@ def launch_module(tmp_path, monkeypatch):
     """Supply fake vendor assets, but use the real Malbut launch files."""
     monkeypatch.delenv('HOMECAM_BACKEND_URL', raising=False)
     monkeypatch.setenv('MALBUT_FALL_CONFIG', str(tmp_path / 'unconfigured-fall.json'))
-    for name in ('slam/launch/include/robot.launch.py',
-                 'home/ros2_ws/src/navigation/launch/include/bringup.launch.py'):
+    for name in ('slam/launch/include/robot.launch.py',):
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('from launch import LaunchDescription\n'
@@ -108,6 +107,11 @@ def _includes(actions):
             if isinstance(child, IncludeLaunchDescription)]
 
 
+def _joystick_nodes(actions):
+    return [item for item in actions if isinstance(item, Node)
+            and item.node_executable == 'joystick_control']
+
+
 def _readiness_exit(actions, context, returncode=0):
     wait = next(item for item in actions if isinstance(item, Node)
                 and item.node_executable == 'wait_for_robot')
@@ -122,76 +126,171 @@ def _readiness_exit(actions, context, returncode=0):
     return result
 
 
-def test_default_without_map_only_starts_hardware_and_perception(launch_module):
-    """A fresh robot must not silently use the simulation map or start moving."""
+def _nodes(actions, executable):
+    return [item for item in actions if isinstance(item, Node)
+            and item.node_executable == executable]
+
+
+def _parameters(context, node):
+    return evaluate_parameters(context, node._Node__parameters)[0]
+
+
+def test_one_bringup_starts_everything_and_maps_without_a_saved_map(launch_module):
+    """No modes: hardware, Nav2, applications and the manager always start."""
     context = _context(launch_module)
     actions = launch_module._setup(context)
-    includes = _includes(actions)
-    assert len(includes) == 2
-    options = [dict(item.launch_arguments) for item in includes]
-    assert options[0]['sim'] == 'false'
-    assert options[0]['robot_name'] == '/'
-    assert options[0]['master_name'] == '/'
-    assert options[0]['point_cloud_enable'] == 'false'
-    assert options[1]['reid_backend'] == 'osnet'
-    assert Path(options[1]['python_executable']).is_file()
-    assert Path(options[1]['model_path']).is_file()
-    assert not any(isinstance(action, Node)
-                   and action.node_package == 'malbut_system_manager'
-                   for action in actions)
+    options = [dict(item.launch_arguments) for item in _includes(actions)]
+    # Hardware, person detection and following, patrol and AutoSLAM; Nav2 is composed.
+    assert len(options) == 5
+    assert all(item['use_sim_time'] == 'false' for item in options)
+    hardware = options[0]
+    assert hardware['sim'] == 'false'
+    assert hardware['robot_name'] == hardware['master_name'] == '/'
+    assert hardware['point_cloud_enable'] == 'false'
+    # The vendor joystick becomes manual_drive input instead of a second /cmd_vel source.
+    assert hardware['use_joy'] == 'false'
+    joystick = _nodes(actions, 'joystick_control')
+    assert len(joystick) == 1 and joystick[0].node_package == 'peripherals'
+    assert [(str(source[0].perform(context)), str(target[0].perform(context)))
+            for source, target in joystick[0]._Node__remappings] == [
+        ('controller/cmd_vel', '/cmd_vel_teleop')]
+    assert _parameters(context, joystick[0])['max_linear'] == 0.15
+    assert _parameters(context, joystick[0])['max_angular'] == 0.45
+    assert sum('reid_backend' in item for item in options) == 1
+    assert sum('lidar_config' in item for item in options) == 1
+    assert sum('camera_image_topic' in item for item in options) == 1
+    manager = _parameters(context, _nodes(actions, 'system_manager')[0])
+    assert manager['localization_control'] is True
+    assert manager['initial_map'] == ''
+    assert manager['ready_topic'] == '/malbut/bringup/status'
+    assert manager['slam_params_file'].endswith('malbut_bringup/config/slam_toolbox.yaml')
+    assert _parameters(context, _nodes(actions, 'manual_control')[0])[
+        'teleop_topic'] == '/cmd_vel_teleop'
+    # Each saved-map load finds the robot through the relocalization Action.
+    assert _nodes(actions, 'relocalization')[0].node_package == 'malbut_relocalization'
+    assert manager['relocalize_action'] == '/relocalize'
+    assert _parameters(context, _nodes(actions, 'wait_for_robot')[0])['relocalization'] is True
 
 
-def test_hardware_only_does_not_require_vendor_or_gpu_install(launch_module):
-    """Externally started drivers can be checked without restarting them."""
-    launch_module.get_package_share_directory = lambda _: pytest.fail('unexpected lookup')
+def _components(context, actions):
+    loader = next(item for item in actions if isinstance(item, LoadComposableNodes))
+    assert loader._LoadComposableNodes__target_container == '/nav2_container'
+    result = {}
+    for node in loader._LoadComposableNodes__composable_node_descriptions:
+        name = perform_substitutions(context, node.node_name)
+        result[name] = {
+            'plugin': perform_substitutions(context, node.node_plugin),
+            'remappings': {perform_substitutions(context, source):
+                           perform_substitutions(context, target)
+                           for source, target in node.remappings or []},
+            'parameters': evaluate_parameters(context, node.parameters),
+        }
+    return result
+
+
+def test_missing_nav2_package_fails_the_launch_by_name(launch_module, monkeypatch):
+    """Without this the lifecycle manager waits forever for the absent component."""
+    from ament_index_python.packages import PackageNotFoundError
+    from malbut_bringup import nav2_stack
+
+    def share(name):
+        if name == 'nav2_collision_monitor':
+            raise PackageNotFoundError(name)
+        return f'/opt/ros/humble/share/{name}'
+
+    monkeypatch.setattr(nav2_stack, 'get_package_share_directory', share)
+    assert nav2_stack.missing_packages() == ['nav2_collision_monitor']
+    with pytest.raises(RuntimeError, match='ros-humble-nav2-collision-monitor'):
+        launch_module._setup(_context(launch_module))
+    monkeypatch.setattr(nav2_stack, 'get_package_share_directory', lambda name: f'/x/{name}')
+    assert nav2_stack.missing_packages() == []
+
+
+def test_nav2_is_composed_with_collision_monitor_and_zone_filter(launch_module):
+    """Navigation publishes /cmd_vel; manual driving passes the Collision Monitor."""
+    context = _context(launch_module, scan_topic='/laser_raw')
+    actions = launch_module._setup(context)
+    params = str((ROOT / 'malbut_bringup/config/nav2_params.yaml').resolve())
+    container = _nodes(actions, 'component_container_isolated')
+    assert len(container) == 1
+    assert container[0]._Node__node_name == 'nav2_container'
+    components = _components(context, actions)
+    assert components['controller_server']['remappings']['cmd_vel'] == 'cmd_vel_nav'
+    smoother = components['velocity_smoother']['remappings']
+    assert smoother['cmd_vel'] == 'cmd_vel_nav'
+    assert smoother['cmd_vel_smoothed'] == 'cmd_vel'
+    assert components['behavior_server']['remappings'].get('cmd_vel', 'cmd_vel') == 'cmd_vel'
+    teleop = components['teleop_behavior_server']
+    assert teleop['plugin'] == 'behavior_server::BehaviorServer'
+    assert teleop['remappings']['cmd_vel'] == 'cmd_vel_pre_collision'
+    assert components['collision_monitor']['plugin'] == (
+        'nav2_collision_monitor::CollisionMonitor')
+    for name, item in components.items():
+        if not name.startswith('lifecycle_manager'):
+            assert [str(path) for path in item['parameters']] == [params], name
+            assert item['remappings']['/scan_raw'] == '/laser_raw', name
+    navigation = components['lifecycle_manager_navigation']['parameters'][0]
+    localization = components['lifecycle_manager_localization']['parameters'][0]
+    assert navigation['autostart'] is True and localization['autostart'] is False
+    order = list(navigation['node_names'])
+    assert order[:2] == ['zone_filter_mask_server', 'zone_filter_info_server']
+    # Spinning to find the pose must not wait for the map-frame global costmap.
+    for name in ('behavior_server', 'teleop_behavior_server', 'velocity_smoother',
+                 'collision_monitor'):
+        assert order.index(name) < order.index('planner_server'), name
+    assert list(localization['node_names']) == ['map_server', 'amcl']
+    assert _nodes(actions, 'zone_filter')[0].node_package == 'malbut_bringup'
+
+
+@pytest.mark.parametrize('options', [{'relocalization': 'false'}, {'restore_pose': 'false'}])
+def test_pose_finding_can_be_left_to_the_operator(launch_module, options):
+    """Without it the manager loads maps and the operator sets the pose."""
+    context = _context(launch_module, **options)
+    actions = launch_module._setup(context)
+    manager = _parameters(context, _nodes(actions, 'system_manager')[0])
+    assert manager['relocalize_action'] == ''
+    assert bool(_nodes(actions, 'relocalization')) == ('relocalization' not in options)
+
+
+def test_reused_hardware_is_not_launched_again(launch_module):
+    """Externally started drivers keep their own joystick; no duplicates start."""
     context = _context(launch_module, start_hardware='false', perception='false')
     actions = launch_module._setup(context)
-    assert _includes(actions) == []
-    assert [item.node_executable for item in actions if isinstance(item, Node)] == [
-        'wait_for_robot']
+    assert not any('robot_name' in dict(item.launch_arguments) for item in _includes(actions))
+    assert not _nodes(actions, 'joystick_control')
+    assert not any('reid_backend' in dict(item.launch_arguments)
+                   for item in _includes(actions))
+    wait = _parameters(context, _nodes(actions, 'wait_for_robot')[0])
+    assert wait['navigation'] is True and wait['perception'] is False
 
 
-def test_mapping_prepares_camera_before_exposing_idle_autoslam(launch_module):
-    """Show the camera first; reuse the ready drivers when a Goal starts mapping."""
-    context = _context(launch_module, mode='mapping', web_panel='true',
-                       scan_topic='/laser_raw',
+def test_applications_and_panel_receive_robot_topics(launch_module):
+    """Configured topics and frames reach autoslam, the panel and readiness."""
+    context = _context(launch_module, web_panel='true', scan_topic='/laser_raw',
                        map_directory='/configured/maps', static_map_topic='/mapping/map',
-                       robot_frame='robot/base', rgb_topic='/camera/color',
-                       python_executable='/not/prepared')
+                       robot_frame='robot/base', rgb_topic='/camera/color')
     actions = launch_module._setup(context)
-    includes = _includes(actions)
-    assert len(includes) == 1
-    assert dict(includes[0].launch_arguments)['sim'] == 'false'
-    ready = _readiness_exit(actions, context)
-    options = dict(_includes(ready)[0].launch_arguments)
-    assert options['auto_start'] == 'true'
-    assert options['scan_topic'] == '/laser_raw'
-    assert options['use_sim_time'] == 'false'
-    assert options['map_directory'] == '/configured/maps'
-    assert options['map_topic'] == '/mapping/map'
-    assert options['base_frame'] == 'robot/base'
-    assert [item.node_executable for item in actions if isinstance(item, Node)] == [
-        'robot_web_panel', 'wait_for_robot']
-    panel = next(item for item in actions if isinstance(item, Node)
-                 and item.node_executable == 'robot_web_panel')
-    assert evaluate_parameters(context, panel._Node__parameters)[0] == {
+    options = [dict(item.launch_arguments) for item in _includes(actions)]
+    autoslam = next(item for item in options if 'map_directory' in item)
+    assert autoslam['map_directory'] == '/configured/maps'
+    assert autoslam['map_topic'] == '/mapping/map'
+    assert autoslam['base_frame'] == 'robot/base'
+    assert _parameters(context, _nodes(actions, 'robot_web_panel')[0]) == {
         'use_sim_time': False, 'manage_bringup': False,
         'map_directory': '/configured/maps', 'map_topic': '/global_costmap/costmap',
         'robot_frame': 'robot/base', 'rgb_topic': '/camera/color',
     }
-    wait = next(item for item in actions if isinstance(item, Node)
-                and item.node_executable == 'wait_for_robot')
-    settings = evaluate_parameters(context, wait._Node__parameters)[0]
-    assert settings['perception'] is False and settings['navigation'] is False
-    with pytest.raises(RuntimeError, match='Robot readiness check failed'):
-        _readiness_exit(actions, context, returncode=1)
+    assert _parameters(context, _nodes(actions, 'system_manager')[0])[
+        'scan_topic'] == '/laser_raw'
+    for group in [item for item in actions if isinstance(item, GroupAction)]:
+        # A global -p creates /** before the named config. In rclcpp this can
+        # make that config's /scan beat the later inline /scan_raw.
+        assert not any(isinstance(child, SetParameter) for child in group.get_sub_entities())
 
 
-@pytest.mark.parametrize('mode', ['mapping', 'navigation'])
-def test_cloud_bringup_includes_one_media_sender_on_real_topics(launch_module, mode):
-    """The bridge stays separate; media follows either Bringup mode's lifetime."""
-    context = _context(launch_module, mode=mode, start_hardware='false',
-                       start_navigation='false', rgb_topic='/camera/color',
+def test_cloud_bringup_includes_one_media_sender_on_real_topics(launch_module):
+    """The bridge stays separate; media follows the Bringup lifetime."""
+    context = _context(launch_module, start_hardware='false', rgb_topic='/camera/color',
                        camera_info_topic='/camera/info', odom_topic='/robot/odom')
     context.environment['HOMECAM_BACKEND_URL'] = 'https://robot.example.com'
     context.environment['HOMECAM_DEVICE_ID'] = 'robot-1'
@@ -203,7 +302,6 @@ def test_cloud_bringup_includes_one_media_sender_on_real_topics(launch_module, m
         'image_topic': '/camera/color', 'camera_info_topic': '/camera/info',
         'odom_topic': '/robot/odom', 'use_sim_time': 'false',
     }]
-    assert not any('auto_start' in item for item in options)
 
 
 def test_missing_perception_files_fail_before_constructing_hardware(launch_module):
@@ -214,79 +312,30 @@ def test_missing_perception_files_fail_before_constructing_hardware(launch_modul
         launch_module._setup(context)
 
 
-def test_navigation_requires_explicit_real_map(launch_module):
-    """Fail before returning any launch actions if map selection is missing."""
-    with pytest.raises(RuntimeError, match='real saved map YAML'):
-        launch_module._setup(_context(launch_module, mode='navigation'))
-
-
-def test_navigation_keeps_each_child_scoped_and_wall_timed(launch_module, tmp_path):
-    """Use vendor configuration and all three Malbut application launches."""
+def test_selected_map_starts_saved_map_localization(launch_module, tmp_path):
+    """A given map picks the first localization; a missing one fails early."""
     map_path = tmp_path / 'real house.yaml'
     map_path.write_text('image: real_house.pgm\n')
-    context = _context(launch_module, mode='navigation', map=str(map_path), web_panel='true')
+    context = _context(launch_module, map=str(map_path))
     actions = launch_module._setup(context)
-    includes = _includes(actions)
-    assert len(includes) == 5
-    options = [dict(item.launch_arguments) for item in includes]
-    assert all(item['use_sim_time'] == 'false' for item in options)
-    nav = next(item for item in options if 'map' in item)
-    assert nav['map'] == str(map_path)
-    assert nav['params_file'].endswith('malbut_bringup/config/nav2_params.yaml')
-    assert nav['use_namespace'] == 'false'
-    nav_source = includes[1].launch_description_source
-    nav_source.get_launch_description(context)
-    assert nav_source.location.endswith(
-        'home/ros2_ws/src/navigation/launch/include/bringup.launch.py')
-    assert sum('model_path' in item for item in options) == 1
-    assert sum('scan_topic' in item for item in options) == 1
-    follower = next(item for item in options if 'scan_topic' in item)
-    assert follower['scan_topic'] == '/scan_raw'
-    assert follower['lidar_config'].endswith('malbut_tracking/config/lidar_foreground.yaml')
-    assert Path(follower['lidar_config']).is_file()
-    panel = next(item for item in actions if isinstance(item, Node)
-                 and item.node_executable == 'robot_web_panel')
-    assert evaluate_parameters(context, panel._Node__parameters)[0]['manage_bringup'] is False
-    for group in [item for item in actions if isinstance(item, GroupAction)]:
-        # A global -p creates /** before the named config. In rclcpp this can
-        # make that config's /scan beat the later inline /scan_raw.
-        assert not any(isinstance(child, SetParameter) for child in group.get_sub_entities())
-    assert not any(isinstance(action, Node)
-                   and action.node_package == 'malbut_system_manager'
-                   for action in actions)
-
-    assert any(isinstance(action, Node) and action.node_executable == 'pose_memory'
-               for action in actions)
-    disabled = launch_module._setup(_context(
-        launch_module, mode='navigation', map=str(map_path), pose_memory='false'))
-    assert not any(isinstance(action, Node) and action.node_executable == 'pose_memory'
-                   for action in disabled)
+    manager = _parameters(context, _nodes(actions, 'system_manager')[0])
+    assert manager['initial_map'] == str(map_path)
+    with pytest.raises(RuntimeError, match='saved map YAML'):
+        launch_module._setup(_context(launch_module, map=str(tmp_path / 'missing.yaml')))
 
 
-def test_external_navigation_does_not_load_another_map_or_nav2(launch_module):
-    """An explicitly external navigation stack is reused as-is."""
-    context = _context(launch_module, mode='navigation', start_hardware='false',
-                       start_navigation='false')
+@pytest.mark.parametrize('returncode', [0, 1])
+def test_manager_starts_first_and_missions_wait_for_readiness(launch_module, returncode):
+    """Localization must precede Nav2 activation; readiness only opens missions."""
+    context = _context(launch_module, start_hardware='false')
     actions = launch_module._setup(context)
-    assert len(_includes(actions)) == 3
-
-
-@pytest.mark.parametrize('returncode,starts_manager', [(0, True), (1, False)])
-def test_manager_only_starts_after_successful_readiness(
-        launch_module, returncode, starts_manager):
-    """Exercise the real launch process-exit handlers without spawning nodes."""
-    context = _context(launch_module, mode='navigation', start_hardware='false',
-                       start_navigation='false')
-    actions = launch_module._setup(context)
-    result = []
-    if starts_manager:
-        result = _readiness_exit(actions, context, returncode=returncode)
-    else:
+    assert len(_nodes(actions, 'system_manager')) == 1
+    if returncode:
         with pytest.raises(RuntimeError, match='Robot readiness check failed'):
             _readiness_exit(actions, context, returncode=returncode)
-    managers = [item for item in result if isinstance(item, Node)
-                and item.node_package == 'malbut_system_manager']
-    assert len(managers) == int(starts_manager)
+    else:
+        started = _readiness_exit(actions, context)
+        assert not any(isinstance(item, Node) for item in started)
 
 
 def test_runtime_dependencies_do_not_pull_simulation_or_new_hardware_package():
@@ -348,13 +397,12 @@ def test_robot_defaults_enable_isolated_cuda_speech(launch_module, monkeypatch, 
     assert settings['speech_python_executable'] != settings['reid_python_executable']
 
 
-@pytest.mark.parametrize('mode', ['sensors', 'navigation', 'mapping'])
 @pytest.mark.parametrize('input_device', [None, '2', '-1'])
-def test_all_modes_include_speech_after_their_readiness_gate(
-        launch_module, speech_assets, mode, input_device):
-    """Every mode forwards the XFM default or explicit override after readiness."""
+def test_speech_starts_after_readiness_and_waits_for_the_manager(
+        launch_module, speech_assets, input_device):
+    """Speech forwards the XFM default or explicit override after readiness."""
     input_options = {} if input_device is None else {'speech_input_device': input_device}
-    context = _context(launch_module, **speech_assets, mode=mode, start_navigation='false',
+    context = _context(launch_module, **speech_assets, start_hardware='false',
                        **input_options, speech_output_device='3',
                        stt_cpp_threads='4', speech_input_has_aec='true',
                        speech_agent_provider='mock', speech_preflight_timeout_s='55',
@@ -374,7 +422,7 @@ def test_all_modes_include_speech_after_their_readiness_gate(
         'input_device': '0' if input_device is None else input_device,
         'output_device': '3', 'cpp_threads': '4',
         'input_has_aec': 'true', 'agent_provider': 'mock',
-        'control_server': {'navigation': 'manager', 'mapping': 'autoslam'}.get(mode, 'none'),
+        'control_server': 'manager',
         'preflight_timeout_s': '55', 'peer_timeout_s': '12',
         'preflight_only': 'false', 'use_sim_time': 'false',
     }
@@ -480,8 +528,8 @@ def fall_config(tmp_path):
 
 @pytest.mark.parametrize('enabled', ['auto', 'true'])
 def test_fall_monitor_starts_once_after_readiness(launch_module, fall_config, enabled):
-    """Start VLM alongside Manager only after navigation readiness, without extra I/O."""
-    context = _context(launch_module, mode='navigation', start_navigation='false',
+    """Keep one early Manager and start one VLM only after readiness."""
+    context = _context(launch_module, start_hardware='false',
                        fall_monitor=enabled, fall_config=str(fall_config),
                        rgb_topic='/robot/camera/rgb')
     actions = launch_module._setup(context)
@@ -489,7 +537,9 @@ def test_fall_monitor_starts_once_after_readiness(launch_module, fall_config, en
                    for item in actions)
     ready = _readiness_exit(actions, context)
     assert sum(isinstance(item, Node) and item.node_executable == 'system_manager'
-               for item in ready) == 1
+               for item in actions) == 1
+    assert not any(isinstance(item, Node) and item.node_executable == 'system_manager'
+                   for item in ready)
     nodes = [item for item in ready if isinstance(item, Node)
              and item.node_executable == 'malbut-fall-monitor']
     assert len(nodes) == 1
@@ -500,9 +550,11 @@ def test_fall_monitor_starts_once_after_readiness(launch_module, fall_config, en
     from uuid import UUID
     assert UUID(parameters['runtime_id'])
     assert UUID(parameters['manager_runtime_id'])
-    manager = next(item for item in ready if isinstance(item, Node)
+    manager = next(item for item in actions if isinstance(item, Node)
                    and item.node_executable == 'system_manager')
     bindings = evaluate_parameters(context, manager._Node__parameters)[0]
+    assert bindings['localization_control'] is True
+    assert bindings['ready_topic'] == '/malbut/bringup/status'
     assert bindings['fall_vlm_runtime_id'] == parameters['runtime_id']
     assert bindings['fall_manager_runtime_id'] == parameters['manager_runtime_id']
     assert UUID(bindings['fall_bridge_runtime_id'])
@@ -519,7 +571,7 @@ def test_fall_monitor_starts_once_after_readiness(launch_module, fall_config, en
 
 def test_startup_binding_is_shared_with_media_and_changes_on_new_launch(
         launch_module, fall_config):
-    context = _context(launch_module, mode='navigation', start_navigation='false',
+    context = _context(launch_module, start_hardware='false',
                        fall_monitor='true', fall_config=str(fall_config))
     context.environment['HOMECAM_BACKEND_URL'] = 'https://robot.example.com'
     bindings = []
@@ -528,9 +580,14 @@ def test_startup_binding_is_shared_with_media_and_changes_on_new_launch(
         media = next(dict(item.launch_arguments) for item in _includes(actions)
                      if 'fall_bridge_runtime_id' in dict(item.launch_arguments))
         ready = _readiness_exit(actions, context)
-        manager = next(item for item in ready if isinstance(item, Node)
+        manager = next(item for item in actions if isinstance(item, Node)
                        and item.node_executable == 'system_manager')
         params = evaluate_parameters(context, manager._Node__parameters)[0]
+        vlm = next(item for item in ready if isinstance(item, Node)
+                   and item.node_executable == 'malbut-fall-monitor')
+        vlm_params = evaluate_parameters(context, vlm._Node__parameters)[0]
+        assert params['fall_vlm_runtime_id'] == vlm_params['runtime_id']
+        assert params['fall_manager_runtime_id'] == vlm_params['manager_runtime_id']
         for peer in ('bridge', 'manager', 'vlm'):
             field = 'fall_' + peer + '_runtime_id'
             assert params[field] == media[field]
@@ -538,28 +595,17 @@ def test_startup_binding_is_shared_with_media_and_changes_on_new_launch(
     assert bindings[0]['fall_bridge_runtime_id'] != bindings[1]['fall_bridge_runtime_id']
 
 
-@pytest.mark.parametrize('mode', ['sensors', 'mapping'])
-@pytest.mark.parametrize('enabled', ['auto', 'true', 'false'])
-def test_non_navigation_never_prepares_fall_monitor(
-        launch_module, fall_config, monkeypatch, mode, enabled):
-    """Ignore VLM config even if explicitly enabled outside normal operation."""
-    monkeypatch.setattr(launch_module, 'prepare_fall_monitor',
-                        lambda *_: pytest.fail('VLM config read outside navigation'))
-    context = _context(launch_module, mode=mode, fall_monitor=enabled,
-                       fall_config=str(fall_config))
-    actions = launch_module._setup(context)
-    ready = _readiness_exit(actions, context)
-    assert not any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
-                   for item in [*actions, *ready])
-    assert not (fall_config.parent / 'not-read.key').exists()
-    assert not (fall_config.parent / 'journal.sqlite').exists()
+def test_fall_launch_uses_unified_navigation_without_legacy_mode_flags(launch_module):
+    """No removed launch mode may become an accidental VLM enable switch."""
+    context = _context(launch_module, start_hardware='false')
+    assert 'mode' not in context.launch_configurations
+    assert 'start_navigation' not in context.launch_configurations
 
 
 def test_fall_monitor_auto_uses_environment_configuration(launch_module, fall_config, monkeypatch):
     """A prepared robot needs no second command or explicit enable flag."""
     monkeypatch.setenv('MALBUT_FALL_CONFIG', str(fall_config))
-    context = _context(launch_module, mode='navigation', start_hardware='false',
-                       start_navigation='false')
+    context = _context(launch_module, start_hardware='false')
     assert context.launch_configurations['fall_monitor'] == 'auto'
     ready = _readiness_exit(launch_module._setup(context), context)
     assert any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
@@ -572,7 +618,7 @@ def test_fall_monitor_rejects_invalid_configuration(launch_module, fall_config, 
     data = json.loads(fall_config.read_text())
     data['input_fps'] = None
     fall_config.write_text(json.dumps(data))
-    context = _context(launch_module, mode='navigation', start_navigation='false',
+    context = _context(launch_module, start_hardware='false',
                        fall_monitor=enabled, fall_config=str(fall_config))
     with pytest.raises(RuntimeError, match='Invalid fall_config'):
         launch_module._setup(context)
@@ -581,7 +627,7 @@ def test_fall_monitor_rejects_invalid_configuration(launch_module, fall_config, 
 def test_fall_monitor_false_does_not_read_configuration(launch_module, fall_config):
     """Operators can disable this process even when its config needs repair."""
     fall_config.write_text('not JSON')
-    context = _context(launch_module, mode='navigation', start_navigation='false',
+    context = _context(launch_module, start_hardware='false',
                        fall_monitor='false', fall_config=str(fall_config))
     ready = _readiness_exit(launch_module._setup(context), context)
     assert not any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
@@ -590,7 +636,7 @@ def test_fall_monitor_false_does_not_read_configuration(launch_module, fall_conf
 
 def test_fall_monitor_true_requires_configuration(launch_module):
     """Explicit enable must not silently skip a missing configuration."""
-    context = _context(launch_module, mode='navigation', start_navigation='false',
+    context = _context(launch_module, start_hardware='false',
                        fall_monitor='true')
     with pytest.raises(RuntimeError, match='Fall configuration is missing'):
         launch_module._setup(context)
@@ -599,7 +645,7 @@ def test_fall_monitor_true_requires_configuration(launch_module):
 @pytest.mark.parametrize('code', [0, 2])
 def test_fall_monitor_exit_stops_bringup(launch_module, fall_config, code):
     """Do not report a healthy launch after its configured fall monitor exits."""
-    context = _context(launch_module, mode='navigation', start_navigation='false',
+    context = _context(launch_module, start_hardware='false',
                        fall_config=str(fall_config))
     actions = launch_module._setup(context)
     node = next(item for item in _readiness_exit(actions, context)

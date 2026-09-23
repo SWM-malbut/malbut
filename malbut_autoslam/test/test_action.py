@@ -1,7 +1,6 @@
 """Exercise AutoSlam through isolated ROS endpoints without a robot or simulator."""
 
 from concurrent.futures import Future
-import math
 import os
 from pathlib import Path
 from threading import Event, Thread
@@ -11,18 +10,16 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped, TransformStamped, Twist
-from lifecycle_msgs.msg import State
+from geometry_msgs.msg import PoseStamped, TransformStamped
 from malbut_interfaces.action import AutoSlam
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.srv import SaveMap
-from nav_msgs.msg import OccupancyGrid, Odometry
+from nav_msgs.msg import OccupancyGrid
 import pytest
 import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.context import Context
-from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
@@ -30,7 +27,6 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from tf2_ros import TransformBroadcaster
 
 from malbut_autoslam.autoslam_node import AutoSlamNode, Navigation, map_base
-from malbut_autoslam.runtime import RuntimeGraph
 
 
 TIMEOUT_S = 6.0
@@ -72,7 +68,6 @@ class _Backend(Node):
         self.publisher = self.create_publisher(
             OccupancyGrid, prefix + '/map',
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
-        self.command_publisher = self.create_publisher(Twist, prefix + '/cmd_vel', 10)
         self.broadcaster = TransformBroadcaster(self)
         self.create_timer(0.05, self._publish)
         self.create_service(
@@ -111,10 +106,6 @@ class _Backend(Node):
         transform.transform.translation.y = 2.0
         transform.transform.rotation.w = 1.0
         self.broadcaster.sendTransform(transform)
-        if self.navigation_active.is_set():
-            command = Twist()
-            command.linear.x = 0.3
-            self.command_publisher.publish(command)
 
     def _plan(self, handle):
         self.planning_requests.append(handle.request)
@@ -161,7 +152,6 @@ class _Backend(Node):
             return NavigateToPose.Result()
         finally:
             self.navigation_active.clear()
-            self.command_publisher.publish(Twist())
 
     def _save(self, request, response):
         self.save_requests.append(request)
@@ -189,8 +179,6 @@ class _System:
             'navigation_action': self.prefix + '/navigate',
             'planning_action': self.prefix + '/plan',
             'save_map_service': self.prefix + '/save_map',
-            'cmd_vel_topic': self.prefix + '/cmd_vel',
-            'progress_odom_topic': self.prefix + '/odom_rf2o',
             'completion_delay_s': 0.1, 'exploration_period_s': 0.05,
             'ready_timeout_s': 2.0, 'navigation_timeout_s': 4.0,
         }
@@ -313,153 +301,28 @@ def test_navigation_timeout_waits_for_confirmed_stop(system_factory):
     assert system.backend.save_requests == []
 
 
-def test_stuck_navigation_stops_excludes_and_saves_then_resets(system_factory):
-    """No-progress failures survive the retry pass but not a new mapping request."""
-    system = system_factory(scene='frontier', progress_timeout_s=0.2)
+def test_failed_navigation_is_skipped_and_retried_by_a_new_request(system_factory):
+    """Nav2 owns obstacle stops; a frontier it cannot reach in time is skipped."""
+    system = system_factory(scene='frontier', navigation_timeout_s=0.3)
     handle = system.request()
     result = handle.get_result_async()
     assert system.backend.cancel_seen.wait(TIMEOUT_S)
     assert not result.done()
-    assert system.node.busy
-    assert system.node.blocked_targets == []  # Wait for terminal, not cancel ACK.
+    assert system.node.busy  # Wait for Nav2's terminal result, not the cancel ACK.
     system.backend.release_cancel.set()
     outcome = _result(result)
     assert outcome.status == GoalStatus.STATUS_SUCCEEDED
     assert outcome.result.success
     targets = [(goal.pose.pose.position.x, goal.pose.pose.position.y)
                for goal in system.backend.navigation_requests]
-    assert targets and len(targets) == len(set(targets))
-    assert system.node.blocked_approaches
+    assert targets
     assert len(system.backend.save_requests) == 1
-    # A second run must be allowed to try the same area again.
+    # Failures are forgotten between requests: the next run may try again.
     count = len(targets)
     second = _result(system.request('second').get_result_async())
     assert second.status == GoalStatus.STATUS_SUCCEEDED
     new = system.backend.navigation_requests[count].pose.pose.position
     assert (new.x, new.y) == targets[0]
-
-
-@pytest.mark.parametrize('motion', [
-    'translation', 'rotation', 'arrival_race', 'no_command', 'turning_while_blocked',
-    'source_switch', 'mode_switch',
-])
-def test_progress_watch_accepts_motion_and_late_success(monkeypatch, motion):
-    """Only commanded-axis progress counts; idle waits do not imply an obstacle."""
-    clock = [0.0]
-    child = SimpleNamespace(handle=SimpleNamespace(accepted=True), error=None, result=None)
-
-    def wait(_seconds):
-        clock[0] += 0.2
-        if clock[0] >= 2.0:
-            child.result = SimpleNamespace(status=GoalStatus.STATUS_SUCCEEDED)
-            return True
-        return False
-
-    child.done = SimpleNamespace(wait=wait)
-    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
-    monkeypatch.setattr('malbut_autoslam.autoslam_node.Navigation', lambda *_args: child)
-
-    def snapshot(with_heading=False):
-        assert with_heading
-        x = clock[0] * 0.1 if motion == 'translation' else 0.0
-        yaw = (math.pi - 0.1 + clock[0] * 0.3
-               if motion in ('rotation', 'turning_while_blocked') else 0.0)
-        yaw = math.atan2(math.sin(yaw), math.cos(yaw))
-        return SimpleNamespace(header=SimpleNamespace(frame_id='map')), (x, 0.0, yaw)
-
-    def settle(_handle):
-        child.result = SimpleNamespace(status=GoalStatus.STATUS_SUCCEEDED)
-        node.child = None
-
-    def command_mode():
-        if motion == 'no_command':
-            return None
-        if motion == 'rotation' or (motion == 'mode_switch' and 0.9 <= clock[0] < 1.5):
-            return 'rotation'
-        return 'translation'
-
-    def progress_pose(frame, pose):
-        if motion == 'source_switch' and 0.9 <= clock[0] < 1.5:
-            return ('odom', 'odom', 'base_footprint'), pose
-        return ('tf', frame), pose
-
-    node = SimpleNamespace(
-        settings={'navigation_timeout_s': 10.0, 'progress_timeout_s': 0.8,
-                  'progress_distance_m': 0.05, 'progress_angle_rad': 0.15},
-        navigation=Mock(), _target_pose=Mock(return_value=PoseStamped()),
-        _check=Mock(), _snapshot=snapshot, _feedback=Mock(),
-        _command_mode=Mock(side_effect=command_mode),
-        _progress_pose=Mock(side_effect=progress_pose),
-        _settle_child=Mock(side_effect=settle),
-        get_logger=Mock(), blocked_targets=[], blocked_approaches=[])
-    assert AutoSlamNode._navigate(node, Mock(), Mock(), 'map', run_deadline=10.0)
-    assert node._settle_child.call_count == (
-        1 if motion in ('arrival_race', 'turning_while_blocked') else 0)
-    assert node.blocked_targets == []
-
-
-def test_command_mode_requires_meaningful_finite_motion(system_factory, monkeypatch):
-    """Use both planar axes without making zero or invalid commands a collision."""
-    system = system_factory(progress_timeout_s=0.2)
-    assert system.node._command_mode() is None
-    for vx, vy, angular, expected in (
-        (0.0, 0.0, 0.0, None),
-        (0.01, 0.0, 0.0, None),
-        (0.3, 0.0, 0.0, 'translation'),
-        (0.0, -0.3, 0.0, 'translation'),
-        (0.0, 0.0, -1.0, 'rotation'),
-        (float('nan'), 0.0, 0.0, None),
-        (0.0, 0.0, float('inf'), None),
-    ):
-        command = Twist()
-        command.linear.x, command.linear.y = vx, vy
-        command.angular.z = angular
-        system.node._receive_command(command)
-        assert system.node._command_mode() == expected
-    command.linear.x = 0.3
-    command.angular.z = 0.0
-    system.node._receive_command(command)
-    expired = time.monotonic() + system.node.settings['sensor_timeout_s'] + 1.0
-    monkeypatch.setattr('malbut_autoslam.autoslam_node.time',
-                        SimpleNamespace(monotonic=lambda: expired))
-    assert system.node._command_mode() is None
-
-
-@pytest.mark.parametrize('sample', [
-    'fresh', 'stale', 'stale_receipt', 'invalid', 'missing_frame',
-])
-def test_progress_odometry_prefers_only_fresh_valid_measurements(
-        system_factory, monkeypatch, sample):
-    """Existing RF2O is optional; bad sensor samples fall back to map/TF progress."""
-    system = system_factory()
-    fallback = (8.0, 9.0, 0.5)
-    assert system.node._progress_pose('map', fallback) == (('tf', 'map'), fallback)
-    message = Odometry()
-    message.header.frame_id = 'odom'
-    message.child_frame_id = 'base_footprint'
-    stamp = system.node.get_clock().now()
-    if sample == 'stale':
-        stamp -= Duration(seconds=system.node.settings['sensor_timeout_s'] + 1.0)
-    message.header.stamp = stamp.to_msg()
-    message.pose.pose.position.x = 1.0
-    message.pose.pose.position.y = 2.0
-    message.pose.pose.orientation.z = math.sin(0.3 / 2.0)
-    message.pose.pose.orientation.w = math.cos(0.3 / 2.0)
-    if sample == 'invalid':
-        message.pose.pose.position.x = float('nan')
-    elif sample == 'missing_frame':
-        message.header.frame_id = ''
-    system.node._receive_progress_odom(message)
-    if sample == 'stale_receipt':
-        expired = time.monotonic() + system.node.settings['sensor_timeout_s'] + 1.0
-        monkeypatch.setattr('malbut_autoslam.autoslam_node.time',
-                            SimpleNamespace(monotonic=lambda: expired))
-    source, pose = system.node._progress_pose('map', fallback)
-    if sample == 'fresh':
-        assert source == ('odom', 'odom', 'base_footprint')
-        assert pose == pytest.approx((1.0, 2.0, 0.3))
-    else:
-        assert (source, pose) == (('tf', 'map'), fallback)
 
 
 def test_missing_navigation_backend_returns_failure(system_factory):
@@ -504,7 +367,7 @@ def test_planning_rechecks_goal_margin_on_current_map_without_trapping_start(mon
     node = SimpleNamespace(
         settings={'ready_timeout_s': 1.0, 'robot_clearance_m': 0.30},
         planner=Mock(), _target_pose=Mock(return_value=PoseStamped()),
-        _check=Mock(), _snapshot=Mock(return_value=(message, robot)), blocked_approaches=[])
+        _check=Mock(), _snapshot=Mock(return_value=(message, robot)))
     assert AutoSlamNode._can_reach(node, Mock(), frontier, 'map') == (
         changed in ('none', 'near_wall_start'))
     planning.cancel.assert_called_once()
@@ -557,113 +420,9 @@ def test_total_exploration_budget_finishes_with_saved_map(system_factory, tmp_pa
     assert len(system.backend.save_requests) == 1
 
 
-@pytest.fixture
-def mock_startup(system_factory, monkeypatch):
-    """Keep real Action handling but replace every process operation with a mock."""
-    runtime = Mock(process=None, log_path=None)
-    runtime.components = {}
-    monkeypatch.setattr('malbut_autoslam.autoslam_node.OwnedRuntime', lambda _path: runtime)
-
-    def create(**settings):
-        system = system_factory(auto_start=True, **settings)
-        monkeypatch.setattr(system.node, '_runtime_graph', lambda: RuntimeGraph(
-            (), (), (), (), False))
-        # The backend's map and TF are real ROS messages, but it has no real
-        # hardware or lifecycle nodes. Unit tests cover those readiness checks.
-        monkeypatch.setattr(system.node, '_check_sensor_updates', lambda: None)
-        monkeypatch.setattr(system.node, '_wait_active_navigation', lambda *_args: None)
-        return system, runtime
-
-    return create
-
-
-def test_action_starts_missing_runtime_and_cleans_it_before_result(mock_startup):
-    """A successful public request owns preparation and teardown around exploration."""
-    system, runtime = mock_startup()
-    handle = system.request()
-    result = _result(handle.get_result_async())
-    assert result.status == GoalStatus.STATUS_SUCCEEDED
-    runtime.acquire.assert_called_once_with()
-    runtime.start.assert_called_once()
-    assert all(runtime.start.call_args.args[0].values())
-    runtime.close.assert_called_once_with()
-    assert system.node.runtime is None
-
-
-def test_startup_failure_cleans_only_owned_runtime(mock_startup):
-    """Failed backend startup never sends a navigation Goal or saves a map."""
-    system, runtime = mock_startup()
-    runtime.start.side_effect = RuntimeError('missing factory launch')
-    result = _result(system.request().get_result_async())
-    assert result.status == GoalStatus.STATUS_ABORTED
-    assert 'missing factory launch' in result.result.message
-    runtime.close.assert_called_once_with()
-    assert not system.backend.started.is_set()
-    assert system.backend.save_requests == []
-
-
-def test_saved_map_conflict_does_not_start_or_stop_external_nodes(mock_startup, monkeypatch):
-    """The active localization mode is never replaced implicitly by mapping."""
-    system, runtime = mock_startup()
-    monkeypatch.setattr(system.node, '_runtime_graph', lambda: RuntimeGraph(
-        ('/amcl',), (), (), (), True))
-    result = _result(system.request().get_result_async())
-    assert result.status == GoalStatus.STATUS_ABORTED
-    assert 'Saved-map localization' in result.result.message
-    runtime.start.assert_not_called()
-    runtime.close.assert_called_once_with()
-
-
-def test_cancel_during_backend_readiness_shuts_owned_launch(mock_startup):
-    """Cancellation while waiting for Nav2 does not leak the mapping launch."""
-    system, runtime = mock_startup(navigation=False)
-    handle = system.request()
-    _wait_until(lambda: runtime.start.called)
-    assert _result(handle.cancel_goal_async()).goals_canceling
-    result = _result(handle.get_result_async())
-    assert result.status == GoalStatus.STATUS_CANCELED
-    runtime.close.assert_called_once_with()
-    assert system.backend.save_requests == []
-
-
-def test_active_external_navigation_goal_is_not_preempted(mock_startup):
-    """Direct AutoSLAM startup must not steal a running external Nav2 Goal."""
-    system, runtime = mock_startup()
-    system.node.navigation_busy = True
-    result = _result(system.request().get_result_async())
-    assert result.status == GoalStatus.STATUS_ABORTED
-    assert 'active goal' in result.result.message
-    runtime.start.assert_not_called()
-    assert not system.backend.started.is_set()
-
-
-def test_unconfirmed_runtime_cleanup_holds_action_until_owned_processes_stop(mock_startup):
-    """Keep the manager's BASE ownership when runtime termination is uncertain."""
-    system, runtime = mock_startup()
-    attempted, release = Event(), Event()
-
-    def close():
-        attempted.set()
-        if not release.is_set():
-            raise RuntimeError('owned group still alive')
-
-    runtime.close.side_effect = close
-    handle = system.request()
-    result = handle.get_result_async()
-    try:
-        assert attempted.wait(TIMEOUT_S)
-        assert not result.done()
-        assert system.node.busy
-        assert not system.request('other').accepted
-    finally:
-        release.set()
-    assert _result(result).status == GoalStatus.STATUS_SUCCEEDED
-    assert system.node.runtime is None
-
-
-def test_server_stop_during_unanswered_save_still_cleans_owned_mapping(mock_startup, monkeypatch):
-    """Parent launch stopping MapSaver cannot leave the owned mapping process orphaned."""
-    system, runtime = mock_startup()
+def test_server_stop_during_unanswered_save_aborts_without_a_map(system_factory, monkeypatch):
+    """Parent launch stopping MapSaver ends the request without claiming a saved map."""
+    system = system_factory()
     save = Mock(return_value=Future())
     monkeypatch.setattr(system.node.saver, 'call_async', save)
     handle = system.request()
@@ -676,13 +435,12 @@ def test_server_stop_during_unanswered_save_still_cleans_owned_mapping(mock_star
     assert not outcome.result.success
     assert 'save result is unconfirmed' in outcome.result.message
     assert outcome.result.map_yaml == ''
-    runtime.close.assert_called_once_with()
 
 
 @pytest.mark.parametrize('transport_error', [False, True])
-def test_unanswered_save_times_out_and_rejects_reuse(mock_startup, monkeypatch, transport_error):
-    """An uncertain non-cancellable save cleans up but cannot race a later save."""
-    system, runtime = mock_startup()
+def test_unanswered_save_times_out_and_rejects_reuse(system_factory, monkeypatch, transport_error):
+    """An uncertain non-cancellable save ends the request but cannot race a later save."""
+    system = system_factory()
     pending = Future()
     if transport_error:
         pending.set_exception(RuntimeError('response lost'))
@@ -699,55 +457,10 @@ def test_unanswered_save_times_out_and_rejects_reuse(mock_startup, monkeypatch, 
     else:
         assert pending.cancelled()
         remove_pending.assert_called_once_with(pending)
-    runtime.close.assert_called_once_with()
-    assert system.node.runtime is None
     assert system.node.save_uncertain
     assert not system.node.stopping.is_set()
     assert not system.node.busy
     assert not system.request('other').accepted
-
-
-def test_live_hardware_readiness_requires_both_sensor_updates(system_factory):
-    """Topic discovery alone is not enough to allow motion on the real robot."""
-    system = system_factory()
-    system.node.settings['auto_start'] = True
-    with pytest.raises(RuntimeError, match='fresh LiDAR and odometry'):
-        system.node._check_sensor_updates()
-    system.node.scan_received_at = time.monotonic()
-    with pytest.raises(RuntimeError, match='fresh LiDAR and odometry'):
-        system.node._check_sensor_updates()
-    system.node.odom_received_at = time.monotonic()
-    system.node._check_sensor_updates()
-
-
-@pytest.mark.parametrize('reply_received', [True, False])
-def test_lost_lifecycle_reply_retries_within_startup_deadline(monkeypatch, reply_received):
-    """A lost read-only reply neither hangs startup nor bypasses ACTIVE checks."""
-    clock = [0.0]
-    monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
-    pending, retry = Future(), Future()
-    if reply_received:
-        retry.set_result(SimpleNamespace(current_state=State(id=State.PRIMARY_STATE_ACTIVE)))
-    client = Mock()
-    client.service_is_ready.return_value = True
-    client.call_async.side_effect = [pending, retry]
-
-    def advance():
-        clock[0] += 3.0
-
-    node = SimpleNamespace(
-        settings={'auto_start': True, 'sensor_timeout_s': 3.0},
-        lifecycle_clients={'controller_server': client},
-        _check=Mock(), _feedback=Mock(), _pause=advance)
-    if reply_received:
-        AutoSlamNode._wait_active_navigation(node, Mock(), deadline=6.0)
-    else:
-        with pytest.raises(RuntimeError, match='controller_server is not active'):
-            AutoSlamNode._wait_active_navigation(node, Mock(), deadline=6.0)
-        assert retry.cancelled()
-    assert pending.cancelled()
-    client.remove_pending_request.assert_any_call(pending)
-    assert client.call_async.call_count == 2
 
 
 def test_cancel_before_late_navigation_acceptance_keeps_ownership():

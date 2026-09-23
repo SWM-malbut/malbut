@@ -3,8 +3,8 @@ set -euo pipefail
 
 selector="$(cd "$(dirname "$0")" && pwd)/detect-ci-modules.sh"
 scenarios=(
-  "homecam_web/app/page.tsx|true,false,false,false,false"
-  "homecam_web/infra/cdk/lib/stack.ts|true,true,false,false,false"
+  "malbut_web/app/page.tsx|true,false,false,false,false"
+  "malbut_web/infra/cdk/lib/stack.ts|true,true,false,false,false"
   "homecam_agent/homecam_media_agent/src/node.cpp|false,false,false,false,true"
   "malbut_agent_server/malbut_agent_server/memory.py|false,false,true,false,false"
   "malbut_description/urdf/robot.xacro|false,false,true,false,false"
@@ -46,7 +46,7 @@ done
 
 assert_selection "No changed paths" false,false,false,false,false --paths
 assert_selection "Agent and web" true,false,true,false,false --paths \
-  malbut_agent_server/memory.py homecam_web/app/page.tsx
+  malbut_agent_server/memory.py malbut_web/app/page.tsx
 assert_selection "Agent then other ROS" false,false,true,false,false --paths \
   malbut_agent_server/memory.py malbut_stt/node.py
 assert_selection "Other ROS then Agent" false,false,true,false,false --paths \

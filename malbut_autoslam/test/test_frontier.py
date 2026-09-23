@@ -10,36 +10,13 @@ from malbut_autoslam.frontier import (
     FRONTIER_CELL_CAP,
     FRONTIER_DISTANCE_PENALTY_CELLS_PER_M,
     MapGrid,
-    blocked_approach,
     find_frontiers,
     map_grid_from_message,
     map_statistics,
-    path_avoids_blocks,
     path_is_known_free,
     point_has_clearance,
     search_frontiers,
 )
-
-
-def test_blocked_approach_uses_current_path_segment_and_leaves_escape():
-    """Do not blacklist the old start, the robot itself, or an alternative route."""
-    path = [(0.0, 0.0), (4.0, 0.0), (4.0, 3.0)]
-    block = blocked_approach(path, (3.0, 0.0), 0.3)
-    assert block == pytest.approx((3.6, 0.0, 0.3))
-    assert not path_avoids_blocks([(3.0, 0.0), (4.0, 0.0)], [block])
-    assert path_avoids_blocks([(3.0, 0.0), (2.0, 0.0)], [block])
-    assert path_avoids_blocks([(3.0, 0.0), (3.0, 1.0), (4.0, 1.0)], [block])
-    assert path_avoids_blocks([(3.0, 0.0)], [block])
-
-
-def test_blocked_approach_stays_on_path_and_handles_short_endpoint():
-    """Follow corners and shrink near an endpoint instead of blocking escape."""
-    block = blocked_approach([(0.0, 0.0), (0.2, 0.0), (0.2, 1.0)], (0.0, 0.0), 0.3)
-    assert block[:2] == pytest.approx((0.2, 0.4))
-    assert path_avoids_blocks([(0.0, 0.0)], [block])
-    short = blocked_approach([(0.0, 0.0), (0.2, 0.0)], (0.0, 0.0), 0.3)
-    assert short == pytest.approx((0.2, 0.0, 0.1))
-    assert blocked_approach([(0.0, 0.0), (0.01, 0.0)], (0.0, 0.0), 0.3) is None
 
 
 def _message():

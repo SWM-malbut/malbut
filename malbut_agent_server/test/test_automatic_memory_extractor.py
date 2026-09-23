@@ -8,6 +8,8 @@ import pytest
 from malbut_agent_server.automatic_memory_extractor import (
     ANSWER_ONLY_INSTRUCTIONS, AutomaticMemoryExtractor,
 )
+from malbut_agent_server.automatic_memory_worker import AutomaticMemoryWorker
+from malbut_agent_server.memory_source_review import MemorySourceReviewer
 from malbut_agent_server.memory_contract import (
     MEMORY_INSTRUCTIONS, MEMORY_PROPOSAL_SCHEMA,
 )
@@ -17,6 +19,7 @@ from malbut_agent_server.providers.openai_responses import (
 )
 from malbut_agent_server.schemas import (
     AgentDecision, AgentRequest, ProviderResult, ProviderUsage, RobotState,
+    SpeechAgentRequest, ValidationError,
 )
 from malbut_agent_server.tools import TOOL_SPECS
 
@@ -209,6 +212,58 @@ def test_extractor_isolates_request_and_does_not_alias_provider_result():
     result.memory_proposal['facts'][0]['value'] = 'changed'
     assert backend.result.memory_proposal['facts'][0]['value'] == '김민재'
     assert result.usage == backend.result.usage
+
+
+def _restore_speech_job(text):
+    original = request()
+    job = {
+        'user_id': original.user_id, 'request_id': original.request_id,
+        'conversation_id': original.conversation_id,
+        'source_turn_id': original.turn_id, 'session_instance_id': 'instance',
+        'generation': 1, 'ordinal': 1, 'expected_session_revision': 1,
+        'payload': {'source': {'text': text}, 'proposal': None,
+                    'state': {'enabled': True, 'revision': 1, 'legacy_cutoff': 0}},
+    }
+    # Recreate the private queue payload as it comes back from SQLite JSON.
+    return AutomaticMemoryWorker._restore(json.loads(json.dumps(job)))[0]
+
+
+@pytest.mark.parametrize('mode', ['automatic_extraction', 'source_review'])
+def test_restored_long_speech_preserves_full_source_in_memory_model_calls(mode):
+    text = '긴 발화 ' * 2157 + '마지막 원문입니다.'
+    original = _restore_speech_job(text)
+    assert isinstance(original, SpeechAgentRequest)
+    assert original.available_tools == () and original.robot_state == RobotState()
+    calls = []
+
+    def transport(_url, _headers, payload, _timeout):
+        calls.append(payload)
+        value = {'memory_proposal': None}
+        if mode == 'source_review':
+            value.update(type='message', message='검토 완료', reason='test', confidence=1)
+        return response(value)
+
+    backend = OpenAIResponsesProvider(
+        'offline-key', 'offline-model', transport=transport,
+        max_model_input_chars=6000,
+    )
+    if mode == 'automatic_extraction':
+        result = AutomaticMemoryExtractor(backend).extract(original)
+        assert result.memory_proposal is None
+    else:
+        outcome = MemorySourceReviewer(backend).review(original, [])
+        assert outcome.response is not None and outcome.facts == []
+    assert len(calls) == 1
+    data = json.loads(calls[0]['input'].split('\n', 1)[1])
+    assert data['current_user_utterance'] == text
+    assert data['available_tools'] == []
+    assert 'tools' not in calls[0]
+
+
+def test_restored_memory_input_keeps_short_policy_and_rejects_oversize_source():
+    assert type(_restore_speech_job('짧은 발화')) is AgentRequest
+    with pytest.raises(ValidationError, match='speech limit'):
+        _restore_speech_job('가' * 16001)
 
 
 def test_extraction_preserves_unknown_usage_and_ignores_reasoning_envelope():

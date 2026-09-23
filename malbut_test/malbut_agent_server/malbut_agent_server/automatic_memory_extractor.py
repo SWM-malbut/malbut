@@ -8,7 +8,7 @@ from malbut_agent_server.memory_contract import (
     MEMORY_KINDS, validate_memory_proposal,
 )
 from malbut_agent_server.schemas import (
-    AgentRequest, ProviderResult, RobotState,
+    ProviderResult, RobotState,
 )
 
 
@@ -79,7 +79,7 @@ class AutomaticMemoryExtractor:
         extraction_id = 'memory-extract-' + hashlib.sha256(
             identity.encode('utf-8'),
         ).hexdigest()[:48]
-        bounded = AgentRequest(
+        bounded = type(request)(
             request_id=extraction_id, user_id=request.user_id,
             conversation_id=request.conversation_id, turn_id=extraction_id,
             utterance=request.utterance, robot_state=RobotState(),

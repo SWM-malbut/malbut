@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Run the Bringup zone_filter entrypoint."""
+
+from malbut_bringup.zone_filter import main
+
+
+if __name__ == '__main__':
+    main()

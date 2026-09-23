@@ -117,11 +117,19 @@ def test_history_negation_is_preserved_without_mid_sentence_truncation():
     assert data['context_truncated'] is False
 
 
-@pytest.mark.parametrize('text', ['', '  ', None, 12, '가' * 2001])
+@pytest.mark.parametrize('text', ['', '  ', None, 12, '가' * 16001])
 def test_invalid_input_makes_no_request(text):
     target, calls = classifier()
     assert target.classify(text, snapshot()) == 'unknown'
     assert calls == []
+
+
+def test_long_interruption_reaches_classifier_without_losing_tail():
+    target, calls = classifier()
+    text = '가"\\\n' * 3990 + '제이크 너에게 말하는 거야.'
+    assert target.classify(text, snapshot([('이전 발화', '이전 답변')])) == 'addressed'
+    assert len(calls) == 1
+    assert json.loads(calls[0][2]['input'])['current_utterance_untrusted'] == text
 
 
 def test_missing_context_and_unsupported_providers_abstain():

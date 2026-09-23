@@ -11,19 +11,23 @@
 
   <depend>action_msgs</depend>
   <depend>ament_index_python</depend>
+  <depend>geometry_msgs</depend>
   <depend>malbut_interfaces</depend>
+  <depend>nav2_msgs</depend>
   <depend>rclpy</depend>
   <depend>rcl_interfaces</depend>
   <depend>rosidl_runtime_py</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
 
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
-  <test_depend>nav2_msgs</test_depend>
   <test_depend>python3-pytest</test_depend>
-  <test_depend>std_srvs</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

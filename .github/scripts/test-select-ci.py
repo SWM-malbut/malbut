@@ -222,7 +222,7 @@ class FallSelectionTests(unittest.TestCase):
             self.assertEqual(result['fall_python'], 'true')
             self.assertEqual(result['ros'], 'true')
             self.assertIn('malbut_stt', result['ros_test_packages'].split())
-        result = SELECTOR.selection([fall, 'homecam_web/app/page.tsx'])
+        result = SELECTOR.selection([fall, 'malbut_web/app/page.tsx'])
         self.assertEqual(result['web'], 'true')
         self.assertEqual(result['fall_python'], 'true')
         self.assertEqual(result['ros'], 'false')
