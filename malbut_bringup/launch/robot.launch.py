@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import shlex
 from uuid import uuid4
 
 from ament_index_python.packages import get_package_share_directory
@@ -63,9 +64,27 @@ def _setup(context):
     # backend does not own fall analysis. Permissions still gate all collection.
     fall_inputs = prepare_fall_monitor(value('fall_monitor'), value('fall_config'))
     fall_monitor = None
+    fall_pose = None
     fall_ids = {key: str(uuid4()) for key in ('manager', 'bridge', 'vlm')} if fall_inputs else {}
     if fall_inputs is not None:
         fall_config, fall_image_topic = fall_inputs
+        pose_model = _file(value('fall_pose_model_path'), 'Fall pose ONNX model')
+        pose_python = str(Path(value('fall_pose_python_executable')).expanduser())
+        _file(pose_python, 'Fall pose Python')
+        if not os.access(pose_python, os.X_OK):
+            raise RuntimeError('Fall pose Python is not executable')
+        fall_pose = Node(
+            package='homecam_detector', executable='homecam_detector_node',
+            name='malbut_fall_pose', output='screen', prefix=[shlex.quote(pose_python)],
+            parameters=[{
+                'use_sim_time': False, 'fall_only': True,
+                'fall_runtime_id': fall_ids['vlm'],
+                'image_topic': value('rgb_topic'), 'odom_topic': value('odom_topic'),
+                'pose_model_path': pose_model, 'pose_keep_aspect': True,
+                'pose_inference_fps': 5.0,
+                'pose_candidate_confidence_threshold': 0.10,
+            }],
+        )
         fall_monitor = Node(
             package='malbut_agent_server', executable='malbut-fall-monitor',
             output='screen', arguments=['--config', fall_config, '--execute'],
@@ -266,6 +285,7 @@ def _setup(context):
             fall_actions = [
                 LogInfo(msg='Starting Cloud VLM; waiting for permissions and Manager settings.'),
                 fall_monitor,
+                fall_pose,
             ]
         return [LogInfo(msg='Robot ready; the system manager accepts missions.'),
                 *fall_actions, *speech_actions]
@@ -279,7 +299,7 @@ def _setup(context):
             isinstance(event.action, Node)
             and str(event.action.node_package).startswith('malbut_')
         )
-        if event.returncode != 0 or is_malbut:
+        if event.returncode != 0 or is_malbut or event.action is fall_pose:
             # Also covers nested speech failures. A plain Shutdown would mask
             # a failed component as a successful shell exit (status 0).
             raise RuntimeError(f'Bringup child exited: {event.process_name}')
@@ -313,6 +333,11 @@ def generate_launch_description():
         'perception': 'true',
         'fall_monitor': 'auto',
         'fall_config': os.environ.get('MALBUT_FALL_CONFIG', '/etc/malbut/fall_runtime.json'),
+        'fall_pose_model_path': os.environ.get(
+            'MALBUT_FALL_POSE_MODEL', str(cache / 'yolo26s-pose.onnx')),
+        'fall_pose_python_executable': os.environ.get(
+            'MALBUT_FALL_POSE_PYTHON',
+            str(cache_root / 'malbut_fall_pose/runtime/bin/python')),
         'speech': 'true',
         'speech_python_executable': str(speech_runtime / 'bin/python'),
         'stt_model_path': os.environ.get(

@@ -23,6 +23,9 @@ class DetectorConfig:
     navigation_status_topic: str = "/navigate_to_pose/_action/status"
     model_path: str = ""
     pose_model_path: str = ""
+    pose_keep_aspect: bool = False
+    fall_only: bool = False
+    fall_runtime_id: str = ""
     device_id: str = ""
     backend_url: str = ""
     confidence_threshold: float = 0.45
@@ -91,6 +94,13 @@ def is_valid_device_id(value: str) -> bool:
 def validate_config(config: DetectorConfig) -> List[str]:
     """Return every actionable configuration error."""
     errors: List[str] = []
+    if config.fall_only:
+        if not config.fall_runtime_id.strip():
+            errors.append("fall_only requires fall_runtime_id")
+        if not config.pose_model_path:
+            errors.append("fall_only requires pose_model_path")
+        if config.backend_url or config.event_clips_enabled or config.model_path:
+            errors.append("fall_only cannot enable legacy events or object detection")
     if not config.image_topic.startswith("/"):
         errors.append("image_topic must be an absolute ROS topic")
     for name, value in (

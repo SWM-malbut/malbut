@@ -21,6 +21,7 @@ fi
 # Explicit roots bypass only this copy's COLCON_IGNORE, without discovering
 # the original/simulation packages or rebuilding manufacturer source packages.
 package_paths=(
+  "$robot_source_dir/homecam_agent/homecam_detector"
   "$robot_source_dir/malbut_bringup"
   "$robot_source_dir/malbut_interfaces"
   "$robot_source_dir/malbut_system_manager"

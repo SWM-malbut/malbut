@@ -129,6 +129,8 @@ class SpeechSelectionTests(unittest.TestCase):
                 result = SELECTOR.selection([path])
                 builds = set(result['ros_packages'].split())
                 self.assertTrue(SPEECH_BUILD <= builds)
+                self.assertIn('homecam_detector', builds)
+                self.assertIn('homecam_agent/homecam_detector', result['ros_paths'].split())
                 self.assertFalse({'malbut_gazebo', 'malbut_scenarios'} & builds)
                 self.assertEqual(result['ros_test_packages'], 'malbut_bringup')
                 self.assertEqual(result['agent'], 'false')

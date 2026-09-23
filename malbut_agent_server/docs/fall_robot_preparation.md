@@ -51,6 +51,8 @@ ros2 run malbut_agent_server malbut-fall-monitor --config "$(ros2 pkg prefix mal
 ## 이번 로컬 확인 결과
 
 2026-09-23, x86_64 PC·ROS Humble에서 로봇 배포용 소스(`malbut_test/`)로 확인했다.
+아래 표는 main 병합 전 확인 기록이다. 현재 기본 Bringup은 depth costmap을 빌드하지
+않으므로 당시의 `depth_image_proc` 누락을 현재 기본 빌드의 차단 사유로 보지 않는다.
 
 | 확인 항목 | 결과 |
 | --- | --- |
@@ -70,6 +72,14 @@ PC에 없던 `aiohttp`는 테스트 전용 경로에 설치했으며 시스템 P
 
 ## 로봇을 받으면 할 순서
 
+포팅용 Pose 연결을 추가한 뒤 2026-09-23에 다시 확인했다.
+관련 테스트 787개가 통과했고, `malbut_test`의 `homecam_detector`와
+`malbut_bringup` 두 패키지도 PC·ROS Humble에서 빌드됐다.
+테스트에서는 영상 저장 OFF 시 Pose 실행, 설정 해제·상태 수신 중단 시 정지,
+원본/포팅본 일치, Pose 후보에서 대상자 정보가 붙은 VLM 요청 생성까지 확인했다.
+VLM 공급자는 테스트 대역을 썼으며, 실제 ONNX 가중치 추론·Cloud API 호출·Jetson
+동시 실행 성능을 측정한 결과는 아니다. 모델과 키, 실행 환경은 로봇에서 따로 준비한다.
+
 최신 main 병합 뒤에도 기능 검사를 다시 했다. 관련 Python·ROS·Manager·Bringup
 검사 518개와 Manager 패키지의 린트·문서 검사 2개가 통과했다.
 웹 테스트 109개, 린트·TypeScript·웹 빌드도 통과했다.
@@ -88,6 +98,52 @@ PC에 없던 `aiohttp`는 테스트 전용 경로에 설치했으며 시스템 P
 VLM 실행 Python에서 `rclpy`, `cv_bridge`, `cv2`, `PIL`, `aiohttp`와 새
 `malbut_interfaces` 자료형을 읽을 수 있어야 한다. `colcon build` 성공만으로
 Python 실행 의존성이 모두 설치되는 것은 아니다.
+
+### 1-1. 낙상용 YOLO-Pose 준비
+
+`malbut_test`에는 원본의 여러 사람 추적, 낙상 후보 생성, RGB/depth 처리 모듈도 함께 넣는다.
+빌드 목록에 `homecam_detector`를 포함하고, Bringup이 준비되면 VLM과
+`malbut_fall_pose`를 각각 한 번 시작한다. 기존 홈캠 미디어의 `start_detector=false`는
+유지한다. 영상 저장용 감지기를 별도로 켜서 두 번 실행하지 않는다.
+
+Pose 실행 환경은 다음처럼 따로 준비한다. 명령은 의존성을 설치하지만 모델 다운로드,
+카메라 사용, Cloud 호출은 하지 않는다. 시스템 Torch/CUDA는 변경하지 않는다.
+
+```bash
+bash ~/ros2_ws/src/malbut/homecam_agent/scripts/prepare_fall_pose_runtime.sh
+```
+
+전체 저장소를 옮긴 구조라면 경로의 `malbut/` 뒤에 `malbut_test/`를 붙인다.
+검증한 YOLO26s pose ONNX 파일도 별도로 준비한다. 기본 경로는
+`~/.cache/malbut_perception/yolo26s-pose.onnx`이며 가중치는 Git에 넣지 않는다.
+현재 해석기는 입력 `[1, 3, 640, 640]`, 출력 행당 57개 값
+(`xyxy`, 신뢰도, 클래스, 17개 관절의 `x/y/신뢰도`)인 end-to-end 모델을 사용한다.
+다른 YOLO 출력 형식을 이름만 바꿔 넣지 않는다.
+
+| Bringup 인자 | 기본값 / 의미 |
+| --- | --- |
+| `fall_pose_model_path` | 위 ONNX 경로. 환경변수 `MALBUT_FALL_POSE_MODEL`로 변경 가능 |
+| `fall_pose_python_executable` | `~/.cache/malbut_fall_pose/runtime/bin/python`. `MALBUT_FALL_POSE_PYTHON`으로 변경 가능 |
+| 입력 | VLM과 같은 `rgb_topic`. 640×400 영상을 비율 유지해 640×640으로 만들고 여백 추가 |
+| 결과 좌표 | 여백을 제외하고 원본 RGB 기준으로 되돌림. 여백 안의 관절은 근거로 사용하지 않음 |
+| 실행 빈도 | 최대 5 fps. 실제 Jetson 처리 속도는 미측정 |
+
+모델 파일·Python 경로가 없으면 Bringup 시작 전에 실패한다.
+ONNX Runtime이나 모델을 불러오지 못하면 Pose 노드 시작에 실패하고 Bringup도 종료한다.
+현재 ONNX 실행은 CPU 방식이다. TensorRT/GPU 가속과 주행·음성 동시 부하는 별도 검증 대상이다.
+
+Pose는 `/malbut/falls/status`에서 **이번 실행의 VLM ID**와 상태 번호를 확인한다.
+설정 적용 완료·낙상 감지 ON·카메라 허용·영상 수신 가능이 모두 참일 때만 영상을 처리한다.
+영상 저장이나 Cloud 동의가 OFF여도 이 조건을 만족하면 Pose는 실행한다.
+허용이 해제되거나 VLM 상태가 5초간 오지 않으면 멈추고 추적 이력을 지운다.
+Manager 연결 중단은 VLM의 기존 5초 검사로 먼저 감지하며, Pose에는 다음 상태 보고로 전달된다.
+VLM 자체가 멈추는 경우에 대비한 별도의 5초 검사도 Pose에 둔다.
+
+Pose가 보내는 `/homecam/person_poses`, `/homecam/fall_candidates`를 VLM이 받는다.
+일반 YOLO의 사람 검출 여부나 `perception=false`는 이 경로를 막지 않는다.
+시험 스크립트의 모든 실험 조건을 옮긴 것은 아니다. 기본 판단 코드는
+`pose-temporal-candidates-v2`이며, 과거 실험의 감지율을 이 배포본의 성능으로 그대로 쓰지 않는다.
+실험용 추가 조건을 적용하려면 동일 영상으로 다시 비교하고 별도로 반영한다.
 
 ### 2. Aurora 토픽 확인
 

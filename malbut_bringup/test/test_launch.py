@@ -66,14 +66,15 @@ def launch_module(tmp_path, monkeypatch):
     cache = tmp_path / 'home/.cache'
     monkeypatch.setenv('XDG_CACHE_HOME', str(cache))
     for name, environment in (('malbut_yolo', 'MALBUT_YOLO_RUNTIME'),
-                              ('malbut_reid', 'MALBUT_REID_RUNTIME')):
+                              ('malbut_reid', 'MALBUT_REID_RUNTIME'),
+                              ('malbut_fall_pose', 'MALBUT_FALL_POSE_RUNTIME')):
         runtime = cache / name / 'runtime'
         monkeypatch.setenv(environment, str(runtime))
         executable = runtime / 'bin/python'
         executable.parent.mkdir(parents=True, exist_ok=True)
         executable.write_text('#!/bin/sh\nexit 0\n')
         executable.chmod(0o755)
-    for name in ('yolo26n.pt', 'osnet_ain_x1_0_msmt17.onnx'):
+    for name in ('yolo26n.pt', 'yolo26s-pose.onnx', 'osnet_ain_x1_0_msmt17.onnx'):
         model = cache / 'malbut_perception' / name
         model.parent.mkdir(parents=True, exist_ok=True)
         model.write_bytes(b'not executed during this launch composition test')
@@ -586,6 +587,13 @@ def test_startup_binding_is_shared_with_media_and_changes_on_new_launch(
         vlm = next(item for item in ready if isinstance(item, Node)
                    and item.node_executable == 'malbut-fall-monitor')
         vlm_params = evaluate_parameters(context, vlm._Node__parameters)[0]
+        poses = _nodes(ready, 'homecam_detector_node')
+        assert len(poses) == 1
+        pose_params = _parameters(context, poses[0])
+        assert pose_params['fall_runtime_id'] == vlm_params['runtime_id']
+        assert pose_params['fall_only'] is True
+        assert pose_params['pose_keep_aspect'] is True
+        assert not _nodes(actions, 'homecam_detector_node')
         assert params['fall_vlm_runtime_id'] == vlm_params['runtime_id']
         assert params['fall_manager_runtime_id'] == vlm_params['manager_runtime_id']
         for peer in ('bridge', 'manager', 'vlm'):
@@ -610,6 +618,32 @@ def test_fall_monitor_auto_uses_environment_configuration(launch_module, fall_co
     ready = _readiness_exit(launch_module._setup(context), context)
     assert any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
                for item in ready)
+
+
+def test_missing_fall_pose_model_stops_before_launch(launch_module, fall_config):
+    """Configured fall monitoring may not silently start without the pose producer."""
+    context = _context(launch_module, start_hardware='false', fall_monitor='true',
+                       fall_config=str(fall_config), fall_pose_model_path='/missing/pose.onnx')
+    with pytest.raises(RuntimeError, match='Fall pose ONNX model'):
+        launch_module._setup(context)
+
+
+def test_fall_pose_does_not_depend_on_general_perception(launch_module, fall_config):
+    """Disabling following/object detection does not suppress fall pose."""
+    context = _context(launch_module, start_hardware='false', perception='false',
+                       fall_monitor='true', fall_config=str(fall_config))
+    ready = _readiness_exit(launch_module._setup(context), context)
+    assert len(_nodes(ready, 'homecam_detector_node')) == 1
+
+
+def test_fall_pose_exit_cannot_leave_a_silent_missing_producer(launch_module, fall_config):
+    """Even exit 0 of the persistent detector stops the partial Bringup."""
+    context = _context(launch_module, start_hardware='false', perception='false',
+                       fall_monitor='true', fall_config=str(fall_config))
+    actions = launch_module._setup(context)
+    pose = _nodes(_readiness_exit(actions, context), 'homecam_detector_node')[0]
+    with pytest.raises(RuntimeError, match='Bringup child exited'):
+        _process_exit(actions, context, pose)
 
 
 @pytest.mark.parametrize('enabled', ['auto', 'true'])

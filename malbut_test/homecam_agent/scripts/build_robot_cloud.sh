@@ -37,6 +37,7 @@ colcon_executable="$(command -v colcon)"
 cd -- "$workspace_dir"
 PATH=/usr/bin:/bin "$colcon_executable" --log-base log/malbut_test build \
   --base-paths "$source_root/malbut_interfaces" "$source_root/homecam_agent/homecam_media_agent" \
+  "$source_root/homecam_agent/homecam_detector" \
   --build-base build/malbut_test --install-base install/malbut_test \
   --symlink-install --packages-up-to homecam_media_agent --cmake-force-configure \
   --cmake-args -DBUILD_TESTING=OFF -DHOMECAM_ENABLE_KVS=ON -DHOMECAM_ENABLE_GSTREAMER=ON \

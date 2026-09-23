@@ -26,6 +26,7 @@ from .event_dedupe import EventDedupe
 from .event_poster import EventPoster
 from .event_segmenter import EventSegmenter
 from .fall_candidate import FallCandidateConfig, FallCandidateDetector
+from .fall_pose_control import FallPoseControl
 from .inference_health import InferenceHealth
 from .motion_detector import FrameMotionDetector
 from .motion_gate import MotionGate
@@ -44,6 +45,9 @@ class HomecamDetectorNode(Node):
         errors = validate_config(self._config)
         if errors:
             raise ValueError("invalid detector configuration: " + "; ".join(errors))
+        self._fall_control = (FallPoseControl(self._config.fall_runtime_id)
+                              if self._config.fall_only else None)
+        self._fall_active = False
 
         self._bridge = CvBridge()
         self._depth_lock = threading.Lock()
@@ -118,12 +122,15 @@ class HomecamDetectorNode(Node):
                         self._config.pose_confidence_threshold
                     ),
                     keypoint_threshold=self._config.pose_keypoint_threshold,
+                    keep_aspect=self._config.pose_keep_aspect,
                 )
                 self.get_logger().info(
                     "Loaded independent YOLO pose ONNX model: "
                     f"{self._config.pose_model_path}"
                 )
             except (FileNotFoundError, RuntimeError, ValueError) as error:
+                if self._config.fall_only:
+                    raise RuntimeError("Fall pose model could not be loaded") from error
                 self.get_logger().error(
                     "YOLO pose unavailable; person and pet events remain "
                     f"enabled without pose enrichment: {error}"
@@ -156,7 +163,7 @@ class HomecamDetectorNode(Node):
             now=time.monotonic(),
         )
 
-        token = load_device_token()
+        token = "" if self._config.fall_only else load_device_token()
         self._poster: Optional[EventPoster] = None
         self._clip_poster: Optional[EventClipPoster] = None
         if self._config.backend_url and token:
@@ -234,6 +241,14 @@ class HomecamDetectorNode(Node):
             self._on_storage_session,
             monitoring_qos,
         )
+        self._fall_status_subscription = None
+        if self._config.fall_only:
+            from malbut_interfaces.msg import FallRuntimeStatus
+
+            self._fall_status_subscription = self.create_subscription(
+                FallRuntimeStatus, "/malbut/falls/status",
+                self._on_fall_status, 1,
+            )
         self._health_publisher = self.create_publisher(
             Bool, "/homecam/detector_healthy", monitoring_qos
         )
@@ -262,6 +277,9 @@ class HomecamDetectorNode(Node):
         )
 
     def _declare_parameters(self) -> None:
+        self.declare_parameter("fall_only", False)
+        self.declare_parameter("fall_runtime_id", "")
+        self.declare_parameter("pose_keep_aspect", False)
         self.declare_parameter("image_topic", "/depth_cam/depth_cam")
         self.declare_parameter("depth_image_topic", "")
         self.declare_parameter("depth_camera_info_topic", "")
@@ -307,6 +325,9 @@ class HomecamDetectorNode(Node):
 
     def _read_config(self) -> DetectorConfig:
         return DetectorConfig(
+            fall_only=bool(self.get_parameter("fall_only").value),
+            fall_runtime_id=self.get_parameter("fall_runtime_id").value,
+            pose_keep_aspect=bool(self.get_parameter("pose_keep_aspect").value),
             image_topic=self.get_parameter("image_topic").value,
             depth_image_topic=self.get_parameter("depth_image_topic").value,
             depth_camera_info_topic=self.get_parameter(
@@ -400,6 +421,9 @@ class HomecamDetectorNode(Node):
         )
 
     def _on_parameter_update(self, parameters) -> SetParametersResult:
+        if self._config.fall_only:
+            return SetParametersResult(
+                successful=False, reason="Fall pose permissions come from VLM status")
         for parameter in parameters:
             if parameter.name != "monitoring_enabled":
                 return SetParametersResult(
@@ -452,6 +476,8 @@ class HomecamDetectorNode(Node):
             )
 
     def _on_monitoring_state(self, message: Bool) -> None:
+        if self._config.fall_only:
+            return
         enabled = bool(message.data)
         self._monitoring_state_received = True
         if enabled == self._config.monitoring_enabled:
@@ -472,6 +498,8 @@ class HomecamDetectorNode(Node):
         )
 
     def _on_storage_session(self, message: String) -> None:
+        if self._config.fall_only:
+            return
         session_id = message.data.strip()
         if session_id and not _is_uuid(session_id):
             self.get_logger().error("Ignoring malformed storage session ID")
@@ -481,6 +509,9 @@ class HomecamDetectorNode(Node):
         self._storage_session_id = session_id
 
     def _publish_health(self) -> None:
+        if self._config.fall_only:
+            self._refresh_fall_control()
+            return  # Do not report health for the separate media event detector.
         message = Bool()
         # While monitoring, health requires recent successful inference and
         # becomes false immediately after three consecutive inference errors.
@@ -493,6 +524,17 @@ class HomecamDetectorNode(Node):
         )
         self._pose_health_publisher.publish(pose_health)
 
+    def _on_fall_status(self, message) -> None:
+        if self._fall_control.receive(message):
+            self._refresh_fall_control()
+
+    def _refresh_fall_control(self) -> bool:
+        active = self._fall_control.active()
+        if active != self._fall_active:
+            self._fall_active = active
+            self._reset_pose_state()
+        return active
+
     def _reset_pose_state(self) -> None:
         self._pose_gate.reset()
         self._pose_failure_count = 0
@@ -504,7 +546,9 @@ class HomecamDetectorNode(Node):
         self._last_pose_source_stamp = None
         self._publish_tracked_poses(
             PoseTrackingResult((), (), expired), None,
-            status="waiting_frame" if self._config.monitoring_enabled else "disabled",
+            status="waiting_frame" if (
+                self._fall_active if self._config.fall_only
+                else self._config.monitoring_enabled) else "disabled",
         )
 
     @staticmethod
@@ -515,6 +559,8 @@ class HomecamDetectorNode(Node):
         )
 
     def _on_depth_image(self, message: Image) -> None:
+        if self._config.fall_only and not self._refresh_fall_control():
+            return
         try:
             depth = self._bridge.imgmsg_to_cv2(
                 message,
@@ -736,7 +782,10 @@ class HomecamDetectorNode(Node):
         self._fall_candidates_publisher.publish(message)
 
     def _on_image(self, message: Image) -> None:
-        if (
+        if self._config.fall_only:
+            if not self._refresh_fall_control():
+                return
+        elif (
             not self._monitoring_state_received
             or not self._config.monitoring_enabled
         ):
@@ -760,6 +809,8 @@ class HomecamDetectorNode(Node):
             image_message=message,
             now=now_monotonic,
         )
+        if self._config.fall_only:
+            return  # No legacy recording, object detection, or remote event POST.
         if self._motion_gate.generic_motion_allowed(now_monotonic):
             if self._motion_detector.detect(frame):
                 candidates["motion"] = 1.0

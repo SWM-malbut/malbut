@@ -119,7 +119,8 @@ def package_index():
     """Read actual ROS contracts, excluding the deployment copy."""
     files = [*ROOT.glob('malbut_*/package.xml'),
              *ROOT.glob('malbut_autonomy/*/package.xml'),
-             *ROOT.glob('malbut_yolo/vendor/yolo_ros/*/package.xml')]
+             *ROOT.glob('malbut_yolo/vendor/yolo_ros/*/package.xml'),
+             ROOT / 'homecam_agent/homecam_detector/package.xml']
     result = {}
     for path in files:
         xml = ET.parse(path).getroot()

@@ -10,6 +10,19 @@
 pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Bringup의
 `test/test_deployment.py`에서 확인하며, 실기기 웹 패널과 수동 GPU 검사는 유지한다.
 
+### 낙상 감지 포팅 시 추가 준비
+
+낙상 기능을 설정한 경우 Bringup은 VLM과 `malbut_fall_pose`를 각각 한 번 시작한다.
+`homecam_detector`도 빌드 목록에 포함한다. Pose는 영상 저장 ON/OFF가 아니라
+낙상 감지 설정·카메라 허용·VLM 실행 상태를 보고 동작한다.
+
+VLM 설정·Cloud 키 외에 YOLO26s pose ONNX 모델과 실행 환경을 별도로 준비해야 한다.
+`bash homecam_agent/scripts/prepare_fall_pose_runtime.sh`로 Pose 전용 Python 환경을
+만들 수 있다. 이 명령은 모델을 내려받거나 카메라·Cloud를 실행하지 않는다.
+기본 모델 경로, 실행 인자와 테스트 순서는
+[낙상 감지 로봇 실행 준비](malbut_agent_server/docs/fall_robot_preparation.md)를 따른다.
+PC에서 연결 테스트를 통과해도 Jetson 성능과 카메라 수신이 검증된 것은 아니다.
+
 ## 구조와 빌드 경계
 
 ```text

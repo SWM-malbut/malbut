@@ -82,6 +82,7 @@ class PersonPoseEstimator:
         confidence_threshold: float = 0.45,
         keypoint_threshold: float = 0.5,
         input_size: int = 640,
+        keep_aspect: bool = False,
     ) -> None:
         """Load one fixed-shape end-to-end YOLO26 pose graph."""
         path = Path(model_path).expanduser()
@@ -99,7 +100,14 @@ class PersonPoseEstimator:
             self._session = ort.InferenceSession(
                 str(path), providers=["CPUExecutionProvider"]
             )
-            self._input_name = self._session.get_inputs()[0].name
+            inputs = self._session.get_inputs()
+            outputs = self._session.get_outputs()
+            if (len(inputs) != 1 or inputs[0].shape != [1, 3, input_size, input_size]
+                    or len(outputs) != 1 or len(outputs[0].shape) != 3
+                    or outputs[0].shape[0] != 1
+                    or 57 not in outputs[0].shape[1:]):
+                raise ValueError("expected fixed-size YOLO26 end-to-end pose ONNX")
+            self._input_name = inputs[0].name
         except Exception as error:
             raise RuntimeError(
                 f"cannot load YOLO pose ONNX model: {error}"
@@ -107,6 +115,7 @@ class PersonPoseEstimator:
         self._confidence = confidence_threshold
         self._keypoint_threshold = keypoint_threshold
         self._input_size = input_size
+        self._keep_aspect = keep_aspect
 
     def estimate(self, bgr_frame: np.ndarray) -> Optional[PersonPose]:
         """Compatibility API: return the strongest qualifying pose."""
@@ -131,9 +140,25 @@ class PersonPoseEstimator:
             or bgr_frame.size == 0
         ):
             raise ValueError("YOLO pose input must be a non-empty BGR image")
+        source_height, source_width = bgr_frame.shape[:2]
+        pad_x = pad_y = 0
+        resized_width = resized_height = self._input_size
         try:
+            input_frame = bgr_frame
+            if getattr(self, "_keep_aspect", False):
+                ratio = min(self._input_size / source_width,
+                            self._input_size / source_height)
+                resized_width = max(1, round(source_width * ratio))
+                resized_height = max(1, round(source_height * ratio))
+                pad_x = (self._input_size - resized_width) // 2
+                pad_y = (self._input_size - resized_height) // 2
+                input_frame = np.full(
+                    (self._input_size, self._input_size, 3), 114, dtype=np.uint8)
+                input_frame[pad_y:pad_y + resized_height,
+                            pad_x:pad_x + resized_width] = cv2.resize(
+                                bgr_frame, (resized_width, resized_height))
             blob = cv2.dnn.blobFromImage(
-                bgr_frame,
+                input_frame,
                 scalefactor=1.0 / 255.0,
                 size=(self._input_size, self._input_size),
                 swapRB=True,
@@ -177,7 +202,18 @@ class PersonPoseEstimator:
                 or confidence > 1.0
             ):
                 continue
-            pose = self._parse_pose(row)
+            # Undo padding before normalizing against the original RGB image.
+            # The legacy stretch path remains unchanged (zero pad, square size).
+            adjusted = row.copy()
+            adjusted[[0, 2]] = (adjusted[[0, 2]] - pad_x) / resized_width * self._input_size
+            adjusted[[1, 3]] = (adjusted[[1, 3]] - pad_y) / resized_height * self._input_size
+            adjusted[6::3] = (adjusted[6::3] - pad_x) / resized_width * self._input_size
+            adjusted[7::3] = (adjusted[7::3] - pad_y) / resized_height * self._input_size
+            outside = ((adjusted[6::3] < 0) | (adjusted[6::3] > self._input_size)
+                       | (adjusted[7::3] < 0) | (adjusted[7::3] > self._input_size))
+            if getattr(self, "_keep_aspect", False):
+                adjusted[8::3][outside] = 0
+            pose = self._parse_pose(adjusted)
             if pose.box[0] < pose.box[2] and pose.box[1] < pose.box[3]:
                 poses.append(pose)
         poses.sort(key=lambda pose: (-pose.box_confidence, pose.box))
