@@ -119,7 +119,8 @@ def package_index():
     """Read actual ROS contracts, excluding the deployment copy."""
     files = [*ROOT.glob('malbut_*/package.xml'),
              *ROOT.glob('malbut_autonomy/*/package.xml'),
-             *ROOT.glob('malbut_yolo/vendor/yolo_ros/*/package.xml')]
+             *ROOT.glob('malbut_yolo/vendor/yolo_ros/*/package.xml'),
+             ROOT / 'homecam_agent/homecam_detector/package.xml']
     result = {}
     for path in files:
         xml = ET.parse(path).getroot()
@@ -170,6 +171,8 @@ def selection(paths, full=False, base=None):
                 path = 'malbut_autonomy/' + path
         if path.startswith('malbut_interfaces/'):
             interface = path.removeprefix('malbut_interfaces/')
+            if interface in {'msg/FallSettingsSnapshot.msg', 'msg/FallSettingsReport.msg'}:
+                flags['homecam'] = True
             speech_only = interface in SPEECH_INTERFACES or (
                 interface == 'CMakeLists.txt' and speech_cmake_additions(original_path, base))
             if speech_only:

@@ -4,6 +4,8 @@ import {
   foreignKey,
   index,
   integer,
+  numeric,
+  doublePrecision,
   jsonb,
   pgTable,
   primaryKey,
@@ -166,6 +168,10 @@ export const deviceState = pgTable("device_state", {
   monitoringEnabled: integer("monitoring_enabled").notNull().default(0),
   cameraEnabled: integer("camera_enabled").notNull().default(1),
   microphoneEnabled: integer("microphone_enabled").notNull().default(1),
+  fallEnabled: boolean("fall_enabled").notNull().default(false),
+  fallCloudConsent: boolean("fall_cloud_consent").notNull().default(false),
+  fallSettingsRevision: numeric("fall_settings_revision", { precision: 20, scale: 0 }).notNull().default("1"),
+  fallSettingsSavedAt: timestampText("fall_settings_saved_at").notNull().defaultNow(),
   sourceProfile: text("source_profile").notNull().default("unknown"),
   imageTopic: text("image_topic"),
   activeStreamMode: text("active_stream_mode").notNull().default("idle"),
@@ -186,6 +192,25 @@ export const deviceState = pgTable("device_state", {
   lastSeenAt: timestampText("last_seen_at"),
   updatedAt: timestampText("updated_at").notNull().defaultNow(),
 });
+
+export const fallSettingsVersions = pgTable("fall_settings_versions", {
+  deviceId: text("device_id").notNull().references(() => devices.id, { onDelete: "cascade" }),
+  revision: numeric("revision", { precision: 20, scale: 0 }).notNull(),
+  enabled: boolean("enabled").notNull(), cameraEnabled: boolean("camera_enabled").notNull(),
+  cloudConsent: boolean("cloud_consent").notNull(), savedAt: timestampText("saved_at").notNull(),
+}, (t) => [primaryKey({ columns: [t.deviceId, t.revision] })]);
+
+export const fallSettingsReports = pgTable("fall_settings_reports", {
+  deviceId: text("device_id").notNull().references(() => devices.id, { onDelete: "cascade" }),
+  bridgeRuntimeId: text("bridge_runtime_id").notNull(), managerRuntimeId: text("manager_runtime_id").notNull(),
+  sequence: numeric("sequence", { precision: 20, scale: 0 }).notNull(),
+  requestedRevision: numeric("requested_revision", { precision: 20, scale: 0 }).notNull(),
+  payloadJson: text("payload_json").notNull(),
+  firstReportAgeS: doublePrecision("first_report_age_s").notNull(),
+  receivedAt: timestampText("received_at").notNull().default(sql`clock_timestamp()`),
+}, (t) => [primaryKey({ columns: [t.deviceId, t.bridgeRuntimeId, t.managerRuntimeId, t.sequence] }),
+  foreignKey({ columns: [t.deviceId, t.requestedRevision], foreignColumns: [fallSettingsVersions.deviceId, fallSettingsVersions.revision] }),
+  index("fall_settings_reports_recent_idx").on(t.deviceId, t.receivedAt)]);
 
 export const homecamEvents = pgTable(
   "homecam_events",

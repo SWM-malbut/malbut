@@ -60,7 +60,8 @@ class SpeechSelectionTests(unittest.TestCase):
 
     def assert_speech(self, result):
         self.assertEqual(set(result['ros_packages'].split()), SPEECH_BUILD)
-        self.assertEqual(result['ros_test_packages'], 'malbut_stt malbut_tts')
+        # The shared interface package now contains its own wire-contract tests.
+        self.assertEqual(result['ros_test_packages'], 'malbut_interfaces malbut_stt malbut_tts')
         self.assertEqual(result['agent'], 'true')
         self.assertEqual(result['ros_full'], 'false')
 
@@ -93,7 +94,7 @@ class SpeechSelectionTests(unittest.TestCase):
         ])
         self.assertTrue(SPEECH_BUILD <= set(result['ros_packages'].split()))
         self.assertEqual(result['ros_test_packages'],
-                         'malbut_stt malbut_tracking malbut_tts')
+                         'malbut_interfaces malbut_stt malbut_tracking malbut_tts')
         self.assertEqual(result['ros_full'], 'false')
 
     def test_shared_ci_and_explicit_full_remain_full(self):
@@ -113,6 +114,12 @@ class SpeechSelectionTests(unittest.TestCase):
         self.assertTrue({'malbut_yolo', 'malbut_tracking'}
                         <= set(result['ros_packages'].split()))
 
+    def test_homecam_is_retested_for_its_new_settings_messages(self):
+        for prefix in ('', 'malbut_test/'):
+            for name in ('FallSettingsSnapshot', 'FallSettingsReport'):
+                result = SELECTOR.selection([f'{prefix}malbut_interfaces/msg/{name}.msg'])
+                self.assertEqual(result['homecam'], 'true')
+
     def test_bringup_builds_speech_dependencies_without_selecting_their_tests(self):
         for path in ('malbut_bringup/launch/robot.launch.py',
                      'malbut_test/malbut_bringup/launch/robot.launch.py',
@@ -122,6 +129,8 @@ class SpeechSelectionTests(unittest.TestCase):
                 result = SELECTOR.selection([path])
                 builds = set(result['ros_packages'].split())
                 self.assertTrue(SPEECH_BUILD <= builds)
+                self.assertIn('homecam_detector', builds)
+                self.assertIn('homecam_agent/homecam_detector', result['ros_paths'].split())
                 self.assertFalse({'malbut_gazebo', 'malbut_scenarios'} & builds)
                 self.assertEqual(result['ros_test_packages'], 'malbut_bringup')
                 self.assertEqual(result['agent'], 'false')

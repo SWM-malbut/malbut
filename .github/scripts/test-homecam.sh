@@ -13,8 +13,8 @@ set -u
 sdk_root="$workspace/.deps/amazon-kinesis-video-streams-webrtc-sdk-c-v1.19.1"
 bash "$repo_root/homecam_agent/scripts/build_kvs_webrtc_sdk.sh" "$sdk_root"
 cd "$workspace"
-colcon build --base-paths "$repo_root/homecam_agent" --symlink-install \
-  --packages-select homecam_detector homecam_media_agent \
+colcon build --base-paths "$repo_root/homecam_agent" "$repo_root/malbut_interfaces" \
+  --symlink-install --packages-select homecam_detector homecam_media_agent malbut_interfaces \
   --cmake-args -DHOMECAM_ENABLE_KVS=ON \
   "-DKVS_WEBRTC_SDK_ROOT=$sdk_root" \
   "-DHOMECAM_KVS_CA_CERT_PATH=$sdk_root/certs/cert.pem"

@@ -1,4 +1,5 @@
 #include "homecam_media_agent/heartbeat_client.hpp"
+#include <charconv>
 
 #include <limits>
 #include <sstream>
@@ -104,8 +105,11 @@ std::string heartbeat_to_json(const HeartbeatStatus & status)
        << "\"mediaHealthy\":" << (status.media_healthy ? "true" : "false") << ","
        << "\"p2pHealthy\":" << (status.p2p_healthy ? "true" : "false") << ","
        << "\"storageHealthy\":" << (status.storage_healthy ? "true" : "false") << ","
-       << "\"detectorHealthy\":" << (status.detector_healthy ? "true" : "false")
-       << "}";
+       << "\"detectorHealthy\":" << (status.detector_healthy ? "true" : "false");
+  if (status.fall_settings_report) {
+    json << ",\"fallSettingsReport\":" << status.fall_settings_report->dump();
+  }
+  json << "}";
   return json.str();
 }
 
@@ -167,12 +171,36 @@ bool parse_desired_settings(
   }
 
   if (desired != nullptr) {
+    desired->fall.reset();
+    desired->fall_reason = "server_settings_missing";
     desired->camera_enabled =
       desired_iterator->at("cameraEnabled").get<bool>();
     desired->microphone_enabled =
       desired_iterator->at("microphoneEnabled").get<bool>();
     desired->monitoring_enabled =
       desired_iterator->at("monitoringEnabled").get<bool>();
+    const auto fall = root.find("fallSettings");
+    if (fall != root.end()) {
+      desired->fall_reason = "server_invalid_settings";
+      if (fall->is_object() && fall->size() == 4U &&
+        fall->contains("settingsRevision") && (*fall)["settingsRevision"].is_string() &&
+        fall->contains("enabled") && (*fall)["enabled"].is_boolean() &&
+        fall->contains("cameraEnabled") && (*fall)["cameraEnabled"].is_boolean() &&
+        fall->contains("cloudConsent") && (*fall)["cloudConsent"].is_boolean())
+      {
+        const auto text = (*fall)["settingsRevision"].get<std::string>();
+        std::uint64_t revision = 0;
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), revision);
+        if (!text.empty() && text.size() <= 20U && text[0] != '0' &&
+          parsed.ec == std::errc() && parsed.ptr == text.data() + text.size() && revision > 0 &&
+          (*fall)["cameraEnabled"].get<bool>() == *desired->camera_enabled)
+        {
+          desired->fall = FallServerSettings{revision, (*fall)["enabled"].get<bool>(),
+            (*fall)["cameraEnabled"].get<bool>(), (*fall)["cloudConsent"].get<bool>()};
+          desired->fall_reason = "none";
+        }
+      }
+    }
   }
   return true;
 }
@@ -197,8 +225,10 @@ bool HeartbeatClient::available() const
 bool HeartbeatClient::post(
   const HeartbeatStatus & status,
   DesiredDeviceSettings * const desired,
-  std::string * const error) const
+  std::string * const error,
+  std::string * const failure_code) const
 {
+  if (failure_code != nullptr) {*failure_code = "server_transport_error";}
 #if HOMECAM_HAVE_CURL
   if (!available()) {
     if (error != nullptr) {
@@ -250,18 +280,25 @@ bool HeartbeatClient::post(
   curl_easy_cleanup(curl);
 
   if (response.overflow) {
+    if (failure_code != nullptr) {*failure_code = "server_invalid_settings";}
     if (error != nullptr) {
       *error = "backend response exceeded 64 KiB";
     }
     return false;
   }
   if (result != CURLE_OK) {
+    if (failure_code != nullptr && result == CURLE_OPERATION_TIMEDOUT) {
+      *failure_code = "server_timeout";
+    }
     if (error != nullptr) {
       *error = curl_easy_strerror(result);
     }
     return false;
   }
   if (response_code < 200 || response_code >= 300) {
+    if (failure_code != nullptr && (response_code == 401 || response_code == 403)) {
+      *failure_code = "server_auth_failed";
+    }
     if (error != nullptr) {
       *error = "backend returned HTTP " + std::to_string(response_code);
     }
@@ -270,6 +307,7 @@ bool HeartbeatClient::post(
   DesiredDeviceSettings parsed_desired;
   std::string parse_error;
   if (!parse_desired_settings(response.body, &parsed_desired, &parse_error)) {
+    if (failure_code != nullptr) {*failure_code = "server_invalid_settings";}
     if (error != nullptr) {
       *error = "invalid heartbeat response: " + parse_error;
     }
@@ -278,6 +316,7 @@ bool HeartbeatClient::post(
   if (desired != nullptr) {
     *desired = parsed_desired;
   }
+  if (failure_code != nullptr) {*failure_code = "none";}
   return true;
 #else
   (void)status;

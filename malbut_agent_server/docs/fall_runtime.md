@@ -18,8 +18,10 @@
 약 5초 합성 영상의 분류 평가이며, 실제 감지 지연까지 검증한 것은 아니다.
 같은 조건의 [6장 비교](../../homecam_agent/docs/FALL84_RUNTIME_CLOUD_6_VS_12_20260919.md)도
 완료했다: 70/84(83.3%), 정상 오탐 7/34, 응답 중앙값 1.73초. 예시 설정은 12장을 유지한다.
-Manager 연결용 토픽은 임시 JSON 연결 규격이다. 다른 팀의 Agent/Manager 구현이나
-`malbut_interfaces`를 변경한 것이 아니다. 실제 연결 전에 담당자와 맞춰야 한다.
+설정 Service·상태·연결 확인은 `malbut_interfaces` 자료형을 사용한다.
+VLM·홈캠·Manager 연결, 서버 설정 응답과 웹 저장·회신 이력 표시를 구현했다.
+현재 실행 등록·실행 상태의 웹 전달과 실물 검증은 남아 있다.
+질문·답변·사건 이벤트는 임시 JSON 연결이므로 담당자와 맞춰야 한다.
 
 ## 영상 입력
 
@@ -71,8 +73,18 @@ Cloud에는 요청 구간에서 고른 JPEG들을 시간순으로 한 요청에 
 
 ## 실행과 제어
 
+설정 적용 Service·실행 상태 Topic의 Manifest와 입력·출력 표는
+[Manager–VLM 호출 명세](fall_manager_contract.md)에 정리했다.
+실행기는 새 설정 Service·상태 발행·연결 확인 수신을 사용한다.
+기존 JSON 설정 토픽과 `/homecam/monitoring_enabled` Bool로 감지를 켤 수 없다.
+
 설정 양식: `config/fall_runtime.example.json`.
-아직 합의하지 않은 수치는 `null`로 두었다. 값을 채우지 않으면 시작하지 않는다.
+2026-09-23에 비어 있던 수치를 **로봇 테스트용 시작값**으로 채웠다.
+운영 기준으로 확정하거나 Jetson에서 성능을 검증한 값은 아니다.
+각 값과 실물 확인 순서는 [로봇 실행 준비](fall_robot_preparation.md)에 정리했다.
+설정 검사만 할 때는 예시를 그대로 사용할 수 있다. 실제 실행 전에는 등록된
+`device_id`로 바꾸고 보호된 키 파일·저장 경로를 준비해야 한다.
+예시 ID가 남아 있으면 `--execute`는 ROS·키·DB를 열기 전에 거부한다.
 Cloud 의존성은 패키지의 `fall-cloud` extra로 설치하거나 ROS 의존성으로 설치한다.
 
 ```bash
@@ -80,33 +92,91 @@ malbut-fall-monitor --config /absolute/path/fall_runtime.json
 ```
 
 기본은 설정 확인만 한다. ROS 시작·토큰 읽기·DB 생성·Cloud 요청을 하지 않는다.
-실제 실행은 `--execute`를 추가한다. 실행하더라도 다음 두 조건 전에는 감지·수집하지 않는다.
+실제 실행은 `--execute`를 추가한다. 실행해도 다음 조건 전에는 감지용 영상을 받지 않는다.
 
-1. media agent의 `/homecam/monitoring_enabled`가 참: 기존 유효 카메라/저장 동의 정책을 따른다.
-2. 이번 실행 ID에 맞는 설정 메시지를 받고, 제어 메시지 유효 시간이 지나지 않음.
+1. 시작 시 읽기 전용 ROS 파라미터 `manager_runtime_id`로 현재 Manager 실행 ID를 지정.
+2. 이번 VLM 실행 ID에 맞는 설정을 적용. 낙상 감지·카메라 허용이 모두 ON.
+3. 지정한 Manager의 새 연결 확인 메시지를 수신. 시작·재연결 때는 새 서버 확인과 설정 적용도 필요.
 
-새 ROS 토픽은 모두 `std_msgs/String` JSON이다.
+VLM의 입력 허용은 KVS 저장 설정과 분리했다. Cloud 전송에는 별도 동의가 필요하다.
+Bringup이 실행 ID를 각 노드에 전달하고 Manager가 서버에서 확인한 설정을 적용한다.
+상위 카메라·YOLO 노드의 발행 조건 분리는 별도 확인이 필요하다.
+서버가 아직 `fallSettings`를 보내지 않으면 기본 Bringup 실행은 대기한다.
+ID를 아는 것만으로 호출자를 인증하지 않으며, ROS 접근 권한은 별도 설정해야 한다.
+
+### Bringup에서 함께 시작
+
+`robot.launch.py`의 통합 navigation 실행에서 VLM을 시작한다.
+`fall_monitor:=auto`가 기본이며,
+`/etc/malbut/fall_runtime.json`이 있으면 로봇 준비 후 VLM을 한 번 시작하고,
+없으면 이유를 표시하고 건너뛴다. 설정 경로는 `MALBUT_FALL_CONFIG` 또는
+`fall_config` 인자로 지정한다. `fall_monitor:=true`는 설정 누락도 오류로 처리하고,
+`fall_monitor:=false`는 노드를 시작하지 않는다. 파일이 있는데 설정이 잘못된 경우는
+`auto`에서도 시작을 거부한다.
+
+최신 Bringup은 별도 `mode` 인자를 없앴다. Manager는 위치 추정을 위해 먼저 시작하고,
+VLM은 준비 완료 뒤 시작한다. Manager를 두 번 띄우지 않는다.
+별도 `mapping_backend.launch.py`는 VLM을 시작하지 않는다.
+실제 수집·전송에는 여전히 최신 설정·연결 확인·동의가 필요하다.
+
+설정의 `image_topic`은 Bringup의 `rgb_topic`으로 remap하므로 같은 카메라를 사용한다.
+새 카메라나 별도 VLM 서버를 띄우지 않으며, 기존 직접 Cloud API 실행기를 사용한다.
+Manager 설정·카메라 허용·Cloud 동의를 확인한다.
+Manager는 홈캠의 유효한 Snapshot을 받아 처음 시작·설정 변경·연결 복구 때 Service를 호출한다.
+같은 설정을 새로 조회한 경우에는 확인 시각만 전달하고 매초 재적용하지 않는다.
+웹에서 감지·전송 동의를 따로 저장하고 재시작 없이 적용하는 기준은
+[전체 명세의 웹 설정 항목](fall_detection.md#웹에서-설정하고-저장-후-적용)에 정리했다.
+로봇 설정 전달·적용 회신과 서버·웹 저장·회신 이력 표시를 구현했다.
+현재 실행 등록·실행 상태의 웹 전달은 남아 있어, 회신 이력을 ‘현재 감지 중’으로 표시하지 않는다.
+합의한 적용·회신 목표는 온라인 로봇 기준 저장 성공 후 3초 이내이며,
+6초 동안 회신이 없으면 웹에 ‘회신 없음’을 표시한다. 이 6초를 아래
+`control_lease_s`나 Cloud 분석 응답 대기 시간으로 사용하지 않는다.
+2026-09-23에는 Manager–VLM 양방향 확인을 1초마다 하고, 5초간 새 메시지가 없으면
+끊김으로 처리하기로 정했다. Manager는 웹에 ‘낙상 감지 상태 확인 불가’를 전달하고,
+VLM은 낙상 분석용 수집·새 전송을 중단하고 대기 요청을 취소한다.
+저장된 설정은 유지하며 복구 후 최신 설정을 다시 확인한 뒤 재개한다.
+서버에서 정상 설정 응답을 받지 못한 지 15초가 되면 새 Cloud 전송도 중단하기로 정했다.
+이때 내부 연결·카메라·감지 허용이 유지되면 YOLO-Pose와 최근 영상 버퍼는 유지한다.
+Cloud 대기 요청은 취소하고 진행 중 요청도 취소를 시도한다. 복구 후 최신 설정과 동의를 다시 확인한다.
+VLM의 5초·15초 중단과 연결 확인 수신은 구현했다. 상태 보고 자체로 Cloud를 호출하지 않는다.
+서버 확인 시각을 전달하는 Manager 발행부와 서버 응답의 `fallSettings` 확장을 구현했다.
+[호출 명세 3.5~3.6절](fall_manager_contract.md)을 따르며, 실제 사용 전 `0011_fall_settings` DB 적용과 서버 배포가 필요하다.
+홈캠 → Manager 설정 전달(`FallSettingsSnapshot`)과 Manager → 홈캠 적용 회신(`FallSettingsReport`),
+기존 heartbeat 요청으로 서버에 결과를 보내는 형식은 같은 명세 3.7~3.8절에 작성했다.
+새 ROS 타입 5종은 `malbut_interfaces`와 실기기 적용본에 만들었다.
+홈캠·Manager는 해당 타입으로 설정과 실제 Service 회신을 전달한다.
+기존 서버가 낙상 설정을 보내지 않으면 기존 홈캠 동작은 유지하고 낙상 감지는 켜지 않는다.
+`control_lease_s`는 합의한 5초로 고정 검증한다. 기존 다른 값을 쓰는 설정 파일은 5로 바꿔야 한다.
+노드 자동 실행과 실제 감지·Cloud 전송·질문 연동 완료를 구분해야 한다.
+키 누락·실행 의존성 오류·실행 중 종료는 기존 Bringup 오류 종료 정책을 따른다.
+단독 실행과 Bringup 실행을 동시에 사용하지 않는다.
+
+### Manager 연결용 토픽
+
+설정·상태 연결은 다음과 같다. Manager 발행·수신도 구현했다.
+
+| 연결 | 방식·타입 | VLM 동작 |
+|---|---|---|
+| `/malbut/falls/settings/apply` | Service, ApplyFallSettings | 설정 수신·적용 결과 회신 |
+| `/malbut/falls/control/heartbeat` | Topic, FallControlHeartbeat | 현재 Manager의 연결·서버 확인 시각 수신 |
+| `/malbut/falls/status` | Topic, FallRuntimeStatus | 1초마다 설정·실행·실제 분석 요청 상태 발행 |
+
+- 같은 설정 번호·내용은 `already_applied`로 회신하지만 연결 시간을 갱신하지 않는다.
+- 이전 실행·낮은 설정 번호·같은 번호의 다른 내용은 거부한다.
+- 카메라 OFF·감지 OFF·Manager 5초 끊김은 수집 중단과 버퍼 비우기로 처리한다.
+- Cloud 동의만 철회하거나 서버 확인만 15초 만료되면 로컬 입력은 유지하고 Cloud를 막는다.
+- 차단 중 요청을 모아 두지 않는다. 복구 후 자동으로 몰아서 보내지 않으며 재확인은 별도 요청한다.
+- 진행 중 취소는 원격 처리·이미 보낸 영상의 회수를 보장하지 않는다. 늦게 온 결과는 정상 판단에 쓰지 않는다.
+- 이 연결은 신뢰된 로컬 ROS graph 전제다. 인증 API나 SROS2 접근 제어를 대신하지 않는다.
+
+아래 사건·Agent 연결은 기존 `std_msgs/String` JSON을 유지한다.
 
 | 토픽 | 방향 | 용도 |
 |---|---|---|
-| `/malbut/falls/runtime/status` | 발행 | `runtimeId`, 수집 여부, 확인 주기, 임시 연결 상태 |
-| `/malbut/falls/runtime/settings` | 수신 | 감지·Cloud 동의·연결 상태, 실행 ID, 설정 버전 |
 | `/malbut/falls/runtime/events` | 발행 | 사건·질문·영상 판정·실패·알림 요청 메타데이터 |
 | `/malbut/falls/runtime/agent_reply` | 수신 | 해석된 Agent 답변. 실제 TTS/STT를 대신하지 않음 |
 | `/malbut/falls/runtime/subject_observation` | 수신 | 외부 판단부용 관측 입력. Pose의 관측은 별도로 내부에서 생성·검증 |
 | `/malbut/falls/runtime/decision` | 수신 | 담당 판단부가 내린 재확인·종결 결정 |
-
-설정 메시지의 정확한 필드:
-
-```json
-{"runtimeId":"이번 실행 ID","revision":1,"enabled":true,"cloudConsent":false,"connected":false}
-```
-
-- 변경 시 `revision`을 올린다. 같은 버전·같은 내용의 반복은 유효 시간 갱신이다.
-- `control_lease_s` 안에 갱신되지 않으면 감지를 끄고 버퍼를 비우며 진행 중 요청을 취소한다.
-- 이전 실행 ID·낮은 설정 버전·같은 버전의 다른 내용은 거부한다.
-- 카메라 OFF는 즉시 버퍼를 비운다. Cloud 동의만 철회하면 YOLO 경로는 유지한다.
-- 이 토픽은 신뢰된 로컬 ROS graph 전제다. 원격 인증 API나 SROS2 접근 제어를 대신하지 않는다.
 
 Agent 답변은 전체 명세의 `AgentCheckReply`와 동일하다. 실제 질문이 재생되지 않았는데
 `no_response`라고 보내면 거부한다. Agent가 연결되지 않았다고 무응답을 만들어내지 않는다.

@@ -57,6 +57,12 @@ def test_robot_speech_launch_and_native_assets_match_source():
         assert (SOURCE / path).read_bytes() == (ROBOT / path).read_bytes(), path
 
 
+def test_robot_fall_startup_helper_matches_source():
+    """Include the VLM config validator imported by the robot launch file."""
+    path = 'malbut_bringup/malbut_bringup/fall_setup.py'
+    assert (SOURCE / path).read_bytes() == (ROBOT / path).read_bytes()
+
+
 @pytest.mark.parametrize('package', SPEECH_PACKAGES)
 def test_robot_speech_install_metadata_is_self_contained(monkeypatch, package):
     """Resolve installed assets and console targets using only the robot folder."""

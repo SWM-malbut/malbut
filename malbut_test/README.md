@@ -10,6 +10,19 @@
 pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Bringup의
 `test/test_deployment.py`에서 확인하며, 실기기 웹 패널과 수동 GPU 검사는 유지한다.
 
+### 낙상 감지 포팅 시 추가 준비
+
+낙상 기능을 설정한 경우 Bringup은 VLM과 `malbut_fall_pose`를 각각 한 번 시작한다.
+`homecam_detector`도 빌드 목록에 포함한다. Pose는 영상 저장 ON/OFF가 아니라
+낙상 감지 설정·카메라 허용·VLM 실행 상태를 보고 동작한다.
+
+VLM 설정·Cloud 키 외에 YOLO26s pose ONNX 모델과 실행 환경을 별도로 준비해야 한다.
+`bash homecam_agent/scripts/prepare_fall_pose_runtime.sh`로 Pose 전용 Python 환경을
+만들 수 있다. 이 명령은 모델을 내려받거나 카메라·Cloud를 실행하지 않는다.
+기본 모델 경로, 실행 인자와 테스트 순서는
+[낙상 감지 로봇 실행 준비](malbut_agent_server/docs/fall_robot_preparation.md)를 따른다.
+PC에서 연결 테스트를 통과해도 Jetson 성능과 카메라 수신이 검증된 것은 아니다.
+
 ## 구조와 빌드 경계
 
 ```text
@@ -52,6 +65,8 @@ STT·Agent·TTS 음성 기능과 실기기용 간단한 웹 테스트 패널은 
 실행 모드는 없으며, 저장 지도 선택 여부만 실행 중에 바뀐다
 ([실행 구성](malbut_bringup/README.md#실행-구성)).
 홈캠 영상 전송도 위 빌드에 포함한다. 서비스 웹 자체는 AWS에 별도 배포한다.
+Cloud VLM도 설정 파일이 준비되면 센서 준비 후 함께 시작한다. 설정 경로와
+감지·전송 전 대기 조건은 [Bringup 안내](malbut_bringup/README.md#cloud-vlm-자동-실행)를 따른다.
 클라우드 연결과 Bringup을 통한 영상 실행은 [README_CLOUD.md](README_CLOUD.md)를 따른다.
 제조사 하드웨어 launch가 차체·센서·로봇 description과 TF를 제공하므로 시뮬레이션용 description을
 별도로 실행하지 않는다. 순찰은 기존 `malbut_autonomy/malbut_patrol`의 복사본이다.

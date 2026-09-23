@@ -18,6 +18,7 @@
 
 #include "homecam_media_agent/build_features.hpp"
 #include "homecam_media_agent/config.hpp"
+#include "homecam_media_agent/fall_settings_bridge.hpp"
 #include "homecam_media_agent/heartbeat_client.hpp"
 #include "homecam_media_agent/kvs_transport.hpp"
 #include "homecam_media_agent/pipeline_builder.hpp"
@@ -165,6 +166,26 @@ public:
     session_client_ = std::make_unique<DeviceSessionClient>(
       trim_trailing_slashes(config_.backend_url), config_.device_id, token);
     desired_state_confirmed_ = config_.backend_url.empty();
+    rcl_interfaces::msg::ParameterDescriptor readonly;
+    readonly.read_only = true;
+    const auto bridge_id = declare_parameter<std::string>("fall_bridge_runtime_id", "", readonly);
+    const auto manager_id = declare_parameter<std::string>("fall_manager_runtime_id", "", readonly);
+    const auto vlm_id = declare_parameter<std::string>("fall_vlm_runtime_id", "", readonly);
+    if (!bridge_id.empty() || !manager_id.empty() || !vlm_id.empty()) {
+      fall_bridge_ = std::make_unique<FallSettingsBridge>(
+        bridge_id, manager_id, vlm_id, steady_now_ns() / 1e9);
+      const auto qos = rclcpp::QoS(1).reliable().transient_local();
+      fall_snapshots_ = create_publisher<FallSettingsBridge::Snapshot>(
+        "/malbut/falls/settings/snapshot", qos);
+      fall_reports_ = create_subscription<FallSettingsBridge::Report>(
+        "/malbut/falls/settings/report", qos,
+        [this](const FallSettingsBridge::Report::ConstSharedPtr report) {
+          if (fall_bridge_->accept_report(*report, steady_now_ns() / 1e9)) {
+            publish_heartbeat();
+          }
+        });
+      fall_snapshots_->publish(fall_bridge_->snapshot());
+    }
     transport_ = make_kvs_transport();
     storage_transport_ = make_kvs_transport();
 #if HOMECAM_HAVE_GSTREAMER
@@ -2016,6 +2037,9 @@ private:
     status.stream_mode =
       transport_running ? active_stream_mode_ : "idle";
     status.frames_received = frames_received_.load();
+    if (fall_bridge_) {
+      status.fall_settings_report = fall_bridge_->report_payload(steady_now_ns() / 1e9);
+    }
 #if HOMECAM_HAVE_GSTREAMER
     const std::string local_state =
       pipeline_ == nullptr ? "waiting_for_camera" : "encoding_local";
@@ -2048,12 +2072,14 @@ private:
             HeartbeatOutcome outcome;
             try {
               outcome.success =
-              client->post(status, &outcome.desired, &outcome.error);
+              client->post(status, &outcome.desired, &outcome.error, &outcome.failure_code);
             } catch (const std::exception & exception) {
               outcome.success = false;
               outcome.error =
               std::string("heartbeat worker exception: ") + exception.what();
             }
+            // Record completion here, not when the ROS executor collects it.
+            outcome.observed_at = steady_now_ns() / 1e9;
             return outcome;
           });
       } catch (const std::exception & exception) {
@@ -2068,6 +2094,8 @@ private:
     bool success{false};
     DesiredDeviceSettings desired;
     std::string error;
+    std::string failure_code{"server_transport_error"};
+    double observed_at{0};
   };
 
   void collect_heartbeat_result()
@@ -2084,6 +2112,10 @@ private:
       RCLCPP_WARN(
         get_logger(), "Heartbeat worker failed: %s", exception.what());
       return;
+    }
+    if (fall_bridge_) {
+      fall_snapshots_->publish(fall_bridge_->update(
+        outcome.desired, outcome.failure_code, outcome.observed_at));
     }
     if (!outcome.success) {
       RCLCPP_WARN_THROTTLE(
@@ -2206,6 +2238,9 @@ private:
 
   MediaConfig config_;
   std::unique_ptr<HeartbeatClient> heartbeat_client_;
+  std::unique_ptr<FallSettingsBridge> fall_bridge_;
+  rclcpp::Publisher<FallSettingsBridge::Snapshot>::SharedPtr fall_snapshots_;
+  rclcpp::Subscription<FallSettingsBridge::Report>::SharedPtr fall_reports_;
   std::unique_ptr<DeviceSessionClient> session_client_;
   std::unique_ptr<KvsTransport> transport_;
   std::unique_ptr<KvsTransport> storage_transport_;

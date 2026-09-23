@@ -12,6 +12,7 @@ from std_msgs.msg import Bool
 import homecam_detector.detector_node as detector_node
 from homecam_detector.config import DetectorConfig
 from homecam_detector.fall_candidate import FallCandidateDetector
+from homecam_detector.fall_pose_control import FallPoseControl
 from homecam_detector.pose import PersonPose, PersonPoseGate
 from homecam_detector.pose_tracker import PersonPoseTracker
 
@@ -64,6 +65,7 @@ def node(monkeypatch):
         "_publish_tracked_poses",
         "_publish_fall_candidates",
         "_reset_pose_state", "_on_monitoring_state", "_on_parameter_update",
+        "_on_fall_status", "_refresh_fall_control",
     ):
         setattr(value, name, MethodType(
             getattr(detector_node.HomecamDetectorNode, name), value
@@ -72,6 +74,33 @@ def node(monkeypatch):
         monotonic=lambda: value.now, time=lambda: 1000.0 + value.now
     ))
     return value
+
+
+def test_fall_only_runs_with_recording_off_and_stops_on_status_expiry(node):
+    node._config = DetectorConfig(
+        fall_only=True, fall_runtime_id='vlm-1', pose_model_path='test.onnx',
+        monitoring_enabled=False,
+    )
+    node._monitoring_state_received = False
+    node._fall_control = FallPoseControl('vlm-1', clock=lambda: node.now)
+    node._fall_active = False
+    node._on_image(camera_image(node))
+    node._pose_estimator.estimate_all.assert_not_called()
+    state = SimpleNamespace(runtime_id='vlm-1', sequence=1, settings_applied=True,
+                            enabled=True, camera_enabled=True, accepting_images=True)
+    node._on_fall_status(state)
+    node._on_monitoring_state(Bool(data=False))
+    node._on_image(camera_image(node))
+    node._pose_estimator.estimate_all.assert_called_once()
+    node._model.detect.assert_not_called()
+    node._dedupe.observe.assert_not_called()
+    node._segmenter.observe.assert_not_called()
+    assert node._pose_tracker is not None
+    node.now += 5
+    node._on_image(camera_image(node))
+    node._pose_estimator.estimate_all.assert_called_once()
+    assert not node._fall_active
+    assert json.loads(node._poses_publisher.publish.call_args.args[0].data)['status'] == 'disabled'
 
 
 def camera_image(node):

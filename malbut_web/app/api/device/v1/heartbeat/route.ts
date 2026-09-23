@@ -4,6 +4,8 @@ import {
 } from "../../../../../db/homecam";
 import { noStore, unauthorized } from "../../../../api-response";
 import { getRequestDevice } from "../../../../device-auth";
+import { hasFallSettingsSchema, readFallSettingsSnapshot, storeFallSettingsReport } from "../../../../../db/fall-settings";
+import { parseFallSettingsReport } from "../../../../fall-settings-contract";
 
 export const dynamic = "force-dynamic";
 
@@ -16,20 +18,36 @@ export async function POST(request: Request) {
   > | null;
   const parsed = parseHeartbeat(payload);
   if (!parsed) return noStore({ error: "장치 상태 형식을 확인해 주세요." }, 400);
+  const report = payload?.fallSettingsReport === undefined ? undefined : parseFallSettingsReport(payload.fallSettingsReport);
+  if (report === null) return noStore({ error: "낙상 설정 회신 형식을 확인해 주세요." }, 400);
+  const fallSettingsSupported = await hasFallSettingsSchema();
+  if (report && !fallSettingsSupported) return noStore({ error: "낙상 설정 DB 준비가 필요합니다." }, 503);
+  if (report) {
+    try {
+      await storeFallSettingsReport(device.deviceId, report);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      const conflict = ["FALL_SETTINGS_REPORT_CONFLICT", "FALL_SETTINGS_REPORT_UNKNOWN_REVISION",
+        "FALL_SETTINGS_REPORT_VALUES_MISMATCH"].includes(code);
+      return noStore({ error: conflict ? "낙상 설정 회신을 저장된 설정과 대조하지 못했습니다." : "낙상 설정 회신을 저장하지 못했습니다." }, conflict ? 409 : 500);
+    }
+  }
 
   const heartbeat = await updateDeviceHeartbeat({
     deviceId: device.deviceId,
     ...parsed,
   });
   const { activeSession, ...reportedState } = heartbeat;
+  const fallSnapshot = fallSettingsSupported ? await readFallSettingsSnapshot(device.deviceId) : null;
   return noStore(
     {
       deviceId: device.deviceId,
-      desiredState: {
+      desiredState: fallSnapshot?.desiredState ?? {
         monitoringEnabled: reportedState.monitoringEnabled,
         cameraEnabled: reportedState.cameraEnabled,
         microphoneEnabled: reportedState.microphoneEnabled,
       },
+      ...(fallSnapshot ? { fallSettings: fallSnapshot.settings } : {}),
       reportedState: {
         sourceProfile: reportedState.sourceProfile,
         imageTopic: reportedState.imageTopic,
@@ -76,7 +94,7 @@ export async function POST(request: Request) {
 }
 
 function parseHeartbeat(value: Record<string, unknown> | null) {
-  if (!value || Array.isArray(value)) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const allowed = [
     "sourceProfile",
     "imageTopic",
@@ -85,6 +103,7 @@ function parseHeartbeat(value: Record<string, unknown> | null) {
     "p2pHealthy",
     "storageHealthy",
     "detectorHealthy",
+    "fallSettingsReport",
   ];
   if (Object.keys(value).some((key) => !allowed.includes(key))) return null;
   if (
