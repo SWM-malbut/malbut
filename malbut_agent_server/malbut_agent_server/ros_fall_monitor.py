@@ -214,6 +214,10 @@ def main(argv=None):
         if not args.execute:
             print('configuration: ok (no ROS, no credential read, no Cloud call)')
             return 0
+        if settings.device_id == 'REPLACE_WITH_REGISTERED_DEVICE_ID':
+            print('replace example device_id with the registered robot ID '
+                  'before execution')
+            return 2
         from malbut_agent_server.adapters.outbound.ollama_cloud_fall import OllamaCloudFallProvider
         from malbut_agent_server.adapters.outbound.sqlite_fall_journal import SqliteFallJournal
         from malbut_agent_server.fall_upload_worker import _read_token

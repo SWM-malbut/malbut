@@ -79,7 +79,12 @@ Cloud에는 요청 구간에서 고른 JPEG들을 시간순으로 한 요청에 
 기존 JSON 설정 토픽과 `/homecam/monitoring_enabled` Bool로 감지를 켤 수 없다.
 
 설정 양식: `config/fall_runtime.example.json`.
-아직 합의하지 않은 수치는 `null`로 두었다. 값을 채우지 않으면 시작하지 않는다.
+2026-09-23에 비어 있던 수치를 **로봇 테스트용 시작값**으로 채웠다.
+운영 기준으로 확정하거나 Jetson에서 성능을 검증한 값은 아니다.
+각 값과 실물 확인 순서는 [로봇 실행 준비](fall_robot_preparation.md)에 정리했다.
+설정 검사만 할 때는 예시를 그대로 사용할 수 있다. 실제 실행 전에는 등록된
+`device_id`로 바꾸고 보호된 키 파일·저장 경로를 준비해야 한다.
+예시 ID가 남아 있으면 `--execute`는 ROS·키·DB를 열기 전에 거부한다.
 Cloud 의존성은 패키지의 `fall-cloud` extra로 설치하거나 ROS 의존성으로 설치한다.
 
 ```bash

@@ -42,7 +42,8 @@ setup(
         (
             'share/' + package_name + '/docs',
             ['docs/fall_detection.md', 'docs/fall_storage_api.md', 'docs/fall_runtime.md',
-             'docs/fall_decision_policy.md', 'docs/fall_subject_observation.md'],
+             'docs/fall_decision_policy.md', 'docs/fall_subject_observation.md',
+             'docs/fall_robot_preparation.md'],
         ),
         (
             'share/' + package_name + '/config',
