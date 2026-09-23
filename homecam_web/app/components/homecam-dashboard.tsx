@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { FallSettingsPanel } from "./fall-settings-panel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
@@ -2271,6 +2272,10 @@ export function HomecamDashboard({
                   />
                 </div>
               </section>
+
+              {selectedDevice && selectedDevice.id !== LOCAL_DEMO_DEVICE_ID && (
+                <FallSettingsPanel key={selectedDevice.id} deviceId={selectedDevice.id} isOwner={isOwner} />
+              )}
 
               <section className="homecam-settings-card">
                 <div className="settings-card-heading">
