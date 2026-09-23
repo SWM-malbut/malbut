@@ -18,7 +18,7 @@ Manager는 설정 적용 Service를 호출하고 실제 회신만 홈캠에 돌�
 Manifest는 대화 Agent가 설정을 바꾸는 경로가 되지 않도록 실제 등록 폴더에 추가하지 않았다.
 기존 JSON 설정·상태 토픽은 실행기에서 제거했다. 질문·답변·사건 이벤트는 기존 JSON 형식을 유지한다.
 
-[전체 처리 흐름](fall_detection.md) · [현재 실행 코드와 연결 상태](fall_runtime.md)
+[전체 처리 흐름](fall_detection.md) · [현재 실행 코드와 연결 상태](fall_runtime.md) · [진행 현황과 다음 작업](fall_progress.md)
 
 ## 1. 기능 구분
 

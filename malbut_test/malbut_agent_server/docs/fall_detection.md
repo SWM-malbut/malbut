@@ -6,6 +6,8 @@
 기존 `FALL_DETECTION_FUNCTION_SPEC.md`의 Local VLM 상시 확인·대체 실행은 이번 범위에서 제외한다.
 아래 기능 전체가 구현됐다는 뜻은 아니다. 현재 구현 범위는 5절에서 구분한다.
 
+[지금까지 한 일과 다음 작업](fall_progress.md)에 평가·구현·실물 검증을 구분해 정리했다.
+
 낙상 감지/VLM의 로봇 자동 실행은 `navigation` 모드만 대상으로 한다.
 `sensors` 모드 제거와 기본 모드 변경은 Bringup 담당자가 진행한다.
 이 문서의 VLM 연결 작업에서 공통 Bringup 모드 목록을 변경하지 않는다.
