@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 import urllib.error
+from concurrent.futures import CancelledError
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Callable, List, Optional, Sequence, Tuple
@@ -14,6 +15,7 @@ from malbut_agent_server.conversation import (
     ConversationSummary,
     ConversationTurn,
 )
+from malbut_agent_server.conversation_progress import claim_retry, in_request, MODEL_RETRY_NOTICE
 from malbut_agent_server.memory import MemoryRecord
 from malbut_agent_server.providers.base import (
     AgentProvider,
@@ -108,6 +110,14 @@ class NormalizedProviderError(ProviderError):
         """Create an error without copying provider response content."""
         self.failure = _FAILURES[code]
         super().__init__('provider failure: ' + code.value)
+
+
+class ContextBudgetExceeded(NormalizedProviderError):
+    """A local input limit, not a provider outage or permission to trim."""
+
+    def __init__(self):
+        super().__init__(ProviderFailureCode.INVALID_REQUEST)
+        self.args = ('conversation context exceeds input token budget',)
 
 
 def _exception_chain(error: BaseException) -> Tuple[BaseException, ...]:
@@ -215,7 +225,7 @@ class ReliableProvider(AgentProvider):
         self,
         providers: Sequence[AgentProvider],
         *,
-        max_retries: int = 2,
+        max_retries: int = 1,
         base_delay_seconds: float = 0.25,
         max_delay_seconds: float = 2.0,
         failure_threshold: int = 3,
@@ -492,12 +502,30 @@ class ReliableProvider(AgentProvider):
                     **context_arguments,
                 )
                 return self._validated_result(result), failure
+            except ContextBudgetExceeded:
+                return ProviderResult(
+                    decision=AgentDecision(
+                        type='refusal',
+                        message=(
+                            '대화 내용이 한 번에 읽을 수 있는 분량을 넘었어요. '
+                            '내용을 임의로 빼지는 않았어요. 잠시 후 다시 시도하거나 '
+                            '이번 요청을 나눠서 말해 주세요.'
+                        ),
+                        reason='conversation_context_limit',
+                        confidence=1.0,
+                    ),
+                    provider='reliable-fallback', model='safe-non-action',
+                    latency_ms=0.0,
+                ), _FAILURES[ProviderFailureCode.INVALID_REQUEST]
+            except CancelledError:
+                raise
             except Exception as error:
                 caught_error = error
                 failure = classify_exception(error)
 
             can_retry = (
-                failure.transient
+                (failure.transient or (in_request()
+                 and failure.code is ProviderFailureCode.INVALID_RESPONSE))
                 and attempt < self._max_retries
             )
             if not can_retry:
@@ -513,6 +541,8 @@ class ReliableProvider(AgentProvider):
                 + self._attempt_timeout_seconds
                 > deadline
             ):
+                break
+            if not claim_retry(MODEL_RETRY_NOTICE):
                 break
             self._sleep(delay)
         return None, failure
@@ -531,6 +561,7 @@ class ReliableProvider(AgentProvider):
         """Return the first valid result or a safe non-action response."""
         started_at = self._clock()
         deadline = started_at + self._total_timeout_seconds
+        attempted = False
         for index, provider in enumerate(self._providers):
             if (
                 deadline - self._clock()
@@ -539,6 +570,9 @@ class ReliableProvider(AgentProvider):
                 break
             if not self._admit_provider(index):
                 continue
+            if attempted and not claim_retry(MODEL_RETRY_NOTICE):
+                break
+            attempted = True
             result, failure = self._complete_one(
                 provider,
                 request,

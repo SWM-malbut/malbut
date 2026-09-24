@@ -123,7 +123,7 @@ def test_weather_injection_is_data_without_changing_system_rules():
     provider = OpenAIResponsesProvider('test-only-key', 'offline-model')
     payload = provider.build_payload(_request(), [], [], [], weather_context=weather)
     assert _data(payload['input'])['weather_context']['current']['condition'] == injection
-    assert payload['instructions'] == SYSTEM_INSTRUCTIONS
+    assert payload['instructions'].startswith(SYSTEM_INSTRUCTIONS + '\n\n')
     assert injection not in payload['instructions']
     assert 'tools' not in payload
     for required in ('fresh', 'unavailable', 'stale', 'fetched_at', 'current.time',

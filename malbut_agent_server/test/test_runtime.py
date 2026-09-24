@@ -55,7 +55,7 @@ def test_openai_mode_requires_key_and_local_http_auth() -> None:
     assert configured.openai_model == 'gpt-5.6-luna'
     assert configured.request_timeout_seconds == 5
     assert configured.provider_total_timeout_seconds == 11
-    assert configured.provider_max_retries == 0
+    assert configured.provider_max_retries == 1
 
 
 def test_server_is_loopback_only() -> None:

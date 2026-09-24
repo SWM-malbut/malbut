@@ -1,13 +1,16 @@
 """Run existing conversation handling outside the ROS callback thread."""
 
 from collections import OrderedDict, deque
+from concurrent.futures import CancelledError
 import hashlib
+import re
 from threading import Condition, Thread
 from typing import Callable, Optional
 
 from malbut_agent_server.conversation import (
     ConversationNotFoundError, ConversationStateError,
 )
+from malbut_agent_server.conversation_progress import RequestProgress, request_scope
 from malbut_agent_server.orchestrator import MemoryChangedError
 from malbut_agent_server.schemas import (
     MAX_SPEECH_TRANSCRIPT_LENGTH, RobotState, SpeechAgentRequest,
@@ -25,6 +28,22 @@ MEMORY_CHANGED_RESPONSE = (
 MAX_INTERRUPTION_IDS = 128
 MAX_SPEECH_ID_LENGTH = 256
 ADDRESSEE_DECISIONS = ('addressed', 'not_addressed', 'unknown')
+NEW_CONVERSATION_REQUESTS = frozenset({
+    '새로시작하자', '새로시작해', '새로시작해줘', '새로시작해주세요',
+    '대화새로시작하자', '대화를새로시작하자', '대화를새로시작해줘',
+    '대화를새로시작해주세요', '새대화시작하자', '새대화를시작하자',
+    '새대화시작해줘', '새대화를시작해줘', '새대화를시작해주세요',
+})
+
+
+def starts_new_conversation(text):
+    """Recognize a direct opening command, preserving any following request."""
+    parts = re.split(r'[.!?。！？]+', text, maxsplit=1)
+    if re.sub(r'\s+', '', parts[0]) not in NEW_CONVERSATION_REQUESTS:
+        return False
+    return len(parts) == 1 or not re.match(
+        r'\s*(?:[\"\'”’`]|라고|라는|라며|고\s*(?:했|말))', parts[1],
+    )
 
 
 class _DialogueReply(dict):
@@ -98,6 +117,7 @@ class DialogueWorker:
         self._stopped = False
         self._ready = False
         self._startup_error: Optional[str] = None
+        self._active_progress = None
         self._thread = Thread(target=self._run, name='malbut-speech-dialogue')
         self._thread.start()
 
@@ -128,7 +148,10 @@ class DialogueWorker:
             if not self.has_capacity():
                 return False
             self._outstanding += 1
-            self._pending.append((utterance_id, text, None))
+            progress = RequestProgress(
+                lambda notice, state: self._progress_notice(utterance_id, notice, state),
+            )
+            self._pending.append((utterance_id, text, None, progress))
             self._condition.notify()
             return True
 
@@ -170,7 +193,7 @@ class DialogueWorker:
                 'pending': True, 'conflict': False,
             }
             self._outstanding += 1
-            self._pending.append((utterance_id, text, playback_id))
+            self._pending.append((utterance_id, text, playback_id, None))
             self._condition.notify()
             return True
 
@@ -179,7 +202,9 @@ class DialogueWorker:
         with self._condition:
             results = list(self._results)
             self._results.clear()
-            self._outstanding -= len(results)
+            self._outstanding -= sum(item['kind'] != 'progress' for item in results)
+            results = [item for item in results if item['kind'] != 'progress'
+                       or item._progress.active]
             for reply in results:
                 self._refresh_reply(reply)
             return results
@@ -191,6 +216,8 @@ class DialogueWorker:
                 return None
             if reply.get('kind') == 'addressee':
                 return None
+            if reply.get('kind') == 'progress':
+                return dict(reply) if reply._progress.publish(publish, reply['text']) else None
             self._refresh_reply(reply)
             if publish(reply['text']):
                 return dict(reply)
@@ -217,6 +244,11 @@ class DialogueWorker:
         """Discard waiting and late replies; let the running call finish."""
         with self._condition:
             self._closing = True
+            if self._active_progress is not None:
+                self._active_progress.finish()
+            for _, _, _, progress in self._pending:
+                if progress is not None:
+                    progress.finish()
             self._pending.clear()
             self._results.clear()
             self._interruptions.clear()
@@ -233,7 +265,7 @@ class DialogueWorker:
                 start_memory = getattr(runtime, 'start_background_memory', None)
                 if start_memory is not None:
                     start_memory()
-                session = runtime.conversation_store.create(self._user_id)
+                session = runtime.conversation_store.resume_or_create(self._user_id)
                 conversation_id = session.conversation_id
                 with self._condition:
                     self._ready = True
@@ -243,7 +275,9 @@ class DialogueWorker:
                     self._stopped = True
                     if not self._closing:
                         while self._pending:
-                            utterance_id, _text, playback_id = self._pending.popleft()
+                            utterance_id, _text, playback_id, progress = self._pending.popleft()
+                            if progress is not None:
+                                progress.finish()
                             if playback_id is not None:
                                 self._results.append(self._addressee_reply(
                                     utterance_id, playback_id, 'unknown',
@@ -261,7 +295,8 @@ class DialogueWorker:
                     )
                     if self._closing:
                         return
-                    utterance_id, text, playback_id = self._pending.popleft()
+                    utterance_id, text, playback_id, progress = self._pending.popleft()
+                    self._active_progress = progress
                 if playback_id is not None:
                     reply = self._classify_interruption(
                         runtime, conversation_id, utterance_id, playback_id, text,
@@ -279,8 +314,19 @@ class DialogueWorker:
                     digest = hashlib.sha256(
                         utterance_id.encode('utf-8'),
                     ).hexdigest()
-                    result = runtime.handle(SpeechAgentRequest(
-                        request_id='speech-request-' + digest,
+                    request_id = 'speech-request-' + digest
+                    start_new = (
+                        starts_new_conversation(text)
+                        and not runtime.conversation_store.has_agent_request(
+                            self._user_id, request_id,
+                        )
+                    )
+                    session = runtime.conversation_store.resume_or_create(
+                        self._user_id, conversation_id, start_new=start_new,
+                    )
+                    conversation_id = session.conversation_id
+                    result = self._handle_with_progress(runtime, SpeechAgentRequest(
+                        request_id=request_id,
                         user_id=self._user_id,
                         conversation_id=conversation_id,
                         turn_id='speech-turn-' + digest,
@@ -291,7 +337,7 @@ class DialogueWorker:
                             if getattr(runtime, 'weather_executor', None)
                             is not None else ()
                         ),
-                    ))
+                    ), progress)
                     decision = result.decision
                     if (decision.type not in {
                             'message', 'clarification', 'refusal',
@@ -303,6 +349,8 @@ class DialogueWorker:
                         decision.message, 'answer',
                         getattr(result, 'memory_validator', None),
                     )
+                except CancelledError:
+                    reply = None
                 except (ConversationNotFoundError, ConversationStateError):
                     reply = self._reply(
                         utterance_id, conversation_id,
@@ -317,9 +365,16 @@ class DialogueWorker:
                     reply = self._reply(
                         utterance_id, conversation_id, ERROR_RESPONSE, 'error',
                     )
+                finally:
+                    progress.finish()
                 with self._condition:
+                    self._active_progress = None
                     if not self._closing:
-                        self._results.append(reply)
+                        if reply is None:
+                            self._outstanding -= 1
+                        else:
+                            reply['text'] = progress.final_text(reply['text'])
+                            self._results.append(reply)
         finally:
             with self._condition:
                 self._stopped = True
@@ -333,6 +388,19 @@ class DialogueWorker:
                         runtime.conversation_store.close()
                     finally:
                         runtime.memory_store.close()
+
+    def _progress_notice(self, utterance_id, text, progress):
+        with self._condition:
+            if self._closing or not progress.active:
+                return
+            reply = self._reply(utterance_id, None, text, 'progress')
+            reply._progress = progress
+            self._results.append(reply)
+
+    @staticmethod
+    def _handle_with_progress(runtime, request, progress):
+        with request_scope(progress=progress):
+            return runtime.handle(request)
 
     @staticmethod
     def _addressee_reply(utterance_id, playback_id, decision):

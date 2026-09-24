@@ -53,6 +53,7 @@ def test_robot_speech_launch_and_native_assets_match_source():
         'malbut_stt/native/whisper_cpp_bridge.cpp',
         'malbut_stt/requirements-whisper-cpp.txt',
         'malbut_tts/requirements-api.txt',
+        'malbut_agent_server/requirements-openai.txt',
     ):
         assert (SOURCE / path).read_bytes() == (ROBOT / path).read_bytes(), path
 
@@ -61,6 +62,13 @@ def test_robot_fall_startup_helper_matches_source():
     """Include the VLM config validator imported by the robot launch file."""
     path = 'malbut_bringup/malbut_bringup/fall_setup.py'
     assert (SOURCE / path).read_bytes() == (ROBOT / path).read_bytes()
+
+
+def test_robot_build_installs_context_tokenizer():
+    """The dedicated Agent interpreter receives its local tokenizer."""
+    build = (ROBOT / 'build.sh').read_text()
+    assert '-r "$robot_source_dir/malbut_agent_server/requirements-openai.txt"' in build
+    assert 'tiktoken' in (ROBOT / 'malbut_agent_server/requirements-openai.txt').read_text()
 
 
 @pytest.mark.parametrize('package', SPEECH_PACKAGES)

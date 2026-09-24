@@ -8,6 +8,11 @@ import time
 import unicodedata
 from dataclasses import dataclass, replace
 
+from malbut_agent_server.conversation_preferences import (
+    SETTINGS_PROMPT, commit_settings, initial_settings,
+    initialize_schema as initialize_preferences_schema,
+    response_setting_fact, response_settings, save_initial_settings,
+)
 from malbut_agent_server.memory_contract import validate_memory_proposal
 from malbut_agent_server.memory_source_review import (
     attach_source_review, source_review_matches,
@@ -34,10 +39,11 @@ YES = {
     '동의해',
     '동의합니다',
     '동의해요',
+    '기억사용에동의하기',
     'yes',
     'ㅇㅇ',
 }
-NO = {'아니', '아니요', '싫어', '동의안해', '거절', 'no'}
+NO = {'아니', '아니요', '싫어', '동의안해', '거절', 'no', '사용하지않기'}
 CANCEL = NO | {'취소', '취소할게', '취소해줘', '그만'}
 _LOGGER = logging.getLogger(__name__)
 
@@ -121,6 +127,8 @@ def local_intent(text):
     if not direct_source(text) or negated_management(text):
         return None
     value = compact(text).rstrip('.!?。')
+    if value in {'기억사용하지않기', '사용하지않기', '기억사용중단', '기억사용중단해줘'}:
+        return 'disable'
     if re.fullmatch(
         r'(개인화|자동저장)(를|는|을)?(중단|꺼|끄|그만|멈춰)'
         r'(해줘|해주세요|해|줘|주세요|할래|하자|해요)?',
@@ -310,6 +318,7 @@ class PersonalMemory:
         with conversation_store._lock:
             conn = conversation_store._connection
             initialize_memory_schema(conn)
+            initialize_preferences_schema(conn)
             conn.execute(
                 (
                     'CREATE TABLE IF NOT EXISTS memory_turn_state (\n'
@@ -344,6 +353,18 @@ class PersonalMemory:
                 )
             conn.commit()
 
+    def initial_settings(self, user_id):
+        """Read the four conversation defaults without enabling memory."""
+        with self.conversations._lock:
+            return initial_settings(self.conversations._connection, user_id)
+
+    def set_initial_settings(self, user_id, settings):
+        """Persist explicitly selected defaults independently of consent."""
+        with self.conversations._lock, self.conversations._connection:
+            return save_initial_settings(
+                self.conversations._connection, user_id, settings,
+            )
+
     def snapshot(self, request, token, history, summary, memory_limit=5):
         """Read eligible history and memories under one read transaction."""
         source = {
@@ -362,6 +383,11 @@ class PersonalMemory:
                 state = self.memory.policy_state(
                     request.user_id, connection=conn
                 )
+                effective_settings, retained_settings, settings_edit = response_settings(
+                    conn, token, request.utterance,
+                )
+                source['response_settings'] = retained_settings
+                source['settings_edit'] = settings_edit
                 memories = (
                     list(
                         self.memory.search(
@@ -434,6 +460,7 @@ class PersonalMemory:
             deps,
             {
                 'enabled': state['enabled'],
+                'response_settings': effective_settings,
                 'pending_question': (
                     {'kind': pending['kind'], 'proposal': pending['proposal']}
                     if pending
@@ -496,6 +523,8 @@ class PersonalMemory:
         }
         unresolved = []
         for fact in proposal['facts']:
+            if response_setting_fact(fact):
+                continue
             if (
                 fact['evidence'] not in request.utterance
                 or not compact(fact['value'])
@@ -530,6 +559,17 @@ class PersonalMemory:
         return outcome
 
     def _context(self, user_id, token, state, history, summary, conn):
+        from malbut_agent_server.conversation import is_context_limit_response
+
+        def usable_turn(turn):
+            # Keep the receipt and ordinal for compaction, but never re-admit a
+            # rejected input. The stored original and valid summary stay intact.
+            return (replace(turn, user_content='')
+                    if is_context_limit_response(turn.response) else turn)
+
+        history = [usable_turn(turn) for turn in history]
+        # ponytail: privacy checks scan this generation's raw lineage even after
+        # compaction; batch/cache dependencies if long-session latency warrants.
         invalid = self.memory.invalidated_ids(user_id, connection=conn)
         rows = conn.execute(
             '''SELECT t.* FROM conversation_turns t
@@ -574,9 +614,33 @@ class PersonalMemory:
                 )
             else:
                 deps.update(item_deps)
-            eligible.append(item)
+            eligible.append(usable_turn(item))
         if not redacted:
             return history, summary, deps
+        if self.conversations.semantic_context:
+            if summary is not None:
+                row = conn.execute(
+                    '''SELECT state_json FROM conversation_summaries
+                    WHERE user_id=? AND conversation_id=?
+                    AND session_instance_id=? AND generation=?
+                    AND summary_id=? AND summary_revision=?''',
+                    (
+                        user_id, token.conversation_id,
+                        token.session_instance_id, token.generation,
+                        summary.summary_id, summary.summary_revision,
+                    ),
+                ).fetchone()
+                try:
+                    compacted_state = json.loads(row['state_json']) if row else {}
+                    if compacted_state.get('memory_policy_state') == state:
+                        return (
+                            [item for item in eligible
+                             if item.ordinal > summary.source_end_ordinal],
+                            summary, deps,
+                        )
+                except (TypeError, ValueError, AttributeError):
+                    pass
+            return eligible, None, deps
         window = self.conversations.history_limit
         recent = eligible[-window:]
         prefix = eligible[:-window]
@@ -610,11 +674,18 @@ class PersonalMemory:
 
     def local_decision(self, request, snapshot):
         """Keep clear controls and replies to consent questions model-free."""
+        edit = snapshot.source.get('settings_edit')
+        if edit and edit['scope'] in {'defaults', 'invalid'}:
+            if edit['scope'] == 'invalid' or not edit['patch']:
+                return reply(SETTINGS_PROMPT, True)
+            return reply('선택한 대화 취향을 초기 설정에 저장했어요. 기억 사용 동의는 바꾸지 않았어요.')
         if local_intent(request.utterance) is not None:
             return reply('기억 설정 요청을 확인했어요.')
         answer = compact(request.utterance).rstrip('.!?。')
         if snapshot.pending and answer in YES | NO:
             return reply('기억 관리 질문에 대한 답을 확인했어요.')
+        if answer == '기억사용에동의하기':
+            return reply('기억 설정 요청을 확인했어요.')
         if snapshot.pending and snapshot.pending['kind'] == 'target':
             return reply('관리할 기억의 선택을 확인했어요.')
         return None
@@ -714,11 +785,19 @@ class PersonalMemory:
 
     def commit(self, request, token, snapshot, result, conn):
         """Apply memory and final answer within the caller's transaction."""
+        from malbut_agent_server.conversation import is_context_limit_response
+
         if (
             self.memory.policy_state(request.user_id, connection=conn)
             != snapshot.state
         ):
             raise ValidationError('memory_changed')
+        context_limited = is_context_limit_response(result.to_persisted_dict())
+        if not context_limited:
+            commit_settings(
+                conn, token, snapshot.source['response_settings'],
+                snapshot.source['settings_edit'],
+            )
         # Another runtime may have attached a delayed fact to an earlier turn
         # while this turn was in inference. Its text was already part of this
         # conversation, so merge newly attached lineage without changing the
@@ -728,13 +807,24 @@ class PersonalMemory:
             request.user_id, token, snapshot.state, snapshot.history,
             snapshot.summary, conn,
         )
-        conn.execute(
-            (
-                'DELETE FROM memory_questions WHERE user_id=? '
-                'AND conversation_id=?'
-            ),
-            (request.user_id, request.conversation_id),
-        )
+        if context_limited:
+            # A rejected input neither answers nor replaces a pending question.
+            conn.execute('''UPDATE memory_questions SET revision=?
+                WHERE user_id=? AND conversation_id=? AND session_instance_id=?
+                AND generation=? AND revision=? AND memory_revision=?''', (
+                    token.revision + 1, request.user_id, request.conversation_id,
+                    token.session_instance_id, token.generation, token.revision,
+                    snapshot.state['revision'],
+                ))
+        else:
+            conn.execute(
+                (
+                    'DELETE FROM memory_questions WHERE user_id=? '
+                    'AND conversation_id=?'
+                ),
+                (request.user_id, request.conversation_id),
+            )
+        response_setting = bool(snapshot.source.get('settings_edit'))
         weather_setting = (
             result.raw_decision.tool_name == 'set_weather_location'
             and result.decision.reason in {
@@ -743,7 +833,11 @@ class PersonalMemory:
             }
         )
         # Explicit robot configuration is not a personal-memory management request.
-        decision, added = (None, []) if weather_setting else self._apply(
+        initial_setting = (
+            response_setting
+            and snapshot.source['settings_edit']['scope'] in {'defaults', 'invalid'}
+        )
+        decision, added = (None, []) if context_limited or weather_setting or initial_setting else self._apply(
             request, token, snapshot, result, conn,
         )
         claim = (
@@ -751,7 +845,7 @@ class PersonalMemory:
             r'(했|하였|완료|해\s*뒀|해\s*두었|됐|할게|해\s*둘게|하겠|해둘께)'
         )
         # Weather setting replies are constructed from Manager results, not model claims.
-        if decision is None and not weather_setting and re.search(claim, result.decision.message):
+        if decision is None and not weather_setting and not initial_setting and re.search(claim, result.decision.message):
             _LOGGER.info('memory_policy reason=unverified_completion')
             decision = _missing_memory_followup(request.utterance)
             if decision is None:
@@ -824,6 +918,8 @@ class PersonalMemory:
         source = snapshot.source
         proposal = result.provider_result.memory_proposal
         control = local_intent(text)
+        if not pending and answer == '기억사용에동의하기':
+            control = 'enable'
         if type(_automatic_insert) is not bool:
             raise ValidationError('automatic insert mode must be boolean')
         if _automatic_insert and (
@@ -954,6 +1050,9 @@ class PersonalMemory:
                 or reply('어떤 내용을 말씀하시는지 조금 더 알려줄래요?', True),
                 [],
             )
+        proposal = dict(proposal, facts=[
+            fact for fact in proposal['facts'] if not response_setting_fact(fact)
+        ])
         operation = proposal['operation']
         if result.decision.type == 'tool_call':
             return (

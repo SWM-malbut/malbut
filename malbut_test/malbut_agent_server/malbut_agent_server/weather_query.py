@@ -68,6 +68,8 @@ class ManagerWeatherQuery:
                         self._cancels.add(key)
                     raise TimeoutError('Manager weather query timed out')
                 result = pending.result
+            if result is not None and result.get('kind') == 'canceled':
+                raise CancelledError('Manager weather query was canceled')
             if result is None or result.get('kind') not in {'succeeded', 'failed'}:
                 raise RuntimeError('Manager weather query did not succeed')
             raw = result.get('result_yaml')

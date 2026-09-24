@@ -20,6 +20,7 @@ from malbut_agent_server.rai_sidecar_protocol import (
 SUPPORTED_PROVIDERS = frozenset({'mock', 'openai', 'rai-sidecar'})
 SUPPORTED_TOOL_MODES = frozenset({'proposal', 'simulation'})
 DEFAULT_OPENAI_MODEL = 'gpt-5.6-luna'
+DEFAULT_OPENAI_SUMMARY_MODEL = 'gpt-6-luna'
 DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECONDS = 5
 DEFAULT_PROVIDER_TOTAL_TIMEOUT_SECONDS = 11
 DEFAULT_RAI_SIDECAR_TIMEOUT_SECONDS = 5
@@ -95,7 +96,7 @@ class Settings:
     database_path: str = ':memory:'
     user_id: str = 'local-user'
     memory_limit: int = 5
-    conversation_ttl_seconds: int = 1800
+    conversation_ttl_seconds: int = 3600
     conversation_history_limit: int = 10
     conversation_summary_max_chars: int = 2000
     max_model_input_chars: int = 20000
@@ -111,7 +112,7 @@ class Settings:
     provider_total_timeout_seconds: int = (
         DEFAULT_PROVIDER_TOTAL_TIMEOUT_SECONDS
     )
-    provider_max_retries: int = 0
+    provider_max_retries: int = 1
     provider_retry_base_delay_ms: int = 250
     provider_retry_max_delay_ms: int = 1000
     provider_failure_threshold: int = 2
@@ -120,8 +121,8 @@ class Settings:
     openai_model: str = DEFAULT_OPENAI_MODEL
     openai_fallback_model: str = ''
     openai_base_url: str = OFFICIAL_OPENAI_BASE_URL
-    openai_reasoning_effort: str = 'none'
-    openai_max_output_tokens: int = 500
+    openai_reasoning_effort: str = 'low'
+    openai_max_output_tokens: int = 1024
     auth_token: str = ''
     tool_mode: str = 'proposal'
     rai_sidecar_python: str = ''
@@ -132,6 +133,9 @@ class Settings:
     rai_model: str = ''
     openai_general_model: str = ''
     openai_robot_planner_model: str = ''
+    conversation_token_budget: int = 16384
+    openai_summary_model: str = DEFAULT_OPENAI_SUMMARY_MODEL
+    openai_summary_reasoning_effort: str = 'low'
 
     def __repr__(self) -> str:
         """Return safe diagnostics with every credential redacted."""
@@ -149,6 +153,7 @@ class Settings:
             f'{self.conversation_history_limit!r}, '
             'conversation_summary_max_chars='
             f'{self.conversation_summary_max_chars!r}, '
+            f'conversation_token_budget={self.conversation_token_budget!r}, '
             f'max_model_input_chars={self.max_model_input_chars!r}, '
             'request_timeout_seconds='
             f'{self.request_timeout_seconds!r}, '
@@ -180,7 +185,10 @@ class Settings:
             f'rai_model={self.rai_model!r}, '
             f'openai_general_model={self.openai_general_model!r}, '
             'openai_robot_planner_model='
-            f'{self.openai_robot_planner_model!r})'
+            f'{self.openai_robot_planner_model!r}, '
+            f'openai_summary_model={self.openai_summary_model!r}, '
+            'openai_summary_reasoning_effort='
+            f'{self.openai_summary_reasoning_effort!r})'
         )
 
     @classmethod
@@ -235,7 +243,7 @@ class Settings:
             conversation_ttl_seconds=_env_int(
                 source,
                 'MALBUT_AGENT_CONVERSATION_TTL_SECONDS',
-                1800,
+                3600,
                 60,
                 2592000,
             ),
@@ -252,6 +260,13 @@ class Settings:
                 2000,
                 256,
                 8000,
+            ),
+            conversation_token_budget=_env_int(
+                source,
+                'MALBUT_AGENT_CONVERSATION_TOKEN_BUDGET',
+                16384,
+                4096,
+                65536,
             ),
             max_model_input_chars=_env_int(
                 source,
@@ -319,7 +334,7 @@ class Settings:
             provider_max_retries=_env_int(
                 source,
                 'MALBUT_AGENT_PROVIDER_MAX_RETRIES',
-                0,
+                1,
                 0,
                 3,
             ),
@@ -369,12 +384,12 @@ class Settings:
             ).strip(),
             openai_reasoning_effort=source.get(
                 'OPENAI_REASONING_EFFORT',
-                'none',
+                'low',
             ).strip().lower(),
             openai_max_output_tokens=_env_int(
                 source,
                 'OPENAI_MAX_OUTPUT_TOKENS',
-                500,
+                1024,
                 64,
                 4096,
             ),
@@ -413,6 +428,14 @@ class Settings:
                 'OPENAI_ROBOT_PLANNER_MODEL',
                 '',
             ).strip(),
+            openai_summary_model=source.get(
+                'OPENAI_SUMMARY_MODEL',
+                DEFAULT_OPENAI_SUMMARY_MODEL,
+            ).strip(),
+            openai_summary_reasoning_effort=source.get(
+                'OPENAI_SUMMARY_REASONING_EFFORT',
+                'low',
+            ).strip().lower(),
         )
 
     def validate_for_server(self) -> None:
@@ -473,6 +496,10 @@ class Settings:
             raise ValueError('OPENAI_API_KEY is required')
         if not _valid_model_id(self.openai_model):
             raise ValueError('OPENAI_MODEL is invalid')
+        if self.openai_summary_model and not _valid_model_id(
+            self.openai_summary_model
+        ):
+            raise ValueError('OPENAI_SUMMARY_MODEL is invalid')
         if self.openai_general_model and not _valid_model_id(
             self.openai_general_model
         ):
@@ -498,6 +525,11 @@ class Settings:
             raise ValueError(
                 'OPENAI_REASONING_EFFORT is unsupported'
             )
+        if (
+            self.openai_summary_reasoning_effort
+            and self.openai_summary_reasoning_effort not in REASONING_EFFORTS
+        ):
+            raise ValueError('OPENAI_SUMMARY_REASONING_EFFORT is unsupported')
 
     def validate_rai_sidecar(self, *, require_http_auth: bool = True) -> None:
         """Reject implicit process lookup and non-isolated RAI startup."""

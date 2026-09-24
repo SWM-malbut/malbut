@@ -137,7 +137,8 @@ if "include-system-site-packages=true" not in config.splitlines():
 ' "$speech_runtime"
     "$speech_python" -m pip --isolated install \
       -r "$robot_source_dir/malbut_stt/requirements-whisper-cpp.txt" \
-      -r "$robot_source_dir/malbut_tts/requirements-api.txt"
+      -r "$robot_source_dir/malbut_tts/requirements-api.txt" \
+      -r "$robot_source_dir/malbut_agent_server/requirements-openai.txt"
     echo "Built CUDA speech backend: $whisper_build/bin/libmalbut_whisper.so"
     echo "Speech Python: $speech_python"
     ;;
