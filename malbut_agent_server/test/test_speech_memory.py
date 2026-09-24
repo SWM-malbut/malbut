@@ -220,6 +220,14 @@ def _fake_ros(monkeypatch, spoken, logs):
         'malbut_agent_server.manager_client.ManagerClient',
         lambda *_args, **_kwargs: SimpleNamespace(close=lambda: None),
     )
+    # This test exercises memory freshness at publication, without an active
+    # situation Action; that ROS boundary has its own integration tests.
+    monkeypatch.setattr(
+        ros_communication, 'SituationActionServer',
+        lambda *_args, **_kwargs: SimpleNamespace(
+            active=False, close=lambda: None, destroy=lambda: None,
+        ),
+    )
 
 
 def test_node_rechecks_deletion_between_drain_and_say(tmp_path, monkeypatch):

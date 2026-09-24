@@ -90,7 +90,8 @@ export async function storeFallEvent(deviceId: string, input: FallEventInput) {
 export type ClaimedFallPush = {
   deviceId: string; notificationId: string; incidentId: string;
   level: "info" | "check" | "urgent";
-  reason: "fall_observed_person_okay" | "person_no_response" | "check_required_not_confirmed_fall" | "help_requested";
+  reason: "fall_observed_person_okay" | "person_no_response" | "check_required_not_confirmed_fall" |
+    "help_requested" | "confirmation_help_required";
   occurredAt: string; leaseId: string; subscriptionResults: Record<string, number>;
 };
 

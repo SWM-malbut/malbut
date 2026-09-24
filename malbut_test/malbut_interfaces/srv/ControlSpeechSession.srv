@@ -1,0 +1,14 @@
+# 호출어 없이 답변받을 Agent 주도 세션의 고유 ID
+string session_id
+# true: 기존 대화를 중단하고 시작, false: 같은 ID의 세션 종료
+# 유효한 미수신 ID의 false는 예약 종료다. 늦게 도착한 같은 ID의 시작은 거절한다.
+# 완료·교체·취소·예약 종료된 최근 256개 ID는 재시작할 수 없다.
+bool active
+# true면 상태만 조회한다. active는 무시하고 세션/예약 종료 상태를 변경하지 않는다.
+bool check_only
+---
+# true는 세션 시작·종료 또는 미수신 ID 예약 종료를 접수했다는 뜻이다.
+# check_only=true에서는 요청 ID가 현재 활성 세션일 때만 true다.
+bool accepted
+# 입력에 AEC가 있어 질문 재생 중에도 사용자 발화를 받을 수 있는지 여부
+bool barge_in_available

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from malbut_stt.dialogue_pipeline import DialoguePipeline
+from malbut_stt.dialogue_pipeline import DialoguePipeline, MAX_RETIRED_SESSION_IDS
 
 VOICE = b'\x01\x00' * 320
 QUIET = bytes(640)
@@ -138,6 +138,214 @@ def test_one_open_microphone_runs_wake_then_consecutive_commands(harness):
     assert harness.closed == ['stop', 'delete']
     assert not pipeline.capture_thread.is_alive() and not pipeline.asr_thread.is_alive()
     assert pipeline.audio.empty() and pipeline.jobs.empty() and pipeline.results.empty()
+
+
+def test_proactive_session_stops_question_at_speech_start_without_addressee(harness):
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
+    assert pipeline.start_session('incident-1')
+    pipeline.on_playback_status('question-1', 'playing')
+    pipeline.feed(VOICE)
+    uid = pipeline.session.utterance_id
+    assert harness.controls == [('question-1', 'stop')]
+    assert statuses == [('incident-1', uid, 'started')]
+    assert harness.transcripts == []
+    pipeline.on_playback_status('question-1', 'stopped')
+    pipeline.feed(QUIET * 100)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    assert harness.transcripts == [(uid, '문장 1')]
+    assert harness.wake_calls == harness.candidates == []
+
+
+def test_proactive_deadline_belongs_to_agent_and_stale_close_is_rejected(harness):
+    pipeline = harness.create()
+    assert pipeline.start_session('incident-1')
+    pipeline.on_playback_status('question-1', 'playing')
+    pipeline.on_playback_status('question-1', 'finished')
+    harness.now = 11.0
+    pipeline.poll()
+    assert pipeline.session.active and pipeline.session.deadline is None
+    assert pipeline.stop_session('not-yet-opened-incident')
+    assert pipeline.session.session_id == 'incident-1'
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    assert pipeline.stop_session('incident-1')
+    assert not pipeline.session.active and pipeline.session.session_id == ''
+
+
+def test_close_before_open_prevents_late_session_activation(harness):
+    pipeline = harness.create()
+    assert pipeline.stop_session('canceled-before-open')
+    assert not pipeline.start_session('canceled-before-open')
+    assert not pipeline.session.active and not pipeline.session.session_id
+    assert not pipeline.stop_session('canceled-before-open')
+
+
+def test_completed_or_replaced_session_cannot_supersede_current_session(harness):
+    pipeline = harness.create()
+    assert pipeline.start_session('first')
+    assert pipeline.start_session('second')
+    assert not pipeline.start_session('first')
+    assert not pipeline.stop_session('first')
+    assert pipeline.session.session_id == 'second'
+    assert pipeline.stop_session('second')
+    assert not pipeline.start_session('second')
+    assert pipeline.start_session('third')
+    assert pipeline.stop_session('not-yet-received')
+    assert not pipeline.start_session('not-yet-received')
+    assert pipeline.session.session_id == 'third'
+
+
+def test_retired_session_reservations_are_bounded_and_validate_ids(harness):
+    pipeline = harness.create()
+    for invalid in ('', ' ', None, 'x' * 201):
+        assert not pipeline.stop_session(invalid)
+    for index in range(MAX_RETIRED_SESSION_IDS + 1):
+        assert pipeline.stop_session(f'future-{index}')
+    assert len(pipeline._retired_session_ids) == MAX_RETIRED_SESSION_IDS
+    assert 'future-0' not in pipeline._retired_session_ids
+    assert not pipeline.start_session(f'future-{MAX_RETIRED_SESSION_IDS}')
+
+
+def test_session_query_never_creates_closes_or_retires_sessions(harness):
+    pipeline = harness.create()
+    assert not pipeline.session_is_active('not-opened')
+    assert pipeline._retired_session_ids == {}
+    assert pipeline.start_session('first')
+    for _ in range(2):
+        assert pipeline.session_is_active('first')
+        assert not pipeline.session_is_active('not-opened')
+    assert pipeline.session.session_id == 'first'
+    assert pipeline._retired_session_ids == {}
+    assert pipeline.stop_session('first')
+    retired = dict(pipeline._retired_session_ids)
+    assert not pipeline.session_is_active('first')
+    assert not pipeline.session_is_active('not-opened')
+    assert dict(pipeline._retired_session_ids) == retired
+    assert not pipeline.session.active
+
+
+def test_proactive_speech_before_playing_stops_delayed_question(harness):
+    pipeline = harness.create()
+    assert pipeline.start_session('incident-1')
+    pipeline.feed(VOICE)
+    pipeline.on_playback_status('question-1', 'playing')
+    assert harness.controls == [('question-1', 'stop')]
+    pipeline.feed(QUIET * 100)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    assert harness.candidates == []
+
+
+def test_proactive_replacement_discards_ordinary_asr_result(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    harness.allow_asr.clear()
+    finish_command(pipeline)
+    assert harness.entered_asr.wait(timeout=1.0)
+    assert pipeline.start_session('incident-1')
+    harness.allow_asr.set()
+    pump(pipeline, lambda: not pipeline._busy)
+    assert harness.transcripts == []
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    assert harness.transcripts[0][1] == '문장 2'
+
+
+def test_next_question_session_discards_previous_question_asr_result(harness):
+    pipeline = harness.create()
+    assert pipeline.start_session('question-1')
+    harness.allow_asr.clear()
+    finish_command(pipeline)
+    assert harness.entered_asr.wait(timeout=1.0)
+    assert pipeline.start_session('question-2')
+    assert not pipeline.stop_session('question-1')
+    harness.allow_asr.set()
+    pump(pipeline, lambda: not pipeline._busy)
+    assert harness.transcripts == []
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    assert pipeline.session.session_id == 'question-2'
+    assert harness.transcripts[0][1] == '문장 2'
+
+
+def test_proactive_answer_is_captured_while_previous_asr_is_still_running(harness):
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
+    wake_up(harness, pipeline)
+    harness.allow_asr.clear()
+    finish_command(pipeline)
+    assert harness.entered_asr.wait(timeout=1.0)
+    assert pipeline.start_session('confirmation-1')
+    pipeline.on_playback_status('question-1', 'playing')
+    pipeline.on_playback_status('question-1', 'finished')
+    finish_command(pipeline)
+    assert statuses and statuses[0][0::2] == ('confirmation-1', 'started')
+    assert pipeline._busy and pipeline.jobs.qsize() == 1
+    assert 'speech_discarded:busy' not in harness.reports
+    harness.allow_asr.set()
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    assert harness.transcripts == [(statuses[0][1], '문장 2')]
+
+
+def test_previous_asr_result_cannot_release_new_generation_busy_owner(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    harness.allow_asr.clear()
+    finish_command(pipeline)
+    assert harness.entered_asr.wait(timeout=1.0)
+    next_entered, next_allowed = Event(), Event()
+
+    def next_transcribe(pcm, rate):
+        next_entered.set()
+        assert next_allowed.wait(timeout=3.0)
+        return '새 확인 답변'
+
+    pipeline.transcriber.transcribe = next_transcribe
+    try:
+        assert pipeline.start_session('confirmation-1')
+        finish_command(pipeline)
+        assert pipeline._busy
+        harness.allow_asr.set()
+        assert next_entered.wait(timeout=1.0)
+        # The sole worker has returned the old ASR and is now decoding our answer.
+        pipeline.poll()
+        assert pipeline._busy and harness.transcripts == []
+        next_allowed.set()
+        pump(pipeline, lambda: len(harness.transcripts) == 1)
+        assert harness.transcripts[0][1] == '새 확인 답변'
+    finally:
+        next_allowed.set()
+
+
+def test_proactive_replacement_removes_queued_obsolete_inference(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    harness.allow_asr.clear()
+    finish_command(pipeline)
+    assert harness.entered_asr.wait(timeout=1.0)
+    pipeline.jobs.put_nowait(('endpoint', pipeline._generation, ('old', 1), VOICE))
+    pipeline._endpoint_job = (pipeline._generation, 'old', 1)
+    assert pipeline.start_session('confirmation-1')
+    assert pipeline.jobs.empty() and pipeline._endpoint_job is None
+    finish_command(pipeline)
+    assert pipeline.jobs.qsize() == 1
+    harness.allow_asr.set()
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    assert len(harness.command_calls) == 2
+
+
+def test_proactive_no_aec_still_blocks_playback_echo(harness):
+    statuses = []
+    pipeline = harness.create(aec=False, publish_input_status=lambda *a: statuses.append(a))
+    assert pipeline.start_session('incident-1')
+    pipeline.on_playback_status('question-1', 'playing')
+    finish_command(pipeline)
+    assert statuses == [] and harness.transcripts == []
+    pipeline.on_playback_status('question-1', 'finished')
+    harness.now = 0.31
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    assert statuses[0][0::2] == ('incident-1', 'started')
 
 
 def test_addressed_interruption_stops_and_publishes_once_after_matching_decision(harness):

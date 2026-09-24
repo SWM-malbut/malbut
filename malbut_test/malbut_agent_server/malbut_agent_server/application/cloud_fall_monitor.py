@@ -347,7 +347,10 @@ class CloudFallMonitor:
                 self.request_recheck(current.incident_id)
                 # Old answers cannot describe the newly observed change.
                 current.question_id = None
-                self.ask_question(current.incident_id)
+                current.answer = None
+                current.situation_assessment = None
+                current.help_needed = None
+                self._emit('incident_updated', current)
             return current.incident_id
         if len(self._incidents) >= self.policy.max_incidents:
             self._emit('candidate_rejected', reason='incident_capacity')
@@ -363,7 +366,6 @@ class CloudFallMonitor:
                 candidate.subject_key, candidate.observed_at))
         self._incidents[current.incident_id] = current
         self._emit('incident_opened', current)
-        self.ask_question(current.incident_id)
         if self._runtime_cloud_block is not None:
             current.pending = False
             self._failure(current, self._runtime_cloud_block)
@@ -378,9 +380,89 @@ class CloudFallMonitor:
         incident.question_id = str(uuid4())
         incident.answer = None
         incident.answer_question_played = False
+        incident.situation_assessment = None
+        incident.help_needed = None
         self._emit('question_requested', incident,
-                   question_id=incident.question_id)
+                   question_id=incident.question_id, reply=incident.video,
+                   reason=('prior_fall_observed' if incident.fall_seen and incident.video
+                           and incident.video.assessment is VideoAssessment.NORMAL_ACTIVITY
+                           else None))
         return incident.question_id
+
+    def confirmation_result(self, *, incident_id, question_id, subject_key,
+                            evidence_revision, situation_assessment, help_needed):
+        """Apply the Manager's final result, preserving the user's own account.
+
+        No transport failure is converted into a user's silence here. The
+        conversation Agent alone applies its ten-second response deadline.
+        """
+        for value in (incident_id, question_id, subject_key):
+            identifier(value)
+        if (type(evidence_revision) is not int or evidence_revision < 1
+                or not isinstance(situation_assessment, str)
+                or situation_assessment not in {'confirmed_incident', 'resolved', 'unknown'}
+                or type(help_needed) is not bool):
+            raise ValueError('invalid confirmation result')
+        incident = self._incidents.get(incident_id)
+        if (incident is None or incident.question_id != question_id
+                or incident.subject_key != subject_key
+                or incident.revision != evidence_revision):
+            return False
+        if incident.situation_assessment is not None:
+            return (incident.situation_assessment == situation_assessment
+                    and incident.help_needed == help_needed)
+        if incident.state is IncidentState.RESOLVED:
+            return False
+        incident.situation_assessment = situation_assessment
+        incident.help_needed = help_needed
+        incident.pending = False
+        incident.answer = VoiceAnswer.HELP if help_needed else VoiceAnswer.OKAY
+        incident.state = IncidentState.HELP_REQUIRED if help_needed else IncidentState.RESOLVED
+        if not help_needed:
+            incident.close_reason = ('risk_cleared' if situation_assessment == 'resolved'
+                                     else 'response_completed')
+        self._emit('confirmation_completed', incident, question_id=question_id,
+                   reason=situation_assessment)
+        if help_needed:
+            self._notify(incident, NotificationLevel.URGENT, 'confirmation_help_required')
+        else:
+            # This is an explicit user-informed decision, not automatic video
+            # clearance. A later video result may not overturn it.
+            self._emit('incident_resolved', incident, reason=incident.close_reason)
+        return True
+
+    def confirmation_failed(self, *, incident_id, question_id, evidence_revision):
+        """Record an unavailable/failed conversation without inventing an answer."""
+        incident = self._incidents.get(incident_id)
+        if (incident is None or incident.question_id != question_id
+                or incident.revision != evidence_revision
+                or incident.state is IncidentState.RESOLVED
+                or incident.situation_assessment is not None):
+            return False
+        incident.answer = VoiceAnswer.FAILED
+        incident.state = IncidentState.RECHECK_REQUIRED
+        self._emit('agent_check_failed', incident, question_id=question_id,
+                   reason='confirmation_transport_failed')
+        return True
+
+    def pending_questions(self):
+        """Retransmit unfinished handoffs so a late-starting Manager can receive them."""
+        events = []
+        for incident in self._incidents.values():
+            if (incident.state is IncidentState.RESOLVED or incident.answer is not None
+                    or incident.video is None or incident.video_revision != incident.revision):
+                continue
+            normal = incident.video.assessment is VideoAssessment.NORMAL_ACTIVITY
+            if incident.question_id is None and (not normal or incident.pending):
+                continue
+            events.append(FallRuntimeEvent(
+                event_id=incident.question_id or incident.incident_id,
+                kind='question_requested' if incident.question_id else 'analysis_completed',
+                incident_id=incident.incident_id, question_id=incident.question_id,
+                subject_key=incident.subject_key, evidence_revision=incident.revision,
+                reply=incident.video,
+                reason='prior_fall_observed' if normal and incident.fall_seen else None))
+        return tuple(events)
 
     def agent_reply(self, reply: AgentCheckReply) -> bool:
         """Agent owns playback, waiting, speaker association and answer interpretation."""
@@ -593,6 +675,9 @@ class CloudFallMonitor:
                 current.question_id = None
                 current.answer = None
                 current.answer_question_played = False
+                current.situation_assessment = None
+                current.help_needed = None
+                self._emit('incident_updated', current)
             current.last_observed_at = max(current.last_observed_at, observed_at)
         current.fall_seen |= finding.assessment is VideoAssessment.OBSERVED_FALL
         current.auto_normal_blocked = True
@@ -725,6 +810,11 @@ class CloudFallMonitor:
         self._analysis_status = CloudAnalysisStatus(
             'completed', request.request_id, request.purpose)
         if incident:
+            if (incident.state is IncidentState.RESOLVED
+                    or incident.situation_assessment is not None):
+                self._emit('stale_analysis_result', incident,
+                           reason='confirmation_already_completed', request=request, reply=reply)
+                return True
             # A late result cannot clear new evidence, but an observed fall
             # in this incident's earlier video must not disappear from history.
             incident.fall_seen |= reply.assessment is VideoAssessment.OBSERVED_FALL
@@ -752,6 +842,9 @@ class CloudFallMonitor:
                 if not checks or check.window_end > checks[-1].window_end:
                     incident.normal_checks = (checks + (check,))[-2:]
             self._emit('analysis_completed', incident, request=request, reply=reply)
+            if ((reply.assessment is not VideoAssessment.NORMAL_ACTIVITY or incident.fall_seen)
+                    and incident.question_id is None):
+                self.ask_question(incident.incident_id)
             self._decision_needed(incident)
         else:
             self._record_crosscheck(request, reply, scene_snapshot, scene_versions)
@@ -769,6 +862,12 @@ class CloudFallMonitor:
             self._analysis_status = CloudAnalysisStatus(
                 state, request.request_id, request.purpose, error)
         if incident:
+            if (request is not None
+                    and (request.evidence_revision != incident.revision
+                         or incident.state is IncidentState.RESOLVED
+                         or incident.situation_assessment is not None)):
+                self._emit('stale_analysis_result', incident, reason=reason, request=request)
+                return
             incident.last_failure = reason
             # Earlier normal must not stand in for a failed new attempt.
             incident.video = None

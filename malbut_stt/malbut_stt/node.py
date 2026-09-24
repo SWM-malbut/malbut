@@ -21,9 +21,11 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         from rclpy.qos import (
             DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,
         )
-        from malbut_interfaces.msg import SpeechPlaybackStatus, SpeechTranscript
+        from malbut_interfaces.msg import (
+            SpeechInputStatus, SpeechPlaybackStatus, SpeechTranscript,
+        )
         from malbut_interfaces.srv import (
-            ClassifySpeechAddressee, ControlSpeechPlayback,
+            ClassifySpeechAddressee, ControlSpeechPlayback, ControlSpeechSession,
         )
         from std_msgs.msg import String
     except ImportError:
@@ -149,6 +151,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             durability=DurabilityPolicy.VOLATILE,
         )
         publisher = node.create_publisher(SpeechTranscript, '/malbut/speech/transcript', qos)
+        input_publisher = node.create_publisher(
+            SpeechInputStatus, '/malbut/speech/input_status', qos)
         control_client = node.create_client(
             ControlSpeechPlayback, '/malbut/speech/playback_control',
         )
@@ -200,7 +204,13 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             if rclpy.ok():
                 publisher.publish(SpeechTranscript(
                     utterance_id=utterance_id, text=text,
+                    session_id=pipeline.session.session_id,
                 ))
+
+        def publish_input_status(session_id, utterance_id, state):
+            if rclpy.ok():
+                input_publisher.publish(SpeechInputStatus(
+                    session_id=session_id, utterance_id=utterance_id, state=state))
 
         def publish_control(playback_id, command):
             if requests_closed or not rclpy.ok():
@@ -326,6 +336,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             publish_transcript=publish,
             publish_control=publish_control,
             publish_interruption=publish_interruption,
+            publish_input_status=publish_input_status,
             report=report,
             on_wake=lambda: play_wake_chime(wake_chime_device_index),
             on_endpoint=lambda: play_endpoint_chime(wake_chime_device_index),
@@ -347,6 +358,22 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         node.create_subscription(
             SpeechPlaybackStatus, '/malbut/speech/playback_status', playback_status, qos,
         )
+
+        def control_session(request, response):
+            response.barge_in_available = pipeline.input_has_aec
+            check_only = getattr(request, 'check_only', False)
+            if check_only:
+                response.accepted = pipeline.session_is_active(request.session_id)
+            else:
+                response.accepted = (
+                    pipeline.start_session(request.session_id) if request.active
+                    else pipeline.stop_session(request.session_id))
+            if response.accepted and not check_only:
+                clear_classification()
+            return response
+
+        node.create_service(
+            ControlSpeechSession, '/malbut/speech/session_control', control_session)
         pipeline.start()
         if rclpy.ok():
             ready_publisher = node.create_publisher(String, '/malbut/speech/status', QoSProfile(

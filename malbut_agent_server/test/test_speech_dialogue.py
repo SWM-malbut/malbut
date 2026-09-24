@@ -43,6 +43,52 @@ def collect(worker, count):
     return replies
 
 
+def test_confirmation_preempts_pending_and_late_ordinary_answers():
+    release = threading.Event()
+
+    def respond(request, history):
+        if request.utterance == 'first':
+            assert release.wait(5)
+        return AgentDecision(type='message', message=request.utterance, confidence=1.0)
+
+    provider = FixedProvider(respond)
+    factory = RuntimeFactory(provider)
+    worker = DialogueWorker(factory, 'speaker', capacity=3)
+    try:
+        assert worker.submit('first-id', 'first')
+        assert provider.entered.wait(5)
+        assert worker.submit('queued-id', 'queued')
+        worker.suspend()
+        assert not worker.has_capacity()
+        assert worker.drain() == []
+        worker.resume()
+        assert worker.submit('new-id', 'new')
+        release.set()
+        replies = collect(worker, 1)
+        assert [(item['utterance_id'], item['text']) for item in replies] == [
+            ('new-id', 'new'),
+        ]
+        assert [item[0].utterance for item in provider.calls] == ['first', 'new']
+        assert worker.has_capacity()
+    finally:
+        release.set()
+        worker.close()
+
+
+def test_already_drained_answer_cannot_reappear_after_confirmation():
+    worker = DialogueWorker(RuntimeFactory(), 'speaker')
+    try:
+        assert worker.submit('old-id', 'old')
+        reply = collect(worker, 1)[0]
+        worker.suspend()
+        worker.resume()
+        published = []
+        assert worker.publish_reply(reply, lambda text: published.append(text) or True) is None
+        assert published == []
+    finally:
+        worker.close()
+
+
 class FixedProvider:
     """Use real context construction with controllable model responses."""
 

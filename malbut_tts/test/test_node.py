@@ -111,6 +111,16 @@ def test_request_kind_and_verbatim_text_reach_runtime(fake_ros):
     node.destroy_node()
 
 
+def test_caller_playback_id_is_forwarded_for_confirmation(fake_ros):
+    node = tts_node.create_tts_node(FakeRuntime)
+    received = []
+    node._runtime.submit = lambda *args, **kwargs: received.append((args, kwargs))
+    fake_ros.subscriptions[0][2](SimpleNamespace(
+        text='넘어지셨나요?', request_type=2, playback_id='question-1'))
+    assert received == [(('넘어지셨나요?', 2), {'playback_id': 'question-1'})]
+    node.destroy_node()
+
+
 def test_worker_states_are_published_in_order_only_by_executor(fake_ros):
     """Audio threads enqueue actual states without publishing ROS messages."""
     node = tts_node.create_tts_node(FakeRuntime)

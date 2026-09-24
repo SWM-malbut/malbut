@@ -129,6 +129,9 @@ def runtime(monkeypatch, tmp_path):
             state.clients[name] = client
             return client
 
+        def create_service(self, service_type, name, callback):
+            state.callbacks[name] = callback
+
         def destroy_node(self):
             state.closed.append('node')
 
@@ -174,9 +177,11 @@ def runtime(monkeypatch, tmp_path):
         def __init__(self, **kwargs):
             state.pipeline_args = kwargs
             state.pipeline = self
+            self.input_has_aec = kwargs['input_has_aec']
             self.phase = 'idle'
             self.pending_addressee = None
-            self.session = SimpleNamespace(playback_id='p1', playback_state='playing')
+            self.session = SimpleNamespace(
+                playback_id='p1', playback_state='playing', session_id='')
             self.polled = False
 
         def start(self):
@@ -213,18 +218,34 @@ def runtime(monkeypatch, tmp_path):
             state.decisions.append((uid, pid, decision))
             self.pending_addressee = None
 
+        def start_session(self, session_id):
+            self.session.session_id = session_id
+            return True
+
+        def stop_session(self, session_id):
+            if self.session.session_id != session_id:
+                return False
+            self.session.session_id = ''
+            return True
+
+        def session_is_active(self, session_id):
+            return bool(session_id and self.session.session_id == session_id)
+
         def close(self):
             state.closed.append('pipeline')
             if state.cleanup_failure:
                 raise RuntimeError('private cleanup device details')
 
     state.messages = SimpleNamespace(
+        SpeechInputStatus=type('SpeechInputStatus', (SimpleNamespace,), {}),
         SpeechTranscript=type('SpeechTranscript', (SimpleNamespace,), {}),
         SpeechPlaybackStatus=type('SpeechPlaybackStatus', (SimpleNamespace,), {
             key.upper(): key for key in ('playing', 'paused', 'finished', 'failed', 'stopped')
         }),
     )
     state.services = SimpleNamespace(
+        ControlSpeechSession=SimpleNamespace(
+            Request=SimpleNamespace, Response=SimpleNamespace),
         ClassifySpeechAddressee=SimpleNamespace(
             Request=type('ClassifyRequest', (SimpleNamespace,), {}),
             Response=type('ClassifyResponse', (SimpleNamespace,), {
@@ -337,12 +358,13 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert runtime.closed == ['pipeline', 'node', 'ros']
     assert [topic for topic, _ in runtime.published] == ['/malbut/speech/transcript']
     assert [vars(msg) for _, msg in runtime.published] == [
-        {'utterance_id': 'u1', 'text': '원문 그대로'},
+        {'utterance_id': 'u1', 'text': '원문 그대로', 'session_id': ''},
     ]
     assert set(runtime.calls['subscriptions']) == {'/malbut/speech/playback_status'}
     assert set(runtime.clients) == {
         '/malbut/speech/playback_control', '/malbut/speech/classify_addressee',
     }
+
     assert vars(runtime.clients['/malbut/speech/playback_control'].requests[0]) == {
         'playback_id': 'p1', 'command': 'pause',
     }
@@ -356,6 +378,66 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
             'history': 'keep_last', 'depth': 10,
             'reliability': 'reliable', 'durability': 'volatile',
         }
+
+
+def test_proactive_session_service_reports_aec_and_correlates_transcript(runtime):
+    runtime.parameters['input_has_aec'] = True
+
+    def on_spin():
+        callback = runtime.callbacks['/malbut/speech/session_control']
+        response = callback(SimpleNamespace(session_id='question-1', active=True),
+                            SimpleNamespace())
+        assert response.accepted and response.barge_in_available
+        runtime.pipeline_args['publish_input_status']('question-1', 'u3', 'started')
+        runtime.pipeline_args['publish_transcript']('u3', '그냥 누워 있었어요')
+        assert not callback(SimpleNamespace(session_id='old-question', active=False),
+                            SimpleNamespace()).accepted
+        assert callback(SimpleNamespace(session_id='question-1', active=False),
+                        SimpleNamespace()).accepted
+        raise KeyboardInterrupt
+
+    runtime.on_spin = on_spin
+    assert main([]) == 0
+    assert [(topic, vars(message)) for topic, message in runtime.published[-2:]] == [
+        ('/malbut/speech/input_status', {
+            'session_id': 'question-1', 'utterance_id': 'u3', 'state': 'started'}),
+        ('/malbut/speech/transcript', {
+            'session_id': 'question-1', 'utterance_id': 'u3', 'text': '그냥 누워 있었어요'}),
+    ]
+
+
+def test_proactive_service_reports_actual_pipeline_aec_not_parameter(runtime):
+    runtime.parameters['input_has_aec'] = True
+
+    def on_spin():
+        # A deployment adapter may force AEC off after reading the parameter.
+        runtime.pipeline.input_has_aec = False
+        response = runtime.callbacks['/malbut/speech/session_control'](
+            SimpleNamespace(session_id='question-1', active=True), SimpleNamespace())
+        assert response.accepted and not response.barge_in_available
+        raise KeyboardInterrupt
+
+    runtime.on_spin = on_spin
+    assert main([]) == 0
+
+
+def test_check_only_service_preserves_session_and_pending_classification(runtime):
+    def on_spin():
+        callback = runtime.callbacks['/malbut/speech/session_control']
+        assert callback(SimpleNamespace(session_id='q1', active=True),
+                        SimpleNamespace()).accepted
+        runtime.pipeline.pending_addressee = ('pending', 'p1', 45)
+        for active in (False, True):
+            assert callback(SimpleNamespace(session_id='q1', active=active, check_only=True),
+                            SimpleNamespace()).accepted
+            assert not callback(SimpleNamespace(
+                session_id='missing', active=active, check_only=True), SimpleNamespace()).accepted
+        assert runtime.pipeline.session.session_id == 'q1'
+        assert runtime.pipeline.pending_addressee == ('pending', 'p1', 45)
+        raise KeyboardInterrupt
+
+    runtime.on_spin = on_spin
+    assert main([]) == 0
 
 
 def test_readiness_is_latched_only_after_microphone_start(runtime, capsys):

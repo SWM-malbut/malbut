@@ -43,7 +43,8 @@ setup(
             'share/' + package_name + '/docs/fall',
             ['docs/fall/fall_detection.md', 'docs/fall/fall_storage_api.md',
              'docs/fall/fall_runtime.md', 'docs/fall/fall_decision_policy.md',
-             'docs/fall/fall_subject_observation.md', 'docs/fall/fall_robot_preparation.md'],
+             'docs/fall/fall_subject_observation.md', 'docs/fall/fall_robot_preparation.md',
+             'docs/fall/agent_fall_interaction.md', 'docs/fall/agent_fall_implementation.md'],
         ),
         (
             'share/' + package_name + '/config',
@@ -58,6 +59,7 @@ setup(
                 'SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md',
                 'docs/evaluations/FALL_DETECTION_VLM_REQUIREMENTS.md',
                 'docs/evaluations/VLM_EVALUATION_HARNESS.md',
+                'docs/evaluations/SITUATION_DIALOGUE_EVALUATION.md',
             ],
         ),
     ],
@@ -96,6 +98,10 @@ setup(
             (
                 'malbut-agent-eval = '
                 'malbut_agent_server.eval_runner:main'
+            ),
+            (
+                'malbut-situation-eval = '
+                'malbut_agent_server.situation_eval_runner:main'
             ),
             (
                 'malbut-front-route-inspect = '

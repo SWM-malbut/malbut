@@ -78,6 +78,10 @@ def kinds(monitor):
 
 
 def answer(monitor, iid, value, *, qid=None, subject=None, revision=None, played=True):
+    # Legacy voice-boundary regression tests explicitly request their question.
+    # Production candidate ingestion now waits for VLM before requesting it.
+    if monitor.incident(iid).question_id is None and qid is None:
+        monitor.ask_question(iid)
     incident = monitor.incident(iid)
     return monitor.agent_reply(AgentCheckReply(
         iid, qid or incident.question_id, subject or incident.subject_key,
@@ -122,13 +126,13 @@ def test_defaults_off_and_local_provider_rejected():
     (False, True, 'cloud_consent_missing'),
     (True, False, 'cloud_disconnected'),
 ])
-def test_common_gate_blocks_both_paths_but_not_questions(consent, connected, reason):
+def test_common_gate_blocks_both_paths_before_vlm(consent, connected, reason):
     async def scenario():
         monitor, clock, provider = make()
         enable(monitor, consent, connected)
         monitor.ingest_rgb(frame(clock()))
         iid = monitor.candidate(candidate())
-        assert 'question_requested' in kinds(monitor)
+        assert 'question_requested' not in kinds(monitor)
         assert await monitor.run_once()
         assert monitor.incident(iid).last_failure == reason
         clock.value += 60
@@ -184,7 +188,7 @@ def test_help_request_does_not_wait_for_cloud_or_duplicate_notification():
         enable(monitor)
         monitor.ingest_rgb(frame(clock()))
         iid = monitor.candidate(candidate())
-        qid = monitor.incident(iid).question_id
+        qid = monitor.ask_question(iid)  # Explicit legacy/operator check.
         provider.release = asyncio.Event()
         work = asyncio.create_task(monitor.run_once())
         await provider.started.wait()
@@ -208,7 +212,7 @@ def test_only_agent_can_report_no_response_and_notifies_while_cloud_pending():
         enable(monitor)
         monitor.ingest_rgb(frame(clock()))
         iid = monitor.candidate(candidate())
-        qid = monitor.incident(iid).question_id
+        qid = monitor.ask_question(iid)  # Explicit legacy/operator check.
         clock.value += 100
         assert monitor.incident(iid).answer is None
         provider.release = asyncio.Event()
@@ -601,7 +605,7 @@ def test_wrong_subject_and_old_revision_cannot_supply_answers():
     monitor, clock, _ = make()
     enable(monitor)
     iid = monitor.candidate(candidate())
-    old_question = monitor.incident(iid).question_id
+    old_question = monitor.ask_question(iid)
     assert not answer(monitor, iid, VoiceAnswer.OKAY, subject='other-person')
     clock.value += 1
     monitor.candidate(candidate(clock(), cid='new', change=True))

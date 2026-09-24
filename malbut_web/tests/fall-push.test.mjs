@@ -22,6 +22,7 @@ test("fall messages separate observation from notification grade without raw vid
   for (const [level, reason] of [
     ["info", "fall_observed_person_okay"], ["check", "person_no_response"],
     ["check", "check_required_not_confirmed_fall"], ["urgent", "help_requested"],
+    ["urgent", "confirmation_help_required"],
   ]) {
     const notification = buildFallNotification({ ...input, level, reason });
     assert.ok(isFallNotification(notification));
@@ -92,6 +93,13 @@ test("broker checks signatures and fall schema before forwarding to web push", a
   }) };
   assert.equal((await broker.request(info)).statusCode, 200);
   assert.equal(broker.sends[1].options.urgency, "normal");
+  const confirmation = { title: "말벗", ...buildFallNotification({
+    ...input, level: "urgent", reason: "confirmation_help_required",
+  }) };
+  assert.equal((await broker.request(confirmation)).statusCode, 200);
+  assert.equal(broker.sends[2].options.urgency, "high");
+  assert.match(broker.sends[2].body.body, /도움이 필요한 것으로 판단/);
+  assert.doesNotMatch(broker.sends[2].body.body, /대상자가 도움을 요청|답변이 없습니다|낙상 확정/);
 });
 
 test("broker still accepts existing homecam events", async () => {

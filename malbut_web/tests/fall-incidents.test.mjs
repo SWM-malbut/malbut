@@ -34,6 +34,27 @@ test("fall request contract is strict, bounded, and excludes recipients/media/de
   assert.equal(await readFallEvent(req("{")), null);
 });
 
+test("Agent confirmation accepts independent situation/help judgments and validates new intents", () => {
+  const { parseFallEvent } = moduleLoader()("app/fall-contract.ts");
+  assert.ok(parseFallEvent(event({ eventKind: "incident_updated", evidenceRevision: 2 })));
+  for (const reason of ["confirmed_incident", "resolved", "unknown"]) {
+    for (const help of [false, true]) {
+      assert.ok(parseFallEvent(event({ eventKind: "confirmation_completed", reason,
+        state: help ? "help_required" : "resolved", answer: help ? "help_request" : "okay" })));
+    }
+  }
+  const confirmation = event({ eventKind: "confirmation_completed", reason: "unknown",
+    state: "resolved", answer: "okay" });
+  for (const change of [{ reason: "invalid" }, { answer: null }, { state: "verifying" },
+    { answer: "help_request" }, { notificationLevel: "urgent" }]) {
+    assert.equal(parseFallEvent({ ...confirmation, ...change }), null);
+  }
+  assert.ok(parseFallEvent(notice({ reason: "confirmation_help_required", fallSeen: false })));
+  assert.equal(parseFallEvent(notice({ reason: "confirmation_help_required", answer: "okay" })), null);
+  assert.equal(parseFallEvent(notice({ reason: "confirmation_help_required", state: "verifying" })), null);
+  assert.equal(parseFallEvent(event({ state: "resolved" })), null);
+});
+
 test("incident and notification persist atomically, retries and conflicting IDs are handled", async () => {
   const h = await fallDatabase(), load = moduleLoader();
   const pg = load("db/postgres.ts"), repo = load("db/fall-incidents.ts");
@@ -228,4 +249,31 @@ test("Python runtime journal -> authenticated API -> database -> push broker pay
     assert.deepEqual((await h.db.query("SELECT level,status FROM fall_push_outbox ORDER BY level")).rows,
       [{ level: "info", status: "superseded" }, { level: "urgent", status: "accepted" }]);
   }); } finally { globalThis.fetch = originalFetch; await h.db.close(); }
+});
+
+test("Manager confirmation journal preserves all six outcomes through storage and notification intent", async () => {
+  const h = await fallDatabase(), load = moduleLoader();
+  const records = JSON.parse(execFileSync("python3", [path.join(h.root, "tests/fixtures/fall_confirmation_payloads.py")], {
+    env: { ...process.env, PYTHONPATH: path.resolve(h.root, "../malbut_agent_server") }, encoding: "utf8",
+  }));
+  const pg = load("db/postgres.ts"), repo = load("db/fall-incidents.ts");
+  const { buildFallNotification } = load("infra/aws/push-broker/fall-notification.mjs");
+  try { await pg.withPostgresPoolForTest(h.pool, async () => {
+    for (const record of records) assert.equal((await repo.storeFallEvent("robot-a", record)).stored, true);
+    const confirmations = records.filter((r) => r.eventKind === "confirmation_completed");
+    assert.equal(confirmations.length, 6);
+    assert.ok(records.some((r) => r.eventKind === "incident_updated"));
+    assert.equal(new Set(confirmations.map((r) => `${r.reason}:${r.state}`)).size, 6);
+    const incidents = await repo.listFallIncidents("robot-a");
+    assert.equal(incidents.filter((i) => i.state === "help_required").length, 3);
+    assert.equal(incidents.filter((i) => i.state === "resolved").length, 3);
+    const notices = (await h.db.query("SELECT level,reason FROM fall_push_outbox")).rows;
+    assert.equal(notices.length, 3);
+    assert.ok(notices.every((n) => n.level === "urgent" && n.reason === "confirmation_help_required"));
+    const claim = await repo.claimFallPush();
+    const notification = buildFallNotification(claim);
+    assert.ok(notification);
+    assert.match(notification.body, /도움이 필요한 것으로 판단/);
+    assert.doesNotMatch(notification.body, /대상자가 도움을 요청|답변이 없습니다|낙상 확정/);
+  }); } finally { await h.db.close(); }
 });

@@ -33,7 +33,8 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, decision
     class AudioBoundary:
         def __init__(self, **callbacks):
             self.callbacks = callbacks
-            self.session = SimpleNamespace(playback_id='playback-1', playback_state='playing')
+            self.session = SimpleNamespace(
+                playback_id='playback-1', playback_state='playing', session_id='')
             self.pending_addressee = None
             self.phase = 'test_audio_boundary'
             self.sent = False

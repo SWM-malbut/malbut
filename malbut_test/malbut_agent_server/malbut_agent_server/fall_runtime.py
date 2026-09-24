@@ -147,6 +147,32 @@ def apply_decision(monitor, payload):
     data = bounded_object(payload)
     action = data.get('action')
     fields = {'incident_id', 'evidence_revision', 'action'}
+    if action in {'confirmation_result', 'confirmation_failed', 'dismiss_normal'}:
+        fields.add('boot_id')
+        if action != 'dismiss_normal':
+            fields.add('question_id')
+        if action == 'confirmation_result':
+            fields.update({'subject_key', 'situation_assessment', 'help_needed'})
+        if (set(data) != fields or data['boot_id'] != monitor.boot_id
+                or type(data['evidence_revision']) is not int
+                or data['evidence_revision'] < 1):
+            raise ValueError('invalid or stale confirmation decision')
+        values = {key: value for key, value in data.items()
+                  if key not in {'action', 'boot_id'}}
+        if action == 'confirmation_result':
+            return monitor.confirmation_result(**values)
+        if action == 'confirmation_failed':
+            return monitor.confirmation_failed(**values)
+        from malbut_agent_server.domain.fall_monitoring import VideoAssessment
+        incident = monitor.incident(data['incident_id'])
+        if (incident.revision != data['evidence_revision']
+                or incident.video_revision != incident.revision
+                or incident.video is None
+                or incident.video.assessment is not VideoAssessment.NORMAL_ACTIVITY
+                or incident.fall_seen or incident.question_id is not None):
+            raise ValueError('normal video clearance is not supported')
+        return monitor.resolve(incident.incident_id, revision=incident.revision,
+                               reason='risk_cleared')
     if action == 'resolve':
         fields.add('reason')
     elif action == 'unresolved':
@@ -166,6 +192,8 @@ def apply_decision(monitor, payload):
                                        suspicion_persists=data['suspicion_persists'])
     if action == 'recheck':
         return monitor.request_recheck(incident.incident_id)
+    if incident.video is None or incident.video_revision != incident.revision:
+        raise ValueError('VLM assessment required before confirmation')
     return monitor.ask_question(incident.incident_id)
 
 

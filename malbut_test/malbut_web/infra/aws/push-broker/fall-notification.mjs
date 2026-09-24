@@ -6,6 +6,7 @@ const messages = {
   person_no_response: ["check", "상태 확인 질문에 답변이 없습니다. 확인이 필요합니다."],
   check_required_not_confirmed_fall: ["check", "낙상 의심 상황을 확인하지 못했습니다. 상태를 확인해 주세요."],
   help_requested: ["urgent", "대상자가 도움을 요청했습니다. 즉시 확인해 주세요."],
+  confirmation_help_required: ["urgent", "상황 확인 결과 도움이 필요한 것으로 판단되었습니다. 즉시 확인해 주세요."],
 };
 
 export function buildFallNotification(input) {

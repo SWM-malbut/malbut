@@ -118,6 +118,9 @@ class DialogueWorker:
         self._ready = False
         self._startup_error: Optional[str] = None
         self._active_progress = None
+        self._suspended = False
+        self._generation = 0
+        self._running = False
         self._thread = Thread(target=self._run, name='malbut-speech-dialogue')
         self._thread.start()
 
@@ -138,6 +141,7 @@ class DialogueWorker:
         with self._condition:
             return (
                 not self._closing and not self._stopped
+                and not self._suspended
                 and self._outstanding < self._capacity
             )
 
@@ -212,7 +216,9 @@ class DialogueWorker:
     def publish_reply(self, reply: dict, publish: Callable) -> Optional[dict]:
         """Check again immediately before publishing while stores are open."""
         with self._condition:
-            if self._closing or self._stopped:
+            if (self._closing or self._stopped or self._suspended
+                    or getattr(reply, '_generation', self._generation)
+                    != self._generation):
                 return None
             if reply.get('kind') == 'addressee':
                 return None
@@ -222,6 +228,26 @@ class DialogueWorker:
             if publish(reply['text']):
                 return dict(reply)
             return None
+
+    def suspend(self):
+        """Preempt ordinary speech and invalidate queued or in-flight replies."""
+        with self._condition:
+            self._suspended = True
+            self._generation += 1
+            if self._active_progress is not None:
+                self._active_progress.finish()
+            for _, _, _, progress in self._pending:
+                if progress is not None:
+                    progress.finish()
+            self._pending.clear()
+            self._results.clear()
+            self._interruptions.clear()
+            self._outstanding = int(self._running)
+
+    def resume(self):
+        """Accept new ordinary turns without replaying preempted replies."""
+        with self._condition:
+            self._suspended = False
 
     def _refresh_reply(self, reply):
         validator = getattr(reply, '_memory_validator', None)
@@ -296,13 +322,18 @@ class DialogueWorker:
                     if self._closing:
                         return
                     utterance_id, text, playback_id, progress = self._pending.popleft()
+                    generation = self._generation
+                    self._running = True
                     self._active_progress = progress
                 if playback_id is not None:
                     reply = self._classify_interruption(
                         runtime, conversation_id, utterance_id, playback_id, text,
                     )
                     with self._condition:
-                        if not self._closing:
+                        self._running = False
+                        if not self._closing and generation != self._generation:
+                            self._outstanding -= 1
+                        elif not self._closing:
                             entry = self._interruptions[utterance_id]
                             entry['pending'] = False
                             if entry['conflict']:
@@ -369,10 +400,12 @@ class DialogueWorker:
                     progress.finish()
                 with self._condition:
                     self._active_progress = None
+                    self._running = False
                     if not self._closing:
-                        if reply is None:
+                        if reply is None or generation != self._generation:
                             self._outstanding -= 1
                         else:
+                            reply._generation = generation
                             reply['text'] = progress.final_text(reply['text'])
                             self._results.append(reply)
         finally:
