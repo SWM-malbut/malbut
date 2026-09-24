@@ -6,8 +6,8 @@
 
 기준 소스는 [PR #94](https://github.com/SWM-malbut/malbut/pull/94)가 병합된
 `main`의 `1f526c6ceecc14f60fd6afcf1f6804cb7c2f7ded`다.
-[Agent 명세](malbut_agent.md), [STT 명세](../../malbut_stt/docs/stt_agent.md),
-[TTS 명세](../../malbut_tts/docs/tts_agent.md)를 기준으로 확인했다.
+[Agent 명세](../malbut_agent.md), [STT 명세](../../../malbut_stt/docs/stt_agent.md),
+[TTS 명세](../../../malbut_tts/docs/tts_agent.md)를 기준으로 확인했다.
 이번 변경은 시험과 결과 기록이며 제품 코드와 명세는 수정하지 않았다.
 
 ## 확인한 흐름
@@ -52,15 +52,15 @@ STT에서 건너뛴 항목은 `webrtcvad`가 필요한 1개와 OpenAI SDK가 필
 건너뜀**을 확인했고, 해당 SDK·VAD 3개도 따로 실행해 **3개 통과·0개 건너뜀**
 을 확인했다. SDK 시험은 로컬 HTTP 대역이며 실제 OpenAI API 호출이 아니다.
 
-- [최종 결과 요약](validation/SWM25-163_FULL_FLOW_2026-09-09/validation-summary-final.json),
-  [Ubuntu 환경](validation/SWM25-163_FULL_FLOW_2026-09-09/environment.json),
-  [빌드 로그](validation/SWM25-163_FULL_FLOW_2026-09-09/build.log)
-- JUnit: [Agent](validation/SWM25-163_FULL_FLOW_2026-09-09/malbut_agent_server_final.xml),
-  [STT](validation/SWM25-163_FULL_FLOW_2026-09-09/malbut_stt.xml),
-  [TTS](validation/SWM25-163_FULL_FLOW_2026-09-09/malbut_tts.xml),
-  [Manager](validation/SWM25-163_FULL_FLOW_2026-09-09/malbut_system_manager.xml)
-- [macOS SDK·VAD 시험](validation/SWM25-163_FULL_FLOW_2026-09-09/macos-sdk-vad.xml),
-  [macOS 실행 환경](validation/SWM25-163_FULL_FLOW_2026-09-09/macos-sdk-vad-environment.json)
+- [최종 결과 요약](../validation/SWM25-163_FULL_FLOW_2026-09-09/validation-summary-final.json),
+  [Ubuntu 환경](../validation/SWM25-163_FULL_FLOW_2026-09-09/environment.json),
+  [빌드 로그](../validation/SWM25-163_FULL_FLOW_2026-09-09/build.log)
+- JUnit: [Agent](../validation/SWM25-163_FULL_FLOW_2026-09-09/malbut_agent_server_final.xml),
+  [STT](../validation/SWM25-163_FULL_FLOW_2026-09-09/malbut_stt.xml),
+  [TTS](../validation/SWM25-163_FULL_FLOW_2026-09-09/malbut_tts.xml),
+  [Manager](../validation/SWM25-163_FULL_FLOW_2026-09-09/malbut_system_manager.xml)
+- [macOS SDK·VAD 시험](../validation/SWM25-163_FULL_FLOW_2026-09-09/macos-sdk-vad.xml),
+  [macOS 실행 환경](../validation/SWM25-163_FULL_FLOW_2026-09-09/macos-sdk-vad-environment.json)
 
 ## 시나리오와 시험 근거
 

@@ -725,7 +725,7 @@ flowchart TD
 
 주 평가지표는 **YOLO-Pose로 찾은 비율 / VLM 단독 정확도 / YOLO-Pose 후 VLM 정확도**다.
 가중치나 종합 점수는 만들지 않는다. 전체 정리는
-[낙상 평가 정리](../../homecam_agent/docs/FALL_EVALUATION_SUMMARY.md)에 있다.
+[낙상 평가 정리](../../../homecam_agent/docs/FALL_EVALUATION_SUMMARY.md)에 있다.
 
 ### 6.1 데이터 구분과 판단 기준
 
@@ -937,7 +937,7 @@ flowchart TD
 내용이나 정답은 수정하지 않았다. 원래 응답·채점은 보존하고, 운영 연결 전에 응답 형식 처리를 정리한다.
 비교한 모든 모델에 같은 형식 진단 규칙을 적용했다.
 
-[전체 모델 비교·검증 기록](../../homecam_agent/docs/FALL84_QWEN35_CLOUD_20260917.md).
+[전체 모델 비교·검증 기록](../../../homecam_agent/docs/FALL84_QWEN35_CLOUD_20260917.md).
 새 모델 호출372회와 관련 테스트419개를 완료했다. 실제 가정·Jetson 성능이나 운영 적용 완료를 뜻하지 않는다.
 
 <a id="model-results"></a>
@@ -1087,8 +1087,8 @@ Qwen 세대별 제외 범위는 아직 확정되지 않아 이 기록의 후보 
 - [음성 재생의 Agent 입력 계약](https://github.com/SWM-malbut/malbut/blob/1f526c6ceecc14f60fd6afcf1f6804cb7c2f7ded/malbut_tts/docs/tts_agent.md)
 - [사람 추적 기능 명세 — 형식 참고](https://app.notion.com/p/3c7c6013131b80a7b2b3c1d363e4cd1c)
 - [낙상 상세 설계 메모 — 기존 Mermaid·모듈 근거 보존](FALL_DETECTION_ARCHITECTURE_NOTES.md)
-- [기존 낙상 VLM 요구사항](evaluations/FALL_DETECTION_VLM_REQUIREMENTS.md)
-- [평가 하네스](evaluations/VLM_EVALUATION_HARNESS.md)
+- [기존 낙상 VLM 요구사항](../evaluations/FALL_DETECTION_VLM_REQUIREMENTS.md)
+- [평가 하네스](../evaluations/VLM_EVALUATION_HARNESS.md)
 
 참고 문서의 사람 추적 전용 상태·거리 지표·단일 대상 가정은 낙상 기능에 복사하지
 않았다. 항목 구성을 따르되 상태·평가 단위·안전 계약은 낙상 요구에 맞게 작성했다.

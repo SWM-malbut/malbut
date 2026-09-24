@@ -356,7 +356,7 @@ flowchart TD
 - 호출 실패는 정상 결과로 대체하지 않고 오류 사유를 별도로 기록한다.
 - 모델의 JSON을 이 계약으로 바꾸는 Ollama Cloud 어댑터·실행 연결을 추가했다.
   2026-09-19 같은 입력/응답 코드로 Mac Ollama 인증 경유 Cloud 84건 평가를 완료했다.
-  [12장 결과](../../homecam_agent/docs/FALL84_RUNTIME_CLOUD_12FRAMES_20260919.md)는
+  [12장 결과](../../../homecam_agent/docs/FALL84_RUNTIME_CLOUD_12FRAMES_20260919.md)는
   약 5초 합성 영상의 단독 분류 결과이며 실물·직접 API 인증·Agent/알림 연동 검증이 아니다.
   이후 추가한 대상 위치 출력(`findings`)은 아직 실제 Cloud 호출로 평가하지 않았다.
   앞서 보류한 복잡한 근거 출력·강제 판정 조건은 사용하지 않는다.
@@ -512,14 +512,14 @@ flowchart TD
 
 코드:
 
-- [자료형·설정](../malbut_agent_server/domain/fall_monitoring.py)
-- [Cloud 인터페이스](../malbut_agent_server/ports/cloud_fall.py)
-- [RGB 버퍼](../malbut_agent_server/application/fall_frame_buffer.py)
-- [실행 코어](../malbut_agent_server/application/cloud_fall_monitor.py)
-- [웹 푸시 전송](../../malbut_web/app/push-broker.ts)
-- [낙상 알림 문구·검증](../../malbut_web/infra/aws/push-broker/fall-notification.mjs)
-- [로봇 영속 저널](../malbut_agent_server/adapters/outbound/sqlite_fall_journal.py)
-- [장치 사건 수신 API](../../malbut_web/app/api/device/v1/fall-events/route.ts)
+- [자료형·설정](../../malbut_agent_server/domain/fall_monitoring.py)
+- [Cloud 인터페이스](../../malbut_agent_server/ports/cloud_fall.py)
+- [RGB 버퍼](../../malbut_agent_server/application/fall_frame_buffer.py)
+- [실행 코어](../../malbut_agent_server/application/cloud_fall_monitor.py)
+- [웹 푸시 전송](../../../malbut_web/app/push-broker.ts)
+- [낙상 알림 문구·검증](../../../malbut_web/infra/aws/push-broker/fall-notification.mjs)
+- [로봇 영속 저널](../../malbut_agent_server/adapters/outbound/sqlite_fall_journal.py)
+- [장치 사건 수신 API](../../../malbut_web/app/api/device/v1/fall-events/route.ts)
 - [저장·전송 계약](fall_storage_api.md)
 - [Cloud·ROS 실행 연결과 제한](fall_runtime.md)
 

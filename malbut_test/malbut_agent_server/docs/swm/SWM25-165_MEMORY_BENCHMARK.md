@@ -118,7 +118,7 @@ $0.00919734다. 저비용을 우선하면 A 유지, 첫 답변 속도를 우선�
 운영 처리 방식은 변경하지 않았다.
 
 실패 원인, 표본 구성, 토큰·캐시 차이와 원본은
-[10회 실측 보고서](benchmarks/memory-latency-10x-20260909/REPORT.md)에 정리했다.
+[10회 실측 보고서](../benchmarks/memory-latency-10x-20260909/REPORT.md)에 정리했다.
 
 ## 최초 실행 기록 — 방식당 6회 버전
 
@@ -143,9 +143,9 @@ $0.00919734다. 저비용을 우선하면 A 유지, 첫 답변 속도를 우선�
 속도나 세 방식의 사용자 체감 차이를 입증하지 않는다. 당시에는 권고할 실측
 근거가 없어 운영 구조를 유지했고, 이후 실제 측정을 별도로 수행했다.
 
-- [고정 응답 시험 요약](benchmarks/memory-latency-20260909/fixed/REPORT.md)
-- [실제 API 시도 요약](benchmarks/memory-latency-20260909/live/REPORT.md)
-- [실제 API 원시 기록](benchmarks/memory-latency-20260909/live/results.json)
+- [고정 응답 시험 요약](../benchmarks/memory-latency-20260909/fixed/REPORT.md)
+- [실제 API 시도 요약](../benchmarks/memory-latency-20260909/live/REPORT.md)
+- [실제 API 원시 기록](../benchmarks/memory-latency-20260909/live/results.json)
 
 각 결과 폴더에 CSV와 원시 JSON을 함께 보존했다. 시험 DB는
 `/tmp/malbut-memory-bench-fixed-20260909-final`과
