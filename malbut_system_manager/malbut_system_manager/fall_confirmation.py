@@ -39,7 +39,8 @@ class ConfirmationRequest:
 
 
 class FallConfirmationCoordinator:
-    """Deduplicate replayed handoffs and reject obsolete evidence/results.
+    """
+    Deduplicate replayed handoffs and reject obsolete evidence/results.
 
     It never calls a guardian or interprets transport failures as user silence.
     Only successful Agent final results may carry a help-needed judgment.
