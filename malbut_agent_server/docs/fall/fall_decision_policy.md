@@ -18,7 +18,7 @@ YOLO 또는 Cloud가 의심하면 먼저 확인 대상으로 남긴다. 이것�
 
 최근 독립 경로 재생에서는 정상 영상 34개 중 16개가 확인 대상이 됐다.
 이는 잘못된 보호자 알림 16건을 뜻하지 않는다. 알림까지 가기 전의 처리 기준이 필요하다.
-[재생 결과](../../homecam_agent/docs/FALL84_PARALLEL_POSE_CLOUD_20260919.md)
+[재생 결과](../../../homecam_agent/docs/FALL84_PARALLEL_POSE_CLOUD_20260919.md)
 
 ## 2. 이미 합의했고 코드에 있는 기준
 
@@ -94,7 +94,7 @@ TV·다른 사람의 말·STT 실패·이전 질문의 답변은 정상 답변�
 
 ## 5. 코드와 연결할 때 빠지면 안 되는 것
 
-- `CloudFallMonitor`에 [정상 종결 조건](../malbut_agent_server/application/fall_normal_closure.py)을
+- `CloudFallMonitor`에 [정상 종결 조건](../../malbut_agent_server/application/fall_normal_closure.py)을
   연결했다. 나머지 판단은 `decision_required`로 넘긴다.
 - 명시적 `resolve(normal_verified)` 명령에도 같은 조건을 적용한다. 첫 정상 결과만으로
   명령을 보내 검사를 우회할 수 없다. `risk_cleared`·`response_completed`는 별도 명시적 결정이다.

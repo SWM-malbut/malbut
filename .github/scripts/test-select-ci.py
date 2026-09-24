@@ -240,7 +240,7 @@ class FallSelectionTests(unittest.TestCase):
 
     def test_documents_data_and_full_ci(self):
         self.assertEqual(SELECTOR.selection([
-            'malbut_agent_server/docs/fall_runtime.md'])['fall_python'], 'false')
+            'malbut_agent_server/docs/fall/fall_runtime.md'])['fall_python'], 'false')
         self.assertEqual(SELECTOR.selection([
             'homecam_agent/evaluations/synthetic_fall_v1/labels.jsonl'
         ])['fall_python'], 'true')

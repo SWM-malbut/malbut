@@ -202,7 +202,7 @@ RAI는 답변·후보 통합 호출과 적격 후보의 비동기 검토·저장
 새 기억 Node, ROS interface, Capability Manifest, 별도 벡터 DB는 추가하지 않는다.
 
 초기 동기 방식의 검증 범위와 재현 방법은
-[SWM25-165 검증 기록](docs/SWM25-165_MEMORY_VALIDATION.md)에 정리한다.
+[SWM25-165 검증 기록](docs/swm/SWM25-165_MEMORY_VALIDATION.md)에 정리한다.
 이 기록의 A 방식 선택은 당시 결정이며 현재 C 경로의 검증 결과를 뜻하지 않는다.
 
 일반 후속 발화는 미완료 자동 job을 취소하지 않는다. 직접적인 저장·정정·삭제·
@@ -231,7 +231,7 @@ OpenAI 대화 기본 모델은 `gpt-5.6-luna`, reasoning은 `low`, 출력 상한
 같은 예산 안에서 사용한다. 기능 실행 요청은 자동 재전송하지 않는다.
 
 동기 저장·저장 후처리·별도 기억 추출의 개발용 시간 비교는
-[기억 처리 비교 실행 안내](docs/SWM25-165_MEMORY_BENCHMARK.md)를 참고한다.
+[기억 처리 비교 실행 안내](docs/swm/SWM25-165_MEMORY_BENCHMARK.md)를 참고한다.
 기본 실행은 고정 응답 시험이며, `--live`에서만 최대 44회 API를 호출한다.
 세 방식은 각각 10회 측정한다. 별도 기억 추출과 준비 호출도 상한에 포함한다.
 해당 문서의 운영 A 선택은 과거 기록이다. 비교용 harness는 현재 운영 worker의

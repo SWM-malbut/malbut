@@ -13,10 +13,10 @@
 
 **실물 실행·직접 Cloud API 인증 경로·푸시 수신은 아직 검증하지 않았다.**
 2026-09-19에는 같은 입력 생성·응답 검증 코드로 Mac Ollama 인증을 거쳐 실제 Cloud에
-합성 영상 84개를 호출했다. [평가 결과](../../homecam_agent/docs/FALL84_RUNTIME_CLOUD_12FRAMES_20260919.md):
+합성 영상 84개를 호출했다. [평가 결과](../../../homecam_agent/docs/FALL84_RUNTIME_CLOUD_12FRAMES_20260919.md):
 12장 입력의 3분류 정확도 72/84(85.7%), 정상 오탐 6/34, 응답 중앙값 2.40초.
 약 5초 합성 영상의 분류 평가이며, 실제 감지 지연까지 검증한 것은 아니다.
-같은 조건의 [6장 비교](../../homecam_agent/docs/FALL84_RUNTIME_CLOUD_6_VS_12_20260919.md)도
+같은 조건의 [6장 비교](../../../homecam_agent/docs/FALL84_RUNTIME_CLOUD_6_VS_12_20260919.md)도
 완료했다: 70/84(83.3%), 정상 오탐 7/34, 응답 중앙값 1.73초. 예시 설정은 12장을 유지한다.
 설정 Service·상태·연결 확인은 `malbut_interfaces` 자료형을 사용한다.
 VLM·홈캠·Manager 연결, 서버 설정 응답과 웹 저장·회신 이력 표시를 구현했다.

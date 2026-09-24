@@ -19,7 +19,7 @@ from malbut_interfaces.srv import ApplyFallSettings
 PACKAGE = Path(__file__).resolve().parents[1]
 REPOSITORY = PACKAGE.parent
 DOCUMENT = (
-    REPOSITORY / 'malbut_agent_server/docs/fall_manager_contract.md'
+    REPOSITORY / 'malbut_agent_server/docs/fall/fall_manager_contract.md'
 )
 TYPES = (
     ApplyFallSettings.Request,

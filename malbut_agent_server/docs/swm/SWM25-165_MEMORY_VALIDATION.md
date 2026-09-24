@@ -1,6 +1,6 @@
 # SWM25-165 장기기억 구현 검증 기록
 
-기준은 [기존 Agent 명세](malbut_agent.md)의 대화 처리·장기기억 규칙이다.
+기준은 [기존 Agent 명세](../malbut_agent.md)의 대화 처리·장기기억 규칙이다.
 이 문서는 구현 결과와 시험 재현 방법이며 별도 기억 저장소 명세가 아니다.
 
 ## SWM25-165 마무리 — Luna와 A 방식
@@ -41,8 +41,8 @@ Ubuntu 전체 시험 후 테스트 함수명만 짧게 변경했으며 실행 �
 
 ROS 환경을 source한 다음 `PYTHONPATH=.:"${PYTHONPATH}" python3 -m pytest -q test`로
 실행한다. `PYTHONPATH=.`만 지정하면 ROS 메시지 모듈 경로를 잃을 수 있다.
-[최신 Ubuntu 검증 요약](validation/SWM25-165_LUNA_2026-09-09/ros-validation-summary.json)과
-[소스 일치 검사](validation/SWM25-165_LUNA_2026-09-09/worktree-code-check.json)를 남긴다.
+[최신 Ubuntu 검증 요약](../validation/SWM25-165_LUNA_2026-09-09/ros-validation-summary.json)과
+[소스 일치 검사](../validation/SWM25-165_LUNA_2026-09-09/worktree-code-check.json)를 남긴다.
 전체 로그·JUnit·빌드 스냅샷은 개발 환경의
 `/var/folders/5s/gq4btl_j0cl6870s1__ggygh0000gn/T/malbut-swm25-165-release-ros-wvc3vf55/`에 있다.
 
@@ -68,8 +68,8 @@ ROS 환경을 source한 다음 `PYTHONPATH=.:"${PYTHONPATH}" python3 -m pytest -
 이는 모든 한국어 이름의 형태소·소유 관계 해석을 검증한 결과가 아니다.
 일반적인 한국어 해석 성능과 실제 마이크·스피커 사용 검증은 별도다.
 
-- [최종 실제 응답·저장 결과](validation/SWM25-165_LUNA_2026-09-09/results.json)
-- [최초 이름 해석 불일치 기록](validation/SWM25-165_LUNA_2026-09-09/ambiguous-results.json)
+- [최종 실제 응답·저장 결과](../validation/SWM25-165_LUNA_2026-09-09/results.json)
+- [최초 이름 해석 불일치 기록](../validation/SWM25-165_LUNA_2026-09-09/ambiguous-results.json)
 
 실제 모델 시험은 HTTP와 음성 **대화 처리 worker**까지다. `publish_reply`의
 시험 콜백을 사용했으며 TTS Topic 발행·합성·재생을 실제로 시험한 것으로

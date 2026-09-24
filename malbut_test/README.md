@@ -20,7 +20,7 @@ VLM 설정·Cloud 키 외에 YOLO26s pose ONNX 모델과 실행 환경을 별도
 `bash homecam_agent/scripts/prepare_fall_pose_runtime.sh`로 Pose 전용 Python 환경을
 만들 수 있다. 이 명령은 모델을 내려받거나 카메라·Cloud를 실행하지 않는다.
 기본 모델 경로, 실행 인자와 테스트 순서는
-[낙상 감지 로봇 실행 준비](malbut_agent_server/docs/fall_robot_preparation.md)를 따른다.
+[낙상 감지 로봇 실행 준비](malbut_agent_server/docs/fall/fall_robot_preparation.md)를 따른다.
 PC에서 연결 테스트를 통과해도 Jetson 성능과 카메라 수신이 검증된 것은 아니다.
 
 ## 구조와 빌드 경계
