@@ -16,7 +16,7 @@ setup(
         ),
         (
             'share/' + package_name,
-            ['package.xml', 'README.md', '.env.example'],
+            ['package.xml', 'README.md', '.env.example', 'requirements-openai.txt'],
         ),
         (
             'share/' + package_name + '/docs',
@@ -61,7 +61,7 @@ setup(
             ],
         ),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'tiktoken>=0.7,<1'],
     extras_require={
         'vlm-nova': ['boto3>=1.35.0,<2'],
         'fall-cloud': ['aiohttp>=3.9,<4', 'Pillow>=9'],

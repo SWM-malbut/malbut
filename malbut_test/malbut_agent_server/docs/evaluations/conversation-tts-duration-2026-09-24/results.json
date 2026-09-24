@@ -1,0 +1,99 @@
+{
+  "created_at": "2026-09-23T18:57:36.685995+00:00",
+  "source": "conversation-spec-final-followup-2026-09-24.json",
+  "source_sha256": "229bfe28f90e27f487fc8769bc3ff1756fb23cebe9faf20df773b58fe9de221e",
+  "synthetic_only": true,
+  "physical_devices_used": false,
+  "scope": "Production OpenAISynthesizer streamed to WAV, without ROS or speaker. Existing text replay, not fresh conversation generation.",
+  "max_api_requests": 2,
+  "requests": [
+    {
+      "method": "POST",
+      "url": "https://api.openai.com/v1/audio/speech",
+      "body": {
+        "input": "상대성이론은 “시간과 공간이 모든 사람에게 똑같이 흐르지 않고, 관측자의 운동 상태와 중력에 따라 달라진다”는 이론입니다. 특수상대성이론은 빛의 속도가 누구에게나 같다는 사실에서 출발하고, 일반상대성이론은 중력을 시공간의 휘어짐으로 설명합니다. 먼저 특수상대성이론부터 차근차근 설명해드릴까요?",
+        "model": "gpt-4o-mini-tts",
+        "voice": "marin",
+        "response_format": "pcm"
+      }
+    },
+    {
+      "method": "POST",
+      "url": "https://api.openai.com/v1/audio/speech",
+      "body": {
+        "input": "특수상대성이론의 핵심은 두 가지입니다. 모든 관성계에서 물리 법칙이 같고, 진공에서 빛의 속도도 관측자와 무관하게 일정하다는 것입니다. 그래서 빠르게 움직이는 물체의 시간은 느리게 흐르고 길이는 운동 방향으로 짧아지며, 대표적인 결과가 ‘시간 지연’과 질량·에너지 등가식 E=mc²입니다. 다음으로 시간 지연이 왜 생기는지 빛시계 예시로 설명해드릴까요?",
+        "model": "gpt-4o-mini-tts",
+        "voice": "marin",
+        "response_format": "pcm"
+      }
+    }
+  ],
+  "cases": [
+    {
+      "id": "explanation-1",
+      "text": "상대성이론은 “시간과 공간이 모든 사람에게 똑같이 흐르지 않고, 관측자의 운동 상태와 중력에 따라 달라진다”는 이론입니다. 특수상대성이론은 빛의 속도가 누구에게나 같다는 사실에서 출발하고, 일반상대성이론은 중력을 시공간의 휘어짐으로 설명합니다. 먼저 특수상대성이론부터 차근차근 설명해드릴까요?",
+      "characters": 163,
+      "model": "gpt-4o-mini-tts",
+      "voice": "marin",
+      "sample_rate": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "completed": true,
+      "pcm_frames": 613200,
+      "chunks": 253,
+      "timeout_seconds": 8.0,
+      "first_buffer_seconds": 2.456,
+      "wall_seconds": 5.851,
+      "pcm_duration_seconds": 25.55,
+      "wav": "explanation-1.wav",
+      "wav_sha256": "306981469da1c54bd548421a34f17e71428ab8c28fb7037e0e1231d25dc2438b"
+    },
+    {
+      "id": "explanation-2",
+      "text": "특수상대성이론의 핵심은 두 가지입니다. 모든 관성계에서 물리 법칙이 같고, 진공에서 빛의 속도도 관측자와 무관하게 일정하다는 것입니다. 그래서 빠르게 움직이는 물체의 시간은 느리게 흐르고 길이는 운동 방향으로 짧아지며, 대표적인 결과가 ‘시간 지연’과 질량·에너지 등가식 E=mc²입니다. 다음으로 시간 지연이 왜 생기는지 빛시계 예시로 설명해드릴까요?",
+      "characters": 197,
+      "model": "gpt-4o-mini-tts",
+      "voice": "marin",
+      "sample_rate": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "completed": true,
+      "pcm_frames": 669600,
+      "chunks": 276,
+      "timeout_seconds": 8.0,
+      "first_buffer_seconds": 1.962,
+      "wall_seconds": 5.865,
+      "pcm_duration_seconds": 27.9,
+      "wav": "explanation-2.wav",
+      "wav_sha256": "53a4d03991ecea73c4dada0c4a1f8a3cba42161125e2c3af0d4d34c9277925b7"
+    }
+  ],
+  "environment": {
+    "python": "3.12.13",
+    "openai": "2.54.0",
+    "numpy": "1.26.4",
+    "tts_source_sha256": "f0a0331c088af4bf8a7c0284a2f48eba4f6f36f1470519a99ad2d065ed5e6dd5"
+  },
+  "completed_at": "2026-09-23T18:57:48.407250+00:00",
+  "measurement_driver": "measure.py",
+  "measurement_driver_sha256": "3fe9a002c18c8620d53bd7d2c2163d020bbfcaa2ba8830c12da4175a925fc831",
+  "sdk_max_retries": 0,
+  "sdk_max_retries_evidence": "Asserted in the executed client_factory; production adapter explicitly passed this value.",
+  "normal_completion_evidence": "Driver sets completed only after generator exhaustion, nonempty PCM, and cancellation check; both cases have completed=true and no error_type.",
+  "offline_tests": {
+    "files": [
+      "malbut_tts/test/test_api_synthesis.py",
+      "malbut_tts/test/test_api_synthesis_sdk.py"
+    ],
+    "passed": 39,
+    "seconds": 4.31,
+    "network_used": false
+  },
+  "pricing_reference": {
+    "url": "https://developers.openai.com/api/docs/models/gpt-4o-mini-tts",
+    "checked_on": "2026-09-24",
+    "text_input_usd_per_million_tokens": 0.6,
+    "audio_output_usd_per_million_tokens": 12.0,
+    "note": "Binary PCM responses did not provide token usage here. No exact usage cost or invoice amount is inferred from sample duration."
+  }
+}

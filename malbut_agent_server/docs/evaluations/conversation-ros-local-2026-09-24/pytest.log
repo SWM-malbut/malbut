@@ -1,0 +1,331 @@
+.............F...........FFFFF.F...F                                     [100%]
+=================================== FAILURES ===================================
+_________________ test_ros_restart_recalls_and_deletes_memory __________________
+
+ros_memory = <test_ros_memory_communication._DialogueHarness object at 0xffff95edfa60>
+
+    def test_ros_restart_recalls_and_deletes_memory(ros_memory):
+        """Restart the real Agent Node while retaining user and SQLite files."""
+        ros_memory.enable_and_remember()
+        saved = ros_memory.inspect_store()[1][0]
+        ros_memory.restart()
+    
+        assert ros_memory.inspect_store()[0]['enabled'] is True
+        assert ros_memory.say(RECALL_TEXT) == RECALL_REPLY
+        after = ros_memory.provider.calls[-1]
+>       assert after['history'] == []
+E       AssertionError: assert [Conversation...87325.711867)] == []
+E         Left contains 3 more items, first extra item: ConversationTurn(conversation_id='925bea9e-51ab-4331-b63f-acff1b882494', user_id='ros-memory-test-user', session_insta...ion', 'reason': '행동 요청이 아닙니다.'}}, 'schema_version': 2}, created_at=1790187325.6116493, completed_at=1790187325.6126845)
+E         Full diff:
+E           [
+E         -  ,
+E         +  ConversationTurn(conversation_id='925bea9e-51ab-4331-b63f-acff1b882494',
+E         +                   user_id='ros-memory-test-user',
+E         +                   session_instance_id='8d95e004-601d-45ae-93b3-7ffff6362f44',...
+E         
+E         ...Full output truncated (161 lines hidden), use '-vv' to show
+
+/source/malbut_agent_server/test/test_ros_memory_communication.py:300: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+[INFO] [1790187325.610202720] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187325.611101429] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "e3c09f01-2ffa-4550-b520-1e4616000ad8", "text": "개인화 켜줘"}
+[INFO] [1790187325.660941512] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "e3c09f01-2ffa-4550-b520-1e4616000ad8", "text": "이름·호칭·반려동물 정보·취향처럼 직접 말한 일상 정보를 앞으로 자동으로 저장하고 다음 대화에 활용해도 될까요? 언제든 조회·정정·삭제하거나 개인화를 중단할 수 있어요.", "kind": "answer", "conversation_id": "925bea9e-51ab-4331-b63f-acff1b882494"}
+[INFO] [1790187325.661448887] [malbut_tts_receiver]: {"event": "tts_text_received", "text": "이름·호칭·반려동물 정보·취향처럼 직접 말한 일상 정보를 앞으로 자동으로 저장하고 다음 대화에 활용해도 될까요? 언제든 조회·정정·삭제하거나 개인화를 중단할 수 있어요."}
+[INFO] [1790187325.661859304] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "43ae4a99-9472-4319-9844-9595cdd6769d", "text": "네"}
+[INFO] [1790187325.708950470] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "43ae4a99-9472-4319-9844-9595cdd6769d", "text": "개인화를 시작했어요. 직접 말한 일상 정보를 기억하고 대화에 활용할게요.", "kind": "answer", "conversation_id": "925bea9e-51ab-4331-b63f-acff1b882494"}
+[INFO] [1790187325.709334304] [malbut_tts_receiver]: {"event": "tts_text_received", "text": "개인화를 시작했어요. 직접 말한 일상 정보를 기억하고 대화에 활용할게요."}
+[INFO] [1790187325.710391762] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "33c6be02-f7f1-4544-936e-c0d1369139eb", "text": "우리 강아지 이름은 초코야"}
+[INFO] [1790187325.759999304] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "33c6be02-f7f1-4544-936e-c0d1369139eb", "text": "말씀을 들었어요.", "kind": "answer", "conversation_id": "925bea9e-51ab-4331-b63f-acff1b882494"}
+[INFO] [1790187325.761560304] [malbut_tts_receiver]: {"event": "tts_text_received", "text": "말씀을 들었어요."}
+[INFO] [1790187325.824332637] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187325.827325220] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "a036c5eb-b398-4a8d-bee2-3fa59ce77397", "text": "강아지 이름이 뭐야?"}
+[INFO] [1790187325.873906595] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "a036c5eb-b398-4a8d-bee2-3fa59ce77397", "text": "기억에 따르면 강아지 이름은 초코예요.", "kind": "answer", "conversation_id": "925bea9e-51ab-4331-b63f-acff1b882494"}
+[INFO] [1790187325.875630137] [malbut_tts_receiver]: {"event": "tts_text_received", "text": "기억에 따르면 강아지 이름은 초코예요."}
+_ test_fetch_failure_and_timeout_reach_manager_as_aborted[fetch_error-FETCH_FAILED] _
+
+ros_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff9659c670>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95f42050>, mission=<function ros_weather.<locals>.mission at 0xffff95f41f30>)
+failure = 'fetch_error', expected = 'FETCH_FAILED'
+
+    @pytest.mark.parametrize('failure,expected', [
+        ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+        ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+    ])
+    def test_fetch_failure_and_timeout_reach_manager_as_aborted(
+        ros_weather, failure, expected,
+    ):
+        """Failed Actions carry errors; Agent cannot use weather numbers."""
+        run = ros_weather
+        run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                            else failure == 'fetch_error')
+        run.client.block = failure == 'timeout'
+        run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
+        _, reply = run.say('오늘 날씨가 어때?')
+>       assert run.client.calls == 1
+E       assert 2 == 1
+E        +  where 2 = <test_ros_weather_communication._WeatherClient object at 0xffff9659c670>.calls
+E        +    where <test_ros_weather_communication._WeatherClient object at 0xffff9659c670> = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff9659c670>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95f42050>, mission=<function ros_weather.<locals>.mission at 0xffff95f41f30>).client
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:557: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187328.151342430] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187328.207096805] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187328.208857555] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "1c29aee5-4630-409d-92be-3388f8fed127", "text": "오늘 날씨가 어때?"}
+[INFO] [1790187328.259725722] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8d62ec320c994add88767954a7a54905d3fb1a6f3744203f7e8667b01bc391d4", "goal_id": "e761bb6abb77467b91b6987f11564005", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.264369638] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8d62ec320c994add88767954a7a54905d3fb1a6f3744203f7e8667b01bc391d4", "goal_id": "e761bb6abb77467b91b6987f11564005", "capability_id": "get_weather", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.267050013] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8d62ec320c994add88767954a7a54905d3fb1a6f3744203f7e8667b01bc391d4", "goal_id": "e761bb6abb77467b91b6987f11564005", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "e761bb6abb77467b91b6987f11564005", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187328.268927472] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8d62ec320c994add88767954a7a54905d3fb1a6f3744203f7e8667b01bc391d4", "goal_id": "e761bb6abb77467b91b6987f11564005", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "e761bb6abb77467b91b6987f11564005", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187328.270473888] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8d62ec320c994add88767954a7a54905d3fb1a6f3744203f7e8667b01bc391d4", "goal_id": "e761bb6abb77467b91b6987f11564005", "capability_id": "get_weather", "kind": "failed", "state": "FAILED", "accepted": true, "terminal": true, "cancel_requested": false, "mission_id": "e761bb6abb77467b91b6987f11564005", "reason": "", "result_yaml": "weather:\n  fetched_at:\n    sec: 0\n    nanosec: 0\n  valid_at:\n    sec: 0\n    nanosec: 0\n  location: ''\n  latitude: 0.0\n  longitude: 0.0\n  source: ''\n  timezone: ''\n  temperature_c: 0.0\n  weather_code: 0\n  daily: []\nerror_code: FETCH_FAILED\nmessage: FETCH_FAILED\n", "feedback_yaml": "state: FETCHING\n", "ros_status": 6}
+[INFO] [1790187328.307916722] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:051e8021-cc38-4464-b4b2-9193ec83314d", "goal_id": "cd775a5b74b54a36a0b5ca32d4a16235", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.309994472] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "1c29aee5-4630-409d-92be-3388f8fed127", "text": "날씨 정보 조회를 한 번 다시 시도할게요.", "kind": "progress", "conversation_id": null}
+[INFO] [1790187328.312908555] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:051e8021-cc38-4464-b4b2-9193ec83314d", "goal_id": "cd775a5b74b54a36a0b5ca32d4a16235", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": "cd775a5b74b54a36a0b5ca32d4a16235", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+--------------------------- Captured stderr teardown ---------------------------
+[INFO] [1790187328.326155388] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:051e8021-cc38-4464-b4b2-9193ec83314d", "goal_id": "cd775a5b74b54a36a0b5ca32d4a16235", "capability_id": "get_weather", "kind": "cancel_requested", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": true, "mission_id": "cd775a5b74b54a36a0b5ca32d4a16235", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+___ test_fetch_failure_and_timeout_reach_manager_as_aborted[timeout-TIMEOUT] ___
+
+ros_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff95cc7220>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95ddacb0>, mission=<function ros_weather.<locals>.mission at 0xffff95dd80d0>)
+failure = 'timeout', expected = 'TIMEOUT'
+
+    @pytest.mark.parametrize('failure,expected', [
+        ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+        ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+    ])
+    def test_fetch_failure_and_timeout_reach_manager_as_aborted(
+        ros_weather, failure, expected,
+    ):
+        """Failed Actions carry errors; Agent cannot use weather numbers."""
+        run = ros_weather
+        run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                            else failure == 'fetch_error')
+        run.client.block = failure == 'timeout'
+        run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
+        _, reply = run.say('오늘 날씨가 어때?')
+        assert run.client.calls == 1
+>       assert run.goals == [('get_weather', {})]
+E       AssertionError: assert [('get_weathe...weather', {})] == [('get_weather', {})]
+E         Left contains one more item: ('get_weather', {})
+E         Full diff:
+E         - [('get_weather', {})]
+E         + [('get_weather', {}), ('get_weather', {})]
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:558: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187328.342494305] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187328.396649972] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187328.398344513] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "20eee57b-3b90-418d-87a9-60575dfa7782", "text": "오늘 날씨가 어때?"}
+[INFO] [1790187328.448250763] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-e145cc5ed1e6a269ba266878004b9fa52afa9d7712c0af02dc435257f161e2ef", "goal_id": "e027f71423b240c1beb4b0f6d48ea09a", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.454654763] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-e145cc5ed1e6a269ba266878004b9fa52afa9d7712c0af02dc435257f161e2ef", "goal_id": "e027f71423b240c1beb4b0f6d48ea09a", "capability_id": "get_weather", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.456635805] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-e145cc5ed1e6a269ba266878004b9fa52afa9d7712c0af02dc435257f161e2ef", "goal_id": "e027f71423b240c1beb4b0f6d48ea09a", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "e027f71423b240c1beb4b0f6d48ea09a", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187328.457137597] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-e145cc5ed1e6a269ba266878004b9fa52afa9d7712c0af02dc435257f161e2ef", "goal_id": "e027f71423b240c1beb4b0f6d48ea09a", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "e027f71423b240c1beb4b0f6d48ea09a", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187328.674629805] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-e145cc5ed1e6a269ba266878004b9fa52afa9d7712c0af02dc435257f161e2ef", "goal_id": "e027f71423b240c1beb4b0f6d48ea09a", "capability_id": "get_weather", "kind": "failed", "state": "FAILED", "accepted": true, "terminal": true, "cancel_requested": false, "mission_id": "e027f71423b240c1beb4b0f6d48ea09a", "reason": "", "result_yaml": "weather:\n  fetched_at:\n    sec: 0\n    nanosec: 0\n  valid_at:\n    sec: 0\n    nanosec: 0\n  location: ''\n  latitude: 0.0\n  longitude: 0.0\n  source: ''\n  timezone: ''\n  temperature_c: 0.0\n  weather_code: 0\n  daily: []\nerror_code: TIMEOUT\nmessage: TIMEOUT\n", "feedback_yaml": "state: FETCHING\n", "ros_status": 6}
+[INFO] [1790187328.700968263] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:8e4b749a-7a43-4a03-aeed-a8f1f84367b5", "goal_id": "4ca7e4e1f306405e92cac452fbdb568c", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.706399513] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "20eee57b-3b90-418d-87a9-60575dfa7782", "text": "날씨 정보 조회를 한 번 다시 시도할게요.", "kind": "progress", "conversation_id": null}
+[INFO] [1790187328.707832138] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:8e4b749a-7a43-4a03-aeed-a8f1f84367b5", "goal_id": "4ca7e4e1f306405e92cac452fbdb568c", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": "4ca7e4e1f306405e92cac452fbdb568c", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+--------------------------- Captured stderr teardown ---------------------------
+[INFO] [1790187328.716599972] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:8e4b749a-7a43-4a03-aeed-a8f1f84367b5", "goal_id": "4ca7e4e1f306405e92cac452fbdb568c", "capability_id": "get_weather", "kind": "cancel_requested", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": true, "mission_id": "4ca7e4e1f306405e92cac452fbdb568c", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+_ test_fetch_failure_and_timeout_reach_manager_as_aborted[KMA_KEY_REQUIRED-KMA_KEY_REQUIRED] _
+
+ros_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff96495600>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95ddb1c0>, mission=<function ros_weather.<locals>.mission at 0xffff95ddb5b0>)
+failure = 'KMA_KEY_REQUIRED', expected = 'KMA_KEY_REQUIRED'
+
+    @pytest.mark.parametrize('failure,expected', [
+        ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+        ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+    ])
+    def test_fetch_failure_and_timeout_reach_manager_as_aborted(
+        ros_weather, failure, expected,
+    ):
+        """Failed Actions carry errors; Agent cannot use weather numbers."""
+        run = ros_weather
+        run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                            else failure == 'fetch_error')
+        run.client.block = failure == 'timeout'
+        run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
+        _, reply = run.say('오늘 날씨가 어때?')
+>       assert run.client.calls == 1
+E       assert 2 == 1
+E        +  where 2 = <test_ros_weather_communication._WeatherClient object at 0xffff96495600>.calls
+E        +    where <test_ros_weather_communication._WeatherClient object at 0xffff96495600> = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff96495600>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95ddb1c0>, mission=<function ros_weather.<locals>.mission at 0xffff95ddb5b0>).client
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:557: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187328.732517847] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187328.786188180] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187328.787674013] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "b9fc134b-c86e-4662-902e-d275cf0bb3be", "text": "오늘 날씨가 어때?"}
+[INFO] [1790187328.835829888] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-05214ecfd4f9a2066b2fe3960db2b7dd163a92df7223a4c7abbda28f9a805cca", "goal_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.840183597] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-05214ecfd4f9a2066b2fe3960db2b7dd163a92df7223a4c7abbda28f9a805cca", "goal_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "capability_id": "get_weather", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.842608180] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-05214ecfd4f9a2066b2fe3960db2b7dd163a92df7223a4c7abbda28f9a805cca", "goal_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187328.844460513] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-05214ecfd4f9a2066b2fe3960db2b7dd163a92df7223a4c7abbda28f9a805cca", "goal_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187328.844905097] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-05214ecfd4f9a2066b2fe3960db2b7dd163a92df7223a4c7abbda28f9a805cca", "goal_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "capability_id": "get_weather", "kind": "failed", "state": "FAILED", "accepted": true, "terminal": true, "cancel_requested": false, "mission_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "reason": "", "result_yaml": "weather:\n  fetched_at:\n    sec: 0\n    nanosec: 0\n  valid_at:\n    sec: 0\n    nanosec: 0\n  location: ''\n  latitude: 0.0\n  longitude: 0.0\n  source: ''\n  timezone: ''\n  temperature_c: 0.0\n  weather_code: 0\n  daily: []\nerror_code: KMA_KEY_REQUIRED\nmessage: KMA_KEY_REQUIRED\n", "feedback_yaml": "state: FETCHING\n", "ros_status": 6}
+[INFO] [1790187328.889517097] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:490c2d94-412d-4e2a-a215-b52f719fbfcf", "goal_id": "75b53ee76ae64ffd935eeaccd9cc6e05", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.891918014] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "b9fc134b-c86e-4662-902e-d275cf0bb3be", "text": "날씨 정보 조회를 한 번 다시 시도할게요.", "kind": "progress", "conversation_id": null}
+[INFO] [1790187328.894210972] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:490c2d94-412d-4e2a-a215-b52f719fbfcf", "goal_id": "75b53ee76ae64ffd935eeaccd9cc6e05", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": "75b53ee76ae64ffd935eeaccd9cc6e05", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+--------------------------- Captured stderr teardown ---------------------------
+[INFO] [1790187328.903199555] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:490c2d94-412d-4e2a-a215-b52f719fbfcf", "goal_id": "75b53ee76ae64ffd935eeaccd9cc6e05", "capability_id": "get_weather", "kind": "cancel_requested", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": true, "mission_id": "75b53ee76ae64ffd935eeaccd9cc6e05", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+_ test_fetch_failure_and_timeout_reach_manager_as_aborted[KMA_AUTH_FAILED-KMA_AUTH_FAILED] _
+
+ros_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff95cc4d60>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95d931c0>, mission=<function ros_weather.<locals>.mission at 0xffff95d92cb0>)
+failure = 'KMA_AUTH_FAILED', expected = 'KMA_AUTH_FAILED'
+
+    @pytest.mark.parametrize('failure,expected', [
+        ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+        ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+    ])
+    def test_fetch_failure_and_timeout_reach_manager_as_aborted(
+        ros_weather, failure, expected,
+    ):
+        """Failed Actions carry errors; Agent cannot use weather numbers."""
+        run = ros_weather
+        run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                            else failure == 'fetch_error')
+        run.client.block = failure == 'timeout'
+        run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
+        _, reply = run.say('오늘 날씨가 어때?')
+        assert run.client.calls == 1
+>       assert run.goals == [('get_weather', {})]
+E       AssertionError: assert [('get_weathe...weather', {})] == [('get_weather', {})]
+E         Left contains one more item: ('get_weather', {})
+E         Full diff:
+E         - [('get_weather', {})]
+E         + [('get_weather', {}), ('get_weather', {})]
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:558: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187328.918126930] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187328.972626139] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187328.974094680] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "19818fe6-cfcf-4025-8819-949778b5dafb", "text": "오늘 날씨가 어때?"}
+[INFO] [1790187329.025679680] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8f1519b9ccbfdffc07b5bb1861371fe2c7c4bdafbadf273bad76bbad2d1f96ea", "goal_id": "65f9cfb32b654ba5ac44803a9b61be76", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.030021972] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8f1519b9ccbfdffc07b5bb1861371fe2c7c4bdafbadf273bad76bbad2d1f96ea", "goal_id": "65f9cfb32b654ba5ac44803a9b61be76", "capability_id": "get_weather", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.032730639] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8f1519b9ccbfdffc07b5bb1861371fe2c7c4bdafbadf273bad76bbad2d1f96ea", "goal_id": "65f9cfb32b654ba5ac44803a9b61be76", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "65f9cfb32b654ba5ac44803a9b61be76", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187329.034095555] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8f1519b9ccbfdffc07b5bb1861371fe2c7c4bdafbadf273bad76bbad2d1f96ea", "goal_id": "65f9cfb32b654ba5ac44803a9b61be76", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "65f9cfb32b654ba5ac44803a9b61be76", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187329.035320430] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8f1519b9ccbfdffc07b5bb1861371fe2c7c4bdafbadf273bad76bbad2d1f96ea", "goal_id": "65f9cfb32b654ba5ac44803a9b61be76", "capability_id": "get_weather", "kind": "failed", "state": "FAILED", "accepted": true, "terminal": true, "cancel_requested": false, "mission_id": "65f9cfb32b654ba5ac44803a9b61be76", "reason": "", "result_yaml": "weather:\n  fetched_at:\n    sec: 0\n    nanosec: 0\n  valid_at:\n    sec: 0\n    nanosec: 0\n  location: ''\n  latitude: 0.0\n  longitude: 0.0\n  source: ''\n  timezone: ''\n  temperature_c: 0.0\n  weather_code: 0\n  daily: []\nerror_code: KMA_AUTH_FAILED\nmessage: KMA_AUTH_FAILED\n", "feedback_yaml": "state: FETCHING\n", "ros_status": 6}
+[INFO] [1790187329.074322722] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:45b4f46c-2089-4047-9293-d0caebbb62b6", "goal_id": "4947daa86f7a4056af121d74366b907e", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.075520889] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "19818fe6-cfcf-4025-8819-949778b5dafb", "text": "날씨 정보 조회를 한 번 다시 시도할게요.", "kind": "progress", "conversation_id": null}
+--------------------------- Captured stderr teardown ---------------------------
+[INFO] [1790187329.103222805] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:45b4f46c-2089-4047-9293-d0caebbb62b6", "goal_id": "4947daa86f7a4056af121d74366b907e", "capability_id": "get_weather", "kind": "cancel_requested", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": true, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+________ test_cancel_propagates_through_manager_and_discards_late_fetch ________
+
+ros_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff95eaaf80>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95d90790>, mission=<function ros_weather.<locals>.mission at 0xffff95d90160>)
+
+    def test_cancel_propagates_through_manager_and_discards_late_fetch(
+        ros_weather,
+    ):
+        """Cancel the same public mission while downstream weather is fetching."""
+        run = ros_weather
+        run.client.block = True
+        run.start()
+        run.send('오늘 날씨가 어때?')
+        run.spin_until(run.client.started.is_set)
+        request_id = next(iter(run.agent.missions._requests))
+        run.agent.missions.cancel(request_id)
+        run.spin_until(lambda: len(run.replies) == 1)
+        event = terminal_event(run)
+        assert event['kind'] == 'canceled'
+        assert event['ros_status'] == GoalStatus.STATUS_CANCELED
+        assert yaml.safe_load(event['result_yaml'])['error_code'] == 'CANCELED'
+        assert run.client.calls == 1
+>       assert run.provider.calls[-1]['weather']['status'] == 'unavailable'
+E       TypeError: 'NoneType' object is not subscriptable
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:590: TypeError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187329.117989389] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187329.172787680] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187329.175621430] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "d96d1e8e-5a85-473c-8dd1-555436d61aeb", "text": "오늘 날씨가 어때?"}
+[INFO] [1790187329.221730889] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.226767472] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.227569014] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "cancel_requested", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.229241555] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": "c844411a40c742fd88c38421900ed613", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187329.230351597] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": "c844411a40c742fd88c38421900ed613", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187329.230532597] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "cancel_accepted", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": "c844411a40c742fd88c38421900ed613", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187329.230713972] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "progress", "state": "CANCELING", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": "c844411a40c742fd88c38421900ed613", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187329.281103264] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "canceled", "state": "CANCELED", "accepted": true, "terminal": true, "cancel_requested": true, "mission_id": "c844411a40c742fd88c38421900ed613", "reason": "", "result_yaml": "weather:\n  fetched_at:\n    sec: 0\n    nanosec: 0\n  valid_at:\n    sec: 0\n    nanosec: 0\n  location: ''\n  latitude: 0.0\n  longitude: 0.0\n  source: ''\n  timezone: ''\n  temperature_c: 0.0\n  weather_code: 0\n  daily: []\nerror_code: CANCELED\nmessage: CANCELED\n", "feedback_yaml": "state: FETCHING\n", "ros_status": 5}
+[INFO] [1790187329.322852555] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:5734c866-887c-4aa5-b6a4-0395b59ec540", "goal_id": "2d1ea9c866df4098932bc572344c296b", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.325926722] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "d96d1e8e-5a85-473c-8dd1-555436d61aeb", "text": "날씨 정보 조회를 한 번 다시 시도할게요.", "kind": "progress", "conversation_id": null}
+[INFO] [1790187329.327244097] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:5734c866-887c-4aa5-b6a4-0395b59ec540", "goal_id": "2d1ea9c866df4098932bc572344c296b", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": "2d1ea9c866df4098932bc572344c296b", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+--------------------------- Captured stderr teardown ---------------------------
+[INFO] [1790187329.335977555] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:5734c866-887c-4aa5-b6a4-0395b59ec540", "goal_id": "2d1ea9c866df4098932bc572344c296b", "capability_id": "get_weather", "kind": "cancel_requested", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": true, "mission_id": "2d1ea9c866df4098932bc572344c296b", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+___ test_missing_manager_or_weather_action_never_falls_back[weather_server] ____
+
+ros_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff963019c0>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95dd8820>, mission=<function ros_weather.<locals>.mission at 0xffff95dda680>)
+missing = 'weather_server'
+
+    @pytest.mark.parametrize('missing', ['manager', 'weather_server'])
+    def test_missing_manager_or_weather_action_never_falls_back(
+        ros_weather, missing,
+    ):
+        """Neither missing Action endpoint permits an Agent-side API fallback."""
+        run = ros_weather
+        run.start(with_manager=missing != 'manager',
+                  with_weather=missing != 'weather_server')
+        _, reply = run.say('오늘 날씨가 어때?')
+>       assert len(run.goals) == (0 if missing == 'manager' else 1)
+E       AssertionError: assert 2 == 1
+E        +  where 2 = len([('get_weather', {}), ('get_weather', {})])
+E        +    where [('get_weather', {}), ('get_weather', {})] = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff963019c0>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95dd8820>, mission=<function ros_weather.<locals>.mission at 0xffff95dda680>).goals
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:608: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187329.524564166] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187329.580635250] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187329.581554791] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "7498fefd-936f-4b25-bed0-aa2da10e0e5c", "text": "오늘 날씨가 어때?"}
+[INFO] [1790187329.629020000] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-57ea6c1e4f07f78e1e8d55c737f8f9eaef0b6694106a1fdbff7c64d0e745efc0", "goal_id": "6df15805bc0940d3b9f058699f2a969c", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.632731500] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-57ea6c1e4f07f78e1e8d55c737f8f9eaef0b6694106a1fdbff7c64d0e745efc0", "goal_id": "6df15805bc0940d3b9f058699f2a969c", "capability_id": "get_weather", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.634039708] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-57ea6c1e4f07f78e1e8d55c737f8f9eaef0b6694106a1fdbff7c64d0e745efc0", "goal_id": "6df15805bc0940d3b9f058699f2a969c", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "6df15805bc0940d3b9f058699f2a969c", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187329.634511958] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-57ea6c1e4f07f78e1e8d55c737f8f9eaef0b6694106a1fdbff7c64d0e745efc0", "goal_id": "6df15805bc0940d3b9f058699f2a969c", "capability_id": "get_weather", "kind": "failed", "state": "FAILED", "accepted": true, "terminal": true, "cancel_requested": false, "mission_id": "6df15805bc0940d3b9f058699f2a969c", "reason": "Action server /malbut/weather/get is unavailable", "result_yaml": "", "feedback_yaml": "", "ros_status": 6}
+[INFO] [1790187329.684703166] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:c208ef8f-120f-4014-81b1-0dd1a5c6d487", "goal_id": "528c2f535be64de39e2556bff86d48f3", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.688874250] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "7498fefd-936f-4b25-bed0-aa2da10e0e5c", "text": "날씨 정보 조회를 한 번 다시 시도할게요.", "kind": "progress", "conversation_id": null}
+[INFO] [1790187329.689812958] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:c208ef8f-120f-4014-81b1-0dd1a5c6d487", "goal_id": "528c2f535be64de39e2556bff86d48f3", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": "528c2f535be64de39e2556bff86d48f3", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+--------------------------- Captured stderr teardown ---------------------------
+[INFO] [1790187329.699035166] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:c208ef8f-120f-4014-81b1-0dd1a5c6d487", "goal_id": "528c2f535be64de39e2556bff86d48f3", "capability_id": "get_weather", "kind": "cancel_requested", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": true, "mission_id": "528c2f535be64de39e2556bff86d48f3", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+_____ test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose _____
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_real_ros_callbacks_on_fak0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xffff95eab1c0>
+
+    def test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose(tmp_path, monkeypatch):
+        node_module = pytest.importorskip('rclpy.node')
+        sensor = pytest.importorskip('sensor_msgs.msg')
+        std = pytest.importorskip('std_msgs.msg')
+        import numpy as np
+    
+        class Node:
+            def __init__(self, name):
+                self.subscriptions = {}
+                self.publishers = {}
+    
+            def create_subscription(self, msg, topic, callback, qos):
+                self.subscriptions[topic] = callback
+    
+            def create_publisher(self, msg, topic, qos):
+                publisher = Mock()
+                self.publishers[topic] = publisher
+                return publisher
+    
+            def create_timer(self, *args):
+                pass
+    
+            def get_clock(self):
+                return SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=10**12))
+    
+            def get_logger(self):
+                return Mock()
+    
+        monkeypatch.setattr(node_module, 'Node', Node)
+        _, clock, provider = make()
+>       node = create_fall_node(FallNodeSettings.parse(json.dumps(config(tmp_path))),
+                                provider=provider, journal=None, clock=clock)
+
+/source/malbut_agent_server/test/test_fall_runtime.py:215: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+settings = FallNodeSettings(device_id='robot', journal_path=PosixPath('/tmp/pytest-of-root/pytest-0/test_real_ros_callbacks_on_fa...ges=12), retention_s=30, buffer_bytes=10000000, buffer_frames=100, input_fps=5, max_source_age_s=1, control_lease_s=10)
+
+    def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
+        import cv2
+>       from cv_bridge import CvBridge, CvBridgeError
+E       ModuleNotFoundError: No module named 'cv_bridge'
+
+/source/malbut_agent_server/malbut_agent_server/ros_fall_monitor.py:26: ModuleNotFoundError
+------------------- generated xml file: /results/pytest.xml --------------------
+8 failed, 28 passed in 9.08s

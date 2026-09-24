@@ -1,0 +1,77 @@
+{
+  "created_at": "2026-09-23T18:14:43.628586+00:00",
+  "scope": "synthetic ROS communication and fake image callback; no physical devices, microphone, speaker, robot, external DDS or API",
+  "docker_started_by_this_task": true,
+  "original_container": "malbut-speech-retry-test",
+  "temporary_image": "malbut-conversation-ros-local:20260924",
+  "temporary_container": "malbut-conversation-ros-check-20260924",
+  "network": "none",
+  "devices": [],
+  "privileged": false,
+  "cap_drop": [
+    "ALL"
+  ],
+  "security_opt": [
+    "no-new-privileges"
+  ],
+  "source_mount": "/source:ro",
+  "runtime_build_install": "/tmp/ros-workspace",
+  "results_mount": "/results:rw",
+  "ROS_LOCALHOST_ONLY": "1",
+  "ROS_DOMAIN_ID": "199 (communication/memory fixtures use 193; weather uses 197)",
+  "package_installation": false,
+  "image_download": false,
+  "git_head": "d6843cf1ab05e404bdc67918bb57f96f38ca320d",
+  "test_source_sha256": {
+    "malbut_agent_server/test/test_node_communication_ros.py": "42e541968a74a13ec494f76ab0f84fe5b1d169a448a21d8f58767d04010abedc",
+    "malbut_agent_server/test/test_ros_memory_communication.py": "d8b9b9e24154f256fea51ac8dea69cc51d3f74b6b8fcea5ca584da2332d51122",
+    "malbut_agent_server/test/test_ros_weather_communication.py": "5a42597c00b357148d19bb72155d71b17c6707d7702143d611d02548c23870b2",
+    "malbut_agent_server/test/test_speech_addressee_service_ros.py": "6a96731e0a47601c783e2426c74d73753d4c1f438c2c90c1f88e08b6e9a0639c",
+    "malbut_agent_server/test/test_fall_runtime.py": "24971a69e9cc9cb6999f38da72f474822521caf81727a8cc191528e0072b61cc",
+    "malbut_interfaces/CMakeLists.txt": "b58e8c37db83eca4be812002fab2f5ed845926f365d7a281670c0ab5bc55bf33"
+  },
+  "initial_existing_containers": [
+    "17ed6f0f1d23 malbut-rosorin-sim-20260918 ros:humble-ros-base-jammy Exited (143) 5 days ago",
+    "47e65f967365 malbut-speech-retry-test ros:humble-ros-base-jammy Exited (137) 5 days ago",
+    "6ce872292cf4 malbut-agent-v2-ros ros:humble-ros-base-jammy Exited (137) 8 days ago"
+  ],
+  "limitations": [
+    "Fixed providers and synthetic messages do not verify microphone, speaker, physical hardware or model response quality."
+  ],
+  "container_id": "468c9b69ceef9aebcc73c10aca372c96c8ea64992cce94eeb1ac6aec22176844",
+  "snapshot_image_id": "sha256:e0c7b6f81a1cec39f883c5f43fe652849cf75b17607c12b2aa1c29ac97b5ac85",
+  "verified_container": {
+    "NetworkMode": "none",
+    "ReadonlyRootfs": true,
+    "Privileged": false,
+    "Devices": [],
+    "CapDrop": [
+      "ALL"
+    ],
+    "SecurityOpt": [
+      "no-new-privileges"
+    ],
+    "Tmpfs": {
+      "/root": "exec,size=268435456",
+      "/tmp": "exec,size=2147483648"
+    },
+    "PortBindings": {}
+  },
+  "verified_mounts": [
+    {
+      "Type": "bind",
+      "Source": "/Users/sinhyeonjae/Documents/ChatGPT/malbut",
+      "Destination": "/source",
+      "RW": false
+    },
+    {
+      "Type": "bind",
+      "Source": "/Users/sinhyeonjae/Documents/ChatGPT/malbut/malbut_agent_server/docs/evaluations/conversation-ros-local-2026-09-24",
+      "Destination": "/results",
+      "RW": true
+    }
+  ],
+  "verified_networks": [
+    "none"
+  ]
+}

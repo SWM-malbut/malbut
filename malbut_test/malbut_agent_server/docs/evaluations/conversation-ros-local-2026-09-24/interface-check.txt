@@ -1,0 +1,6 @@
+malbut_interfaces.action._execute_mission ExecuteMission
+malbut_interfaces.action._follow_person FollowPerson
+malbut_interfaces.action._get_weather GetWeather
+malbut_interfaces.msg._speech_request SpeechRequest
+malbut_interfaces.msg._speech_transcript SpeechTranscript
+malbut_interfaces.srv._classify_speech_addressee ClassifySpeechAddressee

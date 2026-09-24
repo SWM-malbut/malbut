@@ -82,7 +82,8 @@ def test_tool_selection_precedes_one_manager_read_and_one_answer(runtime, status
 
     runtime.provider, runtime.weather_executor = provider, execute
     result = runtime.handle(request())
-    assert calls == ['weather-1']
+    expected_reads = 2 if status == 'unavailable' else 1
+    assert calls[0] == 'weather-1' and len(set(calls)) == expected_reads
     assert len(provider.calls) == 2
     assert provider.calls[0]['tools'] == ['get_weather']
     assert provider.calls[1]['tools'] == []
@@ -99,7 +100,7 @@ def test_tool_selection_precedes_one_manager_read_and_one_answer(runtime, status
     assert result.safety.allowed and result.state_trusted is False
     cached = runtime.handle(request())
     assert cached.raw_decision == result.raw_decision
-    assert len(provider.calls) == 2 and len(calls) == 1
+    assert len(provider.calls) == 2 and len(calls) == expected_reads
 
 
 def test_plain_message_does_not_prefetch_weather(runtime):
@@ -150,7 +151,8 @@ def test_manager_failure_becomes_unavailable_without_direct_cache(runtime, outco
     provider = WeatherProvider()
     runtime.provider, runtime.weather_executor = provider, execute
     result = runtime.handle(request())
-    assert calls == ['weather-1'] and len(provider.calls) == 2
+    assert calls[0] == 'weather-1' and len(set(calls)) == 2
+    assert len(provider.calls) == 2
     assert provider.calls[1]['weather'] == {'status': 'unavailable'}
     assert result.decision.type == 'message' and result.decision.message == 'unavailable'
 
@@ -362,15 +364,61 @@ def test_location_tool_cannot_bypass_manager_in_production_or_simulation():
             ToolCapability('set_weather_location', mode=mode)
 
 
-def test_failed_location_write_cannot_preserve_a_model_save_claim(runtime):
+@pytest.mark.parametrize('outcome', [{'status': 'unavailable'}, TimeoutError('write result unknown')])
+def test_failed_location_write_cannot_preserve_a_model_save_claim(runtime, outcome):
     runtime.provider = WeatherProvider(first=AgentDecision(
         'tool_call', '수원으로 저장했어요.', reason='weather_location_saved',
         tool_name='set_weather_location', arguments={'location': '수원시 우만1동'},
     ))
-    runtime.weather_location_executor = lambda *_: {'status': 'unavailable'}
+    writes = []
+
+    def execute(*args):
+        writes.append(args)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    runtime.weather_location_executor = execute
     result = runtime.handle(request(
         text='날씨 위치를 수원시 우만1동으로 저장해줘', tools=('set_weather_location',),
     ))
     assert result.decision.reason == 'weather_location_unavailable'
+    assert len(writes) == 1
     assert '저장하지 못했어요' in result.decision.message
     assert '저장했어요' not in result.decision.message
+
+
+@pytest.mark.parametrize('status', ['fresh', 'stale', 'unavailable'])
+def test_lookup_and_answer_failures_are_distinguished_without_repeating_execution(runtime, status):
+    class AnswerFailureProvider(WeatherProvider):
+        def complete(self, request, memories, conversation_turns, tools,
+                     conversation_summary=None, *, weather_context=None):
+            if weather_context is not None:
+                self.calls.append({'weather': weather_context})
+                raise TimeoutError('synthetic answer generation failure')
+            return super().complete(request, memories, conversation_turns, tools,
+                                    conversation_summary)
+
+    child, reads = AnswerFailureProvider(), []
+    runtime.provider = ReliableProvider([child], sleep=lambda _: None)
+    runtime.weather_executor = lambda key: (reads.append(key) or {
+        'status': status, 'location': '서울', 'current': {'temperature_c': 24},
+    })
+    query = request(text='내일 비가 와?')
+    result = runtime.handle(query)
+    if status == 'fresh':
+        assert result.decision.type == 'message'
+        assert result.decision.reason == 'weather_answer_unavailable'
+        assert '날씨 정보는 조회했지만' in result.decision.message
+        assert '답변을 만드는 데 실패' in result.decision.message
+        assert '24' not in result.decision.message  # Current data cannot answer tomorrow's rain.
+    else:
+        assert result.decision.reason == 'provider_unavailable'
+        assert '조회했지만' not in result.decision.message
+    assert result.provider_result.provider == 'reliable-fallback'
+    assert result.raw_decision.tool_name == 'get_weather'
+    assert len(set(reads)) == (2 if status == 'unavailable' else 1)
+    assert len(child.calls) == (2 if status == 'unavailable' else 3)
+    before = (len(reads), len(child.calls))
+    assert runtime.handle(query).decision == result.decision
+    assert (len(reads), len(child.calls)) == before

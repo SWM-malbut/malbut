@@ -28,6 +28,7 @@ import yaml  # noqa: E402
 
 from malbut_agent_server import ros_communication, weather_action  # noqa: E402
 from malbut_agent_server.config import Settings  # noqa: E402
+from malbut_agent_server.conversation_progress import WEATHER_RETRY_NOTICE  # noqa: E402
 from malbut_agent_server.factory import build_orchestrator  # noqa: E402
 from malbut_agent_server.schemas import (  # noqa: E402
     AgentDecision, ProviderResult,
@@ -203,7 +204,7 @@ def ros_weather(tmp_path, monkeypatch):
 
     run = SimpleNamespace(
         client=client, provider=provider, replies=replies, receipts=receipts,
-        events=events, goals=goals, spin_until=spin_until,
+        events=events, goals=goals, spin_until=spin_until, responses=[],
         agent=None, manager=None, weather=None,
         location_db_path=location_db_path, location_store=location_store,
         resolve_location=None,
@@ -249,6 +250,15 @@ def ros_weather(tmp_path, monkeypatch):
             dialogue_settings=settings, dialogue_factory=runtime_factory,
             on_event=events.append, goal_response_timeout_s=1.0,
         )
+        original_publish = run.agent.dialogue.publish_reply
+
+        def publish_reply(response, publish):
+            published = original_publish(response, publish)
+            if published is not None:
+                run.responses.append(published)
+            return published
+
+        monkeypatch.setattr(run.agent.dialogue, 'publish_reply', publish_reply)
         executor.add_node(run.agent)
         spin_until(lambda: (
             speech_publisher.get_subscription_count() == 1
@@ -279,8 +289,15 @@ def ros_weather(tmp_path, monkeypatch):
     def say(text, utterance_id=None):
         previous = len(replies)
         utterance_id = send(text, utterance_id)
-        spin_until(lambda: len(replies) > previous)
-        return utterance_id, replies[-1]
+        def terminal_replies():
+            return [item for item in run.responses
+                    if item['utterance_id'] == utterance_id and item['kind'] != 'progress']
+
+        spin_until(lambda: bool(terminal_replies()))
+        terminal = terminal_replies()
+        assert len(terminal) == 1
+        spin_until(lambda: terminal[0]['text'] in replies[previous:])
+        return utterance_id, terminal[0]['text']
 
     run.start, run.send, run.say = start, send, say
 
@@ -465,19 +482,27 @@ def test_interrupted_location_setting_cannot_save_late_result(stored_weather, in
     run = stored_weather
     run.location_store.set(run.location)
     started = Event()
+    resolutions = []
 
     def resolve(query):
+        resolutions.append(query)
         started.set()
         assert run.client.release.wait(10.0)
         return [{**run.location, 'location': '용인시 동백동', 'latitude': 37.277}]
 
     run.resolve_location = resolve
     run.start(auto_location=True, timeout_s=0.2 if interruption == 'timeout' else 5.0)
-    run.send('여기는 용인시 동백동')
+    utterance_id = run.send('여기는 용인시 동백동')
     run.spin_until(started.is_set)
+    request_id = next(iter(run.agent.missions._requests))
     if interruption == 'cancel':
-        run.agent.missions.cancel(next(iter(run.agent.missions._requests)))
-    run.spin_until(lambda: len(run.replies) == 1)
+        run.agent.missions.cancel(request_id)
+        run.spin_until(lambda: run.agent.missions.snapshot(request_id)['terminal'])
+        run.spin_until(lambda: run.agent.dialogue._outstanding == 0)
+        assert run.responses == run.replies == []
+    else:
+        run.spin_until(lambda: len(run.replies) == 1)
+        assert run.responses[0]['kind'] == 'answer'
     event = terminal_event(run)
     assert event['kind'] == ('canceled' if interruption == 'cancel' else 'failed')
     assert run.location_store.get() == run.location
@@ -486,6 +511,11 @@ def test_interrupted_location_setting_cannot_save_late_result(stored_weather, in
     assert not run.weather._worker.is_alive()
     assert run.location_store.get() == run.location
     assert run.client.calls == 0
+    run.send('여기는 용인시 동백동', utterance_id)
+    run.spin_until(lambda: (utterance_id, '여기는 용인시 동백동', 'duplicate') in run.receipts)
+    assert resolutions == ['용인시 동백동']
+    assert len(run.goals) == len(run.provider.calls) == 1
+    assert not any(WEATHER_RETRY_NOTICE in text for text in run.replies)
 
 
 def test_weather_fetch_runs_through_manager_and_typed_action_result(
@@ -553,13 +583,15 @@ def test_fetch_failure_and_timeout_reach_manager_as_aborted(
                         else failure == 'fetch_error')
     run.client.block = failure == 'timeout'
     run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
-    _, reply = run.say('오늘 날씨가 어때?')
-    assert run.client.calls == 1
-    assert run.goals == [('get_weather', {})]
-    event = terminal_event(run)
-    assert event['kind'] == 'failed'
-    assert event['ros_status'] == GoalStatus.STATUS_ABORTED
-    result = yaml.safe_load(event['result_yaml'])
+    utterance_id, reply = run.say('오늘 날씨가 어때?')
+    assert run.client.calls == (1 if failure == 'timeout' else 2)
+    assert run.goals == [('get_weather', {})] * 2
+    terminal = [event for event in run.events if event.get('terminal')]
+    assert len(terminal) == 2
+    assert len({event['request_id'] for event in terminal}) == 2
+    assert all(event['kind'] == 'failed'
+               and event['ros_status'] == GoalStatus.STATUS_ABORTED for event in terminal)
+    result = yaml.safe_load(terminal[0]['result_yaml'])
     assert result['error_code'] == expected
     if failure == 'timeout':
         assert not run.client.finished.is_set()
@@ -568,6 +600,13 @@ def test_fetch_failure_and_timeout_reach_manager_as_aborted(
     assert context['status'] == 'unavailable' and 'current' not in context
     assert '23.5' not in reply
     assert PRIVATE_ERROR not in reply + yaml.safe_dump(run.events)
+    assert sum(text.count(WEATHER_RETRY_NOTICE) for text in run.replies) == 1
+    assert [item['kind'] for item in run.responses if item['kind'] != 'progress'] == ['answer']
+    counts = (run.client.calls, len(run.responses))
+    run.send('오늘 날씨가 어때?', utterance_id)
+    run.spin_until(lambda: (utterance_id, '오늘 날씨가 어때?', 'duplicate') in run.receipts)
+    assert len(run.goals) == len(run.provider.calls) == 2
+    assert (run.client.calls, len(run.responses)) == counts
 
 
 def test_cancel_propagates_through_manager_and_discards_late_fetch(
@@ -577,23 +616,32 @@ def test_cancel_propagates_through_manager_and_discards_late_fetch(
     run = ros_weather
     run.client.block = True
     run.start()
-    run.send('오늘 날씨가 어때?')
+    utterance_id = run.send('오늘 날씨가 어때?')
     run.spin_until(run.client.started.is_set)
     request_id = next(iter(run.agent.missions._requests))
     run.agent.missions.cancel(request_id)
-    run.spin_until(lambda: len(run.replies) == 1)
+    run.spin_until(lambda: run.agent.missions.snapshot(request_id)['terminal'])
+    run.spin_until(lambda: run.agent.dialogue._outstanding == 0)
     event = terminal_event(run)
     assert event['kind'] == 'canceled'
     assert event['ros_status'] == GoalStatus.STATUS_CANCELED
     assert yaml.safe_load(event['result_yaml'])['error_code'] == 'CANCELED'
     assert run.client.calls == 1
-    assert run.provider.calls[-1]['weather']['status'] == 'unavailable'
+    assert len(run.provider.calls) == 1 and run.provider.calls[0]['weather'] is None
+    assert run.goals == [('get_weather', {})]
+    assert run.responses == run.replies == []
     run.client.release.set()
     run.spin_until(run.client.finished.is_set)
     run.weather._worker.join(timeout=1.0)
     assert not run.weather._worker.is_alive()
-    assert len(run.provider.calls) == 2 and len(run.replies) == 1
-    assert '23.5' not in run.replies[0]
+    run.send('오늘 날씨가 어때?', utterance_id)
+    run.spin_until(lambda: (utterance_id, '오늘 날씨가 어때?', 'duplicate') in run.receipts)
+    _, reply = run.say('안녕')
+    assert reply == '안녕하세요.'
+    assert run.goals == [('get_weather', {})] and run.client.calls == 1
+    assert len(run.provider.calls) == 2
+    assert run.replies == ['안녕하세요.']
+    assert not any(item['utterance_id'] == utterance_id for item in run.responses)
 
 
 @pytest.mark.parametrize('missing', ['manager', 'weather_server'])
@@ -604,11 +652,22 @@ def test_missing_manager_or_weather_action_never_falls_back(
     run = ros_weather
     run.start(with_manager=missing != 'manager',
               with_weather=missing != 'weather_server')
-    _, reply = run.say('오늘 날씨가 어때?')
-    assert len(run.goals) == (0 if missing == 'manager' else 1)
+    utterance_id, reply = run.say('오늘 날씨가 어때?')
+    assert len(run.goals) == (0 if missing == 'manager' else 2)
     assert run.client.calls == 0
     assert len(run.provider.calls) == 2
     assert run.provider.calls[0]['weather'] is None
     context = run.provider.calls[1]['weather']
     assert context['status'] == 'unavailable' and 'current' not in context
     assert reply and '23.5' not in reply
+    assert sum(text.count(WEATHER_RETRY_NOTICE) for text in run.replies) == 1
+    terminal = [event for event in run.events if event.get('terminal')]
+    assert len(terminal) == 2
+    assert len({event['request_id'] for event in terminal}) == 2
+    assert not any(event['kind'] == 'succeeded' for event in terminal)
+    count = len(run.responses)
+    run.send('오늘 날씨가 어때?', utterance_id)
+    run.spin_until(lambda: (utterance_id, '오늘 날씨가 어때?', 'duplicate') in run.receipts)
+    assert len(run.goals) == (0 if missing == 'manager' else 2)
+    assert run.client.calls == 0 and len(run.provider.calls) == 2
+    assert len(run.responses) == count

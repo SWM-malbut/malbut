@@ -10,6 +10,7 @@ import copy
 import json
 import re
 
+from malbut_agent_server.conversation_preferences import response_setting_fact
 from malbut_agent_server.memory_contract import validate_memory_proposal
 from malbut_agent_server.personal_memory import (
     compact, direct_source, local_intent, management_request,
@@ -87,6 +88,7 @@ def automatic_candidate(request, snapshot, result):
         if (
             proposal['operation'] != 'remember'
             or not proposal['facts']
+            or all(response_setting_fact(fact) for fact in proposal['facts'])
             or proposal['target_ids']
             or proposal['query']
             or proposal['evidence'] not in text

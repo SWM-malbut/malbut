@@ -18,6 +18,12 @@ from malbut_agent_server.conversation import (
     ConversationTurn,
     SQLiteConversationStore,
 )
+from malbut_agent_server.conversation_progress import (
+    claim_retry, conversation_request, WEATHER_RETRY_NOTICE,
+)
+from malbut_agent_server.conversation_ownership import (
+    owned_conversation_request, recover_abandoned_turns,
+)
 from malbut_agent_server.gateway import (
     CapabilityRegistry,
     production_registry,
@@ -418,6 +424,7 @@ class AgentOrchestrator:
         automatic_memory_extractor=None,
         weather_executor: Callable[[str], dict] | None = None,
         weather_location_executor: Callable[[str, str], dict] | None = None,
+        context_compactor=None,
     ) -> None:
         """Initialize provider, memory, session, and safety services."""
         if memory_limit < 1 or memory_limit > 10:
@@ -451,6 +458,7 @@ class AgentOrchestrator:
         self.personal_memory = PersonalMemory(memory_store, conversation_store)
         self.memory_source_reviewer = memory_source_reviewer
         self.automatic_memory_extractor = automatic_memory_extractor
+        self.context_compactor = context_compactor
         self.weather_executor = weather_executor
         self.weather_location_executor = weather_location_executor
         if type(background_memory) is not bool:
@@ -461,6 +469,7 @@ class AgentOrchestrator:
             if background_memory else None
         )
         self._closed = False
+        self._deferred_conversation_recovery = recover_abandoned_turns(conversation_store)
 
     def start_background_memory(self):
         """Recover queued work when serving, not during construction."""
@@ -479,6 +488,8 @@ class AgentOrchestrator:
                 return
             self._closed = True
         self.stop_background_memory()
+        if self.context_compactor is not None:
+            self.context_compactor.close()
         try:
             self.conversation_store.close()
         finally:
@@ -528,6 +539,8 @@ class AgentOrchestrator:
                 request.user_id, connection=connection,
             )
 
+    @conversation_request
+    @owned_conversation_request
     def handle(
         self,
         request: AgentRequest,
@@ -605,6 +618,15 @@ class AgentOrchestrator:
                     token,
                     utterance_resolver,
                 )
+                if self.context_compactor is not None:
+                    self.context_compactor.schedule(
+                        token, begin.summary, memory_snapshot.history,
+                        memory_snapshot.summary, memory_snapshot.state,
+                        effective_request.utterance,
+                    )
+                from malbut_agent_server.conversation_recall import recall_originals
+
+                recall_originals(self.personal_memory, request, token, memory_snapshot)
                 result = self._handle_uncached(
                     request,
                     effective_request,
@@ -872,6 +894,11 @@ class AgentOrchestrator:
         }:
             provider_result = self._answer_weather(
                 model_request, memories, conversation_turns, conversation_summary, provider_result,
+                memory_context={
+                    'mode': 'answer_only',
+                    'enabled': memory_snapshot.state['enabled'],
+                    'response_settings': memory_snapshot.context['response_settings'],
+                },
             )
             decision = provider_result.decision
         issued_at = float(self._state_clock())
@@ -917,6 +944,7 @@ class AgentOrchestrator:
 
     def _answer_weather(
         self, request, memories, conversation_turns, conversation_summary, first_result,
+        *, memory_context=None,
     ) -> ProviderResult:
         """Execute one Manager read after the model's Tool choice, then answer without Tools."""
         setting_location = first_result.decision.tool_name == 'set_weather_location'
@@ -926,16 +954,22 @@ class AgentOrchestrator:
                 type='message', message='지금 날씨 조회 기능을 사용할 수 없어요.',
                 reason='weather_unavailable', confidence=1.0,
             ))
-        try:
-            if setting_location:
-                weather = executor(request.request_id, first_result.decision.arguments['location'])
-            else:
-                weather = executor(request.request_id)
-            weather = bounded_weather_context(weather)
-        except CancelledError:
-            raise
-        except Exception:
-            weather = {'status': 'unavailable'}
+        for attempt in range(2):
+            try:
+                if setting_location:
+                    weather = executor(request.request_id, first_result.decision.arguments['location'])
+                else:
+                    # A new read ID avoids replaying the Manager's failed receipt.
+                    read_id = request.request_id if attempt == 0 else str(uuid.uuid4())
+                    weather = executor(read_id)
+                weather = bounded_weather_context(weather)
+            except CancelledError:
+                raise
+            except Exception:
+                weather = {'status': 'unavailable'}
+            if (setting_location or weather['status'] != 'unavailable' or attempt
+                    or not claim_retry(WEATHER_RETRY_NOTICE)):
+                break
         if setting_location:
             # A committed setting needs a receipt even if a second model call would fail.
             status = weather['status']
@@ -968,8 +1002,20 @@ class AgentOrchestrator:
             copy.deepcopy(list(conversation_turns)), [],
             conversation_summary=copy.deepcopy(conversation_summary),
             weather_context=weather,
+            **({'memory_context': copy.deepcopy(memory_context)}
+               if memory_context is not None and accepts_memory_context(self.provider) else {}),
         )
         answer.validate()
+        if (weather['status'] == 'fresh'
+                and answer.provider == 'reliable-fallback'
+                and answer.model == 'safe-non-action'
+                and answer.decision.reason == 'provider_unavailable'):
+            answer = replace(answer, decision=AgentDecision(
+                type='message',
+                message=('날씨 정보는 조회했지만 질문에 맞는 답변을 만드는 데 실패했어요. '
+                         '잠시 후 다시 물어봐 주세요.'),
+                reason='weather_answer_unavailable', confidence=1.0,
+            ), memory_proposal=None)
         if answer.decision.type == 'tool_call' or answer.memory_proposal is not None:
             answer = replace(answer, decision=AgentDecision(
                 type='refusal', message='날씨 조회 결과로 답변을 만들지 못했어요.',

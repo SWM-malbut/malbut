@@ -178,8 +178,8 @@ def test_default_luna_queues_memory_after_reply(tmp_path, http_server):
         ]
         assert runtime.memory_store.list_for_user(request.user_id) == []
         assert calls[0]['model'] == 'gpt-5.6-luna'
-        assert calls[0]['reasoning']['effort'] == 'none'
-        assert calls[0]['max_output_tokens'] == 500
+        assert calls[0]['reasoning']['effort'] == 'low'
+        assert calls[0]['max_output_tokens'] == 1024
         assert result.provider_result.model == 'gpt-5.6-luna'
         extraction_release.set()
         import time

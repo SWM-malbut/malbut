@@ -1,0 +1,521 @@
+{
+  "initial_run": {
+    "tests": 36,
+    "passed": 28,
+    "failed": 8,
+    "skipped": 0,
+    "seconds": 9.077,
+    "by_suite": {
+      "test.test_node_communication_ros": {
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0
+      },
+      "test.test_ros_memory_communication": {
+        "passed": 3,
+        "failed": 1,
+        "skipped": 0
+      },
+      "test.test_ros_weather_communication": {
+        "passed": 11,
+        "failed": 6,
+        "skipped": 0
+      },
+      "test.test_speech_addressee_service_ros": {
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0
+      },
+      "test.test_fall_runtime": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0
+      }
+    },
+    "results": [
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_follow_feedback_and_result_reach_real_tts_receiver",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_invalid_capability_is_accepted_then_aborted_without_execution",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_cancel_receipt_precedes_final_canceled_result",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_duplicate_requests_and_repeated_progress_do_not_resend_or_speak",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_two_independent_requests_keep_their_own_results",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_unavailable_manager_does_not_claim_execution",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_stt_duplicate_has_one_reply_and_next_turn_uses_real_history",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_slow_dialogue_does_not_block_manager_feedback_or_cancel",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_dialogue_failure_is_reported_and_next_turn_recovers",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_busy_dialogue_keeps_new_receipt_available_for_retry",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_shutdown_discards_late_dialogue_result_on_real_topic",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_memory_communication",
+        "test": "test_ros_consent_save_recall_and_delete",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_memory_communication",
+        "test": "test_ros_does_not_publish_answer_deleted_after_queue_drain",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_memory_communication",
+        "test": "test_ros_restart_recalls_and_deletes_memory",
+        "status": "failed",
+        "failure": "AssertionError: assert [Conversation...87325.711867)] == []\n  Left contains 3 more items, first extra item: ConversationTurn(conversation_id='925bea9e-51ab-4331-b63f-acff1b882494', user_id='ros-memory-test-user', session_insta...ion', 'reason': '행동 요청이 아닙니다.'}}, 'schema_version': 2}, created_at=1790187325.6116493, completed_at=1790187325.6126845)\n  Full diff:\n    [\n  -  ,\n  +  ConversationTurn(conversation_id='925bea9e-51ab-4331-b63f-acff1b882494',\n  +                   user_id='ros-memory-test-user',\n  +                   session_instance_id='8d95e004-601d-45ae-93b3-7ffff6362f44',...\n  \n  ...Full output truncated (161 lines hidden), use '-vv' to show"
+      },
+      {
+        "suite": "test.test_ros_memory_communication",
+        "test": "test_stt_pipeline_final_text_reaches_agent_and_tts",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_startup_and_general_dialogue_never_fetch_weather",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_missing_location_reaches_agent_through_manager_without_weather_http",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_saved_location_reaches_agent_through_manager_and_typed_weather_action",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_manager_location_setting_and_correction_change_next_weather_goal",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_agent_location_tool_stores_through_real_manager",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_manager_ambiguous_location_preserves_prior_configuration",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_interrupted_location_setting_cannot_save_late_result[cancel]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_interrupted_location_setting_cannot_save_late_result[timeout]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_weather_fetch_runs_through_manager_and_typed_action_result",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_new_speech_fetches_again_but_duplicate_id_does_not",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_fetch_failure_and_timeout_reach_manager_as_aborted[fetch_error-FETCH_FAILED]",
+        "status": "failed",
+        "failure": "assert 2 == 1\n +  where 2 = <test_ros_weather_communication._WeatherClient object at 0xffff9659c670>.calls\n +    where <test_ros_weather_communication._WeatherClient object at 0xffff9659c670> = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff9659c670>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95f42050>, mission=<function ros_weather.<locals>.mission at 0xffff95f41f30>).client"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_fetch_failure_and_timeout_reach_manager_as_aborted[timeout-TIMEOUT]",
+        "status": "failed",
+        "failure": "AssertionError: assert [('get_weathe...weather', {})] == [('get_weather', {})]\n  Left contains one more item: ('get_weather', {})\n  Full diff:\n  - [('get_weather', {})]\n  + [('get_weather', {}), ('get_weather', {})]"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_fetch_failure_and_timeout_reach_manager_as_aborted[KMA_KEY_REQUIRED-KMA_KEY_REQUIRED]",
+        "status": "failed",
+        "failure": "assert 2 == 1\n +  where 2 = <test_ros_weather_communication._WeatherClient object at 0xffff96495600>.calls\n +    where <test_ros_weather_communication._WeatherClient object at 0xffff96495600> = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff96495600>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95ddb1c0>, mission=<function ros_weather.<locals>.mission at 0xffff95ddb5b0>).client"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_fetch_failure_and_timeout_reach_manager_as_aborted[KMA_AUTH_FAILED-KMA_AUTH_FAILED]",
+        "status": "failed",
+        "failure": "AssertionError: assert [('get_weathe...weather', {})] == [('get_weather', {})]\n  Left contains one more item: ('get_weather', {})\n  Full diff:\n  - [('get_weather', {})]\n  + [('get_weather', {}), ('get_weather', {})]"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_cancel_propagates_through_manager_and_discards_late_fetch",
+        "status": "failed",
+        "failure": "TypeError: 'NoneType' object is not subscriptable"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_missing_manager_or_weather_action_never_falls_back[manager]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_missing_manager_or_weather_action_never_falls_back[weather_server]",
+        "status": "failed",
+        "failure": "AssertionError: assert 2 == 1\n +  where 2 = len([('get_weather', {}), ('get_weather', {})])\n +    where [('get_weather', {}), ('get_weather', {})] = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff963019c0>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95dd8820>, mission=<function ros_weather.<locals>.mission at 0xffff95dda680>).goals"
+      },
+      {
+        "suite": "test.test_speech_addressee_service_ros",
+        "test": "test_service_duplicate_and_shutdown_progress_on_single_executor",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_speech_addressee_service_ros",
+        "test": "test_agent_startup_does_not_advertise_unusable_speech_inputs[False]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_speech_addressee_service_ros",
+        "test": "test_agent_startup_does_not_advertise_unusable_speech_inputs[True]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_fall_runtime",
+        "test": "test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose",
+        "status": "failed",
+        "failure": "ModuleNotFoundError: No module named 'cv_bridge'"
+      }
+    ],
+    "runtime_code_changes_by_this_subtask": false
+  },
+  "interpretation": [
+    {
+      "classification": "stale expectation after intended session continuity change",
+      "tests": [
+        "test_ros_restart_recalls_and_deletes_memory"
+      ],
+      "detail": "Test expects empty history after restarting the Agent; current runtime resumes the same valid conversation."
+    },
+    {
+      "classification": "retry and progress change require updated test expectations",
+      "tests": [
+        "test_fetch_failure_and_timeout_reach_manager_as_aborted (4 parameters)",
+        "test_missing_manager_or_weather_action_never_falls_back[weather_server]"
+      ],
+      "detail": "Existing assertions require one read/goal; current retry policy permits one additional read. The harness returns the first speech item and does not distinguish retry progress from terminal output, so no final-behavior pass is claimed."
+    },
+    {
+      "classification": "observed cancellation boundary defect",
+      "tests": [
+        "test_cancel_propagates_through_manager_and_discards_late_fetch"
+      ],
+      "detail": "Actual CANCELED mission is followed by a retry notice and a second get_weather goal. ManagerWeatherQuery._execute raises RuntimeError for canceled kind, so _answer_weather catches it as unavailability and retries. The current test then reads progress as final and fails with TypeError."
+    },
+    {
+      "classification": "existing snapshot missing dependency",
+      "tests": [
+        "test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose"
+      ],
+      "detail": "rclpy and sensor messages imported, but cv_bridge was absent in the initial speech-retry snapshot. The final run used the existing ROSOrin snapshot with cv_bridge and passed the callback test without installing packages."
+    }
+  ],
+  "scope": "Real local ROS middleware and generated current interfaces; fixed providers and synthetic data; no physical devices, model API, external network or external DDS.",
+  "runtime_code_changes_by_this_subtask": true,
+  "package_installation": false,
+  "image_download": false,
+  "cleanup": {
+    "verified_at": "2026-09-23T18:25:10.356507+00:00",
+    "temporary_containers_removed": true,
+    "temporary_images_removed": true,
+    "remaining_containers": [
+      "malbut-rosorin-sim-20260918 Exited (143) 5 days ago",
+      "malbut-speech-retry-test Exited (137) 5 days ago",
+      "malbut-agent-v2-ros Exited (137) 8 days ago"
+    ],
+    "running_containers": [],
+    "docker_desktop_left_running": true,
+    "original_container_started": false
+  },
+  "final_run": {
+    "tests": 36,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 9.818,
+    "by_suite": {
+      "test.test_node_communication_ros": {
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0
+      },
+      "test.test_ros_memory_communication": {
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0
+      },
+      "test.test_ros_weather_communication": {
+        "passed": 17,
+        "failed": 0,
+        "skipped": 0
+      },
+      "test.test_speech_addressee_service_ros": {
+        "passed": 3,
+        "failed": 0,
+        "skipped": 0
+      },
+      "test.test_fall_runtime": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    "results": [
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_follow_feedback_and_result_reach_real_tts_receiver",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_invalid_capability_is_accepted_then_aborted_without_execution",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_cancel_receipt_precedes_final_canceled_result",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_duplicate_requests_and_repeated_progress_do_not_resend_or_speak",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_two_independent_requests_keep_their_own_results",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_unavailable_manager_does_not_claim_execution",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_stt_duplicate_has_one_reply_and_next_turn_uses_real_history",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_slow_dialogue_does_not_block_manager_feedback_or_cancel",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_dialogue_failure_is_reported_and_next_turn_recovers",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_busy_dialogue_keeps_new_receipt_available_for_retry",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_node_communication_ros",
+        "test": "test_shutdown_discards_late_dialogue_result_on_real_topic",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_memory_communication",
+        "test": "test_ros_consent_save_recall_and_delete",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_memory_communication",
+        "test": "test_ros_does_not_publish_answer_deleted_after_queue_drain",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_memory_communication",
+        "test": "test_ros_restart_recalls_and_deletes_memory",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_memory_communication",
+        "test": "test_stt_pipeline_final_text_reaches_agent_and_tts",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_startup_and_general_dialogue_never_fetch_weather",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_missing_location_reaches_agent_through_manager_without_weather_http",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_saved_location_reaches_agent_through_manager_and_typed_weather_action",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_manager_location_setting_and_correction_change_next_weather_goal",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_agent_location_tool_stores_through_real_manager",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_manager_ambiguous_location_preserves_prior_configuration",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_interrupted_location_setting_cannot_save_late_result[cancel]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_interrupted_location_setting_cannot_save_late_result[timeout]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_weather_fetch_runs_through_manager_and_typed_action_result",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_new_speech_fetches_again_but_duplicate_id_does_not",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_fetch_failure_and_timeout_reach_manager_as_aborted[fetch_error-FETCH_FAILED]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_fetch_failure_and_timeout_reach_manager_as_aborted[timeout-TIMEOUT]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_fetch_failure_and_timeout_reach_manager_as_aborted[KMA_KEY_REQUIRED-KMA_KEY_REQUIRED]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_fetch_failure_and_timeout_reach_manager_as_aborted[KMA_AUTH_FAILED-KMA_AUTH_FAILED]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_cancel_propagates_through_manager_and_discards_late_fetch",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_missing_manager_or_weather_action_never_falls_back[manager]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_ros_weather_communication",
+        "test": "test_missing_manager_or_weather_action_never_falls_back[weather_server]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_speech_addressee_service_ros",
+        "test": "test_service_duplicate_and_shutdown_progress_on_single_executor",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_speech_addressee_service_ros",
+        "test": "test_agent_startup_does_not_advertise_unusable_speech_inputs[False]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_speech_addressee_service_ros",
+        "test": "test_agent_startup_does_not_advertise_unusable_speech_inputs[True]",
+        "status": "passed"
+      },
+      {
+        "suite": "test.test_fall_runtime",
+        "test": "test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose",
+        "status": "passed"
+      }
+    ],
+    "runtime_code_changes_by_this_subtask": true
+  },
+  "resolved_changes": [
+    "ManagerWeatherQuery propagates canceled missions as CancelledError instead of retryable RuntimeError.",
+    "DialogueWorker discards canceled result/notices and releases its capacity; next request remains usable.",
+    "Weather ROS harness separates progress and terminal replies; tests verify at most one retry, fresh read IDs, no duplicate resend and unavailable data.",
+    "Location-setting cancellation/timeout tests preserve one execution, no late save and no retry.",
+    "Memory ROS restart test verifies same-session context and deletion redaction instead of expecting a new empty conversation.",
+    "Existing ROSOrin snapshot supplies cv_bridge; no package installation was performed."
+  ],
+  "final_verified_at": "2026-09-23T18:24:06.753123+00:00",
+  "source_mirror_equal": {
+    "malbut_agent_server/weather_query.py": true,
+    "malbut_agent_server/speech_dialogue.py": true
+  },
+  "unit_tests": {
+    "primary": {
+      "passed": 57,
+      "seconds": 0.42
+    },
+    "mirror": {
+      "passed": 57,
+      "seconds": 0.46
+    },
+    "tests": [
+      "test_weather_query.py",
+      "test_speech_dialogue.py"
+    ],
+    "detail": "Same primary test files exercised against primary and mirror PYTHONPATH; mirror repository does not duplicate test files."
+  },
+  "interpretation_scope": "Initial run failures before the runtime corrections and assertion updates; final status is recorded in final_run and resolved_changes."
+}

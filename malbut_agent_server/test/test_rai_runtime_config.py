@@ -106,6 +106,9 @@ def test_rai_fields_append_after_legacy_positional_contract() -> None:
         'rai_model',
         'openai_general_model',
         'openai_robot_planner_model',
+        'conversation_token_budget',
+        'openai_summary_model',
+        'openai_summary_reasoning_effort',
     )
 
 

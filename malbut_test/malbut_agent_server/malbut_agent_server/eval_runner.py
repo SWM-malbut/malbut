@@ -27,6 +27,7 @@ from malbut_agent_server.conversation import SQLiteConversationStore
 from malbut_agent_server.memory import SQLiteMemoryStore
 from malbut_agent_server.orchestrator import AgentOrchestrator
 from malbut_agent_server.prompting import (
+    CONVERSATION_INSTRUCTIONS,
     MAX_MODEL_INPUT_CHARS,
     SYSTEM_INSTRUCTIONS,
     prepare_model_input,
@@ -864,7 +865,9 @@ def run_suite(
             'provider_timeout_seconds': provider_timeout_seconds,
             'request_delay_seconds': request_delay_seconds,
             'max_model_input_chars': MAX_MODEL_INPUT_CHARS,
-            'system_prompt_sha256': _digest(SYSTEM_INSTRUCTIONS),
+            'system_prompt_sha256': _digest(
+                SYSTEM_INSTRUCTIONS + '\n\n' + CONVERSATION_INSTRUCTIONS,
+            ),
             'tool_schema_sha256': _digest(tool_contract),
             'case_suite_sha256': _digest(case_contract),
             'runtime_source_sha256': _source_digest(

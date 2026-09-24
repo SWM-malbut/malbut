@@ -7,6 +7,7 @@ from malbut_agent_server.automatic_memory_extractor import (
     AutomaticMemoryExtractor,
 )
 from malbut_agent_server.config import Settings
+from malbut_agent_server.context_compaction import BackgroundContextCompactor
 from malbut_agent_server.conversation import SQLiteConversationStore
 from malbut_agent_server.gateway import (
     CapabilityRegistry,
@@ -32,6 +33,9 @@ from malbut_agent_server.rai_sidecar_client import (
 from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy
 from malbut_agent_server.speech_addressee import SpeechAddresseeClassifier
+from malbut_agent_server.semantic_summary import (
+    OpenAISemanticSummarizer, count_tokens,
+)
 
 
 RAI_SIDECAR_MODULE = 'malbut_agent_server.rai_sidecar_runtime'
@@ -42,6 +46,7 @@ def _openai_adapter(
     model: str,
     *,
     include_reasoning: bool = True,
+    semantic_context: bool = False,
 ) -> OpenAIResponsesProvider:
     """Build one official-origin OpenAI model adapter."""
     return OpenAIResponsesProvider(
@@ -53,6 +58,12 @@ def _openai_adapter(
         max_output_tokens=settings.openai_max_output_tokens,
         reasoning_effort=settings.openai_reasoning_effort,
         include_reasoning=include_reasoning,
+        semantic_context=semantic_context,
+        # Half is allocated to dialogue. The rest reserves room for tools,
+        # rules, memory, and turns arriving while compaction is in flight.
+        # Output has its own max_output_tokens reservation outside this cap.
+        max_input_tokens=settings.conversation_token_budget * 2,
+        token_counter=count_tokens,
     )
 
 
@@ -62,18 +73,21 @@ def _reliable_openai_provider(
     *,
     fallback_model: str = '',
     include_reasoning: bool = True,
+    semantic_context: bool = True,
 ) -> ReliableProvider:
     """Build one reliability boundary for an explicit model role."""
     providers = [_openai_adapter(
         settings,
         primary_model,
         include_reasoning=include_reasoning,
+        semantic_context=semantic_context,
     )]
     if fallback_model:
         providers.append(_openai_adapter(
             settings,
             fallback_model,
             include_reasoning=include_reasoning,
+            semantic_context=semantic_context,
         ))
     return ReliableProvider(
         providers,
@@ -97,6 +111,7 @@ def _reliable_openai_provider(
 
 def build_provider(
     settings: Settings, *, http_server: bool = True,
+    semantic_context: bool = True,
 ) -> AgentProvider:
     """Build the selected provider without making a network request."""
     if settings.provider == 'mock':
@@ -139,6 +154,7 @@ def build_provider(
         settings,
         settings.openai_model,
         fallback_model=settings.openai_fallback_model,
+        semantic_context=semantic_context,
     )
 
 
@@ -208,6 +224,7 @@ def build_orchestrator(
             summary_max_chars=(
                 settings.conversation_summary_max_chars
             ),
+            semantic_context=settings.provider == 'openai',
         )
         provider = (
             build_provider(settings) if http_server
@@ -220,8 +237,9 @@ def build_orchestrator(
             # Separate reliability/circuit state: background review failures
             # must not open the foreground conversation's circuit breaker.
             review_provider = (
-                build_provider(settings) if http_server
-                else build_provider(settings, http_server=False)
+                build_provider(settings, semantic_context=False) if http_server
+                else build_provider(settings, http_server=False,
+                                    semantic_context=False)
             )
             memory_reviewer = MemorySourceReviewer(review_provider)
         if settings.provider == 'openai':
@@ -229,7 +247,7 @@ def build_orchestrator(
             # Other adapters keep their existing memory contract until they
             # explicitly implement the answer-only/extraction modes.
             memory_extractor = AutomaticMemoryExtractor(build_provider(
-                settings, http_server=http_server,
+                settings, http_server=http_server, semantic_context=False,
             ))
         if front_router is not None:
             routing_service = FrontRoutingService(front_router)
@@ -249,6 +267,22 @@ def build_orchestrator(
                 include_reasoning=False,
             ) if settings.provider == 'openai' else None,
         )
+        context_compactor = None
+        if settings.provider == 'openai':
+            # Load the local encoding during startup, never mid-utterance.
+            count_tokens('')
+            context_compactor = BackgroundContextCompactor(
+                conversation_store, memory_store,
+                OpenAISemanticSummarizer(
+                    api_key=settings.openai_api_key,
+                    model=settings.openai_summary_model or settings.openai_model,
+                    base_url=settings.openai_base_url,
+                    timeout_seconds=max(30, settings.request_timeout_seconds),
+                    reasoning_effort=(settings.openai_summary_reasoning_effort
+                                      or settings.openai_reasoning_effort),
+                ),
+                token_budget=settings.conversation_token_budget,
+            )
         runtime = AgentOrchestrator(
             provider=provider,
             memory_store=memory_store,
@@ -261,6 +295,7 @@ def build_orchestrator(
             memory_source_reviewer=memory_reviewer,
             background_memory=settings.provider != 'mock',
             automatic_memory_extractor=memory_extractor,
+            context_compactor=context_compactor,
             weather_executor=weather_executor,
             weather_location_executor=weather_location_executor,
         )

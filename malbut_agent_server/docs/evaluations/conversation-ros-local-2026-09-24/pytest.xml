@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="8" skipped="0" tests="36" time="9.077" timestamp="2026-09-23T18:15:21.469941" hostname="468c9b69ceef"><testcase classname="test.test_node_communication_ros" name="test_follow_feedback_and_result_reach_real_tts_receiver" time="0.192" /><testcase classname="test.test_node_communication_ros" name="test_invalid_capability_is_accepted_then_aborted_without_execution" time="0.068" /><testcase classname="test.test_node_communication_ros" name="test_cancel_receipt_precedes_final_canceled_result" time="0.169" /><testcase classname="test.test_node_communication_ros" name="test_duplicate_requests_and_repeated_progress_do_not_resend_or_speak" time="0.166" /><testcase classname="test.test_node_communication_ros" name="test_two_independent_requests_keep_their_own_results" time="0.171" /><testcase classname="test.test_node_communication_ros" name="test_unavailable_manager_does_not_claim_execution" time="1.064" /><testcase classname="test.test_node_communication_ros" name="test_stt_duplicate_has_one_reply_and_next_turn_uses_real_history" time="0.227" /><testcase classname="test.test_node_communication_ros" name="test_slow_dialogue_does_not_block_manager_feedback_or_cancel" time="0.220" /><testcase classname="test.test_node_communication_ros" name="test_dialogue_failure_is_reported_and_next_turn_recovers" time="0.225" /><testcase classname="test.test_node_communication_ros" name="test_busy_dialogue_keeps_new_receipt_available_for_retry" time="0.320" /><testcase classname="test.test_node_communication_ros" name="test_shutdown_discards_late_dialogue_result_on_real_topic" time="0.285" /><testcase classname="test.test_ros_memory_communication" name="test_ros_consent_save_recall_and_delete" time="0.418" /><testcase classname="test.test_ros_memory_communication" name="test_ros_does_not_publish_answer_deleted_after_queue_drain" time="0.261" /><testcase classname="test.test_ros_memory_communication" name="test_ros_restart_recalls_and_deletes_memory" time="0.334"><failure message="AssertionError: assert [Conversation...87325.711867)] == []&#10;  Left contains 3 more items, first extra item: ConversationTurn(conversation_id='925bea9e-51ab-4331-b63f-acff1b882494', user_id='ros-memory-test-user', session_insta...ion', 'reason': '행동 요청이 아닙니다.'}}, 'schema_version': 2}, created_at=1790187325.6116493, completed_at=1790187325.6126845)&#10;  Full diff:&#10;    [&#10;  -  ,&#10;  +  ConversationTurn(conversation_id='925bea9e-51ab-4331-b63f-acff1b882494',&#10;  +                   user_id='ros-memory-test-user',&#10;  +                   session_instance_id='8d95e004-601d-45ae-93b3-7ffff6362f44',...&#10;  &#10;  ...Full output truncated (161 lines hidden), use '-vv' to show">ros_memory = &lt;test_ros_memory_communication._DialogueHarness object at 0xffff95edfa60&gt;
+
+    def test_ros_restart_recalls_and_deletes_memory(ros_memory):
+        """Restart the real Agent Node while retaining user and SQLite files."""
+        ros_memory.enable_and_remember()
+        saved = ros_memory.inspect_store()[1][0]
+        ros_memory.restart()
+    
+        assert ros_memory.inspect_store()[0]['enabled'] is True
+        assert ros_memory.say(RECALL_TEXT) == RECALL_REPLY
+        after = ros_memory.provider.calls[-1]
+&gt;       assert after['history'] == []
+E       AssertionError: assert [Conversation...87325.711867)] == []
+E         Left contains 3 more items, first extra item: ConversationTurn(conversation_id='925bea9e-51ab-4331-b63f-acff1b882494', user_id='ros-memory-test-user', session_insta...ion', 'reason': '행동 요청이 아닙니다.'}}, 'schema_version': 2}, created_at=1790187325.6116493, completed_at=1790187325.6126845)
+E         Full diff:
+E           [
+E         -  ,
+E         +  ConversationTurn(conversation_id='925bea9e-51ab-4331-b63f-acff1b882494',
+E         +                   user_id='ros-memory-test-user',
+E         +                   session_instance_id='8d95e004-601d-45ae-93b3-7ffff6362f44',...
+E         
+E         ...Full output truncated (161 lines hidden), use '-vv' to show
+
+/source/malbut_agent_server/test/test_ros_memory_communication.py:300: AssertionError</failure></testcase><testcase classname="test.test_ros_memory_communication" name="test_stt_pipeline_final_text_reaches_agent_and_tts" time="0.113" /><testcase classname="test.test_ros_weather_communication" name="test_startup_and_general_dialogue_never_fetch_weather" time="0.126" /><testcase classname="test.test_ros_weather_communication" name="test_missing_location_reaches_agent_through_manager_without_weather_http" time="0.226" /><testcase classname="test.test_ros_weather_communication" name="test_saved_location_reaches_agent_through_manager_and_typed_weather_action" time="0.176" /><testcase classname="test.test_ros_weather_communication" name="test_manager_location_setting_and_correction_change_next_weather_goal" time="0.278" /><testcase classname="test.test_ros_weather_communication" name="test_agent_location_tool_stores_through_real_manager" time="0.176" /><testcase classname="test.test_ros_weather_communication" name="test_manager_ambiguous_location_preserves_prior_configuration" time="0.084" /><testcase classname="test.test_ros_weather_communication" name="test_interrupted_location_setting_cannot_save_late_result[cancel]" time="0.224" /><testcase classname="test.test_ros_weather_communication" name="test_interrupted_location_setting_cannot_save_late_result[timeout]" time="0.381" /><testcase classname="test.test_ros_weather_communication" name="test_weather_fetch_runs_through_manager_and_typed_action_result" time="0.178" /><testcase classname="test.test_ros_weather_communication" name="test_new_speech_fetches_again_but_duplicate_id_does_not" time="0.277" /><testcase classname="test.test_ros_weather_communication" name="test_fetch_failure_and_timeout_reach_manager_as_aborted[fetch_error-FETCH_FAILED]" time="0.183"><failure message="assert 2 == 1&#10; +  where 2 = &lt;test_ros_weather_communication._WeatherClient object at 0xffff9659c670&gt;.calls&#10; +    where &lt;test_ros_weather_communication._WeatherClient object at 0xffff9659c670&gt; = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff9659c670&gt;, provider=&lt;test_ros_weather_...unction ros_weather.&lt;locals&gt;.say at 0xffff95f42050&gt;, mission=&lt;function ros_weather.&lt;locals&gt;.mission at 0xffff95f41f30&gt;).client">ros_weather = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff9659c670&gt;, provider=&lt;test_ros_weather_...unction ros_weather.&lt;locals&gt;.say at 0xffff95f42050&gt;, mission=&lt;function ros_weather.&lt;locals&gt;.mission at 0xffff95f41f30&gt;)
+failure = 'fetch_error', expected = 'FETCH_FAILED'
+
+    @pytest.mark.parametrize('failure,expected', [
+        ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+        ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+    ])
+    def test_fetch_failure_and_timeout_reach_manager_as_aborted(
+        ros_weather, failure, expected,
+    ):
+        """Failed Actions carry errors; Agent cannot use weather numbers."""
+        run = ros_weather
+        run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                            else failure == 'fetch_error')
+        run.client.block = failure == 'timeout'
+        run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
+        _, reply = run.say('오늘 날씨가 어때?')
+&gt;       assert run.client.calls == 1
+E       assert 2 == 1
+E        +  where 2 = &lt;test_ros_weather_communication._WeatherClient object at 0xffff9659c670&gt;.calls
+E        +    where &lt;test_ros_weather_communication._WeatherClient object at 0xffff9659c670&gt; = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff9659c670&gt;, provider=&lt;test_ros_weather_...unction ros_weather.&lt;locals&gt;.say at 0xffff95f42050&gt;, mission=&lt;function ros_weather.&lt;locals&gt;.mission at 0xffff95f41f30&gt;).client
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:557: AssertionError</failure></testcase><testcase classname="test.test_ros_weather_communication" name="test_fetch_failure_and_timeout_reach_manager_as_aborted[timeout-TIMEOUT]" time="0.382"><failure message="AssertionError: assert [('get_weathe...weather', {})] == [('get_weather', {})]&#10;  Left contains one more item: ('get_weather', {})&#10;  Full diff:&#10;  - [('get_weather', {})]&#10;  + [('get_weather', {}), ('get_weather', {})]">ros_weather = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff95cc7220&gt;, provider=&lt;test_ros_weather_...unction ros_weather.&lt;locals&gt;.say at 0xffff95ddacb0&gt;, mission=&lt;function ros_weather.&lt;locals&gt;.mission at 0xffff95dd80d0&gt;)
+failure = 'timeout', expected = 'TIMEOUT'
+
+    @pytest.mark.parametrize('failure,expected', [
+        ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+        ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+    ])
+    def test_fetch_failure_and_timeout_reach_manager_as_aborted(
+        ros_weather, failure, expected,
+    ):
+        """Failed Actions carry errors; Agent cannot use weather numbers."""
+        run = ros_weather
+        run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                            else failure == 'fetch_error')
+        run.client.block = failure == 'timeout'
+        run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
+        _, reply = run.say('오늘 날씨가 어때?')
+        assert run.client.calls == 1
+&gt;       assert run.goals == [('get_weather', {})]
+E       AssertionError: assert [('get_weathe...weather', {})] == [('get_weather', {})]
+E         Left contains one more item: ('get_weather', {})
+E         Full diff:
+E         - [('get_weather', {})]
+E         + [('get_weather', {}), ('get_weather', {})]
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:558: AssertionError</failure></testcase><testcase classname="test.test_ros_weather_communication" name="test_fetch_failure_and_timeout_reach_manager_as_aborted[KMA_KEY_REQUIRED-KMA_KEY_REQUIRED]" time="0.179"><failure message="assert 2 == 1&#10; +  where 2 = &lt;test_ros_weather_communication._WeatherClient object at 0xffff96495600&gt;.calls&#10; +    where &lt;test_ros_weather_communication._WeatherClient object at 0xffff96495600&gt; = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff96495600&gt;, provider=&lt;test_ros_weather_...unction ros_weather.&lt;locals&gt;.say at 0xffff95ddb1c0&gt;, mission=&lt;function ros_weather.&lt;locals&gt;.mission at 0xffff95ddb5b0&gt;).client">ros_weather = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff96495600&gt;, provider=&lt;test_ros_weather_...unction ros_weather.&lt;locals&gt;.say at 0xffff95ddb1c0&gt;, mission=&lt;function ros_weather.&lt;locals&gt;.mission at 0xffff95ddb5b0&gt;)
+failure = 'KMA_KEY_REQUIRED', expected = 'KMA_KEY_REQUIRED'
+
+    @pytest.mark.parametrize('failure,expected', [
+        ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+        ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+    ])
+    def test_fetch_failure_and_timeout_reach_manager_as_aborted(
+        ros_weather, failure, expected,
+    ):
+        """Failed Actions carry errors; Agent cannot use weather numbers."""
+        run = ros_weather
+        run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                            else failure == 'fetch_error')
+        run.client.block = failure == 'timeout'
+        run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
+        _, reply = run.say('오늘 날씨가 어때?')
+&gt;       assert run.client.calls == 1
+E       assert 2 == 1
+E        +  where 2 = &lt;test_ros_weather_communication._WeatherClient object at 0xffff96495600&gt;.calls
+E        +    where &lt;test_ros_weather_communication._WeatherClient object at 0xffff96495600&gt; = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff96495600&gt;, provider=&lt;test_ros_weather_...unction ros_weather.&lt;locals&gt;.say at 0xffff95ddb1c0&gt;, mission=&lt;function ros_weather.&lt;locals&gt;.mission at 0xffff95ddb5b0&gt;).client
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:557: AssertionError</failure></testcase><testcase classname="test.test_ros_weather_communication" name="test_fetch_failure_and_timeout_reach_manager_as_aborted[KMA_AUTH_FAILED-KMA_AUTH_FAILED]" time="0.176"><failure message="AssertionError: assert [('get_weathe...weather', {})] == [('get_weather', {})]&#10;  Left contains one more item: ('get_weather', {})&#10;  Full diff:&#10;  - [('get_weather', {})]&#10;  + [('get_weather', {}), ('get_weather', {})]">ros_weather = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff95cc4d60&gt;, provider=&lt;test_ros_weather_...unction ros_weather.&lt;locals&gt;.say at 0xffff95d931c0&gt;, mission=&lt;function ros_weather.&lt;locals&gt;.mission at 0xffff95d92cb0&gt;)
+failure = 'KMA_AUTH_FAILED', expected = 'KMA_AUTH_FAILED'
+
+    @pytest.mark.parametrize('failure,expected', [
+        ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+        ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+    ])
+    def test_fetch_failure_and_timeout_reach_manager_as_aborted(
+        ros_weather, failure, expected,
+    ):
+        """Failed Actions carry errors; Agent cannot use weather numbers."""
+        run = ros_weather
+        run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                            else failure == 'fetch_error')
+        run.client.block = failure == 'timeout'
+        run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
+        _, reply = run.say('오늘 날씨가 어때?')
+        assert run.client.calls == 1
+&gt;       assert run.goals == [('get_weather', {})]
+E       AssertionError: assert [('get_weathe...weather', {})] == [('get_weather', {})]
+E         Left contains one more item: ('get_weather', {})
+E         Full diff:
+E         - [('get_weather', {})]
+E         + [('get_weather', {}), ('get_weather', {})]
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:558: AssertionError</failure></testcase><testcase classname="test.test_ros_weather_communication" name="test_cancel_propagates_through_manager_and_discards_late_fetch" time="0.227"><failure message="TypeError: 'NoneType' object is not subscriptable">ros_weather = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff95eaaf80&gt;, provider=&lt;test_ros_weather_...unction ros_weather.&lt;locals&gt;.say at 0xffff95d90790&gt;, mission=&lt;function ros_weather.&lt;locals&gt;.mission at 0xffff95d90160&gt;)
+
+    def test_cancel_propagates_through_manager_and_discards_late_fetch(
+        ros_weather,
+    ):
+        """Cancel the same public mission while downstream weather is fetching."""
+        run = ros_weather
+        run.client.block = True
+        run.start()
+        run.send('오늘 날씨가 어때?')
+        run.spin_until(run.client.started.is_set)
+        request_id = next(iter(run.agent.missions._requests))
+        run.agent.missions.cancel(request_id)
+        run.spin_until(lambda: len(run.replies) == 1)
+        event = terminal_event(run)
+        assert event['kind'] == 'canceled'
+        assert event['ros_status'] == GoalStatus.STATUS_CANCELED
+        assert yaml.safe_load(event['result_yaml'])['error_code'] == 'CANCELED'
+        assert run.client.calls == 1
+&gt;       assert run.provider.calls[-1]['weather']['status'] == 'unavailable'
+E       TypeError: 'NoneType' object is not subscriptable
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:590: TypeError</failure></testcase><testcase classname="test.test_ros_weather_communication" name="test_missing_manager_or_weather_action_never_falls_back[manager]" time="0.169" /><testcase classname="test.test_ros_weather_communication" name="test_missing_manager_or_weather_action_never_falls_back[weather_server]" time="0.183"><failure message="AssertionError: assert 2 == 1&#10; +  where 2 = len([('get_weather', {}), ('get_weather', {})])&#10; +    where [('get_weather', {}), ('get_weather', {})] = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff963019c0&gt;, provider=&lt;test_ros_weather_...unction ros_weather.&lt;locals&gt;.say at 0xffff95dd8820&gt;, mission=&lt;function ros_weather.&lt;locals&gt;.mission at 0xffff95dda680&gt;).goals">ros_weather = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff963019c0&gt;, provider=&lt;test_ros_weather_...unction ros_weather.&lt;locals&gt;.say at 0xffff95dd8820&gt;, mission=&lt;function ros_weather.&lt;locals&gt;.mission at 0xffff95dda680&gt;)
+missing = 'weather_server'
+
+    @pytest.mark.parametrize('missing', ['manager', 'weather_server'])
+    def test_missing_manager_or_weather_action_never_falls_back(
+        ros_weather, missing,
+    ):
+        """Neither missing Action endpoint permits an Agent-side API fallback."""
+        run = ros_weather
+        run.start(with_manager=missing != 'manager',
+                  with_weather=missing != 'weather_server')
+        _, reply = run.say('오늘 날씨가 어때?')
+&gt;       assert len(run.goals) == (0 if missing == 'manager' else 1)
+E       AssertionError: assert 2 == 1
+E        +  where 2 = len([('get_weather', {}), ('get_weather', {})])
+E        +    where [('get_weather', {}), ('get_weather', {})] = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff963019c0&gt;, provider=&lt;test_ros_weather_...unction ros_weather.&lt;locals&gt;.say at 0xffff95dd8820&gt;, mission=&lt;function ros_weather.&lt;locals&gt;.mission at 0xffff95dda680&gt;).goals
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:608: AssertionError</failure></testcase><testcase classname="test.test_speech_addressee_service_ros" name="test_service_duplicate_and_shutdown_progress_on_single_executor" time="0.175" /><testcase classname="test.test_speech_addressee_service_ros" name="test_agent_startup_does_not_advertise_unusable_speech_inputs[False]" time="0.217" /><testcase classname="test.test_speech_addressee_service_ros" name="test_agent_startup_does_not_advertise_unusable_speech_inputs[True]" time="0.216" /><testcase classname="test.test_fall_runtime" name="test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose" time="0.225"><failure message="ModuleNotFoundError: No module named 'cv_bridge'">tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_real_ros_callbacks_on_fak0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0xffff95eab1c0&gt;
+
+    def test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose(tmp_path, monkeypatch):
+        node_module = pytest.importorskip('rclpy.node')
+        sensor = pytest.importorskip('sensor_msgs.msg')
+        std = pytest.importorskip('std_msgs.msg')
+        import numpy as np
+    
+        class Node:
+            def __init__(self, name):
+                self.subscriptions = {}
+                self.publishers = {}
+    
+            def create_subscription(self, msg, topic, callback, qos):
+                self.subscriptions[topic] = callback
+    
+            def create_publisher(self, msg, topic, qos):
+                publisher = Mock()
+                self.publishers[topic] = publisher
+                return publisher
+    
+            def create_timer(self, *args):
+                pass
+    
+            def get_clock(self):
+                return SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=10**12))
+    
+            def get_logger(self):
+                return Mock()
+    
+        monkeypatch.setattr(node_module, 'Node', Node)
+        _, clock, provider = make()
+&gt;       node = create_fall_node(FallNodeSettings.parse(json.dumps(config(tmp_path))),
+                                provider=provider, journal=None, clock=clock)
+
+/source/malbut_agent_server/test/test_fall_runtime.py:215: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+settings = FallNodeSettings(device_id='robot', journal_path=PosixPath('/tmp/pytest-of-root/pytest-0/test_real_ros_callbacks_on_fa...ges=12), retention_s=30, buffer_bytes=10000000, buffer_frames=100, input_fps=5, max_source_age_s=1, control_lease_s=10)
+
+    def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
+        import cv2
+&gt;       from cv_bridge import CvBridge, CvBridgeError
+E       ModuleNotFoundError: No module named 'cv_bridge'
+
+/source/malbut_agent_server/malbut_agent_server/ros_fall_monitor.py:26: ModuleNotFoundError</failure></testcase></testsuite></testsuites>

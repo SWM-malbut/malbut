@@ -1,0 +1,2 @@
+# Local token estimates for OpenAI conversation compaction.
+tiktoken>=0.7,<1

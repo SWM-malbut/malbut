@@ -1,6 +1,7 @@
 """Conversation reuse, bounded admission and worker-owned store lifetime."""
 
 import hashlib
+from concurrent.futures import CancelledError
 import json
 import threading
 import time
@@ -109,6 +110,30 @@ class RuntimeFactory:
         return runtime
 
 
+def test_cancellation_discards_queued_notices_and_releases_capacity():
+    from malbut_agent_server.conversation_progress import claim_retry
+
+    def respond(request, history):
+        if request.utterance == '취소할 요청':
+            assert claim_retry('다시 확인할게요.')
+            raise CancelledError('canceled')
+        return FixedProvider.answer(request, history)
+
+    factory = RuntimeFactory(FixedProvider(respond))
+    worker = DialogueWorker(factory, 'user', capacity=1)
+    try:
+        assert worker.submit('canceled', '취소할 요청')
+        wait_until(lambda: factory.provider.entered.is_set() and worker.has_capacity())
+        assert worker.drain() == []
+        assert worker.submit('next', '다음 요청')
+        reply = collect(worker, 1)[0]
+        assert reply['kind'] == 'answer' and '다음 요청' in reply['text']
+        assert len(factory.provider.calls) == 2
+        assert factory.provider.calls[1][1] == []
+    finally:
+        worker.close()
+
+
 @pytest.mark.parametrize('phase', ['runtime', 'session'])
 def test_ready_waits_for_runtime_and_session_initialization(phase):
     """Expose readiness only after all asynchronous startup work has finished."""
@@ -208,7 +233,7 @@ def test_failed_provider_turn_does_not_poison_the_next_utterance():
 @pytest.mark.parametrize('session_problem', [
     'expired', 'closed', 'missing', 'turn_limit',
 ])
-def test_unusable_session_requires_restart_instead_of_repeating_speech(
+def test_inactive_session_rotates_but_legacy_turn_limit_is_reported(
     session_problem,
 ):
     now = [1000.0]
@@ -227,7 +252,7 @@ def test_unusable_session_requires_restart_instead_of_repeating_speech(
         conversation_id = first['conversation_id']
         store = factory.runtime.conversation_store
         if session_problem == 'expired':
-            now[0] += 1801
+            now[0] += 3600
         elif session_problem == 'closed':
             store.close_session('speaker', conversation_id)
         elif session_problem == 'missing':
@@ -240,11 +265,16 @@ def test_unusable_session_requires_restart_instead_of_repeating_speech(
         for index in range(2):
             assert worker.submit(f'repeated-{index}', '다시 말할게')
             reply = collect(worker, 1)[0]
-            assert reply['kind'] == 'error'
-            assert reply['text'] == SESSION_ERROR_RESPONSE
-            assert reply['text'] != ERROR_RESPONSE
-            assert reply['conversation_id'] == conversation_id
-        assert len(factory.provider.calls) == previous_calls
+            if session_problem == 'turn_limit':
+                assert reply['kind'] == 'error'
+                assert reply['text'] == SESSION_ERROR_RESPONSE
+                assert reply['conversation_id'] == conversation_id
+            else:
+                assert reply['kind'] == 'answer'
+                assert reply['conversation_id'] != conversation_id
+        assert len(factory.provider.calls) == previous_calls + (
+            0 if session_problem == 'turn_limit' else 2
+        )
     finally:
         worker.close()
 
@@ -338,7 +368,7 @@ def test_shutdown_discards_queued_and_late_results_before_closing_stores():
         worker.close()
 
 
-def test_new_worker_creates_new_conversation_on_the_same_database(tmp_path):
+def test_new_worker_resumes_recent_conversation_on_the_same_database(tmp_path):
     path = str(tmp_path / 'conversation.sqlite3')
     conversations = []
     for index in range(2):
@@ -348,10 +378,10 @@ def test_new_worker_creates_new_conversation_on_the_same_database(tmp_path):
             worker.submit(f'utterance-{index}', '안녕')
             reply = collect(worker, 1)[0]
             conversations.append(reply['conversation_id'])
-            assert factory.provider.calls[0][1] == []
+            assert len(factory.provider.calls[0][1]) == index
         finally:
             worker.close()
-    assert conversations[0] != conversations[1]
+    assert conversations[0] == conversations[1]
 
 
 def test_startup_failure_returns_queued_error_and_stops_accepting():

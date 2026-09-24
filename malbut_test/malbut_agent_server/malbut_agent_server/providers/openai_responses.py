@@ -28,6 +28,7 @@ from malbut_agent_server.memory_contract import (
     validate_memory_proposal,
 )
 from malbut_agent_server.prompting import (
+    CONVERSATION_INSTRUCTIONS,
     MAX_CONVERSATION_TURNS,
     MAX_MODEL_INPUT_CHARS,
     SYSTEM_INSTRUCTIONS,
@@ -123,6 +124,9 @@ class OpenAIResponsesProvider(AgentProvider):
         max_output_tokens: int = 500,
         reasoning_effort: str = 'none',
         include_reasoning: bool = True,
+        semantic_context: bool = False,
+        max_input_tokens: int = 32768,
+        token_counter: Optional[Callable[[Any], int]] = None,
     ) -> None:
         """Initialize a lazy adapter without performing a network call."""
         if not api_key or not api_key.strip():
@@ -148,6 +152,12 @@ class OpenAIResponsesProvider(AgentProvider):
             raise ValueError('reasoning_effort is unsupported')
         if type(include_reasoning) is not bool:
             raise ValueError('include_reasoning must be a boolean')
+        if type(semantic_context) is not bool:
+            raise ValueError('semantic_context must be a boolean')
+        if type(max_input_tokens) is not int or max_input_tokens < 1:
+            raise ValueError('max_input_tokens must be a positive integer')
+        if token_counter is not None and not callable(token_counter):
+            raise ValueError('token_counter must be callable')
         self._api_key = api_key.strip()
         self.model = model.strip()
         self.base_url = base_url.strip().rstrip('/')
@@ -156,6 +166,9 @@ class OpenAIResponsesProvider(AgentProvider):
         self.max_output_tokens = max_output_tokens
         self.reasoning_effort = normalized_effort
         self.include_reasoning = include_reasoning
+        self.semantic_context = semantic_context
+        self.max_input_tokens = max_input_tokens
+        self.token_counter = token_counter
         self._validate_base_url()
         self.transport = transport or self._urllib_transport
 
@@ -189,6 +202,7 @@ class OpenAIResponsesProvider(AgentProvider):
         weather_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Call the API once and normalize either a tool call or text."""
+        memory_mode = memory_context.get('mode') if memory_context else None
         prepared = prepare_model_input(
             request,
             memories,
@@ -198,6 +212,7 @@ class OpenAIResponsesProvider(AgentProvider):
             MAX_CONVERSATION_TURNS,
             memory_context=memory_context,
             weather_context=weather_context,
+            preserve_conversation=self._preserve_conversation(memory_mode),
         )
         payload = self.build_payload(
             request,
@@ -225,7 +240,6 @@ class OpenAIResponsesProvider(AgentProvider):
             self.timeout_seconds,
         )
         latency_ms = (time.perf_counter() - started) * 1000
-        memory_mode = memory_context.get('mode') if memory_context else None
         memory_enabled = (
             memory_context is not None and memory_mode != 'answer_only'
         )
@@ -284,10 +298,11 @@ class OpenAIResponsesProvider(AgentProvider):
             MAX_CONVERSATION_TURNS,
             memory_context=memory_context,
             weather_context=weather_context,
+            preserve_conversation=self._preserve_conversation(memory_mode),
         )
         payload: Dict[str, Any] = {
             'model': self.model,
-            'instructions': SYSTEM_INSTRUCTIONS,
+            'instructions': SYSTEM_INSTRUCTIONS + '\n\n' + CONVERSATION_INSTRUCTIONS,
             'input': prepared_context.text,
             'parallel_tool_calls': False,
             'tool_choice': 'auto',
@@ -352,7 +367,49 @@ class OpenAIResponsesProvider(AgentProvider):
             ]
         else:
             payload.pop('tool_choice')
+        if self._preserve_conversation(memory_mode):
+            # Steer generation; character clipping can drop conditions or
+            # force a syntactically valid response to end mid-sentence.
+            if self.model.startswith('gpt-5'):
+                payload['text']['verbosity'] = 'low'
+            schema = copy.deepcopy(payload['text']['format']['schema'])
+            schema['properties']['message'].update({
+                'description': (
+                    '이번에 말할 완결된 한국어 응답 한 구간. 자세한 설명은 하나의 '
+                    '핵심 개념만 설명 두세 문장, 150~250자로 설명한 뒤 다음 개념을 계속 들을지 묻는다. '
+                    '요청된 필수 조건과 안전 주의사항은 빠뜨리지 않는다.'
+                ),
+            })
+            if (memory_context or {}).get('response_settings', {}).get('response_mode') == 'listen_only':
+                schema['properties']['message']['description'] += (
+                    ' 듣기 모드에서는 현재 경험·감정에 직접 반응한다. 이전 답변에서 '
+                    '이미 듣겠다고 했으면 그 약속이나 편하게 말하라는 안내를 반복하지 않는다.'
+                )
+            payload['text']['format']['schema'] = schema
+            payload['truncation'] = 'disabled'
+            counter = self.token_counter
+            if counter is None:
+                from malbut_agent_server.context_compaction import count_tokens
+
+                counter = count_tokens
+            input_tokens = counter(payload)
+            if type(input_tokens) is not int or input_tokens < 0:
+                raise ValueError(
+                    'token_counter must return a non-negative integer',
+                )
+            # Local estimates include schemas; reserve API envelope overhead too.
+            if input_tokens + 1024 > self.max_input_tokens:
+                from malbut_agent_server.providers.reliable import (
+                    ContextBudgetExceeded,
+                )
+
+                raise ContextBudgetExceeded()
         return payload
+
+    def _preserve_conversation(self, memory_mode: Optional[str]) -> bool:
+        return self.semantic_context and memory_mode not in {
+            'automatic_extraction', 'source_review',
+        }
 
     @staticmethod
     def _safety_identifier(user_id: str) -> str:

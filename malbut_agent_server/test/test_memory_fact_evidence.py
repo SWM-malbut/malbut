@@ -137,7 +137,7 @@ def test_wrong_subject_kind_attribute_or_polarity_never_becomes_a_fact(
     [
         ('내 이름은 두부야', {'kind': 'name', 'subject': 'user'}),
         (
-            '나를 두부라고 불러줘',
+            '내 별명은 두부야',
             {'kind': 'nickname', 'subject': 'user', 'attribute': 'nickname'},
         ),
         ('우리 강아지 이름은 두부야', {'subject': '반려견'}),

@@ -17,6 +17,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Sequence,
     Tuple,
 )
 
@@ -312,6 +313,19 @@ class ConversationSession:
         }
 
 
+def is_context_limit_response(response):
+    """Recognize the server's input rejection, never a model's reason alone."""
+    public = response.get('public', response)
+    if not isinstance(public, dict):
+        return False
+    provider, decision = public.get('provider', {}), public.get('decision', {})
+    return (isinstance(provider, dict) and isinstance(decision, dict)
+            and provider.get('provider') == 'reliable-fallback'
+            and provider.get('model') == 'safe-non-action'
+            and decision.get('type') == 'refusal'
+            and decision.get('reason') == 'conversation_context_limit')
+
+
 @dataclass(frozen=True)
 class ConversationTurn:
     """One committed user and assistant exchange."""
@@ -467,7 +481,7 @@ class SQLiteConversationStore:
     def __init__(
         self,
         database_path: str,
-        ttl_seconds: int = 1800,
+        ttl_seconds: int = 3600,
         history_limit: int = 10,
         max_sessions_per_user: int = 100,
         max_turns_per_session: int = 1000,
@@ -476,10 +490,14 @@ class SQLiteConversationStore:
             ExtractiveConversationSummarizer
         ] = None,
         clock: Callable[[], float] = time.time,
+        semantic_context: bool = False,
     ) -> None:
         """Open a database and initialize the conversation schema."""
         if not database_path:
             raise ValueError('database_path must not be empty')
+        if not isinstance(semantic_context, bool):
+            raise ValueError('semantic_context must be a bool')
+        self.semantic_context = semantic_context
         self.ttl_seconds = self._bounded_integer(
             ttl_seconds,
             'ttl_seconds',
@@ -847,11 +865,13 @@ class SQLiteConversationStore:
                     SELECT COUNT(*) AS session_count
                     FROM conversation_sessions
                     WHERE user_id = ?
+                      AND (? = 0 OR status = 'active')
                     ''',
-                    (normalized_user,),
+                    (normalized_user, int(self.semantic_context)),
                 ).fetchone()
                 session_count = int(count_row['session_count'])
-                if session_count >= self.max_sessions_per_user:
+                if (session_count >= self.max_sessions_per_user
+                        and not self.semantic_context):
                     # Retain expired history until admission needs its space.
                     # The existing expiry and instance fences reject late turns.
                     removed = self._connection.execute(
@@ -910,6 +930,38 @@ class SQLiteConversationStore:
             except Exception:
                 self._connection.rollback()
                 raise
+
+    def resume_or_create(
+        self,
+        user_id: str,
+        conversation_id: Optional[str] = None,
+        *,
+        start_new: bool = False,
+    ) -> ConversationSession:
+        """Resume live context without counting startup or reads as dialogue."""
+        normalized_user = validate_user_id(user_id)
+        normalized_id = (validate_conversation_id(conversation_id)
+                         if conversation_id is not None else None)
+        with self._lock:
+            self._expire_and_commit(self._now())
+            if normalized_id is None:
+                row = self._connection.execute(
+                    '''
+                    SELECT * FROM conversation_sessions
+                    WHERE user_id = ? AND status = 'active'
+                    ORDER BY updated_at DESC, created_at DESC, conversation_id
+                    LIMIT 1
+                    ''',
+                    (normalized_user,),
+                ).fetchone()
+            else:
+                row = self._select_session_locked(normalized_user, normalized_id)
+            if row is not None and row['status'] == 'active':
+                if not start_new:
+                    return self._session_from_row(row)
+                # Closing fences pending inference and compaction; raw turns stay.
+                self.close_session(normalized_user, row['conversation_id'])
+            return self.create(normalized_user)
 
     def get(
         self,
@@ -1005,6 +1057,89 @@ class SQLiteConversationStore:
                     turns=tuple(turns),
                     summary=summary,
                 )
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def apply_compaction(
+        self,
+        token: BeginTurnToken,
+        expected_summary: Optional[ConversationSummary],
+        source_turns: Sequence[ConversationTurn],
+        result: SummaryResult,
+        *,
+        guard: Optional[Callable[[sqlite3.Connection], bool]] = None,
+    ) -> bool:
+        """CAS an already generated summary while retaining later raw turns."""
+        sources = tuple(source_turns)
+        if (
+            not self.semantic_context
+            or not sources
+            or not isinstance(result, SummaryResult)
+            or not isinstance(result.content, str)
+            or not result.content.strip()
+            or not isinstance(result.state_json, str)
+            or not isinstance(result.algorithm, str)
+            or not result.algorithm.startswith('openai-semantic-')
+            or result.fallback_used
+        ):
+            return False
+        if (expected_summary is not None
+                and not expected_summary.summarizer.startswith('openai-semantic-')):
+            expected_summary = None
+        previous_end = (expected_summary.source_end_ordinal
+                        if expected_summary else 0)
+        start, end = sources[0].ordinal, sources[-1].ordinal
+        if (
+            start not in {1, previous_end + 1}
+            or end >= token.ordinal
+            or [turn.ordinal for turn in sources] != list(range(start, end + 1))
+            or any(
+                turn.user_id != token.user_id
+                or turn.conversation_id != token.conversation_id
+                or turn.session_instance_id != token.session_instance_id
+                or turn.generation != token.generation
+                for turn in sources
+            )
+        ):
+            return False
+        with self._lock:
+            self._begin()
+            try:
+                now = self._now()
+                self._expire_due_locked(now)
+                row = self._select_session_locked(
+                    token.user_id, token.conversation_id,
+                )
+                session = self._session_from_row(row) if row else None
+                if (
+                    session is None or session.status != 'active'
+                    or session.session_instance_id != token.session_instance_id
+                    or session.generation != token.generation
+                    or session.revision < token.revision
+                ):
+                    self._connection.commit()
+                    return False
+                summary_row = self._select_summary_locked(session)
+                existing = (self._summary_from_row(summary_row)
+                            if summary_row is not None else None)
+                stored = self._summary_source_turns_locked(token, start - 1, end)
+                if (
+                    existing != expected_summary
+                    or [(turn.ordinal, turn.turn_id) for turn in stored]
+                    != [(turn.ordinal, turn.turn_id) for turn in sources]
+                    or (guard is not None and not guard(self._connection))
+                ):
+                    self._connection.commit()
+                    return False
+                previous_digest = (existing.source_digest
+                                   if existing and start != 1 else '')
+                self._save_summary_locked(
+                    session, existing, result, end,
+                    self._extend_source_digest(previous_digest, sources), now,
+                )
+                self._connection.commit()
+                return True
             except Exception:
                 self._connection.rollback()
                 raise
@@ -1161,22 +1296,28 @@ class SQLiteConversationStore:
                     ),
                 ).fetchone()
                 turn_count = int(count_row['turn_count'])
-                if turn_count >= self.max_turns_per_session:
+                if (turn_count >= self.max_turns_per_session
+                        and not self.semantic_context):
                     raise ConversationStateError(
                         'conversation turn limit reached; '
                         'reset or create a new session'
                     )
-                summary = self._summary_for_window_locked(
-                    session,
-                    turn_count,
-                    now,
-                )
+                if self.semantic_context:
+                    summary_row = self._select_summary_locked(session)
+                    summary = (self._summary_from_row(summary_row)
+                               if summary_row is not None else None)
+                else:
+                    summary = self._summary_for_window_locked(
+                        session, turn_count, now,
+                    )
                 history = self._history_locked(
                     normalized_user,
                     normalized_id,
                     session.session_instance_id,
                     session.generation,
-                    self.history_limit,
+                    None if self.semantic_context else self.history_limit,
+                    after_ordinal=(summary.source_end_ordinal
+                                   if self.semantic_context and summary else 0),
                 )
                 ordinal = turn_count + 1
                 if before_new_turn is not None:
@@ -1329,7 +1470,8 @@ class SQLiteConversationStore:
                     self._delete_pending_locked(token)
                     self._connection.commit()
                     raise changed_error
-                self._advance_summary_locked(token, now)
+                if not self.semantic_context:
+                    self._advance_summary_locked(token, now)
                 self._invalidate_pending_confirmations_locked(
                     token.user_id,
                     token.conversation_id,
@@ -2365,7 +2507,7 @@ class SQLiteConversationStore:
         user_id: str,
         conversation_id: str,
     ) -> ConversationSession:
-        """Delete all turns and start a new active generation."""
+        """Start a new active generation, retaining committed raw turns."""
         normalized_user = validate_user_id(user_id)
         normalized_id = validate_conversation_id(conversation_id)
         now = self._now()
@@ -2398,13 +2540,14 @@ class SQLiteConversationStore:
                         session.session_instance_id,
                     ),
                 )
-                self._connection.execute(
-                    '''
-                    DELETE FROM conversation_summaries
-                    WHERE user_id = ? AND conversation_id = ?
-                    ''',
-                    (normalized_user, normalized_id),
-                )
+                if not self.semantic_context:
+                    self._connection.execute(
+                        '''
+                        DELETE FROM conversation_summaries
+                        WHERE user_id = ? AND conversation_id = ?
+                        ''',
+                        (normalized_user, normalized_id),
+                    )
                 self._connection.execute(
                     '''
                     UPDATE conversation_sessions
@@ -3530,6 +3673,22 @@ class SQLiteConversationStore:
             digest_previous,
             digest_turns,
         )
+        return self._save_summary_locked(
+            session, existing,
+            SummaryResult(content, state_json, summarizer_name, fallback_used),
+            source_end, source_digest, now,
+        )
+
+    def _save_summary_locked(
+        self,
+        session: ConversationSession,
+        existing: Optional[ConversationSummary],
+        result: SummaryResult,
+        source_end: int,
+        source_digest: str,
+        now: float,
+    ) -> ConversationSummary:
+        """Persist one derived summary without changing raw turns or activity."""
         summary_id = (
             existing.summary_id
             if existing is not None
@@ -3586,23 +3745,24 @@ class SQLiteConversationStore:
                 source_digest = excluded.source_digest,
                 summarizer = excluded.summarizer,
                 fallback_used = excluded.fallback_used,
+                created_at = excluded.created_at,
                 updated_at = excluded.updated_at
             ''',
             (
-                token.user_id,
-                token.conversation_id,
-                token.session_instance_id,
-                token.generation,
+                session.user_id,
+                session.conversation_id,
+                session.session_instance_id,
+                session.generation,
                 summary_id,
                 summary_revision,
-                content,
-                state_json,
+                result.content,
+                result.state_json,
                 1,
                 source_end,
                 source_end,
                 source_digest,
-                summarizer_name,
-                int(fallback_used),
+                result.algorithm,
+                int(result.fallback_used),
                 created_at,
                 now,
             ),
@@ -3760,7 +3920,7 @@ class SQLiteConversationStore:
     @staticmethod
     def _extend_source_digest(
         previous_digest: str,
-        turns: List[SummarySourceTurn],
+        turns: Sequence[SummarySourceTurn | ConversationTurn],
     ) -> str:
         """Extend a deterministic per-turn digest chain."""
         try:
@@ -3792,7 +3952,8 @@ class SQLiteConversationStore:
         conversation_id: str,
         session_instance_id: str,
         generation: int,
-        limit: int,
+        limit: Optional[int],
+        after_ordinal: int = 0,
     ) -> List[ConversationTurn]:
         rows = self._connection.execute(
             '''
@@ -3803,6 +3964,7 @@ class SQLiteConversationStore:
               AND session_instance_id = ?
               AND generation = ?
               AND status = 'completed'
+              AND ordinal > ?
             ORDER BY ordinal DESC
             LIMIT ?
             ''',
@@ -3811,7 +3973,8 @@ class SQLiteConversationStore:
                 conversation_id,
                 session_instance_id,
                 generation,
-                limit,
+                after_ordinal,
+                -1 if limit is None else limit,
             ),
         ).fetchall()
         return [
@@ -3858,19 +4021,20 @@ class SQLiteConversationStore:
                     row['session_instance_id'],
                 ),
             )
-            self._connection.execute(
-                '''
-                DELETE FROM conversation_summaries
-                WHERE user_id = ?
-                  AND conversation_id = ?
-                  AND session_instance_id = ?
-                ''',
-                (
-                    row['user_id'],
-                    row['conversation_id'],
-                    row['session_instance_id'],
-                ),
-            )
+            if not self.semantic_context:
+                self._connection.execute(
+                    '''
+                    DELETE FROM conversation_summaries
+                    WHERE user_id = ?
+                      AND conversation_id = ?
+                      AND session_instance_id = ?
+                    ''',
+                    (
+                        row['user_id'],
+                        row['conversation_id'],
+                        row['session_instance_id'],
+                    ),
+                )
         cursor = self._connection.execute(
             '''
             UPDATE conversation_sessions
@@ -3925,12 +4089,14 @@ class SQLiteConversationStore:
               AND conversation_id = ?
               AND session_instance_id = ?
               AND generation = ?
+              AND (? = 0 OR summarizer LIKE 'openai-semantic-%')
             ''',
             (
                 session.user_id,
                 session.conversation_id,
                 session.session_instance_id,
                 session.generation,
+                int(self.semantic_context),
             ),
         ).fetchone()
 

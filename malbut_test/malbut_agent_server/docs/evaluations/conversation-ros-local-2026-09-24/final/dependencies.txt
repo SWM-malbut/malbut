@@ -1,0 +1,15 @@
+3.10.12 (main, Aug 31 2026, 10:18:17) [GCC 11.4.0]
+rclpy True /opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py
+sensor_msgs True /opt/ros/humble/local/lib/python3.10/dist-packages/sensor_msgs/__init__.py
+std_msgs True /opt/ros/humble/local/lib/python3.10/dist-packages/std_msgs/__init__.py
+action_msgs True /opt/ros/humble/local/lib/python3.10/dist-packages/action_msgs/__init__.py
+rosidl_runtime_py True /opt/ros/humble/lib/python3.10/site-packages/rosidl_runtime_py/__init__.py
+colcon_core True /usr/lib/python3/dist-packages/colcon_core/__init__.py
+pytest True /usr/lib/python3/dist-packages/pytest/__init__.py
+yaml True /usr/lib/python3/dist-packages/yaml/__init__.py
+numpy True /usr/lib/python3/dist-packages/numpy/__init__.py
+cv2 True /usr/lib/python3/dist-packages/cv2.cpython-310-aarch64-linux-gnu.so
+cv_bridge True /opt/ros/humble/local/lib/python3.10/dist-packages/cv_bridge/__init__.py
+tiktoken False None
+PIL True /usr/lib/python3/dist-packages/PIL/__init__.py
+aiohttp False None
