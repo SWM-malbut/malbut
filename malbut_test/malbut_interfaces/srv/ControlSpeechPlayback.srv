@@ -1,10 +1,14 @@
 string PAUSE=pause
 string RESUME=resume
 string STOP=stop
+string STOP_ALL=stop_all
 # 제어할 TTS 재생의 고유 ID
+# STOP_ALL은 ID 없이 현재 재생과 대기열 전체를 중단한다.
 string playback_id
 # 위 상수 중 하나
+# STOP은 아직 수신하지 않은 유효 ID에 대해서도 예약 취소를 접수한다.
 string command
 ---
 # 요청을 검증하고 접수했는지 여부. 실제 재생 상태는 SpeechPlaybackStatus로 알린다.
+# accepted=true에는 미수신 ID의 예약 취소도 포함한다. 최근 256개 취소/완료 ID를 보관한다.
 bool accepted

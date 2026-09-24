@@ -1,0 +1,15 @@
+# Manager asks the Agent to clarify one suspected incident using a short summary.
+# Correlation only; request_id must identify one confirmation attempt uniquely.
+string request_id
+string situation_type
+string summary
+---
+# Valid only when the Action succeeds. An aborted/canceled Action is a transport
+# or runtime failure, never evidence that the user was silent or needed help.
+string CONFIRMED_INCIDENT=confirmed_incident
+string RESOLVED=resolved
+string UNKNOWN=unknown
+string situation_assessment
+bool help_needed
+---
+# No conversational progress is sent to Manager.

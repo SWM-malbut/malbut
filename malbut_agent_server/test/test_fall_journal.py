@@ -276,7 +276,8 @@ def test_worker_default_does_not_read_token_create_journal_or_call_http(tmp_path
 def test_only_explicit_auth_retry_requeues_and_conflicts_remain_blocked(tmp_path):
     monitor, _, _, journal, _ = attach(tmp_path)
     try:
-        monitor.candidate(candidate())
+        iid = monitor.candidate(candidate())
+        monitor.ask_question(iid)  # Explicit second event for independent upload failures.
         rows = journal.upload_status()
         journal.failed(rows[0]['event_id'], code='http_401', blocked=True)
         journal.failed(rows[1]['event_id'], code='http_409', blocked=True)

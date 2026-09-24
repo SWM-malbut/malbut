@@ -21,7 +21,9 @@
 설정 Service·상태·연결 확인은 `malbut_interfaces` 자료형을 사용한다.
 VLM·홈캠·Manager 연결, 서버 설정 응답과 웹 저장·회신 이력 표시를 구현했다.
 현재 실행 등록·실행 상태의 웹 전달과 실물 검증은 남아 있다.
-질문·답변·사건 이벤트는 임시 JSON 연결이므로 담당자와 맞춰야 한다.
+사건 이벤트는 JSON 연결을 유지한다. 2026-09-25에는 Manager가 이벤트를 받아
+Agent의 확인 Action을 호출하고 최종 판단을 돌려주는 경로를 추가했다.
+[이상 상황 확인 구현](agent_fall_implementation.md)에 계약과 검증 범위를 정리했다.
 
 ## 영상 입력
 
@@ -169,14 +171,21 @@ VLM의 5초·15초 중단과 연결 확인 수신은 구현했다. 상태 보고
 - 진행 중 취소는 원격 처리·이미 보낸 영상의 회수를 보장하지 않는다. 늦게 온 결과는 정상 판단에 쓰지 않는다.
 - 이 연결은 신뢰된 로컬 ROS graph 전제다. 인증 API나 SROS2 접근 제어를 대신하지 않는다.
 
-아래 사건·Agent 연결은 기존 `std_msgs/String` JSON을 유지한다.
+아래 런타임 토픽은 기존 `std_msgs/String` JSON을 유지한다.
+새 대화 Agent는 이 토픽을 직접 쓰지 않고 Manager의 `ConfirmSituation` Action에 응답한다.
 
 | 토픽 | 방향 | 용도 |
 |---|---|---|
 | `/malbut/falls/runtime/events` | 발행 | 사건·질문·영상 판정·실패·알림 요청 메타데이터 |
-| `/malbut/falls/runtime/agent_reply` | 수신 | 해석된 Agent 답변. 실제 TTS/STT를 대신하지 않음 |
+| `/malbut/falls/runtime/agent_reply` | 수신 | 기존 개별 답변 계약용 입력. 새 확인 Action 경로에서는 사용하지 않음 |
 | `/malbut/falls/runtime/subject_observation` | 수신 | 외부 판단부용 관측 입력. Pose의 관측은 별도로 내부에서 생성·검증 |
-| `/malbut/falls/runtime/decision` | 수신 | 담당 판단부가 내린 재확인·종결 결정 |
+| `/malbut/falls/runtime/decision` | 수신 | Manager가 전달하는 최종 확인 결과와 재확인·종결 결정 |
+
+새 경로의 `confirmation_result`는 `boot_id`, `incident_id`, `question_id`,
+`subject_key`, `evidence_revision`, `situation_assessment`, `help_needed`를 검증한다.
+`confirmation_failed`는 처리 실패이며 무응답 판단이 아니다. `dismiss_normal`은
+이전 낙상 관측이나 확인 대기가 없는 정상 영상의 종결에만 적용한다.
+이하 개별 답변·재확인 계약은 기존 호출자용으로 유지한다.
 
 Agent 답변은 전체 명세의 `AgentCheckReply`와 동일하다. 실제 질문이 재생되지 않았는데
 `no_response`라고 보내면 거부한다. Agent가 연결되지 않았다고 무응답을 만들어내지 않는다.
@@ -227,9 +236,9 @@ ROS 처리 루프에서 업로드를 기다리지 않는다. 이 실행 명령�
 - 사건 영상에 유효한 대상 박스가 모두 연결되면 해당 사람을 확인하도록 요청한다.
   연결할 수 없는 다인 장면은 임의로 한 사람을 고르지 말고 `unobservable`로 답하도록 했다.
   모델 준수·박스 정확도는 실영상 검증이 필요하다.
-- Manager 측 이벤트 수신·질문 재생·답변 연결·재확인 판단은 담당자와 연결해야 한다.
-  ROS 발행 성공은 Agent 처리 완료가 아니다.
-- 현재 테스트는 HTTP 응답/취소를 흉내 낸 전송기, 실제 코어, ROS 메시지/콜백을 쓴다.
+- Manager의 확인 Action 연결은 구현했으며 실제 DDS와 시험용 음성 장치로 왕복 검증한다.
+  실제 음성·모델·카메라를 합친 확인은 남아 있다.
+- 아래 2026-09-19 검증은 HTTP 응답/취소를 흉내 낸 전송기, 실제 코어, ROS 메시지/콜백을 쓴다.
   ROS 노드 생성은 시험용 객체로 대체하며 DDS graph·실물 카메라·Cloud 추론은 실행하지 않는다.
 - 6장/12장 합성 영상 Cloud 비교는 위 기록을 참고한다. 직접 API 인증 경로와
   Jetson 동시 부하·시간 측정, 실제 Agent 답변·대상 관측을 합친 E2E는 남아 있다.

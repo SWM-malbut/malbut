@@ -20,6 +20,15 @@ class ConversationSession:
         """Enter dialogue without restarting an already active turn."""
         self.active = True
 
+    def activate_proactive(self, session_id):
+        """Open an Agent-owned turn; its deadlines are managed by the Agent."""
+        self.terminate()
+        self.session_id = session_id
+        self.active = True
+        if self.playback_state in ('playing', 'paused') and self._control != 'stop':
+            self._control = 'stop'
+            self.publish_control(self.playback_id, 'stop')
+
     @property
     def interrupted_playback_id(self):
         """Expose the playback associated with the current utterance, if any."""
@@ -28,6 +37,7 @@ class ConversationSession:
     def terminate(self):
         """Invalidate pending utterances while preserving actual playback tracking."""
         self.active = False
+        self.session_id = ''
         self.deadline = None
         self.utterance_id = None
         self._interrupted_playback = None
@@ -52,6 +62,10 @@ class ConversationSession:
         self._resume_pending = False
         self._interrupted_playback = None
         if self.playback_state in ('playing', 'paused') and self._control != 'stop':
+            if self.session_id:
+                self._control = 'stop'
+                self.publish_control(self.playback_id, 'stop')
+                return self.utterance_id
             if self.playback_state == 'playing' or self._control in ('pause', 'resume'):
                 self._interrupted_playback = self.playback_id
                 if self._control != 'pause':
@@ -130,6 +144,10 @@ class ConversationSession:
             if state == 'playing' and previous == 'paused' and self._control == 'resume':
                 self._control = None
             if self.active and state == 'playing' and self.utterance_id is not None:
+                if self.session_id:
+                    self._control = 'stop'
+                    self.publish_control(playback_id, 'stop')
+                    return
                 self._interrupted_playback = playback_id
                 if self._control != 'pause':
                     self._control = 'pause'
@@ -141,7 +159,7 @@ class ConversationSession:
         self._interrupted_playback = None
         self.deadline = (
             self.clock() + 5.0
-            if self.active and state == 'finished'
+            if self.active and not self.session_id and state == 'finished'
             and self._control != 'stop' and self.utterance_id is None
             else None
         )

@@ -1,5 +1,6 @@
 """Serialize speech requests and keep playback controls scoped to one ID."""
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 import heapq
 import logging
@@ -12,7 +13,9 @@ from uuid import uuid4
 
 DIALOGUE = 0
 NOTIFICATION = 1
+CONFIRMATION = 2
 TERMINAL_STATES = frozenset(('finished', 'failed', 'stopped'))
+MAX_RETIRED_PLAYBACK_IDS = 256
 
 
 @dataclass
@@ -52,6 +55,7 @@ class SpeechRuntime:
         self._logger = logger or logging.getLogger(__name__)
         self._condition = Condition()
         self._pending = []
+        self._retired_ids = OrderedDict()
         self._sequence = 0
         self._active = None
         self._closed = False
@@ -68,32 +72,63 @@ class SpeechRuntime:
         if self._expiry_worker is not None:
             self._expiry_worker.start()
 
-    def submit(self, text, request_type=DIALOGUE, *, validate=None):
+    def submit(self, text, request_type=DIALOGUE, *, validate=None, playback_id=''):
         """Return an ID; full/expired waiting requests report failed once."""
         if not isinstance(text, str) or not text.strip():
             self._logger.warning('tts_text_ignored: blank response')
             return None
-        if type(request_type) is not int or request_type not in (0, 1):
+        if type(request_type) is not int or request_type not in (0, 1, 2):
             self._logger.warning('tts_request_ignored: invalid request_type')
             return None
+        if not isinstance(playback_id, str) or (playback_id and (
+                not playback_id.strip() or len(playback_id) > 200)):
+            self._logger.warning('tts_request_ignored: invalid playback_id')
+            return None
+        superseded = []
+        previous = None
         with self._condition:
             if self._closed:
                 return None
+            if playback_id and (
+                    self._active is not None and self._active.playback_id == playback_id
+                    or any(item[2].playback_id == playback_id for item in self._pending)):
+                return None
+            if playback_id in self._retired_ids:
+                if self._retired_ids[playback_id] == 'canceled_before_receipt':
+                    # Topic delivery may follow an already accepted STOP service.
+                    request = _Request(playback_id, text, None, state='stopped')
+                    self._report_status(request, 'stopped')
+                    return playback_id
+                return None
             now = self._clock()
             expired = self._expire_pending_locked(now)
+            if request_type == CONFIRMATION:
+                superseded = [item[2] for item in self._pending]
+                self._pending.clear()
+                previous = self._active
+                if previous is not None and previous.state not in TERMINAL_STATES:
+                    previous.cancel.set()
+                    previous.command = 'stop'
             request = _Request(
-                str(uuid4()), text,
+                playback_id or str(uuid4()), text,
                 now + self._pending_timeout_s if self._pending_timeout_s > 0 else None,
                 validate,
             )
             rejected = len(self._pending) >= self._max_pending_requests
             if not rejected:
                 heapq.heappush(self._pending, (
-                    request_type, self._sequence, request,
+                    -1 if request_type == CONFIRMATION else request_type,
+                    self._sequence, request,
                 ))
                 self._sequence += 1
             self._condition.notify_all()
         self._fail_waiting(expired, 'expired')
+        for pending in superseded:
+            pending.cancel.set()
+            pending.state = 'stopped'
+            self._report_status(pending, 'stopped')
+        if previous is not None and previous.player is not None:
+            self._stop_player(previous)
         if rejected:
             self._fail_waiting([request], 'full')
         return request.playback_id
@@ -130,9 +165,32 @@ class SpeechRuntime:
             self._fail_waiting(expired, 'expired')
 
     def control(self, playback_id, command):
-        """Accept a valid control for the active request without replacing it."""
+        """Control a request, including a bounded STOP reservation before receipt."""
+        if command == 'stop_all':
+            return self.stop_all()
+        if (not isinstance(playback_id, str) or not playback_id.strip()
+                or len(playback_id) > 200):
+            return False
         with self._condition:
+            if self._closed:
+                return False
+            if command == 'stop':
+                pending = next((entry for entry in self._pending
+                                if entry[2].playback_id == playback_id), None)
+                if pending is not None:
+                    self._pending.remove(pending)
+                    heapq.heapify(self._pending)
+                    pending[2].cancel.set()
+                    pending[2].state = 'stopped'
+                    self._report_status(pending[2], 'stopped')
+                    return True
             request = self._active
+            if command == 'stop' and (
+                    request is None or request.playback_id != playback_id):
+                if playback_id in self._retired_ids:
+                    return self._retired_ids[playback_id] == 'canceled_before_receipt'
+                self._remember_retired(playback_id, 'canceled_before_receipt')
+                return True
             if (request is None or request.playback_id != playback_id
                     or request.state in TERMINAL_STATES
                     or request.cancel.is_set()):
@@ -153,12 +211,7 @@ class SpeechRuntime:
         # runtime condition while that thread reports a playback state.
         if command == 'stop':
             if player is not None:
-                try:
-                    player.stop()
-                except Exception as error:
-                    with self._condition:
-                        request.control_error = error
-                    self._logger.error(f'tts_control_failed: {error}')
+                self._stop_player(request)
             return True
         accepted = getattr(player, command)()
         if not accepted:
@@ -166,6 +219,36 @@ class SpeechRuntime:
                 if request.command == command:
                     request.command = None
         return accepted
+
+    def stop_all(self):
+        """Preempt ordinary dialogue before the Agent has generated a question."""
+        with self._condition:
+            if self._closed:
+                return False
+            pending = [entry[2] for entry in self._pending]
+            self._pending.clear()
+            request = self._active
+            if request is not None and request.state not in TERMINAL_STATES:
+                request.cancel.set()
+                request.command = 'stop'
+            else:
+                request = None
+            self._condition.notify_all()
+        for item in pending:
+            item.cancel.set()
+            item.state = 'stopped'
+            self._report_status(item, 'stopped')
+        if request is not None and request.player is not None:
+            self._stop_player(request)
+        return True
+
+    def _stop_player(self, request):
+        try:
+            request.player.stop()
+        except Exception as error:
+            with self._condition:
+                request.control_error = error
+            self._logger.error(f'tts_control_failed: {error}')
 
     def close(self):
         """Cancel active work, drop waiting jobs, and close the worker."""
@@ -191,10 +274,20 @@ class SpeechRuntime:
             raise TimeoutError('TTS expiry worker did not stop within 10 seconds')
 
     def _report_status(self, request, state):
+        if state in TERMINAL_STATES:
+            with self._condition:
+                self._remember_retired(request.playback_id, state)
         try:
             self._on_status(request.playback_id, state)
         except Exception as error:
             self._logger.error(f'tts_status_failed: {error}')
+
+    def _remember_retired(self, playback_id, state):
+        """Called under the runtime lock; never retain unbounded cancellation IDs."""
+        self._retired_ids[playback_id] = state
+        self._retired_ids.move_to_end(playback_id)
+        while len(self._retired_ids) > MAX_RETIRED_PLAYBACK_IDS:
+            self._retired_ids.popitem(last=False)
 
     def _status(self, request, state):
         with self._condition:

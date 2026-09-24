@@ -5,7 +5,9 @@ from threading import Condition, Event
 
 import pytest
 
-from malbut_tts.runtime import DIALOGUE, NOTIFICATION, SpeechRuntime
+from malbut_tts.runtime import (
+    CONFIRMATION, DIALOGUE, MAX_RETIRED_PLAYBACK_IDS, NOTIFICATION, SpeechRuntime,
+)
 
 
 class FakeSynthesizer:
@@ -130,6 +132,85 @@ def test_priority_and_fifo_preserve_current_and_all_pending_requests(h):
     assert len(set([first] + pending)) == 5
 
 
+def test_confirmation_preempts_old_playback_and_queued_dialogue(h):
+    first = h.runtime.submit('ordinary answer')
+    h.active(first)
+    waiting = h.runtime.submit('queued ordinary answer')
+    question = h.runtime.submit('넘어지셨나요?', CONFIRMATION, playback_id='question-1')
+    assert question == 'question-1'
+    h.wait(first, 'stopped')
+    h.wait(waiting, 'stopped')
+    h.active(question).drain.set()
+    h.wait(question, 'finished')
+    assert h.synth.texts == ['ordinary answer', '넘어지셨나요?']
+    assert (first, 'finished') not in h.events
+    assert (waiting, 'playing') not in h.events
+
+
+def test_cancel_pending_known_playback_id_never_synthesizes_it(h):
+    first = h.runtime.submit('ordinary answer')
+    player = h.active(first)
+    waiting = h.runtime.submit('queued answer', playback_id='known-id')
+    assert h.runtime.control(waiting, 'stop')
+    h.wait(waiting, 'stopped')
+    player.drain.set()
+    h.wait(first, 'finished')
+    assert h.synth.texts == ['ordinary answer']
+    assert not h.runtime.control(waiting, 'stop')
+
+
+def test_duplicate_live_playback_id_does_not_create_competing_request(h):
+    first = h.runtime.submit('ordinary answer', playback_id='same-id')
+    h.active(first)
+    assert h.runtime.submit('duplicate', playback_id='same-id') is None
+
+
+def test_stop_all_clears_active_and_waiting_before_question_is_available(h):
+    first = h.runtime.submit('ordinary answer')
+    h.active(first)
+    waiting = h.runtime.submit('queued ordinary answer')
+    assert h.runtime.control('', 'stop_all')
+    h.wait(first, 'stopped')
+    h.wait(waiting, 'stopped')
+    assert h.synth.texts == ['ordinary answer']
+    assert h.runtime.control('', 'stop_all')
+    question = h.runtime.submit('question', CONFIRMATION, playback_id='q1')
+    h.active(question).drain.set()
+    h.wait(question, 'finished')
+
+
+def test_stop_before_confirmation_receipt_suppresses_late_audio_and_preemption(h):
+    active = h.runtime.submit('진행 중인 다른 음성')
+    player = h.active(active)
+    assert h.runtime.control('confirmation-late', 'stop')
+    assert h.runtime.control('confirmation-late', 'stop')
+    assert ('confirmation-late', 'stopped') not in h.events
+    assert h.runtime.submit(
+        '이미 답한 질문', CONFIRMATION, playback_id='confirmation-late',
+    ) == 'confirmation-late'
+    h.wait('confirmation-late', 'stopped')
+    assert not player.cancel.is_set()
+    assert h.synth.texts == ['진행 중인 다른 음성']
+    assert not h.runtime.control('confirmation-late', 'stop')
+    assert h.runtime.submit('중복 질문', CONFIRMATION, playback_id='confirmation-late') is None
+    assert h.events.count(('confirmation-late', 'stopped')) == 1
+    player.drain.set()
+    h.wait(active, 'finished')
+
+
+def test_stop_reservations_are_bounded_and_reject_invalid_ids(h):
+    for invalid in ('', '  ', None, 'x' * 201):
+        assert not h.runtime.control(invalid, 'stop')
+    for index in range(MAX_RETIRED_PLAYBACK_IDS + 1):
+        assert h.runtime.control(f'future-{index}', 'stop')
+    assert len(h.runtime._retired_ids) == MAX_RETIRED_PLAYBACK_IDS
+    assert 'future-0' not in h.runtime._retired_ids
+    latest = f'future-{MAX_RETIRED_PLAYBACK_IDS}'
+    assert h.runtime.submit('늦은 질문', CONFIRMATION, playback_id=latest) == latest
+    h.wait(latest, 'stopped')
+    assert h.synth.texts == []
+
+
 def test_finished_waits_for_full_device_drain_and_is_emitted_once(h):
     """Synthesis exhaustion alone must never start the STT silence timer."""
     pid = h.runtime.submit(' 문장 하나.\n문장 둘. ')
@@ -229,9 +310,9 @@ def test_blank_invalid_kind_and_invalid_controls_do_not_change_state(h):
     """Ignore unusable input and reject a control that cannot be performed."""
     for text in ('', ' \n\t', None):
         assert h.runtime.submit(text) is None
-    for kind in (-1, 2, 'dialogue', True):
+    for kind in (-1, 3, 'dialogue', True):
         assert h.runtime.submit('hello', kind) is None
-    assert not h.runtime.control('missing', 'stop')
+    assert not h.runtime.control('', 'stop')
     pid = h.runtime.submit('answer')
     player = h.active(pid)
     for command in ('resume', 'invalid'):

@@ -76,6 +76,7 @@ class SystemManagerNode(Node):
         self._server_group = ReentrantCallbackGroup()
         self._client_group = ReentrantCallbackGroup()
         self._fall_link = None
+        self._fall_confirmation = None
         fall_ids = {
             key: self.declare_parameter(
                 'fall_' + key + '_runtime_id', '',
@@ -157,6 +158,11 @@ class SystemManagerNode(Node):
                 self, manager_id=fall_ids['manager'],
                 bridge_id=fall_ids['bridge'], vlm_id=fall_ids['vlm'],
             )
+
+        from .fall_confirmation_link import FallConfirmationLink
+        self._fall_confirmation = FallConfirmationLink(
+            self, runtime_id=fall_ids['vlm'],
+            goal_response_timeout_s=goal_response_timeout_s)
 
         self._localization = None
         if localization_control:
@@ -270,6 +276,8 @@ class SystemManagerNode(Node):
         self._accepting_goals = False
         if self._fall_link is not None:
             self._fall_link.close()
+        if self._fall_confirmation is not None:
+            self._fall_confirmation.destroy()
         if getattr(self, '_localization', None) is not None:
             self._localization.close()
         if hasattr(self, '_action_server'):
@@ -282,6 +290,8 @@ class SystemManagerNode(Node):
         """Stop admission and cancel every non-terminal managed mission."""
         if self._fall_link is not None:
             self._fall_link.close()
+        if self._fall_confirmation is not None:
+            self._fall_confirmation.close()
         with self._effects_lock:
             self._accepting_goals = False
             with self._lock:

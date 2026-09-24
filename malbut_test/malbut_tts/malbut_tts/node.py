@@ -114,7 +114,9 @@ def create_tts_node(runtime_factory=None):
 
         def _receive(self, message):
             if not self._closing:
-                self._runtime.submit(message.text, message.request_type)
+                playback_id = getattr(message, 'playback_id', '')
+                options = {'playback_id': playback_id} if playback_id else {}
+                self._runtime.submit(message.text, message.request_type, **options)
 
         def _control(self, request, response):
             response.accepted = (

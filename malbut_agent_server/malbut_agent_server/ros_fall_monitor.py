@@ -1,7 +1,7 @@
 """Opt-in ROS input/output wiring for the Cloud-only fall runtime.
 
-Settings and health use malbut_interfaces. Agent/event handoffs remain an
-experimental JSON bridge. No TTS, drive commands or push HTTP here.
+Settings and health use malbut_interfaces. The Manager owns confirmation
+handoffs; the conversation Agent never subscribes to these runtime topics.
 """
 
 import argparse
@@ -51,6 +51,7 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
                 'manager_runtime_id', '', descriptor=ParameterDescriptor(read_only=True)).value
             runtime = self.declare_parameter(
                 'runtime_id', '', descriptor=ParameterDescriptor(read_only=True)).value
+            self.runtime_id = runtime
             self.control = FallSettingsControl(
                 self.inputs, manager_runtime_id=manager, runtime_id=runtime, clock=clock)
             self._bridge = CvBridge()
@@ -58,6 +59,7 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
             self._last_processed_image = None
             self._status_sequence = 0
             self._logs = {}
+            self._last_question_handoff = -float('inf')
             self._events = self.create_publisher(String, '/malbut/falls/runtime/events', 50)
             self._status = self.create_publisher(FallRuntimeStatus, '/malbut/falls/status', 10)
             self.create_service(ApplyFallSettings, '/malbut/falls/settings/apply',
@@ -170,9 +172,17 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
                 last_error_code=analysis.last_error_code))
 
         def publish_events(self):
-            for event in self.monitor.drain_events():
+            events = list(self.monitor.drain_events())
+            if clock() - self._last_question_handoff >= 1.0:
+                self._last_question_handoff = clock()
+                sent = {event.question_id for event in events
+                        if event.kind == 'question_requested'}
+                events.extend(event for event in self.monitor.pending_questions()
+                              if event.question_id not in sent)
+            for event in events:
                 self._events.publish(String(data=json.dumps(
-                    event_metadata(event), allow_nan=False)))
+                    dict(event_metadata(event), boot_id=self.monitor.boot_id,
+                         runtime_id=self.runtime_id), allow_nan=False)))
 
     return FallNode()
 
