@@ -1,0 +1,63 @@
+{
+  "created_at": "2026-09-23T18:21:18.398250+00:00",
+  "temporary_image": "malbut-conversation-ros-fall-local:20260924",
+  "original_container": "malbut-rosorin-sim-20260918",
+  "temporary_container": "malbut-conversation-ros-fixed-20260924",
+  "source_sha256": {
+    "malbut_agent_server/malbut_agent_server/weather_query.py": "006ae77f2e6af55dab503294c4713feb54edc20e1d41b80e363714a271f04d67",
+    "malbut_agent_server/malbut_agent_server/speech_dialogue.py": "04ec9fd67815a7d5d169744f67d7ac4abf7218cd2360a0d16d60205cc7348176",
+    "malbut_agent_server/test/test_weather_query.py": "8b25ee7a6ee56d5b45cdc612d3354842d1319f7332baaf011d8e8e38644ccd8b",
+    "malbut_agent_server/test/test_speech_dialogue.py": "95c65178a7c7816c0316a6cd185278945afb0684987f72eeee2398caf38a0d84",
+    "malbut_agent_server/test/test_ros_memory_communication.py": "3cfa7a91a4c27a140fc0ab3b7b8749ef4acca4f43f164d3ce61a45612318a9ae",
+    "malbut_agent_server/test/test_ros_weather_communication.py": "3cbe72d05d729a56b1027ff021302cb8785bf4dc409af796dc88568da38d48db"
+  },
+  "host_unit_tests": {
+    "command": "PYTHONPATH=malbut_agent_server:malbut_agent_server/test /tmp/malbut-context-venv/bin/python -m pytest -q malbut_agent_server/test/test_weather_query.py malbut_agent_server/test/test_speech_dialogue.py",
+    "passed": 57,
+    "seconds": 0.42
+  },
+  "container_id": "857cb22ac626258355b7c08bbf64a1f638d7ed1633647b1fd7d8160fa1064c7d",
+  "snapshot_image_id": "sha256:4ea06355e9c97f94838262cf7d73a29d288247ccbeb34e3c8a6ab6f83ec864bb",
+  "container_state": {
+    "Status": "exited",
+    "ExitCode": 1,
+    "StartedAt": "2026-09-23T18:21:18.552262759Z",
+    "FinishedAt": "2026-09-23T18:21:50.74740301Z",
+    "OOMKilled": false,
+    "Error": ""
+  },
+  "verified_container": {
+    "NetworkMode": "none",
+    "ReadonlyRootfs": true,
+    "Privileged": false,
+    "Devices": [],
+    "CapDrop": [
+      "ALL"
+    ],
+    "SecurityOpt": [
+      "no-new-privileges"
+    ],
+    "Tmpfs": {
+      "/root": "exec,size=268435456",
+      "/tmp": "exec,size=2147483648"
+    },
+    "PortBindings": {}
+  },
+  "verified_mounts": [
+    {
+      "Type": "bind",
+      "Source": "/Users/sinhyeonjae/Documents/ChatGPT/malbut/malbut_agent_server/docs/evaluations/conversation-ros-local-2026-09-24/post-fix",
+      "Destination": "/results",
+      "RW": true
+    },
+    {
+      "Type": "bind",
+      "Source": "/Users/sinhyeonjae/Documents/ChatGPT/malbut",
+      "Destination": "/source",
+      "RW": false
+    }
+  ],
+  "verified_networks": [
+    "none"
+  ]
+}

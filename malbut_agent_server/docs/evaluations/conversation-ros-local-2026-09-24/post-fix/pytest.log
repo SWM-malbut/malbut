@@ -1,0 +1,58 @@
+...[INFO] [1790187686.751784637] [malbut_tts_receiver]: {"event": "tts_text_received", "text": "사람 따라가기 요청: Manager가 실행 요청을 성공 상태로 종료했다고 알려왔어요."}
+.[INFO] [1790187686.927558888] [malbut_tts_receiver]: {"event": "tts_text_received", "text": "사람 따라가기 요청: Manager가 실행 요청을 성공 상태로 종료했다고 알려왔어요."}
+.................F..............                                     [100%]
+=================================== FAILURES ===================================
+______ test_interrupted_location_setting_cannot_save_late_result[cancel] _______
+
+stored_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff7dedbd30>, provider=<test_ros_weather_...eries=[], candidates=[{'location': '수원시 우만동', 'latitude': 37.28535, 'longitude': 127.02941, 'timezone': 'Asia/Seoul'}])
+interruption = 'cancel'
+
+    @pytest.mark.parametrize('interruption', ['cancel', 'timeout'])
+    def test_interrupted_location_setting_cannot_save_late_result(stored_weather, interruption):
+        """The Manager's terminal failure cannot be followed by a late database write."""
+        run = stored_weather
+        run.location_store.set(run.location)
+        started = Event()
+    
+        def resolve(query):
+            started.set()
+            assert run.client.release.wait(10.0)
+            return [{**run.location, 'location': '용인시 동백동', 'latitude': 37.277}]
+    
+        run.resolve_location = resolve
+        run.start(auto_location=True, timeout_s=0.2 if interruption == 'timeout' else 5.0)
+        run.send('여기는 용인시 동백동')
+        run.spin_until(started.is_set)
+        if interruption == 'cancel':
+            run.agent.missions.cancel(next(iter(run.agent.missions._requests)))
+>       run.spin_until(lambda: len(run.replies) == 1)
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:497: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+predicate = <function test_interrupted_location_setting_cannot_save_late_result.<locals>.<lambda> at 0xffff7dd5b7f0>
+
+    def spin_until(predicate):
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            executor.spin_once(timeout_sec=0.02)
+>       raise AssertionError('Weather mission or speech evidence is missing')
+E       AssertionError: Weather mission or speech evidence is missing
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:198: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187691.736756417] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187691.790628792] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187691.793243792] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "deb1d477-68ce-41a2-bfeb-bef1f4cfbda2", "text": "여기는 용인시 동백동"}
+[INFO] [1790187691.845554542] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:set:speech-request-6b72f29a81cff0eb6b3ff433b685bd67bb025fc7bf6cd62588ee3b7d12afcfa5", "goal_id": "1188bd6cc4ad48fd977715ecf4529ca3", "capability_id": "set_weather_location", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187691.851172251] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:set:speech-request-6b72f29a81cff0eb6b3ff433b685bd67bb025fc7bf6cd62588ee3b7d12afcfa5", "goal_id": "1188bd6cc4ad48fd977715ecf4529ca3", "capability_id": "set_weather_location", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187691.852271501] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:set:speech-request-6b72f29a81cff0eb6b3ff433b685bd67bb025fc7bf6cd62588ee3b7d12afcfa5", "goal_id": "1188bd6cc4ad48fd977715ecf4529ca3", "capability_id": "set_weather_location", "kind": "cancel_requested", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187691.855114542] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:set:speech-request-6b72f29a81cff0eb6b3ff433b685bd67bb025fc7bf6cd62588ee3b7d12afcfa5", "goal_id": "1188bd6cc4ad48fd977715ecf4529ca3", "capability_id": "set_weather_location", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": "1188bd6cc4ad48fd977715ecf4529ca3", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187691.856745209] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:set:speech-request-6b72f29a81cff0eb6b3ff433b685bd67bb025fc7bf6cd62588ee3b7d12afcfa5", "goal_id": "1188bd6cc4ad48fd977715ecf4529ca3", "capability_id": "set_weather_location", "kind": "progress", "state": "CANCELING", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": "1188bd6cc4ad48fd977715ecf4529ca3", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187691.857028126] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:set:speech-request-6b72f29a81cff0eb6b3ff433b685bd67bb025fc7bf6cd62588ee3b7d12afcfa5", "goal_id": "1188bd6cc4ad48fd977715ecf4529ca3", "capability_id": "set_weather_location", "kind": "cancel_accepted", "state": "CANCELING", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": "1188bd6cc4ad48fd977715ecf4529ca3", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187691.857334501] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:set:speech-request-6b72f29a81cff0eb6b3ff433b685bd67bb025fc7bf6cd62588ee3b7d12afcfa5", "goal_id": "1188bd6cc4ad48fd977715ecf4529ca3", "capability_id": "set_weather_location", "kind": "progress", "state": "CANCELING", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": "1188bd6cc4ad48fd977715ecf4529ca3", "reason": "", "result_yaml": null, "feedback_yaml": "mission_id: ''\nstate: RESOLVING\nfeedback_yaml: ''\n", "ros_status": null}
+[INFO] [1790187691.909576626] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:set:speech-request-6b72f29a81cff0eb6b3ff433b685bd67bb025fc7bf6cd62588ee3b7d12afcfa5", "goal_id": "1188bd6cc4ad48fd977715ecf4529ca3", "capability_id": "set_weather_location", "kind": "canceled", "state": "CANCELED", "accepted": true, "terminal": true, "cancel_requested": true, "mission_id": "1188bd6cc4ad48fd977715ecf4529ca3", "reason": "", "result_yaml": "mission_id: ''\nresult_yaml: 'status: unavailable\n\n  '\nmessage: CANCELED\n", "feedback_yaml": "mission_id: ''\nstate: RESOLVING\nfeedback_yaml: ''\n", "ros_status": 5}
+------------------- generated xml file: /results/pytest.xml --------------------
+1 failed, 35 passed in 24.63s
