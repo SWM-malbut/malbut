@@ -51,7 +51,7 @@ STT·Agent·TTS는 기본 포함이며, 로봇 준비 확인 뒤 음성 점검 �
 
 `robot.launch.py`는 통합 navigation 실행에서 Cloud VLM 실행기
 `malbut-fall-monitor`를 함께 시작한다. Manager는 위치 추정을 위해 먼저 시작하며,
-설정이 준비되어 있으면 VLM은 로봇 준비 확인 뒤 한 번만 실행한다. 카메라는 추가로 띄우지 않고 Bringup의
+설정이 준비되어 있으면 VLM·Pose·`malbut_fall_coordinator`는 로봇 준비 확인 뒤 한 번만 실행한다. 카메라는 추가로 띄우지 않고 Bringup의
 `rgb_topic`을 사용한다. 음성을 꺼도 VLM 노드는 별도로 시작할 수 있다.
 
 최신 Bringup은 `mode` 인자를 없앴다. `mode:=navigation`을 넘길 필요가 없다.
@@ -75,12 +75,15 @@ ros2 launch malbut_bringup robot.launch.py map:=/실제/지도.yaml fall_monitor
 ```
 
 이 명령은 **VLM 노드 시작**이지 전송 동의가 아니다. 실제 영상 수집에는
-시작 시 지정한 Manager 실행 ID, 현재 VLM에 적용한 감지·카메라 허용 설정,
-Manager의 새 연결 확인 메시지가 필요하다. VLM은 KVS 저장 허용 Bool을 더 이상 받지 않는다.
+시작 시 지정한 낙상 코디네이터 실행 ID, 현재 VLM에 적용한 감지·카메라 허용 설정,
+코디네이터의 새 연결 확인 메시지가 필요하다. VLM은 KVS 저장 허용 Bool을 더 이상 받지 않는다.
 Cloud 전송에는 `cloud_consent`와 15초 안의 서버 설정 확인도 필요하다.
-Bringup은 홈캠·Manager·VLM에 같은 실행 ID 묶음을 전달하고,
-홈캠이 서버 설정을 받으면 Manager가 VLM에 적용한다. 준비 완료나 노드 시작만으로
-감지·Cloud 전송을 켜지는 않는다. Agent 질문·답변의 실제 연동은 별도 작업이다.
+Bringup은 홈캠·낙상 코디네이터·VLM에 같은 실행 ID 묶음을 전달하고,
+홈캠이 서버 설정을 받으면 코디네이터가 VLM에 적용한다. 준비 완료나 노드 시작만으로
+감지·Cloud 전송을 켜지는 않는다. 확인 대화는 코디네이터가 관리자에
+`fall_confirmation` 미션(`URGENT`, `BASE·SPEAKER`)을 요청해 기존 Agent Action으로 연결한다.
+관리자는 낙상 판단이나 설정 전달을 하지 않는다. 기존 wire 필드의 `manager_runtime_id`는
+호환성을 위해 이름만 유지하며 코디네이터 ID를 담는다.
 
 API 키는 런타임 설정의 `cloud_key_file`에서 읽으며 launch 인자로 전달하지 않는다.
 설정 검사는 키를 읽거나 DB를 만들지 않는다. 실제 노드가 시작될 때 키와 의존성을

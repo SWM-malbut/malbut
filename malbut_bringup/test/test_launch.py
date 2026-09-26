@@ -556,9 +556,13 @@ def test_fall_monitor_starts_once_after_readiness(launch_module, fall_config, en
     bindings = evaluate_parameters(context, manager._Node__parameters)[0]
     assert bindings['localization_control'] is True
     assert bindings['ready_topic'] == '/malbut/bringup/status'
-    assert bindings['fall_vlm_runtime_id'] == parameters['runtime_id']
-    assert bindings['fall_manager_runtime_id'] == parameters['manager_runtime_id']
-    assert UUID(bindings['fall_bridge_runtime_id'])
+    assert not any(key.startswith('fall_') for key in bindings)
+    coordinators = _nodes(ready, 'fall_coordinator')
+    assert len(coordinators) == 1
+    bindings = _parameters(context, coordinators[0])
+    assert bindings['vlm_runtime_id'] == parameters['runtime_id']
+    assert bindings['runtime_id'] == parameters['manager_runtime_id']
+    assert UUID(bindings['bridge_runtime_id'])
     arguments = [perform_substitutions(context, arg) for arg in node.cmd[1:]]
     assert arguments[:3] == ['--config', str(fall_config), '--execute']
     remaps = [(perform_substitutions(context, src), perform_substitutions(context, dst))
@@ -581,9 +585,7 @@ def test_startup_binding_is_shared_with_media_and_changes_on_new_launch(
         media = next(dict(item.launch_arguments) for item in _includes(actions)
                      if 'fall_bridge_runtime_id' in dict(item.launch_arguments))
         ready = _readiness_exit(actions, context)
-        manager = next(item for item in actions if isinstance(item, Node)
-                       and item.node_executable == 'system_manager')
-        params = evaluate_parameters(context, manager._Node__parameters)[0]
+        params = _parameters(context, _nodes(ready, 'fall_coordinator')[0])
         vlm = next(item for item in ready if isinstance(item, Node)
                    and item.node_executable == 'malbut-fall-monitor')
         vlm_params = evaluate_parameters(context, vlm._Node__parameters)[0]
@@ -594,13 +596,14 @@ def test_startup_binding_is_shared_with_media_and_changes_on_new_launch(
         assert pose_params['fall_only'] is True
         assert pose_params['pose_keep_aspect'] is True
         assert not _nodes(actions, 'homecam_detector_node')
-        assert params['fall_vlm_runtime_id'] == vlm_params['runtime_id']
-        assert params['fall_manager_runtime_id'] == vlm_params['manager_runtime_id']
+        assert params['vlm_runtime_id'] == vlm_params['runtime_id']
+        assert params['runtime_id'] == vlm_params['manager_runtime_id']
         for peer in ('bridge', 'manager', 'vlm'):
             field = 'fall_' + peer + '_runtime_id'
-            assert params[field] == media[field]
+            parameter = 'runtime_id' if peer == 'manager' else peer + '_runtime_id'
+            assert params[parameter] == media[field]
         bindings.append(params)
-    assert bindings[0]['fall_bridge_runtime_id'] != bindings[1]['fall_bridge_runtime_id']
+    assert bindings[0]['bridge_runtime_id'] != bindings[1]['bridge_runtime_id']
 
 
 def test_fall_launch_uses_unified_navigation_without_legacy_mode_flags(launch_module):

@@ -119,6 +119,24 @@ def rig(monkeypatch, tmp_path):
             rclpy.shutdown()
 
 
+@pytest.fixture
+def mission_manager(rig):
+    """Use the generic manager for fall coordinator integration checks."""
+    from pathlib import Path
+    from malbut_system_manager.system_manager_node import SystemManagerNode
+
+    directory = Path(__file__).parents[2] / 'malbut_interfaces/capabilities'
+    manager = SystemManagerNode(manifest_directory=str(directory))
+    rig.executor.add_node(manager)
+    try:
+        yield manager
+    finally:
+        manager.begin_shutdown()
+        rig.spin_until(lambda: manager.downstream_execution_count == 0)
+        rig.executor.remove_node(manager)
+        manager.destroy_node()
+
+
 def test_user_rest_resolves_and_reports_before_closing_playback(rig):
     handle = rig.start('rest-confirmation')
     assert handle.accepted
@@ -212,10 +230,10 @@ def test_cancel_closes_proactive_input_and_releases_ordinary_dialogue(rig):
     ('도와줘', 'unknown', True),
 ])
 def test_vlm_manager_real_agent_round_trip_applies_final_user_judgment(
-    rig, answer, assessment, help_needed,
+    rig, mission_manager, answer, assessment, help_needed,
 ):
     from std_msgs.msg import String
-    from malbut_system_manager.fall_confirmation_link import FallConfirmationLink
+    from malbut_fall_coordinator.fall_confirmation_link import FallConfirmationLink
     from malbut_agent_server.fall_runtime import apply_decision, event_metadata
     from test_fall_confirmation_result import assessed
 

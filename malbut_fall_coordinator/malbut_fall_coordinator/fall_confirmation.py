@@ -1,4 +1,4 @@
-"""Manager-owned, ROS-independent routing of VLM checks to the conversation Agent."""
+"""Fall-owned, ROS-independent routing of VLM checks to the conversation Agent."""
 
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -20,7 +20,7 @@ def _identifier(value):
 
 @dataclass(frozen=True)
 class ConfirmationRequest:
-    """Transport correlation stays with the Manager, outside spoken prompts."""
+    """Transport correlation stays with the coordinator, outside spoken prompts."""
 
     boot_id: str
     incident_id: str
