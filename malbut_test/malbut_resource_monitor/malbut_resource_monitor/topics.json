@@ -1,0 +1,18 @@
+[
+  "/scan_raw",
+  "/odom",
+  "/tf",
+  "/depth_cam/rgb0/image_raw",
+  "/depth_cam/depth0/image_raw",
+  "/yolo/detections",
+  "/perception/person/detections_2d",
+  "/perception/person/detections_3d",
+  "/perception/lidar/foreground_clusters",
+  "/tracking/person/status",
+  "/map",
+  "/global_costmap/costmap",
+  "/cmd_vel",
+  "/malbut/state",
+  "/malbut/speech/transcript",
+  "/malbut/speech/playback_status"
+]
