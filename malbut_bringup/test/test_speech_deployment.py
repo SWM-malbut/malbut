@@ -55,7 +55,34 @@ def test_robot_speech_launch_and_native_assets_match_source():
         'malbut_tts/requirements-api.txt',
         'malbut_agent_server/requirements-openai.txt',
     ):
-        assert (SOURCE / path).read_bytes() == (ROBOT / path).read_bytes(), path
+        original = (SOURCE / path).read_text()
+        deployed = (ROBOT / path).read_text()
+        if path == 'malbut_bringup/launch/robot.launch.py':
+            deployed = _without_resource_monitor(deployed)
+        assert original == deployed, path
+
+
+def _without_resource_monitor(deployed):
+    """Allow only the reviewed test-only observer hooks, not application drift."""
+    replacements = (
+        ('from malbut_resource_monitor.launch_support import record_first\n', ''),
+        ("        if (isinstance(event.action, Node)\n"
+         "                and str(event.action.node_package) == 'malbut_resource_monitor'):\n"
+         '            # Measurement is optional and must never stop an application.\n'
+         '            return []\n', ''),
+        ('    startup = [\n', '    return [\n'),
+        ("    if value('resource_monitor') == 'true':\n"
+         "        return record_first(startup, value('resource_log_root'))\n"
+         '    return startup\n', ''),
+        ("        'resource_monitor': 'true',\n"
+         "        'resource_log_root': str(Path.home() / '.ros/malbut/resource_logs'),\n", ''),
+        ("            'start_hardware', 'perception', 'resource_monitor',\n",
+         "            'start_hardware', 'perception',\n"),
+    )
+    for hook, original in replacements:
+        assert deployed.count(hook) == 1, hook
+        deployed = deployed.replace(hook, original, 1)
+    return deployed
 
 
 def test_robot_fall_startup_helper_matches_source():
