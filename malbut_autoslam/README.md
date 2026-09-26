@@ -86,8 +86,10 @@ ros2 action send_goal /malbut/mission/execute \
 - 이동 중 장애물과 막힘은 Nav2가 처리한다. Collision Monitor가 LiDAR 장애물
   쪽으로 가는 명령을 줄이고, controller의 progress checker가 움직이지 못하는 Goal을
   실패시킨다. Nav2가 실패하거나 `navigation_timeout_s` 안에 끝나지 않은 경계는 이번
-  요청에서 제외한다(위의 재시도 규칙). 예전의 자체 정체 감지(`/cmd_vel`과
-  `/odom_rf2o` 비교, 5초)는 Collision Monitor 도입과 함께 없앴다.
+  요청에서 제외한다(위의 재시도 규칙). progress checker가 실패시켜도 Nav2 BT는 같은
+  목표를 몇 분까지 재시도하므로, 로봇이 `stall_timeout_s=30.0` 동안
+  `stall_distance_m=0.10` 이상 움직이지 않으면 그 목표를 취소하고 경계를 제외한다
+  (지도 좌표의 로봇 위치만 본다. 예전의 `/cmd_vel`·`/odom_rf2o` 비교는 쓰지 않는다).
 - 같은 서버의 중복 요청은 거부한다. Manifest는 `FOREGROUND/NORMAL/[BASE]`다.
 - 취소·선점·Ctrl+C 시 하위 Nav2 Goal을 취소하고 **실제 종료까지 기다린다**.
   외부 Nav2의 응답이 불명확하면 이동이 끝났다고 간주해 새 작업을 받지 않는다.

@@ -108,6 +108,9 @@ class AutoSlamNode(Node):
             'exploration_period_s': 1.0, 'completion_delay_s': 12.0,
             'map_timeout_s': 10.0, 'tf_timeout_s': 3.0,
             'ready_timeout_s': 30.0, 'navigation_timeout_s': 90.0,
+            # Nav2 retries a blocked goal internally for minutes; move on to
+            # another frontier once the robot has stood still this long.
+            'stall_timeout_s': 30.0, 'stall_distance_m': 0.10,
             'max_exploration_time_s': 1200.0,
         }
         for name, default in defaults.items():
@@ -296,15 +299,26 @@ class AutoSlamNode(Node):
         self.child = Navigation(self.navigation, request)
         deadline = min(run_deadline,
                        time.monotonic() + self.settings['navigation_timeout_s'])
+        moved_from, moved_at = None, time.monotonic()
         while not self.child.done.wait(0.2):
             self._check(handle)
-            message, _pose = self._snapshot()
+            message, pose = self._snapshot()
             if message.header.frame_id != frame:
                 raise RuntimeError('SLAM frame changed during navigation')
             if self.child.error:
                 raise RuntimeError(f'Nav2 transport error: {self.child.error}')
             self._feedback(handle, 'NAVIGATING')
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if (moved_from is None
+                    or math.dist(pose, moved_from) >= self.settings['stall_distance_m']):
+                moved_from, moved_at = pose, now
+            elif now - moved_at >= self.settings['stall_timeout_s']:
+                self.get_logger().warning(
+                    f'Robot did not move for {now - moved_at:.0f} s; '
+                    f'skipping frontier ({frontier.x:.2f}, {frontier.y:.2f})')
+                self._settle_child(handle)
+                return False
+            if now >= deadline:
                 self._settle_child(handle)
                 return False
         result = self.child.result

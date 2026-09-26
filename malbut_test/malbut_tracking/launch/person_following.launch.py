@@ -51,7 +51,6 @@ def generate_launch_description():
                 'global_costmap_topic': LaunchConfiguration(
                     'global_costmap_topic'
                 ),
-                'static_map_topic': LaunchConfiguration('static_map_topic'),
                 'lidar_clusters_topic': LaunchConfiguration(
                     'lidar_clusters_topic'
                 ),

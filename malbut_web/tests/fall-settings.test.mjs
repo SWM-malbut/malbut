@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
 import { readFileSync, readdirSync } from "node:fs";
+import pg from "pg";
 import { fallDatabase, moduleLoader } from "./helpers/fall-db-harness.mjs";
 
 function report(change = {}) {
@@ -17,12 +18,43 @@ async function withDatabase(operation) {
   finally { await h.db.close(); }
 }
 
-test("fall settings and managed robot migrations have distinct numbers", () => {
+test("migration runner applies shared-prefix migrations once by full filename", async () => {
   const names = readdirSync(path.resolve(import.meta.dirname, "../db/migrations"))
-    .filter((name) => /^\d+_.*\.sql$/.test(name));
+    .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name)).sort();
   assert.ok(names.includes("0010_managed_robot_tools.sql"));
   assert.ok(names.includes("0011_fall_settings.sql"));
-  assert.equal(new Set(names.map((name) => name.split("_")[0])).size, names.length);
+  assert.ok(names.includes("0011_manual_move_stream.sql"));
+  const h = await fallDatabase({ through: "0010_managed_robot_tools" });
+  const originalPool = pg.Pool, originalUrl = process.env.DATABASE_URL;
+  const applied = [];
+  // Run the production CLI against an isolated database, not AWS/PostgreSQL.
+  const client = { release() {}, async query(sql, values) {
+    // A single in-memory connection needs no cross-process advisory lock.
+    if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 0 };
+    const result = values ? await h.pool.query(sql, values) : (await h.db.exec(sql)).at(-1);
+    if (sql.startsWith("INSERT INTO homecam_schema_migrations")) applied.push(values[0]);
+    return result;
+  } };
+  pg.Pool = class { async connect() { return client; } async end() {} };
+  process.env.DATABASE_URL = "postgresql://test:test@localhost/test";
+  try {
+    for (const attempt of [1, 2]) {
+      const script = new URL("../scripts/migrate.mjs", import.meta.url);
+      script.searchParams.set("shared-prefix-test", String(attempt));
+      await import(script.href);
+      // Existing deployed IDs stay unchanged; restarting must not run them again.
+      assert.deepEqual(applied, ["0011_fall_settings", "0011_manual_move_stream"]);
+      const versions = (await h.db.query(
+        "SELECT version FROM homecam_schema_migrations ORDER BY version",
+      )).rows.map((row) => row.version);
+      assert.deepEqual(versions, names.map((name) => path.basename(name, ".sql")));
+    }
+  } finally {
+    pg.Pool = originalPool;
+    if (originalUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = originalUrl;
+    await h.db.close();
+  }
 });
 
 test("robot web copy includes the same fall settings integration", () => {

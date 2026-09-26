@@ -8,7 +8,7 @@ from typing import Callable
 
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import ComputePathToPose, FollowPath, Spin
+from nav2_msgs.action import BackUp, ComputePathToPose, FollowPath, Spin
 from nav_msgs.msg import Path
 from rclpy.action import ActionClient
 from rclpy.clock import Clock, ClockType
@@ -19,6 +19,7 @@ class MotionMode(Enum):
 
     NAVIGATE = 'navigate'
     SPIN = 'spin'
+    BACKUP = 'backup'
 
 
 MotionResultCallback = Callable[[MotionMode, int, str], None]
@@ -237,6 +238,8 @@ class Nav2MotionClient:
         on_result: MotionResultCallback,
         on_feedback: MotionFeedbackCallback | None = None,
         on_idle: Callable[[], None] | None = None,
+        *,
+        backup_action: str = 'backup',
     ) -> None:
         """Attach standard Nav2 action clients to a ROS node."""
         self._follow_path_client = ActionClient(
@@ -245,6 +248,7 @@ class Nav2MotionClient:
             follow_path_action,
         )
         self._spin_client = ActionClient(node, Spin, spin_action)
+        self._backup_client = ActionClient(node, BackUp, backup_action)
         self._on_result = on_result
         self._on_feedback = on_feedback
         self._on_idle = on_idle
@@ -304,6 +308,24 @@ class Nav2MotionClient:
         goal.time_allowance.nanosec = int((seconds % 1.0) * 1e9)
         return self._send(self._spin_client, goal, MotionMode.SPIN)
 
+    def backup(
+        self,
+        distance_m: float,
+        speed_mps: float,
+        allowance_seconds: float,
+    ) -> bool:
+        """Preempt current work and back straight up with Nav2's BackUp behavior."""
+        if not self._backup_client.server_is_ready():
+            return False
+        goal = BackUp.Goal()
+        # BackUp drives along -x; it takes the magnitudes and negates them itself.
+        goal.target.x = abs(float(distance_m))
+        goal.speed = abs(float(speed_mps))
+        seconds = max(0.0, float(allowance_seconds))
+        goal.time_allowance.sec = int(seconds)
+        goal.time_allowance.nanosec = int((seconds % 1.0) * 1e9)
+        return self._send(self._backup_client, goal, MotionMode.BACKUP)
+
     def cancel(self) -> None:
         """Discard queued motion and retain owned goals until they finish."""
         self._token += 1
@@ -317,6 +339,7 @@ class Nav2MotionClient:
         self._destroyed = True
         self._follow_path_client.destroy()
         self._spin_client.destroy()
+        self._backup_client.destroy()
 
     def _send(self, client, goal, mode: MotionMode) -> bool:
         if self._destroyed:
@@ -335,8 +358,9 @@ class Nav2MotionClient:
         self._mode = mode
         # Controller Server accepts a replacement FollowPath goal. Sending it
         # directly preserves continuous motion without cancel/stop gaps.
-        # Humble's Spin does not support preemption. Its terminal result, not
-        # the cancel acknowledgement, is the boundary for another motion.
+        # Humble's Spin and BackUp behaviors do not support preemption. Their
+        # terminal result, not the cancel acknowledgement, is the boundary for
+        # another motion.
         if self._requests and not (
             replacing_navigation and self._can_replace_path()
         ):

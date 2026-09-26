@@ -80,6 +80,7 @@ def follow(monkeypatch):
         _loss_timer=Mock(),
         _pending_detection_timer=Mock(),
         _cancel_tracking_retry=Mock(),
+        _reset_goal_pullback=Mock(),
         _reset_recovery=Mock(),
         _settings_for_goal=Mock(),
         _validate_target_request=Mock(),

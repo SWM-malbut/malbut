@@ -325,6 +325,19 @@ def test_failed_navigation_is_skipped_and_retried_by_a_new_request(system_factor
     assert (new.x, new.y) == targets[0]
 
 
+def test_standing_still_skips_the_frontier_before_the_navigation_timeout(system_factory):
+    """A goal Nav2 keeps retrying without moving the robot is given up early."""
+    system = system_factory(scene='frontier', navigation_timeout_s=60.0, stall_timeout_s=0.3)
+    handle = system.request()
+    result = handle.get_result_async()
+    assert system.backend.cancel_seen.wait(TIMEOUT_S)  # Long before 60 s.
+    assert system.node.busy
+    system.backend.release_cancel.set()
+    outcome = _result(result)
+    assert outcome.status == GoalStatus.STATUS_SUCCEEDED
+    assert outcome.result.success
+
+
 def test_missing_navigation_backend_returns_failure(system_factory):
     """A live map does not make the operation ready without Nav2."""
     system = system_factory(navigation=False, ready_timeout_s=0.15)
