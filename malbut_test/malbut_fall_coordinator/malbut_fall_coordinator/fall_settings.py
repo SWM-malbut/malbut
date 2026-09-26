@@ -1,4 +1,4 @@
-"""Forward verified server settings, never values proposed by the Agent."""
+"""Fall coordinator settings relay; never apply values proposed by the Agent."""
 
 import math
 import re

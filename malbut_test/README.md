@@ -12,7 +12,7 @@ pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Br
 
 ### 낙상 감지 포팅 시 추가 준비
 
-낙상 기능을 설정한 경우 Bringup은 VLM과 `malbut_fall_pose`를 각각 한 번 시작한다.
+낙상 기능을 설정한 경우 Bringup은 VLM·`malbut_fall_pose`·`malbut_fall_coordinator`를 각각 한 번 시작한다.
 `homecam_detector`도 빌드 목록에 포함한다. Pose는 영상 저장 ON/OFF가 아니라
 낙상 감지 설정·카메라 허용·VLM 실행 상태를 보고 동작한다.
 
@@ -36,6 +36,7 @@ PC에서 연결 테스트를 통과해도 Jetson 성능과 카메라 수신이 �
 │       ├── malbut_stt/
 │       ├── malbut_tts/
 │       ├── malbut_system_manager/
+│       ├── malbut_fall_coordinator/
 │       ├── malbut_yolo/
 │       │   └── vendor/yolo_ros/                # 함께 포함된 upstream 소스
 │       ├── malbut_reid/
@@ -54,7 +55,7 @@ PC에서 연결 테스트를 통과해도 Jetson 성능과 카메라 수신이 �
 
 `COLCON_IGNORE`는 **삭제하지 않는다.** 기본 colcon 탐색에서 원본과 복사본의
 패키지 이름이 겹치지 않게 한다. `build.sh`는 홈캠 영상 노드와 필요한 KVS SDK,
-11개 로봇·음성 패키지와 포함된 `yolo_ros`, `yolo_msgs`를 한 번에 빌드한다.
+로봇·음성·낙상 코디네이터 패키지와 포함된 `yolo_ros`, `yolo_msgs`를 한 번에 빌드한다.
 경로를 직접 지정하므로 제조사 패키지를 재빌드하거나
 제조사의 `install/setup.zsh`를 덮어쓰지 않는다. 패키지명은 그대로 유지한다.
 
@@ -303,7 +304,7 @@ ros2 action send_goal /malbut/mission/execute \
   "{capability_id: patrol, arguments_yaml: '{thoroughness: 0}'}" --feedback
 ```
 
-수동 조작은 조이스틱이나 웹 방향 버튼을 조작하면 시작되어(Nav2 AssistedTeleop)
+수동 조작은 조이스틱이나 웹 조작 패드를 움직이면 시작되어(Nav2 AssistedTeleop)
 진행 중인 추적·순찰을 멈추고, 5초 동안 조작이 없으면 끝난다. 수동 조작 중에는
 추적·순찰 요청이 거부된다. 자세한 동작은 [수동 조작](malbut_bringup/README.md#수동-조작)을 따른다.
 

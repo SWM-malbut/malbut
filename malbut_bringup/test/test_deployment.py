@@ -13,6 +13,7 @@ ROOT = Path(__file__).parents[2] / 'malbut_test'
 PACKAGES = (
     'homecam_agent/homecam_detector',
     'malbut_bringup', 'malbut_interfaces', 'malbut_system_manager',
+    'malbut_fall_coordinator',
     'malbut_agent_server', 'malbut_stt', 'malbut_tts',
     'malbut_yolo', 'malbut_reid', 'malbut_tracking', 'malbut_patrol',
     'malbut_autoslam', 'malbut_relocalization',
@@ -159,6 +160,22 @@ def test_sdk_is_downloaded_once_and_reuses_incremental_build(tmp_path):
 def test_robot_copy_retains_colcon_ignore():
     """A default parent-workspace scan must not find duplicate package names."""
     assert (ROOT / 'COLCON_IGNORE').is_file()
+
+
+def test_robot_fall_coordinator_matches_source_without_manager_domain_code():
+    """Ship the separated runtime, not a second relay inside the manager."""
+    package = ROOT.parent / 'malbut_fall_coordinator'
+    for source in (package / 'malbut_fall_coordinator').glob('*.py'):
+        deployed = ROOT / 'malbut_fall_coordinator' / source.relative_to(package)
+        assert source.read_bytes() == deployed.read_bytes()
+    for name in ('package.xml', 'setup.py', 'setup.cfg', 'resource/malbut_fall_coordinator'):
+        deployed = ROOT / 'malbut_fall_coordinator' / name
+        assert (package / name).read_bytes() == deployed.read_bytes()
+    assert not (ROOT / 'malbut_fall_coordinator/test').exists()
+    manager = ROOT / 'malbut_system_manager/malbut_system_manager'
+    assert not list(manager.glob('fall_*.py'))
+    manifest = 'malbut_interfaces/capabilities/fall_confirmation.yaml'
+    assert (ROOT.parent / manifest).read_bytes() == (ROOT / manifest).read_bytes()
 
 
 def test_robot_detector_matches_source_and_has_new_topics():

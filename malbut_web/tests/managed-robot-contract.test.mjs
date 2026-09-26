@@ -26,12 +26,13 @@ test("real robot commands use a bounded adapter to existing capabilities", () =>
   ]) assert.equal(parseRobotCommand({ operation: "mission_start", payload }), null);
 });
 
-test("real robot tools accept only bounded map, step, Zone and debug requests", () => {
+test("real robot tools accept only bounded map, velocity, Zone and debug requests", () => {
   const zone = { behavior: "restricted", name: "주방", points: [[0, 0], [1, 0], [1, 1]] };
   for (const [operation, payload] of [
     ["map_delete", { map: "home.yaml" }],
-    ["manual_move", { direction: "turn_left" }],
-    ["manual_move", { direction: "stop" }],
+    ["manual_move", { vx: 0.15, vy: 0, wz: -0.5 }],
+    ["manual_move", { vx: 0, vy: 0, wz: 0 }],
+    ["manual_move", { vx: -0.2, vy: 0.2, wz: 0 }],
     ["zones_save", { map: "home.yaml", zones: [zone, { behavior: "avoid", points: [[2, 2], [3, 2], [3, 3]] }] }],
     ["zones_save", { map: "home.yaml", zones: [] }],
     ["robot_ping", {}],
@@ -43,8 +44,12 @@ test("real robot tools accept only bounded map, step, Zone and debug requests", 
   for (const [operation, payload] of [
     ["map_delete", { map: "../home.yaml" }],
     ["map_delete", { map: "home.yaml", files: ["home.pgm"] }],
-    ["manual_move", { direction: "forward", speed: 1 }],
-    ["manual_move", { direction: "spin" }],
+    ["manual_move", { direction: "forward" }],
+    ["manual_move", { vx: 0.25, vy: 0, wz: 0 }],
+    ["manual_move", { vx: 0.1, vy: 0, wz: 0.6 }],
+    ["manual_move", { vx: 0.1, vy: 0, wz: 0, hold_s: 1 }],
+    ["manual_move", { vx: Infinity, vy: 0, wz: 0 }],
+    ["manual_move", { vx: "0.1", vy: 0, wz: 0 }],
     ["zones_save", { map: "/tmp/home.yaml", zones: [] }],
     ["zones_save", { map: "home.yaml", zones: [{ ...zone, points: [[0, 0], [1, 0]] }] }],
     ["zones_save", { map: "home.yaml", zones: [{ ...zone, behavior: "lava" }] }],

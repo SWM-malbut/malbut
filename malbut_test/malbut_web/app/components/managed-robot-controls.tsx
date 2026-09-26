@@ -123,7 +123,7 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
       {requests.length === 0 ? <p>아직 요청한 작업이 없습니다.</p> : requests.slice().reverse().map((request) => {
         const result = record(request.result);
         return <p key={String(request.id)}>
-          <strong>{String(request.capability)} · {String(request.state)}</strong><br />
+          <strong>{String(request.capability)} · {String(request.state)}{requestPhase(request)}</strong><br />
           {String(request.message || result.message || yamlMessage(result.result_yaml))}
         </p>;
       })}
@@ -134,8 +134,25 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
 
 /** Downstream results arrive as the manager's YAML; show their message line. */
 function yamlMessage(value: unknown) {
-  const match = typeof value === "string" ? /^message: *(.*)$/m.exec(value) : null;
+  return yamlField(value, "message");
+}
+
+function yamlField(value: unknown, name: string) {
+  const match = typeof value === "string" ? new RegExp(`^${name}: *(.*)$`, "m").exec(value) : null;
   return match ? match[1].replace(/^(['"])(.*)\1$/, "$2") : "";
+}
+
+/**
+ * RUNNING above only means the manager accepted the request. Its feedback says
+ * whether the mission waits (PENDING) and which step the robot is on
+ * (for example AutoSLAM WAITING, EXPLORING or NAVIGATING).
+ */
+function requestPhase(request: Record<string, unknown>) {
+  if (terminal.has(String(request.state))) return "";
+  const feedback = record(request.feedback);
+  const manager = typeof feedback.feedback_yaml === "string" ? String(feedback.state ?? "") : "";
+  const step = manager ? yamlField(feedback.feedback_yaml, "state") : String(feedback.state ?? "");
+  return (manager && manager !== request.state ? ` (관리자 ${manager})` : "") + (step ? ` · ${step}` : "");
 }
 
 export function record(value: unknown): Record<string, unknown> {

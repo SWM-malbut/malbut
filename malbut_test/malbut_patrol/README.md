@@ -125,6 +125,7 @@ ROS parameter로 환경과 운용값을 지정합니다.
 | `observation_hz` | 5Hz, 최신 프레임을 관측에 반영하는 최대 빈도 |
 | `sensor_timeout_s`, `costmap_timeout_s` | 3s, 5s, 입력 단절 검출 |
 | `navigation_timeout_s` | 120s, 한 후보에 묶이지 않도록 이동 취소 후 다른 후보 시도 |
+| `stall_timeout_s`, `stall_distance_m` | 30s, 0.10m. Nav2가 재시도하는 동안 로봇이 이만큼 움직이지 않으면 이동 취소 후 다른 후보 시도 |
 | `spin_time_allowance_s` | 60s, 한 바퀴 회전의 Nav2 실행 허용 시간 |
 | `goal_response_timeout_s`, `cancel_completion_timeout_s` | 각각 5s, 통신 응답·종료 확인 |
 | `maximum_goal_cost` | 80, OccupancyGrid 표현의 목표 허용 비용 |

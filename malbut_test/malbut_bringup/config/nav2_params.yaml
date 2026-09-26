@@ -151,8 +151,17 @@ controller_server:
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 0.25
+      # 0.25 m (vendor) stopped almost a body length short of a web goal and
+      # outside the person follower's 0.90-1.10 m standoff band. AMCL jitter
+      # and the 0.03 m local grid make anything below ~0.10 m hunt back and forth.
+      xy_goal_tolerance: 0.12
+      # Arrival is position only: 6.28 rad accepts any heading (the checker has
+      # no switch to skip yaw). Inside the goal tolerance DWB may only turn in
+      # place, and its footprint critic refuses a turn that sweeps the
+      # rectangular body into a wall, so a required final heading near a wall
+      # held the goal until the BT's BackUp recovery (~80 s). Facing a person
+      # is the follower's own Spin; patrol spins a full turn at each viewpoint.
+      yaw_goal_tolerance: 6.28
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
       debug_trajectory_details: True
@@ -178,7 +187,8 @@ controller_server:
       linear_granularity: 0.05
       angular_granularity: 0.025
       transform_tolerance: 0.2
-      xy_goal_tolerance: 0.25
+      # DWB switches to RotateToGoal here; keep it equal to the goal checker.
+      xy_goal_tolerance: 0.12
       trans_stopped_velocity: 0.25
       short_circuit_trajectory_evaluation: True
       stateful: True
@@ -190,7 +200,20 @@ controller_server:
       # inflated cost reads 174-253 for any body clearance up to 0.35 m, so as a
       # preference it made standing still cheaper than driving along a wall.
       # Scale 0 would skip the critic entirely.
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      # PreferForward (built-in dwb_critics) adds `penalty` x `scale` to every
+      # trajectory that drives backwards; strafe_x/theta_scale are zeroed so
+      # forward turning and rotating in place stay free. 40 is the upper end of
+      # the range public DWB configs use next to PathDist 32 / GoalDist 24: a
+      # soft preference for driving forward, not a ban. Reverse still wins when
+      # it saves clearly more path distance or when every forward sample is
+      # rejected by the obstacle critics. The person follower backs away from a
+      # too-close person with the BackUp behavior, not through this controller.
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist", "PreferForward"]
+      PreferForward.scale: 40.0
+      PreferForward.penalty: 1.0
+      PreferForward.strafe_x: 0.0
+      PreferForward.strafe_theta: 0.2
+      PreferForward.theta_scale: 0.0
       BaseObstacle.scale: 0.02
       ObstacleFootprint.scale: 0.01
       PathAlign.scale: 32.0
@@ -353,6 +376,10 @@ planner_server:
     planner_plugins: ["GridBased"]
     GridBased:
       plugin: "nav2_navfn_planner/NavfnPlanner"
+      # An unreachable goal cell (inside a wall, furniture or a person's own
+      # LiDAR blob plus the 0.106 m inscribed inflation) is moved to the nearest
+      # reachable cell within this radius. The person follower plans straight to
+      # the person and relies on it; a person's two legs need about 0.35 m.
       tolerance: 0.5
       use_astar: false
       allow_unknown: true

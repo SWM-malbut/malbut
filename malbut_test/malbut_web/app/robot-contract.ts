@@ -55,9 +55,10 @@ export type RobotMapUpload = {
   semanticZones?: Record<string, unknown> | null;
 };
 
-export const MANUAL_DIRECTIONS = [
-  "forward", "backward", "left", "right", "turn_left", "turn_right", "stop",
-] as const;
+// Held joystick/keyboard velocities (m/s, m/s, rad/s). The robot's bridge
+// enforces the same driver limits and stops when the page stops repeating.
+export const MANUAL_VELOCITY_LIMITS = { vx: 0.2, vy: 0.2, wz: 0.5 } as const;
+export type ManualVelocity = { vx: number; vy: number; wz: number };
 export const ZONE_BEHAVIORS = ["restricted", "avoid", "allow"] as const;
 const MAX_ZONES = 64;
 const MAX_ZONE_POINTS = 64;
@@ -90,8 +91,7 @@ export function parseRobotCommand(value: unknown): {
       ? { operation, payload } : null;
   }
   if (operation === "manual_move") {
-    return Object.keys(payload).length === 1 &&
-      MANUAL_DIRECTIONS.includes(payload.direction as (typeof MANUAL_DIRECTIONS)[number])
+    return Object.keys(payload).length === 3 && validManualVelocity(payload)
       ? { operation, payload } : null;
   }
   if (operation === "zones_save") {
@@ -198,6 +198,14 @@ function validMission(capability: unknown, value: unknown): boolean {
 }
 
 /** Polygons for the saved map in use, in the robot's Zone file shape. */
+export function validManualVelocity(value: unknown): value is ManualVelocity {
+  if (!isObject(value)) return false;
+  return (Object.keys(MANUAL_VELOCITY_LIMITS) as Array<keyof typeof MANUAL_VELOCITY_LIMITS>).every((axis) => (
+    typeof value[axis] === "number" && Number.isFinite(value[axis]) &&
+    Math.abs(value[axis] as number) <= MANUAL_VELOCITY_LIMITS[axis]
+  ));
+}
+
 function validZones(value: unknown) {
   return Array.isArray(value) && value.length <= MAX_ZONES && value.every((zone) => {
     if (!isObject(zone) || Object.keys(zone).some((key) => !["behavior", "points", "name"].includes(key))) {

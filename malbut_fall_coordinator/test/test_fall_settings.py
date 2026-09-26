@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from malbut_system_manager.fall_settings import FallSettingsRelay
+from malbut_fall_coordinator.fall_settings import FallSettingsRelay
 
 
 class Clock:
