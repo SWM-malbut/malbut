@@ -19,3 +19,6 @@ htmlcov/
 *.log
 kvsFileFilterLogIndex
 kvsFileLogFilter.*
+# Generated files left locally after homecam_web was renamed to malbut_web.
+/homecam_web/node_modules/
+/homecam_web/.next/

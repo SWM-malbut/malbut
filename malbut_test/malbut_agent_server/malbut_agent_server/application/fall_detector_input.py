@@ -72,6 +72,9 @@ class FallDetectorInput:
                 self._generation += 1
         self._settings = dict(settings)
 
+    def set_cloud_block(self, reason):
+        self.monitor.set_cloud_block(reason)
+
     def _time(self, capture, *, source_now, now, channel, frame_id):
         timestamp(source_now)
         timestamp(now)
@@ -156,7 +159,8 @@ class FallDetectorInput:
         if 'subjectCheckVersion' in data:
             if (data['subjectCheckVersion'] != 1 or not isinstance(data.get('tracks'), list)
                     or len(data['tracks']) > self.max_candidates
-                    or type(data.get('unassignedCount')) is not int or data['unassignedCount'] < 0):
+                    or type(data.get('unassignedCount')) is not int
+                    or data['unassignedCount'] < 0):
                 raise ValueError('invalid subject checks')
             capture = data.get('captureTimeSec')
             timestamp(capture)

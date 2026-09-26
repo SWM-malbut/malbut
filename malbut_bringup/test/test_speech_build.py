@@ -123,6 +123,7 @@ def test_default_build_prepares_isolated_speech_before_colcon(robot_build, layou
         '-m', 'pip', '--isolated', 'install',
         '-r', str(robot / 'malbut_stt/requirements-whisper-cpp.txt'),
         '-r', str(robot / 'malbut_tts/requirements-api.txt'),
+        '-r', str(robot / 'malbut_agent_server/requirements-openai.txt'),
     ]]
     assert calls[-1]['name'] == 'colcon'
     assert calls[-2]['name'] == 'cloud'

@@ -1,7 +1,7 @@
 """Opt-in ROS input/output wiring for the Cloud-only fall runtime.
 
-Manager control/reply topics below are a proposed JSON bridge, not an approved
-replacement for malbut_interfaces. No TTS, drive commands or push HTTP here.
+Settings and health use malbut_interfaces. The Manager owns confirmation
+handoffs; the conversation Agent never subscribes to these runtime topics.
 """
 
 import argparse
@@ -15,19 +15,26 @@ from malbut_agent_server.application.cloud_fall_monitor import CloudFallMonitor
 from malbut_agent_server.application.fall_detector_input import FallDetectorInput, ros_stamp
 from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
 from malbut_agent_server.fall_runtime import (
-    FallNodeSettings, FallRuntimeControl, apply_decision, event_metadata, parse_agent_reply,
+    FallNodeSettings, apply_decision, event_metadata, parse_agent_reply,
     parse_subject_observation,
 )
 from malbut_agent_server.ports.fall_event_journal import FallJournalError
+from malbut_agent_server.fall_control import (
+    FallSettingsControl, SETTINGS_FIELDS, HEARTBEAT_FIELDS,
+)
 
 
 def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
     import cv2
     from cv_bridge import CvBridge, CvBridgeError
+    from rcl_interfaces.msg import ParameterDescriptor
+    from rclpy.clock import Clock, ClockType
     from rclpy.node import Node
-    from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy, qos_profile_sensor_data
+    from rclpy.qos import qos_profile_sensor_data
+    from malbut_interfaces.msg import FallRuntimeStatus, FallControlHeartbeat
+    from malbut_interfaces.srv import ApplyFallSettings
     from sensor_msgs.msg import Image
-    from std_msgs.msg import Bool, String
+    from std_msgs.msg import String
 
     class FallNode(Node):
         def __init__(self):
@@ -40,18 +47,25 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
                 provider=provider, journal=journal, clock=clock)
             self.inputs = FallDetectorInput(
                 self.monitor, max_source_age_s=settings.max_source_age_s)
-            self.control = FallRuntimeControl(self.inputs, lease_s=settings.control_lease_s,
-                                              clock=clock)
+            manager = self.declare_parameter(
+                'manager_runtime_id', '', descriptor=ParameterDescriptor(read_only=True)).value
+            runtime = self.declare_parameter(
+                'runtime_id', '', descriptor=ParameterDescriptor(read_only=True)).value
+            self.runtime_id = runtime
+            self.control = FallSettingsControl(
+                self.inputs, manager_runtime_id=manager, runtime_id=runtime, clock=clock)
             self._bridge = CvBridge()
             self._last_image = -float('inf')
+            self._last_processed_image = None
+            self._status_sequence = 0
             self._logs = {}
+            self._last_question_handoff = -float('inf')
             self._events = self.create_publisher(String, '/malbut/falls/runtime/events', 50)
-            self._status = self.create_publisher(String, '/malbut/falls/runtime/status', 10)
-            privacy_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
-                                     reliability=ReliabilityPolicy.RELIABLE)
-            self.create_subscription(Bool, '/homecam/monitoring_enabled',
-                                     lambda msg: self.control.media_permission(msg.data),
-                                     privacy_qos)
+            self._status = self.create_publisher(FallRuntimeStatus, '/malbut/falls/status', 10)
+            self.create_service(ApplyFallSettings, '/malbut/falls/settings/apply',
+                                self.on_settings)
+            self.create_subscription(FallControlHeartbeat, '/malbut/falls/control/heartbeat',
+                                     self.on_heartbeat, 10)
             self.create_subscription(Image, settings.image_topic, self.on_image,
                                      qos_profile_sensor_data)
             self.create_subscription(String, '/homecam/person_poses',
@@ -59,9 +73,6 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
                                      qos_profile_sensor_data)
             self.create_subscription(String, '/homecam/fall_candidates',
                                      lambda msg: self.on_detector('candidates', msg), 10)
-            self.create_subscription(String, '/malbut/falls/runtime/settings',
-                                     lambda msg: self.guarded('settings_invalid',
-                                                              self.control.settings, msg.data), 10)
             self.create_subscription(String, '/malbut/falls/runtime/agent_reply',
                                      self.on_answer, 10)
             self.create_subscription(String, '/malbut/falls/runtime/subject_observation',
@@ -69,7 +80,20 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
             self.create_subscription(String, '/malbut/falls/runtime/decision',
                                      lambda msg: self.guarded('decision_rejected', apply_decision,
                                                               self.monitor, msg.data), 10)
-            self.create_timer(1.0, self.publish_status)
+            self._status_clock = Clock(clock_type=ClockType.STEADY_TIME)
+            self.create_timer(1.0, self.publish_status, clock=self._status_clock)
+
+        def on_settings(self, request, response):
+            result = self.control.apply_settings(**{
+                key: getattr(request, key) for key in SETTINGS_FIELDS})
+            for key, value in result.items():
+                setattr(response, key, value)
+            return response
+
+        def on_heartbeat(self, message):
+            if not self.control.heartbeat(**{
+                    key: getattr(message, key) for key in HEARTBEAT_FIELDS}):
+                self.log_code('control_heartbeat_rejected')
 
         def guarded(self, code, operation, *args, **kwargs):
             try:
@@ -109,9 +133,11 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
             ok, encoded = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
             if not ok:
                 raise ValueError('JPEG encoding failed')
-            self.inputs.rgb(bytes(encoded), capture=ros_stamp(
+            accepted = self.inputs.rgb(bytes(encoded), capture=ros_stamp(
                 dict(sec=message.header.stamp.sec, nanosec=message.header.stamp.nanosec)),
                 frame_id=message.header.frame_id, source_now=self.source_now(), now=clock())
+            if accepted:
+                self._last_processed_image = clock()
 
         def on_detector(self, kind, message):
             self.control.refresh()
@@ -134,17 +160,29 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
                              self.monitor.observe_subject, observation)
 
         def publish_status(self):
-            self.control.refresh()
-            self._status.publish(String(data=json.dumps(dict(
-                runtimeId=self.control.runtime_id, acceptingImages=self.control.accepting_images,
-                scanIntervalSec=self.monitor.periodic_interval_s(),
-                managerBridge='experimental', automaticSceneAssociation=True,
-                sceneAssociation='experimental_geometry', unidentifiedDiscoveryStorage='local'))))
+            fields = self.control.status()
+            analysis = self.monitor.analysis_status
+            self._status_sequence += 1
+            self._status.publish(FallRuntimeStatus(
+                **fields, sequence=self._status_sequence,
+                last_frame_age_s=(-1.0 if self._last_processed_image is None
+                                  else max(0.0, clock() - self._last_processed_image)),
+                analysis_state=analysis.state, request_id=analysis.request_id,
+                request_purpose=analysis.request_purpose,
+                last_error_code=analysis.last_error_code))
 
         def publish_events(self):
-            for event in self.monitor.drain_events():
+            events = list(self.monitor.drain_events())
+            if clock() - self._last_question_handoff >= 1.0:
+                self._last_question_handoff = clock()
+                sent = {event.question_id for event in events
+                        if event.kind == 'question_requested'}
+                events.extend(event for event in self.monitor.pending_questions()
+                              if event.question_id not in sent)
+            for event in events:
                 self._events.publish(String(data=json.dumps(
-                    event_metadata(event), allow_nan=False)))
+                    dict(event_metadata(event), boot_id=self.monitor.boot_id,
+                         runtime_id=self.runtime_id), allow_nan=False)))
 
     return FallNode()
 
@@ -161,7 +199,7 @@ async def spin_runtime(node):
             if check is not None and check.done():
                 check.result()  # Persistence/internal errors must stop the process.
                 check = None
-            if check is None:
+            if check is None and node.control.cloud_block_reason is None:
                 check = asyncio.create_task(node.monitor.run_once())
             node.publish_events()
             await asyncio.sleep(0.01)
@@ -186,6 +224,10 @@ def main(argv=None):
         if not args.execute:
             print('configuration: ok (no ROS, no credential read, no Cloud call)')
             return 0
+        if settings.device_id == 'REPLACE_WITH_REGISTERED_DEVICE_ID':
+            print('replace example device_id with the registered robot ID '
+                  'before execution')
+            return 2
         from malbut_agent_server.adapters.outbound.ollama_cloud_fall import OllamaCloudFallProvider
         from malbut_agent_server.adapters.outbound.sqlite_fall_journal import SqliteFallJournal
         from malbut_agent_server.fall_upload_worker import _read_token

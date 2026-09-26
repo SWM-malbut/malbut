@@ -11,7 +11,9 @@ import pytest
 
 ROOT = Path(__file__).parents[2] / 'malbut_test'
 PACKAGES = (
+    'homecam_agent/homecam_detector',
     'malbut_bringup', 'malbut_interfaces', 'malbut_system_manager',
+    'malbut_fall_coordinator',
     'malbut_agent_server', 'malbut_stt', 'malbut_tts',
     'malbut_yolo', 'malbut_reid', 'malbut_tracking', 'malbut_patrol',
     'malbut_autoslam', 'malbut_relocalization',
@@ -72,8 +74,10 @@ def test_build_selects_only_robot_copy_and_separate_output(tmp_path, layout):
     assert result.returncode == 0, result.stderr
     cloud_arguments, arguments = [json.loads(line)
                                   for line in recorded.read_text().splitlines()]
-    assert cloud_arguments[cloud_arguments.index('--packages-select') + 1] == \
+    assert cloud_arguments[cloud_arguments.index('--packages-up-to') + 1] == \
         'homecam_media_agent'
+    assert str(robot / 'malbut_interfaces') in cloud_arguments
+    assert str(robot / 'homecam_agent/homecam_detector') in cloud_arguments
     assert '-DHOMECAM_ENABLE_KVS=ON' in cloud_arguments
     assert '-DHOMECAM_ENABLE_GSTREAMER=ON' in cloud_arguments
     assert cloud_arguments[cloud_arguments.index('--install-base') + 1] == \
@@ -156,6 +160,36 @@ def test_sdk_is_downloaded_once_and_reuses_incremental_build(tmp_path):
 def test_robot_copy_retains_colcon_ignore():
     """A default parent-workspace scan must not find duplicate package names."""
     assert (ROOT / 'COLCON_IGNORE').is_file()
+
+
+def test_robot_fall_coordinator_matches_source_without_manager_domain_code():
+    """Ship the separated runtime, not a second relay inside the manager."""
+    package = ROOT.parent / 'malbut_fall_coordinator'
+    for source in (package / 'malbut_fall_coordinator').glob('*.py'):
+        deployed = ROOT / 'malbut_fall_coordinator' / source.relative_to(package)
+        assert source.read_bytes() == deployed.read_bytes()
+    for name in ('package.xml', 'setup.py', 'setup.cfg', 'resource/malbut_fall_coordinator'):
+        deployed = ROOT / 'malbut_fall_coordinator' / name
+        assert (package / name).read_bytes() == deployed.read_bytes()
+    assert not (ROOT / 'malbut_fall_coordinator/test').exists()
+    manager = ROOT / 'malbut_system_manager/malbut_system_manager'
+    assert not list(manager.glob('fall_*.py'))
+    manifest = 'malbut_interfaces/capabilities/fall_confirmation.yaml'
+    assert (ROOT.parent / manifest).read_bytes() == (ROOT / manifest).read_bytes()
+
+
+def test_robot_detector_matches_source_and_has_new_topics():
+    """Never ship the old one-person detector beside a multi-person consumer."""
+    original = ROOT.parent / 'homecam_agent/homecam_detector'
+    deployed = ROOT / 'homecam_agent/homecam_detector'
+    for source in (original / 'homecam_detector').glob('*.py'):
+        assert source.read_bytes() == (deployed / source.relative_to(original)).read_bytes()
+    for name in ('package.xml', 'setup.py'):
+        assert (original / name).read_bytes() == (deployed / name).read_bytes()
+    producer = (deployed / 'homecam_detector/detector_node.py').read_text()
+    consumer = (ROOT / 'malbut_agent_server/malbut_agent_server/ros_fall_monitor.py').read_text()
+    for topic in ('/homecam/person_poses', '/homecam/fall_candidates'):
+        assert topic in producer and topic in consumer
 
 
 def test_robot_copy_keeps_runtime_without_simulation_evaluator():

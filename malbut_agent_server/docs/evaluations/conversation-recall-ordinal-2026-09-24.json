@@ -1,0 +1,74 @@
+{
+  "synthetic_only": true,
+  "no_api_calls": true,
+  "before_activation": [
+    {
+      "utterance": "처음 제안한 거는 뭐였지?",
+      "recall_requested": false
+    },
+    {
+      "utterance": "처음에 제안한 거는 뭐였지?",
+      "recall_requested": true
+    },
+    {
+      "utterance": "두번째안이 뭐였지?",
+      "recall_requested": false
+    },
+    {
+      "utterance": "그 두 번째 안 이어서 하자.",
+      "recall_requested": false
+    },
+    {
+      "utterance": "두 번 말해줘.",
+      "recall_requested": false
+    },
+    {
+      "utterance": "두 번째 버튼을 눌러.",
+      "recall_requested": false
+    },
+    {
+      "utterance": "두 번째 안전장치를 켜줘.",
+      "recall_requested": false
+    }
+  ],
+  "after_activation": [
+    {
+      "utterance": "처음 제안한 거는 뭐였지?",
+      "recall_requested": true
+    },
+    {
+      "utterance": "처음에 제안한 거는 뭐였지?",
+      "recall_requested": true
+    },
+    {
+      "utterance": "두번째안이 뭐였지?",
+      "recall_requested": true
+    },
+    {
+      "utterance": "그 두 번째 안 이어서 하자.",
+      "recall_requested": true
+    },
+    {
+      "utterance": "두 번 말해줘.",
+      "recall_requested": false
+    },
+    {
+      "utterance": "두 번째 버튼을 눌러.",
+      "recall_requested": false
+    },
+    {
+      "utterance": "두 번째 안전장치를 켜줘.",
+      "recall_requested": false
+    }
+  ],
+  "scope_note": "Offline runtime activation comparison; generation semantics are not inferred from a matching trigger. Test suite separately verifies bounded whole-turn restoration, ordering, summary immutability, privacy and session isolation.",
+  "verification": {
+    "targeted_primary_passed": 61,
+    "targeted_mirror_runtime_passed": 61,
+    "full_local_suite_passed": 2059,
+    "full_local_suite_skips": 5,
+    "full_local_suite_seconds": 17.56,
+    "skip_scope": "Four ROS module-level skips and one rclpy function skip on macOS; these were separately exercised in the earlier local ROS evaluation.",
+    "regression_test_file": "malbut_agent_server/test/test_conversation_recall.py"
+  }
+}

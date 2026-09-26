@@ -481,3 +481,6 @@ class FallIncident:
     subject_observation: Optional[SubjectObservation] = None
     normal_evidence_after: float = 0.0
     subject_association_token: Optional[str] = None
+    # The Manager's final confirmation is separate from the legacy voice enum.
+    situation_assessment: Optional[str] = None
+    help_needed: Optional[bool] = None

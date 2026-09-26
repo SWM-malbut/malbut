@@ -47,6 +47,50 @@ STT·Agent·TTS는 기본 포함이며, 로봇 준비 확인 뒤 음성 점검 �
 별도 미디어 launch나 systemd 서비스를 중복 실행하지 않는다.
 전체 절차는 [실기기 클라우드 연결](../malbut_test/README_CLOUD.md)을 따른다.
 
+### Cloud VLM 자동 실행
+
+`robot.launch.py`는 통합 navigation 실행에서 Cloud VLM 실행기
+`malbut-fall-monitor`를 함께 시작한다. Manager는 위치 추정을 위해 먼저 시작하며,
+설정이 준비되어 있으면 VLM·Pose·`malbut_fall_coordinator`는 로봇 준비 확인 뒤 한 번만 실행한다. 카메라는 추가로 띄우지 않고 Bringup의
+`rgb_topic`을 사용한다. 음성을 꺼도 VLM 노드는 별도로 시작할 수 있다.
+
+최신 Bringup은 `mode` 인자를 없앴다. `mode:=navigation`을 넘길 필요가 없다.
+별도 `mapping_backend.launch.py`는 VLM을 시작하지 않는다.
+
+| 설정 | 동작 |
+| --- | --- |
+| `fall_monitor:=auto` (기본) | 설정 파일이 있으면 시작. 없으면 이유를 출력하고 건너뜀 |
+| `fall_monitor:=true` | 설정 파일 필수. 없거나 잘못되면 Bringup 시작 거부 |
+| `fall_monitor:=false` | VLM 노드를 띄우지 않음 |
+| `fall_config:=/절대경로/fall_runtime.json` | 사용할 설정 파일 지정 |
+
+설정 파일 기본 위치는 `/etc/malbut/fall_runtime.json`이다.
+`MALBUT_FALL_CONFIG` 환경변수로 기본 위치를 바꿀 수 있다.
+어느 경로든 파일이 있는데 값이 잘못됐으면 조용히 건너뛰지 않고 시작을 거부한다.
+설정 양식은 Agent 패키지의 `config/fall_runtime.example.json`이며,
+수치는 로봇 테스트용 시작값이다. 등록된 로봇 ID와 키·저장 경로를 준비하고 실물에서 확인해야 한다.
+
+```bash
+ros2 launch malbut_bringup robot.launch.py map:=/실제/지도.yaml fall_monitor:=true fall_config:=/etc/malbut/fall_runtime.json
+```
+
+이 명령은 **VLM 노드 시작**이지 전송 동의가 아니다. 실제 영상 수집에는
+시작 시 지정한 낙상 코디네이터 실행 ID, 현재 VLM에 적용한 감지·카메라 허용 설정,
+코디네이터의 새 연결 확인 메시지가 필요하다. VLM은 KVS 저장 허용 Bool을 더 이상 받지 않는다.
+Cloud 전송에는 `cloud_consent`와 15초 안의 서버 설정 확인도 필요하다.
+Bringup은 홈캠·낙상 코디네이터·VLM에 같은 실행 ID 묶음을 전달하고,
+홈캠이 서버 설정을 받으면 코디네이터가 VLM에 적용한다. 준비 완료나 노드 시작만으로
+감지·Cloud 전송을 켜지는 않는다. 확인 대화는 코디네이터가 관리자에
+`fall_confirmation` 미션(`URGENT`, `BASE·SPEAKER`)을 요청해 기존 Agent Action으로 연결한다.
+관리자는 낙상 판단이나 설정 전달을 하지 않는다. 기존 wire 필드의 `manager_runtime_id`는
+호환성을 위해 이름만 유지하며 코디네이터 ID를 담는다.
+
+API 키는 런타임 설정의 `cloud_key_file`에서 읽으며 launch 인자로 전달하지 않는다.
+설정 검사는 키를 읽거나 DB를 만들지 않는다. 실제 노드가 시작될 때 키와 의존성을
+확인하며, 실패하거나 실행 중 노드가 종료되면 기존 정책대로 Bringup 전체를 종료한다.
+Bringup과 별도의 `malbut-fall-monitor --execute`를 동시에 실행하지 않는다.
+실물 카메라·Cloud 인증·Manager 연결을 합친 동작 검증은 별도로 필요하다.
+
 제조사 실행은 하드웨어 `slam/launch/include/robot.launch.py` 하나만 include한다.
 Nav2는 제조사 navigation launch 대신, 공식 `nav2_bringup`이 쓰는 것과 같은 Nav2
 서버를 제조사처럼 하나의 컴포넌트 컨테이너(`nav2_container`)에 직접 구성한다

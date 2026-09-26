@@ -33,10 +33,12 @@
   <exec_depend>malbut_yolo</exec_depend>
   <exec_depend>malbut_reid</exec_depend>
   <exec_depend>malbut_tracking</exec_depend>
+  <exec_depend>homecam_detector</exec_depend>
   <exec_depend>malbut_patrol</exec_depend>
   <exec_depend>malbut_autoslam</exec_depend>
   <exec_depend>malbut_relocalization</exec_depend>
   <exec_depend>malbut_system_manager</exec_depend>
+  <exec_depend>malbut_fall_coordinator</exec_depend>
   <exec_depend>homecam_media_agent</exec_depend>
   <test_depend>ament_cmake_pytest</test_depend>
   <exec_depend>malbut_agent_server</exec_depend>

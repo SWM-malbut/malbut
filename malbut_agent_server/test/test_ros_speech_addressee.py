@@ -126,6 +126,10 @@ def node(monkeypatch, tmp_path, request):
         ClassifySpeechAddressee=SimpleNamespace(Response=Response),
     ))
     monkeypatch.setattr(ros_communication, 'DialogueWorker', Worker)
+    monkeypatch.setattr(ros_communication, 'SituationActionServer',
+                        lambda *_args, **_kwargs: SimpleNamespace(
+                            active=False, close=lambda: None, destroy=lambda: None,
+                        ))
     monkeypatch.setattr('malbut_agent_server.manager_client.ManagerClient',
                         lambda *_args, **_kwargs: SimpleNamespace(close=lambda: None))
     instance = ros_communication.create_communication_node(

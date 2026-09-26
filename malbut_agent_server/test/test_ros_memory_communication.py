@@ -56,6 +56,7 @@ class _MemoryProvider:
             'Memory dialogue must not expose robot actuation tools'
         )
         self.calls.append({
+            'conversation_id': request.conversation_id,
             'text': request.utterance,
             'memories': copy.deepcopy(memories),
             'history': copy.deepcopy(conversation_turns),
@@ -292,20 +293,27 @@ def test_ros_restart_recalls_and_deletes_memory(ros_memory):
     """Restart the real Agent Node while retaining user and SQLite files."""
     ros_memory.enable_and_remember()
     saved = ros_memory.inspect_store()[1][0]
+    conversation_id = ros_memory.provider.calls[-1]['conversation_id']
     ros_memory.restart()
 
     assert ros_memory.inspect_store()[0]['enabled'] is True
     assert ros_memory.say(RECALL_TEXT) == RECALL_REPLY
     after = ros_memory.provider.calls[-1]
-    assert after['history'] == []
+    assert after['conversation_id'] == conversation_id
+    assert after['history'][-1].user_content == FACT_TEXT
+    assert all(turn.conversation_id == conversation_id for turn in after['history'])
     assert [m.id for m in after['memories']] == [saved.id]
     assert ros_memory.say('강아지 이름 기억 삭제해줘') == '요청한 기억을 삭제했어요.'
 
     ros_memory.restart()
     assert ros_memory.inspect_store()[1] == []
     assert ros_memory.say(RECALL_TEXT) == EMPTY_REPLY
-    assert ros_memory.provider.calls[-1]['history'] == []
-    assert ros_memory.provider.calls[-1]['memories'] == []
+    after_delete = ros_memory.provider.calls[-1]
+    assert after_delete['conversation_id'] == conversation_id
+    assert after_delete['history']
+    assert all('초코' not in turn.user_content + turn.assistant_content
+               for turn in after_delete['history'])
+    assert after_delete['memories'] == []
 
 
 def test_stt_pipeline_final_text_reaches_agent_and_tts(ros_memory):

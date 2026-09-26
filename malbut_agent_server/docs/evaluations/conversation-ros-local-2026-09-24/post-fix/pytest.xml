@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="36" time="24.632" timestamp="2026-09-23T18:21:25.942525" hostname="857cb22ac626"><testcase classname="test.test_node_communication_ros" name="test_follow_feedback_and_result_reach_real_tts_receiver" time="0.145" /><testcase classname="test.test_node_communication_ros" name="test_invalid_capability_is_accepted_then_aborted_without_execution" time="0.071" /><testcase classname="test.test_node_communication_ros" name="test_cancel_receipt_precedes_final_canceled_result" time="0.118" /><testcase classname="test.test_node_communication_ros" name="test_duplicate_requests_and_repeated_progress_do_not_resend_or_speak" time="0.172" /><testcase classname="test.test_node_communication_ros" name="test_two_independent_requests_keep_their_own_results" time="0.172" /><testcase classname="test.test_node_communication_ros" name="test_unavailable_manager_does_not_claim_execution" time="1.066" /><testcase classname="test.test_node_communication_ros" name="test_stt_duplicate_has_one_reply_and_next_turn_uses_real_history" time="0.229" /><testcase classname="test.test_node_communication_ros" name="test_slow_dialogue_does_not_block_manager_feedback_or_cancel" time="0.281" /><testcase classname="test.test_node_communication_ros" name="test_dialogue_failure_is_reported_and_next_turn_recovers" time="0.225" /><testcase classname="test.test_node_communication_ros" name="test_busy_dialogue_keeps_new_receipt_available_for_retry" time="0.277" /><testcase classname="test.test_node_communication_ros" name="test_shutdown_discards_late_dialogue_result_on_real_topic" time="0.297" /><testcase classname="test.test_ros_memory_communication" name="test_ros_consent_save_recall_and_delete" time="0.424" /><testcase classname="test.test_ros_memory_communication" name="test_ros_does_not_publish_answer_deleted_after_queue_drain" time="0.271" /><testcase classname="test.test_ros_memory_communication" name="test_ros_restart_recalls_and_deletes_memory" time="0.511" /><testcase classname="test.test_ros_memory_communication" name="test_stt_pipeline_final_text_reaches_agent_and_tts" time="0.114" /><testcase classname="test.test_ros_weather_communication" name="test_startup_and_general_dialogue_never_fetch_weather" time="0.124" /><testcase classname="test.test_ros_weather_communication" name="test_missing_location_reaches_agent_through_manager_without_weather_http" time="0.227" /><testcase classname="test.test_ros_weather_communication" name="test_saved_location_reaches_agent_through_manager_and_typed_weather_action" time="0.182" /><testcase classname="test.test_ros_weather_communication" name="test_manager_location_setting_and_correction_change_next_weather_goal" time="0.275" /><testcase classname="test.test_ros_weather_communication" name="test_agent_location_tool_stores_through_real_manager" time="0.178" /><testcase classname="test.test_ros_weather_communication" name="test_manager_ambiguous_location_preserves_prior_configuration" time="0.085" /><testcase classname="test.test_ros_weather_communication" name="test_interrupted_location_setting_cannot_save_late_result[cancel]" time="15.150"><failure message="AssertionError: Weather mission or speech evidence is missing">stored_weather = namespace(client=&lt;test_ros_weather_communication._WeatherClient object at 0xffff7dedbd30&gt;, provider=&lt;test_ros_weather_...eries=[], candidates=[{'location': '수원시 우만동', 'latitude': 37.28535, 'longitude': 127.02941, 'timezone': 'Asia/Seoul'}])
+interruption = 'cancel'
+
+    @pytest.mark.parametrize('interruption', ['cancel', 'timeout'])
+    def test_interrupted_location_setting_cannot_save_late_result(stored_weather, interruption):
+        """The Manager's terminal failure cannot be followed by a late database write."""
+        run = stored_weather
+        run.location_store.set(run.location)
+        started = Event()
+    
+        def resolve(query):
+            started.set()
+            assert run.client.release.wait(10.0)
+            return [{**run.location, 'location': '용인시 동백동', 'latitude': 37.277}]
+    
+        run.resolve_location = resolve
+        run.start(auto_location=True, timeout_s=0.2 if interruption == 'timeout' else 5.0)
+        run.send('여기는 용인시 동백동')
+        run.spin_until(started.is_set)
+        if interruption == 'cancel':
+            run.agent.missions.cancel(next(iter(run.agent.missions._requests)))
+&gt;       run.spin_until(lambda: len(run.replies) == 1)
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:497: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+predicate = &lt;function test_interrupted_location_setting_cannot_save_late_result.&lt;locals&gt;.&lt;lambda&gt; at 0xffff7dd5b7f0&gt;
+
+    def spin_until(predicate):
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() &lt; deadline:
+            if predicate():
+                return
+            executor.spin_once(timeout_sec=0.02)
+&gt;       raise AssertionError('Weather mission or speech evidence is missing')
+E       AssertionError: Weather mission or speech evidence is missing
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:198: AssertionError</failure></testcase><testcase classname="test.test_ros_weather_communication" name="test_interrupted_location_setting_cannot_save_late_result[timeout]" time="0.381" /><testcase classname="test.test_ros_weather_communication" name="test_weather_fetch_runs_through_manager_and_typed_action_result" time="0.178" /><testcase classname="test.test_ros_weather_communication" name="test_new_speech_fetches_again_but_duplicate_id_does_not" time="0.280" /><testcase classname="test.test_ros_weather_communication" name="test_fetch_failure_and_timeout_reach_manager_as_aborted[fetch_error-FETCH_FAILED]" time="0.229" /><testcase classname="test.test_ros_weather_communication" name="test_fetch_failure_and_timeout_reach_manager_as_aborted[timeout-TIMEOUT]" time="0.482" /><testcase classname="test.test_ros_weather_communication" name="test_fetch_failure_and_timeout_reach_manager_as_aborted[KMA_KEY_REQUIRED-KMA_KEY_REQUIRED]" time="0.232" /><testcase classname="test.test_ros_weather_communication" name="test_fetch_failure_and_timeout_reach_manager_as_aborted[KMA_AUTH_FAILED-KMA_AUTH_FAILED]" time="0.230" /><testcase classname="test.test_ros_weather_communication" name="test_cancel_propagates_through_manager_and_discards_late_fetch" time="0.284" /><testcase classname="test.test_ros_weather_communication" name="test_missing_manager_or_weather_action_never_falls_back[manager]" time="0.228" /><testcase classname="test.test_ros_weather_communication" name="test_missing_manager_or_weather_action_never_falls_back[weather_server]" time="0.232" /><testcase classname="test.test_speech_addressee_service_ros" name="test_service_duplicate_and_shutdown_progress_on_single_executor" time="0.173" /><testcase classname="test.test_speech_addressee_service_ros" name="test_agent_startup_does_not_advertise_unusable_speech_inputs[False]" time="0.217" /><testcase classname="test.test_speech_addressee_service_ros" name="test_agent_startup_does_not_advertise_unusable_speech_inputs[True]" time="0.268" /><testcase classname="test.test_fall_runtime" name="test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose" time="0.249" /></testsuite></testsuites>

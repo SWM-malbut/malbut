@@ -54,6 +54,11 @@ def generate_launch_description() -> LaunchDescription:
                 ),
                 "audio_source": ParameterValue(audio_source, value_type=str),
                 "audio_sink": ParameterValue(audio_sink, value_type=str),
+                **{
+                    "fall_" + peer + "_runtime_id": ParameterValue(
+                        LaunchConfiguration("fall_" + peer + "_runtime_id"), value_type=str
+                    ) for peer in ("bridge", "manager", "vlm")
+                },
                 "microphone_enabled": ParameterValue(
                     microphone_enabled, value_type=bool
                 ),
@@ -103,6 +108,8 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("audio_source", default_value="default"),
             DeclareLaunchArgument("audio_sink", default_value="default"),
             DeclareLaunchArgument("microphone_enabled", default_value="true"),
+            *[DeclareLaunchArgument("fall_" + peer + "_runtime_id", default_value="")
+              for peer in ("bridge", "manager", "vlm")],
             RegisterEventHandler(
                 OnProcessExit(
                     target_action=media_node,

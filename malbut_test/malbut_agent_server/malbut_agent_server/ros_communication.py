@@ -24,6 +24,9 @@ from malbut_agent_server.speech_receiver import (
     DEFAULT_DB_PATH, TRANSCRIPT_TOPIC, receive_transcript,
 )
 from malbut_agent_server.weather_query import ManagerWeatherQuery
+from malbut_agent_server.ros_situation import (
+    SituationActionServer, build_situation_factory,
+)
 
 
 RESPONSE_TOPIC = '/malbut/speech/response'
@@ -39,6 +42,7 @@ def create_communication_node(
     goal_response_timeout_s=5.0,
     dialogue_settings=None, dialogue_factory=None,
     weather_query_timeout_s=20.0,
+    situation_factory=None,
 ):
     """Compose communication on one owning thread with a single executor."""
     from malbut_interfaces.msg import SpeechRequest, SpeechTranscript
@@ -68,6 +72,7 @@ def create_communication_node(
             self._addressee_waiters = {}
             self._addressee_callbacks = 0
             self.weather_query = None
+            self.situation = None
             try:
                 qos = QoSProfile(
                     history=HistoryPolicy.KEEP_LAST, depth=10,
@@ -104,6 +109,12 @@ def create_communication_node(
                 self.dialogue = DialogueWorker(
                     runtime_factory, settings.user_id,
                 )
+                self.situation = SituationActionServer(
+                    self,
+                    situation_factory or build_situation_factory(settings),
+                    on_begin=self._begin_situation,
+                    on_end=lambda: self.dialogue.resume(),
+                )
                 self.create_timer(0.05, self._drain_dialogue)
                 self._start_speech_inputs()
             except Exception:
@@ -133,6 +144,8 @@ def create_communication_node(
                 return False
             if self._closing or not self.context.ok():
                 return False
+            if self.situation is not None and self.situation.active:
+                return False
             self._speech.publish(SpeechRequest(
                 text=text, request_type=request_type,
             ))
@@ -140,6 +153,12 @@ def create_communication_node(
 
         def _receive_speech(self, message):
             if self._closing:
+                return
+            if self.situation is not None and self.situation.active:
+                self.situation.transcript(message)
+                return
+            if getattr(message, 'session_id', ''):
+                # A late answer from an ended confirmation is not ordinary chat.
                 return
             utterance_id, text = message.utterance_id, message.text
             try:
@@ -181,6 +200,8 @@ def create_communication_node(
             """Yield to the executor while the dialogue worker classifies."""
             response.decision = ClassifySpeechAddressee.Response.UNKNOWN
             if self._closing or not self.context.ok():
+                return response
+            if self.situation is not None and self.situation.active:
                 return response
             if self._addressee_callbacks >= MAX_PENDING_ADDRESSEE_REQUESTS:
                 return response
@@ -225,6 +246,14 @@ def create_communication_node(
                 if not future.done():
                     future.set_result(decision)
 
+        def _begin_situation(self):
+            self.dialogue.suspend()
+            for waiters in self._addressee_waiters.values():
+                for future in waiters:
+                    if not future.done():
+                        future.set_result(ClassifySpeechAddressee.Response.UNKNOWN)
+            self._addressee_waiters.clear()
+
         def _drain_dialogue(self):
             if self._closing:
                 return
@@ -263,6 +292,8 @@ def create_communication_node(
         def begin_shutdown(self):
             """Reject new work and release classification responses as unknown."""
             self._closing = True
+            if self.situation is not None:
+                self.situation.close()
             for waiters in self._addressee_waiters.values():
                 for future in waiters:
                     if not future.done():
@@ -297,6 +328,8 @@ def create_communication_node(
                         if self._receipts is not None:
                             self._receipts.close()
                     finally:
+                        if self.situation is not None:
+                            self.situation.destroy()
                         destroyed = super().destroy_node()
             return destroyed
 

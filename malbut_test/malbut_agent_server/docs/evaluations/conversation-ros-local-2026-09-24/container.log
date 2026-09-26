@@ -1,0 +1,1134 @@
+3.10.12 (main, Jun 22 2026, 18:55:27) [GCC 11.4.0]
+rclpy True /opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py
+sensor_msgs True /opt/ros/humble/local/lib/python3.10/dist-packages/sensor_msgs/__init__.py
+std_msgs True /opt/ros/humble/local/lib/python3.10/dist-packages/std_msgs/__init__.py
+action_msgs True /opt/ros/humble/local/lib/python3.10/dist-packages/action_msgs/__init__.py
+rosidl_runtime_py True /opt/ros/humble/lib/python3.10/site-packages/rosidl_runtime_py/__init__.py
+colcon_core True /usr/lib/python3/dist-packages/colcon_core/__init__.py
+pytest True /usr/lib/python3/dist-packages/pytest/__init__.py
+yaml True /usr/lib/python3/dist-packages/yaml/__init__.py
+numpy True /usr/lib/python3/dist-packages/numpy/__init__.py
+cv2 True /usr/lib/python3/dist-packages/cv2.cpython-310-aarch64-linux-gnu.so
+cv_bridge False None
+tiktoken False None
+PIL False None
+aiohttp False None
+Starting >>> malbut_interfaces
+-- The C compiler identification is GNU 11.4.0
+-- The CXX compiler identification is GNU 11.4.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found ament_cmake: 1.3.14 (/opt/ros/humble/share/ament_cmake/cmake)
+-- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter 
+-- Found builtin_interfaces: 1.2.3 (/opt/ros/humble/share/builtin_interfaces/cmake)
+-- Found rosidl_generator_c: 3.1.9 (/opt/ros/humble/share/rosidl_generator_c/cmake)
+-- Found rosidl_adapter: 3.1.9 (/opt/ros/humble/share/rosidl_adapter/cmake)
+-- Found rosidl_generator_cpp: 3.1.9 (/opt/ros/humble/share/rosidl_generator_cpp/cmake)
+-- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+-- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+-- Found geometry_msgs: 4.9.2 (/opt/ros/humble/share/geometry_msgs/cmake)
+-- Found rosidl_default_generators: 1.2.1 (/opt/ros/humble/share/rosidl_default_generators/cmake)
+-- Found ament_cmake_ros: 0.10.0 (/opt/ros/humble/share/ament_cmake_ros/cmake)
+-- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+-- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+-- Found PythonInterp: /usr/bin/python3 (found suitable version "3.10.12", minimum required is "3.6") 
+-- Found python_cmake_module: 0.10.0 (/opt/ros/humble/share/python_cmake_module/cmake)
+-- Found PythonLibs: /usr/lib/aarch64-linux-gnu/libpython3.10.so (found suitable version "3.10.12", minimum required is "3.5") 
+-- Using PYTHON_EXECUTABLE: /usr/bin/python3
+-- Using PYTHON_INCLUDE_DIRS: /usr/include/python3.10
+-- Using PYTHON_LIBRARIES: /usr/lib/aarch64-linux-gnu/libpython3.10.so
+-- Found PythonExtra: .so  
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /tmp/ros-workspace/build/malbut_interfaces
+[  0%] Generating C code for ROS interfaces
+[  1%] Generating Rust code for ROS interfaces
+[  1%] Generating C++ code for ROS interfaces
+[  1%] Built target ament_cmake_python_copy_malbut_interfaces
+running egg_info
+creating malbut_interfaces.egg-info
+writing malbut_interfaces.egg-info/PKG-INFO
+writing dependency_links to malbut_interfaces.egg-info/dependency_links.txt
+writing top-level names to malbut_interfaces.egg-info/top_level.txt
+writing manifest file 'malbut_interfaces.egg-info/SOURCES.txt'
+reading manifest file 'malbut_interfaces.egg-info/SOURCES.txt'
+writing manifest file 'malbut_interfaces.egg-info/SOURCES.txt'
+[  1%] Built target ament_cmake_python_build_malbut_interfaces_egg
+[  1%] Built target malbut_interfaces__rs
+[  2%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/action/detail/get_weather__functions.c.o
+[  3%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/action/detail/auto_slam__functions.c.o
+[  3%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/action/detail/execute_mission__functions.c.o
+[  4%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/action/detail/follow_person__functions.c.o
+[  4%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/action/detail/patrol__functions.c.o
+[  5%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/msg/detail/lidar_cluster__functions.c.o
+[  5%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/msg/detail/lidar_cluster_array__functions.c.o
+[  6%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/msg/detail/speech_playback_status__functions.c.o
+[  6%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/msg/detail/mission_status__functions.c.o
+[  7%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/msg/detail/sensor_processing_trace__functions.c.o
+[  8%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/msg/detail/speech_request__functions.c.o
+[  8%] Built target malbut_interfaces__cpp
+[  8%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/msg/detail/speech_transcript__functions.c.o
+[  9%] Generating C++ type support for eProsima Fast-RTPS
+[ 10%] Generating C++ introspection for ROS interfaces
+[ 11%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/msg/detail/system_state__functions.c.o
+[ 12%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/msg/detail/weather_state__functions.c.o
+[ 13%] Generating C++ type support dispatch for ROS interfaces
+[ 13%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/msg/detail/weather_forecast__functions.c.o
+[ 14%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/msg/detail/tracking_command_trace__functions.c.o
+[ 15%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/srv/detail/control_speech_playback__functions.c.o
+[ 15%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_c.dir/rosidl_generator_c/malbut_interfaces/srv/detail/classify_speech_addressee__functions.c.o
+[ 16%] Linking C shared library libmalbut_interfaces__rosidl_generator_c.so
+[ 16%] Built target malbut_interfaces__rosidl_generator_c
+[ 17%] Generating C type support for eProsima Fast-RTPS
+[ 18%] Generating C introspection for ROS interfaces
+[ 19%] Generating C type support dispatch for ROS interfaces
+[ 19%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/action/get_weather__type_support.cpp.o
+[ 20%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/msg/lidar_cluster__type_support.cpp.o
+[ 20%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/action/patrol__type_support.cpp.o
+[ 20%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/action/auto_slam__type_support.cpp.o
+[ 21%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/action/follow_person__type_support.cpp.o
+[ 22%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/action/execute_mission__type_support.cpp.o
+[ 23%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/msg/lidar_cluster_array__type_support.cpp.o
+[ 23%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/action/get_weather__type_support.cpp.o
+[ 24%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/action/execute_mission__type_support.cpp.o
+[ 24%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/msg/mission_status__type_support.cpp.o
+[ 24%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/action/auto_slam__type_support.cpp.o
+[ 25%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/action/follow_person__type_support.cpp.o
+[ 26%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/msg/sensor_processing_trace__type_support.cpp.o
+[ 26%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/action/patrol__type_support.cpp.o
+[ 28%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/msg/lidar_cluster_array__type_support.cpp.o
+[ 28%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/msg/lidar_cluster__type_support.cpp.o
+[ 29%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/msg/speech_playback_status__type_support.cpp.o
+[ 29%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/msg/speech_request__type_support.cpp.o
+[ 29%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/msg/mission_status__type_support.cpp.o
+[ 30%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/msg/sensor_processing_trace__type_support.cpp.o
+[ 30%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/msg/speech_playback_status__type_support.cpp.o
+[ 31%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/msg/speech_transcript__type_support.cpp.o
+[ 31%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/action/detail/get_weather__type_support.cpp.o
+[ 31%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/msg/system_state__type_support.cpp.o
+[ 32%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/msg/speech_request__type_support.cpp.o
+[ 33%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/msg/tracking_command_trace__type_support.cpp.o
+[ 34%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/msg/speech_transcript__type_support.cpp.o
+[ 34%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/msg/system_state__type_support.cpp.o
+[ 35%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/msg/weather_forecast__type_support.cpp.o
+[ 36%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/msg/tracking_command_trace__type_support.cpp.o
+[ 36%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/msg/weather_state__type_support.cpp.o
+[ 36%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/msg/weather_forecast__type_support.cpp.o
+[ 37%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/msg/weather_state__type_support.cpp.o
+[ 38%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/action/detail/execute_mission__type_support.cpp.o
+[ 39%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/srv/classify_speech_addressee__type_support.cpp.o
+[ 39%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/malbut_interfaces/srv/control_speech_playback__type_support.cpp.o
+[ 39%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/action/detail/auto_slam__type_support.cpp.o
+[ 40%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/srv/classify_speech_addressee__type_support.cpp.o
+[ 40%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/malbut_interfaces/srv/control_speech_playback__type_support.cpp.o
+[ 41%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/action/detail/follow_person__type_support.cpp.o
+[ 42%] Linking CXX shared library libmalbut_interfaces__rosidl_typesupport_c.so
+[ 43%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/action/detail/patrol__type_support.cpp.o
+[ 43%] Built target malbut_interfaces__rosidl_typesupport_c
+[ 43%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/action/detail/get_weather__type_support.c.o
+[ 43%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/msg/detail/lidar_cluster__type_support.cpp.o
+[ 44%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/msg/detail/lidar_cluster_array__type_support.cpp.o
+[ 45%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/action/detail/execute_mission__type_support.c.o
+[ 45%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/action/detail/dds_fastrtps/get_weather__type_support.cpp.o
+[ 46%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/action/detail/dds_fastrtps/execute_mission__type_support.cpp.o
+[ 47%] Linking CXX shared library libmalbut_interfaces__rosidl_typesupport_cpp.so
+[ 47%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/action/detail/auto_slam__type_support.c.o
+[ 48%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/action/detail/follow_person__type_support.c.o
+[ 48%] Built target malbut_interfaces__rosidl_typesupport_cpp
+[ 48%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/action/detail/get_weather__type_support_c.cpp.o
+[ 49%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/action/detail/execute_mission__type_support_c.cpp.o
+[ 49%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/action/detail/auto_slam__type_support_c.cpp.o
+[ 49%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/action/detail/patrol__type_support.c.o
+[ 50%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/msg/detail/lidar_cluster__type_support.c.o
+[ 51%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/msg/detail/lidar_cluster_array__type_support.c.o
+[ 51%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/msg/detail/mission_status__type_support.c.o
+[ 51%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/action/detail/dds_fastrtps/auto_slam__type_support.cpp.o
+[ 52%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/msg/detail/sensor_processing_trace__type_support.c.o
+[ 52%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/msg/detail/mission_status__type_support.cpp.o
+[ 52%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/msg/detail/speech_playback_status__type_support.c.o
+[ 53%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/msg/detail/sensor_processing_trace__type_support.cpp.o
+[ 54%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/msg/detail/speech_playback_status__type_support.cpp.o
+[ 55%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/msg/detail/speech_request__type_support.c.o
+[ 56%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/action/detail/dds_fastrtps/follow_person__type_support.cpp.o
+[ 57%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/msg/detail/speech_transcript__type_support.c.o
+[ 58%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/action/detail/dds_fastrtps/patrol__type_support.cpp.o
+[ 59%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/action/detail/follow_person__type_support_c.cpp.o
+[ 59%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/msg/detail/system_state__type_support.c.o
+[ 59%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/msg/detail/speech_request__type_support.cpp.o
+[ 60%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/msg/detail/tracking_command_trace__type_support.c.o
+[ 60%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/msg/detail/weather_forecast__type_support.c.o
+[ 61%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/msg/detail/speech_transcript__type_support.cpp.o
+[ 61%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/msg/detail/system_state__type_support.cpp.o
+[ 62%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/msg/detail/weather_state__type_support.c.o
+[ 63%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/srv/detail/classify_speech_addressee__type_support.c.o
+[ 63%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/msg/detail/dds_fastrtps/lidar_cluster__type_support.cpp.o
+[ 63%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/malbut_interfaces/srv/detail/control_speech_playback__type_support.c.o
+[ 64%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/msg/detail/dds_fastrtps/lidar_cluster_array__type_support.cpp.o
+[ 65%] Linking C shared library libmalbut_interfaces__rosidl_typesupport_introspection_c.so
+[ 65%] Built target malbut_interfaces__rosidl_typesupport_introspection_c
+[ 65%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/action/detail/patrol__type_support_c.cpp.o
+[ 65%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/msg/detail/dds_fastrtps/mission_status__type_support.cpp.o
+[ 66%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/msg/detail/lidar_cluster__type_support_c.cpp.o
+[ 67%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/msg/detail/dds_fastrtps/sensor_processing_trace__type_support.cpp.o
+[ 68%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/msg/detail/tracking_command_trace__type_support.cpp.o
+[ 69%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/msg/detail/lidar_cluster_array__type_support_c.cpp.o
+[ 70%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/msg/detail/dds_fastrtps/speech_playback_status__type_support.cpp.o
+[ 71%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/msg/detail/weather_forecast__type_support.cpp.o
+[ 71%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/msg/detail/weather_state__type_support.cpp.o
+[ 71%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/msg/detail/mission_status__type_support_c.cpp.o
+[ 72%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/srv/detail/classify_speech_addressee__type_support.cpp.o
+[ 73%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/msg/detail/sensor_processing_trace__type_support_c.cpp.o
+[ 73%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/msg/detail/dds_fastrtps/speech_request__type_support.cpp.o
+[ 74%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/msg/detail/dds_fastrtps/speech_transcript__type_support.cpp.o
+[ 74%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/msg/detail/dds_fastrtps/system_state__type_support.cpp.o
+[ 74%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/malbut_interfaces/srv/detail/control_speech_playback__type_support.cpp.o
+[ 74%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/msg/detail/speech_playback_status__type_support_c.cpp.o
+[ 75%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/msg/detail/dds_fastrtps/weather_forecast__type_support.cpp.o
+[ 76%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/msg/detail/dds_fastrtps/tracking_command_trace__type_support.cpp.o
+[ 77%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/msg/detail/speech_request__type_support_c.cpp.o
+[ 77%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/msg/detail/dds_fastrtps/weather_state__type_support.cpp.o
+[ 78%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/msg/detail/speech_transcript__type_support_c.cpp.o
+[ 78%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/msg/detail/system_state__type_support_c.cpp.o
+[ 79%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/srv/detail/dds_fastrtps/classify_speech_addressee__type_support.cpp.o
+[ 80%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/msg/detail/tracking_command_trace__type_support_c.cpp.o
+[ 81%] Linking CXX shared library libmalbut_interfaces__rosidl_typesupport_introspection_cpp.so
+[ 81%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/malbut_interfaces/srv/detail/dds_fastrtps/control_speech_playback__type_support.cpp.o
+[ 81%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/msg/detail/weather_forecast__type_support_c.cpp.o
+[ 81%] Built target malbut_interfaces__rosidl_typesupport_introspection_cpp
+[ 82%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/srv/detail/classify_speech_addressee__type_support_c.cpp.o
+[ 82%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/srv/detail/control_speech_playback__type_support_c.cpp.o
+[ 83%] Building CXX object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/malbut_interfaces/msg/detail/weather_state__type_support_c.cpp.o
+[ 84%] Linking CXX shared library libmalbut_interfaces__rosidl_typesupport_fastrtps_cpp.so
+[ 85%] Linking CXX shared library libmalbut_interfaces__rosidl_typesupport_fastrtps_c.so
+[ 85%] Built target malbut_interfaces__rosidl_typesupport_fastrtps_cpp
+[ 85%] Built target malbut_interfaces__rosidl_typesupport_fastrtps_c
+[ 85%] Built target malbut_interfaces
+[ 86%] Generating Python code for ROS interfaces
+[ 86%] Built target malbut_interfaces__py
+[ 86%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/action/_get_weather_s.c.o
+[ 86%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/action/_auto_slam_s.c.o
+[ 87%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/action/_patrol_s.c.o
+[ 88%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/msg/_lidar_cluster_array_s.c.o
+[ 88%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/msg/_mission_status_s.c.o
+[ 89%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/msg/_speech_playback_status_s.c.o
+[ 89%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/msg/_lidar_cluster_s.c.o
+[ 90%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/action/_follow_person_s.c.o
+[ 90%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/msg/_speech_request_s.c.o
+[ 91%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/action/_execute_mission_s.c.o
+[ 92%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/msg/_sensor_processing_trace_s.c.o
+[ 93%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/msg/_speech_transcript_s.c.o
+[ 93%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/msg/_system_state_s.c.o
+[ 94%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/msg/_tracking_command_trace_s.c.o
+[ 95%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/msg/_weather_forecast_s.c.o
+[ 96%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/srv/_classify_speech_addressee_s.c.o
+[ 96%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/srv/_control_speech_playback_s.c.o
+[ 96%] Building C object CMakeFiles/malbut_interfaces__rosidl_generator_py.dir/rosidl_generator_py/malbut_interfaces/msg/_weather_state_s.c.o
+[ 97%] Linking C shared library rosidl_generator_py/malbut_interfaces/libmalbut_interfaces__rosidl_generator_py.so
+[ 97%] Built target malbut_interfaces__rosidl_generator_py
+[ 97%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_introspection_c__pyext.dir/rosidl_generator_py/malbut_interfaces/_malbut_interfaces_s.ep.rosidl_typesupport_introspection_c.c.o
+[ 97%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_fastrtps_c__pyext.dir/rosidl_generator_py/malbut_interfaces/_malbut_interfaces_s.ep.rosidl_typesupport_fastrtps_c.c.o
+[ 97%] Building C object CMakeFiles/malbut_interfaces__rosidl_typesupport_c__pyext.dir/rosidl_generator_py/malbut_interfaces/_malbut_interfaces_s.ep.rosidl_typesupport_c.c.o
+[ 98%] Linking C shared library rosidl_generator_py/malbut_interfaces/malbut_interfaces_s__rosidl_typesupport_introspection_c.cpython-310-aarch64-linux-gnu.so
+[ 99%] Linking C shared library rosidl_generator_py/malbut_interfaces/malbut_interfaces_s__rosidl_typesupport_fastrtps_c.cpython-310-aarch64-linux-gnu.so
+[100%] Linking C shared library rosidl_generator_py/malbut_interfaces/malbut_interfaces_s__rosidl_typesupport_c.cpython-310-aarch64-linux-gnu.so
+[100%] Built target malbut_interfaces__rosidl_typesupport_introspection_c__pyext
+[100%] Built target malbut_interfaces__rosidl_typesupport_c__pyext
+[100%] Built target malbut_interfaces__rosidl_typesupport_fastrtps_c__pyext
+-- Install configuration: ""
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/ament_index/resource_index/rosidl_interfaces/malbut_interfaces
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/control_speech_playback.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/classify_speech_addressee.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/patrol.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/follow_person.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/auto_slam.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/execute_mission.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/get_weather.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/weather_state.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/weather_forecast.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/tracking_command_trace.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/system_state.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/speech_transcript.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/speech_request.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/speech_playback_status.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/sensor_processing_trace.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/mission_status.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/lidar_cluster_array.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__type_support.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__struct.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__functions.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__functions.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/lidar_cluster.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/rosidl_generator_c__visibility_control.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/environment/library_path.sh
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/environment/library_path.dsv
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_generator_c.so
+-- Set runtime path of "/tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_generator_c.so" to ""
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__rosidl_typesupport_fastrtps_c.h
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__rosidl_typesupport_fastrtps_c.h
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__rosidl_typesupport_fastrtps_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/rosidl_typesupport_fastrtps_c__visibility_control.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_typesupport_fastrtps_c.so
+-- Set runtime path of "/tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_typesupport_fastrtps_c.so" to ""
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/control_speech_playback.hpp
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/classify_speech_addressee.hpp
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/patrol.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/follow_person.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/auto_slam.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/execute_mission.hpp
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/get_weather.hpp
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/weather_state.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/weather_forecast.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/tracking_command_trace.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/system_state.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/speech_transcript.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/speech_request.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/speech_playback_status.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/sensor_processing_trace.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/mission_status.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/lidar_cluster_array.hpp
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__type_support.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__traits.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__struct.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__builder.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/lidar_cluster.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/rosidl_generator_cpp__visibility_control.hpp
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/dds_fastrtps
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__rosidl_typesupport_fastrtps_cpp.hpp
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/dds_fastrtps
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__rosidl_typesupport_fastrtps_cpp.hpp
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/dds_fastrtps
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__rosidl_typesupport_fastrtps_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/rosidl_typesupport_fastrtps_cpp__visibility_control.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_typesupport_fastrtps_cpp.so
+-- Set runtime path of "/tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_typesupport_fastrtps_cpp.so" to ""
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__rosidl_typesupport_introspection_c.h
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__rosidl_typesupport_introspection_c.h
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__type_support.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__rosidl_typesupport_introspection_c.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/rosidl_typesupport_introspection_c__visibility_control.h
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_typesupport_introspection_c.so
+-- Set runtime path of "/tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_typesupport_introspection_c.so" to ""
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_typesupport_c.so
+-- Set runtime path of "/tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_typesupport_c.so" to ""
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/control_speech_playback__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/srv/detail/classify_speech_addressee__rosidl_typesupport_introspection_cpp.hpp
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_state__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/weather_forecast__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/tracking_command_trace__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/system_state__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_transcript__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_request__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/speech_playback_status__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/sensor_processing_trace__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/mission_status__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster_array__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/msg/detail/lidar_cluster__rosidl_typesupport_introspection_cpp.hpp
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action
+-- Up-to-date: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/patrol__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/follow_person__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/auto_slam__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/execute_mission__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__type_support.cpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/include/malbut_interfaces/malbut_interfaces/action/detail/get_weather__rosidl_typesupport_introspection_cpp.hpp
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_typesupport_introspection_cpp.so
+-- Set runtime path of "/tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_typesupport_introspection_cpp.so" to ""
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_typesupport_cpp.so
+-- Set runtime path of "/tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_typesupport_cpp.so" to ""
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/environment/pythonpath.sh
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/environment/pythonpath.dsv
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces-0.1.0-py3.10.egg-info
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces-0.1.0-py3.10.egg-info/SOURCES.txt
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces-0.1.0-py3.10.egg-info/top_level.txt
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces-0.1.0-py3.10.egg-info/dependency_links.txt
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces-0.1.0-py3.10.egg-info/PKG-INFO
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/malbut_interfaces_s__rosidl_typesupport_c.cpython-310-aarch64-linux-gnu.so
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/malbut_interfaces_s__rosidl_typesupport_introspection_c.cpython-310-aarch64-linux-gnu.so
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/malbut_interfaces_s__rosidl_typesupport_fastrtps_c.cpython-310-aarch64-linux-gnu.so
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/libmalbut_interfaces__rosidl_generator_py.so
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/_malbut_interfaces_s.ep.rosidl_typesupport_c.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/_malbut_interfaces_s.ep.rosidl_typesupport_introspection_c.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/_malbut_interfaces_s.ep.rosidl_typesupport_fastrtps_c.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/srv
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/srv/__init__.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/srv/_control_speech_playback_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/srv/_control_speech_playback.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/srv/_classify_speech_addressee_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/srv/_classify_speech_addressee.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/__init__.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_weather_state_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_weather_state.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_weather_forecast_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_weather_forecast.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_tracking_command_trace_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_tracking_command_trace.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_system_state_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_system_state.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_speech_transcript_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_speech_transcript.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_speech_request_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_speech_request.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_speech_playback_status_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_speech_playback_status.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_sensor_processing_trace_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_sensor_processing_trace.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_mission_status_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_mission_status.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_lidar_cluster_array_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_lidar_cluster_array.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_lidar_cluster_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_lidar_cluster.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/__init__.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_patrol_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_patrol.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_follow_person_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_follow_person.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_auto_slam_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_auto_slam.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_execute_mission_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_execute_mission.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_get_weather_s.c
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_get_weather.py
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/__init__.py
+Listing '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/__init__.py'...
+Listing '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/__init__.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_auto_slam.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_execute_mission.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_follow_person.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_get_weather.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/action/_patrol.py'...
+Listing '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/__init__.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_lidar_cluster.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_lidar_cluster_array.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_mission_status.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_sensor_processing_trace.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_speech_playback_status.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_speech_request.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_speech_transcript.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_system_state.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_tracking_command_trace.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_weather_forecast.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/msg/_weather_state.py'...
+Listing '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/srv'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/srv/__init__.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/srv/_classify_speech_addressee.py'...
+Compiling '/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/srv/_control_speech_playback.py'...
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/malbut_interfaces_s__rosidl_typesupport_fastrtps_c.cpython-310-aarch64-linux-gnu.so
+-- Set runtime path of "/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/malbut_interfaces_s__rosidl_typesupport_fastrtps_c.cpython-310-aarch64-linux-gnu.so" to ""
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/malbut_interfaces_s__rosidl_typesupport_introspection_c.cpython-310-aarch64-linux-gnu.so
+-- Set runtime path of "/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/malbut_interfaces_s__rosidl_typesupport_introspection_c.cpython-310-aarch64-linux-gnu.so" to ""
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/malbut_interfaces_s__rosidl_typesupport_c.cpython-310-aarch64-linux-gnu.so
+-- Set runtime path of "/tmp/ros-workspace/install/malbut_interfaces/local/lib/python3.10/dist-packages/malbut_interfaces/malbut_interfaces_s__rosidl_typesupport_c.cpython-310-aarch64-linux-gnu.so" to ""
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_generator_py.so
+-- Set runtime path of "/tmp/ros-workspace/install/malbut_interfaces/lib/libmalbut_interfaces__rosidl_generator_py.so" to ""
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/ament_index/resource_index/rust_packages/malbut_interfaces
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/build.rs
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/Cargo.toml
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/src
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/src/lib.rs
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/src/action
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/src/action/rmw.rs
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/src/action.rs
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/src/srv
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/src/srv/rmw.rs
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/src/srv.rs
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/src/msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/src/msg/rmw.rs
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/rust/src/msg.rs
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/action/GetWeather.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/action/ExecuteMission.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/action/AutoSlam.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/action/FollowPerson.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/action/Patrol.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/LidarCluster.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/LidarClusterArray.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/MissionStatus.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/SensorProcessingTrace.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/SpeechPlaybackStatus.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/SpeechRequest.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/SpeechTranscript.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/SystemState.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/TrackingCommandTrace.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/WeatherForecast.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/WeatherState.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/srv/ClassifySpeechAddressee.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/srv/ControlSpeechPlayback.idl
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/action/GetWeather.action
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/action/ExecuteMission.action
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/action/AutoSlam.action
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/action/FollowPerson.action
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/action/Patrol.action
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/LidarCluster.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/LidarClusterArray.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/MissionStatus.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/SensorProcessingTrace.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/SpeechPlaybackStatus.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/SpeechRequest.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/SpeechTranscript.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/SystemState.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/TrackingCommandTrace.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/WeatherForecast.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/msg/WeatherState.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/srv/ClassifySpeechAddressee.srv
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/srv/ClassifySpeechAddressee_Request.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/srv/ClassifySpeechAddressee_Response.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/srv/ControlSpeechPlayback.srv
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/srv/ControlSpeechPlayback_Request.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/srv/ControlSpeechPlayback_Response.msg
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/capabilities
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/capabilities/get_weather.yaml
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/capabilities/autoslam.yaml
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/capabilities/set_weather_location.yaml
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/capabilities/patrol.yaml
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/capabilities/follow_person.yaml
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/capabilities/navigate_to_pose.yaml
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/ament_index/resource_index/package_run_dependencies/malbut_interfaces
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/ament_index/resource_index/parent_prefix_path/malbut_interfaces
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/environment/ament_prefix_path.sh
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/environment/ament_prefix_path.dsv
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/environment/path.sh
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/environment/path.dsv
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/local_setup.bash
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/local_setup.sh
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/local_setup.zsh
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/local_setup.dsv
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/package.dsv
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/ament_index/resource_index/packages/malbut_interfaces
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/export_malbut_interfaces__rosidl_generator_cExport.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/export_malbut_interfaces__rosidl_generator_cExport-noconfig.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/export_malbut_interfaces__rosidl_typesupport_fastrtps_cExport.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/export_malbut_interfaces__rosidl_typesupport_fastrtps_cExport-noconfig.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/export_malbut_interfaces__rosidl_generator_cppExport.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/export_malbut_interfaces__rosidl_typesupport_fastrtps_cppExport.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/export_malbut_interfaces__rosidl_typesupport_fastrtps_cppExport-noconfig.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/malbut_interfaces__rosidl_typesupport_introspection_cExport.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/malbut_interfaces__rosidl_typesupport_introspection_cExport-noconfig.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/malbut_interfaces__rosidl_typesupport_cExport.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/malbut_interfaces__rosidl_typesupport_cExport-noconfig.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/malbut_interfaces__rosidl_typesupport_introspection_cppExport.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/malbut_interfaces__rosidl_typesupport_introspection_cppExport-noconfig.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/malbut_interfaces__rosidl_typesupport_cppExport.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/malbut_interfaces__rosidl_typesupport_cppExport-noconfig.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/export_malbut_interfaces__rosidl_generator_pyExport.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/export_malbut_interfaces__rosidl_generator_pyExport-noconfig.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/rosidl_cmake-extras.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/ament_cmake_export_dependencies-extras.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/ament_cmake_export_include_directories-extras.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/ament_cmake_export_libraries-extras.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/ament_cmake_export_targets-extras.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/rosidl_cmake_export_typesupport_targets-extras.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/rosidl_cmake_export_typesupport_libraries-extras.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/rosidl_cmake_aggregate_target-extras.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/malbut_interfacesConfig.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/cmake/malbut_interfacesConfig-version.cmake
+-- Installing: /tmp/ros-workspace/install/malbut_interfaces/share/malbut_interfaces/package.xml
+Finished <<< malbut_interfaces [6.72s]
+
+Summary: 1 package finished [6.80s]
+malbut_interfaces.action._execute_mission ExecuteMission
+malbut_interfaces.action._follow_person FollowPerson
+malbut_interfaces.action._get_weather GetWeather
+malbut_interfaces.msg._speech_request SpeechRequest
+malbut_interfaces.msg._speech_transcript SpeechTranscript
+malbut_interfaces.srv._classify_speech_addressee ClassifySpeechAddressee
+.............F...........FFFFF.F...F                                     [100%]
+=================================== FAILURES ===================================
+_________________ test_ros_restart_recalls_and_deletes_memory __________________
+
+ros_memory = <test_ros_memory_communication._DialogueHarness object at 0xffff95edfa60>
+
+    def test_ros_restart_recalls_and_deletes_memory(ros_memory):
+        """Restart the real Agent Node while retaining user and SQLite files."""
+        ros_memory.enable_and_remember()
+        saved = ros_memory.inspect_store()[1][0]
+        ros_memory.restart()
+    
+        assert ros_memory.inspect_store()[0]['enabled'] is True
+        assert ros_memory.say(RECALL_TEXT) == RECALL_REPLY
+        after = ros_memory.provider.calls[-1]
+>       assert after['history'] == []
+E       AssertionError: assert [Conversation...87325.711867)] == []
+E         Left contains 3 more items, first extra item: ConversationTurn(conversation_id='925bea9e-51ab-4331-b63f-acff1b882494', user_id='ros-memory-test-user', session_insta...ion', 'reason': '행동 요청이 아닙니다.'}}, 'schema_version': 2}, created_at=1790187325.6116493, completed_at=1790187325.6126845)
+E         Full diff:
+E           [
+E         -  ,
+E         +  ConversationTurn(conversation_id='925bea9e-51ab-4331-b63f-acff1b882494',
+E         +                   user_id='ros-memory-test-user',
+E         +                   session_instance_id='8d95e004-601d-45ae-93b3-7ffff6362f44',...
+E         
+E         ...Full output truncated (161 lines hidden), use '-vv' to show
+
+/source/malbut_agent_server/test/test_ros_memory_communication.py:300: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+[INFO] [1790187325.610202720] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187325.611101429] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "e3c09f01-2ffa-4550-b520-1e4616000ad8", "text": "개인화 켜줘"}
+[INFO] [1790187325.660941512] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "e3c09f01-2ffa-4550-b520-1e4616000ad8", "text": "이름·호칭·반려동물 정보·취향처럼 직접 말한 일상 정보를 앞으로 자동으로 저장하고 다음 대화에 활용해도 될까요? 언제든 조회·정정·삭제하거나 개인화를 중단할 수 있어요.", "kind": "answer", "conversation_id": "925bea9e-51ab-4331-b63f-acff1b882494"}
+[INFO] [1790187325.661448887] [malbut_tts_receiver]: {"event": "tts_text_received", "text": "이름·호칭·반려동물 정보·취향처럼 직접 말한 일상 정보를 앞으로 자동으로 저장하고 다음 대화에 활용해도 될까요? 언제든 조회·정정·삭제하거나 개인화를 중단할 수 있어요."}
+[INFO] [1790187325.661859304] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "43ae4a99-9472-4319-9844-9595cdd6769d", "text": "네"}
+[INFO] [1790187325.708950470] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "43ae4a99-9472-4319-9844-9595cdd6769d", "text": "개인화를 시작했어요. 직접 말한 일상 정보를 기억하고 대화에 활용할게요.", "kind": "answer", "conversation_id": "925bea9e-51ab-4331-b63f-acff1b882494"}
+[INFO] [1790187325.709334304] [malbut_tts_receiver]: {"event": "tts_text_received", "text": "개인화를 시작했어요. 직접 말한 일상 정보를 기억하고 대화에 활용할게요."}
+[INFO] [1790187325.710391762] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "33c6be02-f7f1-4544-936e-c0d1369139eb", "text": "우리 강아지 이름은 초코야"}
+[INFO] [1790187325.759999304] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "33c6be02-f7f1-4544-936e-c0d1369139eb", "text": "말씀을 들었어요.", "kind": "answer", "conversation_id": "925bea9e-51ab-4331-b63f-acff1b882494"}
+[INFO] [1790187325.761560304] [malbut_tts_receiver]: {"event": "tts_text_received", "text": "말씀을 들었어요."}
+[INFO] [1790187325.824332637] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187325.827325220] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "a036c5eb-b398-4a8d-bee2-3fa59ce77397", "text": "강아지 이름이 뭐야?"}
+[INFO] [1790187325.873906595] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "a036c5eb-b398-4a8d-bee2-3fa59ce77397", "text": "기억에 따르면 강아지 이름은 초코예요.", "kind": "answer", "conversation_id": "925bea9e-51ab-4331-b63f-acff1b882494"}
+[INFO] [1790187325.875630137] [malbut_tts_receiver]: {"event": "tts_text_received", "text": "기억에 따르면 강아지 이름은 초코예요."}
+_ test_fetch_failure_and_timeout_reach_manager_as_aborted[fetch_error-FETCH_FAILED] _
+
+ros_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff9659c670>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95f42050>, mission=<function ros_weather.<locals>.mission at 0xffff95f41f30>)
+failure = 'fetch_error', expected = 'FETCH_FAILED'
+
+    @pytest.mark.parametrize('failure,expected', [
+        ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+        ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+    ])
+    def test_fetch_failure_and_timeout_reach_manager_as_aborted(
+        ros_weather, failure, expected,
+    ):
+        """Failed Actions carry errors; Agent cannot use weather numbers."""
+        run = ros_weather
+        run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                            else failure == 'fetch_error')
+        run.client.block = failure == 'timeout'
+        run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
+        _, reply = run.say('오늘 날씨가 어때?')
+>       assert run.client.calls == 1
+E       assert 2 == 1
+E        +  where 2 = <test_ros_weather_communication._WeatherClient object at 0xffff9659c670>.calls
+E        +    where <test_ros_weather_communication._WeatherClient object at 0xffff9659c670> = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff9659c670>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95f42050>, mission=<function ros_weather.<locals>.mission at 0xffff95f41f30>).client
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:557: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187328.151342430] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187328.207096805] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187328.208857555] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "1c29aee5-4630-409d-92be-3388f8fed127", "text": "오늘 날씨가 어때?"}
+[INFO] [1790187328.259725722] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8d62ec320c994add88767954a7a54905d3fb1a6f3744203f7e8667b01bc391d4", "goal_id": "e761bb6abb77467b91b6987f11564005", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.264369638] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8d62ec320c994add88767954a7a54905d3fb1a6f3744203f7e8667b01bc391d4", "goal_id": "e761bb6abb77467b91b6987f11564005", "capability_id": "get_weather", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.267050013] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8d62ec320c994add88767954a7a54905d3fb1a6f3744203f7e8667b01bc391d4", "goal_id": "e761bb6abb77467b91b6987f11564005", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "e761bb6abb77467b91b6987f11564005", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187328.268927472] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8d62ec320c994add88767954a7a54905d3fb1a6f3744203f7e8667b01bc391d4", "goal_id": "e761bb6abb77467b91b6987f11564005", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "e761bb6abb77467b91b6987f11564005", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187328.270473888] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8d62ec320c994add88767954a7a54905d3fb1a6f3744203f7e8667b01bc391d4", "goal_id": "e761bb6abb77467b91b6987f11564005", "capability_id": "get_weather", "kind": "failed", "state": "FAILED", "accepted": true, "terminal": true, "cancel_requested": false, "mission_id": "e761bb6abb77467b91b6987f11564005", "reason": "", "result_yaml": "weather:\n  fetched_at:\n    sec: 0\n    nanosec: 0\n  valid_at:\n    sec: 0\n    nanosec: 0\n  location: ''\n  latitude: 0.0\n  longitude: 0.0\n  source: ''\n  timezone: ''\n  temperature_c: 0.0\n  weather_code: 0\n  daily: []\nerror_code: FETCH_FAILED\nmessage: FETCH_FAILED\n", "feedback_yaml": "state: FETCHING\n", "ros_status": 6}
+[INFO] [1790187328.307916722] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:051e8021-cc38-4464-b4b2-9193ec83314d", "goal_id": "cd775a5b74b54a36a0b5ca32d4a16235", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.309994472] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "1c29aee5-4630-409d-92be-3388f8fed127", "text": "날씨 정보 조회를 한 번 다시 시도할게요.", "kind": "progress", "conversation_id": null}
+[INFO] [1790187328.312908555] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:051e8021-cc38-4464-b4b2-9193ec83314d", "goal_id": "cd775a5b74b54a36a0b5ca32d4a16235", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": "cd775a5b74b54a36a0b5ca32d4a16235", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+--------------------------- Captured stderr teardown ---------------------------
+[INFO] [1790187328.326155388] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:051e8021-cc38-4464-b4b2-9193ec83314d", "goal_id": "cd775a5b74b54a36a0b5ca32d4a16235", "capability_id": "get_weather", "kind": "cancel_requested", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": true, "mission_id": "cd775a5b74b54a36a0b5ca32d4a16235", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+___ test_fetch_failure_and_timeout_reach_manager_as_aborted[timeout-TIMEOUT] ___
+
+ros_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff95cc7220>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95ddacb0>, mission=<function ros_weather.<locals>.mission at 0xffff95dd80d0>)
+failure = 'timeout', expected = 'TIMEOUT'
+
+    @pytest.mark.parametrize('failure,expected', [
+        ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+        ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+    ])
+    def test_fetch_failure_and_timeout_reach_manager_as_aborted(
+        ros_weather, failure, expected,
+    ):
+        """Failed Actions carry errors; Agent cannot use weather numbers."""
+        run = ros_weather
+        run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                            else failure == 'fetch_error')
+        run.client.block = failure == 'timeout'
+        run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
+        _, reply = run.say('오늘 날씨가 어때?')
+        assert run.client.calls == 1
+>       assert run.goals == [('get_weather', {})]
+E       AssertionError: assert [('get_weathe...weather', {})] == [('get_weather', {})]
+E         Left contains one more item: ('get_weather', {})
+E         Full diff:
+E         - [('get_weather', {})]
+E         + [('get_weather', {}), ('get_weather', {})]
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:558: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187328.342494305] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187328.396649972] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187328.398344513] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "20eee57b-3b90-418d-87a9-60575dfa7782", "text": "오늘 날씨가 어때?"}
+[INFO] [1790187328.448250763] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-e145cc5ed1e6a269ba266878004b9fa52afa9d7712c0af02dc435257f161e2ef", "goal_id": "e027f71423b240c1beb4b0f6d48ea09a", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.454654763] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-e145cc5ed1e6a269ba266878004b9fa52afa9d7712c0af02dc435257f161e2ef", "goal_id": "e027f71423b240c1beb4b0f6d48ea09a", "capability_id": "get_weather", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.456635805] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-e145cc5ed1e6a269ba266878004b9fa52afa9d7712c0af02dc435257f161e2ef", "goal_id": "e027f71423b240c1beb4b0f6d48ea09a", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "e027f71423b240c1beb4b0f6d48ea09a", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187328.457137597] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-e145cc5ed1e6a269ba266878004b9fa52afa9d7712c0af02dc435257f161e2ef", "goal_id": "e027f71423b240c1beb4b0f6d48ea09a", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "e027f71423b240c1beb4b0f6d48ea09a", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187328.674629805] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-e145cc5ed1e6a269ba266878004b9fa52afa9d7712c0af02dc435257f161e2ef", "goal_id": "e027f71423b240c1beb4b0f6d48ea09a", "capability_id": "get_weather", "kind": "failed", "state": "FAILED", "accepted": true, "terminal": true, "cancel_requested": false, "mission_id": "e027f71423b240c1beb4b0f6d48ea09a", "reason": "", "result_yaml": "weather:\n  fetched_at:\n    sec: 0\n    nanosec: 0\n  valid_at:\n    sec: 0\n    nanosec: 0\n  location: ''\n  latitude: 0.0\n  longitude: 0.0\n  source: ''\n  timezone: ''\n  temperature_c: 0.0\n  weather_code: 0\n  daily: []\nerror_code: TIMEOUT\nmessage: TIMEOUT\n", "feedback_yaml": "state: FETCHING\n", "ros_status": 6}
+[INFO] [1790187328.700968263] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:8e4b749a-7a43-4a03-aeed-a8f1f84367b5", "goal_id": "4ca7e4e1f306405e92cac452fbdb568c", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.706399513] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "20eee57b-3b90-418d-87a9-60575dfa7782", "text": "날씨 정보 조회를 한 번 다시 시도할게요.", "kind": "progress", "conversation_id": null}
+[INFO] [1790187328.707832138] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:8e4b749a-7a43-4a03-aeed-a8f1f84367b5", "goal_id": "4ca7e4e1f306405e92cac452fbdb568c", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": "4ca7e4e1f306405e92cac452fbdb568c", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+--------------------------- Captured stderr teardown ---------------------------
+[INFO] [1790187328.716599972] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:8e4b749a-7a43-4a03-aeed-a8f1f84367b5", "goal_id": "4ca7e4e1f306405e92cac452fbdb568c", "capability_id": "get_weather", "kind": "cancel_requested", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": true, "mission_id": "4ca7e4e1f306405e92cac452fbdb568c", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+_ test_fetch_failure_and_timeout_reach_manager_as_aborted[KMA_KEY_REQUIRED-KMA_KEY_REQUIRED] _
+
+ros_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff96495600>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95ddb1c0>, mission=<function ros_weather.<locals>.mission at 0xffff95ddb5b0>)
+failure = 'KMA_KEY_REQUIRED', expected = 'KMA_KEY_REQUIRED'
+
+    @pytest.mark.parametrize('failure,expected', [
+        ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+        ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+    ])
+    def test_fetch_failure_and_timeout_reach_manager_as_aborted(
+        ros_weather, failure, expected,
+    ):
+        """Failed Actions carry errors; Agent cannot use weather numbers."""
+        run = ros_weather
+        run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                            else failure == 'fetch_error')
+        run.client.block = failure == 'timeout'
+        run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
+        _, reply = run.say('오늘 날씨가 어때?')
+>       assert run.client.calls == 1
+E       assert 2 == 1
+E        +  where 2 = <test_ros_weather_communication._WeatherClient object at 0xffff96495600>.calls
+E        +    where <test_ros_weather_communication._WeatherClient object at 0xffff96495600> = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff96495600>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95ddb1c0>, mission=<function ros_weather.<locals>.mission at 0xffff95ddb5b0>).client
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:557: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187328.732517847] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187328.786188180] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187328.787674013] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "b9fc134b-c86e-4662-902e-d275cf0bb3be", "text": "오늘 날씨가 어때?"}
+[INFO] [1790187328.835829888] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-05214ecfd4f9a2066b2fe3960db2b7dd163a92df7223a4c7abbda28f9a805cca", "goal_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.840183597] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-05214ecfd4f9a2066b2fe3960db2b7dd163a92df7223a4c7abbda28f9a805cca", "goal_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "capability_id": "get_weather", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.842608180] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-05214ecfd4f9a2066b2fe3960db2b7dd163a92df7223a4c7abbda28f9a805cca", "goal_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187328.844460513] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-05214ecfd4f9a2066b2fe3960db2b7dd163a92df7223a4c7abbda28f9a805cca", "goal_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187328.844905097] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-05214ecfd4f9a2066b2fe3960db2b7dd163a92df7223a4c7abbda28f9a805cca", "goal_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "capability_id": "get_weather", "kind": "failed", "state": "FAILED", "accepted": true, "terminal": true, "cancel_requested": false, "mission_id": "b22ccbd7db80404bb9c1d32b0c5c3fbc", "reason": "", "result_yaml": "weather:\n  fetched_at:\n    sec: 0\n    nanosec: 0\n  valid_at:\n    sec: 0\n    nanosec: 0\n  location: ''\n  latitude: 0.0\n  longitude: 0.0\n  source: ''\n  timezone: ''\n  temperature_c: 0.0\n  weather_code: 0\n  daily: []\nerror_code: KMA_KEY_REQUIRED\nmessage: KMA_KEY_REQUIRED\n", "feedback_yaml": "state: FETCHING\n", "ros_status": 6}
+[INFO] [1790187328.889517097] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:490c2d94-412d-4e2a-a215-b52f719fbfcf", "goal_id": "75b53ee76ae64ffd935eeaccd9cc6e05", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187328.891918014] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "b9fc134b-c86e-4662-902e-d275cf0bb3be", "text": "날씨 정보 조회를 한 번 다시 시도할게요.", "kind": "progress", "conversation_id": null}
+[INFO] [1790187328.894210972] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:490c2d94-412d-4e2a-a215-b52f719fbfcf", "goal_id": "75b53ee76ae64ffd935eeaccd9cc6e05", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": "75b53ee76ae64ffd935eeaccd9cc6e05", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+--------------------------- Captured stderr teardown ---------------------------
+[INFO] [1790187328.903199555] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:490c2d94-412d-4e2a-a215-b52f719fbfcf", "goal_id": "75b53ee76ae64ffd935eeaccd9cc6e05", "capability_id": "get_weather", "kind": "cancel_requested", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": true, "mission_id": "75b53ee76ae64ffd935eeaccd9cc6e05", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+_ test_fetch_failure_and_timeout_reach_manager_as_aborted[KMA_AUTH_FAILED-KMA_AUTH_FAILED] _
+
+ros_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff95cc4d60>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95d931c0>, mission=<function ros_weather.<locals>.mission at 0xffff95d92cb0>)
+failure = 'KMA_AUTH_FAILED', expected = 'KMA_AUTH_FAILED'
+
+    @pytest.mark.parametrize('failure,expected', [
+        ('fetch_error', 'FETCH_FAILED'), ('timeout', 'TIMEOUT'),
+        ('KMA_KEY_REQUIRED', 'KMA_KEY_REQUIRED'), ('KMA_AUTH_FAILED', 'KMA_AUTH_FAILED'),
+    ])
+    def test_fetch_failure_and_timeout_reach_manager_as_aborted(
+        ros_weather, failure, expected,
+    ):
+        """Failed Actions carry errors; Agent cannot use weather numbers."""
+        run = ros_weather
+        run.client.error = (KmaWeatherError(failure) if failure.startswith('KMA_')
+                            else failure == 'fetch_error')
+        run.client.block = failure == 'timeout'
+        run.start(timeout_s=0.2 if failure == 'timeout' else 5.0)
+        _, reply = run.say('오늘 날씨가 어때?')
+        assert run.client.calls == 1
+>       assert run.goals == [('get_weather', {})]
+E       AssertionError: assert [('get_weathe...weather', {})] == [('get_weather', {})]
+E         Left contains one more item: ('get_weather', {})
+E         Full diff:
+E         - [('get_weather', {})]
+E         + [('get_weather', {}), ('get_weather', {})]
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:558: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187328.918126930] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187328.972626139] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187328.974094680] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "19818fe6-cfcf-4025-8819-949778b5dafb", "text": "오늘 날씨가 어때?"}
+[INFO] [1790187329.025679680] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8f1519b9ccbfdffc07b5bb1861371fe2c7c4bdafbadf273bad76bbad2d1f96ea", "goal_id": "65f9cfb32b654ba5ac44803a9b61be76", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.030021972] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8f1519b9ccbfdffc07b5bb1861371fe2c7c4bdafbadf273bad76bbad2d1f96ea", "goal_id": "65f9cfb32b654ba5ac44803a9b61be76", "capability_id": "get_weather", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.032730639] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8f1519b9ccbfdffc07b5bb1861371fe2c7c4bdafbadf273bad76bbad2d1f96ea", "goal_id": "65f9cfb32b654ba5ac44803a9b61be76", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "65f9cfb32b654ba5ac44803a9b61be76", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187329.034095555] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8f1519b9ccbfdffc07b5bb1861371fe2c7c4bdafbadf273bad76bbad2d1f96ea", "goal_id": "65f9cfb32b654ba5ac44803a9b61be76", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "65f9cfb32b654ba5ac44803a9b61be76", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187329.035320430] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-8f1519b9ccbfdffc07b5bb1861371fe2c7c4bdafbadf273bad76bbad2d1f96ea", "goal_id": "65f9cfb32b654ba5ac44803a9b61be76", "capability_id": "get_weather", "kind": "failed", "state": "FAILED", "accepted": true, "terminal": true, "cancel_requested": false, "mission_id": "65f9cfb32b654ba5ac44803a9b61be76", "reason": "", "result_yaml": "weather:\n  fetched_at:\n    sec: 0\n    nanosec: 0\n  valid_at:\n    sec: 0\n    nanosec: 0\n  location: ''\n  latitude: 0.0\n  longitude: 0.0\n  source: ''\n  timezone: ''\n  temperature_c: 0.0\n  weather_code: 0\n  daily: []\nerror_code: KMA_AUTH_FAILED\nmessage: KMA_AUTH_FAILED\n", "feedback_yaml": "state: FETCHING\n", "ros_status": 6}
+[INFO] [1790187329.074322722] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:45b4f46c-2089-4047-9293-d0caebbb62b6", "goal_id": "4947daa86f7a4056af121d74366b907e", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.075520889] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "19818fe6-cfcf-4025-8819-949778b5dafb", "text": "날씨 정보 조회를 한 번 다시 시도할게요.", "kind": "progress", "conversation_id": null}
+--------------------------- Captured stderr teardown ---------------------------
+[INFO] [1790187329.103222805] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:45b4f46c-2089-4047-9293-d0caebbb62b6", "goal_id": "4947daa86f7a4056af121d74366b907e", "capability_id": "get_weather", "kind": "cancel_requested", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": true, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+________ test_cancel_propagates_through_manager_and_discards_late_fetch ________
+
+ros_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff95eaaf80>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95d90790>, mission=<function ros_weather.<locals>.mission at 0xffff95d90160>)
+
+    def test_cancel_propagates_through_manager_and_discards_late_fetch(
+        ros_weather,
+    ):
+        """Cancel the same public mission while downstream weather is fetching."""
+        run = ros_weather
+        run.client.block = True
+        run.start()
+        run.send('오늘 날씨가 어때?')
+        run.spin_until(run.client.started.is_set)
+        request_id = next(iter(run.agent.missions._requests))
+        run.agent.missions.cancel(request_id)
+        run.spin_until(lambda: len(run.replies) == 1)
+        event = terminal_event(run)
+        assert event['kind'] == 'canceled'
+        assert event['ros_status'] == GoalStatus.STATUS_CANCELED
+        assert yaml.safe_load(event['result_yaml'])['error_code'] == 'CANCELED'
+        assert run.client.calls == 1
+>       assert run.provider.calls[-1]['weather']['status'] == 'unavailable'
+E       TypeError: 'NoneType' object is not subscriptable
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:590: TypeError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187329.117989389] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187329.172787680] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187329.175621430] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "d96d1e8e-5a85-473c-8dd1-555436d61aeb", "text": "오늘 날씨가 어때?"}
+[INFO] [1790187329.221730889] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.226767472] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.227569014] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "cancel_requested", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.229241555] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": "c844411a40c742fd88c38421900ed613", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187329.230351597] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": "c844411a40c742fd88c38421900ed613", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187329.230532597] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "cancel_accepted", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": "c844411a40c742fd88c38421900ed613", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187329.230713972] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "progress", "state": "CANCELING", "accepted": true, "terminal": false, "cancel_requested": true, "mission_id": "c844411a40c742fd88c38421900ed613", "reason": "", "result_yaml": null, "feedback_yaml": "state: FETCHING\n", "ros_status": null}
+[INFO] [1790187329.281103264] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-f722c3f1e96913ae68dfb7b0e5ee2a31f4b964e1698d834301edf15ee2a7f90e", "goal_id": "c844411a40c742fd88c38421900ed613", "capability_id": "get_weather", "kind": "canceled", "state": "CANCELED", "accepted": true, "terminal": true, "cancel_requested": true, "mission_id": "c844411a40c742fd88c38421900ed613", "reason": "", "result_yaml": "weather:\n  fetched_at:\n    sec: 0\n    nanosec: 0\n  valid_at:\n    sec: 0\n    nanosec: 0\n  location: ''\n  latitude: 0.0\n  longitude: 0.0\n  source: ''\n  timezone: ''\n  temperature_c: 0.0\n  weather_code: 0\n  daily: []\nerror_code: CANCELED\nmessage: CANCELED\n", "feedback_yaml": "state: FETCHING\n", "ros_status": 5}
+[INFO] [1790187329.322852555] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:5734c866-887c-4aa5-b6a4-0395b59ec540", "goal_id": "2d1ea9c866df4098932bc572344c296b", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.325926722] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "d96d1e8e-5a85-473c-8dd1-555436d61aeb", "text": "날씨 정보 조회를 한 번 다시 시도할게요.", "kind": "progress", "conversation_id": null}
+[INFO] [1790187329.327244097] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:5734c866-887c-4aa5-b6a4-0395b59ec540", "goal_id": "2d1ea9c866df4098932bc572344c296b", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": "2d1ea9c866df4098932bc572344c296b", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+--------------------------- Captured stderr teardown ---------------------------
+[INFO] [1790187329.335977555] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:5734c866-887c-4aa5-b6a4-0395b59ec540", "goal_id": "2d1ea9c866df4098932bc572344c296b", "capability_id": "get_weather", "kind": "cancel_requested", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": true, "mission_id": "2d1ea9c866df4098932bc572344c296b", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+___ test_missing_manager_or_weather_action_never_falls_back[weather_server] ____
+
+ros_weather = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff963019c0>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95dd8820>, mission=<function ros_weather.<locals>.mission at 0xffff95dda680>)
+missing = 'weather_server'
+
+    @pytest.mark.parametrize('missing', ['manager', 'weather_server'])
+    def test_missing_manager_or_weather_action_never_falls_back(
+        ros_weather, missing,
+    ):
+        """Neither missing Action endpoint permits an Agent-side API fallback."""
+        run = ros_weather
+        run.start(with_manager=missing != 'manager',
+                  with_weather=missing != 'weather_server')
+        _, reply = run.say('오늘 날씨가 어때?')
+>       assert len(run.goals) == (0 if missing == 'manager' else 1)
+E       AssertionError: assert 2 == 1
+E        +  where 2 = len([('get_weather', {}), ('get_weather', {})])
+E        +    where [('get_weather', {}), ('get_weather', {})] = namespace(client=<test_ros_weather_communication._WeatherClient object at 0xffff963019c0>, provider=<test_ros_weather_...unction ros_weather.<locals>.say at 0xffff95dd8820>, mission=<function ros_weather.<locals>.mission at 0xffff95dda680>).goals
+
+/source/malbut_agent_server/test/test_ros_weather_communication.py:608: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[INFO] [1790187329.524564166] [system_manager]: System manager ready with capabilities: get_weather, set_weather_location
+[INFO] [1790187329.580635250] [malbut_agent_communication]: speech_dialogue_ready; speech input endpoints started
+[INFO] [1790187329.581554791] [malbut_agent_communication]: {"event": "speech_transcript", "status": "received", "utterance_id": "7498fefd-936f-4b25-bed0-aa2da10e0e5c", "text": "오늘 날씨가 어때?"}
+[INFO] [1790187329.629020000] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-57ea6c1e4f07f78e1e8d55c737f8f9eaef0b6694106a1fdbff7c64d0e745efc0", "goal_id": "6df15805bc0940d3b9f058699f2a969c", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.632731500] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-57ea6c1e4f07f78e1e8d55c737f8f9eaef0b6694106a1fdbff7c64d0e745efc0", "goal_id": "6df15805bc0940d3b9f058699f2a969c", "capability_id": "get_weather", "kind": "accepted", "state": "ACCEPTED", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.634039708] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-57ea6c1e4f07f78e1e8d55c737f8f9eaef0b6694106a1fdbff7c64d0e745efc0", "goal_id": "6df15805bc0940d3b9f058699f2a969c", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": true, "terminal": false, "cancel_requested": false, "mission_id": "6df15805bc0940d3b9f058699f2a969c", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+[INFO] [1790187329.634511958] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:speech-request-57ea6c1e4f07f78e1e8d55c737f8f9eaef0b6694106a1fdbff7c64d0e745efc0", "goal_id": "6df15805bc0940d3b9f058699f2a969c", "capability_id": "get_weather", "kind": "failed", "state": "FAILED", "accepted": true, "terminal": true, "cancel_requested": false, "mission_id": "6df15805bc0940d3b9f058699f2a969c", "reason": "Action server /malbut/weather/get is unavailable", "result_yaml": "", "feedback_yaml": "", "ros_status": 6}
+[INFO] [1790187329.684703166] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:c208ef8f-120f-4014-81b1-0dd1a5c6d487", "goal_id": "528c2f535be64de39e2556bff86d48f3", "capability_id": "get_weather", "kind": "submitted", "state": "SUBMITTING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": null, "reason": "", "result_yaml": null, "feedback_yaml": null, "ros_status": null}
+[INFO] [1790187329.688874250] [malbut_agent_communication]: {"event": "dialogue_response_published", "utterance_id": "7498fefd-936f-4b25-bed0-aa2da10e0e5c", "text": "날씨 정보 조회를 한 번 다시 시도할게요.", "kind": "progress", "conversation_id": null}
+[INFO] [1790187329.689812958] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:c208ef8f-120f-4014-81b1-0dd1a5c6d487", "goal_id": "528c2f535be64de39e2556bff86d48f3", "capability_id": "get_weather", "kind": "progress", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": false, "mission_id": "528c2f535be64de39e2556bff86d48f3", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+--------------------------- Captured stderr teardown ---------------------------
+[INFO] [1790187329.699035166] [malbut_agent_communication]: {"event": "mission_event", "request_id": "weather-query:c208ef8f-120f-4014-81b1-0dd1a5c6d487", "goal_id": "528c2f535be64de39e2556bff86d48f3", "capability_id": "get_weather", "kind": "cancel_requested", "state": "RUNNING", "accepted": null, "terminal": false, "cancel_requested": true, "mission_id": "528c2f535be64de39e2556bff86d48f3", "reason": "", "result_yaml": null, "feedback_yaml": "", "ros_status": null}
+_____ test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose _____
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_real_ros_callbacks_on_fak0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xffff95eab1c0>
+
+    def test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose(tmp_path, monkeypatch):
+        node_module = pytest.importorskip('rclpy.node')
+        sensor = pytest.importorskip('sensor_msgs.msg')
+        std = pytest.importorskip('std_msgs.msg')
+        import numpy as np
+    
+        class Node:
+            def __init__(self, name):
+                self.subscriptions = {}
+                self.publishers = {}
+    
+            def create_subscription(self, msg, topic, callback, qos):
+                self.subscriptions[topic] = callback
+    
+            def create_publisher(self, msg, topic, qos):
+                publisher = Mock()
+                self.publishers[topic] = publisher
+                return publisher
+    
+            def create_timer(self, *args):
+                pass
+    
+            def get_clock(self):
+                return SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=10**12))
+    
+            def get_logger(self):
+                return Mock()
+    
+        monkeypatch.setattr(node_module, 'Node', Node)
+        _, clock, provider = make()
+>       node = create_fall_node(FallNodeSettings.parse(json.dumps(config(tmp_path))),
+                                provider=provider, journal=None, clock=clock)
+
+/source/malbut_agent_server/test/test_fall_runtime.py:215: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+settings = FallNodeSettings(device_id='robot', journal_path=PosixPath('/tmp/pytest-of-root/pytest-0/test_real_ros_callbacks_on_fa...ges=12), retention_s=30, buffer_bytes=10000000, buffer_frames=100, input_fps=5, max_source_age_s=1, control_lease_s=10)
+
+    def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
+        import cv2
+>       from cv_bridge import CvBridge, CvBridgeError
+E       ModuleNotFoundError: No module named 'cv_bridge'
+
+/source/malbut_agent_server/malbut_agent_server/ros_fall_monitor.py:26: ModuleNotFoundError
+------------------- generated xml file: /results/pytest.xml --------------------
+8 failed, 28 passed in 9.08s

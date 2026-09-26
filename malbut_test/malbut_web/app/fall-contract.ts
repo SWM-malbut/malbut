@@ -5,9 +5,10 @@ const states = ["verifying", "recheck_required", "help_required", "resolved"];
 const assessments = ["observed_fall", "suspected_fall", "normal_activity", "unobservable"];
 const answers = ["help_request", "okay", "unclear", "no_response", "failed"];
 const kinds = [
-  "incident_opened", "question_requested", "voice_result", "decision_required",
+  "incident_opened", "incident_updated", "question_requested", "voice_result", "decision_required",
   "notification_requested", "agent_check_failed", "analysis_completed",
   "analysis_unavailable", "stale_analysis_result", "recheck_unavailable", "incident_resolved",
+  "confirmation_completed",
 ];
 
 export type FallEventInput = {
@@ -56,10 +57,20 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
     if (v.reason === "fall_observed_person_okay" && (!v.fallSeen || v.answer !== "okay")) return null;
     if (v.reason === "person_no_response" && v.answer !== "no_response") return null;
     if (v.reason === "help_requested" && (v.answer !== "help_request" || v.state !== "help_required")) return null;
+    if (v.reason === "confirmation_help_required" &&
+        (v.answer !== "help_request" || v.state !== "help_required")) return null;
   } else if (v.notificationLevel !== null) return null;
+  if (v.eventKind === "confirmation_completed") {
+    // The actual situation and help decision are independent. For example,
+    // normal lying down may still require help getting up, while a user may
+    // decline help without explaining what happened.
+    if (!["confirmed_incident", "resolved", "unknown"].includes(v.reason as string) ||
+        !((v.state === "help_required" && v.answer === "help_request") ||
+          (v.state === "resolved" && v.answer === "okay"))) return null;
+  }
   if (v.state === "resolved") {
-    if (v.eventKind !== "incident_resolved" ||
-        !["normal_verified", "risk_cleared", "response_completed"].includes(v.reason as string)) return null;
+    if (v.eventKind !== "confirmation_completed" && (v.eventKind !== "incident_resolved" ||
+        !["normal_verified", "risk_cleared", "response_completed"].includes(v.reason as string))) return null;
     if (v.reason === "normal_verified" && (v.fallSeen || v.answer !== "okay" || v.assessment !== "normal_activity")) return null;
   }
   // Construct in a canonical order for idempotency comparisons; no raw media,

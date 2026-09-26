@@ -12,14 +12,15 @@ SWM25-72에서 오프라인 `mock`과 OpenAI Responses API를 같은
 
 - `(user_id, conversation_id)` 단위 SQLite 세션 격리
 - `request_id`, `turn_id` 기반 내구성 있는 중복 요청 방지
-- 사용자·로봇 발화의 순서 저장과 최근 10턴 전달
+- 사용자·로봇 발화의 순서 저장과 OpenAI 토큰 예산 기반 컨텍스트 전달
 - 세션 생성·조회·초기화·종료·삭제
 - 유휴 만료와 reset·delete 중 늦게 도착한 응답 차단
 - 같은 프로세스에서 동시에 들어온 요청의 직렬 처리
 - `아까 말한 것`, `그 사람`, `그거`의 Mock 기반 후속 표현 회귀
-- 최근 N턴 원문과 그 이전 대화의 결정론적 rolling summary 분리
+- OpenAI의 최근 완결 턴 원문과 이전 대화의 비동기 의미 요약 분리
+- Mock/RAI의 기존 최근 N턴·결정론적 rolling summary 경로 유지
 - 사용자별 장기 기억의 별도 검색과 만료 항목 제외
-- 전체 모델 입력 문자 제한, overflow fallback과 내용 없는 크기 메트릭
+- OpenAI의 최종 입력 토큰 한도 검사, Mock/RAI의 문자 제한·overflow fallback과 내용 없는 크기 메트릭
 - 과거 대화·요약·기억을 `_untrusted` JSON 데이터로 직렬화
 - OpenAI 구조화 응답·엄격한 Tool schema·사용량 메타데이터 정규화
 - 유한 retry, backoff, circuit breaker와 옵션 모델 fallback
@@ -201,7 +202,7 @@ RAI는 답변·후보 통합 호출과 적격 후보의 비동기 검토·저장
 새 기억 Node, ROS interface, Capability Manifest, 별도 벡터 DB는 추가하지 않는다.
 
 초기 동기 방식의 검증 범위와 재현 방법은
-[SWM25-165 검증 기록](docs/SWM25-165_MEMORY_VALIDATION.md)에 정리한다.
+[SWM25-165 검증 기록](docs/swm/SWM25-165_MEMORY_VALIDATION.md)에 정리한다.
 이 기록의 A 방식 선택은 당시 결정이며 현재 C 경로의 검증 결과를 뜻하지 않는다.
 
 일반 후속 발화는 미완료 자동 job을 취소하지 않는다. 직접적인 저장·정정·삭제·
@@ -224,11 +225,13 @@ OpenAI C는 적격 인사·일반 대화에서도 별도 추출이 `null`을 반
 감소나 모든 발화의 지연 개선을 보장하지 않는다. 큐·취소·재시작·권한 경계는
 [의미 기반 개인 기억과 비동기 자동 저장](docs/SEMANTIC_MEMORY.md)을 참고한다.
 
-OpenAI 대화 기본 모델은 `gpt-5.6-luna`, reasoning은 `none`, 출력 상한은
-500토큰이다. 기본 자동 재시도와 다른 모델로의 전환은 사용하지 않는다.
+OpenAI 대화 기본 모델은 `gpt-5.6-luna`, reasoning은 `low`, 출력 상한은
+1,024토큰이다. 생성·읽기 전용 조회의 자동 재시도는 요청당 한 번의 예산을
+공유한다. 다른 모델로의 전환은 `OPENAI_FALLBACK_MODEL`을 지정했을 때만
+같은 예산 안에서 사용한다. 기능 실행 요청은 자동 재전송하지 않는다.
 
 동기 저장·저장 후처리·별도 기억 추출의 개발용 시간 비교는
-[기억 처리 비교 실행 안내](docs/SWM25-165_MEMORY_BENCHMARK.md)를 참고한다.
+[기억 처리 비교 실행 안내](docs/swm/SWM25-165_MEMORY_BENCHMARK.md)를 참고한다.
 기본 실행은 고정 응답 시험이며, `--live`에서만 최대 44회 API를 호출한다.
 세 방식은 각각 10회 측정한다. 별도 기억 추출과 준비 호출도 상한에 포함한다.
 해당 문서의 운영 A 선택은 과거 기록이다. 비교용 harness는 현재 운영 worker의
@@ -305,6 +308,42 @@ chmod 600 .env.local
 있다면 `OPENAI_MODEL`을 Luna로 변경한다. 명시한 환경 변수와 `--model`은
 기본값보다 우선하므로 HTTP와 음성 실행에 사용하는 설정을 함께 확인한다.
 Front Router를 쓰는 경우 `OPENAI_GENERAL_MODEL`도 비우거나 Luna로 지정한다.
+
+OpenAI 대화는 오래된 맥락을 별도 API 호출로 요약한다. 압축 비용을 줄이기 위해
+요약 기본 모델은 `OPENAI_SUMMARY_MODEL=gpt-6-luna`, 추론 설정은
+`OPENAI_SUMMARY_REASONING_EFFORT=low`다. 대화 모델을 바꿔도 요약 모델은
+이 설정을 유지한다. 각 값을 명시적으로 비우면 해당 대화 설정인
+`OPENAI_MODEL` / `OPENAI_REASONING_EFFORT`를 각각 상속한다.
+요약 요청 제한은 최소 30초이며,
+`MALBUT_AGENT_TIMEOUT_SECONDS`를 더 길게 지정하면 그 값을 사용한다.
+실행할 Python 환경에 `python3 -m pip install -r requirements-openai.txt`로
+로컬 토큰 계산기를 설치한다. 로봇의 `malbut_test/build.sh`도 음성용 환경에
+이 의존성을 설치한다. 최초 시작 때 토큰 사전을 내려받아 캐시할 수 있으며,
+대화 중 토큰 수를 세기 위한 API 호출은 하지 않는다.
+
+`MALBUT_AGENT_CONVERSATION_TOKEN_BUDGET`의 기본값은 16,384다. 현재 발언을
+포함한 대화의 추정 사용량이 90%에 도달하면 백그라운드에서 요약하고,
+요약과 최근 원문의 합을 같은 예산의 30%로 줄이는 것을 목표로 한다.
+최근 원문은 대화 예산의 약 10% 안에서 완결된 턴 단위로 유지하되, 직전
+한 턴이 이 분량보다 길어도 자르지 않고 원문으로 남긴다. 요약 API에는
+압축할 오래된 원문과 직전 요약만 보내며, 최근 원문과 현재 발언은 답변 모델에
+별도로 전달한다. 중요한
+내용을 보존하기 위해 목표를 넘을 수 있고, 진행 중 추가된 발언은 별도로
+이어 붙이므로 적용 직후 전체 분량은 더 커질 수 있다.
+
+전체 입력에는 대화 예산의 두 배를 운영 한도로 적용하고 규칙·도구·기억과
+압축 중 추가 발언에 쓸 여유를 둔다. 출력은 `OPENAI_MAX_OUTPUT_TOKENS`로
+별도 예약한다. 이 값은 모델의 실제 최대 용량을 뜻하지 않으며 모델을
+바꿀 때 입력·출력 합이 해당 모델 용량 안에 드는지 확인해야 한다.
+토큰 수는 로컬 추정치이고 서버 측 자동 잘림도 끈다. 한도를 넘으면 내용을
+임의로 빼는 대신 분량 초과 안내를 반환한다.
+
+요약 중에도 대화는 기존 맥락으로 진행하며 현재 답변의 입력은 바꾸지 않는다.
+완료된 요약과 이후 원문을 다음 답변부터 사용한다. 원문은 SQLite에 남고,
+세션별 최신 요약만 갱신한다. 기억 삭제·정정, 세션 초기화·만료 중 완료된
+낡은 작업은 폐기한다. 한 번에 요약 하나만 실행하며 실패 시 원문을 유지하고
+최소 60초 뒤 다음 발화에서 재시도한다. 요약 호출에도 API 비용이 발생한다.
+기존 최근 턴 수·문자 제한은 Mock/RAI에만 적용된다.
 
 먼저 유료 API 호출 없이 설정을 검사한다.
 
@@ -429,18 +468,56 @@ PYTHONPATH=. python3 -m malbut_agent_server.vlm_eval_runner \
 [홈캠 VLM 평가 하네스 문서](docs/evaluations/VLM_EVALUATION_HARNESS.md)에
 정리되어 있다.
 
+## 대화 명세 구현
+
+[대화 처리 명세](docs/conversation.md)의 기본 운영 경로는 OpenAI 음성 대화다.
+마지막 완료 발화에서 1시간 미만이면 같은 사용자의 SQLite 세션을 재개하며,
+재시작·호출어 대기·요약 작업은 이 시각을 연장하지 않는다. 1시간 이상 또는
+“새로 시작하자”라는 명시적 음성 요청은 새 세션을 만든다. 프로세스가 추론 중
+종료되면 다음 시작 때 해당 세션에 살아 있는 추론이 없는지 OS 잠금으로
+확인하고 미완료 예약만 복구한다. 완료 원문과 요약·임시 설정은 유지한다.
+음성 워커는 매 발화에서도 이 기준을 적용한다. HTTP API는 호출자가 명시한
+`conversation_id`를 사용하며, 생성·reset 요청을 자동 세션 선택으로 바꾸지 않는다.
+
+“초기 설정”으로 말투·호칭·답변 길이·대화 적극성 선택지를 확인할 수 있다.
+“초기 설정 말투=친근한 반말, 호칭=두부”처럼 기본값을 저장하거나,
+`PersonalMemory.set_initial_settings(user_id, patch)`로 같은 네 항목을 설정한다.
+일반 대화의 “짧게 답해줘”, “그냥 들어줘”는 현재 세션에만 적용한다.
+“이번 답변만”은 해당 발화에만 적용하고, 새 세션에는 저장된 기본값을 복원한다.
+초기 설정은 장기기억 동의를 켜지 않는다. “기억 사용에 동의하기” 또는
+“기억 사용하지 않기”는 별도의 기존 기억 정책으로 처리한다.
+
+발화 접수 후 5초가 지나면 대기 안내를 한 번 보낸다. 일반 모델 생성과
+읽기 전용 날씨 조회는 요청 전체에서 자동 재시도를 한 번 공유하고 안내한다.
+로봇 실행이나 위치 설정을 이 규칙으로 다시 보내지 않는다. 완료·취소 후
+대기 안내를 발행하지 않으며, 재시도가 빠르게 끝나 안내를 아직 전달하지
+못했으면 최종 음성 응답에 재시도 사실을 포함한다.
+
+압축 후 이전 문구를 다시 물으면 같은 세션의 원문을 조회해 현재 입력에
+포함한다. “처음 제안한 것”, “두번째안”, “2번째 방법” 같은 순서 참조도
+조회하며, 검색할 때만 순서 표현과 공백을 정규화한다. 저장 원문은 바꾸지 않는다.
+조회에도 기억 삭제·동의 필터가 적용된다. 현재 검색은 단어 기반으로,
+완전히 다른 표현의 질의에는 원문 선택이 정확하지 않을 수 있다. 긴 설명은
+한국어 약 150~250자의 완결된 구간 뒤 이어 들을지 확인하도록 지시한다.
+GPT-5 계열의 일반 대화는 API의 `text.verbosity=low`를 함께 사용한다.
+완성된 응답을 글자 수로 자르지 않아 뒤쪽 조건과 주의사항을 보존한다.
+문자 기준은 약 30초를 위한 초기 목표이며 모델의 준수나 실제 TTS 재생
+시간을 보장하지 않는다. 사용자가 동의하면 전달한 내용 다음부터 이어간다.
+검증 범위와 남은 항목은 [대화 명세 구현 검증](docs/evaluations/CONVERSATION_IMPLEMENTATION_2026-09-24.md)을 따른다.
+
 ## 사용자 컨텍스트
 
 모델 입력은 다음 영역을 서로 다른 데이터로 구성한다.
 
-- `conversation_history_untrusted`: 현재 세션의 최근 완료 N턴 원문
-- `conversation_summary_untrusted`: 최근 N턴 이전 구간의 rolling summary
+- `conversation_history_untrusted`: 현재 세션의 완료 원문(압축 시 최근 구간)
+- `conversation_summary_untrusted`: 이전 구간의 최신 요약
 - `memory_context_untrusted`: 현재 사용자에게 속한 활성 장기 기억
 - `current_user_utterance`: 현재 요청의 사용자 발화
 
 과거 세 영역 안의 `SYSTEM`, `developer`, Tool 호출 문장은 현재 명령으로
-승격하지 않는다. 전체 입력은 기본 20,000자로 제한하며, 초과하면 선택
-문맥을 줄인 뒤 현재 발화의 가능한 prefix를 보존한다. 응답의
+승격하지 않는다. OpenAI는 위의 토큰 예산과 원문 보존 정책을 적용한다.
+Mock/RAI는 최근 N턴·문자 제한을 사용하는 기존 경로이며 전체 입력은 기본
+20,000자로 제한한다. 초과하면 선택 문맥을 줄인 뒤 현재 발화의 가능한 prefix를 보존한다. 응답의
 `provider.context`에는 원문 대신 각 영역의 원본·포함 개수와 문자 수,
 잘린 영역과 overflow 여부만 들어간다.
 
@@ -449,20 +526,24 @@ PYTHONPATH=. python3 -m malbut_agent_server.vlm_eval_runner \
 | 환경 변수 | 기본값 | 허용 범위 |
 | --- | ---: | ---: |
 | `MALBUT_AGENT_MEMORY_LIMIT` | 5 | 1~10 |
-| `MALBUT_AGENT_CONVERSATION_HISTORY_LIMIT` | 10 | 10~50 |
-| `MALBUT_AGENT_CONVERSATION_SUMMARY_MAX_CHARS` | 2,000 | 256~8,000 |
-| `MALBUT_AGENT_MAX_MODEL_INPUT_CHARS` | 20,000 | 4,096~1,000,000 |
+| `MALBUT_AGENT_CONVERSATION_TTL_SECONDS` | 3,600 | 마지막 완료 발화 이후 초; 60~2,592,000 |
+| `MALBUT_AGENT_CONVERSATION_TOKEN_BUDGET` | 16,384 | OpenAI 대화 예산; 4,096~65,536 |
+| `MALBUT_AGENT_CONVERSATION_HISTORY_LIMIT` | 10 | Mock/RAI 최근 턴 수; 10~50 |
+| `MALBUT_AGENT_CONVERSATION_SUMMARY_MAX_CHARS` | 2,000 | Mock/RAI 요약 문자 수; 256~8,000 |
+| `MALBUT_AGENT_MAX_MODEL_INPUT_CHARS` | 20,000 | Mock/RAI 및 별도 기억 처리 입력; 4,096~1,000,000 |
 | `MALBUT_AGENT_TIMEOUT_SECONDS` | 5 | 1~120 |
 | `MALBUT_AGENT_PROVIDER_TOTAL_TIMEOUT_SECONDS` | 11 | 1~300 |
-| `MALBUT_AGENT_PROVIDER_MAX_RETRIES` | 0 | 0~3 |
+| `MALBUT_AGENT_PROVIDER_MAX_RETRIES` | 1 | 0~3; 대화 요청 전체에서는 최대 1회 |
 | `MALBUT_AGENT_TOOL_MODE` | `proposal` | `proposal`, `simulation` |
 | `MALBUT_RAI_SIDECAR_TIMEOUT_SECONDS` | 5 | 1~120 |
 | `OPENAI_MODEL` | `gpt-5.6-luna` | 출력 가능한 공식 model ID |
+| `OPENAI_SUMMARY_MODEL` | `gpt-6-luna` | 요약 전용 model ID; 명시적 빈 값은 `OPENAI_MODEL` 상속 |
+| `OPENAI_SUMMARY_REASONING_EFFORT` | `low` | 요약 전용 effort; 명시적 빈 값은 `OPENAI_REASONING_EFFORT` 상속 |
 | `OPENAI_FALLBACK_MODEL` | 빈 값 | 선택, 주력과 다른 model ID |
 | `OPENAI_GENERAL_MODEL` | 빈 값 | Front Router 일반 대화 전용 model ID |
 | `OPENAI_ROBOT_PLANNER_MODEL` | 빈 값 | Front Router 로봇 계획 전용 model ID |
-| `OPENAI_REASONING_EFFORT` | `none` | 지원 effort 값 |
-| `OPENAI_MAX_OUTPUT_TOKENS` | 500 | 64~4,096 |
+| `OPENAI_REASONING_EFFORT` | `low` | 지원 effort 값 |
+| `OPENAI_MAX_OUTPUT_TOKENS` | 1,024 | 64~4,096 |
 
 역할별 model 값은 명시적인 Front Router가 주입된 OpenAI 구성에서만
 사용한다. 둘 다 비어 있으면 SWM25-151 이전과 동일하게 하나의 범용
@@ -536,9 +617,14 @@ Agent의 수신 기록이 만들어졌다는 의미다. Topic 발행만으로 �
 
 ## STT · Agent 대화 · Manager · TTS 연결
 
+Manager에서 시작하는 이상 상황 확인 대화는 [대화 명세](docs/fall/agent_fall_interaction.md)와
+[구현·실행 조건](docs/fall/agent_fall_implementation.md)을 따른다. 낙상 확인은
+`/malbut/agent/confirm_situation` Action으로 받고, 최종 판단 두 필드만 반환한다.
+
 `agent_communication`은 STT 최종 발화를 기존 대화 처리에 전달하고, 생성한
-응답을 TTS Topic으로 보내는 개발용 실행 모드다. 한 프로세스에서 새 대화
-세션을 만들고 실행 중 문맥을 유지한다. Manager의 실행 요청·진행·취소 통신도
+응답을 TTS Topic으로 보내는 개발용 실행 모드다. 같은 대화 DB와 `--user-id`를
+사용하면 재시작 후에도 마지막 완료 발화로부터 1시간 기준으로 세션을 재개한다.
+Manager의 실행 요청·진행·취소 통신도
 같은 Agent Node에서 제공하며, 모델 응답을 기다리는 동안에도 처리한다.
 
 ```mermaid
@@ -624,7 +710,8 @@ ros2 topic pub --once /malbut/speech/transcript \
 
 새로운 발화에는 새로운 ID를 사용한다. 기존 ID를 다시 보내면 대화 처리나
 답변 발행을 반복하지 않는다. 발화 ID 기록은 재시작 후에도 유지되지만
-대화 세션은 실행마다 새로 만든다. 실제 STT 실행법은
+대화 세션의 재개는 별도로 대화 DB와 사용자, 마지막 완료 시각을 기준으로
+판단한다. 실제 STT 실행법은
 [STT README](../malbut_stt/README.md)를 따른다.
 
 Agent 터미널에 다음 JSON을 한 줄로 입력하면 TTS 터미널에
@@ -653,7 +740,8 @@ Manager에서 사용하는 형식이다. 자동 통신 시험은 해당 구성�
 ### 상태와 책임 경계
 
 - STT 원문은 기존 대화 처리와 Provider를 거쳐 응답으로 정리한다. 같은
-  프로세스 안에서는 앞선 대화 문맥을 이어가며, 재시작하면 새 세션을 사용한다.
+  사용자·DB에서 1시간 미만이면 재시작 후에도 앞선 대화 문맥을 이어간다.
+  1시간 이상이거나 명시적으로 새 시작을 요청하면 새 세션을 선택한다.
   처리 완료·실패 안내와 Manager가 확인한 실행 결과를 구분한다.
 - 최종 음성 전사는 한 번에 최대 16,000자를 접수한다. 전체 원문과 끝부분을
   하나의 요청으로 처리하며, 초과 시 원문 일부를 실행하지 않고 분할 안내를 한다.
@@ -664,13 +752,15 @@ Manager에서 사용하는 형식이다. 자동 통신 시험은 해당 구성�
 - 대화 처리 용량은 진행 중·대기 중·아직 발행하지 않은 응답을 합쳐 10개다.
   가득 차면 새 발화 ID를 소비하기 전에 바쁨을 안내한다. 이미 접수한 ID는
   용량과 관계없이 중복 처리하지 않는다.
-- 일반 모델 처리 실패는 오류를 안내한 뒤 다음 새 발화를 처리한다. 기존
-  세션의 유휴 만료(기본 30분)·닫힘·삭제·turn 한도는 재시작 안내로 구분한다.
-  만료된 세션을 임의로 복원하거나 새 세션으로 조용히 바꾸지 않는다.
-- 새 세션 생성 시 사용자별 저장 한도(기본 100개)에 도달하면 같은 사용자의
-  가장 오래된 `expired` 세션과 연결 이력을 필요한 수만 정리한다. 활성 세션과
-  명시적으로 닫힌 세션은 자동 삭제하지 않으며, 이들로 한도가 가득 차면
-  기존 한도 오류를 반환한다.
+- 일반 모델 처리 실패는 오류를 안내한 뒤 다음 새 발화를 처리한다. 음성 워커는
+  매 발화 전에 유휴 만료(기본 1시간)·닫힘·삭제를 확인하고 필요하면 새 세션을
+  만든다. 이미 선택한 세션이 처리 중 바뀌거나 한도 오류가 나면 재시작 안내를 한다.
+- OpenAI는 만료·닫힘·세션 수·턴 수를 이유로 완료 원문을 자동 삭제하지 않는다.
+  사용자별 세션 한도(기본 100개)는 활성 세션만 세며, 종료된 세션 원문도 명시적
+  삭제 전까지 보관한다. Mock/RAI는 기존 저장 한도와 턴 한도를 유지하고,
+  새 세션을 위한 공간이 부족할 때 오래된 `expired` 세션과 연결 이력을 정리한다.
+  해당 경로에서도 활성·명시적으로 닫힌 세션을 자동 삭제하지 않으며 공간을
+  확보할 수 없으면 한도 오류를 반환한다.
 - 종료하면 대기 발화와 미발행 답변을 폐기하고, 실행 중 추론이 끝난 뒤 DB를
   닫는다. 접수된 발화는 재시작 후 자동 재처리하지 않으며 새 발화로 다시 말한다.
 - 자연어 발화를 새로운 로봇 실행 권한으로 사용하지 않는다. 이번에 추가하는

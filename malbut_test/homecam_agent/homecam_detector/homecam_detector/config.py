@@ -12,16 +12,33 @@ class DetectorConfig:
     """Runtime configuration independent of ROS parameter plumbing."""
 
     image_topic: str = "/depth_cam/depth_cam"
+    depth_image_topic: str = ""
+    depth_camera_info_topic: str = ""
+    depth_aligned_to_rgb: bool = False
+    depth_scale_m: float = 0.0
+    depth_max_stamp_delta_sec: float = 0.15
+    camera_height_m: float = 0.091864
+    camera_pitch_rad: float = 0.0
     odom_topic: str = "/odom"
     navigation_status_topic: str = "/navigate_to_pose/_action/status"
     model_path: str = ""
     pose_model_path: str = ""
+    pose_keep_aspect: bool = False
+    fall_only: bool = False
+    fall_runtime_id: str = ""
     device_id: str = ""
     backend_url: str = ""
     confidence_threshold: float = 0.45
     pose_confidence_threshold: float = 0.45
     pose_keypoint_threshold: float = 0.5
     pose_inference_fps: float = 5.0
+    pose_candidate_confidence_threshold: float = 0.10
+    pose_track_max_gap_sec: float = 1.0
+    pose_track_min_observations: int = 3
+    pose_track_max_people: int = 32
+    fall_temporal_window_sec: float = 2.0
+    fall_found_down_hold_sec: float = 0.6
+    fall_max_frame_gap_sec: float = 0.5
     consecutive_frames: int = 3
     event_cooldown_sec: float = 30.0
     event_confirmation_window_frames: int = 5
@@ -77,8 +94,52 @@ def is_valid_device_id(value: str) -> bool:
 def validate_config(config: DetectorConfig) -> List[str]:
     """Return every actionable configuration error."""
     errors: List[str] = []
+    if config.fall_only:
+        if not config.fall_runtime_id.strip():
+            errors.append("fall_only requires fall_runtime_id")
+        if not config.pose_model_path:
+            errors.append("fall_only requires pose_model_path")
+        if config.backend_url or config.event_clips_enabled or config.model_path:
+            errors.append("fall_only cannot enable legacy events or object detection")
     if not config.image_topic.startswith("/"):
         errors.append("image_topic must be an absolute ROS topic")
+    for name, value in (
+        ("depth_image_topic", config.depth_image_topic),
+        ("depth_camera_info_topic", config.depth_camera_info_topic),
+    ):
+        if value and not value.startswith("/"):
+            errors.append(f"{name} must be empty or an absolute ROS topic")
+    if bool(config.depth_image_topic) != bool(config.depth_camera_info_topic):
+        errors.append(
+            "depth_image_topic and depth_camera_info_topic must be set together"
+        )
+    if config.depth_aligned_to_rgb and not config.depth_image_topic:
+        errors.append("depth_aligned_to_rgb requires configured depth topics")
+    if (
+        config.depth_image_topic
+        and config.depth_camera_info_topic
+        and not config.depth_aligned_to_rgb
+    ):
+        errors.append(
+            "configured depth topics must be explicitly aligned to RGB"
+        )
+    if (
+        not math.isfinite(config.depth_scale_m)
+        or config.depth_scale_m < 0.0
+    ):
+        errors.append("depth_scale_m must be zero (auto) or positive")
+    if (
+        not math.isfinite(config.depth_max_stamp_delta_sec)
+        or config.depth_max_stamp_delta_sec <= 0.0
+    ):
+        errors.append("depth_max_stamp_delta_sec must be positive")
+    if (
+        not math.isfinite(config.camera_height_m)
+        or config.camera_height_m <= 0.0
+    ):
+        errors.append("camera_height_m must be positive")
+    if not math.isfinite(config.camera_pitch_rad):
+        errors.append("camera_pitch_rad must be finite")
     if config.odom_topic and not config.odom_topic.startswith("/"):
         errors.append("odom_topic must be empty or an absolute ROS topic")
     if (
@@ -104,6 +165,27 @@ def validate_config(config: DetectorConfig) -> List[str]:
         or not 0.0 < config.pose_inference_fps <= 30.0
     ):
         errors.append("pose_inference_fps must be in (0, 30]")
+    if (not math.isfinite(config.pose_candidate_confidence_threshold)
+            or not 0 < config.pose_candidate_confidence_threshold
+            <= config.pose_confidence_threshold):
+        errors.append("pose candidate threshold must be in (0, pose_confidence_threshold]")
+    if (not math.isfinite(config.pose_track_max_gap_sec)
+            or config.pose_track_max_gap_sec <= 0):
+        errors.append("pose_track_max_gap_sec must be positive")
+    if (type(config.pose_track_min_observations) is not int
+            or config.pose_track_min_observations < 2):
+        errors.append("pose_track_min_observations must be an integer >= 2")
+    if (type(config.pose_track_max_people) is not int
+            or not 1 <= config.pose_track_max_people <= 128):
+        errors.append("pose_track_max_people must be an integer in [1, 128]")
+    for name in ("fall_temporal_window_sec", "fall_found_down_hold_sec", "fall_max_frame_gap_sec"):
+        value = getattr(config, name)
+        if not math.isfinite(value) or value <= 0:
+            errors.append(f"{name} must be finite and positive")
+    if config.fall_found_down_hold_sec > config.fall_temporal_window_sec:
+        errors.append("fall_found_down_hold_sec must not exceed fall_temporal_window_sec")
+    if config.fall_max_frame_gap_sec > config.fall_temporal_window_sec:
+        errors.append("fall_max_frame_gap_sec must not exceed fall_temporal_window_sec")
     if config.consecutive_frames < 1:
         errors.append("consecutive_frames must be at least 1")
     if (

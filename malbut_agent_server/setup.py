@@ -16,7 +16,7 @@ setup(
         ),
         (
             'share/' + package_name,
-            ['package.xml', 'README.md', '.env.example'],
+            ['package.xml', 'README.md', '.env.example', 'requirements-openai.txt'],
         ),
         (
             'share/' + package_name + '/docs',
@@ -40,9 +40,11 @@ setup(
             ],
         ),
         (
-            'share/' + package_name + '/docs',
-            ['docs/fall_detection.md', 'docs/fall_storage_api.md', 'docs/fall_runtime.md',
-             'docs/fall_decision_policy.md', 'docs/fall_subject_observation.md'],
+            'share/' + package_name + '/docs/fall',
+            ['docs/fall/fall_detection.md', 'docs/fall/fall_storage_api.md',
+             'docs/fall/fall_runtime.md', 'docs/fall/fall_decision_policy.md',
+             'docs/fall/fall_subject_observation.md', 'docs/fall/fall_robot_preparation.md',
+             'docs/fall/agent_fall_interaction.md', 'docs/fall/agent_fall_implementation.md'],
         ),
         (
             'share/' + package_name + '/config',
@@ -57,10 +59,11 @@ setup(
                 'SWM25-72_OPENAI_POSTFIX_PARITY_EVALUATION_2026-08-05.md',
                 'docs/evaluations/FALL_DETECTION_VLM_REQUIREMENTS.md',
                 'docs/evaluations/VLM_EVALUATION_HARNESS.md',
+                'docs/evaluations/SITUATION_DIALOGUE_EVALUATION.md',
             ],
         ),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'tiktoken>=0.7,<1'],
     extras_require={
         'vlm-nova': ['boto3>=1.35.0,<2'],
         'fall-cloud': ['aiohttp>=3.9,<4', 'Pillow>=9'],
@@ -95,6 +98,10 @@ setup(
             (
                 'malbut-agent-eval = '
                 'malbut_agent_server.eval_runner:main'
+            ),
+            (
+                'malbut-situation-eval = '
+                'malbut_agent_server.situation_eval_runner:main'
             ),
             (
                 'malbut-front-route-inspect = '

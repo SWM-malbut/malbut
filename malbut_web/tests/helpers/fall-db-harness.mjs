@@ -32,10 +32,11 @@ export function moduleLoader(overrides = {}) {
   return (relative) => load(path.resolve(root, relative));
 }
 
-export async function fallDatabase() {
+export async function fallDatabase({ through } = {}) {
   const db = new PGlite();
   await db.exec("CREATE TABLE homecam_schema_migrations(version TEXT PRIMARY KEY)");
-  for (const file of readdirSync(path.join(root, "db/migrations")).filter((f) => f.endsWith(".sql")).sort()) {
+  for (const file of readdirSync(path.join(root, "db/migrations"))
+    .filter((f) => f.endsWith(".sql") && (!through || f <= `${through}.sql`)).sort()) {
     await db.exec(readFileSync(path.join(root, "db/migrations", file), "utf8"));
     await db.query("INSERT INTO homecam_schema_migrations VALUES($1)", [file.replace(/\.sql$/, "")]);
   }

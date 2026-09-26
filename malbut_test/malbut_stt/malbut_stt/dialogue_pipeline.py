@@ -1,6 +1,7 @@
 """Keep continuous capture and local inference outside serialized dialogue events."""
 
 import math
+from collections import OrderedDict
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import Event, Thread
@@ -12,6 +13,9 @@ from malbut_stt.endpoint import is_complete_korean_utterance
 from malbut_stt.pipeline import pcm_bytes
 from malbut_stt.streaming import StreamingUtteranceCollector
 from malbut_stt.wake import is_wake_phrase
+
+
+MAX_RETIRED_SESSION_IDS = 256
 
 
 @dataclass(frozen=True)
@@ -37,7 +41,7 @@ class DialoguePipeline:
                  report, settings=None, input_has_aec=False, clock=monotonic,
                  on_wake=None, endpoint_predecode_s: float | None = None,
                  partial_interval_s: float | None = 2.0, on_partial=None,
-                 on_endpoint=None):
+                 on_endpoint=None, publish_input_status=None):
         self.recorder_factory = recorder_factory
         self.wake = wake
         self.transcriber = transcriber
@@ -49,6 +53,7 @@ class DialoguePipeline:
         self.on_wake = on_wake
         self.on_endpoint = on_endpoint
         self.on_partial = on_partial
+        self.publish_input_status = publish_input_status
         self._stream_factory = getattr(transcriber, 'create_stream', None)
         self._stream = None
         self.input_has_aec = input_has_aec
@@ -95,6 +100,7 @@ class DialoguePipeline:
         self._discard_capture = False
         self._utterance_playback_id = None
         self._pending = None
+        self._retired_session_ids = OrderedDict()
         self._raw_playback_gate = False
         self._raw_gate_until = 0.0
         self._chime_playing = False
@@ -130,6 +136,53 @@ class DialoguePipeline:
         self.asr_thread.start()
         self.phase = 'running'
         self.report('waiting_for_wake')
+
+    def start_session(self, session_id):
+        """Replace ordinary dialogue with a correlated, wake-free confirmation."""
+        if (self.stopping.is_set() or not isinstance(session_id, str)
+                or not session_id.strip() or len(session_id) > 200):
+            return False
+        if session_id in self._retired_session_ids:
+            return False
+        if self.session.active and self.session.session_id == session_id:
+            return True
+        self._terminate('session_replaced:proactive')
+        self._tail_stream = None
+        self.session.activate_proactive(session_id)
+        return True
+
+    def stop_session(self, session_id):
+        """Close this ID or reserve its closure without touching another session."""
+        if (self.stopping.is_set() or not isinstance(session_id, str)
+                or not session_id.strip() or len(session_id) > 200):
+            return False
+        if self.session.session_id != session_id:
+            if session_id in self._retired_session_ids:
+                return False
+            self._retire_session(session_id)
+            return True
+        self._terminate('session_ended:proactive')
+        return True
+
+    def session_is_active(self, session_id):
+        """Read the current session without creating, closing, or retiring any ID."""
+        return bool(
+            not self.stopping.is_set()
+            and isinstance(session_id, str) and session_id.strip()
+            and len(session_id) <= 200
+            and self.session.active and self.session.session_id == session_id)
+
+    def _retire_session(self, session_id):
+        if session_id:
+            self._retired_session_ids[session_id] = None
+            self._retired_session_ids.move_to_end(session_id)
+            while len(self._retired_session_ids) > MAX_RETIRED_SESSION_IDS:
+                self._retired_session_ids.popitem(last=False)
+
+    def _input_status(self, state, uid=None):
+        if self.session.session_id and self.publish_input_status is not None:
+            self.publish_input_status(
+                self.session.session_id, uid or self.session.utterance_id or '', state)
 
     def _capture(self):
         try:
@@ -219,14 +272,26 @@ class DialoguePipeline:
         self._drain(self.audio)
 
     def _terminate(self, reason):
+        if self.session.session_id and reason.startswith((
+                'utterance_discarded:', 'transcription_queue_full',
+                'audio_queue_overflow')):
+            self._input_status('failed')
         stream = self.command_stream if self.session.active else self.wake_stream
         tail = self._tail_stream
         if tail is None and self._discard_capture and stream.collector.started:
             tail = StreamingUtteranceCollector(stream.is_speech, settings=stream.settings)
             tail.discarding = True
             tail.quiet_frames = stream.collector.silent_frames
+        self._retire_session(self.session.session_id)
         self.session.terminate()
         self._generation += 1
+        # In-flight inference belongs to the old generation. Keep its worker,
+        # but allow a new turn to capture and queue one bounded job behind it.
+        self._busy = False
+        self._drain(self.jobs)
+        self._endpoint_job = None
+        self._endpoint_requested_at = None
+        self._endpoint_is_partial = False
         cancel = getattr(self.transcriber, 'cancel', None)
         if callable(cancel):
             cancel()
@@ -271,7 +336,8 @@ class DialoguePipeline:
             if result[0] in ('endpoint', 'partial'):
                 self._accept_endpoint(*result[1:], partial=result[0] == 'partial')
             else:
-                self._busy = False
+                if result[1] == self._generation:
+                    self._busy = False
                 self._accept_result(*result)
         self._submit_endpoint()
         self._finish_ready_endpoint()
@@ -321,6 +387,7 @@ class DialoguePipeline:
                     continue
                 if self.session.active:
                     self._capture_id = self.session.user_speech_started()
+                    self._input_status('started', self._capture_id)
                     self._endpoint_result = None
                     self._stream = (self._stream_factory() if callable(self._stream_factory)
                                     and self.command_stream.partial_interval_s is not None
@@ -540,6 +607,7 @@ class DialoguePipeline:
             if kind == 'wake':
                 self._terminate(failure)
             else:
+                self._input_status('failed', uid)
                 self.session.discard_utterance(uid)
                 self._utterance_playback_id = None
                 self.report(failure)

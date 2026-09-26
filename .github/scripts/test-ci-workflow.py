@@ -54,7 +54,7 @@ class WorkflowTests(unittest.TestCase):
             calls = [json.loads(line) for line in log.read_text().splitlines()]
             return result, calls
 
-    def test_homecam_builds_and_tests_only_its_two_packages(self):
+    def test_homecam_builds_interfaces_without_navigation_or_speech_stack(self):
         result, calls = self.run_homecam()
         self.assertEqual(result.returncode, 0, result.stderr)
         builds = [call for call in calls if call[:2] == ['colcon', 'build']]
@@ -68,6 +68,8 @@ class WorkflowTests(unittest.TestCase):
             self.assertTrue(scope.endswith('/homecam_agent'))
             self.assertNotIn('malbut_gazebo', command)
         self.assertIn('-DHOMECAM_ENABLE_KVS=ON', builds[0])
+        self.assertIn('malbut_interfaces', builds[0])
+        self.assertTrue(any(part.endswith('/malbut_interfaces') for part in builds[0]))
         self.assertIn('--return-code-on-test-failure', tests[0])
         self.assertEqual(calls[-1], ['colcon', 'test-result', '--verbose'])
         self.assertTrue(any(call[:3] == ['python3', '-m', 'pytest'] for call in calls))

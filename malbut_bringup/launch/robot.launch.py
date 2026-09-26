@@ -2,6 +2,8 @@
 
 import os
 from pathlib import Path
+import shlex
+from uuid import uuid4
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -14,6 +16,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from malbut_bringup.fall_setup import prepare_fall_monitor
 from malbut_bringup.nav2_stack import nav2_actions
 from malbut_bringup.perception_setup import validate_perception_files
 
@@ -57,6 +60,48 @@ def _setup(context):
     perception = value('perception') == 'true'
     hardware = value('start_hardware') == 'true'
     relocalization = value('relocalization') == 'true'
+    # The unified robot launch always starts navigation. The separate mapping
+    # backend does not own fall analysis. Permissions still gate all collection.
+    fall_inputs = prepare_fall_monitor(value('fall_monitor'), value('fall_config'))
+    fall_monitor = None
+    fall_pose = None
+    fall_coordinator = None
+    # The legacy "manager" wire slot now belongs to the fall coordinator.
+    fall_ids = {key: str(uuid4()) for key in ('manager', 'bridge', 'vlm')} if fall_inputs else {}
+    if fall_inputs is not None:
+        fall_config, fall_image_topic = fall_inputs
+        fall_coordinator = Node(
+            package='malbut_fall_coordinator', executable='fall_coordinator',
+            name='fall_coordinator', output='screen',
+            parameters=[{
+                'use_sim_time': False, 'runtime_id': fall_ids['manager'],
+                'bridge_runtime_id': fall_ids['bridge'], 'vlm_runtime_id': fall_ids['vlm'],
+            }],
+        )
+        pose_model = _file(value('fall_pose_model_path'), 'Fall pose ONNX model')
+        pose_python = str(Path(value('fall_pose_python_executable')).expanduser())
+        _file(pose_python, 'Fall pose Python')
+        if not os.access(pose_python, os.X_OK):
+            raise RuntimeError('Fall pose Python is not executable')
+        fall_pose = Node(
+            package='homecam_detector', executable='homecam_detector_node',
+            name='malbut_fall_pose', output='screen', prefix=[shlex.quote(pose_python)],
+            parameters=[{
+                'use_sim_time': False, 'fall_only': True,
+                'fall_runtime_id': fall_ids['vlm'],
+                'image_topic': value('rgb_topic'), 'odom_topic': value('odom_topic'),
+                'pose_model_path': pose_model, 'pose_keep_aspect': True,
+                'pose_inference_fps': 5.0,
+                'pose_candidate_confidence_threshold': 0.10,
+            }],
+        )
+        fall_monitor = Node(
+            package='malbut_agent_server', executable='malbut-fall-monitor',
+            output='screen', arguments=['--config', fall_config, '--execute'],
+            parameters=[{'use_sim_time': False, 'manager_runtime_id': fall_ids['manager'],
+                         'runtime_id': fall_ids['vlm']}],
+            remappings=[(fall_image_topic, value('rgb_topic'))],
+        )
     speech = None
     if value('speech') == 'true':
         # Preserve the venv executable path: resolving its symlink would select
@@ -115,6 +160,10 @@ def _setup(context):
                   if backend_url else None)
 
     actions = []
+    if fall_monitor is None:
+        reason = ('fall_monitor=false' if value('fall_monitor') == 'false'
+                  else 'fall_config is missing; set fall_config or MALBUT_FALL_CONFIG')
+        actions.append(LogInfo(msg=f'Cloud VLM startup disabled: {reason}.'))
     if hardware_path:
         actions.append(_include(hardware_path, {
             # This vendor version uses '/' (not '') for unprefixed TF/topics.
@@ -141,6 +190,7 @@ def _setup(context):
             'image_topic': value('rgb_topic'),
             'camera_info_topic': value('camera_info_topic'),
             'odom_topic': value('odom_topic'),
+            **{'fall_' + key + '_runtime_id': value for key, value in fall_ids.items()},
         }))
 
     # Nav2 servers with Malbut-owned parameters, composed like the vendor stack,
@@ -238,8 +288,17 @@ def _setup(context):
             return []
         if event.returncode != 0:
             raise RuntimeError('Robot readiness check failed')
+        speech_actions = [speech] if speech else []
+        fall_actions = []
+        if fall_monitor is not None:
+            fall_actions = [
+                LogInfo(msg='Starting fall coordinator and VLM; waiting for permissions.'),
+                fall_coordinator,
+                fall_monitor,
+                fall_pose,
+            ]
         return [LogInfo(msg='Robot ready; the system manager accepts missions.'),
-                *([speech] if speech else [])]
+                *fall_actions, *speech_actions]
 
     def child_exited(event, launch_context):
         if launch_context.is_shutdown or event.action is wait:
@@ -250,7 +309,7 @@ def _setup(context):
             isinstance(event.action, Node)
             and str(event.action.node_package).startswith('malbut_')
         )
-        if event.returncode != 0 or is_malbut:
+        if event.returncode != 0 or is_malbut or event.action is fall_pose:
             # Also covers nested speech failures. A plain Shutdown would mask
             # a failed component as a successful shell exit (status 0).
             raise RuntimeError(f'Bringup child exited: {event.process_name}')
@@ -282,6 +341,13 @@ def generate_launch_description():
         'restore_pose': 'true',
         'web_panel': 'false',
         'perception': 'true',
+        'fall_monitor': 'auto',
+        'fall_config': os.environ.get('MALBUT_FALL_CONFIG', '/etc/malbut/fall_runtime.json'),
+        'fall_pose_model_path': os.environ.get(
+            'MALBUT_FALL_POSE_MODEL', str(cache / 'yolo26s-pose.onnx')),
+        'fall_pose_python_executable': os.environ.get(
+            'MALBUT_FALL_POSE_PYTHON',
+            str(cache_root / 'malbut_fall_pose/runtime/bin/python')),
         'speech': 'true',
         'speech_python_executable': str(speech_runtime / 'bin/python'),
         'stt_model_path': os.environ.get(
@@ -326,6 +392,7 @@ def generate_launch_description():
         'sensor_timeout_s': '3.0',
     }
     choices = {
+        'fall_monitor': ['auto', 'true', 'false'],
         **{key: ['true', 'false'] for key in (
             'start_hardware', 'perception',
             'publish_debug_image', 'relocalization',

@@ -1,0 +1,22 @@
+# Manager -> VLM. 소유자가 서버에 저장한 설정만 신뢰된 경로로 전달한다.
+# runtime_id는 대상 실행을 구분하며, 호출자 인증을 대신하지 않는다.
+string runtime_id
+# 1 이상. 낙상 감지/카메라 허용/Cloud 동의 중 하나라도 바뀌면 증가한다.
+uint64 settings_revision
+bool enabled
+# 영상 저장 ON/OFF와는 별개의 카메라 허용 설정이다.
+bool camera_enabled
+bool cloud_consent
+---
+# 같은 번호와 내용이 이미 적용된 경우에도 true다. 분석 성공을 뜻하지 않는다.
+bool applied
+string runtime_id
+uint64 requested_revision
+# 적용한 설정이 없으면 0. 아래 bool 값은 실제 적용된 설정이다.
+uint64 applied_revision
+bool enabled
+bool camera_enabled
+bool cloud_consent
+# applied / already_applied / runtime_mismatch / stale_revision /
+# revision_conflict / invalid_request / internal_error
+string reason_code "invalid_request"

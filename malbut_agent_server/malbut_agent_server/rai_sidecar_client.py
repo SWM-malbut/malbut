@@ -17,6 +17,7 @@ from malbut_agent_server.conversation import (
 from malbut_agent_server.memory import MemoryRecord
 from malbut_agent_server.memory_contract import MEMORY_INSTRUCTIONS
 from malbut_agent_server.prompting import (
+    CONVERSATION_INSTRUCTIONS,
     MAX_CONVERSATION_TURNS,
     MAX_MODEL_INPUT_CHARS,
     SYSTEM_INSTRUCTIONS,
@@ -454,8 +455,8 @@ class RaiSidecarProvider(AgentProvider):
             proposal_request = ProposalRequest(
                 request_id=request.request_id,
                 instructions=(
-                    SYSTEM_INSTRUCTIONS if memory_context is None
-                    else SYSTEM_INSTRUCTIONS + '\n\n' + MEMORY_INSTRUCTIONS
+                    SYSTEM_INSTRUCTIONS + '\n\n' + CONVERSATION_INSTRUCTIONS
+                    + ('\n\n' + MEMORY_INSTRUCTIONS if memory_context is not None else '')
                 ),
                 model_input=prepared.text,
                 tools=project_tool_specs(tools),

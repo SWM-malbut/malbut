@@ -21,9 +21,11 @@ fi
 # Explicit roots bypass only this copy's COLCON_IGNORE, without discovering
 # the original/simulation packages or rebuilding manufacturer source packages.
 package_paths=(
+  "$robot_source_dir/homecam_agent/homecam_detector"
   "$robot_source_dir/malbut_bringup"
   "$robot_source_dir/malbut_interfaces"
   "$robot_source_dir/malbut_system_manager"
+  "$robot_source_dir/malbut_fall_coordinator"
   "$robot_source_dir/malbut_agent_server"
   "$robot_source_dir/malbut_stt"
   "$robot_source_dir/malbut_tts"
@@ -136,7 +138,8 @@ if "include-system-site-packages=true" not in config.splitlines():
 ' "$speech_runtime"
     "$speech_python" -m pip --isolated install \
       -r "$robot_source_dir/malbut_stt/requirements-whisper-cpp.txt" \
-      -r "$robot_source_dir/malbut_tts/requirements-api.txt"
+      -r "$robot_source_dir/malbut_tts/requirements-api.txt" \
+      -r "$robot_source_dir/malbut_agent_server/requirements-openai.txt"
     echo "Built CUDA speech backend: $whisper_build/bin/libmalbut_whisper.so"
     echo "Speech Python: $speech_python"
     ;;

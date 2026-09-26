@@ -1,6 +1,7 @@
 """Check composition without launching hardware, inference, or navigation."""
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
 from xml.etree import ElementTree
@@ -50,6 +51,7 @@ def test_cloud_launch_starts_only_outbound_bridge():
 def launch_module(tmp_path, monkeypatch):
     """Supply fake vendor assets, but use the real Malbut launch files."""
     monkeypatch.delenv('HOMECAM_BACKEND_URL', raising=False)
+    monkeypatch.setenv('MALBUT_FALL_CONFIG', str(tmp_path / 'unconfigured-fall.json'))
     for name in ('slam/launch/include/robot.launch.py',):
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,14 +66,15 @@ def launch_module(tmp_path, monkeypatch):
     cache = tmp_path / 'home/.cache'
     monkeypatch.setenv('XDG_CACHE_HOME', str(cache))
     for name, environment in (('malbut_yolo', 'MALBUT_YOLO_RUNTIME'),
-                              ('malbut_reid', 'MALBUT_REID_RUNTIME')):
+                              ('malbut_reid', 'MALBUT_REID_RUNTIME'),
+                              ('malbut_fall_pose', 'MALBUT_FALL_POSE_RUNTIME')):
         runtime = cache / name / 'runtime'
         monkeypatch.setenv(environment, str(runtime))
         executable = runtime / 'bin/python'
         executable.parent.mkdir(parents=True, exist_ok=True)
         executable.write_text('#!/bin/sh\nexit 0\n')
         executable.chmod(0o755)
-    for name in ('yolo26n.pt', 'osnet_ain_x1_0_msmt17.onnx'):
+    for name in ('yolo26n.pt', 'yolo26s-pose.onnx', 'osnet_ain_x1_0_msmt17.onnx'):
         model = cache / 'malbut_perception' / name
         model.parent.mkdir(parents=True, exist_ok=True)
         model.write_bytes(b'not executed during this launch composition test')
@@ -505,3 +508,184 @@ def test_parent_never_leaves_partial_speech_pipeline(launch_module, package):
     node = Node(package=package, executable='test')
     with pytest.raises(RuntimeError, match='Bringup child exited'):
         _process_exit(actions, context, node)
+
+
+@pytest.fixture
+def fall_config(tmp_path):
+    """Use test-only limits; never create a key, database or Cloud connection."""
+    path = tmp_path / 'fall settings.json'
+    path.write_text(json.dumps({
+        'device_id': 'test-robot', 'journal_path': str(tmp_path / 'journal.sqlite'),
+        'cloud_key_file': str(tmp_path / 'not-read.key'), 'model': 'gemma4:31b',
+        'image_topic': '/configured/rgb', 'retention_s': 10,
+        'buffer_bytes': 10000000, 'buffer_frames': 100, 'input_fps': 5,
+        'max_source_age_s': 1, 'control_lease_s': 5,
+        'policy': {'retry_interval_s': 3, 'max_person_observation_age_s': 2,
+                   'clip_window_s': 5, 'max_frame_age_s': 2, 'max_calls_per_minute': 5,
+                   'max_incidents': 10, 'max_images': 12},
+    }))
+    return path
+
+
+@pytest.mark.parametrize('enabled', ['auto', 'true'])
+def test_fall_monitor_starts_once_after_readiness(launch_module, fall_config, enabled):
+    """Keep one early Manager and start one VLM only after readiness."""
+    context = _context(launch_module, start_hardware='false',
+                       fall_monitor=enabled, fall_config=str(fall_config),
+                       rgb_topic='/robot/camera/rgb')
+    actions = launch_module._setup(context)
+    assert not any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
+                   for item in actions)
+    ready = _readiness_exit(actions, context)
+    assert sum(isinstance(item, Node) and item.node_executable == 'system_manager'
+               for item in actions) == 1
+    assert not any(isinstance(item, Node) and item.node_executable == 'system_manager'
+                   for item in ready)
+    nodes = [item for item in ready if isinstance(item, Node)
+             and item.node_executable == 'malbut-fall-monitor']
+    assert len(nodes) == 1
+    node = nodes[0]
+    assert node.node_package == 'malbut_agent_server'
+    parameters = evaluate_parameters(context, node._Node__parameters)[0]
+    assert parameters['use_sim_time'] is False
+    from uuid import UUID
+    assert UUID(parameters['runtime_id'])
+    assert UUID(parameters['manager_runtime_id'])
+    manager = next(item for item in actions if isinstance(item, Node)
+                   and item.node_executable == 'system_manager')
+    bindings = evaluate_parameters(context, manager._Node__parameters)[0]
+    assert bindings['localization_control'] is True
+    assert bindings['ready_topic'] == '/malbut/bringup/status'
+    assert not any(key.startswith('fall_') for key in bindings)
+    coordinators = _nodes(ready, 'fall_coordinator')
+    assert len(coordinators) == 1
+    bindings = _parameters(context, coordinators[0])
+    assert bindings['vlm_runtime_id'] == parameters['runtime_id']
+    assert bindings['runtime_id'] == parameters['manager_runtime_id']
+    assert UUID(bindings['bridge_runtime_id'])
+    arguments = [perform_substitutions(context, arg) for arg in node.cmd[1:]]
+    assert arguments[:3] == ['--config', str(fall_config), '--execute']
+    remaps = [(perform_substitutions(context, src), perform_substitutions(context, dst))
+              for src, dst in node._Node__remappings]
+    assert remaps == [('/configured/rgb', '/robot/camera/rgb')]
+    assert not (fall_config.parent / 'not-read.key').exists()
+    assert not (fall_config.parent / 'journal.sqlite').exists()
+    with pytest.raises(RuntimeError, match='Robot readiness check failed'):
+        _readiness_exit(actions, context, returncode=1)
+
+
+def test_startup_binding_is_shared_with_media_and_changes_on_new_launch(
+        launch_module, fall_config):
+    context = _context(launch_module, start_hardware='false',
+                       fall_monitor='true', fall_config=str(fall_config))
+    context.environment['HOMECAM_BACKEND_URL'] = 'https://robot.example.com'
+    bindings = []
+    for _ in range(2):
+        actions = launch_module._setup(context)
+        media = next(dict(item.launch_arguments) for item in _includes(actions)
+                     if 'fall_bridge_runtime_id' in dict(item.launch_arguments))
+        ready = _readiness_exit(actions, context)
+        params = _parameters(context, _nodes(ready, 'fall_coordinator')[0])
+        vlm = next(item for item in ready if isinstance(item, Node)
+                   and item.node_executable == 'malbut-fall-monitor')
+        vlm_params = evaluate_parameters(context, vlm._Node__parameters)[0]
+        poses = _nodes(ready, 'homecam_detector_node')
+        assert len(poses) == 1
+        pose_params = _parameters(context, poses[0])
+        assert pose_params['fall_runtime_id'] == vlm_params['runtime_id']
+        assert pose_params['fall_only'] is True
+        assert pose_params['pose_keep_aspect'] is True
+        assert not _nodes(actions, 'homecam_detector_node')
+        assert params['vlm_runtime_id'] == vlm_params['runtime_id']
+        assert params['runtime_id'] == vlm_params['manager_runtime_id']
+        for peer in ('bridge', 'manager', 'vlm'):
+            field = 'fall_' + peer + '_runtime_id'
+            parameter = 'runtime_id' if peer == 'manager' else peer + '_runtime_id'
+            assert params[parameter] == media[field]
+        bindings.append(params)
+    assert bindings[0]['bridge_runtime_id'] != bindings[1]['bridge_runtime_id']
+
+
+def test_fall_launch_uses_unified_navigation_without_legacy_mode_flags(launch_module):
+    """No removed launch mode may become an accidental VLM enable switch."""
+    context = _context(launch_module, start_hardware='false')
+    assert 'mode' not in context.launch_configurations
+    assert 'start_navigation' not in context.launch_configurations
+
+
+def test_fall_monitor_auto_uses_environment_configuration(launch_module, fall_config, monkeypatch):
+    """A prepared robot needs no second command or explicit enable flag."""
+    monkeypatch.setenv('MALBUT_FALL_CONFIG', str(fall_config))
+    context = _context(launch_module, start_hardware='false')
+    assert context.launch_configurations['fall_monitor'] == 'auto'
+    ready = _readiness_exit(launch_module._setup(context), context)
+    assert any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
+               for item in ready)
+
+
+def test_missing_fall_pose_model_stops_before_launch(launch_module, fall_config):
+    """Configured fall monitoring may not silently start without the pose producer."""
+    context = _context(launch_module, start_hardware='false', fall_monitor='true',
+                       fall_config=str(fall_config), fall_pose_model_path='/missing/pose.onnx')
+    with pytest.raises(RuntimeError, match='Fall pose ONNX model'):
+        launch_module._setup(context)
+
+
+def test_fall_pose_does_not_depend_on_general_perception(launch_module, fall_config):
+    """Disabling following/object detection does not suppress fall pose."""
+    context = _context(launch_module, start_hardware='false', perception='false',
+                       fall_monitor='true', fall_config=str(fall_config))
+    ready = _readiness_exit(launch_module._setup(context), context)
+    assert len(_nodes(ready, 'homecam_detector_node')) == 1
+
+
+def test_fall_pose_exit_cannot_leave_a_silent_missing_producer(launch_module, fall_config):
+    """Even exit 0 of the persistent detector stops the partial Bringup."""
+    context = _context(launch_module, start_hardware='false', perception='false',
+                       fall_monitor='true', fall_config=str(fall_config))
+    actions = launch_module._setup(context)
+    pose = _nodes(_readiness_exit(actions, context), 'homecam_detector_node')[0]
+    with pytest.raises(RuntimeError, match='Bringup child exited'):
+        _process_exit(actions, context, pose)
+
+
+@pytest.mark.parametrize('enabled', ['auto', 'true'])
+def test_fall_monitor_rejects_invalid_configuration(launch_module, fall_config, enabled):
+    """A present but unfinished config must fail before any hardware is launched."""
+    data = json.loads(fall_config.read_text())
+    data['input_fps'] = None
+    fall_config.write_text(json.dumps(data))
+    context = _context(launch_module, start_hardware='false',
+                       fall_monitor=enabled, fall_config=str(fall_config))
+    with pytest.raises(RuntimeError, match='Invalid fall_config'):
+        launch_module._setup(context)
+
+
+def test_fall_monitor_false_does_not_read_configuration(launch_module, fall_config):
+    """Operators can disable this process even when its config needs repair."""
+    fall_config.write_text('not JSON')
+    context = _context(launch_module, start_hardware='false',
+                       fall_monitor='false', fall_config=str(fall_config))
+    ready = _readiness_exit(launch_module._setup(context), context)
+    assert not any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
+                   for item in ready)
+
+
+def test_fall_monitor_true_requires_configuration(launch_module):
+    """Explicit enable must not silently skip a missing configuration."""
+    context = _context(launch_module, start_hardware='false',
+                       fall_monitor='true')
+    with pytest.raises(RuntimeError, match='Fall configuration is missing'):
+        launch_module._setup(context)
+
+
+@pytest.mark.parametrize('code', [0, 2])
+def test_fall_monitor_exit_stops_bringup(launch_module, fall_config, code):
+    """Do not report a healthy launch after its configured fall monitor exits."""
+    context = _context(launch_module, start_hardware='false',
+                       fall_config=str(fall_config))
+    actions = launch_module._setup(context)
+    node = next(item for item in _readiness_exit(actions, context)
+                if isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor')
+    with pytest.raises(RuntimeError, match='Bringup child exited'):
+        _process_exit(actions, context, node, returncode=code)

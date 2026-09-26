@@ -97,7 +97,7 @@ def test_only_matching_manager_result_completes_waiting_tool():
         query.close()
 
 
-@pytest.mark.parametrize('kind', ['unavailable', 'rejected', 'failed', 'unknown', 'canceled'])
+@pytest.mark.parametrize('kind', ['unavailable', 'rejected', 'failed', 'unknown'])
 def test_manager_failure_never_returns_weather_values(kind):
     query = ManagerWeatherQuery(Manager(kind))
     result, done, thread = start(query)
@@ -106,6 +106,21 @@ def test_manager_failure_never_returns_weather_values(kind):
         finish(done, thread)
         assert isinstance(result['error'], RuntimeError)
         assert 'value' not in result
+    finally:
+        query.close()
+
+
+def test_manager_cancellation_propagates_without_a_second_submission():
+    query = ManagerWeatherQuery(Manager('canceled'))
+    result, done, thread = start(query)
+    try:
+        query.drain()
+        finish(done, thread)
+        assert isinstance(result['error'], CancelledError)
+        assert 'value' not in result
+        query.drain()
+        assert len(query._manager.calls) == 1
+        assert query._pending == {} and query._manager.cancels == []
     finally:
         query.close()
 
