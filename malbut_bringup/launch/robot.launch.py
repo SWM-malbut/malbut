@@ -65,9 +65,19 @@ def _setup(context):
     fall_inputs = prepare_fall_monitor(value('fall_monitor'), value('fall_config'))
     fall_monitor = None
     fall_pose = None
+    fall_coordinator = None
+    # The legacy "manager" wire slot now belongs to the fall coordinator.
     fall_ids = {key: str(uuid4()) for key in ('manager', 'bridge', 'vlm')} if fall_inputs else {}
     if fall_inputs is not None:
         fall_config, fall_image_topic = fall_inputs
+        fall_coordinator = Node(
+            package='malbut_fall_coordinator', executable='fall_coordinator',
+            name='fall_coordinator', output='screen',
+            parameters=[{
+                'use_sim_time': False, 'runtime_id': fall_ids['manager'],
+                'bridge_runtime_id': fall_ids['bridge'], 'vlm_runtime_id': fall_ids['vlm'],
+            }],
+        )
         pose_model = _file(value('fall_pose_model_path'), 'Fall pose ONNX model')
         pose_python = str(Path(value('fall_pose_python_executable')).expanduser())
         _file(pose_python, 'Fall pose Python')
@@ -246,7 +256,6 @@ def _setup(context):
         parameters=[{
             'use_sim_time': False, 'ready_topic': READY_TOPIC,
             'localization_control': True, 'initial_map': initial_map,
-            **{'fall_' + key + '_runtime_id': val for key, val in fall_ids.items()},
             'slam_params_file': slam_params, 'scan_topic': value('scan_topic'),
             # Each saved-map load finds the robot through the Action, saved pose first.
             'relocalize_action': (RELOCALIZE_ACTION if relocalization
@@ -283,7 +292,8 @@ def _setup(context):
         fall_actions = []
         if fall_monitor is not None:
             fall_actions = [
-                LogInfo(msg='Starting Cloud VLM; waiting for permissions and Manager settings.'),
+                LogInfo(msg='Starting fall coordinator and VLM; waiting for permissions.'),
+                fall_coordinator,
                 fall_monitor,
                 fall_pose,
             ]

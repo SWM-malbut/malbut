@@ -2,6 +2,11 @@
 
 작성일: 2026-09-19. [전체 명세](fall_detection.md), [사건 저장](fall_storage_api.md).
 
+> **SWM25-164:** 아래 기록의 낙상 설정 전달·heartbeat·판단 검증·Agent 연결 책임은
+> 시스템 관리자에서 `malbut_fall_coordinator`로 이동했다. ROS/웹 인터페이스는 유지한다.
+> `manager_runtime_id`는 이제 코디네이터 ID다. 확인 대화만 일반 관리자의
+> `fall_confirmation` 미션으로 실행한다([현재 실행 구조](../../../malbut_fall_coordinator/README.md)).
+
 ## 이번에 연결한 부분
 
 - 카메라 RGB → JPEG 순환 버퍼. YOLO 후보가 없어도 받는다.

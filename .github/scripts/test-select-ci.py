@@ -15,7 +15,7 @@ SPEC = importlib.util.spec_from_file_location('select_ci', SCRIPT)
 SELECTOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SELECTOR)
 SPEECH_BUILD = {
-    'malbut_agent_server', 'malbut_interfaces', 'malbut_stt',
+    'malbut_agent_server', 'malbut_fall_coordinator', 'malbut_interfaces', 'malbut_stt',
     'malbut_system_manager', 'malbut_tts',
 }
 CMAKE = '''project(malbut_interfaces)

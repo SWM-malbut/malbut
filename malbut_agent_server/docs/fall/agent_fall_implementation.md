@@ -1,4 +1,4 @@
-# Agent–Manager 이상 상황 확인 구현
+# 낙상 코디네이터–Manager–Agent 이상 상황 확인 구현
 
 [대화 명세](agent_fall_interaction.md)를 구현한 연결과 실행 조건이다.
 첫 적용 대상은 낙상이며, Agent의 대화 엔진과 Action은 다른 이상 상황도 받는다.
@@ -8,11 +8,14 @@
 ```mermaid
 sequenceDiagram
     participant V as VLM 런타임
+    participant F as 낙상 코디네이터
     participant M as Manager
     participant A as Agent
     participant S as STT·TTS
     participant U as 사용자
-    V->>M: 영상 판단 후 question_requested
+    V->>F: 영상 판단 후 question_requested
+    F->>M: ExecuteMission(fall_confirmation), URGENT
+    Note over M: BASE·SPEAKER 충돌 미션 종료 확인
     M->>A: ConfirmSituation(요청 ID, 유형, 요약)
     A->>S: 기존 대화 중단 · 확인 세션 시작
     A->>S: 실제 상황 확인 질문
@@ -21,13 +24,14 @@ sequenceDiagram
     S->>A: 발화 시작 · 인식 결과
     Note over A,U: 실제 상황 확인 후 필요한 경우 상태·도움 확인
     A->>M: 실제 상황 판단 · 도움 필요 여부
-    M->>V: 해당 사건의 confirmation_result
+    M->>F: 일반 미션 최종 결과
+    F->>V: 해당 사건의 confirmation_result
     A->>S: 상황에 맞는 마무리 말
 ```
 
 VLM은 후보가 생기자마자 질문하지 않고 영상의 1차 판단을 기다린다.
-정상 활동이고 이전 낙상 관측이 없으면 Manager가 질문 없이 종결한다.
-Manager는 구조화된 영상 판정을 짧은 요약으로 바꾸며, Agent에 영상이나
+정상 활동이고 이전 낙상 관측이 없으면 낙상 코디네이터가 질문 없이 종결한다.
+코디네이터는 구조화된 영상 판정을 짧은 요약으로 바꾸며, Agent에 영상이나
 VLM의 자유 형식 설명을 전달하지 않는다. Agent는 낙상 런타임 토픽을 직접 구독하지 않는다.
 
 ## Manager–Agent 계약
@@ -56,19 +60,20 @@ Action: `/malbut/agent/confirm_situation`
 Action이 `SUCCEEDED`일 때만 결과를 사용한다. 모델·마이크·TTS 오류나 취소는
 `ABORTED`/`CANCELED`로 구분하며 사용자 무응답으로 바꾸지 않는다.
 
-Manager는 사건·질문·대상·근거 버전과 런타임 부팅 ID를 연결해 결과를 검증한다.
+낙상 코디네이터는 사건·질문·대상·근거 버전과 런타임 부팅 ID를 연결해 결과를 검증한다.
 오래된 결과는 적용하지 않고, 같은 질문의 재전달에는 이미 얻은 결과를 재전송한다.
-Agent는 최근 128개 요청의 내용 해시와 완료 결과를 기억한다. Manager가 재시작해
+Agent는 최근 128개 요청의 내용 해시와 완료 결과를 기억한다. 코디네이터가 재시작해
 기존 Action Goal을 잃어도 같은 요청 ID·유형·요약이면 대화를 다시 하지 않고 결과를
-돌려준다. 같은 ID로 내용이 바뀌면 거절한다. 이 캐시는 Agent 프로세스 내부에만 있으며
+돌려준다. 관리자의 기존 확인 미션이 실행 중이면 먼저 종료를 기다려 같은 대화를 선점하지 않는다.
+같은 ID로 내용이 바뀌면 거절한다. 이 캐시는 Agent 프로세스 내부에만 있으며
 Agent 자체가 재시작한 뒤까지 보존하는 저장소는 아니다.
 현재 대화의 최종 판단이 적용된 뒤 늦게 도착한 영상 결과로 사용자 답변을 덮어쓰지 않는다.
-Agent는 보호자 알림을 실행하거나 요청하지 않으며 후속 처리는 Manager 측에 남는다.
+Agent는 보호자 알림을 실행하거나 요청하지 않으며 후속 처리는 낙상 코디네이터·VLM 측에 남는다.
 기존 웹 업로드·알림 계약에는 `confirmation_completed`, `incident_updated`,
 `confirmation_help_required`를 추가했다. 도움 필요 알림은 Agent의 판단으로 표현하며
 사용자가 직접 도움을 요청했다고 바꾸지 않는다.
 
-Manager는 수락된 요청의 결과를 최대 610초 기다리며, Agent 서버가 연속 5초 사라진
+코디네이터는 수락된 미션의 결과를 최대 610초 기다리며, Manager 서버가 연속 5초 사라진
 경우에도 처리 실패로 큐를 해제한다. Agent 자체 처리 상한은 600초다. 이 제한은
 통신·처리 장애 복구용이며 질문 뒤 사용자 답변을 기다리는 10초와 별개다.
 
@@ -125,7 +130,7 @@ Agent의 `--provider openai`는 기존 OpenAI 설정과 키를 재사용해 질�
 - `test_situation_recovery_ros.py`: Manager 재시작, 결과 전송 유실, 완료 결과 재전송.
 - Bringup의 `test_confirmation_audio.py`: 실제 대화 엔진·STT 파이프라인·TTS 런타임을
   결합해 합성 PCM 입력으로 끼어들기, 질문 후 답변, 무응답, ASR 오류, 세션 소실 확인.
-- Manager의 `test_fall_confirmation*.py`: 버전·중복·실패·결과 전달.
+- `malbut_fall_coordinator/test/test_fall_confirmation*.py`: 버전·중복·실패·결과 전달·일반 관리자 선점.
 - STT·TTS의 기존 테스트: 일반 대화와 확인 대화의 음성 제어 회귀.
 
 한국어 의미 판단 재검증에는 20개 사례를 묶은 평가 도구를 사용한다.

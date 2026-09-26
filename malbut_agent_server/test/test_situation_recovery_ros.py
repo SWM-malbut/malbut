@@ -1,10 +1,11 @@
-"""Recover replayed VLM handoffs after losing the Manager Action client."""
+"""Recover replayed VLM handoffs after losing the fall coordinator client."""
 
 import json
 
 import pytest
 
 from test_situation_action_ros import rig as _confirmation_rig
+from test_situation_action_ros import mission_manager as _mission_manager
 
 rclpy = pytest.importorskip('rclpy', reason='ROS 2 is not installed')
 from action_msgs.msg import GoalStatus  # noqa: E402
@@ -18,6 +19,7 @@ from std_msgs.msg import String  # noqa: E402
 # Register locally even when pytest already collected the source test module
 # as a package module; a plugin registration can otherwise inherit its scope.
 rig = _confirmation_rig
+mission_manager = _mission_manager
 
 
 def replay(rig, request_id, *, summary='거실 바닥에 누워 있는 사람이 관측됨',
@@ -41,10 +43,10 @@ def replay(rig, request_id, *, summary='거실 바닥에 누워 있는 사람이
 
 
 @pytest.mark.parametrize('restart_after_result', [False, True])
-def test_manager_restart_recovers_same_handoff_without_repeating_dialogue(
-    rig, restart_after_result,
+def test_coordinator_restart_recovers_same_handoff_without_repeating_dialogue(
+    rig, mission_manager, restart_after_result,
 ):
-    from malbut_system_manager.fall_confirmation_link import FallConfirmationLink
+    from malbut_fall_coordinator.fall_confirmation_link import FallConfirmationLink
     from malbut_agent_server.fall_runtime import apply_decision, event_metadata
     from test_fall_confirmation_result import assessed
 
@@ -74,7 +76,7 @@ def test_manager_restart_recovers_same_handoff_without_repeating_dialogue(
             # Simulate losing the final topic publication before the VLM
             # applies it. The original question therefore remains pending.
             received.clear()
-        # A crashed Manager cannot issue cancellation during teardown. Drop
+        # A crashed coordinator cannot issue cancellation during teardown. Drop
         # its ROS entities directly, retaining the Agent's current dialogue.
         link.timer.cancel()
         rig.executor.remove_node(manager)

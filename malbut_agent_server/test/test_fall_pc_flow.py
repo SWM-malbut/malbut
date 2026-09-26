@@ -1,7 +1,7 @@
 """Opt-in PC flow checks using real ROS messages, never a remote model.
 
 Requires MALBUT_RUN_FALL_ROS_TESTS=1 and ROS_LOCALHOST_ONLY=1. Every topic and
-Service is remapped under a new UUID, away from robot topics. The Manager relay,
+Service is remapped under a new UUID, away from robot topics. The fall settings relay,
 VLM node, tracker, candidate rules, Cloud JSON codec and SQLite journal are real.
 Camera pixels, pose estimates, server replies and confirmation results are test data.
 Only the Cloud provider's HTTP transport is replaced; no credential file is read.
@@ -51,7 +51,7 @@ if RUN_ROS:
     from malbut_agent_server.fall_runtime import FallNodeSettings
     from malbut_agent_server.ros_fall_monitor import create_fall_node, spin_runtime
     from malbut_interfaces.msg import FallRuntimeStatus, FallSettingsReport, FallSettingsSnapshot
-    from malbut_system_manager.fall_settings_link import FallSettingsLink
+    from malbut_fall_coordinator.fall_settings_link import FallSettingsLink
 
 
 TOPICS = (

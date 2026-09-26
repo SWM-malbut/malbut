@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>malbut_fall_coordinator</name>
+  <version>0.1.0</version>
+  <description>Fall settings and incident confirmation coordination.</description>
+  <maintainer email="sanggeunji0117@gmail.com">Malbut Team</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <depend>action_msgs</depend>
+  <depend>malbut_interfaces</depend>
+  <depend>rclpy</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>std_msgs</depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <test_depend>malbut_system_manager</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>
