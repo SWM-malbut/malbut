@@ -9,6 +9,7 @@ setup(
         ('share/malbut_resource_monitor', ['package.xml', 'README.md']),
     ],
     install_requires=['setuptools'], zip_safe=True,
+    tests_require=['pytest'],
     maintainer='Malbut Team', maintainer_email='sanggeunji0117@gmail.com',
     description='Passive resource recorder and offline log viewer', license='Apache-2.0',
     entry_points={'console_scripts': [

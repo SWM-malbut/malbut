@@ -177,6 +177,26 @@ class SpeechSelectionTests(unittest.TestCase):
                         SELECTOR.changed_paths(base), base=base))
 
 
+class DeploymentToolSelectionTests(unittest.TestCase):
+    """Test deployment-only measurement without selecting the robot stack."""
+
+    def test_resource_monitor_is_built_and_tested_from_its_actual_path(self):
+        result = SELECTOR.selection([
+            'malbut_test/malbut_resource_monitor/malbut_resource_monitor/collector.py',
+        ])
+        self.assertEqual(result['ros_packages'], 'malbut_interfaces malbut_resource_monitor')
+        self.assertEqual(result['ros_test_packages'], 'malbut_resource_monitor')
+        self.assertEqual(result['ros_paths'],
+                         'malbut_interfaces malbut_test/malbut_resource_monitor')
+        self.assertEqual(result['ros_full'], 'false')
+        self.assertEqual(result['agent'], 'false')
+
+    def test_main_packages_still_take_precedence_over_deployment_copies(self):
+        packages = SELECTOR.package_index()
+        self.assertEqual(packages['malbut_bringup']['path'], 'malbut_bringup')
+        self.assertEqual(packages['malbut_interfaces']['path'], 'malbut_interfaces')
+
+
 class FallSelectionTests(unittest.TestCase):
     """Do not install ROS for reviewed fall code or lose checks on mixed PRs."""
 

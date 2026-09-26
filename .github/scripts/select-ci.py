@@ -116,14 +116,18 @@ def speech_cmake_additions(path, base):
 
 
 def package_index():
-    """Read actual ROS contracts, excluding the deployment copy."""
+    """Read ROS contracts, preferring originals and including deployment-only tools."""
     files = [*ROOT.glob('malbut_*/package.xml'),
              *ROOT.glob('malbut_autonomy/*/package.xml'),
              *ROOT.glob('malbut_yolo/vendor/yolo_ros/*/package.xml'),
-             ROOT / 'homecam_agent/homecam_detector/package.xml']
+             ROOT / 'homecam_agent/homecam_detector/package.xml',
+             *ROOT.glob('malbut_test/malbut_*/package.xml')]
     result = {}
     for path in files:
         xml = ET.parse(path).getroot()
+        if xml.findtext('name') in result:
+            # Prefer the main package; retain test-only tools with no main copy.
+            continue
         result[xml.findtext('name')] = {
             'path': path.parent.relative_to(ROOT).as_posix(),
             'dependencies': {item.text for item in xml
@@ -180,7 +184,8 @@ def selection(paths, full=False, base=None):
             else:
                 broad_interfaces = True
         for name in owners:
-            if path.startswith(packages[name]['path'] + '/'):
+            if (path.startswith(packages[name]['path'] + '/')
+                    or original_path.startswith(packages[name]['path'] + '/')):
                 selected.add(name)
                 break
         else:

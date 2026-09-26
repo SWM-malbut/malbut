@@ -12,7 +12,7 @@ import pytest
 ROOT = Path(__file__).parents[2] / 'malbut_test'
 PACKAGES = (
     'homecam_agent/homecam_detector',
-    'malbut_bringup', 'malbut_interfaces', 'malbut_system_manager',
+    'malbut_bringup', 'malbut_resource_monitor', 'malbut_interfaces', 'malbut_system_manager',
     'malbut_fall_coordinator',
     'malbut_agent_server', 'malbut_stt', 'malbut_tts',
     'malbut_yolo', 'malbut_reid', 'malbut_tracking', 'malbut_patrol',
