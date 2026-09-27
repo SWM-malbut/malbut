@@ -7,7 +7,7 @@ from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
 
-from malbut_stt.audio import CaptureSettings
+from malbut_stt.audio import CaptureSettings, MicrophoneOverflow
 from malbut_stt.conversation import ConversationSession
 from malbut_stt.endpoint import is_complete_korean_utterance
 from malbut_stt.pipeline import pcm_bytes
@@ -86,6 +86,7 @@ class DialoguePipeline:
         self.results = Queue(maxsize=1)
         self.stopping = Event()
         self.overflow = Event()
+        self.capture_ready = Event()
         self.recorder = None
         self.capture_thread = None
         self.asr_thread = None
@@ -190,10 +191,17 @@ class DialoguePipeline:
                 generation = self._audio_generation
                 blocked = self._input_blocked(self.clock())
                 busy = self._busy or self._pending is not None
-                samples = self.recorder.read()
+                try:
+                    samples = self.recorder.read()
+                except MicrophoneOverflow:
+                    # A PortAudio discontinuity invalidates the utterance just
+                    # like our queue overflowing; it does not kill the device.
+                    self.overflow.set()
+                    continue
                 captured_at = self.clock()
                 if self.stopping.is_set():
                     break
+                self.capture_ready.set()
                 if (self.overflow.is_set() or generation != self._audio_generation
                         or blocked or self._input_blocked(captured_at)):
                     continue

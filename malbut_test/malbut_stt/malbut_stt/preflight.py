@@ -12,7 +12,7 @@ def check_stt(model_path, library_path, *, device_index=0, cpp_threads=6):
     """
     if type(device_index) is not int or device_index < -1:
         raise ValueError('device_index must be -1 or a microphone index')
-    from malbut_stt.audio import SoundDeviceRecorder
+    from malbut_stt.audio import MicrophoneOverflow, SoundDeviceRecorder
     import webrtcvad
 
     from malbut_stt.cpp_transcription import CppWhisperTranscriber
@@ -31,7 +31,14 @@ def check_stt(model_path, library_path, *, device_index=0, cpp_threads=6):
                 raise ValueError('STT microphone must provide 16 kHz PCM')
             recorder.start()
             started = True
-            samples = recorder.read()
+            # Startup scheduling can lose a frame without losing the device.
+            # The existing preflight supervisor bounds this wait.
+            while True:
+                try:
+                    samples = recorder.read()
+                    break
+                except MicrophoneOverflow:
+                    continue
             if len(samples) != 512:
                 raise ValueError('STT microphone returned an incomplete frame')
             # Match the node's 20 ms WebRTC VAD input; do not transcribe or log it.

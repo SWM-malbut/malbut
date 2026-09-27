@@ -72,6 +72,7 @@ int mb_whisper_transcribe(void * context, const float * samples, int count,
     params.detect_language = false;
     params.translate = false;
     params.no_context = true;
+    params.suppress_nst = true;
     params.initial_prompt = initial_prompt;
     params.carry_initial_prompt = false;
     params.greedy.best_of = 1;

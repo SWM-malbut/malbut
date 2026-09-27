@@ -48,6 +48,23 @@ PID가 재사용될 수도 있으므로 현재 프로세스의 이름을 과거 
 별도 웹 빌드나 AWS 배포 없이 위 로봇 빌드와 뷰어 실행만 하면 된다. 기본 바인딩은 localhost이며,
 인증 없는 로그 뷰어이므로 인터넷 공개/AWS 배포용이 아니다.
 
+### 음성 대화 확인
+
+**로그 종류 → 음성 대화 · STT / TTS**에서 사용자의 최종 STT 인식 문장,
+로봇이 TTS에 요청한 답변 문장, TTS 재생 상태를 수신 시각순으로 확인한다.
+최신 이벤트가 위에 나오며 기존 2초 자동 갱신·회차/시간 구간 선택을 그대로 사용한다.
+화면에는 구간 내 최신 300개 이벤트를 표시하며 전체는 JSONL로 저장할 수 있다.
+
+`/malbut/speech/transcript`, `/malbut/speech/response`,
+`/malbut/speech/playback_status`를 수신만 한다. 음성 처리·Agent 코드는 변경하지 않는다.
+요청 문장이 실제로 재생되었다고 단정하지 않으며, 재생 상태는 별도 이벤트로 표시한다.
+같은 `playback_id`가 있을 때만 서로 대응할 수 있다. 일반 답변처럼 요청 ID가 비어 있으면
+TTS가 생성한 ID와 연결할 수 없으며, STT와 답변을 시간순으로 임의 짝짓지 않는다.
+텍스트/상태는 best-effort, volatile, keep-last(50)으로 관측하므로 수신 누락은 가능하다.
+과거 회차에는 발화 본문이 없어서 복원할 수 없다. **업데이트한 수집기로 새 회차를 시작해야 한다.**
+원본 오디오는 녹음하지 않지만 **인식·답변 텍스트는 `speech.jsonl`에 저장**하므로
+대화 개인정보가 포함될 수 있다. 신뢰하는 LAN에서만 열고 로그 공유 시 확인한다.
+
 로봇 없이 다른 PC에서 저장 로그를 보는 것도 가능하다 (Python 3.10+, ROS 불필요):
 
 ```bash
@@ -81,6 +98,7 @@ topics/*.jsonl         # 토픽별 수신 Hz / CDR 바이트 수 / 마지막 수
 actions/*.jsonl        # Action endpoint별 UUID / 상태 변화 / 수신 시각
 missions.jsonl        # 관리자 mission ID ↔ capability 및 상태 관측 (결과 추정 금지)
 phases/*.jsonl         # STT 입력/최종 transcript 도착, TTS 재생 상태 (발화 본문 저장 안 함)
+speech.jsonl           # STT 원문, TTS 요청 문장, 재생 상태 및 ID (오디오 녹음 없음)
 tegrastats.jsonl       # 원본 NVIDIA 측정 줄 (해석 결과 검증용)
 observer.jsonl        # 측정기 자체의 미지원/진단 알림 (기능 성능 지표 아님)
 ```

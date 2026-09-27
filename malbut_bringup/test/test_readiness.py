@@ -4,6 +4,9 @@ from collections import deque
 from concurrent.futures import Future
 from types import SimpleNamespace
 from unittest.mock import Mock
+import json
+
+import pytest
 
 from lifecycle_msgs.msg import State
 from rclpy.clock import ClockType
@@ -60,6 +63,58 @@ def test_ready_requires_data_and_transforms(monkeypatch):
     assert node.ready
     assert json.loads(node.status_publisher.publish.call_args.args[0].data) == {
         'state': 'READY', 'missing': []}
+
+
+def test_stage_progress_does_not_prematurely_admit_manager_missions(monkeypatch):
+    node = _node(monkeypatch)
+    node.stage = 'sensors'
+    node.started_at = 10.0
+    node.startup_timeout = 120.0
+    node.settings.update(startup_index=1, startup_total=6, startup_label='센서')
+    node.progress_publisher = Mock()
+    node._report(['data:scan'])
+    progress = json.loads(node.progress_publisher.publish.call_args.args[0].data)
+    assert progress['completed'] == 0 and progress['total'] == 6
+    assert not node.ready
+    node._report([])
+    assert node.ready
+    assert json.loads(node.progress_publisher.publish.call_args.args[0].data)['completed'] == 1
+    node.status_publisher.publish.assert_not_called()
+
+
+def test_stage_timeout_names_missing_input_and_never_reports_ready(monkeypatch):
+    node = _node(monkeypatch)
+    node.stage = 'perception'
+    node.started_at = 0.0
+    node.startup_timeout = 5.0
+    node.settings.update(startup_index=2, startup_total=6, startup_label='사람 인식')
+    node.progress_publisher = Mock()
+    with pytest.raises(RuntimeError, match='사람 인식: data:perception'):
+        node._report(['data:perception'])
+    assert not node.ready
+    progress = json.loads(node.progress_publisher.publish.call_args.args[0].data)
+    assert progress['state'] == 'ERROR' and progress['completed'] == 1
+
+
+def test_extension_waits_for_service_response_not_just_node_discovery(monkeypatch):
+    node = _node(monkeypatch)
+    node.stage = 'extensions'
+    future = Future()
+    client = Mock()
+    client.service_is_ready.return_value = True
+    client.call_async.return_value = future
+    node.probes = {'malbut_fall_pose': [client, None, False]}
+    node.probe_requested = {}
+    assert node._extension_missing() == ['init:malbut_fall_pose']
+    assert node._extension_missing() == ['init:malbut_fall_pose']
+    client.call_async.assert_called_once()
+    future.set_result(SimpleNamespace(values=[]))
+    assert node._extension_missing() == []
+    node.stage = 'speech'
+    node.speech_ready = False
+    assert node._extension_missing() == ['speech: microphone startup']
+    node._speech(SimpleNamespace(data='ready'))
+    assert node._extension_missing() == []
 
 
 def test_disconnected_depth_frame_is_not_ready(monkeypatch):

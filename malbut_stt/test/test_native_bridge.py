@@ -32,7 +32,7 @@ struct whisper_full_params {
     struct { int beam_size; } beam_search;
     float temperature, temperature_inc;
     bool print_realtime, print_progress, print_timestamps, print_special;
-    bool token_timestamps, vad;
+    bool token_timestamps, vad, suppress_nst;
     bool (*abort_callback)(void *);
     void *abort_callback_user_data;
     bool (*encoder_begin_callback)(whisper_context *, whisper_state *, void *);
@@ -50,6 +50,7 @@ inline whisper_full_params whisper_full_default_params(whisper_sampling_strategy
     return {};
 }
 inline int whisper_full(whisper_context *ctx, whisper_full_params p, const float *, int) {
+    if (!p.suppress_nst) return 48;
     entered = 1;
     if (mode == 2) {
         // Model a backend step that only returns after its callback deadline.

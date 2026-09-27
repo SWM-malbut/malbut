@@ -13,7 +13,7 @@ import pytest
 from malbut_resource_monitor.resources import (
     LinuxSampler, Tegra, classify, cpu_percent, cpu_ticks, parse_tegrastats,
 )
-from malbut_resource_monitor.ros_observer import ActionEvents, channel_name
+from malbut_resource_monitor.ros_observer import ActionEvents, SpeechEvents, channel_name
 from malbut_resource_monitor.store import Store
 from malbut_resource_monitor.viewer import LogServer
 
@@ -103,6 +103,29 @@ def test_action_dedup_historic_goal_and_no_fabricated_request_time(tmp_path):
     assert records[-1]['initial_terminal']
     assert records[0]['accepted_ros_ns'] == 123000000456
     assert channel_name('topics', '/a/b') != channel_name('topics', '/a_b')
+    store.close('test')
+
+
+def test_speech_text_and_playback_are_separate_observations(tmp_path):
+    store = Store(tmp_path, 1, os.getpid())
+    events = SpeechEvents(store)
+    events.observe('stt_transcript', SimpleNamespace(
+        text='지금 몇 시야? <사용자 원문>', utterance_id='utterance-1', session_id=''))
+    events.observe('tts_request', SimpleNamespace(
+        text='오후 아홉 시입니다.\n다른 도움이 필요하세요?', request_type=0, playback_id=''))
+    events.observe('tts_playback', SimpleNamespace(playback_id='tts-generated', state='playing'))
+    events.observe('tts_playback', SimpleNamespace(playback_id='tts-generated', state='finished'))
+    records = [json.loads(line) for line in (store.path / 'speech.jsonl').read_text().splitlines()]
+    assert [r['event'] for r in records] == [
+        'stt_transcript', 'tts_request', 'tts_playback', 'tts_playback']
+    assert records[0]['text'] == '지금 몇 시야? <사용자 원문>'
+    assert records[1]['text'] == '오후 아홉 시입니다.\n다른 도움이 필요하세요?'
+    assert records[1]['playback_id'] == ''  # Never guess TTS's generated ID.
+    assert 'state' not in records[1] and 'utterance_id' not in records[1]
+    assert 'text' not in records[2] and records[3]['state'] == 'finished'
+    assert all('wall_ns' in row and 't' in row for row in records)
+    assert store.metadata['channels']['speech']['kind'] == 'speech'
+    assert ((store.path / 'speech.jsonl').stat().st_mode & 0o777) == 0o600
     store.close('test')
 
 

@@ -400,6 +400,33 @@ def test_manager_does_not_make_missing_autoslam_executable():
     bridge.clients['manager'].send_goal_async.assert_not_called()
 
 
+def test_startup_progress_appears_in_existing_runtime_message(monkeypatch):
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {
+        'state': 'RUNNING', 'mode': 'mapping', 'message': 'process alive'}
+    bridge.data.system = {'system_state': 1}
+    bridge.speech_ready = True
+    bridge.node.count_publishers.return_value = 1
+    monkeypatch.setattr(bridge, '_robot_pose', lambda: None)
+    progress = {'completed': 4, 'total': 6, 'stage': '홈캠·낙상 초기화',
+                'state': 'WAITING', 'missing': ['init:malbut_fall_pose']}
+    bridge._startup_progress(SimpleNamespace(data=json.dumps(progress)))
+    bridge._refresh()
+    status = bridge.data.snapshot()['runtime']
+    assert '준비 4/6 단계 · 홈캠·낙상 초기화' in status['message']
+    assert not status['ready'] and status['waiting'] == ['init:malbut_fall_pose']
+    progress.update(completed=6, state='READY', missing=[])
+    bridge._startup_progress(SimpleNamespace(data=json.dumps(progress)))
+    bridge._refresh()
+    assert bridge.data.snapshot()['runtime']['ready']
+    bridge._startup_progress(SimpleNamespace(data='{}'))
+    assert bridge.startup_progress == progress
+    bridge.runtime.snapshot.return_value = {'state': 'STOPPED', 'message': 'stopped'}
+    bridge._refresh()
+    assert bridge.startup_progress == {}
+
+
 def test_readiness_reason_is_exposed_without_changing_manager(monkeypatch):
     """Show exact preparation blockers while retaining the launch process state."""
     bridge, _ = _bridge(autoslam_ready=False)
