@@ -17,3 +17,8 @@ class FallEventJournal(Protocol):
     def append_discovery(self, *, device_id: str, boot_id: str,
                          event: FallRuntimeEvent) -> None:
         ...
+
+    def append_association(self, *, device_id: str, boot_id: str,
+                           events: tuple, incident: FallIncident) -> None:
+        """Commit the target's events and per-discovery link in ONE transaction."""
+        ...

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Cloud 입력 프레임 박스 검수 초안</title>
+<style>
+body{font:16px/1.55 system-ui,sans-serif;background:#131a22;color:#e8edf2;max-width:1120px;margin:24px auto;padding:0 16px}
+h1{font-size:24px;margin:0}.notice{background:#332b17;border-left:4px solid #efc968;padding:12px}
+button,select,input{font:inherit;padding:7px;border-radius:5px;border:1px solid #657484;background:#202d3b;color:#fff}
+button{cursor:pointer}button:hover{background:#304861}button:disabled{opacity:.4;cursor:default}
+.controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:14px 0}
+canvas{display:block;max-width:100%;height:auto;background:#000;touch-action:none;border:1px solid #657484;cursor:crosshair}
+.coords input{width:75px}.hint{color:#becbd9}#status{min-height:1.6em;color:#ffdc84}#note{width:min(96%,800px)}
+#people{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}#people button.active{outline:3px solid #fff}
+small{display:block}a{color:#a4d3ff}fieldset{border:1px solid #657484}legend{padding:0 6px}
+</style>
+<h1>실제 Cloud 입력의 사람 박스 검수</h1>
+<p class="notice">아직 승인하지 않은 초안입니다. 모델 예측 박스는 표시하지 않습니다. 현재 박스는 원본 이미지를 보고 작성한 검수용 초안이며, 이전 모델 출력을 본 뒤 작성했으므로 블라인드 검수는 아닙니다. 수정·다운로드해도 기존 정답이나 점수는 자동으로 바뀌지 않습니다.</p>
+<p>확인할 사람을 고른 뒤 <b>마우스로 드래그해 박스를 다시 그리거나</b> 좌표를 바꾸세요. 보이는 머리·손·발은 포함하고, 화면 밖이나 가려진 신체 범위는 추측하지 마세요. Alt 키는 필요하지 않습니다.</p>
+<div class="controls">
+ <button id="prev">이전 프레임</button><select id="frame" aria-label="프레임"></select><button id="next">다음 프레임</button>
+ <label><input type="checkbox" id="show" checked> 박스 표시</label>
+</div>
+<p id="heading"></p>
+<canvas id="canvas" width="640" height="400" aria-label="원본 Cloud 이미지와 검수 초안 박스"></canvas>
+<div id="people"></div>
+<fieldset><legend id="personTitle"></legend>
+ <div class="controls"><label>관측 여부 <select id="visibility"><option value="visible">보임</option><option value="not_visible">보이지 않음</option><option value="uncertain">사람 구분 어려움</option></select></label></div>
+ <div class="controls coords"><label>왼쪽 <input type="number" id="left" min="0" max="639" step="1"></label><label>위 <input type="number" id="top" min="0" max="399" step="1"></label><label>오른쪽 <input type="number" id="right" min="1" max="640" step="1"></label><label>아래 <input type="number" id="bottom" min="1" max="400" step="1"></label><button id="apply">좌표 적용</button></div>
+ <label>메모 <input id="note" type="text"></label>
+</fieldset>
+<div class="controls"><button id="reviewed">이 프레임 확인했음</button><span id="progress"></span></div>
+<div class="controls"><button id="download">수정 JSON 내려받기</button><label>이전에 저장한 JSON 불러오기 <input id="upload" type="file" accept=".json,application/json"></label></div>
+<p id="status" role="status"></p>
+<p class="hint">이 화면에는 네트워크 요청이 없습니다. 수정 내용은 이 탭의 메모리에만 보관되며, 닫기 전에 JSON을 내려받으세요. 원본 이미지는 파일에 포함되어 있습니다. 내려받은 JSON을 보내주면 검토 여부와 원본 연결을 확인한 뒤 별도 정답 자료로 반영할 수 있습니다.</p>
+<script type="application/json" id="draft-data">__DRAFT_DATA__</script>
+<script>
+'use strict';
+const initial=JSON.parse(document.getElementById('draft-data').textContent);
+let draft=structuredClone(initial), frameIndex=0, personIndex=0, drag=null, generation=0, loaded=false;
+const $=id=>document.getElementById(id), ctx=$('canvas').getContext('2d');
+const colors=['#72ff67','#ffe060','#f795ed'], coordinateIds=['left','top','right','bottom'];
+const photo=new Image();
+const current=()=>draft.frames[frameIndex], person=()=>current().persons[personIndex];
+const validBox=b=>Array.isArray(b)&&b.length===4&&b.every(Number.isInteger)&&0<=b[0]&&b[0]<b[2]&&b[2]<=640&&0<=b[1]&&b[1]<b[3]&&b[3]<=400;
+function validateData(value){
+ if(value.schema_version!==initial.schema_version||value.packet_sha256!==initial.packet_sha256||value.approval_status!=='pending_human_review'||value.approved_gt_updated!==false||value.coordinate_format!==initial.coordinate_format||value.interpolation!=='forbidden')throw Error('다른 자료이거나 승인 상태가 바뀐 파일입니다.');
+ if(!Array.isArray(value.frames)||value.frames.length!==initial.frames.length)throw Error('프레임 수가 다릅니다.');
+ const keys=new Set();
+ for(const f of value.frames){
+  const ref=initial.frames.find(r=>r.key===f.key);
+  if(!ref||keys.has(f.key)||['case_id','image_index','source_frame','jpeg_sha256'].some(k=>f[k]!==ref[k]))throw Error('원본 프레임 연결이 다릅니다.');
+  keys.add(f.key);
+  if(!Array.isArray(f.persons)||f.persons.length!==ref.persons.length)throw Error('사람 목록이 다릅니다.');
+  const ids=new Set();
+  for(const p of f.persons){
+   const rp=ref.persons.find(r=>r.person_id===p.person_id);
+   if(!rp||ids.has(p.person_id)||rp.role!==p.role)throw Error('사람 ID/역할이 다릅니다.');
+   ids.add(p.person_id);
+   if(!['visible','not_visible','uncertain'].includes(p.visibility))throw Error('관측 여부를 확인하세요.');
+   if(p.visibility==='visible'?!validBox(p.box):p.box!==null)throw Error(f.key+'의 박스를 확인하세요.');
+  }
+ }
+ return true;
+}
+function say(message){$('status').textContent=message;}
+function progress(){
+ const n=draft.frames.filter(f=>f.human_reviewed===true).length;
+ $('progress').textContent=`확인 표시 ${n} / ${draft.frames.length}프레임 · 정답 승인은 별도`;
+ $('reviewed').textContent=current().human_reviewed?'확인 표시 취소':'이 프레임 확인했음';
+}
+function changed(){current().human_reviewed=false;progress();}
+function draw(){
+ ctx.clearRect(0,0,640,400); if(!loaded)return;
+ ctx.drawImage(photo,0,0);
+ if(!$('show').checked)return;
+ for(const [n,p] of current().persons.entries()){
+  if(!p.box)continue;
+  const [x,y,r,b]=p.box;ctx.strokeStyle=colors[n%colors.length];ctx.lineWidth=n===personIndex?3:1.5;
+  ctx.strokeRect(x,y,r-x,b-y);ctx.fillStyle=colors[n%colors.length];ctx.font='13px sans-serif';ctx.fillText(p.person_id+' DRAFT',x+3,Math.min(y+16,396));
+ }
+ if(drag){ctx.strokeStyle='#fff';ctx.setLineDash([4,4]);ctx.strokeRect(drag.x,drag.y,drag.endX-drag.x,drag.endY-drag.y);ctx.setLineDash([]);}
+}
+function updatePerson(){
+ const p=person();$('personTitle').textContent=p.person_id+' · '+p.description+(p.role==='target'?' (확인 대상)':' (주변 사람)');
+ $('visibility').value=p.visibility;$('note').value=p.note||'';
+ coordinateIds.forEach((id,n)=>{$(id).value=p.box?p.box[n]:'';$(id).disabled=p.visibility!=='visible';});
+ $('apply').disabled=p.visibility!=='visible';
+ $('people').replaceChildren();current().persons.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p.person_id+' '+(p.role==='target'?'대상':'주변 사람');b.className=i===personIndex?'active':'';b.style.borderColor=colors[i%colors.length];b.onclick=()=>{personIndex=i;updatePerson();draw();};$('people').append(b);});
+}
+function showFrame(index){
+ frameIndex=Math.max(0,Math.min(draft.frames.length-1,index));personIndex=0;drag=null;loaded=false;
+ $('frame').value=String(frameIndex);$('prev').disabled=frameIndex===0;$('next').disabled=frameIndex===draft.frames.length-1;
+ const f=current();$('heading').textContent=`${f.case_id} · 전송 이미지 ${f.image_index} (0부터) · 원본 프레임 ${f.source_frame} · 640×400`;
+ updatePerson();progress();draw();
+ const request=++generation;photo.onload=()=>{if(request!==generation)return;loaded=true;draw();};photo.onerror=()=>say('이미지를 읽지 못했습니다.');photo.src=f.image_data;
+}
+initial.frames.forEach((f,i)=>{const option=document.createElement('option');option.value=String(i);option.textContent=f.key+' / f'+f.source_frame;$('frame').append(option);});
+$('frame').onchange=()=>showFrame(Number($('frame').value));$('prev').onclick=()=>showFrame(frameIndex-1);$('next').onclick=()=>showFrame(frameIndex+1);$('show').onchange=draw;
+$('apply').onclick=()=>{const box=coordinateIds.map(id=>$(id).value===''?NaN:Number($(id).value));if(!validBox(box)){say('왼쪽 < 오른쪽, 위 < 아래인 정수 좌표를 입력하세요.');return;}person().box=box;changed();say('좌표를 적용했습니다.');draw();};
+$('visibility').onchange=()=>{person().visibility=$('visibility').value;person().box=null;changed();updatePerson();draw();say(person().visibility==='visible'?'드래그하거나 좌표를 입력해 박스를 그리세요.':'박스를 비웠습니다.');};
+$('note').oninput=()=>{person().note=$('note').value;changed();};
+function point(event){const r=$('canvas').getBoundingClientRect();return [Math.round(Math.max(0,Math.min(640,(event.clientX-r.left)*640/r.width))),Math.round(Math.max(0,Math.min(400,(event.clientY-r.top)*400/r.height)))];}
+$('canvas').onpointerdown=event=>{if(!loaded||person().visibility!=='visible'||!$('show').checked||event.button!==0)return;const [x,y]=point(event);drag={x,y,endX:x,endY:y};$('canvas').setPointerCapture(event.pointerId);};
+$('canvas').onpointermove=event=>{if(!drag)return;[drag.endX,drag.endY]=point(event);draw();};
+$('canvas').onpointerup=event=>{if(!drag)return;const [x,y]=point(event);const box=[Math.min(x,drag.x),Math.min(y,drag.y),Math.max(x,drag.x),Math.max(y,drag.y)];drag=null;if(validBox(box)){person().box=box;changed();updatePerson();say('새 박스를 적용했습니다.');}draw();};
+$('canvas').onpointercancel=()=>{drag=null;draw();};
+$('reviewed').onclick=()=>{try{validateData(draft);current().human_reviewed=!current().human_reviewed;progress();say('확인 표시만 저장했습니다. 정답으로 자동 승인하지 않습니다.');}catch(e){say(e.message);}};
+function exportData(){validateData(draft);const value=structuredClone(draft);for(const f of value.frames){delete f.image_data;for(const p of f.persons)delete p.description;}value.review_exported_at=new Date().toISOString();return value;}
+$('download').onclick=()=>{try{const value=exportData();const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)+'\n'],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='cloud-box-review-'+initial.packet_sha256.slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);say('수정 JSON을 내려받았습니다. 이 파일을 보내주세요.');}catch(e){say(e.message);}};
+$('upload').onchange=async()=>{try{const file=$('upload').files[0];if(!file)return;const value=JSON.parse(await file.text());validateData(value);for(const f of value.frames){const ref=initial.frames.find(r=>r.key===f.key);f.image_data=ref.image_data;for(const p of f.persons)p.description=ref.persons.find(r=>r.person_id===p.person_id).description;}draft=value;showFrame(0);say('수정 JSON을 불러왔습니다. 정답 승인은 별도입니다.');}catch(e){say('불러오기 실패: '+e.message);}finally{$('upload').value='';}};
+window.addEventListener('beforeunload',event=>{event.preventDefault();event.returnValue='';});
+validateData(draft);showFrame(0);
+</script>
+</html>

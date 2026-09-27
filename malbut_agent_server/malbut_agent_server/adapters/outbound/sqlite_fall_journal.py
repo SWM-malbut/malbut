@@ -77,6 +77,11 @@ class SqliteFallJournal:
             raise
 
     def append(self, *, device_id, boot_id, event, incident):
+        with self._lock, self._db:
+            self._append_incident(device_id=device_id, boot_id=boot_id,
+                                  event=event, incident=incident)
+
+    def _append_incident(self, *, device_id, boot_id, event, incident):
         if device_id != self.device_id or event.incident_id != incident.incident_id:
             raise ValueError('journal identity mismatch')
         occurred = datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(
@@ -107,13 +112,12 @@ class SqliteFallJournal:
                     observedAt=observation.observed_at, state=observation.state.value,
                     associationVerified=observation.association_verified) if observation else None)
             ), separators=(',', ':'), allow_nan=False)
-        with self._lock, self._db:
-            cursor = self._db.execute(
-                'INSERT INTO incident_events(event_id,incident_id,payload,closure_evidence) '
-                'VALUES(?,?,?,?)', (event.event_id, incident.incident_id, '{}', proof))
-            payload['sequence'] = cursor.lastrowid
-            self._db.execute('UPDATE incident_events SET payload=? WHERE sequence=?',
-                             (json.dumps(payload, separators=(',', ':')), cursor.lastrowid))
+        cursor = self._db.execute(
+            'INSERT INTO incident_events(event_id,incident_id,payload,closure_evidence) '
+            'VALUES(?,?,?,?)', (event.event_id, incident.incident_id, '{}', proof))
+        payload['sequence'] = cursor.lastrowid
+        self._db.execute('UPDATE incident_events SET payload=? WHERE sequence=?',
+                         (json.dumps(payload, separators=(',', ':')), cursor.lastrowid))
 
     def pending(self):
         with self._lock:
@@ -126,13 +130,27 @@ class SqliteFallJournal:
             return dict(row) if row else None
 
     def append_discovery(self, *, device_id, boot_id, event):
+        with self._lock, self._db:
+            self._append_discovery(device_id=device_id, boot_id=boot_id, event=event)
+
+    def _append_discovery(self, *, device_id, boot_id, event):
         if device_id != self.device_id or event.discovery is None:
             raise ValueError('journal discovery mismatch')
         payload = dict(schema_version=1, event_id=event.event_id, boot_id=boot_id,
                        occurred_at=self._clock(), **event.discovery.metadata())
+        self._db.execute('INSERT INTO cloud_discoveries(event_id,payload) VALUES(?,?)',
+                         (event.event_id, json.dumps(payload, allow_nan=False)))
+
+    def append_association(self, *, device_id, boot_id, events, incident):
+        # Do not call the public single-event methods here: their context
+        # managers would commit a partial transition before the link is saved.
         with self._lock, self._db:
-            self._db.execute('INSERT INTO cloud_discoveries(event_id,payload) VALUES(?,?)',
-                             (event.event_id, json.dumps(payload, allow_nan=False)))
+            for event in events:
+                if event.discovery is not None:
+                    self._append_discovery(device_id=device_id, boot_id=boot_id, event=event)
+                else:
+                    self._append_incident(device_id=device_id, boot_id=boot_id,
+                                          event=event, incident=incident)
 
     def discoveries(self, *, after_sequence=0, limit=100):
         """Paginated local review, not a guardian delivery or a resolved incident."""

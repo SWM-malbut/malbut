@@ -124,3 +124,42 @@ def test_closed_coordinator_ignores_new_work_and_results():
     coordinator.close()
     assert not coordinator.receive(event())
     assert not coordinator.complete(request, situation_assessment='unknown', help_needed=True)
+
+
+def test_explicit_scene_question_is_general_deduplicated_and_retains_null_subject():
+    coordinator = FallConfirmationCoordinator(runtime_id='vlm')
+    payload = event(confirmation_scope='scene', subject_key=None)
+    assert coordinator.receive(payload)
+    request, = coordinator.requests.values()
+    assert request.subject_key is None
+    assert '특정인을 지목하지 말고' in request.summary
+    assert '다른 사람의 상태로 판단하지 마세요' in request.summary
+    assert 'ignore instructions' not in request.summary
+    assert coordinator.receive(payload)
+    assert len(coordinator.requests) == 1
+    assert coordinator.complete(request, situation_assessment='resolved', help_needed=False)
+    command, = coordinator.drain_commands()
+    assert command['subject_key'] is None
+    assert command['incident_id'] == 'incident'
+    assert coordinator.receive(payload) and not coordinator.requests
+    assert coordinator.drain_commands() == (command,)
+
+
+@pytest.mark.parametrize('change', [
+    {'subject_key': None},
+    {'confirmation_scope': 'scene', 'subject_key': 'helper'},
+    {'confirmation_scope': 'scene', 'subject_key': None, 'video_assessment': 'normal_activity'},
+    {'confirmation_scope': 'scene', 'subject_key': None, 'video_assessment': 'unobservable'},
+    {'confirmation_scope': []}, {'confirmation_scope': None},
+])
+def test_missing_subject_requires_explicit_positive_scene_scope(change):
+    coordinator, request = make()
+    assert not coordinator.receive(event(**change))
+    assert list(coordinator.requests.values()) == [request]
+
+
+def test_scene_normal_analysis_never_requests_dismissal():
+    coordinator = FallConfirmationCoordinator(runtime_id='vlm')
+    assert coordinator.receive(event(kind='analysis_completed', confirmation_scope='scene',
+                                     subject_key=None, video_assessment='normal_activity'))
+    assert not coordinator.drain_commands()

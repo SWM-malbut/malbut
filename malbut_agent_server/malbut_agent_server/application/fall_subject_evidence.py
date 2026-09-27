@@ -65,6 +65,11 @@ class FallSubjectEvidence:
         entry = self._frames.get(observed_at, {}).get(subject_key)
         return entry[0] if entry is not None else None
 
+    def at(self, observed_at):
+        """Exact measured sample only; never backfill with a nearby Pose box."""
+        return tuple((key, token, pose) for key, (token, pose) in
+                     self._frames.get(observed_at, {}).items())
+
     def snapshot(self, window):
         """Immutable measured boxes at dispatch; no interpolation or RGB copy."""
         return tuple(tuple((key, token, pose) for key, (token, pose) in
