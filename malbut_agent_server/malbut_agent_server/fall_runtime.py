@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import time
+from typing import Optional, TYPE_CHECKING
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from malbut_agent_server.adapters.outbound.sam_tracking import SamTrackingSettings
 
 from malbut_agent_server.application.fall_detector_input import bounded_object
 from malbut_agent_server.domain.fall_monitoring import (
@@ -27,6 +31,7 @@ class FallNodeSettings:
     input_fps: float
     max_source_age_s: float
     control_lease_s: float
+    tracking: Optional['SamTrackingSettings'] = None
 
     @classmethod
     def parse(cls, text):
@@ -34,7 +39,7 @@ class FallNodeSettings:
         fields = {'device_id', 'journal_path', 'cloud_key_file', 'model', 'image_topic',
                   'policy', 'retention_s', 'buffer_bytes', 'buffer_frames', 'input_fps',
                   'max_source_age_s', 'control_lease_s'}
-        if set(data) != fields:
+        if set(data) - {'tracking'} != fields:
             raise ValueError('runtime configuration fields do not match contract')
         if not isinstance(data['policy'], dict):
             raise ValueError('policy must be an object')
@@ -64,6 +69,9 @@ class FallNodeSettings:
                 or data['max_source_age_s'] > policy.max_frame_age_s):
             raise ValueError('inconsistent runtime limits')
         data['policy'] = policy
+        if data.get('tracking') is not None:
+            from malbut_agent_server.adapters.outbound.sam_tracking import SamTrackingSettings
+            data['tracking'] = SamTrackingSettings.parse(data['tracking'])
         return cls(**data)
 
 

@@ -14,6 +14,14 @@ from test_paid_vlm_box_prompt import parent_bundle
 PROFILE = native_boxes.PROFILE
 
 
+def test_live_native_prompt_matches_evaluated_v4_without_changing_old_profiles():
+    from malbut_agent_server.adapters.outbound.ollama_cloud_fall import (
+        CROSSCHECK_NATIVE_SYSTEM_PROMPT, CROSSCHECK_SYSTEM_PROMPT,
+    )
+    assert CROSSCHECK_NATIVE_SYSTEM_PROMPT == inputs.system_prompt(PROFILE)
+    assert 'and box (normalized left,top,right,bottom).' in CROSSCHECK_SYSTEM_PROMPT
+
+
 def reply(box=None, indices=(0, 11)):
     if box is None:
         box = [200, 100, 800, 600]
