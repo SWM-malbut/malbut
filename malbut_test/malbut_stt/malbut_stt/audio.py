@@ -3,6 +3,7 @@
 from collections import deque
 from dataclasses import dataclass
 import math
+import os
 from typing import Callable, Optional
 
 
@@ -161,6 +162,13 @@ class SoundDeviceRecorder:
 
         # Use the same device IDs as `python -m sounddevice`.
         self._device = None if device_index == -1 else device_index
+        # Robot Bringup pins XFM in PULSE_SOURCE for both consumers. Standalone
+        # capture and explicit non-XFM device selections keep their old behavior.
+        shared_source = os.environ.get('MALBUT_SHARED_MICROPHONE', '')
+        if device_index == 0 and shared_source:
+            if os.environ.get('PULSE_SOURCE') != shared_source:
+                raise RuntimeError('Shared microphone source does not match PULSE_SOURCE')
+            self._device = 'pulse'
 
         sd.check_input_settings(
             device=self._device,

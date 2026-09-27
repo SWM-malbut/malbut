@@ -9,15 +9,15 @@ from unittest.mock import Mock
 
 import pytest
 
-from malbut_system_manager.fall_confirmation import FallConfirmationCoordinator
-from malbut_system_manager.fall_confirmation_link import FallConfirmationLink
+from malbut_fall_coordinator.fall_confirmation import FallConfirmationCoordinator
+from malbut_fall_coordinator.fall_confirmation_link import FallConfirmationLink
 from test_fall_confirmation import event
 
 
 @pytest.fixture
 def rig(monkeypatch):
     monkeypatch.setitem(sys.modules, 'action_msgs.msg', SimpleNamespace(
-        GoalStatus=SimpleNamespace(STATUS_SUCCEEDED=4),
+        GoalStatus=SimpleNamespace(STATUS_SUCCEEDED=4, STATUS_ABORTED=6),
     ))
     now = SimpleNamespace(value=0.0)
     link = object.__new__(FallConfirmationLink)
@@ -30,6 +30,12 @@ def rig(monkeypatch):
     link.client, link.decisions, link.timer = Mock(), Mock(), Mock()
     link.client.server_is_ready.return_value = True
     link.client.send_goal_async.side_effect = lambda goal: Future()
+    link.agent_presence = Mock()
+    link.agent_presence.server_is_ready.return_value = True
+    link.manager_state = SimpleNamespace(
+        active_foreground_missions=[], active_background_missions=[],
+        pending_missions=[], suspended_missions=[],
+    )
     link.request = link.goal_future = link.handle = None
     link.sent_at = link.next_attempt = 0.0
     link.accepted_at = link.server_missing_since = None
@@ -47,18 +53,21 @@ def commands(link):
 
 def success():
     return SimpleNamespace(status=4, result=SimpleNamespace(
-        situation_assessment='resolved', help_needed=False,
+        message='', result_yaml=json.dumps(dict(
+            situation_assessment='resolved', help_needed=False,
+        )),
     ))
 
 
 @pytest.mark.parametrize('late_by', [0.0, 0.001])
-@pytest.mark.parametrize('phase', ['acceptance', 'result', 'server_loss'])
+@pytest.mark.parametrize('phase', ['acceptance', 'result', 'manager_loss', 'agent_loss'])
 def test_late_callback_cannot_bypass_transport_deadline(rig, phase, late_by):
     link = rig.link
     if phase != 'acceptance':
         link.goal_future.set_result(rig.handle)
-    if phase == 'server_loss':
-        link.client.server_is_ready.return_value = False
+    if phase in ('manager_loss', 'agent_loss'):
+        peer = link.client if phase == 'manager_loss' else link.agent_presence
+        peer.server_is_ready.return_value = False
         link.tick()
     rig.now.value = (610.0 if phase == 'result' else 5.0) + late_by
     if phase == 'acceptance':
@@ -72,11 +81,18 @@ def test_late_callback_cannot_bypass_transport_deadline(rig, phase, late_by):
 
 
 def test_result_before_deadline_is_forwarded_once(rig):
+    goal = rig.link.client.send_goal_async.call_args.args[0]
+    assert goal.capability_id == 'fall_confirmation'
+    assert json.loads(goal.arguments_yaml) == dict(
+        request_id=rig.link.request.request_id, situation_type='fall',
+        summary=rig.link.request.summary,
+    )
     rig.now.value = 4.999
     rig.link.goal_future.set_result(rig.handle)
     rig.now.value += 609.999
     rig.result.set_result(success())
     assert [item['action'] for item in commands(rig.link)] == ['confirmation_result']
+    assert commands(rig.link)[0]['help_needed'] is False
     rig.handle.cancel_goal_async.assert_not_called()
 
 
@@ -119,3 +135,36 @@ def test_rejected_goal_can_retry_same_request_without_old_deadline(rig):
     rig.result.set_result(success())
     assert [item['action'] for item in commands(rig.link)] == ['confirmation_result']
     rig.handle.cancel_goal_async.assert_not_called()
+
+
+def test_downstream_rejection_retries_through_manager(rig):
+    request = rig.link.request
+    rig.link.goal_future.set_result(rig.handle)
+    rig.result.set_result(SimpleNamespace(status=6, result=SimpleNamespace(
+        message='Downstream Action server rejected the goal', result_yaml='',
+    )))
+    assert rig.link.request is None
+    assert commands(rig.link) == []
+    rig.now.value = 1.0
+    rig.link.tick()
+    assert rig.link.request == request
+    assert rig.link.client.send_goal_async.call_count == 2
+    rig.link.agent_presence.send_goal_async.assert_not_called()
+
+
+@pytest.mark.parametrize('accepted', [False, True])
+def test_close_returns_transport_future_and_cancels_late_goal(rig, accepted):
+    pending = rig.link.goal_future
+    cancellation = Future()
+    rig.handle.cancel_goal_async.return_value = cancellation
+    if accepted:
+        pending.set_result(rig.handle)
+    assert rig.link.close() is (cancellation if accepted else pending)
+    assert rig.link.request is rig.link.handle is rig.link.goal_future is None
+    if not accepted:
+        rig.handle.cancel_goal_async.assert_not_called()
+        pending.set_result(rig.handle)
+    rig.handle.cancel_goal_async.assert_called_once()
+    rig.result.set_result(success())
+    assert commands(rig.link) == []
+    rig.link.agent_presence.cancel_goal_async.assert_not_called()

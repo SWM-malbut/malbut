@@ -7,6 +7,7 @@ import base64
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -37,6 +38,12 @@ ROBOT_INTERFACE = 'malbut_manager_v1'
 LOCAL_OPERATIONS = ('map_delete', 'zones_save', 'robot_ping', 'robot_diagnostics')
 # The server accepts device request bodies up to 64 KiB.
 MAX_RESULT_BYTES = 60 * 1024
+# Held joystick/keyboard input arrives through the command queue. While it does,
+# commands are polled every 0.2 s (state uploads keep the normal interval) and
+# each velocity is held long enough to ride out one poll plus network jitter.
+MANUAL_POLL_S = 0.2
+MANUAL_FAST_WINDOW_S = 3.0
+MANUAL_HOLD_S = 1.0
 
 
 def validate_backend_url(value):
@@ -150,8 +157,9 @@ def panel_command(operation, payload):
         command = {'command': 'start', **payload}
     elif operation == 'mission_cancel' and not payload:
         command = {'command': 'cancel'}
-    elif operation == 'manual_move' and set(payload) == {'direction'}:
-        command = {'command': 'nudge', **payload}
+    elif operation == 'manual_move' and set(payload) == {'vx', 'vy', 'wz'}:
+        command = {'command': 'teleop', 'linear_x': payload['vx'], 'linear_y': payload['vy'],
+                   'angular_z': payload['wz'], 'hold_s': MANUAL_HOLD_S}
     elif operation == 'debug_mission_start' and set(payload) == {'capability', 'arguments'}:
         command = {'command': 'debug_start', **payload}
     else:
@@ -321,6 +329,8 @@ class CloudSync:
         self.seen = OrderedDict()
         self.last_map = ''
         self.last_map_at = 0.0
+        self.last_state_at = -math.inf
+        self.fast_until = -math.inf
         self.maps = []
         self.maps_at = 0.0
         self.last_warning = ''
@@ -369,6 +379,8 @@ class CloudSync:
             result = {'ok': False, 'result': {'error': 'Result exceeds the cloud size limit'}}
         self.seen[command_id] = result
         self.pending[command_id] = result
+        if operation == 'manual_move' and result['ok']:
+            self.fast_until = time.monotonic() + MANUAL_FAST_WINDOW_S
         while len(self.seen) > 256:
             self.seen.popitem(last=False)
 
@@ -401,6 +413,11 @@ class CloudSync:
                    'last_warning': self.last_warning})
         return json.loads(json.dumps(diagnostics, default=str))
 
+    def wait_seconds(self, elapsed):
+        """Poll fast only while manual input keeps arriving."""
+        interval = MANUAL_POLL_S if time.monotonic() < self.fast_until else self.interval
+        return max(0.1, interval - elapsed)
+
     def tick(self):
         """Flush receipts before claiming another command; never replay a mission."""
         self._complete_pending()
@@ -412,8 +429,11 @@ class CloudSync:
             self.maps_at = now
         snapshot = self.bridge.data.snapshot()
         info = self.bridge.data.map_snapshot()
-        self.client.request('/api/device/v1/robot/state', 'POST',
-                            state_payload(snapshot, info, self.maps))
+        # Fast manual polls only claim commands; state keeps its normal cadence.
+        if now - self.last_state_at >= self.interval - MANUAL_POLL_S / 2:
+            self.client.request('/api/device/v1/robot/state', 'POST',
+                                state_payload(snapshot, info, self.maps))
+            self.last_state_at = now
         if self.stop_event.is_set():
             return
         if info.get('active') and info.get('available') and now - self.last_map_at >= 5.0:
@@ -460,7 +480,7 @@ class CloudSync:
                 self._warn(str(error))
             except Exception:
                 self._warn('Robot cloud synchronization failed; check local runtime state')
-            self.stop_event.wait(max(0.1, self.interval - (time.monotonic() - started)))
+            self.stop_event.wait(self.wait_seconds(time.monotonic() - started))
 
     def close(self):
         """Stop claiming commands before the local bridge begins shutdown."""

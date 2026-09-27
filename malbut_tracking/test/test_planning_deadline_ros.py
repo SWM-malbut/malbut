@@ -78,11 +78,10 @@ def test_slow_ros_planner_uses_short_fallback_before_its_late_result(monkeypatch
         follower._tracking_source = 'camera'
         robot = Point2D(0.5, 1.0)
         follower._robot_pose = Mock(return_value=(robot, 0.0))
-        follower._latest_static_map = CostmapGrid(
+        follower._latest_global_costmap = CostmapGrid(
             'map', follower._now_seconds(), 0.1, 40, 40,
             Point2D(0.0, 0.0), 0.0, (0,) * 1600,
         )
-        follower._latest_global_costmap = follower._latest_static_map
         deadline = monotonic() + 2.0
         while not follower._path_planner._client.server_is_ready():
             assert monotonic() < deadline, 'isolated test action server was not discovered'

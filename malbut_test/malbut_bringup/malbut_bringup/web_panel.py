@@ -36,18 +36,10 @@ TELEOP_TOPIC = '/cmd_vel_teleop'
 TELEOP_LIMITS = {'linear_x': 0.2, 'linear_y': 0.2, 'angular_z': 0.5}
 # The page repeats a held command; if it stops (closed page, lost Wi-Fi), stop once.
 TELEOP_TIMEOUT_S = 0.5
+# A page behind a polling link may ask for a longer hold to ride out its jitter.
+TELEOP_MAX_HOLD_S = 2.0
 ZONES_STATE_TOPIC = '/malbut/zones/state'
 MAX_ZONE_REQUEST_BYTES = 64 * 1024
-# One remote manual step (about 12 cm or 23 degrees), inside TELEOP_LIMITS.
-NUDGES = {
-    'forward': (0.15, 0.0, 0.0), 'backward': (-0.15, 0.0, 0.0),
-    'left': (0.0, 0.15, 0.0), 'right': (0.0, -0.15, 0.0),
-    'turn_left': (0.0, 0.0, 0.5), 'turn_right': (0.0, 0.0, -0.5),
-}
-NUDGE_S = 0.8
-# manual_control requests manual_drive on the first input; the step starts once
-# /malbut/state reports MANUAL, so a slow start does not shorten it.
-NUDGE_START_TIMEOUT_S = 3.0
 # RViz's 2D Pose Estimate spread: 0.5 m and about 15 degrees.
 GIVEN_POSE_COVARIANCE = [0.0] * 36
 GIVEN_POSE_COVARIANCE[0] = GIVEN_POSE_COVARIANCE[7] = 0.25
@@ -79,11 +71,6 @@ def validate_command(payload):
                 and Path(payload['map']).suffix in ('.yaml', '.yml')):
             return payload
         raise ValueError('Choose mapping, or navigation with a listed map filename')
-    if payload.get('command') == 'nudge':
-        if set(payload) != {'command', 'direction'} or payload['direction'] not in (
-                *NUDGES, 'stop'):
-            raise ValueError('Manual step needs one of: ' + ', '.join((*NUDGES, 'stop')))
-        return payload
     if payload.get('command') == 'debug_start':
         # Any registered capability; the manager validates fields against its manifest.
         if (set(payload) != {'command', 'capability', 'arguments'}
@@ -99,13 +86,18 @@ def validate_command(payload):
             raise ValueError(f'Debug arguments exceed {DEBUG_ARGUMENT_BYTES} bytes')
         return payload
     if payload.get('command') == 'teleop':
-        if set(payload) != {'command', *TELEOP_LIMITS}:
+        if set(payload) - {'hold_s'} != {'command', *TELEOP_LIMITS}:
             raise ValueError('Teleop requires linear_x, linear_y and angular_z')
         for key, limit in TELEOP_LIMITS.items():
             value = payload[key]
             if (type(value) not in (float, int) or not math.isfinite(value)
                     or abs(value) > limit):
                 raise ValueError(f'{key} must be finite and within ±{limit}')
+        hold = payload.get('hold_s', TELEOP_TIMEOUT_S)
+        if (type(hold) not in (float, int) or not math.isfinite(hold)
+                or not TELEOP_TIMEOUT_S <= hold <= TELEOP_MAX_HOLD_S):
+            raise ValueError(
+                f'hold_s must be between {TELEOP_TIMEOUT_S} and {TELEOP_MAX_HOLD_S} seconds')
         return payload
     if set(payload) != {'command', 'capability', 'arguments'}:
         raise ValueError('Expected command, capability, arguments')
@@ -279,7 +271,7 @@ class PanelData:
         self.system = None
         self.tracking = None
         self.zones = None
-        self.manual = {'state': 'IDLE', 'direction': None, 'message': ''}
+        self.manual = {'state': 'IDLE', 'message': ''}
         self.frames = {}
         self.encoded = (None, b'')
         self.map_cache = MapCache(palette=map_palette)
@@ -392,7 +384,7 @@ class RosBridge:
         self.twist = Twist
         self.teleop_publisher = self.node.create_publisher(Twist, TELEOP_TOPIC, 10)
         self.teleop_received = None
-        self.nudge = None
+        self.teleop_hold_s = TELEOP_TIMEOUT_S
         self.clients = {
             'manager': ActionClient(self.node, ExecuteMission, '/malbut/mission/execute'),
             'autoslam': ActionClient(self.node, AutoSlam, '/autoslam'),
@@ -773,8 +765,6 @@ class RosBridge:
                 self.cancel_owned()
             elif payload['command'] == 'teleop':
                 self._teleop(payload)
-            elif payload['command'] == 'nudge':
-                self._nudge(payload['direction'])
             elif payload['command'] in ('bringup_start', 'bringup_stop'):
                 try:
                     if payload['command'] == 'bringup_start':
@@ -790,64 +780,35 @@ class RosBridge:
                     self.data.update(request_id, state='ERROR', message=str(error))
 
     def _teleop(self, payload):
-        """Forward one web command; AssistedTeleop keeps the latest input."""
-        self.nudge = None
+        """Forward one held command; AssistedTeleop keeps the latest input."""
         message = self.twist()
         message.linear.x = float(payload['linear_x'])
         message.linear.y = float(payload['linear_y'])
         message.angular.z = float(payload['angular_z'])
         moving = any(payload[key] for key in TELEOP_LIMITS)
+        self.teleop_hold_s = float(payload.get('hold_s', TELEOP_TIMEOUT_S))
         self.teleop_received = time.monotonic() if moving else None
         self.teleop_publisher.publish(message)
+        # manual_control starts manual_drive on the first input; until
+        # /malbut/state reports MANUAL nothing moves. The page shows that mode.
+        self._manual_state('MOVING' if moving else 'IDLE',
+                           'Driving' if moving else 'Stopped')
 
-    def _nudge(self, direction):
-        """Start one bounded step, or stop the current one."""
-        if direction == 'stop':
-            self.stop_teleop()
-            self._manual_state('IDLE', None, 'Stopped')
-            return
-        self.nudge = {'direction': direction, 'requested': time.monotonic(), 'moving': None}
-        self._manual_state('STARTING', direction, 'Waiting for manual control')
-
-    def _manual_state(self, state, direction, message):
+    def _manual_state(self, state, message):
         with self.data.lock:
-            self.data.manual = {'state': state, 'direction': direction, 'message': message}
-
-    def _step_nudge(self):
-        nudge, now = self.nudge, time.monotonic()
-        with self.data.lock:
-            manual = (self.data.system or {}).get('control_mode') == 1  # SystemState.MANUAL
-        if nudge['moving'] is None and manual:
-            nudge['moving'] = now
-            self._manual_state('MOVING', nudge['direction'], 'Moving one step')
-        if nudge['moving'] is None and now - nudge['requested'] > NUDGE_START_TIMEOUT_S:
-            self.stop_teleop()
-            self._manual_state('IDLE', None, 'Manual control did not start; '
-                               'the manager may be switching localization')
-            return
-        if nudge['moving'] is not None and now - nudge['moving'] >= NUDGE_S:
-            self.stop_teleop()
-            self._manual_state('IDLE', None, 'Step finished')
-            return
-        # Before MANUAL this only wakes manual_control; AssistedTeleop is not running.
-        message = self.twist()
-        (message.linear.x, message.linear.y,
-         message.angular.z) = NUDGES[nudge['direction']]
-        self.teleop_publisher.publish(message)
+            self.data.manual = {'state': state, 'message': message}
 
     def _teleop_watchdog(self):
         """Stop once when a held web command is no longer repeated."""
-        if self.nudge is not None:
-            self._step_nudge()
-        elif (self.teleop_received is not None
-                and time.monotonic() - self.teleop_received > TELEOP_TIMEOUT_S):
+        if (self.teleop_received is not None
+                and time.monotonic() - self.teleop_received > self.teleop_hold_s):
             self.stop_teleop()
+            self._manual_state('IDLE', 'Stopped: the page stopped repeating its input')
 
     def stop_teleop(self):
         """Publish zero if this panel last commanded motion."""
-        if self.teleop_received is not None or self.nudge is not None:
+        if self.teleop_received is not None:
             self.teleop_received = None
-            self.nudge = None
             self.teleop_publisher.publish(self.twist())
 
     def _start(self, request_id, payload):

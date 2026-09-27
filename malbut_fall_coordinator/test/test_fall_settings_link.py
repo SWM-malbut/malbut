@@ -40,7 +40,7 @@ class Node:
 def setup_link():
     pytest.importorskip('rclpy')
     types = pytest.importorskip('malbut_interfaces.msg')
-    from malbut_system_manager.fall_settings_link import FallSettingsLink
+    from malbut_fall_coordinator.fall_settings_link import FallSettingsLink
     node = Node()
     link = FallSettingsLink(node, manager_id='manager', bridge_id='bridge', vlm_id='vlm')
     link.relay, clock = make()

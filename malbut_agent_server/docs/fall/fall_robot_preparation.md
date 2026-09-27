@@ -102,8 +102,8 @@ Python 실행 의존성이 모두 설치되는 것은 아니다.
 ### 1-1. 낙상용 YOLO-Pose 준비
 
 `malbut_test`에는 원본의 여러 사람 추적, 낙상 후보 생성, RGB/depth 처리 모듈도 함께 넣는다.
-빌드 목록에 `homecam_detector`를 포함하고, Bringup이 준비되면 VLM과
-`malbut_fall_pose`를 각각 한 번 시작한다. 기존 홈캠 미디어의 `start_detector=false`는
+빌드 목록에 `homecam_detector`와 `malbut_fall_coordinator`를 포함하고, Bringup이 준비되면 VLM·
+`malbut_fall_pose`·낙상 코디네이터를 각각 한 번 시작한다. 기존 홈캠 미디어의 `start_detector=false`는
 유지한다. 영상 저장용 감지기를 별도로 켜서 두 번 실행하지 않는다.
 
 Pose 실행 환경은 다음처럼 따로 준비한다. 명령은 의존성을 설치하지만 모델 다운로드,

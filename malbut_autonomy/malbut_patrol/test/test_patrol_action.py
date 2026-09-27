@@ -369,6 +369,18 @@ def test_unreachable_viewpoints_return_partial_failure(patrol_runtime):
     assert len(points) == len(set(points))
 
 
+@pytest.mark.parametrize('patrol_runtime', [{'stall_timeout_s': 0.3}], indirect=True)
+def test_standing_still_moves_on_to_the_next_viewpoint(patrol_runtime):
+    """A viewpoint Nav2 keeps retrying without moving the robot is given up early."""
+    _manager, navigation, _sensors, client = patrol_runtime
+    handle = _result(client.send_goal_async(Patrol.Goal()))
+    assert handle.accepted
+    _wait_until(lambda: len(navigation.requests) >= 2)  # Long before 120 s.
+    assert navigation.cancel_received.is_set()
+    assert _result(handle.cancel_goal_async()).goals_canceling
+    assert _result(handle.get_result_async()).status == GoalStatus.STATUS_CANCELED
+
+
 def test_system_manager_uses_registered_patrol_and_cancels_nav2(patrol_runtime):
     """Exercise the installed manifest and both real Action cancellation hops."""
     module = pytest.importorskip(

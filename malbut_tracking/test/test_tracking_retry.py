@@ -36,9 +36,11 @@ def _follower():
         _tracking_retry_timer=Mock(), _latest_global_costmap=None,
         _tracking_plan_timer=Mock(), _tracking_plan_pending=False,
         _next_tracking_plan_ns=0, _line_fallback_immediate=False,
-        _static_job_context=None, _line_fallback_pending=False,
+        _line_fallback_pending=False,
+        _goal_pullback_m=0.0, _goal_pullback_anchor=None,
         _nav2=Mock(mode=MotionMode.NAVIGATE), _path_planner=Mock(busy=False),
         _request_tracking_path=Mock(), _request_line_fallback=Mock(),
+        _request_retreat=Mock(),
         _align_with_target=Mock(), _publish_track_markers=Mock(),
         _warn_periodically=Mock(),
         _robot_pose=Mock(return_value=(Point2D(0.0, 0.0), 0.0)),
@@ -50,7 +52,8 @@ def _follower():
         '_schedule_tracking_navigation_retry', '_on_tracking_retry_timer',
         '_reset_tracking_plan_cadence', '_tracking_plan_due',
         '_on_tracking_plan_timer', '_plan_latest_observation_if_pending',
-        '_set_state',
+        '_set_state', '_update_goal_pullback', '_reset_goal_pullback',
+        '_raise_goal_pullback', '_pulled_back_goal',
     ):
         setattr(node, name, MethodType(getattr(PersonFollowerNode, name), node))
     node._cancel_tracking_retry = Mock(
@@ -146,7 +149,8 @@ def test_hold_alignment_and_retreat_do_not_wait_for_forward_retry(robot_x, comma
         node._align_with_target.assert_called_once()
         node._request_tracking_path.assert_not_called()
     else:
-        assert node._request_tracking_path.call_args.args[2].command == command
+        node._request_tracking_path.assert_not_called()
+        assert node._request_retreat.call_args.args[1].command == command
 
 
 def test_retry_timer_uses_latest_observation_not_original_failure_snapshot():
@@ -159,7 +163,7 @@ def test_retry_timer_uses_latest_observation_not_original_failure_snapshot():
     node._request_tracking_path.assert_called_once()
     args = node._request_tracking_path.call_args.args
     assert args[1] == Point2D(3.06, 0.0)
-    assert args[6] == 20_200_000_000
+    assert args[5] == 20_200_000_000
     assert node._motion_generation == generation  # Timer is not a new measurement.
     assert not node._tracking_retry_pending
 
@@ -227,7 +231,7 @@ def test_planning_slot_keeps_latest_input_without_postponing_its_deadline(monkey
     args = node._request_tracking_path.call_args.args
     assert args[0] == Point2D(0.2, 0.0)  # Fresh robot TF at the planning slot.
     assert args[1] == Point2D(3.19, 0.0)
-    assert args[6] == 20_190_000_000  # Original capture timestamp is preserved.
+    assert args[5] == 20_190_000_000  # Original capture timestamp is preserved.
     assert node._motion_generation == 7
     assert not node._tracking_plan_pending
     advance(1.0)
@@ -265,40 +269,6 @@ def test_fast_completed_plan_waits_for_slot_but_slow_plan_has_no_catchup(monkeyp
     assert not node._tracking_plan_pending
 
 
-def test_static_search_cycles_share_the_same_cadence(monkeypatch):
-    """The budget gate runs before the static worker, not only before Nav2 calls."""
-    node, advance = _cadence_follower(monkeypatch)
-    original_parameter = node.get_parameter
-    parameters = {'static_occupied_threshold': 50, 'static_planning_budget_s': 0.02}
-    node.get_parameter = lambda key: (
-        SimpleNamespace(value=parameters[key]) if key in parameters
-        else original_parameter(key)
-    )
-    node._latest_global_costmap = SimpleNamespace(resolution=0.05)
-    node._latest_static_map = object()
-    node._static_job = None
-    node._static_worker = Mock()
-    node._compute_static_path = Mock()
-    node._wake_static_plan = Mock()
-    _observe(node)
-    node._static_worker.submit.assert_called_once()
-    first = node._static_job
-    advance(0.03)
-    _observe(node, 3.03)
-    assert node._static_job is first
-    PersonFollowerNode._on_static_plan_ready(node)
-    node._request_tracking_path.assert_called_once()
-    advance(0.04)
-    _observe(node, 3.04)
-    assert node._static_job is None
-    node._static_worker.submit.assert_called_once()
-    assert node._tracking_plan_pending
-    advance(0.2)
-    node._on_tracking_plan_timer()
-    assert node._static_worker.submit.call_count == 2
-    assert node._static_worker.submit.call_args.args[3] == Point2D(3.04, 0.0)
-
-
 @pytest.mark.parametrize('robot_x,command', [
     (3.0, FollowCommand.HOLD), (2.0, FollowCommand.ALIGN),
     (2.5, FollowCommand.RETREAT),
@@ -321,7 +291,8 @@ def test_motion_regime_changes_bypass_slot_and_clear_deferred_plan(
     elif command == FollowCommand.ALIGN:
         node._align_with_target.assert_called_once()
     else:
-        assert node._request_tracking_path.call_count == 2
+        node._request_tracking_path.assert_called_once()
+        node._request_retreat.assert_called_once()
     calls = node._request_tracking_path.call_count
     advance(0.2)
     node._on_tracking_plan_timer()
@@ -395,7 +366,6 @@ def test_direction_reversal_invalidates_inflight_plan_and_stops_old_motion(
     node, _ = _cadence_follower(monkeypatch)
     node._last_motion_command = previous
     node._planning_shutdown = False
-    node._static_job_context = object()
     node._line_fallback_pending = True
     response, result = Future(), Future()
     client = Mock()
@@ -413,12 +383,14 @@ def test_direction_reversal_invalidates_inflight_plan_and_stops_old_motion(
 
     _observe(node, x)
     assert node._last_motion_command == command
-    assert node._static_job_context is None
     assert not node._line_fallback_pending
     node._nav2.cancel.assert_called_once()
     handle.cancel_goal_async.assert_called_once()
     assert node._path_planner.busy  # Cancellation request is not completion.
     node._request_tracking_path.assert_not_called()
+    if command == FollowCommand.RETREAT:
+        # BackUp needs no plan: it is requested at once and queues behind the stop.
+        node._request_retreat.assert_called_once()
     _observe(node, latest_x)
     node._nav2.cancel.assert_called_once()  # Same direction does not cancel again.
 
@@ -427,6 +399,10 @@ def test_direction_reversal_invalidates_inflight_plan_and_stops_old_motion(
     ))
     old_callback.assert_not_called()
     assert not node._path_planner.busy
+    if command == FollowCommand.RETREAT:
+        node._request_tracking_path.assert_not_called()
+        assert node._request_retreat.call_args.args[1].command == command
+        return
     node._request_tracking_path.assert_called_once()
     args = node._request_tracking_path.call_args.args
     assert args[1] == Point2D(latest_x, 0.0)
@@ -455,4 +431,28 @@ def test_bearing_only_close_observation_stops_an_existing_retreat(monkeypatch):
     node._path_planner.cancel.assert_called_once()
     node._nav2.cancel.assert_called_once()
     node._request_tracking_path.assert_not_called()
+    node._request_retreat.assert_not_called()
     assert not node._tracking_plan_pending
+
+
+def test_person_moving_one_planner_step_clears_the_goal_pullback():
+    """The pulled-back goal is tied to the spot where Nav2 found no path."""
+    node = _follower()
+    node._cancel_tracking_retry()
+    node.get_logger = Mock()
+    parameters = {'goal_pullback_step_m': 0.5}
+    original = node.get_parameter
+    node.get_parameter = lambda key: (
+        SimpleNamespace(value=parameters[key]) if key in parameters else original(key)
+    )
+    assert node._raise_goal_pullback(Point2D(3.0, 0.0))
+    assert node._goal_pullback_m == 0.5
+    _observe(node, 3.4)
+    assert node._goal_pullback_m == 0.5  # Jitter below one step keeps it.
+    _observe(node, 3.6)
+    assert node._goal_pullback_m == 0.0 and node._goal_pullback_anchor is None
+    # Retreat, hold and alignment never carry a forward pullback along.
+    assert node._raise_goal_pullback(Point2D(3.6, 0.0))
+    _observe(node, robot_x=2.5)
+    assert node._last_motion_command == FollowCommand.RETREAT
+    assert node._goal_pullback_m == 0.0

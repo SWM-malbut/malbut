@@ -6,7 +6,6 @@ person_follower:
     action_name: follow_person
     detections_topic: /perception/person/detections_3d
     global_costmap_topic: /global_costmap/costmap_raw
-    static_map_topic: /map
     lidar_clusters_topic: /perception/lidar/foreground_clusters
     status_topic: /tracking/person/status
     target_pose_topic: /tracking/person/estimated_target_pose
@@ -20,6 +19,11 @@ person_follower:
     tracking_controller_id: FollowPath
     goal_checker_id: general_goal_checker
     spin_action: spin
+    # A too-close person is answered with Nav2's BackUp behavior: a straight,
+    # footprint-checked reverse along the robot's axis while the camera keeps
+    # facing the person. No reverse path or second controller is involved.
+    backup_action: backup
+    retreat_speed_mps: 0.15
     navigation_retry_delay_s: 0.75
     speed_limit_topic: speed_limit
     global_frame: map
@@ -93,21 +97,19 @@ person_follower:
     # coalesced into one latest request when that plan completes.
     bearing_only_variance_threshold_m2: 1.0
 
-    # Accept destinations only in the low-cost exterior of Nav2 inflation.
-    # The actual robot radius and clearance remain defined by Nav2.
-    goal_maximum_cost: 80
-    # Raw-map A* is only a directional hint, never a robot-clearance verdict.
-    # Nav2's live costmap/controller retain the actual obstacle inflation.
-    static_occupied_threshold: 65
-    static_planning_budget_s: 0.05
+    # Nav2 plans straight to the person's estimated position. Its planner
+    # `tolerance` (0.5 m on the robot) moves a goal inside the person's own
+    # LiDAR cells or furniture to the nearest reachable cell, and the route is
+    # cut at the standoff. After a "no path" result the goal steps this far
+    # toward the robot per attempt, up to the standoff point.
+    goal_pullback_step_m: 0.50
     # Response deadline; late results are discarded, not remote CPU killed.
     nav2_planning_timeout_s: 0.20
+    # Camera-ray targets beyond the depth range and the short line fallback
+    # accept only the low-cost exterior of Nav2 inflation; the fallback
+    # segment is capped at this radius.
+    goal_maximum_cost: 80
     goal_safe_search_radius_m: 1.00
-    goal_openness_radius_m: 0.60
-    goal_openness_preference_m: 0.30
-    heading_probe_distance_m: 0.90
-    minimum_heading_clearance_m: 0.45
-    require_global_costmap_for_goal: true
 
     # RGB-D establishes identity and an observed LiDAR track may continue it.
     # Brief delivery gaps are debounced before the ordered recovery begins.

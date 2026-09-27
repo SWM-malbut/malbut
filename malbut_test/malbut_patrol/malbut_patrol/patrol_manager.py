@@ -131,6 +131,10 @@ class PatrolManager(Node):
             'goal_response_timeout_s': 5.0,
             'cancel_completion_timeout_s': 5.0,
             'navigation_timeout_s': 120.0,
+            # Nav2 retries a blocked goal internally for minutes; move on to the
+            # next viewpoint once the robot has stood still this long.
+            'stall_timeout_s': 30.0,
+            'stall_distance_m': 0.10,
             'spin_time_allowance_s': 60.0,
             'maximum_goal_cost': 80,
         }
@@ -140,7 +144,7 @@ class PatrolManager(Node):
         for name in ('observation_hz', 'sensor_timeout_s', 'costmap_timeout_s',
                      'goal_response_timeout_s', 'cancel_completion_timeout_s',
                      'navigation_timeout_s', 'spin_time_allowance_s',
-                     'robot_clearance_m'):
+                     'robot_clearance_m', 'stall_timeout_s', 'stall_distance_m'):
             if not math.isfinite(self.settings[name]) or self.settings[name] <= 0:
                 raise ValueError(f'{name} must be positive and finite')
         for name in ('observation_ranges_m', 'coverage_targets',
@@ -385,9 +389,10 @@ class PatrolManager(Node):
         cost = message.data[row * message.info.width + col]
         return 0 <= cost <= self.settings['maximum_goal_cost']
 
-    def _run_child(self, client, request, handle, timeout):
+    def _run_child(self, client, request, handle, timeout, stall=False):
         self.child = ChildAction(client, request)
         operation = self.child
+        moved_from, moved_at = None, time.monotonic()
         while not operation.settled:
             self._pump(handle)
             elapsed = time.monotonic() - operation.sent_at
@@ -396,7 +401,23 @@ class PatrolManager(Node):
             if (operation.handle is None and elapsed
                     > self.settings['goal_response_timeout_s']):
                 raise PatrolInterrupted('Nav2 goal response timeout')
-            if elapsed > timeout:
+            stalled = False
+            if stall:
+                try:
+                    position = self._robot_xy()
+                except TransformException:
+                    position = None  # _pump reports missing localization.
+                now = time.monotonic()
+                if position is not None and (
+                        moved_from is None or math.dist(position, moved_from)
+                        >= self.settings['stall_distance_m']):
+                    moved_from, moved_at = position, now
+                stalled = now - moved_at >= self.settings['stall_timeout_s']
+                if stalled:
+                    self.get_logger().warning(
+                        f'Robot did not move for {now - moved_at:.0f} s; '
+                        'trying the next viewpoint')
+            if stalled or elapsed > timeout:
                 if not self._settle_child():
                     raise PatrolInterrupted('Nav2 did not confirm cancellation')
                 return False
@@ -470,7 +491,7 @@ class PatrolManager(Node):
                 request.pose.pose.orientation.w = math.cos(viewpoint.yaw * 0.5)
                 self.phase = 'NAVIGATING'
                 if not self._run_child(self.navigation, request, handle,
-                                       self.settings['navigation_timeout_s']):
+                                       self.settings['navigation_timeout_s'], stall=True):
                     continue
                 self.visited += 1
                 self.phase = 'OBSERVING'

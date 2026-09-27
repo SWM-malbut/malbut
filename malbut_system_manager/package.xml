@@ -15,7 +15,6 @@
   <depend>malbut_interfaces</depend>
   <depend>nav2_msgs</depend>
   <depend>rclpy</depend>
-  <depend>rcl_interfaces</depend>
   <depend>rosidl_runtime_py</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>

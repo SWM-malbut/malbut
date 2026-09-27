@@ -1,5 +1,13 @@
 # 낙상 감지 Manager–VLM 호출 명세
 
+> **2026-09-26 / SWM25-164 책임 분리:** 이 문서의 낙상 설정·연결 확인·사건 검증을
+> 담당하던 “Manager”는 이제 별도 `malbut_fall_coordinator` 노드다. 기존 ROS/웹
+> 필드명(`manager_runtime_id` 등)은 호환성을 위해 유지하며 코디네이터 ID를 담는다.
+> 시스템 관리자는 낙상 토픽을 구독하지 않고 일반 `ExecuteMission` 실행·선점만 한다.
+> 확인 대화만 `fall_confirmation` Capability로 등록하고, 설정 Service는 일반
+> Capability에 노출하지 않는다. 아래의 기존 계약·설계 이력보다
+> [현재 코디네이터 책임](../../../malbut_fall_coordinator/README.md)을 우선한다.
+
 작성일: 2026-09-20
 수정일: 2026-09-23 — 웹 설정 저장·heartbeat 응답·적용 회신 이력까지 연결.
 

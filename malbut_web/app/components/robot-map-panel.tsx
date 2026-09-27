@@ -8,7 +8,7 @@ import {
   MapTrifold,
 } from "@phosphor-icons/react";
 import type { HomecamDevice } from "./homecam-dashboard";
-import type { RobotOperation } from "../robot-contract";
+import type { ManualVelocity, RobotOperation } from "../robot-contract";
 import { ManagedRobotControls } from "./managed-robot-controls";
 import { ManagedRobotDebug } from "./managed-robot-debug";
 import { ManagedRobotMap } from "./managed-robot-map";
@@ -536,7 +536,7 @@ export function RobotMapPanel({
         ["runtime_start", "runtime_stop", "mission_start", "mission_cancel", "debug_mission_start"].includes(operation)
           ? "로봇에 요청을 전달했습니다. 실제 상태·결과를 확인하세요."
           : operation === "map_delete" ? "저장 지도 삭제를 요청했습니다."
-          : operation === "manual_move" ? "한 걸음 이동을 요청했습니다."
+          : operation === "manual_move" ? "수동 조작 명령을 보냈습니다."
           : operation === "zones_save" ? "구역 저장을 요청했습니다."
           : operation === "robot_ping" ? "로봇 응답 시간을 재고 있습니다."
           : operation === "robot_diagnostics" ? "로봇 진단을 요청했습니다."
@@ -564,6 +564,28 @@ export function RobotMapPanel({
       setBusy(false);
     }
   };
+
+  // Held joystick/keyboard input: no busy state, notice or snapshot reload per
+  // repeat; the tools card shows the last delivery error itself.
+  const driveCommand = useCallback(async (velocity: ManualVelocity) => {
+    if (!device) return "장치를 선택하세요.";
+    try {
+      const response = await fetch(
+        `/api/devices/${encodeURIComponent(device.id)}/robot/commands`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          keepalive: true,
+          body: JSON.stringify({ operation: "manual_move", payload: velocity }),
+        },
+      );
+      if (response.ok) return "";
+      const payload = await response.json().catch(() => ({})) as { error?: string };
+      return payload.error ?? `HTTP ${response.status}`;
+    } catch {
+      return "네트워크 오류로 명령을 보내지 못했습니다.";
+    }
+  }, [device]);
 
   const selectDestination = (event: React.MouseEvent<HTMLDivElement>) => {
     if (suppressMapClick.current) {
@@ -1497,7 +1519,8 @@ export function RobotMapPanel({
               <ManagedRobotControls key={deviceId} snapshot={snapshot} isOwner={isOwner}
                 busy={busy || Boolean(activeCommand)} sendCommand={sendCommand} goal={currentManagedGoal} />
               <ManagedRobotTools snapshot={snapshot} isOwner={isOwner}
-                busy={busy || Boolean(activeCommand)} sendCommand={sendCommand} workspace={workspace} />
+                busy={busy || Boolean(activeCommand)} sendCommand={sendCommand} drive={driveCommand}
+                workspace={workspace} />
               {isOwner && <ManagedRobotDebug key={`debug-${deviceId}`} deviceId={deviceId} snapshot={snapshot}
                 busy={busy || Boolean(activeCommand)} sendCommand={sendCommand} now={clockNow}
                 report={managedDiagnostics?.deviceId === deviceId ? managedDiagnostics.report : null} />}

@@ -1,5 +1,6 @@
 """Check short fallback paths without touching a real motion server."""
 
+import math
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -7,7 +8,7 @@ from nav_msgs.msg import Path
 import pytest
 
 from malbut_tracking.costmap_tracking import CostmapGrid
-from malbut_tracking.follow_policy import decide_follow_motion, FollowCommand, FollowSettings
+from malbut_tracking.follow_policy import decide_follow_motion, FollowSettings
 from malbut_tracking.geometry import Point2D
 from malbut_tracking.navigation import MotionMode
 from malbut_tracking.person_follower_node import FollowState, PersonFollowerNode
@@ -24,16 +25,24 @@ def _fixture(wall_x=None, map_time=20.0):
         'sensor_transform_queue_timeout_s': 0.3,
         'goal_safe_search_radius_m': 1.0,
         'goal_maximum_cost': 80,
+        'goal_pullback_step_m': 0.5,
+        'planner_id': 'GridBased',
+        'nav2_planning_timeout_s': 0.2,
+        'tracking_controller_id': 'FollowPath',
+        'goal_checker_id': 'general_goal_checker',
+        'retreat_speed_mps': 0.15,
     }
     from builtin_interfaces.msg import Time
     follower = SimpleNamespace(
         _latest_global_costmap=grid, _now_seconds=lambda: 20.0,
         _settings=settings, _global_frame='map', _tracking_source='camera',
         _last_motion_source_stamp_ns=20_000_000_000,
-        _static_job_context=object(), _line_fallback_pending=True,
+        _line_fallback_pending=True,
+        _goal_pullback_m=0.0, _goal_pullback_anchor=None,
         _path_planner=Mock(busy=True), _nav2=Mock(),
         _dispatch_tracking_path=Mock(return_value=True),
         _schedule_tracking_navigation_retry=Mock(), _warn_periodically=Mock(),
+        _schedule_recovery_navigation_retry=Mock(), get_logger=Mock(),
         get_parameter=lambda key: SimpleNamespace(value=parameters[key]),
         get_clock=lambda: SimpleNamespace(
             now=lambda: SimpleNamespace(to_msg=lambda: Time(sec=20)),
@@ -96,77 +105,6 @@ def test_fallback_preserves_requested_person_standoff():
     assert endpoint.x == pytest.approx(0.7)
 
 
-def test_fixed_map_updates_are_not_ignored():
-    """An updated occupancy map replaces the first received snapshot."""
-    old, new = object(), object()
-    follower = SimpleNamespace(
-        _latest_static_map=old, _occupancy_grid=Mock(return_value=new),
-        _warn_periodically=Mock(), get_logger=Mock(),
-    )
-    PersonFollowerNode._on_static_map(follower, object())
-    assert follower._latest_static_map is new
-
-
-def test_follower_static_search_uses_raw_corridor_without_extra_padding():
-    """The hint may pass a narrow gap; actual robot clearance remains with Nav2."""
-    costs = tuple(0 if row == 2 else 100 for row in range(5) for _ in range(20))
-    grid = CostmapGrid('map', 0.0, 0.05, 20, 5, Point2D(0.0, 0.0), 0.0, costs)
-    path = PersonFollowerNode._compute_static_path(
-        object(), grid, Point2D(0.125, 0.125), Point2D(0.875, 0.125), 65, 0.02,
-    )
-    assert path is not None
-
-
-def test_unsafe_retreat_goal_schedules_retry_instead_of_recursing(monkeypatch):
-    """An unprojectable retreat must not enter the forward-line fallback loop."""
-    follower = _fixture()
-    follower.get_parameter = lambda key: SimpleNamespace(value=1.0)
-    follower._nav2.mode = MotionMode.NAVIGATE
-    follower._line_fallback_pending = False
-    follower._plan_latest_observation_if_pending = Mock()
-    monkeypatch.setattr(
-        'malbut_tracking.person_follower_node.project_navigation_goal',
-        Mock(return_value=None),
-    )
-    robot, target = Point2D(1.25, 0.55), Point2D(1.35, 0.55)
-    decision = decide_follow_motion(robot, target, follower._settings)
-    assert decision.command == FollowCommand.RETREAT
-
-    PersonFollowerNode._request_tracking_path(
-        follower, robot, target, decision, False, None, 'camera', 20_000_000_000, 1,
-    )
-
-    follower._schedule_tracking_navigation_retry.assert_called_once_with()
-    follower._plan_latest_observation_if_pending.assert_not_called()
-    follower._path_planner.compute.assert_not_called()
-    follower._nav2.cancel.assert_called_once_with()
-    assert not follower._line_fallback_pending
-
-
-@pytest.mark.parametrize('path', [None, Path()])
-def test_failed_or_empty_retreat_plan_uses_retry_backoff(path):
-    """A failed retreat result cannot immediately issue another identical plan."""
-    follower = _fixture()
-    follower._active_goal = object()
-    follower._state = FollowState.TRACKING
-    follower._observation_is_current = Mock(return_value=True)
-    follower._navigation_failure_count = 0
-    follower._line_fallback_pending = False
-    follower._plan_latest_observation_if_pending = Mock()
-    follower._cancel_tracking_retry = Mock()
-
-    PersonFollowerNode._on_tracking_path(
-        follower, path, 'retreat unavailable', None, 'camera', False,
-        20_000_000_000, 1, 1,
-    )
-
-    follower._schedule_tracking_navigation_retry.assert_called_once_with()
-    follower._plan_latest_observation_if_pending.assert_not_called()
-    follower._dispatch_tracking_path.assert_not_called()
-    follower._cancel_tracking_retry.assert_not_called()
-    assert not follower._line_fallback_pending
-
-
 def test_successful_forward_plan_is_dispatched_with_requested_standoff():
     """The actual callback passes the trimmed route, not just a helper result."""
     from geometry_msgs.msg import PoseStamped
@@ -189,3 +127,163 @@ def test_successful_forward_plan_is_dispatched_with_requested_standoff():
     assert endpoint == Point2D(2.25, 0.55)
     assert selected.poses[-1].pose.position.x == 2.25
     assert travel == pytest.approx(2.0)
+
+
+def _bind(follower, *names):
+    from types import MethodType
+    for name in names:
+        setattr(follower, name, MethodType(getattr(PersonFollowerNode, name), follower))
+    return follower
+
+
+def test_forward_plan_targets_the_person_itself_without_a_costmap():
+    """Nav2's planner tolerance, not the follower, resolves the person's cells."""
+    follower = _bind(_fixture(), '_pulled_back_goal')
+    follower._latest_global_costmap = None
+    follower._path_planner = Mock(busy=False)
+    follower._path_planner.compute.return_value = True
+    robot, target = Point2D(0.25, 0.55), Point2D(3.25, 2.55)
+    decision = decide_follow_motion(robot, target, follower._settings)
+    PersonFollowerNode._request_tracking_path(
+        follower, robot, target, decision, False, 'camera', 20_000_000_000, 1,
+    )
+    pose = follower._path_planner.compute.call_args.args[0]
+    assert (pose.pose.position.x, pose.pose.position.y) == (3.25, 2.55)
+    assert pose.header.frame_id == 'map'
+    yaw = 2 * math.atan2(pose.pose.orientation.z, pose.pose.orientation.w)
+    assert yaw == pytest.approx(math.atan2(2.0, 3.0))
+    assert follower._path_planner.compute.call_args.args[1] == 'GridBased'
+    assert follower._path_planner.compute.call_args.kwargs['timeout_seconds'] == 0.2
+    follower._warn_periodically.assert_not_called()
+
+
+def test_pulled_back_goal_moves_toward_the_robot_and_stops_at_the_standoff():
+    """Each failed cycle steps one planner tolerance closer, never past the standoff."""
+    follower = _bind(_fixture(), '_raise_goal_pullback', '_pulled_back_goal')
+    robot, target = Point2D(0.0, 0.0), Point2D(3.0, 0.0)
+    assert follower._pulled_back_goal(robot, target) == target
+    assert follower._raise_goal_pullback(target)
+    assert follower._pulled_back_goal(robot, target) == Point2D(2.5, 0.0)
+    assert follower._raise_goal_pullback(target)
+    assert follower._goal_pullback_m == pytest.approx(1.0)  # The standoff itself.
+    assert follower._pulled_back_goal(robot, target) == Point2D(2.0, 0.0)
+    assert not follower._raise_goal_pullback(target)
+    assert follower._goal_pullback_m == pytest.approx(1.0)
+    # A person closer than the pullback still gets a goal on the robot's side.
+    near = follower._pulled_back_goal(robot, Point2D(0.5, 0.0))
+    assert 0.0 < near.x < 0.5
+
+
+@pytest.mark.parametrize('detail,pullback_before,expect_pullback', [
+    ('Nav2 path planning finished with status 6', 0.0, True),   # No path: step closer.
+    ('Nav2 path planning finished with status 6', 1.0, False),  # Standoff reached.
+    ('Nav2 path planning timed out; waiting for Nav2 to finish cancellation', 0.0, False),
+])
+def test_no_path_to_the_person_pulls_the_goal_back_before_the_line_fallback(
+    detail, pullback_before, expect_pullback,
+):
+    """Only an actual "no path" answer moves the goal; timeouts keep the fallback."""
+    follower = _bind(_fixture(), '_raise_goal_pullback')
+    follower._goal_pullback_m = pullback_before
+    follower._active_goal = object()
+    follower._state = FollowState.TRACKING
+    follower._observation_is_current = Mock(return_value=True)
+    follower._navigation_failure_count = 0
+    follower._line_fallback_pending = False
+    follower._line_fallback_immediate = False
+    follower._plan_latest_observation_if_pending = Mock()
+    follower._cancel_tracking_retry = Mock()
+    PersonFollowerNode._on_tracking_path(
+        follower, None, detail, Point2D(3.25, 0.55), 'camera', False,
+        20_000_000_000, 1, 1,
+    )
+    follower._plan_latest_observation_if_pending.assert_called_once_with(-1)
+    follower._cancel_tracking_retry.assert_called_once_with()
+    if expect_pullback:
+        assert follower._goal_pullback_m == pytest.approx(0.5)
+        assert follower._goal_pullback_anchor == Point2D(3.25, 0.55)
+        assert not follower._line_fallback_pending
+    else:
+        assert follower._goal_pullback_m == pullback_before
+        assert follower._line_fallback_pending and follower._line_fallback_immediate
+    follower._dispatch_tracking_path.assert_not_called()
+
+
+def _retreating(follower, robot, target):
+    follower._path_planner = Mock(busy=False)
+    follower._nav2 = Mock(mode=None, stopping=False)
+    follower._nav2.backup.return_value = True
+    for name in ('_publish_track_markers', '_publish_command_trace', '_cancel_tracking_retry',
+                 '_warn_periodically', '_schedule_tracking_navigation_retry'):
+        setattr(follower, name, Mock())
+    follower._goal_dispatch_count = 0
+    follower._backup_target_m = follower._backup_traveled_m = 0.0
+    follower._remaining_travel_distance_m = 0.0
+    follower._last_goal_position = None
+    decision = decide_follow_motion(robot, target, follower._settings)
+    assert decision.command.value == 'retreat'
+    return decision
+
+
+def test_too_close_person_backs_the_robot_up_with_the_nav2_behavior():
+    """The retreat is a straight BackUp, not a reverse path through DWB."""
+    follower = _fixture()
+    robot, target = Point2D(1.0, 0.0), Point2D(1.7, 0.0)
+    decision = _retreating(follower, robot, target)
+    PersonFollowerNode._request_retreat(follower, robot, decision, False)
+    distance_m, speed, allowance = follower._nav2.backup.call_args.args
+    # One whole standoff is requested; the distance band cancels it in time.
+    assert distance_m == pytest.approx(1.0) and speed == 0.15
+    assert allowance == pytest.approx(2.0 * 1.0 / 0.15 + 1.0)
+    follower._path_planner.cancel.assert_called_once()
+    follower._path_planner.compute.assert_not_called()
+    assert follower._backup_target_m == pytest.approx(1.0)
+    assert follower._remaining_travel_distance_m == pytest.approx(0.3)
+    assert follower._last_goal_position == decision.goal.position
+    assert follower._publish_command_trace.call_args.args[1] == 'camera:backup'
+    follower._cancel_tracking_retry.assert_called_once()
+    follower._nav2.backup.return_value = False
+    PersonFollowerNode._request_retreat(follower, robot, decision, False)
+    follower._schedule_tracking_navigation_retry.assert_called_once()
+
+
+def test_running_backup_is_kept_unless_the_person_keeps_closing_in():
+    """Humble's BackUp cannot be preempted, so a covering one is not restarted."""
+    follower = _fixture()
+    robot, target = Point2D(1.0, 0.0), Point2D(1.7, 0.0)
+    decision = _retreating(follower, robot, target)
+    PersonFollowerNode._request_retreat(follower, robot, decision, False)
+    follower._nav2.mode = MotionMode.BACKUP
+    PersonFollowerNode._on_nav2_feedback(
+        follower, MotionMode.BACKUP, SimpleNamespace(distance_traveled=0.1))
+    assert follower._remaining_travel_distance_m == pytest.approx(0.9)
+    # The person keeps walking in: 0.5 m needed, 0.9 m left on the running goal.
+    closer = decide_follow_motion(Point2D(0.9, 0.0), Point2D(1.4, 0.0), follower._settings)
+    PersonFollowerNode._request_retreat(follower, Point2D(0.9, 0.0), closer, False)
+    assert follower._nav2.backup.call_count == 1
+    # Nearly used up: 0.1 m left cannot cover 0.5 m, so a fresh goal replaces it.
+    PersonFollowerNode._on_nav2_feedback(
+        follower, MotionMode.BACKUP, SimpleNamespace(distance_traveled=0.9))
+    PersonFollowerNode._request_retreat(follower, Point2D(0.9, 0.0), closer, False)
+    assert follower._nav2.backup.call_count == 2
+    assert follower._nav2.backup.call_args.args[0] == pytest.approx(1.0)
+
+
+def test_backup_that_stops_for_an_obstacle_uses_retry_backoff():
+    """A blocked retreat holds and retries later instead of looping at once."""
+    from action_msgs.msg import GoalStatus
+    follower = _fixture()
+    follower._backup_target_m, follower._backup_traveled_m = 0.3, 0.1
+    follower._remaining_travel_distance_m = 0.2
+    follower._navigation_failure_count = 0
+    follower._last_goal_position = Point2D(0.7, 0.0)
+    follower._state = FollowState.TRACKING
+    PersonFollowerNode._on_nav2_result(
+        follower, MotionMode.BACKUP, GoalStatus.STATUS_ABORTED, 'Collision Ahead')
+    follower._schedule_tracking_navigation_retry.assert_called_once()
+    assert follower._navigation_failure_count == 1
+    assert follower._last_goal_position is None
+    assert follower._backup_target_m == 0.0 and follower._remaining_travel_distance_m == 0.0
+    PersonFollowerNode._on_nav2_result(
+        follower, MotionMode.BACKUP, GoalStatus.STATUS_SUCCEEDED, 'done')
+    assert follower._navigation_failure_count == 0

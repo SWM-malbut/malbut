@@ -46,6 +46,8 @@ def test_localization_uses_actual_initial_pose_and_vendor_frames(config):
     planner = config['planner_server']['ros__parameters']
     assert planner['planner_plugins'] == ['GridBased']
     assert planner['GridBased']['plugin'] == 'nav2_navfn_planner/NavfnPlanner'
+    # The person follower plans to the person's own cells and needs a search
+    # radius wider than two legs plus the 0.106 m inscribed inflation.
     assert planner['GridBased']['tolerance'] == 0.5
 
 
@@ -107,7 +109,7 @@ def test_dwb_rejects_footprint_contact_and_keeps_the_vendor_distance_score(confi
     follow = config['controller_server']['ros__parameters']['FollowPath']
     assert follow['critics'] == ['RotateToGoal', 'Oscillation', 'BaseObstacle',
                                  'ObstacleFootprint', 'GoalAlign', 'PathAlign',
-                                 'PathDist', 'GoalDist']
+                                 'PathDist', 'GoalDist', 'PreferForward']
     assert follow['BaseObstacle.scale'] == 0.02
     resolution = config['local_costmap']['local_costmap']['ros__parameters']['resolution']
     # DWB skips a critic at scale 0; at 254 the outline score must still stay
@@ -157,3 +159,31 @@ def test_planar_lidar_uses_2d_layers_with_unchanged_observation_ranges(config):
         assert scan['obstacle_min_range'] == scan['raytrace_min_range'] == 0.0
         assert scan['obstacle_max_range'] == 2.5
         assert scan['raytrace_max_range'] == 3.0
+
+
+def test_goals_stop_within_the_follower_distance_band(config):
+    """0.25 m left a web goal a body length short and outside 0.90-1.10 m."""
+    controller = config['controller_server']['ros__parameters']
+    checker = controller['general_goal_checker']
+    assert checker['xy_goal_tolerance'] == 0.12
+    assert checker['stateful'] is True
+    # Position-only arrival: no final in-place turn near walls.
+    assert checker['yaw_goal_tolerance'] >= 2 * math.pi - 0.01
+    assert controller['FollowPath']['xy_goal_tolerance'] == checker['xy_goal_tolerance']
+
+
+def test_autonomous_driving_prefers_forward_without_forbidding_reverse(config):
+    """The person follower retreats with BackUp, so one DWB instance is enough."""
+    controller = config['controller_server']['ros__parameters']
+    assert controller['controller_plugins'] == ['FollowPath']
+    follow = controller['FollowPath']
+    assert follow['min_vel_x'] < 0  # Reverse stays possible when forward is blocked.
+    assert follow['PreferForward.penalty'] == 1.0
+    assert follow['PreferForward.strafe_x'] == 0.0
+    assert follow['PreferForward.theta_scale'] == 0.0
+    # A soft preference in the range public DWB configs use (1-40 next to
+    # PathDist 32 / GoalDist 24); reverse stays available, not banned.
+    assert follow['PreferForward.scale'] == 40.0
+    assert follow['PreferForward.scale'] <= follow['PathDist.scale'] + follow['GoalDist.scale']
+    behavior = config['behavior_server']['ros__parameters']
+    assert behavior['backup']['plugin'] == 'nav2_behaviors/BackUp'

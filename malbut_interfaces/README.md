@@ -9,7 +9,8 @@
 
 | 방향 | 방식·이름 | 타입 정본 | 역할 |
 |---|---|---|---|
-| Manager → Agent → Manager | Action `/malbut/agent/confirm_situation` | [ConfirmSituation](action/ConfirmSituation.action) | 상황 요약으로 확인 대화를 요청하고 최종 상황 판단·도움 필요 여부를 받음 |
+| FallCoordinator → Manager → FallCoordinator | Action `/malbut/mission/execute` | [ExecuteMission](action/ExecuteMission.action) | `fall_confirmation` capability로 확인을 요청하고 하위 Action의 최종 결과를 받음 |
+| Manager → Agent → Manager | Action `/malbut/agent/confirm_situation` | [ConfirmSituation](action/ConfirmSituation.action) | 등록된 capability를 실행해 상황 요약으로 확인 대화를 요청하고 최종 상황 판단·도움 필요 여부를 받음 |
 | Agent → STT → Agent | Service `/malbut/speech/session_control` | [ControlSpeechSession](srv/ControlSpeechSession.srv) | 호출어 없는 청취 세션의 시작·종료·생존 조회 |
 | STT → Agent | Topic `/malbut/speech/input_status` | [SpeechInputStatus](msg/SpeechInputStatus.msg) | 일반 대화·확인 세션의 발화 시작·청취 또는 인식 실패 |
 | STT → Agent | Topic `/malbut/speech/transcript` | [SpeechTranscript](msg/SpeechTranscript.msg) | 최종 인식 문장과 발화·세션 ID |
@@ -36,10 +37,14 @@ Agent는 최종 답변을 준비하는 중의 지연·재시도 안내에만 `tr
 값을 기억하며, 중간 안내의 `FINISHED`로 일반 대화의 5초 종료 대기를 시작하지 않는다.
 최종 답변의 `interim=false` 재생이 정상 완료된 뒤 기존 5초 대기를 적용한다.
 
-`ConfirmSituation`은 Manager의 낙상 연결부가 직접 호출하는 내부 보조 Action이다.
-`ExecuteMission`의 일반 명령이 아니므로 `capabilities/`에 등록하지 않는다.
-STT·TTS 제어 서비스도 내부 보조 호출이다. 확인 대화의 음성 선점은 Agent와 TTS가
-수행하며, Manifest의 자원 중재를 거친다고 가정하지 않는다.
+[FallCoordinator](../malbut_fall_coordinator/README.md)는 VLM 사건을 해석하고
+`ExecuteMission`으로 `fall_confirmation`을 요청한다. Manager는
+[등록된 Manifest](capabilities/fall_confirmation.yaml)의 `FOREGROUND`, `URGENT`,
+`[BASE, SPEAKER]` 규칙에 따라 충돌 미션의 종료를 확인한 뒤 Agent의
+`ConfirmSituation` Action을 실행한다. Coordinator는 Manager가 돌려준 최종 결과를
+검증하여 VLM 사건에 적용한다. 취소된 기존 주행은 자동 재개하지 않는다.
+STT·TTS 제어 서비스는 내부 보조 호출로 유지한다. Agent는 확인 대화 시작 전에
+TTS의 `STOP_ALL`을 요청하고, 개별 질문은 재생 ID로 제어한다.
 
 ## 동작 명세
 
@@ -47,7 +52,7 @@ STT·TTS 제어 서비스도 내부 보조 호출이다. 확인 대화의 음성
 - [확인 대화 정책](../malbut_agent_server/docs/fall/agent_fall_interaction.md): 상황 판단·도움 확인·무응답·재질문 정책.
 - [STT 명세](../malbut_stt/docs/stt_agent.md) · [TTS 명세](../malbut_tts/docs/tts_agent.md): 각 노드의 입출력과 음성 처리.
 - [낙상 설정·상태 계약](../malbut_agent_server/docs/fall/fall_manager_contract.md): 설정 적용·연결 확인·실행 상태·홈캠 전달용 타입.
-- [VLM 런타임–Manager JSON 계약](../malbut_agent_server/docs/fall/fall_runtime.md#manager-연결용-토픽): 기존 `/malbut/falls/runtime/events`·`decision`은 `std_msgs/msg/String`을 유지한다. JSON 필드와 검증 규칙은 이 문서를 따르며, 확인 대화 Agent는 이 토픽을 직접 사용하지 않는다.
+- [VLM 런타임–FallCoordinator JSON 계약](../malbut_agent_server/docs/fall/fall_runtime.md): 기존 `/malbut/falls/runtime/events`·`decision`은 `std_msgs/msg/String`을 유지한다. JSON 필드와 검증 규칙은 이 문서를 따르며, 확인 대화 Agent는 이 토픽을 직접 사용하지 않는다.
 
 계약 변경 시 영향받는 발행·수신 노드와 동작 명세, `malbut_test`의 대응 파일을 함께
 갱신한다. 필드·상수는 ROS 정의에서 바꾸고 문서에 독립된 규격을 추가하지 않는다.

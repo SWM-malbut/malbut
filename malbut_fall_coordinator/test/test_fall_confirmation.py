@@ -1,10 +1,10 @@
-"""Manager routing never invents a user response or sends image/model prose."""
+"""Fall routing never invents a user response or sends image/model prose."""
 
 import json
 
 import pytest
 
-from malbut_system_manager.fall_confirmation import FallConfirmationCoordinator
+from malbut_fall_coordinator.fall_confirmation import FallConfirmationCoordinator
 
 
 def event(**changes):

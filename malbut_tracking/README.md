@@ -45,13 +45,14 @@ to evaluate another compatible humanoid appearance without changing code.
 
 - Input detections: `/perception/person/detections_3d`
 - LiDAR foreground clusters: `/perception/lidar/foreground_clusters`
-- Current static SLAM map: `/map` (bounded fixed-route planning)
-- Global navigation grid: `/global_costmap/costmap_raw` (goal and fallback safety)
+- Global navigation grid: `/global_costmap/costmap_raw` (camera-ray target and
+  line-fallback checks only; Nav2's planner places every tracking goal)
 - Follow action: `/follow_person` (`malbut_interfaces/action/FollowPerson`)
 - State: `/tracking/person/status`
 - Estimated map pose: `/tracking/person/estimated_target_pose`
 - RViz LiDAR track labels: `/tracking/person/lidar_tracks`
-- Motion: Nav2 `ComputePathToPose`, `FollowPath`, `Spin`, and `SpeedLimit`
+- Motion: Nav2 `ComputePathToPose`, `FollowPath`, `BackUp` (retreat), `Spin`,
+  and `SpeedLimit`
 
 The package's `lidar_foreground_preprocessor` receives `/scan`, `/map`, and TF.
 It lives in `src/` alongside the Python follower, and both executables are
@@ -75,20 +76,26 @@ scan updates. New tracks remain tentative until repeated measurements confirm
 them, and confirmed tracks coast for a bounded time through short occlusion.
 The follower therefore does not misrepresent every scene residual as a moving
 object, and LiDAR can never select a person before RGB-D establishes identity.
-The global costmap remains an input only for selecting safe Nav2 goals and
-paths.
+The global costmap remains an input only for the camera-ray target beyond the
+depth range and for the short line fallback.
 
 RGB-D is the primary long-range position source, so a visible person remains
 followable even outside the LiDAR/costmap observation area. Camera-only motion
 continuously derives targets from current sensor observations. The follower
-keeps the current raw SLAM map and plans a fixed-geometry route from the
-robot to the observed person. It scans that route backward from the person and
-selects the first cell that is safe in the current global costmap. Nav2 then
-plans the route to that live-safe destination. The follower keeps its prefix
-up to the first entry into the requested person-distance circle, with the
-endpoint facing the person; it never shortcuts across the planned detour.
-This prevents a full path toward the person's own position from continuing
-until a delayed observation cancels it. The measured distance band still
+asks Nav2 `ComputePathToPose` for a route to the person's own estimated
+position. The person's LiDAR cells and their inflation make that goal cell
+unreachable, so Nav2's planner `tolerance` (0.5 m in the robot's
+`nav2_params.yaml`, `GridBased`) ends the route at the nearest reachable cell;
+the follower does not search the costmap for a goal itself. It keeps the
+route's prefix up to the first entry into the requested person-distance
+circle, with the endpoint facing the person; it never shortcuts across the
+planned detour. This prevents a full path toward the person's own position
+from continuing until a delayed observation cancels it. When Nav2 answers "no
+path" (someone sitting inside furniture inflation, deeper than the tolerance),
+the next attempt moves the goal `goal_pullback_step_m` (0.5 m, one planner
+tolerance) along the line of sight toward the robot, repeating up to the
+standoff point; the pullback is dropped once the person moves more than one
+step away or the motion decision changes. The measured distance band still
 decides when to advance or hold. Nav2 owns
 both translation and body rotation; there is no downstream camera-yaw mixer.
 A newer path directly preempts the
@@ -110,14 +117,11 @@ slow job never creates catch-up work. The first plan, distance-band changes,
 HOLD/ALIGN, cancellation and recovery transitions remain immediate. A failed
 cycle can use its checked line fallback immediately once. Nav2's controller
 continues running at its configured frequency between path replacements.
-Fixed-map A* runs on one worker with a 50 ms computation budget, without
-additional static-map padding or a connectivity cache. Map updates replace
-the old snapshot. This route is only a directional hint; Nav2's robot radius,
-obstacle inflation and local collision checking remain unchanged.
 Nav2 planning has a 200 ms response deadline. A timeout invalidates late results
 and requests cancellation, but does not forcibly stop Navfn's remote CPU work.
 No second global-plan request is sent before that owned request ends.
-If either planning stage fails or times out, a short straight segment toward
+If planning times out, or still fails with the goal at the standoff point, a
+short straight segment toward
 the current target standoff is checked against the live costmap, including
 every crossed cell and diagonal corner. It stops before obstacles/unknown
 space and is capped by `goal_safe_search_radius_m` (1 m). A costmap older than
@@ -209,8 +213,16 @@ explicitly canceled. A current camera observation immediately updates the
 green target even if its detector ID changed; LiDAR is used to refine its
 range and continue it through temporary camera loss.
 The robot advances when the person is beyond the configured distance band and
-holds inside it. When the person approaches too closely, the same Nav2 planner
-computes the reverse path. Each accepted camera or LiDAR observation may
+holds inside it. When the person approaches too closely, the follower asks
+Nav2's `BackUp` behavior to reverse straight along the robot's own axis at
+`retreat_speed_mps`; the behavior server checks the footprint against the
+local costmap on the way. No reverse path is planned and the camera keeps
+facing the person. One whole standoff distance is requested at once, because
+Humble's BackUp cannot be preempted and restarting it for every step of an
+approaching person would stop the base each time; the distance band cancels
+the reverse as soon as the standoff is restored, and a fresh goal is sent only
+when the running one cannot cover what is still needed. Each accepted camera
+or LiDAR observation may
 request a fresh route; while one `ComputePathToPose` request is in flight, only
 the newest observation is retained and planned immediately afterward. The
 normal holonomic `FollowPath` controller follows all planner-produced positions

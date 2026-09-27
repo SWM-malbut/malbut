@@ -36,8 +36,8 @@ def _command(capability='autoslam', arguments=None):
     {'command': 'bringup_start', 'mode': 'navigation', 'map': '/tmp/home.yaml'},
     {'command': 'bringup_start', 'mode': 'shell'},
     {'command': 'bringup_stop', 'pid': 1},
-    {'command': 'nudge', 'direction': 'spin'},
-    {'command': 'nudge', 'direction': 'forward', 'speed': 1.0},
+    {'command': 'teleop', 'linear_x': 0.1, 'linear_y': 0.0, 'angular_z': 0.0, 'hold_s': 5.0},
+    {'command': 'teleop', 'linear_x': 0.1, 'linear_y': 0.0, 'angular_z': 0.0, 'hold_s': 0.0},
     _command('relocalize', {'method': 1}),
     _command('relocalize', {'method': 0, 'x': 1.0, 'y': 0.0, 'yaw': 0.0}),
     _command('relocalize', {'method': 3}),
@@ -250,7 +250,7 @@ def _bridge(manager_ready=False, autoslam_ready=True):
     bridge.tf_buffer = Mock()
     bridge.topics = {'map_topic': '/map'}
     bridge.guard = Mock()
-    bridge.nudge = None
+    bridge.teleop_hold_s = 0.5
     bridge.to_dict = lambda message: vars(message)
     bridge.auto_goal = SimpleNamespace
     bridge.mission_goal = SimpleNamespace
@@ -722,14 +722,13 @@ def test_manual_drive_starts_through_the_manager_with_registered_defaults():
 
 
 @pytest.mark.parametrize('payload', [
-    {'command': 'nudge', 'direction': 'forward'},
-    {'command': 'nudge', 'direction': 'stop'},
+    {'command': 'teleop', 'linear_x': 0.15, 'linear_y': 0.0, 'angular_z': 0.0, 'hold_s': 1.0},
     _command('relocalize', {'method': 0}),
     _command('relocalize', {'method': 1, 'x': 1.0, 'y': -2, 'yaw': 0.5}),
     {'command': 'debug_start', 'capability': 'get_weather', 'arguments': {}},
 ])
 def test_remote_tools_are_bounded_commands(payload):
-    """Steps, pose finding and debug missions pass as fixed command shapes."""
+    """Held driving, pose finding and debug missions pass as fixed command shapes."""
     assert validate_command(payload) == payload
 
 
@@ -778,37 +777,26 @@ def test_diagnostics_report_the_graph_and_state_without_local_logs():
     assert '/secret' not in json.dumps(report) and 'private' not in json.dumps(report)
 
 
-def test_step_waits_for_manual_control_then_moves_for_a_fixed_time(monkeypatch):
-    """A remote step starts when the manager reports MANUAL and stops by itself."""
+def test_remote_hold_rides_out_polling_gaps_then_stops_once(monkeypatch):
+    """A cloud page asks for a longer hold; a lost stop still ends within it."""
     now = [100.0]
     bridge = _teleop_bridge(monkeypatch, now)
-    bridge.submit({'command': 'nudge', 'direction': 'forward'})
+    bridge.submit({'command': 'teleop', 'linear_x': 0.15, 'linear_y': 0.0,
+                   'angular_z': 0.0, 'hold_s': 1.0})
     bridge._drain()
+    assert bridge.data.snapshot()['manual'] == {'state': 'MOVING', 'message': 'Driving'}
+    now[0] += 0.7  # Beyond the LAN panel's 0.5 s, inside the requested hold.
     bridge._teleop_watchdog()
-    assert bridge.data.snapshot()['manual']['state'] == 'STARTING'
-    now[0] += 1.0
-    bridge.data.system = {'control_mode': 1}
+    assert _published(bridge) == [(0.15, 0.0, 0.0)]
+    now[0] += 0.4
     bridge._teleop_watchdog()
-    now[0] += 0.7
     bridge._teleop_watchdog()
-    assert bridge.data.snapshot()['manual']['state'] == 'MOVING'
-    now[0] += 0.2
-    bridge._teleop_watchdog()
-    assert _published(bridge) == [(0.15, 0.0, 0.0)] * 3 + [(0.0, 0.0, 0.0)]
+    assert _published(bridge) == [(0.15, 0.0, 0.0), (0.0, 0.0, 0.0)]
     assert bridge.data.snapshot()['manual']['state'] == 'IDLE'
-
-
-def test_step_is_dropped_when_manual_control_does_not_start(monkeypatch):
-    """While the manager rejects manual_drive (switching maps) nothing moves later."""
-    now = [100.0]
-    bridge = _teleop_bridge(monkeypatch, now)
-    bridge.submit({'command': 'nudge', 'direction': 'turn_left'})
+    bridge.submit({'command': 'teleop', 'linear_x': 0.0, 'linear_y': 0.0, 'angular_z': 0.0})
     bridge._drain()
-    now[0] += 3.5
-    bridge._teleop_watchdog()
-    bridge._teleop_watchdog()
-    assert _published(bridge) == [(0.0, 0.0, 0.0)]
-    assert 'did not start' in bridge.data.snapshot()['manual']['message']
+    assert bridge.data.snapshot()['manual'] == {'state': 'IDLE', 'message': 'Stopped'}
+    assert bridge.teleop_hold_s == 0.5  # The next LAN command restores its own hold.
 
 
 @pytest.fixture

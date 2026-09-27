@@ -1,4 +1,4 @@
-"""ROS callbacks for the dedicated settings relay, outside Agent missions."""
+"""ROS callbacks for the fall coordinator settings relay, outside Agent missions."""
 
 from threading import RLock
 
@@ -105,7 +105,7 @@ class FallSettingsLink:
                 self.reports.publish(self.report_type(**report))
 
     def close(self):
-        """Stop confirmation before the Manager shuts down its executor."""
+        """Stop settings traffic before the coordinator shuts down its executor."""
         with self.lock:
             self.relay.close()
             self.timer.cancel()

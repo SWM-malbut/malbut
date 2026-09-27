@@ -23,8 +23,10 @@ fi
 package_paths=(
   "$robot_source_dir/homecam_agent/homecam_detector"
   "$robot_source_dir/malbut_bringup"
+  "$robot_source_dir/malbut_resource_monitor"
   "$robot_source_dir/malbut_interfaces"
   "$robot_source_dir/malbut_system_manager"
+  "$robot_source_dir/malbut_fall_coordinator"
   "$robot_source_dir/malbut_agent_server"
   "$robot_source_dir/malbut_stt"
   "$robot_source_dir/malbut_tts"

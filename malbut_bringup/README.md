@@ -51,7 +51,7 @@ STT·Agent·TTS는 기본 포함이며, 로봇 준비 확인 뒤 음성 점검 �
 
 `robot.launch.py`는 통합 navigation 실행에서 Cloud VLM 실행기
 `malbut-fall-monitor`를 함께 시작한다. Manager는 위치 추정을 위해 먼저 시작하며,
-설정이 준비되어 있으면 VLM은 로봇 준비 확인 뒤 한 번만 실행한다. 카메라는 추가로 띄우지 않고 Bringup의
+설정이 준비되어 있으면 VLM·Pose·`malbut_fall_coordinator`는 로봇 준비 확인 뒤 한 번만 실행한다. 카메라는 추가로 띄우지 않고 Bringup의
 `rgb_topic`을 사용한다. 음성을 꺼도 VLM 노드는 별도로 시작할 수 있다.
 
 최신 Bringup은 `mode` 인자를 없앴다. `mode:=navigation`을 넘길 필요가 없다.
@@ -75,12 +75,15 @@ ros2 launch malbut_bringup robot.launch.py map:=/실제/지도.yaml fall_monitor
 ```
 
 이 명령은 **VLM 노드 시작**이지 전송 동의가 아니다. 실제 영상 수집에는
-시작 시 지정한 Manager 실행 ID, 현재 VLM에 적용한 감지·카메라 허용 설정,
-Manager의 새 연결 확인 메시지가 필요하다. VLM은 KVS 저장 허용 Bool을 더 이상 받지 않는다.
+시작 시 지정한 낙상 코디네이터 실행 ID, 현재 VLM에 적용한 감지·카메라 허용 설정,
+코디네이터의 새 연결 확인 메시지가 필요하다. VLM은 KVS 저장 허용 Bool을 더 이상 받지 않는다.
 Cloud 전송에는 `cloud_consent`와 15초 안의 서버 설정 확인도 필요하다.
-Bringup은 홈캠·Manager·VLM에 같은 실행 ID 묶음을 전달하고,
-홈캠이 서버 설정을 받으면 Manager가 VLM에 적용한다. 준비 완료나 노드 시작만으로
-감지·Cloud 전송을 켜지는 않는다. Agent 질문·답변의 실제 연동은 별도 작업이다.
+Bringup은 홈캠·낙상 코디네이터·VLM에 같은 실행 ID 묶음을 전달하고,
+홈캠이 서버 설정을 받으면 코디네이터가 VLM에 적용한다. 준비 완료나 노드 시작만으로
+감지·Cloud 전송을 켜지는 않는다. 확인 대화는 코디네이터가 관리자에
+`fall_confirmation` 미션(`URGENT`, `BASE·SPEAKER`)을 요청해 기존 Agent Action으로 연결한다.
+관리자는 낙상 판단이나 설정 전달을 하지 않는다. 기존 wire 필드의 `manager_runtime_id`는
+호환성을 위해 이름만 유지하며 코디네이터 ID를 담는다.
 
 API 키는 런타임 설정의 `cloud_key_file`에서 읽으며 launch 인자로 전달하지 않는다.
 설정 검사는 키를 읽거나 DB를 만들지 않는다. 실제 노드가 시작될 때 키와 의존성을
@@ -290,8 +293,12 @@ ros2 launch malbut_bringup robot.launch.py \
 ```
 
 추적 서버의 planner/controller/goal-checker ID(`GridBased`, `FollowPath`,
-`general_goal_checker`)는 `nav2_params.yaml`과 일치한다. 필요하면 `following_config`와
-`lidar_config`로 기존 응용 설정을 지정한다. 시뮬레이션 튜닝을 실기기 Nav2에 덮어쓰지 않는다.
+`general_goal_checker`)는 `nav2_params.yaml`과 일치한다. 추적기는 사람 위치 자체를 목표로
+경로를 요청하고, 사람 몸이 차지한 칸은 planner의 `GridBased.tolerance`(0.5 m)가 가장 가까운
+갈 수 있는 칸으로 옮긴다. 사람이 너무 가까우면 후진 경로 대신 behavior 서버의
+`BackUp`으로 곧게 물러난다. 필요하면 `following_config`와 `lidar_config`로 기존 응용
+설정을 지정한다.
+시뮬레이션 튜닝을 실기기 Nav2에 덮어쓰지 않는다.
 
 저장 지도로 바꿀 때마다 관리자가 [위치 보정](#위치-보정)을 요청한다. 이 지도의 마지막
 AMCL 위치나 AutoSLAM이 저장한 `<지도이름>.pose.yaml`을 먼저 확인하고, 맞지 않거나
@@ -376,6 +383,19 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
   앞뒤(0.139 m)와 모서리(0.174 m)가 검사되지 않기 때문이다. 외곽선 아래 팽창 비용은
   차체 여유 0.35 m 안에서 174~253으로 거의 같아 거리 점수로 쓸 수 없으므로, 이 critic의
   가중치는 거부 판정만 남도록 작게 둔다(0이면 critic을 건너뛴다).
+- `FollowPath`의 `PreferForward` critic(Nav2 기본 제공, 원래 설정에는 꺼져 있었음)은 후진
+  궤적에만 벌점(scale 40 × penalty 1.0)을 더한다. `theta_scale`·`strafe_x`를 0으로 두어
+  회전·전진은 벌점이 없다. 40은 공개 DWB 설정들이 PathDist 32·GoalDist 24 옆에 두는
+  범위(1~40)의 위쪽으로, 전진을 약하게 선호하는 값이다. 후진이 경로 거리를 크게 줄이거나
+  전진 궤적이 모두 장애물에 걸리면 여전히 후진한다. 사람 추적의 후퇴는 DWB 경로가 아니라
+  `BackUp` behavior라서 이 벌점과 무관하다.
+- 도착 판정 `xy_goal_tolerance`는 0.12 m다(제조사 0.25 m는 차체 길이만큼 앞에서 멈추고,
+  사람 추적의 0.90~1.10 m 거리 띠 밖에서 멈췄다). 방향은 보지 않는다(`yaw_goal_tolerance`
+  6.28 rad). 도착 반경 안에서 DWB는 제자리 회전만 하고, footprint critic은 직사각형 차체가
+  벽을 쓸고 지나가는 회전을 거부하므로, 벽 옆 목표에서 방향을 맞추려다 BT의 BackUp 복구
+  (약 80초)까지 멈춰 있었다. 사람을 바라보는 것은 추적기의 Spin이, 순찰 지점의 둘러보기는
+  순찰의 한 바퀴 회전이 맡는다. `GridBased.tolerance` 0.5 m는 목표 칸이
+  벽·가구·사람 안이면 그 반경 안의 가장 가까운 갈 수 있는 칸으로 목표를 옮긴다.
 - Spin·BackUp은 behavior 서버가 local costmap으로 앞을 검사한 뒤 움직인다.
 - Collision Monitor 최소 구성: 다각형 하나(`FootprintApproach`, `approach`). 수동 조작 명령
   방향으로 차체 외곽(`/local_costmap/published_footprint`)을 1초 앞까지 옮겨 보고, LiDAR
@@ -431,9 +451,11 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
   같은 제조사 노드(0.15m/s, 0.45rad/s)를 `/cmd_vel_teleop`로 연결해 다시 실행한다.
   그래서 조이스틱 명령은 Nav2 명령과 섞이지 않는다. 외부 하드웨어를 재사용하는
   `start_hardware:=false`에서는 제조사 조이스틱이 기존처럼 드라이버를 직접 움직인다.
-- 서비스 웹의 수동 조작 버튼도 같은 입력을 사용한다. 버튼 한 번이 한 걸음(0.15m/s 또는
-  0.5rad/s로 0.8초)이며, 로봇 브리지는 `control_mode`가 `MANUAL`이 된 뒤에 움직이고
-  스스로 0을 보낸다. 3초 안에 수동 조작이 시작되지 않으면(예: 위치 추정 전환 중) 버린다.
+- 서비스 웹의 조작 패드(누른 채 끌기 또는 방향키)도 같은 입력을 사용한다. 페이지가
+  0.2초마다 속도를 반복해 보내고 로봇 브리지가 그대로 `/cmd_vel_teleop`에 낸다. 명령
+  큐는 로봇이 가져가지 않은 이전 속도를 새 속도로 바꾸고, 브리지는 수동 입력이 있는 동안
+  큐를 0.2초마다 확인한다. 손을 떼면 0을 보내고, 1초 넘게 새 명령이 없으면 브리지가
+  스스로 0을 보낸다(LAN 패널은 0.5초).
 - 조이스틱은 놓으면 0을 보낸다. 입력이 끊긴 채 남은 마지막 명령도 5초 뒤 수동 조작
   종료로 정지한다.
 

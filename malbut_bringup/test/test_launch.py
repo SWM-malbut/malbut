@@ -377,6 +377,53 @@ def _process_exit(actions, context, process, returncode=0):
     return result
 
 
+def test_cloud_and_stt_share_xfm_before_capture_starts(
+        launch_module, speech_assets, monkeypatch):
+    """Both clients get the same physical input; public device/output stay intact."""
+    monkeypatch.setenv('HOMECAM_BACKEND_URL', 'https://robot.example.com')
+    source = 'alsa_input.usb-xfm.mono-fallback'
+    monkeypatch.setattr(launch_module, 'shared_xfm_source', lambda env: source)
+    context = _context(launch_module, **speech_assets)
+    actions = launch_module._setup(context)
+    first_capture = next(index for index, item in enumerate(actions)
+                         if isinstance(item, GroupAction))
+    for action in actions[:first_capture]:
+        if isinstance(action, SetEnvironmentVariable):
+            action.execute(context)
+    assert context.environment['PULSE_SOURCE'] == source
+    assert context.environment['MALBUT_SHARED_MICROPHONE'] == source
+    media = next(dict(item.launch_arguments) for item in _includes(actions)
+                 if 'backend_url' in dict(item.launch_arguments))
+    assert media['audio_source'] == 'pulse'
+    assert 'microphone_enabled' not in media
+    assert 'audio_sink' not in media
+    assert context.launch_configurations['speech_input_device'] == '0'
+
+
+@pytest.mark.parametrize('speech,cloud,device', [
+    ('true', False, '0'), ('false', True, '0'), ('true', True, '2'),
+])
+def test_other_audio_paths_keep_existing_device_selection(
+        launch_module, speech_assets, monkeypatch, speech, cloud, device):
+    """Do not add a PulseAudio requirement to standalone STT or explicit overrides."""
+    if cloud:
+        monkeypatch.setenv('HOMECAM_BACKEND_URL', 'https://robot.example.com')
+    monkeypatch.setattr(launch_module, 'shared_xfm_source',
+                        lambda env: pytest.fail('unnecessary shared source lookup'))
+    speech_assets['speech'] = speech
+    context = _context(launch_module, **speech_assets, speech_input_device=device)
+    context.environment['MALBUT_SHARED_MICROPHONE'] = 'stale-source'
+    context.environment['PULSE_SOURCE'] = 'desktop-source'
+    actions = launch_module._setup(context)
+    for action in actions:
+        if isinstance(action, SetEnvironmentVariable):
+            action.execute(context)
+    assert context.environment['MALBUT_SHARED_MICROPHONE'] == ''
+    assert context.environment['PULSE_SOURCE'] == 'desktop-source'
+    assert all('audio_source' not in dict(item.launch_arguments)
+               for item in _includes(actions))
+
+
 def test_robot_defaults_enable_isolated_cuda_speech(launch_module, monkeypatch, tmp_path):
     """The normal robot entrypoint selects the same cache paths as build.sh."""
     monkeypatch.setenv('MALBUT_AGENT_USER_ID', 'http-user')
@@ -578,9 +625,13 @@ def test_fall_monitor_starts_once_after_readiness(launch_module, fall_config, en
     bindings = evaluate_parameters(context, manager._Node__parameters)[0]
     assert bindings['localization_control'] is True
     assert bindings['ready_topic'] == '/malbut/bringup/status'
-    assert bindings['fall_vlm_runtime_id'] == parameters['runtime_id']
-    assert bindings['fall_manager_runtime_id'] == parameters['manager_runtime_id']
-    assert UUID(bindings['fall_bridge_runtime_id'])
+    assert not any(key.startswith('fall_') for key in bindings)
+    coordinators = _nodes(ready, 'fall_coordinator')
+    assert len(coordinators) == 1
+    bindings = _parameters(context, coordinators[0])
+    assert bindings['vlm_runtime_id'] == parameters['runtime_id']
+    assert bindings['runtime_id'] == parameters['manager_runtime_id']
+    assert UUID(bindings['bridge_runtime_id'])
     arguments = [perform_substitutions(context, arg) for arg in node.cmd[1:]]
     assert arguments[:3] == ['--config', str(fall_config), '--execute']
     remaps = [(perform_substitutions(context, src), perform_substitutions(context, dst))
@@ -603,9 +654,7 @@ def test_startup_binding_is_shared_with_media_and_changes_on_new_launch(
         media = next(dict(item.launch_arguments) for item in _includes(actions)
                      if 'fall_bridge_runtime_id' in dict(item.launch_arguments))
         ready = _readiness_exit(actions, context)
-        manager = next(item for item in actions if isinstance(item, Node)
-                       and item.node_executable == 'system_manager')
-        params = evaluate_parameters(context, manager._Node__parameters)[0]
+        params = _parameters(context, _nodes(ready, 'fall_coordinator')[0])
         vlm = next(item for item in ready if isinstance(item, Node)
                    and item.node_executable == 'malbut-fall-monitor')
         vlm_params = evaluate_parameters(context, vlm._Node__parameters)[0]
@@ -616,13 +665,14 @@ def test_startup_binding_is_shared_with_media_and_changes_on_new_launch(
         assert pose_params['fall_only'] is True
         assert pose_params['pose_keep_aspect'] is True
         assert not _nodes(actions, 'homecam_detector_node')
-        assert params['fall_vlm_runtime_id'] == vlm_params['runtime_id']
-        assert params['fall_manager_runtime_id'] == vlm_params['manager_runtime_id']
+        assert params['vlm_runtime_id'] == vlm_params['runtime_id']
+        assert params['runtime_id'] == vlm_params['manager_runtime_id']
         for peer in ('bridge', 'manager', 'vlm'):
             field = 'fall_' + peer + '_runtime_id'
-            assert params[field] == media[field]
+            parameter = 'runtime_id' if peer == 'manager' else peer + '_runtime_id'
+            assert params[parameter] == media[field]
         bindings.append(params)
-    assert bindings[0]['fall_bridge_runtime_id'] != bindings[1]['fall_bridge_runtime_id']
+    assert bindings[0]['bridge_runtime_id'] != bindings[1]['bridge_runtime_id']
 
 
 def test_fall_launch_uses_unified_navigation_without_legacy_mode_flags(launch_module):

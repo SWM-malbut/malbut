@@ -57,15 +57,15 @@ class Client:
 @pytest.fixture
 def motion(monkeypatch):
     """Build the real adapter without creating a ROS node or driving robot."""
-    path_client, spin_client = Client(), Client()
+    clients = {name: Client() for name in ('path', 'spin', 'backup')}
     monkeypatch.setattr(
-        navigation, 'ActionClient',
-        lambda node, action, name: path_client if name == 'path' else spin_client,
+        navigation, 'ActionClient', lambda node, action, name: clients[name],
     )
     result = Mock()
     adapter = Nav2MotionClient(None, 'path', 'spin', result)
     return SimpleNamespace(
-        adapter=adapter, path=path_client, spin=spin_client, result=result,
+        adapter=adapter, path=clients['path'], spin=clients['spin'],
+        backup=clients['backup'], result=result,
     )
 
 
@@ -233,3 +233,36 @@ def test_unknown_terminal_result_does_not_release_motion_ownership(motion):
     request_path(motion)
     assert not motion.path.goals
     assert len(motion.spin.goals) == 1
+
+
+def test_backup_goal_carries_magnitudes_and_waits_like_spin(motion):
+    """The behavior negates distance and speed itself; replacements wait for terminal."""
+    assert motion.adapter.backup(0.3, 0.15, 5.0)
+    goal = motion.backup.goals[-1]
+    assert goal.target.x == pytest.approx(0.3) and goal.speed == pytest.approx(0.15)
+    assert goal.time_allowance.sec == 5
+    assert motion.adapter.mode == MotionMode.BACKUP
+    first = motion.backup.accept()
+    assert motion.adapter.backup(0.5, 0.15, 7.0)
+    assert first.cancel_count == 1 and motion.adapter.stopping
+    assert len(motion.backup.goals) == 1
+    first.finish()
+    assert len(motion.backup.goals) == 2
+    assert motion.backup.goals[-1].target.x == pytest.approx(0.5)
+    assert not motion.adapter.stopping
+
+
+def test_backup_and_path_switch_only_after_the_other_ends(motion):
+    """A retreat stops the forward controller first, and vice versa."""
+    request_path(motion)
+    first = motion.path.accept()
+    assert motion.adapter.backup(0.2, 0.15, 3.0)
+    assert first.cancel_count == 1 and not motion.backup.goals
+    first.finish()
+    assert len(motion.backup.goals) == 1
+    backing = motion.backup.accept()
+    request_path(motion)
+    assert backing.cancel_count == 1 and len(motion.path.goals) == 1
+    backing.finish()
+    assert len(motion.path.goals) == 2
+    assert motion.adapter.mode == MotionMode.NAVIGATE
