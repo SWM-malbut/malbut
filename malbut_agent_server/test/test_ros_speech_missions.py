@@ -55,9 +55,15 @@ class _Provider:
             '따라와': ('request_follow_person', {}),
             '멈춰': ('cancel_voice_mission', {}),
             '거실로 가': ('request_navigation', {'location': '거실'}),
+            '거실로 가볼까?': ('request_navigation', {'location': '거실'}),
             '꼼꼼히 순찰해': ('request_patrol', {'thoroughness': 'thorough'}),
             # Deliberately wrong model output: policy must reject its intent.
             '오늘 날씨는 어때': ('request_follow_person', {}),
+            '거실로 갈 수 있어?': ('request_navigation', {'location': '거실'}),
+            '거실로 가보지 마': ('request_navigation', {'location': '거실'}),
+            '"거실로 가볼까?"라는 문장을 설명해': (
+                'request_navigation', {'location': '거실'},
+            ),
         }
         tool, arguments = selected[request.utterance]
         assert tool in {spec.name for spec in tools}
@@ -307,10 +313,7 @@ def test_transcript_follow_and_next_spoken_cancel_cross_manager_once(speech_grap
     assert len(run.provider.calls) == 2
 
 
-def test_named_navigation_requires_selected_map_and_preserves_registered_pose(
-    speech_graph, tmp_path,
-):
-    run = speech_graph
+def _registered_navigation(tmp_path):
     image = tmp_path / 'fixture.pgm'
     image.write_bytes(b'P5\n1 1\n255\n\xff')
     selected = tmp_path / 'fixture.yaml'
@@ -323,17 +326,26 @@ def test_named_navigation_requires_selected_map_and_preserves_registered_pose(
         'map': str(selected), 'frame_id': 'map',
         'locations': {'거실': {'x': 1.25, 'y': -2.5, 'yaw': math.pi / 2}},
     }, allow_unicode=True))
-    run.start(NavigationTargets(config))
-    _, reply = run.say('거실로 가')
+    return NavigationTargets(config), selected
+
+
+@pytest.mark.parametrize('utterance', ['거실로 가', '거실로 가볼까?'])
+def test_named_navigation_requires_selected_map_and_preserves_registered_pose(
+    speech_graph, tmp_path, utterance,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    run.start(targets)
+    _, reply = run.say(utterance)
     assert '지도' in reply
     assert run.manager_goals == []
 
     run.observe_map(selected)
-    run.say('거실로 가')
+    run.say(utterance)
     run.spin_until(lambda: len(run.actuators.goals['navigate_to_pose']) == 1)
     goal = run.actuators.goals['navigate_to_pose'][0]
     assert run.manager_goals == [('navigate_to_pose',
-                                 NavigationTargets(config).resolve('거실', str(selected)).arguments)]
+                                 targets.resolve('거실', str(selected)).arguments)]
     assert goal.pose.header.frame_id == 'map'
     assert goal.pose.pose.position.x == 1.25
     assert goal.pose.pose.position.y == -2.5
@@ -343,6 +355,24 @@ def test_named_navigation_requires_selected_map_and_preserves_registered_pose(
     assert goal.pose.pose.orientation.w == pytest.approx(math.cos(math.pi / 4))
     assert goal.behavior_tree == ''
     run.spin_until(lambda: any(event['kind'] == 'succeeded' for event in run.events))
+
+
+@pytest.mark.parametrize('utterance', [
+    '거실로 갈 수 있어?', '거실로 가보지 마', '"거실로 가볼까?"라는 문장을 설명해',
+])
+def test_wrong_navigation_tool_for_noncommand_never_reaches_manager(
+    speech_graph, tmp_path, utterance,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    run.start(targets)
+    run.observe_map(selected)
+    _, reply = run.say(utterance)
+    assert len(run.provider.calls) == 1
+    assert '실행할 작업 하나를 직접' in reply
+    assert run.manager_goals == []
+    assert run.events == []
+    assert all(not goals for goals in run.actuators.goals.values())
 
 
 def test_patrol_thoroughness_reaches_downstream_through_manager(speech_graph):

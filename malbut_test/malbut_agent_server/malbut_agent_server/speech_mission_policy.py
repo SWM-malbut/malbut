@@ -20,7 +20,7 @@ from malbut_agent_server.tools import (
 )
 
 
-POLICY_REVISION = 'speech-manager-intent-v1'
+POLICY_REVISION = 'speech-manager-intent-v2'
 _QUOTES = frozenset('\"\'“”‘’«»「」『』`')
 _META = (
     '만약', '만일', '가정', '예를들', '상상', '번역', '인용', '설명',
@@ -50,7 +50,8 @@ _FOLLOW = (
 )
 _GO = (
     r'(?:가(?:줘|주세요|줄래|주실래|주겠니|자)?(?:요)?|가세요'
-    r'|이동(?:' + _DO + r'|' + _START + r'))'
+    r'|(?:갈까|가볼까|가볼래)(?:요)?|가보자'
+    r'|이동(?:' + _DO + r'|' + _START + r'|해볼(?:까|래)(?:요)?|해보자))'
 )
 _CANCEL = (
     r'(?:(?:현재|지금)?(?:진행중인|실행중인)?'
