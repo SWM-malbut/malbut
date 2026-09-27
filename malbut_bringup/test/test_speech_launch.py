@@ -133,7 +133,8 @@ def test_scoped_include_captures_settings_before_parent_scope_restores(speech):
     """Late callbacks must retain speech settings after a scoped include exits."""
     context = _context(speech, agent_provider='mock', input_has_aec='true',
                        agent_user_id='trial-p1',
-                       agent_conversation_db='/trial records/p1.sqlite3')
+                       agent_conversation_db='/trial records/p1.sqlite3',
+                       navigation_targets='/speech/targets.yaml')
     actions = speech._setup(context)
     # GroupAction pops the child scope before asynchronous process exits arrive.
     context.launch_configurations.clear()
@@ -141,6 +142,7 @@ def test_scoped_include_captures_settings_before_parent_scope_restores(speech):
         'python_executable': '/yolo/bin/python', 'preflight_only': 'true',
         'agent_provider': 'openai', 'input_has_aec': 'false',
         'agent_user_id': 'parent-user', 'agent_conversation_db': '/parent.sqlite3',
+        'manager_commands': 'false', 'navigation_targets': '/parent/targets.yaml',
     })
     peers = _exit(actions, context, _process(actions))
     agent = next(item for item in peers if isinstance(item, Node)
@@ -148,6 +150,8 @@ def test_scoped_include_captures_settings_before_parent_scope_restores(speech):
     assert [perform_substitutions(context, part) for part in agent.cmd[1:7]] == [
         '--provider', 'mock', '--user-id', 'trial-p1',
         '--conversation-db', '/trial records/p1.sqlite3']
+    assert [perform_substitutions(context, part) for part in agent.cmd[7:10]] == [
+        '--enable-manager-commands', '--navigation-targets', '/speech/targets.yaml']
     stt = _exit(actions, context, _process(peers))[0]
     assert evaluate_parameters(context, stt._Node__parameters)[1]['input_has_aec'] is True
 
@@ -196,6 +200,23 @@ def test_input_device_reaches_preflight_and_stt(speech, input_device):
     peers = _exit(actions, context, preflight)
     stt = _exit(actions, context, _process(peers))[0]
     assert evaluate_parameters(context, stt._Node__parameters)[1]['device_index'] == int(expected)
+
+
+@pytest.mark.parametrize('enabled', ['true', 'false'])
+def test_speech_mission_settings_reach_only_the_agent(speech, enabled):
+    """Wire the production opt-in and target catalog without starting a Goal."""
+    path = '/configured maps/voice-targets.yaml'
+    context = _context(speech, manager_commands=enabled, navigation_targets=path)
+    actions = speech._setup(context)
+    peers = _exit(actions, context, _process(actions))
+    agent = next(item for item in peers if isinstance(item, Node)
+                 and item.node_package == 'malbut_agent_server')
+    command = [perform_substitutions(context, part) for part in agent.cmd[1:]]
+    assert ('--enable-manager-commands' in command) is (enabled == 'true')
+    if enabled == 'true':
+        assert command[command.index('--navigation-targets') + 1] == path
+    else:
+        assert '--navigation-targets' not in command
 
 
 @pytest.mark.parametrize('server', ['manager', 'autoslam'])

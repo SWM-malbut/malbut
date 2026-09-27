@@ -908,6 +908,13 @@ class AgentOrchestrator:
                 },
             )
             decision = provider_result.decision
+        elif raw_decision.type == 'tool_call' and safety.code == 'manager_request':
+            # Persist the proposal as a request, never a model-invented completion.
+            decision = replace(raw_decision, message=(
+                '음성으로 시작한 작업의 취소를 요청할게요.'
+                if raw_decision.tool_name == 'cancel_voice_mission'
+                else 'Manager에 작업 실행을 요청할게요.'
+            ))
         issued_at = float(self._state_clock())
         expires_at = (
             issued_at + decision.expires_in_ms / 1000.0

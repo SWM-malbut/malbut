@@ -41,6 +41,8 @@ def _setup(context):
     agent_provider = value('agent_provider')
     agent_user_id = value('agent_user_id')
     agent_conversation_db = value('agent_conversation_db')
+    manager_commands = value('manager_commands') == 'true'
+    navigation_targets = value('navigation_targets')
     preflight_only = value('preflight_only') == 'true'
     input_has_aec = value('input_has_aec') == 'true'
     control_server = value('control_server')
@@ -95,11 +97,17 @@ def _setup(context):
         if not config.is_file():
             return fail(f'Speech STT configuration is missing: {config}')
         prefix = shlex.quote(python)
+        mission_arguments = []
+        if manager_commands:
+            mission_arguments.append('--enable-manager-commands')
+            if navigation_targets.strip():
+                mission_arguments.extend(['--navigation-targets', navigation_targets])
         agent = Node(
             package='malbut_agent_server', executable='agent_communication',
             prefix=prefix, output='screen', arguments=[
                 '--provider', agent_provider, '--user-id', agent_user_id,
                 '--conversation-db', agent_conversation_db,
+                *mission_arguments,
             ],
         )
         tts = Node(
@@ -168,11 +176,13 @@ def generate_launch_description():
         'python_executable': sys.executable, 'preflight_only': 'false',
         'preflight_timeout_s': '120.0', 'peer_timeout_s': '30.0',
         'control_server': 'none',
+        'manager_commands': 'true', 'navigation_targets': '',
     }
     choices = {
         'input_has_aec': ['true', 'false'], 'preflight_only': ['true', 'false'],
         'agent_provider': ['openai', 'mock'],
         'control_server': ['none', 'manager', 'autoslam'],
+        'manager_commands': ['true', 'false'],
     }
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=default, choices=choices.get(name))

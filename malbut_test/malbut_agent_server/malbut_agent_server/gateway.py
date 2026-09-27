@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional, Protocol, Tuple
 
 from malbut_agent_server.schemas import ValidationError, validate_user_id
 from malbut_agent_server.tools import (
+    SPEECH_MISSION_TOOLS,
     TOOL_SPECS,
     ToolSpec,
     select_tool_specs,
@@ -34,6 +35,10 @@ SIMULATION = 'simulation'
 RUNTIME_MODES = frozenset({PRODUCTION, SIMULATION})
 
 TOOL_RISK_LEVELS = {
+    'request_navigation': 'L3',
+    'request_follow_person': 'L3',
+    'request_patrol': 'L3',
+    'cancel_voice_mission': 'L0',
     'get_weather': 'L0',
     'set_weather_location': 'L0',
     'get_robot_status': 'L0',
@@ -44,6 +49,10 @@ TOOL_RISK_LEVELS = {
 }
 
 TOOL_TIMEOUT_SECONDS = {
+    'request_navigation': 2.0,
+    'request_follow_person': 2.0,
+    'request_patrol': 2.0,
+    'cancel_voice_mission': 2.0,
     'get_weather': 10.0,
     'set_weather_location': 10.0,
     'get_robot_status': 1.0,
@@ -105,6 +114,8 @@ class ToolCapability:
             raise ValueError(f'unsupported Tool mode: {self.mode}')
         if self.name in {'get_weather', 'set_weather_location'} and self.mode != PROPOSAL_ONLY:
             raise ValueError('weather tools must execute through Manager')
+        if self.name in SPEECH_MISSION_TOOLS and self.mode != PROPOSAL_ONLY:
+            raise ValueError('speech mission tools must execute through Manager')
         if not isinstance(self.available, bool):
             raise ValueError('Tool availability must be a boolean')
         if self.mode == READ_ONLY and self.name not in READ_ONLY_ELIGIBLE:
@@ -655,6 +666,7 @@ def production_registry() -> CapabilityRegistry:
                     else PROPOSAL_ONLY
                 ),
                 timeout_seconds=TOOL_TIMEOUT_SECONDS[name],
+                available=name not in SPEECH_MISSION_TOOLS,
             )
             for name in TOOL_SPECS
         ],
@@ -666,14 +678,18 @@ def simulation_registry() -> CapabilityRegistry:
     """Build explicit side-effect-free adapters for local demonstrations."""
     capabilities = []
     for name in TOOL_SPECS:
+        manager_only = name in {
+            'get_weather', 'set_weather_location', *SPEECH_MISSION_TOOLS,
+        }
         capabilities.append(
             ToolCapability(
                 name=name,
-                mode=PROPOSAL_ONLY if name in {'get_weather', 'set_weather_location'}
+                mode=PROPOSAL_ONLY if manager_only
                 else SIMULATION_ONLY,
-                adapter=None if name in {'get_weather', 'set_weather_location'}
+                adapter=None if manager_only
                 else MockToolAdapter(name),
                 timeout_seconds=TOOL_TIMEOUT_SECONDS[name],
+                available=name not in SPEECH_MISSION_TOOLS,
             )
         )
     return CapabilityRegistry(
