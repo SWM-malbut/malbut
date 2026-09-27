@@ -7,6 +7,8 @@ Missing/ambiguous evidence is retained as an unidentified discovery by the calle
 from dataclasses import dataclass
 from typing import Optional
 
+from malbut_agent_server.domain.fall_monitoring import CloudAssociationEvidence
+
 
 @dataclass(frozen=True)
 class SceneAssociation:
@@ -21,6 +23,27 @@ def box_iou(a, b):
     union = ((a[2] - a[0]) * (a[3] - a[1])
              + (b[2] - b[0]) * (b[3] - b[1]) - area)
     return area / union if union else 0.0
+
+
+def association_evidence(finding, snapshot):
+    """Distinguish no usable counterpart observations from unverified identity.
+
+    Count ONLY frozen dispatch samples. A helper's box can make evidence
+    available; this never means Pose found the person in the Cloud finding.
+    Missing Cloud locations use the whole request window for availability only.
+    """
+    if finding.regions:
+        if any(r.frame_index >= len(snapshot) for r in finding.regions):
+            return CloudAssociationEvidence('invalid_sample_reference', 0, 0, 0)
+        selected = [snapshot[r.frame_index] for r in finding.regions]
+        scope = 'finding_frames'
+    else:
+        selected, scope = snapshot, 'request_window'
+    return CloudAssociationEvidence(
+        scope, len(selected),
+        sum(any(pose.box is not None for _, _, pose in sample) for sample in selected),
+        sum(any(token is not None and pose.association_usable and pose.box is not None
+                for _, token, pose in sample) for sample in selected))
 
 
 def associate_finding(finding, snapshot):

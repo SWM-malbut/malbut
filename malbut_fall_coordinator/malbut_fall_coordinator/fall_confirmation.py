@@ -3,6 +3,7 @@
 from collections import OrderedDict
 from dataclasses import dataclass
 import json
+from typing import Optional
 
 
 ASSESSMENTS = {'confirmed_incident', 'resolved', 'unknown'}
@@ -25,7 +26,7 @@ class ConfirmationRequest:
     boot_id: str
     incident_id: str
     question_id: str
-    subject_key: str
+    subject_key: Optional[str]
     revision: int
     summary: str
 
@@ -77,6 +78,14 @@ class FallConfirmationCoordinator:
                 'incident_opened', 'incident_updated', 'incident_resolved',
                 'confirmation_completed', 'analysis_completed', 'question_requested'}:
             return False
+        scope = event.get('confirmation_scope', 'subject')
+        subject = event.get('subject_key')
+        # A missing person ID is not permission to address the whole scene.
+        # Only an explicit scene handoff may retain a null subject through the
+        # managed conversation; the VLM runtime owns its non-clearance rule.
+        if (scope not in ('subject', 'scene')
+                or (scope == 'scene' and ('subject_key' not in event or subject is not None))):
+            return False
         boot = event.get('boot_id')
         iid = event.get('incident_id')
         revision = event.get('evidence_revision')
@@ -88,8 +97,9 @@ class FallConfirmationCoordinator:
         if kind == 'question_requested':
             qid, subject = event.get('question_id'), event.get('subject_key')
             video = event.get('video_assessment')
-            if (not _identifier(qid) or not _identifier(subject)
+            if (not _identifier(qid) or (scope == 'subject' and not _identifier(subject))
                     or not isinstance(video, str) or video not in VIDEO_SUMMARIES
+                    or (scope == 'scene' and video not in {'observed_fall', 'suspected_fall'})
                     or (video == 'normal_activity'
                         and event.get('reason') != 'prior_fall_observed')):
                 return False
@@ -123,7 +133,7 @@ class FallConfirmationCoordinator:
         if kind == 'analysis_completed' and event.get('video_assessment') == 'normal_activity':
             # Runtime revalidates that there was no earlier observed fall or
             # outstanding confirmation; a later normal frame cannot clear it.
-            if not any(r.incident_id == iid for r in self.requests.values()):
+            if scope != 'scene' and not any(r.incident_id == iid for r in self.requests.values()):
                 self.commands.append(dict(action='dismiss_normal', boot_id=boot,
                                           incident_id=iid, evidence_revision=revision))
             return True
@@ -148,9 +158,14 @@ class FallConfirmationCoordinator:
             if request.incident_id == iid:
                 del self.requests[rid]
                 self._remember(rid)
-        self.requests[qid] = ConfirmationRequest(
-            boot, iid, qid, subject, revision,
-            VIDEO_SUMMARIES[video] + ' 실제로 넘어진 것인지와 도움 필요 여부를 확인해 주세요.')
+        summary = VIDEO_SUMMARIES[video]
+        if scope == 'scene':
+            summary += (' 영상 속 대상과 대답하는 사람의 연결은 확인되지 않았습니다.'
+                        ' 특정인을 지목하지 말고, 주변에 넘어졌거나 도움이 필요한 분이 있는지'
+                        ' 확인해 주세요. 한 사람의 괜찮다는 답변을 다른 사람의 상태로 판단하지 마세요.')
+        else:
+            summary += ' 실제로 넘어진 것인지와 도움 필요 여부를 확인해 주세요.'
+        self.requests[qid] = ConfirmationRequest(boot, iid, qid, subject, revision, summary)
         return True
 
     def complete(self, request, *, situation_assessment, help_needed):

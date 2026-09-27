@@ -478,8 +478,17 @@ def test_periodic_cloud_check_without_pose_candidate(tmp_path):
             discovery = flow.journal.discoveries()[0]
             assert discovery['assessment'] == 'suspected_fall'
             assert discovery['association_status'] == 'unidentified'
-            assert discovery['incident_id'] is None
-            assert not flow.stored()  # No invented subject/incident.
+            assert discovery['subject_key'] is None
+            iid = discovery['incident_id']
+            await flow.until(lambda: any(
+                e['kind'] == 'question_requested' and e['incident_id'] == iid
+                for e in flow.events))
+            question = next(e for e in flow.events if e['kind'] == 'question_requested')
+            assert question['confirmation_scope'] == 'scene'
+            assert question['subject_key'] is None
+            assert flow.vlm.monitor.incident(iid).subject_key is None
+            assert any(r['incidentId'] == iid for r in flow.stored())
+            assert not any(r['notificationLevel'] for r in flow.stored())
         finally:
             await flow.close()
     asyncio.run(run())

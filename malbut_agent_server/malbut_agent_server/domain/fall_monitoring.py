@@ -378,6 +378,66 @@ class CloudPersonFinding:
 
 
 @dataclass(frozen=True)
+class CloudAssociationEvidence:
+    """Availability at Cloud dispatch, not proof that Pose found this person."""
+
+    scope: str
+    samples: int
+    pose_box_samples: int
+    usable_pose_samples: int
+
+    def __post_init__(self):
+        if (self.scope not in ('finding_frames', 'request_window', 'invalid_sample_reference')
+                or any(type(n) is not int or n < 0 for n in (
+                    self.samples, self.pose_box_samples, self.usable_pose_samples))
+                or not 0 <= self.usable_pose_samples <= self.pose_box_samples <= self.samples):
+            raise ValueError('invalid association evidence')
+
+    @property
+    def unlinked_case(self):
+        # An invalid reference is unknown, not evidence of detector absence.
+        if self.scope != 'invalid_sample_reference' and self.usable_pose_samples == 0:
+            return 'pose_evidence_missing'
+        return 'identity_unverified'
+
+    def metadata(self):
+        return dict(scope=self.scope, samples=self.samples,
+                    pose_box_samples=self.pose_box_samples,
+                    usable_pose_samples=self.usable_pose_samples)
+
+
+@dataclass(frozen=True)
+class CloudDiscoveryLink:
+    """Append-only local provenance; a source scene is NOT a merged person."""
+
+    source_incident_id: str
+    source_revision: int
+    target_token: str
+    seed_time: float
+    confirmed_at: float
+    visual_samples: int
+    pose_samples: int
+
+    def __post_init__(self):
+        identifier(self.source_incident_id)
+        identifier(self.target_token)
+        timestamp(self.seed_time)
+        timestamp(self.confirmed_at)
+        if (any(type(n) is not int or n < 1 for n in (
+                self.source_revision, self.visual_samples, self.pose_samples))
+                or not 3 <= self.pose_samples <= self.visual_samples
+                or self.confirmed_at - self.seed_time < .5 - 1e-9):
+            raise ValueError('invalid discovery link proof')
+
+    def metadata(self):
+        return dict(source_incident_id=self.source_incident_id,
+                    source_revision=self.source_revision, target_token=self.target_token,
+                    seed_time=self.seed_time, confirmed_at=self.confirmed_at,
+                    visual_samples=self.visual_samples, pose_samples=self.pose_samples,
+                    method='continuous_visual_track_pose_v1')
+
+
+@dataclass(frozen=True)
 class CloudDiscovery:
     discovery_id: str
     request_id: str
@@ -387,13 +447,22 @@ class CloudDiscovery:
     reason: str
     subject_key: Optional[str] = None
     incident_id: Optional[str] = None
+    association_evidence: Optional[CloudAssociationEvidence] = None
+    association_link: Optional[CloudDiscoveryLink] = None
 
     def metadata(self):
         """Private local record; excludes RGB, model prose and Cloud credentials."""
         return dict(discovery_id=self.discovery_id, request_id=self.request_id,
                     finding_index=self.finding_index, assessment=self.finding.assessment.value,
                     candidate_kind=self.finding.kind.value, reason=self.reason,
-                    association_status='matched' if self.incident_id else 'unidentified',
+                    association_status='matched' if self.subject_key else 'unidentified',
+                    association_case=('matched' if self.subject_key else
+                        self.association_evidence.unlinked_case
+                        if self.association_evidence is not None else 'unknown'),
+                    association_evidence=(self.association_evidence.metadata()
+                        if self.association_evidence is not None else None),
+                    association_link=(self.association_link.metadata()
+                        if self.association_link is not None else None),
                     subject_key=self.subject_key, incident_id=self.incident_id,
                     sample_times=list(self.sample_times),
                     regions=[dict(frame_index=r.frame_index, box=list(r.box))
@@ -447,12 +516,16 @@ class FallRuntimeEvent:
     request: Optional[CloudFallRequest] = field(default=None, repr=False)
     reply: Optional[CloudFallReply] = None
     discovery: Optional[CloudDiscovery] = None
+    confirmation_scope: str = 'subject'
 
 
 @dataclass
 class FallIncident:
     incident_id: str
-    subject_key: str
+    # None is a scene-level verification case, never a synthetic person ID.
+    # Its discoveries may involve different people; sharing this case is only
+    # a bounded confirmation queue, not a claim of person/event identity.
+    subject_key: Optional[str]
     kind: CandidateKind
     opened_at: float
     last_observed_at: float
