@@ -157,6 +157,13 @@ class AutoSlamNode(Node):
             callback_group=self.group,
         )
 
+    def destroy_node(self):
+        """Release owned Action waitables before destroying their ROS node."""
+        self.server.destroy()
+        self.navigation.destroy()
+        self.planner.destroy()
+        super().destroy_node()
+
     def _receive_map(self, message):
         with self.lock:
             self.message = message

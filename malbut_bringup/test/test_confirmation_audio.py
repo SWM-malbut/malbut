@@ -254,7 +254,8 @@ def test_started_answer_survives_ten_seconds_and_moves_to_help_question(audio_ri
 
 @pytest.mark.parametrize('followup', ['corrected_help', 'silence', 'still_unclear'])
 def test_unclear_asr_reasks_in_a_new_session_before_help_decision(audio_rig, followup):
-    """Exercise retry control with a genuinely ambiguous answer.
+    """
+    Exercise retry control with a genuinely ambiguous answer.
 
     ASR and semantic interpretation are fixtures; this checks the composed
     STT/session/TTS state machines, not recognition or model accuracy.

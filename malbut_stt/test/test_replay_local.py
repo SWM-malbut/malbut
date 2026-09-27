@@ -107,8 +107,11 @@ def test_busy_discarded_speech_cannot_shorten_an_earlier_transcripts_latency(run
     assert any(item['event'] == 'speech_discarded:busy' for item in result['events'])
     transcript = result['transcripts'][0]
     assert 0 <= transcript['first_vad_speech_at_s'] <= transcript['last_vad_speech_at_s'] < 0.3
-    assert transcript['at_s'] > 3.6
-    assert transcript['vad_last_speech_to_text_s'] > 3.5
+    inference = result['inference'][0]
+    discarded = next(item for item in result['events'] if item['event'] == 'speech_discarded:busy')
+    assert (transcript['last_vad_speech_at_s'] < inference['started_s']
+            < discarded['at_s'] < inference['finished_s'] <= transcript['at_s'])
+    assert transcript['vad_last_speech_to_text_s'] >= inference['elapsed_s'] >= 2.7
     assert transcript['vad_last_speech_to_text_s'] == pytest.approx(
         transcript['at_s'] - transcript['last_vad_speech_at_s'])
 
