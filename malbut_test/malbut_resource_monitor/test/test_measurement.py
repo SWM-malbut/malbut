@@ -174,6 +174,61 @@ def test_viewer_revalidates_only_changed_files_and_time_ranges(tmp_path):
         thread.join()
 
 
+def test_session_label_is_persistent_but_never_changes_collector_logs(tmp_path):
+    store = Store(tmp_path, 1, os.getpid())
+    store.register('system', kind='system', label='system')
+    store.write('system', {'cpu_percent': 42})
+    original = {name: (store.path / name).read_bytes()
+                for name in ('metadata.json', 'system.jsonl')}
+    server = LogServer(('127.0.0.1', 0), tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f'http://127.0.0.1:{server.server_port}'
+    query = urlencode({'session': store.path.name})
+
+    def rename(name, session_query=query, origin=base):
+        return urlopen(Request(
+            base + '/api/session/name?' + session_query,
+            data=json.dumps({'name': name}).encode(),
+            headers={'Content-Type': 'application/json', 'Origin': origin}))
+
+    try:
+        with urlopen(base + '/api/sessions') as response:
+            etag = response.headers['ETag']
+        with rename('거실 사람 추적 1차') as response:
+            assert json.load(response)['display_name'] == '거실 사람 추적 1차'
+        with urlopen(Request(base + '/api/sessions', headers={
+                'If-None-Match': etag})) as response:
+            assert json.load(response)[0]['display_name'] == '거실 사람 추적 1차'
+        with urlopen(base + '/api/session?' + query) as response:
+            assert json.load(response)['display_name'] == '거실 사람 추적 1차'
+        assert json.loads((store.path / 'viewer.json').read_text()) == {
+            'display_name': '거실 사람 추적 1차'}
+        assert ((store.path / 'viewer.json').stat().st_mode & 0o777) == 0o600
+        for name, content in original.items():
+            assert (store.path / name).read_bytes() == content
+        # Later collector writes must not erase the label.
+        store.close('test')
+        with urlopen(base + '/api/session?' + query) as response:
+            assert json.load(response)['display_name'] == '거실 사람 추적 1차'
+        for invalid in ('x' * 81, 'bad\nname', 123):
+            with pytest.raises(HTTPError) as error:
+                rename(invalid)
+            assert error.value.code == 400
+        with pytest.raises(HTTPError) as error:
+            rename('bad', origin='https://unrelated.example')
+        assert error.value.code == 403
+        with pytest.raises(HTTPError) as error:
+            rename('bad', session_query=urlencode({'session': '../elsewhere'}))
+        assert error.value.code == 400
+        with rename('') as response:
+            assert json.load(response)['display_name'] == ''
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 def test_deployment_wiring_only():
     deployment = Path(__file__).resolve().parents[2]
     launch = (deployment / 'malbut_bringup/launch/robot.launch.py').read_text()
