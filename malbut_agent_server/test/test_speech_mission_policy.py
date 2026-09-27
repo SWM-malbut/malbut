@@ -1,4 +1,4 @@
-"""Voice delegates explicit requests without weakening the legacy state gate."""
+"""Check structural proposal bounds; language interpretation belongs to the model."""
 
 from types import SimpleNamespace
 
@@ -37,89 +37,25 @@ def evaluate(utterance, tool, arguments=None, *, policy=None, ttl=5000):
 
 
 @pytest.mark.parametrize('utterance,tool,arguments', [
-    ('제이크야 나 따라와', 'request_follow_person', {}),
-    ('따라와 줘', 'request_follow_person', {}),
-    ('나 좀 따라와', 'request_follow_person', {}),
-    ('보이는 사람을 따라와 주세요', 'request_follow_person', {}),
-    ('please follow me', 'request_follow_person', {}),
-    ('거실로 가', 'request_navigation', {'location': '거실'}),
-    ('거실로 가볼까?', 'request_navigation', {'location': '거실'}),
-    ('거실로 가 볼까요?', 'request_navigation', {'location': 'living_room'}),
-    ('거실로 갈까?', 'request_navigation', {'location': '거실'}),
-    ('주방으로 갈까요?', 'request_navigation', {'location': '주방'}),
-    ('제이크야 지금 주방으로 가볼래?', 'request_navigation', {'location': '주방'}),
-    ('거실로 가볼래요?', 'request_navigation', {'location': '거실'}),
-    ('서재로 가보자', 'request_navigation', {'location': '서재'}),
-    ('거실로 이동해 볼까요?', 'request_navigation', {'location': '거실'}),
-    ('제이크 지금 주방으로 가 줘!', 'request_navigation', {'location': '주방'}),
-    ('거실로 이동해', 'request_navigation', {'location': 'living_room'}),
-    ('서재로 이동해 주세요', 'request_navigation', {'location': '서재'}),
-    ('please go to kitchen', 'request_navigation', {'location': 'kitchen'}),
-    ('순찰해줘', 'request_patrol', {'thoroughness': 'normal'}),
-    ('순찰 시작해', 'request_patrol', {'thoroughness': 'normal'}),
-    ('집안을 꼼꼼히 순찰해 줘', 'request_patrol', {'thoroughness': 'thorough'}),
-    ('가볍게 순찰해', 'request_patrol', {'thoroughness': 'light'}),
-    ('start a thorough patrol', 'request_patrol', {'thoroughness': 'thorough'}),
-    ('멈춰', 'cancel_voice_mission', {}),
-    ('취소해 줘', 'cancel_voice_mission', {}),
-    ('진행 중인 순찰을 취소해', 'cancel_voice_mission', {}),
-    ('그만 따라와', 'cancel_voice_mission', {}),
-    ('따라오지 마', 'cancel_voice_mission', {}),
-    ('stop following', 'cancel_voice_mission', {}),
+    ('우리 거실로 가볼까', 'request_navigation', {'location': '거실'}),
+    ('주방으로 가 주시겠어요', 'request_navigation', {'location': '주방'}),
+    ('거실로 와바라', 'request_navigation', {'location': '거실'}),
+    ('주방으로 오너라', 'request_navigation', {'location': '주방'}),
+    ('어, 그… 거실로 좀 가주이소', 'request_navigation', {'location': '거실'}),
+    # The model may resolve a destination-only answer from prior clarification.
+    ('거실', 'request_navigation', {'location': '거실'}),
+    ('제 뒤를 따라오실래요', 'request_follow_person', {}),
+    ('집안을 좀 꼼꼼히 둘러봐 줘', 'request_patrol', {'thoroughness': 'thorough'}),
+    ('집안 한 번 가볍게 돌아주겠니', 'request_patrol', {'thoroughness': 'light'}),
+    ('이제 그만 따라오셔도 돼요', 'cancel_voice_mission', {}),
 ])
-def test_direct_intent_allows_only_manager_delegation(utterance, tool, arguments):
+def test_structured_model_proposals_are_not_limited_by_utterance_grammar(
+    utterance, tool, arguments,
+):
+    # Decisions are fixture outputs, not evidence of a model's language accuracy.
     result = evaluate(utterance, tool, arguments)
     assert result.allowed
     assert result.code == 'manager_request'
-
-
-@pytest.mark.parametrize('utterance,tool,arguments', [
-    ('"따라와"라고 말했어', 'request_follow_person', {}),
-    ('나 따라와라고 말해줘', 'request_follow_person', {}),
-    ('따라와라는 문장을 번역해', 'request_follow_person', {}),
-    ('따라올 수 있어?', 'request_follow_person', {}),
-    ('따라오지 마', 'request_follow_person', {}),
-    ('안 따라왔으면 좋겠어', 'request_follow_person', {}),
-    ('나중에 따라와', 'request_follow_person', {}),
-    ('만약 내가 가면 따라와', 'request_follow_person', {}),
-    ('엄마를 따라와', 'request_follow_person', {}),
-    ('저기 가', 'request_navigation', {'location': '거실'}),
-    ('거실로 가', 'request_navigation', {'location': '주방'}),
-    ('거실로 가라고 했어', 'request_navigation', {'location': '거실'}),
-    ('거실로 가지 마', 'request_navigation', {'location': '거실'}),
-    ('거실로 가볼까?', 'request_navigation', {'location': '주방'}),
-    ('거실로 갈 수 있어?', 'request_navigation', {'location': '거실'}),
-    ('거실로 이동 가능해?', 'request_navigation', {'location': '거실'}),
-    ('거실로 안 가볼까?', 'request_navigation', {'location': '거실'}),
-    ('거실로 가지 말까?', 'request_navigation', {'location': '거실'}),
-    ('거실로 가볼까 말까?', 'request_navigation', {'location': '거실'}),
-    ('거실로 가볼까라고 말해줘', 'request_navigation', {'location': '거실'}),
-    ('“거실로 가볼까?”', 'request_navigation', {'location': '거실'}),
-    ('내일 거실로 가볼까?', 'request_navigation', {'location': '거실'}),
-    ('만약 거실로 가볼까?', 'request_navigation', {'location': '거실'}),
-    ('거실로 가볼까? 그리고 순찰해', 'request_navigation', {'location': '거실'}),
-    ('거실로 가고 따라와', 'request_navigation', {'location': '거실'}),
-    ('거실과 주방으로 가', 'request_navigation', {'location': '주방'}),
-    ('따라와 그리고 순찰해', 'request_patrol', {'thoroughness': 'normal'}),
-    ('순찰하고 따라와', 'request_follow_person', {}),
-    ('내일 순찰해', 'request_patrol', {'thoroughness': 'normal'}),
-    ('순찰하지 마', 'request_patrol', {'thoroughness': 'normal'}),
-    ('꼼꼼히 순찰해', 'request_patrol', {'thoroughness': 'light'}),
-    ('순찰해', 'request_patrol', {'thoroughness': 'thorough'}),
-    ('순찰을 취소하지 마', 'cancel_voice_mission', {}),
-    ('날씨 조회를 취소해', 'cancel_voice_mission', {}),
-    ('상황 대응을 취소해', 'cancel_voice_mission', {}),
-    ('멈춰라고 말해', 'cancel_voice_mission', {}),
-    ('취소하고 주방으로 가', 'cancel_voice_mission', {}),
-    ('do not follow me', 'request_follow_person', {}),
-    ('if you can follow me', 'request_follow_person', {}),
-])
-def test_quoted_negated_hypothetical_and_multiple_tasks_do_not_delegate(
-    utterance, tool, arguments,
-):
-    result = evaluate(utterance, tool, arguments)
-    assert not result.allowed
-    assert result.code == 'current_turn_intent_missing'
 
 
 @pytest.mark.parametrize('tool,arguments', [

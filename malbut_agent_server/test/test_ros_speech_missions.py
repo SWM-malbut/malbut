@@ -42,36 +42,50 @@ ACTION_TYPES = {
 
 
 class _Provider:
-    """Deterministic model seam; policy, conversation and tool routing are real."""
+    """Fixed decisions test transport, never the model's language interpretation."""
 
     def __init__(self):
         self.calls = []
+        self.histories = []
+        self.overrides = {}
 
     def complete(self, request, memories, conversation_turns, tools,
                  conversation_summary=None):
-        del memories, conversation_turns, conversation_summary
+        del memories, conversation_summary
         self.calls.append(request)
+        self.histories.append(list(conversation_turns))
         selected = {
             '따라와': ('request_follow_person', {}),
             '멈춰': ('cancel_voice_mission', {}),
             '거실로 가': ('request_navigation', {'location': '거실'}),
             '거실로 가볼까?': ('request_navigation', {'location': '거실'}),
+            '우리 거실로 가볼까': ('request_navigation', {'location': '거실'}),
+            '거실로 와바라': ('request_navigation', {'location': '거실'}),
+            '거실': ('request_navigation', {'location': '거실'}),
             '꼼꼼히 순찰해': ('request_patrol', {'thoroughness': 'thorough'}),
-            # Deliberately wrong model output: policy must reject its intent.
-            '오늘 날씨는 어때': ('request_follow_person', {}),
-            '거실로 갈 수 있어?': ('request_navigation', {'location': '거실'}),
-            '거실로 가보지 마': ('request_navigation', {'location': '거실'}),
-            '"거실로 가볼까?"라는 문장을 설명해': (
-                'request_navigation', {'location': '거실'},
-            ),
         }
-        tool, arguments = selected[request.utterance]
-        assert tool in {spec.name for spec in tools}
-        return ProviderResult(
-            decision=AgentDecision(
+        noncommands = {
+            '오늘 날씨는 어때': ('message', '날씨에 관한 대화 응답입니다.'),
+            '거실로 갈 수 있어?': ('message', '등록된 목적지 이동 기능이 있어요.'),
+            '거실로 가보지 마': ('message', '이동하지 않을게요.'),
+            '"거실로 가볼까?"라는 문장을 설명해': ('message', '거실 이동을 제안하는 문장이에요.'),
+            '와바라': ('clarification', '어느 등록된 목적지로 오면 될까요?'),
+            '이리 오너라': ('clarification', '어느 등록된 목적지로 오면 될까요?'),
+        }
+        if request.utterance in self.overrides:
+            decision = self.overrides[request.utterance]
+        elif request.utterance in noncommands:
+            kind, message = noncommands[request.utterance]
+            decision = AgentDecision(type=kind, message=message)
+        else:
+            tool, arguments = selected[request.utterance]
+            assert tool in {spec.name for spec in tools}
+            decision = AgentDecision(
                 type='tool_call', tool_name=tool, arguments=arguments,
                 message='모델이 만든 실행 완료 주장', expires_in_ms=5000,
-            ),
+            )
+        return ProviderResult(
+            decision=decision,
             provider='ros-speech-mission-fixture', model='fixed', latency_ms=0.0,
         )
 
@@ -329,7 +343,9 @@ def _registered_navigation(tmp_path):
     return NavigationTargets(config), selected
 
 
-@pytest.mark.parametrize('utterance', ['거실로 가', '거실로 가볼까?'])
+@pytest.mark.parametrize('utterance', [
+    '거실로 가', '거실로 가볼까?', '우리 거실로 가볼까', '거실로 와바라',
+])
 def test_named_navigation_requires_selected_map_and_preserves_registered_pose(
     speech_graph, tmp_path, utterance,
 ):
@@ -359,8 +375,9 @@ def test_named_navigation_requires_selected_map_and_preserves_registered_pose(
 
 @pytest.mark.parametrize('utterance', [
     '거실로 갈 수 있어?', '거실로 가보지 마', '"거실로 가볼까?"라는 문장을 설명해',
+    '오늘 날씨는 어때', '와바라', '이리 오너라',
 ])
-def test_wrong_navigation_tool_for_noncommand_never_reaches_manager(
+def test_message_and_clarification_transport_never_creates_manager_goals(
     speech_graph, tmp_path, utterance,
 ):
     run = speech_graph
@@ -369,10 +386,28 @@ def test_wrong_navigation_tool_for_noncommand_never_reaches_manager(
     run.observe_map(selected)
     _, reply = run.say(utterance)
     assert len(run.provider.calls) == 1
-    assert '실행할 작업 하나를 직접' in reply
+    assert reply
     assert run.manager_goals == []
     assert run.events == []
     assert all(not goals for goals in run.actuators.goals.values())
+
+
+def test_model_proposal_after_destination_clarification_uses_same_conversation(
+    speech_graph, tmp_path,
+):
+    run = speech_graph
+    targets, selected = _registered_navigation(tmp_path)
+    run.start(targets)
+    run.observe_map(selected)
+    run.say('와바라')
+    assert run.manager_goals == []
+    run.say('거실')
+    run.spin_until(lambda: len(run.actuators.goals['navigate_to_pose']) == 1)
+    assert [turn.user_content for turn in run.provider.histories[-1]] == ['와바라']
+    assert run.provider.calls[0].conversation_id == run.provider.calls[1].conversation_id
+    assert run.manager_goals == [('navigate_to_pose', targets.resolve(
+        '거실', str(selected)).arguments)]
+    run.spin_until(lambda: any(event['kind'] == 'succeeded' for event in run.events))
 
 
 def test_patrol_thoroughness_reaches_downstream_through_manager(speech_graph):
@@ -385,10 +420,40 @@ def test_patrol_thoroughness_reaches_downstream_through_manager(speech_graph):
     run.spin_until(lambda: any(event['kind'] == 'succeeded' for event in run.events))
 
 
-def test_wrong_model_tool_cannot_turn_a_question_into_motion(speech_graph):
+@pytest.mark.parametrize('tool,arguments', [
+    ('request_navigation', {'location': '거실', 'pose': {'x': 42}}),
+    ('request_follow_person', {'target_person_id': 'invented-speaker-id'}),
+    ('request_patrol', {'thoroughness': 'fast'}),
+    ('cancel_voice_mission', {'request_id': 'somebody-else'}),
+])
+def test_invalid_structured_proposal_never_reaches_manager(
+    speech_graph, tmp_path, tool, arguments,
+):
     run = speech_graph
-    run.start()
-    run.say('오늘 날씨는 어때')
+    targets, selected = _registered_navigation(tmp_path)
+    run.provider.overrides['따라와'] = AgentDecision(
+        type='tool_call', tool_name=tool, arguments=arguments,
+        message='모델이 만든 실행 완료 주장',
+    )
+    run.start(targets)
+    run.observe_map(selected)
+    run.say('따라와')
     assert len(run.provider.calls) == 1
     assert run.manager_goals == []
+    assert run.events == []
+    assert all(not goals for goals in run.actuators.goals.values())
+
+
+def test_model_cannot_reenable_navigation_when_target_configuration_is_disabled(speech_graph):
+    run = speech_graph
+    run.provider.overrides['거실로 가'] = AgentDecision(
+        type='tool_call', tool_name='request_navigation', arguments={'location': '거실'},
+        message='모델이 만든 실행 완료 주장',
+    )
+    run.start()
+    run.say('거실로 가')
+    assert len(run.provider.calls) == 1
+    assert 'request_navigation' not in run.provider.calls[0].available_tools
+    assert run.manager_goals == []
+    assert run.events == []
     assert all(not goals for goals in run.actuators.goals.values())
