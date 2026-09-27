@@ -6,7 +6,7 @@ import time
 from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pytest
 
@@ -128,6 +128,46 @@ def test_viewer_reads_exact_samples_and_blocks_path_traversal(tmp_path):
             assert error.value.code == 400
         with urlopen(base + '/') as response:
             assert '관측' in response.read().decode()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_viewer_revalidates_only_changed_files_and_time_ranges(tmp_path):
+    store = Store(tmp_path, 1, os.getpid())
+    store.register('system', kind='system', label='system')
+    store.write('system', {'t': 1, 'cpu_percent': 10})
+    server = LogServer(('127.0.0.1', 0), tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f'http://127.0.0.1:{server.server_port}'
+    query = urlencode({'session': store.path.name, 'channel': 'system'})
+    try:
+        paths = ['/api/sessions', '/api/session?' + query, '/api/data?' + query]
+        tags = {}
+        for path in paths:
+            with urlopen(base + path) as response:
+                tags[path] = response.headers['ETag']
+                assert tags[path]
+            with pytest.raises(HTTPError) as error:
+                urlopen(Request(base + path, headers={'If-None-Match': tags[path]}))
+            assert error.value.code == 304
+        store.write('system', {'t': 2, 'cpu_percent': 20})
+        with urlopen(Request(base + paths[2], headers={
+                'If-None-Match': tags[paths[2]]})) as response:
+            data_tag = response.headers['ETag']
+            assert data_tag != tags[paths[2]]
+            assert [row['cpu_percent'] for row in json.load(response)['rows']] == [10, 20]
+        # Same file, different requested interval must not reuse the old response.
+        with urlopen(Request(base + paths[2] + '&start=2', headers={
+                'If-None-Match': data_tag})) as response:
+            assert len(json.load(response)['rows']) == 1
+        store.close('test')
+        for path in paths[:2]:
+            with urlopen(Request(base + path, headers={
+                    'If-None-Match': tags[path]})) as response:
+                assert response.headers['ETag'] != tags[path]
     finally:
         server.shutdown()
         server.server_close()

@@ -338,6 +338,9 @@ STT는 로컬 whisper.cpp CUDA, Agent와 TTS는 기본 OpenAI API를 사용한�
 장치 선택은 `speech_input_device`, `speech_output_device`를 사용한다.
 입력 기본값은 `speech_input_device:=0`이며 현재 로봇의
 `XFM-DP-V0.0.18: USB Audio` (sounddevice index `0`, ALSA `hw:0,0`)를 선택한다.
+웹 홈캠과 STT를 동시에 켤 때는 같은 XFM 입력을 PulseAudio로 공유한다.
+입력 선택값 `0`과 STT 16 kHz 설정, 스피커 출력은 유지한다.
+공유 의존성은 `setup.sh`에 포함되어 있으며 기존 설치의 추가 명령은 아래 음성 실행 안내를 따른다.
 제조사 `xf_mic_asr_offline/voice_control`이 XFM을 선점하면 시작할 수 없으므로,
 먼저 음성 실행 안내의 선점 해제·`startup_check` 자동실행 해제 절차를 따른다.
 모델·경로 변경과 음성만 점검하는 하위 launch 사용법은

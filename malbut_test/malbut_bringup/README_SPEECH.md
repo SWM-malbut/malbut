@@ -124,9 +124,24 @@ speech_python="${MALBUT_SPEECH_RUNTIME:-${XDG_CACHE_HOME:-$HOME/.cache}/malbut_s
 ros2 launch malbut_bringup robot.launch.py --show-args
 ```
 
-입력과 출력 모두 위 sounddevice 목록의 장치 번호를 그대로 사용한다.
 입력 기본값은 `0`이며, 현재 로봇에서 확인한 `XFM-DP-V0.0.18: USB Audio`
-(ALSA `hw:0,0`)를 선택한다. 입력 채널이 있는 장치인지 확인한다.
+(ALSA `hw:0,0`)를 선택한다. **웹 홈캠과 STT를 함께 켜는 통합 Bringup**에서는
+이 XFM 입력을 PulseAudio로 공유한다. STT는 기존 16 kHz mono PCM을 받고,
+홈캠은 같은 입력을 기존 48 kHz Opus 경로로 송출한다. 마이크 이름으로 물리 입력을
+고정하므로, 장치 점유 중 PortAudio 목록 순서가 바뀌어도 다른 마이크를 선택하지 않는다.
+시스템 기본 입력·출력은 바꾸지 않는다.
+
+공유에는 `pulseaudio pulseaudio-utils libasound2-plugins`가 필요하며
+`malbut_test/setup.sh`에서 설치한다. 기존 설치에는 아래 명령을 한 번 실행한다.
+
+```bash
+sudo apt-get install -y pulseaudio pulseaudio-utils libasound2-plugins
+```
+
+Bringup은 로봇 데스크톱과 같은 사용자(`ubuntu`)로 실행한다(`sudo ros2 launch` 금지).
+공유 XFM 입력을 찾지 못하면 시작 전에 이유를 표시한다.
+웹 없이 실행하거나 `speech.launch.py`만 실행할 때와 명시적으로 다른 입력을 지정할 때는
+기존처럼 sounddevice 장치 번호를 그대로 사용한다. 출력 번호도 기존 방식 그대로다.
 `-1`을 명시하면 시스템 기본 입력을 사용한다. 현장 점검에서 기본 입력은
 XFM이 아닌 Jetson card 3 쪽이었으므로 XFM을 쓸 때는 `0`을 사용한다.
 출력 기본값은 `-1`이다. 장비나 USB 구성을 바꾸면 목록을 다시 확인한다.
@@ -143,7 +158,7 @@ ros2 launch malbut_bringup robot.launch.py \
 | `speech` | `true`; `false`면 로봇 구성만 진단 |
 | `speech_python_executable` | 위 음성 환경의 `bin/python`; YOLO의 `python_executable`과 별개 |
 | `stt_model_path`, `stt_library_path` | 위 환경 변수 또는 기본 캐시 경로 |
-| `speech_input_device` | `0`; 현재 로봇의 XFM 마이크, sounddevice 장치 번호 |
+| `speech_input_device` | `0`; XFM 마이크, 웹 동시 실행 시 공유 입력. 다른 값은 sounddevice 장치 번호 |
 | `speech_output_device` | `-1`; TTS와 호출 성공음이 함께 사용하는 시스템 기본 출력 |
 | `stt_cpp_threads` | `6` CPU 보조 스레드 |
 | `speech_input_has_aec` | `false`; 검증된 에코 제거 입력일 때만 `true` |
@@ -160,13 +175,14 @@ AEC 인자는 에코 제거 기능을 구현하거나 활성화하지 않는다.
 현장 점검에서 `arecord -D plughw:0,0` 녹음으로 XFM의 실제 음성 입력을 확인했다.
 ALSA card 1의 `USB Audio Device`는 이번에 사용할 마이크가 아니다.
 제조사 `xf_mic_asr_offline/voice_control`이 `/dev/snd/pcmC0D0c`를 선점하면
-입력 번호가 `0`이어도 STT가 마이크를 열 수 없다. 로봇에서 먼저 확인한다:
+입력 번호가 `0`이어도 STT 또는 PulseAudio가 마이크를 열 수 없다. 로봇에서 먼저 확인한다:
 
 ```bash
 sudo fuser -v /dev/snd/pcmC0D0c
 pgrep -af '[x]f_mic_asr_offline'
 ```
 
+소유자가 `pulseaudio`라면 공유 입력의 정상 소유자이므로 종료하지 않는다.
 소유자가 아래 제조사 실행 파일인 경우 해당 음성 노드만 일회 종료한다:
 
 ```bash

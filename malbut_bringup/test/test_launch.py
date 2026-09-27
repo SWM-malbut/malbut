@@ -377,6 +377,53 @@ def _process_exit(actions, context, process, returncode=0):
     return result
 
 
+def test_cloud_and_stt_share_xfm_before_capture_starts(
+        launch_module, speech_assets, monkeypatch):
+    """Both clients get the same physical input; public device/output stay intact."""
+    monkeypatch.setenv('HOMECAM_BACKEND_URL', 'https://robot.example.com')
+    source = 'alsa_input.usb-xfm.mono-fallback'
+    monkeypatch.setattr(launch_module, 'shared_xfm_source', lambda env: source)
+    context = _context(launch_module, **speech_assets)
+    actions = launch_module._setup(context)
+    first_capture = next(index for index, item in enumerate(actions)
+                         if isinstance(item, GroupAction))
+    for action in actions[:first_capture]:
+        if isinstance(action, SetEnvironmentVariable):
+            action.execute(context)
+    assert context.environment['PULSE_SOURCE'] == source
+    assert context.environment['MALBUT_SHARED_MICROPHONE'] == source
+    media = next(dict(item.launch_arguments) for item in _includes(actions)
+                 if 'backend_url' in dict(item.launch_arguments))
+    assert media['audio_source'] == 'pulse'
+    assert 'microphone_enabled' not in media
+    assert 'audio_sink' not in media
+    assert context.launch_configurations['speech_input_device'] == '0'
+
+
+@pytest.mark.parametrize('speech,cloud,device', [
+    ('true', False, '0'), ('false', True, '0'), ('true', True, '2'),
+])
+def test_other_audio_paths_keep_existing_device_selection(
+        launch_module, speech_assets, monkeypatch, speech, cloud, device):
+    """Do not add a PulseAudio requirement to standalone STT or explicit overrides."""
+    if cloud:
+        monkeypatch.setenv('HOMECAM_BACKEND_URL', 'https://robot.example.com')
+    monkeypatch.setattr(launch_module, 'shared_xfm_source',
+                        lambda env: pytest.fail('unnecessary shared source lookup'))
+    speech_assets['speech'] = speech
+    context = _context(launch_module, **speech_assets, speech_input_device=device)
+    context.environment['MALBUT_SHARED_MICROPHONE'] = 'stale-source'
+    context.environment['PULSE_SOURCE'] = 'desktop-source'
+    actions = launch_module._setup(context)
+    for action in actions:
+        if isinstance(action, SetEnvironmentVariable):
+            action.execute(context)
+    assert context.environment['MALBUT_SHARED_MICROPHONE'] == ''
+    assert context.environment['PULSE_SOURCE'] == 'desktop-source'
+    assert all('audio_source' not in dict(item.launch_arguments)
+               for item in _includes(actions))
+
+
 def test_robot_defaults_enable_isolated_cuda_speech(launch_module, monkeypatch, tmp_path):
     """The normal robot entrypoint selects the same cache paths as build.sh."""
     for name in ('MALBUT_SPEECH_RUNTIME', 'MALBUT_STT_MODEL_PATH',
