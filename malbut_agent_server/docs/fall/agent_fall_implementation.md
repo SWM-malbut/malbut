@@ -3,6 +3,18 @@
 [대화 명세](agent_fall_interaction.md)를 구현한 연결과 실행 조건이다.
 첫 적용 대상은 낙상이며, Agent의 대화 엔진과 Action은 다른 이상 상황도 받는다.
 
+## 공통 인터페이스 규격 적용
+
+[공통 인터페이스 색인](../../../malbut_interfaces/README.md)의 경로·타입을 사용한다.
+필드·자료형·상수의 정본은 `malbut_interfaces`의 `.action/.srv/.msg`이며,
+이 문서는 입력 검증과 동작·실패 처리 규칙을 정한다. 결과·취소가 필요한 확인 대화는
+Action, 청취·재생 제어는 Service, 발화·재생 상태와 전사는 Topic으로 연결한다.
+
+`ConfirmSituation`은 Manager의 `FallConfirmationLink`가 호출하는 내부 보조 Action이다.
+일반 Agent 도구나 `ExecuteMission`의 미션으로 노출하지 않으며 `capabilities/`에
+등록하지 않는다. Agent는 기존 일반 대화를 무효화하고 TTS 전체 중단·확인 발화
+우선순위로 음성을 선점한다. 이 경로는 Manifest의 `SPEAKER` 자원 중재를 거치지 않는다.
+
 ## 연결
 
 ```mermaid
@@ -33,15 +45,20 @@ VLM의 자유 형식 설명을 전달하지 않는다. Agent는 낙상 런타임
 ## Manager–Agent 계약
 
 Action: `/malbut/agent/confirm_situation`
-자료형: `malbut_interfaces/action/ConfirmSituation`
+자료형: [`malbut_interfaces/action/ConfirmSituation`](../../../malbut_interfaces/action/ConfirmSituation.action)
 
-| 방향 | 필드 | 의미 |
-| --- | --- | --- |
-| 요청 | `request_id` | 중복 확인을 막는 요청 ID |
-| 요청 | `situation_type` | 상황 유형, 낙상은 `fall` |
-| 요청 | `summary` | Manager가 전달하는 상황 요약 |
-| 결과 | `situation_assessment` | `confirmed_incident`, `resolved`, `unknown` |
-| 결과 | `help_needed` | 도움 필요 여부 |
+| 방향 | 필드 | ROS 타입 | 의미·검증 |
+| --- | --- | --- | --- |
+| 요청 | `request_id` | `string` | 중복 확인을 막는 요청 ID, 최대 200자 |
+| 요청 | `situation_type` | `string` | 상황 유형, 낙상은 `fall`, 최대 100자 |
+| 요청 | `summary` | `string` | Manager가 전달하는 상황 요약, 최대 4,000자 |
+| 결과 | `situation_assessment` | `string` | Action Result의 세 상수 중 하나인 최종 상황 판단 |
+| 결과 | `help_needed` | `bool` | 도움 필요 여부 |
+
+요청의 세 문자열은 모두 필수이며 공백만 있는 값은 거절한다. 줄바꿈·탭을 제외한
+32 미만 코드값의 제어 문자는 허용하지 않는다. 검증은 Agent의 Action 서버가 수행한다.
+Feedback 필드는 비어 있다. Goal 수락은 대화 완료가 아니며, Result는 아래 성공 조건에
+따라 사용한다. 세 결과 상수의 현재 값은 `confirmed_incident`, `resolved`, `unknown`이다.
 
 결과의 두 필드는 독립적이다. 실제 낙상은 확인했지만 도움을 거절했다면
 `confirmed_incident/false`, 발생 여부를 확인하지 못한 채 도움을 요청했다면
@@ -50,6 +67,17 @@ Action: `/malbut/agent/confirm_situation`
 사용자가 앞서 말한 낙상 사실을 명시적으로 철회하면 실제 상황도 `unknown`으로
 정정할 수 있다. 도움 질문에 대한 모호한 답변만으로 이미 확인한 사실을 지우지는 않는다.
 실제 상황과 도움 확인 단계 사이를 오가더라도 각 단계의 재질문 상한은 초기화하지 않는다.
+
+단독 `도와줘`·`도와주세요`는 공백과 끝의 `.!?。！？`를 제거한 정확 일치에 한해
+상황 종류와 관계없이 답변 판단 API를 생략하고 현재 상황 판단을 유지하면서
+`help_needed=true`로 종료한다. 부정·인용·복합 문장에는 적용하지 않는다.
+
+낙상 확인(`situation_type`이 `fall` 또는 `낙상`)에서는 단독 `좋아져`를 `도와줘`의
+오인식으로 간주한다. 공백을 제거하고 끝의 `.!?。！？`를 제거한 값이 정확히 `좋아져`일
+때만 적용하며, 답변 원문을 이력에 남기고 현재 `situation_assessment`를 유지한 채
+추가 provider 호출이나 재질문 없이 `help_needed=true`로 종료한다. `몸이 좋아져`처럼
+다른 말이 포함된 문장이나 다른 상황 유형은 기존 의미 판단을 따른다. 실제로 상태가
+호전된다는 뜻의 단독 `좋아져`도 도움 필요로 처리되는 한정된 오인식 대응 규칙이다.
 
 진행 Feedback은 발행하지 않는다. 판단이 끝나면 먼저 결과를 전달하고 마무리 말을
 재생한다. 마무리 재생 오류 때문에 이미 얻은 판단이 유실되지 않게 한다.
@@ -71,19 +99,31 @@ Agent는 보호자 알림을 실행하거나 요청하지 않으며 후속 처�
 Manager는 수락된 요청의 결과를 최대 610초 기다리며, Agent 서버가 연속 5초 사라진
 경우에도 처리 실패로 큐를 해제한다. Agent 자체 처리 상한은 600초다. 이 제한은
 통신·처리 장애 복구용이며 질문 뒤 사용자 답변을 기다리는 10초와 별개다.
+Goal 수락 대기 5초와 결과 대기 610초는 타이머보다 응답 콜백이 먼저 와도 검사한다.
+기한이 지난 Goal 수락에는 취소를 요청하며, 늦은 결과를 상황 판단으로 사용하지 않는다.
 
 ## 음성 처리
 
+- 확인 시작 전 TTS 전체 중단의 서비스 응답을 최대 5초 기다린다. 기한이 지난
+  응답이 타이머 검사보다 먼저 완료돼도 확인 대화를 시작하지 않고 처리 오류로 끝낸다.
+  초기 대기가 시간초과·취소·종료되면 로컬 응답 대기도 취소해 미응답 요청이 쌓이지
+  않게 한다. 로컬 Future 취소는 이미 전송한 ROS 서비스의 원격 실행 취소를 뜻하지 않는다.
 - `/malbut/speech/session_control`로 질문별 청취 세션을 연다. STT는 이 세션에서
   호출어와 일반 대화의 수신 대상 분류를 생략한다.
 - 질문마다 새 `session_id`와 `playback_id`를 사용해 이전 질문의 늦은 답변을 버린다.
   STT는 종료·교체된 최근 256개 세션 ID를 기억해 지연된 시작 요청이 세션을 되살리지
   못하게 한다. 종료가 시작보다 먼저 도착하면 해당 ID의 종료를 예약한다.
 - `/malbut/speech/input_status`의 발화 시작 신호가 오면 질문을 중단하고 청취한다.
+- 세션 시작 ACK보다 완성된 답변이 먼저 오면 그 발화 ID를 보존하며, 이후 다른
+  발화의 시작 신호가 먼저 받은 답변을 덮어쓰지 않는다.
 - 질문의 재생 완료 후부터 답변 시작까지 10초 기다린다. 시작 신호를 받으면
   무응답 타이머를 해제한다. 인식·통신의 별도 제한 시간 초과는 처리 오류다.
+- 모델·세션 시작·재생·전사·청취 상태 조회는 단계별 60초 제한을 적용한다.
+  제한이 지난 완료 결과나 콜백이 타이머 검사보다 먼저 와도 처리 오류로 종료하며,
+  제한 시간을 연장하거나 새 판단을 보고하지 않는다. 이미 전달한 최종 판단은 유지한다.
 - 무응답 확정 직전에 `session_control(check_only=true)`로 해당 청취 세션의 생존을
-  조회한다. STT 재시작 등으로 세션이 사라졌거나 조회에 실패하면 처리 오류로 끝낸다.
+  조회한다. STT 재시작으로 세션이 사라지거나 마이크 입력이 중단된 경우, 또는 조회에
+  실패하면 처리 오류로 끝낸다.
   조회는 세션을 생성하거나 변경하지 않으며, 조회 중 도착한 실제 답변을 우선한다.
 - 모호한 답변의 재질문은 확인 사항별 최대 2회다. 무응답은 즉시 도움 필요로
   판단하며, 확인하지 못한 실제 상황은 `unknown`으로 남긴다.
@@ -112,7 +152,8 @@ source install/setup.bash
 ```
 
 Agent의 `--provider openai`는 기존 OpenAI 설정과 키를 재사용해 질문과 답변을
-문맥으로 판단한다. `--provider mock`은 정해진 예문을 처리하는 오프라인 시험용이다.
+문맥으로 판단한다. 위의 단독 도움 요청과 낙상 `좋아져` 규칙은 provider 종류와 무관하게 먼저 적용한다.
+`--provider mock`은 정해진 예문을 처리하는 오프라인 시험용이다.
 `rai-sidecar`는 이 Action의 판단 어댑터를 제공하지 않아 확인 요청을 거절한다.
 키 설정과 일반 실행 방법은 [Agent README](../../README.md#실행과-텍스트-전달)를 따른다.
 
@@ -128,7 +169,7 @@ Agent의 `--provider openai`는 기존 OpenAI 설정과 키를 재사용해 질�
 - Manager의 `test_fall_confirmation*.py`: 버전·중복·실패·결과 전달.
 - STT·TTS의 기존 테스트: 일반 대화와 확인 대화의 음성 제어 회귀.
 
-한국어 의미 판단 재검증에는 20개 사례를 묶은 평가 도구를 사용한다.
+한국어 의미 판단 재검증에는 22개 사례를 묶은 평가 도구를 사용한다.
 기본 실행은 네트워크를 사용하지 않는 mock이며, 의미 변형·다른 이상 상황 등
 mock이 지원하지 않는 사례는 `skipped_live_only`로 표시한다.
 mock의 통과는 실제 언어 모델 검증을 뜻하지 않는다.
@@ -150,8 +191,8 @@ python3 -m malbut_agent_server.situation_eval_runner --provider openai \
   --env-file /path/to/local.env --output /tmp/situation-openai-evaluation.json
 ```
 
-실제 API의 한국어 의미 판단, 마이크·스피커·AEC, 카메라와 로봇을 합친 동작은
-이번 로컬 검증에 포함하지 않았다. 로컬 통과를 실기기 검증으로 해석하지 않는다.
+아래 2026-09-25 검증 기록에는 실제 API의 한국어 의미 판단, 마이크·스피커·AEC,
+카메라와 로봇을 합친 동작을 포함하지 않았다. 로컬 통과를 실기기 검증으로 해석하지 않는다.
 
 ### 로컬 검증 기록 — 2026-09-25
 

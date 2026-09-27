@@ -131,21 +131,56 @@ def test_startup_waits_for_both_checks_and_preserves_jetson_settings(speech):
 
 def test_scoped_include_captures_settings_before_parent_scope_restores(speech):
     """Late callbacks must retain speech settings after a scoped include exits."""
-    context = _context(speech, agent_provider='mock', input_has_aec='true')
+    context = _context(speech, agent_provider='mock', input_has_aec='true',
+                       agent_user_id='trial-p1',
+                       agent_conversation_db='/trial records/p1.sqlite3')
     actions = speech._setup(context)
     # GroupAction pops the child scope before asynchronous process exits arrive.
     context.launch_configurations.clear()
     context.launch_configurations.update({
         'python_executable': '/yolo/bin/python', 'preflight_only': 'true',
         'agent_provider': 'openai', 'input_has_aec': 'false',
+        'agent_user_id': 'parent-user', 'agent_conversation_db': '/parent.sqlite3',
     })
     peers = _exit(actions, context, _process(actions))
     agent = next(item for item in peers if isinstance(item, Node)
                  and item.node_package == 'malbut_agent_server')
-    assert [perform_substitutions(context, part) for part in agent.cmd[1:3]] == [
-        '--provider', 'mock']
+    assert [perform_substitutions(context, part) for part in agent.cmd[1:7]] == [
+        '--provider', 'mock', '--user-id', 'trial-p1',
+        '--conversation-db', '/trial records/p1.sqlite3']
     stt = _exit(actions, context, _process(peers))[0]
     assert evaluate_parameters(context, stt._Node__parameters)[1]['input_has_aec'] is True
+
+
+@pytest.mark.parametrize('explicit', [False, True])
+def test_dialogue_identity_is_forwarded_without_http_environment(speech, monkeypatch, explicit):
+    """Keep speech defaults or trial identity independent of the HTTP database."""
+    monkeypatch.setenv('MALBUT_AGENT_USER_ID', 'http-user')
+    monkeypatch.setenv('MALBUT_AGENT_DB', '/http-memory.sqlite3')
+    overrides = ({'agent_user_id': 'trial-p2',
+                  'agent_conversation_db': '~/trial records/p2.sqlite3'} if explicit else {})
+    context = _context(speech, **overrides)
+    actions = speech._setup(context)
+    peers = _exit(actions, context, _process(actions))
+    agent = next(item for item in peers if isinstance(item, Node)
+                 and item.node_package == 'malbut_agent_server')
+    assert [perform_substitutions(context, part) for part in agent.cmd[1:7]] == [
+        '--provider', 'openai', '--user-id',
+        'trial-p2' if explicit else 'speech-development-user',
+        '--conversation-db',
+        '~/trial records/p2.sqlite3' if explicit
+        else '~/.local/state/malbut/speech-dialogue.sqlite3',
+    ]
+
+
+@pytest.mark.parametrize('name', ['agent_user_id', 'agent_conversation_db'])
+@pytest.mark.parametrize('blank', ['', ' \t'])
+def test_blank_dialogue_identity_fails_before_child_creation(speech, monkeypatch, name, blank):
+    """An invalid trial identity must not reach preflight or audio startup."""
+    monkeypatch.setattr(speech, 'ExecuteProcess',
+                        lambda **_: pytest.fail('child constructed'))
+    with pytest.raises(RuntimeError, match=name):
+        speech._setup(_context(speech, **{name: blank}))
 
 
 @pytest.mark.parametrize('input_device', [None, '7', '-1'])

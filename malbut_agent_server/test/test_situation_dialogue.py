@@ -60,6 +60,74 @@ def test_explicit_help_decision_can_finish_while_actual_event_is_unknown(answer,
     assert '신고' not in final.text and '연락했' not in final.text
 
 
+@pytest.mark.parametrize('confirmed', [False, True])
+@pytest.mark.parametrize('situation_type,answer', [
+    ('fall', '도와줘'), ('fall', '도와주세요'), ('smoke', ' 도와주세요!? \n'),
+])
+def test_standalone_help_request_bypasses_reasking_provider_and_preserves_assessment(
+        confirmed, situation_type, answer):
+    replies = [judgment()]
+    if confirmed:
+        replies.append(judgment('confirmed_incident'))
+    # Real-model failure: a valid unknown/null response repeated the first question.
+    provider = ScriptedProvider(*replies, judgment())
+    dialogue = SituationDialogue(provider)
+    dialogue.start('direct-help', situation_type, '상황 확인')
+    if confirmed:
+        assert dialogue.answer('실제로 발생했어요').result is None
+    calls = len(provider.contexts)
+    final = dialogue.answer(answer)
+    assert final.result is not None
+    assert asdict(final.result) == {
+        'situation_assessment': 'confirmed_incident' if confirmed else 'unknown',
+        'help_needed': True,
+    }
+    assert len(provider.contexts) == calls
+    assert dialogue._history[-1].answer == answer
+
+
+@pytest.mark.parametrize('answer', [
+    '도와주지 마세요', '"도와주세요"', '민수가 도와주세요라고 말했어요',
+    '도와주세요라는 말은 취소할게요', '넘어졌지만 도움은 필요 없어요',
+    '그냥 누웠는데 일어나는 건 도와줘',
+])
+def test_help_words_inside_other_answers_still_use_semantic_provider(answer):
+    provider = ScriptedProvider(judgment(), judgment('resolved', False, ''))
+    dialogue = start(provider)
+    assert dialogue.answer(answer).result.help_needed is False
+    assert len(provider.contexts) == 2 and provider.contexts[-1].answer == answer
+
+
+@pytest.mark.parametrize('confirmed', [False, True])
+@pytest.mark.parametrize('situation_type,answer', [('fall', '좋아져'), ('낙상', ' 좋아져! \n')])
+def test_fall_asr_help_alias_finishes_without_provider_and_keeps_original_answer(
+        confirmed, situation_type, answer):
+    provider = ScriptedProvider(judgment(), judgment('confirmed_incident'))
+    dialogue = SituationDialogue(provider)
+    dialogue.start('alias-1', situation_type, '낙상 의심')
+    if confirmed:
+        assert dialogue.answer('넘어졌어').result is None
+    calls = len(provider.contexts)
+    final = dialogue.answer(answer)
+    assert asdict(final.result) == {
+        'situation_assessment': 'confirmed_incident' if confirmed else 'unknown',
+        'help_needed': True,
+    }
+    assert len(provider.contexts) == calls
+    assert dialogue._history[-1].answer == answer
+
+
+@pytest.mark.parametrize('situation_type,answer', [
+    ('fall', '상태가 좋아져'), ('fall', '좋아져서 괜찮아'), ('smoke', '좋아져'),
+])
+def test_fall_asr_alias_does_not_override_other_sentences_or_incidents(situation_type, answer):
+    provider = ScriptedProvider(judgment(), judgment('resolved', False, ''))
+    dialogue = SituationDialogue(provider)
+    dialogue.start('alias-boundary', situation_type, '상황 확인')
+    assert dialogue.answer(answer).result.help_needed is False
+    assert provider.contexts[-1].answer == answer
+
+
 def test_confirm_incident_then_respect_no_help_answer():
     dialogue = start()
     followup = dialogue.answer('넘어졌어요')

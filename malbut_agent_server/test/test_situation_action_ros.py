@@ -15,8 +15,10 @@ from malbut_interfaces.msg import (  # noqa: E402
 )
 from malbut_interfaces.srv import ControlSpeechPlayback, ControlSpeechSession  # noqa: E402
 from rclpy.action import ActionClient  # noqa: E402
+from rclpy.callback_groups import ReentrantCallbackGroup  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
+from rclpy.task import Future  # noqa: E402
 
 from malbut_agent_server.config import Settings  # noqa: E402
 from malbut_agent_server.ros_communication import create_communication_node  # noqa: E402
@@ -39,7 +41,7 @@ def rig(monkeypatch, tmp_path):
     executor.add_node(voice)
     state = SimpleNamespace(
         agent=agent, spoken=[], controls=[], session_id='', finish=True, feedback=[],
-        voice=voice, executor=executor,
+        voice=voice, executor=executor, control_response=None, completed_controls=0,
     )
     playback = voice.create_publisher(SpeechPlaybackStatus, '/malbut/speech/playback_status', 10)
     inputs = voice.create_publisher(SpeechInputStatus, '/malbut/speech/input_status', 10)
@@ -66,14 +68,20 @@ def rig(monkeypatch, tmp_path):
         response.barge_in_available = True
         return response
 
-    def control(request, response):
+    async def control(request, response):
         state.controls.append(request)
+        if state.control_response is not None:
+            await state.control_response
         response.accepted = True
+        state.completed_controls += 1
         return response
 
     voice.create_subscription(SpeechRequest, '/malbut/speech/response', speak, 10)
     voice.create_service(ControlSpeechSession, '/malbut/speech/session_control', session)
-    voice.create_service(ControlSpeechPlayback, '/malbut/speech/playback_control', control)
+    voice.create_service(
+        ControlSpeechPlayback, '/malbut/speech/playback_control', control,
+        callback_group=ReentrantCallbackGroup(),
+    )
     client = ActionClient(voice, ConfirmSituation, '/malbut/agent/confirm_situation')
 
     def spin_until(predicate, timeout=8):
@@ -111,6 +119,9 @@ def rig(monkeypatch, tmp_path):
     try:
         yield state
     finally:
+        if state.control_response is not None:
+            state.control_response.set_result(None)
+            spin_until(lambda: state.completed_controls == len(state.controls))
         agent.destroy_node()
         client.destroy()
         voice.destroy_node()
@@ -193,6 +204,78 @@ def test_audio_failure_is_an_aborted_action_not_user_silence(rig):
     rig.spin_until(result.done)
     assert result.result().status == GoalStatus.STATUS_ABORTED
     assert result.result().result.situation_assessment == ''
+
+
+@pytest.mark.parametrize('elapsed', [4.999, 5.0, 5.001])
+def test_completed_preemption_ack_must_still_meet_deadline(rig, monkeypatch, elapsed):
+    from malbut_agent_server import ros_situation
+
+    now = [0.0]
+    monkeypatch.setattr(ros_situation, 'time', SimpleNamespace(monotonic=lambda: now[0]))
+    server = rig.agent.situation
+    server._timer.cancel()
+    handle = rig.start()
+    assert handle.accepted
+    result = handle.get_result_async()
+    rig.spin_until(lambda: server._stop_future is not None and server._stop_future.done())
+    # The real service response is available before the next timer callback.
+    now[0] = elapsed
+    server._tick()
+    if elapsed >= 5.0:
+        assert not server.active
+        rig.spin_until(result.done)
+        assert result.result().status == GoalStatus.STATUS_ABORTED
+        assert result.result().result.situation_assessment == ''
+        assert not rig.spoken and not rig.session_id
+    else:
+        assert server.active and not server._initializing
+        assert server._stop_future is None
+        server._timer.reset()
+        rig.spin_until(lambda: server._session.phase == 'listening')
+        cancel = handle.cancel_goal_async()
+        rig.spin_until(lambda: cancel.done() and result.done())
+        assert result.result().status == GoalStatus.STATUS_CANCELED
+
+
+@pytest.mark.parametrize('termination', ['timeout', 'cancel', 'close'])
+def test_unanswered_preemption_requests_are_released_locally(rig, monkeypatch, termination):
+    from malbut_agent_server import ros_situation
+
+    now = [0.0]
+    monkeypatch.setattr(ros_situation, 'time', SimpleNamespace(monotonic=lambda: now[0]))
+    server = rig.agent.situation
+    server._timer.cancel()
+    rig.control_response = Future(executor=rig.executor)
+    pending_counts, retained_futures = [], []
+    attempts = 1 if termination == 'close' else 3
+    for attempt in range(attempts):
+        handle = rig.start()
+        assert handle.accepted
+        result = handle.get_result_async()
+        rig.spin_until(lambda: len(rig.controls) == attempt + 1)
+        assert server._stop_future is not None and not server._stop_future.done()
+        if termination == 'cancel':
+            cancel = handle.cancel_goal_async()
+            rig.spin_until(cancel.done)
+            assert cancel.result().goals_canceling
+            server._tick()
+        elif termination == 'close':
+            server.close()
+        else:
+            now[0] += 5.0
+            server._tick()
+        rig.spin_until(result.done)
+        expected = (GoalStatus.STATUS_CANCELED if termination == 'cancel'
+                    else GoalStatus.STATUS_ABORTED)
+        assert result.result().status == expected
+        assert not server.active and not rig.spoken and not rig.session_id
+        pending_counts.append(len(server._playback._pending_requests))
+        retained_futures.append(server._stop_future)
+
+    # The service is still waiting: no late response performed this cleanup.
+    assert not rig.control_response.done() and rig.completed_controls == 0
+    assert pending_counts == [0] * attempts
+    assert retained_futures == [None] * attempts
 
 
 def test_cancel_closes_proactive_input_and_releases_ordinary_dialogue(rig):

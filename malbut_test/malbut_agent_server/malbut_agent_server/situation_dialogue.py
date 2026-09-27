@@ -164,7 +164,14 @@ class SituationDialogue:
             self.request, self.stage, self.situation_assessment,
             tuple(self._history), self._question, text,
         )
-        interpreted = self._evaluate(context)
+        normalized = ''.join(text.split()).rstrip('.!?。！？')
+        if normalized in ('도와줘', '도와주세요') or (
+            self.request.situation_type in ('fall', '낙상') and normalized == '좋아져'
+        ):
+            # ponytail: exact standalone requests only; fall ASR alias stays fall-only.
+            interpreted = SituationInterpretation(self.situation_assessment, True, '')
+        else:
+            interpreted = self._evaluate(context)
         # Providers return a cumulative snapshot. A user may explicitly retract
         # a previous confirmation, including changing it back to uncertainty.
         assessment = interpreted.situation_assessment

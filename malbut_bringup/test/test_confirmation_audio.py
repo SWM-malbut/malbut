@@ -45,7 +45,7 @@ class AudioRig:
         self.asr_allowed.set()
         self.tts = SpeechRuntime(
             SimpleNamespace(generate=self.synthesize), self.player,
-            lambda pid, state: self.events.put(('playback', pid, state)),
+            lambda pid, state, interim: self.events.put(('playback', pid, state)),
         )
         self.stt = DialoguePipeline(
             recorder_factory=lambda: SimpleNamespace(
@@ -121,8 +121,7 @@ class AudioRig:
 
     def verify_session(self, sid):
         future = Future()
-        future.set_result(SimpleNamespace(accepted=(
-            self.stt.session.active and self.stt.session.session_id == sid)))
+        future.set_result(SimpleNamespace(accepted=self.stt.session_is_active(sid)))
         return future
 
     def speak(self, text, pid):
@@ -253,6 +252,66 @@ def test_started_answer_survives_ten_seconds_and_moves_to_help_question(audio_ri
     assert len(rig.spoken) == 3 and not rig.wakes
 
 
+@pytest.mark.parametrize('followup', ['corrected_help', 'silence', 'still_unclear'])
+def test_unclear_asr_reasks_in_a_new_session_before_help_decision(audio_rig, followup):
+    """Exercise retry control with a genuinely ambiguous answer.
+
+    ASR and semantic interpretation are fixtures; this checks the composed
+    STT/session/TTS state machines, not recognition or model accuracy.
+    """
+    rig = audio_rig(aec=False)
+    rig.start()
+    rig.drain_question()
+    old_sid = rig.session.session_id
+    rig.answer('모르겠어')
+    rig.until(lambda: len(rig.spoken) == 2
+              and (rig.session.playback_id, 'playing') in rig.playbacks)
+    assert rig.session.session_id != old_sid and rig.results == []
+    assert not rig.session.transcript(old_sid, 'late-old-answer', '그냥 누워 있는 거야')
+    question_finished_at = rig.now
+    rig.drain_question()
+    if followup == 'silence':
+        rig.now = question_finished_at + 9.999
+        rig.poll()
+        assert rig.results == [] and rig.session.phase == 'listening'
+        rig.now = question_finished_at + 10
+    elif followup == 'corrected_help':
+        rig.answer('도와줘')
+    else:
+        rig.answer('모르겠어')
+        rig.until(lambda: len(rig.spoken) == 3
+                  and (rig.session.playback_id, 'playing') in rig.playbacks)
+        assert rig.results == []
+        rig.drain_question()
+        rig.answer('모르겠어')
+    rig.finish()
+    assert rig.results == [SituationResult('unknown', True)]
+    assert len(rig.spoken) == (4 if followup == 'still_unclear' else 3)
+    assert not rig.wakes
+
+
+@pytest.mark.parametrize('confirmed', [False, True])
+def test_fall_asr_help_alias_finishes_without_another_question(audio_rig, confirmed):
+    rig = audio_rig(aec=False)
+    rig.start()
+    rig.drain_question()
+    if confirmed:
+        rig.answer('넘어졌어')
+        rig.until(lambda: len(rig.spoken) == 2
+                  and (rig.session.playback_id, 'playing') in rig.playbacks)
+        rig.drain_question()
+    question_count = len(rig.spoken)
+    rig.answer('좋아져')
+    rig.until(lambda: len(rig.spoken) == question_count + 1
+              and (rig.session.playback_id, 'playing') in rig.playbacks)
+    assessment = 'confirmed_incident' if confirmed else 'unknown'
+    assert rig.results == [SituationResult(assessment, True)]
+    assert rig.session.phase == 'closing' and rig.session.session_id == ''
+    assert not rig.stt.session.active
+    rig.finish()
+    assert len(rig.spoken) == question_count + 1 and not rig.wakes
+
+
 def test_microphone_asr_failure_never_becomes_user_silence(audio_rig):
     rig = audio_rig()
     rig.start()
@@ -261,6 +320,33 @@ def test_microphone_asr_failure_never_becomes_user_silence(audio_rig):
     rig.until(lambda: rig.session.done)
     assert rig.finishes == [('aborted', None)] and rig.results == []
     assert not rig.stt.session.active
+
+
+def test_blocked_microphone_read_never_becomes_user_silence(audio_rig, monkeypatch):
+    capture_time = [0.0]
+    monkeypatch.setattr('malbut_stt.dialogue_pipeline.monotonic', lambda: capture_time[0])
+    rig = audio_rig()
+    rig.recorder_frames.put([0] * 320)
+    deadline = time.monotonic() + 2
+    while rig.stt.audio.empty():
+        assert time.monotonic() < deadline, 'microphone did not deliver its first frame'
+        time.sleep(0.001)
+    rig.poll()
+    rig.start()
+    rig.drain_question()
+    assert rig.stt.capture_thread.is_alive() and rig.stt.capture_error is None
+    assert rig.stt.audio.empty()
+
+    # The original recorder remains blocked, with no exception or new PCM.
+    # Even if Agent verifies silence before STT polls, the device is unhealthy.
+    capture_time[0] = 5.0
+    rig.now = 10.0
+    rig.session.tick()
+    assert rig.finishes == [('aborted', None)] and rig.results == []
+    assert not rig.asr_started.is_set() and len(rig.spoken) == 1
+    assert not rig.stt.session.active
+    with pytest.raises(RuntimeError, match='microphone input timeout'):
+        rig.poll()
 
 
 def test_real_playback_finish_starts_silence_deadline(audio_rig):
@@ -287,3 +373,33 @@ def test_lost_stt_session_does_not_turn_into_a_help_judgment(audio_rig):
     rig.until(lambda: rig.session.done)
     assert rig.finishes == [('aborted', None)] and rig.results == []
     assert len(rig.spoken) == 1
+
+
+@pytest.mark.parametrize('closing', [False, True])
+def test_late_device_drain_cannot_restart_or_complete_confirmation(audio_rig, closing):
+    rig = audio_rig()
+    rig.start()
+    if closing:
+        rig.drain_question()
+        rig.answer('그냥 누워 있는 거야')
+        rig.until(lambda: rig.session.phase == 'closing'
+                  and rig.session.playback_id in rig.players)
+    playback_id = rig.session.playback_id
+    outcomes = list(rig.results)
+    rig.now += 60
+    rig.players[playback_id].drain.set()
+
+    # Deliver the actual TTS completion before the next session timer tick.
+    pending = []
+    while True:
+        event = rig.events.get(timeout=3)
+        pending.append(event)
+        if event == ('playback', playback_id, 'finished'):
+            break
+    for event in pending:
+        rig.events.put(event)
+    rig.poll()
+
+    assert rig.finishes == [('aborted', None)]
+    assert rig.results == outcomes
+    assert not rig.stt.session.active

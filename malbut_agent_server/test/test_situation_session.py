@@ -252,6 +252,36 @@ def test_opening_transcript_before_ack_is_buffered_and_consumed_once_after_ack()
     assert h.outcomes == [SituationResult('unknown', True)]
 
 
+def test_opening_completed_answer_owns_correlation_before_later_started_event():
+    h = Harness(SituationTurn('넘어지셨나요?'), ending('resolved', False))
+    h.session.start()
+    h.complete_work()
+    sid = h.session.session_id
+    assert h.session.transcript(sid, 'first-answer', '그냥 누워 있었어요')
+    h.session.input_status(sid, 'next-utterance', 'started')
+    assert not h.session.transcript(sid, 'next-utterance', '도와주세요')
+    h.session.input_status(sid, 'next-utterance', 'failed')
+    assert not h.session.done
+    h.ready_input()
+    assert h.session.phase == 'thinking'
+    assert not h.session.transcript(sid, 'next-utterance', '도와주세요')
+    h.complete_work()
+    assert h.calls[-1] == ('answer', ('그냥 누워 있었어요',))
+    assert h.outcomes == [SituationResult('resolved', False)]
+
+
+@pytest.mark.parametrize('utterance_id', ['first-answer', ''])
+def test_opening_buffered_answer_preserves_matching_or_session_wide_failure(utterance_id):
+    h = Harness()
+    h.session.start()
+    h.complete_work()
+    sid = h.session.session_id
+    assert h.session.transcript(sid, 'first-answer', '도와주세요')
+    h.session.input_status(sid, utterance_id, 'failed')
+    assert h.finishes == [('aborted', None)]
+    assert h.outcomes == [] and not h.executor.jobs
+
+
 @pytest.mark.parametrize('early_input', ['started', 'transcript'])
 def test_opening_input_is_discarded_if_microphone_ack_rejects_session(early_input):
     h = Harness()
@@ -312,6 +342,70 @@ def test_operation_timeout_does_not_become_user_silence(phase):
     h.now = 60
     h.session.tick()
     assert h.finishes == [('aborted', None)]
+    assert all(call[0] != 'no_response' for call in h.calls)
+
+
+@pytest.mark.parametrize('late_by', [0.0, 0.001])
+@pytest.mark.parametrize('operation', ['initial_model', 'answer_model', 'opening'])
+def test_completed_future_cannot_bypass_an_elapsed_operation_deadline(operation, late_by):
+    h = Harness(SituationTurn('넘어지셨나요?'), ending('resolved', False))
+    if operation == 'answer_model':
+        h.begin_question()
+        h.session.transcript(h.session.session_id, 'u1', '그냥 누워 있었어요')
+    else:
+        h.session.start()
+        if operation == 'opening':
+            h.complete_work()
+    spoken = [event for event in h.events if event[0] == 'speak']
+    h.now = 60.0 + late_by
+    if operation == 'opening':
+        h.openings[-1][1].set_result(SimpleNamespace(accepted=True))
+    else:
+        h.executor.run_next()
+    h.session.tick()
+    assert h.finishes == [('aborted', None)]
+    assert h.outcomes == []
+    assert [event for event in h.events if event[0] == 'speak'] == spoken
+
+
+@pytest.mark.parametrize('phase,event', [
+    ('speaking', 'finished'), ('closing', 'finished'), ('closing', 'stopped'),
+    ('opening', 'started'), ('opening', 'transcript'),
+    ('speaking', 'started'), ('speaking', 'transcript'), ('hearing', 'transcript'),
+    ('interrupted', 'started'), ('interrupted', 'transcript'),
+    ('checking_silence', 'started'), ('checking_silence', 'transcript'),
+])
+def test_callback_before_tick_cannot_revive_an_expired_operation(phase, event):
+    h = Harness(SituationTurn('넘어지셨나요?'), ending('resolved', False))
+    h.session.start()
+    h.complete_work()
+    if phase != 'opening':
+        h.ready_input()
+    sid, pid = h.session.session_id, h.session.playback_id
+    if phase == 'closing':
+        h.session.transcript(sid, 'u1', '그냥 누워 있었어요')
+        h.complete_work()
+        pid = h.session.playback_id
+    elif phase == 'hearing':
+        h.session.input_status(sid, 'u1', 'started')
+    elif phase == 'interrupted':
+        h.session.playback(pid, 'stopped')
+    elif phase == 'checking_silence':
+        h.played()
+        h.verify_automatically = False
+        h.now = 10.0
+        h.session.tick()
+    assert h.session.phase == phase
+    delivered = list(h.outcomes)
+    h.now = {'interrupted': 2.0, 'checking_silence': 70.0}.get(phase, 60.0)
+    if event in {'finished', 'stopped'}:
+        h.session.playback(pid, event)
+    elif event == 'started':
+        h.session.input_status(sid, 'u1', 'started')
+    else:
+        assert not h.session.transcript(sid, 'u1', '그냥 누워 있었어요')
+    assert h.finishes == [('aborted', None)]
+    assert h.outcomes == delivered
     assert all(call[0] != 'no_response' for call in h.calls)
 
 
@@ -469,6 +563,7 @@ def test_real_answer_during_silence_check_invalidates_late_rejected_query(event)
     h.session.tick()
     future = h.verifications[-1][1]
     assert future.set_running_or_notify_cancel()
+    h.now = 69.999
     if event == 'started':
         h.session.input_status(sid, 'u1', 'started')
         assert h.session.phase == 'hearing'

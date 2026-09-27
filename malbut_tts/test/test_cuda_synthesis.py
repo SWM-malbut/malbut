@@ -296,7 +296,7 @@ def test_runtime_cancel_during_generation_then_same_engine_next_request(rig):
 
     logger = Mock()
     runtime = SpeechRuntime(rig.engine, Player,
-                            lambda pid, state: statuses.append((pid, state)),
+                            lambda pid, state, interim: statuses.append((pid, state)),
                             logger=logger)
     try:
         first = runtime.submit('취소할 답변')
@@ -329,7 +329,7 @@ def test_runtime_error_logger_receives_content_free_backend_error(rig):
     player = SimpleNamespace(close=Mock(), stop=Mock())
     runtime = SpeechRuntime(
         rig.engine, lambda **_: player,
-        lambda pid, state: terminal.set() if state == 'failed' else None,
+        lambda pid, state, interim: terminal.set() if state == 'failed' else None,
         logger=logger,
     )
     try:

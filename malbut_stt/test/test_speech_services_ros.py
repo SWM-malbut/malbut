@@ -8,7 +8,9 @@ import pytest
 
 rclpy = pytest.importorskip('rclpy', reason='ROS 2 is not installed')
 
-from malbut_interfaces.msg import SpeechPlaybackStatus, SpeechTranscript  # noqa: E402
+from malbut_interfaces.msg import (  # noqa: E402
+    SpeechInputStatus, SpeechPlaybackStatus, SpeechTranscript,
+)
 from malbut_interfaces.srv import (  # noqa: E402
     ClassifySpeechAddressee, ControlSpeechPlayback,
 )
@@ -21,7 +23,7 @@ from malbut_stt import node as stt_node, wake  # noqa: E402
 def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, decision):
     """Use generated types and one executor without opening a microphone or model."""
     state = SimpleNamespace(clients=[], classifications=[], controls=[], transcripts=[],
-                            decisions=[], statuses=[], closed=False)
+                            decisions=[], statuses=[], input_statuses=[], closed=False)
 
     create_client = Node.create_client
 
@@ -51,6 +53,8 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, decision
                 SpeechPlaybackStatus, '/malbut/speech/playback_status', 10)
             self.peer.create_subscription(SpeechTranscript, '/malbut/speech/transcript',
                                           state.transcripts.append, 10)
+            self.peer.create_subscription(SpeechInputStatus, '/malbut/speech/input_status',
+                                          state.input_statuses.append, 10)
             rclpy.get_global_executor().add_node(self.peer)
 
         def classify(self, request, response):
@@ -68,6 +72,7 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, decision
             if (not self.sent and all(
                     client.service_is_ready() for client in state.clients)
                     and self.peer.count_publishers('/malbut/speech/transcript') == 1
+                    and self.peer.count_publishers('/malbut/speech/input_status') == 1
                     and self.status.get_subscription_count() == 1):
                 self.sent = True
                 self.pending_addressee = ('utterance-1', 'playback-1', self.deadline)
@@ -75,12 +80,16 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, decision
                 for command in ('pause', 'resume', 'stop'):
                     self.callbacks['publish_control']('playback-1', command)
                 self.callbacks['publish_transcript']('normal-1', '오늘 날씨 알려줘')
-            if state.decisions and len(state.controls) == 3 and state.transcripts:
+                for input_state in ('started', 'failed'):
+                    self.callbacks['publish_input_status']('', 'missed-1', input_state)
+            if (state.decisions and len(state.controls) == 3 and state.transcripts
+                    and len(state.input_statuses) == 2):
                 # Service acceptance must not manufacture an actual playback status.
                 if not state.statuses:
                     assert self.session.playback_state == 'playing'
                     self.status.publish(SpeechPlaybackStatus(
-                        playback_id='playback-1', state=SpeechPlaybackStatus.PAUSED))
+                        playback_id='playback-1', state=SpeechPlaybackStatus.PAUSED,
+                        interim=True))
                 else:
                     raise KeyboardInterrupt
 
@@ -88,8 +97,8 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, decision
             state.decisions.append((uid, pid, result))
             self.pending_addressee = None
 
-        def on_playback_status(self, pid, playback_state):
-            state.statuses.append((pid, playback_state))
+        def on_playback_status(self, pid, playback_state, *, interim=False):
+            state.statuses.append((pid, playback_state, interim))
             self.session.playback_state = playback_state
 
         def close(self):
@@ -114,5 +123,9 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, decision
     assert state.controls == [('playback-1', value) for value in ('pause', 'resume', 'stop')]
     assert [(item.utterance_id, item.text) for item in state.transcripts] == [
         ('normal-1', '오늘 날씨 알려줘')]
-    assert state.statuses and all(item == ('playback-1', 'paused') for item in state.statuses)
+    assert state.statuses and all(item == ('playback-1', 'paused', True)
+                                  for item in state.statuses)
+    assert [(item.session_id, item.utterance_id, item.state)
+            for item in state.input_statuses] == [
+        ('', 'missed-1', 'started'), ('', 'missed-1', 'failed')]
     assert state.closed and not rclpy.ok()

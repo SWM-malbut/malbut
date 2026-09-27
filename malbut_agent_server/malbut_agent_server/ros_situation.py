@@ -178,6 +178,9 @@ class SituationActionServer:
                 future.set_result(('succeeded', result))
 
         def finish(status, result):
+            stop_future, self._stop_future = self._stop_future, None
+            if stop_future is not None:
+                stop_future.cancel()
             if receipt.status is None:
                 receipt.status, receipt.outcome = status, result
             if not future.done():
@@ -242,12 +245,14 @@ class SituationActionServer:
             session.abort()
             return
         if self._initializing:
-            if not self._stop_future.done():
-                if time.monotonic() - self._started_at >= 5:
-                    session.abort()
+            if time.monotonic() - self._started_at >= 5:
+                session.abort()
                 return
+            if not self._stop_future.done():
+                return
+            stop_future, self._stop_future = self._stop_future, None
             try:
-                if not self._stop_future.result().accepted:
+                if not stop_future.result().accepted:
                     raise RuntimeError('speech preemption rejected')
                 self._initializing = False
                 session.start()

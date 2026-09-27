@@ -72,11 +72,35 @@ class FallConfirmationLink:
         handle = self.handle
         self.request = self.handle = self.goal_future = None
         self.accepted_at = self.server_missing_since = None
+        self._cancel_handle(handle)
+
+    def _cancel_handle(self, handle):
         if handle is not None:
             try:
                 handle.cancel_goal_async()
             except Exception:
                 self.node.get_logger().warning('confirmation_cancel_transport_failed')
+
+    def _expire_current(self):
+        """Enforce the same deadline before timer and future callbacks advance state."""
+        now = self.clock()
+        expired = False
+        if self.goal_future is not None:
+            expired = now - self.sent_at >= self.goal_response_timeout_s
+        elif self.handle is not None:
+            if self.client.server_is_ready():
+                self.server_missing_since = None
+            elif self.server_missing_since is None:
+                self.server_missing_since = now
+            expired = (
+                now - self.accepted_at >= self.result_timeout_s
+                or (self.server_missing_since is not None
+                    and now - self.server_missing_since >= self.server_loss_timeout_s))
+        if expired:
+            self.coordinator.fail(self.request)
+            self._cancel_current()
+            self._publish()
+        return expired
 
     def _drive(self):
         if self.coordinator.closed:
@@ -86,24 +110,7 @@ class FallConfirmationLink:
                 and self.coordinator.requests.get(self.request.request_id) != self.request):
             self._cancel_current()
         if self.request is not None:
-            transport_failed = False
-            if (self.goal_future is not None
-                    and self.clock() - self.sent_at >= self.goal_response_timeout_s):
-                transport_failed = True
-            elif self.handle is not None:
-                now = self.clock()
-                if self.client.server_is_ready():
-                    self.server_missing_since = None
-                elif self.server_missing_since is None:
-                    self.server_missing_since = now
-                transport_failed = (
-                    now - self.accepted_at >= self.result_timeout_s
-                    or (self.server_missing_since is not None
-                        and now - self.server_missing_since >= self.server_loss_timeout_s))
-            if transport_failed:
-                self.coordinator.fail(self.request)
-                self._cancel_current()
-                self._publish()
+            self._expire_current()
             return
         if self.clock() < self.next_attempt or not self.client.server_is_ready():
             return
@@ -124,18 +131,21 @@ class FallConfirmationLink:
 
     def _accepted(self, request, future):
         with self.lock:
+            if self.request == request and self.goal_future is future:
+                self._expire_current()
             try:
                 handle = future.result()
             except Exception:
-                if self.request == request:
+                if self.request == request and self.goal_future is future:
                     self.coordinator.fail(request)
                     self._cancel_current()
                     self._publish()
                 return
             if (self.request != request or self.coordinator.closed
+                    or self.goal_future is not future
                     or self.coordinator.requests.get(request.request_id) != request):
                 if handle.accepted:
-                    handle.cancel_goal_async()
+                    self._cancel_handle(handle)
                 return
             self.goal_future = None
             if not handle.accepted:
@@ -160,6 +170,8 @@ class FallConfirmationLink:
 
         with self.lock:
             if self.request != request or self.coordinator.closed:
+                return
+            if self._expire_current():
                 return
             try:
                 response = future.result()

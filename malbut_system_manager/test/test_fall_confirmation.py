@@ -31,6 +31,7 @@ def test_vlm_summary_is_generic_bounded_and_replayed_request_is_deduplicated():
 
 
 @pytest.mark.parametrize('change', [
+    {'kind': []}, {'kind': {}},
     {'video_assessment': 'normal_activity'}, {'video_assessment': []},
     {'video_assessment': None}, {'runtime_id': 'other'}, {'boot_id': ''},
     {'subject_key': ''}, {'question_id': ''}, {'evidence_revision': True},

@@ -13,6 +13,7 @@ class ConversationSession:
         self._seen_playbacks = set()
         self.playback_id = None
         self.playback_state = None
+        self._playback_interim = False
         self._control = None
         self.terminate()
 
@@ -115,7 +116,7 @@ class ConversationSession:
             self._control = 'resume'
             self.publish_control(self.playback_id, 'resume')
 
-    def on_playback_status(self, playback_id, state):
+    def on_playback_status(self, playback_id, state, *, interim=False):
         """Only a new playing event can introduce a playback; terminal states are final."""
         if not isinstance(playback_id, str) or not playback_id.strip():
             raise ValueError('playback ID must contain text')
@@ -123,6 +124,8 @@ class ConversationSession:
             'playing', 'paused', 'finished', 'failed', 'stopped',
         ):
             raise ValueError('unknown playback state')
+        if type(interim) is not bool:
+            raise ValueError('interim must be a boolean')
         self.tick()
         if playback_id != self.playback_id:
             if state != 'playing' or playback_id in self._seen_playbacks:
@@ -130,6 +133,7 @@ class ConversationSession:
             self._seen_playbacks.add(playback_id)
             self.playback_id = playback_id
             self.playback_state = None
+            self._playback_interim = interim
             self._control = None
             self._interrupted_playback = None
             self._resume_pending = False
@@ -160,7 +164,8 @@ class ConversationSession:
         self.deadline = (
             self.clock() + 5.0
             if self.active and not self.session_id and state == 'finished'
-            and self._control != 'stop' and self.utterance_id is None
+            and not self._playback_interim and self._control != 'stop'
+            and self.utterance_id is None
             else None
         )
         self._control = None

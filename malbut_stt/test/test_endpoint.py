@@ -27,7 +27,7 @@ QUIET = bytes(640)
     '아니, 열지 마.', '다녀왔어.', '함께 갈까?',
     '뭐지? 너 너무 느리다', '너무 느려.', '너무 느려요.',
     '오늘 기분이 좋다', '나는 이게 좋아', '정말 좋아요', '지금 뭐해?',
-    '알겠지?', '한번 해봐라',
+    '알겠지?', '한번 해봐라', '좋아져!',
     '제 이름은 제이크입니다.', '정말입니까?',
 ])
 def test_explicit_korean_final_endings_can_shorten_the_wait(text):
@@ -43,7 +43,7 @@ def test_explicit_korean_final_endings_can_shorten_the_wait(text):
     '이게 어디야라는',
     '친구네', '군대', '내가 준비를 끝냈어도', '먹을까 하고',
     '너무 느려서', '기분이 좋아도', '너무 느리다고', '좋다며',
-    '한번 해봐라라고', '좋아요라는',
+    '한번 해봐라라고', '좋아요라는', '좋아져서', '좋아져도', '좋아져라고',
 ])
 def test_fragments_connectives_quotes_and_punctuation_keep_fallback(text):
     assert not is_complete_korean_utterance(text)
@@ -107,10 +107,11 @@ def reply(run, job, text, error=None):
     run.pipeline.poll()
 
 
-def test_complete_candidate_finalizes_at_one_second_and_reuses_the_text(run):
+@pytest.mark.parametrize('text', ['문을 닫아 주세요.', '좋아져'])
+def test_complete_candidate_finalizes_at_one_second_and_reuses_the_text(run, text):
     job = candidate(run)
-    reply(run, job, '문을 닫아 주세요.')
-    assert run.transcripts == [(job[2][0], '문을 닫아 주세요.')]
+    reply(run, job, text)
+    assert run.transcripts == [(job[2][0], text)]
     assert run.pipeline.jobs.empty()
     assert not run.pipeline._busy
     assert 'endpoint_finalized:silence_s=1.00' in run.reports

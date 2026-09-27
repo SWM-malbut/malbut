@@ -66,7 +66,7 @@ class SituationSpeechSession:
         self._work = self.executor.submit(run)
 
     def tick(self):
-        if self.done:
+        if self.done or self._expire_operation():
             return
         try:
             if self._work is not None and self._work.done():
@@ -127,7 +127,8 @@ class SituationSpeechSession:
             self._finish('aborted')
 
     def playback(self, playback_id, state):
-        if self.done or playback_id != self.playback_id:
+        if (self.done or playback_id != self.playback_id
+                or self._expire_operation()):
             return
         if state == 'finished':
             if self.phase == 'closing':
@@ -145,11 +146,13 @@ class SituationSpeechSession:
             self._deadline = self.clock() + 2.0
 
     def input_status(self, session_id, utterance_id, state):
-        if self.done or not self.session_id or session_id != self.session_id:
+        if (self.done or not self.session_id or session_id != self.session_id
+                or self._expire_operation()):
             return
         if state == 'failed':
-            if (not utterance_id or not self.utterance_id
-                    or utterance_id == self.utterance_id):
+            active_utterance = self.utterance_id or self._early_started
+            if (not utterance_id or not active_utterance
+                    or utterance_id == active_utterance):
                 self._finish('aborted')
             return
         if not isinstance(utterance_id, str) or not utterance_id.strip():
@@ -176,12 +179,14 @@ class SituationSpeechSession:
         if (self.done or not self.session_id or session_id != self.session_id
                 or not isinstance(utterance_id, str) or not utterance_id.strip()
                 or not isinstance(text, str) or not text.strip()
-                or len(text) > 16000 or utterance_id in self._heard):
+                or len(text) > 16000 or utterance_id in self._heard
+                or self._expire_operation()):
             return False
         if self.phase == 'opening':
             if self._early_started and self._early_started != utterance_id:
                 return False
             if self._early_answer is None:
+                self._early_started = utterance_id
                 self._early_answer = (utterance_id, text)
             return True
         if self.phase not in (
@@ -199,6 +204,14 @@ class SituationSpeechSession:
             self._finish('aborted')
             return False
         return True
+
+    def _expire_operation(self):
+        """A ready future or late callback cannot renew an expired operation."""
+        if (self.phase != 'listening' and self._deadline is not None
+                and self.clock() >= self._deadline):
+            self._finish('aborted')
+            return True
+        return False
 
     def _clear_verification(self):
         if self._verifying is not None:

@@ -52,6 +52,31 @@ def test_finished_starts_five_seconds_and_duplicate_does_not_extend(run):
     assert session.user_speech_started() is None
 
 
+@pytest.mark.parametrize('followup', [False, True])
+def test_interim_notice_keeps_listening_until_the_final_answer(run, followup):
+    session = run.session
+    first = session.user_speech_started()
+    session.finish_utterance(first, '주말 계획을 이야기해 줘', addressed=True)
+    run.now = 5
+    session.on_playback_status('progress', 'playing', interim=True)
+    run.now = 7
+    session.on_playback_status('progress', 'finished', interim=True)
+    run.now = 12
+    assert not session.tick() and session.active and session.deadline is None
+    run.now = 15
+    session.on_playback_status('answer', 'playing')
+    run.now = 17
+    session.on_playback_status('answer', 'finished')
+    assert session.deadline == 22
+    run.now = 21 if followup else 22
+    if followup:
+        second = session.user_speech_started()
+        assert second and second != first
+        assert session.finish_utterance(second, '비 오는 날로 바꿔 줘', addressed=True)
+    else:
+        assert session.tick() and not session.active
+
+
 def test_speech_cancels_deadline_and_next_answer_starts_a_new_wait(run):
     session = run.session
     session.on_playback_status('first', 'playing')

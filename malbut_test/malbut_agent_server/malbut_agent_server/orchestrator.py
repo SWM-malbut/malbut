@@ -771,6 +771,13 @@ class AgentOrchestrator:
                 model='consent-v1', latency_ms=0.0, memory_supported=True,
             )
         elif server_clarification is None:
+            if self.robot_state_source is not None and set(model_request.available_tools) - {
+                'get_weather', 'set_weather_location',
+            }:
+                # Advisory context only; Safety reads again after inference.
+                model_request, trusted, _, _ = self._fresh_safety_request(model_request)
+                if not trusted:
+                    model_request = replace(model_request, robot_state=RobotState())
             tool_specs = self.capability_registry.select_specs(
                 model_request.available_tools
             )
@@ -1067,7 +1074,7 @@ class AgentOrchestrator:
         self,
         request: AgentRequest,
     ) -> tuple[AgentRequest, bool, str | None, float | None]:
-        """Read server-owned state after the model, or preserve legacy mode."""
+        """Read independent server-owned evidence, or preserve legacy mode."""
         source = self.robot_state_source
         if source is None:
             return request, self.trusted_robot_state, None, None

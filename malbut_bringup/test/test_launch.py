@@ -379,6 +379,8 @@ def _process_exit(actions, context, process, returncode=0):
 
 def test_robot_defaults_enable_isolated_cuda_speech(launch_module, monkeypatch, tmp_path):
     """The normal robot entrypoint selects the same cache paths as build.sh."""
+    monkeypatch.setenv('MALBUT_AGENT_USER_ID', 'http-user')
+    monkeypatch.setenv('MALBUT_AGENT_DB', '/http-memory.sqlite3')
     for name in ('MALBUT_SPEECH_RUNTIME', 'MALBUT_STT_MODEL_PATH',
                  'MALBUT_STT_BUILD_DIR', 'MALBUT_STT_LIBRARY_PATH'):
         monkeypatch.delenv(name, raising=False)
@@ -390,6 +392,9 @@ def test_robot_defaults_enable_isolated_cuda_speech(launch_module, monkeypatch, 
     cache = tmp_path / 'home/.cache/malbut_speech'
     assert settings['speech'] == 'true'
     assert settings['speech_input_device'] == '0'
+    assert settings['speech_agent_user_id'] == 'speech-development-user'
+    assert settings['speech_agent_conversation_db'] == (
+        '~/.local/state/malbut/speech-dialogue.sqlite3')
     assert settings['speech_python_executable'] == str(cache / 'runtime/bin/python')
     assert settings['stt_model_path'] == str(cache / 'models/ggml-small.bin')
     assert settings['stt_library_path'] == str(
@@ -400,13 +405,16 @@ def test_robot_defaults_enable_isolated_cuda_speech(launch_module, monkeypatch, 
 
 @pytest.mark.parametrize('input_device', [None, '2', '-1'])
 def test_speech_starts_after_readiness_and_waits_for_the_manager(
-        launch_module, speech_assets, input_device):
+        launch_module, speech_assets, input_device, monkeypatch):
     """Speech forwards the XFM default or explicit override after readiness."""
+    monkeypatch.setattr(launch_module, 'nav2_actions', lambda *_args, **_kwargs: [])
     input_options = {} if input_device is None else {'speech_input_device': input_device}
     context = _context(launch_module, **speech_assets, start_hardware='false',
                        **input_options, speech_output_device='3',
                        stt_cpp_threads='4', speech_input_has_aec='true',
                        speech_agent_provider='mock', speech_preflight_timeout_s='55',
+                       speech_agent_user_id='trial-p3',
+                       speech_agent_conversation_db='/trial records/p3.sqlite3',
                        speech_peer_timeout_s='12', preflight_only='true')
     actions = launch_module._setup(context)
     assert not any('stt_model_path' in dict(item.launch_arguments)
@@ -423,6 +431,8 @@ def test_speech_starts_after_readiness_and_waits_for_the_manager(
         'input_device': '0' if input_device is None else input_device,
         'output_device': '3', 'cpp_threads': '4',
         'input_has_aec': 'true', 'agent_provider': 'mock',
+        'agent_user_id': 'trial-p3',
+        'agent_conversation_db': '/trial records/p3.sqlite3',
         'control_server': 'manager',
         'preflight_timeout_s': '55', 'peer_timeout_s': '12',
         'preflight_only': 'false', 'use_sim_time': 'false',
@@ -433,6 +443,18 @@ def test_speech_starts_after_readiness_and_waits_for_the_manager(
     assert context.launch_configurations['model_path'].endswith('yolo26n.pt')
     context._set_is_shutdown(True)
     assert _process_exit(actions, context, wait) == []
+
+
+@pytest.mark.parametrize('name', ['speech_agent_user_id', 'speech_agent_conversation_db'])
+@pytest.mark.parametrize('blank', ['', ' \t'])
+def test_blank_speech_identity_fails_before_hardware(
+        launch_module, speech_assets, monkeypatch, name, blank):
+    """Reject an empty participant identity before including any robot child."""
+    context = _context(launch_module, **speech_assets, **{name: blank})
+    monkeypatch.setattr(launch_module, '_include',
+                        lambda *_args, **_kwargs: pytest.fail('child constructed'))
+    with pytest.raises(RuntimeError, match=name):
+        launch_module._setup(context)
 
 
 @pytest.mark.parametrize('path', [
