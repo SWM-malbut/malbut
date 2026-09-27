@@ -15,7 +15,7 @@ yaml = pytest.importorskip('yaml')
 
 from action_msgs.msg import GoalStatus  # noqa: E402
 from malbut_interfaces.action import ExecuteMission, FollowPerson  # noqa: E402
-from malbut_interfaces.msg import SpeechTranscript  # noqa: E402
+from malbut_interfaces.msg import SpeechInputStatus, SpeechRequest, SpeechTranscript  # noqa: E402
 from rclpy.action import (  # noqa: E402
     ActionClient, ActionServer, CancelResponse, GoalResponse,
 )
@@ -492,6 +492,44 @@ def _publish_transcript(graph, utterance_id, text, *, repeat=1):
         publisher.publish(message)
 
 
+def test_ordinary_recognition_failure_guidance_and_followup_use_existing_topics(communication):
+    provider = _DialogueProvider()
+    graph = communication(with_manager=False, provider=provider)
+    publisher = graph.sender.create_publisher(
+        SpeechInputStatus, '/malbut/speech/input_status', 10)
+    _wait_until(lambda: publisher.get_subscription_count() == 2)
+
+    def status(uid, state, session_id=''):
+        publisher.publish(SpeechInputStatus(
+            session_id=session_id, utterance_id=uid, state=state))
+
+    notice = '잘 알아듣지 못했어요. 다시 말씀해 주세요.'
+    status('', SpeechInputStatus.STARTED)
+    status('', SpeechInputStatus.FAILED)
+    status('old', SpeechInputStatus.STARTED)
+    status('latest', SpeechInputStatus.STARTED)
+    status('old', SpeechInputStatus.FAILED)
+    status('confirmation', SpeechInputStatus.STARTED, 'incident-1')
+    status('confirmation', SpeechInputStatus.FAILED, 'incident-1')
+    status('latest', SpeechInputStatus.FAILED)
+    status('latest', SpeechInputStatus.FAILED)
+    _wait_until(lambda: graph.speech == [notice])
+    assert provider.calls == [] and graph.receipts == []
+    _publish_transcript(graph, 'recognized', '내 이름은 봄이야')
+    _wait_until(lambda: graph.speech == [notice, '봄이라고 소개해 주셨네요.'])
+    assert len(provider.calls) == 1 and provider.histories == [[]]
+    assert graph.receipts == ['received']
+    # Completed transcripts suppress even a STARTED delivered on the other Topic later.
+    status('recognized', SpeechInputStatus.STARTED)
+    status('recognized', SpeechInputStatus.FAILED)
+    status('latest', SpeechInputStatus.STARTED)
+    status('latest', SpeechInputStatus.FAILED)
+    status('another', SpeechInputStatus.STARTED)
+    status('another', SpeechInputStatus.FAILED)
+    _wait_until(lambda: graph.speech == [notice, '봄이라고 소개해 주셨네요.', notice])
+    assert len(provider.calls) == 1 and graph.receipts == ['received']
+
+
 def test_stt_duplicate_has_one_reply_and_next_turn_uses_real_history(
     communication,
 ):
@@ -528,6 +566,70 @@ def test_stt_duplicate_has_one_reply_and_next_turn_uses_real_history(
     assert graph.agent.say(direct_text)
     _wait_until(lambda: graph.speech[-1] == direct_text)
     assert not graph.agent.say('  ')
+
+
+@pytest.mark.parametrize('pending_phase', ['running', 'completed_unread'])
+def test_recognition_feedback_preserves_an_earlier_pending_answer(
+    communication, monkeypatch, pending_phase,
+):
+    provider = _DialogueProvider(blocked=True)
+    graph = communication(with_manager=False, provider=provider)
+    messages = []
+    subscription = graph.sender.create_subscription(
+        SpeechRequest, '/malbut/speech/response', messages.append, 10)
+    publisher = graph.sender.create_publisher(
+        SpeechInputStatus, '/malbut/speech/input_status', 10)
+    try:
+        _wait_until(lambda: graph.agent.count_subscribers('/malbut/speech/response') == 2)
+        _wait_until(lambda: publisher.get_subscription_count() == 2)
+        _publish_transcript(graph, 'earlier-answer', '안녕')
+        _wait_until(provider.started.is_set)
+        drain = graph.agent.dialogue.drain
+        if pending_phase == 'completed_unread':
+            monkeypatch.setattr(graph.agent.dialogue, 'drain', lambda: [])
+            provider.release.set()
+            _wait_until(lambda: bool(graph.agent.dialogue._results))
+        for state in (SpeechInputStatus.STARTED, SpeechInputStatus.FAILED):
+            publisher.publish(SpeechInputStatus(utterance_id='missed', state=state))
+        _wait_until(lambda: len(messages) == 1)
+        assert messages[0].text == '잘 알아듣지 못했어요. 다시 말씀해 주세요.'
+        assert messages[0].interim is True
+        assert graph.receipts == ['received'] and len(provider.calls) == 1
+        monkeypatch.setattr(graph.agent.dialogue, 'drain', drain)
+        provider.release.set()
+        _wait_until(lambda: len(messages) == 2)
+        assert messages[1].text == '대화 연결 확인 응답'
+        assert messages[1].interim is False
+        for state in (SpeechInputStatus.STARTED, SpeechInputStatus.FAILED):
+            publisher.publish(SpeechInputStatus(utterance_id='after-answer', state=state))
+        _wait_until(lambda: len(messages) == 3)
+        assert messages[2].text == messages[0].text
+        assert messages[2].interim is False
+        assert graph.receipts == ['received'] and len(provider.calls) == 1
+    finally:
+        provider.release.set()
+        graph.sender.destroy_publisher(publisher)
+        graph.sender.destroy_subscription(subscription)
+
+
+def test_progress_notice_and_final_reply_keep_distinct_interim_flags(communication):
+    provider = _DialogueProvider(blocked=True)
+    graph = communication(with_manager=False, provider=provider)
+    messages = []
+    subscription = graph.sender.create_subscription(
+        SpeechRequest, '/malbut/speech/response', messages.append, 10)
+    try:
+        _wait_until(lambda: graph.agent.count_subscribers('/malbut/speech/response') == 2)
+        _publish_transcript(graph, 'progress-speech', '안녕')
+        _wait_until(lambda: bool(messages))
+        assert messages[0].interim is True and not provider.release.is_set()
+        provider.release.set()
+        _wait_until(lambda: len(messages) == 2)
+        assert messages[1].text == '대화 연결 확인 응답'
+        assert messages[1].interim is False
+    finally:
+        provider.release.set()
+        graph.sender.destroy_subscription(subscription)
 
 
 def test_slow_dialogue_does_not_block_manager_feedback_or_cancel(

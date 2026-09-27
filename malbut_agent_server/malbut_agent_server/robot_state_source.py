@@ -1,4 +1,4 @@
-"""Server-owned robot-state evidence used after model inference."""
+"""Server-owned model context and independently rechecked safety evidence."""
 
 import math
 import time

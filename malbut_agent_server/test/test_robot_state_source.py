@@ -1,5 +1,6 @@
-"""Contracts for post-model server-owned RobotState evidence."""
+"""Contracts for model context and post-model server-owned RobotState evidence."""
 
+from dataclasses import replace
 from typing import List
 
 import pytest
@@ -60,7 +61,7 @@ class NavigateProvider(AgentProvider):
 
 
 class RecordingSource:
-    """Prove that the state source runs strictly after the provider."""
+    """Record independent state reads around inference."""
 
     def __init__(self, events, evidence):
         self.events = events
@@ -107,12 +108,13 @@ def _runtime(provider, source, *, now=100.0, max_age=2.0):
     )
 
 
-def test_server_owned_state_is_read_after_provider_and_overrides_client():
+@pytest.mark.parametrize('available', [True, False])
+def test_server_owned_state_surrounds_inference_and_overrides_client(available):
     events = []
     evidence = RobotStateEvidence(
         state=RobotState(
             battery_percent=80,
-            navigation_available=True,
+            navigation_available=available,
             localization_ok=True,
             emergency_stop=False,
         ),
@@ -125,10 +127,15 @@ def test_server_owned_state_is_read_after_provider_and_overrides_client():
         RecordingSource(events, evidence),
     )
     try:
-        result = runtime.handle(_request())
-        assert [event[0] for event in events] == ['provider', 'state']
-        assert events[0][1].emergency_stop is True
-        assert result.safety.allowed is True
+        request = _request()
+        original = request.to_dict()
+        result = runtime.handle(request)
+        assert [event[0] for event in events] == ['state', 'provider', 'state']
+        assert events[1][1] == evidence.state
+        assert request.to_dict() == original
+        assert result.safety.allowed is available
+        if not available:
+            assert result.safety.code == 'navigation_unavailable'
         assert result.state_trusted is True
         assert result.state_evidence_id == 'fresh-simulation-state'
         assert result.state_observed_at == 100.0
@@ -137,10 +144,83 @@ def test_server_owned_state_is_read_after_provider_and_overrides_client():
         assert 'fresh-simulation-state' not in str(public)
         assert 'malbut-safety-v1' not in str(public)
         replay = runtime.handle(_request())
+        assert [event[0] for event in events] == ['state', 'provider', 'state']
         assert replay.state_evidence_id == result.state_evidence_id
         assert replay.state_observed_at == result.state_observed_at
         assert replay.safety_policy_revision == result.safety_policy_revision
         assert replay.to_persisted_dict()['schema_version'] == 3
+    finally:
+        conversation.close()
+        memory.close()
+
+
+@pytest.mark.parametrize('failure', ['stale', 'future', 'untrusted', 'read_error'])
+def test_invalid_state_is_not_model_context_or_replaced_by_client(failure):
+    events = []
+    ready = RobotState(
+        battery_percent=80, navigation_available=True, localization_ok=True,
+    )
+    evidence = RobotStateEvidence(
+        state=ready,
+        observed_at={'stale': 90.0, 'future': 101.0}.get(failure, 100.0),
+        evidence_id='invalid-context', trusted=failure != 'untrusted',
+    )
+    source = RecordingSource(events, evidence)
+    if failure == 'read_error':
+        def fail_read():
+            raise RuntimeError('state unavailable')
+
+        source.read = fail_read
+    runtime, memory, conversation = _runtime(NavigateProvider(events), source)
+    try:
+        request = replace(_request(), robot_state=ready)
+        result = runtime.handle(request)
+        model_states = [state for kind, state in events if kind == 'provider']
+        assert model_states == [RobotState()]
+        assert result.safety.allowed is False
+        assert result.safety.code == 'untrusted_robot_state'
+        assert request.robot_state == ready
+    finally:
+        conversation.close()
+        memory.close()
+
+
+@pytest.mark.parametrize('change', ['emergency_stop', 'stale'])
+def test_state_changed_during_inference_is_checked_again(monkeypatch, change):
+    events = []
+    before = RobotStateEvidence(
+        state=RobotState(
+            battery_percent=80, navigation_available=True, localization_ok=True,
+        ),
+        observed_at=100.0, evidence_id='before-inference', trusted=True,
+    )
+    after = replace(
+        before, state=replace(before.state, emergency_stop=change == 'emergency_stop'),
+        observed_at=90.0 if change == 'stale' else 100.0,
+        evidence_id='after-inference',
+    )
+    source = RecordingSource(events, before)
+    provider = NavigateProvider(events)
+    complete = provider.complete
+
+    def infer(*args, **kwargs):
+        result = complete(*args, **kwargs)
+        source.evidence = after
+        return result
+
+    monkeypatch.setattr(provider, 'complete', infer)
+    runtime, memory, conversation = _runtime(provider, source)
+    try:
+        result = runtime.handle(_request())
+        assert events == [
+            ('state', before.state), ('provider', before.state), ('state', after.state),
+        ]
+        assert result.safety.allowed is False
+        assert result.safety.code == (
+            'emergency_stop' if change == 'emergency_stop' else 'untrusted_robot_state'
+        )
+        assert result.state_evidence_id == 'after-inference'
+        assert result.to_dict()['execution']['authorized'] is False
     finally:
         conversation.close()
         memory.close()

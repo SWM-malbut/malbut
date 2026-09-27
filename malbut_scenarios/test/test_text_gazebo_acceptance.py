@@ -1280,7 +1280,7 @@ def _write_safety_observation(
         safety_profile=profile,
         result_code=result_code,
         claim_arm_count=1,
-        preclaim_read_count=1,
+        preclaim_read_count=2,
         postclaim_read_count=1,
         fault_application_count=1,
         map_switch_count=(
@@ -1333,7 +1333,7 @@ def test_safety_observation_requires_strict_server_owned_proof(
     ):
         supervisor._safety_fault_observation()
 
-    _write_safety_observation(tmp_path, profile)
+    path = _write_safety_observation(tmp_path, profile)
     assert supervisor._safety_fault_observation() == (
         SafetyFaultObservation(
             observed=True,
@@ -1341,6 +1341,18 @@ def test_safety_observation_requires_strict_server_owned_proof(
             map_switch_count=map_switch_count,
         )
     )
+    observation = json.loads(path.read_text(encoding='utf-8'))
+    for preclaim_reads in (1, 3):
+        observation['preclaim_read_count'] = preclaim_reads
+        path.write_text(
+            json.dumps(observation, sort_keys=True, separators=(',', ':')),
+            encoding='utf-8',
+        )
+        with pytest.raises(
+            acceptance.TextGazeboAcceptanceError,
+            match='safety_evidence_invalid',
+        ):
+            supervisor._safety_fault_observation()
 
 
 def test_approval_pressure_observation_is_required_for_concurrent_profile(

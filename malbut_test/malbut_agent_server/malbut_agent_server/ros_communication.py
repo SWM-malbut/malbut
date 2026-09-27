@@ -1,6 +1,7 @@
 """ROS speech dialogue with independent Manager communication."""
 
 import argparse
+from collections import deque
 from dataclasses import replace
 import json
 import math
@@ -16,7 +17,7 @@ from malbut_agent_server.config import Settings, load_env_file
 from malbut_agent_server.factory import build_orchestrator
 from malbut_agent_server.mission_speech import MissionAnnouncer
 from malbut_agent_server.speech_dialogue import (
-    DialogueWorker, SpeechInputTooLongError,
+    DialogueWorker, MAX_SPEECH_ID_LENGTH, SpeechInputTooLongError,
     validate_dialogue_input, validate_interruption_input,
 )
 from malbut_agent_server.speech_receipts import SpeechReceiptStore
@@ -30,6 +31,7 @@ from malbut_agent_server.ros_situation import (
 
 
 RESPONSE_TOPIC = '/malbut/speech/response'
+INPUT_STATUS_TOPIC = '/malbut/speech/input_status'
 ADDRESSEE_SERVICE = '/malbut/speech/classify_addressee'
 MAX_PENDING_ADDRESSEE_REQUESTS = 128
 MAX_COMMAND_BYTES = 65536
@@ -45,7 +47,7 @@ def create_communication_node(
     situation_factory=None,
 ):
     """Compose communication on one owning thread with a single executor."""
-    from malbut_interfaces.msg import SpeechRequest, SpeechTranscript
+    from malbut_interfaces.msg import SpeechInputStatus, SpeechRequest, SpeechTranscript
     from malbut_interfaces.srv import ClassifySpeechAddressee
     from rclpy.callback_groups import ReentrantCallbackGroup
     from rclpy.node import Node
@@ -69,6 +71,8 @@ def create_communication_node(
             self._receipts = None
             self._closing = False
             self._speech_ready = False
+            self._input_utterance_id = None
+            self._seen_input_ids = deque(maxlen=128)
             self._addressee_waiters = {}
             self._addressee_callbacks = 0
             self.weather_query = None
@@ -130,6 +134,10 @@ def create_communication_node(
                 SpeechTranscript, TRANSCRIPT_TOPIC,
                 self._receive_speech, self._speech_qos,
             )
+            self.create_subscription(
+                SpeechInputStatus, INPUT_STATUS_TOPIC,
+                self._receive_input_status, self._speech_qos,
+            )
             self.create_service(
                 ClassifySpeechAddressee, ADDRESSEE_SERVICE,
                 self._classify_addressee,
@@ -138,7 +146,7 @@ def create_communication_node(
             self._speech_ready = True
             self.get_logger().info('speech_dialogue_ready; speech input endpoints started')
 
-        def say(self, text, request_type=SpeechRequest.DIALOGUE):
+        def say(self, text, request_type=SpeechRequest.DIALOGUE, *, interim=False):
             """Publish text without claiming playback completion."""
             if not isinstance(text, str) or not text.strip():
                 return False
@@ -147,9 +155,31 @@ def create_communication_node(
             if self.situation is not None and self.situation.active:
                 return False
             self._speech.publish(SpeechRequest(
-                text=text, request_type=request_type,
+                text=text, request_type=request_type, interim=interim,
             ))
             return True
+
+        def _receive_input_status(self, message):
+            if self._closing or message.session_id:
+                return
+            uid = message.utterance_id
+            if (not isinstance(uid, str) or not uid.strip()
+                    or len(uid) > MAX_SPEECH_ID_LENGTH):
+                return
+            unavailable = (not self.dialogue.ready or self.dialogue.startup_error
+                           or not self.dialogue.has_capacity()
+                           or self.situation is not None and self.situation.active)
+            if message.state == SpeechInputStatus.STARTED:
+                if uid in self._seen_input_ids:
+                    return
+                self._seen_input_ids.append(uid)
+                self._input_utterance_id = None if unavailable else uid
+            elif (message.state == SpeechInputStatus.FAILED
+                  and uid == self._input_utterance_id):
+                self._input_utterance_id = None
+                if not unavailable:
+                    self.say('잘 알아듣지 못했어요. 다시 말씀해 주세요.',
+                             interim=self.dialogue.has_pending)
 
         def _receive_speech(self, message):
             if self._closing:
@@ -163,6 +193,11 @@ def create_communication_node(
             utterance_id, text = message.utterance_id, message.text
             try:
                 validate_dialogue_input(utterance_id, text)
+                # Transcript and status Topics may be delivered in either order.
+                if utterance_id == self._input_utterance_id:
+                    self._input_utterance_id = None
+                if utterance_id not in self._seen_input_ids:
+                    self._seen_input_ids.append(utterance_id)
                 previous = self._receipts.lookup(utterance_id, text)
             except SpeechInputTooLongError as error:
                 self.get_logger().warning(f'speech_dialogue invalid input: {error}')
@@ -247,6 +282,7 @@ def create_communication_node(
                     future.set_result(decision)
 
         def _begin_situation(self):
+            self._input_utterance_id = None
             self.dialogue.suspend()
             for waiters in self._addressee_waiters.values():
                 for future in waiters:
@@ -266,7 +302,9 @@ def create_communication_node(
                 if response.get('kind') == 'addressee':
                     self._resolve_addressee(response)
                     continue
-                published = self.dialogue.publish_reply(response, self.say)
+                published = self.dialogue.publish_reply(
+                    response, lambda text: self.say(
+                        text, interim=response.get('kind') == 'progress'))
                 if published is not None:
                     self.get_logger().info(json.dumps({
                         'event': 'dialogue_response_published', **published,

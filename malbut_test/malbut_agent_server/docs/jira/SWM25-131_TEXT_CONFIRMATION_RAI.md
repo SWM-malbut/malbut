@@ -138,6 +138,12 @@ target invalidation도 durable claim을 남긴다. 따라서 같은 ID·같은 �
 
 ### `orchestrator.py`와 `robot_state_source.py`
 
+로봇 도구가 제공되는 실제 Provider 호출 전에는 서버 상태를 한 번 읽어 모델의 참고
+정보에 넣는다. 신뢰되고 최신인 표본만 사용하며, 오래된·미래 시각·비신뢰 표본이나
+조회 실패는 기본 `RobotState()`로 대체한다. 원래 요청과 재전송 판별값은 바꾸지 않는다.
+서버 source가 없는 기존 경로는 모델 입력을 유지한다. 이 사전 조회는 아래의
+안전 검사나 승인 후 실행 검사에 재사용하지 않는다.
+
 Provider가 응답한 뒤에 `RobotStateSource.read()`를 호출한다. HTTP body나
 모델 prompt의 state는 실행 가능성 판단의 권한이 아니다. source가 없거나,
 예외가 발생하거나, 표본이 stale이면 기존 Safety가

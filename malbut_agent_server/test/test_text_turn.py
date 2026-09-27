@@ -248,6 +248,54 @@ def test_request_ambiguous_confirmation_and_approval_call_llm_once(
         memory.close()
 
 
+def test_navigation_provider_sees_fresh_server_state_before_deciding(tmp_path):
+    """A state-aware model must not see unavailable default request state."""
+    service, provider, _resolver, store, memory, _database = _runtime(tmp_path)
+    observed_states = []
+
+    def state_aware_complete(request, *args, **kwargs):
+        del args, kwargs
+        provider.calls += 1
+        state = request.robot_state
+        observed_states.append(state)
+        if state.navigation_available and state.localization_ok:
+            decision = AgentDecision(
+                type='tool_call', message='거실로 이동할까요?',
+                tool_name='navigate', arguments={'location': '거실'},
+            )
+        else:
+            decision = AgentDecision(
+                type='refusal', message='현재 이동할 수 없어요.',
+                reason='navigation_unavailable',
+            )
+        return ProviderResult(
+            decision=decision, provider='state-aware-fixture',
+            model='fixture-model', latency_ms=0.0,
+        )
+
+    provider.complete = state_aware_complete
+    try:
+        store.create('user-1', 'conversation-1')
+        result = service.handle(
+            user_id='user-1',
+            value=_request('request-state', 'turn-state', '거실로 가줘'),
+        )
+        assert result['status'] == 'awaiting_confirmation', {
+            'model_state': observed_states[0].to_dict(),
+            'decision': result.get('decision'),
+        }
+        assert provider.calls == 1
+        assert observed_states[0].navigation_available is True
+        assert observed_states[0].localization_ok is True
+        assert observed_states[0].battery_percent == 90.0
+        assert result['proposal']['arguments'] == {'location': '거실'}
+        assert result['execution']['physical_authorized'] is False
+        assert result['execution']['nav2_start_count'] == 0
+    finally:
+        store.close()
+        memory.close()
+
+
 def test_general_route_tool_proposal_cannot_create_confirmation(
     tmp_path,
 ) -> None:
@@ -413,7 +461,9 @@ def test_server_route_policy_gates_confirmation_creation(tmp_path) -> None:
         ) is None
         assert provider.calls == 1
         assert resolver.calls == 0
-        assert state_read_count == 0
+        # One model-context read is allowed; rejected proposals skip the
+        # post-inference safety read, target binding and action creation.
+        assert state_read_count == 1
         with sqlite3.connect(database) as connection:
             assert connection.execute(
                 'SELECT COUNT(*) FROM robot_actions'

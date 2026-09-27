@@ -21,7 +21,8 @@ def _setup(context):
     def value(name):
         return LaunchConfiguration(name).perform(context)
 
-    for name in ('stt_model_path', 'stt_library_path', 'python_executable'):
+    for name in ('stt_model_path', 'stt_library_path', 'python_executable',
+                 'agent_user_id', 'agent_conversation_db'):
         if not value(name).strip():
             raise RuntimeError(f'{name} must be explicitly configured')
     timeouts = {}
@@ -38,6 +39,8 @@ def _setup(context):
     # Scoped includes restore LaunchConfigurations before exit callbacks run.
     # Capture these now so the parent's YOLO/runtime settings cannot leak in.
     agent_provider = value('agent_provider')
+    agent_user_id = value('agent_user_id')
+    agent_conversation_db = value('agent_conversation_db')
     preflight_only = value('preflight_only') == 'true'
     input_has_aec = value('input_has_aec') == 'true'
     control_server = value('control_server')
@@ -94,7 +97,10 @@ def _setup(context):
         prefix = shlex.quote(python)
         agent = Node(
             package='malbut_agent_server', executable='agent_communication',
-            prefix=prefix, output='screen', arguments=['--provider', agent_provider],
+            prefix=prefix, output='screen', arguments=[
+                '--provider', agent_provider, '--user-id', agent_user_id,
+                '--conversation-db', agent_conversation_db,
+            ],
         )
         tts = Node(
             package='malbut_tts', executable='tts_node', prefix=prefix, output='screen',
@@ -157,6 +163,8 @@ def generate_launch_description():
         'stt_model_path': '', 'stt_library_path': '',
         'input_device': '0', 'output_device': '-1', 'cpp_threads': '6',
         'input_has_aec': 'false', 'agent_provider': 'openai',
+        'agent_user_id': 'speech-development-user',
+        'agent_conversation_db': '~/.local/state/malbut/speech-dialogue.sqlite3',
         'python_executable': sys.executable, 'preflight_only': 'false',
         'preflight_timeout_s': '120.0', 'peer_timeout_s': '30.0',
         'control_server': 'none',

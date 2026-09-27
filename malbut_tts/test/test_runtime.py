@@ -71,6 +71,7 @@ class Harness:
         self.synth = synth or FakeSynthesizer()
         self.players = Queue()
         self.events = []
+        self.interim_flags = []
         self.condition = Condition()
         self.runtime = SpeechRuntime(
             self.synth, self.make_player, self.status,
@@ -82,9 +83,10 @@ class Harness:
         self.players.put(player)
         return player
 
-    def status(self, playback_id, state):
+    def status(self, playback_id, state, interim):
         with self.condition:
             self.events.append((playback_id, state))
+            self.interim_flags.append(interim)
             self.condition.notify_all()
 
     def wait(self, playback_id, state):
@@ -225,6 +227,28 @@ def test_finished_waits_for_full_device_drain_and_is_emitted_once(h):
     assert h.events == [(pid, 'playing'), (pid, 'finished')]
     assert not h.runtime.control(pid, 'resume')
     assert not h.runtime.control(pid, 'stop')
+
+
+@pytest.mark.parametrize('interim', [False, True])
+@pytest.mark.parametrize('terminal', ['finished', 'stopped', 'failed'])
+def test_interim_flag_is_preserved_from_playing_through_terminal(h, interim, terminal):
+    pid = h.runtime.submit('답변을 준비하고 있어요.', interim=interim)
+    player = h.active(pid)
+    assert h.interim_flags == [interim]
+    if terminal == 'stopped':
+        assert h.runtime.control(pid, 'stop')
+    else:
+        player.fail = terminal == 'failed'
+        player.drain.set()
+    h.wait(pid, terminal)
+    assert h.events == [(pid, 'playing'), (pid, terminal)]
+    assert h.interim_flags == [interim, interim]
+
+
+def test_invalid_interim_flag_is_rejected_before_synthesis(h):
+    for interim in (None, 0, 1, '', 'false', [], {}):
+        assert h.runtime.submit('잘못된 요청', interim=interim) is None
+    assert h.synth.texts == [] and h.events == []
 
 
 def test_paused_request_blocks_even_higher_priority_and_resumes_same_id(h):

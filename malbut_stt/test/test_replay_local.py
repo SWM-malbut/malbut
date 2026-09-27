@@ -5,12 +5,13 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
-from threading import Event
+from threading import Event, Thread
 from types import SimpleNamespace
 import wave
 
 import pytest
 
+from malbut_stt.cpp_transcription import CppWhisperTranscriber
 from malbut_stt.transcription import LocalWhisperTranscriber
 
 
@@ -106,10 +107,30 @@ def test_busy_discarded_speech_cannot_shorten_an_earlier_transcripts_latency(run
     assert any(item['event'] == 'speech_discarded:busy' for item in result['events'])
     transcript = result['transcripts'][0]
     assert 0 <= transcript['first_vad_speech_at_s'] <= transcript['last_vad_speech_at_s'] < 0.3
-    assert transcript['at_s'] > 3.6
-    assert transcript['vad_last_speech_to_text_s'] > 3.5
+    inference = result['inference'][0]
+    discarded = next(item for item in result['events'] if item['event'] == 'speech_discarded:busy')
+    assert (transcript['last_vad_speech_at_s'] < inference['started_s']
+            < discarded['at_s'] < inference['finished_s'] <= transcript['at_s'])
+    assert transcript['vad_last_speech_to_text_s'] >= inference['elapsed_s'] >= 2.7
     assert transcript['vad_last_speech_to_text_s'] == pytest.approx(
         transcript['at_s'] - transcript['last_vad_speech_at_s'])
+
+
+def test_slow_inference_after_eof_keeps_capture_alive(runtime, tmp_path):
+    path = write_wav(tmp_path / 'slow-after-eof.wav', b'\x01\x00' * 1600)
+    transcriber = LocalWhisperTranscriber(runtime.model_dir)
+
+    def slow_transcribe(*_args, **_kwargs):
+        Event().wait(9.0)
+        return iter([fake_segment('알려줘.')]), None
+
+    transcriber.model.transcribe = slow_transcribe
+    result = runtime.module.replay_wav(path, transcriber, max_runtime_s=15.0)
+    assert result['status'] == 'completed' and result['error'] is None
+    assert result['clean_shutdown'] and result['replay']['all_input_emitted']
+    assert [item['text'] for item in result['transcripts']] == ['알려줘.']
+    assert result['inference'][0]['elapsed_s'] >= 9.0
+    assert result['replay']['emitted_chunks'] * 0.032 > 9.0
 
 
 def test_resumed_voice_keeps_first_onset_but_updates_its_own_last_voice(runtime, tmp_path):
@@ -202,6 +223,9 @@ def test_recorder_paces_exact_512_sample_frames_and_unblocks_on_stop(runtime, mo
     assert recorder.read() == [1] + [0] * 511
     assert waits == [0.032, 0.032]
     assert recorder.finished_at == 0.064 and recorder.chunks == 2
+    assert recorder.read() == [0] * 512
+    assert waits == pytest.approx([0.032, 0.032, 0.032])
+    assert recorder.finished_at == 0.064 and recorder.chunks == 3
     recorder.stop()
     assert recorder.read() == [0] * 512
     recorder.delete()
@@ -299,6 +323,107 @@ def test_timed_out_native_worker_prevents_reusing_its_model(runtime, tmp_path, m
     assert result['status'] == 'timed_out' and not result['clean_shutdown']
     with pytest.raises(ValueError, match='unfinished replay'):
         runtime.module.replay_wav(path, transcriber)
+
+
+def test_cpp_replay_timeout_cancels_and_restores_reusable_native_model(runtime, tmp_path):
+    lifecycle = []
+    native = SimpleNamespace(
+        cancel=lambda: lifecycle.append('cancel'),
+        close=lambda: lifecycle.append('close'),
+    )
+    transcriber = CppWhisperTranscriber.__new__(CppWhisperTranscriber)
+    transcriber.model = native
+    path = write_wav(tmp_path / 'cpp-silence.wav', bytes(320))
+    try:
+        for _ in range(2):
+            result = runtime.module.replay_wav(path, transcriber, max_runtime_s=0.01)
+            assert result['status'] == 'timed_out' and result['error'] is None
+            assert result['clean_shutdown'] and transcriber.model is native
+            assert result['runtime']['backend'] == 'whisper.cpp'
+            assert result['model_transcribe_calls'] == 0
+        assert lifecycle == ['cancel', 'cancel']
+    finally:
+        transcriber.model = native
+        transcriber.close()
+    assert lifecycle == ['cancel', 'cancel', 'close']
+
+
+def test_measured_cpp_model_preserves_stream_and_lifecycle_ownership(runtime):
+    lifecycle = []
+    native = SimpleNamespace(
+        cancel=lambda: lifecycle.append('cancel'),
+        close=lambda: lifecycle.append('close'),
+    )
+    transcriber = CppWhisperTranscriber.__new__(CppWhisperTranscriber)
+    transcriber.model = runtime.module._MeasuredModel(native, [], 0.0)
+    assert transcriber.create_stream().model is transcriber.model
+    transcriber.cancel()
+    transcriber.close()
+    assert lifecycle == ['cancel', 'close']
+
+
+def test_owned_cpp_model_is_released_once_after_both_late_workers_exit(
+    runtime, monkeypatch, tmp_path,
+):
+    lifecycle, workers = [], []
+    capture_done, inference_done, closed = Event(), Event(), Event()
+
+    class Native(CppWhisperTranscriber):
+        def __init__(self, *_args):
+            def close():
+                assert all(not worker.is_alive() for worker in workers)
+                lifecycle.append('close')
+                closed.set()
+            self.model = SimpleNamespace(
+                cancel=lambda: lifecycle.append('cancel'), close=close,
+            )
+
+    class LatePipeline:
+        def __init__(self, **kwargs):
+            self.transcriber = kwargs['transcriber']
+            self.session = SimpleNamespace(activate=lambda: None)
+            self.capture_thread = Thread(target=capture_done.wait, daemon=True)
+            self.asr_thread = Thread(target=inference_done.wait, daemon=True)
+            workers.extend([self.capture_thread, self.asr_thread])
+
+        def start(self):
+            for worker in workers:
+                worker.start()
+
+        def poll(self):
+            pass
+
+        def close(self):
+            self.transcriber.cancel()
+
+    monkeypatch.setattr('malbut_stt.cpp_transcription.CppWhisperTranscriber', Native)
+    monkeypatch.setattr(runtime.module, 'DialoguePipeline', LatePipeline)
+    path = write_wav(tmp_path / 'late-native.wav', bytes(320))
+    results = []
+    replay = Thread(target=lambda: results.append(runtime.module.replay_wav(
+        path, backend='whisper_cpp', model_path='small.bin', library_path='native.so',
+        max_runtime_s=0.01,
+    )), daemon=True)
+    try:
+        replay.start()
+        replay.join(timeout=1.0)
+        assert not replay.is_alive()
+        result = results[0]
+        assert result['status'] == 'timed_out' and not result['clean_shutdown']
+        assert lifecycle == ['cancel'] and not closed.is_set()
+        inference_done.set()
+        workers[1].join(timeout=1.0)
+        assert not closed.is_set()
+        capture_done.set()
+        workers[0].join(timeout=1.0)
+        assert closed.wait(1.0)
+        assert lifecycle == ['cancel', 'close']
+    finally:
+        capture_done.set()
+        inference_done.set()
+        for worker in workers:
+            worker.join(timeout=1.0)
+        replay.join(timeout=1.0)
 
 
 def test_pipeline_initialization_failure_restores_reusable_model(runtime, tmp_path, monkeypatch):
@@ -415,3 +540,46 @@ def test_cli_can_observe_eof_without_a_detected_wake(runtime, tmp_path):
     assert result['replay']['wake_required'] and result['replay']['all_input_emitted']
     assert result['transcript_count'] == result['model_transcribe_calls'] == 0
     assert not any(item['event'] == 'wake_detected' for item in result['events'])
+
+
+def test_cpp_cli_uses_native_model_and_jetson_endpoint_then_releases_it(
+    runtime, monkeypatch, tmp_path,
+):
+    lifecycle = []
+
+    class Native(CppWhisperTranscriber):
+        def __init__(self, model_path, library_path):
+            runtime.loads.append((model_path, library_path))
+            self.metadata = {'model_ftype': 7, 'requested_use_gpu': True}
+            self.model = SimpleNamespace(
+                cancel=lambda: lifecycle.append('cancel'),
+                close=lambda: lifecycle.append('close'),
+            )
+
+    monkeypatch.setattr('malbut_stt.cpp_transcription.CppWhisperTranscriber', Native)
+    path = write_wav(tmp_path / 'native-silence.wav', bytes(320))
+    output = tmp_path / 'native.json'
+    assert runtime.module.main([
+        '--wav', str(path), '--model-path', 'small-q8.bin', '--library-path', 'native.so',
+        '--backend', 'whisper_cpp', '--output', str(output), '--max-runtime-s', '0.01',
+    ]) == 1
+    result = json.loads(output.read_text())
+    assert result['status'] == 'timed_out' and result['clean_shutdown']
+    assert runtime.loads == [('small-q8.bin', 'native.so')]
+    assert lifecycle == ['cancel', 'close']
+    assert result['runtime']['native']['model_ftype'] == 7
+    assert result['runtime']['requested_compute_type'] is None
+    assert result['runtime']['backend'] == 'whisper.cpp'
+    assert result['replay']['endpoint_predecode_s'] == 0.8
+
+
+@pytest.mark.parametrize('options', [
+    {'backend': 'whisper_cpp'},
+    {'backend': 'whisper_cpp', 'library_path': 'native.so', 'compute_type': 'int8'},
+    {'backend': 'mlx', 'library_path': 'native.so'},
+    {'library_path': 'native.so'},
+])
+def test_native_backend_options_are_validated_before_input(runtime, options):
+    with pytest.raises(ValueError, match='library_path|compute_type'):
+        runtime.module.replay_wav('not-opened.wav', **options)
+    assert runtime.loads == []

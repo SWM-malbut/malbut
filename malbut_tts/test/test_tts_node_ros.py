@@ -31,8 +31,8 @@ class ControlledRuntime:
         self.accepted = []
         self.closed = False
 
-    def submit(self, text, request_type=0):
-        self.submitted.append((text, request_type))
+    def submit(self, text, request_type=0, *, interim=False):
+        self.submitted.append((text, request_type, interim))
         return 'ros-playback-1'
 
     def control(self, playback_id, command):
@@ -63,6 +63,8 @@ def test_generated_request_kind_service_and_worker_status_round_trip():
     try:
         assert SpeechRequest().request_type == SpeechRequest.DIALOGUE == 0
         assert SpeechRequest.NOTIFICATION == 1
+        assert SpeechRequest().interim is False
+        assert SpeechPlaybackStatus().interim is False
         tts = tts_node.create_tts_node(ControlledRuntime)
         peer = Node('tts_adapter_test_peer')
         executor.add_node(tts)
@@ -89,12 +91,12 @@ def test_generated_request_kind_service_and_worker_status_round_trip():
             request_type=SpeechRequest.NOTIFICATION,
         ))
         requests.publish(SpeechRequest(
-            text='대화 답변이에요.', request_type=SpeechRequest.DIALOGUE,
+            text='답변을 준비하고 있어요.', request_type=SpeechRequest.DIALOGUE, interim=True,
         ))
         spin_until(lambda: len(tts._runtime.submitted) == 2)
         assert tts._runtime.submitted == [
-            (' 순찰을 마쳤어요.\n', SpeechRequest.NOTIFICATION),
-            ('대화 답변이에요.', SpeechRequest.DIALOGUE),
+            (' 순찰을 마쳤어요.\n', SpeechRequest.NOTIFICATION, False),
+            ('답변을 준비하고 있어요.', SpeechRequest.DIALOGUE, True),
         ]
 
         control = client.call_async(ControlSpeechPlayback.Request(
@@ -110,16 +112,16 @@ def test_generated_request_kind_service_and_worker_status_round_trip():
         assert not invalid.result().accepted
 
         worker = Thread(target=lambda: [
-            tts._runtime.on_status('ros-playback-1', state)
+            tts._runtime.on_status('ros-playback-1', state, True)
             for state in ('playing', 'paused', 'playing', 'finished')
         ])
         worker.start()
         worker.join(timeout=2)
         assert not worker.is_alive()
         spin_until(lambda: len(received) == 4)
-        assert [(message.playback_id, message.state)
+        assert [(message.playback_id, message.state, message.interim)
                 for message in received] == [
-            ('ros-playback-1', state)
+            ('ros-playback-1', state, True)
             for state in ('playing', 'paused', 'playing', 'finished')
         ]
         runtime = tts._runtime
@@ -202,8 +204,8 @@ def test_real_runtime_priority_controls_and_device_drain_through_ros():
         runtime = SpeechRuntime(synth, make_player, on_status)
         real_submit = runtime.submit
 
-        def record_submit(text, request_type=0):
-            playback_id = real_submit(text, request_type)
+        def record_submit(text, request_type=0, *, interim=False):
+            playback_id = real_submit(text, request_type, interim=interim)
             submitted.append((text, playback_id))
             return playback_id
 

@@ -9,3 +9,6 @@ uint8 request_type
 
 # 발행자가 지정한 재생 ID. 빈 값이면 TTS가 생성한다.
 string playback_id
+
+# 최종 답변 전의 진행 안내. 완료 뒤에도 최종 답변을 기다리며 청취를 유지한다.
+bool interim

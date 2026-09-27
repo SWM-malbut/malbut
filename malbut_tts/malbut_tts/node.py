@@ -116,7 +116,9 @@ def create_tts_node(runtime_factory=None):
             if not self._closing:
                 playback_id = getattr(message, 'playback_id', '')
                 options = {'playback_id': playback_id} if playback_id else {}
-                self._runtime.submit(message.text, message.request_type, **options)
+                self._runtime.submit(
+                    message.text, message.request_type, interim=message.interim, **options,
+                )
 
         def _control(self, request, response):
             response.accepted = (
@@ -126,18 +128,18 @@ def create_tts_node(runtime_factory=None):
             )
             return response
 
-        def _queue_status(self, playback_id, state):
+        def _queue_status(self, playback_id, state, interim):
             if not self._closing:
-                self._statuses.put((playback_id, state))
+                self._statuses.put((playback_id, state, interim))
 
         def _publish_statuses(self):
             while not self._closing:
                 try:
-                    playback_id, state = self._statuses.get_nowait()
+                    playback_id, state, interim = self._statuses.get_nowait()
                 except Empty:
                     return
                 self._status_publisher.publish(SpeechPlaybackStatus(
-                    playback_id=playback_id, state=state,
+                    playback_id=playback_id, state=state, interim=interim,
                 ))
 
         def destroy_node(self):

@@ -18,8 +18,8 @@ class FakeRuntime:
         self.controls = []
         self.closed = False
 
-    def submit(self, text, request_type=0):
-        self.submitted.append((text, request_type))
+    def submit(self, text, request_type=0, *, interim=False):
+        self.submitted.append((text, request_type, interim))
         return 'playback-1'
 
     def control(self, playback_id, command):
@@ -105,9 +105,13 @@ def test_request_kind_and_verbatim_text_reach_runtime(fake_ros):
         'reliability': 'reliable', 'durability': 'volatile',
     }
     assert fake_ros.publishers[0][1:] == (tts_node.STATUS_TOPIC, qos)
-    callback(SimpleNamespace(text=' 원문\n', request_type=0))
-    callback(SimpleNamespace(text='순찰 완료', request_type=1))
-    assert node._runtime.submitted == [(' 원문\n', 0), ('순찰 완료', 1)]
+    callback(SimpleNamespace(text=' 원문\n', request_type=0, interim=False))
+    callback(SimpleNamespace(text='순찰 완료', request_type=1, interim=False))
+    callback(SimpleNamespace(text='답변을 준비하고 있어요.', request_type=0, interim=True))
+    assert node._runtime.submitted == [
+        (' 원문\n', 0, False), ('순찰 완료', 1, False),
+        ('답변을 준비하고 있어요.', 0, True),
+    ]
     node.destroy_node()
 
 
@@ -116,16 +120,19 @@ def test_caller_playback_id_is_forwarded_for_confirmation(fake_ros):
     received = []
     node._runtime.submit = lambda *args, **kwargs: received.append((args, kwargs))
     fake_ros.subscriptions[0][2](SimpleNamespace(
-        text='넘어지셨나요?', request_type=2, playback_id='question-1'))
-    assert received == [(('넘어지셨나요?', 2), {'playback_id': 'question-1'})]
+        text='넘어지셨나요?', request_type=2, playback_id='question-1', interim=False))
+    assert received == [(('넘어지셨나요?', 2), {
+        'playback_id': 'question-1', 'interim': False,
+    })]
     node.destroy_node()
 
 
-def test_worker_states_are_published_in_order_only_by_executor(fake_ros):
+@pytest.mark.parametrize('interim', [False, True])
+def test_worker_states_are_published_in_order_only_by_executor(fake_ros, interim):
     """Audio threads enqueue actual states without publishing ROS messages."""
     node = tts_node.create_tts_node(FakeRuntime)
     worker = Thread(target=lambda: [
-        node._runtime.on_status('playback-1', state)
+        node._runtime.on_status('playback-1', state, interim)
         for state in ('playing', 'paused', 'playing', 'finished')
     ])
     worker.start()
@@ -133,9 +140,9 @@ def test_worker_states_are_published_in_order_only_by_executor(fake_ros):
     assert not worker.is_alive()
     assert fake_ros.published == []
     fake_ros.timers[0][1]()
-    assert [(message.playback_id, message.state)
+    assert [(message.playback_id, message.state, message.interim)
             for _, message in fake_ros.published] == [
-        ('playback-1', state)
+        ('playback-1', state, interim)
         for state in ('playing', 'paused', 'playing', 'finished')
     ]
     assert {thread_id for thread_id, _ in fake_ros.published} == {get_ident()}
@@ -169,13 +176,13 @@ def test_destruction_closes_audio_before_ros_and_ignores_late_events(fake_ros):
 
     def close():
         fake_ros.destruction.append('runtime')
-        runtime.on_status('playback-1', 'stopped')
+        runtime.on_status('playback-1', 'stopped', False)
 
     runtime.close = close
     assert node.destroy_node()
     assert not node.destroy_node()
     assert fake_ros.destruction == ['runtime', 'node']
-    fake_ros.subscriptions[0][2](SimpleNamespace(text='늦은 말', request_type=0))
+    fake_ros.subscriptions[0][2](SimpleNamespace(text='늦은 말', request_type=0, interim=False))
     fake_ros.timers[0][1]()
     assert runtime.submitted == []
     assert fake_ros.published == []

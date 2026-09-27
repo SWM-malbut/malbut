@@ -106,6 +106,9 @@ def _setup(context):
         )
     speech = None
     if value('speech') == 'true':
+        for name in ('speech_agent_user_id', 'speech_agent_conversation_db'):
+            if not value(name).strip():
+                raise RuntimeError(f'{name} must be explicitly configured')
         # Preserve the venv executable path: resolving its symlink would select
         # system Python and lose the isolated speech dependencies.
         python = str(Path(value('speech_python_executable')).expanduser())
@@ -121,6 +124,8 @@ def _setup(context):
             'cpp_threads': value('stt_cpp_threads'),
             'input_has_aec': value('speech_input_has_aec'),
             'agent_provider': value('speech_agent_provider'),
+            'agent_user_id': value('speech_agent_user_id'),
+            'agent_conversation_db': value('speech_agent_conversation_db'),
             'control_server': 'manager',
             'preflight_timeout_s': value('speech_preflight_timeout_s'),
             'peer_timeout_s': value('speech_peer_timeout_s'),
@@ -376,6 +381,8 @@ def generate_launch_description():
         'stt_cpp_threads': '6',
         'speech_input_has_aec': 'false',
         'speech_agent_provider': 'openai',
+        'speech_agent_user_id': 'speech-development-user',
+        'speech_agent_conversation_db': '~/.local/state/malbut/speech-dialogue.sqlite3',
         'speech_preflight_timeout_s': '120.0',
         'speech_peer_timeout_s': '30.0',
         'hardware_launch_file': '',

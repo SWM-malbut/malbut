@@ -65,6 +65,37 @@ can reuse the context. Whisper's abort and encoder callbacks enforce this
 cooperatively: a GPU kernel or driver that never returns cannot be interrupted
 by this deadline and still requires the process supervisor's shutdown boundary.
 
+## Same-audio performance replay
+
+Run an existing mono 16 kHz PCM16 WAV through the actual VAD, incremental decode,
+and endpoint pipeline, without opening a microphone, speaker, ROS, or API:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=malbut_stt python malbut_stt/tools/replay_local.py \
+  --backend whisper_cpp \
+  --model-path /absolute/path/to/ggml-small.bin \
+  --library-path /absolute/path/to/stt-cuda-build/bin/libmalbut_whisper.so \
+  --wav /absolute/path/to/korean.wav \
+  --output .runtime/replay-F16.json \
+  --max-runtime-s 120 2>.runtime/replay-F16.native.log
+```
+
+The replay matches the Jetson profile's 0.8-second predecode and 2-second
+fallback. It keeps supplying paced silence after EOF while pending inference
+finishes. Reports separate model loading, individual decode calls, and the
+last VAD speech frame to final-text interval; the latter is not physical
+microphone speech-end truth. Preserve the native log to verify the selected
+CUDA device. Add `--wake` only for a fixture containing the wake phrase.
+
+For Q8/Q5 comparison, use the same frozen WAV and change only the model/output
+paths. Native precision comes from the model file, not `--compute-type`.
+CLI runs are cold loads; for warm sequential repetitions, pass one resident
+`CppWhisperTranscriber` to `replay_wav(..., transcriber=stt)` and close it after
+clean replay shutdown. Do not run a second product STT process during this
+baseline. Record whole-device RAM, swap, temperature and YOLO load separately
+on Jetson. The [2026-09-26 evaluation](../docs/jetson_8gb_performance_2026-09-26.md)
+records candidate selection and current limits.
+
 ## ROS node
 
 Use a Python environment compatible with the installed ROS distribution.

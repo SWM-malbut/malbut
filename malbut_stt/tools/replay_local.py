@@ -14,7 +14,7 @@ import math
 from pathlib import Path
 import platform
 import struct
-from threading import Event
+from threading import Event, Thread
 from time import monotonic
 import wave
 
@@ -24,7 +24,7 @@ from malbut_stt.wake import LocalWakeRecognizer
 
 
 class _WavRecorder:
-    """Supply real-time 32 ms chunks, then block after the added silence ends."""
+    """Supply real-time 32 ms chunks, continuing healthy silence after EOF."""
 
     sample_rate = 16000
     frame_length = 512
@@ -42,9 +42,6 @@ class _WavRecorder:
         self.started_at = monotonic()
 
     def read(self):
-        if self.offset >= len(self.pcm):
-            self.stopped.wait()
-            return [0] * self.frame_length
         target = self.started_at + (self.chunks + 1) * self.frame_length / self.sample_rate
         self.stopped.wait(max(0.0, target - monotonic()))
         if self.stopped.is_set():
@@ -52,7 +49,7 @@ class _WavRecorder:
         frame = self.pcm[self.offset:self.offset + self.frame_length * 2]
         self.offset += len(frame)
         self.chunks += 1
-        if self.offset >= len(self.pcm):
+        if self.finished_at is None and self.offset >= len(self.pcm):
             self.finished_at = monotonic()
         frame = frame.ljust(self.frame_length * 2, b'\x00')
         return list(struct.unpack('<512h', frame))
@@ -72,6 +69,10 @@ class _MeasuredModel:
         self.model = model
         self.calls = calls
         self.origin = origin
+
+    def __getattr__(self, name):
+        # Cancellation and native context ownership remain with the loaded model.
+        return getattr(self.model, name)
 
     def transcribe(self, audio, **options):
         started = monotonic()
@@ -141,13 +142,15 @@ def _idle(pipeline):
             and pipeline.audio.empty() and pipeline.jobs.empty() and pipeline.results.empty())
 
 
-def replay_wav(wav_path, transcriber=None, *, model_path=None, compute_type=None, backend=None,
+def replay_wav(wav_path, transcriber=None, *, model_path=None, library_path=None,
+               compute_type=None, backend=None,
                max_runtime_s=120.0, wake_required=False):
     """Return one replay report; a supplied model may be reused sequentially.
 
     ``max_runtime_s`` bounds observation after model loading. Shutdown may add
-    the pipeline's bounded native-inference join grace. Reuse is safe only when
-    ``clean_shutdown`` is true; cancellation does not stop native inference.
+    the pipeline's bounded worker joins. Native cancellation support depends on
+    the backend; ``clean_shutdown`` requires both capture and ASR workers to exit
+    before the original model is restored for reuse.
     ``wake_required`` starts in wake detection instead of active dialogue.
     """
     if (type(max_runtime_s) not in (int, float) or not math.isfinite(max_runtime_s)
@@ -157,8 +160,15 @@ def replay_wav(wav_path, transcriber=None, *, model_path=None, compute_type=None
         raise ValueError('wake_required must be a boolean')
     if compute_type is not None and compute_type not in ('int8', 'float32'):
         raise ValueError('compute_type must be int8 or float32')
-    if backend not in (None, 'faster-whisper', 'mlx'):
-        raise ValueError('backend must be faster-whisper or mlx')
+    if backend not in (None, 'faster-whisper', 'mlx', 'whisper_cpp'):
+        raise ValueError('backend must be faster-whisper, mlx or whisper_cpp')
+    if backend == 'whisper_cpp':
+        if not library_path:
+            raise ValueError('whisper_cpp requires library_path')
+        if compute_type is not None:
+            raise ValueError('whisper_cpp precision is stored in the model; omit compute_type')
+    elif library_path is not None:
+        raise ValueError('library_path is only used with whisper_cpp')
     if backend == 'mlx' and compute_type is not None:
         raise ValueError('MLX uses fixed fp16; compute_type cannot be overridden')
     if transcriber is not None and backend is not None:
@@ -175,7 +185,11 @@ def replay_wav(wav_path, transcriber=None, *, model_path=None, compute_type=None
     if transcriber is None:
         if model_path is None:
             raise ValueError('a local model path or loaded transcriber is required')
-        if backend == 'mlx':
+        if backend == 'whisper_cpp':
+            from malbut_stt.cpp_transcription import CppWhisperTranscriber
+
+            transcriber = CppWhisperTranscriber(model_path, library_path)
+        elif backend == 'mlx':
             from malbut_stt.mlx_transcription import MlxWhisperTranscriber
 
             transcriber = MlxWhisperTranscriber(model_path)
@@ -239,10 +253,12 @@ def replay_wav(wav_path, transcriber=None, *, model_path=None, compute_type=None
             is_speech=is_speech, publish_transcript=publish,
             publish_control=lambda *_: report('unexpected_playback_control'),
             publish_interruption=lambda *_: report('unexpected_addressee_request'),
-            report=report,
+            report=report, endpoint_predecode_s=0.8,
         )
     except Exception:
         transcriber.model = original_model
+        if not reused and backend == 'whisper_cpp':
+            transcriber.close()
         raise
     status, error = 'completed', None
     try:
@@ -276,6 +292,18 @@ def replay_wav(wav_path, transcriber=None, *, model_path=None, compute_type=None
         not pipeline.asr_thread or not pipeline.asr_thread.is_alive())
     if clean:
         transcriber.model = original_model
+        if not reused and backend == 'whisper_cpp':
+            transcriber.close()
+    elif not reused and backend == 'whisper_cpp':
+        # Keep observation bounded without freeing a context still used by ASR.
+        def release_after_workers():
+            for worker in (pipeline.capture_thread, pipeline.asr_thread):
+                if worker is not None:
+                    worker.join()
+            transcriber.model = original_model
+            transcriber.close()
+
+        Thread(target=release_after_workers, name='replay-native-cleanup', daemon=True).start()
     packages = {}
     for package in ('faster-whisper', 'ctranslate2', 'mlx-whisper', 'mlx', 'webrtcvad-wheels'):
         try:
@@ -291,6 +319,7 @@ def replay_wav(wav_path, transcriber=None, *, model_path=None, compute_type=None
             'max_runtime_s': max_runtime_s, 'elapsed_s': monotonic() - origin,
             'all_input_emitted': recorder.finished_at is not None,
             'emitted_chunks': recorder.chunks, 'vad_mode': 2,
+            'endpoint_predecode_s': 0.8, 'fallback_silence_s': 2.0,
             'vad_timing_basis': ('UID-correlated owner-thread VAD processing; '
                                  'not physical speech-end truth'),
             'wake_required': wake_required, 'audio_input': 'local_wav_without_playback',
@@ -302,8 +331,10 @@ def replay_wav(wav_path, transcriber=None, *, model_path=None, compute_type=None
             'requested_backend': None if reused else backend or 'faster-whisper',
             'compute_type': backend_compute_type,
             'requested_compute_type': (None if reused else 'float16' if backend == 'mlx'
+                                       else None if backend == 'whisper_cpp'
                                        else compute_type or 'int8'),
             'model_path': str(Path(model_path).expanduser().resolve()) if model_path else None,
+            'native': getattr(transcriber, 'metadata', None),
         },
     }
 
@@ -312,8 +343,10 @@ def main(args=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--wav', required=True)
     parser.add_argument('--model-path', required=True)
+    parser.add_argument('--library-path', help='local CUDA or Metal ABI 3 whisper.cpp bridge')
     parser.add_argument('--output', required=True)
-    parser.add_argument('--backend', choices=('faster-whisper', 'mlx'), default='faster-whisper')
+    parser.add_argument('--backend', choices=('faster-whisper', 'mlx', 'whisper_cpp'),
+                        default='faster-whisper')
     parser.add_argument('--compute-type', choices=('int8', 'float32'))
     parser.add_argument('--wake', action='store_true',
                         help='require a wake word first (default: dialogue starts active)')
@@ -324,6 +357,7 @@ def main(args=None):
         parser.error('--compute-type cannot be used with the fixed-fp16 MLX backend')
     try:
         result = replay_wav(options.wav, model_path=options.model_path,
+                            library_path=options.library_path,
                             compute_type=options.compute_type,
                             backend=options.backend,
                             wake_required=options.wake,

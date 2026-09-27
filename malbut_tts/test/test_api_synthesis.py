@@ -268,7 +268,7 @@ def test_partial_failure_does_not_finish_and_next_request_recovers():
         def close(self):
             self.closed = True
 
-    def status(pid, state):
+    def status(pid, state, interim):
         statuses.append((pid, state))
         if len(statuses) == 2:
             done.set()

@@ -13,6 +13,8 @@
 
 Capability Manifest는 ROS 표준을 대체하지 않는 **Malbut 기능 등록 규격**입니다. `.action/.srv/.msg`가 필드와 상수의 최종 기준입니다.
 
+현재 음성·낙상 확인의 공개 경로와 동작 명세는 [공통 인터페이스 색인](malbut_interfaces/README.md)에서 확인합니다.
+
 ```text
 malbut_interfaces/
 ├── capabilities/

@@ -32,11 +32,11 @@ def question():
 
 def test_packaged_suite_distinguishes_mock_state_flow_from_live_semantic_coverage():
     cases = runner.load_cases()
-    assert len(cases) == 20
+    assert len(cases) == 22
     engine_factory = runner.build_situation_factory(runner.Settings.from_env({}))
     report = runner.run_evaluation(cases, engine_factory)
     assert report['evaluation'] == 'mock_state_flow_only'
-    assert report['counts'] == {'passed': 13, 'failed': 0, 'error': 0, 'skipped_live_only': 7}
+    assert report['counts'] == {'passed': 15, 'failed': 0, 'error': 0, 'skipped_live_only': 7}
     fields = {'id', 'status', 'situation_assessment', 'help_needed', 'question_count'}
     assert all(set(row) == fields for row in report['cases'])
 

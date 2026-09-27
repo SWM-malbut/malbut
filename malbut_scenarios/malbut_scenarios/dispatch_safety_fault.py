@@ -110,7 +110,7 @@ class DispatchSafetyFaultObservation:
         if (
             self.result_code != contract.result_code
             or self.claim_arm_count != 1
-            or self.preclaim_read_count != 1
+            or self.preclaim_read_count != 2
             or self.postclaim_read_count != 1
             or self.fault_application_count
             != contract.fault_application_count
@@ -446,7 +446,7 @@ class DispatchSafetyFaultCoordinator:
             self._raise_if_unavailable_locked()
             if (
                 self._claim_arm_count != 0
-                or self._preclaim_read_count != 1
+                or self._preclaim_read_count != 2
                 or self._postclaim_read_count != 0
             ):
                 self._fail_locked(
@@ -469,18 +469,19 @@ class DispatchSafetyFaultCoordinator:
             self._raise_if_unavailable_locked()
             if self._claim_arm_count == 0:
                 if (
-                    self._preclaim_read_count != 0
+                    self._preclaim_read_count not in {0, 1}
                     or self._postclaim_read_count != 0
                 ):
                     self._fail_locked(
                         'dispatch_safety_fault_sequence_invalid'
                     )
                     raise self._error  # type: ignore[misc]
-                self._preclaim_read_count = 1
+                # Model context and post-model Safety each read real state.
+                self._preclaim_read_count += 1
                 return evidence
             if (
                 self._claim_arm_count != 1
-                or self._preclaim_read_count != 1
+                or self._preclaim_read_count != 2
                 or self._postclaim_read_count != 0
                 or self._observation is not None
             ):

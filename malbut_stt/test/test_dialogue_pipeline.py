@@ -283,12 +283,13 @@ def test_proactive_answer_is_captured_while_previous_asr_is_still_running(harnes
     pipeline.on_playback_status('question-1', 'playing')
     pipeline.on_playback_status('question-1', 'finished')
     finish_command(pipeline)
-    assert statuses and statuses[0][0::2] == ('confirmation-1', 'started')
+    assert statuses[0][0::2] == ('', 'started')
+    assert statuses[1][0::2] == ('confirmation-1', 'started')
     assert pipeline._busy and pipeline.jobs.qsize() == 1
     assert 'speech_discarded:busy' not in harness.reports
     harness.allow_asr.set()
     pump(pipeline, lambda: len(harness.transcripts) == 1)
-    assert harness.transcripts == [(statuses[0][1], '문장 2')]
+    assert harness.transcripts == [(statuses[1][1], '문장 2')]
 
 
 def test_previous_asr_result_cannot_release_new_generation_busy_owner(harness):
@@ -525,7 +526,8 @@ def test_busy_utterance_tail_stays_discarded_after_asr_failure_without_ending_di
 
 @pytest.mark.parametrize('failure', ['', ' \n', None, RuntimeError('private model details')])
 def test_failed_command_waits_for_new_speech_without_another_wake(harness, failure):
-    pipeline = harness.create()
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
     wake_up(harness, pipeline)
     original = pipeline.transcriber.transcribe
 
@@ -547,17 +549,31 @@ def test_failed_command_waits_for_new_speech_without_another_wake(harness, failu
     assert pipeline.pending_addressee is None
     assert harness.transcripts == [] and harness.candidates == []
     assert harness.controls == []
+    assert statuses == [('', first, 'started'), ('', first, 'failed')]
     pipeline.transcriber.transcribe = original
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.transcripts) == 1)
     assert harness.transcripts[0][0] != first
     assert harness.transcripts[0][1] == '문장 1'
     assert len(harness.wake_calls) == 1
+    assert statuses[-1] == ('', harness.transcripts[0][0], 'started')
+
+
+def test_ordinary_input_status_ignores_empty_ids_and_busy_discard(harness):
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
+    wake_up(harness, pipeline)
+    pipeline._input_status('failed')
+    pipeline._busy = True
+    pipeline.feed(VOICE + QUIET * 100)
+    assert 'speech_discarded:busy' in harness.reports
+    assert statuses == []
 
 
 @pytest.mark.parametrize('failure', ['', RuntimeError('private model details')])
 def test_failed_interruption_keeps_actual_pause_and_waits_for_another_utterance(harness, failure):
-    pipeline = harness.create()
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
     wake_up(harness, pipeline)
     original = pipeline.transcriber.transcribe
 
@@ -579,6 +595,8 @@ def test_failed_interruption_keeps_actual_pause_and_waits_for_another_utterance(
     assert pipeline.pending_addressee is None
     assert harness.controls == [('p1', 'pause')]
     assert harness.candidates == [] and harness.transcripts == []
+    # An ordinary retry notice would queue behind the still-paused answer.
+    assert statuses == [('', first, 'started')]
     pipeline.transcriber.transcribe = original
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.candidates) == 1)
@@ -676,7 +694,9 @@ def test_overflow_discards_incomplete_audio_without_inference(harness):
     assert 'audio_queue_overflow' in harness.reports
 
 
-def test_capture_ready_waits_for_valid_input_after_overflow(harness):
+def test_capture_ready_waits_for_valid_input_after_overflow(harness, monkeypatch):
+    capture_time = [100.0]
+    monkeypatch.setattr('malbut_stt.dialogue_pipeline.monotonic', lambda: capture_time[0])
     pipeline = harness.create()
     assert not pipeline.capture_ready.is_set()
     harness.recorder.frames.put(MicrophoneOverflow('microphone input overflow'))
@@ -684,8 +704,13 @@ def test_capture_ready_waits_for_valid_input_after_overflow(harness):
     assert not pipeline.capture_ready.is_set()
     pipeline.poll()
     assert pipeline.capture_error is None and pipeline.capture_thread.is_alive()
+    capture_time[0] = 104.0
     harness.recorder.frames.put([0] * 320)
     wait_for(pipeline.capture_ready.is_set)
+    assert pipeline._last_capture_at == 104.0
+    capture_time[0] = 105.0
+    pipeline.poll()
+    assert pipeline.capture_error is None
     assert harness.transcripts == []
 
 
@@ -728,6 +753,103 @@ def test_capture_worker_failure_reports_read_phase_and_releases_device(harness):
     assert harness.closed == ['stop', 'delete']
     assert not pipeline.capture_thread.is_alive() and not pipeline.asr_thread.is_alive()
     assert harness.transcripts == []
+
+
+@pytest.mark.parametrize('first_frame', [False, True])
+def test_blocked_microphone_read_cannot_verify_or_open_a_session(
+        harness, monkeypatch, first_frame):
+    capture_time = [100.0]
+    monkeypatch.setattr('malbut_stt.dialogue_pipeline.monotonic', lambda: capture_time[0])
+    pipeline = harness.create()
+    wait_for(lambda: harness.recorder.reads == 1)
+    if first_frame:
+        harness.recorder.frames.put([0] * 320)
+        wait_for(lambda: harness.recorder.reads == 2)
+        pipeline.poll()
+    assert pipeline.start_session('incident')
+
+    # Dialogue deadlines may advance independently of real device capture.
+    harness.now = 1000.0
+    capture_time[0] = 104.999
+    pipeline.poll()
+    assert pipeline.session_is_active('incident')
+    capture_time[0] = 105.0
+    assert not pipeline.session_is_active('incident')
+    assert pipeline.session.active and pipeline._retired_session_ids == {}
+    assert not pipeline.start_session('incident')
+    assert not pipeline.start_session('another')
+    assert pipeline.session.session_id == 'incident'
+    with pytest.raises(RuntimeError, match='microphone input timeout') as failure:
+        pipeline.poll()
+    assert pipeline.phase == 'reading_microphone'
+    assert harness.transcripts == harness.command_calls == []
+
+    # A late read cannot revive a pipeline whose capture failure was observed.
+    harness.recorder.frames.put([0] * 320)
+    wait_for(lambda: not pipeline.capture_thread.is_alive())
+    assert not pipeline.session_is_active('incident')
+    assert not pipeline.start_session('another')
+    with pytest.raises(RuntimeError) as repeated:
+        pipeline.poll()
+    assert repeated.value is failure.value
+
+
+def test_late_microphone_frame_cannot_hide_capture_timeout_before_poll(harness, monkeypatch):
+    capture_time = [100.0]
+    monkeypatch.setattr('malbut_stt.dialogue_pipeline.monotonic', lambda: capture_time[0])
+    pipeline = harness.create()
+    wait_for(lambda: harness.recorder.reads == 1)
+    harness.recorder.frames.put([0] * 320)
+    wait_for(lambda: harness.recorder.reads == 2)
+    pipeline.poll()
+    assert pipeline.start_session('incident')
+
+    capture_time[0] = 105.0
+    harness.recorder.frames.put([0] * 320)
+    wait_for(lambda: not pipeline.capture_thread.is_alive())
+    assert not pipeline.session_is_active('incident')
+    with pytest.raises(RuntimeError, match='microphone input timeout'):
+        pipeline.poll()
+    assert pipeline.audio.empty() and harness.command_calls == []
+
+
+def test_late_first_microphone_frame_does_not_report_capture_ready(harness, monkeypatch):
+    capture_time = [100.0]
+    monkeypatch.setattr('malbut_stt.dialogue_pipeline.monotonic', lambda: capture_time[0])
+    pipeline = harness.create()
+    wait_for(lambda: harness.recorder.reads == 1)
+
+    capture_time[0] = 105.0
+    harness.recorder.frames.put([0] * 320)
+    wait_for(lambda: not pipeline.capture_thread.is_alive())
+
+    assert not pipeline.capture_ready.is_set()
+    with pytest.raises(RuntimeError, match='microphone input timeout'):
+        pipeline.poll()
+    assert pipeline.audio.empty() and harness.transcripts == []
+
+
+@pytest.mark.parametrize('playback_gate', [False, True])
+def test_quiet_microphone_frames_remain_healthy_during_playback(
+        harness, monkeypatch, playback_gate):
+    capture_time = [100.0]
+    monkeypatch.setattr('malbut_stt.dialogue_pipeline.monotonic', lambda: capture_time[0])
+    pipeline = harness.create(aec=False)
+    assert pipeline.start_session('incident')
+    if playback_gate:
+        pipeline.on_playback_status('question', 'playing')
+    wait_for(lambda: harness.recorder.reads == 1)
+    for _ in range(4):
+        capture_time[0] += 4.0
+        reads = harness.recorder.reads
+        harness.recorder.frames.put([0] * 320)
+        wait_for(lambda: harness.recorder.reads > reads)
+        if playback_gate:
+            assert pipeline.audio.empty()
+        pipeline.poll()
+        assert pipeline.session_is_active('incident')
+    assert pipeline.capture_error is None
+    assert harness.transcripts == harness.command_calls == []
 
 
 def test_unsupported_microphone_rate_is_deleted_without_starting_workers(harness):
