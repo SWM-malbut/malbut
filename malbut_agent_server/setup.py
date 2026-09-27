@@ -20,7 +20,9 @@ setup(
         ),
         (
             'share/' + package_name + '/docs',
-            ['docs/SEMANTIC_MEMORY.md'],
+            ['docs/SEMANTIC_MEMORY.md', 'docs/MANAGER_VOICE_COMMANDS.md',
+             'docs/MANAGER_VOICE_SPEC.md', 'docs/MANAGER_VOICE_INTERFACE.md',
+             'docs/MANAGER_VOICE_LAB.md'],
         ),
         (
             'share/' + package_name + '/docs/jira',
@@ -79,6 +81,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'malbut-voice-lab = malbut_agent_server.voice_lab:main',
             (
                 'weather = '
                 'malbut_agent_server.weather_action:main'

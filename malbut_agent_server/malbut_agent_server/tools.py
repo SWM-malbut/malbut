@@ -33,8 +33,69 @@ EMPTY_PARAMETERS: Dict[str, Any] = {
     'additionalProperties': False,
 }
 
+SPEECH_MISSION_TOOLS = (
+    'request_navigation', 'request_follow_person', 'request_patrol',
+    'cancel_voice_mission',
+)
+
 
 TOOL_SPECS = {
+    'request_navigation': ToolSpec(
+        name='request_navigation',
+        description=(
+            'Request one named indoor destination through Manager. Use only for '
+            'a direct movement request in the current utterance. A configured '
+            'server-owned map resolver supplies coordinates; never invent them. '
+            'This proposes a Manager request, not successful movement. '
+            'For an ambiguous or unconfigured destination ask the user to '
+            'restate the full movement request with a registered place name. '
+            'A destination-only follow-up is insufficient. Relative motion is unsupported.'
+        ),
+        parameters={
+            'type': 'object',
+            'properties': {'location': {'type': 'string', 'maxLength': 128}},
+            'required': ['location'],
+            'additionalProperties': False,
+        },
+    ),
+    'request_follow_person': ToolSpec(
+        name='request_follow_person',
+        description=(
+            'Ask Manager to start following the first visible person using the '
+            'configured safe distance. Use only for an explicit current request '
+            'to follow. The visible person is not verified as the speaker; never '
+            'claim speaker identification or choose a named registered person. '
+            'Do not claim execution or completion before Manager reports it.'
+        ),
+        parameters=EMPTY_PARAMETERS,
+    ),
+    'request_patrol': ToolSpec(
+        name='request_patrol',
+        description=(
+            'Ask Manager for one patrol of the selected saved map. Use only for '
+            'a direct current request. thoroughness is normal unless the user '
+            'explicitly asks for light or thorough coverage. Never claim '
+            'execution or completion before Manager reports it.'
+        ),
+        parameters={
+            'type': 'object',
+            'properties': {'thoroughness': {
+                'type': 'string', 'enum': ['light', 'normal', 'thorough'],
+            }},
+            'required': ['thoroughness'],
+            'additionalProperties': False,
+        },
+    ),
+    'cancel_voice_mission': ToolSpec(
+        name='cancel_voice_mission',
+        description=(
+            'Request cancellation of this voice session\'s current motion '
+            'mission. Use only for a direct current stop/cancel request. '
+            'Never cancel weather, emergency/situation work, or another '
+            'client\'s mission. Cancellation receipt does not prove termination.'
+        ),
+        parameters=EMPTY_PARAMETERS,
+    ),
     'get_weather': ToolSpec(
         name='get_weather',
         description=(
@@ -218,6 +279,10 @@ def _validate_schema_value(
             raise ValidationError(
                 f'{field_name} must be at most 2000 characters'
             )
+        if len(value) > schema.get('maxLength', 2000):
+            raise ValidationError(f'{field_name} exceeds its length limit')
+        if 'enum' in schema and value not in schema['enum']:
+            raise ValidationError(f'{field_name} is not an allowed value')
         return
     raise RuntimeError(
         f'unsupported Tool schema type for {field_name}: {expected!r}'
