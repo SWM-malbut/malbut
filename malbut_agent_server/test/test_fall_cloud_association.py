@@ -144,7 +144,9 @@ def test_missing_findings_legacy_response_remains_unidentified():
     asyncio.run(monitor.run_once())
     records = discoveries(monitor)
     assert len(records) == 1 and records[0].reason == 'insufficient_locations'
-    assert records[0].subject_key is None and records[0].incident_id is None
+    assert records[0].subject_key is None
+    assert monitor.incident(records[0].incident_id).subject_key is None
+    assert records[0].metadata()['association_status'] == 'unidentified'
 
 
 def test_matched_scene_opens_one_case_without_an_extra_cloud_call_or_fake_answer():
@@ -208,7 +210,8 @@ def test_same_track_id_after_a_gap_does_not_prove_existing_incident_identity():
     provider.reply = reply(finding())
     asyncio.run(monitor.run_once())
     d = discoveries(monitor)[0]
-    assert d.reason == 'incident_target_continuity_unverified' and d.incident_id is None
+    assert d.reason == 'incident_target_continuity_unverified'
+    assert d.incident_id != iid and monitor.incident(d.incident_id).subject_key is None
     assert monitor.incident(iid).candidate_sources == ('yolo_pose',)
 
 
@@ -292,8 +295,15 @@ def test_changes_while_cloud_pending_do_not_attach_old_result(during, expected):
         await task
         events = monitor.drain_events()
         d = next(e.discovery for e in events if e.discovery)
-        assert d.reason == expected and d.incident_id is None
-        assert not any(e.kind == 'question_requested' for e in events)
+        assert d.reason == expected and d.subject_key is None
+        if during == 'new_case':
+            # Keep the newer Pose case; do not resurrect its stale result.
+            assert d.incident_id is None
+            assert not any(e.kind == 'question_requested' for e in events)
+        else:
+            assert monitor.incident(d.incident_id).subject_key is None
+            questions = [e for e in events if e.kind == 'question_requested']
+            assert len(questions) == 1 and questions[0].confirmation_scope == 'scene'
     asyncio.run(run())
 
 
@@ -329,7 +339,7 @@ def test_consent_revocation_discards_inflight_findings():
     asyncio.run(run())
 
 
-def test_unidentified_records_survive_restart_and_are_not_fake_web_incidents(tmp_path):
+def test_unidentified_records_and_scene_verification_survive_restart(tmp_path):
     monitor, _, provider = scene_setup()
     path = tmp_path / 'private' / 'fall.sqlite'
     journal = SqliteFallJournal(path, device_id='robot')
@@ -338,12 +348,18 @@ def test_unidentified_records_survive_restart_and_are_not_fake_web_incidents(tmp
     asyncio.run(monitor.run_once())
     event = next(e for e in monitor.drain_events() if e.discovery)
     assert event_metadata(event)['discovery']['subject_key'] is None
-    assert journal.pending() is None and journal.unresolved() == []
+    iid = event.discovery.incident_id
+    assert monitor.incident(iid).subject_key is None
+    assert journal.pending() is not None
+    assert journal.unresolved()[0]['incidentId'] == iid
     journal.close()
     reopened = SqliteFallJournal(path, device_id='robot')
     try:
         rows = reopened.discoveries()
-        assert len(rows) == 1 and rows[0]['incident_id'] is None
+        assert len(rows) == 1 and rows[0]['incident_id'] == iid
+        assert rows[0]['subject_key'] is None
+        assert rows[0]['association_status'] == 'unidentified'
+        assert reopened.unresolved()[0]['incidentId'] == iid
         assert rows[0]['assessment'] == 'suspected_fall'
         assert 'private-model-text' not in json.dumps(rows) and 'jpeg' not in json.dumps(rows)
         assert reopened.discoveries(after_sequence=rows[0]['sequence']) == []

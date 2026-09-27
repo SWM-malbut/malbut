@@ -83,6 +83,11 @@ class FallFrameBuffer:
             self._size = 0
             self._last_stamp = -1.0
 
+    def contains(self, captured_at: float) -> bool:
+        """Local tracking must refer to an RGB frame actually ingested here."""
+        with self._lock:
+            return any(frame.captured_at == captured_at for frame in self._frames)
+
     @property
     def stored_bytes(self) -> int:
         with self._lock:

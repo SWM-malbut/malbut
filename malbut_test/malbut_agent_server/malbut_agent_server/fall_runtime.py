@@ -169,6 +169,7 @@ def apply_decision(monitor, payload):
                 or incident.video_revision != incident.revision
                 or incident.video is None
                 or incident.video.assessment is not VideoAssessment.NORMAL_ACTIVITY
+                or incident.subject_key is None
                 or incident.fall_seen or incident.question_id is not None):
             raise ValueError('normal video clearance is not supported')
         return monitor.resolve(incident.incident_id, revision=incident.revision,
@@ -204,6 +205,7 @@ def event_metadata(event):
                   subject_key=event.subject_key, evidence_revision=event.evidence_revision,
                   notification_level=(event.notification_level.value
                                       if event.notification_level else None))
+    result['confirmation_scope'] = event.confirmation_scope
     if event.reply is not None:
         result['video_assessment'] = event.reply.assessment.value
         # Free model explanations are not instructions and are not routed to

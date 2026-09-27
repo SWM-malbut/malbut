@@ -1,0 +1,160 @@
+{
+  "gpt-6-astra": {
+    "currency": "USD",
+    "source": "https://developers.openai.com/api/docs/pricing",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "cache_write_30m": null,
+      "output": null
+    }
+  },
+  "gpt-6-sol": {
+    "currency": "USD",
+    "source": "https://developers.openai.com/api/docs/pricing",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "cache_write_30m": null,
+      "output": null
+    }
+  },
+  "claude-opus-5-5": {
+    "currency": "USD",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "output": null
+    }
+  },
+  "claude-sonnet-5": {
+    "currency": "USD",
+    "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "output": null
+    }
+  },
+  "gemini-3.8-flash": {
+    "currency": "USD",
+    "source": "https://ai.google.dev/gemini-api/docs/pricing",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "output": null
+    }
+  },
+  "gemini-3.5-flash": {
+    "currency": "USD",
+    "source": "https://ai.google.dev/gemini-api/docs/pricing",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "output": null
+    }
+  },
+  "muse-spark-1.2": {
+    "currency": "USD",
+    "source": "https://dev.meta.ai/docs/pricing-rate-limits",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "output": null
+    }
+  },
+  "qwen3.8-max": {
+    "currency": "USD",
+    "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "output": null
+    }
+  },
+  "qwen3.8-flash": {
+    "currency": "USD",
+    "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "output": null
+    }
+  },
+  "glm-5.3-flash": {
+    "currency": "USD",
+    "source": "https://docs.z.ai/guides/vlm/glm-5.3-flash",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "output": null
+    }
+  },
+  "kimi-k3": {
+    "currency": "USD",
+    "source": "https://platform.kimi.ai/docs/guide/kimi-k3-quickstart",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "output": null
+    }
+  },
+  "grok-4.7": {
+    "currency": "USD",
+    "source": "https://docs.x.ai/developers/models/grok-4.7",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "output": null
+    }
+  },
+  "gemma4:31b": {
+    "currency": "USD",
+    "source": "https://ollama.com/pricing",
+    "checked_on": null,
+    "per_million_tokens": {
+      "input": null,
+      "cached_input": null,
+      "cache_write_5m": null,
+      "cache_write_1h": null,
+      "output": null
+    }
+  }
+}
