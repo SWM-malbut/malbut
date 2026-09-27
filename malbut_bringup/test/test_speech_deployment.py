@@ -47,6 +47,7 @@ def test_robot_speech_launch_and_native_assets_match_source():
         'malbut_bringup/launch/speech.launch.py',
         'malbut_bringup/malbut_bringup/speech_preflight.py',
         'malbut_bringup/malbut_bringup/speech_process.py',
+        'malbut_bringup/malbut_bringup/speech_audio.py',
         'malbut_stt/malbut_stt/preflight.py',
         'malbut_stt/config/jetson.yaml',
         'malbut_stt/native/CMakeLists.txt',

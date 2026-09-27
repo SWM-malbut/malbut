@@ -2,6 +2,7 @@
 
 import argparse
 from collections import deque
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -20,11 +21,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-    def send(self, content, content_type='application/json; charset=utf-8'):
+    def send(self, content, content_type='application/json; charset=utf-8', etag=None):
         self.send_response(200)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(content)))
         self.send_header('Cache-Control', 'no-store')
+        if etag:
+            self.send_header('ETag', etag)
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Content-Security-Policy',
                          "default-src 'self'; script-src 'self' 'unsafe-inline'; "
@@ -33,8 +36,26 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def json(self, value):
-        self.send(json.dumps(value, ensure_ascii=False, allow_nan=False).encode())
+    def json(self, value, etag=None):
+        self.send(json.dumps(value, ensure_ascii=False, allow_nan=False).encode(), etag=etag)
+
+    def unchanged(self, paths):
+        """Skip reading unchanged logs; signatures include the requested time range."""
+        signatures = []
+        for path in paths:
+            try:
+                stat = path.stat()
+                signatures.append((str(path), stat.st_ino, stat.st_mtime_ns, stat.st_size))
+            except FileNotFoundError:
+                signatures.append((str(path), None))
+        etag = '"' + hashlib.sha256(repr((self.path, signatures)).encode()).hexdigest() + '"'
+        if self.headers.get('If-None-Match') == etag:
+            self.send_response(304)
+            self.send_header('ETag', etag)
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            return None
+        return etag
 
     def session(self, query):
         name = query.get('session', [''])[0]
@@ -61,23 +82,32 @@ class Handler(BaseHTTPRequestHandler):
                           'text/html; charset=utf-8')
                 return
             if url.path == '/api/sessions':
+                paths = [path for path in
+                         sorted(self.server.root.glob('*/metadata.json'), reverse=True)
+                         if not path.is_symlink() and not path.parent.is_symlink()]
+                etag = self.unchanged(paths)
+                if etag is None:
+                    return
                 sessions = []
-                for path in sorted(self.server.root.glob('*/metadata.json'), reverse=True):
-                    if path.is_symlink() or path.parent.is_symlink():
-                        continue
+                for path in paths:
                     try:
                         data = json.loads(path.read_text())
                         sessions.append({k: data.get(k) for k in
                                          ('session', 'hostname', 'started_wall_ns', 'finished')})
                     except (OSError, ValueError):
                         continue
-                self.json(sessions)
+                self.json(sessions, etag)
                 return
             session = self.session(query)
-            metadata = self.metadata(session)
             if url.path == '/api/session':
-                self.json(metadata)
+                path = session / 'metadata.json'
+                if path.resolve().parent != session:
+                    raise ValueError('Metadata outside session')
+                etag = self.unchanged([path])
+                if etag is not None:
+                    self.json(self.metadata(session), etag)
                 return
+            metadata = self.metadata(session)
             channel = query.get('channel', [''])[0]
             if channel not in metadata['channels']:
                 raise ValueError('Unknown channel')
@@ -104,6 +134,9 @@ class Handler(BaseHTTPRequestHandler):
             if url.path != '/api/data':
                 self.send_error(404)
                 return
+            etag = self.unchanged([path])
+            if etag is None:
+                return
             start = float(query.get('start', ['0'])[0])
             end = float(query.get('end', ['inf'])[0])
             rows, count, malformed = deque(maxlen=50000), 0, 0
@@ -121,7 +154,7 @@ class Handler(BaseHTTPRequestHandler):
                             count += 1
                             rows.append(row)
             self.json({'rows': list(rows), 'truncated': count > len(rows),
-                       'matching_rows': count, 'malformed_rows': malformed})
+                       'matching_rows': count, 'malformed_rows': malformed}, etag)
         except (BrokenPipeError, ConnectionResetError):
             pass
         except (ValueError, OSError, KeyError) as error:

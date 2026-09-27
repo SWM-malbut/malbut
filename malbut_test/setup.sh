@@ -33,7 +33,8 @@ else
   apt_command=(sudo apt-get)
 fi
 bash "$robot_source_dir/homecam_agent/scripts/install_dependencies.sh"
-"${apt_command[@]}" install -y --no-install-recommends curl python3-pip libportaudio2
+"${apt_command[@]}" install -y --no-install-recommends curl python3-pip libportaudio2 \
+  pulseaudio pulseaudio-utils libasound2-plugins
 rosdep update
 rosdep install --from-paths "${package_paths[@]}" \
   --ignore-src -r -y --rosdistro humble \

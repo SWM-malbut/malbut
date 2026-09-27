@@ -11,6 +11,7 @@ from malbut_stt.audio import SoundDeviceRecorder
 
 @pytest.fixture
 def sounddevice(monkeypatch):
+    monkeypatch.delenv('MALBUT_SHARED_MICROPHONE', raising=False)
     devices = [
         {'name': 'XFM-DP-V0.0.18: USB Audio', 'max_input_channels': 1},
         {'name': 'Speaker', 'max_input_channels': 0},
@@ -24,13 +25,15 @@ def sounddevice(monkeypatch):
 
     def query_devices(device=None, kind=None):
         if kind == 'input':
+            if device == 'pulse':
+                return {'name': 'pulse', 'max_input_channels': 32}
             return devices[4 if device is None else device]
         return devices
 
     def check_input_settings(**options):
         state.calls.append(('check', options))
         device = options['device']
-        if device is not None and (
+        if device not in (None, 'pulse') and (
                 device >= len(devices) or not devices[device]['max_input_channels']):
             raise RuntimeError('invalid input device')
 
@@ -75,6 +78,34 @@ def test_device_id_matches_sounddevice_listing(sounddevice, device_index):
     ]
     selected = 4 if device is None else device
     assert recorder.selected_device == sounddevice.devices[selected]['name']
+
+
+def test_shared_xfm_uses_pulse_without_changing_pcm(sounddevice, monkeypatch):
+    """The busy hardware's PortAudio index must not select a different mic."""
+    monkeypatch.setenv('MALBUT_SHARED_MICROPHONE', 'alsa_input.xfm')
+    monkeypatch.setenv('PULSE_SOURCE', 'alsa_input.xfm')
+    sounddevice.devices[0] = sounddevice.devices[2]
+    recorder = SoundDeviceRecorder(device_index=0)
+    assert sounddevice.calls == [
+        ('check', {'device': 'pulse', 'channels': 1, 'dtype': 'int16',
+                   'samplerate': 16000}),
+        ('open', {'device': 'pulse', 'samplerate': 16000, 'channels': 1,
+                  'dtype': 'int16', 'blocksize': 512}),
+    ]
+    assert recorder.selected_device == 'pulse'
+    assert recorder.sample_rate == 16000
+    assert len(recorder.read()) == 512
+    SoundDeviceRecorder(device_index=2)
+    assert sounddevice.calls[-1][1]['device'] == 2
+
+
+def test_shared_xfm_refuses_a_different_pulse_source(sounddevice, monkeypatch):
+    """Never silently share the desktop's unrelated default input."""
+    monkeypatch.setenv('MALBUT_SHARED_MICROPHONE', 'alsa_input.xfm')
+    monkeypatch.setenv('PULSE_SOURCE', 'alsa_input.other')
+    with pytest.raises(RuntimeError, match='does not match PULSE_SOURCE'):
+        SoundDeviceRecorder(device_index=0)
+    assert not sounddevice.calls
 
 
 @pytest.mark.parametrize('device_index', [1, 3, 9])

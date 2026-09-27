@@ -19,6 +19,7 @@ from launch_ros.actions import Node
 from malbut_bringup.fall_setup import prepare_fall_monitor
 from malbut_bringup.nav2_stack import nav2_actions
 from malbut_bringup.perception_setup import validate_perception_files
+from malbut_bringup.speech_audio import shared_xfm_source
 from malbut_resource_monitor.launch_support import record_first
 
 # Nav2 AssistedTeleop input used by the manual_drive capability.
@@ -160,7 +161,16 @@ def _setup(context):
     media_path = (_package_file('homecam_media_agent', 'launch/homecam_robot.launch.py')
                   if backend_url else None)
 
-    actions = []
+    # The robot's input 0 is XFM. Pin its server-side identity before any
+    # capture starts: a busy raw ALSA device can disappear from PortAudio IDs.
+    shared_source = (shared_xfm_source(dict(context.environment))
+                     if media_path and speech and value('speech_input_device') == '0' else '')
+    actions = [SetEnvironmentVariable('MALBUT_SHARED_MICROPHONE', shared_source)]
+    if shared_source:
+        actions.extend([
+            SetEnvironmentVariable('PULSE_SOURCE', shared_source),
+            LogInfo(msg=f'XFM microphone shared by STT and homecam: {shared_source}'),
+        ])
     if fall_monitor is None:
         reason = ('fall_monitor=false' if value('fall_monitor') == 'false'
                   else 'fall_config is missing; set fall_config or MALBUT_FALL_CONFIG')
@@ -191,6 +201,7 @@ def _setup(context):
             'image_topic': value('rgb_topic'),
             'camera_info_topic': value('camera_info_topic'),
             'odom_topic': value('odom_topic'),
+            **({'audio_source': 'pulse'} if shared_source else {}),
             **{'fall_' + key + '_runtime_id': value for key, value in fall_ids.items()},
         }))
 
