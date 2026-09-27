@@ -90,6 +90,23 @@ Jetson 성능, 가림/교차 상황에서의 사람 식별 성공률을 입증�
 
 ## 기록 위치
 
+### PR #140 게시 전 최신 main 반영
+
+main의 PR #138 음성 명령 변경을 함께 반영했다. 겹친 `setup.py` 실행 명령에는
+`malbut-voice-lab`과 `malbut-fall-preflight`를 모두 유지했다.
+이 상태에서 Agent·코디네이터 Python은 2,776개 통과 / 45개 생략,
+낙상·홈캠 오프라인 묶음은 2,000개 통과 / 21개 생략이었다.
+
+추가 ROS 검사 첫 실행은 62개 통과 / 1개 실패였다.
+PC 흐름 테스트가 `analysis_completed` 수신만 기다리고, 별도 ROS 콜백으로 오는
+`question_requested`까지 이미 도착했다고 가정해 `StopIteration`이 났다.
+질문 메시지도 기존 제한 시간 안에 수신하는지 기다리도록 시험 코드를 수정했다.
+질문 누락 시 실패하는 조건과 이벤트 순서·사건 수·Cloud 호출 수 검사는 유지했다.
+운영 코드의 판단 조건이나 대기 시간을 늘린 변경은 아니다.
+수정 후 재검사와 GitHub 빌드 결과는 PR #140에 기록한다.
+게시 전 산출물은 `fall-publish-20260928.NBWIMW` 디렉터리에 보관하며,
+초기 실패 기록도 남겼다.
+
 로컬 검사 산출물: `fall-runtime-followup-20260928.0Bvdfe`
 (`~/.local/share/malbut-evaluations/` 아래).
 주요 XML: `agent-coordinator-final.xml`, `fall-offline-ci-final.xml`,

@@ -318,6 +318,10 @@ def test_manager_pose_cloud_confirmation_and_record(tmp_path, situation_assessme
             assert 1 <= len(request.window.frames) <= 12
             assert request.window.requested_end - request.window.requested_start == 5
             assert flow.candidate_messages
+            # Separate ROS callbacks: analysis may arrive one spin before the
+            # question event. Require its delivery instead of assuming both
+            # are already present after observing analysis_completed.
+            await flow.until(lambda: any(e['kind'] == 'question_requested' for e in flow.events))
             question = next(e for e in flow.events if e['kind'] == 'question_requested')
             kinds = [e['kind'] for e in flow.events]
             assert kinds.index('analysis_completed') < kinds.index('question_requested')
