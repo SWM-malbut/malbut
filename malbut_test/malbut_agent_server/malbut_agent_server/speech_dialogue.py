@@ -3,6 +3,7 @@
 from collections import OrderedDict, deque
 from concurrent.futures import CancelledError
 import hashlib
+import math
 import re
 from threading import Condition, Thread
 from typing import Callable, Optional
@@ -53,6 +54,7 @@ class _DialogueReply(dict):
         """Attach the internal guard without adding a public JSON field."""
         super().__init__(fields)
         self._memory_validator = memory_validator
+        self._mission_callback = None
 
 
 class SpeechInputTooLongError(ValueError):
@@ -100,12 +102,15 @@ class DialogueWorker:
 
     def __init__(
         self, runtime_factory: Callable, user_id: str, capacity: int = 10,
+        *, missions=None,
     ):
+        """Prepare turns off-thread and optionally dispatch through Manager."""
         if not callable(runtime_factory):
             raise TypeError('runtime_factory must be callable')
         if type(capacity) is not int or capacity < 1:
             raise ValueError('capacity must be a positive integer')
         self._factory = runtime_factory
+        self._missions = missions
         self._user_id = validate_user_id(user_id)
         self._capacity = capacity
         self._condition = Condition()
@@ -231,6 +236,15 @@ class DialogueWorker:
             if reply.get('kind') == 'progress':
                 return dict(reply) if reply._progress.publish(publish, reply['text']) else None
             self._refresh_reply(reply)
+            dispatch = getattr(reply, '_mission_callback', None)
+            if dispatch is not None:
+                # Consume before calling transport, even if publication fails.
+                reply._mission_callback = None
+                try:
+                    reply['text'] = dispatch()
+                except Exception:
+                    reply['text'] = '실행 요청의 처리 여부를 확인하지 못했어요. 자동으로 다시 보내지 않을게요.'
+                    reply['kind'] = 'error'
             if publish(reply['text']):
                 return dict(reply)
             return None
@@ -267,10 +281,12 @@ class DialogueWorker:
             reply['text'] = MEMORY_CHANGED_RESPONSE
             reply['kind'] = 'error'
             reply._memory_validator = None
+            reply._mission_callback = None
         except Exception:
             reply['text'] = ERROR_RESPONSE
             reply['kind'] = 'error'
             reply._memory_validator = None
+            reply._mission_callback = None
 
     def close(self) -> None:
         """Discard waiting and late replies; let the running call finish."""
@@ -362,30 +378,36 @@ class DialogueWorker:
                         self._user_id, conversation_id, start_new=start_new,
                     )
                     conversation_id = session.conversation_id
-                    result = self._handle_with_progress(runtime, SpeechAgentRequest(
+                    request = SpeechAgentRequest(
                         request_id=request_id,
                         user_id=self._user_id,
                         conversation_id=conversation_id,
                         turn_id='speech-turn-' + digest,
                         utterance=text,
                         robot_state=RobotState(),
-                        available_tools=(
+                        available_tools=tuple(getattr(runtime, 'speech_mission_tools', ())) + (
                             ('get_weather', 'set_weather_location')
                             if getattr(runtime, 'weather_executor', None)
                             is not None else ()
                         ),
-                    ), progress)
+                    )
+                    result = self._handle_with_progress(runtime, request, progress)
                     decision = result.decision
-                    if (decision.type not in {
+                    if decision.type == 'tool_call' and self._missions is not None:
+                        reply = self._mission_reply(
+                            runtime, request, result, utterance_id, conversation_id,
+                        )
+                    elif (decision.type not in {
                             'message', 'clarification', 'refusal',
                     } or not isinstance(decision.message, str)
                             or not decision.message.strip()):
                         raise ValueError('Expected a non-action response')
-                    reply = self._reply(
-                        utterance_id, conversation_id,
-                        decision.message, 'answer',
-                        getattr(result, 'memory_validator', None),
-                    )
+                    else:
+                        reply = self._reply(
+                            utterance_id, conversation_id,
+                            decision.message, 'answer',
+                            getattr(result, 'memory_validator', None),
+                        )
                 except CancelledError:
                     reply = None
                 except (ConversationNotFoundError, ConversationStateError):
@@ -427,6 +449,40 @@ class DialogueWorker:
                         runtime.conversation_store.close()
                     finally:
                         runtime.memory_store.close()
+
+    def _mission_reply(self, runtime, request, result, utterance_id, conversation_id):
+        """Bind a committed proposal; send only at the ROS publication boundary."""
+        decision = result.decision
+        if (decision.tool_name not in getattr(runtime, 'speech_mission_tools', ())
+                or not result.safety.allowed or result.safety.code != 'manager_request'):
+            raise ValueError('unsupported speech mission proposal')
+        proposal = self._missions.prepare(
+            request.request_id, decision.tool_name, decision.arguments,
+        )
+        reply = self._reply(
+            utterance_id, conversation_id, proposal.message, 'answer',
+            getattr(result, 'memory_validator', None),
+        )
+
+        def guard():
+            if result.memory_validator is not None:
+                result.memory_validator()
+            session = runtime.conversation_store.snapshot(
+                self._user_id, conversation_id, limit=1,
+            ).session
+            if (session.status != 'active'
+                    or session.generation != result.conversation_generation
+                    or session.revision != result.conversation_revision):
+                return '대화가 변경되어 이전 실행 요청을 보내지 않았어요.'
+            # SQLite validation can wait; measure freshness after those reads.
+            now = float(result.clock())
+            if (not math.isfinite(now) or now < result.issued_at
+                    or now >= result.expires_at):
+                return '요청의 유효 시간이 지나 실행하지 않았어요. 다시 말씀해 주세요.'
+            return None
+
+        reply._mission_callback = lambda: self._missions.dispatch(proposal, guard=guard)
+        return reply
 
     def _progress_notice(self, utterance_id, text, progress):
         with self._condition:

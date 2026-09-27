@@ -53,4 +53,3 @@ def test_gpu_worker_matches_recorded_incremental_boxes_without_blocking_loop():
                               subsequent_min_s=min(times[1:]),
                               subsequent_max_s=max(times[1:]), max_loop_gap_s=max(gaps))))
     asyncio.run(run())
-

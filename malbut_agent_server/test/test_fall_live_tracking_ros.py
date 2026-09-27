@@ -83,4 +83,3 @@ def test_ros_discovery_automatically_starts_and_finishes_tracking(tmp_path, mode
             await flow.close()
         assert tracker.closed
     asyncio.run(run())
-

@@ -16,6 +16,7 @@ from malbut_agent_server.schemas import (
     MAX_UTTERANCE_LENGTH,
     SpeechAgentRequest,
 )
+from malbut_agent_server.tools import SPEECH_MISSION_TOOLS, ToolSpec
 
 
 MAX_MEMORY_CONTEXT_CHARS = 3000
@@ -164,6 +165,28 @@ CONVERSATION_INSTRUCTIONS = """
   저장·정정·삭제·실행은 확인된 결과만 안내하고 접수·진행·완료를 구분합니다.
   답변 전에 현재 요청의 질문, 정확한 값, 제외 조건과 응답 범위가 빠지지 않았는지 확인합니다.
 """.strip()
+
+
+def system_instructions_for_tools(tools: Sequence[ToolSpec]) -> str:
+    """Clarify Manager delegation only for tools actually supplied by the server."""
+    delegated = [tool.name for tool in tools if tool.name in SPEECH_MISSION_TOOLS]
+    if not delegated:
+        return SYSTEM_INSTRUCTIONS
+    return SYSTEM_INSTRUCTIONS + '\n\n' + (
+        '이번 요청에 제공된 Manager 위임 도구: ' + ', '.join(delegated) + '.\n'
+        '이 도구들은 물리 동작을 승인·직접 실행하는 도구가 아니라 Manager에 요청하는 '
+        '도구입니다. 현재 발화가 한 작업의 직접 요청이고 필수 인자가 분명하면 해당 Tool을 '
+        '선택합니다. 인용·가능 여부만 묻는 질문·가정·부정이나 과거 대화만으로 새 작업을 '
+        '요청하지 않습니다. '
+        '명시적인 중지·취소는 제공된 취소 도구로 요청합니다.\n'
+        '이 위임 도구에 한해 규칙 13의 참고용 robot_state_untrusted만으로 수행 불가를 '
+        '단정하거나 Tool 요청을 생략하지 않습니다. 실제 실행 가능 여부는 Manager와 하위 '
+        '서버의 관측·검증에 맡깁니다. 참고 상태를 준비 완료로 바꾸거나 '
+        '좌표·인물 ID·센서 상태를 지어내지 않습니다. 다른 직접 제어 도구의 상태·배터리 '
+        '조건과 위험·권한·프라이버시 거부, 각 도구의 사용 제한은 그대로 적용합니다.\n'
+        'Tool 선택은 접수·실행·성공을 뜻하지 않습니다. Manager의 확인 전 접수·진행·완료를 '
+        '주장하지 않으며, 취소 요청만으로 동작이 끝났다고 말하지 않습니다.'
+    )
 
 
 @dataclass(frozen=True)
