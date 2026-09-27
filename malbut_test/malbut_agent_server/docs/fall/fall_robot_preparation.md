@@ -48,6 +48,81 @@ ros2 run malbut_agent_server malbut-fall-monitor --config "$(ros2 pkg prefix mal
 `--execute`를 넣지 않으면 키를 읽거나 DB를 만들지 않고, 카메라 수신·Cloud 요청도 하지 않는다.
 설정 검사 통과는 의존성·계정·실제 카메라까지 준비됐다는 의미가 아니다.
 
+## 실행 전 점검 명령 (2026-09-28 추가)
+
+`malbut-fall-preflight`는 낙상 실행에 필요한 파일과 설치 경로를 점검한다.
+로봇에서 **실제로 노드를 실행할 계정**으로 ROS 환경과 빌드한 overlay를 불러온 뒤 사용한다.
+원본과 `malbut_test` 배포본에 같은 명령을 넣었다.
+
+```bash
+ros2 run malbut_agent_server malbut-fall-preflight --config /etc/malbut/fall_runtime.json
+```
+
+기본 검사는 다음만 확인한다.
+
+- 설정 형식과 예시 device ID 사용 여부. 서버에 등록된 ID인지 조회하지는 않는다.
+- Cloud 키 파일 존재 여부·크기·소유자·권한. **키 내용을 열거나 출력하지 않는다.**
+- DB 부모 디렉터리의 쓰기 권한·소유자·보호 설정. 기존 DB가 있으면 파일 권한도 확인한다.
+- VLM·낙상 코디네이터·Manager·홈캠·인터페이스 패키지의 설치 경로와 필요한 실행 파일.
+- Pose 모델과 Python 실행 경로. `tracking`을 설정했다면 SAM 소스·체크포인트·Python 경로도 확인한다.
+
+설정 파일은 일반 파일이어야 하며 심볼릭 링크를 허용하지 않는다.
+키 파일에는 런타임과 같은 소유자·권한 검사를 적용한다. 실행 계정 소유 0600을 권장한다.
+DB 디렉터리는 실행 계정 소유 0700, 이미 있는 DB는 실행 계정 소유 0600으로 준비한다.
+검사 명령은 디렉터리 생성, 권한 변경, 키 읽기, DB 열기·마이그레이션을 하지 않는다.
+잘못된 경로를 고치기 위해 기존 DB를 지우면 안 된다.
+
+### 로컬 의존성·모델 로딩까지 확인
+
+```bash
+ros2 run malbut_agent_server malbut-fall-preflight --config /etc/malbut/fall_runtime.json --probe
+```
+
+`--probe`를 붙이면 별도 프로세스에서 다음을 추가 확인한다.
+
+- VLM Python의 ROS 자료형·native 의존성 import.
+- Pose Python의 실제 ONNX 모델 로딩과 입력·출력 형식. 실행 노드와 같은 CPU 해석기를 사용한다.
+- `tracking`이 설정된 경우 실제 SAM worker의 고정 소스·체크포인트 검사와 CUDA/BF16 모델 로딩.
+
+각 프로세스는 최대 30초 기다린다. 실패·시간 초과는 검사 결과에 표시하고 프로세스를 종료한다.
+자식 프로세스에 API 키 환경변수는 넘기지 않고, 라이브러리의 임의 출력도 결과에 싣지 않는다.
+모델을 메모리/GPU에 올리므로 RAM·VRAM은 사용하지만, 영상을 넣거나 추론하지 않는다.
+ROS 노드·카메라·주행을 시작하거나 서버·Cloud API를 호출하지 않는다.
+키 인증 성공 여부는 이 명령으로 확인할 수 없다.
+
+Pose 경로를 Bringup에서 바꿨다면 검사에도 같은 경로를 지정한다.
+
+```bash
+ros2 run malbut_agent_server malbut-fall-preflight --config /etc/malbut/fall_runtime.json --pose-model /path/to/yolo26s-pose.onnx --pose-python /path/to/runtime/bin/python --probe --json
+```
+
+`MALBUT_FALL_CONFIG`, `MALBUT_FALL_POSE_MODEL`, `MALBUT_FALL_POSE_PYTHON` 환경변수도 지원한다.
+Python 실행 경로가 가상환경의 심볼릭 링크여도 기반 Python 경로로 바꾸지 않는다.
+`tracking: null`이면 SAM 검사는 건너뛰며, 검사를 위해 추적 기능을 자동으로 켜지 않는다.
+
+SSH 터미널에서 바로 읽을 수 있는 결과가 기본이고, `--json`은 저장하기 위한 고정 구조 결과를 출력한다.
+검사 실패는 종료 코드 2, 요청한 검사 통과는 0이다.
+`checks_passed=true`여도 `deployment_verified=false`로 남긴다.
+실제 API 인증·서버 설정 전달·카메라 시간·대상 연결 정확도·Jetson 동시 부하는 따로 확인해야 한다.
+
+### 추가 명령의 PC 검증 결과
+
+2026-09-28, x86_64 PC에서 확인한 결과다. 로봇 준비 완료나 새 정확도 평가 결과가 아니다.
+
+| 확인 | 결과 |
+| --- | --- |
+| 준비 점검 전용 테스트 | 44개 통과. 키·DB 미열람, 잘못된 권한·경로·설정, 가상환경 경로, 부분/과다 출력, 자식 프로세스 시간 초과·취소 종료 확인 |
+| 낙상/홈캠 Python 회귀 검사 | 2,000개 통과, 21개 생략. ROS/GPU 등 별도 실행이 필요한 검사는 아래에 따로 표시. 기존 경고 2건 |
+| 자동 연결 ROS 검사 | 실제 PC ROS 통신 4개 통과. 영상·Cloud·추적 결과는 테스트 입력이며 실물 정확도 검사가 아님 |
+| 실제 로컬 모델 로딩 검사 | 기존 PC 테스트 환경에서 ROS 의존성, Pose ONNX, SAM 모델 로딩 통과. 이미지·키·DB 입력이나 Cloud 요청 없음 |
+| SAM 추적 회귀 검사 | 저장된 SYN059 영상 20프레임이 기존 추적 결과와 일치. 1개 테스트 통과 |
+| Python 패키지 빌드 | 새 점검 모듈 포함 성공. 전체 로봇 Bringup 빌드·설치는 별도 |
+| 현재 PC 기본 경로 검사 | 종료 코드 2. 로봇용 기본 설정·Pose 경로 및 미설치/미선택 ROS overlay를 준비 필요로 표시 |
+
+실제 모델 로딩은 기존 PC 검증용 경로를 명시해서 진행했다.
+기본 경로 검사를 통과시키려고 가짜 운영 설정·키를 만들거나 모델 파일을 옮기지 않았다.
+새 검사 명령을 Bringup에서 자동 실행하도록 바꾸지는 않았다.
+
 ## 이번 로컬 확인 결과
 
 2026-09-23, x86_64 PC·ROS Humble에서 로봇 배포용 소스(`malbut_test/`)로 확인했다.

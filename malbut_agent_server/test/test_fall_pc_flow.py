@@ -121,7 +121,7 @@ class OfflineCloud(OllamaCloudFallProvider):
 class PcFlow:
     """Actual DDS graph with a test server/camera/Agent and production relay."""
 
-    def __init__(self, tmp_path, *, mode='fall', lying=True):
+    def __init__(self, tmp_path, *, mode='fall', lying=True, tracker_factory=None):
         self.scope = uuid4().hex
         self.ids = {k: f'{k}-{self.scope}' for k in ('manager', 'bridge', 'vlm')}
         args = ['--ros-args']
@@ -144,7 +144,8 @@ class PcFlow:
             self.settings = FallNodeSettings.parse(json.dumps(config))
             self.provider = OfflineCloud(mode)
             self.journal = SqliteFallJournal(self.db, device_id=self.settings.device_id)
-            self.vlm = create_fall_node(self.settings, provider=self.provider, journal=self.journal)
+            self.vlm = create_fall_node(self.settings, provider=self.provider, journal=self.journal,
+                                        tracker_factory=tracker_factory)
             self.nodes.append(self.vlm)
             self.manager = Node('fall_pc_manager')
             self.nodes.append(self.manager)

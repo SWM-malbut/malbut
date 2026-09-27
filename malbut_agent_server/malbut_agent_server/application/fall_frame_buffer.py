@@ -88,6 +88,20 @@ class FallFrameBuffer:
         with self._lock:
             return any(frame.captured_at == captured_at for frame in self._frames)
 
+    def tracking_frame(self, captured_at: float, *, now: float, first=False):
+        """Return the exact seed or next received image; never skip an eviction."""
+        timestamp(captured_at)
+        timestamp(now)
+        with self._lock:
+            self._evict(now)
+            frames = tuple(self._frames)
+            for index, frame in enumerate(frames):
+                if frame.captured_at == captured_at:
+                    if first:
+                        return frame
+                    return frames[index + 1] if index + 1 < len(frames) else None
+        raise ValueError('tracking history no longer available')
+
     @property
     def stored_bytes(self) -> int:
         with self._lock:

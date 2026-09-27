@@ -10,6 +10,7 @@
   "input_fps": 5,
   "max_source_age_s": 1,
   "control_lease_s": 5,
+  "tracking": null,
   "policy": {
     "retry_interval_s": 3,
     "max_person_observation_age_s": 2,
