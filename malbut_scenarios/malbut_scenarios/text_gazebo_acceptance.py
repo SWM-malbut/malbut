@@ -1110,7 +1110,7 @@ class _AcceptanceSupervisor:
             observation.safety_profile is not self._safety_profile
             or observation.result_code != contract.result_code
             or observation.claim_arm_count != 1
-            or observation.preclaim_read_count != 1
+            or observation.preclaim_read_count != 2
             or observation.postclaim_read_count != 1
             or observation.fault_application_count
             != contract.fault_application_count

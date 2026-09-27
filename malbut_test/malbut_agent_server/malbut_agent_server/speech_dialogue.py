@@ -136,6 +136,12 @@ class DialogueWorker:
         with self._condition:
             return self._startup_error
 
+    @property
+    def has_pending(self) -> bool:
+        """Include queued, running, and completed replies awaiting drain."""
+        with self._condition:
+            return self._outstanding > 0
+
     def has_capacity(self) -> bool:
         """Count pending, in-flight and unread utterances together."""
         with self._condition:

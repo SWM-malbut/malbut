@@ -186,16 +186,45 @@ VLM의 5초·15초 중단과 연결 확인 수신은 구현했다. 상태 보고
 | `/malbut/falls/runtime/subject_observation` | 수신 | 외부 판단부용 관측 입력. Pose의 관측은 별도로 내부에서 생성·검증 |
 | `/malbut/falls/runtime/decision` | 수신 | Manager가 전달하는 최종 확인 결과와 재확인·종결 결정 |
 
-새 경로의 `confirmation_result`는 `boot_id`, `incident_id`, `question_id`,
-`subject_key`, `evidence_revision`, `situation_assessment`, `help_needed`를 검증한다.
-`confirmation_failed`는 처리 실패이며 무응답 판단이 아니다. `dismiss_normal`은
-이전 낙상 관측이나 확인 대기가 없는 정상 영상의 종결에만 적용한다.
+확인 대화의 ROS Action·음성 타입은 [공통 인터페이스 색인](../../../malbut_interfaces/README.md)을 따른다.
+아래 JSON은 기존 런타임 연결의 payload 계약이며 새 `.msg` 정의가 아니다.
+발행자는 VLM 런타임의 `event_metadata`와 Manager의 `FallConfirmationCoordinator`,
+수신 검증은 각각 `FallConfirmationCoordinator.receive`와 `apply_decision`이 맡는다.
+
+`events`의 `question_requested`에서 Manager가 확인하는 필드는 다음과 같다.
+사건·분석·종결 이벤트도 같은 토픽으로 받아 최신 버전과 종료 상태를 갱신한다.
+
+| 필드 | JSON 타입 | 의미·검증 |
+|---|---|---|
+| `kind` | string | 확인 요청은 `question_requested` |
+| `boot_id`, `incident_id`, `question_id`, `subject_key` | string | 공백이 아닌 최대 200자의 ID. 이전 런타임 부팅·종결 사건·오래된 근거의 요청은 다시 실행하지 않음 |
+| `runtime_id` | string | Manager에 대상 런타임 ID가 설정돼 있으면 일치해야 함 |
+| `evidence_revision` | integer | 1 이상. boolean은 허용하지 않음 |
+| `video_assessment` | string | `observed_fall`, `suspected_fall`, `unobservable`, `normal_activity` |
+| `reason` | string | `normal_activity`의 확인 요청은 `prior_fall_observed`여야 함 |
+
+이벤트는 메타데이터를 더 포함할 수 있지만 Manager가 영상·자유 형식 모델 설명을
+Agent 요청에 복사하지 않는다. ID·버전은 Manager가 유지하고 구조화된 영상 판정을
+짧은 상황 요약으로 바꿔 `ConfirmSituation`에 보낸다.
+
+새 확인 경로에서 사용하는 `decision`의 공통 필수 필드는 `action: string`, `boot_id: string`,
+`incident_id: string`, `evidence_revision: integer`다. 다음 표의 필드만 추가로 허용하며
+누락·추가 필드, 현재 부팅 ID 불일치, 1 미만 또는 boolean인 버전을 거절한다.
+
+| `action` | 추가 필수 필드 | 의미 |
+|---|---|---|
+| `confirmation_result` | `question_id: string`, `subject_key: string`, `situation_assessment: string`, `help_needed: boolean` | Action 성공 결과. 상황 값은 `ConfirmSituation.Result`의 상수와 같고 도움 여부는 독립된 값 |
+| `confirmation_failed` | `question_id: string` | 음성·모델·통신 실패 또는 취소. 사용자 무응답이나 도움 필요로 바꾸지 않음 |
+| `dismiss_normal` | 없음 | 이전 낙상 관측이나 확인 대기가 없는 최신 정상 영상의 종결 |
+
+사건·질문·대상·근거 버전의 일치 여부는 런타임 코어가 다시 검사한다. 이미 처리한
+같은 결과는 멱등 처리하고 오래된 결과를 현재 사건에 적용하지 않는다.
 이하 개별 답변·재확인 계약은 기존 호출자용으로 유지한다.
 
 Agent 답변은 전체 명세의 `AgentCheckReply`와 동일하다. 실제 질문이 재생되지 않았는데
 `no_response`라고 보내면 거부한다. Agent가 연결되지 않았다고 무응답을 만들어내지 않는다.
 
-판단 메시지는 `incident_id`, `evidence_revision`, `action`을 받는다.
+기존 호출자의 재확인·종결 결정 메시지는 `incident_id`, `evidence_revision`, `action`을 받는다.
 `action`은 `recheck`, `ask_again`, `resolve`, `unresolved` 중 하나다.
 `resolve`는 `reason`, `unresolved`는 `suspicion_persists` 필드가 추가로 필요하다.
 그 외 필드는 거부한다. 오래된 버전이나 근거 없는 정상 종결도 코어에서 거부한다.

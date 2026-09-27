@@ -73,8 +73,9 @@ class FallConfirmationCoordinator:
         if not isinstance(event, dict):
             return False
         kind = event.get('kind')
-        if kind not in {'incident_opened', 'incident_updated', 'incident_resolved',
-                        'confirmation_completed', 'analysis_completed', 'question_requested'}:
+        if not isinstance(kind, str) or kind not in {
+                'incident_opened', 'incident_updated', 'incident_resolved',
+                'confirmation_completed', 'analysis_completed', 'question_requested'}:
             return False
         boot = event.get('boot_id')
         iid = event.get('incident_id')

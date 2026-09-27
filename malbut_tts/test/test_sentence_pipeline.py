@@ -72,7 +72,7 @@ class Pipeline:
         self.events = []
         self.runtime = SpeechRuntime(
             SentenceSynthesizer(backend), self.make_player,
-            lambda pid, state: self.events.append((pid, state)),
+            lambda pid, state, interim: self.events.append((pid, state)),
         )
 
     def make_player(self, **kwargs):

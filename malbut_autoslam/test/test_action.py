@@ -218,10 +218,10 @@ class _System:
         try:
             _wait_until(lambda: not self.node.busy)
         finally:
-            self.executor.shutdown(timeout_sec=TIMEOUT_S)
+            assert self.executor.shutdown(timeout_sec=TIMEOUT_S)
             self.thread.join(TIMEOUT_S)
+            assert not self.thread.is_alive()
             self.client.destroy()
-            self.node.server.destroy()
             self.backend.planner.destroy()
             if self.backend.navigation is not None:
                 self.backend.navigation.destroy()
@@ -245,6 +245,18 @@ def system_factory(tmp_path, monkeypatch):
     yield create
     for system in reversed(systems):
         system.close()
+
+
+def test_fixture_close_releases_action_waitables(tmp_path, monkeypatch):
+    """Do not defer native action handles to a later test's garbage collection."""
+    monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
+    system = _System(tmp_path)
+    try:
+        system.ready()
+    finally:
+        system.close()
+    assert not list(system.node.waitables)
+    assert not system.thread.is_alive()
 
 
 def test_direct_action_saves_map_after_exploration_finishes(system_factory, tmp_path):

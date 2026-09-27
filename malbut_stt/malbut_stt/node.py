@@ -351,7 +351,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             if rclpy.ok():
                 try:
                     pipeline.on_playback_status(
-                        message.playback_id, playback_states[message.state])
+                        message.playback_id, playback_states[message.state],
+                        interim=message.interim)
                 except (KeyError, ValueError):
                     node.get_logger().warning('invalid_playback_status')
 

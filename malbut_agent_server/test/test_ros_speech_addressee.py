@@ -20,6 +20,11 @@ class SpeechRequest(SimpleNamespace):
     NOTIFICATION = 1
 
 
+class SpeechInputStatus(SimpleNamespace):
+    STARTED = 'started'
+    FAILED = 'failed'
+
+
 class Future:
     def __init__(self, *, executor=None):
         self._done = False
@@ -87,6 +92,8 @@ def node(monkeypatch, tmp_path, request):
         startup_error = None
         ready = getattr(request, 'param', True)
         accept = True
+        suspended = False
+        has_pending = False
 
         def __init__(self, *_args):
             self.requests = []
@@ -96,6 +103,19 @@ def node(monkeypatch, tmp_path, request):
             validate_interruption_input(uid, pid, text)
             self.requests.append((uid, pid, text))
             return self.accept and self.startup_error is None
+
+        def has_capacity(self):
+            return self.ready and self.accept and not self.suspended
+
+        def submit(self, uid, text):
+            self.requests.append((uid, text))
+            return self.has_capacity()
+
+        def suspend(self):
+            self.suspended = True
+
+        def resume(self):
+            self.suspended = False
 
         def drain(self):
             result, self.results = self.results, []
@@ -121,6 +141,7 @@ def node(monkeypatch, tmp_path, request):
     ))
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.msg', SimpleNamespace(
         SpeechRequest=SpeechRequest, SpeechTranscript=SimpleNamespace,
+        SpeechInputStatus=SpeechInputStatus,
     ))
     monkeypatch.setitem(sys.modules, 'malbut_interfaces.srv', SimpleNamespace(
         ClassifySpeechAddressee=SimpleNamespace(Response=Response),
@@ -159,7 +180,9 @@ def test_speech_endpoints_wait_for_worker_initialization(node):
     assert node.subscriptions == node.services == {}
     node.dialogue.ready = True
     node._drain_dialogue()
-    assert set(node.subscriptions) == {ros_communication.TRANSCRIPT_TOPIC}
+    assert set(node.subscriptions) == {
+        ros_communication.TRANSCRIPT_TOPIC, '/malbut/speech/input_status',
+    }
     assert set(node.services) == {ros_communication.ADDRESSEE_SERVICE}
 
 
@@ -170,6 +193,88 @@ def test_failed_initialization_never_advertises_speech_endpoints(node):
     with pytest.raises(RuntimeError, match='speech_dialogue_startup_failed'):
         node._drain_dialogue()
     assert node.subscriptions == node.services == {}
+
+
+def input_status(node, uid, state, session_id=''):
+    callback, _ = node.subscriptions['/malbut/speech/input_status']
+    callback(SpeechInputStatus(session_id=session_id, utterance_id=uid, state=state))
+
+
+def test_recognition_failure_during_an_earlier_answer_is_interim(node):
+    node.dialogue.has_pending = True
+    input_status(node, 'missed', 'started')
+    input_status(node, 'missed', 'failed')
+    messages = node.sent[ros_communication.RESPONSE_TOPIC]
+    assert len(messages) == 1
+    assert messages[0].text == '잘 알아듣지 못했어요. 다시 말씀해 주세요.'
+    assert messages[0].interim is True
+    assert node.dialogue.requests == []
+
+
+def test_recognition_failure_speaks_once_without_model_turn_and_next_input_works(node):
+    input_status(node, 'missed', 'started')
+    input_status(node, 'missed', 'failed')
+    input_status(node, 'missed', 'failed')
+    input_status(node, 'missed', 'started')
+    input_status(node, 'missed', 'failed')
+    messages = node.sent[ros_communication.RESPONSE_TOPIC]
+    assert len(messages) == 1
+    assert messages[0].text == '잘 알아듣지 못했어요. 다시 말씀해 주세요.'
+    assert messages[0].request_type == SpeechRequest.DIALOGUE
+    assert messages[0].interim is False
+    assert node.dialogue.requests == []
+    assert node._receipts.lookup('missed', '미인식 원문') is None
+    input_status(node, 'next', 'started')
+    node._receive_speech(request(uid='next', text='다시 안녕'))
+    input_status(node, 'next', 'failed')
+    input_status(node, 'next', 'started')
+    input_status(node, 'next', 'failed')
+    assert node.dialogue.requests == [('next', '다시 안녕')]
+    assert len(messages) == 1
+
+
+def test_recognition_failure_ignores_stale_id_and_transcript_before_started(node):
+    input_status(node, 'missing-start', 'failed')
+    input_status(node, 'old', 'started')
+    input_status(node, 'latest', 'started')
+    input_status(node, 'old', 'started')
+    input_status(node, 'old', 'failed')
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+    input_status(node, 'latest', 'failed')
+    node._receive_speech(request(uid='already-transcribed', text='안녕'))
+    input_status(node, 'already-transcribed', 'started')
+    input_status(node, 'already-transcribed', 'failed')
+    assert len(node.sent[ros_communication.RESPONSE_TOPIC]) == 1
+
+
+@pytest.mark.parametrize('uid', ['', ' ', 'x' * 257])
+def test_recognition_failure_ignores_invalid_ordinary_ids(node, uid):
+    input_status(node, uid, 'started')
+    input_status(node, uid, 'failed')
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+
+
+@pytest.mark.parametrize('blocked', ['capacity', 'startup', 'proactive'])
+def test_recognition_failure_is_suppressed_when_ordinary_dialogue_is_unavailable(node, blocked):
+    input_status(node, 'ordinary', 'started')
+    input_status(node, 'proactive', 'started', 'incident-1')
+    input_status(node, 'proactive', 'failed', 'incident-1')
+    input_status(node, '', 'failed', 'incident-1')
+    if blocked == 'capacity':
+        node.dialogue.accept = False
+    elif blocked == 'startup':
+        node.dialogue.startup_error = 'Unavailable'
+    else:
+        node.situation.active = True
+        node._begin_situation()
+    input_status(node, 'ordinary', 'failed')
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
+    node.dialogue.accept = True
+    node.dialogue.startup_error = None
+    node.situation.active = False
+    node.dialogue.resume()
+    input_status(node, 'ordinary', 'failed')
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
 
 
 def test_service_yields_until_timer_drains_without_speech_or_receipt(node):

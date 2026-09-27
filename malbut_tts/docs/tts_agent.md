@@ -8,13 +8,15 @@ flowchart LR
     Play --> Speaker["스피커"]
 
     STT["STT"] -->|"일시정지 · 재개 · 중지"| Play
+    Agent -->|"확인 대화 재생 중지 · 전체 중지"| Play
     Play -->|"재생 상태 · 답변 전체 완료"| STT
+    Play -->|"확인 질문 재생 상태"| Agent
 ```
 
 - Agent가 보낸 텍스트를 음성으로 변환한다.
 - 변환한 음성을 스피커로 재생한다.
-- STT의 요청에 따라 음성 재생을 일시정지/재개/중지 한다.
-- 음성 재생 상태를 STT에 전달한다.
+- STT·Agent의 요청에 따라 음성 재생을 제어한다.
+- 음성 재생 상태를 STT·Agent에 전달한다.
 - 음성 재생 요청을 우선순위에 따라 처리하고, 같은 우선순위에서는 수신한 순서대로 재생한다.
 
 ### 1.1. 채택 실행 프로필
@@ -34,30 +36,37 @@ flowchart LR
 
 ## 2. 입력
 
+필드와 선택값의 최종 기준은 `malbut_interfaces`의 `.msg`와 `.srv` 파일이다.
+공개 통신 목록과 공통 규격은 [인터페이스 명세](../../malbut_interfaces/README.md)에서 확인한다.
+
 - Agent로부터 사용자에게 말할 텍스트를 전달받는다.
   - `/malbut/speech/response` ROS 2 Topic을 사용한다.
-  - 메시지 타입은 `malbut_interfaces/msg/SpeechRequest`이다.
+  - 메시지 타입은 [SpeechRequest](../../malbut_interfaces/msg/SpeechRequest.msg)이다.
   - 전달 데이터: `text: string` — 사용자에게 말할 텍스트.
+  - `playback_id: string`은 발행자가 지정한 재생 ID다. 빈 값이면 TTS가 생성한다.
+  - `interim: bool`은 최종 답변 전 지연·재시도 안내 여부이며 기본값은 `false`다. Agent의 중간 안내만 `true`이며, 최종 답변·일반 알림·확인 발화는 `false`다.
   - QoS는 `RELIABLE`, `VOLATILE`, `KEEP_LAST`, 깊이 `10`을 사용한다.
-  - Agent는 요청이 대화 답변인지 일반 작업 알림인지 구분하여 전달한다.
-  - `request_type: uint8`은 대화 답변 `DIALOGUE=0`과 일반 작업 알림
-    `NOTIFICATION=1` 중 하나다.
-  - Agent가 보낸 하나의 답변 또는 알림을 하나의 음성 재생 요청으로 처리한다. 하나의 요청에는 여러 문장이 포함될 수 있다.
+  - `request_type: uint8`은 대화 답변 `DIALOGUE=0`, 일반 작업 알림
+    `NOTIFICATION=1`, 이상 상황 확인 `CONFIRMATION=2`를 구분한다.
+  - Agent가 보낸 하나의 답변·알림·확인 발화를 하나의 음성 재생 요청으로 처리한다. 하나의 요청에는 여러 문장이 포함될 수 있다.
 
-- STT가 특정 음성의 일시정지/재개/중지를 요청한다.
+- STT·Agent가 특정 음성의 일시정지/재개/중지 또는 전체 중지를 요청한다.
   - `/malbut/speech/playback_control` ROS 2 Service를 사용한다.
-  - 서비스 타입은 `malbut_interfaces/srv/ControlSpeechPlayback`이다.
-  - 요청 데이터: `playback_id: string` — 제어할 음성 재생의 고유 ID, `command: string` — `pause`, `resume`, `stop` 중 하나.
+  - 서비스 타입은 [ControlSpeechPlayback](../../malbut_interfaces/srv/ControlSpeechPlayback.srv)이다.
+  - 요청 데이터: `playback_id: string` — 제어할 음성 재생의 고유 ID, `command: string` — `PAUSE`, `RESUME`, `STOP`, `STOP_ALL` 상수 중 하나.
+  - `STOP_ALL`은 재생 ID 없이 현재 재생과 대기열 전체를 중단한다. Agent는 확인 대화 시작 전에 이를 요청하고, 개별 질문은 `playback_id`로 중지한다.
   - 응답 데이터: `accepted: bool` — 요청의 접수 여부. 실제 처리 완료를 의미하지 않으며, 처리 결과는 재생 상태 알림으로 전달한다.
 
 ## 3. 출력
 
 - 변환한 음성을 오디오 출력 장치를 통해 스피커로 재생한다.
-- 음성의 재생 상태를 STT에 전달한다.
+- 음성의 재생 상태를 STT·Agent에 전달한다.
   - `/malbut/speech/playback_status` ROS 2 Topic을 사용한다.
-  - 메시지 타입은 `malbut_interfaces/msg/SpeechPlaybackStatus`이다.
+  - 메시지 타입은 [SpeechPlaybackStatus](../../malbut_interfaces/msg/SpeechPlaybackStatus.msg)이다.
   - 전달 데이터: `playback_id: string` — 음성 재생의 고유 ID, `state: string` — 현재 재생 상태.
+  - `interim: bool`은 원래 `SpeechRequest`의 값을 모든 상태에서 그대로 전달한다. 중간 안내의 `finished`는 그 안내의 재생 완료이며 최종 답변 완료를 뜻하지 않는다. STT는 해당 안내 뒤 일반 대화의 5초 종료 대기를 시작하지 않는다.
   - 재생 상태는 `playing`(재생 중), `paused`(일시정지), `finished`(정상 완료), `failed`(실패), `stopped`(중지)로 구분한다.
+  - Agent는 질문의 `playback_id`에 대응하는 `finished`를 받은 뒤 답변 시작 대기 시간을 계산한다. `failed`나 `stopped`를 정상 완료로 처리하지 않는다.
 
 ## 4. 동작 규칙
 
@@ -135,7 +144,7 @@ sequenceDiagram
 
 - 처리하는 음성 재생 건마다 고유한 `playback_id`를 부여하고, 해당 요청에서 생성된 모든 음성의 상태 알림과 제어에 동일한 ID를 사용한다.
 - 한 번에 하나의 음성을 재생한다. 새 요청은 아래의 우선순위와 대기 순서 규칙에 따라 처리한다.
-- 실제 재생 상태가 변경되면 해당 상태를 STT에 전달한다. finished는 해당 요청의 모든 음성이 스피커를 통해 끝까지 재생된 뒤 한 번 전달한다.
+- 실제 재생 상태가 변경되면 해당 상태를 STT·Agent에 전달한다. finished는 해당 요청의 모든 음성이 스피커를 통해 끝까지 재생된 뒤 한 번 전달한다.
 - 음성 변환이나 재생에 실패하면 오류를 기록하고 `failed` 상태를 전달하며, 정상 재생 완료로 처리하지 않는다.
 
 ### 요청의 우선순위와 대기 순서

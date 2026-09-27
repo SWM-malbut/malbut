@@ -360,16 +360,20 @@ def test_capacity_includes_inflight_pending_and_unread_results():
     factory = RuntimeFactory(provider)
     worker = DialogueWorker(factory, 'speaker', capacity=2)
     try:
+        assert not worker.has_pending
         assert worker.submit('one', '첫 번째')
+        assert worker.has_pending
         assert provider.entered.wait(5)
         assert worker.submit('two', '두 번째')
         assert not worker.has_capacity()
         assert not worker.submit('three', '세 번째')
         release.set()
         wait_until(lambda: len(factory.completed) == 2)
+        assert worker.has_pending  # Completed but unread replies still need speech.
         assert not worker.has_capacity()
         assert not worker.submit('three', '세 번째')
         assert len(collect(worker, 2)) == 2
+        assert not worker.has_pending
         assert worker.has_capacity()
         assert worker.submit('three', '세 번째')
         assert collect(worker, 1)[0]['utterance_id'] == 'three'

@@ -8,7 +8,7 @@ bool active
 bool check_only
 ---
 # true는 세션 시작·종료 또는 미수신 ID 예약 종료를 접수했다는 뜻이다.
-# check_only=true에서는 요청 ID가 현재 활성 세션일 때만 true다.
+# check_only=true에서는 요청 ID가 현재 활성 세션이고 마이크 입력이 정상일 때만 true다.
 bool accepted
 # 입력에 AEC가 있어 질문 재생 중에도 사용자 발화를 받을 수 있는지 여부
 bool barge_in_available

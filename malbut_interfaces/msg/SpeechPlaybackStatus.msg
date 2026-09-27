@@ -8,3 +8,6 @@ string playback_id
 
 # 위 상수 중 하나. FINISHED만 정상 재생 완료를 뜻한다.
 string state
+
+# 해당 SpeechRequest의 interim 값. 한 재생 ID의 모든 상태에서 동일하다.
+bool interim

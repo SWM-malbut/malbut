@@ -188,13 +188,14 @@ def _coordinator(
     )
 
 
-def _arm_after_one_real_read(
+def _arm_after_two_real_reads(
     source: DispatchSafetyRobotStateSource,
     coordinator: DispatchSafetyFaultCoordinator,
-) -> RobotStateEvidence:
+) -> tuple[RobotStateEvidence, RobotStateEvidence]:
     first = source.read()
+    second = source.read()
     coordinator.arm_after_claim(_claim())
-    return first
+    return first, second
 
 
 @pytest.mark.parametrize(
@@ -222,12 +223,13 @@ def test_every_profile_publishes_only_its_exact_contract(
         clock=clock,
         sleeper=clock.sleep,
     )
+    model = _evidence('model-state', 99.0)
     before = _evidence('proposal-state', 99.5)
     after = _evidence('dispatch-state-private', 100.5)
-    delegate = _SequenceSource(before, after)
+    delegate = _SequenceSource(model, before, after)
     source = DispatchSafetyRobotStateSource(delegate, coordinator)
 
-    assert _arm_after_one_real_read(source, coordinator) is before
+    assert _arm_after_two_real_reads(source, coordinator) == (model, before)
     result = source.read()
 
     contract = safety_contract(profile)
@@ -238,13 +240,13 @@ def test_every_profile_publishes_only_its_exact_contract(
         safety_profile=profile,
         result_code=contract.result_code,
         claim_arm_count=1,
-        preclaim_read_count=1,
+        preclaim_read_count=2,
         postclaim_read_count=1,
         fault_application_count=contract.fault_application_count,
         map_switch_count=contract.map_switch_count,
     )
     assert coordinator.completed_observation() == observation
-    assert delegate.calls == 2
+    assert delegate.calls == 3
     assert stat_mode(coordinator.observation_path) == 0o600
     assert 'dispatch-state-private' not in (
         coordinator.observation_path.read_text(encoding='ascii')
@@ -294,11 +296,13 @@ def test_repository_arms_only_after_real_nonempty_claim(
     )
     source = DispatchSafetyRobotStateSource(
         _SequenceSource(
+            _evidence('model-state', 99.0),
             _evidence('proposal-state', 99.5),
             _evidence('dispatch-state', 100.5),
         ),
         coordinator,
     )
+    source.read()
     source.read()
     claim = _claim()
     delegate = _Repository([None, claim, None])
@@ -326,17 +330,19 @@ def test_repository_arms_only_after_real_nonempty_claim(
 def test_state_source_reads_delegate_before_duplicate_sequence_fails(
     tmp_path: Path,
 ) -> None:
-    """Even an invalid third read consumes the real boundary first."""
+    """Even an invalid fourth read consumes the real boundary first."""
     coordinator = _coordinator(
         tmp_path,
         TextGazeboSafetyProfile.EMERGENCY_STOP,
     )
     delegate = _SequenceSource(
+        _evidence('model', 99.0),
         _evidence('proposal', 99.5),
         _evidence('dispatch', 100.5),
-        _evidence('unexpected-third-real-read', 101.0),
+        _evidence('unexpected-fourth-real-read', 101.0),
     )
     source = DispatchSafetyRobotStateSource(delegate, coordinator)
+    source.read()
     source.read()
     coordinator.arm_after_claim(_claim())
     source.read()
@@ -345,7 +351,28 @@ def test_state_source_reads_delegate_before_duplicate_sequence_fails(
         source.read()
 
     assert caught.value.code == 'dispatch_safety_fault_sequence_invalid'
-    assert delegate.calls == 3
+    assert delegate.calls == 4
+
+
+@pytest.mark.parametrize('preclaim_reads', (0, 1, 3))
+def test_claim_requires_exactly_two_preclaim_reads(tmp_path, preclaim_reads):
+    """Missing model/Safety reads and a third preclaim read fail closed."""
+    coordinator = _coordinator(
+        tmp_path, TextGazeboSafetyProfile.EMERGENCY_STOP,
+    )
+    delegate = _SequenceSource(*(
+        _evidence(f'preclaim-{index}', 99.0) for index in range(3)
+    ))
+    source = DispatchSafetyRobotStateSource(delegate, coordinator)
+
+    with pytest.raises(DispatchSafetyFaultError) as caught:
+        for _ in range(preclaim_reads):
+            source.read()
+        coordinator.arm_after_claim(_claim())
+
+    assert caught.value.code == 'dispatch_safety_fault_sequence_invalid'
+    assert delegate.calls == preclaim_reads
+    assert not coordinator.observation_path.exists()
 
 
 def test_stale_fault_rejects_a_sample_that_predates_approval(
@@ -361,11 +388,13 @@ def test_stale_fault_rejects_a_sample_that_predates_approval(
     )
     source = DispatchSafetyRobotStateSource(
         _SequenceSource(
+            _evidence('model', 99.0),
             _evidence('proposal', 99.5),
             _evidence('predates-action', 99.9),
         ),
         coordinator,
     )
+    source.read()
     source.read()
     coordinator.arm_after_claim(_claim())
 
@@ -399,11 +428,13 @@ def test_stale_fault_requires_an_originally_fresh_nonfuture_sample(
     )
     source = DispatchSafetyRobotStateSource(
         _SequenceSource(
+            _evidence('model', 99.0),
             _evidence('proposal', 99.5),
             _evidence('invalid-dispatch-freshness', observed_at),
         ),
         coordinator,
     )
+    source.read()
     source.read()
     coordinator.arm_after_claim(_claim())
 
@@ -429,11 +460,13 @@ def test_map_callback_failure_is_typed_and_publishes_no_proof(
     )
     source = DispatchSafetyRobotStateSource(
         _SequenceSource(
+            _evidence('model', 99.0),
             _evidence('proposal', 99.5),
             _evidence('dispatch', 100.5),
         ),
         coordinator,
     )
+    source.read()
     source.read()
     coordinator.arm_after_claim(_claim())
 
@@ -465,7 +498,7 @@ def test_malformed_real_source_is_rejected_before_fault_application(
 
 @pytest.mark.parametrize(
     'mutate',
-    ('mode', 'extra', 'duplicate', 'noncanonical', 'symlink'),
+    ('mode', 'extra', 'duplicate', 'noncanonical', 'symlink', 'read-count'),
 )
 def test_observation_reader_rejects_noncanonical_or_unsafe_files(
     tmp_path: Path,
@@ -476,11 +509,13 @@ def test_observation_reader_rejects_noncanonical_or_unsafe_files(
     coordinator = _coordinator(tmp_path, profile)
     source = DispatchSafetyRobotStateSource(
         _SequenceSource(
+            _evidence('model', 99.0),
             _evidence('proposal', 99.5),
             _evidence('dispatch', 100.5),
         ),
         coordinator,
     )
+    source.read()
     source.read()
     coordinator.arm_after_claim(_claim())
     source.read()
@@ -491,9 +526,9 @@ def test_observation_reader_rejects_noncanonical_or_unsafe_files(
     if mutate == 'mode':
         candidate.write_bytes(payload)
         candidate.chmod(0o644)
-    elif mutate == 'extra':
+    elif mutate in {'extra', 'read-count'}:
         value = json.loads(payload)
-        value['extra'] = 1
+        value['extra' if mutate == 'extra' else 'preclaim_read_count'] = 1
         candidate.write_text(
             json.dumps(value, sort_keys=True, separators=(',', ':')),
             encoding='ascii',

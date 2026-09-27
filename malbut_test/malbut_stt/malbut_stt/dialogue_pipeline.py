@@ -16,6 +16,7 @@ from malbut_stt.wake import is_wake_phrase
 
 
 MAX_RETIRED_SESSION_IDS = 256
+MICROPHONE_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,7 @@ class DialoguePipeline:
         self.capture_thread = None
         self.asr_thread = None
         self.capture_error = None
+        self._last_capture_at = None
         self.phase = 'idle'
         self._started = False
         self._closed = False
@@ -130,6 +132,7 @@ class DialoguePipeline:
         self.phase = 'starting_microphone'
         self.recorder.start()
         self._started = True
+        self._last_capture_at = monotonic()
         self.capture_thread = Thread(target=self._capture, name='stt-capture', daemon=True)
         self.asr_thread = Thread(target=self._infer, name='stt-asr', daemon=True)
         self.capture_thread.start()
@@ -139,7 +142,8 @@ class DialoguePipeline:
 
     def start_session(self, session_id):
         """Replace ordinary dialogue with a correlated, wake-free confirmation."""
-        if (self.stopping.is_set() or not isinstance(session_id, str)
+        if (self.stopping.is_set() or self.capture_error is not None
+                or self._capture_timed_out() or not isinstance(session_id, str)
                 or not session_id.strip() or len(session_id) > 200):
             return False
         if session_id in self._retired_session_ids:
@@ -168,9 +172,15 @@ class DialoguePipeline:
         """Read the current session without creating, closing, or retiring any ID."""
         return bool(
             not self.stopping.is_set()
+            and self.capture_error is None and not self._capture_timed_out()
             and isinstance(session_id, str) and session_id.strip()
             and len(session_id) <= 200
             and self.session.active and self.session.session_id == session_id)
+
+    def _capture_timed_out(self):
+        # Device liveness is independent of the injected dialogue-policy clock.
+        return (self._started and self._last_capture_at is not None
+                and monotonic() - self._last_capture_at >= MICROPHONE_TIMEOUT_SECONDS)
 
     def _retire_session(self, session_id):
         if session_id:
@@ -180,9 +190,13 @@ class DialoguePipeline:
                 self._retired_session_ids.popitem(last=False)
 
     def _input_status(self, state, uid=None):
-        if self.session.session_id and self.publish_input_status is not None:
+        uid = uid or self.session.utterance_id or ''
+        # Ordinary turns have no session ID, but must identify a real utterance.
+        # Proactive sessions also use a blank UID for session-wide input failure.
+        if self.publish_input_status is not None and (
+                self.session.session_id or isinstance(uid, str) and uid.strip()):
             self.publish_input_status(
-                self.session.session_id, uid or self.session.utterance_id or '', state)
+                self.session.session_id, uid, state)
 
     def _capture(self):
         try:
@@ -194,6 +208,10 @@ class DialoguePipeline:
                 captured_at = self.clock()
                 if self.stopping.is_set():
                     break
+                if self._capture_timed_out():
+                    raise RuntimeError('microphone input timeout')
+                # Quiet frames and echo-gated frames still prove capture is alive.
+                self._last_capture_at = monotonic()
                 if (self.overflow.is_set() or generation != self._audio_generation
                         or blocked or self._input_blocked(captured_at)):
                     continue
@@ -205,7 +223,7 @@ class DialoguePipeline:
                 except Full:
                     self.overflow.set()
         except Exception as error:
-            if not self.stopping.is_set():
+            if not self.stopping.is_set() and self.capture_error is None:
                 self.capture_error = error
 
     def _infer(self):
@@ -305,6 +323,8 @@ class DialoguePipeline:
         """Advance deadlines and consume bounded work without blocking ROS callbacks."""
         if self.stopping.is_set():
             return
+        if self.capture_error is None and self._capture_timed_out():
+            self.capture_error = RuntimeError('microphone input timeout')
         if self.capture_error is not None:
             self.phase = 'reading_microphone'
             raise self.capture_error
@@ -607,7 +627,10 @@ class DialoguePipeline:
             if kind == 'wake':
                 self._terminate(failure)
             else:
-                self._input_status('failed', uid)
+                # A retry notice must not queue behind the paused answer whose
+                # addressee is still unknown; keep that existing recovery path.
+                if self.session.session_id or self._utterance_playback_id is None:
+                    self._input_status('failed', uid)
                 self.session.discard_utterance(uid)
                 self._utterance_playback_id = None
                 self.report(failure)
@@ -646,13 +669,13 @@ class DialoguePipeline:
             self.session.finish_utterance(uid, text, addressed=True)
         self._utterance_playback_id = None
 
-    def on_playback_status(self, playback_id, state):
+    def on_playback_status(self, playback_id, state, *, interim=False):
         """Track acknowledged playback and discard raw echo on gate transitions."""
         if self.stopping.is_set():
             return
         self.poll()
         previous = (self.session.playback_id, self.session.playback_state)
-        self.session.on_playback_status(playback_id, state)
+        self.session.on_playback_status(playback_id, state, interim=interim)
         current = (self.session.playback_id, self.session.playback_state)
         if previous != current and not self.input_has_aec:
             if current[1] in ('playing', 'paused') and self.session.utterance_id is not None:

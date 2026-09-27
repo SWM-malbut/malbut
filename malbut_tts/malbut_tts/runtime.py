@@ -24,6 +24,7 @@ class _Request:
     text: str
     expires_at: Optional[float]
     validate: Optional[Callable] = None
+    interim: bool = False
     cancel: Event = field(default_factory=Event)
     player: object = None
     state: str = 'generating'
@@ -72,13 +73,16 @@ class SpeechRuntime:
         if self._expiry_worker is not None:
             self._expiry_worker.start()
 
-    def submit(self, text, request_type=DIALOGUE, *, validate=None, playback_id=''):
+    def submit(self, text, request_type=DIALOGUE, *, validate=None, playback_id='', interim=False):
         """Return an ID; full/expired waiting requests report failed once."""
         if not isinstance(text, str) or not text.strip():
             self._logger.warning('tts_text_ignored: blank response')
             return None
         if type(request_type) is not int or request_type not in (0, 1, 2):
             self._logger.warning('tts_request_ignored: invalid request_type')
+            return None
+        if type(interim) is not bool:
+            self._logger.warning('tts_request_ignored: invalid interim')
             return None
         if not isinstance(playback_id, str) or (playback_id and (
                 not playback_id.strip() or len(playback_id) > 200)):
@@ -96,7 +100,7 @@ class SpeechRuntime:
             if playback_id in self._retired_ids:
                 if self._retired_ids[playback_id] == 'canceled_before_receipt':
                     # Topic delivery may follow an already accepted STOP service.
-                    request = _Request(playback_id, text, None, state='stopped')
+                    request = _Request(playback_id, text, None, interim=interim, state='stopped')
                     self._report_status(request, 'stopped')
                     return playback_id
                 return None
@@ -112,7 +116,7 @@ class SpeechRuntime:
             request = _Request(
                 playback_id or str(uuid4()), text,
                 now + self._pending_timeout_s if self._pending_timeout_s > 0 else None,
-                validate,
+                validate, interim=interim,
             )
             rejected = len(self._pending) >= self._max_pending_requests
             if not rejected:
@@ -278,7 +282,7 @@ class SpeechRuntime:
             with self._condition:
                 self._remember_retired(request.playback_id, state)
         try:
-            self._on_status(request.playback_id, state)
+            self._on_status(request.playback_id, state, request.interim)
         except Exception as error:
             self._logger.error(f'tts_status_failed: {error}')
 
