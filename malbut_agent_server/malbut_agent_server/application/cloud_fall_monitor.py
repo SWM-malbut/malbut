@@ -742,6 +742,29 @@ class CloudFallMonitor:
             raise ValueError('visual_track_broken')
         return entry.session_id
 
+    def tracking_session_reason(self, session_id):
+        """Read-only lifecycle gate for the local asynchronous tracker."""
+        self._prune_discoveries()
+        entry = next((e for e in self._discoveries.values()
+                      if e.session_id is not None and e.session_id == session_id), None)
+        if entry is None:
+            return 'unknown_tracking_session'
+        if entry.discovery.association_link is not None:
+            return 'already_linked'
+        return self._discovery_link_block(entry) or (
+            'visual_track_broken' if entry.track.broken else None)
+
+    def end_discovery_tracking(self, session_id):
+        """A lost/stopped session cannot reacquire another person under its seed."""
+        for entry in self._discoveries.values():
+            if entry.session_id is not None and entry.session_id == session_id:
+                if entry.discovery.association_link is None:
+                    entry.track.broken = True
+                return
+
+    def pose_observation_ready(self, observed_at):
+        return self._subject_evidence.observed_through(observed_at)
+
     def ingest_discovery_track(self, session_id, *, observed_at, box):
         """Associate a tracked discovery using exact, current measured Pose.
 

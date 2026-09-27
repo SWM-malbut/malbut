@@ -70,6 +70,11 @@ class FallSubjectEvidence:
         return tuple((key, token, pose) for key, (token, pose) in
                      self._frames.get(observed_at, {}).items())
 
+    def observed_through(self, observed_at):
+        """Whether ordered Pose input has reached this RGB's timestamp."""
+        latest = next(reversed(self._frames), None)
+        return latest is not None and latest >= observed_at
+
     def snapshot(self, window):
         """Immutable measured boxes at dispatch; no interpolation or RGB copy."""
         return tuple(tuple((key, token, pose) for key, (token, pose) in
