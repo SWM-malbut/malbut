@@ -1,6 +1,7 @@
 """Exercise real ROS service clients with audio and models replaced only at the boundary."""
 
 import sys
+from threading import Event
 from time import monotonic
 from types import SimpleNamespace
 
@@ -20,7 +21,7 @@ from malbut_stt import node as stt_node, wake  # noqa: E402
 
 
 @pytest.mark.parametrize('decision', ['addressed', 'not_addressed', 'unknown'])
-def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, decision):
+def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, decision):
     """Use generated types and one executor without opening a microphone or model."""
     state = SimpleNamespace(clients=[], classifications=[], controls=[], transcripts=[],
                             decisions=[], statuses=[], input_statuses=[], closed=False)
@@ -39,6 +40,7 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, decision
                 playback_id='playback-1', playback_state='playing', session_id='')
             self.pending_addressee = None
             self.phase = 'test_audio_boundary'
+            self.capture_ready = Event()
             self.sent = False
             self.deadline = monotonic() + 8.0
             self.peer = None
@@ -69,6 +71,8 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, decision
 
         def poll(self):
             assert monotonic() < self.deadline, 'ROS service round trip timed out'
+            # Model the first valid microphone frame without opening audio hardware.
+            self.capture_ready.set()
             if (not self.sent and all(
                     client.service_is_ready() for client in state.clients)
                     and self.peer.count_publishers('/malbut/speech/transcript') == 1
@@ -118,6 +122,7 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, decision
         Vad=lambda *_: SimpleNamespace(is_speech=lambda *_: False)))
 
     assert stt_node.main(['--ros-args', '-p', f'wake_model_path:={tmp_path}']) == 0
+    assert capsys.readouterr().out.splitlines().count('malbut_speech_capture_ready') == 1
     assert state.classifications == [('utterance-1', 'playback-1', '잠깐만')]
     assert state.decisions == [('utterance-1', 'playback-1', decision)]
     assert state.controls == [('playback-1', value) for value in ('pause', 'resume', 'stop')]
