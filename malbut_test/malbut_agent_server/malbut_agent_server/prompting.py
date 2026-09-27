@@ -172,6 +172,13 @@ def system_instructions_for_tools(tools: Sequence[ToolSpec]) -> str:
     delegated = [tool.name for tool in tools if tool.name in SPEECH_MISSION_TOOLS]
     if not delegated:
         return SYSTEM_INSTRUCTIONS
+    navigation_intent = (
+        '\n장소 이동에서 목적지가 분명한 현재 제안은 질문형이어도 실행 요청입니다. '
+        '예: 거실로 가볼까?, 주방으로 갈까요?, 거실로 이동해 볼까요?. '
+        '이때 이동할까요?라고 다시 확인하지 말고 제공된 이동 도구를 선택합니다. '
+        '거실로 갈 수 있어?처럼 기능의 가능 여부만 묻는 말은 실행 요청이 아닙니다.'
+        if 'request_navigation' in delegated else ''
+    )
     return SYSTEM_INSTRUCTIONS + '\n\n' + (
         '이번 요청에 제공된 Manager 위임 도구: ' + ', '.join(delegated) + '.\n'
         '이 도구들은 물리 동작을 승인·직접 실행하는 도구가 아니라 Manager에 요청하는 '
@@ -186,6 +193,7 @@ def system_instructions_for_tools(tools: Sequence[ToolSpec]) -> str:
         '조건과 위험·권한·프라이버시 거부, 각 도구의 사용 제한은 그대로 적용합니다.\n'
         'Tool 선택은 접수·실행·성공을 뜻하지 않습니다. Manager의 확인 전 접수·진행·완료를 '
         '주장하지 않으며, 취소 요청만으로 동작이 끝났다고 말하지 않습니다.'
+        + navigation_intent
     )
 
 

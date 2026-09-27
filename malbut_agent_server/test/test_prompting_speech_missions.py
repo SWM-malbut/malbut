@@ -45,6 +45,13 @@ def test_supplied_manager_tool_gets_specific_delegation_without_claiming_ready(n
     assert not data['robot_state_untrusted']['navigation_available']
     assert not data['robot_state_untrusted']['camera_available']
     assert [tool['name'] for tool in payload['tools']] == [name]
+    if name == 'request_navigation':
+        assert '거실로 가볼까?' in extension
+        assert '다시 확인하지 말고 제공된 이동 도구' in extension
+        assert '가능 여부만 묻는 말은 실행 요청이 아닙니다' in extension
+        assert '거실로 가볼까?' in payload['tools'][0]['description']
+    else:
+        assert '거실로 가볼까?' not in extension
 
 
 @pytest.mark.parametrize('exposed', [(), ('navigate',), ('follow_user',), ('get_weather',)])

@@ -55,6 +55,7 @@ Action의 Goal·Result·취소 서비스와 Feedback·Status Topic까지 시험�
 
 ```text
 거실로 가줘
+거실로 가볼까?
 따라와
 /status
 멈춰
@@ -65,6 +66,9 @@ Action의 Goal·Result·취소 서비스와 Feedback·Status Topic까지 시험�
 `[하위 Goal]`에서 실제 Manager가 보낸 인자, `[Manager]`에서 접수·진행·종료,
 `[응답]`에서 Agent가 음성 출력 Topic으로 발행한 문장을 확인한다.
 실제 주행 완료를 재현하는 대신 공개 ROS 계약과 실행 경로를 확인한다.
+`거실로 가볼까?` 같은 현재 이동 제안은 실행 요청으로 처리한다.
+`거실로 갈 수 있어?` 같은 기능 질문, `거실로 가보지 마` 같은 부정문,
+`"거실로 가볼까?"라는 문장을 설명해` 같은 인용문은 이동을 실행하지 않는다.
 
 | 명령 | 기능 |
 | --- | --- |
@@ -131,6 +135,7 @@ Action의 Goal·Result·취소 서비스와 Feedback·Status Topic까지 시험�
 | ID | 시나리오 |
 | --- | --- |
 | `navigation` | 목적지 이동 |
+| `navigation-suggestion` | 제안형 목적지 이동 |
 | `follow` | 사람 따라가기 |
 | `cancel-follow` | 따라가기 취소 |
 | `patrol-light` | 가벼운 순찰 |
@@ -151,6 +156,7 @@ Action의 Goal·Result·취소 서비스와 Feedback·Status Topic까지 시험�
 | `map-mismatch` | 목적지와 지도 불일치 |
 | `map-switching` | 지도 전환 중 |
 | `map-error` | 지도 상태 오류 |
+| `capability-question` | 이동 기능 질문 |
 | `negation` | 부정 명령 |
 | `quotation` | 인용문 |
 | `multiple-tasks` | 복합 요청 |

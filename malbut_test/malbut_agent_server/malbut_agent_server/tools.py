@@ -44,7 +44,12 @@ TOOL_SPECS = {
         name='request_navigation',
         description=(
             'Request one named indoor destination through Manager. Use only for '
-            'a direct movement request in the current utterance. A configured '
+            'a current movement request, including suggestions such as '
+            '"거실로 가볼까?", "주방으로 갈까요?", or "거실로 이동해 볼까요?". '
+            'A clear destination with this suggestive wording is a request to act; '
+            'call this tool without asking for confirmation again. '
+            'A capability question such as "거실로 갈 수 있어?", negation, '
+            'quotation, or a hypothetical is not a movement request. A configured '
             'server-owned map resolver supplies coordinates; never invent them. '
             'This proposes a Manager request, not successful movement. '
             'For an ambiguous or unconfigured destination ask the user to '
