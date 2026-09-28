@@ -377,17 +377,18 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         node.create_service(
             ControlSpeechSession, '/malbut/speech/session_control', control_session)
         pipeline.start()
-        if rclpy.ok():
-            ready_publisher = node.create_publisher(String, '/malbut/speech/status', QoSProfile(
-                history=HistoryPolicy.KEEP_LAST, depth=1,
-                reliability=ReliabilityPolicy.RELIABLE,
-                durability=DurabilityPolicy.TRANSIENT_LOCAL,
-            ))
-            ready_publisher.publish(String(data='ready'))
-            # The startup supervisor must never restart an active capture session.
-            print('malbut_speech_capture_ready', flush=True)
+        ready_publisher = None
         while rclpy.ok():
             pipeline.poll()
+            if ready_publisher is None and pipeline.capture_ready.is_set() and rclpy.ok():
+                ready_publisher = node.create_publisher(String, '/malbut/speech/status', QoSProfile(
+                    history=HistoryPolicy.KEEP_LAST, depth=1,
+                    reliability=ReliabilityPolicy.RELIABLE,
+                    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                ))
+                ready_publisher.publish(String(data='ready'))
+                # Report actual input, not merely a started capture thread.
+                print('malbut_speech_capture_ready', flush=True)
             poll_requests()
             if rclpy.ok():
                 rclpy.spin_once(node, timeout_sec=0.02)

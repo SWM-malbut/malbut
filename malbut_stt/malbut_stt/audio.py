@@ -145,6 +145,11 @@ class UtteranceCollector:
         del self.audio[:count * 2]
         self.audio_start_samples = start
 
+
+class MicrophoneOverflow(RuntimeError):
+    """Audio was lost, but the input stream can still be read."""
+
+
 class SoundDeviceRecorder:
     """PvRecorder-compatible microphone wrapper using PortAudio/sounddevice."""
 
@@ -201,7 +206,7 @@ class SoundDeviceRecorder:
 
         data, overflowed = self._stream.read(self._frame_length)
         if overflowed:
-            raise RuntimeError('microphone input overflow')
+            raise MicrophoneOverflow('microphone input overflow')
 
         samples = np.frombuffer(data, dtype='<i2')
         if samples.size != self._frame_length:

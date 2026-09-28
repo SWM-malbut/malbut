@@ -20,6 +20,7 @@ from malbut_bringup.fall_setup import prepare_fall_monitor
 from malbut_bringup.nav2_stack import nav2_actions
 from malbut_bringup.perception_setup import validate_perception_files
 from malbut_bringup.speech_audio import shared_xfm_source
+from malbut_bringup.startup_sequence import sequential_startup
 from malbut_resource_monitor.launch_support import record_first
 
 # Nav2 AssistedTeleop input used by the manual_drive capability.
@@ -173,6 +174,9 @@ def _setup(context):
     shared_source = (shared_xfm_source(dict(context.environment))
                      if media_path and speech and value('speech_input_device') == '0' else '')
     actions = [SetEnvironmentVariable('MALBUT_SHARED_MICROPHONE', shared_source)]
+    hardware_actions, perception_actions, navigation_actions = [], [], []
+    following_actions, patrol_actions, autoslam_actions = [], [], []
+    extension_actions, extension_nodes = [], []
     if shared_source:
         actions.extend([
             SetEnvironmentVariable('PULSE_SOURCE', shared_source),
@@ -183,7 +187,7 @@ def _setup(context):
                   else 'fall_config is missing; set fall_config or MALBUT_FALL_CONFIG')
         actions.append(LogInfo(msg=f'Cloud VLM startup disabled: {reason}.'))
     if hardware_path:
-        actions.append(_include(hardware_path, {
+        hardware_actions.append(_include(hardware_path, {
             # This vendor version uses '/' (not '') for unprefixed TF/topics.
             'sim': 'false', 'robot_name': '/', 'master_name': '/',
             # Aurora's upstream launch accepts this inherited argument. Person
@@ -194,7 +198,7 @@ def _setup(context):
             'use_joy': 'false',
         }))
         # Same vendor node and speeds as its hardware launch; only the output moves.
-        actions.append(Node(
+        hardware_actions.append(Node(
             package='peripherals', executable='joystick_control',
             name='joystick_control', output='screen', parameters=[{
                 'use_sim_time': False, 'max_linear': 0.15, 'max_angular': 0.45,
@@ -202,7 +206,8 @@ def _setup(context):
             }],
             remappings=[('controller/cmd_vel', TELEOP_TOPIC)]))
     if media_path:
-        actions.append(_include(media_path, {
+        extension_nodes.append('homecam_media_agent')
+        extension_actions.append(_include(media_path, {
             'backend_url': backend_url,
             'device_id': context.environment.get('HOMECAM_DEVICE_ID', 'jetson-homecam'),
             'image_topic': value('rgb_topic'),
@@ -215,11 +220,11 @@ def _setup(context):
     # Nav2 servers with Malbut-owned parameters, composed like the vendor stack,
     # plus the Collision Monitor and Zone mask. Localization stays unconfigured
     # until the manager selects SLAM or a saved map.
-    actions.extend(nav2_actions(
+    navigation_actions.extend(nav2_actions(
         params, scan_topic=value('scan_topic'), odom_topic=value('odom_topic')))
 
     if relocalization:
-        actions.append(Node(
+        navigation_actions.append(Node(
             package='malbut_relocalization', executable='relocalization',
             name='relocalization', output='screen', parameters=[{'use_sim_time': False}]))
     if value('web_panel') == 'true':
@@ -235,7 +240,7 @@ def _setup(context):
         )}
         options.update(perception_files)
         options['reid_backend'] = 'osnet'
-        actions.append(_include(_package_file(
+        perception_actions.append(_include(_package_file(
             'malbut_tracking', 'launch/person_detection.launch.py'), options))
         follower = {name: value(name) for name in (
             'scan_topic', 'global_frame', 'robot_frame', 'static_map_topic',
@@ -248,9 +253,9 @@ def _setup(context):
         follower['lidar_config'] = (
             _file(value('lidar_config'), 'LiDAR config') if value('lidar_config')
             else _package_file('malbut_tracking', 'config/lidar_foreground.yaml'))
-        actions.append(_include(_package_file(
+        following_actions.append(_include(_package_file(
             'malbut_tracking', 'launch/person_following.launch.py'), follower))
-    actions.append(_include(_package_file(
+    patrol_actions.append(_include(_package_file(
         'malbut_patrol', 'launch/patrol.launch.py'), {
             'map_topic': value('static_map_topic'),
             'costmap_topic': value('patrol_costmap_topic'),
@@ -260,16 +265,16 @@ def _setup(context):
             'room_map_file': value('room_map_file'),
         }))
     # Bringup owns SLAM and Nav2 here; the Goal never starts a second stack.
-    actions.append(_include(_package_file(
+    autoslam_actions.append(_include(_package_file(
         'malbut_autoslam', 'launch/autoslam.launch.py'), {
             'map_directory': value('map_directory'),
             'map_topic': value('static_map_topic'),
             'base_frame': value('robot_frame'),
         }))
 
-    # The manager starts immediately: it owns localization, which Nav2 needs
-    # before it can activate. Missions wait for the readiness report instead.
-    actions.append(Node(
+    # Manager/localization and Nav2 must start together: the manager owns the
+    # map/TF Nav2 needs to activate. Missions still wait for full readiness.
+    navigation_actions.append(Node(
         package='malbut_system_manager', executable='system_manager',
         name='system_manager', output='screen',
         parameters=[{
@@ -281,46 +286,48 @@ def _setup(context):
                                   and value('restore_pose') == 'true' else ''),
         }],
     ))
-    actions.append(Node(
+    navigation_actions.append(Node(
         package='malbut_system_manager', executable='manual_control',
         name='manual_control', output='screen',
         parameters=[{'use_sim_time': False, 'teleop_topic': TELEOP_TOPIC}],
     ))
 
-    wait = Node(
-        package='malbut_bringup', executable='wait_for_robot',
-        name='bringup_readiness', output='screen',
-        parameters=[{
-            'use_sim_time': False, 'navigation': True,
-            'perception': perception, 'relocalization': relocalization,
-            **{name: value(name) for name in (
-                'scan_topic', 'odom_topic', 'rgb_topic', 'depth_topic',
-                'camera_info_topic', 'global_frame', 'robot_frame',
-                'static_map_topic', 'global_costmap_topic', 'patrol_costmap_topic',
-            )},
-            'sensor_timeout_s': float(value('sensor_timeout_s')),
-        }],
-    )
-
-    def ready(event, launch_context):
-        if launch_context.is_shutdown:
-            return []
-        if event.returncode != 0:
-            raise RuntimeError('Robot readiness check failed')
-        speech_actions = [speech] if speech else []
-        fall_actions = []
-        if fall_monitor is not None:
-            fall_actions = [
-                LogInfo(msg='Starting fall coordinator and VLM; waiting for permissions.'),
-                fall_coordinator,
-                fall_monitor,
-                fall_pose,
-            ]
-        return [LogInfo(msg='Robot ready; the system manager accepts missions.'),
-                *fall_actions, *speech_actions]
+    readiness_parameters = {
+        'use_sim_time': False, 'navigation': True,
+        'perception': perception, 'relocalization': relocalization,
+        **{name: value(name) for name in (
+            'scan_topic', 'odom_topic', 'rgb_topic', 'depth_topic',
+            'camera_info_topic', 'global_frame', 'robot_frame',
+            'static_map_topic', 'global_costmap_topic', 'patrol_costmap_topic',
+        )},
+        'sensor_timeout_s': float(value('sensor_timeout_s')),
+    }
+    stages = [('sensors', '하드웨어·센서', hardware_actions, [])]
+    if perception_actions:
+        stages.append(('perception', '사람 인식', perception_actions, []))
+    stages.append(('navigation', '지도·Nav2·관리자', navigation_actions, []))
+    if following_actions:
+        stages.append(('following', '사람 추적', following_actions, []))
+    stages.extend([
+        ('patrol', '순찰', patrol_actions, []),
+        ('applications', 'AutoSLAM·주행 준비 확인', autoslam_actions, []),
+    ])
+    if fall_monitor is not None:
+        extension_actions.extend([fall_coordinator, fall_monitor, fall_pose])
+        extension_nodes.extend(['fall_coordinator', 'malbut_cloud_fall_monitor',
+                                'malbut_fall_pose'])
+    if extension_actions:
+        stages.append(('extensions', '홈캠·낙상 초기화', extension_actions, extension_nodes))
+    if speech is not None:
+        stages.append(('speech', '음성 모델·마이크', [speech], []))
+    sequence, gates = sequential_startup(
+        stages, readiness_parameters,
+        timeout_s=float(value('speech_preflight_timeout_s')),
+        speech_timeout_s=2 * (float(value('speech_preflight_timeout_s'))
+                              + float(value('speech_peer_timeout_s'))))
 
     def child_exited(event, launch_context):
-        if launch_context.is_shutdown or event.action is wait:
+        if launch_context.is_shutdown or event.action in gates:
             return []
         if (isinstance(event.action, Node)
                 and str(event.action.node_package) == 'malbut_resource_monitor'):
@@ -339,9 +346,8 @@ def _setup(context):
         return []
 
     startup = [
-        RegisterEventHandler(OnProcessExit(target_action=wait, on_exit=ready)),
         RegisterEventHandler(OnProcessExit(on_exit=child_exited)),
-        *actions, wait,
+        *actions, *sequence,
     ]
     if value('resource_monitor') == 'true':
         return record_first(startup, value('resource_log_root'))

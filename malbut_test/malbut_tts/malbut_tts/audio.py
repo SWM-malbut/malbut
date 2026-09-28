@@ -24,6 +24,7 @@ class StreamingPlayer:
         self._offset = 0
         self._rate = None
         self._input_done = False
+        self._rebuffering = False
         self._pause_requested = False
         self._paused = False
         self._started = False
@@ -68,6 +69,9 @@ class StreamingPlayer:
                     raise RuntimeError('Cannot write after finishing playback.')
                 if len(self._pending) < max_pending:
                     return
+                # A full queue of short local sentences must still drain;
+                # otherwise the producer cannot reach finish().
+                self._rebuffering = False
                 self._condition.wait(0.05)
 
     def write(self, audio, sample_rate):
@@ -87,6 +91,7 @@ class StreamingPlayer:
             self._rate = rate
             while len(self._pending) >= 32:
                 self._check()
+                self._rebuffering = False
                 self._condition.wait(0.05)
             self._check()
             self._pending.append(chunk)
@@ -167,6 +172,14 @@ class StreamingPlayer:
                 if self._pause_requested:
                     self._drain_reason = 'paused'
                     raise self._sd.CallbackStop()
+                if self._rebuffering:
+                    buffered = sum(len(chunk) for chunk in self._pending) - self._offset
+                    # Match the initial 400 ms cushion after actual starvation.
+                    # Keep the stream open and leave queued PCM untouched.
+                    if not self._input_done and buffered < max(frames, int(self._rate * 0.4)):
+                        underflow = True
+                        return
+                    self._rebuffering = False
                 filled = 0
                 while filled < frames and self._pending:
                     chunk = self._pending[0]
@@ -180,6 +193,7 @@ class StreamingPlayer:
                         self._offset = 0
                 if filled < frames and not self._input_done:
                     underflow = True
+                    self._rebuffering = True
                 self._condition.notify_all()
                 if self._input_done and not self._pending:
                     self._drain_reason = 'finished'
@@ -242,7 +256,7 @@ class StreamingPlayer:
                     self._sd = importlib.import_module('sounddevice')
                     stream = self._sd.OutputStream(
                         samplerate=self._rate, channels=1, dtype='float32',
-                        blocksize=0, latency='low', device=self._device,
+                        blocksize=0, latency='high', device=self._device,
                         callback=self._callback,
                         finished_callback=self._finished_callback,
                     )

@@ -34,6 +34,7 @@ def fake_device():
         def __init__(self, *, callback, finished_callback, **kwargs):
             self.callback = callback
             self.finished_callback = finished_callback
+            self.options = kwargs
             self.output = []
             self.starts = 0
             self.draining = False
@@ -133,6 +134,7 @@ class StreamingPlayerTests(unittest.TestCase):
     def test_starts_before_generation_ends_and_waits_for_device_drain(self):
         """PCM plays while more input is possible, and drain gates success."""
         stream = self.start([1, 2, 3, 4])
+        self.assertEqual(stream.options['latency'], 'high')
         stream.step()
         self.player.write([5, 6, 7, 8], 24000)
         outcome = self.finish_in_thread()
@@ -190,7 +192,7 @@ class StreamingPlayerTests(unittest.TestCase):
         self.assertEqual(self.player.underruns, 3)
         self.player.write([13, 14], 24000)
         outcome = self.finish_in_thread()
-        stream.step()
+        stream.step(frames=12)
         self.assertTrue(stream.draining)
         self.assertEqual(self.player.underruns, 3)
         stream.drain()
@@ -199,6 +201,75 @@ class StreamingPlayerTests(unittest.TestCase):
         self.assertEqual(self.player.underruns, 3)
         with self.assertRaises(AttributeError):
             self.player.underruns = 0
+
+    def test_starvation_waits_for_400ms_before_resuming_without_losing_pcm(self):
+        """Small arrivals accumulate after starvation instead of stuttering."""
+        stream = self.start([1, 2])
+        stream.step()
+        for value in (3, 4, 5):
+            self.player.write(np.full(2400, value), 24000)
+            stream.step(frames=2400)
+            self.assertFalse(any(stream.output[-2400:]))
+        self.player.write(np.full(2400, 6), 24000)
+        stream.step(frames=9600)
+        np.testing.assert_array_equal(
+            stream.output[-9600:], np.repeat([3, 4, 5, 6], 2400))
+        self.assertEqual(stream.starts, 1)
+        self.assertEqual(self.states, ['playing'])
+        outcome = self.finish_in_thread()
+        stream.step()
+        stream.drain()
+        wait_until(lambda: bool(outcome))
+        self.assertEqual(outcome, ['finished'])
+
+    def test_rebuffering_preserves_pause_and_flushes_short_final_audio(self):
+        """Pause still drains; finished input needs no minimum refill size."""
+        stream = self.start([1, 2])
+        stream.step()
+        self.player.write([3, 4], 24000)
+        self.assertTrue(self.player.pause())
+        stream.step()
+        stream.drain()
+        wait_until(lambda: self.states[-1] == 'paused')
+        outcome = self.finish_in_thread()
+        self.assertEqual(outcome, [])
+        self.assertTrue(self.player.resume())
+        wait_until(lambda: self.states[-1] == 'playing')
+        stream.step()
+        self.assertTrue(stream.draining)
+        stream.drain()
+        wait_until(lambda: bool(outcome))
+        self.assertEqual(outcome, ['finished'])
+        self.assertEqual([x for x in stream.output if x], [1, 2, 3, 4])
+
+    def test_full_short_sentence_queue_can_drain_during_rebuffering(self):
+        """Refilling must not deadlock the local sentence producer's limit."""
+        stream = self.start([1, 2])
+        stream.step()
+        self.player.write([3, 4], 24000)
+        self.player.write([5, 6], 24000)
+        available = Event()
+
+        def reserve():
+            self.player.wait_for_capacity(max_pending=2)
+            available.set()
+
+        thread = Thread(target=reserve)
+        thread.start()
+        self.addCleanup(thread.join, 2)
+        wait_until(lambda: not self.player._rebuffering)
+        stream.step()
+        self.assertTrue(available.wait(1))
+        self.assertEqual(stream.output[-4:], [3, 4, 5, 6])
+
+    def test_stop_during_rebuffering_discards_queued_audio(self):
+        """Cancellation never waits for the refill threshold."""
+        stream = self.start([1, 2])
+        stream.step()
+        self.player.write([3, 4], 24000)
+        self.player.stop()
+        self.assertTrue(stream.aborted and stream.closed)
+        self.assertEqual([x for x in stream.output if x], [1, 2])
 
     def test_stop_unblocks_full_buffer_and_rejects_late_pcm(self):
         """Stopping a paused request discards pending and late audio."""

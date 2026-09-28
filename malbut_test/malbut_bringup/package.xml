@@ -28,6 +28,7 @@
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>nav2_msgs</exec_depend>
   <exec_depend>lifecycle_msgs</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
   <exec_depend>vision_msgs</exec_depend>
   <exec_depend>malbut_interfaces</exec_depend>
   <exec_depend>malbut_resource_monitor</exec_depend>

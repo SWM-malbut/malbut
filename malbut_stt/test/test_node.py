@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import sys
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +18,7 @@ def runtime(monkeypatch, tmp_path):
     state = SimpleNamespace(
         ok=False, calls={}, logs=[], published=[], statuses=[], closed=[], failure=None,
         cleanup_failure=False, native_cleanup_failure=False,
-        shutdown_before_publish=False, callbacks={},
+        shutdown_before_publish=False, callbacks={}, capture_available=True,
         parameters={'wake_model_path': str(model)},
         now=0.0, clients={}, on_spin=None, service_ready={}, service_failure={},
         response_failure={}, accepted=True, decision='addressed', decisions=[],
@@ -184,6 +185,7 @@ def runtime(monkeypatch, tmp_path):
             self.session = SimpleNamespace(
                 playback_id='p1', playback_state='playing', session_id='')
             self.polled = False
+            self.capture_ready = Event()
 
         def start(self):
             self.phase = 'opening_microphone'
@@ -196,6 +198,8 @@ def runtime(monkeypatch, tmp_path):
 
         def poll(self):
             fail(self.phase)
+            if state.capture_available:
+                self.capture_ready.set()
             if self.polled:
                 return
             self.polled = True
@@ -441,7 +445,7 @@ def test_check_only_service_preserves_session_and_pending_classification(runtime
     assert main([]) == 0
 
 
-def test_readiness_is_latched_only_after_microphone_start(runtime, capsys):
+def test_readiness_is_latched_only_after_microphone_input(runtime, capsys):
     """Web readiness must represent successful capture startup, not just a publisher."""
     assert main() == 0
     assert runtime.statuses == [('ready', 'running')]
@@ -453,8 +457,28 @@ def test_readiness_is_latched_only_after_microphone_start(runtime, capsys):
     }
 
 
+def test_no_ready_marker_until_first_input_arrives(runtime, capsys):
+    runtime.capture_available = False
+    spins = []
+
+    def on_spin():
+        spins.append(True)
+        if len(spins) == 1:
+            assert runtime.statuses == []
+            assert 'malbut_speech_capture_ready' not in capsys.readouterr().out
+            runtime.capture_available = True
+        else:
+            assert runtime.statuses == [('ready', 'running')]
+            raise KeyboardInterrupt
+
+    runtime.on_spin = on_spin
+    assert main() == 0
+    assert len(spins) == 2
+    assert capsys.readouterr().out.splitlines().count('malbut_speech_capture_ready') == 1
+
+
 @pytest.mark.parametrize('phase', [
-    'initializing_stt', 'opening_microphone', 'starting_microphone',
+    'initializing_stt', 'opening_microphone', 'starting_microphone', 'running',
 ])
 def test_failed_microphone_or_model_never_reports_ready(runtime, phase, capsys):
     """A loaded node name or DDS publisher alone cannot satisfy Bringup readiness."""

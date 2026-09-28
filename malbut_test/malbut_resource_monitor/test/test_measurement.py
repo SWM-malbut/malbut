@@ -13,7 +13,7 @@ import pytest
 from malbut_resource_monitor.resources import (
     LinuxSampler, Tegra, classify, cpu_percent, cpu_ticks, parse_tegrastats,
 )
-from malbut_resource_monitor.ros_observer import ActionEvents, channel_name
+from malbut_resource_monitor.ros_observer import ActionEvents, SpeechEvents, channel_name
 from malbut_resource_monitor.store import Store
 from malbut_resource_monitor.viewer import LogServer
 
@@ -106,6 +106,29 @@ def test_action_dedup_historic_goal_and_no_fabricated_request_time(tmp_path):
     store.close('test')
 
 
+def test_speech_text_and_playback_are_separate_observations(tmp_path):
+    store = Store(tmp_path, 1, os.getpid())
+    events = SpeechEvents(store)
+    events.observe('stt_transcript', SimpleNamespace(
+        text='지금 몇 시야? <사용자 원문>', utterance_id='utterance-1', session_id=''))
+    events.observe('tts_request', SimpleNamespace(
+        text='오후 아홉 시입니다.\n다른 도움이 필요하세요?', request_type=0, playback_id=''))
+    events.observe('tts_playback', SimpleNamespace(playback_id='tts-generated', state='playing'))
+    events.observe('tts_playback', SimpleNamespace(playback_id='tts-generated', state='finished'))
+    records = [json.loads(line) for line in (store.path / 'speech.jsonl').read_text().splitlines()]
+    assert [r['event'] for r in records] == [
+        'stt_transcript', 'tts_request', 'tts_playback', 'tts_playback']
+    assert records[0]['text'] == '지금 몇 시야? <사용자 원문>'
+    assert records[1]['text'] == '오후 아홉 시입니다.\n다른 도움이 필요하세요?'
+    assert records[1]['playback_id'] == ''  # Never guess TTS's generated ID.
+    assert 'state' not in records[1] and 'utterance_id' not in records[1]
+    assert 'text' not in records[2] and records[3]['state'] == 'finished'
+    assert all('wall_ns' in row and 't' in row for row in records)
+    assert store.metadata['channels']['speech']['kind'] == 'speech'
+    assert ((store.path / 'speech.jsonl').stat().st_mode & 0o777) == 0o600
+    store.close('test')
+
+
 def test_viewer_reads_exact_samples_and_blocks_path_traversal(tmp_path):
     store = Store(tmp_path, 1, os.getpid())
     store.register('system', kind='system', label='system')
@@ -168,6 +191,61 @@ def test_viewer_revalidates_only_changed_files_and_time_ranges(tmp_path):
             with urlopen(Request(base + path, headers={
                     'If-None-Match': tags[path]})) as response:
                 assert response.headers['ETag'] != tags[path]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_session_label_is_persistent_but_never_changes_collector_logs(tmp_path):
+    store = Store(tmp_path, 1, os.getpid())
+    store.register('system', kind='system', label='system')
+    store.write('system', {'cpu_percent': 42})
+    original = {name: (store.path / name).read_bytes()
+                for name in ('metadata.json', 'system.jsonl')}
+    server = LogServer(('127.0.0.1', 0), tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f'http://127.0.0.1:{server.server_port}'
+    query = urlencode({'session': store.path.name})
+
+    def rename(name, session_query=query, origin=base):
+        return urlopen(Request(
+            base + '/api/session/name?' + session_query,
+            data=json.dumps({'name': name}).encode(),
+            headers={'Content-Type': 'application/json', 'Origin': origin}))
+
+    try:
+        with urlopen(base + '/api/sessions') as response:
+            etag = response.headers['ETag']
+        with rename('거실 사람 추적 1차') as response:
+            assert json.load(response)['display_name'] == '거실 사람 추적 1차'
+        with urlopen(Request(base + '/api/sessions', headers={
+                'If-None-Match': etag})) as response:
+            assert json.load(response)[0]['display_name'] == '거실 사람 추적 1차'
+        with urlopen(base + '/api/session?' + query) as response:
+            assert json.load(response)['display_name'] == '거실 사람 추적 1차'
+        assert json.loads((store.path / 'viewer.json').read_text()) == {
+            'display_name': '거실 사람 추적 1차'}
+        assert ((store.path / 'viewer.json').stat().st_mode & 0o777) == 0o600
+        for name, content in original.items():
+            assert (store.path / name).read_bytes() == content
+        # Later collector writes must not erase the label.
+        store.close('test')
+        with urlopen(base + '/api/session?' + query) as response:
+            assert json.load(response)['display_name'] == '거실 사람 추적 1차'
+        for invalid in ('x' * 81, 'bad\nname', 123):
+            with pytest.raises(HTTPError) as error:
+                rename(invalid)
+            assert error.value.code == 400
+        with pytest.raises(HTTPError) as error:
+            rename('bad', origin='https://unrelated.example')
+        assert error.value.code == 403
+        with pytest.raises(HTTPError) as error:
+            rename('bad', session_query=urlencode({'session': '../elsewhere'}))
+        assert error.value.code == 400
+        with rename('') as response:
+            assert json.load(response)['display_name'] == ''
     finally:
         server.shutdown()
         server.server_close()

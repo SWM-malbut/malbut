@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from malbut_stt.audio import SoundDeviceRecorder
+from malbut_stt.audio import MicrophoneOverflow, SoundDeviceRecorder
 
 
 @pytest.fixture
@@ -155,8 +155,10 @@ def test_overflow_is_reported(sounddevice):
     """An input discontinuity must not be passed off as a valid frame."""
     recorder = SoundDeviceRecorder()
     sounddevice.overflowed = True
-    with pytest.raises(RuntimeError, match='microphone input overflow'):
+    with pytest.raises(MicrophoneOverflow, match='microphone input overflow'):
         recorder.read()
+    sounddevice.overflowed = False
+    assert len(recorder.read()) == 512
 
 
 def test_incomplete_frame_is_reported(sounddevice):

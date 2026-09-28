@@ -14,8 +14,10 @@ from nav2_msgs.action import (
 )
 from nav2_msgs.msg import Costmap
 from nav_msgs.msg import OccupancyGrid, Odometry
+from rcl_interfaces.srv import GetParameters
 import rclpy
 from rclpy.action import ActionClient
+from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -42,6 +44,8 @@ class RobotReadiness(Node):
             'global_costmap_topic': '/global_costmap/costmap_raw',
             'patrol_costmap_topic': '/global_costmap/costmap',
             'sensor_timeout_s': 3.0,
+            'startup_stage': '', 'startup_label': '', 'startup_index': 0,
+            'startup_total': 0, 'startup_nodes': '', 'startup_timeout_s': 120.0,
         }
         self.settings = {
             key: self.declare_parameter(key, default).value
@@ -51,6 +55,11 @@ class RobotReadiness(Node):
         if not math.isfinite(self.timeout) or self.timeout <= 0:
             raise ValueError('sensor_timeout_s must be positive and finite')
         self.ready = False
+        self.stage = self.settings['startup_stage']
+        self.started_at = time.monotonic()
+        self.startup_timeout = float(self.settings['startup_timeout_s'])
+        if not math.isfinite(self.startup_timeout) or self.startup_timeout <= 0:
+            raise ValueError('startup_timeout_s must be positive and finite')
         self.seen = {}
         self.frames = {}
         # Keep headers only: TF can arrive just after a scan, so testing only
@@ -70,6 +79,17 @@ class RobotReadiness(Node):
         )
         self.status_publisher = self.create_publisher(
             String, '/malbut/bringup/status', static_qos)
+        self.progress_publisher = self.create_publisher(
+            String, '/malbut/bringup/progress', static_qos) if self.stage else None
+        self.probes = {
+            name: [self.create_client(GetParameters, f'/{name}/get_parameters'), None, False]
+            for name in self.settings['startup_nodes'].split(',') if name
+        }
+        self.probe_requested = {}
+        self.speech_ready = False
+        if self.stage == 'speech':
+            self.subscriptions_.append(self.create_subscription(
+                String, '/malbut/speech/status', self._speech, static_qos))
         topics = [
             ('scan', LaserScan, self.settings['scan_topic']),
             ('odom', Odometry, self.settings['odom_topic']),
@@ -77,7 +97,9 @@ class RobotReadiness(Node):
             ('depth', Image, self.settings['depth_topic']),
             ('camera_info', CameraInfo, self.settings['camera_info_topic']),
         ]
-        if self.settings['perception']:
+        if self.stage in ('extensions', 'speech'):
+            topics = []
+        elif self.settings['perception']:
             topics.append(('perception', Detection3DArray,
                            '/perception/person/detections_3d'))
         for label, message_type, topic in topics:
@@ -107,6 +129,10 @@ class RobotReadiness(Node):
                 actions.append(('/follow_person', FollowPerson))
             if self.settings['relocalization']:
                 actions.append(('/relocalize', Relocalize))
+            if self.stage == 'navigation':
+                # These applications start only after the navigation group.
+                actions = [(name, kind) for name, kind in actions
+                           if name not in ('/patrol', '/autoslam', '/follow_person')]
             self.action_clients = [
                 (name, ActionClient(self, action_type, name))
                 for name, action_type in actions
@@ -123,6 +149,11 @@ class RobotReadiness(Node):
                              'behavior_server', 'teleop_behavior_server', 'bt_navigator',
                              'velocity_smoother', 'collision_monitor')
             }
+        if self.stage in ('following', 'patrol'):
+            name, action_type = (
+                ('/follow_person', FollowPerson) if self.stage == 'following'
+                else ('/patrol', Patrol))
+            self.action_clients = [(name, ActionClient(self, action_type, name))]
         self.last_missing = None
         self.timer = self.create_timer(1.0, self.check)
 
@@ -171,6 +202,9 @@ class RobotReadiness(Node):
 
     def check(self):
         """Poll only readiness; no fixed boot sleep and no autonomous motion."""
+        if getattr(self, 'stage', '') in ('extensions', 'speech'):
+            self._report(self._extension_missing())
+            return
         now = time.monotonic()
         missing = [
             f'data:{label}' for label, received in self.seen.items()
@@ -235,19 +269,68 @@ class RobotReadiness(Node):
                 # forever for one whose services never appear; the labels show
                 # where it stopped (e.g. inactive up to the missing node).
                 missing.append(f'lifecycle:{name}={entry[3]}')
+        self._report(missing)
+
+    def _speech(self, message):
+        self.speech_ready = message.data == 'ready'
+
+    def _extension_missing(self):
+        # A service response proves the executor is spinning after constructor
+        # initialization, unlike merely discovering a process/node name. Never
+        # enable monitoring or require a person/cloud permission for startup.
+        now = time.monotonic()
+        missing = []
+        for name, entry in self.probes.items():
+            client, future, ready = entry
+            if ready:
+                continue
+            if future is not None and future.done():
+                try:
+                    entry[2] = future.result() is not None
+                except Exception:
+                    entry[2] = False
+                entry[1] = None
+            elif future is not None and now - self.probe_requested[name] >= self.timeout:
+                client.remove_pending_request(future)
+                future.cancel()
+                entry[1] = None
+            if not entry[2]:
+                missing.append(f'init:{name}')
+                if entry[1] is None and client.service_is_ready():
+                    entry[1] = client.call_async(GetParameters.Request(names=['use_sim_time']))
+                    self.probe_requested[name] = now
+        if self.stage == 'speech' and not self.speech_ready:
+            missing.append('speech: microphone startup')
+        return missing
+
+    def _report(self, missing):
+        stage = getattr(self, 'stage', '')
+        if stage:
+            expired = bool(missing) and time.monotonic() - self.started_at >= self.startup_timeout
+            index, total = self.settings['startup_index'], self.settings['startup_total']
+            self.progress_publisher.publish(String(data=json.dumps({
+                'completed': index - int(bool(missing)), 'total': total,
+                'stage': self.settings['startup_label'], 'missing': missing,
+                'state': 'ERROR' if expired else 'WAITING' if missing else 'READY',
+            })))
+            if expired:
+                raise RuntimeError(
+                    f"Startup timed out: {self.settings['startup_label']}: {', '.join(missing)}")
         if missing:
             summary = ', '.join(missing)
             if summary != self.last_missing:
                 self.get_logger().info('Waiting for ' + summary)
-                self.status_publisher.publish(String(data=json.dumps({
-                    'state': 'WAITING', 'missing': missing,
-                })))
+                if stage in ('', 'applications'):
+                    self.status_publisher.publish(String(data=json.dumps({
+                        'state': 'WAITING', 'missing': missing,
+                    })))
                 self.last_missing = summary
             return
         self.ready = True
-        self.status_publisher.publish(String(data=json.dumps({
-            'state': 'READY', 'missing': [],
-        })))
+        if stage in ('', 'applications'):
+            self.status_publisher.publish(String(data=json.dumps({
+                'state': 'READY', 'missing': [],
+            })))
         self.get_logger().info('Required robot inputs are ready.')
 
 
@@ -261,6 +344,10 @@ def main(args=None):
         while rclpy.ok() and not node.ready:
             rclpy.spin_once(node, timeout_sec=1.0)
         if node.ready:
+            # Deliver the final count before this one-shot publisher exits.
+            if node.progress_publisher is not None:
+                node.progress_publisher.wait_for_all_acked(Duration(seconds=1.0))
+            node.status_publisher.wait_for_all_acked(Duration(seconds=1.0))
             result = 0
     except (KeyboardInterrupt, ExternalShutdownException):
         pass

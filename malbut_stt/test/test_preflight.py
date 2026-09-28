@@ -8,12 +8,13 @@ from types import SimpleNamespace
 import pytest
 
 from malbut_stt.preflight import check_stt
+from malbut_stt.audio import MicrophoneOverflow
 
 
 @pytest.fixture
 def runtime(monkeypatch):
     state = SimpleNamespace(
-        calls={}, events=[], failure=None, sample_rate=16000,
+        calls={}, events=[], failure=None, sample_rate=16000, overflows=0,
         samples=[0, 1, -1, 32767, -32768] + [0] * 507,
     )
 
@@ -54,6 +55,9 @@ def runtime(monkeypatch):
 
         def read(self):
             event('read')
+            if state.overflows:
+                state.overflows -= 1
+                raise MicrophoneOverflow('microphone input overflow')
             return state.samples
 
         def stop(self):
@@ -88,6 +92,14 @@ def check(**options):
 def test_default_microphone_is_xfm_device_zero(runtime):
     check()
     assert runtime.calls['recorder'] == {'frame_length': 512, 'device_index': 0}
+
+
+def test_startup_overflow_retries_input_without_reloading_model_or_device(runtime):
+    runtime.overflows = 2
+    assert check()['microphone_sample_rate'] == 16000
+    assert runtime.events.count('read') == 3
+    assert runtime.events.count('model_load') == runtime.events.count('start') == 1
+    assert runtime.events[-3:] == ['stop', 'delete', 'model_close']
 
 
 def test_local_model_and_microphone_check_reports_only_verified_capabilities(runtime):

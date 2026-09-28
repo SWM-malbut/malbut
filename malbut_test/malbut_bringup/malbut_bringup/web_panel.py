@@ -395,6 +395,7 @@ class RosBridge:
             'manage_bringup', True).value else None)
         self.runtime_message = ''
         self.startup_status = {}
+        self.startup_progress = {}
         self.speech_ready = False
         self.stopping_runtime = None
         self.action_status = {}
@@ -430,6 +431,9 @@ class RosBridge:
                                           self._tracking, 1),
             self.node.create_subscription(
                 String, '/malbut/bringup/status', self._bringup_status,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
+            self.node.create_subscription(
+                String, '/malbut/bringup/progress', self._startup_progress,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
             self.node.create_subscription(
                 String, '/malbut/speech/status', self._speech_status,
@@ -525,6 +529,21 @@ class RosBridge:
         if self.stopping_runtime is not None:
             status.update(state='STOPPING', ready=False,
                           message='Waiting for Action cancellation to finish')
+        progress = getattr(self, 'startup_progress', {})
+        if status['state'] in ('STARTING', 'RUNNING') and progress:
+            status['progress'] = dict(progress)
+            status['message'] = (f"준비 {progress['completed']}/{progress['total']} 단계 · "
+                                 f"{progress['stage']}")
+            if progress['state'] != 'READY' or progress['completed'] < progress['total']:
+                status['ready'] = False
+                status['waiting'] = progress['missing']
+                status['message'] += ' · 준비 중' if progress['state'] != 'ERROR' else ' · 실패'
+            else:
+                status['message'] += ' · 완료'
+            if self.runtime_message:
+                status['message'] += ' · ' + self.runtime_message
+        elif status['state'] not in ('STARTING', 'RUNNING'):
+            self.startup_progress = {}
         with self.data.lock:
             self.data.runtime = status
 
@@ -533,6 +552,22 @@ class RosBridge:
             self.data.receive_map(message)
         except ValueError as error:
             self.node.get_logger().warning(f'Ignoring invalid map: {error}')
+
+    def _startup_progress(self, message):
+        try:
+            progress = json.loads(message.data)
+            if (isinstance(progress, dict)
+                    and type(progress.get('completed')) is int
+                    and type(progress.get('total')) is int
+                    and 0 <= progress['completed'] <= progress['total']
+                    and progress['total'] > 0
+                    and isinstance(progress.get('stage'), str)
+                    and progress.get('state') in ('WAITING', 'READY', 'ERROR')
+                    and isinstance(progress.get('missing'), list)
+                    and all(isinstance(item, str) for item in progress['missing'])):
+                self.startup_progress = progress
+        except (ValueError, TypeError):
+            pass
 
     def _bringup_status(self, message):
         try:
@@ -626,6 +661,7 @@ class RosBridge:
         self.tf_buffer.clear()
         self.action_status.clear()
         self.startup_status = {}
+        self.startup_progress = {}
         self.speech_ready = False
         self.localization = {}
         with self.data.lock:

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from malbut_stt.dialogue_pipeline import DialoguePipeline, MAX_RETIRED_SESSION_IDS
+from malbut_stt.audio import MicrophoneOverflow
 
 VOICE = b'\x01\x00' * 320
 QUIET = bytes(640)
@@ -41,7 +42,10 @@ def harness():
 
         def read(self):
             self.reads += 1
-            return self.frames.get(timeout=3.0)
+            frame = self.frames.get(timeout=3.0)
+            if isinstance(frame, Exception):
+                raise frame
+            return frame
 
         def stop(self):
             self.active = False
@@ -690,6 +694,50 @@ def test_overflow_discards_incomplete_audio_without_inference(harness):
     assert 'audio_queue_overflow' in harness.reports
 
 
+def test_capture_ready_waits_for_valid_input_after_overflow(harness, monkeypatch):
+    capture_time = [100.0]
+    monkeypatch.setattr('malbut_stt.dialogue_pipeline.monotonic', lambda: capture_time[0])
+    pipeline = harness.create()
+    assert not pipeline.capture_ready.is_set()
+    harness.recorder.frames.put(MicrophoneOverflow('microphone input overflow'))
+    wait_for(pipeline.overflow.is_set)
+    assert not pipeline.capture_ready.is_set()
+    pipeline.poll()
+    assert pipeline.capture_error is None and pipeline.capture_thread.is_alive()
+    capture_time[0] = 104.0
+    harness.recorder.frames.put([0] * 320)
+    wait_for(pipeline.capture_ready.is_set)
+    assert pipeline._last_capture_at == 104.0
+    capture_time[0] = 105.0
+    pipeline.poll()
+    assert pipeline.capture_error is None
+    assert harness.transcripts == []
+
+
+def test_microphone_overflow_discards_partial_utterance_and_keeps_capture(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    pipeline.feed(VOICE)
+    assert pipeline.command_stream.collector.started
+    harness.recorder.frames.put(MicrophoneOverflow('microphone input overflow'))
+    wait_for(pipeline.overflow.is_set)
+    pipeline.poll()
+    assert not pipeline.session.active
+    assert not pipeline.command_stream.collector.started
+    assert harness.transcripts == [] and harness.command_calls == []
+    assert pipeline.capture_error is None and pipeline.capture_thread.is_alive()
+    assert harness.closed == []
+    harness.recorder.frames.put([0] * 320)
+    wait_for(pipeline.capture_ready.is_set)
+    pipeline.poll()
+    pipeline.feed(VOICE + QUIET * 20)
+    pump(pipeline, lambda: pipeline.session.active)
+    assert len(harness.wake_calls) == 2
+    finish_command(pipeline)
+    pump(pipeline, lambda: bool(harness.transcripts))
+    assert len(harness.transcripts) == 1
+
+
 def test_capture_worker_failure_reports_read_phase_and_releases_device(harness):
     def fail_read():
         raise RuntimeError('private microphone details')
@@ -697,6 +745,7 @@ def test_capture_worker_failure_reports_read_phase_and_releases_device(harness):
     harness.recorder.read = fail_read
     pipeline = harness.create()
     wait_for(lambda: pipeline.capture_error is not None)
+    assert not pipeline.capture_ready.is_set()
     with pytest.raises(RuntimeError):
         pipeline.poll()
     assert pipeline.phase == 'reading_microphone'
@@ -762,6 +811,22 @@ def test_late_microphone_frame_cannot_hide_capture_timeout_before_poll(harness, 
     with pytest.raises(RuntimeError, match='microphone input timeout'):
         pipeline.poll()
     assert pipeline.audio.empty() and harness.command_calls == []
+
+
+def test_late_first_microphone_frame_does_not_report_capture_ready(harness, monkeypatch):
+    capture_time = [100.0]
+    monkeypatch.setattr('malbut_stt.dialogue_pipeline.monotonic', lambda: capture_time[0])
+    pipeline = harness.create()
+    wait_for(lambda: harness.recorder.reads == 1)
+
+    capture_time[0] = 105.0
+    harness.recorder.frames.put([0] * 320)
+    wait_for(lambda: not pipeline.capture_thread.is_alive())
+
+    assert not pipeline.capture_ready.is_set()
+    with pytest.raises(RuntimeError, match='microphone input timeout'):
+        pipeline.poll()
+    assert pipeline.audio.empty() and harness.transcripts == []
 
 
 @pytest.mark.parametrize('playback_gate', [False, True])

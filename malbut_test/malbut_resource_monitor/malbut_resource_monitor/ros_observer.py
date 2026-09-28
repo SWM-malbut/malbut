@@ -48,6 +48,26 @@ class ActionEvents:
             self.states[key] = state
 
 
+class SpeechEvents:
+    """Record observed text and playback events without guessing dialogue pairs."""
+
+    FIELDS = {
+        'stt_transcript': ('text', 'utterance_id', 'session_id'),
+        'tts_request': ('text', 'request_type', 'playback_id'),
+        'tts_playback': ('playback_id', 'state'),
+    }
+
+    def __init__(self, store):
+        self.store = store
+        store.register('speech', kind='speech', label='음성 대화 · STT / TTS')
+
+    def observe(self, event, message):
+        self.store.write('speech', {
+            'event': event,
+            **{field: getattr(message, field) for field in self.FIELDS[event]},
+        })
+
+
 class Observer:
     def __init__(self, store, topics):
         import rclpy
@@ -95,8 +115,16 @@ class Observer:
 
     def _phases(self):
         from malbut_interfaces.msg import (
-            SpeechInputStatus, SpeechPlaybackStatus, SpeechTranscript, SystemState,
+            SpeechInputStatus, SpeechPlaybackStatus, SpeechRequest, SpeechTranscript, SystemState,
         )
+        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+
+        self.speech = SpeechEvents(self.store)
+        # Small, infrequent text/status events may arrive in a burst. Do not
+        # retain only one, or impose reliable-reader backpressure on speech.
+        speech_qos = QoSProfile(
+            depth=50, reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE)
         self.phase_subscriptions = []
         specs = [
             (SpeechInputStatus, '/malbut/speech/input_status', 'speech_input',
@@ -113,9 +141,14 @@ class Observer:
             def callback(msg, fields=fields, channel=channel, label=label):
                 self.store.write(channel, {
                     'phase': label, **{f: getattr(msg, f) for f in fields}})
+                if label in SpeechEvents.FIELDS:
+                    self.speech.observe(label, msg)
 
             self.phase_subscriptions.append(self.node.create_subscription(
-                message_type, topic, callback, self.data_qos))
+                message_type, topic, callback, speech_qos))
+        self.phase_subscriptions.append(self.node.create_subscription(
+            SpeechRequest, '/malbut/speech/response',
+            lambda msg: self.speech.observe('tts_request', msg), speech_qos))
         self.store.register('missions', kind='mission', label='manager mission observations')
         self.phase_subscriptions.append(self.node.create_subscription(
             SystemState, '/malbut/state', self._missions, self.data_qos))
