@@ -109,6 +109,10 @@ def test_tool_allowlist_contains_no_low_level_motion_control() -> None:
         'capture_photo',
         'send_notification',
         'get_robot_status',
+        'request_navigation',
+        'request_follow_person',
+        'request_patrol',
+        'cancel_voice_mission',
     }
 
 

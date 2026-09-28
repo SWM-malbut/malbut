@@ -534,6 +534,8 @@ def test_speech_starts_after_readiness_and_waits_for_the_manager(
         'input_has_aec': 'true', 'agent_provider': 'mock',
         'agent_user_id': 'trial-p3',
         'agent_conversation_db': '/trial records/p3.sqlite3',
+        'manager_commands': 'true',
+        'navigation_targets': '',
         'control_server': 'manager',
         'preflight_timeout_s': '55', 'peer_timeout_s': '12',
         'preflight_only': 'false', 'use_sim_time': 'false',

@@ -31,9 +31,9 @@ from malbut_agent_server.prompting import (
     CONVERSATION_INSTRUCTIONS,
     MAX_CONVERSATION_TURNS,
     MAX_MODEL_INPUT_CHARS,
-    SYSTEM_INSTRUCTIONS,
     PreparedModelInput,
     prepare_model_input,
+    system_instructions_for_tools,
 )
 from malbut_agent_server.providers.base import AgentProvider, ProviderError
 from malbut_agent_server.schemas import (
@@ -302,7 +302,8 @@ class OpenAIResponsesProvider(AgentProvider):
         )
         payload: Dict[str, Any] = {
             'model': self.model,
-            'instructions': SYSTEM_INSTRUCTIONS + '\n\n' + CONVERSATION_INSTRUCTIONS,
+            'instructions': system_instructions_for_tools(tools) + '\n\n'
+            + CONVERSATION_INSTRUCTIONS,
             'input': prepared_context.text,
             'parallel_tool_calls': False,
             'tool_choice': 'auto',

@@ -121,7 +121,7 @@ class OfflineCloud(OllamaCloudFallProvider):
 class PcFlow:
     """Actual DDS graph with a test server/camera/Agent and production relay."""
 
-    def __init__(self, tmp_path, *, mode='fall', lying=True):
+    def __init__(self, tmp_path, *, mode='fall', lying=True, tracker_factory=None):
         self.scope = uuid4().hex
         self.ids = {k: f'{k}-{self.scope}' for k in ('manager', 'bridge', 'vlm')}
         args = ['--ros-args']
@@ -144,7 +144,8 @@ class PcFlow:
             self.settings = FallNodeSettings.parse(json.dumps(config))
             self.provider = OfflineCloud(mode)
             self.journal = SqliteFallJournal(self.db, device_id=self.settings.device_id)
-            self.vlm = create_fall_node(self.settings, provider=self.provider, journal=self.journal)
+            self.vlm = create_fall_node(self.settings, provider=self.provider, journal=self.journal,
+                                        tracker_factory=tracker_factory)
             self.nodes.append(self.vlm)
             self.manager = Node('fall_pc_manager')
             self.nodes.append(self.manager)
@@ -317,6 +318,10 @@ def test_manager_pose_cloud_confirmation_and_record(tmp_path, situation_assessme
             assert 1 <= len(request.window.frames) <= 12
             assert request.window.requested_end - request.window.requested_start == 5
             assert flow.candidate_messages
+            # Separate ROS callbacks: analysis may arrive one spin before the
+            # question event. Require its delivery instead of assuming both
+            # are already present after observing analysis_completed.
+            await flow.until(lambda: any(e['kind'] == 'question_requested' for e in flow.events))
             question = next(e for e in flow.events if e['kind'] == 'question_requested')
             kinds = [e['kind'] for e in flow.events]
             assert kinds.index('analysis_completed') < kinds.index('question_requested')
@@ -478,8 +483,17 @@ def test_periodic_cloud_check_without_pose_candidate(tmp_path):
             discovery = flow.journal.discoveries()[0]
             assert discovery['assessment'] == 'suspected_fall'
             assert discovery['association_status'] == 'unidentified'
-            assert discovery['incident_id'] is None
-            assert not flow.stored()  # No invented subject/incident.
+            assert discovery['subject_key'] is None
+            iid = discovery['incident_id']
+            await flow.until(lambda: any(
+                e['kind'] == 'question_requested' and e['incident_id'] == iid
+                for e in flow.events))
+            question = next(e for e in flow.events if e['kind'] == 'question_requested')
+            assert question['confirmation_scope'] == 'scene'
+            assert question['subject_key'] is None
+            assert flow.vlm.monitor.incident(iid).subject_key is None
+            assert any(r['incidentId'] == iid for r in flow.stored())
+            assert not any(r['notificationLevel'] for r in flow.stored())
         finally:
             await flow.close()
     asyncio.run(run())

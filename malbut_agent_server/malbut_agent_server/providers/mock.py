@@ -23,6 +23,7 @@ from malbut_agent_server.schemas import (
     MAX_UTTERANCE_LENGTH,
     ProviderResult,
 )
+from malbut_agent_server.speech_mission_policy import has_current_mission_intent
 from malbut_agent_server.tools import ToolSpec
 
 
@@ -265,6 +266,10 @@ class MockProvider(AgentProvider):
         if follow_up is not None:
             return follow_up
 
+        mission = self._speech_mission(request, tools)
+        if mission is not None:
+            return mission
+
         if any(
             phrase in compact
             for phrase in (
@@ -322,6 +327,10 @@ class MockProvider(AgentProvider):
 
         if any(word in compact for word in ('할수있는', '기능')):
             labels = {
+                'request_navigation': '목적지 이동 요청',
+                'request_follow_person': '보이는 사람 따라가기 요청',
+                'request_patrol': '순찰 요청',
+                'cancel_voice_mission': '음성으로 요청한 동작 취소',
                 'navigate': '이동',
                 'detect_pet': '반려동물 감지',
                 'capture_photo': '사진 촬영',
@@ -451,6 +460,36 @@ class MockProvider(AgentProvider):
             '요청을 정확히 이해하지 못했어. 한 가지 작업으로 말해줘.',
             'intent_unclear',
         )
+
+    @staticmethod
+    def _speech_mission(request, tools):
+        """Choose only exposed Manager tools using the current-intent policy."""
+        available = {tool.name for tool in tools} & set(request.available_tools)
+        candidates = [
+            ('cancel_voice_mission', {}),
+            ('request_follow_person', {}),
+            *(('request_patrol', {'thoroughness': level})
+              for level in ('normal', 'light', 'thorough')),
+        ]
+        # The offline provider has a small fixed vocabulary. It never resolves
+        # coordinates, invents a target, or reuses a destination from history.
+        candidates.extend(
+            ('request_navigation', {'location': location})
+            for location in (
+                '거실', '주방', '침실', '현관', '충전소', '베란다', '서재',
+                'living_room', 'kitchen', 'bedroom', 'entrance', 'dock',
+            )
+        )
+        for tool_name, arguments in candidates:
+            if tool_name in available and has_current_mission_intent(
+                request.utterance, tool_name, arguments,
+            ):
+                return AgentDecision(
+                    type='tool_call', message='Manager에 요청을 전달할게요.',
+                    tool_name=tool_name, arguments=arguments,
+                    reason='voice_manager_request', confidence=1.0,
+                )
+        return None
 
     @staticmethod
     def _history_follow_up(

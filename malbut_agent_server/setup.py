@@ -20,7 +20,9 @@ setup(
         ),
         (
             'share/' + package_name + '/docs',
-            ['docs/SEMANTIC_MEMORY.md'],
+            ['docs/SEMANTIC_MEMORY.md', 'docs/MANAGER_VOICE_COMMANDS.md',
+             'docs/MANAGER_VOICE_SPEC.md', 'docs/MANAGER_VOICE_INTERFACE.md',
+             'docs/MANAGER_VOICE_LAB.md'],
         ),
         (
             'share/' + package_name + '/docs/jira',
@@ -43,6 +45,8 @@ setup(
             'share/' + package_name + '/docs/fall',
             ['docs/fall/fall_detection.md', 'docs/fall/fall_storage_api.md',
              'docs/fall/fall_runtime.md', 'docs/fall/fall_decision_policy.md',
+             'docs/fall/fall_deferred_association.md',
+             'docs/fall/fall_runtime_followup_validation_20260928.md',
              'docs/fall/fall_subject_observation.md', 'docs/fall/fall_robot_preparation.md',
              'docs/fall/agent_fall_interaction.md', 'docs/fall/agent_fall_implementation.md'],
         ),
@@ -79,6 +83,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'malbut-fall-preflight = malbut_agent_server.fall_preflight:main',
+            'malbut-voice-lab = malbut_agent_server.voice_lab:main',
             (
                 'weather = '
                 'malbut_agent_server.weather_action:main'

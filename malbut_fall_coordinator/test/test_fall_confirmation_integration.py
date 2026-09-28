@@ -37,6 +37,8 @@ class FakeAgent(Node):
         self.cancelled = []
         self.hold = set()
         self.abort = set()
+        # Keep configurable local replies alongside upstream retry/order hooks.
+        self.results = {}
         self.reject_once = False
         self.on_start = lambda: None
         self.server = ActionServer(
@@ -66,7 +68,8 @@ class FakeAgent(Node):
             handle.abort()
             return ConfirmSituation.Result()
         handle.succeed()
-        return ConfirmSituation.Result(situation_assessment='resolved', help_needed=False)
+        assessment, help_needed = self.results.get(request.request_id, ('resolved', False))
+        return ConfirmSituation.Result(situation_assessment=assessment, help_needed=help_needed)
 
     def destroy_node(self):
         self.hold.clear()
@@ -248,3 +251,76 @@ def test_continuous_server_loss_fails_but_short_discovery_gap_does_not(graph, mo
     publish(incident_id='second', question_id='next-question')
     wait_for(lambda: len(decisions) == 2)
     assert decisions[1]['question_id'] == 'next-question'
+
+
+@pytest.mark.parametrize('assessment', ['resolved', 'unknown', 'confirmed_incident'])
+@pytest.mark.parametrize('help_needed', [False, True])
+def test_real_cloud_only_monitor_event_reaches_agent_without_pose_and_returns_safely(
+        graph, monkeypatch, assessment, help_needed):
+    import asyncio
+
+    pytest.importorskip('malbut_agent_server.application.cloud_fall_monitor')
+    from malbut_agent_server.application.cloud_fall_monitor import CloudFallMonitor
+    from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
+    from malbut_agent_server.domain.fall_monitoring import (
+        CloudFallReply, FallRuntimePolicy, IncidentState, RgbFrame, VideoAssessment,
+    )
+    from malbut_agent_server.fall_runtime import apply_decision, event_metadata
+
+    class Provider:
+        execution_target = 'cloud'
+        calls = 0
+
+        async def analyze(self, request):
+            self.calls += 1
+            return CloudFallReply(VideoAssessment.SUSPECTED_FALL, 'no Pose/box available')
+
+    now = [100.0]
+    provider = Provider()
+    monitor = CloudFallMonitor(
+        device_id='test-robot', boot_id='test-boot', provider=provider,
+        clock=lambda: now[0],
+        policy=FallRuntimePolicy.agreed(
+            retry_interval_s=3, max_person_observation_age_s=2, clip_window_s=5,
+            max_frame_age_s=2, max_calls_per_minute=20, max_incidents=10, max_images=12),
+        buffer=FallFrameBuffer(retention_s=10, max_bytes=10000, max_frames=64))
+    monitor.configure(enabled=True, camera_enabled=True, cloud_consent=True, connected=True)
+    now[0] = 160.0
+    monitor.ingest_rgb(RgbFrame(160.0, b'\xff\xd8test\xff\xd9'))
+    assert asyncio.run(monitor.run_once())
+    events = monitor.drain_events()
+    q = next(e for e in events if e.kind == 'question_requested')
+    assert q.confirmation_scope == 'scene' and q.subject_key is None
+    link, agent, decisions, publish = graph
+    sent_missions = []
+    send_goal = link.client.send_goal_async
+
+    def send_via_manager(goal, **kwargs):
+        sent_missions.append(goal)
+        return send_goal(goal, **kwargs)
+
+    monkeypatch.setattr(link.client, 'send_goal_async', send_via_manager)
+    agent.results[q.question_id] = (assessment, help_needed)
+    for item in events:
+        publish(**event_metadata(item))
+    wait_for(lambda: len(decisions) == 1)
+    assert len(sent_missions) == 1
+    assert sent_missions[0].capability_id == 'fall_confirmation'
+    assert json.loads(sent_missions[0].arguments_yaml)['request_id'] == q.question_id
+    assert len(agent.requests) == 1
+    assert '특정인을 지목하지 말고' in agent.requests[0].summary
+    assert decisions[0]['subject_key'] is None
+    assert decisions[0]['situation_assessment'] == assessment
+    assert decisions[0]['help_needed'] is help_needed
+    assert apply_decision(monitor, json.dumps(decisions[0]))
+    incident = monitor.incident(q.incident_id)
+    expected = IncidentState.HELP_REQUIRED if help_needed else IncidentState.RECHECK_REQUIRED
+    assert incident.state is expected and incident.subject_key is None
+    assert incident.close_reason is None
+    # Retry transport delivery, not a second question or analysis.
+    publish(**event_metadata(q))
+    wait_for(lambda: len(decisions) == 2)
+    assert decisions[1] == decisions[0]
+    assert apply_decision(monitor, json.dumps(decisions[1]))
+    assert len(sent_missions) == len(agent.requests) == provider.calls == 1
+    asyncio.run(monitor.close())

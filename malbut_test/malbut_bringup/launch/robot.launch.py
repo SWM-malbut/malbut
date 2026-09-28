@@ -127,6 +127,8 @@ def _setup(context):
             'agent_provider': value('speech_agent_provider'),
             'agent_user_id': value('speech_agent_user_id'),
             'agent_conversation_db': value('speech_agent_conversation_db'),
+            'manager_commands': value('speech_manager_commands'),
+            'navigation_targets': value('speech_navigation_targets'),
             'control_server': 'manager',
             'preflight_timeout_s': value('speech_preflight_timeout_s'),
             'peer_timeout_s': value('speech_peer_timeout_s'),
@@ -393,6 +395,8 @@ def generate_launch_description():
         'speech_agent_provider': 'openai',
         'speech_agent_user_id': 'speech-development-user',
         'speech_agent_conversation_db': '~/.local/state/malbut/speech-dialogue.sqlite3',
+        'speech_manager_commands': 'true',
+        'speech_navigation_targets': '',
         'speech_preflight_timeout_s': '120.0',
         'speech_peer_timeout_s': '30.0',
         'hardware_launch_file': '',
@@ -433,6 +437,7 @@ def generate_launch_description():
             'restore_pose', 'web_panel', 'speech', 'speech_input_has_aec',
         )},
         'speech_agent_provider': ['openai', 'mock'],
+        'speech_manager_commands': ['true', 'false'],
     }
     return LaunchDescription([
         # The vendor hardware launch reads its complete includes from src.

@@ -24,7 +24,8 @@ from malbut_agent_server.fall_control import (
 )
 
 
-def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
+def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
+                     tracker_factory=None):
     import cv2
     from cv_bridge import CvBridge, CvBridgeError
     from rcl_interfaces.msg import ParameterDescriptor
@@ -59,6 +60,10 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
             self._last_processed_image = None
             self._status_sequence = 0
             self._logs = {}
+            from malbut_agent_server.application.fall_live_tracking import LiveDiscoveryTracking
+            self.tracking = (LiveDiscoveryTracking(
+                self.monitor, tracker_factory, clock=clock, report=self.log_code)
+                if tracker_factory is not None else None)
             self._last_question_handoff = -float('inf')
             self._events = self.create_publisher(String, '/malbut/falls/runtime/events', 50)
             self._status = self.create_publisher(FallRuntimeStatus, '/malbut/falls/status', 10)
@@ -183,6 +188,9 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic):
                 self._events.publish(String(data=json.dumps(
                     dict(event_metadata(event), boot_id=self.monitor.boot_id,
                          runtime_id=self.runtime_id), allow_nan=False)))
+                if (self.tracking is not None and event.kind == 'cloud_discovery'
+                        and self.control.accepting_images):
+                    self.tracking.offer(event.discovery)
 
     return FallNode()
 
@@ -196,6 +204,8 @@ async def spin_runtime(node):
         while rclpy.ok():
             rclpy.spin_once(node, timeout_sec=0)
             node.control.refresh()
+            if node.tracking is not None:
+                node.tracking.maintain(accepting_images=node.control.accepting_images)
             if check is not None and check.done():
                 check.result()  # Persistence/internal errors must stop the process.
                 check = None
@@ -205,11 +215,15 @@ async def spin_runtime(node):
             await asyncio.sleep(0.01)
     finally:
         node.control.close()
-        await node.monitor.close()
-        if check is not None:
-            check.cancel()
-            await asyncio.gather(check, return_exceptions=True)
-        node.publish_events()
+        try:
+            if node.tracking is not None:
+                await node.tracking.close()
+        finally:
+            await node.monitor.close()
+            if check is not None:
+                check.cancel()
+                await asyncio.gather(check, return_exceptions=True)
+            node.publish_events()
 
 
 def main(argv=None):
@@ -236,6 +250,11 @@ def main(argv=None):
 
         provider = OllamaCloudFallProvider(model=settings.model,
                                            api_key=_read_token(settings.cloud_key_file))
+        tracker_factory = None
+        if settings.tracking is not None:
+            from functools import partial
+            from malbut_agent_server.adapters.outbound.sam_tracking import SamTrackingWorker
+            tracker_factory = partial(SamTrackingWorker, settings.tracking)
         journal = SqliteFallJournal(settings.journal_path, device_id=settings.device_id)
         node = None
         try:
@@ -243,7 +262,8 @@ def main(argv=None):
 
             async def run():
                 nonlocal node
-                node = create_fall_node(settings, provider=provider, journal=journal)
+                node = create_fall_node(settings, provider=provider, journal=journal,
+                                        tracker_factory=tracker_factory)
                 await spin_runtime(node)
             asyncio.run(run())
         finally:
