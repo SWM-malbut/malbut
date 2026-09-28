@@ -193,6 +193,25 @@ Depth를 costmap에 다시 넣을 수 있도록 만든 Bringup 내부
 덮는 버전이라면 그 설정이 우선하므로, 원본 점군 발행 중단은 실기기에서 확인한다.
 `ros2 topic info /depth_cam/depth0/points --verbose`로 Nav2 구독자가 없는지 볼 수 있다.
 
+### 카메라 Fast DDS 공유 메모리
+
+Bringup이 제조사 하드웨어(카메라 포함)를 시작할 때 해당 launch 그룹에만
+`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`와 `FASTRTPS_DEFAULT_PROFILES_FILE`을 전달한다.
+설정 파일은 설치된 `malbut_bringup/config/fastdds_camera.xml`이며 SHM 세그먼트는
+**4 MiB (4,194,304 bytes)**, 원격 통신용 UDPv4는 유지한다. Nav2·인식·음성 등 다른
+그룹의 환경변수는 변경하지 않는다. 이 그룹의 기존 사용자 DDS XML은 대체된다.
+`RMW_FASTRTPS_USE_QOS_FROM_XML=1`은 추가하지 않는다. 토픽 QoS·발행 주기도 바꾸지 않는다.
+
+설정 적용은 프로세스 시작 시점이다. 업데이트 후 Bringup을 종료하고 다시 시작한다.
+`start_hardware=false`로 기존 드라이버를 재사용하면 적용되지 않는다. 별도 서비스로
+카메라를 켜는 경우에는 그 서비스 시작 환경에도 같은 XML 경로를 설정해야 한다.
+드라이버·CUDA 재컴파일은 필요 없으며, 저장소 적용 시에는 평소 빌드로 새 XML을 설치한다.
+SHM 공간은 DDS participant마다 할당되므로 이 그룹에 속한 다른 하드웨어 프로세스도
+영향을 받는다. 실제 지연 개선 여부는 로봇에서 별도로 확인해야 한다.
+
+공식 근거: [Fast DDS SHM 설정](https://fast-dds.docs.eprosima.com/en/v2.6.11/fastdds/transport/shared_memory/shared_memory.html),
+[Humble RMW XML 설정](https://github.com/ros2/rmw_fastrtps/tree/humble#full-qos-configuration).
+
 ## 1. 처음 실행
 
 GPU·음성 준비 전에는 인식과 음성을 끄고 센서·Nav2·관리자만 확인할 수 있다.

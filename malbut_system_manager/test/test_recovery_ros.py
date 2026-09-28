@@ -12,7 +12,7 @@ from rclpy.action import ActionClient
 from rclpy.executors import SingleThreadedExecutor
 
 
-def test_manual_recovery_preserves_live_pid_and_restarts_only_exited_child(tmp_path):
+def test_manual_recovery_preserves_live_pid_and_restarts_only_exited_child(tmp_path, monkeypatch):
     """A successful startup, PASS, stopped-child restart and second PASS work end-to-end."""
     fixture = tmp_path / 'child.py'
     fixture.write_text('''import os, pathlib, sys, time
@@ -52,7 +52,10 @@ def generate_launch_description():
         RegisterEventHandler(OnProcessExit(target_action=probe, on_exit=complete)),
         child('first'), child('second'), probe])
 ''')
-    env = dict(os.environ, ROS_DOMAIN_ID='213', ROS_LOCALHOST_ONLY='1')
+    # Discovery must use the same scope in both the client and child process.
+    # CI has no shell-wide ROS_LOCALHOST_ONLY, unlike the developer shell.
+    monkeypatch.setenv('ROS_LOCALHOST_ONLY', '1')
+    env = dict(os.environ, ROS_DOMAIN_ID='213')
     context = rclpy.context.Context()
     rclpy.init(context=context, domain_id=213)
     node = rclpy.create_node('recovery_test_client', context=context)

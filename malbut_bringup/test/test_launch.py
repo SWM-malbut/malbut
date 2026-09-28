@@ -225,6 +225,52 @@ def test_one_bringup_starts_everything_and_maps_without_a_saved_map(launch_modul
     assert _parameters(context, _nodes(actions, 'wait_for_robot')[0])['relocalization'] is True
 
 
+def test_camera_dds_profile_is_scoped_to_vendor_hardware(launch_module):
+    """Only newly launched vendor hardware inherits the larger SHM segment."""
+    context = _context(launch_module)
+    context.environment['FASTRTPS_DEFAULT_PROFILES_FILE'] = '/existing/profile.xml'
+    context.environment['RMW_IMPLEMENTATION'] = 'rmw_fastrtps_cpp'
+    context.environment.pop('RMW_FASTRTPS_USE_QOS_FROM_XML', None)
+    actions = _core_actions(launch_module, context)
+    hardware = next(action for action in actions if isinstance(action, GroupAction))
+    # Execute the group's push/set/pop actions without running vendor code.
+    for action in hardware.get_sub_entities():
+        if isinstance(action, IncludeLaunchDescription):
+            assert context.environment['FASTRTPS_DEFAULT_PROFILES_FILE'] == str(
+                ROOT / 'malbut_bringup/config/fastdds_camera.xml')
+            assert context.environment['RMW_IMPLEMENTATION'] == 'rmw_fastrtps_cpp'
+            assert 'RMW_FASTRTPS_USE_QOS_FROM_XML' not in context.environment
+        else:
+            action.execute(context)
+    assert context.environment['FASTRTPS_DEFAULT_PROFILES_FILE'] == '/existing/profile.xml'
+    for action in actions:
+        if isinstance(action, GroupAction) and action is not hardware:
+            assert not any(isinstance(child, SetEnvironmentVariable)
+                           for child in action.get_sub_entities())
+
+
+def test_camera_dds_profile_keeps_udp_and_does_not_change_endpoint_qos():
+    """SHM is exactly 4 MiB; default UDP discovery and endpoint policies remain."""
+    import xml.etree.ElementTree as ET
+    path = ROOT / 'malbut_bringup/config/fastdds_camera.xml'
+    profile = ET.parse(path).getroot()
+    ns = {'dds': 'http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles'}
+    transports = profile.findall('dds:transport_descriptors/dds:transport_descriptor', ns)
+    by_type = {item.findtext('dds:type', namespaces=ns): item for item in transports}
+    assert set(by_type) == {'SHM', 'UDPv4'}
+    assert int(by_type['SHM'].findtext('dds:segment_size', namespaces=ns)) == 4 * 1024**2
+    participant = profile.find('dds:participant', ns)
+    assert participant.get('is_default_profile') == 'true'
+    selected = participant.findall('dds:rtps/dds:userTransports/dds:transport_id', ns)
+    assert {item.text for item in selected} == {
+        item.findtext('dds:transport_id', namespaces=ns) for item in transports}
+    assert participant.findtext('dds:rtps/dds:useBuiltinTransports', namespaces=ns) == 'false'
+    assert profile.find('dds:publisher', ns) is None
+    assert profile.find('dds:subscriber', ns) is None
+    assert path.read_bytes() == (
+        ROOT / 'malbut_test/malbut_bringup/config/fastdds_camera.xml').read_bytes()
+
+
 def _components(context, actions):
     loader = next(item for item in actions if isinstance(item, LoadComposableNodes))
     assert loader._LoadComposableNodes__target_container == '/nav2_container'
