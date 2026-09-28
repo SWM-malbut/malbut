@@ -165,6 +165,14 @@ Agent는 목적지 설정이 있을 때 이 Topic을 구독하고, `LOCALIZATION
 
 Agent 내부 LLM 도구 스키마는 [`tools.py`](../malbut_agent_server/tools.py)가 관리한다.
 모델이 좌표·속도·사람 ID·Behavior Tree·기능 ID·취소 UUID를 임의로 결정하도록 노출하지 않는다.
+LLM은 표현 변형·사투리·인식 오탈자를 포함한 현재 요청의 의미로 실제 제공된 도구 하나를 선택한다.
+바로 앞의 목적지 확인 질문에 대한 현재의 명시적 답변도 연결할 수 있지만, 기억이나 과거 대화만으로 새 작업을 시작하지 않는다.
+인용·부정·가정·복합 요청의 의미 구분은 LLM 책임이며 실제 음성 경로에는 표현 정규식·키워드 허용 목록이 없다.
+서버는 활성화된 도구, 인자 스키마, 유효 시간, 지도 연결, 대화 저장·변경, 취소 소유권과 중복 전송을 검사한다.
+
+`SpeechTranscript`는 발화자 ID·방향·지도 좌표를 제공하지 않는다. `FollowPerson`은 사람을 계속 따라가는 Action이며
+일회성 발화자 접근 계약이 아니다. 따라서 `와바라`, `이리 오너라`에 목적지가 없으면 등록된 장소를 확인하며,
+임의 pose를 생성하거나 지속 추적으로 대체하지 않는다. 이 의미 해석 변경으로 공개 ROS 필드·상수·Manifest는 바꾸지 않는다.
 목적지 설정, launch 인자, CLI 사용법은 [운영 안내](MANAGER_VOICE_COMMANDS.md)를 참조한다.
 
 ## 5. 최소 검증과 변경 경계
@@ -182,6 +190,8 @@ Agent 내부 LLM 도구 스키마는 [`tools.py`](../malbut_agent_server/tools.p
 
 등록 검증 근거는 `malbut_system_manager/test/test_manifest_registry.py`,
 실제 Manager 연결 검증 근거는 `malbut_agent_server/test/test_ros_speech_missions.py`다.
+mock의 표현 정규식은 `providers/mock_speech_intent.py`의 오프라인 시험 전용이다.
+고정 Provider로 통과한 호출·취소 시험이 실제 LLM의 의미 판정 정확도를 보장하지는 않는다.
 
 새 프로젝트 전용 인터페이스가 필요해질 때는 `malbut_interfaces`에 정의하고, 필드마다 의미·단위를 주석으로 남긴다.
 거리·시간·각도·주기는 `_m`, `_s`, `_rad`, `_hz`로 표시하고 선택값은 IDL 상수로 둔다.

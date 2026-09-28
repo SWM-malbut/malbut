@@ -23,7 +23,7 @@ from malbut_agent_server.schemas import (
     MAX_UTTERANCE_LENGTH,
     ProviderResult,
 )
-from malbut_agent_server.speech_mission_policy import has_current_mission_intent
+from malbut_agent_server.providers.mock_speech_intent import matches_speech_fixture
 from malbut_agent_server.tools import ToolSpec
 
 
@@ -463,7 +463,7 @@ class MockProvider(AgentProvider):
 
     @staticmethod
     def _speech_mission(request, tools):
-        """Choose only exposed Manager tools using the current-intent policy."""
+        """Return deterministic offline fixtures, not a live semantic judgment."""
         available = {tool.name for tool in tools} & set(request.available_tools)
         candidates = [
             ('cancel_voice_mission', {}),
@@ -481,7 +481,7 @@ class MockProvider(AgentProvider):
             )
         )
         for tool_name, arguments in candidates:
-            if tool_name in available and has_current_mission_intent(
+            if tool_name in available and matches_speech_fixture(
                 request.utterance, tool_name, arguments,
             ):
                 return AgentDecision(

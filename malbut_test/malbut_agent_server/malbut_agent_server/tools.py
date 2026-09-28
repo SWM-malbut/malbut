@@ -44,12 +44,25 @@ TOOL_SPECS = {
         name='request_navigation',
         description=(
             'Request one named indoor destination through Manager. Use only for '
-            'a direct movement request in the current utterance. A configured '
+            'a current movement request interpreted by meaning, including polite '
+            'questions, suggestions, dialect, and recognizable speech errors. '
+            'For example "우리 거실로 가볼까?", "거실로 와바라", and '
+            '"주방으로 오너라" request movement to the named place. '
+            'These examples are not an exhaustive phrase list. '
+            'A clear destination with this meaning is a request to act; '
+            'call this tool without asking for confirmation again. '
+            'A capability question such as "거실로 갈 수 있어?", negation, '
+            'quotation, or a hypothetical is not a movement request. A configured '
             'server-owned map resolver supplies coordinates; never invent them. '
             'This proposes a Manager request, not successful movement. '
-            'For an ambiguous or unconfigured destination ask the user to '
-            'restate the full movement request with a registered place name. '
-            'A destination-only follow-up is insufficient. Relative motion is unsupported.'
+            'For an ambiguous destination ask which named place the user means. '
+            'A current answer to your immediately preceding destination question '
+            'can complete that movement request; do not demand the whole command again. '
+            'Never revive old actions from memories or unrelated history. '
+            'No speaker position or one-shot approach capability is available: '
+            '"와바라", "이리 오너라", and "come here" without a named place '
+            'require destination clarification, never guessed coordinates. '
+            'Relative motion is unsupported.'
         ),
         parameters={
             'type': 'object',
@@ -62,8 +75,11 @@ TOOL_SPECS = {
         name='request_follow_person',
         description=(
             'Ask Manager to start following the first visible person using the '
-            'configured safe distance. Use only for an explicit current request '
-            'to follow. The visible person is not verified as the speaker; never '
+            'configured safe distance. Interpret current requests to keep following '
+            'by meaning, including paraphrases, dialect, and speech errors. '
+            'This is ongoing following, not a one-shot approach: do not substitute '
+            'it for "와바라", "이리 오너라", or "come here". '
+            'The visible person is not verified as the speaker; never '
             'claim speaker identification or choose a named registered person. '
             'Do not claim execution or completion before Manager reports it.'
         ),
@@ -73,7 +89,8 @@ TOOL_SPECS = {
         name='request_patrol',
         description=(
             'Ask Manager for one patrol of the selected saved map. Use only for '
-            'a direct current request. thoroughness is normal unless the user '
+            'a current request to inspect or patrol the home, interpreted by meaning '
+            'rather than a fixed phrase. thoroughness is normal unless the user '
             'explicitly asks for light or thorough coverage. Never claim '
             'execution or completion before Manager reports it.'
         ),
@@ -90,7 +107,8 @@ TOOL_SPECS = {
         name='cancel_voice_mission',
         description=(
             'Request cancellation of this voice session\'s current motion '
-            'mission. Use only for a direct current stop/cancel request. '
+            'mission. Interpret current stop/cancel intent by meaning, including '
+            '"이제 그만 따라와", "그쯤 하고 쉬어", and other paraphrases. '
             'Never cancel weather, emergency/situation work, or another '
             'client\'s mission. Cancellation receipt does not prove termination.'
         ),

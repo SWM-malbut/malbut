@@ -38,13 +38,22 @@ def test_supplied_manager_tool_gets_specific_delegation_without_claiming_ready(n
     assert not any(other in extension for other in SPEECH_MISSION_TOOLS if other != name)
     assert 'Manager와 하위 서버의 관측·검증' in extension
     assert '다른 직접 제어 도구의 상태·배터리' in extension
-    assert '현재 발화가 한 작업의 직접 요청' in extension
+    assert '현재 발화의 의미가 한 작업의 실행 요청' in extension
+    assert '명령형 문구나 키워드의 포함 여부로 제한하지 않습니다' in extension
+    assert '발화자 위치를 지어내거나 지속 따라오기 도구로 대신 실행하지 않습니다' in extension
     assert 'Manager의 확인 전 접수·진행·완료' in extension
     data = json.loads(payload['input'].split('\n', 1)[1])
     assert data['robot_state_untrusted'] == original.robot_state.to_dict()
     assert not data['robot_state_untrusted']['navigation_available']
     assert not data['robot_state_untrusted']['camera_available']
     assert [tool['name'] for tool in payload['tools']] == [name]
+    if name == 'request_navigation':
+        assert '거실로 가볼까?' in extension
+        assert '다시 확인하지 말고 제공된 이동 도구' in extension
+        assert '전체 명령을 다시 말하라고 요구하지 않습니다' in extension
+        assert '거실로 가볼까?' in payload['tools'][0]['description']
+    else:
+        assert '거실로 가볼까?' not in extension
 
 
 @pytest.mark.parametrize('exposed', [(), ('navigate',), ('follow_user',), ('get_weather',)])

@@ -22,6 +22,7 @@ class Scenario:
 
 SCENARIOS = (
     Scenario('navigation', '목적지 이동', '거실 좌표 Goal과 Manager 성공 결과를 확인합니다.'),
+    Scenario('navigation-suggestion', '제안형 목적지 이동', '“거실로 가볼까?”를 거실 이동 요청으로 실행합니다.'),
     Scenario('follow', '사람 따라가기', '보이는 사람 추적의 실행 상태를 확인하며 완료를 가정하지 않습니다.'),
     Scenario('cancel-follow', '따라가기 취소', '지속 중인 따라가기를 음성으로 취소하고 종료를 확인합니다.'),
     Scenario('patrol-light', '가벼운 순찰', '가벼운 순찰이 thoroughness=0으로 전달됩니다.'),
@@ -42,6 +43,7 @@ SCENARIOS = (
     Scenario('map-mismatch', '목적지와 지도 불일치', '목적지 설정과 다른 저장 지도에서는 이동하지 않습니다.'),
     Scenario('map-switching', '지도 전환 중', '지도 전환 중에는 목적지 이동을 보내지 않습니다.'),
     Scenario('map-error', '지도 상태 오류', '지도 오류 상태에서는 목적지 이동을 보내지 않습니다.'),
+    Scenario('capability-question', '이동 기능 질문', '갈 수 있는지 묻는 기능 질문은 실행하지 않습니다.'),
     Scenario('negation', '부정 명령', '이동·추적·순찰을 하지 말라는 말을 실행 요청으로 바꾸지 않습니다.'),
     Scenario('quotation', '인용문', '인용된 이동·추적·순찰·취소 명령을 실행하지 않습니다.'),
     Scenario('multiple-tasks', '복합 요청', '여러 작업 요청에서 일부 행동을 임의로 실행하지 않습니다.'),
@@ -239,7 +241,8 @@ def _quotation(graph, checks):
     _send(graph, '따라와')
     _goal(graph, 'follow_person')
     _wait(graph, lambda: bool(_events(graph, 'follow_person', state='RUNNING')), '추적 시작')
-    for text in ('"거실로 가"라고 말했어', '"따라와"라는 문장을 설명해',
+    for text in ('"거실로 가"라고 말했어', '"거실로 가볼까?"라는 문장을 설명해',
+                 '"따라와"라는 문장을 설명해',
                  '"순찰해"라고 말했어', '"취소해"라고 말해'):
         _, reply = _send(graph, text)
         _check(checks, reply.get('kind') != 'error', f'인용문을 비실행 응답으로 처리함: {text}')
@@ -255,6 +258,8 @@ def _quotation(graph, checks):
 def _execute(scenario_id, graph, checks, timeline):
     if scenario_id == 'navigation':
         return _motion(graph, checks, 'navigate_to_pose')
+    if scenario_id == 'navigation-suggestion':
+        return _motion(graph, checks, 'navigate_to_pose', text='거실로 가볼까?')
     if scenario_id == 'follow':
         return _motion(graph, checks, 'follow_person', outcome='hold')
     if scenario_id.startswith('patrol-'):
@@ -291,7 +296,8 @@ def _execute(scenario_id, graph, checks, timeline):
         return _no_motion(graph, checks, ['거실로 가'])
     noncommands = {
         'unknown-place': ['베란다로 가'],
-        'negation': ['거실로 가지 마', '따라오지 말아줘', '순찰하지 말아줘'],
+        'capability-question': ['거실로 갈 수 있어?'],
+        'negation': ['거실로 가지 마', '거실로 가보지 마', '따라오지 말아줘', '순찰하지 말아줘'],
         'multiple-tasks': ['거실로 가고 주방으로 이동해', '따라와 그리고 순찰해'],
         'relative-destination': ['저기로 가', '뒤로 가'],
         'navigation-disabled': ['거실로 가'],
