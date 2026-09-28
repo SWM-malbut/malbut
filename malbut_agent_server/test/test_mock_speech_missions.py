@@ -37,6 +37,10 @@ def decide(text, available=SPEECH_MISSION_TOOLS, *, exposed=None):
     ('따라오지 마', 'cancel_voice_mission', {}),
     ('순찰을 취소해', 'cancel_voice_mission', {}),
     ('거실로 가', 'request_navigation', {'location': '거실'}),
+    ('거실로 가볼까?', 'request_navigation', {'location': '거실'}),
+    ('거실로 가 볼까요?', 'request_navigation', {'location': '거실'}),
+    ('주방으로 갈까?', 'request_navigation', {'location': '주방'}),
+    ('거실로 이동해 볼까요?', 'request_navigation', {'location': '거실'}),
     ('부엌으로 이동해줘', 'request_navigation', {'location': '주방'}),
     ('서재로 가 줘', 'request_navigation', {'location': '서재'}),
     ('go to kitchen', 'request_navigation', {'location': 'kitchen'}),
@@ -56,6 +60,9 @@ def test_offline_voice_commands_select_strict_manager_payloads(text, tool, argum
     '따라와 그리고 순찰해', '순찰하고 나를 따라와', '날씨 조회를 취소해',
     '상황 대응을 취소해', '순찰을 취소하지 마',
     '거실로 가고 주방으로 이동해', '서재로 가면 어떻게 돼?',
+    '거실로 갈 수 있어?', '거실로 이동 가능해?', '거실로 안 가볼까?',
+    '거실로 가지 말까?', '거실로 가볼까 말까?', '“거실로 가볼까?”',
+    '거실로 가볼까라고 말해줘', '내일 거실로 가볼까?',
 ])
 def test_non_commands_never_select_manager_tool(text):
     assert decide(text).tool_name not in SPEECH_MISSION_TOOLS

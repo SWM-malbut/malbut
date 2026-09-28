@@ -16,6 +16,7 @@ class ObservedNavigationGraph:
         self.terminal = terminal
         self.start_error = start_error
         self.events, self.goals, self.replies = [], [], []
+        self.utterances = []
         self.started, self.closed = False, False
         self.options = None
 
@@ -29,6 +30,7 @@ class ObservedNavigationGraph:
         self.behavior = (capability, behavior)
 
     def send(self, text, utterance_id=None):
+        self.utterances.append(text)
         uid = utterance_id or 'utterance'
         self.replies.append({'utterance_id': uid, 'kind': 'answer', 'text': '요청을 보냈어요.'})
         self.goals.append({
@@ -62,17 +64,21 @@ class ObservedNavigationGraph:
 
 def test_catalog_is_unique_and_advertises_advanced_tests_separately():
     names = [item.id for item in scenarios.SCENARIOS]
-    assert len(names) == len(set(names)) == 29
+    assert len(names) == len(set(names)) == 31
     assert {
         'navigation', 'follow', 'cancel-follow', 'patrol-light', 'patrol-normal',
         'patrol-thorough', 'preempt-base', 'cancel-delayed', 'manager-unavailable',
+        'navigation-suggestion', 'capability-question',
     } <= set(names)
     assert all(item.title and item.description for item in scenarios.SCENARIOS)
     assert '/regression' in scenarios.COVERAGE_NOTE
     assert '실물' in scenarios.COVERAGE_NOTE
 
 
-def test_passing_result_contains_actual_observations_and_closes_graph():
+@pytest.mark.parametrize('scenario_id,utterance', [
+    ('navigation', '거실로 가'), ('navigation-suggestion', '거실로 가볼까?'),
+])
+def test_passing_result_contains_actual_observations_and_closes_graph(scenario_id, utterance):
     graphs, output = [], []
 
     def factory(**kwargs):
@@ -80,9 +86,10 @@ def test_passing_result_contains_actual_observations_and_closes_graph():
         graphs.append(graph)
         return graph
 
-    result = scenarios.run_scenario('navigation', factory, output.append)
+    result = scenarios.run_scenario(scenario_id, factory, output.append)
     assert result['passed']
     assert graphs[0].closed
+    assert graphs[0].utterances == [utterance]
     assert graphs[0].options == {'manager_enabled': True, 'navigation_enabled': True}
     assert result['evidence']['goals'] == graphs[0].goals
     assert result['evidence']['events'] == graphs[0].events[:-1]
@@ -95,7 +102,8 @@ def test_passing_result_contains_actual_observations_and_closes_graph():
     assert result['evidence']['goals']  # Evidence is detached from subsequent graph cleanup.
 
 
-def test_wrong_destination_cannot_pass_even_with_a_success_event():
+@pytest.mark.parametrize('scenario_id', ['navigation', 'navigation-suggestion'])
+def test_wrong_destination_cannot_pass_even_with_a_success_event(scenario_id):
     graph = None
 
     def factory(**kwargs):
@@ -103,11 +111,22 @@ def test_wrong_destination_cannot_pass_even_with_a_success_event():
         graph = ObservedNavigationGraph(position=9.0, **kwargs)
         return graph
 
-    result = scenarios.run_scenario('navigation', factory, lambda event: None)
+    result = scenarios.run_scenario(scenario_id, factory, lambda event: None)
     assert not result['passed']
     assert '거실' in result['error']
     assert graph.closed
     assert result['evidence']['checks'][-1]['passed'] is False
+
+
+def test_capability_question_scenario_detects_an_unwanted_navigation(monkeypatch):
+    graph = ObservedNavigationGraph(lambda event: None)
+    monkeypatch.setattr(scenarios, '_observe', lambda *args, **kwargs: None)
+    result = scenarios.run_scenario('capability-question', lambda **kwargs: graph,
+                                    lambda event: None)
+    assert graph.utterances == ['거실로 갈 수 있어?']
+    assert not result['passed']
+    assert result['evidence']['goals']
+    assert graph.closed
 
 
 def test_missing_manager_result_does_not_become_success(monkeypatch):
