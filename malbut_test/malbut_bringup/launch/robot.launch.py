@@ -329,6 +329,10 @@ def _setup(context):
     def child_exited(event, launch_context):
         if launch_context.is_shutdown or event.action in gates:
             return []
+        if (getattr(launch_context.locals, 'malbut_recovery_owner', False)
+                and getattr(launch_context.locals, 'malbut_startup_complete', False)):
+            return [LogInfo(msg=f'Bringup child stopped: {event.process_name}; '
+                            'use manual recovery to restart stopped nodes')]
         if (isinstance(event.action, Node)
                 and str(event.action.node_package) == 'malbut_resource_monitor'):
             # Measurement is optional and must never stop an application.

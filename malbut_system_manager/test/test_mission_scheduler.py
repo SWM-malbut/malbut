@@ -1,5 +1,7 @@
 """Unit tests for the ROS-independent mission scheduling policy."""
 
+from dataclasses import replace
+
 import pytest
 
 from malbut_system_manager.mission_scheduler import MissionScheduler
@@ -73,6 +75,17 @@ def _completion(effects, mission_id):
         for completion in effects.complete
         if completion.mission_id == mission_id
     )
+
+
+def test_recovery_cannot_be_replaced_by_another_mission():
+    """Do not begin driving while a manual stage check is in progress."""
+    state, scheduler = _ready_scheduler()
+    recovery = _mission('recovery', priority=MissionPriority.URGENT)
+    recovery.capability = replace(recovery.capability, capability_id='recovery')
+    assert scheduler.submit(recovery).start == ['recovery']
+    incoming = scheduler.submit(_mission('driving', priority=MissionPriority.URGENT))
+    assert not incoming.cancel and not incoming.start
+    assert 'recovery is in progress' in _completion(incoming, 'driving').message
 
 
 def test_background_missions_run_concurrently_without_leaving_idle():

@@ -455,6 +455,10 @@ class MissionScheduler:
                 effects.updated.add(previous.mission_id)
 
     def _gate_error(self, mission: MissionRecord) -> str:
+        if any(other.mission_id != mission.mission_id
+               and other.capability.capability_id == 'recovery'
+               for other in self.state.all()):
+            return 'manual recovery is in progress'
         if not self.state.ready:
             return 'system manager is still booting'
         if self.state.emergency:

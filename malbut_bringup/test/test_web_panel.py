@@ -277,6 +277,19 @@ def test_autoslam_uses_manager_when_available():
     bridge.clients['autoslam'].send_goal_async.assert_not_called()
 
 
+def test_recovery_feedback_exposes_stage_through_existing_manager_action():
+    """Unwrap only recovery's nested ExecuteMission feedback for the viewer."""
+    import yaml
+    bridge, _ = _bridge(manager_ready=True)
+    request_id = bridge.submit({'command': 'start', 'capability': 'recovery', 'arguments': {}})
+    bridge._drain()
+    bridge._feedback(request_id, SimpleNamespace(feedback=SimpleNamespace(
+        state='RUNNING', feedback_yaml=yaml.safe_dump({
+            'state': 'RUNNING', 'feedback_yaml': 'state: CHECKING\nstage: navigation\n'}))))
+    assert bridge.data.requests[request_id]['feedback']['feedback_yaml'] == (
+        'state: CHECKING\nstage: navigation\n')
+
+
 def test_navigation_arguments_use_public_goal_without_arbitrary_behavior_tree():
     """Translate finite map coordinates, leaving Nav2's default behavior intact."""
     goal = mission_arguments('navigate_to_pose', {'x': 1, 'y': -2, 'yaw': 0})

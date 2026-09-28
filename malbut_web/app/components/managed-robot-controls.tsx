@@ -32,13 +32,14 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
   const maps = Array.isArray(target.maps) ? target.maps.map(record).filter((map) => typeof map.id === "string") : [];
   const requests = Array.isArray(target.requests) ? target.requests.map(record) : [];
   const active = requests.filter((request) => !terminal.has(String(request.state)));
+  const recovering = active.some((request) => request.capability === "recovery");
   const managed = snapshot.state?.nav2.robot_interface === "malbut_manager_v1";
   const disabled = !isOwner || !snapshot.online || !managed || busy;
   const stopped = runtime.state === "STOPPED";
   const running = runtime.state === "RUNNING";
   const switching = localization.mode === "SWITCHING";
-  const navigationReady = runtime.mode === "navigation" && runtime.ready === true && servers.manager === true;
-  const mappingReady = runtime.mode === "mapping" && runtime.ready === true && servers.autoslam === true;
+  const navigationReady = !recovering && runtime.mode === "navigation" && runtime.ready === true && servers.manager === true;
+  const mappingReady = !recovering && runtime.mode === "mapping" && runtime.ready === true && servers.autoslam === true;
   const inUse = !stopped && typeof runtime.map === "string" ? runtime.map : "";
   const knownMap = maps.some((map) => map.id === selectedMap);
   const mission = (capability: string, args: Record<string, unknown>) => sendCommand("mission_start", { capability, arguments: args });
@@ -49,7 +50,7 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
   };
   return <>
     <div className="robot-map-panel-card managed-robot-controls">
-      <h3>로봇 실행 준비</h3>
+      <h3>로봇 Bringup</h3>
       {!managed && <p>실로봇 연결을 기다리고 있습니다.</p>}
       <p>{String(runtime.message || runtime.state || "상태 수신 대기")}</p>
       {Array.isArray(runtime.waiting) && runtime.waiting.length > 0 && <p>준비 대기: {runtime.waiting.join(", ")}</p>}
@@ -59,9 +60,14 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
         {localization.message ? ` · ${String(localization.message)}` : ""}
       </p>}
       <div className="robot-map-actions is-inline">
-        <button disabled={disabled || switching || !(stopped || (running && runtime.mode !== "mapping"))}
+        <button disabled={disabled || recovering || switching || !(stopped || (running && runtime.mode !== "mapping"))}
           onClick={() => void sendCommand("runtime_start", { mode: "mapping" })}>
-          {stopped ? "지도 만들기 모드" : "지도 만들기로 전환"}
+          {stopped ? "Bringup 시작 (새 지도)" : "위치 추정 전환 (새 지도 / SLAM)"}
+        </button>
+        <button className="is-secondary"
+          disabled={disabled || !running || servers.manager !== true || switching || recovering}
+          onClick={() => void mission("recovery", {})}>
+          {recovering ? "Bringup 복구 중…" : "Bringup 복구"}
         </button>
         <button className="is-secondary" disabled={disabled || stopped || runtime.state === "STOPPING"} onClick={() => void sendCommand("runtime_stop")}>Bringup 종료</button>
       </div>
@@ -74,9 +80,9 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
         </select>
       </label>
       <div className="robot-map-actions">
-        <button disabled={disabled || switching || !knownMap || !(stopped || running) || selectedMap === inUse}
+        <button disabled={disabled || recovering || switching || !knownMap || !(stopped || running) || selectedMap === inUse}
           onClick={() => void sendCommand("runtime_start", { mode: "navigation", map: selectedMap })}>
-          {stopped ? "선택한 지도로 주행 준비" : "선택한 지도로 전환"}
+          {stopped ? "Bringup 시작 (선택한 지도)" : "위치 추정 전환 (선택한 지도)"}
         </button>
         <button className="is-danger" disabled={disabled || !knownMap || selectedMap === inUse} onClick={deleteMap}>
           선택한 지도 삭제
@@ -85,6 +91,7 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
       <small>{stopped
         ? "준비만으로 자동 주행하지 않습니다."
         : "실행 중에는 재시작 없이 위치 추정만 바꿉니다. 이동 중인 작업이 있으면 거부합니다. 사용 중인 지도는 삭제할 수 없습니다."}</small>
+      <small>복구는 Bringup 순서대로 꺼진 실행 대상만 다시 켭니다. 정상 노드와 지도는 유지하며, 이전 주행을 자동 재개하지 않습니다.</small>
     </div>
     <div className="robot-map-panel-card managed-robot-controls">
       <h3>기능 실행</h3>
@@ -123,7 +130,7 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
       {requests.length === 0 ? <p>아직 요청한 작업이 없습니다.</p> : requests.slice().reverse().map((request) => {
         const result = record(request.result);
         return <p key={String(request.id)}>
-          <strong>{String(request.capability)} · {String(request.state)}{requestPhase(request)}</strong><br />
+          <strong>{request.capability === "recovery" ? "Bringup 복구" : String(request.capability)} · {String(request.state)}{requestPhase(request)}</strong><br />
           {String(request.message || result.message || yamlMessage(result.result_yaml))}
         </p>;
       })}
@@ -152,7 +159,9 @@ function requestPhase(request: Record<string, unknown>) {
   const feedback = record(request.feedback);
   const manager = typeof feedback.feedback_yaml === "string" ? String(feedback.state ?? "") : "";
   const step = manager ? yamlField(feedback.feedback_yaml, "state") : String(feedback.state ?? "");
-  return (manager && manager !== request.state ? ` (관리자 ${manager})` : "") + (step ? ` · ${step}` : "");
+  const stage = request.capability === "recovery" ? yamlField(feedback.feedback_yaml, "stage") : "";
+  return (manager && manager !== request.state ? ` (관리자 ${manager})` : "") +
+    (step ? ` · ${step}` : "") + (stage ? ` · ${stage}` : "");
 }
 
 export function record(value: unknown): Record<string, unknown> {

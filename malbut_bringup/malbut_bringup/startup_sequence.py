@@ -1,6 +1,8 @@
 """Launch dependent groups only after their read-only startup probe succeeds."""
 
-from launch.actions import LogInfo, RegisterEventHandler
+import json
+
+from launch.actions import LogInfo, OpaqueFunction, RegisterEventHandler, SetLaunchConfiguration
 from launch.event_handlers import OnProcessExit
 from launch_ros.actions import Node
 
@@ -20,11 +22,13 @@ def sequential_startup(stages, parameters, *, timeout_s, speech_timeout_s):
                 'startup_nodes': ','.join(nodes),
                 'startup_timeout_s': speech_timeout_s if kind == 'speech' else timeout_s,
             }]))
+        gates[-1]._malbut_readiness_probe = True
     completed = set()
 
     def begin(index):
         _kind, label, actions, _nodes = stages[index]
-        return [LogInfo(msg=f'Bringup [{index}/{len(stages)}] 준비 중: {label}'),
+        return [SetLaunchConfiguration('malbut_startup_stage', json.dumps([index, label])),
+                LogInfo(msg=f'Bringup [{index}/{len(stages)}] 준비 중: {label}'),
                 *actions, gates[index]]
 
     def finished(index):
@@ -38,6 +42,11 @@ def sequential_startup(stages, parameters, *, timeout_s, speech_timeout_s):
                 f'Bringup [{index + 1}/{len(stages)}] 완료: {stages[index][1]}'))]
             if index + 1 < len(stages):
                 actions.extend(begin(index + 1))
+            else:
+                def mark_complete(context):
+                    context.extend_globals({'malbut_startup_complete': True})
+                    return []
+                actions.append(OpaqueFunction(function=mark_complete))
             return actions
         return on_exit
 

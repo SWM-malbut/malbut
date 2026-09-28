@@ -295,6 +295,29 @@ def test_nav2_is_composed_with_collision_monitor_and_zone_filter(launch_module):
     assert _nodes(actions, 'zone_filter')[0].node_package == 'malbut_bringup'
 
 
+def test_nav2_recovery_reloads_components_and_selected_map_without_motion(launch_module):
+    """A fresh container needs fresh loaders and the current saved-map settings."""
+    from geometry_msgs.msg import PoseWithCovarianceStamped
+    context = _context(launch_module)
+    actions = _core_actions(launch_module, context)
+    container = _nodes(actions, 'component_container_isolated')[0]
+    pose = PoseWithCovarianceStamped()
+    pose.header.frame_id = 'map'
+    pose.pose.pose.position.x = 1.5
+    pose.pose.pose.orientation.w = 1.0
+    reload = container._malbut_recovery_followup
+    first = reload({'mode': 'LOCALIZATION', 'map': '/maps/home.yaml'}, pose)
+    second = reload({'mode': 'MAPPING'}, None)
+    assert first[0] is not second[0]
+    saved = _components(context, first)
+    assert saved['map_server']['parameters'][1]['yaml_filename'] == '/maps/home.yaml'
+    assert saved['amcl']['parameters'][1]['set_initial_pose'] is True
+    assert saved['amcl']['parameters'][1]['initial_pose.x'] == 1.5
+    assert saved['lifecycle_manager_localization']['parameters'][0]['autostart'] is True
+    mapping = _components(context, second)
+    assert mapping['lifecycle_manager_localization']['parameters'][0]['autostart'] is False
+
+
 @pytest.mark.parametrize('options', [{'relocalization': 'false'}, {'restore_pose': 'false'}])
 def test_pose_finding_can_be_left_to_the_operator(launch_module, options):
     """Without it the manager loads maps and the operator sets the pose."""
@@ -633,6 +656,19 @@ def test_parent_never_leaves_partial_speech_pipeline(launch_module, package):
     node = Node(package=package, executable='test')
     with pytest.raises(RuntimeError, match='Bringup child exited'):
         _process_exit(actions, context, node)
+
+
+def test_managed_successful_bringup_keeps_surviving_nodes_for_manual_recovery(launch_module):
+    """The new policy is opt-in and applies only after every initial stage passed."""
+    context = _context(launch_module, start_hardware='false', perception='false')
+    actions = _core_actions(launch_module, context)
+    node = Node(package='malbut_stt', executable='test')
+    context.extend_globals({'malbut_recovery_owner': True})
+    with pytest.raises(RuntimeError, match='Bringup child exited'):
+        _process_exit(actions, context, node)
+    context.extend_globals({'malbut_startup_complete': True})
+    result = _process_exit(actions, context, node, returncode=-11)
+    assert result and all(type(action).__name__ == 'LogInfo' for action in result)
 
 
 @pytest.fixture

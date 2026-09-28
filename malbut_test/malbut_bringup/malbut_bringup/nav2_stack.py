@@ -8,6 +8,9 @@ whose output passes the Collision Monitor, and saved-map Zones reach both
 costmaps through the keepout filter servers.
 """
 
+import math
+from pathlib import Path
+
 from ament_index_python.packages import get_package_share_directory, PackageNotFoundError
 from launch_ros.actions import LoadComposableNodes, Node
 from launch_ros.descriptions import ComposableNode
@@ -81,10 +84,11 @@ def nav2_actions(params_file, *, scan_topic, odom_topic):
     remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static'),
                   ('/scan_raw', scan_topic), ('/odom', odom_topic)]
 
-    def component(name):
+    def component(name, overrides=None):
         package, plugin = COMPONENTS[name]
         return ComposableNode(
-            package=package, plugin=plugin, name=name, parameters=[params_file],
+            package=package, plugin=plugin, name=name,
+            parameters=[params_file] + ([overrides] if overrides else []),
             remappings=remappings + MOTION_REMAPPINGS.get(name, []))
 
     def lifecycle_manager(name, nodes, autostart):
@@ -99,14 +103,43 @@ def nav2_actions(params_file, *, scan_topic, odom_topic):
     nodes.extend(component(name) for name in LOCALIZATION_NODES)
     nodes.append(lifecycle_manager(
         'lifecycle_manager_localization', LOCALIZATION_NODES, False))
-    return [
-        Node(
+    container = Node(
             package='rclcpp_components', executable='component_container_isolated',
             name=CONTAINER, output='screen',
             # The costmaps inside the servers read the same file through the
             # container's global arguments, as in nav2_bringup.
             parameters=[params_file, {'autostart': True, 'use_sim_time': False}],
-            remappings=remappings),
+            remappings=remappings)
+
+    def recovery_components(localization, pose):
+        # A respawned component container is empty: load fresh component
+        # descriptions, not the already-executed initial LoadComposableNodes.
+        selected = localization.get('map') if localization.get('mode') == 'LOCALIZATION' else None
+        mask = Path.home() / '.ros/malbut/zones/zone_mask.yaml'
+        restored = [component(name, {'yaml_filename': str(mask)}
+                              if name == 'zone_filter_mask_server' and mask.is_file() else {})
+                    for name in NAVIGATION_NODES]
+        restored.append(lifecycle_manager(
+            'lifecycle_manager_navigation', NAVIGATION_NODES, True))
+        initial_pose = {}
+        if selected and pose is not None and pose.header.frame_id == 'map':
+            position, q = pose.pose.pose.position, pose.pose.pose.orientation
+            initial_pose = {'set_initial_pose': True, 'initial_pose.x': position.x,
+                            'initial_pose.y': position.y, 'initial_pose.z': position.z,
+                            'initial_pose.yaw': math.atan2(
+                                2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y*q.y + q.z*q.z))}
+        restored.extend([
+            component('map_server', {'yaml_filename': selected or ''}),
+            component('amcl', initial_pose),
+            lifecycle_manager(
+                'lifecycle_manager_localization', LOCALIZATION_NODES, bool(selected)),
+        ])
+        return [LoadComposableNodes(target_container='/' + CONTAINER,
+                                    composable_node_descriptions=restored)]
+
+    container._malbut_recovery_followup = recovery_components
+    return [
+        container,
         LoadComposableNodes(target_container='/' + CONTAINER,
                             composable_node_descriptions=nodes),
         Node(
