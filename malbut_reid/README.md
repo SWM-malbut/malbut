@@ -31,7 +31,7 @@ Bringup에서 한 번 실행하며 FollowPerson 실행·취소와 수명을 공�
 
 RGB/검출은 ROS `message_filters.TimeSynchronizer`로 **같은 센서 시각**만
 연결하고 frame ID도 확인한다. 검출이 늦게 도착해도 더 최신 영상으로 대체하지
-않는다. `sync_queue_size`는 이 지연을 흡수할 이미지 개수(기본 60)이며 처리 Hz를
+않는다. `sync_queue_size`는 이 지연을 흡수할 이미지 개수(기본 10)이며 처리 Hz를
 제한하지 않는다. 해당 RGB가 유실되거나 이미 버퍼에서 빠졌으면 그 결과는
 처리할 수 없다. 입력 구독은 Sensor Data QoS, 출력은 Reliable/depth 10이다.
 

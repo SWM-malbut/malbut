@@ -197,7 +197,7 @@ class PersonLocalizerNode(Node):
             'bearing_only_uncertainty_m': 2.0,
             'person_thickness_m': 0.35,
             'sync_queue_size': 3,
-            'sync_slop_sec': 0.08,
+            'sync_slop_sec': 0.02,
             'identity_sync_queue_size': 60,
             'publish_debug_image': True,
             'debug_image_transport': 'compressed',

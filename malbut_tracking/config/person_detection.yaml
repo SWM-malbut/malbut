@@ -31,7 +31,7 @@
     # Match aligned RGB-D first, then retain pairs until the identity result
     # for that exact source RGB stamp arrives. No processing rate limit.
     sync_queue_size: 3
-    sync_slop_sec: 0.08
+    sync_slop_sec: 0.02
     identity_sync_queue_size: 60
     publish_debug_image: true
     debug_image_transport: compressed
