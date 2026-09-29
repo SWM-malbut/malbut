@@ -459,7 +459,9 @@ class MissionScheduler:
                and other.capability.capability_id == 'recovery'
                for other in self.state.all()):
             return 'manual recovery is in progress'
-        if not self.state.ready:
+        # Recovery's owner admits only a failed startup gate or a previously
+        # ready Bringup. Ordinary missions must remain blocked during startup.
+        if not self.state.ready and mission.capability.capability_id != 'recovery':
             return 'system manager is still booting'
         if self.state.emergency:
             return 'emergency stop is active'

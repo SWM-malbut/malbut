@@ -96,6 +96,9 @@ def nav2_actions(params_file, *, scan_topic, odom_topic):
             package='nav2_lifecycle_manager',
             plugin='nav2_lifecycle_manager::LifecycleManager', name=name,
             parameters=[{'use_sim_time': False, 'autostart': autostart,
+                         # Keep bond failure detection, but only the explicit
+                         # manual recovery may reactivate a failed group.
+                         'attempt_respawn_reconnection': False,
                          'node_names': list(nodes)}])
 
     nodes = [component(name) for name in NAVIGATION_NODES]
@@ -111,16 +114,10 @@ def nav2_actions(params_file, *, scan_topic, odom_topic):
             parameters=[params_file, {'autostart': True, 'use_sim_time': False}],
             remappings=remappings)
 
-    def recovery_components(localization, pose):
-        # A respawned component container is empty: load fresh component
-        # descriptions, not the already-executed initial LoadComposableNodes.
+    def recovery_parameters(localization, pose):
+        """Restore maps cleared by cleanup, not just by process exit."""
         selected = localization.get('map') if localization.get('mode') == 'LOCALIZATION' else None
         mask = Path.home() / '.ros/malbut/zones/zone_mask.yaml'
-        restored = [component(name, {'yaml_filename': str(mask)}
-                              if name == 'zone_filter_mask_server' and mask.is_file() else {})
-                    for name in NAVIGATION_NODES]
-        restored.append(lifecycle_manager(
-            'lifecycle_manager_navigation', NAVIGATION_NODES, True))
         initial_pose = {}
         if selected and pose is not None and pose.header.frame_id == 'map':
             position, q = pose.pose.pose.position, pose.pose.pose.orientation
@@ -128,16 +125,39 @@ def nav2_actions(params_file, *, scan_topic, odom_topic):
                             'initial_pose.y': position.y, 'initial_pose.z': position.z,
                             'initial_pose.yaw': math.atan2(
                                 2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y*q.y + q.z*q.z))}
-        restored.extend([
-            component('map_server', {'yaml_filename': selected or ''}),
-            component('amcl', initial_pose),
-            lifecycle_manager(
-                'lifecycle_manager_localization', LOCALIZATION_NODES, bool(selected)),
-        ])
+        return {
+            'zone_filter_mask_server': {'yaml_filename': str(mask)} if mask.is_file() else {},
+            'map_server': {'yaml_filename': selected or ''}, 'amcl': initial_pose,
+        }
+
+    def recovery_lifecycle(localization, pose):
+        parameters = recovery_parameters(localization, pose)
+        groups = []
+        # Restore map/AMCL before the planner waits for map TF. In mapping mode
+        # these nodes are intentionally unconfigured; SLAM remains the owner.
+        if localization.get('mode') == 'LOCALIZATION' and localization.get('map'):
+            groups.append(dict(manager='lifecycle_manager_localization',
+                               nodes=LOCALIZATION_NODES, parameters=parameters))
+        groups.append(dict(manager='lifecycle_manager_navigation',
+                           nodes=NAVIGATION_NODES, parameters=parameters))
+        return groups
+
+    def recovery_components(localization, pose):
+        # A respawned container is empty. The recovery owner activates these
+        # groups explicitly after loading; no competing autostart transition.
+        parameters = recovery_parameters(localization, pose)
+        restored = [component(name, parameters.get(name)) for name in NAVIGATION_NODES]
+        restored.append(lifecycle_manager(
+            'lifecycle_manager_navigation', NAVIGATION_NODES, False))
+        restored.extend(component(name, parameters[name]) for name in LOCALIZATION_NODES)
+        restored.append(lifecycle_manager(
+            'lifecycle_manager_localization', LOCALIZATION_NODES, False))
         return [LoadComposableNodes(target_container='/' + CONTAINER,
                                     composable_node_descriptions=restored)]
 
     container._malbut_recovery_followup = recovery_components
+    container._malbut_recovery_lifecycle = recovery_lifecycle
+    container._malbut_restart_unresponsive = True
     return [
         container,
         LoadComposableNodes(target_container='/' + CONTAINER,

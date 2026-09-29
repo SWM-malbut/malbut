@@ -9,6 +9,7 @@ import json
 import pytest
 
 from lifecycle_msgs.msg import State
+from nav2_msgs.msg import Costmap
 from rclpy.clock import ClockType
 from rclpy.time import Time
 from sensor_msgs.msg import Image, LaserScan
@@ -139,7 +140,7 @@ def test_restarted_lifecycle_server_can_be_queried_again(monkeypatch):
     node.lifecycle['controller_server'] = [service, pending, False, 'inactive']
     node.check()
     assert pending.cancelled()
-    assert node.lifecycle['controller_server'][3] == 'missing'
+    assert node.lifecycle['controller_server'][3] == 'service_not_discovered'
     assert node.lifecycle['controller_server'][1] is None
     assert not node.ready
     service.service_is_ready.return_value = True
@@ -161,6 +162,33 @@ def test_old_sensor_message_does_not_count_as_fresh_data(monkeypatch):
     assert node.seen['rgb'] == 10.0
 
 
+def test_old_latched_costmap_is_not_proof_of_running_nav2(monkeypatch):
+    """A saved static map can be old; periodically published costmaps cannot."""
+    node = _node(monkeypatch)
+    node.settings['navigation'] = True
+    node.fixed = {'map', 'costmap', 'patrol_costmap'}
+    node.seen.update(map=0.0, costmap=None, patrol_costmap=10.0)
+    node.frames.update(map='map', patrol_costmap='map')
+    message = Costmap(data=[0])
+    message.header.frame_id = 'map'
+    message.header.stamp.sec = 1
+    node._receive('costmap', message)
+    node.check()
+    assert not node.ready
+    assert 'data:costmap' in node.last_missing
+    assert 'data:map' not in node.last_missing
+    assert 'frame:costmap must be map' not in node.last_missing
+    message.header.stamp.sec = 10
+    node._receive('costmap', message)
+    node.check()
+    assert node.ready
+    node.ready = False
+    node.seen['costmap'] = 0.0
+    node.check()
+    assert not node.ready
+    assert 'data:costmap' in node.last_missing
+
+
 def test_lost_lifecycle_response_retries_without_restarting_server(monkeypatch):
     """Reproduce get_state response loss while Nav2 stays discoverable."""
     node = _node(monkeypatch)
@@ -180,6 +208,7 @@ def test_lost_lifecycle_response_retries_without_restarting_server(monkeypatch):
     assert pending.cancelled()
     service.remove_pending_request.assert_called_once_with(pending)
     assert service.call_async.call_count == 2
+    assert node.lifecycle['amcl'][3] == 'response_timeout'
     assert not node.ready  # Retrying alone is not proof that Nav2 is active.
     retry.set_result(SimpleNamespace(current_state=State(id=State.PRIMARY_STATE_ACTIVE)))
     node.check()

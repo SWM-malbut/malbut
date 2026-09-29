@@ -88,6 +88,16 @@ def test_recovery_cannot_be_replaced_by_another_mission():
     assert 'recovery is in progress' in _completion(incoming, 'driving').message
 
 
+def test_only_recovery_can_be_requested_before_readiness():
+    """The recovery owner, not ordinary motion, can repair a failed startup gate."""
+    state, scheduler = _ready_scheduler()
+    state.ready = False
+    assert not scheduler.submit(_mission('driving')).start
+    recovery = _mission('recovery', priority=MissionPriority.URGENT)
+    recovery.capability = replace(recovery.capability, capability_id='recovery')
+    assert scheduler.submit(recovery).start == ['recovery']
+
+
 def test_background_missions_run_concurrently_without_leaving_idle():
     """Background-only work must remain concurrent and report IDLE."""
     state, scheduler = _ready_scheduler()

@@ -171,7 +171,7 @@ class RobotReadiness(Node):
             return
         # Header time must be wall time too; a recently received old image is
         # not evidence that the physical camera is delivering current data.
-        if label not in self.fixed:
+        if label not in self.fixed or label in ('costmap', 'patrol_costmap'):
             age = (self.get_clock().now() - Time.from_msg(
                 message.header.stamp)).nanoseconds * 1e-9
             if age < -self.timeout or age > self.timeout:
@@ -209,7 +209,8 @@ class RobotReadiness(Node):
         missing = [
             f'data:{label}' for label, received in self.seen.items()
             if received is None or (
-                label not in self.fixed and now - received > self.timeout)
+                (label not in self.fixed or label in ('costmap', 'patrol_costmap'))
+                and now - received > self.timeout)
         ]
         base = self.settings['robot_frame']
         for label in ('scan', 'camera_info', 'odom', 'rgb', 'depth', 'perception'):
@@ -230,7 +231,7 @@ class RobotReadiness(Node):
             if not self._scan_transform_ready(target, now):
                 missing.append(f'TF:scan->{target}@stamp')
             for label in self.fixed:
-                if self.frames.get(label) != target:
+                if label in self.frames and self.frames[label] != target:
                     missing.append(f'frame:{label} must be {target}')
         for name, client in self.action_clients:
             if not client.server_is_ready():
@@ -245,14 +246,16 @@ class RobotReadiness(Node):
                 future.cancel()
                 future = entry[1] = None
                 entry[2] = False
+                entry[3] = 'response_timeout'
             if not client.service_is_ready():
                 if future is not None:
                     client.remove_pending_request(future)
                     future.cancel()
                 entry[1] = None
                 entry[2] = False
-                # No get_state service: the component never loaded into the container.
-                entry[3] = 'missing'
+                # Discovery absence does not prove the process exited or that
+                # the component never loaded; DDS/executor failure can look alike.
+                entry[3] = 'service_not_discovered'
             elif future is None or future.done():
                 if future is not None:
                     try:

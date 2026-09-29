@@ -7,13 +7,15 @@ import sys
 import time
 
 from malbut_interfaces.action import ExecuteMission
+import pytest
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.executors import SingleThreadedExecutor
 
 
-def test_manual_recovery_preserves_live_pid_and_restarts_only_exited_child(tmp_path, monkeypatch):
-    """A successful startup, PASS, stopped-child restart and second PASS work end-to-end."""
+@pytest.mark.parametrize('failure', ['exited', 'unresponsive'])
+def test_manual_recovery_preserves_healthy_pid(tmp_path, monkeypatch, failure):
+    """Test real launch shutdown/restart; ROS-unresponsive diagnosis is injected."""
     fixture = tmp_path / 'child.py'
     fixture.write_text('''import os, pathlib, sys, time
 root = pathlib.Path(sys.argv[2])
@@ -37,10 +39,24 @@ else:
 from launch.actions import OpaqueFunction, RegisterEventHandler, SetLaunchConfiguration
 from launch.event_handlers import OnProcessExit
 from launch_ros.actions import Node
+from pathlib import Path
+from malbut_system_manager.lifecycle_recovery import LifecycleRecovery, LifecycleUnavailable
+def injected_recover(self, spec, deadline, canceled, report):
+    marker = Path({str(tmp_path / 'unresponsive')!r})
+    if marker.exists():
+        marker.unlink()
+        raise LifecycleUnavailable('/fixture/get_state', 'response_timeout')
+    report(dict(state='PASS', manager='fixture', before={{}}, action='NONE'))
+LifecycleRecovery.recover = injected_recover
 def generate_launch_description():
     def child(name):
-        return Node(executable={sys.executable!r},
+        node = Node(executable={sys.executable!r},
                     arguments=[{str(fixture)!r}, name, {str(tmp_path)!r}])
+        if name == 'first':
+            node._malbut_restart_unresponsive = True
+            node._malbut_recovery_lifecycle = lambda *_: [
+                dict(manager='fixture', nodes=['fixture'])]
+        return node
     probe = child('probe')
     probe._malbut_readiness_probe = True
     def complete(event, context):
@@ -94,11 +110,15 @@ def generate_launch_description():
             second = int((tmp_path / 'second').read_text())
             assert 'restarted: []' in recover()
             assert int((tmp_path / 'first').read_text()) == first
-            os.kill(first, signal.SIGTERM)
-            deadline = time.monotonic() + 5.0
-            while 'process has died' not in log.read_text():
-                assert time.monotonic() < deadline, log.read_text()
-                time.sleep(0.05)
+            if failure == 'exited':
+                os.kill(first, signal.SIGTERM)
+                deadline = time.monotonic() + 5.0
+                while 'process has died' not in log.read_text():
+                    assert time.monotonic() < deadline, log.read_text()
+                    time.sleep(0.05)
+            else:
+                (tmp_path / 'unresponsive').touch()
+                os.kill(first, 0)  # Still alive; the owner's targeted shutdown must stop it.
             assert 'restarted: []' not in recover()
             replacement = int((tmp_path / 'first').read_text())
             assert replacement != first
