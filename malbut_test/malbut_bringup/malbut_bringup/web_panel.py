@@ -18,6 +18,8 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
+import yaml
+
 from .web_map import MapCache
 from .web_runtime import RuntimeSupervisor, SavedMapCatalog
 from .zones import COSTS, MAX_POINTS, MAX_ZONES, read_zones, write_zones, zone_feature, ZoneError
@@ -105,7 +107,10 @@ def validate_command(payload):
         raise ValueError('Invalid command')
     capability = payload['capability']
     args = payload['arguments']
-    if capability == 'autoslam':
+    if capability == 'recovery':
+        if args:
+            raise ValueError('recovery accepts no arguments')
+    elif capability == 'autoslam':
         if set(args) != {'map_name'} or not isinstance(args['map_name'], str):
             raise ValueError('map_name is required')
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', args['map_name']):
@@ -897,7 +902,19 @@ class RosBridge:
         future.add_done_callback(lambda result: self._accepted(request_id, result))
 
     def _feedback(self, request_id, message):
-        self.data.update(request_id, feedback=self.to_dict(message.feedback))
+        feedback = self.to_dict(message.feedback)
+        with self.data.lock:
+            recovery = self.data.requests.get(request_id, {}).get('capability') == 'recovery'
+        if recovery:
+            # The existing ExecuteMission type is nested once by the manager.
+            # Expose its stage YAML like other capability feedback to the UI.
+            try:
+                nested = yaml.safe_load(feedback.get('feedback_yaml', ''))
+                if isinstance(nested, dict) and isinstance(nested.get('feedback_yaml'), str):
+                    feedback['feedback_yaml'] = nested['feedback_yaml']
+            except yaml.YAMLError:
+                pass
+        self.data.update(request_id, feedback=feedback)
 
     def _accepted(self, request_id, future):
         try:

@@ -150,6 +150,9 @@ def _setup(context):
         if launch_context.is_shutdown or stage == 'stopped':
             return []
         if event.action in runtime_nodes:
+            if (getattr(launch_context.locals, 'malbut_recovery_owner', False)
+                    and getattr(launch_context.locals, 'malbut_startup_complete', False)):
+                return []  # Recorded by the owner for manual recovery.
             return fail(f'Speech runtime child exited: {event.process_name}')
         return []
 

@@ -6,9 +6,9 @@
     detections_2d_topic: /perception/person/detections_2d
 
     # Retain source RGB frames until the matching delayed YOLO result arrives.
-    # This is a memory bound, not a processing-rate limit (60 VGA BGR frames
-    # occupy approximately 53 MiB). Increase only for a slower source pipeline.
-    sync_queue_size: 60
+    # This is a memory bound, not a processing-rate limit (10 VGA BGR frames
+    # occupy approximately 8.8 MiB). Results whose RGB was evicted are skipped.
+    sync_queue_size: 10
     opencv_num_threads: 4
 
     # Existing encoder and identity-association policy, unchanged.

@@ -220,7 +220,11 @@ class RuntimeSupervisor:
                 if self._status['state'] == 'STOPPING':
                     raise RuntimeError('Bringup start canceled before launch')
             # One Bringup for both: the mode only picks the first localization.
-            command = ['ros2', 'launch', 'malbut_bringup', 'robot.launch.py',
+            from ament_index_python.packages import get_package_share_directory
+            launch_file = (Path(get_package_share_directory('malbut_bringup'))
+                           / 'launch/robot.launch.py')
+            command = ['ros2', 'run', 'malbut_system_manager', 'managed_bringup',
+                       str(launch_file),
                        'web_panel:=false', 'publish_debug_image:=true',
                        f'start_hardware:={str(start_hardware).lower()}',
                        f'map_directory:={self.catalog.directory}']

@@ -29,7 +29,7 @@ class PersonReidentifierNode(Node):
             'rgb_topic': '/camera/color/image_raw',
             'yolo_detections_topic': '/yolo/detections',
             'detections_2d_topic': '/perception/person/detections_2d',
-            'sync_queue_size': 60,
+            'sync_queue_size': 10,
             'opencv_num_threads': 4,
             'reid_backend': 'auto',
             'reid_model_path': str(

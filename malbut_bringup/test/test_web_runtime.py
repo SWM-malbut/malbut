@@ -111,11 +111,12 @@ def test_navigation_launch_uses_only_fixed_argv_and_explicit_selected_map(runtim
     args, kwargs = popen.call_args
     # One Bringup; the requested mode only selects the first localization.
     assert args[0] == [
-        'ros2', 'launch', 'malbut_bringup', 'robot.launch.py',
+        'ros2', 'run', 'malbut_system_manager', 'managed_bringup', args[0][4],
         'web_panel:=false', 'publish_debug_image:=true', 'start_hardware:=false',
         f'map_directory:={supervisor.catalog.directory}',
         f'map:={supervisor.catalog.resolve("home.yaml")}']
     assert kwargs['start_new_session'] is True
+    assert args[0][4].endswith('/malbut_bringup/launch/robot.launch.py')
     assert not kwargs.get('shell', False)
     with pytest.raises(RuntimeError, match='Stop'):
         supervisor.start('mapping')

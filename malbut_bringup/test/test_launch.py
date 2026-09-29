@@ -225,6 +225,52 @@ def test_one_bringup_starts_everything_and_maps_without_a_saved_map(launch_modul
     assert _parameters(context, _nodes(actions, 'wait_for_robot')[0])['relocalization'] is True
 
 
+def test_camera_dds_profile_is_scoped_to_vendor_hardware(launch_module):
+    """Only newly launched vendor hardware inherits the larger SHM segment."""
+    context = _context(launch_module)
+    context.environment['FASTRTPS_DEFAULT_PROFILES_FILE'] = '/existing/profile.xml'
+    context.environment['RMW_IMPLEMENTATION'] = 'rmw_fastrtps_cpp'
+    context.environment.pop('RMW_FASTRTPS_USE_QOS_FROM_XML', None)
+    actions = _core_actions(launch_module, context)
+    hardware = next(action for action in actions if isinstance(action, GroupAction))
+    # Execute the group's push/set/pop actions without running vendor code.
+    for action in hardware.get_sub_entities():
+        if isinstance(action, IncludeLaunchDescription):
+            assert context.environment['FASTRTPS_DEFAULT_PROFILES_FILE'] == str(
+                ROOT / 'malbut_bringup/config/fastdds_camera.xml')
+            assert context.environment['RMW_IMPLEMENTATION'] == 'rmw_fastrtps_cpp'
+            assert 'RMW_FASTRTPS_USE_QOS_FROM_XML' not in context.environment
+        else:
+            action.execute(context)
+    assert context.environment['FASTRTPS_DEFAULT_PROFILES_FILE'] == '/existing/profile.xml'
+    for action in actions:
+        if isinstance(action, GroupAction) and action is not hardware:
+            assert not any(isinstance(child, SetEnvironmentVariable)
+                           for child in action.get_sub_entities())
+
+
+def test_camera_dds_profile_keeps_udp_and_does_not_change_endpoint_qos():
+    """SHM is exactly 4 MiB; default UDP discovery and endpoint policies remain."""
+    import xml.etree.ElementTree as ET
+    path = ROOT / 'malbut_bringup/config/fastdds_camera.xml'
+    profile = ET.parse(path).getroot()
+    ns = {'dds': 'http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles'}
+    transports = profile.findall('dds:transport_descriptors/dds:transport_descriptor', ns)
+    by_type = {item.findtext('dds:type', namespaces=ns): item for item in transports}
+    assert set(by_type) == {'SHM', 'UDPv4'}
+    assert int(by_type['SHM'].findtext('dds:segment_size', namespaces=ns)) == 4 * 1024**2
+    participant = profile.find('dds:participant', ns)
+    assert participant.get('is_default_profile') == 'true'
+    selected = participant.findall('dds:rtps/dds:userTransports/dds:transport_id', ns)
+    assert {item.text for item in selected} == {
+        item.findtext('dds:transport_id', namespaces=ns) for item in transports}
+    assert participant.findtext('dds:rtps/dds:useBuiltinTransports', namespaces=ns) == 'false'
+    assert profile.find('dds:publisher', ns) is None
+    assert profile.find('dds:subscriber', ns) is None
+    assert path.read_bytes() == (
+        ROOT / 'malbut_test/malbut_bringup/config/fastdds_camera.xml').read_bytes()
+
+
 def _components(context, actions):
     loader = next(item for item in actions if isinstance(item, LoadComposableNodes))
     assert loader._LoadComposableNodes__target_container == '/nav2_container'
@@ -293,6 +339,29 @@ def test_nav2_is_composed_with_collision_monitor_and_zone_filter(launch_module):
         assert order.index(name) < order.index('planner_server'), name
     assert list(localization['node_names']) == ['map_server', 'amcl']
     assert _nodes(actions, 'zone_filter')[0].node_package == 'malbut_bringup'
+
+
+def test_nav2_recovery_reloads_components_and_selected_map_without_motion(launch_module):
+    """A fresh container needs fresh loaders and the current saved-map settings."""
+    from geometry_msgs.msg import PoseWithCovarianceStamped
+    context = _context(launch_module)
+    actions = _core_actions(launch_module, context)
+    container = _nodes(actions, 'component_container_isolated')[0]
+    pose = PoseWithCovarianceStamped()
+    pose.header.frame_id = 'map'
+    pose.pose.pose.position.x = 1.5
+    pose.pose.pose.orientation.w = 1.0
+    reload = container._malbut_recovery_followup
+    first = reload({'mode': 'LOCALIZATION', 'map': '/maps/home.yaml'}, pose)
+    second = reload({'mode': 'MAPPING'}, None)
+    assert first[0] is not second[0]
+    saved = _components(context, first)
+    assert saved['map_server']['parameters'][1]['yaml_filename'] == '/maps/home.yaml'
+    assert saved['amcl']['parameters'][1]['set_initial_pose'] is True
+    assert saved['amcl']['parameters'][1]['initial_pose.x'] == 1.5
+    assert saved['lifecycle_manager_localization']['parameters'][0]['autostart'] is True
+    mapping = _components(context, second)
+    assert mapping['lifecycle_manager_localization']['parameters'][0]['autostart'] is False
 
 
 @pytest.mark.parametrize('options', [{'relocalization': 'false'}, {'restore_pose': 'false'}])
@@ -633,6 +702,19 @@ def test_parent_never_leaves_partial_speech_pipeline(launch_module, package):
     node = Node(package=package, executable='test')
     with pytest.raises(RuntimeError, match='Bringup child exited'):
         _process_exit(actions, context, node)
+
+
+def test_managed_successful_bringup_keeps_surviving_nodes_for_manual_recovery(launch_module):
+    """The new policy is opt-in and applies only after every initial stage passed."""
+    context = _context(launch_module, start_hardware='false', perception='false')
+    actions = _core_actions(launch_module, context)
+    node = Node(package='malbut_stt', executable='test')
+    context.extend_globals({'malbut_recovery_owner': True})
+    with pytest.raises(RuntimeError, match='Bringup child exited'):
+        _process_exit(actions, context, node)
+    context.extend_globals({'malbut_startup_complete': True})
+    result = _process_exit(actions, context, node, returncode=-11)
+    assert result and all(type(action).__name__ == 'LogInfo' for action in result)
 
 
 @pytest.fixture

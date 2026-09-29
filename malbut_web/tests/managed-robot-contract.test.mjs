@@ -12,6 +12,7 @@ test("real robot commands use a bounded adapter to existing capabilities", () =>
     { capability: "follow_person", arguments: { target_mode: 0, target_person_id: "", desired_distance_m: 0.2 } },
     { capability: "follow_person", arguments: { target_mode: 1, target_person_id: "person-1", desired_distance_m: 1 } },
     { capability: "patrol", arguments: { thoroughness: 2 } },
+    { capability: "recovery", arguments: {} },
     { capability: "autoslam", arguments: { map_name: "home_1" } },
     { capability: "navigate_to_pose", arguments: { x: 1, y: -2, yaw: 0 } },
   ]) assert.deepEqual(parseRobotCommand({ operation: "mission_start", payload }), { operation: "mission_start", payload });
@@ -22,6 +23,7 @@ test("real robot commands use a bounded adapter to existing capabilities", () =>
     { capability: "autoslam", arguments: { map_name: "../home" } },
     { capability: "navigate_to_pose", arguments: { x: Infinity, y: 0, yaw: 0 } },
     { capability: "shell", arguments: {} },
+    { capability: "recovery", arguments: { command: "anything" } },
     { capability: "patrol", arguments: { thoroughness: 1 }, priority: "URGENT" },
   ]) assert.equal(parseRobotCommand({ operation: "mission_start", payload }), null);
 });

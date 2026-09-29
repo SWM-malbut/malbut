@@ -42,11 +42,13 @@ def _package_file(package, relative):
                  f'{package}/{relative}')
 
 
-def _include(path, arguments):
+def _include(path, arguments, *, environment=None):
     # In particular, a child's generic "config" must not affect its siblings.
     # Pass clock mode through the child launch, not a global SetParameter:
     # creating /** first lets named YAML values override later inline wiring.
     return GroupAction([
+        *[SetEnvironmentVariable(name, value)
+          for name, value in (environment or {}).items()],
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(path),
             launch_arguments={
@@ -196,6 +198,12 @@ def _setup(context):
             # The joystick feeds manual_drive instead of the driver, so its
             # commands can no longer mix with autonomous /cmd_vel output.
             'use_joy': 'false',
+        }, environment={
+            # Scope DDS changes to the vendor group that launches Aurora.
+            # Receivers and other Bringup stages retain their own settings.
+            'RMW_IMPLEMENTATION': 'rmw_fastrtps_cpp',
+            'FASTRTPS_DEFAULT_PROFILES_FILE': _package_file(
+                'malbut_bringup', 'config/fastdds_camera.xml'),
         }))
         # Same vendor node and speeds as its hardware launch; only the output moves.
         hardware_actions.append(Node(
@@ -329,6 +337,10 @@ def _setup(context):
     def child_exited(event, launch_context):
         if launch_context.is_shutdown or event.action in gates:
             return []
+        if (getattr(launch_context.locals, 'malbut_recovery_owner', False)
+                and getattr(launch_context.locals, 'malbut_startup_complete', False)):
+            return [LogInfo(msg=f'Bringup child stopped: {event.process_name}; '
+                            'use manual recovery to restart stopped nodes')]
         if (isinstance(event.action, Node)
                 and str(event.action.node_package) == 'malbut_resource_monitor'):
             # Measurement is optional and must never stop an application.

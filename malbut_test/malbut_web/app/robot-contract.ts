@@ -171,6 +171,7 @@ export function parseRobotCommand(value: unknown): {
 function validMission(capability: unknown, value: unknown): boolean {
   if (!isObject(value)) return false;
   const keys = Object.keys(value);
+  if (capability === "recovery") return keys.length === 0;
   if (capability === "autoslam") {
     return keys.length === 1 && typeof value.map_name === "string" &&
       /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value.map_name);

@@ -1,0 +1,23 @@
+schema_version: 1
+capability:
+  id: recovery
+  title: Bringup 수동 복구
+  description: 기존 Bringup 순서대로 종료된 실행 대상만 한 번 재실행한다. 정상 노드는 유지한다.
+command:
+  kind: ACTION
+  name: /malbut/bringup/recover
+  type: malbut_interfaces/action/ExecuteMission
+input:
+  fields:
+    capability_id:
+      type: string
+      description: 고정된 수동 복구 기능
+      default: recovery
+    arguments_yaml:
+      type: string
+      description: 추가 실행 명령은 받지 않는다.
+      default: '{}'
+execution:
+  mode: FOREGROUND
+  priority: URGENT
+  resources: [BASE, SPEAKER]

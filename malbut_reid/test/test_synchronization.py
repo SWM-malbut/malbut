@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 from message_filters import SimpleFilter, TimeSynchronizer
+import pytest
 from sensor_msgs.msg import Image
 from std_msgs.msg import Header
 
@@ -45,15 +46,17 @@ def test_detection_can_arrive_before_rgb_without_pairing_wrong_frame():
     assert paired == [(image, detection)]
 
 
-def test_evicted_rgb_is_not_replaced_by_a_newer_image():
+@pytest.mark.parametrize('queue_size', [2, 10])
+def test_evicted_rgb_is_not_replaced_by_a_newer_image(queue_size):
     rgb, boxes = SimpleFilter(), SimpleFilter()
-    synchronizer = TimeSynchronizer([rgb, boxes], queue_size=2)
+    synchronizer = TimeSynchronizer([rgb, boxes], queue_size=queue_size)
     paired = []
     synchronizer.registerCallback(lambda image, det: paired.append((image, det)))
-    for second in (1, 2, 3):
+    for second in range(1, queue_size + 2):
         rgb.signalMessage(_image(second))
+    assert len(synchronizer.queues[0]) == queue_size
     boxes.signalMessage(_detections(1))
     assert paired == []
-    boxes.signalMessage(_detections(3))
+    boxes.signalMessage(_detections(queue_size + 1))
     assert len(paired) == 1
-    assert paired[0][0].header.stamp.sec == 3
+    assert paired[0][0].header.stamp.sec == queue_size + 1
