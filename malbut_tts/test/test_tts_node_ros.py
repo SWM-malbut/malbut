@@ -28,11 +28,13 @@ class ControlledRuntime:
     def __init__(self, on_status):
         self.on_status = on_status
         self.submitted = []
+        self.request_ids = []
         self.accepted = []
         self.closed = False
 
-    def submit(self, text, request_type=0, *, interim=False):
+    def submit(self, text, request_type=0, *, interim=False, request_id=''):
         self.submitted.append((text, request_type, interim))
+        self.request_ids.append(request_id)
         return 'ros-playback-1'
 
     def control(self, playback_id, command):
@@ -64,6 +66,7 @@ def test_generated_request_kind_service_and_worker_status_round_trip():
         assert SpeechRequest().request_type == SpeechRequest.DIALOGUE == 0
         assert SpeechRequest.NOTIFICATION == 1
         assert SpeechRequest().interim is False
+        assert SpeechRequest().request_id == ''
         assert SpeechPlaybackStatus().interim is False
         tts = tts_node.create_tts_node(ControlledRuntime)
         peer = Node('tts_adapter_test_peer')
@@ -92,12 +95,19 @@ def test_generated_request_kind_service_and_worker_status_round_trip():
         ))
         requests.publish(SpeechRequest(
             text='답변을 준비하고 있어요.', request_type=SpeechRequest.DIALOGUE, interim=True,
+            request_id='weather-request',
         ))
-        spin_until(lambda: len(tts._runtime.submitted) == 2)
+        requests.publish(SpeechRequest(
+            text='날씨를 확인하지 못했어요.', request_type=SpeechRequest.DIALOGUE,
+            request_id='weather-request',
+        ))
+        spin_until(lambda: len(tts._runtime.submitted) == 3)
         assert tts._runtime.submitted == [
             (' 순찰을 마쳤어요.\n', SpeechRequest.NOTIFICATION, False),
             ('답변을 준비하고 있어요.', SpeechRequest.DIALOGUE, True),
+            ('날씨를 확인하지 못했어요.', SpeechRequest.DIALOGUE, False),
         ]
+        assert tts._runtime.request_ids == ['', 'weather-request', 'weather-request']
 
         control = client.call_async(ControlSpeechPlayback.Request(
             playback_id='ros-playback-1', command='pause',
