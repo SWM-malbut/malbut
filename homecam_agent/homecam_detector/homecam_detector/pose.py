@@ -83,6 +83,10 @@ class PersonPoseEstimator:
         keypoint_threshold: float = 0.5,
         input_size: int = 640,
         keep_aspect: bool = False,
+        *,
+        execution_provider: str = 'cpu',
+        intra_op_num_threads: int = 0,
+        allow_spinning: bool = True,
     ) -> None:
         """Load one fixed-shape end-to-end YOLO26 pose graph."""
         path = Path(model_path).expanduser()
@@ -97,9 +101,39 @@ class PersonPoseEstimator:
                 "ONNX Runtime is required for the YOLO26 pose model"
             ) from error
         try:
+            if execution_provider not in ('cpu', 'cuda'):
+                raise ValueError('pose execution provider must be cpu or cuda')
+            if type(intra_op_num_threads) is not int or not 0 <= intra_op_num_threads <= 256:
+                raise ValueError('pose thread count must be an integer in [0, 256]')
+            if type(allow_spinning) is not bool:
+                raise ValueError('pose allow_spinning must be bool')
+            options = {}
+            if intra_op_num_threads or not allow_spinning:
+                session_options = ort.SessionOptions()
+                session_options.intra_op_num_threads = intra_op_num_threads
+                session_options.add_session_config_entry(
+                    'session.intra_op.allow_spinning', '1' if allow_spinning else '0')
+                session_options.add_session_config_entry(
+                    'session.inter_op.allow_spinning', '1' if allow_spinning else '0')
+                options['sess_options'] = session_options
+            providers = ['CPUExecutionProvider']
+            if execution_provider == 'cuda':
+                if 'CUDAExecutionProvider' not in ort.get_available_providers():
+                    raise RuntimeError('CUDAExecutionProvider is not installed')
+                # Optional pip CUDA libraries; system/JetPack libraries may also
+                # satisfy these dependencies. Never install packages at startup.
+                preload = getattr(ort, 'preload_dlls', None)
+                if preload is not None:
+                    preload()
+                providers = [('CUDAExecutionProvider', {'use_tf32': 0}),
+                             'CPUExecutionProvider']
             self._session = ort.InferenceSession(
-                str(path), providers=["CPUExecutionProvider"]
+                str(path), providers=providers, **options
             )
+            if execution_provider == 'cuda':
+                if 'CUDAExecutionProvider' not in self._session.get_providers():
+                    raise RuntimeError('CUDA initialization failed; refusing CPU-only fallback')
+                self._session.disable_fallback()
             inputs = self._session.get_inputs()
             outputs = self._session.get_outputs()
             if (len(inputs) != 1 or inputs[0].shape != [1, 3, input_size, input_size]
@@ -272,12 +306,18 @@ class PersonPoseGate:
 
     def should_infer(self, now: float) -> bool:
         """Reserve this frame for pose inference when it is due."""
+        if not self.is_due(now):
+            return False
+        self._last_inference_at = now
+        return True
+
+    def is_due(self, now: float) -> bool:
+        """Check before conversion without reserving or moving the deadline."""
         if (
             self._last_inference_at is not None
             and now - self._last_inference_at + 1e-9 < self._interval_sec
         ):
             return False
-        self._last_inference_at = now
         return True
 
     def reset(self) -> None:

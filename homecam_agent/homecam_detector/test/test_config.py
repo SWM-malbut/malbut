@@ -14,6 +14,19 @@ def test_default_config_is_valid() -> None:
     assert validate_config(DetectorConfig()) == []
 
 
+def test_pose_execution_settings_are_validated_without_changing_cpu_defaults():
+    default = DetectorConfig()
+    assert (default.pose_execution_provider, default.pose_intra_op_num_threads,
+            default.pose_allow_spinning, default.pose_opencv_num_threads) == ('cpu', 0, True, 0)
+    assert validate_config(replace(
+        default, pose_execution_provider='cuda',
+        pose_intra_op_num_threads=2, pose_allow_spinning=False, pose_opencv_num_threads=1)) == []
+    for changes in ({'pose_execution_provider': 'auto'}, {'pose_intra_op_num_threads': True},
+                    {'pose_intra_op_num_threads': -1}, {'pose_opencv_num_threads': -1},
+                    {'pose_allow_spinning': 'false'}):
+        assert validate_config(replace(default, **changes))
+
+
 def test_navigation_status_topic_must_be_absolute_or_disabled() -> None:
     assert validate_config(
         DetectorConfig(navigation_status_topic="navigate_to_pose/_action/status")

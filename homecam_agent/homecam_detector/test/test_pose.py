@@ -127,6 +127,54 @@ def test_pose_gate_does_not_repeat_same_frame_time() -> None:
     assert gate.should_infer(0.2)
 
 
+def test_early_gate_check_does_not_reserve_or_shift_deadline():
+    gate = PersonPoseGate(5)
+    assert gate.is_due(1)
+    assert gate.is_due(1)
+    assert gate.should_infer(1)
+    assert not gate.is_due(1.1)
+    assert not gate.should_infer(1.1)
+    assert gate.is_due(1.2)
+    assert gate.should_infer(1.2)
+    gate.reset()
+    assert gate.is_due(1.21)
+
+
+def test_cuda_missing_or_failed_must_not_silently_use_cpu(tmp_path, monkeypatch):
+    path = tmp_path / 'model.onnx'
+    path.touch()
+    fake = SimpleNamespace(get_available_providers=lambda: ['CPUExecutionProvider'])
+    monkeypatch.setitem(sys.modules, 'onnxruntime', fake)
+    with pytest.raises(RuntimeError, match='not installed'):
+        PersonPoseEstimator(str(path), execution_provider='cuda')
+    fake.get_available_providers = lambda: ['CUDAExecutionProvider', 'CPUExecutionProvider']
+    fake.InferenceSession = lambda *a, **kw: SimpleNamespace(
+        get_providers=lambda: ['CPUExecutionProvider'])
+    with pytest.raises(RuntimeError, match='refusing CPU-only fallback'):
+        PersonPoseEstimator(str(path), execution_provider='cuda')
+
+
+def test_thread_and_spinning_options_are_explicit(tmp_path, monkeypatch):
+    path = tmp_path / 'model.onnx'
+    path.touch()
+    entries, passed = {}, {}
+    options = SimpleNamespace(add_session_config_entry=entries.__setitem__)
+    session = SimpleNamespace(
+        get_inputs=lambda: [SimpleNamespace(name='images', shape=[1, 3, 640, 640])],
+        get_outputs=lambda: [SimpleNamespace(shape=[1, 300, 57])])
+
+    def create(*args, **kwargs):
+        passed.update(kwargs)
+        return session
+    monkeypatch.setitem(sys.modules, 'onnxruntime', SimpleNamespace(
+        SessionOptions=lambda: options, InferenceSession=create))
+    PersonPoseEstimator(str(path), intra_op_num_threads=2, allow_spinning=False)
+    assert options.intra_op_num_threads == 2
+    assert passed['providers'] == ['CPUExecutionProvider']
+    assert entries == {
+        'session.intra_op.allow_spinning': '0', 'session.inter_op.allow_spinning': '0'}
+
+
 def test_estimate_all_keeps_distinct_people_and_weak_candidates():
     left = _pose_row(0.8)
     left[:4] = [10, 10, 210, 310]

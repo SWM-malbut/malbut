@@ -85,6 +85,14 @@ STT·Agent·TTS는 기본 포함이며, 로봇 준비 확인 뒤 음성 점검 �
 ros2 launch malbut_bringup robot.launch.py map:=/실제/지도.yaml fall_monitor:=true fall_config:=/etc/malbut/fall_runtime.json
 ```
 
+낙상 Pose는 기본 CPU 실행을 유지한다. 호환되는 ONNX Runtime CUDA EP가 준비된 경우
+`fall_pose_execution_provider:=cuda`로 선택할 수 있다. 초기화 실패 시 CPU로 조용히
+전환하지 않는다. 시작 인자 `fall_pose_intra_op_num_threads`, `fall_pose_allow_spinning`,
+`fall_pose_opencv_num_threads`로 부하를 조정할 수 있으며 변경에는 재시작이 필요하다.
+기본값은 각각 `0`, `true`, `0`(기존 라이브러리 설정 유지)이다.
+Jetson의 실제 성능/의존성은 별도 확인 대상이다.
+[PC 비교 결과와 실행 예시](../homecam_agent/docs/FALL_POSE_PERFORMANCE_20260929.md)를 참고한다.
+
 이 명령은 **VLM 노드 시작**이지 전송 동의가 아니다. 실제 영상 수집에는
 시작 시 지정한 낙상 코디네이터 실행 ID, 현재 VLM에 적용한 감지·카메라 허용 설정,
 코디네이터의 새 연결 확인 메시지가 필요하다. VLM은 KVS 저장 허용 Bool을 더 이상 받지 않는다.
