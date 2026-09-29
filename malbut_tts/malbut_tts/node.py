@@ -116,6 +116,9 @@ def create_tts_node(runtime_factory=None):
             if not self._closing:
                 playback_id = getattr(message, 'playback_id', '')
                 options = {'playback_id': playback_id} if playback_id else {}
+                request_id = getattr(message, 'request_id', '')
+                if request_id:
+                    options['request_id'] = request_id
                 self._runtime.submit(
                     message.text, message.request_type, interim=message.interim, **options,
                 )

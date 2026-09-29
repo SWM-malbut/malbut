@@ -13,6 +13,11 @@ backend로 자동 전환하지 않는다. CUDA backend는 문장별로 합성하
 - 한 답변의 여러 문장과 음성 조각은 하나의 `playback_id`를 공유한다.
 - 현재 요청을 유지하고 새 요청은 대기열에 넣는다. 다음 요청은 대화 답변
   우선, 같은 종류에서는 수신한 순서대로 선택한다.
+- 같은 `request_id`의 진행 안내(`interim=true`)는 대기열에 최신 한 건만
+  유지한다. 최종 답변(`interim=false`)을 접수하면 같은 요청의 아직 재생하지
+  않은 진행 안내를 `stopped`로 취소한다. 합성 중인 안내도 음성 출력 전이면
+  취소하고, 이미 재생·일시정지 중인 안내와 다른 요청의 답변은 유지한다.
+  빈 `request_id`는 기존 대기 순서를 유지한다.
 - 대기 요청은 기본 최대 32개이며, 앞선 답변의 재생·일시정지가 길어져도
   기다린 시간만으로 삭제하지 않는다. ROS parameter `max_pending_requests`
   (양의 정수)로 개수 제한을 조정한다. 가득 찬 대기열에 들어온 새 요청은
@@ -34,7 +39,7 @@ backend로 자동 전환하지 않는다. CUDA backend는 문장별로 합성하
 
 | 방향 | 이름 | 타입 및 데이터 |
 | --- | --- | --- |
-| Agent → TTS | `/malbut/speech/response` Topic | `SpeechRequest`: `text`, `request_type` |
+| Agent → TTS | `/malbut/speech/response` Topic | `SpeechRequest`: `text`, `request_type`, `playback_id`, `request_id`, `interim` |
 | STT → TTS | `/malbut/speech/playback_control` Service | `ControlSpeechPlayback`: `playback_id`, `command` → `accepted` |
 | TTS → STT | `/malbut/speech/playback_status` Topic | `SpeechPlaybackStatus`: `playback_id`, `state` |
 
@@ -47,8 +52,9 @@ Topic QoS는 `RELIABLE`, `VOLATILE`, `KEEP_LAST`, depth `10`이다.
 실제 상태는 별도 Topic의 `playing`, `paused`, `finished`, `failed`,
 `stopped`로 확인한다. 현재 요청이 아니거나 현재 상태에서 수행할 수 없는
 제어는 거절한다. 생성 중인 요청은 중지할 수 있지만 일시정지는 재생 시작 후
-가능하다. 메시지 필드가 추가되었으므로 Agent·인터페이스·TTS를 함께 다시
-빌드하고 실행 중인 노드도 새 인터페이스로 재시작해야 한다.
+가능하다. `request_id` 추가로 메시지 타입이 바뀌었으므로 인터페이스와
+Agent·TTS·STT·모니터 등 관련 발행·수신 노드를 같은 정의로 다시 빌드하고
+실행 중인 노드도 재시작해야 한다.
 
 ## OpenAI API 스트리밍 음성
 

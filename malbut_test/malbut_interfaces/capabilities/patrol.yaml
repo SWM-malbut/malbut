@@ -19,7 +19,7 @@ input:
 
 execution:
   mode: FOREGROUND
-  priority: NORMAL
+  priority: LOW
   resources: [BASE]
   map_requirement: SELECTED
 

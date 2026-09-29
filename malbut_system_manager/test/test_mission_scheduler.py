@@ -1,8 +1,10 @@
 """Unit tests for the ROS-independent mission scheduling policy."""
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
+import yaml
 
 from malbut_system_manager.mission_scheduler import MissionScheduler
 from malbut_system_manager.models import (
@@ -96,6 +98,102 @@ def test_only_recovery_can_be_requested_before_readiness():
     recovery = _mission('recovery', priority=MissionPriority.URGENT)
     recovery.capability = replace(recovery.capability, capability_id='recovery')
     assert scheduler.submit(recovery).start == ['recovery']
+
+
+@pytest.fixture(params=['source', 'deployment'])
+def manifest_directory(request):
+    """Use the same behavioral checks for source and deployment manifests."""
+    root = Path(__file__).resolve().parents[2]
+    if request.param == 'deployment':
+        root /= 'malbut_test'
+    return root / 'malbut_interfaces' / 'capabilities'
+
+
+def _registered_mission(manifest_directory, capability_id):
+    """Exercise checked-in policy without loading generated ROS interfaces."""
+    path = manifest_directory / f'{capability_id}.yaml'
+    document = yaml.safe_load(path.read_text(encoding='utf-8'))
+    capability = document['capability']
+    command = document['command']
+    execution = document['execution']
+    manifest = CapabilityManifest(
+        capability_id=capability['id'],
+        title=capability['title'],
+        description=capability['description'],
+        command_kind=CommandKind(command['kind']),
+        command_name=command['name'],
+        command_type=command['type'],
+        execution_mode=ExecutionMode(execution['mode']),
+        priority=MissionPriority[execution['priority']],
+        resources=frozenset(
+            ExecutionResource(resource) for resource in execution['resources']
+        ),
+        map_requirement=(
+            MapRequirement(execution['map_requirement'])
+            if 'map_requirement' in execution else None
+        ),
+        input_fields={},
+        interface_type=object,
+        source_path=str(path),
+    )
+    return MissionRecord(capability_id, manifest, arguments={})
+
+
+@pytest.mark.parametrize('active_id', ['follow_person', 'navigate_to_pose'])
+def test_registered_patrol_cannot_interrupt_user_motion(
+    manifest_directory,
+    active_id,
+):
+    """Source and deployment policy preserve active user-requested motion."""
+    state, scheduler = _ready_scheduler()
+    active = _registered_mission(manifest_directory, active_id)
+    patrol = _registered_mission(manifest_directory, 'patrol')
+    assert scheduler.submit(active).start == [active_id]
+
+    effects = scheduler.submit(patrol)
+
+    assert effects.start == []
+    assert effects.cancel == []
+    completion = _completion(effects, 'patrol')
+    assert completion.outcome is TerminalOutcome.ABORTED
+    assert 'higher priority NORMAL' in completion.message
+    assert state.active_foreground[active_id].state is MissionState.RUNNING
+    assert not state.active_foreground[active_id].preempted_by
+    assert state.get('patrol') is None
+
+
+@pytest.mark.parametrize('active_id,incoming_id', [
+    ('patrol', 'follow_person'),
+    ('patrol', 'navigate_to_pose'),
+    ('follow_person', 'navigate_to_pose'),
+    ('navigate_to_pose', 'follow_person'),
+])
+def test_registered_motion_replacement_waits_for_active_goal_to_stop(
+    manifest_directory,
+    active_id,
+    incoming_id,
+):
+    """Higher or equal priority motion waits for the old goal to terminate."""
+    state, scheduler = _ready_scheduler()
+    active = _registered_mission(manifest_directory, active_id)
+    incoming = _registered_mission(manifest_directory, incoming_id)
+    assert scheduler.submit(active).start == [active_id]
+
+    submitted = scheduler.submit(incoming)
+
+    assert submitted.start == []
+    assert submitted.cancel == [active_id]
+    assert state.active_foreground[active_id].state is MissionState.CANCELING
+    assert state.pending[incoming_id].waiting_for == {active_id}
+
+    terminal = scheduler.handle_terminal(active_id, TerminalOutcome.CANCELED)
+
+    assert terminal.start == [incoming_id]
+    assert state.active_foreground[incoming_id].state is MissionState.RUNNING
+    assert _completion(terminal, active_id).outcome is TerminalOutcome.ABORTED
+    assert 'preempted' in _completion(terminal, active_id).message
+    assert state.get(active_id) is None
+    assert not state.suspended
 
 
 def test_background_missions_run_concurrently_without_leaving_idle():

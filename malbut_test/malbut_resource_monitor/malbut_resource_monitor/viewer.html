@@ -89,7 +89,7 @@
   <div id="speechPanel" hidden>
     <h2>음성 대화 기록</h2>
     <p class="muted">사용자의 최종 STT 인식 문장과 로봇의 TTS 요청 문장을 보여줍니다. 최신 기록이 위에 표시되며 자동 갱신됩니다.</p>
-    <p class="muted">TTS 요청은 실제 재생 완료를 뜻하지 않습니다. 재생 상태는 별도 행이며, 같은 재생 ID가 있을 때만 문장과 연결할 수 있습니다. STT와 답변을 시간순으로 임의 짝짓지 않습니다. 수신 시각 기준이며 토픽 관측이 누락될 수 있습니다.</p>
+    <p class="muted">TTS 요청은 실제 재생 완료를 뜻하지 않습니다. 재생 상태는 별도 행이며, 선택 구간에서 같은 재생 ID의 요청을 찾으면 요청 문장을 함께 표시합니다. STT와 답변을 시간순으로 임의 짝짓지 않습니다. 수신 시각 기준이며 토픽 관측이 누락될 수 있습니다.</p>
     <p id="speechSummary" role="status"></p>
     <div class="scroll"><table><thead><tr><th>수신 시각 / 회차 경과</th><th>구분</th><th>인식 / 답변 문장</th><th>종류 / 재생 상태</th></tr></thead><tbody id="speechRows"></tbody></table></div>
     <small>원본 음성은 녹음하지 않습니다. 대화 문장은 로그에 저장되므로 공유 시 개인정보를 확인하세요.</small>
@@ -261,13 +261,21 @@
     changed('speech',[metadata.session,available,rows],()=>{
       $('speechRows').replaceChildren();
       if(!available){$('speechSummary').textContent='이 회차에는 대화 문장 수집 기록이 없습니다. 업데이트한 수집기로 새 회차를 시작하세요. 과거 기록에서 문장을 복원할 수는 없습니다.';return}
+      const requestTexts=new Map();
+      for(const row of rows){
+        if(row.event!=='tts_request'||typeof row.playback_id!=='string'||!row.playback_id||typeof row.text!=='string')continue;
+        // Conflicting requests for one ID do not identify a unique sentence.
+        if(!requestTexts.has(row.playback_id))requestTexts.set(row.playback_id,row.text);
+        else if(requestTexts.get(row.playback_id)!==row.text)requestTexts.set(row.playback_id,null);
+      }
       const visible=rows.slice(-300).reverse();
       $('speechSummary').textContent=rows.length?`선택 구간 ${rows.length}개 이벤트 · 최신 ${visible.length}개 표시 · 전체는 JSONL 저장`:'선택 구간에 수신한 대화가 없습니다. STT 최종 인식 / TTS 요청을 기다립니다.';
       for(const row of visible){
         const tr=document.createElement('tr'),stt=row.event==='stt_transcript',tts=row.event==='tts_request';
         textCell(tr,(Number.isFinite(row.wall_ns)?new Date(row.wall_ns/1e6).toLocaleTimeString()+' · ':'')+row.t.toFixed(2)+'초');
         textCell(tr,stt?'사용자 · STT':tts?'로봇 · TTS 요청':'TTS 재생 상태');tr.lastChild.className=stt?'speech-stt':'speech-tts';
-        textCell(tr,typeof row.text==='string'?row.text:'— (문장 없는 상태 이벤트)');tr.lastChild.className='speech-text';
+        const speechText=typeof row.text==='string'?row.text:row.event==='tts_playback'?requestTexts.get(row.playback_id):undefined;
+        textCell(tr,typeof speechText==='string'?speechText:'— (문장 없는 상태 이벤트)');tr.lastChild.className='speech-text';
         textCell(tr,tts?(types[row.request_type]||'기타 요청'):stt?'최종 인식':(states[row.state]||row.state||'알 수 없음'));
         const identifiers=[row.utterance_id?'발화 ID: '+row.utterance_id:'',row.session_id?'대화 세션: '+row.session_id:'',row.playback_id?'재생 ID: '+row.playback_id:tts?'재생 ID 미지정 · 상태와 연결 불가':''].filter(Boolean);
         for(const value of identifiers){const detail=document.createElement('small');detail.textContent=value;tr.lastChild.append(detail)}

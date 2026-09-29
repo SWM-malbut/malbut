@@ -6,7 +6,8 @@ from threading import Condition, Event
 import pytest
 
 from malbut_tts.runtime import (
-    CONFIRMATION, DIALOGUE, MAX_RETIRED_PLAYBACK_IDS, NOTIFICATION, SpeechRuntime,
+    CONFIRMATION, DIALOGUE, MAX_FINALIZED_REQUEST_IDS, MAX_RETIRED_PLAYBACK_IDS,
+    NOTIFICATION, SpeechRuntime,
 )
 
 
@@ -165,6 +166,260 @@ def test_duplicate_live_playback_id_does_not_create_competing_request(h):
     first = h.runtime.submit('ordinary answer', playback_id='same-id')
     h.active(first)
     assert h.runtime.submit('duplicate', playback_id='same-id') is None
+
+
+def test_final_removes_only_waiting_interims_for_its_request(h):
+    active = h.runtime.submit('unrelated active')
+    player = h.active(active)
+    progress = h.runtime.submit('old progress', request_id='weather', interim=True)
+    other_progress = h.runtime.submit('other progress', request_id='other', interim=True)
+    other_final = h.runtime.submit('other final', request_id='another')
+    final = h.runtime.submit('weather failed', request_id='weather')
+    repeated_final = h.runtime.submit('weather failed', request_id='weather')
+    h.wait(progress, 'stopped')
+    assert not player.cancel.is_set()
+    player.drain.set()
+    h.wait(active, 'finished')
+    for pid in (other_progress, other_final, final, repeated_final):
+        h.active(pid).drain.set()
+        h.wait(pid, 'finished')
+    assert h.synth.texts == [
+        'unrelated active', 'other progress', 'other final',
+        'weather failed', 'weather failed',
+    ]
+    assert h.events.count((progress, 'stopped')) == 1
+
+
+@pytest.mark.parametrize('interim', [False, True])
+def test_new_correlated_request_replaces_waiting_progress_even_when_queue_is_full(interim):
+    h = Harness(max_pending_requests=1)
+    try:
+        active = h.runtime.submit('active')
+        player = h.active(active)
+        old = h.runtime.submit('old progress', request_id='request', interim=True)
+        new = h.runtime.submit('new text', request_id='request', interim=interim)
+        h.wait(old, 'stopped')
+        assert (new, 'failed') not in h.events
+        player.drain.set()
+        h.wait(active, 'finished')
+        h.active(new).drain.set()
+        h.wait(new, 'finished')
+        assert h.synth.texts == ['active', 'new text']
+        assert h.events.count((old, 'stopped')) == 1
+    finally:
+        h.runtime.close()
+
+
+@pytest.mark.parametrize('paused', [False, True])
+def test_final_preserves_its_progress_after_playback_started(h, paused):
+    progress = h.runtime.submit('playing progress', request_id='request', interim=True)
+    player = h.active(progress)
+    if paused:
+        assert h.runtime.control(progress, 'pause')
+    waiting = h.runtime.submit('waiting progress', request_id='request', interim=True)
+    final = h.runtime.submit('final', request_id='request')
+    h.wait(waiting, 'stopped')
+    assert not player.cancel.is_set()
+    assert (progress, 'stopped') not in h.events
+    if paused:
+        assert h.runtime.control(progress, 'resume')
+    player.drain.set()
+    h.wait(progress, 'finished')
+    h.active(final).drain.set()
+    h.wait(final, 'finished')
+    assert h.synth.texts == ['playing progress', 'final']
+
+
+@pytest.mark.parametrize('interim', [False, True])
+@pytest.mark.parametrize('same_request', [False, True])
+def test_replacement_only_cancels_matching_progress_during_synthesis(interim, same_request):
+    entered, release = Event(), Event()
+
+    class SlowProgress(FakeSynthesizer):
+        def generate(self, text, cancel_event):
+            if text == 'old progress':
+                entered.set()
+                assert release.wait(3)
+            yield from super().generate(text, cancel_event)
+
+    h = Harness(SlowProgress())
+    try:
+        old = h.runtime.submit('old progress', request_id='request', interim=True)
+        assert entered.wait(3)
+        old_player = h.players.get(timeout=3)
+        new = h.runtime.submit('new text', interim=interim,
+                               request_id='request' if same_request else 'other')
+        canceled = same_request and not interim
+        assert old_player.cancel.is_set() is canceled
+        release.set()
+        if canceled:
+            h.wait(old, 'stopped')
+            assert old_player.audio == []
+        else:
+            h.wait(old, 'playing')
+            old_player.drain.set()
+            h.wait(old, 'finished')
+        h.active(new).drain.set()
+        h.wait(new, 'finished')
+        old_events = [(old, 'stopped')] if canceled else [
+            (old, 'playing'), (old, 'finished'),
+        ]
+        assert h.events == old_events + [(new, 'playing'), (new, 'finished')]
+    finally:
+        release.set()
+        h.runtime.close()
+
+
+def test_final_cancels_progress_before_player_factory_returns():
+    entered, release = Event(), Event()
+    h = Harness()
+
+    def delayed_player(**kwargs):
+        if not entered.is_set():
+            entered.set()
+            assert release.wait(3)
+        return h.make_player(**kwargs)
+
+    h.runtime._player_factory = delayed_player
+    try:
+        progress = h.runtime.submit('progress', request_id='request', interim=True)
+        assert entered.wait(3)
+        final = h.runtime.submit('final', request_id='request')
+        release.set()
+        h.wait(progress, 'stopped')
+        assert h.players.get(timeout=3).audio == []
+        h.active(final).drain.set()
+        h.wait(final, 'finished')
+        assert h.synth.texts == ['final']
+        assert h.events == [(progress, 'stopped'), (final, 'playing'), (final, 'finished')]
+    finally:
+        release.set()
+        h.runtime.close()
+
+
+def test_rejected_final_does_not_cancel_generating_progress_or_retire_request():
+    entered, release = Event(), Event()
+
+    class SlowProgress(FakeSynthesizer):
+        def generate(self, text, cancel_event):
+            if text == 'progress':
+                entered.set()
+                assert release.wait(3)
+            yield from super().generate(text, cancel_event)
+
+    h = Harness(SlowProgress(), max_pending_requests=1)
+    try:
+        progress = h.runtime.submit('progress', request_id='request', interim=True)
+        assert entered.wait(3)
+        player = h.players.get(timeout=3)
+        queued = h.runtime.submit('other request', request_id='other')
+        rejected = h.runtime.submit('rejected final', request_id='request')
+        h.wait(rejected, 'failed')
+        assert not player.cancel.is_set()
+        release.set()
+        h.wait(progress, 'playing')
+        player.drain.set()
+        h.wait(progress, 'finished')
+        other_player = h.active(queued)
+        late = h.runtime.submit('later progress', request_id='request', interim=True)
+        other_player.drain.set()
+        h.wait(queued, 'finished')
+        h.active(late).drain.set()
+        h.wait(late, 'finished')
+        assert h.synth.texts == ['progress', 'other request', 'later progress']
+    finally:
+        release.set()
+        h.runtime.close()
+
+
+@pytest.mark.parametrize('invalid', [
+    {'text': ''}, {'request_id': ' '}, {'request_id': None},
+    {'request_id': 'x' * 257}, {'interim': 'false'},
+    {'playback_id': 'active'}, {'playback_id': 'progress'},
+])
+def test_invalid_or_duplicate_final_preserves_waiting_progress(h, invalid):
+    active = h.runtime.submit('active', playback_id='active')
+    player = h.active(active)
+    progress = h.runtime.submit('progress', request_id='request',
+                                playback_id='progress', interim=True)
+    options = {'text': 'final', 'request_id': 'request', **invalid}
+    assert h.runtime.submit(**options) is None
+    assert (progress, 'stopped') not in h.events
+    player.drain.set()
+    h.wait(active, 'finished')
+    h.active(progress).drain.set()
+    h.wait(progress, 'finished')
+    later = h.runtime.submit('later progress', request_id='request', interim=True)
+    h.active(later).drain.set()
+    h.wait(later, 'finished')
+    assert h.synth.texts == ['active', 'progress', 'later progress']
+
+
+def test_request_id_accepts_the_full_utterance_id_length(h):
+    final = h.runtime.submit('final', request_id='x' * 256)
+    h.active(final).drain.set()
+    h.wait(final, 'finished')
+    late = h.runtime.submit('late progress', request_id='x' * 256, interim=True)
+    h.wait(late, 'stopped')
+    assert h.synth.texts == ['final']
+
+
+def test_accepted_final_stops_late_progress_even_after_final_finishes(h):
+    final = h.runtime.submit('final', request_id='request')
+    player = h.active(final)
+    late = h.runtime.submit('late progress', request_id='request',
+                            interim=True, playback_id='late')
+    h.wait(late, 'stopped')
+    assert h.runtime.submit('duplicate late progress', request_id='request',
+                            interim=True, playback_id='late') is None
+    player.drain.set()
+    h.wait(final, 'finished')
+    later = h.runtime.submit('later progress', request_id='request', interim=True)
+    h.wait(later, 'stopped')
+    assert h.synth.texts == ['final']
+    assert h.events.count((late, 'stopped')) == 1
+    assert h.events.count((later, 'stopped')) == 1
+
+
+def test_finalized_request_history_is_bounded(h):
+    active = h.runtime.submit('active')
+    h.active(active)
+    for index in range(MAX_FINALIZED_REQUEST_IDS + 1):
+        final = h.runtime.submit('final', request_id=f'request-{index}')
+        assert h.runtime.control(final, 'stop')
+    assert len(h.runtime._finalized_request_ids) == MAX_FINALIZED_REQUEST_IDS
+    assert 'request-0' not in h.runtime._finalized_request_ids
+    late = h.runtime.submit('late progress', interim=True,
+                            request_id=f'request-{MAX_FINALIZED_REQUEST_IDS}')
+    h.wait(late, 'stopped')
+    assert h.synth.texts == ['active']
+
+
+def test_requests_without_correlation_keep_all_progress_and_final(h):
+    active = h.runtime.submit('active')
+    player = h.active(active)
+    pending = [
+        h.runtime.submit('progress', interim=True),
+        h.runtime.submit('progress', interim=True),
+        h.runtime.submit('final'),
+    ]
+    player.drain.set()
+    h.wait(active, 'finished')
+    for pid in pending:
+        h.active(pid).drain.set()
+        h.wait(pid, 'finished')
+    assert h.synth.texts == ['active', 'progress', 'progress', 'final']
+
+
+def test_confirmation_still_preempts_with_a_finalized_request_id(h):
+    final = h.runtime.submit('final', request_id='request')
+    h.active(final)
+    question = h.runtime.submit('question', CONFIRMATION,
+                                request_id='request', interim=True)
+    h.wait(final, 'stopped')
+    h.active(question).drain.set()
+    h.wait(question, 'finished')
+    assert h.synth.texts == ['final', 'question']
 
 
 def test_stop_all_clears_active_and_waiting_before_question_is_available(h):

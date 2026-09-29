@@ -16,6 +16,7 @@ NOTIFICATION = 1
 CONFIRMATION = 2
 TERMINAL_STATES = frozenset(('finished', 'failed', 'stopped'))
 MAX_RETIRED_PLAYBACK_IDS = 256
+MAX_FINALIZED_REQUEST_IDS = 256
 
 
 @dataclass
@@ -25,6 +26,7 @@ class _Request:
     expires_at: Optional[float]
     validate: Optional[Callable] = None
     interim: bool = False
+    request_id: str = ''
     cancel: Event = field(default_factory=Event)
     player: object = None
     state: str = 'generating'
@@ -57,6 +59,7 @@ class SpeechRuntime:
         self._condition = Condition()
         self._pending = []
         self._retired_ids = OrderedDict()
+        self._finalized_request_ids = OrderedDict()
         self._sequence = 0
         self._active = None
         self._closed = False
@@ -73,7 +76,8 @@ class SpeechRuntime:
         if self._expiry_worker is not None:
             self._expiry_worker.start()
 
-    def submit(self, text, request_type=DIALOGUE, *, validate=None, playback_id='', interim=False):
+    def submit(self, text, request_type=DIALOGUE, *, validate=None, playback_id='',
+               interim=False, request_id=''):
         """Return an ID; full/expired waiting requests report failed once."""
         if not isinstance(text, str) or not text.strip():
             self._logger.warning('tts_text_ignored: blank response')
@@ -88,6 +92,12 @@ class SpeechRuntime:
                 not playback_id.strip() or len(playback_id) > 200)):
             self._logger.warning('tts_request_ignored: invalid playback_id')
             return None
+        if not isinstance(request_id, str) or (request_id and (
+                not request_id.strip() or len(request_id) > 256)):
+            self._logger.warning('tts_request_ignored: invalid request_id')
+            return None
+        # Confirmation questions retain their existing preemption policy.
+        correlated_id = request_id if request_type != CONFIRMATION else ''
         superseded = []
         previous = None
         with self._condition:
@@ -105,21 +115,47 @@ class SpeechRuntime:
                     return playback_id
                 return None
             now = self._clock()
-            expired = self._expire_pending_locked(now)
-            if request_type == CONFIRMATION:
-                superseded = [item[2] for item in self._pending]
-                self._pending.clear()
-                previous = self._active
-                if previous is not None and previous.state not in TERMINAL_STATES:
-                    previous.cancel.set()
-                    previous.command = 'stop'
             request = _Request(
                 playback_id or str(uuid4()), text,
                 now + self._pending_timeout_s if self._pending_timeout_s > 0 else None,
-                validate, interim=interim,
+                validate, interim=interim, request_id=correlated_id,
             )
-            rejected = len(self._pending) >= self._max_pending_requests
+            if interim and correlated_id in self._finalized_request_ids:
+                request.cancel.set()
+                request.state = 'stopped'
+                self._report_status(request, 'stopped')
+                return request.playback_id
+            expired = self._expire_pending_locked(now)
+            if request_type == CONFIRMATION:
+                superseded = [entry[2] for entry in self._pending]
+            elif correlated_id:
+                superseded = [entry[2] for entry in self._pending
+                              if entry[2].interim
+                              and entry[2].request_id == correlated_id]
+            rejected = len(self._pending) - len(superseded) >= self._max_pending_requests
             if not rejected:
+                superseded_ids = {item.playback_id for item in superseded}
+                self._pending = [entry for entry in self._pending
+                                 if entry[2].playback_id not in superseded_ids]
+                heapq.heapify(self._pending)
+                active = self._active
+                if active is not None and active.state not in TERMINAL_STATES:
+                    if request_type == CONFIRMATION or (
+                            correlated_id and not interim
+                            and active.request_id == correlated_id
+                            and active.interim and active.state == 'generating'):
+                        previous = active
+                        previous.cancel.set()
+                        previous.command = 'stop'
+                if correlated_id and not interim:
+                    self._finalized_request_ids[correlated_id] = None
+                    self._finalized_request_ids.move_to_end(correlated_id)
+                    while len(self._finalized_request_ids) > MAX_FINALIZED_REQUEST_IDS:
+                        self._finalized_request_ids.popitem(last=False)
+                for pending in superseded:
+                    pending.cancel.set()
+                    pending.state = 'stopped'
+                    self._report_status(pending, 'stopped')
                 heapq.heappush(self._pending, (
                     -1 if request_type == CONFIRMATION else request_type,
                     self._sequence, request,
@@ -127,10 +163,6 @@ class SpeechRuntime:
                 self._sequence += 1
             self._condition.notify_all()
         self._fail_waiting(expired, 'expired')
-        for pending in superseded:
-            pending.cancel.set()
-            pending.state = 'stopped'
-            self._report_status(pending, 'stopped')
         if previous is not None and previous.player is not None:
             self._stop_player(previous)
         if rejected:

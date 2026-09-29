@@ -172,6 +172,32 @@ def result(uid='uid', pid='pid', decision='addressed'):
             'playback_id': pid, 'decision': decision}
 
 
+def test_speech_requests_have_distinct_playback_ids_and_preserve_content(node):
+    """Observers can join repeated text to its own TTS playback statuses."""
+    text = '  별말씀을요.\n'
+    for request_type, interim in (
+        (SpeechRequest.DIALOGUE, False),
+        (SpeechRequest.DIALOGUE, False),
+        (SpeechRequest.DIALOGUE, True),
+        (SpeechRequest.NOTIFICATION, False),
+    ):
+        assert node.say(text, request_type=request_type, interim=interim)
+
+    messages = node.sent[ros_communication.RESPONSE_TOPIC]
+    assert len(messages) == 4
+    assert all(isinstance(message.playback_id, str)
+               and message.playback_id.strip() for message in messages)
+    assert len({message.playback_id for message in messages}) == len(messages)
+    assert all(message.request_id == '' for message in messages)
+    assert [(message.text, message.request_type, message.interim)
+            for message in messages] == [
+        (text, SpeechRequest.DIALOGUE, False),
+        (text, SpeechRequest.DIALOGUE, False),
+        (text, SpeechRequest.DIALOGUE, True),
+        (text, SpeechRequest.NOTIFICATION, False),
+    ]
+
+
 @pytest.mark.parametrize('node', [False], indirect=True)
 def test_speech_endpoints_wait_for_worker_initialization(node):
     """A peer probe must not admit STT while the dialogue DB is still opening."""
@@ -365,6 +391,24 @@ def test_normal_dialogue_answers_keep_the_existing_tts_path(node):
         (original, SpeechRequest.DIALOGUE),
     ]
     assert list(node.sent) == [ros_communication.RESPONSE_TOPIC]
+    assert messages[0].request_id == 'normal'
+
+
+def test_progress_and_final_replies_share_request_id_but_not_playback_id(node):
+    node.dialogue.results = [
+        {'kind': 'progress', 'utterance_id': 'weather', 'text': '확인 중이에요.'},
+        {'kind': 'progress', 'utterance_id': 'weather', 'text': '다시 확인할게요.'},
+        {'kind': 'answer', 'utterance_id': 'weather', 'text': '오늘은 맑아요.'},
+        {'kind': 'progress', 'utterance_id': 'other', 'text': '잠시 기다려 주세요.'},
+        {'kind': 'error', 'utterance_id': 'other', 'text': '요청을 처리하지 못했어요.'},
+    ]
+    node._drain_dialogue()
+    messages = node.sent[ros_communication.RESPONSE_TOPIC]
+    assert [(message.request_id, message.interim) for message in messages] == [
+        ('weather', True), ('weather', True), ('weather', False),
+        ('other', True), ('other', False),
+    ]
+    assert len({message.playback_id for message in messages}) == 5
 
 
 def test_overlong_final_speech_is_rejected_with_notice_without_receipt(node):

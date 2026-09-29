@@ -408,20 +408,21 @@ def test_cancel_receipt_precedes_final_canceled_result(communication):
     _wait_until(lambda: graph.follow.cancel_seen['hold'].is_set())
     assert not graph.agent.missions.snapshot(request_id)['terminal']
     assert not _events(graph, request_id, 'canceled')
-    _wait_until(lambda: any('취소 요청' in text for text in graph.speech))
+    assert graph.speech == []
 
     graph.follow.allow_cancel.set()
     _wait_until(lambda: graph.agent.missions.snapshot(request_id)['terminal'])
     final = graph.agent.missions.snapshot(request_id)
     assert final['ros_status'] == GoalStatus.STATUS_CANCELED
     _wait_until(lambda: any('취소 상태' in text for text in graph.speech))
+    assert len(graph.speech) == 1
     assert not any('로봇이 멈췄' in text for text in graph.speech)
 
 
 def test_duplicate_requests_and_repeated_progress_do_not_resend_or_speak(
     communication,
 ):
-    """Keep one Goal and one announcement for each observed state."""
+    """Keep feedback observable without narrating it or resending the Goal."""
     graph = communication()
     arguments = _arguments('duplicate')
     request_id = graph.agent.missions.submit(
@@ -437,14 +438,15 @@ def test_duplicate_requests_and_repeated_progress_do_not_resend_or_speak(
             'follow_person', _arguments('changed'), request_id='same-request',
         )
     assert len(graph.follow.goals['duplicate']) == 1
-    _wait_until(lambda: any('실행 중인' in text for text in graph.speech))
-    assert len([text for text in graph.speech if '실행 중인' in text]) == 1
+    assert graph.speech == []
     graph.follow.finish['duplicate'].set()
     _wait_until(lambda: graph.agent.missions.snapshot(request_id)['terminal'])
     graph.agent.missions.submit(
         'follow_person', arguments, request_id='same-request',
     )
     assert len(graph.follow.goals['duplicate']) == 1
+    _wait_until(lambda: any('성공 상태로 종료' in text for text in graph.speech))
+    assert len(graph.speech) == 1
 
 
 def test_two_independent_requests_keep_their_own_results(communication):
@@ -600,6 +602,10 @@ def test_recognition_feedback_preserves_an_earlier_pending_answer(
         _wait_until(lambda: len(messages) == 2)
         assert messages[1].text == '대화 연결 확인 응답'
         assert messages[1].interim is False
+        assert [message.request_id for message in messages] == [
+            '', 'earlier-answer',
+        ]
+        assert messages[0].playback_id != messages[1].playback_id
         for state in (SpeechInputStatus.STARTED, SpeechInputStatus.FAILED):
             publisher.publish(SpeechInputStatus(utterance_id='after-answer', state=state))
         _wait_until(lambda: len(messages) == 3)
@@ -627,6 +633,10 @@ def test_progress_notice_and_final_reply_keep_distinct_interim_flags(communicati
         _wait_until(lambda: len(messages) == 2)
         assert messages[1].text == '대화 연결 확인 응답'
         assert messages[1].interim is False
+        assert [message.request_id for message in messages] == [
+            'progress-speech', 'progress-speech',
+        ]
+        assert messages[0].playback_id != messages[1].playback_id
     finally:
         provider.release.set()
         graph.sender.destroy_subscription(subscription)

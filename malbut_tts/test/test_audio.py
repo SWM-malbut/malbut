@@ -271,6 +271,35 @@ class StreamingPlayerTests(unittest.TestCase):
         self.assertTrue(stream.aborted and stream.closed)
         self.assertEqual([x for x in stream.output if x], [1, 2])
 
+    def test_cancellation_during_startup_discards_pcm_before_playing_state(self):
+        """A final answer can cancel buffered progress before PLAYING arrives."""
+        entered, release = Event(), Event()
+        api, instances = fake_device()
+        original_start = api.OutputStream.start
+
+        def delayed_start(stream):
+            original_start(stream)
+            entered.set()
+            assert release.wait(2)
+
+        api.OutputStream.start = delayed_start
+        with patch.dict('sys.modules', {'sounddevice': api}):
+            try:
+                self.player.write([1, 2, 3, 4], 24000)
+                self.assertTrue(entered.wait(2))
+                self.assertEqual(self.states, [])
+                self.cancel.set()
+                stream = instances[0]
+                stream.step()
+                self.assertEqual(stream.output, [])
+                release.set()
+                wait_until(lambda: stream.closed)
+                self.assertEqual(self.states, [])
+                self.assertTrue(stream.aborted)
+                self.assertEqual(list(self.player._pending), [])
+            finally:
+                release.set()
+
     def test_stop_unblocks_full_buffer_and_rejects_late_pcm(self):
         """Stopping a paused request discards pending and late audio."""
         stream = self.start([1, 2, 3, 4])

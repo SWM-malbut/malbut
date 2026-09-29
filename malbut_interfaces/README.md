@@ -15,7 +15,7 @@
 | STT → Agent | Topic `/malbut/speech/input_status` | [SpeechInputStatus](msg/SpeechInputStatus.msg) | 일반 대화·확인 세션의 발화 시작·청취 또는 인식 실패 |
 | STT → Agent | Topic `/malbut/speech/transcript` | [SpeechTranscript](msg/SpeechTranscript.msg) | 최종 인식 문장과 발화·세션 ID |
 | STT → Agent → STT | Service `/malbut/speech/classify_addressee` | [ClassifySpeechAddressee](srv/ClassifySpeechAddressee.srv) | 일반 대화의 수신 대상 판정. 확인 세션에서는 생략 |
-| Agent → TTS | Topic `/malbut/speech/response` | [SpeechRequest](msg/SpeechRequest.msg) | 대화·알림·확인 발화와 재생 ID, 중간 안내 여부 |
+| Agent → TTS | Topic `/malbut/speech/response` | [SpeechRequest](msg/SpeechRequest.msg) | 대화·알림·확인 발화와 재생 ID, 요청 ID, 중간 안내 여부 |
 | Agent·STT → TTS → 호출자 | Service `/malbut/speech/playback_control` | [ControlSpeechPlayback](srv/ControlSpeechPlayback.srv) | 개별 재생 제어·전체 중단과 접수 여부 |
 | TTS → Agent·STT | Topic `/malbut/speech/playback_status` | [SpeechPlaybackStatus](msg/SpeechPlaybackStatus.msg) | 실제 재생 상태. 요청 접수와 재생 완료는 별개 |
 
@@ -37,6 +37,12 @@ Agent는 최종 답변을 준비하는 중의 지연·재시도 안내에만 `tr
 값을 기억하며, 중간 안내의 `FINISHED`로 일반 대화의 5초 종료 대기를 시작하지 않는다.
 최종 답변의 `interim=false` 재생이 정상 완료된 뒤 기존 5초 대기를 적용한다.
 
+`SpeechRequest.request_id`는 같은 사용자 요청의 진행 안내와 최종 답변을 묶는다.
+빈 값이면 기존 독립 재생을 유지하며, 지정할 때는 공백뿐인 값 없이 최대 256자를
+사용한다. Agent는 원래 발화 ID를 전달한다. 최종 답변 접수 시 TTS는 같은 요청의
+아직 재생하지 않은 진행 안내를 `stopped`로 취소하고, 이미 재생·일시정지 중인
+음성은 유지한다. 각 발화의 `playback_id`는 계속 고유하며 상태 연결에 사용한다.
+
 [FallCoordinator](../malbut_fall_coordinator/README.md)는 VLM 사건을 해석하고
 `ExecuteMission`으로 `fall_confirmation`을 요청한다. Manager는
 [등록된 Manifest](capabilities/fall_confirmation.yaml)의 `FOREGROUND`, `URGENT`,
@@ -56,7 +62,7 @@ TTS의 `STOP_ALL`을 요청하고, 개별 질문은 재생 ID로 제어한다.
 
 계약 변경 시 영향받는 발행·수신 노드와 동작 명세, `malbut_test`의 대응 파일을 함께
 갱신한다. 필드·상수는 ROS 정의에서 바꾸고 문서에 독립된 규격을 추가하지 않는다.
-`interim` 추가는 ROS 메시지의 wire 타입 변경이다. `malbut_interfaces`와 영향받는 모든
-발행·수신 패키지(Agent·STT·TTS)를 같은 정의로 함께 재빌드하고 실행 중인 노드를 모두
-재시작해야 한다. 기본값이 `false`여도 이전 타입과 혼용하지 않는다. 이전 빌드·검증
+`interim`과 `request_id` 추가는 ROS 메시지의 wire 타입 변경이다. `malbut_interfaces`와
+영향받는 모든 발행·수신 패키지(Agent·STT·TTS·모니터)를 같은 정의로 함께 재빌드하고
+실행 중인 노드를 모두 재시작해야 한다. 기본값을 사용해도 이전 타입과 혼용하지 않는다. 이전 빌드·검증
 snapshot을 변경된 타입의 검증 결과로 간주하지 않으며, 실제 로봇 동작은 별도로 확인한다.

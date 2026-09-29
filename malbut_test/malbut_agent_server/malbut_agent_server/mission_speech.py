@@ -28,6 +28,7 @@ _MESSAGES = {
     'cancel_unknown': '취소 접수 여부를 확인할 수 없어요. 종료된 것으로 판단하지 않을게요.',
 }
 _TERMINAL = {'rejected', 'succeeded', 'failed', 'canceled', 'unavailable'}
+_ANNOUNCED = _TERMINAL | {'unknown', 'cancel_unknown', 'cancel_rejected'}
 
 
 def event_speech(event: Dict) -> Optional[str]:
@@ -49,29 +50,28 @@ def event_speech(event: Dict) -> Optional[str]:
 
 
 class MissionAnnouncer:
-    """Suppress repeated progress while preserving real state changes."""
+    """Announce outcomes and uncertainty without narrating routine progress."""
 
     def __init__(self, speak: Callable[[str], bool]) -> None:
         """Use the Agent's normal text publication boundary."""
         self._speak = speak
-        self._last: Dict[str, tuple] = {}
+        self._last: Dict[str, str] = {}
         self._finished = set()
 
     def handle(self, event: Dict) -> Optional[str]:
-        """Announce a confirmed event and return its published text."""
+        """Publish final results and actionable problems once observed."""
         request_id = event['request_id']
         kind = event.get('kind')
-        if request_id in self._finished:
+        if request_id in self._finished or kind not in _ANNOUNCED:
             return None
         text = event_speech(event)
         if text is None:
             return None
-        signature = (kind, event.get('state') if kind == 'progress' else None)
-        if self._last.get(request_id) == signature:
+        if self._last.get(request_id) == kind:
             return None
         if not self._speak(text):
             return None
-        self._last[request_id] = signature
+        self._last[request_id] = kind
         if kind in _TERMINAL:
             self._finished.add(request_id)
         return text
