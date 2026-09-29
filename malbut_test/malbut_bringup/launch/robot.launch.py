@@ -21,6 +21,7 @@ from malbut_bringup.nav2_stack import nav2_actions
 from malbut_bringup.perception_setup import validate_perception_files
 from malbut_bringup.speech_audio import shared_xfm_source
 from malbut_bringup.startup_sequence import sequential_startup
+from malbut_resource_monitor.launch_support import record_first
 
 # Nav2 AssistedTeleop input used by the manual_drive capability.
 TELEOP_TOPIC = '/cmd_vel_teleop'
@@ -339,6 +340,10 @@ def _setup(context):
         if getattr(launch_context.locals, 'malbut_recovery_owner', False):
             return [LogInfo(msg=f'Bringup child stopped: {event.process_name}; '
                             'use manual recovery; startup probes still require readiness')]
+        if (isinstance(event.action, Node)
+                and str(event.action.node_package) == 'malbut_resource_monitor'):
+            # Measurement is optional and must never stop an application.
+            return []
         # Vendor one-shot initialization tools may exit normally. Malbut
         # servers, however, must not silently leave a partially running stack.
         is_malbut = (
@@ -351,10 +356,13 @@ def _setup(context):
             raise RuntimeError(f'Bringup child exited: {event.process_name}')
         return []
 
-    return [
+    startup = [
         RegisterEventHandler(OnProcessExit(on_exit=child_exited)),
         *actions, *sequence,
     ]
+    if value('resource_monitor') == 'true':
+        return record_first(startup, value('resource_log_root'))
+    return startup
 
 
 def generate_launch_description():
@@ -371,6 +379,8 @@ def generate_launch_description():
     stt_build = Path(os.environ.get(
         'MALBUT_STT_BUILD_DIR', speech_cache / 'whisper-cpp-build')).expanduser()
     defaults = {
+        'resource_monitor': 'true',
+        'resource_log_root': str(Path.home() / '.ros/malbut/resource_logs'),
         'start_hardware': 'true',
         'relocalization': 'true',
         'restore_pose': 'true',
@@ -433,7 +443,7 @@ def generate_launch_description():
     choices = {
         'fall_monitor': ['auto', 'true', 'false'],
         **{key: ['true', 'false'] for key in (
-            'start_hardware', 'perception',
+            'start_hardware', 'perception', 'resource_monitor',
             'publish_debug_image', 'relocalization',
             'restore_pose', 'web_panel', 'speech', 'speech_input_has_aec',
         )},
