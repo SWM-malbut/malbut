@@ -12,6 +12,7 @@ import sqlite3
 import sys
 import time
 from typing import Optional, Sequence
+from uuid import uuid4
 
 from malbut_agent_server.config import Settings, load_env_file
 from malbut_agent_server.factory import build_orchestrator
@@ -173,7 +174,8 @@ def create_communication_node(
             self._speech_ready = True
             self.get_logger().info('speech_dialogue_ready; speech input endpoints started')
 
-        def say(self, text, request_type=SpeechRequest.DIALOGUE, *, interim=False):
+        def say(self, text, request_type=SpeechRequest.DIALOGUE, *, interim=False,
+                request_id=''):
             """Publish text without claiming playback completion."""
             if not isinstance(text, str) or not text.strip():
                 return False
@@ -183,6 +185,7 @@ def create_communication_node(
                 return False
             self._speech.publish(SpeechRequest(
                 text=text, request_type=request_type, interim=interim,
+                playback_id=str(uuid4()), request_id=request_id,
             ))
             return True
 
@@ -331,7 +334,8 @@ def create_communication_node(
                     continue
                 published = self.dialogue.publish_reply(
                     response, lambda text: self.say(
-                        text, interim=response.get('kind') == 'progress'))
+                        text, interim=response.get('kind') == 'progress',
+                        request_id=response.get('utterance_id', '')))
                 if published is not None:
                     self.get_logger().info(json.dumps({
                         'event': 'dialogue_response_published', **published,

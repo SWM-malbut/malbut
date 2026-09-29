@@ -371,9 +371,9 @@ class MissionSequence(Node):
             }}})
         self.wait(lambda: self.done('patrol')
                   and (self.running('navigate') or self.done('navigate')),
-                  'Equal-priority navigation completely cancels patrol')
+                  'NORMAL navigation completely cancels LOW patrol')
         self.check(self.was_replaced('patrol'),
-                   'Equal priority: new navigation ends patrol with replacement result')
+                   'Higher-priority navigation ends patrol with replacement result')
         self.wait(lambda: all(self.child_status.get('/patrol', {}).get(goal) not in LIVE
                               for goal in original_patrol_goals),
                   'Patrol application really terminates before replacement')

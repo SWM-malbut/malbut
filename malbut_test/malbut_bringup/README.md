@@ -473,8 +473,8 @@ teleop_behavior_server(AssistedTeleop) ─cmd_vel_pre_collision→ collision_mon
   있는 동안은 보드의 `/ros_robot_controller/joy`에서 스틱 기울기를 확인해 조작 중으로
   본다. 보드가 스틱 값을 변화 시에만 보내는 펌웨어라면 5초 이상 같은 방향으로 잡고
   있을 때 멈출 수 있으며, 스틱을 다시 움직이면 다시 시작한다.
-- 우선순위 `HIGH`, 자원 `BASE`. 실행 중인 추적·순찰·목적지 이동·위치 보정(NORMAL)을
-  취소한 뒤 시작하고, 수동 조작 중에는 NORMAL 이동 요청을 거부한다. 이 동안
+- 우선순위 `HIGH`, 자원 `BASE`. 실행 중인 추적·목적지 이동·위치 보정(`NORMAL`)과
+  순찰(`LOW`)을 취소한 뒤 시작하고, 수동 조작 중에는 `NORMAL`·`LOW` 이동 요청을 거부한다. 이 동안
   `/malbut/state`의 `control_mode`는 `MANUAL`이다. 지도 선택 여부와 무관하지만, 위치
   추정 전환 중에는 받지 않으며 조작을 계속하면 전환이 끝난 뒤 시작된다.
 - 입력: Bringup이 하드웨어를 직접 켜면 제조사 조이스틱을 `use_joy:=false`로 끄고,

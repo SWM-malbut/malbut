@@ -652,6 +652,14 @@ flowchart LR
 | Agent ↔ Manager | `/malbut/mission/execute`, `malbut_interfaces/action/ExecuteMission` | 요청, 접수, 진행, 결과, 특정 Goal 취소 |
 | Agent → TTS | `/malbut/speech/response`, `malbut_interfaces/msg/SpeechRequest` | `text`에 대화 답변·질문·명령 안내 문장을 담아 발행 |
 
+Agent는 발행할 때마다 고유한 `playback_id`를 지정한다. TTS 재생 노드는
+같은 ID로 `SpeechPlaybackStatus`를 발행하므로, 동일한 문장을 반복해도
+각 요청과 재생 상태를 구분해 연결할 수 있다.
+같은 사용자 발화의 지연·재시도 안내와 최종 답변에는 발화 ID를 공통
+`request_id`로 지정한다. TTS는 새 진행 안내가 오면 같은 요청의 대기 중인
+이전 진행 안내를 대체하고, 최종 답변을 접수하면 아직 재생하지 않은 진행
+안내를 취소한다. 이미 재생·일시정지 중인 음성과 다른 요청의 답변은 유지한다.
+
 두 Topic은 `RELIABLE`, `VOLATILE`, `KEEP_LAST`, depth `10`을 사용한다.
 TTS를 위한 별도 Manifest는 만들지 않는다. TTS 수신기는 음성을 합성하거나
 스피커로 재생하지 않으며, 발행 성공도 상대 수신·재생 완료를 보장하지 않는다.
@@ -782,8 +790,9 @@ Manager에서 사용하는 형식이다. 자동 통신 시험은 해당 구성�
 - Manager는 Action을 접수한 뒤 등록·입력·실행 조건 검사에서 거절할 수 있다.
   따라서 `accepted`와 성공 종료를 구분한다. 결과 YAML은 원문 그대로 보존하고
   기능별 완료나 물리 정지를 추측하지 않는다.
-- `MissionAnnouncer`는 확인된 상태를 문장으로 바꾼다. 같은 요청의 반복 진행은
-  한 번만 안내하고, 종료 뒤 늦은 진행으로 다시 실행 중이라고 안내하지 않는다.
+- `MissionAnnouncer`는 성공·실패·취소·거절 등 최종 결과와 상태 불명·취소 거절을
+  음성으로 안내한다. 접수·실행 대기·실행 중·취소 처리 같은 중간 상태는 로그에만
+  남긴다. 같은 안내의 반복과 종료 뒤 늦은 이벤트는 다시 발화하지 않는다.
 - 취소 요청·취소 수락·Action의 최종 취소 종료는 별도 상태다. 로봇 전체 중지
   경로와 물리 정지 판정은 이번 연결에 포함하지 않는다.
 - 접수 응답 제한 시간은 기본 5초다. 응답이 없으면 `UNKNOWN`으로 남기고 시작

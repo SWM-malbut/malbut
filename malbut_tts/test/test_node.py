@@ -128,6 +128,28 @@ def test_caller_playback_id_is_forwarded_for_confirmation(fake_ros):
 
 
 @pytest.mark.parametrize('interim', [False, True])
+def test_request_id_reaches_runtime_with_playback_id_and_interim(fake_ros, interim):
+    node = tts_node.create_tts_node(FakeRuntime)
+    received = []
+    node._runtime.submit = lambda *args, **kwargs: received.append((args, kwargs))
+    fake_ros.subscriptions[0][2](SimpleNamespace(
+        text='날씨 안내', request_type=0, playback_id='playback',
+        request_id='utterance', interim=interim))
+    assert received == [(('날씨 안내', 0), {
+        'playback_id': 'playback', 'request_id': 'utterance', 'interim': interim,
+    })]
+    node.destroy_node()
+
+
+def test_empty_request_id_preserves_legacy_runtime_adapter(fake_ros):
+    node = tts_node.create_tts_node(FakeRuntime)
+    fake_ros.subscriptions[0][2](SimpleNamespace(
+        text='일반 답변', request_type=0, request_id='', interim=False))
+    assert node._runtime.submitted == [('일반 답변', 0, False)]
+    node.destroy_node()
+
+
+@pytest.mark.parametrize('interim', [False, True])
 def test_worker_states_are_published_in_order_only_by_executor(fake_ros, interim):
     """Audio threads enqueue actual states without publishing ROS messages."""
     node = tts_node.create_tts_node(FakeRuntime)
