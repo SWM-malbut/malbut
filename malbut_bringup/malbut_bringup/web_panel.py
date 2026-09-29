@@ -543,6 +543,9 @@ class RosBridge:
                 status['ready'] = False
                 status['waiting'] = progress['missing']
                 status['message'] += ' · 준비 중' if progress['state'] != 'ERROR' else ' · 실패'
+                if progress['state'] == 'ERROR' and status['state'] == 'RUNNING':
+                    status['message'] += (' · Bringup 복구로 재시도' if self.data.servers['manager']
+                                          else ' · 관리자 미실행: Bringup 종료 후 재시작 필요')
             else:
                 status['message'] += ' · 완료'
             if self.runtime_message:

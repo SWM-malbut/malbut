@@ -51,8 +51,7 @@ to evaluate another compatible humanoid appearance without changing code.
 - State: `/tracking/person/status`
 - Estimated map pose: `/tracking/person/estimated_target_pose`
 - RViz LiDAR track labels: `/tracking/person/lidar_tracks`
-- Motion: Nav2 `ComputePathToPose`, `FollowPath`, `BackUp` (retreat), `Spin`,
-  and `SpeedLimit`
+- Motion: Nav2 `ComputePathToPose`, `FollowPath`, `BackUp` (retreat), and `Spin`
 
 The package's `lidar_foreground_preprocessor` receives `/scan`, `/map`, and TF.
 It lives in `src/` alongside the Python follower, and both executables are
@@ -83,9 +82,12 @@ RGB-D is the primary long-range position source, so a visible person remains
 followable even outside the LiDAR/costmap observation area. Camera-only motion
 continuously derives targets from current sensor observations. The follower
 asks Nav2 `ComputePathToPose` for a route to the person's own estimated
-position. The person's LiDAR cells and their inflation make that goal cell
-unreachable, so Nav2's planner `tolerance` (0.5 m in the robot's
-`nav2_params.yaml`, `GridBased`) ends the route at the nearest reachable cell;
+position, selecting `FollowPersonAStar` (Navfn with `use_astar: true`) on the
+robot. Other navigation keeps `GridBased`; the Gazebo launch explicitly uses
+its existing `GridBased` Smac 2D A* planner. The person's LiDAR cells and their
+inflation make that goal cell unreachable, so Nav2's planner `tolerance`
+(0.5 m in the robot's `nav2_params.yaml`, `FollowPersonAStar`) ends the route
+at the nearest reachable cell;
 the follower does not search the costmap for a goal itself. It keeps the
 route's prefix up to the first entry into the requested person-distance
 circle, with the endpoint facing the person; it never shortcuts across the
@@ -157,8 +159,8 @@ Action exposes only target selection and desired distance. Minimum safety
 distance and recovery timeouts remain deployment policy in
 `config/person_following.yaml`. The follower no longer caps speed from path
 length: Nav2's controller and velocity-smoother settings remain authoritative.
-Starting/canceling a follow mission releases the old application cap using
-Nav2's `SpeedLimit=0` reset, not an unlimited hardware velocity command.
+The follower does not publish speed-limit or speed-limit-reset messages,
+including when starting or canceling a mission.
 
 ## Run on a robot
 

@@ -17,6 +17,7 @@ from launch.event_handlers import OnShutdown
 from launch.substitutions import LaunchConfiguration
 from launch.utilities import perform_substitutions
 from launch_ros.actions import Node
+from launch_ros.utilities import evaluate_parameters
 import pytest
 import yaml
 
@@ -229,6 +230,14 @@ def test_navigation_has_one_public_upstream_bringup_entry_point():
         and entity.node_package == 'malbut_tracking'
     }
     assert tracking_nodes == {'person_follower', 'lidar_foreground_preprocessor'}
+    follower = next(entity for entity in description.entities
+                    if isinstance(entity, Node) and entity.node_executable == 'person_follower')
+    planner_context = LaunchContext()
+    planner_context.launch_configurations['use_sim_time'] = 'true'
+    overrides = evaluate_parameters(planner_context, follower._Node__parameters)[-1]
+    # The shared robot config selects FollowPersonAStar, absent in Gazebo.
+    # Keep the simulator's existing A* planner by selecting it explicitly.
+    assert overrides['planner_id'] == 'GridBased'
     perception_group = next(
         entity for entity in description.entities
         if isinstance(entity, GroupAction)

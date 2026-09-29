@@ -101,6 +101,7 @@ class NavigationClient:
         self._request = request
         goal = ComputePathToPose.Goal()
         goal.goal = pose
+        goal.planner_id = 'GridBased'
         goal.use_start = False
         future = self._planner.send_goal_async(goal)
         future.add_done_callback(

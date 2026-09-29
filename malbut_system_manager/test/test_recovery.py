@@ -8,7 +8,10 @@ from unittest.mock import Mock
 from launch import LaunchContext
 from launch_ros.actions import Node
 from rclpy.action import GoalResponse
+import pytest
+import yaml
 
+from malbut_system_manager.lifecycle_recovery import LifecycleUnavailable
 from malbut_system_manager.recovery import ProcessRecord, RecoveryOwner
 
 
@@ -23,6 +26,7 @@ def _owner():
     owner.busy = owner.stopping = False
     owner.localization, owner.pose = {}, None
     owner.current_probe = None
+    owner.lifecycle_recovery = Mock(busy=False)
     return owner
 
 
@@ -77,6 +81,14 @@ def test_recovery_rejects_before_startup_duplicate_and_arbitrary_requests():
     assert owner._goal(request) == GoalResponse.REJECT
 
 
+def test_recovery_does_not_overlap_a_timed_out_lifecycle_command():
+    """A service timeout cannot cancel an in-flight Nav2 transition."""
+    owner = _owner()
+    owner.lifecycle_recovery.busy = True
+    request = SimpleNamespace(capability_id='recovery', arguments_yaml='{}')
+    assert owner._goal(request) == GoalResponse.REJECT
+
+
 def test_probe_uses_original_timeout_and_does_not_reuse_old_exit(tmp_path):
     """Each pass must wait for the fresh probe, never the cached startup result."""
     params = tmp_path / 'probe.yaml'
@@ -114,3 +126,90 @@ def test_restarting_container_reloads_components_once():
     description = owner.service.include_launch_description.call_args.args[0]
     description.entities[0].execute(owner.launch_context)
     followup.assert_called_once_with({}, None)
+
+
+def test_failed_startup_can_be_recovered_but_ordinary_startup_cannot():
+    """A startup timeout remains manually recoverable without admitting motion."""
+    owner = _owner()
+    owner.launch_context.extend_globals({'malbut_startup_complete': False})
+    request = SimpleNamespace(capability_id='recovery', arguments_yaml='{}')
+    assert owner._goal(request) == GoalResponse.REJECT
+    owner.launch_context.extend_globals({'malbut_startup_failed': True})
+    assert owner._goal(request) == GoalResponse.ACCEPT
+
+
+def test_nonzero_startup_exit_is_still_a_recovery_target():
+    """A crashed startup child is not a completed one-shot initializer."""
+    owner = _owner()
+    owner.launch_context.extend_globals({'malbut_startup_complete': False})
+    event = _event(Node(package='example', executable='crashed'))
+    owner.started(event, owner.launch_context)
+    owner.exited(event, owner.launch_context)
+    assert owner.records[0].required
+
+
+@pytest.mark.parametrize('second_failure', [False, True])
+def test_unresponsive_owned_nav2_is_stopped_then_restarted_only_once(second_failure):
+    """Real exit confirmation precedes replacement, with no infinite restart loop."""
+    owner = _owner()
+    stage = (2, 'navigation')
+    spec = dict(manager='manager', nodes=('server',))
+    record = ProcessRecord(
+        Node(package='example', executable='container'), stage,
+        dict(name='nav2_container', cmd=['unused']), lifecycle=lambda *_: [spec],
+        pid=1234, restart_unresponsive=True)
+    probe = ProcessRecord(object(), stage, dict(name='probe', cmd=['unused']),
+                          probe=True, returncode=0)
+    owner.records = [record, probe]
+    failure = LifecycleUnavailable('/server/get_state', 'response_timeout')
+    owner.lifecycle_recovery.recover.side_effect = [failure, failure if second_failure else None]
+    events = []
+
+    def stop(event):
+        assert event.process_matcher(record.action)
+        assert not event.process_matcher(Node(package='other', executable='healthy'))
+        events.append('exit')
+        record.returncode = -15  # Launch's confirmed exit event, not ROS graph disappearance.
+
+    def launch(target, goal):
+        if target is record:
+            assert events == ['exit']
+            events.append('restart')
+            target.returncode = None
+        else:
+            target.returncode = 0
+        target.started = True
+
+    owner.service.emit_event.side_effect = stop
+    owner._launch = Mock(side_effect=launch)
+    goal = Mock(is_cancel_requested=False, goal_id=SimpleNamespace(uuid=bytes(16)))
+    result = owner._execute(goal)
+    assert events == ['exit', 'restart']
+    assert yaml.safe_load(result.result_yaml)['success'] is not second_failure
+    assert owner.service.emit_event.call_count == 1
+    if second_failure:
+        goal.succeed.assert_not_called()
+        goal.abort.assert_called_once()
+    else:
+        goal.succeed.assert_called_once()
+
+
+def test_unconfirmed_exit_never_launches_a_replacement():
+    """A stuck shutdown is failure, not permission to duplicate the container."""
+    owner = _owner()
+    record = ProcessRecord(object(), (0, 'navigation'), dict(name='container'),
+                           lifecycle=Mock(), restart_unresponsive=True)
+    owner.records = [record]
+    with pytest.raises(RuntimeError, match='exit was not confirmed'):
+        owner._stop_unresponsive(record, SimpleNamespace(is_cancel_requested=False), 0)
+    owner.service.include_launch_description.assert_not_called()
+
+
+def test_unowned_or_non_nav2_process_cannot_be_stopped():
+    """No name-based process kill is permitted."""
+    owner = _owner()
+    record = ProcessRecord(object(), (0, 'sensors'), {})
+    owner.records = [record]
+    with pytest.raises(RuntimeError, match='not an owned'):
+        owner._stop_unresponsive(record, SimpleNamespace(is_cancel_requested=False), 1)
+    owner.service.emit_event.assert_not_called()

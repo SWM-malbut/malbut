@@ -10,7 +10,7 @@ from geometry_msgs.msg import Pose, PoseStamped
 from malbut_interfaces.action import FollowPerson
 from malbut_interfaces.msg import LidarClusterArray, TrackingCommandTrace
 from nav_msgs.msg import Path
-from nav2_msgs.msg import Costmap, SpeedLimit
+from nav2_msgs.msg import Costmap
 import rclpy
 from rclpy.action import (
     ActionServer,
@@ -179,11 +179,6 @@ class PersonFollowerNode(Node):
             self,
             str(self.get_parameter('compute_path_action').value),
             on_idle=self._on_path_planner_idle,
-        )
-        self._speed_publisher = self.create_publisher(
-            SpeedLimit,
-            str(self.get_parameter('speed_limit_topic').value),
-            10,
         )
         self._status_publisher = self.create_publisher(
             String,
@@ -373,7 +368,6 @@ class PersonFollowerNode(Node):
         self.declare_parameter('retreat_speed_mps', 0.15)
         self.declare_parameter('navigation_retry_delay_s', 0.75)
         self.declare_parameter('nav2_planning_timeout_s', 0.20)
-        self.declare_parameter('speed_limit_topic', 'speed_limit')
         self.declare_parameter('global_frame', 'map')
         self.declare_parameter('odometry_frame', 'odom')
         self.declare_parameter('robot_frame', 'base_footprint')
@@ -405,10 +399,6 @@ class PersonFollowerNode(Node):
         self.declare_parameter('minimum_distance_m', 0.20)
         self.declare_parameter('distance_tolerance_m', 0.10)
         self.declare_parameter('alignment_angle_tolerance_rad', 0.10)
-        # Retained for launch compatibility; Nav2 now owns all speed limits.
-        self.declare_parameter('minimum_follow_speed_mps', 0.10)
-        self.declare_parameter('maximum_linear_speed_mps', 0.40)
-        self.declare_parameter('full_speed_travel_distance_m', 1.50)
         self.declare_parameter('approach_prediction_horizon_s', 0.75)
         self.declare_parameter('approach_speed_threshold_mps', 0.10)
         self.declare_parameter('bearing_only_variance_threshold_m2', 1.0)
@@ -651,7 +641,6 @@ class PersonFollowerNode(Node):
         self._navigation_failure_count = 0
         self._tracking_source = 'none'
         self._set_state(FollowState.IDLE)
-        self._reset_speed_limit()
         goal_handle.execute()
         self.get_logger().info(
             'Waiting to acquire '
@@ -2889,14 +2878,6 @@ class PersonFollowerNode(Node):
             message.markers.append(goal_label)
         self._track_markers_publisher.publish(message)
 
-    def _reset_speed_limit(self) -> None:
-        """Release a previous follow cap; keep Nav2's configured limits."""
-        message = SpeedLimit()
-        message.header.stamp = self.get_clock().now().to_msg()
-        message.percentage = False
-        message.speed_limit = 0.0
-        self._speed_publisher.publish(message)
-
     def _set_state(self, state: str) -> None:
         if state == self._state:
             return
@@ -2921,7 +2902,6 @@ class PersonFollowerNode(Node):
         self._active_goal = None
         self._nav2.cancel()
         self._path_planner.cancel()
-        self._reset_speed_limit()
         self._set_state(FollowState.STOPPED)
         self._line_fallback_pending = False
         self._settings = None

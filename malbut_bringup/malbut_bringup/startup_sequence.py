@@ -2,7 +2,8 @@
 
 import json
 
-from launch.actions import LogInfo, OpaqueFunction, RegisterEventHandler, SetLaunchConfiguration
+from launch.actions import LogInfo
+from launch.actions import RegisterEventHandler, SetLaunchConfiguration
 from launch.event_handlers import OnProcessExit
 from launch_ros.actions import Node
 
@@ -32,22 +33,34 @@ def sequential_startup(stages, parameters, *, timeout_s, speech_timeout_s):
                 *actions, gates[index]]
 
     def finished(index):
-        def on_exit(event, context):
-            if context.is_shutdown or index in completed:
-                return []
-            if event.returncode != 0:
-                raise RuntimeError(f'Bringup stage failed: {stages[index][1]}')
+        def advance(context):
             completed.add(index)
+            context.extend_globals({'malbut_startup_failed': False})
             actions = [LogInfo(msg=(
                 f'Bringup [{index + 1}/{len(stages)}] 완료: {stages[index][1]}'))]
             if index + 1 < len(stages):
                 actions.extend(begin(index + 1))
             else:
-                def mark_complete(context):
-                    context.extend_globals({'malbut_startup_complete': True})
-                    return []
-                actions.append(OpaqueFunction(function=mark_complete))
+                context.extend_globals({'malbut_startup_complete': True})
             return actions
+
+        def on_exit(event, context):
+            if context.is_shutdown or index in completed:
+                return []
+            if event.returncode != 0:
+                if getattr(context.locals, 'malbut_recovery_owner', False):
+                    # Keep already started processes observable. The manual
+                    # owner rechecks all reached stages, then continues here.
+                    remaining = sum(speech_timeout_s if stage[0] == 'speech' else timeout_s
+                                    for stage in stages[index + 1:])
+                    context.extend_globals({
+                        'malbut_startup_failed': True,
+                        'malbut_startup_resume': (advance, remaining + timeout_s),
+                    })
+                    return [LogInfo(msg=f'Bringup stage failed: {stages[index][1]}; '
+                                    'startup paused for manual recovery; not READY')]
+                raise RuntimeError(f'Bringup stage failed: {stages[index][1]}')
+            return advance(context)
         return on_exit
 
     return ([RegisterEventHandler(OnProcessExit(

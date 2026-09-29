@@ -15,7 +15,7 @@ person_follower:
     # Standard Nav2 endpoints. The follower never publishes /cmd_vel.
     follow_path_action: follow_path
     compute_path_action: compute_path_to_pose
-    planner_id: GridBased
+    planner_id: FollowPersonAStar
     tracking_controller_id: FollowPath
     goal_checker_id: general_goal_checker
     spin_action: spin
@@ -25,7 +25,6 @@ person_follower:
     backup_action: backup
     retreat_speed_mps: 0.15
     navigation_retry_delay_s: 0.75
-    speed_limit_topic: speed_limit
     global_frame: map
     odometry_frame: odom
     robot_frame: base_footprint

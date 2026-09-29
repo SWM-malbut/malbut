@@ -606,7 +606,8 @@ def generate_launch_description():
             os.path.join(
                 tracking_share, 'config', 'person_following.yaml'
             ),
-            {'use_sim_time': use_sim_time},
+            # Gazebo's GridBased is already the Smac 2D A* planner.
+            {'use_sim_time': use_sim_time, 'planner_id': 'GridBased'},
         ],
     )
     person_lidar_preprocessor = Node(

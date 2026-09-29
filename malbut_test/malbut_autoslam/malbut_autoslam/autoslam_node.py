@@ -249,6 +249,7 @@ class AutoSlamNode(Node):
         self.planned_path = []
         request = ComputePathToPose.Goal()
         request.goal = self._target_pose(frontier, frame)
+        request.planner_id = 'GridBased'
         request.use_start = False
         self._check(handle)
         planning = Navigation(self.planner, request)

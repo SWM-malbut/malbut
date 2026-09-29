@@ -44,11 +44,20 @@ def test_localization_uses_actual_initial_pose_and_vendor_frames(config):
     assert amcl['robot_model_type'] == 'nav2_amcl::OmniMotionModel'
     assert config['map_server']['ros__parameters']['yaml_filename'] == ''
     planner = config['planner_server']['ros__parameters']
-    assert planner['planner_plugins'] == ['GridBased']
+    assert planner['planner_plugins'] == ['GridBased', 'FollowPersonAStar']
     assert planner['GridBased']['plugin'] == 'nav2_navfn_planner/NavfnPlanner'
-    # The person follower plans to the person's own cells and needs a search
-    # radius wider than two legs plus the 0.106 m inscribed inflation.
     assert planner['GridBased']['tolerance'] == 0.5
+    assert planner['GridBased']['use_astar'] is False
+
+
+def test_only_person_following_selects_astar_with_unchanged_safety_settings(config):
+    """Select the A* instance per goal; do not alter general navigation."""
+    planner = config['planner_server']['ros__parameters']
+    assert planner['FollowPersonAStar'] == {**planner['GridBased'], 'use_astar': True}
+    root = Path(__file__).parents[2]
+    for package in (root / 'malbut_tracking', root / 'malbut_test/malbut_tracking'):
+        following = yaml.safe_load((package / 'config/person_following.yaml').read_text())
+        assert following['person_follower']['ros__parameters']['planner_id'] == 'FollowPersonAStar'
 
 
 def test_robot_costmap_footprint_and_driver_velocity_limits(config):

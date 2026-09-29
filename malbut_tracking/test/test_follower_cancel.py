@@ -73,7 +73,6 @@ def follow(monkeypatch):
         _cancel_requested_goal=None,
         _cancel_guard=Mock(),
         _path_planner=Mock(busy=True),
-        _reset_speed_limit=Mock(),
         _set_state=Mock(),
         _obstacle_tracker=Mock(),
         _camera_estimator=Mock(),

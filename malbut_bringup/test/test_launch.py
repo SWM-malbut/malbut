@@ -331,6 +331,8 @@ def test_nav2_is_composed_with_collision_monitor_and_zone_filter(launch_module):
     navigation = components['lifecycle_manager_navigation']['parameters'][0]
     localization = components['lifecycle_manager_localization']['parameters'][0]
     assert navigation['autostart'] is True and localization['autostart'] is False
+    assert navigation['attempt_respawn_reconnection'] is False
+    assert localization['attempt_respawn_reconnection'] is False
     order = list(navigation['node_names'])
     assert order[:2] == ['zone_filter_mask_server', 'zone_filter_info_server']
     # Spinning to find the pose must not wait for the map-frame global costmap.
@@ -359,9 +361,18 @@ def test_nav2_recovery_reloads_components_and_selected_map_without_motion(launch
     assert saved['map_server']['parameters'][1]['yaml_filename'] == '/maps/home.yaml'
     assert saved['amcl']['parameters'][1]['set_initial_pose'] is True
     assert saved['amcl']['parameters'][1]['initial_pose.x'] == 1.5
-    assert saved['lifecycle_manager_localization']['parameters'][0]['autostart'] is True
+    assert saved['lifecycle_manager_localization']['parameters'][0]['autostart'] is False
+    assert saved['lifecycle_manager_navigation']['parameters'][0]['autostart'] is False
     mapping = _components(context, second)
     assert mapping['lifecycle_manager_localization']['parameters'][0]['autostart'] is False
+    groups = container._malbut_recovery_lifecycle(
+        {'mode': 'LOCALIZATION', 'map': '/maps/home.yaml'}, pose)
+    assert [group['manager'] for group in groups] == [
+        'lifecycle_manager_localization', 'lifecycle_manager_navigation']
+    assert groups[0]['parameters']['map_server']['yaml_filename'] == '/maps/home.yaml'
+    assert groups[0]['parameters']['amcl']['initial_pose.x'] == 1.5
+    groups = container._malbut_recovery_lifecycle({'mode': 'MAPPING'}, None)
+    assert [group['manager'] for group in groups] == ['lifecycle_manager_navigation']
 
 
 @pytest.mark.parametrize('options', [{'relocalization': 'false'}, {'restore_pose': 'false'}])
@@ -705,16 +716,33 @@ def test_parent_never_leaves_partial_speech_pipeline(launch_module, package):
 
 
 def test_managed_successful_bringup_keeps_surviving_nodes_for_manual_recovery(launch_module):
-    """The new policy is opt-in and applies only after every initial stage passed."""
+    """Managed launches preserve evidence even before the first READY."""
     context = _context(launch_module, start_hardware='false', perception='false')
     actions = _core_actions(launch_module, context)
     node = Node(package='malbut_stt', executable='test')
     context.extend_globals({'malbut_recovery_owner': True})
-    with pytest.raises(RuntimeError, match='Bringup child exited'):
-        _process_exit(actions, context, node)
+    assert _process_exit(actions, context, node)
     context.extend_globals({'malbut_startup_complete': True})
     result = _process_exit(actions, context, node, returncode=-11)
     assert result and all(type(action).__name__ == 'LogInfo' for action in result)
+
+
+def test_managed_failed_stage_pauses_and_can_continue_after_manual_recovery(launch_module):
+    """No later stage starts until the owner explicitly resumes the failed gate."""
+    context = _context(launch_module, perception='false')
+    context.extend_globals({'malbut_recovery_owner': True})
+    initial = launch_module._setup(context)
+    gate = _nodes(initial, 'wait_for_robot')[0]
+    result = _process_exit(initial, context, gate, returncode=1)
+    assert not _nodes(result, 'wait_for_robot')
+    assert context.locals.malbut_startup_failed
+    assert not getattr(context.locals, 'malbut_startup_complete', False)
+    resume, timeout = context.locals.malbut_startup_resume
+    next_stage = resume(context)
+    assert timeout > 0
+    assert not context.locals.malbut_startup_failed
+    assert len(_nodes(next_stage, 'wait_for_robot')) == 1
+    assert _process_exit(initial, context, gate) == []
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-"""Preflight the robot speech runtime before starting Agent, TTS, then STT."""
+"""Start Agent, TTS, then STT without loading Whisper twice."""
 
 from math import isfinite
 from pathlib import Path
@@ -84,7 +84,7 @@ def _setup(context):
         return TimerAction(period=timeout, actions=[OpaqueFunction(function=expired)])
 
     def preflight_exited(event, launch_context):
-        nonlocal stage, stt
+        nonlocal stage
         if launch_context.is_shutdown or stage != 'preflight':
             return []
         if event.returncode != 0:
@@ -93,6 +93,12 @@ def _setup(context):
             stage = 'stopped'
             return [EmitEvent(event=Shutdown(
                 reason='Speech preflight passed; preflight_only is complete'))]
+        return start_runtime(launch_context)
+
+    def start_runtime(launch_context):
+        nonlocal stage, stt
+        if launch_context.is_shutdown:
+            return []
         config = Path(get_package_share_directory('malbut_stt')) / 'config/jetson.yaml'
         if not config.is_file():
             return fail(f'Speech STT configuration is missing: {config}')
@@ -128,14 +134,23 @@ def _setup(context):
         stage = 'peers'
         return [agent, tts, peers, watchdog('peers', timeouts['peer_timeout_s'])]
 
-    def control_exited(event, launch_context):
+    def start_after_control(launch_context):
         nonlocal stage
+        if preflight_only:
+            stage = 'preflight'
+            return [preflight, watchdog('preflight', timeouts['preflight_timeout_s'])]
+        # Normal Bringup skips the disposable model/audio preflight. Keep the
+        # explicit preflight_only diagnostic; STT still validates its own startup.
+        # stage = 'preflight'
+        # return [preflight, watchdog('preflight', timeouts['preflight_timeout_s'])]
+        return start_runtime(launch_context)
+
+    def control_exited(event, launch_context):
         if launch_context.is_shutdown or stage != 'control':
             return []
         if event.returncode != 0:
             return fail('Speech robot control readiness failed')
-        stage = 'preflight'
-        return [preflight, watchdog('preflight', timeouts['preflight_timeout_s'])]
+        return start_after_control(launch_context)
 
     def peers_exited(event, launch_context):
         nonlocal stage
@@ -165,7 +180,7 @@ def _setup(context):
         return [*registrations, RegisterEventHandler(OnProcessExit(
             target_action=control, on_exit=control_exited)),
             control, watchdog('control', timeouts['peer_timeout_s'])]
-    return [*registrations, preflight, watchdog('preflight', timeouts['preflight_timeout_s'])]
+    return [*registrations, *start_after_control(context)]
 
 
 def generate_launch_description():
