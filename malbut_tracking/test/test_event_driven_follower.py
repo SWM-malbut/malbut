@@ -126,7 +126,6 @@ def test_nav2_distance_feedback_does_not_reapply_an_application_speed_cap():
     follower = SimpleNamespace(
         _remaining_travel_distance_m=0.0,
         _state=FollowState.TRACKING,
-        _publish_speed_limit=Mock(),
     )
 
     PersonFollowerNode._on_nav2_feedback(
@@ -136,22 +135,6 @@ def test_nav2_distance_feedback_does_not_reapply_an_application_speed_cap():
     )
 
     assert follower._remaining_travel_distance_m == 1.25
-    follower._publish_speed_limit.assert_not_called()
-
-
-def test_release_follow_speed_limit_restores_nav2_configured_limits():
-    """Zero is Nav2's cap-reset value, not a custom fixed robot speed."""
-    from builtin_interfaces.msg import Time
-    follower = SimpleNamespace(
-        _speed_publisher=Mock(),
-        get_clock=lambda: SimpleNamespace(
-            now=lambda: SimpleNamespace(to_msg=lambda: Time(sec=20)),
-        ),
-    )
-    PersonFollowerNode._reset_speed_limit(follower)
-    message = follower._speed_publisher.publish.call_args.args[0]
-    assert message.speed_limit == 0.0
-    assert not message.percentage
 
 
 def test_waiting_for_first_person_does_not_start_blind_search():

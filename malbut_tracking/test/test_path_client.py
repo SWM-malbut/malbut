@@ -96,6 +96,14 @@ def expire(planner):
     planner.node.timers[-1].callback()
 
 
+@pytest.mark.parametrize('planner_id', ['GridBased', 'FollowPersonAStar'])
+def test_requested_planner_is_forwarded_to_nav2(planner, planner_id):
+    """Select the configured planner per action goal, not by renaming a node."""
+    assert planner.adapter.compute(PoseStamped(), planner_id, planner.result)
+    assert planner.client.goals[0].planner_id == planner_id
+    planner.client.accept().finish()
+
+
 def test_success_before_deadline_returns_path_and_destroys_timer(planner):
     assert compute(planner)
     assert planner.node.timers[0].clock.clock_type == ClockType.STEADY_TIME

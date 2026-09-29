@@ -412,6 +412,8 @@ def test_unreachable_frontiers_save_partial_map_without_driving(
     assert outcome.result.map_yaml == str(tmp_path / 'home.yaml')
     assert outcome.result.known_area_m2 == pytest.approx(4.0)
     assert system.backend.planning_requests
+    assert all(request.planner_id == 'GridBased'
+               for request in system.backend.planning_requests)
     assert system.backend.navigation_requests == []
     assert len(system.backend.save_requests) == 1
     assert ('Remaining frontiers' in outcome.result.message

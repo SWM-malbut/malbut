@@ -114,7 +114,7 @@ ros2 launch malbut_bringup robot.launch.py
 
 차체·센서·인식·Nav2·관리자와 음성을 함께 시작한다. 실행 모드는 없으며, 저장 지도로
 시작하려면 같은 명령에 `map:=/실제/지도.yaml`을 지정한다. `speech:=true`가 기본값이며,
-로봇 준비 확인 뒤 음성 점검을 시작한다. 이 실행만으로 이동 Goal을 보내지는 않는다.
+로봇 준비 확인 뒤 음성 노드를 시작한다. 이 실행만으로 이동 Goal을 보내지는 않는다.
 
 장치를 따로 지정해야 할 때는 아래 목록을 로봇에서 확인한다:
 
@@ -163,7 +163,7 @@ ros2 launch malbut_bringup robot.launch.py \
 | `stt_cpp_threads` | `6` CPU 보조 스레드 |
 | `speech_input_has_aec` | `false`; 검증된 에코 제거 입력일 때만 `true` |
 | `speech_agent_provider` | `openai`; `mock`으로 바꿔도 TTS는 OpenAI 사용 |
-| `speech_preflight_timeout_s` | `120.0`; 점검과 실제 STT 시작 각각의 제한시간. 재시도 대기 포함 |
+| `speech_preflight_timeout_s` | `120.0`; 실제 STT 시작 제한시간. 단독 점검에도 사용하며 재시도 대기 포함 |
 | `speech_peer_timeout_s` | `30.0`; ROS 연결 대기 제한시간 |
 
 AEC 인자는 에코 제거 기능을 구현하거나 활성화하지 않는다. STT의 나머지 endpoint
@@ -203,11 +203,10 @@ Bringup이 제조사 프로세스를 자동으로 종료하지는 않는다.
 1. **로봇 제어 준비**: Manager의 Action 서버와 BOOTING 이후 상태가 준비된 뒤
    음성 준비를 시작한다.
    준비 확인은 이동 Goal을 보내지 않는다. 단독 음성 실행에는 이 단계를 요구하지 않는다.
-2. **Preflight**: 생성된 ROS 음성 타입, Agent 설정, OpenAI SDK와 키 존재,
-   출력 장치의 24 kHz mono float32 스트림, STT ABI 3 모델 로딩,
-   마이크 16 kHz PCM 512 samples 읽기와 20 ms VAD 입력을 점검한다.
-   출력에는 100 ms 무음만 쓰며, 입력을 전사·저장·전송하지 않는다.
-3. **Agent와 TTS**: 점검 프로세스가 성공 종료한 뒤 시작한다. Agent는 대화 런타임과
+2. **Preflight 생략**: 일반 Bringup에서는 사전 점검 실행을 주석 처리하여
+   Whisper 모델을 점검용으로 로딩·해제한 뒤 다시 로딩하지 않는다.
+   기존 점검은 명시적으로 `preflight_only:=true`를 지정한 단독 진단에만 실행한다.
+3. **Agent와 TTS**: 로봇 제어 준비 직후 시작한다. Agent는 대화 런타임과
    DB 세션 초기화가 끝난 뒤 음성 입력 Topic·Service를 공개한다.
 4. **ROS 연결 확인**: 두 Service와 타입이 맞는 Topic의 발행자·구독자가
    발견된 뒤 STT를 시작한다.
@@ -217,17 +216,17 @@ Bringup이 제조사 프로세스를 자동으로 종료하지는 않는다.
    Action 서버 발견만으로 완료 처리하지 않는다. 기존 Agent·STT·TTS가 실행 중이면
    웹의 새 Bringup 시작은 중복 실행 오류로 거부한다.
 
-`speech_preflight_passed`, `speech_peers_ready`, `malbut_speech_capture_ready` 순서로
-통과 로그를 확인한다.
-점검 또는 실제 STT 시작 중 CUDA 메모리 할당 부족 로그와 함께 프로세스가 종료되면,
+일반 Bringup에서는 `speech_peers_ready`, `malbut_speech_capture_ready` 순서로
+통과 로그를 확인한다. `speech_preflight_passed`는 단독 진단에서만 출력한다.
+실제 STT 시작(또는 명시적 단독 점검) 중 CUDA 메모리 할당 부족 로그와 함께 프로세스가 종료되면,
 음성 프로세스만 5초, 10초 기다려 최대 3회 시도한다. 재시도 중에는 Bringup을 유지하고
 웹은 마이크 준비를 계속 기다린다. 각 단계의 제한시간은 재시도와 대기를 모두 포함한다.
 파일·설정 오류나 CUDA 메모리 부족으로 확인되지 않은 실패는 바로 보고한다.
 3회 모두 실패하거나 제한시간을 넘으면 통합 Bringup 전체를 실패 코드로 종료한다.
 마이크 준비 이후의 음성 노드 종료는 재시도하지 않는다. Ctrl+C 또는 웹의 Bringup
 종료는 진행 중인 시도와 대기를 취소하고 함께 실행한 로봇·음성 구성을 정리한다.
-점검에서 사용한 모델·마이크·출력 스트림은 반환 전에 해제하고,
-같은 Python 실행 파일·모델·장치 설정으로 실제 노드를 시작한다.
+단독 점검에서 사용한 모델·마이크·출력 스트림은 반환 전에 해제하며,
+`preflight_only:=true`는 실제 음성 노드를 시작하지 않고 종료한다.
 실패 출력의 `phase`로 설정·ROS 타입·TTS 출력·STT 모델/마이크 중 실패 단계를 확인한다.
 예외 원문, API 키, 마이크 샘플은 로그에 출력하지 않는다. 단, Malbut 코드가 정한
 고정 메시지(예: `whisper.cpp requires rebuilding the packaged ABI 3 bridge`)와

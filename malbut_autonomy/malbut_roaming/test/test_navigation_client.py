@@ -158,6 +158,7 @@ def test_validated_path_runs_navigation_and_reports_success(client):
     navigator = FakeActionClient.instances['navigate_to_pose']
     planner_goal, _feedback, planner_future = planner.sent[0]
     assert planner_goal.goal is pose
+    assert planner_goal.planner_id == 'GridBased'
     assert planner_goal.use_start is False
 
     _complete_valid_plan(planner_future)

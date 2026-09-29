@@ -15,7 +15,7 @@
     border-radius:6px; padding:10px; min-width:0; width:100%}
   button,.button {cursor:pointer; background:#214b58; text-decoration:none; text-align:center}
   button:hover,.button:hover {background:#296374} .row {display:flex; gap:12px; align-items:center; flex-wrap:wrap}
-  .row button,.row .button {width:auto} #chart {width:100%; height:360px; display:block}
+  .row button,.row .button {width:auto} canvas.chart {width:100%; height:360px; display:block}
   [hidden] {display:none!important}
   .checks {display:flex; flex-wrap:wrap; gap:10px; margin:12px 0}
   .check {display:flex; flex-direction:row; align-items:center; gap:10px; padding:10px 12px;
@@ -27,8 +27,17 @@
   .swatch {width:28px; flex-shrink:0; border-top:3px solid var(--line-color)}
   .check.off .swatch {opacity:.35} #legend {margin:12px 0}
   #sessionName {max-width:420px} #nameStatus {font-size:13px}
-  #hover .hover-value {display:inline-flex; align-items:center; gap:7px; margin:3px 18px 3px 0}
-  #hover {min-height:24px; color:#83ded1; white-space:pre-wrap} #notice {color:#f4c889; white-space:pre-wrap}
+  .hover .hover-value {display:inline-flex; align-items:center; gap:7px; margin:3px 18px 3px 0}
+  .hover {min-height:24px; color:#83ded1; white-space:pre-wrap} #notice {color:#f4c889; white-space:pre-wrap}
+  .metric-groups {display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); align-items:start; gap:12px; margin:16px 0}
+  .metric-group {border:1px solid #314454; border-radius:8px; padding:12px; min-width:0}
+  .metric-group>.check {border:0; padding:0; background:transparent}
+  .metric-group>.check strong {flex:1} .metric-group>.check small {white-space:nowrap}
+  .metric-group details {margin-top:10px} .metric-group .checks {max-height:245px; overflow:auto; margin-bottom:0}
+  .metric-group .checks .check {width:100%; padding:7px 9px; overflow-wrap:anywhere}
+  .unit-chart {border-top:1px solid #314454; margin-top:22px; padding-top:18px}
+  .unit-chart h2 {margin-bottom:4px} .unit-legend {gap:8px 20px; margin:12px 0}
+  .unit-legend span {display:inline-flex; align-items:center; gap:8px; font-size:13px}
   table {border-collapse:collapse; width:100%; font-size:13px} td,th {text-align:left; border-bottom:1px solid #314454;
     padding:10px 8px; overflow-wrap:anywhere} th {color:#a8c0d0} .scroll {overflow:auto; max-height:400px}
   code {font-size:12px; overflow-wrap:anywhere} details {margin-top:14px} summary {cursor:pointer; color:#b4c6d4}
@@ -36,7 +45,7 @@
   #speechRows td {vertical-align:top} #speechRows .speech-text {white-space:pre-wrap; min-width:200px}
   #speechRows .speech-stt {color:#88baff} #speechRows .speech-tts {color:#65dece}
   #speechRows small {display:block; margin-top:5px; overflow-wrap:anywhere}
-  @media(max-width:650px) {body{padding:14px}.panel{padding:14px}#chart{height:300px}}
+  @media(max-width:650px) {body{padding:14px}.panel{padding:14px}canvas.chart{height:300px}.metric-groups{grid-template-columns:1fr}}
 </style>
 <header><div class="tag">MALBUT / OBSERVATION ONLY</div><h1>실기기 측정 로그</h1>
 <div class="muted">저장한 실측값을 조회합니다. 이 화면은 ROS에 연결하거나 로봇을 제어하지 않습니다.</div></header>
@@ -67,7 +76,14 @@
     <label>끝 (초, 비우면 전체)<input id="end" type="number" min="0" step="0.1"></label>
     <label id="actionField">Action 상태 표시<select id="action"><option value="">선택 안 함</option></select></label>
   </div>
-  <p id="notice"></p><div id="graph"><p id="seriesCount" class="muted"></p><div id="legend" class="checks"></div><canvas id="chart"></canvas><div id="hover"></div>
+  <p id="notice"></p>
+  <div id="systemMetrics" hidden>
+    <h2>함께 볼 지표</h2>
+    <p class="muted">같은 단위는 한 그래프에, 다른 단위는 별도 그래프에 표시합니다. 모든 그래프의 시간축은 같습니다. 체크는 표시만 바꾸며 수집에는 영향을 주지 않습니다.</p>
+    <div class="row"><button id="allMetrics" type="button">모든 지표 표시</button><button id="noMetrics" type="button">모두 숨김</button><small id="metricCount"></small></div>
+    <div id="metricGroups" class="metric-groups"></div>
+  </div>
+  <div id="graph"><div id="singleGraph"><p id="seriesCount" class="muted"></p><div id="legend" class="checks"></div><canvas id="chart" class="chart"></canvas><div id="hover" class="hover"></div></div><div id="systemCharts" hidden></div>
   <small>점은 실제 표본, 선은 표본 사이 연결입니다. 미지원·누락 값은 빈 구간으로 표시합니다. CPU: 프로세스는 코어 1개 = 100%, 전체는 장치 = 100%.</small>
   </div>
   <div id="speechPanel" hidden>
@@ -92,21 +108,72 @@
 <script>
   'use strict';
   const $=id=>document.getElementById(id), palette=['#65dece','#88baff','#ffcc7e','#cf9cf7','#fe92a8','#b7df81','#ddaf87','#a5b7cd'];
-  let metadata={}, rows=[], events=[], series=[], extent=[0,1];
+  let metadata={}, rows=[], events=[];
   const storageKey='malbut-resource-viewer-v1', selectionIds=['session','kind','channel','metric','start','end','action'];
   const responseCache=new Map(), rendered=new Map();
   let request=null, timer=null, restored=null, displayedData=null, displayedAction=null, nameDirty=false, namedSession='';
   try {restored=JSON.parse(localStorage.getItem(storageKey))} catch {}
   let groupChoices=restored?.groups||{}, hiddenSeries=new Set(restored?.hiddenSeries||[]);
+  const systemChoices=restored?.systemMetrics||{}, expandedUnits=new Set(restored?.expandedUnits||['%','MiB']);
+  const systemPlots=new Map();
   let legacyProcess=restored?.values?.process||'';
   for(const id of ['kind','start','end'])if(typeof restored?.values?.[id]==='string')$(id).value=restored.values[id];
   if(!$('kind').value)$('kind').value='system';
   const details=document.querySelector('details');
   if(restored)details.open=restored.details===true;
   function preferred(id){return restored?.values?.[id]??$(id).value}
-  function saveState(){if(restored)return;try{localStorage.setItem(storageKey,JSON.stringify({values:Object.fromEntries(selectionIds.map(id=>[id,$(id).value])),groups:groupChoices,hiddenSeries:[...hiddenSeries],scrollY:window.scrollY,details:details.open}))}catch{}}
+  function saveState(){if(restored)return;try{localStorage.setItem(storageKey,JSON.stringify({values:Object.fromEntries(selectionIds.map(id=>[id,$(id).value])),groups:groupChoices,hiddenSeries:[...hiddenSeries],systemMetrics:systemChoices,expandedUnits:[...expandedUnits],scrollY:window.scrollY,details:details.open}))}catch{}}
   function changed(key,value,render){const signature=JSON.stringify(value);if(rendered.get(key)===signature)return;render();rendered.set(key,signature)}
   const labels={cpu_percent:'CPU (%)',ram_used_mib:'사용 RAM (MiB)',ram_rss_mib:'프로세스 RSS (MiB)',swap_used_mib:'사용 Swap (MiB)',swap_mib:'프로세스 Swap (MiB)',gpu_percent:'GPU (%) · 프로세스별 미지원',emc_percent:'EMC 대역폭 사용률 (%)',emc_mhz:'EMC 클럭 (MHz)',received_hz:'수집기 수신 Hz',received_bytes_per_s:'수신 CDR 바이트/초',collection_duration_ms:'수집 소요시간 (ms)',schedule_lateness_ms:'수집 일정 지연 (ms)'};
+  const unitTitles={'%':'사용률','MiB':'메모리 · RAM / Swap','MHz':'클럭','°C':'온도','mW':'전력','ms':'수집 처리시간','s':'표본 간격 · 경과시간'};
+  function metricInfo(field){
+    let unit='',name=labels[field]||field,match;
+    for(const [suffix,value] of [['_percent','%'],['_mib','MiB'],['_mhz','MHz'],['_c','°C'],['_mw','mW'],['_ms','ms'],['_s','s']])if(field.endsWith(suffix)){unit=value;break}
+    if((match=/^cpu(\d+)_(percent|mhz)$/.exec(field)))name=`CPU 코어 ${match[1]} ${match[2]==='percent'?'사용률':'클럭'}`;
+    if((match=/^gpu(\d+)_mhz$/.exec(field)))name=`GPU 클럭 ${match[1]}`;
+    if(field==='gpu_percent')name='GPU 사용률';
+    const memory={MemTotal_mib:'RAM 전체 용량',MemAvailable_mib:'RAM 사용 가능',SwapTotal_mib:'Swap 전체 용량',SwapFree_mib:'Swap 남은 용량'};
+    name=memory[field]||name;
+    if(field.startsWith('temp.'))name=field.slice(5,-2)+' 온도';
+    if(field.startsWith('power.'))name=field.slice(6,-3)+' 순간 전력';
+    if(field.startsWith('power_avg.'))name=field.slice(10,-3)+' 평균 전력';
+    if(field==='sample_window_s')name='실제 표본 간격';
+    if(field==='tegrastats_age_s')name='GPU 측정 경과시간';
+    // Unknown fields never share an axis on the assumption that their units match.
+    return {field,unit,key:unit||'unknown:'+field,name,heading:unit?`${unitTitles[unit]} (${unit})`:field};
+  }
+  function numericFields(list){const omit=new Set(['t','wall_ns','pid','ppid','received_total']);return [...new Set(list.flatMap(r=>Object.keys(r).filter(k=>!omit.has(k)&&(typeof r[k]==='number'||r[k]===null))))]}
+  function systemKey(){return JSON.stringify([$('session').value,$('channel').value])}
+  function systemGroups(){
+    const groups=new Map();for(const field of numericFields(rows)){const info=metricInfo(field);if(!groups.has(info.key))groups.set(info.key,{...info,fields:[]});groups.get(info.key).fields.push(info)}
+    return [...groups.values()].sort((a,b)=>{const order=Object.keys(unitTitles);return (order.indexOf(a.key)<0?99:order.indexOf(a.key))-(order.indexOf(b.key)<0?99:order.indexOf(b.key))});
+  }
+  function selectedMetrics(){return systemChoices[systemKey()]||[]}
+  function metricsChanged(){restored=null;chart();saveState()}
+  function metricControls(groups){
+    const fields=groups.flatMap(g=>g.fields.map(f=>f.field)),key=systemKey();
+    if(!Array.isArray(systemChoices[key])&&fields.length){
+      const previous=preferred('metric'),defaults=['cpu_percent','gpu_percent','emc_percent','ram_used_mib','swap_used_mib'];
+      if(previous==='__cores'||previous==='__clocks')defaults.push(...fields.filter(f=>(previous==='__cores'?/^cpu\d+_percent$/:/^cpu\d+_mhz$/).test(f)));
+      else if(previous)defaults.push(previous);
+      systemChoices[key]=[...new Set(defaults.filter(f=>fields.includes(f)))];
+      if(!systemChoices[key].length)systemChoices[key]=fields.slice(0,1);
+    }
+    const selected=new Set(selectedMetrics());
+    $('metricCount').textContent=`${fields.filter(f=>selected.has(f)).length} / ${fields.length}개 지표 표시`;
+    changed('metricGroups',[key,groups,selectedMetrics()],()=>{
+      $('metricGroups').replaceChildren();
+      for(const group of groups){
+        const keys=group.fields.map(f=>f.field),count=keys.filter(f=>selected.has(f)).length,box=document.createElement('div');box.className='metric-group';
+        const master=checkbox(group.heading+' 전체',count===keys.length,on=>{const next=new Set(selectedMetrics());for(const field of keys)on?next.add(field):next.delete(field);systemChoices[key]=[...next];metricsChanged()});
+        master.querySelector('input').indeterminate=count>0&&count<keys.length;
+        const title=document.createElement('strong'),badge=document.createElement('small');title.textContent=group.heading;badge.textContent=`${count}/${keys.length} 선택`;master.append(title,badge);box.append(master);
+        const detail=document.createElement('details'),summary=document.createElement('summary'),checks=document.createElement('div');summary.textContent='개별 지표 선택';checks.className='checks';detail.open=expandedUnits.has(group.key);detail.append(summary,checks);detail.ontoggle=()=>{if(detail.open)expandedUnits.add(group.key);else expandedUnits.delete(group.key);saveState()};
+        for(const info of group.fields){const card=checkbox(info.name,selected.has(info.field),on=>{const next=new Set(selectedMetrics());on?next.add(info.field):next.delete(info.field);systemChoices[key]=[...next];metricsChanged()});card.title=info.field;const swatch=document.createElement('span'),name=document.createElement('span'),style=curveStyle('',info.field);swatch.className='swatch';swatch.style.setProperty('--line-color',style.color);if(style.dash.length)swatch.style.borderTopStyle='dashed';name.textContent=info.name;card.append(swatch,name);checks.append(card)}
+        box.append(detail);$('metricGroups').append(box);
+      }
+    });
+  }
   const groupLabels={perception:'인식 · YOLO / OSNet / 위치변환',follow_person:'사람 추적',patrol:'순찰',autoslam:'AutoSLAM',localization:'SLAM / 위치보정',nav2_shared:'Nav2 공유 프로세스',manager:'시스템 관리자',speech:'음성 / Agent',web_media:'웹 / 영상',fall:'낙상',observer:'측정기 자체 부하',other_robot:'기타 로봇 프로세스'};
   const nodeLabels={yolo_node:'YOLO 감지',tracking_node:'영상 객체 추적',debug_node:'인식 디버그 영상',detect_3d_node:'객체 3D 변환',person_localizer:'사람 위치 추정',person_reidentifier:'OSNet 사람 식별',person_follower:'사람 추적',lidar_foreground_preprocessor:'LiDAR 추적 전처리',patrol_manager:'순찰',autoslam:'AutoSLAM',map_saver_server:'지도 저장',relocalization:'위치 보정',zone_filter:'주행 구역 필터',sync_slam_toolbox_node:'SLAM',async_slam_toolbox_node:'SLAM',system_manager:'시스템 관리자',manual_control:'수동 이동',stt:'음성 인식 STT',stt_node:'음성 인식 STT',tts_node:'음성 출력 TTS',tts_receiver:'음성 출력 TTS',agent_communication:'대화 Agent',speech_runtime:'음성 런타임',homecam_media_agent_node:'홈캠 영상·음성',robot_cloud_sync:'웹 연결',fall_coordinator:'낙상 처리',resource_recorder:'성능 수집기',resource_viewer:'성능 뷰어',tegrastats:'Jetson 자원 측정',nav2_container:'Nav2 공유 프로세스'};
   const basename=path=>(path||'').split('/').pop();
@@ -121,14 +188,17 @@
   function selectedGroups(){return groupChoices[$('session').value]||[]}
   function curveKey(id,field){return JSON.stringify([$('session').value,$('kind').value,id||$('channel').value,id?'':field])}
   function curveStyle(id,field){
-    const keys=id?Object.keys(metadata.process_catalog||{}):[...new Set(rows.flatMap(r=>Object.keys(r)))];
-    let index=keys.indexOf(id||field);if(index<0)index=[...(id||field)].reduce((n,c)=>n+c.charCodeAt(0),0);
+    const keys=id?Object.keys(metadata.process_catalog||{}):['cpu_percent','gpu_percent','emc_percent','ram_used_mib','swap_used_mib'];
+    // Do not rescan every sample for every curve; sensor names also retain
+    // their colors when a time range, late-arriving field or session changes.
+    let index=keys.indexOf(id||field);if(index<0)index=palette.length+[...(id||field)].reduce((n,c)=>(n*31+c.charCodeAt(0))>>>0,0);
     return {color:index<palette.length?palette[index]:`hsl(${(index*137.508)%360} 72% 72%)`,dash:Math.floor(index/palette.length)%2?[6,3]:[]};
   }
   function checkbox(label,checked,onchange){const card=document.createElement('label');card.className='check'+(checked?'':' off');const input=document.createElement('input');input.type='checkbox';input.checked=checked;input.setAttribute('aria-label',label);input.onchange=()=>onchange(input.checked);card.append(input);return card}
   function functions(){
     const speech=$('kind').value==='speech';$('speechPanel').hidden=!speech;
     for(const id of ['graph','metricField','actionField','actionPanel','catalogPanel'])$(id).hidden=speech;
+    const system=$('kind').value==='system';$('systemMetrics').hidden=!system;$('metricField').hidden=speech||system;$('singleGraph').hidden=system;$('systemCharts').hidden=!system;
     const process=$('kind').value==='process',choices=processChannels();$('functionPanel').hidden=!process;$('channelField').hidden=process;$('download').hidden=process;$('processDownloads').hidden=!process;
     if(!process)return;
     const session=$('session').value;
@@ -180,7 +250,7 @@
     $('download').href=downloadLink(channels[0]);
     if($('kind').value==='speech'){speech();return}
     if(legacyProcess&&$('kind').value==='process'){for(const r of rows)if(r.identity&&r.identity!==legacyProcess)hiddenSeries.add(curveKey(r.identity,''));legacyProcess=''}
-    const omit=new Set(['t','wall_ns','pid','ppid','received_total']);const fields=[...new Set(rows.flatMap(r=>Object.keys(r).filter(k=>!omit.has(k)&&(typeof r[k]==='number'||r[k]===null))))];
+    const fields=numericFields(rows);
     const options=fields.map(k=>[k,labels[k]||k]);if(fields.some(k=>/^cpu\d+_percent$/.test(k)))options.unshift(['__cores','코어별 CPU (%)']);if(fields.some(k=>/^cpu\d+_mhz$/.test(k)))options.push(['__clocks','코어별 클럭 (MHz)']);
     replaceOptions($('metric'),options,preferred('metric')||'cpu_percent');chart();}
   function catalog(){const selected=$('kind').value==='process'?selectedGroups():null;changed('catalog',[selected,metadata.process_catalog],()=>{$('catalog').replaceChildren();const unknown=[];for(const [id,p] of Object.entries(metadata.process_catalog||{})){if(selected&&!selected.includes('processes/'+p.group))continue;const info=processInfo(id),tr=document.createElement('tr');textCell(tr,info.group+(p.shared_process?' (공유)':''));textCell(tr,id);textCell(tr,(p.executable||'알 수 없음')+'\n'+(p.entrypoint||''));textCell(tr,(p.ros_node_names||[]).join(', ')||'remap 이름 없음');$('catalog').append(tr);if(info.unknown)unknown.push(info.pid)}$('identityHelp').hidden=!unknown.length;$('identityHelp').textContent=unknown.length?'이름 미식별 PID: '+unknown.join(', ')+'. 같은 로봇에서 프로세스가 살아 있을 때 ps -p '+unknown.join(',')+' -o pid=,comm=,args= 로 확인하세요. args에 키가 있다면 공유 전에 가려주세요. 이미 종료된 PID의 이름은 현재 ps로 복원할 수 없고, PID가 재사용됐을 수도 있습니다.':''})}
@@ -226,20 +296,44 @@
       $('legend').replaceChildren();for(const s of all){const shown=!hiddenSeries.has(s.key);const card=checkbox(s.name,shown,on=>{if(on)hiddenSeries.delete(s.key);else hiddenSeries.add(s.key);restored=null;chart();saveState()});card.title=s.path;const swatch=document.createElement('span');swatch.className='swatch';swatch.style.setProperty('--line-color',s.color);if(s.dash.length)swatch.style.borderTopStyle='dashed';const text=document.createElement('span'),name=document.createElement('strong'),detail=document.createElement('small'),badge=document.createElement('span');name.textContent=s.name;detail.textContent=s.detail;text.append(name,detail);badge.className='badge';badge.textContent=shown?'표시':'숨김';card.append(swatch,text,badge);$('legend').append(card)}
     });return visible;
   }
-  function chart(){if($('kind').value==='speech')return;const canvas=$('chart'),rect=canvas.getBoundingClientRect(),dpr=devicePixelRatio||1;canvas.width=rect.width*dpr;canvas.height=rect.height*dpr;const c=canvas.getContext('2d');c.scale(dpr,dpr);const w=rect.width,h=rect.height,L=65,R=w-18,T=25,B=h-38;c.clearRect(0,0,w,h);series=[];
+  function timeExtent(list){let minimum=Infinity,maximum=-Infinity;for(const row of list){minimum=Math.min(minimum,row.t);maximum=Math.max(maximum,row.t)}if(!list.length)return [0,1];return [minimum,maximum>minimum?maximum:minimum+1]}
+  function systemChart(){
+    const groups=systemGroups();metricControls(groups);const selected=new Set(selectedMetrics()),extent=timeExtent(rows),active=new Set();
+    for(const group of groups){
+      const fields=group.fields.filter(f=>selected.has(f.field));if(!fields.length)continue;active.add(group.key);
+      let plot=systemPlots.get(group.key);
+      if(!plot){const root=document.createElement('section'),title=document.createElement('h2'),legend=document.createElement('div'),canvas=document.createElement('canvas'),hover=document.createElement('div');root.className='unit-chart';root.dataset.unit=group.key;legend.className='unit-legend row';canvas.className='chart';hover.className='hover';root.append(title,legend,canvas,hover);plot={root,title,legend,canvas,hover,signature:''};systemPlots.set(group.key,plot)}
+      plot.title.textContent=group.heading;
+      const series=fields.map(info=>({name:info.name,field:info.field,rows,...curveStyle('',info.field)}));
+      const signature=JSON.stringify(series.map(s=>[s.field,s.name,s.color,s.dash]));
+      if(plot.signature!==signature){plot.legend.replaceChildren();for(const s of series){const item=document.createElement('span'),swatch=document.createElement('i');swatch.className='swatch';swatch.style.setProperty('--line-color',s.color);if(s.dash.length)swatch.style.borderTopStyle='dashed';item.append(swatch,document.createTextNode(s.name));plot.legend.append(item)}plot.signature=signature}
+      plot.root.hidden=false;
+      if(plot.root.parentNode!==$('systemCharts'))$('systemCharts').append(plot.root);
+      drawChart(plot.canvas,plot.hover,series,extent);
+    }
+    for(const [key,plot] of systemPlots)if(!active.has(key))plot.root.hidden=true;
+    let empty=$('systemEmpty');if(!empty){empty=document.createElement('p');empty.id='systemEmpty';empty.className='empty';$('systemCharts').append(empty)}empty.hidden=active.size>0;empty.textContent=rows.length?'표시할 지표를 체크하세요.':'이 구간에 측정 기록이 없습니다.';
+  }
+  function chart(){if($('kind').value==='speech')return;if($('kind').value==='system'){systemChart();return}let series=[];
     const metric=$('metric').value,filtered=$('kind').value==='process'?rows.filter(r=>selectedGroups().includes(r._channel)):rows;const fields=metric==='__cores'||metric==='__clocks'?[...new Set(filtered.flatMap(r=>Object.keys(r)))].filter(k=>(metric==='__cores'?/^cpu\d+_percent$/:/^cpu\d+_mhz$/).test(k)):[metric];
     const grouped=new Map();filtered.forEach(r=>{const key=r.identity||'';if(!grouped.has(key))grouped.set(key,[]);grouped.get(key).push(r)});for(const[id,list]of grouped)for(const field of fields){const info=id?processInfo(id):null;series.push({key:curveKey(id,field),name:info?info.name:(labels[field]||field),detail:info?`${info.group} · ${info.raw} · PID ${info.pid} · ${labels[field]||field}`:($('kind').value==='system'?'로봇 컴퓨터 전체':$('channel').selectedOptions[0]?.textContent||''),path:info?info.path+' · '+id:'',field,rows:list,...curveStyle(id,field)})}
-    series=legend(series);let minimum=Infinity,maximum=-Infinity;for(const row of filtered){minimum=Math.min(minimum,row.t);maximum=Math.max(maximum,row.t)}if(!filtered.length){minimum=0;maximum=1}extent=[minimum,maximum>minimum?maximum:minimum+1];let ymin=0,ymax=1;series.forEach(s=>s.rows.forEach(r=>{const v=r[s.field];if(typeof v==='number'&&Number.isFinite(v)){ymin=Math.min(ymin,v);ymax=Math.max(ymax,v)}}));ymax*=1.08;
+    drawChart($('chart'),$('hover'),legend(series),timeExtent(filtered));
+  }
+  function drawChart(canvas,hover,series,extent){
+    const rect=canvas.getBoundingClientRect();if(!rect.width)return;const dpr=devicePixelRatio||1;canvas.width=rect.width*dpr;canvas.height=rect.height*dpr;const c=canvas.getContext('2d');c.scale(dpr,dpr);const w=rect.width,h=rect.height,L=65,R=w-18,T=25,B=h-38;c.clearRect(0,0,w,h);
+    let ymin=0,ymax=1;series.forEach(s=>s.rows.forEach(r=>{const v=r[s.field];if(typeof v==='number'&&Number.isFinite(v)){ymin=Math.min(ymin,v);ymax=Math.max(ymax,v)}}));ymax*=1.08;
     const x=t=>L+(t-extent[0])/(extent[1]-extent[0])*(R-L),y=v=>B-(v-ymin)/(ymax-ymin)*(B-T);c.font='12px system-ui';c.fillStyle='#a5b9ca';c.strokeStyle='#314454';for(let i=0;i<=4;i++){const yy=T+i*(B-T)/4;c.beginPath();c.moveTo(L,yy);c.lineTo(R,yy);c.stroke();c.fillText((ymax-i*(ymax-ymin)/4).toFixed(1),3,yy+4);const t=extent[0]+i*(extent[1]-extent[0])/4;c.fillText(t.toFixed(1)+'s',x(t)-13,h-12)}
     for(const e of events){if(e.t<extent[0]||e.t>extent[1])continue;c.strokeStyle=['SUCCEEDED','CANCELED','ABORTED'].includes(e.state)?'#f4c88980':'#ac9fe780';c.setLineDash([4,4]);c.beginPath();c.moveTo(x(e.t),T);c.lineTo(x(e.t),B);c.stroke();c.setLineDash([])}
     let valid=0;series.forEach(s=>{c.strokeStyle=s.color;c.fillStyle=s.color;c.lineWidth=2;c.setLineDash(s.dash);c.beginPath();let last=null;for(const r of s.rows){const v=r[s.field];if(typeof v!=='number'||!Number.isFinite(v)){last=null;continue}valid++;if(last!==null&&r.t-last<=metadata.interval_s*2.5)c.lineTo(x(r.t),y(v));else c.moveTo(x(r.t),y(v));last=r.t}c.stroke();c.setLineDash([]);for(const r of s.rows){const v=r[s.field];if(typeof v==='number'&&Number.isFinite(v)){c.beginPath();c.arc(x(r.t),y(v),2,0,7);c.fill()}}});
     if(!valid){c.fillStyle='#a5b9ca';c.fillText(series.length?'이 구간에 측정 가능한 값이 없습니다 (미지원 / 미수신).':'표시할 기능 또는 곡선을 체크하세요.',L+15,T+40)}
-    $('hover').replaceChildren();
+    hover.replaceChildren();
+    canvas.onmousemove=e=>{const t=extent[0]+((e.clientX-canvas.getBoundingClientRect().left-L)/(R-L))*(extent[1]-extent[0]);hover.replaceChildren();for(const s of series){let closest=null;for(const r of s.rows)if(!closest||Math.abs(r.t-t)<Math.abs(closest.t-t))closest=r;if(!closest)continue;const item=document.createElement('span');item.className='hover-value';item.style.color=s.color;const value=closest[s.field];item.textContent=s.name+(closest.identity?' · PID '+processInfo(closest.identity).pid:'')+' @ '+closest.t.toFixed(2)+'s: '+(typeof value==='number'&&Number.isFinite(value)?value.toFixed(2):'미지원 / 누락');hover.append(item)}};
   }
-  $('chart').onmousemove=e=>{const rect=$('chart').getBoundingClientRect(),t=extent[0]+((e.clientX-rect.left-65)/(rect.width-83))*(extent[1]-extent[0]);$('hover').replaceChildren();for(const s of series){let closest=null;for(const r of s.rows)if(!closest||Math.abs(r.t-t)<Math.abs(closest.t-t))closest=r;if(!closest)continue;const item=document.createElement('span');item.className='hover-value';item.style.color=s.color;const value=closest[s.field];item.textContent=s.name+(closest.identity?' · PID '+processInfo(closest.identity).pid:'')+' @ '+closest.t.toFixed(2)+'s: '+(typeof value==='number'?value.toFixed(2):'미지원 / 누락');$('hover').append(item)}};
   $('session').onchange=()=>{rows=[];events=[];displayedData=null;displayedAction=null;$('events').replaceChildren();$('start').value=0;$('end').value='';chart();selectionChanged()};
   for(const id of ['kind','channel','start','end','action'])$(id).onchange=selectionChanged;
   $('metric').onchange=()=>{restored=null;saveState();chart()};
+  $('allMetrics').onclick=()=>{systemChoices[systemKey()]=numericFields(rows);metricsChanged()};
+  $('noMetrics').onclick=()=>{systemChoices[systemKey()]=[];metricsChanged()};
   $('allFunctions').onclick=()=>{groupChoices[$('session').value]=processChannels().map(([key])=>key);functionsChanged()};
   $('noFunctions').onclick=()=>{groupChoices[$('session').value]=[];functionsChanged()};
   $('sessionName').oninput=()=>{nameDirty=true;$('nameStatus').textContent='저장 전'};
@@ -249,6 +343,6 @@
   let scrollTimer;window.addEventListener('scroll',()=>{clearTimeout(scrollTimer);scrollTimer=setTimeout(()=>{if(!restored)saveState()},150)},{passive:true});
   document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(timer);request?.abort()}else refresh()});
   if('scrollRestoration' in history)history.scrollRestoration='manual';
-  new ResizeObserver(chart).observe($('chart'));refresh();
+  let chartWidth=0;new ResizeObserver(entries=>{const width=entries[0].contentRect.width;if(width!==chartWidth){chartWidth=width;chart()}}).observe($('graph'));refresh();
 </script>
 </html>

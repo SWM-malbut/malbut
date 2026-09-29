@@ -28,6 +28,11 @@ ros2 run malbut_resource_monitor resource_viewer --host 0.0.0.0 --port 8766
 
 Mac 브라우저에서 `http://로봇IP:8766` → 실행 회차 → 전체/프로세스/토픽 → 지표 선택.
 Action을 선택하면 상태 변화 시점이 세로선으로 표시된다. Goal 행을 누르면 해당 구간으로 좁힌다.
+로봇 컴퓨터 전체 화면은 **함께 볼 지표**에서 여러 지표를 체크한다. 사용률(%)·메모리(MiB)·
+클럭(MHz)·온도(°C)·전력(mW)·수집 시간(ms/s)을 단위별 그래프로 나누며 시간축은 공유한다.
+단위 제목의 체크는 그룹 전체, **개별 지표 선택**은 코어/센서별 선택이다. 일부만 고르면
+그룹 체크가 부분 선택으로 표시된다. 선택은 회차·로그별로 새로고침 후에도 유지한다.
+전력 rail을 합산하거나 미지원 GPU 값을 0으로 채우지 않는다. 원본 단위·표본은 그대로이다.
 기능별 프로세스 화면에서는 기능 그룹을 체크해 함께 비교하고, 범례 체크로 개별 곡선을 숨긴다.
 체크 상태는 **그래프 표시 여부**이지 로봇 기능의 실행/정지 상태가 아니다.
 범례의 주 이름은 저장된 ROS 노드명 또는 실행 파일명에서 가져온다. PID는 보조 정보로 표시하며,
@@ -155,6 +160,8 @@ cd malbut_test/malbut_resource_monitor
 python3 -m pytest -q test/test_measurement.py
 # ROS Humble + malbut_interfaces를 source한 환경에서만:
 python3 -m pytest -q test/test_ros_observer.py
+# 선택 사항: Playwright + Chromium이 설치된 개발 환경에서만 (ROS 불필요):
+python3 -m pytest -q test/test_viewer_browser.py
 ```
 
 Jetson GPU/EMC/전력은 실제 장치에서 원본 tegrastats와 대조해야 한다.
