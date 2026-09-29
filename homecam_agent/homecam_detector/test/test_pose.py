@@ -154,6 +154,30 @@ def test_cuda_missing_or_failed_must_not_silently_use_cpu(tmp_path, monkeypatch)
         PersonPoseEstimator(str(path), execution_provider='cuda')
 
 
+def test_cuda_is_explicit_fp32_and_disables_runtime_fallback(tmp_path, monkeypatch):
+    path = tmp_path / 'model.onnx'
+    path.touch()
+    calls, passed = [], {}
+    session = SimpleNamespace(
+        get_providers=lambda: ['CUDAExecutionProvider', 'CPUExecutionProvider'],
+        disable_fallback=lambda: calls.append('disable_fallback'),
+        get_inputs=lambda: [SimpleNamespace(name='images', shape=[1, 3, 640, 640])],
+        get_outputs=lambda: [SimpleNamespace(shape=[1, 300, 57])])
+
+    def create(*args, **kwargs):
+        calls.append('create')
+        passed.update(kwargs)
+        return session
+
+    monkeypatch.setitem(sys.modules, 'onnxruntime', SimpleNamespace(
+        get_available_providers=lambda: ['CUDAExecutionProvider', 'CPUExecutionProvider'],
+        preload_dlls=lambda: calls.append('preload'), InferenceSession=create))
+    PersonPoseEstimator(str(path), execution_provider='cuda')
+    assert passed['providers'] == [
+        ('CUDAExecutionProvider', {'use_tf32': 0}), 'CPUExecutionProvider']
+    assert calls == ['preload', 'create', 'disable_fallback']
+
+
 def test_thread_and_spinning_options_are_explicit(tmp_path, monkeypatch):
     path = tmp_path / 'model.onnx'
     path.touch()

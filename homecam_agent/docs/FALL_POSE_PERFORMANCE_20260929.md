@@ -87,6 +87,49 @@ CPU 막대는 재생별 평균 9개의 중앙값, 흰 점은 각 재생 평균�
 추론 막대는 189회 중앙값, 선 끝은 p95임. 초 단위 CPU 시계열은 저장되지 않았으므로
 시간별 꺾은선 그래프로 복원하지 않음. 그래프 생성 과정에서 새 추론이나 Cloud 호출은 하지 않음.
 
+### 시간별 사용률 재측정 (2026-09-30)
+
+위 막대 그래프와 별도로, 사용자가 요청한 시간별 그래프를 만들기 위해 새로 재생함.
+`benchmark_fall_pose.py`에 약 0.5초 간격 프로세스 CPU 시간 차이와 GPU 전체 사용률 기록을
+추가함. 같은 준비 실행·640×400 입력·모델·영상 3개를 각 3회 재생하는 조건은 유지함.
+기존 CPU 조건과 전체 개선 조건을 순차 실행하고, 준비와 재생 사이 공백을 제외한
+측정 구간의 누적 시간축으로 나란히 표시함. 두 조건을 동시에 실행한 그래프가 아님.
+조건별 측정 구간은 약 46.5초이며, 구간별 표본 81개를 저장함.
+
+![로컬 Pose 시간별 CPU·GPU 사용률](assets/fall_pose_timeline_20260930/pose-cpu-gpu-timeline.png)
+
+| 항목 | 기존 CPU | 변환 제한·스레드 조정·CUDA |
+| --- | ---: | ---: |
+| 재생별 평균 CPU의 중앙값 (코어 하나=100%) | 526.4% | 7.1% |
+| 추론 시간 중앙값 | 55.69ms | 8.73ms |
+| 실제 처리 fps 중앙값 | 4.06 | 4.06 |
+| 추론 횟수 | 189 | 189 |
+| 이미지 변환 횟수 | 567 | 189 |
+| 처리 전 버린 입력 | 0 | 0 |
+
+이번 재측정의 CPU 감소율은 반올림 전 값 기준 98.7%임.
+기존 측정값을 덮어쓰지 않았으며 앞 표의 98.6%와 측정 회차가 다름.
+시간별 그래프는 기존 평균으로 꾸민 값이 아니라 새 구간별 측정값을 사용함.
+
+첫 시도에서는 벤치마크 실행 전부터 GPU 전체 사용률이 78%로 관측됨.
+사용자가 배경 작업을 멈추겠다고 알려준 뒤 두 조건 모두 다시 측정했고,
+최종 비교에는 `A-original-quiet`와 `D-cuda-quiet`를 사용함.
+첫 시도의 `A-original`과 `D-cuda`도 삭제하지 않고 보관함.
+재측정에도 원격 화면 등 배경 활동은 남아 있으므로 `quiet`는 GPU 유휴 보장을 뜻하지 않음.
+
+GPU 전체 사용률의 재생별 중앙값 범위는 CPU 조건 15~18%, CUDA 조건 2~10%였음.
+이는 Pose가 GPU로 이동했는데 GPU 부하가 감소했다는 근거로 사용하지 않음.
+배경 작업과 측정 간격의 영향이 섞인 전체 GPU 표본이며 Pose 단독 활동을 분리하지 못함.
+재생별 GPU 전체 메모리 중앙값은 725~726MiB에서 1164MiB로 기록됨.
+전체 전력·발열은 이번에도 측정하지 않음.
+
+원본은 `/home/jisanggeun/.local/share/malbut-evaluations/pose-timeline-20260930.JTap8rqj`에 보관함.
+모델·입력 데이터·벤치마크 스크립트 해시가 두 조건에서 같은지 확인함.
+저장소에는 [PNG](assets/fall_pose_timeline_20260930/pose-cpu-gpu-timeline.png),
+[SVG](assets/fall_pose_timeline_20260930/pose-cpu-gpu-timeline.svg),
+[시간별 측정값과 실행 설정](assets/fall_pose_timeline_20260930/timeline-data.json)을 함께 보관함.
+실제 영상·Cloud 응답·키는 이 첨부에 포함하지 않음. 새 Cloud 호출은 0회임.
+
 ## 적용한 코드
 
 - `fall_only=true`에서만 영상 변환 전 추론 시각을 확인. 허용/연결 확인은 그보다 먼저 수행.
@@ -230,7 +273,22 @@ VLM 단독으로 운영할지 결정하려면 동일한 긴 연속 영상을 두
 - `homecam_agent/scripts/evaluate_pose_vlm_fresh.py`: 기본 dry-run,
   명시적인 `--execute`에서만 키를 읽고 Cloud 호출. 동일 출력 경로의 자동 재실행 금지.
   `--budget-usd`는 이 실험에 승인된 $1보다 크게 지정할 수 없음.
-- 운영 코드/실험 코드는 로컬 수정 상태이며, 이 작업에서 커밋·push·PR/merge·로봇 배포는 하지 않음.
+- 초기 평가 당시에는 로컬 수정 상태였으며 로봇 배포는 하지 않음.
+
+### 저장소 반영 전 추가 확인 (2026-09-30)
+
+- 최신 `origin/main`의 `07393ed` 위에 이번 변경만 반영함.
+  새 브랜치는 `feat/SWM25-193-fall-pose-performance`이며 기존 main의 순차 Bringup 변경을 유지함.
+- 새 실행 옵션 테스트도 최신 Bringup의 단계별 시작 도우미로 검사하도록 맞춤.
+- detector·Bringup·낙상 처리·평가 도구 회귀 검사: **2271 passed, 20 skipped**.
+  건너뛴 항목은 별도 실행하는 로컬 ROS 19개와 별도 GPU 자산 시험 1개임.
+- 위 로컬 ROS 19개를 별도 domain 148에서 실제로 실행해 **19 passed (196.73초)** 확인함.
+  입력 영상·자세·Cloud 답변은 fixture이며 실제 DDS 연결을 검사함.
+  `ros-regression.xml`에 보관함. 별도 GPU 자산 시험 1개는 이번에도 실행하지 않음.
+- 첫 검사에서 Bringup 설치 패키지를 찾지 못해 실패한 항목은 별도 경로에 현재 Bringup을
+  빌드한 뒤 다시 확인함. HTTP 어댑터 시험 의존성이 있는 평가 환경을 사용해 의존성 부족으로
+  시험을 건너뛰지 않음. 결과는 원본 경로의 `regression-built.xml`에 보관함.
+- GPU 실행은 여전히 선택 사항이며 기본 CPU 실행 설정은 유지함. 로봇 배포나 기본값 전환은 하지 않음.
 
 참고: [ORT 스레드 설정](https://onnxruntime.ai/docs/performance/tune-performance/threading.html),
 [CUDA EP 의존성](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html),

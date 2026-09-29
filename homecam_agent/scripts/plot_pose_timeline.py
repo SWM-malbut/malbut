@@ -78,7 +78,9 @@ def main():
     fig.subplots_adjust(left=.075, right=.97, top=.79, bottom=.20, hspace=.19)
     reduction = 100 * (1 - after['cpu_median'] / before['cpu_median'])
     fig.text(.06, .95, '로컬 Pose · 시간별 CPU / GPU 사용률', fontsize=23, weight='bold')
-    fig.text(.06, .902, 'i5-12400F / RTX 3070 · 같은 영상 3개 × 3회 · 전후 순차 실행을 같은 재생 시간축에 표시',
+    fig.text(.06, .902,
+             f"i5-12400F / RTX 3070 · 같은 영상 {len(before['manifest']['cases'])}개 × "
+             f"{before['manifest']['repeats']}회 · 전후 순차 실행을 같은 재생 시간축에 표시",
              fontsize=12, color='#b8c9d9')
     fig.text(.06, .847,
              f"CPU 재생별 평균의 중앙값: {before['cpu_median']:.1f}% → "
@@ -101,6 +103,9 @@ def main():
         axes[1].plot(times, [point['gpu_percent'] for point in condition['points']],
                      color=color, marker='.', markersize=4, linewidth=1.1, label=label)
     axes[0].set_ylabel('Pose 프로세스 CPU (%)\n코어 하나 = 100%')
+    peak_cpu = max(point['cpu_percent'] for condition in (before, after)
+                   for point in condition['points'])
+    axes[0].set_ylim(0, max(100, peak_cpu * 1.18))
     axes[1].set_ylabel('GPU 전체 사용률 (%)\n다른 프로그램 포함')
     axes[1].set_ylim(0, 100)
     axes[1].set_xlabel('측정 구간 누적 시간 (초) · 모델 준비 / 영상 사이 공백 제외')
@@ -118,7 +123,10 @@ def main():
              fontsize=10, color='#b8c9d9')
     args.output.mkdir(parents=True, mode=0o700)
     fig.savefig(args.output / 'pose-cpu-gpu-timeline.png', dpi=150)
-    fig.savefig(args.output / 'pose-cpu-gpu-timeline.svg')
+    svg = args.output / 'pose-cpu-gpu-timeline.svg'
+    fig.savefig(svg)
+    # Matplotlib adds trailing blanks to SVG paths; keep generated diffs clean.
+    svg.write_text('\n'.join(line.rstrip() for line in svg.read_text().splitlines()) + '\n')
     report = {'before': before, 'after': after,
               'cpu_reduction_percent': reduction,
               'scope': 'separate local callback replays, aligned elapsed time, not Jetson or all ROS nodes'}

@@ -923,7 +923,7 @@ def test_fall_pose_execution_options_reach_only_dedicated_node(launch_module, fa
         fall_monitor='true', fall_config=str(fall_config), fall_pose_execution_provider='cuda',
         fall_pose_intra_op_num_threads='2', fall_pose_allow_spinning='false',
         fall_pose_opencv_num_threads='1')
-    ready = _readiness_exit(launch_module._setup(context), context)
+    ready = _readiness_exit(_core_actions(launch_module, context), context)
     node = _nodes(ready, 'homecam_detector_node')[0]
     params = evaluate_parameters(context, node._Node__parameters)[0]
     assert params['pose_execution_provider'] == 'cuda'
