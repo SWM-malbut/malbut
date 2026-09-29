@@ -42,7 +42,7 @@ def runtime(monkeypatch, tmp_path):
     (model_path / 'tokenizer.json').touch()
     state = SimpleNamespace(
         args=['--model-path', str(model_path)],
-        frames=[[1] * 512] + [[0] * 512] * 13,
+        frames=[[1] * 512] * 3 + [[0] * 512] * 13,
         segments=['제이크야'], events=[], requests=[],
         model_options=None, recorder_options=None,
         failure=None, interrupt=None, sample_rate=16000,
@@ -185,9 +185,9 @@ def test_once_preserves_first_frame_and_closes_before_recognition(
     assert runtime.recorder_options == {'frame_length': 512, 'device_index': 2}
     assert len(runtime.requests) == 1
     audio, options = runtime.requests[0]
-    assert audio[:512] == [1 / 32768.0] * 512
-    assert audio[512:] == [0.0] * (len(audio) - 512)
-    assert len(audio) == 320 * 22  # Two VAD speech frames, then 0.4 s silence.
+    assert audio[:1536] == [1 / 32768.0] * 1536
+    assert audio[1536:] == [0.0] * (len(audio) - 1536)
+    assert len(audio) == 320 * 25  # Five VAD-positive frames, then 0.4 s silence.
     assert options['language'] == 'ko'
     assert options['condition_on_previous_text'] is False
 

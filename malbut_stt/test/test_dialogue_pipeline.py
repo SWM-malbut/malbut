@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from malbut_stt.dialogue_pipeline import DialoguePipeline, MAX_RETIRED_SESSION_IDS
-from malbut_stt.audio import MicrophoneOverflow
+from malbut_stt.audio import CaptureSettings, MicrophoneOverflow
 
 VOICE = b'\x01\x00' * 320
 QUIET = bytes(640)
@@ -71,6 +71,9 @@ def harness():
         return '문장 ' + str(len(state.command_calls))
 
     def create(*, aec=True, **options):
+        # Keep the one-frame onsets used by these session/race boundary fixtures.
+        options.setdefault('settings', CaptureSettings(
+            silence_timeout_s=2.0, min_speech_s=.02))
         pipeline = DialoguePipeline(
             recorder_factory=lambda: state.recorder,
             wake=SimpleNamespace(transcribe=wake),
@@ -100,7 +103,7 @@ def pump(pipeline, predicate):
 
 
 def wake_up(harness, pipeline):
-    pipeline.feed(VOICE + QUIET * 20)
+    pipeline.feed(VOICE * 4 + QUIET * 20)
     pump(pipeline, lambda: pipeline.session.active)
     assert len(harness.wake_calls) == 1
 
@@ -398,7 +401,7 @@ def test_unknown_discards_without_resume_and_requires_fresh_wake(harness, reason
     assert 'addressee_unknown:' + reason in harness.reports
     pipeline.on_addressee(uid, 'p1', 'addressed')
     assert harness.transcripts == []
-    pipeline.feed(VOICE + QUIET * 20)
+    pipeline.feed(VOICE * 4 + QUIET * 20)
     pump(pipeline, lambda: pipeline.session.active)
     assert len(harness.wake_calls) == 2
 
@@ -730,7 +733,7 @@ def test_microphone_overflow_discards_partial_utterance_and_keeps_capture(harnes
     harness.recorder.frames.put([0] * 320)
     wait_for(pipeline.capture_ready.is_set)
     pipeline.poll()
-    pipeline.feed(VOICE + QUIET * 20)
+    pipeline.feed(VOICE * 4 + QUIET * 20)
     pump(pipeline, lambda: pipeline.session.active)
     assert len(harness.wake_calls) == 2
     finish_command(pipeline)
@@ -923,7 +926,7 @@ def test_failed_wake_chime_reports_failure_and_returns_to_wake(harness):
         raise RuntimeError('private device detail')
 
     pipeline = harness.create(on_wake=chime)
-    pipeline.feed(VOICE + QUIET * 20)
+    pipeline.feed(VOICE * 4 + QUIET * 20)
     pump(pipeline, lambda: 'wake_chime_failed:RuntimeError' in harness.reports)
     assert not pipeline.session.active and not pipeline._chime_playing
     assert harness.transcripts == [] and not pipeline.command_stream.collector.audio

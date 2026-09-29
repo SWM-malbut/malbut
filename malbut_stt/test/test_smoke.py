@@ -18,7 +18,7 @@ from malbut_stt.wake import LocalWakeRecognizer
 def runtime(monkeypatch):
     """Replace SDK boundaries while keeping the real pipeline and WAV adapter."""
     state = SimpleNamespace(
-        frames=[[1] * 512] + [[0] * 512] * 32, recordings=None,
+        frames=[[1] * 512] * 3 + [[0] * 512] * 32, recordings=None,
         text='  거실로 가줘.\n', failure=None, interrupt=None,
         events=[], requests=[], recorder_options=None, wake_options=None,
         wake_texts=['제이크야'], wake_requests=[],
@@ -180,10 +180,10 @@ def test_manual_once_silence_never_calls_api(runtime, capsys):
 def test_vad_diagnostic_starts_at_last_positive_frame(runtime, monkeypatch, capsys):
     """Measure from VAD processing, preserving the separate API duration."""
     runtime.frames = (
-        [[1] * 320] + [[0] * 320] * 3
+        [[1] * 320] * 4 + [[0] * 320] * 3
         + [[1] * 320] + [[0] * 320] * 50
     )
-    clock = iter([10.0, 11.0, 12.0, 14.0])
+    clock = iter([9.0, 9.2, 9.4, 10.0, 11.0, 12.0, 14.0])
     monkeypatch.setattr('malbut_stt.smoke.monotonic', lambda: next(clock))
     assert main(['--manual', '--once']) == 0
     transcript = events(capsys)[-1]
@@ -308,8 +308,8 @@ def test_wake_local_once_reuses_model_for_a_separate_full_command(
     monkeypatch.delenv('OPENAI_API_KEY')
     monkeypatch.setitem(sys.modules, 'openai', None)
     runtime.recordings = [
-        [[2] * 512] + [[0] * 512] * 13,
-        [[1] * 512] + [[0] * 512] * 32,
+        [[2] * 512] * 3 + [[0] * 512] * 13,
+        [[1] * 512] * 3 + [[0] * 512] * 32,
     ]
     assert main(model_args(tmp_path) + ['--local', '--once']) == 0
     output = events(capsys)
@@ -415,8 +415,8 @@ def test_float32_compute_type_reaches_local_model_in_each_smoke_mode(
             args.append('--manual')
         else:
             runtime.recordings = [
-                [[2] * 512] + [[0] * 512] * 13,
-                [[1] * 512] + [[0] * 512] * 32,
+                [[2] * 512] * 3 + [[0] * 512] * 13,
+                [[1] * 512] * 3 + [[0] * 512] * 32,
             ]
     assert main(args) == 0
     assert events(capsys)[0]['local_compute_type'] == 'float32'
@@ -461,8 +461,8 @@ def test_mlx_local_modes_share_one_adapter_without_ct2_or_api(
             args.append('--manual')
         else:
             runtime.recordings = [
-                [[2] * 512] + [[0] * 512] * 13,
-                [[1] * 512] + [[0] * 512] * 32,
+                [[2] * 512] * 3 + [[0] * 512] * 13,
+                [[1] * 512] * 3 + [[0] * 512] * 32,
             ]
     assert main(args) == 0
     ready = events(capsys)[0]
@@ -639,8 +639,8 @@ def test_wake_once_sends_only_a_fresh_command_capture_to_api(runtime, tmp_path, 
     """Local wake PCM is closed and discarded before the command microphone opens."""
     args = model_args(tmp_path)
     runtime.recordings = [
-        [[2] * 512] + [[0] * 512] * 13,
-        [[1] * 512] + [[0] * 512] * 32,
+        [[2] * 512] * 3 + [[0] * 512] * 13,
+        [[1] * 512] * 3 + [[0] * 512] * 32,
     ]
     assert main(args + ['--once']) == 0
     output = events(capsys)

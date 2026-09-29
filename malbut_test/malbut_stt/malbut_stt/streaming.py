@@ -32,6 +32,7 @@ class StreamingUtteranceCollector:
         self.partial_interval_s = partial_interval_s
         self.is_speech = is_speech
         self.pending = bytearray()
+        self._pending_start_blocked = False
         self.discarding = False
         self.quiet_frames = 0
         self._revision = 0
@@ -48,6 +49,7 @@ class StreamingUtteranceCollector:
     def reset(self) -> None:
         """Drop buffered audio after a device discontinuity or session reset."""
         self.pending.clear()
+        self._pending_start_blocked = False
         self.discarding = False
         self.quiet_frames = 0
         self.collector = self._new_collector()
@@ -68,15 +70,20 @@ class StreamingUtteranceCollector:
         self._candidate_revision = None
         return result
 
-    def feed(self, pcm: bytes) -> list[CaptureResult]:
+    def feed(self, pcm: bytes, *, start_blocked: bool = False) -> list[CaptureResult]:
         """Accept arbitrary recorder chunks and preserve their frame boundaries.
 
-        ``speech_started`` precedes each ``complete`` or ``too_long`` result.
+        A qualified VAD onset emits ``speech_started`` before each ``complete``
+        or ``too_long`` result. Short isolated noise creates no event.
         An overlong utterance is discarded until its terminating silence, so
         its tail cannot become a new command. Idle silence creates no event.
+        ``start_blocked`` marks samples captured while a new utterance could
+        not be accepted; any such frame in the qualified onset marks its event.
         """
         if len(pcm) % 2:
             raise ValueError('PCM16 input must contain whole samples')
+        if pcm:
+            self._pending_start_blocked |= start_blocked
         self.pending.extend(pcm)
         events = []
         frame_bytes = 640  # 20 ms of 16 kHz mono PCM16.
@@ -84,6 +91,9 @@ class StreamingUtteranceCollector:
         while len(self.pending) - consumed >= frame_bytes:
             frame = bytes(self.pending[consumed:consumed + frame_bytes])
             consumed += frame_bytes
+            frame_blocked = self._pending_start_blocked
+            self._pending_start_blocked = (
+                len(self.pending) > consumed and start_blocked)
             if self.discarding:
                 if self.is_speech(frame, 16000):
                     self.quiet_frames = 0
@@ -96,10 +106,11 @@ class StreamingUtteranceCollector:
                 continue
 
             started = self.collector.started
-            result = self.collector.feed(frame)
+            result = self.collector.feed(frame, start_blocked=frame_blocked)
             self._revision = self.collector.revision
             if not started and self.collector.started:
-                events.append(CaptureResult('speech_started'))
+                events.append(CaptureResult(
+                    'speech_started', start_blocked=self.collector.start_blocked))
             if result is None:
                 if (self.endpoint_is_current(self.collector.revision)
                         and self._candidate_revision != self.collector.revision):
