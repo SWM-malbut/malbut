@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from benchmark_fall_pose import cpu_interval
-from plot_pose_timeline import load_condition
+from plot_pose_timeline import load_condition, validate_comparison
 
 
 def test_cpu_percent_is_not_capped_to_one_core():
@@ -52,3 +52,40 @@ def test_retains_zero_gpu_usage_and_missing_measurements(tmp_path):
     assert result['cpu_median'] == 123
     assert result['inference_ms_median'] == 9
     assert result['boundaries'] == [1.2]
+
+
+def condition():
+    manifest = {'model_sha256': 'model', 'media_sha256': 'media', 'camera_input': '640x400',
+                'cases': ['case'], 'repeats': 1, 'runner_sha256': 'runner',
+                'ort': 'version', 'opencv': 'version', 'options': {}}
+    return {'manifest': manifest, 'replay_order': [('case', 0)]}
+
+
+def test_stage_comparison_accepts_different_execution_options():
+    before, after = condition(), condition()
+    after['manifest']['options'] = {'execution_provider': 'cuda'}
+    validate_comparison([before, after])
+
+
+@pytest.mark.parametrize('field', ['model_sha256', 'media_sha256', 'camera_input', 'cases',
+                                 'repeats', 'runner_sha256', 'ort', 'opencv'])
+def test_stage_comparison_rejects_changed_inputs(field):
+    before, after = condition(), condition()
+    after['manifest'][field] = 'changed'
+    with pytest.raises(ValueError, match=field):
+        validate_comparison([before, after])
+
+
+def test_stage_comparison_rejects_different_replay_order():
+    before, after = condition(), condition()
+    after['replay_order'] = [('case', 1)]
+    with pytest.raises(ValueError, match='replay order'):
+        validate_comparison([before, after])
+
+
+def test_stage_comparison_requires_measurement_identity():
+    before, after = condition(), condition()
+    for item in (before, after):
+        del item['manifest']['runner_sha256']
+    with pytest.raises(ValueError, match='runner_sha256'):
+        validate_comparison([before, after])
