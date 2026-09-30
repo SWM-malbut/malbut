@@ -33,11 +33,11 @@ class Recorder:
 
 
 def wake_frames():
-    return [[7] * 320] + [[0] * 320] * 20
+    return [[7] * 320] * 4 + [[0] * 320] * 20
 
 
 def command_frames():
-    return [[1] * 320] + [[0] * 320] * 50
+    return [[1] * 320] * 4 + [[0] * 320] * 50
 
 
 def make_pipeline(recordings, responses, wake_responses=None, manual=False):
@@ -93,8 +93,8 @@ def test_wake_audio_never_reaches_api_and_first_command_frame_is_preserved():
     original = '  거실로 가줘.\n'
     run = make_pipeline([wake_frames(), command_frames()], [original])
     run.pipeline.run()
-    assert run.wake_calls == [(b'\x07\x00' * 320 + bytes(640 * 20), 16000)]
-    assert run.calls == [(b'\x01\x00' * 320 + bytes(640 * 50), 16000)]
+    assert run.wake_calls == [(b'\x07\x00' * (320 * 4) + bytes(640 * 20), 16000)]
+    assert run.calls == [(b'\x01\x00' * (320 * 4) + bytes(640 * 50), 16000)]
     assert len(run.messages) == 1
     assert run.messages[0][1] == original
     assert str(UUID(run.messages[0][0])) == run.messages[0][0]
@@ -167,7 +167,7 @@ def test_manual_capture_does_not_need_a_wake_model_or_drop_the_first_frame():
     run = make_pipeline([command_frames()], ['안녕'], manual=True)
     run.pipeline.run()
     assert run.wake_calls == []
-    assert run.calls == [(b'\x01\x00' * 320 + bytes(640 * 50), 16000)]
+    assert run.calls == [(b'\x01\x00' * (320 * 4) + bytes(640 * 50), 16000)]
     assert run.events[:2] == ['listening', 'transcribing']
 
 

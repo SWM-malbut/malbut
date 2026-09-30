@@ -50,7 +50,10 @@ def test_fragments_connectives_quotes_and_punctuation_keep_fallback(text):
 
 
 def test_early_snapshot_is_once_per_pause_and_revision_survives_reset():
-    stream = StreamingUtteranceCollector(lambda frame, _: any(frame), early_endpoint_s=1.0)
+    # Endpoint revisions below deliberately use one 20 ms voiced frame.
+    stream = StreamingUtteranceCollector(
+        lambda frame, _: any(frame), early_endpoint_s=1.0,
+        settings=CaptureSettings(silence_timeout_s=2.0, min_speech_s=.02))
     stream.feed(VOICE)
     assert stream.feed(QUIET * 49) == []
     candidate, = stream.feed(QUIET)
@@ -79,6 +82,8 @@ def run():
         publish_control=lambda pid, cmd: state.controls.append((pid, cmd)),
         publish_interruption=lambda *_: None, report=state.reports.append,
         clock=lambda: state.now, input_has_aec=True,
+        # Keep exact single-frame PCM boundaries independent of onset debounce.
+        settings=CaptureSettings(silence_timeout_s=2.0, min_speech_s=.02),
     )
     pipeline.session.activate()
     state.pipeline = pipeline
@@ -256,7 +261,8 @@ def test_predecode_must_begin_by_the_one_second_complete_boundary(predecode_s):
 
 @pytest.mark.parametrize('fallback_s', [2.0, 2.01, 1.01, 3.0])
 def test_candidate_zero_padding_matches_actual_fallback_pcm_without_waiting(run, fallback_s):
-    settings = CaptureSettings(silence_timeout_s=fallback_s)
+    # The padding comparison starts with exactly one 20 ms speech frame.
+    settings = CaptureSettings(silence_timeout_s=fallback_s, min_speech_s=.02)
     stream = StreamingUtteranceCollector(
         lambda frame, _: any(frame), settings=settings, early_endpoint_s=1.0,
     )
@@ -280,6 +286,7 @@ def test_candidate_zero_padding_matches_actual_fallback_pcm_without_waiting(run,
 def test_padding_preserves_observed_nonzero_vad_negative_audio(run):
     stream = StreamingUtteranceCollector(
         lambda frame, _: frame[:2] == VOICE[:2], early_endpoint_s=1.0,
+        settings=CaptureSettings(silence_timeout_s=2.0, min_speech_s=.02),
     )
     run.pipeline.command_stream = stream
     observed_pcm = VOICE + SECOND * 50
@@ -341,7 +348,7 @@ def test_reset_releases_busy_owned_by_a_finalized_endpoint_wait(run):
     reply(run, old, '오래된 문장입니다.')
     assert not pipeline._busy and pipeline._endpoint_job is None
     assert run.transcripts == []
-    pipeline.feed(VOICE + QUIET * 20)
+    pipeline.feed(VOICE * 4 + QUIET * 20)
     wake_job = pipeline.jobs.get_nowait()
     assert wake_job[0] == 'wake'
     reply(run, wake_job, '제이크')
@@ -354,7 +361,7 @@ def test_stale_endpoint_does_not_release_busy_owned_by_a_new_wake_job(run):
     pipeline.feed(QUIET * 50)
     pipeline.overflow.set()
     pipeline.poll()
-    pipeline.feed(VOICE + QUIET * 20)
+    pipeline.feed(VOICE * 4 + QUIET * 20)
     wake_job = pipeline.jobs.get_nowait()
     assert wake_job[0] == 'wake' and pipeline._busy
     reply(run, old, '오래된 문장입니다.')
@@ -459,7 +466,7 @@ def test_report_includes_actual_audio_silence_and_candidate_wait(run):
 def test_wake_detection_keeps_its_short_audio_boundary(run):
     pipeline = run.pipeline
     pipeline.session.terminate()
-    pipeline.feed(VOICE + QUIET * 20)
+    pipeline.feed(VOICE * 4 + QUIET * 20)
     job = pipeline.jobs.get_nowait()
     assert job[0] == 'wake'
     assert 'checking_endpoint:silence_s=1.00' not in run.reports

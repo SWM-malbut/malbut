@@ -407,9 +407,11 @@ class DialoguePipeline:
                 self._tail_stream = None
             return
         stream = self.command_stream if self.session.active else self.wake_stream
-        for event in stream.feed(pcm):
+        start_blocked = busy_at_capture or self._busy or self._pending is not None
+        for event in stream.feed(pcm, start_blocked=start_blocked):
             if event.status == 'speech_started':
-                self._discard_capture = busy_at_capture or self._busy or self._pending is not None
+                self._discard_capture = (event.start_blocked or self._busy
+                                         or self._pending is not None)
                 if self._discard_capture:
                     self.report('speech_discarded:busy')
                     continue
