@@ -287,6 +287,50 @@ def _components(context, actions):
     return result
 
 
+def test_nav2_send_buffer_profile_is_process_local(launch_module, monkeypatch):
+    """Do not leak Nav2's profile to hardware, the owner, or other children."""
+    from malbut_bringup import nav2_stack
+
+    monkeypatch.setattr(nav2_stack, 'get_package_share_directory',
+                        launch_module.get_package_share_directory)
+    context = _context(launch_module)
+    context.environment['FASTRTPS_DEFAULT_PROFILES_FILE'] = '/existing/profile.xml'
+    context.environment.pop('RMW_FASTRTPS_USE_QOS_FROM_XML', None)
+    before = dict(context.environment)
+    actions = _core_actions(launch_module, context)
+    container = _nodes(actions, 'component_container_isolated')[0]
+    extra = {perform_substitutions(context, key): perform_substitutions(context, value)
+             for key, value in container.process_description.additional_env}
+    assert extra == {
+        'RMW_IMPLEMENTATION': 'rmw_fastrtps_cpp',
+        'FASTRTPS_DEFAULT_PROFILES_FILE': str(ROOT / 'malbut_bringup/config/fastdds_nav2.xml'),
+    }
+    assert context.environment['FASTRTPS_DEFAULT_PROFILES_FILE'] == before[
+        'FASTRTPS_DEFAULT_PROFILES_FILE']
+    assert 'RMW_FASTRTPS_USE_QOS_FROM_XML' not in context.environment
+    for action in actions:
+        if isinstance(action, Node) and action is not container:
+            assert not action.process_description.additional_env
+
+
+def test_nav2_profile_only_allows_send_buffer_growth_and_is_deployed():
+    """Keep transports, publication mode, endpoint QoS and preallocation defaults."""
+    path = ROOT / 'malbut_bringup/config/fastdds_nav2.xml'
+    profile = ElementTree.parse(path).getroot()
+    ns = '{http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles}'
+    node = profile
+    for tag in ('participant', 'rtps', 'allocation', 'send_buffers', 'dynamic'):
+        assert len(node) == 1
+        node = node[0]
+        assert node.tag == ns + tag
+        if tag == 'participant':
+            assert node.get('is_default_profile') == 'true'
+    assert node.text == 'true'
+    for relative in ('config/fastdds_nav2.xml', 'malbut_bringup/nav2_stack.py'):
+        assert (ROOT / 'malbut_bringup' / relative).read_bytes() == (
+            ROOT / 'malbut_test/malbut_bringup' / relative).read_bytes()
+
+
 def test_missing_nav2_package_fails_the_launch_by_name(launch_module, monkeypatch):
     """Without this the lifecycle manager waits forever for the absent component."""
     from ament_index_python.packages import PackageNotFoundError

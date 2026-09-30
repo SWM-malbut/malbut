@@ -110,6 +110,16 @@ Nav2는 제조사 navigation launch 대신, 공식 `nav2_bringup`이 쓰는 것�
 Monitor를 거치게 하고, Zone 필터 서버를 추가하고, 위치를 찾는 회전이 지도 위치 없이도
 가능하도록 lifecycle 순서를 정한다. 이 순서에서는 behavior·smoother·Collision Monitor가
 map TF를 기다리는 planner보다 먼저 켜진다.
+
+Nav2 컨테이너에만 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`와
+`FASTRTPS_DEFAULT_PROFILES_FILE=<패키지 share>/config/fastdds_nav2.xml`을 전달한다.
+이 프로필은 `rtps/allocation/send_buffers/dynamic=true`만 설정한다. 동시에 발행하는
+스레드가 송신 버퍼를 모두 점유하면, 반환을 기다리는 대신 추가 버퍼를 할당하고
+반환된 버퍼를 재사용한다. 동시 송신량에 따라 버퍼 메모리가 늘어날 수 있다.
+카메라 SHM 크기·토픽 큐·QoS·발행 모드는 바꾸지 않는다. 수동 복구도 기존 실행 환경을
+재사용하므로 재시작된 Nav2에 같은 설정이 적용된다. 설정은 다음 Nav2 시작부터 적용된다.
+근거: [Fast DDS 2.6.12 송신 버퍼 설정](https://github.com/eProsima/Fast-DDS/blob/v2.6.12/include/fastdds/rtps/attributes/RTPSParticipantAllocationAttributes.hpp).
+
 컨트롤러(DWB)를 포함한 모든 Nav2 값은
 `config/nav2_params.yaml`, SLAM 값은 `config/slam_toolbox.yaml`에 있으며 둘 다
 로봇에서 제공된 제조사 설정(Hiwonder ROSOrin ROS2 `navigation`, `slam` 패키지)을

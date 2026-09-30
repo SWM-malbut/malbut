@@ -116,15 +116,20 @@ def test_cancel_before_dispatch_does_not_start_a_process():
 
 
 def test_restarting_container_reloads_components_once():
-    """Restarting an empty container without its components is not recovery."""
+    """Reload components and retain the DDS environment on the replacement."""
     owner = _owner()
     followup = Mock(return_value=[])
+    environment = {'RMW_IMPLEMENTATION': 'rmw_fastrtps_cpp',
+                   'FASTRTPS_DEFAULT_PROFILES_FILE': '/share/config/fastdds_nav2.xml'}
     record = ProcessRecord(object(), (2, 'navigation'),
-                           dict(cmd=['/bin/true'], cwd=None, env={}, name='container'),
+                           dict(cmd=['/bin/true'], cwd=None, env=environment, name='container'),
                            returncode=-11, followup=followup)
     owner._launch(record, SimpleNamespace(is_cancel_requested=False))
     description = owner.service.include_launch_description.call_args.args[0]
-    description.entities[0].execute(owner.launch_context)
+    actions = description.entities[0].execute(owner.launch_context)
+    replacement = actions[0]
+    replacement.process_description.prepare(owner.launch_context, replacement)
+    assert replacement.process_description.final_env == environment
     followup.assert_called_once_with({}, None)
 
 

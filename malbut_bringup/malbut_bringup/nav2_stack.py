@@ -109,6 +109,13 @@ def nav2_actions(params_file, *, scan_topic, odom_topic):
     container = Node(
             package='rclcpp_components', executable='component_container_isolated',
             name=CONTAINER, output='screen',
+            # Only this process uses the growable DDS send-buffer pool. Manual
+            # recovery preserves its expanded environment when restarting it.
+            additional_env={
+                'RMW_IMPLEMENTATION': 'rmw_fastrtps_cpp',
+                'FASTRTPS_DEFAULT_PROFILES_FILE': str(Path(
+                    get_package_share_directory('malbut_bringup')) / 'config/fastdds_nav2.xml'),
+            },
             # The costmaps inside the servers read the same file through the
             # container's global arguments, as in nav2_bringup.
             parameters=[params_file, {'autostart': True, 'use_sim_time': False}],

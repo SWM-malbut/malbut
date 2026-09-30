@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Nav2 only: avoid waiting for a fixed send-buffer pool while holding reader locks. -->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <participant profile_name="malbut_nav2_default" is_default_profile="true">
+    <rtps>
+      <allocation>
+        <send_buffers>
+          <dynamic>true</dynamic>
+        </send_buffers>
+      </allocation>
+    </rtps>
+  </participant>
+</profiles>
