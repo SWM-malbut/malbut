@@ -919,7 +919,8 @@ def test_fall_pose_does_not_depend_on_general_perception(launch_module, fall_con
 
 
 def test_fall_pose_execution_options_reach_only_dedicated_node(launch_module, fall_config):
-    context = _context(launch_module, start_hardware='false', perception='false',
+    context = _context(
+        launch_module, start_hardware='false', perception='false',
         fall_monitor='true', fall_config=str(fall_config), fall_pose_execution_provider='cuda',
         fall_pose_intra_op_num_threads='2', fall_pose_allow_spinning='false',
         fall_pose_opencv_num_threads='1')
