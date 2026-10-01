@@ -111,6 +111,41 @@ def camera_image(node):
     return message
 
 
+def test_fall_only_converts_only_due_frames_and_checks_control_first(node):
+    node._config = DetectorConfig(fall_only=True)
+    node._refresh_fall_control = Mock(return_value=True)
+    for i in range(30):
+        node.now = 1 + i / 30
+        node._on_image(camera_image(node))
+    assert node._refresh_fall_control.call_count == 30
+    assert node._bridge.imgmsg_to_cv2.call_count == 5
+    assert node._pose_estimator.estimate_all.call_count == 5
+    node._refresh_fall_control.return_value = False
+    node.now = 3
+    node._on_image(camera_image(node))
+    assert node._bridge.imgmsg_to_cv2.call_count == 5
+
+
+def test_general_homecam_still_converts_frames_between_pose_samples(node):
+    for i in range(30):
+        node.now = 1 + i / 30
+        node._on_image(camera_image(node))
+    assert node._bridge.imgmsg_to_cv2.call_count == 30
+    assert node._model.detect.call_count == 30
+    assert node._pose_estimator.estimate_all.call_count == 5
+
+
+def test_bad_fall_frames_cannot_bypass_conversion_budget(node):
+    node._config = DetectorConfig(fall_only=True)
+    node._refresh_fall_control = Mock(return_value=True)
+    node._bridge.imgmsg_to_cv2.side_effect = detector_node.CvBridgeError('bad pixels')
+    for i in range(30):
+        node.now = 1 + i / 30
+        node._on_image(camera_image(node))
+    assert node._bridge.imgmsg_to_cv2.call_count == 5
+    node._pose_estimator.estimate_all.assert_not_called()
+
+
 def payloads(node):
     return [json.loads(call.args[0].data)
             for call in node._pose_publisher.publish.call_args_list]

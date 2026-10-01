@@ -88,6 +88,13 @@ def _setup(context):
         _file(pose_python, 'Fall pose Python')
         if not os.access(pose_python, os.X_OK):
             raise RuntimeError('Fall pose Python is not executable')
+        pose_provider = value('fall_pose_execution_provider')
+        pose_threads = int(value('fall_pose_intra_op_num_threads'))
+        cv_threads = int(value('fall_pose_opencv_num_threads'))
+        pose_spinning = value('fall_pose_allow_spinning')
+        if (pose_provider not in ('cpu', 'cuda') or not 0 <= pose_threads <= 256
+                or not 0 <= cv_threads <= 256 or pose_spinning not in ('true', 'false')):
+            raise RuntimeError('Invalid fall pose execution options')
         fall_pose = Node(
             package='homecam_detector', executable='homecam_detector_node',
             name='malbut_fall_pose', output='screen', prefix=[shlex.quote(pose_python)],
@@ -96,6 +103,10 @@ def _setup(context):
                 'fall_runtime_id': fall_ids['vlm'],
                 'image_topic': value('rgb_topic'), 'odom_topic': value('odom_topic'),
                 'pose_model_path': pose_model, 'pose_keep_aspect': True,
+                'pose_execution_provider': pose_provider,
+                'pose_intra_op_num_threads': pose_threads,
+                'pose_allow_spinning': pose_spinning == 'true',
+                'pose_opencv_num_threads': cv_threads,
                 'pose_inference_fps': 5.0,
                 'pose_candidate_confidence_threshold': 0.10,
             }],
@@ -390,6 +401,12 @@ def generate_launch_description():
         'fall_config': os.environ.get('MALBUT_FALL_CONFIG', '/etc/malbut/fall_runtime.json'),
         'fall_pose_model_path': os.environ.get(
             'MALBUT_FALL_POSE_MODEL', str(cache / 'yolo26s-pose.onnx')),
+        # GPU/JetPack availability and thread tuning are deployment choices.
+        # Preserve the previous CPU defaults until tested on the actual robot.
+        'fall_pose_execution_provider': 'cpu',
+        'fall_pose_intra_op_num_threads': '0',
+        'fall_pose_allow_spinning': 'true',
+        'fall_pose_opencv_num_threads': '0',
         'fall_pose_python_executable': os.environ.get(
             'MALBUT_FALL_POSE_PYTHON',
             str(cache_root / 'malbut_fall_pose/runtime/bin/python')),

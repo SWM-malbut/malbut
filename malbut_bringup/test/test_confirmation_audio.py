@@ -20,7 +20,9 @@ from malbut_stt.dialogue_pipeline import DialoguePipeline  # noqa: E402
 from malbut_tts.runtime import CONFIRMATION, SpeechRuntime  # noqa: E402
 
 
-VOICE = b'\x01\x00' * 320
+VOICE = b'\x01\x00' * 320  # One 20 ms frame at 16 kHz.
+# The default onset guard requires 80 ms of consecutive speech, not one VAD hit.
+SPEECH = VOICE * 4
 QUIET = bytes(640)
 
 
@@ -173,7 +175,7 @@ class AudioRig:
 
     def answer(self, text):
         self.responses.append(text)
-        self.stt.feed(VOICE + QUIET * 100)
+        self.stt.feed(SPEECH + QUIET * 100)
 
     def finish(self):
         self.until(lambda: self.results and self.session.playback_id in self.players)
@@ -216,10 +218,27 @@ def test_aec_barge_in_stops_real_tts_and_resolves_without_wake(audio_rig):
     assert len(rig.spoken) == 2 and not rig.wakes
 
 
+@pytest.mark.parametrize('noise_frames', [1, 3], ids=['20ms', '60ms'])
+def test_brief_noise_keeps_question_playing_then_accepts_real_answer(audio_rig, noise_frames):
+    rig = audio_rig()
+    question = rig.start()
+    rig.stt.feed(VOICE * noise_frames + QUIET * 100)
+    rig.poll()
+    assert not rig.asr_started.is_set() and not rig.results
+    assert not rig.controls and rig.session.phase == 'speaking'
+    assert not rig.players[question].cancel.is_set()
+
+    rig.answer('그냥 누워 있는 거야')
+    rig.finish()
+    assert (question, 'stop') in rig.controls
+    assert rig.results == [SituationResult('resolved', False)]
+    assert len(rig.spoken) == 2 and not rig.wakes
+
+
 def test_no_aec_blocks_speaker_echo_then_accepts_wake_free_answer(audio_rig):
     rig = audio_rig(aec=False)
     rig.start()
-    rig.stt.feed(VOICE + QUIET * 100)
+    rig.stt.feed(SPEECH + QUIET * 100)
     rig.poll()
     assert not rig.asr_started.is_set() and not rig.results
     rig.drain_question()

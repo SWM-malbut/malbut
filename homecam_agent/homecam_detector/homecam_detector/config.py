@@ -24,6 +24,10 @@ class DetectorConfig:
     model_path: str = ""
     pose_model_path: str = ""
     pose_keep_aspect: bool = False
+    pose_execution_provider: str = 'cpu'
+    pose_intra_op_num_threads: int = 0
+    pose_allow_spinning: bool = True
+    pose_opencv_num_threads: int = 0  # 0 preserves the process default.
     fall_only: bool = False
     fall_runtime_id: str = ""
     device_id: str = ""
@@ -94,6 +98,16 @@ def is_valid_device_id(value: str) -> bool:
 def validate_config(config: DetectorConfig) -> List[str]:
     """Return every actionable configuration error."""
     errors: List[str] = []
+    if config.pose_execution_provider not in ('cpu', 'cuda'):
+        errors.append('pose_execution_provider must be cpu or cuda')
+    if (type(config.pose_intra_op_num_threads) is not int
+            or not 0 <= config.pose_intra_op_num_threads <= 256):
+        errors.append('pose_intra_op_num_threads must be an integer in [0, 256]')
+    if type(config.pose_allow_spinning) is not bool:
+        errors.append('pose_allow_spinning must be bool')
+    if (type(config.pose_opencv_num_threads) is not int
+            or not 0 <= config.pose_opencv_num_threads <= 256):
+        errors.append('pose_opencv_num_threads must be an integer in [0, 256]')
     if config.fall_only:
         if not config.fall_runtime_id.strip():
             errors.append("fall_only requires fall_runtime_id")

@@ -918,6 +918,34 @@ def test_fall_pose_does_not_depend_on_general_perception(launch_module, fall_con
     assert len(_nodes(ready, 'homecam_detector_node')) == 1
 
 
+def test_fall_pose_execution_options_reach_only_dedicated_node(launch_module, fall_config):
+    context = _context(
+        launch_module, start_hardware='false', perception='false',
+        fall_monitor='true', fall_config=str(fall_config), fall_pose_execution_provider='cuda',
+        fall_pose_intra_op_num_threads='2', fall_pose_allow_spinning='false',
+        fall_pose_opencv_num_threads='1')
+    ready = _readiness_exit(_core_actions(launch_module, context), context)
+    node = _nodes(ready, 'homecam_detector_node')[0]
+    params = evaluate_parameters(context, node._Node__parameters)[0]
+    assert params['pose_execution_provider'] == 'cuda'
+    assert params['pose_intra_op_num_threads'] == 2
+    assert params['pose_allow_spinning'] is False
+    assert params['pose_opencv_num_threads'] == 1
+    assert params['pose_keep_aspect'] is True
+    assert params['pose_inference_fps'] == 5.0
+
+
+@pytest.mark.parametrize('changes', [
+    {'fall_pose_execution_provider': 'auto'}, {'fall_pose_intra_op_num_threads': '-1'},
+    {'fall_pose_allow_spinning': 'maybe'}, {'fall_pose_opencv_num_threads': '-1'},
+])
+def test_fall_pose_rejects_invalid_execution_options(launch_module, fall_config, changes):
+    context = _context(launch_module, start_hardware='false', fall_monitor='true',
+                       fall_config=str(fall_config), **changes)
+    with pytest.raises(RuntimeError, match='Invalid fall pose execution options'):
+        launch_module._setup(context)
+
+
 def test_fall_pose_exit_cannot_leave_a_silent_missing_producer(launch_module, fall_config):
     """Even exit 0 of the persistent detector stops the partial Bringup."""
     context = _context(launch_module, start_hardware='false', perception='false',

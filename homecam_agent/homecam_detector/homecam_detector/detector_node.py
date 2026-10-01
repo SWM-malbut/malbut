@@ -114,6 +114,9 @@ class HomecamDetectorNode(Node):
                 "model_path is empty; person, dog, and cat detection is disabled"
             )
         self._pose_estimator: Optional[PersonPoseEstimator] = None
+        if self._config.pose_opencv_num_threads:
+            import cv2
+            cv2.setNumThreads(self._config.pose_opencv_num_threads)
         if self._config.pose_model_path:
             try:
                 self._pose_estimator = PersonPoseEstimator(
@@ -123,10 +126,16 @@ class HomecamDetectorNode(Node):
                     ),
                     keypoint_threshold=self._config.pose_keypoint_threshold,
                     keep_aspect=self._config.pose_keep_aspect,
+                    execution_provider=self._config.pose_execution_provider,
+                    intra_op_num_threads=self._config.pose_intra_op_num_threads,
+                    allow_spinning=self._config.pose_allow_spinning,
                 )
                 self.get_logger().info(
                     "Loaded independent YOLO pose ONNX model: "
-                    f"{self._config.pose_model_path}"
+                    f"{self._config.pose_model_path}; "
+                    f"provider={self._config.pose_execution_provider}, "
+                    f"threads={self._config.pose_intra_op_num_threads}, "
+                    f"spinning={self._config.pose_allow_spinning}"
                 )
             except (FileNotFoundError, RuntimeError, ValueError) as error:
                 if self._config.fall_only:
@@ -280,6 +289,10 @@ class HomecamDetectorNode(Node):
         self.declare_parameter("fall_only", False)
         self.declare_parameter("fall_runtime_id", "")
         self.declare_parameter("pose_keep_aspect", False)
+        self.declare_parameter('pose_execution_provider', 'cpu')
+        self.declare_parameter('pose_intra_op_num_threads', 0)
+        self.declare_parameter('pose_allow_spinning', True)
+        self.declare_parameter('pose_opencv_num_threads', 0)
         self.declare_parameter("image_topic", "/depth_cam/depth_cam")
         self.declare_parameter("depth_image_topic", "")
         self.declare_parameter("depth_camera_info_topic", "")
@@ -328,6 +341,10 @@ class HomecamDetectorNode(Node):
             fall_only=bool(self.get_parameter("fall_only").value),
             fall_runtime_id=self.get_parameter("fall_runtime_id").value,
             pose_keep_aspect=bool(self.get_parameter("pose_keep_aspect").value),
+            pose_execution_provider=self.get_parameter('pose_execution_provider').value,
+            pose_intra_op_num_threads=self.get_parameter('pose_intra_op_num_threads').value,
+            pose_allow_spinning=self.get_parameter('pose_allow_spinning').value,
+            pose_opencv_num_threads=self.get_parameter('pose_opencv_num_threads').value,
             image_topic=self.get_parameter("image_topic").value,
             depth_image_topic=self.get_parameter("depth_image_topic").value,
             depth_camera_info_topic=self.get_parameter(
@@ -782,8 +799,14 @@ class HomecamDetectorNode(Node):
         self._fall_candidates_publisher.publish(message)
 
     def _on_image(self, message: Image) -> None:
+        pose_sample_time = None
         if self._config.fall_only:
             if not self._refresh_fall_control():
+                return
+            # Only the dedicated fall node can skip conversion. General homecam
+            # consumers still need this frame even when pose inference is idle.
+            pose_sample_time = time.monotonic()
+            if not self._pose_gate.is_due(pose_sample_time):
                 return
         elif (
             not self._monitoring_state_received
@@ -793,6 +816,10 @@ class HomecamDetectorNode(Node):
         try:
             frame = self._bridge.imgmsg_to_cv2(message, desired_encoding="bgr8")
         except CvBridgeError as error:
+            if pose_sample_time is not None:
+                # A stream of corrupt images must not bypass the conversion
+                # budget just because no inference was reached.
+                self._pose_gate.should_infer(pose_sample_time)
             self.get_logger().error(f"Cannot convert camera frame: {error}")
             self._publish_fall_candidates(
                 PoseTrackingResult((), (), ()), message, [], "invalid_image", ()
@@ -800,7 +827,8 @@ class HomecamDetectorNode(Node):
             return
 
         candidates: Dict[str, float] = {}
-        now_monotonic = time.monotonic()
+        now_monotonic = (pose_sample_time if pose_sample_time is not None
+                         else time.monotonic())
         # The pose model finds people itself. Run it before general detection
         # so an empty result, missing model, or failure there cannot gate pose.
         # The privacy guard above and the pose rate limit still apply.
