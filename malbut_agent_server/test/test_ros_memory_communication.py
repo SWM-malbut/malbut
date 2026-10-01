@@ -327,9 +327,12 @@ def test_stt_pipeline_final_text_reaches_agent_and_tts(ros_memory):
     phases = []
     stopped = []
     recorders = []
+    # CaptureSettings requires 80 ms of consecutive voice. A single 20 ms
+    # frame is intentionally rejected as noise, for both wake and utterance.
+    voice_frames = 4
     recordings = iter([
-        [[7] * 320] + [[0] * 320] * 20,
-        [[1] * 320] + [[0] * 320] * 50,
+        [[7] * 320] * voice_frames + [[0] * 320] * 20,
+        [[1] * 320] * voice_frames + [[0] * 320] * 50,
     ])
 
     class Recorder:
@@ -362,7 +365,7 @@ def test_stt_pipeline_final_text_reaches_agent_and_tts(ros_memory):
         assert len(recorders) == 1
         assert recorders[-1].closed and not recorders[-1].active
         assert phases == ['waiting_for_wake', 'recognizing_wake']
-        assert pcm == b'\x07\x00' * 320 + bytes(640 * 20)
+        assert pcm == b'\x07\x00' * (320 * voice_frames) + bytes(640 * 20)
         assert sample_rate == 16000
         wake_calls.append(pcm)
         return '제이크야'
@@ -374,7 +377,7 @@ def test_stt_pipeline_final_text_reaches_agent_and_tts(ros_memory):
             'waiting_for_wake', 'recognizing_wake', 'wake_detected',
             'listening', 'transcribing',
         ]
-        assert pcm == b'\x01\x00' * 320 + bytes(640 * 50)
+        assert pcm == b'\x01\x00' * (320 * voice_frames) + bytes(640 * 50)
         assert sample_rate == 16000
         calls.append(pcm)
         return text
