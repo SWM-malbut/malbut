@@ -17,6 +17,26 @@ from homecam_detector.pose import PersonPose, PersonPoseGate
 from homecam_detector.pose_tracker import PersonPoseTracker
 
 
+@pytest.mark.parametrize('overrides,expected', [
+    ({'fall_only': True}, ('auto', 2, False, 1)),
+    ({'fall_only': False}, ('auto', 2, False, 1)),
+    ({'fall_only': True, 'pose_execution_provider': 'cpu', 'pose_intra_op_num_threads': 3},
+     ('cpu', 3, False, 1)),
+])
+def test_direct_node_defaults_and_explicit_overrides(overrides, expected):
+    parameters = {}
+    def declare(name, default):
+        parameters[name] = overrides.get(name, default)
+    node = SimpleNamespace(declare_parameter=declare,
+                           get_parameter=lambda name: SimpleNamespace(value=parameters[name]))
+    detector_node.HomecamDetectorNode._declare_parameters(node)
+    config = detector_node.HomecamDetectorNode._read_config(node)
+    assert (config.pose_execution_provider, config.pose_intra_op_num_threads,
+            config.pose_allow_spinning, config.pose_opencv_num_threads) == expected
+    assert (config.yolo_execution_provider, config.yolo_intra_op_num_threads,
+            config.yolo_allow_spinning) == ('auto', 2, False)
+
+
 @pytest.fixture
 def node(monkeypatch):
     # Bind production callbacks to a test double: no node initialization,

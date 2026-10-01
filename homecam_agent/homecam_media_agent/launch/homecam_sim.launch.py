@@ -1,5 +1,8 @@
 """Launch the Gazebo home-camera media and detector agents."""
 
+import os
+import sys
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, EmitEvent, RegisterEventHandler
 from launch.event_handlers import OnProcessExit
@@ -12,6 +15,15 @@ from launch.substitutions import PathJoinSubstitution
 
 
 def generate_launch_description() -> LaunchDescription:
+    execution_defaults = {
+        'yolo_execution_provider': ('auto', str),
+        'yolo_intra_op_num_threads': ('2', int),
+        'yolo_allow_spinning': ('false', bool),
+        'pose_execution_provider': ('auto', str),
+        'pose_intra_op_num_threads': ('2', int),
+        'pose_allow_spinning': ('false', bool),
+        'pose_opencv_num_threads': ('1', int),
+    }
     config = PathJoinSubstitution(
         [FindPackageShare("homecam_media_agent"), "config", "sim.yaml"]
     )
@@ -62,12 +74,15 @@ def generate_launch_description() -> LaunchDescription:
         package="homecam_detector",
         executable="homecam_detector_node",
         name="homecam_detector",
+        prefix=[LaunchConfiguration('detector_python_executable')],
         output="screen",
         parameters=[
             config,
             common_overrides,
             {
                 "model_path": ParameterValue(model_path, value_type=str),
+                **{name: ParameterValue(LaunchConfiguration(name), value_type=kind)
+                   for name, (_, kind) in execution_defaults.items()},
                 "pose_model_path": ParameterValue(
                     pose_model_path, value_type=str
                 ),
@@ -85,6 +100,10 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("backend_url", default_value=""),
             DeclareLaunchArgument("device_id", default_value="gazebo-homecam"),
             DeclareLaunchArgument("model_path", default_value=""),
+            DeclareLaunchArgument('detector_python_executable', default_value=os.environ.get(
+                'MALBUT_HOMECAM_DETECTOR_PYTHON', sys.executable)),
+            *[DeclareLaunchArgument(name, default_value=value)
+              for name, (value, _) in execution_defaults.items()],
             DeclareLaunchArgument("pose_model_path", default_value=""),
             DeclareLaunchArgument("monitoring_enabled", default_value="false"),
             DeclareLaunchArgument("event_clips_enabled", default_value="true"),

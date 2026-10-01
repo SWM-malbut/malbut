@@ -2,6 +2,7 @@
 
 import importlib.util
 from pathlib import Path
+import pytest
 
 from launch import LaunchContext
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -13,8 +14,8 @@ from launch_ros.utilities import evaluate_parameters
 ROOT = Path(__file__).parents[1]
 
 
-def _launch(name, **overrides):
-    source = ROOT / "homecam_media_agent/launch" / name
+def _launch(name, *, root=ROOT, **overrides):
+    source = root / "homecam_media_agent/launch" / name
     spec = importlib.util.spec_from_file_location(name.replace(".", "_"), source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -25,6 +26,34 @@ def _launch(name, **overrides):
         if isinstance(action, DeclareLaunchArgument):
             action.execute(context)
     return description.entities, context
+
+
+@pytest.mark.parametrize('profile', ['homecam_aurora.launch.py', 'homecam_sim.launch.py'])
+@pytest.mark.parametrize('root', [ROOT, ROOT.parent / 'malbut_test/homecam_agent'])
+@pytest.mark.parametrize('overrides,expected', [
+    ({}, ('auto', 2, False, 'auto', 2, False, 1)),
+    ({'yolo_execution_provider': 'cuda', 'pose_execution_provider': 'cpu',
+      'yolo_intra_op_num_threads': '3', 'pose_opencv_num_threads': '2'},
+     ('cuda', 3, False, 'cpu', 2, False, 2)),
+])
+def test_homecam_execution_settings_reach_only_detector(profile, root, overrides, expected):
+    actions, context = _launch(profile, root=root, image_topic='/test/rgb',
+                               detector_python_executable='/test/runtime/bin/python', **overrides)
+    node = next(n for n in actions if isinstance(n, Node)
+                and n.node_executable == 'homecam_detector_node')
+    params = {}
+    for item in evaluate_parameters(context, node._Node__parameters):
+        if isinstance(item, dict):
+            params.update(item)
+    keys = ('yolo_execution_provider', 'yolo_intra_op_num_threads', 'yolo_allow_spinning',
+            'pose_execution_provider', 'pose_intra_op_num_threads', 'pose_allow_spinning',
+            'pose_opencv_num_threads')
+    assert tuple(params[key] for key in keys) == expected
+    assert perform_substitutions(context, node.process_description.prefix) == '/test/runtime/bin/python'
+    media = next(n for n in actions if isinstance(n, Node)
+                 and n.node_executable == 'homecam_media_agent_node')
+    assert all(not set(keys).intersection(item) for item in
+               evaluate_parameters(context, media._Node__parameters) if isinstance(item, dict))
 
 
 def test_robot_reuses_media_with_real_camera_and_no_duplicate_detector():

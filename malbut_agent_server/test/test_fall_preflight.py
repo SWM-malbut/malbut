@@ -338,17 +338,23 @@ def test_probe_hides_import_output_and_does_not_initialize_ros(monkeypatch, caps
     assert 'must-not-be-reported' not in str(capsys.readouterr())
 
 
-def test_pose_probe_loads_cpu_estimator_only(monkeypatch, capsys):
+@pytest.mark.parametrize('provider', ['auto', 'cpu', 'cuda'])
+def test_pose_probe_loads_requested_estimator_without_inference(monkeypatch, capsys, provider):
     calls = []
-    def estimator(path, *, keep_aspect):
-        calls.append((path, keep_aspect))
+    threads = []
+    def estimator(path, **kwargs):
+        calls.append((path, kwargs))
         return object()  # no predict()/infer() method
     for name in ('cv_bridge', 'cv2', 'rclpy'):
         monkeypatch.setitem(sys.modules, name, SimpleNamespace())
+    monkeypatch.setitem(sys.modules, 'cv2', SimpleNamespace(setNumThreads=threads.append))
     monkeypatch.setitem(sys.modules, 'homecam_detector.pose',
                         SimpleNamespace(PersonPoseEstimator=estimator))
-    assert probe.main(['pose', '--model', '/test/model.onnx']) == 0
-    assert calls == [('/test/model.onnx', True)]
+    assert probe.main(['pose', '--model', '/test/model.onnx',
+                       '--pose-execution-provider', provider]) == 0
+    assert calls == [('/test/model.onnx', dict(keep_aspect=True, execution_provider=provider,
+                                              intra_op_num_threads=2, allow_spinning=False))]
+    assert threads == [1]
     assert capsys.readouterr().out == '{"ready":true}\n'
 
 
@@ -367,13 +373,34 @@ def test_cli_defaults_overrides_and_exit_status(monkeypatch, capsys, tmp_path):
     args, options = calls[0]
     assert args == (tmp_path / 'runtime.json', tmp_path / 'malbut_perception/yolo26s-pose.onnx',
                     tmp_path / 'malbut_fall_pose/runtime/bin/python')
-    assert options == {'probe': False}
+    defaults = dict(pose_execution_provider='auto', pose_intra_op_num_threads=2,
+                    pose_allow_spinning=False, pose_opencv_num_threads=1)
+    assert options == dict(probe=False, **defaults)
     monkeypatch.setenv('MALBUT_FALL_POSE_MODEL', '/custom/pose.onnx')
     monkeypatch.setenv('MALBUT_FALL_POSE_PYTHON', '/custom/bin/python')
-    assert preflight.main(['--probe', '--config', '/custom/config.json']) == 2
+    assert preflight.main(['--probe', '--config', '/custom/config.json',
+                          '--pose-execution-provider', 'cuda']) == 2
+    defaults['pose_execution_provider'] = 'cuda'
     assert calls[1] == ((Path('/custom/config.json'), Path('/custom/pose.onnx'),
-                         Path('/custom/bin/python')), {'probe': True})
+                         Path('/custom/bin/python')), dict(probe=True, **defaults))
     assert '준비가 필요한' in capsys.readouterr().out
+
+
+def test_pose_probe_command_checks_selected_runtime_and_provider(deployment):
+    calls = []
+    async def runner(command, env):
+        calls.append(command)
+        return 'dependencies_or_model_failed' if 'pose' in command else 'ok'
+    report = inspect(deployment, probe=True, pose_execution_provider='cuda',
+                     pose_intra_op_num_threads=3, pose_allow_spinning=True,
+                     pose_opencv_num_threads=2, probe_runner=runner)
+    command = calls[1]
+    assert command[0] == str(deployment.python)
+    assert command[command.index('--pose-execution-provider') + 1] == 'cuda'
+    assert command[command.index('--pose-intra-op-num-threads') + 1] == '3'
+    assert command[command.index('--pose-allow-spinning') + 1] == 'true'
+    assert command[command.index('--pose-opencv-num-threads') + 1] == '2'
+    assert checks(report)['pose_probe']['status'] == 'failed'
 
 
 def test_source_and_robot_mirror_are_identical():

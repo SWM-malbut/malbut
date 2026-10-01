@@ -1,12 +1,63 @@
 """Tests for detector post-processing that do not require a model file."""
 
 import sys
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
 import pytest
 
 from homecam_detector.yolo import YoloOnnxDetector, class_aware_nms
+
+
+@pytest.mark.parametrize('provider,available,selected', [
+    ('auto', ['CPUExecutionProvider'], 'cpu'),
+    ('auto', ['CUDAExecutionProvider', 'CPUExecutionProvider'], 'cuda'),
+    ('cuda', ['CUDAExecutionProvider', 'CPUExecutionProvider'], 'cuda'),
+    ('cpu', ['CUDAExecutionProvider', 'CPUExecutionProvider'], 'cpu'),
+])
+def test_object_detector_uses_same_provider_and_thread_policy_as_pose(
+        tmp_path, monkeypatch, provider, available, selected):
+    path = tmp_path / 'model.onnx'
+    path.touch()
+    passed, entries, calls = {}, {}, []
+    options = SimpleNamespace(add_session_config_entry=entries.__setitem__)
+    session = SimpleNamespace(
+        get_inputs=lambda: [SimpleNamespace(name='images')],
+        get_providers=lambda: available,
+        disable_fallback=lambda: calls.append('disable_fallback'))
+    def create(*args, **kwargs):
+        passed.update(kwargs)
+        return session
+    monkeypatch.setitem(sys.modules, 'onnxruntime', SimpleNamespace(
+        SessionOptions=lambda: options, InferenceSession=create,
+        get_available_providers=lambda: available))
+    detector = YoloOnnxDetector(str(path), execution_provider=provider)
+    assert detector.execution_provider == selected
+    assert options.intra_op_num_threads == 2
+    assert entries == {'session.intra_op.allow_spinning': '0',
+                       'session.inter_op.allow_spinning': '0'}
+    if selected == 'cuda':
+        assert passed['providers'] == [('CUDAExecutionProvider', {'use_tf32': 0}),
+                                       'CPUExecutionProvider']
+        assert calls == ['disable_fallback']
+    else:
+        assert passed['providers'] == ['CPUExecutionProvider'] and calls == []
+
+
+@pytest.mark.parametrize('available', [['CPUExecutionProvider'],
+                                     ['CUDAExecutionProvider', 'CPUExecutionProvider']])
+def test_object_detector_never_hides_failed_cuda(tmp_path, monkeypatch, available):
+    path = tmp_path / 'model.onnx'
+    path.touch()
+    fake = SimpleNamespace(
+        SessionOptions=lambda: SimpleNamespace(add_session_config_entry=lambda *a: None),
+        get_available_providers=lambda: available,
+        InferenceSession=lambda *a, **kw: SimpleNamespace(
+            get_providers=lambda: ['CPUExecutionProvider']))
+    monkeypatch.setitem(sys.modules, 'onnxruntime', fake)
+    with pytest.raises(RuntimeError, match='not installed|refusing CPU-only fallback'):
+        YoloOnnxDetector(str(path), execution_provider='cuda')
 
 
 class _FakeNet:

@@ -38,7 +38,7 @@ fail-closed로 막고 로컬 파이프라인·감지 개발만 허용한다. 실
 
 - `homecam_media_agent`: C++17, ROS 구독, GStreamer 파이프라인, heartbeat,
   단기 KVS session lease/refresh 경계
-- `homecam_detector`: Python, OpenCV DNN YOLO, frame motion, odometry gate,
+- `homecam_detector`: Python, ONNX Runtime YOLO, frame motion, odometry gate,
   이벤트 중복 제거 및 HTTPS 전달
 
 YOLO 모델 파일은 저장소에 포함하지 않는다. 현재 시뮬레이션 기본 모델은
@@ -253,8 +253,38 @@ colcon build \
 
 SDK 저작권·라이선스 고지는 `THIRD_PARTY_NOTICES.md`에 기록되어 있다.
 
-`model_path`가 비어 있거나 파일을 읽지 못하면 노드는 종료하지 않고
-motion-only 모드로 내려간다. 이벤트 탭의 분류 의미는 다음과 같다.
+일반 홈캠(`fall_only=false`)의 YOLO와 Pose도 GPU 선택·스레드 제한을 적용한다.
+기본값은 각각 `yolo_execution_provider=auto`, `pose_execution_provider=auto`,
+ORT 스레드 `2`, spinning `false`다. `auto`는 실행 Python에 CUDA EP가 있으면
+CUDA를 선택하고, 없으면 CPU와 GPU 미사용 경고를 선택한다. GPU 초기화 실패를
+CPU 추론 성공으로 숨기지 않는다. `yolo_intra_op_num_threads`, `yolo_allow_spinning`,
+`pose_intra_op_num_threads`, `pose_allow_spinning`으로 모델별 조정이 가능하다.
+기존 이름인 `pose_opencv_num_threads`는 실제로 OpenCV 프로세스 전체에 적용되며
+기본 `1`이다. 일반 YOLO 전처리와 움직임 감지에도 적용한다.
+
+`homecam_aurora.launch.py`와 `homecam_sim.launch.py`에서 위 인자를 사용할 수 있다.
+GPU 환경은 낙상과 마찬가지로 별도 준비해야 한다. 설치 절차는
+[로봇 준비 문서](../malbut_agent_server/docs/fall/fall_robot_preparation.md#gpu-환경-준비와-적용-확인)를 따른다.
+기존에 검증한 CUDA Python이 있다면 다음처럼 일반 홈캠 감지기에 지정한다.
+
+```bash
+export MALBUT_HOMECAM_DETECTOR_PYTHON="${XDG_CACHE_HOME:-$HOME/.cache}/malbut_fall_pose/runtime-cuda/bin/python"
+ros2 launch homecam_media_agent homecam_aurora.launch.py \
+  image_topic:=/depth_cam/rgb0/image_raw \
+  model_path:=/absolute/path/to/yolo26n.onnx \
+  yolo_execution_provider:=cuda
+```
+
+`detector_python_executable` 인자로도 경로를 지정할 수 있다. C++ 미디어 노드의
+실행 환경은 바꾸지 않는다. 시작 로그에 각 모델의 실제 `provider=cuda/cpu`를 남긴다.
+권한/모니터링 조건, 이벤트 구간 판단과 영상 저장·전송 규칙은 그대로이며,
+일반 홈캠은 움직임 감지에도 프레임을 쓰므로 낙상 전용의 5fps 변환 생략을 적용하지 않는다.
+모델 추론은 GPU로 보낼 수 있지만 영상 변환·움직임 감지·이벤트 처리가 모두 GPU로
+옮겨지는 것은 아니다. 실제 Jetson CPU/GPU 부하와 처리 속도는 별도 측정이 필요하다.
+
+`model_path`가 비어 있으면 motion-only 모드로 실행한다. 기본 `auto`/명시적 `cpu`에서
+모델을 읽지 못하면 오류를 알리고 motion-only로 계속한다. `yolo_execution_provider=cuda`를
+명시했는데 모델/CUDA를 불러오지 못하면 시작에 실패한다. 이벤트 탭의 분류 의미는 다음과 같다.
 
 - `사람`: YOLO가 COCO person 클래스를 인식
 - `반려동물`: YOLO가 COCO dog 또는 cat 클래스를 인식

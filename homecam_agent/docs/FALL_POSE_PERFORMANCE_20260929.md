@@ -188,6 +188,32 @@ Bringup·새 평가 도구 테스트 74개를 다시 실행해 모두 통과함.
 
 ## 적용한 코드
 
+아래는 9월 29일 측정 당시 변경 내용이다. 10월 1일 배포 수정에서 낙상 전용 노드의
+기본값을 `auto / ORT 2 threads / spinning OFF / OpenCV 1 thread`로 바꿨다.
+기존 PR은 조정 옵션만 추가하고 기본값은 유지해, 업데이트만 한 로봇에는 스레드 조정이
+적용되지 않았다. 이어 일반 홈캠의 YOLO·Pose에도 GPU 선택과 스레드 제한을 적용했다.
+위 표의 측정 결과를 새로 측정한 것은 아니다.
+현재 설치·실행 절차는 [Bringup 안내](../../malbut_bringup/README.md#cloud-vlm-자동-실행)를 따른다.
+
+10월 1일 기본값 수정 검증:
+
+- Bringup 전체 회귀 검사 491개 통과.
+- Detector·설치 스크립트·홈캠 launch·낙상 preflight 검사 303개 통과. 기본 실행 인자,
+  직접 노드 실행의 기본값, 명시적인 CPU 설정, 일반 홈캠의 조정된 기본값을 포함.
+- CUDA 없는 환경의 CPU 선택, CUDA 초기화 실패 시 CPU-only 실행 거부,
+  기존 GPU 패키지 보존과 CPU/GPU 설치 환경 분리는 테스트 대역으로 확인.
+  실제 Jetson에 GPU wheel을 설치한 검사는 아님.
+- PC의 ORT 1.23.2 환경에서 실제 YOLO26s 모델을 `auto`, `cuda`, `cpu`로 각각
+  로딩하고 640×400 검은 시험 이미지로 추론 성공. `auto`는 CUDA를 선택함.
+- 실제 ROS 노드 시작에서도 `auto / 2 / false / 1` 및 CUDA 선택을 확인함.
+  감지 허용 전 영상 처리는 중단 상태였고, 카메라·Cloud는 사용하지 않음.
+- 일반 홈캠 실제 ROS 노드도 YOLO·Pose 모두 CUDA 선택, 스레드 2, spinning OFF로
+  시작함을 확인. 모니터링 OFF 상태는 유지됨.
+- 일반 YOLO26n은 합성 영상 SYN001·SYN002·SYN022에서 5프레임마다 추출한 총 39장으로
+  기존 CPU 설정과 새 기본 CUDA 설정을 비교. person/cat/dog 검출 클래스가 달라진 프레임은
+  0장, 신뢰도 최대 차이는 약 0.00000215. 이 소규모 비교는 정확도 평가나 Jetson 측정이 아님.
+- 이는 배포 설정 연결 검사이며 Jetson 성능 개선 수치를 새로 측정한 결과는 아님.
+
 - `fall_only=true`에서만 영상 변환 전 추론 시각을 확인. 허용/연결 확인은 그보다 먼저 수행.
 - 일반 홈캠은 Pose가 쉬는 프레임도 다른 분석에 필요하므로 기존 변환 경로를 유지.
 - 변환 실패한 프레임도 제한 횟수를 사용하도록 해 손상된 이미지 입력이 제한을 우회하지 않음.
@@ -207,7 +233,7 @@ ros2 launch malbut_bringup robot.launch.py \
 ```
 
 필요하면 `fall_pose_python_executable`도 해당 환경으로 지정.
-현재 `prepare_fall_pose_runtime.sh`는 CPU 설치용임. Jetson에 PC용 CUDA wheel을 그대로
+측정 당시 `prepare_fall_pose_runtime.sh`는 CPU 설치용이었음. Jetson에 PC용 CUDA wheel을 그대로
 설치하지 말고 해당 JetPack/CUDA/cuDNN/aarch64 조합의 호환성을 먼저 확인해야 함.
 
 ## 84개 동일 프레임 비교

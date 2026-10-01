@@ -7,6 +7,13 @@ from typing import List
 from urllib.parse import urlsplit
 
 
+EXECUTION_PARAMETER_NAMES = (
+    'yolo_execution_provider', 'yolo_intra_op_num_threads', 'yolo_allow_spinning',
+    'pose_execution_provider', 'pose_intra_op_num_threads', 'pose_allow_spinning',
+    'pose_opencv_num_threads',
+)
+
+
 @dataclass(frozen=True)
 class DetectorConfig:
     """Runtime configuration independent of ROS parameter plumbing."""
@@ -24,10 +31,14 @@ class DetectorConfig:
     model_path: str = ""
     pose_model_path: str = ""
     pose_keep_aspect: bool = False
-    pose_execution_provider: str = 'cpu'
-    pose_intra_op_num_threads: int = 0
-    pose_allow_spinning: bool = True
-    pose_opencv_num_threads: int = 0  # 0 preserves the process default.
+    yolo_execution_provider: str = 'auto'
+    yolo_intra_op_num_threads: int = 2
+    yolo_allow_spinning: bool = False
+    pose_execution_provider: str = 'auto'
+    pose_intra_op_num_threads: int = 2
+    pose_allow_spinning: bool = False
+    # OpenCV's setting is process-wide: applies to object, pose and motion.
+    pose_opencv_num_threads: int = 1  # Legacy parameter name; 0 preserves library defaults.
     fall_only: bool = False
     fall_runtime_id: str = ""
     device_id: str = ""
@@ -98,13 +109,14 @@ def is_valid_device_id(value: str) -> bool:
 def validate_config(config: DetectorConfig) -> List[str]:
     """Return every actionable configuration error."""
     errors: List[str] = []
-    if config.pose_execution_provider not in ('cpu', 'cuda'):
-        errors.append('pose_execution_provider must be cpu or cuda')
-    if (type(config.pose_intra_op_num_threads) is not int
-            or not 0 <= config.pose_intra_op_num_threads <= 256):
-        errors.append('pose_intra_op_num_threads must be an integer in [0, 256]')
-    if type(config.pose_allow_spinning) is not bool:
-        errors.append('pose_allow_spinning must be bool')
+    for prefix in ('pose', 'yolo'):
+        if getattr(config, prefix + '_execution_provider') not in ('auto', 'cpu', 'cuda'):
+            errors.append(prefix + '_execution_provider must be auto, cpu or cuda')
+        threads = getattr(config, prefix + '_intra_op_num_threads')
+        if type(threads) is not int or not 0 <= threads <= 256:
+            errors.append(prefix + '_intra_op_num_threads must be an integer in [0, 256]')
+        if type(getattr(config, prefix + '_allow_spinning')) is not bool:
+            errors.append(prefix + '_allow_spinning must be bool')
     if (type(config.pose_opencv_num_threads) is not int
             or not 0 <= config.pose_opencv_num_threads <= 256):
         errors.append('pose_opencv_num_threads must be an integer in [0, 256]')

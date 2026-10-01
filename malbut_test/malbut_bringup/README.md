@@ -85,6 +85,23 @@ STT·Agent·TTS는 기본 포함이며, 로봇 준비 확인 뒤 음성 점검 �
 ros2 launch malbut_bringup robot.launch.py map:=/실제/지도.yaml fall_monitor:=true fall_config:=/etc/malbut/fall_runtime.json
 ```
 
+낙상 Pose의 기본값은 `fall_pose_execution_provider:=auto`, ORT 스레드 `2`,
+spinning `false`, OpenCV 스레드 `1`이다. 추가 인자 없이 스레드 제한이 적용된다.
+일반 홈캠의 YOLO·Pose에도 같은 스레드 제한과 GPU 선택 정책을 적용한다.
+`auto`는 **해당 노드의 실행 Python**에 CUDA EP가
+있으면 CUDA를 선택하고, 없으면 CPU를 선택하면서 GPU 미사용 경고를 남긴다.
+CUDA가 설치돼 있지만 초기화에 실패하면 CPU로 조용히 바꾸지 않고 시작에 실패한다.
+GPU 실행을 필수로 하려면 `fall_pose_execution_provider:=cuda`를 사용한다.
+시작 로그의 `provider=cuda (requested=auto)` / `provider=cpu (requested=auto)`로
+실제 선택을 확인한다. `ros2 param get`의 `auto`는 GPU 활성화 증거가 아니다.
+`fall_pose_intra_op_num_threads`, `fall_pose_allow_spinning`, `fall_pose_opencv_num_threads`로
+변경할 수 있으며 재빌드 후 노드 재시작이 필요하다. 이전 실행 명령/YAML의 명시적인
+`cpu`, `0`, `true`, `0` 값은 새 기본값보다 우선하므로 함께 확인한다.
+GPU 의존성 설치와 사전 점검은
+[로봇 준비 문서](../malbut_agent_server/docs/fall/fall_robot_preparation.md#1-1-낙상용-yolo-pose-준비)를 따른다.
+코드 업데이트만으로 CPU 전용 ONNX Runtime이 GPU 버전으로 바뀌지는 않는다.
+Jetson에서의 실제 처리 fps·CPU/GPU 부하는 별도 확인 대상이다.
+
 이 명령은 **VLM 노드 시작**이지 전송 동의가 아니다. 실제 영상 수집에는
 시작 시 지정한 낙상 코디네이터 실행 ID, 현재 VLM에 적용한 감지·카메라 허용 설정,
 코디네이터의 새 연결 확인 메시지가 필요하다. VLM은 KVS 저장 허용 Bool을 더 이상 받지 않는다.

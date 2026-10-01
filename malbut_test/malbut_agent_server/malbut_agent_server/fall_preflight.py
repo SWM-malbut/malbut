@@ -192,7 +192,9 @@ async def run_probe(command, env, *, timeout_s=30):
 
 
 async def inspect(config, pose_model, pose_python, *, probe=False, prefix_lookup=package_prefix,
-                  probe_runner=run_probe):
+                  probe_runner=run_probe, pose_execution_provider='auto',
+                  pose_intra_op_num_threads=2, pose_allow_spinning=False,
+                  pose_opencv_num_threads=1):
     checks, settings = [], None
     try:
         settings = read_settings(config)
@@ -246,11 +248,16 @@ async def inspect(config, pose_model, pose_python, *, probe=False, prefix_lookup
          runtime_environment()),
         ('pose_probe', pose_ready,
          [str(pose_python), '-m', 'malbut_agent_server.fall_preflight_probe',
-          'pose', '--model', str(pose_model)], runtime_environment()),
+          'pose', '--model', str(pose_model),
+          '--pose-execution-provider', pose_execution_provider,
+          '--pose-intra-op-num-threads', str(pose_intra_op_num_threads),
+          '--pose-allow-spinning', 'true' if pose_allow_spinning else 'false',
+          '--pose-opencv-num-threads', str(pose_opencv_num_threads)], runtime_environment()),
     ):
         if probe and enabled:
             checks.append(item(name, await probe_runner(command, env),
-                               '실행 Python의 ROS/native 의존성과 Pose ONNX 형식을 확인하세요.'))
+                               '실행 Python의 ROS/native 의존성, 요청한 CUDA/CPU 제공자와 '
+                               'Pose ONNX 형식을 확인하세요.'))
         else:
             checks.append(Check(name, 'skipped', 'not_requested' if not probe else 'files_unavailable'))
     if tracking is not None:
@@ -285,11 +292,20 @@ def main(argv=None):
         'MALBUT_FALL_POSE_PYTHON', str(cache / 'malbut_fall_pose/runtime/bin/python')))
     parser.add_argument('--probe', action='store_true',
                         help='Load local dependencies/models without images, ROS init or Cloud.')
+    parser.add_argument('--pose-execution-provider', choices=('auto', 'cpu', 'cuda'), default='auto',
+                        help='Match Bringup; use cuda to require a working CUDA session.')
+    parser.add_argument('--pose-intra-op-num-threads', type=int, default=2)
+    parser.add_argument('--pose-allow-spinning', choices=('true', 'false'), default='false')
+    parser.add_argument('--pose-opencv-num-threads', type=int, default=1)
     parser.add_argument('--json', action='store_true', help='Print only the bounded report schema.')
     args = parser.parse_args(argv)
     try:
         report = asyncio.run(inspect(args.config.expanduser(), args.pose_model.expanduser(),
-                                     args.pose_python.expanduser(), probe=args.probe))
+                                     args.pose_python.expanduser(), probe=args.probe,
+                                     pose_execution_provider=args.pose_execution_provider,
+                                     pose_intra_op_num_threads=args.pose_intra_op_num_threads,
+                                     pose_allow_spinning=args.pose_allow_spinning == 'true',
+                                     pose_opencv_num_threads=args.pose_opencv_num_threads))
     except KeyboardInterrupt:
         return 130
     if args.json:
