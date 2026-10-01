@@ -19,6 +19,10 @@ pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Br
 VLM 설정·Cloud 키 외에 YOLO26s pose ONNX 모델과 실행 환경을 별도로 준비해야 한다.
 `bash homecam_agent/scripts/prepare_fall_pose_runtime.sh`로 Pose 전용 Python 환경을
 만들 수 있다. 이 명령은 모델을 내려받거나 카메라·Cloud를 실행하지 않는다.
+낙상 Pose는 이제 기본 `auto / ORT 스레드 2 / spinning OFF / OpenCV 스레드 1`로
+실행한다. `auto`가 CPU를 선택하면 경고를 남긴다. 코드 업데이트만으로 GPU 의존성이
+설치되는 것은 아니며, 호환 wheel을 준비한 경우 설치 스크립트의 `--cuda-wheel`과
+아래 문서의 CUDA 사전 점검을 사용한다.
 기본 모델 경로, 실행 인자와 테스트 순서는
 [낙상 감지 로봇 실행 준비](malbut_agent_server/docs/fall/fall_robot_preparation.md)를 따른다.
 PC에서 연결 테스트를 통과해도 Jetson 성능과 카메라 수신이 검증된 것은 아니다.

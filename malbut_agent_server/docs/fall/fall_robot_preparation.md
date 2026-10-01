@@ -199,13 +199,65 @@ bash ~/ros2_ws/src/malbut/homecam_agent/scripts/prepare_fall_pose_runtime.sh
 | --- | --- |
 | `fall_pose_model_path` | 위 ONNX 경로. 환경변수 `MALBUT_FALL_POSE_MODEL`로 변경 가능 |
 | `fall_pose_python_executable` | `~/.cache/malbut_fall_pose/runtime/bin/python`. `MALBUT_FALL_POSE_PYTHON`으로 변경 가능 |
+| `fall_pose_execution_provider` | `auto`: 실행 Python에 CUDA EP가 있으면 CUDA, 없으면 CPU + 경고. `cuda`는 GPU 필수, `cpu`는 CPU 고정 |
+| `fall_pose_intra_op_num_threads` | `2` |
+| `fall_pose_allow_spinning` | `false` |
+| `fall_pose_opencv_num_threads` | `1` |
 | 입력 | VLM과 같은 `rgb_topic`. 640×400 영상을 비율 유지해 640×640으로 만들고 여백 추가 |
 | 결과 좌표 | 여백을 제외하고 원본 RGB 기준으로 되돌림. 여백 안의 관절은 근거로 사용하지 않음 |
 | 실행 빈도 | 최대 5 fps. 실제 Jetson 처리 속도는 미측정 |
 
 모델 파일·Python 경로가 없으면 Bringup 시작 전에 실패한다.
 ONNX Runtime이나 모델을 불러오지 못하면 Pose 노드 시작에 실패하고 Bringup도 종료한다.
-현재 ONNX 실행은 CPU 방식이다. TensorRT/GPU 가속과 주행·음성 동시 부하는 별도 검증 대상이다.
+CUDA를 선택했는데 초기화가 실패하면 CPU로 조용히 바꾸지 않는다. 일반 홈캠의 YOLO와
+Pose에도 같은 GPU 선택·스레드 제한을 적용한다. 이번 기본값은 PC 측정값을 바탕으로 정했으며 Jetson의 처리 fps와
+주행·음성 동시 부하는 별도 검증 대상이다. TensorRT 실행 경로를 추가한 것은 아니다.
+
+#### GPU 환경 준비와 적용 확인
+
+코드만 업데이트해도 스레드 제한은 적용되지만, CPU 전용 ONNX Runtime에 GPU 기능이
+생기지는 않는다. 설치 스크립트의 기본 모드는 기존 ORT가 있으면 유지하며 GPU 버전에
+CPU 패키지를 덮어쓰지 않는다. GPU가 없는 환경은 경고와 함께 CPU로 시작한다.
+
+GPU 설치는 해당 로봇의 Python·aarch64·JetPack·CUDA·cuDNN에 맞는 **로컬 wheel**을
+준비한 뒤 별도로 실행한다. 스크립트는 wheel을 자동으로 고르거나 Torch/CUDA를 바꾸지
+않는다. [ORT의 CUDA/cuDNN 호환 조건](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#requirements)을
+확인해야 하며 PC용 wheel을 Jetson에 그대로 설치하면 안 된다.
+
+```bash
+bash homecam_agent/scripts/prepare_fall_pose_runtime.sh --cuda-wheel /absolute/path/to/compatible.whl
+export MALBUT_FALL_POSE_PYTHON="${XDG_CACHE_HOME:-$HOME/.cache}/malbut_fall_pose/runtime-cuda/bin/python"
+ros2 run malbut_agent_server malbut-fall-preflight --probe --pose-execution-provider cuda
+```
+
+GPU 설치는 기존 `runtime`을 보존하고 `runtime-cuda`를 사용한다. 위 환경변수는
+Bringup을 실행하는 셸이나 서비스에도 설정한다. 이미 검증된 GPU Python을 쓰려면 그
+경로를 지정해도 된다. preflight에만 경로를 지정하고 Bringup에는 빠뜨리지 않는다.
+`--probe`는 같은 모델을 요청한 제공자로 불러오지만 실제 카메라 추론/속도까지 검증하지 않는다.
+단순 provider 목록에 CUDA가 보인다는 것만으로 GPU 준비 완료로 처리하지 않는다.
+
+재빌드·overlay 적용·노드 재시작 후 기본 파라미터는 다음과 같다.
+
+```bash
+ros2 param get /malbut_fall_pose pose_execution_provider     # auto
+ros2 param get /malbut_fall_pose pose_intra_op_num_threads    # 2
+ros2 param get /malbut_fall_pose pose_allow_spinning          # false
+ros2 param get /malbut_fall_pose pose_opencv_num_threads      # 1
+```
+
+시작 로그에서 `provider=cuda (requested=auto)`인지 확인한다. `provider=cpu`이면 GPU는
+아직 사용하지 않는 상태다. CPU 실행을 허용하지 않으려면 Bringup에
+`fall_pose_execution_provider:=cuda`를 추가한다. 기존 launch/YAML에 `cpu / 0 / true / 0`을
+명시했다면 제거하거나 새 값으로 바꾼다. 이 값들은 기본값보다 우선한다.
+`fall_runtime.json`의 Cloud 설정과 Pose 실행 설정은 별개이며 실행 중 param 변경으로는
+추론 세션이 바뀌지 않는다.
+
+별도로 일반 홈캠 이벤트 감지기를 실행할 때는 같은 GPU Python 경로를
+`MALBUT_HOMECAM_DETECTOR_PYTHON` 환경변수 또는 `detector_python_executable` 인자로
+지정한다. 일반 YOLO의 옵션은 `yolo_execution_provider`, `yolo_intra_op_num_threads`,
+`yolo_allow_spinning`이며 Pose의 옵션과 독립적으로 조정한다. `homecam_aurora.launch.py`와
+`homecam_sim.launch.py`에 연결했다. 로봇 통합 실행의 `start_detector=false`는 유지하므로
+이번 변경이 일반 홈캠 감지기를 추가로 켜지는 않는다.
 
 Pose는 `/malbut/falls/status`에서 **이번 실행의 VLM ID**와 상태 번호를 확인한다.
 설정 적용 완료·낙상 감지 ON·카메라 허용·영상 수신 가능이 모두 참일 때만 영상을 처리한다.

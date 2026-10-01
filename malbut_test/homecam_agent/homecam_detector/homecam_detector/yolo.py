@@ -6,6 +6,8 @@ from typing import Dict, List
 import cv2
 import numpy as np
 
+from .onnx_session import create_session
+
 
 def class_aware_nms(
     boxes: List[List[int]],
@@ -40,6 +42,10 @@ class YoloOnnxDetector:
         model_path: str,
         confidence_threshold: float = 0.45,
         input_size: int = 640,
+        *,
+        execution_provider: str = 'auto',
+        intra_op_num_threads: int = 2,
+        allow_spinning: bool = False,
     ) -> None:
         path = Path(model_path).expanduser()
         if not model_path or not path.is_file():
@@ -54,10 +60,9 @@ class YoloOnnxDetector:
                 "prepare_yolo26_model.sh and rebuild homecam_detector"
             ) from error
         try:
-            self._ort_session = ort.InferenceSession(
-                str(path),
-                providers=["CPUExecutionProvider"],
-            )
+            self._ort_session, self.execution_provider = create_session(
+                ort, path, execution_provider=execution_provider,
+                intra_op_num_threads=intra_op_num_threads, allow_spinning=allow_spinning)
             self._ort_input_name = self._ort_session.get_inputs()[0].name
         except Exception as error:
             raise RuntimeError(

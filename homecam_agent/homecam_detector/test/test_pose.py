@@ -154,7 +154,8 @@ def test_cuda_missing_or_failed_must_not_silently_use_cpu(tmp_path, monkeypatch)
         PersonPoseEstimator(str(path), execution_provider='cuda')
 
 
-def test_cuda_is_explicit_fp32_and_disables_runtime_fallback(tmp_path, monkeypatch):
+@pytest.mark.parametrize('provider', ['cuda', 'auto'])
+def test_cuda_is_explicit_fp32_and_disables_runtime_fallback(tmp_path, monkeypatch, provider):
     path = tmp_path / 'model.onnx'
     path.touch()
     calls, passed = [], {}
@@ -172,10 +173,46 @@ def test_cuda_is_explicit_fp32_and_disables_runtime_fallback(tmp_path, monkeypat
     monkeypatch.setitem(sys.modules, 'onnxruntime', SimpleNamespace(
         get_available_providers=lambda: ['CUDAExecutionProvider', 'CPUExecutionProvider'],
         preload_dlls=lambda: calls.append('preload'), InferenceSession=create))
-    PersonPoseEstimator(str(path), execution_provider='cuda')
+    estimator = PersonPoseEstimator(str(path), execution_provider=provider)
+    assert estimator.execution_provider == 'cuda'
     assert passed['providers'] == [
         ('CUDAExecutionProvider', {'use_tf32': 0}), 'CPUExecutionProvider']
     assert calls == ['preload', 'create', 'disable_fallback']
+
+
+def test_auto_selects_cpu_only_when_cuda_is_absent(tmp_path, monkeypatch):
+    path = tmp_path / 'model.onnx'
+    path.touch()
+    selected = []
+    session = SimpleNamespace(
+        get_inputs=lambda: [SimpleNamespace(name='images', shape=[1, 3, 640, 640])],
+        get_outputs=lambda: [SimpleNamespace(shape=[1, 300, 57])])
+    def create(*args, **kwargs):
+        selected.append(kwargs['providers'])
+        return session
+    fake = SimpleNamespace(get_available_providers=lambda: ['CPUExecutionProvider'],
+                           InferenceSession=create)
+    monkeypatch.setitem(sys.modules, 'onnxruntime', fake)
+    assert PersonPoseEstimator(str(path), execution_provider='auto').execution_provider == 'cpu'
+    assert selected == [['CPUExecutionProvider']]
+    # Installed but broken CUDA must not become an unreported CPU-only run.
+    fake.get_available_providers = lambda: ['CUDAExecutionProvider', 'CPUExecutionProvider']
+    session.get_providers = lambda: ['CPUExecutionProvider']
+    with pytest.raises(RuntimeError, match='refusing CPU-only fallback'):
+        PersonPoseEstimator(str(path), execution_provider='auto')
+
+
+def test_explicit_cpu_does_not_initialize_available_cuda(tmp_path, monkeypatch):
+    path = tmp_path / 'model.onnx'
+    path.touch()
+    session = SimpleNamespace(
+        get_inputs=lambda: [SimpleNamespace(name='images', shape=[1, 3, 640, 640])],
+        get_outputs=lambda: [SimpleNamespace(shape=[1, 300, 57])])
+    def create(*args, **kwargs):
+        assert kwargs['providers'] == ['CPUExecutionProvider']
+        return session
+    monkeypatch.setitem(sys.modules, 'onnxruntime', SimpleNamespace(InferenceSession=create))
+    assert PersonPoseEstimator(str(path), execution_provider='cpu').execution_provider == 'cpu'
 
 
 def test_thread_and_spinning_options_are_explicit(tmp_path, monkeypatch):

@@ -8,6 +8,8 @@ from typing import Dict, Optional, Tuple
 import cv2
 import numpy as np
 
+from .onnx_session import create_session
+
 
 COCO_KEYPOINT_NAMES = (
     "nose",
@@ -101,39 +103,9 @@ class PersonPoseEstimator:
                 "ONNX Runtime is required for the YOLO26 pose model"
             ) from error
         try:
-            if execution_provider not in ('cpu', 'cuda'):
-                raise ValueError('pose execution provider must be cpu or cuda')
-            if type(intra_op_num_threads) is not int or not 0 <= intra_op_num_threads <= 256:
-                raise ValueError('pose thread count must be an integer in [0, 256]')
-            if type(allow_spinning) is not bool:
-                raise ValueError('pose allow_spinning must be bool')
-            options = {}
-            if intra_op_num_threads or not allow_spinning:
-                session_options = ort.SessionOptions()
-                session_options.intra_op_num_threads = intra_op_num_threads
-                session_options.add_session_config_entry(
-                    'session.intra_op.allow_spinning', '1' if allow_spinning else '0')
-                session_options.add_session_config_entry(
-                    'session.inter_op.allow_spinning', '1' if allow_spinning else '0')
-                options['sess_options'] = session_options
-            providers = ['CPUExecutionProvider']
-            if execution_provider == 'cuda':
-                if 'CUDAExecutionProvider' not in ort.get_available_providers():
-                    raise RuntimeError('CUDAExecutionProvider is not installed')
-                # Optional pip CUDA libraries; system/JetPack libraries may also
-                # satisfy these dependencies. Never install packages at startup.
-                preload = getattr(ort, 'preload_dlls', None)
-                if preload is not None:
-                    preload()
-                providers = [('CUDAExecutionProvider', {'use_tf32': 0}),
-                             'CPUExecutionProvider']
-            self._session = ort.InferenceSession(
-                str(path), providers=providers, **options
-            )
-            if execution_provider == 'cuda':
-                if 'CUDAExecutionProvider' not in self._session.get_providers():
-                    raise RuntimeError('CUDA initialization failed; refusing CPU-only fallback')
-                self._session.disable_fallback()
+            self._session, self.execution_provider = create_session(
+                ort, path, execution_provider=execution_provider,
+                intra_op_num_threads=intra_op_num_threads, allow_spinning=allow_spinning)
             inputs = self._session.get_inputs()
             outputs = self._session.get_outputs()
             if (len(inputs) != 1 or inputs[0].shape != [1, 3, input_size, input_size]

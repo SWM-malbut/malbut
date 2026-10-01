@@ -28,6 +28,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('phase', choices=('runtime', 'pose'))
     parser.add_argument('--model')
+    parser.add_argument('--pose-execution-provider', choices=('auto', 'cpu', 'cuda'), default='auto')
+    parser.add_argument('--pose-intra-op-num-threads', type=int, default=2)
+    parser.add_argument('--pose-allow-spinning', choices=('true', 'false'), default='false')
+    parser.add_argument('--pose-opencv-num-threads', type=int, default=1)
     args = parser.parse_args(argv)
     output = sys.stdout
     try:
@@ -39,8 +43,17 @@ def main(argv=None):
                 import cv2  # noqa: F401
                 import rclpy  # noqa: F401
                 from homecam_detector.pose import PersonPoseEstimator
-                # Same model shape/CPU provider validation as the real Pose node.
-                PersonPoseEstimator(args.model, keep_aspect=True)
+                if not 0 <= args.pose_opencv_num_threads <= 256:
+                    raise ValueError('Invalid OpenCV thread count')
+                if args.pose_opencv_num_threads:
+                    cv2.setNumThreads(args.pose_opencv_num_threads)
+                # Match the dedicated node. Explicit CUDA must never pass by
+                # checking only a CPU session in this same interpreter.
+                PersonPoseEstimator(
+                    args.model, keep_aspect=True,
+                    execution_provider=args.pose_execution_provider,
+                    intra_op_num_threads=args.pose_intra_op_num_threads,
+                    allow_spinning=args.pose_allow_spinning == 'true')
         output.write('{"ready":true}\n')
         output.flush()
         return 0

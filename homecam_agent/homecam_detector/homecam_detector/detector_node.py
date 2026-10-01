@@ -20,7 +20,7 @@ from std_msgs.msg import String
 
 from .clip_poster import EventClipPoster
 from .aurora_depth import AuroraDepthEvidenceExtractor, CameraIntrinsics
-from .config import DetectorConfig, validate_config
+from .config import DetectorConfig, EXECUTION_PARAMETER_NAMES, validate_config
 from .credentials import load_device_token
 from .event_dedupe import EventDedupe
 from .event_poster import EventPoster
@@ -95,17 +95,36 @@ class HomecamDetectorNode(Node):
             max_frame_gap_sec=self._config.max_frame_gap_sec,
         )
         self._storage_session_id = ""
+        if self._config.pose_opencv_num_threads:
+            import cv2
+            cv2.setNumThreads(self._config.pose_opencv_num_threads)
         self._model: Optional[YoloOnnxDetector] = None
         if self._config.model_path:
             try:
                 self._model = YoloOnnxDetector(
                     self._config.model_path,
                     confidence_threshold=self._config.confidence_threshold,
+                    execution_provider=self._config.yolo_execution_provider,
+                    intra_op_num_threads=self._config.yolo_intra_op_num_threads,
+                    allow_spinning=self._config.yolo_allow_spinning,
                 )
                 self.get_logger().info(
-                    f"Loaded YOLO ONNX model: {self._config.model_path}"
+                    f"Loaded YOLO ONNX model: {self._config.model_path}; "
+                    f"provider={self._model.execution_provider} "
+                    f"(requested={self._config.yolo_execution_provider}), "
+                    f"threads={self._config.yolo_intra_op_num_threads}, "
+                    f"spinning={self._config.yolo_allow_spinning}, "
+                    f"opencv_threads={self._config.pose_opencv_num_threads}"
                 )
+                if (self._config.yolo_execution_provider == 'auto'
+                        and self._model.execution_provider == 'cpu'):
+                    self.get_logger().warning(
+                        'Homecam YOLO auto selected CPU: this Python has no CUDAExecutionProvider. '
+                        'GPU acceleration is NOT active. Select a compatible GPU runtime using '
+                        'detector_python_executable; yolo_execution_provider:=cuda requires GPU.')
             except (FileNotFoundError, RuntimeError, ValueError) as error:
+                if self._config.yolo_execution_provider == 'cuda':
+                    raise RuntimeError(f"Required YOLO CUDA model could not be loaded: {error}") from error
                 self.get_logger().error(
                     f"YOLO unavailable; continuing with generic motion only: {error}"
                 )
@@ -114,9 +133,6 @@ class HomecamDetectorNode(Node):
                 "model_path is empty; person, dog, and cat detection is disabled"
             )
         self._pose_estimator: Optional[PersonPoseEstimator] = None
-        if self._config.pose_opencv_num_threads:
-            import cv2
-            cv2.setNumThreads(self._config.pose_opencv_num_threads)
         if self._config.pose_model_path:
             try:
                 self._pose_estimator = PersonPoseEstimator(
@@ -133,13 +149,22 @@ class HomecamDetectorNode(Node):
                 self.get_logger().info(
                     "Loaded independent YOLO pose ONNX model: "
                     f"{self._config.pose_model_path}; "
-                    f"provider={self._config.pose_execution_provider}, "
+                    f"provider={self._pose_estimator.execution_provider} "
+                    f"(requested={self._config.pose_execution_provider}), "
                     f"threads={self._config.pose_intra_op_num_threads}, "
-                    f"spinning={self._config.pose_allow_spinning}"
+                    f"spinning={self._config.pose_allow_spinning}, "
+                    f"opencv_threads={self._config.pose_opencv_num_threads}"
                 )
+                if (self._config.pose_execution_provider == 'auto'
+                        and self._pose_estimator.execution_provider == 'cpu'):
+                    self.get_logger().warning(
+                        'YOLO pose auto selected CPU: this Python has no CUDAExecutionProvider. '
+                        'GPU acceleration is NOT active. Prepare a compatible GPU runtime and '
+                        'select it as the detector Python; set pose_execution_provider=cuda '
+                        '(Bringup: fall_pose_execution_provider:=cuda) to require GPU execution.')
             except (FileNotFoundError, RuntimeError, ValueError) as error:
-                if self._config.fall_only:
-                    raise RuntimeError("Fall pose model could not be loaded") from error
+                if self._config.fall_only or self._config.pose_execution_provider == 'cuda':
+                    raise RuntimeError(f"Required pose model could not be loaded: {error}") from error
                 self.get_logger().error(
                     "YOLO pose unavailable; person and pet events remain "
                     f"enabled without pose enrichment: {error}"
@@ -289,10 +314,9 @@ class HomecamDetectorNode(Node):
         self.declare_parameter("fall_only", False)
         self.declare_parameter("fall_runtime_id", "")
         self.declare_parameter("pose_keep_aspect", False)
-        self.declare_parameter('pose_execution_provider', 'cpu')
-        self.declare_parameter('pose_intra_op_num_threads', 0)
-        self.declare_parameter('pose_allow_spinning', True)
-        self.declare_parameter('pose_opencv_num_threads', 0)
+        defaults = DetectorConfig()
+        for name in EXECUTION_PARAMETER_NAMES:
+            self.declare_parameter(name, getattr(defaults, name))
         self.declare_parameter("image_topic", "/depth_cam/depth_cam")
         self.declare_parameter("depth_image_topic", "")
         self.declare_parameter("depth_camera_info_topic", "")
@@ -341,6 +365,9 @@ class HomecamDetectorNode(Node):
             fall_only=bool(self.get_parameter("fall_only").value),
             fall_runtime_id=self.get_parameter("fall_runtime_id").value,
             pose_keep_aspect=bool(self.get_parameter("pose_keep_aspect").value),
+            yolo_execution_provider=self.get_parameter('yolo_execution_provider').value,
+            yolo_intra_op_num_threads=self.get_parameter('yolo_intra_op_num_threads').value,
+            yolo_allow_spinning=self.get_parameter('yolo_allow_spinning').value,
             pose_execution_provider=self.get_parameter('pose_execution_provider').value,
             pose_intra_op_num_threads=self.get_parameter('pose_intra_op_num_threads').value,
             pose_allow_spinning=self.get_parameter('pose_allow_spinning').value,
