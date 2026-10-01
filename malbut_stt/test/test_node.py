@@ -329,6 +329,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert defaults['stt_decode_timeout_s'] == 30.0
     assert defaults['wake_chime_device_index'] == -1
     assert defaults['pre_roll_s'] == 0.3
+    assert defaults['min_speech_s'] == 0.08
     assert defaults['wake_model_path'] == defaults['stt_model_path'] == ''
     assert defaults['compute_type'] == 'int8'
     assert defaults['backend'] == 'faster_whisper'
@@ -350,6 +351,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert runtime.pipeline_args['wake'].model is runtime.pipeline_args['transcriber'].model
     assert runtime.pipeline_args['input_has_aec'] is False
     assert runtime.pipeline_args['settings'].silence_timeout_s == 2.0
+    assert runtime.pipeline_args['settings'].min_speech_s == 0.08
     assert runtime.pipeline_args['settings'].max_utterance_s is None
     assert runtime.pipeline_args['settings'].max_buffer_s == 60.0
     assert runtime.pipeline_args['endpoint_predecode_s'] == 0.8
@@ -645,6 +647,21 @@ def test_acknowledgement_chimes_use_selected_output_device(runtime):
     assert main() == 0
     assert runtime.calls['chimes'] == [4]
     assert runtime.calls['endpoint_chimes'] == [4]
+
+
+@pytest.mark.parametrize('duration', [0.02, 0.08, 0.12, 0.3])
+def test_speech_onset_parameter_reaches_capture_settings(runtime, duration):
+    runtime.parameters['min_speech_s'] = duration
+    assert main() == 0
+    assert runtime.pipeline_args['settings'].min_speech_s == duration
+
+
+@pytest.mark.parametrize('duration', [0, -1, True, float('nan'), float('inf'), 0.31])
+def test_invalid_speech_onset_is_rejected_before_loading_model(runtime, duration):
+    runtime.parameters['min_speech_s'] = duration
+    assert main() == 1
+    assert 'local_stt' not in runtime.calls
+    assert 'recorder' not in runtime.calls
 
 
 def test_endpoint_chime_failure_is_reported_as_warning(runtime):

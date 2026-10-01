@@ -40,10 +40,10 @@ def test_preroll_preserves_onset_and_one_second_silence_finalizes():
     collector = UtteranceCollector(
         16000, lambda frame, _: frame == voice, CaptureSettings(),
     )
-    assert collector.feed(FRAME * 30 + voice * 2 + FRAME * 49) is None
+    assert collector.feed(FRAME * 30 + voice * 4 + FRAME * 49) is None
     result = collector.feed(FRAME)
     assert result.status == 'complete'
-    assert result.pcm == FRAME * 14 + voice * 2 + FRAME * 50
+    assert result.pcm == FRAME * 14 + voice * 4 + FRAME * 50
     with pytest.raises(RuntimeError):
         collector.feed(FRAME)
 
@@ -54,7 +54,7 @@ def test_renewed_speech_resets_silence_timeout():
     collector = UtteranceCollector(
         16000, lambda frame, _: frame == voice, CaptureSettings(),
     )
-    assert collector.feed(voice + FRAME * 49 + voice + FRAME * 49) is None
+    assert collector.feed(voice * 4 + FRAME * 49 + voice + FRAME * 49) is None
     assert collector.feed(FRAME).status == 'complete'
 
 
@@ -92,6 +92,90 @@ def test_incompatible_durations_and_sample_format_are_rejected():
     collector = UtteranceCollector(16000, lambda *_: True, CaptureSettings())
     with pytest.raises(ValueError):
         collector.feed(b'\x00')
+
+
+@pytest.mark.parametrize('value', [0, -1, True, float('nan'), float('inf'), None, '0.08'])
+def test_invalid_minimum_speech_duration_is_rejected(value):
+    with pytest.raises(ValueError, match='finite and positive'):
+        CaptureSettings(min_speech_s=value)
+
+
+def test_qualification_must_fit_in_preroll():
+    with pytest.raises(ValueError, match='minimum speech.*pre-roll'):
+        CaptureSettings(min_speech_s=0.32)
+
+
+@pytest.mark.parametrize('sample_rate', [8000, 16000, 32000, 48000])
+def test_default_qualification_is_four_frames_at_every_supported_rate(sample_rate):
+    voice = b'\x01\x00' * (sample_rate // 50)
+    collector = UtteranceCollector(sample_rate, lambda *_: True, CaptureSettings())
+    assert collector.feed(voice * 3) is None
+    assert not collector.started and not collector.audio
+    assert collector.feed(voice) is None
+    assert collector.started and collector.speech_frames == 4
+    assert collector.audio == voice * 4
+
+
+def test_fractional_frame_minimum_rounds_up_without_losing_onset():
+    collector = UtteranceCollector(
+        16000, lambda *_: True, CaptureSettings(min_speech_s=0.05),
+    )
+    collector.feed(FRAME * 2)
+    assert not collector.started
+    collector.feed(FRAME)
+    assert collector.started and collector.audio == FRAME * 3
+
+
+def test_onset_crossing_idle_window_can_still_qualify():
+    voice = b'\x01\x00' * 320
+    collector = UtteranceCollector(
+        16000, lambda frame, _: any(frame),
+        CaptureSettings(start_timeout_s=0.08, pre_roll_s=0.08),
+    )
+    assert collector.feed(FRAME * 3 + voice * 3) is None
+    assert not collector.started
+    assert collector.feed(voice) is None
+    assert collector.started and collector.audio == FRAME * 3 + voice * 4
+
+
+@pytest.mark.parametrize('max_duration, expected_frames', [(0.1, 6), (0.06, 4)])
+def test_qualification_counts_from_first_voiced_frame_for_duration_limit(
+    max_duration, expected_frames,
+):
+    collector = UtteranceCollector(
+        16000, lambda *_: True,
+        CaptureSettings(silence_timeout_s=0.02, max_utterance_s=max_duration),
+    )
+    assert collector.feed(FRAME * (expected_frames - 1)) is None
+    assert collector.feed(FRAME).status == 'too_long'
+
+
+def test_qualification_enforces_pcm_budget_with_preserved_preroll():
+    voice = b'\x01\x00' * 320
+    collector = UtteranceCollector(
+        16000, lambda frame, _: any(frame),
+        CaptureSettings(silence_timeout_s=0.02, pre_roll_s=0.08, max_buffer_s=0.1),
+    )
+    assert collector.feed(FRAME * 4 + voice * 3) is None
+    assert collector.feed(voice).status == 'buffer_overflow'
+    assert not collector.audio and not collector.candidate_audio
+
+
+def test_collector_preserves_blocked_eligibility_across_partial_input_frame():
+    voice = b'\x01\x00' * 320
+    collector = UtteranceCollector(16000, lambda frame, _: any(frame), CaptureSettings())
+    assert collector.feed(voice[:2], start_blocked=True) is None
+    assert collector.feed(voice[2:] + voice * 3) is None
+    assert collector.started and collector.start_blocked is True
+    assert collector.feed(FRAME * 50).start_blocked is True
+
+
+def test_collector_quiet_frame_clears_blocked_candidate_before_next_onset():
+    voice = b'\x01\x00' * 320
+    collector = UtteranceCollector(16000, lambda frame, _: any(frame), CaptureSettings())
+    assert collector.feed(voice + FRAME[:320], start_blocked=True) is None
+    assert collector.feed(FRAME[320:] + voice * 4) is None
+    assert collector.started and collector.start_blocked is False
 
 
 def test_preroll_cannot_exceed_pcm_budget_before_the_first_speech_frame():

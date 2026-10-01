@@ -16,12 +16,13 @@ class CaptureSettings:
     max_utterance_s: Optional[float] = 20.0
     pre_roll_s: float = 0.3
     max_buffer_s: float = 60.0
+    min_speech_s: float = 0.08
 
     def __post_init__(self) -> None:
         """Reject invalid durations before listening starts."""
         durations = (
             self.start_timeout_s, self.silence_timeout_s,
-            self.pre_roll_s, self.max_buffer_s,
+            self.pre_roll_s, self.max_buffer_s, self.min_speech_s,
         )
         if self.max_utterance_s is not None:
             durations += (self.max_utterance_s,)
@@ -37,6 +38,8 @@ class CaptureSettings:
             raise ValueError('pre-roll must not exceed speech start timeout')
         if self.pre_roll_s > self.max_buffer_s:
             raise ValueError('pre-roll must not exceed audio buffer limit')
+        if self.min_speech_s > self.pre_roll_s:
+            raise ValueError('minimum speech must not exceed pre-roll')
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,7 @@ class CaptureResult:
     revision: int = 0
     silence_s: float = 0.0
     audio_start_s: float = 0.0
+    start_blocked: bool = False
 
 
 class UtteranceCollector:
@@ -67,37 +71,68 @@ class UtteranceCollector:
         self.settings = settings
         self.frame_bytes = sample_rate // 50 * 2
         self.pending = bytearray()
+        self._pending_start_blocked = False
         self.pre_roll = deque(maxlen=max(1, math.ceil(settings.pre_roll_s / 0.02)))
         self.audio = bytearray()
         self.audio_start_samples = 0
         self.wait_frames = 0
         self.speech_frames = 0
         self.silent_frames = 0
+        self.candidate_frames = 0
+        self.candidate_audio = bytearray()
+        self._candidate_start_blocked = False
+        self.start_blocked = False
         self.started = False
         self.result: Optional[CaptureResult] = None
         self.revision = 0
 
-    def feed(self, pcm: bytes) -> Optional[CaptureResult]:
-        """Accept PCM16 little-endian chunks and finalize at most once."""
+    def feed(self, pcm: bytes, *, start_blocked: bool = False) -> Optional[CaptureResult]:
+        """Accept PCM16 and retain onset eligibility across frame/chunk boundaries."""
         if self.result is not None:
             raise RuntimeError('utterance is already finalized')
         if len(pcm) % 2:
             raise ValueError('PCM16 input must contain whole samples')
+        if pcm:
+            self._pending_start_blocked |= start_blocked
         self.pending.extend(pcm)
         while len(self.pending) >= self.frame_bytes:
             frame = bytes(self.pending[:self.frame_bytes])
             del self.pending[:self.frame_bytes]
+            frame_blocked = self._pending_start_blocked
+            # The old partial frame was consumed; remaining samples came from
+            # this call and must not inherit that older frame's eligibility.
+            self._pending_start_blocked = bool(self.pending) and start_blocked
             speech = self.is_speech(frame, self.sample_rate)
             if not self.started:
                 self.wait_frames += 1
                 self.pre_roll.append(frame)
                 if speech:
-                    self.started = True
-                    self.revision += 1
-                    self.audio.extend(b''.join(self.pre_roll))
-                    self.pre_roll.clear()
-                    self.speech_frames = 1
-                elif self.wait_frames >= math.ceil(self.settings.start_timeout_s / 0.02):
+                    # Preserve pre-roll relative to the first voiced frame,
+                    # including the onset while it earns enough VAD evidence.
+                    if self.candidate_frames == 0:
+                        self.candidate_audio.extend(b''.join(self.pre_roll))
+                    else:
+                        self.candidate_audio.extend(frame)
+                    self._candidate_start_blocked |= frame_blocked
+                    self.candidate_frames += 1
+                    if self.candidate_frames >= math.ceil(self.settings.min_speech_s / 0.02):
+                        self.started = True
+                        self.revision += self.candidate_frames
+                        self.audio.extend(self.candidate_audio)
+                        self.pre_roll.clear()
+                        self.speech_frames = self.candidate_frames
+                        self.start_blocked = self._candidate_start_blocked
+                        self.candidate_audio.clear()
+                        self.candidate_frames = 0
+                        self._candidate_start_blocked = False
+                else:
+                    self.candidate_frames = 0
+                    self.candidate_audio.clear()
+                    self._candidate_start_blocked = False
+                # Let an onset crossing the idle-window boundary finish its
+                # short qualification, instead of losing a valid short word.
+                if (not self.started and self.candidate_frames == 0
+                        and self.wait_frames >= math.ceil(self.settings.start_timeout_s / 0.02)):
                     self.result = CaptureResult('no_speech')
             else:
                 self.audio.extend(frame)
@@ -105,6 +140,7 @@ class UtteranceCollector:
                 self.silent_frames = 0 if speech else self.silent_frames + 1
                 if speech:
                     self.revision += 1
+            if self.started:
                 if (self.settings.max_utterance_s is not None
                         and self.speech_frames > math.floor(
                             self.settings.max_utterance_s / 0.02)):
@@ -116,7 +152,11 @@ class UtteranceCollector:
                     self.result = self.snapshot('complete')
             if self.result is not None:
                 self.pending.clear()
+                self._pending_start_blocked = False
                 self.pre_roll.clear()
+                self.candidate_audio.clear()
+                self.candidate_frames = 0
+                self._candidate_start_blocked = False
                 self.audio.clear()
                 return self.result
         return None
@@ -130,7 +170,7 @@ class UtteranceCollector:
         """Associate an immutable audio snapshot with its last voiced frame."""
         return CaptureResult(status, bytes(self.audio), self.revision,
                              self.silent_frames * 0.02,
-                             self.audio_start_s)
+                             self.audio_start_s, self.start_blocked)
 
     def discard_before(self, audio_start_s: float) -> None:
         """Release PCM only up to a successfully transcribed stable boundary."""

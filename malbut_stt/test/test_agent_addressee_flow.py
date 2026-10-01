@@ -70,7 +70,7 @@ def test_candidate_is_classified_before_normal_dialogue_and_correlated_back_to_s
     )
 
     def say(text):
-        pipeline.feed(b'\x01\x00' * 320)
+        pipeline.feed(b'\x01\x00' * (320 * 4))
         pipeline.feed(bytes(640) * 150)
         kind, generation, uid, pcm = pipeline.jobs.get_nowait()
         assert kind == 'command' and pcm

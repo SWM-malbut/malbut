@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+from malbut_stt.audio import CaptureSettings
 from malbut_stt.conversation import ConversationSession
 from malbut_stt.streaming import StreamingUtteranceCollector
 
@@ -17,8 +18,10 @@ def runtime():
         publish_transcript=lambda uid, text: run.transcripts.append((uid, text)),
         publish_control=lambda pid, command: run.controls.append((pid, command)),
     )
-    # Synthetic input already represents user speech. This is not an AEC test.
-    stream = StreamingUtteranceCollector(lambda frame, _: any(frame))
+    # These deadline tests intentionally model onset at one exact 20 ms frame.
+    stream = StreamingUtteranceCollector(
+        lambda frame, _: any(frame), settings=CaptureSettings(
+            silence_timeout_s=2.0, min_speech_s=.02))
 
     def feed(frame, count=1):
         for _ in range(count):

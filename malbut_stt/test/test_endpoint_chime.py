@@ -22,6 +22,8 @@ def run():
         publish_transcript=lambda uid, text: state.transcripts.append((uid, text)),
         publish_control=lambda *_: None, publish_interruption=lambda *_: None,
         report=state.reports.append, clock=lambda: state.now, input_has_aec=True,
+        # These chime/endpoint races intentionally begin with a 20 ms frame.
+        settings=CaptureSettings(silence_timeout_s=2.0, min_speech_s=.02),
         on_endpoint=lambda: state.chimes.append(pipeline.session.utterance_id),
     )
     pipeline.session.activate()
@@ -170,7 +172,7 @@ def test_existing_tts_playback_never_gets_a_second_output_stream(run, status):
 def test_wake_and_busy_discarded_captures_do_not_chime(run):
     p = run.pipeline
     p.session.terminate()
-    p.feed(VOICE + QUIET * 20)
+    p.feed(VOICE * 4 + QUIET * 20)
     wake = p.jobs.get_nowait()
     assert wake[0] == 'wake' and run.chimes == []
     reply(run, wake, '제이크야')

@@ -81,6 +81,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             max_utterance_s=None if max_utterance_s == 0 else max_utterance_s,
             max_buffer_s=max_buffer_s,
             pre_roll_s=parameter('pre_roll_s', 0.3),
+            min_speech_s=parameter('min_speech_s', 0.08),
         )
         if not isinstance(vad_mode, int) or vad_mode not in range(4):
             raise ValueError('vad_mode must be 0 through 3')
