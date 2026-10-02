@@ -514,21 +514,16 @@ class RosBridge:
         if self.runtime:
             if status['state'] not in ('STARTING', 'RUNNING'):
                 self.speech_ready = False
-            status['ready'] = (status['state'] == 'RUNNING'
-                               and server_ready and self.speech_ready
-                               and bool(self.node.count_publishers('/malbut/speech/status')))
+            # Optional speech startup must not block unrelated robot commands.
+            # Each capability still checks its own Action/data prerequisites.
+            status['ready'] = status['state'] == 'RUNNING' and server_ready
         else:
             status['ready'] = server_ready
         status['waiting'] = []
         if (self.runtime and status['state'] == 'RUNNING'
                 and not status['ready']):
-            if server_ready:
-                status['waiting'] = ['speech: microphone startup']
-                status['message'] = '음성 모델·마이크 준비 대기'
-            else:
-                status['waiting'] = self.startup_status.get('missing', [])
-                status['message'] = ('필수 입력 준비 대기' if status['waiting']
-                                     else 'Action 서버 준비 대기')
+            status['waiting'] = ['manager: Action server startup']
+            status['message'] = '관리자 Action 서버 준비 대기'
         if self.runtime_message:
             status['message'] = self.runtime_message
         if self.stopping_runtime is not None:
@@ -540,7 +535,8 @@ class RosBridge:
             status['message'] = (f"준비 {progress['completed']}/{progress['total']} 단계 · "
                                  f"{progress['stage']}")
             if progress['state'] != 'READY' or progress['completed'] < progress['total']:
-                status['ready'] = False
+                # A separately run diagnostic is informational, not admission
+                # control for independent modules.
                 status['waiting'] = progress['missing']
                 status['message'] += ' · 준비 중' if progress['state'] != 'ERROR' else ' · 실패'
                 if progress['state'] == 'ERROR' and status['state'] == 'RUNNING':

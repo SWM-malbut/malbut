@@ -22,7 +22,7 @@ ROOT = Path(__file__).parents[2]
 
 
 @pytest.fixture
-def speech(monkeypatch):
+def speech(monkeypatch, tmp_path):
     """Load the real launch module against the checked-in Jetson configuration."""
     spec = importlib.util.spec_from_file_location(
         'speech_launch', ROOT / 'malbut_bringup/launch/speech.launch.py')
@@ -30,14 +30,20 @@ def speech(monkeypatch):
     spec.loader.exec_module(module)
     monkeypatch.setattr(module, 'get_package_share_directory',
                         lambda package: str(ROOT / package))
+    for name in ('ggml.bin', 'libmalbut_whisper.so'):
+        (tmp_path / name).write_bytes(b'fixture; not loaded')
+    module.assets = {
+        'stt_model_path': str(tmp_path / 'ggml.bin'),
+        'stt_library_path': str(tmp_path / 'libmalbut_whisper.so'),
+        'python_executable': sys.executable,
+    }
     return module
 
 
 def _context(module, **overrides):
     context = LaunchContext()
     context.launch_configurations.update({
-        'stt_model_path': '/models/ggml.bin',
-        'stt_library_path': '/native/libmalbut_whisper.so',
+        **module.assets,
         **overrides,
     })
     for action in module.generate_launch_description().entities:
@@ -65,291 +71,141 @@ def _process(actions):
 
 def _timeout(actions, context):
     timer = next(action for action in actions if isinstance(action, TimerAction))
-    callback = next(action for action in timer.actions
-                    if isinstance(action, OpaqueFunction))
+    callback = next(action for action in timer.actions if isinstance(action, OpaqueFunction))
     return callback.execute(context)
 
 
-def _assert_shutdown(actions):
-    assert len(actions) == 1
-    assert isinstance(actions[0], EmitEvent)
-
-
-def test_startup_skips_preflight_but_waits_for_peers_and_preserves_settings(speech):
-    """Normal startup loads Whisper only in STT, after Agent/TTS are ready."""
-    context = _context(speech, input_device='2', output_device='3', cpp_threads='4',
-                       input_has_aec='true', agent_provider='mock',
-                       python_executable='/runtime with space/bin/python')
+@pytest.mark.parametrize('control_server', ['none', 'manager', 'autoslam'])
+def test_all_speech_nodes_start_without_external_control_or_peer_gates(speech, control_server):
+    context = _context(speech, control_server=control_server)
     actions = speech._setup(context)
-    peers = actions
-    nodes = [action for action in peers if isinstance(action, Node)]
-    assert [node.node_executable for node in nodes] == ['agent_communication', 'tts_node']
-    agent, tts = nodes
-    assert agent.node_package == 'malbut_agent_server'
-    assert [perform_substitutions(context, part) for part in agent.cmd[1:3]] == [
-        '--provider', 'mock']
+    assert [item.node_executable for item in actions if isinstance(item, Node)] == [
+        'agent_communication', 'tts_node', 'stt']
+    assert not any(isinstance(item, ExecuteProcess) and not isinstance(item, Node)
+                   for item in actions)
+    assert not any(isinstance(item, TimerAction) for item in actions)
+
+
+def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
+    context = _context(
+        speech, input_device='2', output_device='3', cpp_threads='4', input_has_aec='true',
+        agent_provider='mock', agent_user_id='trial-user',
+        agent_conversation_db='/trial records/session.sqlite3',
+        navigation_targets='/maps/targets.yaml', preflight_timeout_s='25')
+    actions = speech._setup(context)
+    agent, tts, stt = [item for item in actions if isinstance(item, Node)]
+    # All settings are captured before the scoped parent restores its own values.
+    context.launch_configurations.clear()
+    command = [perform_substitutions(context, part) for part in agent.cmd[1:]]
+    assert command == [
+        '--provider', 'mock', '--user-id', 'trial-user',
+        '--conversation-db', '/trial records/session.sqlite3',
+        '--enable-manager-commands', '--navigation-targets', '/maps/targets.yaml', '--ros-args']
     assert evaluate_parameters(context, tts._Node__parameters) == (
         {'backend': 'openai', 'output_device': 3},)
-    graph_check = _process(peers)
-    assert [perform_substitutions(context, part) for part in graph_check.cmd] == [
-        '/runtime with space/bin/python', '-m', 'malbut_bringup.speech_preflight',
-        '--wait-for-peers', '--timeout-s', '30.0',
-    ]
-    result = _exit(actions, context, graph_check)
-    assert len(result) == 1
-    stt = result[0]
-    assert stt.node_executable == 'stt'
-    params = evaluate_parameters(context, stt._Node__parameters)
-    assert params[0] == ROOT / 'malbut_stt/config/jetson.yaml'
-    assert params[1] == {
-        'stt_model_path': '/models/ggml.bin',
-        'stt_library_path': '/native/libmalbut_whisper.so',
+    config, params = evaluate_parameters(context, stt._Node__parameters)
+    assert config == ROOT / 'malbut_stt/config/jetson.yaml'
+    assert params == {
+        'stt_model_path': speech.assets['stt_model_path'],
+        'stt_library_path': speech.assets['stt_library_path'],
         'device_index': 2, 'cpp_threads': 4, 'input_has_aec': True,
         'wake_chime_device_index': 3,
     }
-    for node in [agent, tts]:
-        assert perform_substitutions(context, node.process_description.prefix) == shlex.quote(
-            '/runtime with space/bin/python')
     assert shlex.split(perform_substitutions(context, stt.process_description.prefix)) == [
-        '/runtime with space/bin/python', '-m', 'malbut_bringup.speech_process',
-        '--startup-timeout-s', '120.0', '--wait-for-ready', '--',
-        '/runtime with space/bin/python',
-    ]
-    assert _timeout(peers, context) == []
+        sys.executable, '-m', 'malbut_bringup.speech_process',
+        '--startup-timeout-s', '25.0', '--wait-for-ready', '--', sys.executable]
 
 
-def test_scoped_include_captures_settings_before_parent_scope_restores(speech):
-    """Late callbacks must retain speech settings after a scoped include exits."""
-    context = _context(speech, control_server='manager',
-                       agent_provider='mock', input_has_aec='true',
-                       agent_user_id='trial-p1',
-                       agent_conversation_db='/trial records/p1.sqlite3',
-                       navigation_targets='/speech/targets.yaml')
-    actions = speech._setup(context)
-    # GroupAction pops the child scope before asynchronous process exits arrive.
-    context.launch_configurations.clear()
-    context.launch_configurations.update({
-        'python_executable': '/yolo/bin/python', 'preflight_only': 'true',
-        'agent_provider': 'openai', 'input_has_aec': 'false',
-        'agent_user_id': 'parent-user', 'agent_conversation_db': '/parent.sqlite3',
-        'manager_commands': 'false', 'navigation_targets': '/parent/targets.yaml',
-    })
-    peers = _exit(actions, context, _process(actions))
-    agent = next(item for item in peers if isinstance(item, Node)
-                 and item.node_package == 'malbut_agent_server')
-    assert [perform_substitutions(context, part) for part in agent.cmd[1:7]] == [
-        '--provider', 'mock', '--user-id', 'trial-p1',
-        '--conversation-db', '/trial records/p1.sqlite3']
-    assert [perform_substitutions(context, part) for part in agent.cmd[7:10]] == [
-        '--enable-manager-commands', '--navigation-targets', '/speech/targets.yaml']
-    stt = _exit(actions, context, _process(peers))[0]
-    assert evaluate_parameters(context, stt._Node__parameters)[1]['input_has_aec'] is True
-
-
-@pytest.mark.parametrize('explicit', [False, True])
-def test_dialogue_identity_is_forwarded_without_http_environment(speech, monkeypatch, explicit):
-    """Keep speech defaults or trial identity independent of the HTTP database."""
-    monkeypatch.setenv('MALBUT_AGENT_USER_ID', 'http-user')
-    monkeypatch.setenv('MALBUT_AGENT_DB', '/http-memory.sqlite3')
-    overrides = ({'agent_user_id': 'trial-p2',
-                  'agent_conversation_db': '~/trial records/p2.sqlite3'} if explicit else {})
-    context = _context(speech, **overrides)
-    actions = speech._setup(context)
-    peers = actions
-    agent = next(item for item in peers if isinstance(item, Node)
-                 and item.node_package == 'malbut_agent_server')
-    assert [perform_substitutions(context, part) for part in agent.cmd[1:7]] == [
-        '--provider', 'openai', '--user-id',
-        'trial-p2' if explicit else 'speech-development-user',
-        '--conversation-db',
-        '~/trial records/p2.sqlite3' if explicit
-        else '~/.local/state/malbut/speech-dialogue.sqlite3',
-    ]
-
-
-@pytest.mark.parametrize('name', ['agent_user_id', 'agent_conversation_db'])
-@pytest.mark.parametrize('blank', ['', ' \t'])
-def test_blank_dialogue_identity_fails_before_child_creation(speech, monkeypatch, name, blank):
-    """An invalid trial identity must not reach preflight or audio startup."""
-    monkeypatch.setattr(speech, 'ExecuteProcess',
-                        lambda **_: pytest.fail('child constructed'))
-    with pytest.raises(RuntimeError, match=name):
-        speech._setup(_context(speech, **{name: blank}))
-
-
-@pytest.mark.parametrize('input_device', [None, '7', '-1'])
-def test_input_device_reaches_stt_and_explicit_preflight(speech, input_device):
-    """Capture and an explicit diagnostic retain the configured microphone."""
-    overrides = {} if input_device is None else {'input_device': input_device}
-    expected = '0' if input_device is None else input_device
-    context = _context(speech, **overrides)
-    actions = speech._setup(context)
-    stt = _exit(actions, context, _process(actions))[0]
-    assert evaluate_parameters(context, stt._Node__parameters)[1]['device_index'] == int(expected)
-    diagnostic = _context(speech, preflight_only='true', **overrides)
-    preflight = _process(speech._setup(diagnostic))
-    command = [perform_substitutions(diagnostic, part) for part in preflight.cmd]
-    assert command[command.index('--input-device') + 1] == expected
+def test_venv_symlink_and_spaces_are_not_resolved(speech, tmp_path):
+    python = tmp_path / 'speech runtime/bin/python'
+    python.parent.mkdir(parents=True)
+    python.symlink_to(sys.executable)
+    context = _context(speech, python_executable=str(python))
+    nodes = [item for item in speech._setup(context) if isinstance(item, Node)]
+    for item in nodes[:2]:
+        assert perform_substitutions(context, item.process_description.prefix) == (
+            shlex.quote(str(python)))
 
 
 @pytest.mark.parametrize('enabled', ['true', 'false'])
-def test_speech_mission_settings_reach_only_the_agent(speech, enabled):
-    """Wire the production opt-in and target catalog without starting a Goal."""
-    path = '/configured maps/voice-targets.yaml'
-    context = _context(speech, manager_commands=enabled, navigation_targets=path)
-    actions = speech._setup(context)
-    peers = actions
-    agent = next(item for item in peers if isinstance(item, Node)
-                 and item.node_package == 'malbut_agent_server')
+def test_manager_command_opt_in_does_not_gate_launch(speech, enabled):
+    context = _context(speech, manager_commands=enabled, navigation_targets='/targets.yaml')
+    agent = next(item for item in speech._setup(context)
+                 if isinstance(item, Node) and item.node_executable == 'agent_communication')
     command = [perform_substitutions(context, part) for part in agent.cmd[1:]]
     assert ('--enable-manager-commands' in command) is (enabled == 'true')
-    if enabled == 'true':
-        assert command[command.index('--navigation-targets') + 1] == path
-    else:
-        assert '--navigation-targets' not in command
+    assert ('--navigation-targets' in command) is (enabled == 'true')
 
 
-@pytest.mark.parametrize('server', ['manager', 'autoslam'])
-def test_robot_control_must_be_ready_before_speech_runtime(speech, server):
-    """Creating the manager process alone cannot start the speech pipeline."""
-    context = _context(speech, control_server=server)
-    actions = speech._setup(context)
-    control = _process(actions)
-    assert [perform_substitutions(context, part) for part in control.cmd][-4:] == [
-        '--wait-for-control', server, '--timeout-s', '30.0']
-    assert not any(isinstance(action, Node) for action in actions)
-    peers = _exit(actions, context, control)
-    assert '--wait-for-peers' in [
-        perform_substitutions(context, part) for part in _process(peers).cmd]
-    assert _timeout(actions, context) == []
-    assert [item.node_executable for item in peers if isinstance(item, Node)] == [
-        'agent_communication', 'tts_node']
-
-
-@pytest.mark.parametrize('outcome', ['failed', 'timeout', 'shutdown'])
-def test_unready_robot_control_never_starts_speech(speech, outcome):
-    """Failure, timeout and shutdown all close admission to the next stage."""
-    context = _context(speech, control_server='manager')
-    actions = speech._setup(context)
-    if outcome == 'shutdown':
-        context._set_is_shutdown(True)
-    else:
-        with pytest.raises(RuntimeError, match='failed' if outcome == 'failed' else 'timed out'):
-            if outcome == 'failed':
-                _exit(actions, context, _process(actions), returncode=2)
-            else:
-                _timeout(actions, context)
-    assert _exit(actions, context, _process(actions)) == []
-
-
-@pytest.mark.parametrize('name', ['stt_model_path', 'stt_library_path', 'python_executable'])
-def test_required_settings_fail_before_starting_processes(speech, name):
-    """Empty runtime paths never silently select a development default."""
+@pytest.mark.parametrize('name', [
+    'agent_user_id', 'agent_conversation_db', 'stt_model_path', 'stt_library_path',
+    'python_executable'])
+@pytest.mark.parametrize('blank', ['', ' \t'])
+def test_required_settings_fail_before_process_creation(speech, name, blank):
     with pytest.raises(RuntimeError, match=name):
-        speech._setup(_context(speech, **{name: ''}))
+        speech._setup(_context(speech, **{name: blank}))
 
 
 @pytest.mark.parametrize('name', ['preflight_timeout_s', 'peer_timeout_s'])
 @pytest.mark.parametrize('value', ['0', '-1', 'nan', 'inf'])
 def test_timeout_must_be_bounded(speech, name, value):
-    """Reject settings that leave model loads or peer startup unbounded."""
     with pytest.raises(RuntimeError, match=name):
         speech._setup(_context(speech, **{name: value}))
 
 
-def test_defaults_select_current_interpreter_and_openai(speech):
-    """Use the invoking runtime without enabling the standalone diagnostic."""
+@pytest.mark.parametrize('name', ['stt_model_path', 'stt_library_path', 'python_executable'])
+def test_missing_local_asset_fails_only_this_module_setup(speech, name):
+    with pytest.raises(RuntimeError, match='file not found'):
+        speech._setup(_context(speech, **{name: '/missing/asset'}))
+
+
+@pytest.mark.parametrize('child', ['agent_communication', 'tts_node', 'stt'])
+@pytest.mark.parametrize('code', [0, 1, -11])
+def test_child_exit_is_reported_without_shutdown_or_respawn(speech, child, code):
+    from launch.actions import LogInfo
     context = _context(speech)
-    assert context.launch_configurations['python_executable'] == sys.executable
-    assert context.launch_configurations['agent_provider'] == 'openai'
-    assert context.launch_configurations['preflight_only'] == 'false'
-    assert context.launch_configurations['preflight_timeout_s'] == '120.0'
-    assert context.launch_configurations['peer_timeout_s'] == '30.0'
-
-
-def test_configured_deadlines_cover_each_startup_process(speech):
-    """Bound the entire process lifetime, including imports before its own checks."""
-    context = _context(speech, preflight_timeout_s='2.5', peer_timeout_s='1.5')
     actions = speech._setup(context)
-    timer = next(action for action in actions if isinstance(action, TimerAction))
-    assert timer.period == 1.5
-    assert [perform_substitutions(context, part) for part in _process(actions).cmd][-1] == '1.5'
-    stt = _exit(actions, context, _process(actions))[0]
-    prefix = shlex.split(perform_substitutions(context, stt.process_description.prefix))
-    assert prefix[prefix.index('--startup-timeout-s') + 1] == '2.5'
-    diagnostic = _context(speech, preflight_only='true', preflight_timeout_s='2.5')
-    timer = next(action for action in speech._setup(diagnostic)
-                 if isinstance(action, TimerAction))
-    assert timer.period == 2.5
+    node = next(item for item in actions
+                if isinstance(item, Node) and item.node_executable == child)
+    result = _exit(actions, context, node, returncode=code)
+    assert len(result) == 1 and isinstance(result[0], LogInfo)
+    context._set_is_shutdown(True)
+    assert _exit(actions, context, node, returncode=code) == []
 
 
-def test_missing_installed_jetson_config_stops_before_starting_peers(speech, monkeypatch):
-    """Do not replace a missing robot preset with the node's development defaults."""
-    monkeypatch.setattr(speech, 'get_package_share_directory', lambda _: '/missing/package')
-    context = _context(speech)
-    with pytest.raises(RuntimeError, match='configuration is missing'):
-        speech._setup(context)
-
-
-def test_preflight_only_exits_without_constructing_peers(speech, monkeypatch):
-    """A passing one-shot check never opens a long-running speech pipeline."""
+def test_preflight_only_stays_an_explicit_diagnostic(speech, monkeypatch):
     context = _context(speech, preflight_only='true')
     monkeypatch.setattr(speech, 'get_package_share_directory',
-                        lambda _: pytest.fail('unnecessary runtime lookup'))
+                        lambda _: pytest.fail('runtime nodes should not be constructed'))
     actions = speech._setup(context)
-    _assert_shutdown(_exit(actions, context, _process(actions)))
+    assert not any(isinstance(item, Node) for item in actions)
+    result = _exit(actions, context, _process(actions))
+    assert len(result) == 1 and isinstance(result[0], EmitEvent)
     assert _timeout(actions, context) == []
 
 
-@pytest.mark.parametrize('phase', ['preflight', 'peers'])
-def test_failed_or_timed_out_check_never_starts_next_stage(speech, phase):
-    """A deadline also prevents a late successful exit from reopening the gate."""
-    for timed_out in (False, True):
-        context = _context(speech, preflight_only='true' if phase == 'preflight' else 'false')
-        actions = speech._setup(context)
-        stage_actions = actions
-        process = _process(stage_actions)
-        with pytest.raises(RuntimeError, match='timed out' if timed_out else 'failed'):
-            if timed_out:
-                _timeout(stage_actions, context)
-            else:
-                _exit(actions, context, process, returncode=1)
-        assert _exit(actions, context, process) == []
-
-
-@pytest.mark.parametrize('returncode', [0, 1])
-@pytest.mark.parametrize('child', ['agent_communication', 'tts_node', 'stt'])
-def test_any_runtime_child_exit_stops_speech(speech, child, returncode):
-    """Even a clean child exit must not leave half a speech pipeline running."""
-    context = _context(speech)
+@pytest.mark.parametrize('timed_out', [True, False])
+def test_diagnostic_failure_prevents_late_success(speech, timed_out):
+    context = _context(speech, preflight_only='true')
     actions = speech._setup(context)
-    peers = actions
-    graph = _process(peers)
-    nodes = [item for item in peers if isinstance(item, Node)]
-    if child == 'stt':
-        nodes.extend(_exit(actions, context, graph))
-    process = next(node for node in nodes if node.node_executable == child)
-    with pytest.raises(RuntimeError, match='runtime child exited'):
-        _exit(actions, context, process, returncode=returncode)
-    assert _exit(actions, context, graph) == []
+    with pytest.raises(RuntimeError, match='timed out' if timed_out else 'failed'):
+        if timed_out:
+            _timeout(actions, context)
+        else:
+            _exit(actions, context, _process(actions), returncode=2)
+    assert _exit(actions, context, _process(actions)) == []
 
 
-@pytest.mark.parametrize('phase', ['preflight', 'peers'])
-def test_shutdown_never_starts_new_nodes_or_emits_again(speech, phase):
-    """Honor launch shutdown while either startup check is still running."""
-    context = _context(speech, preflight_only='true' if phase == 'preflight' else 'false')
+def test_shutdown_never_starts_diagnostic_children(speech):
+    context = _context(speech, preflight_only='true')
     actions = speech._setup(context)
-    stage_actions = actions
     context._set_is_shutdown(True)
-    assert _exit(actions, context, _process(stage_actions)) == []
-    assert _timeout(stage_actions, context) == []
-    for node in [item for item in stage_actions if isinstance(item, Node)]:
-        assert _exit(actions, context, node) == []
+    assert _exit(actions, context, _process(actions)) == []
+    assert _timeout(actions, context) == []
 
 
 @pytest.mark.parametrize('mode,expected_code', [('failed', 1), ('timeout', 1), ('passed', 0)])
-def test_real_launch_exit_status_and_preflight_only(speech, tmp_path, mode, expected_code):
-    """Report failed checks to shell callers and terminate a stalled subprocess."""
+def test_real_launch_exit_status_for_explicit_diagnostic(speech, tmp_path, mode, expected_code):
     wrapper = tmp_path / 'python'
     wrapper.write_text('#!/bin/sh\n' + {
         'failed': 'exit 2\n', 'timeout': 'exec sleep 30\n', 'passed': 'exit 0\n',
@@ -357,33 +213,7 @@ def test_real_launch_exit_status_and_preflight_only(speech, tmp_path, mode, expe
     wrapper.chmod(0o755)
     result = subprocess.run([
         'ros2', 'launch', str(ROOT / 'malbut_bringup/launch/speech.launch.py'),
-        'stt_model_path:=/dummy/model.bin', 'stt_library_path:=/dummy/library.so',
-        f'python_executable:={wrapper}', 'preflight_only:=true',
-        'preflight_timeout_s:=0.2' if mode == 'timeout' else 'preflight_timeout_s:=5.0',
+        f'python_executable:={wrapper}', 'stt_model_path:=unused',
+        'stt_library_path:=unused', 'preflight_only:=true', 'preflight_timeout_s:=0.2',
     ], capture_output=True, text=True, timeout=15)
     assert result.returncode == expected_code, result.stdout + result.stderr
-    assert 'agent_communication' not in result.stdout + result.stderr
-    if mode == 'timeout':
-        assert 'Speech preflight timed out' in result.stdout + result.stderr
-
-
-@pytest.mark.parametrize('control_code', [0, 2])
-def test_real_launch_runs_control_check_before_any_audio_check(tmp_path, control_code):
-    """Run the launch event loop; a rejected controller never opens audio."""
-    events = tmp_path / 'events'
-    wrapper = tmp_path / 'python'
-    wrapper.write_text(
-        '#!/usr/bin/python3\nimport pathlib, sys\n'
-        'control = "--wait-for-control" in sys.argv\n'
-        f'with pathlib.Path({str(events)!r}).open("a") as stream:\n'
-        '    stream.write("control\\n" if control else "preflight\\n")\n'
-        f'sys.exit({control_code} if control else 0)\n')
-    wrapper.chmod(0o755)
-    result = subprocess.run([
-        'ros2', 'launch', str(ROOT / 'malbut_bringup/launch/speech.launch.py'),
-        'stt_model_path:=/dummy/model.bin', 'stt_library_path:=/dummy/library.so',
-        f'python_executable:={wrapper}', 'preflight_only:=true', 'control_server:=manager',
-    ], capture_output=True, text=True, timeout=15)
-    assert result.returncode == (0 if control_code == 0 else 1), result.stdout + result.stderr
-    assert events.read_text().splitlines() == (
-        ['control', 'preflight'] if control_code == 0 else ['control'])

@@ -428,7 +428,7 @@ def test_startup_progress_appears_in_existing_runtime_message(monkeypatch):
     bridge._refresh()
     status = bridge.data.snapshot()['runtime']
     assert '준비 4/6 단계 · 홈캠·낙상 초기화' in status['message']
-    assert not status['ready'] and status['waiting'] == ['init:malbut_fall_pose']
+    assert status['ready'] and status['waiting'] == ['init:malbut_fall_pose']
     progress.update(completed=6, state='READY', missing=[])
     bridge._startup_progress(SimpleNamespace(data=json.dumps(progress)))
     bridge._refresh()
@@ -454,15 +454,15 @@ def test_readiness_reason_is_exposed_without_changing_manager(monkeypatch):
     bridge._refresh()
     runtime = bridge.data.snapshot()['runtime']
     assert runtime['state'] == 'RUNNING' and not runtime['ready']
-    assert runtime['waiting'] == ['TF:map->base_footprint (set initial pose)']
-    assert runtime['message'] == '필수 입력 준비 대기'
+    assert runtime['waiting'] == ['manager: Action server startup']
+    assert runtime['message'] == '관리자 Action 서버 준비 대기'
     bridge._bringup_status(SimpleNamespace(data='invalid JSON'))
     assert bridge.startup_status['state'] == 'WAITING'
 
 
 @pytest.mark.parametrize('mode', ['mapping', 'navigation'])
-def test_action_server_is_not_ready_until_speech_capture_starts(monkeypatch, mode):
-    """The UI must wait through preflight/model loading after Manager appears."""
+def test_manager_requests_are_independent_of_speech_capture(monkeypatch, mode):
+    """Optional speech startup or disappearance never blocks unrelated actions."""
     bridge, _ = _bridge(manager_ready=True)
     bridge.runtime = Mock()
     bridge.runtime.snapshot.return_value = {
@@ -472,19 +472,19 @@ def test_action_server_is_not_ready_until_speech_capture_starts(monkeypatch, mod
     bridge.node.count_publishers.return_value = 1
     bridge._refresh()
     status = bridge.data.snapshot()['runtime']
-    assert not status['ready']
-    assert status['waiting'] == ['speech: microphone startup']
+    assert status['ready']
+    assert status['waiting'] == []
     # DDS data delivery can precede the graph cache's writer discovery.
     bridge.node.count_publishers.return_value = 0
     bridge._speech_status(SimpleNamespace(data='ready'))
     bridge._refresh()
-    assert not bridge.data.snapshot()['runtime']['ready']
+    assert bridge.data.snapshot()['runtime']['ready']
     bridge.node.count_publishers.return_value = 1
     bridge._refresh()
     assert bridge.data.snapshot()['runtime']['ready']
     bridge.node.count_publishers.return_value = 0
     bridge._refresh()
-    assert not bridge.data.snapshot()['runtime']['ready']
+    assert bridge.data.snapshot()['runtime']['ready']
 
 
 @pytest.mark.parametrize('state', ['STOPPED', 'STOPPING', 'ERROR', 'STARTING'])

@@ -66,7 +66,7 @@ PC에서 연결 테스트를 통과해도 Jetson 성능과 카메라 수신이 �
 Gazebo·actor·시나리오·벤치마크는 포함하지 않는다.
 STT·Agent·TTS 음성 기능과 실기기용 간단한 웹 테스트 패널은 포함한다.
 `build.sh` 하나가 음성 런타임·STT CUDA 라이브러리와 ROS 패키지를 빌드하고,
-`robot.launch.py` 하나가 로봇 전체와 STT·Agent·TTS를 기본으로 함께 실행한다.
+`bringup.launch.py` 하나가 로봇 전체와 STT·Agent·TTS를 기본으로 함께 실행한다.
 실행 모드는 없으며, 저장 지도 선택 여부만 실행 중에 바뀐다
 ([실행 구성](malbut_bringup/README.md#실행-구성)).
 홈캠 영상 전송도 위 빌드에 포함한다. 서비스 웹 자체는 AWS에 별도 배포한다.
@@ -175,7 +175,7 @@ Bringup도 `robot_name=/`, `master_name=/`를 전달한다.
 GPU·음성 준비 전에는 인식과 음성을 끄고 센서·Nav2·관리자만 확인할 수 있다.
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py perception:=false speech:=false
+ros2 launch malbut_bringup bringup.launch.py perception:=false speech:=false
 ```
 
 확인이 끝나면 이 실행을 종료하고 웹 패널을 한 번 실행한다.
@@ -245,7 +245,7 @@ OSNet 준비 중 GPU provider가 표시되더라도 실제 모델 추론까지 �
 평소에는 이 명령을 따로 실행할 필요 없다.
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py publish_debug_image:=true speech:=false
+ros2 launch malbut_bringup bringup.launch.py publish_debug_image:=true speech:=false
 ```
 
 ## 4. 저장 지도로 Bringup 및 기능 요청
@@ -259,7 +259,7 @@ Bringup이 켜져 있으면 재시작 없이 SLAM을 끄고 저장 지도·AMCL�
 웹 대신 터미널로 직접 실행하는 경우, 처음부터 저장 지도로 켜거나:
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py \
+ros2 launch malbut_bringup bringup.launch.py \
   map:="$HOME/.ros/malbut/maps/home2.yaml" publish_debug_image:=true
 ```
 
@@ -278,8 +278,10 @@ LiDAR 스캔이 지도와 맞는지 확인한다. 맞지 않거나 기록이 없
 AMCL 위치는 5초 주기로 `~/.ros/malbut/localization/last_pose.yaml`에 저장한다.
 찾지 못하거나 결과가 실제와 다르면 RViz의 **2D Pose Estimate**로 실제 위치를 지정한다.
 지도 YAML·이미지가 바뀌면 이전 위치는 쓰지 않는다.
-관리자는 처음부터 켜져 위치 추정을 관리하고, 센서·TF·Nav2와 응용 서버가 준비되면
-미션을 받기 시작한다. 준비 검사기는 **부팅 확인용**이며 주행 안전감시기를 대체하지 않는다.
+관리자는 처음부터 켜져 위치 추정을 관리한다. 각 기능은 외부 ROS 준비와 무관하게
+실행되며, 실제 요청 처리 시 필요한 Action·지도·센서 조건을 확인한다.
+공통 기반만 실행할 때는 `robot.launch.py`, 전체 실행에는 `bringup.launch.py`를 사용한다.
+단계형 수동 복구는 새 모듈 구조에 맞추는 후속 작업까지 사용할 수 없다.
 아래 요청 전에는 로봇이 자동으로 순찰/추적을 시작하지 않는다.
 같은 웹 주소에서 지도·영상 확인·추적·순찰·이 패널의 요청 취소가 가능하다.
 위치 보정이 실패하면 웹의 지도 표시만으로 초기화되지 않으므로
@@ -329,13 +331,13 @@ ros2 service call /malbut/mission/execute/_action/cancel_goal \
 음성 launch를 중복 실행하지 않는다. 저장 지도로 켜려면 위 4절처럼 `map:=...`을 지정한다.
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py
+ros2 launch malbut_bringup bringup.launch.py
 ```
 
-`speech:=true`가 기본값이다. 로봇 준비 확인 뒤 음성 점검을 시작하며,
-점검 → Agent·TTS → 관리자 준비 확인 → STT 순서이고, 실패 시 Bringup 전체가 종료된다.
+`speech:=true`가 기본값이다. Agent·TTS·STT는 관리자·Nav2 준비를 기다리지 않고
+실행한다. 음성 초기화 실패는 다른 모듈을 종료하지 않으며 로그로 확인한다.
 STT는 로컬 whisper.cpp CUDA, Agent와 TTS는 기본 OpenAI API를 사용한다.
-말로 추적·순찰을 실행하는 연결은 별도 범위다.
+Agent의 로봇 명령은 실제 요청 시 관리자 Action 연결이 필요하다.
 
 기본 모델 경로는 `~/.cache/malbut_speech/models/ggml-small.bin`, CUDA 라이브러리는
 `~/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so`다.

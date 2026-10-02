@@ -1,50 +1,31 @@
-"""Check composition without launching hardware, inference, or navigation."""
+"""Check independent modules without hardware, inference, APIs, or motion."""
 
 import importlib.util
 import json
 from pathlib import Path
-import sys
 from xml.etree import ElementTree
 
 from launch import LaunchContext, LaunchDescription, LaunchService
 from launch.actions import (
-    DeclareLaunchArgument, EmitEvent, ExecuteProcess, GroupAction, IncludeLaunchDescription,
-    RegisterEventHandler, SetEnvironmentVariable,
+    DeclareLaunchArgument, ExecuteProcess, GroupAction, IncludeLaunchDescription,
+    LogInfo, OpaqueFunction, SetEnvironmentVariable,
 )
-from launch.event_handlers import OnProcessExit
-from launch.events import Shutdown
-from launch.events.process import ProcessExited
 from launch.utilities import perform_substitutions
-from launch_ros.actions import LoadComposableNodes, Node, SetParameter
+from launch_ros.actions import LoadComposableNodes, Node
 from launch_ros.utilities import evaluate_parameters
 import pytest
 
+from malbut_bringup import launch_support
 
 ROOT = Path(__file__).parents[2]
 
 
-def test_cloud_launch_starts_only_outbound_bridge():
-    """Cloud connectivity does not start hardware, navigation, or a local HTTP port."""
-    source = ROOT / 'malbut_bringup/launch/cloud.launch.py'
-    spec = importlib.util.spec_from_file_location('cloud_launch', source)
+def _load(name):
+    spec = importlib.util.spec_from_file_location(
+        name + '_launch', ROOT / 'malbut_bringup/launch' / (name + '.launch.py'))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    context = _context(module, backend_url='https://robot.example.com',
-                       token_file='/protected/device.token', map_directory='/maps')
-    actions = module.generate_launch_description().entities
-    nodes = [action for action in actions if isinstance(action, Node)]
-    assert len(nodes) == 1 and nodes[0].node_executable == 'robot_cloud_sync'
-    assert not _includes(actions)
-    parameters = evaluate_parameters(context, nodes[0]._Node__parameters)[0]
-    assert parameters['use_sim_time'] is False
-    assert parameters['map_topic'] == '/map'
-    assert parameters['token_file'] == '/protected/device.token'
-    assert 'token' not in parameters and 'port' not in parameters
-    for action in actions:
-        if isinstance(action, SetEnvironmentVariable):
-            action.execute(context)
-    assert context.environment['HOMECAM_BACKEND_URL'] == 'https://robot.example.com'
-    assert context.environment['HOMECAM_DEVICE_TOKEN_FILE'] == '/protected/device.token'
+    return module
 
 
 @pytest.fixture
@@ -62,7 +43,7 @@ def launch_module(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location('robot_launch', source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    monkeypatch.setattr(module.Path, 'home', lambda: tmp_path / 'home')
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path / 'home')
     cache = tmp_path / 'home/.cache'
     monkeypatch.setenv('XDG_CACHE_HOME', str(cache))
     for name, environment in (('malbut_yolo', 'MALBUT_YOLO_RUNTIME'),
@@ -87,14 +68,15 @@ def launch_module(tmp_path, monkeypatch):
                        else ROOT / 'malbut_autonomy' / name)
         return str(tmp_path / name)
 
+    from malbut_bringup import launch_support, nav2_stack
+    monkeypatch.setattr(launch_support, 'get_package_share_directory', package_share)
+    monkeypatch.setattr(nav2_stack, 'get_package_share_directory', package_share)
     module.get_package_share_directory = package_share
     return module
 
 
 def _context(module, **overrides):
     context = LaunchContext()
-    # These legacy cases exercise the hardware graph independently of speech.
-    context.launch_configurations['speech'] = 'false'
     context.launch_configurations.update(overrides)
     for action in module.generate_launch_description().entities:
         if isinstance(action, DeclareLaunchArgument):
@@ -108,25 +90,6 @@ def _includes(actions):
             if isinstance(child, IncludeLaunchDescription)]
 
 
-def _joystick_nodes(actions):
-    return [item for item in actions if isinstance(item, Node)
-            and item.node_executable == 'joystick_control']
-
-
-def _readiness_exit(actions, context, returncode=0):
-    wait = next(item for item in actions if isinstance(item, Node)
-                and item.node_executable == 'wait_for_robot')
-    event = ProcessExited(action=wait, name='bringup_readiness', cmd=[],
-                          cwd=None, env=None, pid=1, returncode=returncode)
-    result = []
-    for registration in actions:
-        if isinstance(registration, RegisterEventHandler):
-            handler = registration.event_handler
-            if handler.matches(event):
-                result.extend(handler.handle(event, context) or [])
-    return result
-
-
 def _nodes(actions, executable):
     return [item for item in actions if isinstance(item, Node)
             and item.node_executable == executable]
@@ -137,92 +100,47 @@ def _parameters(context, node):
 
 
 def _core_actions(launch_module, context):
-    """Inspect the core graph by completing only its earlier startup probes."""
-    actions = launch_module._setup(context)
-    while True:
-        gate = next(item for item in actions if isinstance(item, Node)
-                    and item.node_executable == 'wait_for_robot')
-        if _parameters(context, gate)['startup_stage'] == 'applications':
-            return actions
-        following = _process_exit(actions, context, gate)
-        actions = [item for item in actions if item is not gate] + following
+    return launch_module._setup(context)
 
 
-def test_groups_start_only_after_previous_probe_and_count_enabled_stages(
-        launch_module, speech_assets, fall_config):
-    context = _context(launch_module, **speech_assets, fall_monitor='true',
-                       fall_config=str(fall_config))
-    initial = launch_module._setup(context)
-    current = initial
-    assert not _nodes(initial, 'system_manager')
-    assert len(_includes(initial)) == 1  # Only the vendor hardware group.
-    expected = ['sensors', 'perception', 'navigation', 'following', 'patrol',
-                'applications', 'extensions', 'speech']
-    for index, kind in enumerate(expected, start=1):
-        gate = _nodes(current, 'wait_for_robot')[0]
-        params = _parameters(context, gate)
-        assert (params['startup_stage'], params['startup_index'], params['startup_total']) == (
-            kind, index, len(expected))
-        if kind == 'navigation':
-            assert _nodes(current, 'system_manager')
-            assert _nodes(current, 'relocalization')
-            assert _nodes(current, 'component_container_isolated')
-            assert not _includes(current)  # Applications have not started.
-        if kind == 'extensions':
-            assert _nodes(current, 'homecam_detector_node')
-            assert not any('stt_model_path' in dict(item.launch_arguments)
-                           for item in _includes(current))
-        current = _process_exit(initial, context, gate)
-        assert _process_exit(initial, context, gate) == []  # No duplicate startup.
-    assert not _nodes(current, 'wait_for_robot')
+def _included_modules(actions):
+    return {Path(_source_path(item)).name.split('.')[0]:
+            dict(item.launch_arguments) for item in _includes(actions)}
 
 
-def test_stage_failure_and_shutdown_do_not_start_later_groups(launch_module):
-    context = _context(launch_module, perception='false')
-    initial = launch_module._setup(context)
-    gate = _nodes(initial, 'wait_for_robot')[0]
-    assert _parameters(context, gate)['startup_total'] == 4
-    with pytest.raises(RuntimeError, match='Bringup stage failed'):
-        _process_exit(initial, context, gate, returncode=1)
-    context._set_is_shutdown(True)
-    assert _process_exit(initial, context, gate) == []
+def _source_path(include):
+    return perform_substitutions(
+        LaunchContext(), include.launch_description_source._LaunchDescriptionSource__location)
 
 
-def test_one_bringup_starts_everything_and_maps_without_a_saved_map(launch_module):
-    """No modes: hardware, Nav2, applications and the manager always start."""
-    context = _context(launch_module)
-    actions = _core_actions(launch_module, context)
-    options = [dict(item.launch_arguments) for item in _includes(actions)]
-    # Hardware, person detection and following, patrol and AutoSLAM; Nav2 is composed.
-    assert len(options) == 5
-    assert all(item['use_sim_time'] == 'false' for item in options)
-    hardware = options[0]
-    assert hardware['sim'] == 'false'
-    assert hardware['robot_name'] == hardware['master_name'] == '/'
-    assert hardware['point_cloud_enable'] == 'false'
-    # The vendor joystick becomes manual_drive input instead of a second /cmd_vel source.
-    assert hardware['use_joy'] == 'false'
-    joystick = _nodes(actions, 'joystick_control')
-    assert len(joystick) == 1 and joystick[0].node_package == 'peripherals'
-    assert [(str(source[0].perform(context)), str(target[0].perform(context)))
-            for source, target in joystick[0]._Node__remappings] == [
-        ('controller/cmd_vel', '/cmd_vel_teleop')]
-    assert _parameters(context, joystick[0])['max_linear'] == 0.15
-    assert _parameters(context, joystick[0])['max_angular'] == 0.45
-    assert sum('reid_backend' in item for item in options) == 1
-    assert sum('lidar_config' in item for item in options) == 1
-    assert sum('camera_image_topic' in item for item in options) == 1
-    manager = _parameters(context, _nodes(actions, 'system_manager')[0])
-    assert manager['localization_control'] is True
-    assert manager['initial_map'] == ''
-    assert manager['ready_topic'] == '/malbut/bringup/status'
-    assert manager['slam_params_file'].endswith('malbut_bringup/config/slam_toolbox.yaml')
-    assert _parameters(context, _nodes(actions, 'manual_control')[0])[
-        'teleop_topic'] == '/cmd_vel_teleop'
-    # Each saved-map load finds the robot through the relocalization Action.
-    assert _nodes(actions, 'relocalization')[0].node_package == 'malbut_relocalization'
-    assert manager['relocalize_action'] == '/relocalize'
-    assert _parameters(context, _nodes(actions, 'wait_for_robot')[0])['relocalization'] is True
+def _module_setup(name, context):
+    group = launch_support.module_actions(name, _load(name)._setup)
+    callback = next(item for item in group.get_sub_entities() if isinstance(item, OpaqueFunction))
+    return callback.execute(context)
+
+
+def test_cloud_launch_starts_only_outbound_bridge():
+    """Cloud connectivity does not start hardware, navigation, or a local HTTP port."""
+    source = ROOT / 'malbut_bringup/launch/cloud.launch.py'
+    spec = importlib.util.spec_from_file_location('cloud_launch', source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    context = _context(module, backend_url='https://robot.example.com',
+                       token_file='/protected/device.token', map_directory='/maps')
+    actions = module.generate_launch_description().entities
+    nodes = [action for action in actions if isinstance(action, Node)]
+    assert len(nodes) == 1 and nodes[0].node_executable == 'robot_cloud_sync'
+    assert not _includes(actions)
+    parameters = evaluate_parameters(context, nodes[0]._Node__parameters)[0]
+    assert parameters['use_sim_time'] is False
+    assert parameters['map_topic'] == '/map'
+    assert parameters['token_file'] == '/protected/device.token'
+    assert 'token' not in parameters and 'port' not in parameters
+    for action in actions:
+        if isinstance(action, SetEnvironmentVariable):
+            action.execute(context)
+    assert context.environment['HOMECAM_BACKEND_URL'] == 'https://robot.example.com'
+    assert context.environment['HOMECAM_DEVICE_TOKEN_FILE'] == '/protected/device.token'
 
 
 def test_camera_dds_profile_is_scoped_to_vendor_hardware(launch_module):
@@ -419,376 +337,6 @@ def test_nav2_recovery_reloads_components_and_selected_map_without_motion(launch
     assert [group['manager'] for group in groups] == ['lifecycle_manager_navigation']
 
 
-@pytest.mark.parametrize('options', [{'relocalization': 'false'}, {'restore_pose': 'false'}])
-def test_pose_finding_can_be_left_to_the_operator(launch_module, options):
-    """Without it the manager loads maps and the operator sets the pose."""
-    context = _context(launch_module, **options)
-    actions = _core_actions(launch_module, context)
-    manager = _parameters(context, _nodes(actions, 'system_manager')[0])
-    assert manager['relocalize_action'] == ''
-    assert bool(_nodes(actions, 'relocalization')) == ('relocalization' not in options)
-
-
-def test_reused_hardware_is_not_launched_again(launch_module):
-    """Externally started drivers keep their own joystick; no duplicates start."""
-    context = _context(launch_module, start_hardware='false', perception='false')
-    actions = _core_actions(launch_module, context)
-    assert not any('robot_name' in dict(item.launch_arguments) for item in _includes(actions))
-    assert not _nodes(actions, 'joystick_control')
-    assert not any('reid_backend' in dict(item.launch_arguments)
-                   for item in _includes(actions))
-    wait = _parameters(context, _nodes(actions, 'wait_for_robot')[0])
-    assert wait['navigation'] is True and wait['perception'] is False
-
-
-def test_applications_and_panel_receive_robot_topics(launch_module):
-    """Configured topics and frames reach autoslam, the panel and readiness."""
-    context = _context(launch_module, web_panel='true', scan_topic='/laser_raw',
-                       map_directory='/configured/maps', static_map_topic='/mapping/map',
-                       robot_frame='robot/base', rgb_topic='/camera/color')
-    actions = _core_actions(launch_module, context)
-    options = [dict(item.launch_arguments) for item in _includes(actions)]
-    autoslam = next(item for item in options if 'map_directory' in item)
-    assert autoslam['map_directory'] == '/configured/maps'
-    assert autoslam['map_topic'] == '/mapping/map'
-    assert autoslam['base_frame'] == 'robot/base'
-    assert _parameters(context, _nodes(actions, 'robot_web_panel')[0]) == {
-        'use_sim_time': False, 'manage_bringup': False,
-        'map_directory': '/configured/maps', 'map_topic': '/global_costmap/costmap',
-        'robot_frame': 'robot/base', 'rgb_topic': '/camera/color',
-    }
-    assert _parameters(context, _nodes(actions, 'system_manager')[0])[
-        'scan_topic'] == '/laser_raw'
-    for group in [item for item in actions if isinstance(item, GroupAction)]:
-        # A global -p creates /** before the named config. In rclcpp this can
-        # make that config's /scan beat the later inline /scan_raw.
-        assert not any(isinstance(child, SetParameter) for child in group.get_sub_entities())
-
-
-def test_cloud_bringup_includes_one_media_sender_on_real_topics(launch_module):
-    """The bridge stays separate; media follows the Bringup lifetime."""
-    context = _context(launch_module, start_hardware='false', rgb_topic='/camera/color',
-                       camera_info_topic='/camera/info', odom_topic='/robot/odom')
-    context.environment['HOMECAM_BACKEND_URL'] = 'https://robot.example.com'
-    context.environment['HOMECAM_DEVICE_ID'] = 'robot-1'
-    actions = _core_actions(launch_module, context)
-    options = [dict(item.launch_arguments)
-               for item in _includes(_readiness_exit(actions, context))]
-    media = [item for item in options if 'backend_url' in item]
-    assert media == [{
-        'backend_url': 'https://robot.example.com', 'device_id': 'robot-1',
-        'image_topic': '/camera/color', 'camera_info_topic': '/camera/info',
-        'odom_topic': '/robot/odom', 'use_sim_time': 'false',
-    }]
-
-
-def test_missing_perception_files_fail_before_constructing_hardware(launch_module):
-    """Report missing inference setup before any child launch can be returned."""
-    context = _context(launch_module, python_executable='/not/prepared')
-    launch_module._include = lambda *_args, **_kwargs: pytest.fail('child constructed')
-    with pytest.raises(RuntimeError, match='Perception files are not ready'):
-        _core_actions(launch_module, context)
-
-
-def test_selected_map_starts_saved_map_localization(launch_module, tmp_path):
-    """A given map picks the first localization; a missing one fails early."""
-    map_path = tmp_path / 'real house.yaml'
-    map_path.write_text('image: real_house.pgm\n')
-    context = _context(launch_module, map=str(map_path))
-    actions = _core_actions(launch_module, context)
-    manager = _parameters(context, _nodes(actions, 'system_manager')[0])
-    assert manager['initial_map'] == str(map_path)
-    with pytest.raises(RuntimeError, match='saved map YAML'):
-        _core_actions(launch_module, _context(launch_module, map=str(tmp_path / 'missing.yaml')))
-
-
-@pytest.mark.parametrize('returncode', [0, 1])
-def test_manager_starts_first_and_missions_wait_for_readiness(launch_module, returncode):
-    """Localization must precede Nav2 activation; readiness only opens missions."""
-    context = _context(launch_module, start_hardware='false')
-    actions = _core_actions(launch_module, context)
-    assert len(_nodes(actions, 'system_manager')) == 1
-    if returncode:
-        with pytest.raises(RuntimeError, match='Bringup stage failed'):
-            _readiness_exit(actions, context, returncode=returncode)
-    else:
-        started = _readiness_exit(actions, context)
-        assert not any(isinstance(item, Node) for item in started)
-
-
-def test_runtime_dependencies_do_not_pull_simulation_or_new_hardware_package():
-    """Vendor packages are runtime prerequisites, not fabricated rosdep keys."""
-    package = ElementTree.parse(ROOT / 'malbut_bringup/package.xml').getroot()
-    dependencies = {item.text for item in package.findall('exec_depend')}
-    assert {'malbut_tracking', 'malbut_patrol', 'malbut_system_manager',
-            'homecam_media_agent'} <= dependencies
-    assert not {'malbut_gazebo', 'malbut_scenarios', 'malbut_hardware'} & dependencies
-
-
-@pytest.fixture
-def speech_assets(launch_module, tmp_path):
-    """Prepare only path fixtures; these tests never load a model or audio."""
-    runtime = tmp_path / 'speech runtime'
-    python = runtime / 'bin/python'
-    python.parent.mkdir(parents=True)
-    python.symlink_to('/bin/sh')
-    model = tmp_path / 'model.bin'
-    library = tmp_path / 'bridge.so'
-    model.touch()
-    library.touch()
-    return {
-        'speech': 'true', 'speech_python_executable': str(python),
-        'stt_model_path': str(model), 'stt_library_path': str(library),
-    }
-
-
-def _process_exit(actions, context, process, returncode=0):
-    event = ProcessExited(action=process, name='test_child', cmd=[],
-                          cwd=None, env=None, pid=1, returncode=returncode)
-    result = []
-    for action in actions:
-        if isinstance(action, RegisterEventHandler):
-            handler = action.event_handler
-            if handler.matches(event):
-                result.extend(handler.handle(event, context) or [])
-    return result
-
-
-def test_cloud_and_stt_share_xfm_before_capture_starts(
-        launch_module, speech_assets, monkeypatch):
-    """Both clients get the same physical input; public device/output stay intact."""
-    monkeypatch.setenv('HOMECAM_BACKEND_URL', 'https://robot.example.com')
-    source = 'alsa_input.usb-xfm.mono-fallback'
-    monkeypatch.setattr(launch_module, 'shared_xfm_source', lambda env: source)
-    context = _context(launch_module, **speech_assets)
-    actions = _core_actions(launch_module, context)
-    first_capture = next(index for index, item in enumerate(actions)
-                         if isinstance(item, GroupAction))
-    for action in actions[:first_capture]:
-        if isinstance(action, SetEnvironmentVariable):
-            action.execute(context)
-    assert context.environment['PULSE_SOURCE'] == source
-    assert context.environment['MALBUT_SHARED_MICROPHONE'] == source
-    media = next(dict(item.launch_arguments)
-                 for item in _includes(_readiness_exit(actions, context))
-                 if 'backend_url' in dict(item.launch_arguments))
-    assert media['audio_source'] == 'pulse'
-    assert 'microphone_enabled' not in media
-    assert 'audio_sink' not in media
-    assert context.launch_configurations['speech_input_device'] == '0'
-
-
-@pytest.mark.parametrize('speech,cloud,device', [
-    ('true', False, '0'), ('false', True, '0'), ('true', True, '2'),
-])
-def test_other_audio_paths_keep_existing_device_selection(
-        launch_module, speech_assets, monkeypatch, speech, cloud, device):
-    """Do not add a PulseAudio requirement to standalone STT or explicit overrides."""
-    if cloud:
-        monkeypatch.setenv('HOMECAM_BACKEND_URL', 'https://robot.example.com')
-    monkeypatch.setattr(launch_module, 'shared_xfm_source',
-                        lambda env: pytest.fail('unnecessary shared source lookup'))
-    speech_assets['speech'] = speech
-    context = _context(launch_module, **speech_assets, speech_input_device=device)
-    context.environment['MALBUT_SHARED_MICROPHONE'] = 'stale-source'
-    context.environment['PULSE_SOURCE'] = 'desktop-source'
-    actions = _core_actions(launch_module, context)
-    for action in actions:
-        if isinstance(action, SetEnvironmentVariable):
-            action.execute(context)
-    assert context.environment['MALBUT_SHARED_MICROPHONE'] == ''
-    assert context.environment['PULSE_SOURCE'] == 'desktop-source'
-    assert all('audio_source' not in dict(item.launch_arguments)
-               for item in _includes(actions))
-
-
-def test_robot_defaults_enable_isolated_cuda_speech(launch_module, monkeypatch, tmp_path):
-    """The normal robot entrypoint selects the same cache paths as build.sh."""
-    monkeypatch.setenv('MALBUT_AGENT_USER_ID', 'http-user')
-    monkeypatch.setenv('MALBUT_AGENT_DB', '/http-memory.sqlite3')
-    for name in ('MALBUT_SPEECH_RUNTIME', 'MALBUT_STT_MODEL_PATH',
-                 'MALBUT_STT_BUILD_DIR', 'MALBUT_STT_LIBRARY_PATH'):
-        monkeypatch.delenv(name, raising=False)
-    context = LaunchContext()
-    for action in launch_module.generate_launch_description().entities:
-        if isinstance(action, DeclareLaunchArgument):
-            action.execute(context)
-    settings = context.launch_configurations
-    cache = tmp_path / 'home/.cache/malbut_speech'
-    assert settings['speech'] == 'true'
-    assert settings['speech_input_device'] == '0'
-    assert settings['speech_agent_user_id'] == 'speech-development-user'
-    assert settings['speech_agent_conversation_db'] == (
-        '~/.local/state/malbut/speech-dialogue.sqlite3')
-    assert settings['speech_python_executable'] == str(cache / 'runtime/bin/python')
-    assert settings['stt_model_path'] == str(cache / 'models/ggml-small.bin')
-    assert settings['stt_library_path'] == str(
-        cache / 'whisper-cpp-build/bin/libmalbut_whisper.so')
-    assert settings['speech_python_executable'] != settings['python_executable']
-    assert settings['speech_python_executable'] != settings['reid_python_executable']
-
-
-@pytest.mark.parametrize('input_device', [None, '2', '-1'])
-def test_speech_starts_after_readiness_and_waits_for_the_manager(
-        launch_module, speech_assets, input_device, monkeypatch):
-    """Speech forwards the XFM default or explicit override after readiness."""
-    monkeypatch.setattr(launch_module, 'nav2_actions', lambda *_args, **_kwargs: [])
-    input_options = {} if input_device is None else {'speech_input_device': input_device}
-    context = _context(launch_module, **speech_assets, start_hardware='false',
-                       **input_options, speech_output_device='3',
-                       stt_cpp_threads='4', speech_input_has_aec='true',
-                       speech_agent_provider='mock', speech_preflight_timeout_s='55',
-                       speech_agent_user_id='trial-p3',
-                       speech_agent_conversation_db='/trial records/p3.sqlite3',
-                       speech_peer_timeout_s='12', preflight_only='true')
-    actions = _core_actions(launch_module, context)
-    assert not any('stt_model_path' in dict(item.launch_arguments)
-                   for item in _includes(actions))
-    wait = next(item for item in actions if isinstance(item, Node)
-                and item.node_executable == 'wait_for_robot')
-    started = _process_exit(actions, context, wait)
-    speech = next(item for item in _includes(started)
-                  if 'stt_model_path' in dict(item.launch_arguments))
-    assert dict(speech.launch_arguments) == {
-        'python_executable': speech_assets['speech_python_executable'],
-        'stt_model_path': speech_assets['stt_model_path'],
-        'stt_library_path': speech_assets['stt_library_path'],
-        'input_device': '0' if input_device is None else input_device,
-        'output_device': '3', 'cpp_threads': '4',
-        'input_has_aec': 'true', 'agent_provider': 'mock',
-        'agent_user_id': 'trial-p3',
-        'agent_conversation_db': '/trial records/p3.sqlite3',
-        'manager_commands': 'true',
-        'navigation_targets': '',
-        'control_server': 'manager',
-        'preflight_timeout_s': '55', 'peer_timeout_s': '12',
-        'preflight_only': 'false', 'use_sim_time': 'false',
-    }
-    # Do not resolve the venv symlink or replace the parent's perception Python.
-    assert context.launch_configurations['python_executable'] != (
-        speech_assets['speech_python_executable'])
-    assert context.launch_configurations['model_path'].endswith('yolo26n.pt')
-    context._set_is_shutdown(True)
-    assert _process_exit(actions, context, wait) == []
-
-
-@pytest.mark.parametrize('name', ['speech_agent_user_id', 'speech_agent_conversation_db'])
-@pytest.mark.parametrize('blank', ['', ' \t'])
-def test_blank_speech_identity_fails_before_hardware(
-        launch_module, speech_assets, monkeypatch, name, blank):
-    """Reject an empty participant identity before including any robot child."""
-    context = _context(launch_module, **speech_assets, **{name: blank})
-    monkeypatch.setattr(launch_module, '_include',
-                        lambda *_args, **_kwargs: pytest.fail('child constructed'))
-    with pytest.raises(RuntimeError, match=name):
-        launch_module._setup(context)
-
-
-@pytest.mark.parametrize('path', [
-    'speech_python_executable', 'stt_model_path', 'stt_library_path',
-])
-def test_missing_speech_assets_fail_before_hardware(launch_module, speech_assets, path):
-    """Never start the robot with a known missing runtime, model or bridge."""
-    speech_assets[path] = '/not/prepared'
-    context = _context(launch_module, **speech_assets)
-    launch_module._include = lambda *_args, **_kwargs: pytest.fail('child constructed')
-    with pytest.raises(RuntimeError, match='file not found'):
-        _core_actions(launch_module, context)
-
-
-@pytest.mark.parametrize('check', [
-    'speech_control_readiness', 'speech_preflight', 'speech_peer_readiness',
-])
-def test_parent_allows_successful_speech_checks_but_propagates_failure(launch_module, check):
-    """Nested one-shot checks may exit 0; failures must return nonzero to the shell."""
-    context = _context(launch_module, start_hardware='false', perception='false')
-    actions = _core_actions(launch_module, context)
-    process = ExecuteProcess(cmd=['/bin/true'], name=check)
-    assert _process_exit(actions, context, process) == []
-    with pytest.raises(RuntimeError, match='Bringup child exited'):
-        _process_exit(actions, context, process, returncode=2)
-
-
-@pytest.mark.parametrize('cuda_oom,expected_code,attempts', [(True, 0, 2), (False, 1, 1)])
-def test_parent_waits_for_supervised_cuda_oom_retry(
-        launch_module, tmp_path, cuda_oom, expected_code, attempts):
-    """Hide only an owned startup OOM retry from the real parent launch guard."""
-    counter = tmp_path / 'attempts'
-    child = tmp_path / 'speech_child.py'
-    failure = ('cudaMalloc failed: out of memory' if cuda_oom
-               else 'failed to load model: invalid header')
-    child.write_text(
-        'from pathlib import Path\nimport os, resource, signal\n'
-        'resource.setrlimit(resource.RLIMIT_CORE, (0, 0))\n'
-        f'counter = Path({str(counter)!r})\n'
-        'attempt = int(counter.read_text()) + 1 if counter.exists() else 1\n'
-        'counter.write_text(str(attempt))\n'
-        'if attempt == 1:\n'
-        f'    print({failure!r}, flush=True)\n'
-        '    os.kill(os.getpid(), signal.SIGABRT)\n')
-    process = ExecuteProcess(cmd=[
-        sys.executable, '-m', 'malbut_bringup.speech_process',
-        '--startup-timeout-s', '20', '--', sys.executable, str(child),
-    ], name='speech_preflight', output='screen')
-    context = _context(launch_module, start_hardware='false', perception='false')
-    event = ProcessExited(action=process, name='speech_preflight', cmd=[],
-                          cwd=None, env=None, pid=1, returncode=0)
-    guard = next(action for action in _core_actions(launch_module, context)
-                 if isinstance(action, RegisterEventHandler)
-                 and action.event_handler.matches(event))
-    service = LaunchService()
-    service.include_launch_description(LaunchDescription([
-        guard,
-        RegisterEventHandler(OnProcessExit(
-            target_action=process,
-            on_exit=[EmitEvent(event=Shutdown(reason='supervised process completed'))],
-        )),
-        process,
-    ]))
-    assert service.run() == expected_code
-    assert int(counter.read_text()) == attempts
-
-
-@pytest.mark.parametrize('package', ['malbut_stt', 'malbut_tts', 'malbut_agent_server'])
-def test_parent_never_leaves_partial_speech_pipeline(launch_module, package):
-    """Even a clean persistent-node exit terminates the unified launch as failure."""
-    context = _context(launch_module, start_hardware='false', perception='false')
-    actions = _core_actions(launch_module, context)
-    node = Node(package=package, executable='test')
-    with pytest.raises(RuntimeError, match='Bringup child exited'):
-        _process_exit(actions, context, node)
-
-
-def test_managed_successful_bringup_keeps_surviving_nodes_for_manual_recovery(launch_module):
-    """Managed launches preserve evidence even before the first READY."""
-    context = _context(launch_module, start_hardware='false', perception='false')
-    actions = _core_actions(launch_module, context)
-    node = Node(package='malbut_stt', executable='test')
-    context.extend_globals({'malbut_recovery_owner': True})
-    assert _process_exit(actions, context, node)
-    context.extend_globals({'malbut_startup_complete': True})
-    result = _process_exit(actions, context, node, returncode=-11)
-    assert result and all(type(action).__name__ == 'LogInfo' for action in result)
-
-
-def test_managed_failed_stage_pauses_and_can_continue_after_manual_recovery(launch_module):
-    """No later stage starts until the owner explicitly resumes the failed gate."""
-    context = _context(launch_module, perception='false')
-    context.extend_globals({'malbut_recovery_owner': True})
-    initial = launch_module._setup(context)
-    gate = _nodes(initial, 'wait_for_robot')[0]
-    result = _process_exit(initial, context, gate, returncode=1)
-    assert not _nodes(result, 'wait_for_robot')
-    assert context.locals.malbut_startup_failed
-    assert not getattr(context.locals, 'malbut_startup_complete', False)
-    resume, timeout = context.locals.malbut_startup_resume
-    next_stage = resume(context)
-    assert timeout > 0
-    assert not context.locals.malbut_startup_failed
-    assert len(_nodes(next_stage, 'wait_for_robot')) == 1
-    assert _process_exit(initial, context, gate) == []
-
-
 @pytest.fixture
 def fall_config(tmp_path):
     """Use test-only limits; never create a key, database or Cloud connection."""
@@ -806,116 +354,196 @@ def fall_config(tmp_path):
     return path
 
 
-@pytest.mark.parametrize('enabled', ['auto', 'true'])
-def test_fall_monitor_starts_once_after_readiness(launch_module, fall_config, enabled):
-    """Keep one early Manager and start one VLM only after readiness."""
-    context = _context(launch_module, start_hardware='false',
-                       fall_monitor=enabled, fall_config=str(fall_config),
-                       rgb_topic='/robot/camera/rgb')
-    actions = _core_actions(launch_module, context)
-    assert not any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
+def test_robot_contains_only_shared_nodes_and_no_external_readiness_gate(launch_module):
+    context = _context(launch_module)
+    actions = launch_module._setup(context)
+    assert {item.node_executable for item in actions if isinstance(item, Node)} == {
+        'component_container_isolated', 'zone_filter', 'system_manager'}
+    assert len(_includes(actions)) == 1
+    hardware = dict(_includes(actions)[0].launch_arguments)
+    assert hardware['robot_name'] == hardware['master_name'] == '/'
+    assert hardware['point_cloud_enable'] == hardware['use_joy'] == 'false'
+    manager = _parameters(context, _nodes(actions, 'system_manager')[0])
+    assert manager['ready_topic'] == ''
+    assert manager['localization_control'] is True
+    assert manager['relocalize_action'] == '/relocalize'
+    assert manager['initial_map'] == ''
+
+
+def test_aggregate_schedules_all_enabled_modules_without_probes(launch_module, fall_config):
+    module = _load('bringup')
+    context = _context(module, fall_monitor='true', fall_config=str(fall_config))
+    actions = module._setup(context)
+    includes = _included_modules(actions)
+    assert set(includes) == {
+        'robot', 'tracking', 'patrol', 'autoslam', 'manual', 'relocalization', 'fall', 'speech'}
+    assert not _nodes(actions, 'wait_for_robot')
+    assert not any(type(item).__name__ in ('TimerAction', 'RegisterEventHandler')
                    for item in actions)
-    ready = _readiness_exit(actions, context)
-    assert sum(isinstance(item, Node) and item.node_executable == 'system_manager'
-               for item in actions) == 1
-    assert not any(isinstance(item, Node) and item.node_executable == 'system_manager'
-                   for item in ready)
-    nodes = [item for item in ready if isinstance(item, Node)
-             and item.node_executable == 'malbut-fall-monitor']
-    assert len(nodes) == 1
-    node = nodes[0]
-    assert node.node_package == 'malbut_agent_server'
-    parameters = evaluate_parameters(context, node._Node__parameters)[0]
-    assert parameters['use_sim_time'] is False
-    from uuid import UUID
-    assert UUID(parameters['runtime_id'])
-    assert UUID(parameters['manager_runtime_id'])
-    manager = next(item for item in actions if isinstance(item, Node)
-                   and item.node_executable == 'system_manager')
-    bindings = evaluate_parameters(context, manager._Node__parameters)[0]
-    assert bindings['localization_control'] is True
-    assert bindings['ready_topic'] == '/malbut/bringup/status'
-    assert not any(key.startswith('fall_') for key in bindings)
-    coordinators = _nodes(ready, 'fall_coordinator')
-    assert len(coordinators) == 1
-    bindings = _parameters(context, coordinators[0])
-    assert bindings['vlm_runtime_id'] == parameters['runtime_id']
-    assert bindings['runtime_id'] == parameters['manager_runtime_id']
-    assert UUID(bindings['bridge_runtime_id'])
-    arguments = [perform_substitutions(context, arg) for arg in node.cmd[1:]]
-    assert arguments[:3] == ['--config', str(fall_config), '--execute']
-    remaps = [(perform_substitutions(context, src), perform_substitutions(context, dst))
-              for src, dst in node._Node__remappings]
-    assert remaps == [('/configured/rgb', '/robot/camera/rgb')]
-    assert not (fall_config.parent / 'not-read.key').exists()
-    assert not (fall_config.parent / 'journal.sqlite').exists()
-    with pytest.raises(RuntimeError, match='Bringup stage failed'):
-        _readiness_exit(_core_actions(launch_module, context), context, returncode=1)
+    assert 'control_server' not in includes['speech']
+    assert all(item['use_sim_time'] == 'false' for item in includes.values())
+    assert context.locals.malbut_modular_bringup
 
 
-def test_startup_binding_is_shared_with_media_and_changes_on_new_launch(
-        launch_module, fall_config):
-    context = _context(launch_module, start_hardware='false',
-                       fall_monitor='true', fall_config=str(fall_config))
+def test_optional_modules_can_all_be_disabled(launch_module):
+    module = _load('bringup')
+    context = _context(module, perception='false', patrol='false', autoslam='false',
+                       manual='false', relocalization='false', fall_monitor='false',
+                       homecam='false', speech='false')
+    includes = _included_modules(module._setup(context))
+    assert set(includes) == {'robot'}
+    assert includes['robot']['restore_pose'] == 'false'
+
+
+def test_selected_map_and_explicit_pose_choice_reach_common_manager(launch_module, tmp_path):
+    path = tmp_path / 'real map.yaml'
+    path.write_text('image: real.png\n')
+    context = _context(launch_module, map=str(path), restore_pose='false')
+    params = _parameters(context, _nodes(launch_module._setup(context), 'system_manager')[0])
+    assert params['initial_map'] == str(path)
+    assert params['relocalize_action'] == ''
+    with pytest.raises(RuntimeError, match='saved map YAML'):
+        launch_module._setup(_context(launch_module, map='/missing.yaml'))
+
+
+@pytest.mark.parametrize('name', [
+    'robot', 'tracking', 'patrol', 'autoslam', 'manual', 'relocalization', 'homecam', 'fall'])
+def test_standalone_module_constructs_without_any_running_ros_peer(
+        launch_module, fall_config, name):
+    module = _load(name)
+    context = _context(module, fall_monitor='true', fall_config=str(fall_config))
     context.environment['HOMECAM_BACKEND_URL'] = 'https://robot.example.com'
-    bindings = []
+    actions = module._setup(context)
+    assert actions
+    assert not _nodes(actions, 'wait_for_robot')
+    assert not any(isinstance(action, ExecuteProcess) and not isinstance(action, Node)
+                   for action in actions)
+
+
+def test_missing_optional_model_does_not_prevent_other_modules(launch_module, fall_config):
+    top = _load('bringup')
+    context = _context(top, python_executable='/missing/yolo',
+                       fall_monitor='true', fall_config=str(fall_config),
+                       fall_pose_model_path='/missing/pose')
+    scheduled = _included_modules(top._setup(context))
+    assert {'tracking', 'fall', 'speech', 'robot'} <= scheduled.keys()
+    for name in ('tracking', 'fall'):
+        result = _module_setup(name, context)
+        assert len(result) == 1 and isinstance(result[0], LogInfo)
+        assert context.locals.malbut_modules[name]
+    for name in ('robot', 'patrol', 'autoslam'):
+        assert _module_setup(name, context)
+        assert context.locals.malbut_modules[name] == ''
+
+
+def test_standalone_configuration_failure_is_reported(launch_module):
+    context = _context(_load('tracking'), python_executable='/missing/python')
+    with pytest.raises(RuntimeError, match='Perception files'):
+        _module_setup('tracking', context)
+
+
+def test_module_error_does_not_shutdown_other_launch_process(tmp_path):
+    marker = tmp_path / 'alive'
+
+    def broken(_context):
+        raise RuntimeError('model missing')
+
+    def healthy(_context):
+        return [ExecuteProcess(cmd=['/usr/bin/touch', str(marker)])]
+
+    def bind(context):
+        context.extend_globals({'malbut_modular_bringup': True})
+        return []
+    service = LaunchService()
+    service.include_launch_description(LaunchDescription([
+        OpaqueFunction(function=bind),
+        launch_support.module_actions('broken', broken),
+        launch_support.module_actions('healthy', healthy),
+    ]))
+    assert service.run() == 0
+    assert marker.is_file()
+
+
+def test_tracking_reuses_detection_and_following_without_shared_drivers(launch_module):
+    module = _load('tracking')
+    context = _context(module, scan_topic='/laser', rgb_topic='/camera/color')
+    includes = [dict(item.launch_arguments) for item in _includes(module._setup(context))]
+    assert len(includes) == 2
+    detection, follower = includes
+    assert detection['rgb_topic'] == '/camera/color'
+    assert detection['reid_backend'] == 'osnet'
+    assert follower['scan_topic'] == '/laser'
+    assert follower['lidar_config'].endswith('malbut_tracking/config/lidar_foreground.yaml')
+    assert 'config' not in follower  # Never shadow the child's YAML default with ''.
+
+
+def test_application_topic_wiring_and_manual_input_are_preserved(launch_module):
+    module = _load('patrol')
+    context = _context(module, static_map_topic='/mapping/map', robot_frame='robot/base',
+                       rgb_topic='/camera/color')
+    options = dict(_includes(module._setup(context))[0].launch_arguments)
+    assert options['map_topic'] == '/mapping/map'
+    assert options['base_frame'] == 'robot/base'
+    assert options['camera_image_topic'] == '/camera/color'
+    module = _load('autoslam')
+    context = _context(module, map_directory='/maps', robot_frame='robot/base')
+    options = dict(_includes(module._setup(context))[0].launch_arguments)
+    assert options['map_directory'] == '/maps' and options['base_frame'] == 'robot/base'
+    module = _load('manual')
+    context = _context(module)
+    actions = module._setup(context)
+    assert _parameters(context, _nodes(actions, 'manual_control')[0])['teleop_topic'] == (
+        '/cmd_vel_teleop')
+    joystick = _nodes(actions, 'joystick_control')[0]
+    assert _parameters(context, joystick)['max_linear'] == 0.15
+    assert [(perform_substitutions(context, a), perform_substitutions(context, b))
+            for a, b in joystick._Node__remappings] == [
+                ('controller/cmd_vel', '/cmd_vel_teleop')]
+    assert not _nodes(module._setup(_context(module, start_hardware='false')), 'joystick_control')
+
+
+def test_media_and_fall_share_session_ids_without_start_order(launch_module, fall_config):
+    from uuid import UUID
+    top = _load('bringup')
+    previous = None
     for _ in range(2):
-        actions = _core_actions(launch_module, context)
-        ready = _readiness_exit(actions, context)
-        media = next(dict(item.launch_arguments) for item in _includes(ready)
-                     if 'fall_bridge_runtime_id' in dict(item.launch_arguments))
-        params = _parameters(context, _nodes(ready, 'fall_coordinator')[0])
-        vlm = next(item for item in ready if isinstance(item, Node)
-                   and item.node_executable == 'malbut-fall-monitor')
-        vlm_params = evaluate_parameters(context, vlm._Node__parameters)[0]
-        poses = _nodes(ready, 'homecam_detector_node')
-        assert len(poses) == 1
-        pose_params = _parameters(context, poses[0])
-        assert pose_params['fall_runtime_id'] == vlm_params['runtime_id']
-        assert pose_params['fall_only'] is True
-        assert pose_params['pose_keep_aspect'] is True
-        assert not _nodes(actions, 'homecam_detector_node')
-        assert params['vlm_runtime_id'] == vlm_params['runtime_id']
-        assert params['runtime_id'] == vlm_params['manager_runtime_id']
-        for peer in ('bridge', 'manager', 'vlm'):
-            field = 'fall_' + peer + '_runtime_id'
-            parameter = 'runtime_id' if peer == 'manager' else peer + '_runtime_id'
-            assert params[parameter] == media[field]
-        bindings.append(params)
-    assert bindings[0]['bridge_runtime_id'] != bindings[1]['bridge_runtime_id']
+        context = _context(top, speech='false', fall_config=str(fall_config))
+        context.environment['HOMECAM_BACKEND_URL'] = 'https://robot.example.com'
+        modules = _included_modules(top._setup(context))
+        for peer in ('manager', 'bridge', 'vlm'):
+            key = 'fall_' + peer + '_runtime_id'
+            assert UUID(modules['fall'][key])
+            assert modules['fall'][key] == modules['homecam'][key]
+        assert modules['fall']['fall_bridge_runtime_id'] != previous
+        previous = modules['fall']['fall_bridge_runtime_id']
+        context.launch_configurations.update(modules['fall'])
+        actions = _load('fall')._setup(context)
+        coordinator = _parameters(context, _nodes(actions, 'fall_coordinator')[0])
+        monitor = _parameters(context, _nodes(actions, 'malbut-fall-monitor')[0])
+        pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
+        assert coordinator['runtime_id'] == monitor['manager_runtime_id']
+        assert coordinator['vlm_runtime_id'] == monitor['runtime_id'] == pose['fall_runtime_id']
 
 
-def test_fall_launch_uses_unified_navigation_without_legacy_mode_flags(launch_module):
-    """No removed launch mode may become an accidental VLM enable switch."""
-    context = _context(launch_module, start_hardware='false')
-    assert 'mode' not in context.launch_configurations
-    assert 'start_navigation' not in context.launch_configurations
-
-
-def test_fall_monitor_auto_uses_environment_configuration(launch_module, fall_config, monkeypatch):
-    """A prepared robot needs no second command or explicit enable flag."""
-    monkeypatch.setenv('MALBUT_FALL_CONFIG', str(fall_config))
-    context = _context(launch_module, start_hardware='false')
-    assert context.launch_configurations['fall_monitor'] == 'auto'
-    ready = _readiness_exit(_core_actions(launch_module, context), context)
-    assert any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
-               for item in ready)
-
-
-def test_missing_fall_pose_model_stops_before_launch(launch_module, fall_config):
-    """Configured fall monitoring may not silently start without the pose producer."""
-    context = _context(launch_module, start_hardware='false', fall_monitor='true',
-                       fall_config=str(fall_config), fall_pose_model_path='/missing/pose.onnx')
-    with pytest.raises(RuntimeError, match='Fall pose ONNX model'):
-        _core_actions(launch_module, context)
-
-
-def test_fall_pose_does_not_depend_on_general_perception(launch_module, fall_config):
-    """Disabling following/object detection does not suppress fall pose."""
-    context = _context(launch_module, start_hardware='false', perception='false',
-                       fall_monitor='true', fall_config=str(fall_config))
-    ready = _readiness_exit(_core_actions(launch_module, context), context)
-    assert len(_nodes(ready, 'homecam_detector_node')) == 1
+@pytest.mark.parametrize('cuda_mode', [None, 0o644, 0o755])
+def test_fall_python_prefers_installed_cuda_runtime(tmp_path, monkeypatch, cuda_mode):
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
+    monkeypatch.delenv('MALBUT_FALL_POSE_PYTHON', raising=False)
+    cuda_python = tmp_path / 'malbut_fall_pose/runtime-cuda/bin/python'
+    if cuda_mode is not None:
+        cuda_python.parent.mkdir(parents=True)
+        cuda_python.write_text('#!/bin/sh\nexit 0\n')
+        cuda_python.chmod(cuda_mode)
+    expected = (cuda_python if cuda_mode == 0o755
+                else tmp_path / 'malbut_fall_pose/runtime/bin/python')
+    for name in ('fall', 'bringup'):
+        module = _load(name)
+        context = _context(module)
+        assert context.launch_configurations['fall_pose_python_executable'] == str(expected)
+        context = _context(module, fall_pose_python_executable='/explicit/python')
+        assert context.launch_configurations['fall_pose_python_executable'] == '/explicit/python'
+    monkeypatch.setenv('MALBUT_FALL_POSE_PYTHON', '/custom/python')
+    assert launch_support.defaults()['fall_pose_python_executable'] == '/custom/python'
 
 
 @pytest.mark.parametrize('overrides,expected', [
@@ -925,78 +553,81 @@ def test_fall_pose_does_not_depend_on_general_perception(launch_module, fall_con
      ('cpu', 0, True, 0)),
     ({'fall_pose_execution_provider': 'cuda'}, ('cuda', 2, False, 1)),
 ])
-def test_fall_pose_execution_options_reach_only_dedicated_node(
-        launch_module, fall_config, overrides, expected):
-    context = _context(
-        launch_module, start_hardware='false', perception='false',
-        fall_monitor='true', fall_config=str(fall_config), **overrides)
-    ready = _readiness_exit(_core_actions(launch_module, context), context)
-    node = _nodes(ready, 'homecam_detector_node')[0]
-    params = evaluate_parameters(context, node._Node__parameters)[0]
+def test_fall_pose_keeps_robot_defaults(launch_module, fall_config, overrides, expected):
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config), **overrides)
+    params = _parameters(context, _nodes(module._setup(context), 'homecam_detector_node')[0])
     assert (params['pose_execution_provider'], params['pose_intra_op_num_threads'],
             params['pose_allow_spinning'], params['pose_opencv_num_threads']) == expected
-    assert params['pose_keep_aspect'] is True
-    assert params['pose_inference_fps'] == 5.0
+    assert params['pose_keep_aspect'] is True and params['pose_inference_fps'] == 5.0
+    assert params['fall_only'] is True
 
 
 @pytest.mark.parametrize('changes', [
     {'fall_pose_execution_provider': 'invalid'}, {'fall_pose_intra_op_num_threads': '-1'},
     {'fall_pose_allow_spinning': 'maybe'}, {'fall_pose_opencv_num_threads': '-1'},
+    {'fall_pose_model_path': '/missing/pose.onnx'},
 ])
-def test_fall_pose_rejects_invalid_execution_options(launch_module, fall_config, changes):
-    context = _context(launch_module, start_hardware='false', fall_monitor='true',
-                       fall_config=str(fall_config), **changes)
-    with pytest.raises(RuntimeError, match='Invalid fall pose execution options'):
-        launch_module._setup(context)
+def test_fall_rejects_invalid_local_setup(launch_module, fall_config, changes):
+    module = _load('fall')
+    with pytest.raises(RuntimeError):
+        context = _context(module, fall_config=str(fall_config), **changes)
+        module._setup(context)
 
 
-def test_fall_pose_exit_cannot_leave_a_silent_missing_producer(launch_module, fall_config):
-    """Even exit 0 of the persistent detector stops the partial Bringup."""
-    context = _context(launch_module, start_hardware='false', perception='false',
-                       fall_monitor='true', fall_config=str(fall_config))
-    actions = _core_actions(launch_module, context)
-    pose = _nodes(_readiness_exit(actions, context), 'homecam_detector_node')[0]
-    with pytest.raises(RuntimeError, match='Bringup child exited'):
-        _process_exit(actions, context, pose)
+def test_cloud_media_uses_existing_camera_without_duplication(launch_module):
+    module = _load('homecam')
+    context = _context(module, rgb_topic='/rgb', camera_info_topic='/info', odom_topic='/wheel')
+    context.environment['HOMECAM_BACKEND_URL'] = 'https://robot.example.com'
+    context.environment['HOMECAM_DEVICE_ID'] = 'robot-1'
+    actions = module._setup(context)
+    assert not any(isinstance(item, Node) for item in actions)
+    media = dict(_includes(actions)[0].launch_arguments)
+    assert media['backend_url'] == 'https://robot.example.com'
+    assert media['device_id'] == 'robot-1'
+    assert (media['image_topic'], media['camera_info_topic'], media['odom_topic']) == (
+        '/rgb', '/info', '/wheel')
 
 
-@pytest.mark.parametrize('enabled', ['auto', 'true'])
-def test_fall_monitor_rejects_invalid_configuration(launch_module, fall_config, enabled):
-    """A present but unfinished config must fail before any hardware is launched."""
-    data = json.loads(fall_config.read_text())
-    data['input_fps'] = None
-    fall_config.write_text(json.dumps(data))
-    context = _context(launch_module, start_hardware='false',
-                       fall_monitor=enabled, fall_config=str(fall_config))
-    with pytest.raises(RuntimeError, match='Invalid fall_config'):
-        _core_actions(launch_module, context)
+def test_shared_microphone_prepared_once_and_only_for_audio_modules(launch_module, monkeypatch):
+    module = _load('bringup')
+    calls = []
+    monkeypatch.setattr(module, 'shared_xfm_source', lambda env: calls.append(env) or 'xfm-source')
+    context = _context(module)
+    context.environment['HOMECAM_BACKEND_URL'] = 'https://robot.example.com'
+    actions = module._setup(context)
+    assert len(calls) == 1
+    for group in [item for item in actions if isinstance(item, GroupAction)]:
+        for action in group.get_sub_entities():
+            if isinstance(action, IncludeLaunchDescription):
+                name = Path(_source_path(action)).name
+                if name in ('homecam.launch.py', 'speech.launch.py'):
+                    assert context.environment['MALBUT_SHARED_MICROPHONE'] == 'xfm-source'
+                    assert context.environment['PULSE_SOURCE'] == 'xfm-source'
+                else:
+                    assert 'MALBUT_SHARED_MICROPHONE' not in context.environment
+            else:
+                action.execute(context)
+    assert 'MALBUT_SHARED_MICROPHONE' not in context.environment
 
 
-def test_fall_monitor_false_does_not_read_configuration(launch_module, fall_config):
-    """Operators can disable this process even when its config needs repair."""
-    fall_config.write_text('not JSON')
-    context = _context(launch_module, start_hardware='false',
-                       fall_monitor='false', fall_config=str(fall_config))
-    ready = _readiness_exit(_core_actions(launch_module, context), context)
-    assert not any(isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor'
-                   for item in ready)
+def test_shared_microphone_failure_is_confined_to_audio_modules(launch_module, monkeypatch):
+    module = _load('bringup')
+
+    def missing(_):
+        raise RuntimeError('Shared microphone unavailable')
+    monkeypatch.setattr(module, 'shared_xfm_source', missing)
+    context = _context(module)
+    context.environment['HOMECAM_BACKEND_URL'] = 'https://robot.example.com'
+    includes = _included_modules(module._setup(context))
+    assert 'robot' in includes and 'tracking' in includes
+    assert 'speech' not in includes and 'homecam' not in includes
+    assert set(context.locals.malbut_modules) == {'homecam', 'speech'}
 
 
-def test_fall_monitor_true_requires_configuration(launch_module):
-    """Explicit enable must not silently skip a missing configuration."""
-    context = _context(launch_module, start_hardware='false',
-                       fall_monitor='true')
-    with pytest.raises(RuntimeError, match='Fall configuration is missing'):
-        _core_actions(launch_module, context)
-
-
-@pytest.mark.parametrize('code', [0, 2])
-def test_fall_monitor_exit_stops_bringup(launch_module, fall_config, code):
-    """Do not report a healthy launch after its configured fall monitor exits."""
-    context = _context(launch_module, start_hardware='false',
-                       fall_config=str(fall_config))
-    actions = _core_actions(launch_module, context)
-    node = next(item for item in _readiness_exit(actions, context)
-                if isinstance(item, Node) and item.node_executable == 'malbut-fall-monitor')
-    with pytest.raises(RuntimeError, match='Bringup child exited'):
-        _process_exit(actions, context, node, returncode=code)
+def test_runtime_dependencies_do_not_pull_simulation_or_new_hardware_package():
+    package = ElementTree.parse(ROOT / 'malbut_bringup/package.xml').getroot()
+    dependencies = {item.text for item in package.findall('exec_depend')}
+    assert {'malbut_tracking', 'malbut_patrol', 'malbut_system_manager',
+            'homecam_media_agent'} <= dependencies
+    assert not {'malbut_gazebo', 'malbut_scenarios', 'malbut_hardware'} & dependencies

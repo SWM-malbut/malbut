@@ -1,8 +1,8 @@
 # 통합 Bringup의 음성 준비와 preflight
 
 실로봇은 **최초 `setup.sh` 준비 → `build.sh` 빌드 → `cloud.launch.py` 웹 연결 → 웹의
-Bringup 준비** 순서로 실행한다. 터미널에서 직접 실행할 때는 `robot.launch.py`를 사용한다.
-`robot.launch.py`가 Jetson용 whisper.cpp STT, Agent 대화 노드와 OpenAI TTS를
+Bringup 준비** 순서로 실행한다. 터미널에서 직접 실행할 때는 `bringup.launch.py`를 사용한다.
+`bringup.launch.py`가 Jetson용 whisper.cpp STT, Agent 대화 노드와 OpenAI TTS를
 기본으로 포함한다. `speech.launch.py`는 이때 사용하는 하위 launch이며 음성만 진단할 때
 별도로 실행할 수 있다. Agent의 현재 proposal-only 정책과 STT/TTS 명세는 그대로 사용한다.
 
@@ -109,19 +109,19 @@ launch는 `.env` 파일을 자동 로드하지 않는다.
 웹 연결만으로는 음성이 시작되지 않는다. 아래는 웹을 사용하지 않을 때의 직접 실행이다.
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py
+ros2 launch malbut_bringup bringup.launch.py
 ```
 
 차체·센서·인식·Nav2·관리자와 음성을 함께 시작한다. 실행 모드는 없으며, 저장 지도로
 시작하려면 같은 명령에 `map:=/실제/지도.yaml`을 지정한다. `speech:=true`가 기본값이며,
-로봇 준비 확인 뒤 음성 노드를 시작한다. 이 실행만으로 이동 Goal을 보내지는 않는다.
+다른 모듈의 준비와 무관하게 음성 노드를 시작한다. 이 실행만으로 이동 Goal을 보내지는 않는다.
 
 장치를 따로 지정해야 할 때는 아래 목록을 로봇에서 확인한다:
 
 ```zsh
 speech_python="${MALBUT_SPEECH_RUNTIME:-${XDG_CACHE_HOME:-$HOME/.cache}/malbut_speech/runtime}/bin/python"
 "$speech_python" -m sounddevice
-ros2 launch malbut_bringup robot.launch.py --show-args
+ros2 launch malbut_bringup bringup.launch.py --show-args
 ```
 
 입력 기본값은 `0`이며, 현재 로봇에서 확인한 `XFM-DP-V0.0.18: USB Audio`
@@ -149,7 +149,7 @@ XFM이 아닌 Jetson card 3 쪽이었으므로 XFM을 쓸 때는 `0`을 사용�
 ROS STT의 `device_index`에 사용하지 않는다.
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py \
+ros2 launch malbut_bringup bringup.launch.py \
   speech_input_device:=0 speech_output_device:=-1
 ```
 
@@ -200,37 +200,28 @@ Bringup이 제조사 프로세스를 자동으로 종료하지는 않는다.
 
 ## 시작 순서와 통과 의미
 
-1. **로봇 제어 준비**: Manager의 Action 서버와 BOOTING 이후 상태가 준비된 뒤
-   음성 준비를 시작한다.
-   준비 확인은 이동 Goal을 보내지 않는다. 단독 음성 실행에는 이 단계를 요구하지 않는다.
-2. **Preflight 생략**: 일반 Bringup에서는 사전 점검 실행을 주석 처리하여
-   Whisper 모델을 점검용으로 로딩·해제한 뒤 다시 로딩하지 않는다.
-   기존 점검은 명시적으로 `preflight_only:=true`를 지정한 단독 진단에만 실행한다.
-3. **Agent와 TTS**: 로봇 제어 준비 직후 시작한다. Agent는 대화 런타임과
-   DB 세션 초기화가 끝난 뒤 음성 입력 Topic·Service를 공개한다.
-4. **ROS 연결 확인**: 두 Service와 타입이 맞는 Topic의 발행자·구독자가
-   발견된 뒤 STT를 시작한다.
-5. **마이크 준비 완료**: STT 모델 로딩과 마이크 시작이 성공하면
-   `/malbut/speech/status`에 `ready`를 발행한다. 웹은 실행 중인 Bringup의 제어 서버와
-   이 준비 상태를 모두 확인해야 준비 완료로 표시한다. 단순 프로세스 생성이나
-   Action 서버 발견만으로 완료 처리하지 않는다. 기존 Agent·STT·TTS가 실행 중이면
-   웹의 새 Bringup 시작은 중복 실행 오류로 거부한다.
+1. **독립 실행**: Agent·TTS·STT를 같은 launch에서 실행한다. 외부 관리자·Nav2
+   또는 상대 Topic 발견을 launch 시작 조건으로 사용하지 않는다.
+2. **자체 초기화**: 각 노드가 모델·오디오·DB 등 자신의 초기화를 수행한다.
+   STT는 모델 로딩과 마이크 시작 성공 후 `/malbut/speech/status`에 `ready`를 발행한다.
+   상대 서비스가 없으면 실제 요청을 처리할 수 없지만 다른 모듈을 종료하지 않는다.
+3. **명시적 진단**: `preflight_only:=true`에서만 점검용 모델/마이크를 열고 종료한다.
+   일반 실행은 Whisper를 이중으로 로딩하지 않는다.
+4. **웹 의미**: 관리자 준비는 명령 전달 가능 여부, 음성 ready는 마이크 준비 여부다.
+   음성 준비가 전체 로봇 기능의 사용 조건은 아니다. 중복 Bringup 실행 방지는 유지한다.
 
-일반 Bringup에서는 `speech_peers_ready`, `malbut_speech_capture_ready` 순서로
-통과 로그를 확인한다. `speech_preflight_passed`는 단독 진단에서만 출력한다.
-실제 STT 시작(또는 명시적 단독 점검) 중 CUDA 메모리 할당 부족 로그와 함께 프로세스가 종료되면,
-음성 프로세스만 5초, 10초 기다려 최대 3회 시도한다. 재시도 중에는 Bringup을 유지하고
-웹은 마이크 준비를 계속 기다린다. 각 단계의 제한시간은 재시도와 대기를 모두 포함한다.
-파일·설정 오류나 CUDA 메모리 부족으로 확인되지 않은 실패는 바로 보고한다.
-3회 모두 실패하거나 제한시간을 넘으면 통합 Bringup 전체를 실패 코드로 종료한다.
-마이크 준비 이후의 음성 노드 종료는 재시도하지 않는다. Ctrl+C 또는 웹의 Bringup
-종료는 진행 중인 시도와 대기를 취소하고 함께 실행한 로봇·음성 구성을 정리한다.
+기존 `control_server`, `peer_timeout_s` 인자는 구 호출 호환용으로 받지만 일반 실행의
+외부 준비 검사에 사용하지 않는다. 모델 초기화 제한시간 `preflight_timeout_s`는 유지한다.
+STT 시작 중 확인된 CUDA 메모리 부족에 대한 기존 5초·10초 대기/최대 3회 시도는
+음성 프로세스 내부에서 유지한다. 실패 소진·모델 오류·음성 노드 종료는 로그로
+보고하며 다른 모듈을 종료하지 않는다. 자동 복구 기능을 새로 추가하지 않는다.
+Ctrl+C 또는 웹 Bringup 종료는 소유한 음성 프로세스와 진행 중인 대기도 정리한다.
 단독 점검에서 사용한 모델·마이크·출력 스트림은 반환 전에 해제하며,
 `preflight_only:=true`는 실제 음성 노드를 시작하지 않고 종료한다.
 실패 출력의 `phase`로 설정·ROS 타입·TTS 출력·STT 모델/마이크 중 실패 단계를 확인한다.
 예외 원문, API 키, 마이크 샘플은 로그에 출력하지 않는다. 단, Malbut 코드가 정한
 고정 메시지(예: `whisper.cpp requires rebuilding the packaged ABI 3 bridge`)와
-PortAudio 장치 오류는 `detail`로 함께 출력해 웹의 Bringup 종료 메시지에 나온다.
+PortAudio 장치 오류는 `detail`로 함께 출력해 해당 실행 로그에서 확인한다.
 
 Preflight는 **유료 API 요청을 보내지 않는다**. 키의 유효성·API 접근 권한·네트워크·
 실제 음성 합성은 검증하지 않는다. 모델 로딩 시 GPU를 요청하지만 CUDA에서 실제
@@ -255,7 +246,7 @@ ros2 launch malbut_bringup speech.launch.py \
 ```
 
 이 진단은 성공 시 종료한다. 음성만 계속 시험하려면 같은 명령의 `preflight_only`를
-`false`로 바꾼다. 정상 로봇 운용에는 위 `robot.launch.py`를 사용한다.
+`false`로 바꾼다. 정상 로봇 운용에는 위 `bringup.launch.py`를 사용한다.
 
 현재 로봇의 XFM으로 STT·Agent·TTS만 실행하는 명령은 다음과 같다.
 위 선점 해제를 마치고 ROS 및 빌드된 workspace 환경을 불러온 터미널에서 실행한다:
@@ -318,7 +309,7 @@ ros2 launch malbut_bringup speech.launch.py \
   agent_conversation_db:="$HOME/.local/state/malbut/trial-20260926-p1.sqlite3"
 ```
 
-전체 로봇의 `robot.launch.py`에서는 같은 값에 `speech_agent_user_id`와
+전체 로봇의 `bringup.launch.py`에서는 같은 값에 `speech_agent_user_id`와
 `speech_agent_conversation_db`를 사용한다. 두 launch 모두 미지정 시 기존 음성 전용
 기본값 `speech-development-user`, `~/.local/state/malbut/speech-dialogue.sqlite3`를
 유지하며 HTTP용 `MALBUT_AGENT_USER_ID`·`MALBUT_AGENT_DB`를 대신 사용하지 않는다.
