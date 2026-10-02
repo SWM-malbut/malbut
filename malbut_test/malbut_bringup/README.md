@@ -3,7 +3,7 @@
 ROSOrin / Jetson Orin NX / ROS 2 Humble용 최상위 실행 패키지다.
 제조사 드라이버·TF를 재사용하고, 공식 Nav2와 Malbut 응용 서버를 연결한다.
 기존 `build.sh` 하나로 음성 런타임·STT CUDA 라이브러리와 ROS 패키지를 빌드하고,
-`robot.launch.py` 하나로 로봇 전체와 STT·Agent·TTS를 함께 실행한다.
+`bringup.launch.py` 하나로 로봇 전체와 STT·Agent·TTS를 함께 실행한다.
 Gazebo와 시나리오는 이 실행에 포함하지 않는다.
 클라우드 연결이 설정되어 있으면 기존 홈캠 KVS 영상·음성 전송 노드를 함께 실행한다.
 추적·순찰 알고리즘과 시스템 관리자의 정책은 변경하지 않는다.
@@ -13,30 +13,53 @@ Gazebo와 시나리오는 이 실행에 포함하지 않는다.
 
 ## 실행 구성
 
-시작은 `하드웨어·센서 → 사람 인식 → 지도·Nav2·관리자 → 사람 추적 → 순찰 → AutoSLAM
-→ 홈캠·낙상 초기화 → 음성 모델·마이크` 순서다. 비활성 기능은 단계에서 제외한다.
-각 단계는 실제 센서/TF, Action·lifecycle 또는 초기화 후 서비스 응답을 확인해야
-다음 단계를 시작한다. 제조사 하드웨어와 Nav2·위치 추정·관리자의 상호 의존 묶음은 유지한다.
-음성 내부 순서는 기존 사전 검사 → Agent·TTS → STT이며, 첫 정상 마이크 입력까지 기다린다.
-홈캠·낙상 준비는 초기화 확인이며, 사용자 감시 허용이나 클라우드 분석을 강제로 켜지 않는다.
-콘솔과 웹의 기존 준비 상태에 `준비 2/8 단계 · 지도·Nav2·관리자`처럼 표시한다.
-`/malbut/bringup/progress`는 단계 진행 정보이고, 관리자용 기존 READY 계약과 분리돼 있다.
-단계 제한시간은 기존 `speech_preflight_timeout_s`를 재사용한다. 음성 단계는
-두 번의 모델 준비와 제어/peer 검사 제한시간 합계를 적용하며, 초과하면 해당 단계와 누락 조건을 남긴다.
+공통 기능과 응용 기능을 독립 launch로 실행한다. 각 모듈은 다른 모듈의 Topic,
+TF, Action이 없어도 먼저 켜진다. 외부 의존성은 실제 작업을 요청하거나 입력을
+처리할 때 확인하며, 이전 단계 준비 성공을 다음 모듈의 실행 조건으로 사용하지 않는다.
 
-실행 모드는 없다. `robot.launch.py`는 항상 같은 구성을 켜고, 저장 지도 선택 여부만
-실행 중에 바뀐다.
-
-| 항상 실행 | 내용 |
+| Launch | 소유하는 기능 |
 | --- | --- |
-| 제조사 하드웨어 | 차체·센서·TF·오도메트리. 조이스틱은 수동 조작 입력으로 연결 |
-| Nav2 | 공식 Nav2 서버를 Malbut가 직접 컴포넌트로 구성(`nav2_stack.py`), Malbut 소유 `nav2_params.yaml` |
-| 안전·구역 | Collision Monitor(수동 조작의 마지막 검사), Zone keepout 필터(`zone_filter`) |
-| 위치 보정 | `malbut_relocalization`의 `/relocalize` Action (저장 위치 확인, 필요하면 전역 탐색) |
-| 인식 | YOLO·RGB-D 사람 위치 추정 (`perception:=false`로 끌 수 있음) |
-| 응용 서버 | 사람 추적, 순찰, AutoSLAM(대기) |
-| 시스템 관리자 | 미션 실행·선점, 위치 추정 전환, 수동 조작 해제(`manual_control`) |
-| 음성 | STT·Agent·TTS (`speech:=false`로 끌 수 있음) |
+| `robot.launch.py` | 제조사 차체·센서·TF·오도메트리, Nav2·Collision Monitor·Zone, 지도·위치 추정·시스템 관리자 |
+| `tracking.launch.py` | 기존 사람 인식(YOLO·ReID·RGB-D 위치 추정)과 사람 추적 launch |
+| `patrol.launch.py` | 순찰 서버 |
+| `autoslam.launch.py` | 탐색 서버·지도 저장 서버·내부 lifecycle 관리자 |
+| `manual.launch.py` | 수동 입력 adapter와 조이스틱 |
+| `relocalization.launch.py` | 위치 보정 Action 서버 |
+| `speech.launch.py` | STT·Agent·TTS |
+| `fall.launch.py` | 낙상 Pose·VLM 모니터·낙상 코디네이터 |
+| `homecam.launch.py` | 기존 홈캠 미디어 launch, 공통 카메라 Topic 재사용 |
+| `bringup.launch.py` | 선택한 위 모듈을 함께 실행하는 통합 진입점 |
+
+기존 전체 실행 명령의 `robot.launch.py`를 `bringup.launch.py`로 바꾼다.
+공통 기반만 필요하면 `ros2 launch malbut_bringup robot.launch.py`를 사용한다.
+별도 터미널에서 필요한 기능만 켤 수도 있다. 이미 통합 실행한 기능은 중복 실행하지 않는다.
+
+```bash
+ros2 launch malbut_bringup robot.launch.py
+# 다른 터미널: 위 명령보다 먼저 실행해도 노드가 떠 있어야 한다.
+ros2 launch malbut_bringup tracking.launch.py
+ros2 launch malbut_bringup patrol.launch.py
+```
+
+통합 실행에서 `perception`, `patrol`, `autoslam`, `manual`, `relocalization`,
+`speech`는 기본 `true`다. `homecam:=auto`는 백엔드 환경이 있을 때,
+`fall_monitor:=auto`는 설정 파일이 있을 때 포함한다.
+모델·실행 환경·설정 파일 오류는 해당 모듈의 시작 실패로 로그에 남기며,
+다른 모듈의 실행을 막거나 정상 노드를 종료하지 않는다. 단독 launch의 잘못된
+설정은 오류로 종료한다. 프로세스 실행은 기능 준비 완료/안전한 주행을 뜻하지 않는다.
+
+모듈 분리는 프로세스 분리가 아니다. Nav2는 기존 컨테이너와 lifecycle 구성을 유지한다.
+이번 변경에서는 복구를 개편하지 않는다. 새 통합 launch의 기존 단계형 복구 요청은
+거절하며, 모듈별 복구 연결은 후속 작업이다. 빈 복구 작업을 성공으로 보고하지 않는다.
+`malbut_test`의 자원 기록기는 통합 진입점에서 모듈들보다 먼저 실행되며,
+기록기 실패가 기능 실행을 막지 않는 기존 동작을 유지한다.
+
+단독 실행도 모델·Python 환경·장치 접근 같은 자기 설정은 필요하다. 외부 ROS
+상대가 없는 것과 로컬 설치/설정이 잘못된 것은 구분한다. 홈캠과 낙상을 각각
+실행하면서 연동하려면 `fall_manager_runtime_id`, `fall_bridge_runtime_id`,
+`fall_vlm_runtime_id` 세 값을 동일하게 지정한다. 통합 실행은 매 실행마다 같은
+ID 묶음을 자동 전달한다. STT와 홈캠의 XFM 동시 입력도 통합 실행에서 기존
+PulseAudio 공유 설정을 적용하며, 단독 실행에서는 같은 입력 공유 환경을 사용한다.
 
 | 저장 지도 | 위치 추정 | 가능한 이동 미션 |
 | --- | --- | --- |
@@ -44,15 +67,16 @@ Gazebo와 시나리오는 이 실행에 포함하지 않는다.
 | 선택됨 (`map:=...` 또는 실행 중 선택) | 저장 지도 + AMCL, 선택할 때 위치 보정 | 사람 추적, 순찰, 목적지 이동, 위치 보정, 수동 조작 |
 
 관리자는 시작하자마자 위치 추정을 켠다. Nav2 global costmap은 `map` TF가 생겨야
-활성화되기 때문이다. 미션은 준비 검사기가 READY를 보낸 뒤에 받는다([위치 추정 전환](#위치-추정-전환)).
+활성화되기 때문이다. 관리자는 선택 기능 전체의 READY를 기다리지 않으며,
+미션별 Action 연결·지도 모드·안전 조건을 확인한다([위치 추정 전환](#위치-추정-전환)).
 
-STT·Agent·TTS는 기본 포함이며, 로봇 준비 확인 뒤 음성 점검 → Agent·TTS →
-관리자 준비 확인 → STT 순서로 시작한다. 시작 중 CUDA 메모리 부족은 5초, 10초 대기 후
-최대 3회 시도하며, 재시도 소진·제한시간 초과 또는 다른 음성 구성 실패 시 Bringup 전체를 종료한다.
+STT·Agent·TTS는 기본 포함이며 Nav2·관리자 준비를 기다리지 않고 시작한다.
+STT의 기존 CUDA 초기화 재시도와 제한시간은 유지하되, 음성 실패가 전체 Bringup을
+종료하지 않는다. 관리자가 없으면 Agent의 실제 로봇 명령만 실행할 수 없다.
 시뮬레이션 지도를 실로봇에 대신 넣지 않는다.
 
 실기기 적용본은 `build.sh` 하나로 홈캠 미디어까지 빌드한다.
-`cloud.launch.py`는 웹 명령·상태 연결만 유지하고, 웹이 시작하는 `robot.launch.py`가
+`cloud.launch.py`는 웹 명령·상태 연결만 유지하고, 웹이 시작하는 `bringup.launch.py`가
 카메라와 영상 노드를 함께 관리한다. `HOMECAM_BACKEND_URL`이 설정되어 있으면
 기존 `homecam_robot.launch.py`를 한 번 포함하며 토큰 파일 환경을 그대로 전달한다.
 별도 미디어 launch나 systemd 서비스를 중복 실행하지 않는다.
@@ -60,9 +84,9 @@ STT·Agent·TTS는 기본 포함이며, 로봇 준비 확인 뒤 음성 점검 �
 
 ### Cloud VLM 자동 실행
 
-`robot.launch.py`는 통합 navigation 실행에서 Cloud VLM 실행기
+`bringup.launch.py`는 독립 `fall.launch.py`를 통해 Cloud VLM 실행기
 `malbut-fall-monitor`를 함께 시작한다. Manager는 위치 추정을 위해 먼저 시작하며,
-설정이 준비되어 있으면 VLM·Pose·`malbut_fall_coordinator`는 로봇 준비 확인 뒤 한 번만 실행한다. 카메라는 추가로 띄우지 않고 Bringup의
+설정이 준비되어 있으면 VLM·Pose·`malbut_fall_coordinator`는 다른 모듈 준비를 기다리지 않고 한 번만 실행한다. 카메라는 추가로 띄우지 않고 Bringup의
 `rgb_topic`을 사용한다. 음성을 꺼도 VLM 노드는 별도로 시작할 수 있다.
 
 최신 Bringup은 `mode` 인자를 없앴다. `mode:=navigation`을 넘길 필요가 없다.
@@ -71,22 +95,27 @@ STT·Agent·TTS는 기본 포함이며, 로봇 준비 확인 뒤 음성 점검 �
 | 설정 | 동작 |
 | --- | --- |
 | `fall_monitor:=auto` (기본) | 설정 파일이 있으면 시작. 없으면 이유를 출력하고 건너뜀 |
-| `fall_monitor:=true` | 설정 파일 필수. 없거나 잘못되면 Bringup 시작 거부 |
+| `fall_monitor:=true` | 설정 파일 필수. 없거나 잘못되면 낙상 모듈 시작 실패 |
 | `fall_monitor:=false` | VLM 노드를 띄우지 않음 |
 | `fall_config:=/절대경로/fall_runtime.json` | 사용할 설정 파일 지정 |
 
 설정 파일 기본 위치는 `/etc/malbut/fall_runtime.json`이다.
 `MALBUT_FALL_CONFIG` 환경변수로 기본 위치를 바꿀 수 있다.
-어느 경로든 파일이 있는데 값이 잘못됐으면 조용히 건너뛰지 않고 시작을 거부한다.
+어느 경로든 파일이 있는데 값이 잘못됐으면 낙상 모듈의 오류로 보고한다.
 설정 양식은 Agent 패키지의 `config/fall_runtime.example.json`이며,
 수치는 로봇 테스트용 시작값이다. 등록된 로봇 ID와 키·저장 경로를 준비하고 실물에서 확인해야 한다.
 
 ```bash
-ros2 launch malbut_bringup robot.launch.py map:=/실제/지도.yaml fall_monitor:=true fall_config:=/etc/malbut/fall_runtime.json
+ros2 launch malbut_bringup bringup.launch.py map:=/실제/지도.yaml fall_monitor:=true fall_config:=/etc/malbut/fall_runtime.json
 ```
 
 낙상 Pose의 기본값은 `fall_pose_execution_provider:=auto`, ORT 스레드 `2`,
 spinning `false`, OpenCV 스레드 `1`이다. 추가 인자 없이 스레드 제한이 적용된다.
+실행 Python은 낙상 전용 `~/.cache/malbut_fall_pose/runtime/bin/python`이다
+(`XDG_CACHE_HOME` 지원). 실기기 `build.sh`가 이 환경에 GPU용 ONNX Runtime을 준비한다.
+OSNet/ReID 가상환경을 재사용하거나 `runtime-cuda`를 자동 선택하지 않는다. 환경변수
+`MALBUT_FALL_POSE_PYTHON` 또는 `fall_pose_python_executable` 인자를 명시하면 그 값이 우선한다.
+이미 설치된 CUDA·cuDNN·Torch는 변경하지 않는다. Bringup 실행 중에는 설치하지 않는다.
 일반 홈캠의 YOLO·Pose에도 같은 스레드 제한과 GPU 선택 정책을 적용한다.
 `auto`는 **해당 노드의 실행 Python**에 CUDA EP가
 있으면 CUDA를 선택하고, 없으면 CPU를 선택하면서 GPU 미사용 경고를 남긴다.
@@ -99,7 +128,8 @@ GPU 실행을 필수로 하려면 `fall_pose_execution_provider:=cuda`를 사용
 `cpu`, `0`, `true`, `0` 값은 새 기본값보다 우선하므로 함께 확인한다.
 GPU 의존성 설치와 사전 점검은
 [로봇 준비 문서](../malbut_agent_server/docs/fall/fall_robot_preparation.md#1-1-낙상용-yolo-pose-준비)를 따른다.
-코드 업데이트만으로 CPU 전용 ONNX Runtime이 GPU 버전으로 바뀌지는 않는다.
+소스만 갱신하고 로봇 빌드를 생략하면 기존 Python 환경은 바뀌지 않는다.
+`MALBUT_BUILD_FALL_POSE=0`으로 환경 준비를 생략할 수 있으며 실행 시 `auto` 정책은 그대로다.
 Jetson에서의 실제 처리 fps·CPU/GPU 부하는 별도 확인 대상이다.
 
 이 명령은 **VLM 노드 시작**이지 전송 동의가 아니다. 실제 영상 수집에는
@@ -115,7 +145,8 @@ Bringup은 홈캠·낙상 코디네이터·VLM에 같은 실행 ID 묶음을 전
 
 API 키는 런타임 설정의 `cloud_key_file`에서 읽으며 launch 인자로 전달하지 않는다.
 설정 검사는 키를 읽거나 DB를 만들지 않는다. 실제 노드가 시작될 때 키와 의존성을
-확인하며, 실패하거나 실행 중 노드가 종료되면 기존 정책대로 Bringup 전체를 종료한다.
+확인하며, 실패하거나 실행 중 노드가 종료되면 해당 오류를 로그로 보고한다.
+다른 정상 모듈은 계속 실행한다.
 Bringup과 별도의 `malbut-fall-monitor --execute`를 동시에 실행하지 않는다.
 실물 카메라·Cloud 인증·Manager 연결을 합친 동작 검증은 별도로 필요하다.
 
@@ -192,7 +223,7 @@ Bringup은 인식용 Python 실행 파일·모델이 없으면 누락 경로와 
 ```bash
 ros2 pkg prefix slam
 ros2 pkg prefix navigation
-ros2 launch malbut_bringup robot.launch.py --show-args
+ros2 launch malbut_bringup bringup.launch.py --show-args
 ```
 
 공식 앱 자동실행 서비스가 하드웨어를 이미 사용한다면, 운영자가 현재 실행을
@@ -245,13 +276,13 @@ GPU·음성 준비 전에는 인식과 음성을 끄고 센서·Nav2·관리자�
 이 경우 사람 추적 서버도 켜지지 않는다.
 
 ```bash
-ros2 launch malbut_bringup robot.launch.py perception:=false speech:=false
+ros2 launch malbut_bringup bringup.launch.py perception:=false speech:=false
 ```
 
 인식·음성 환경과 API 키가 준비되면 전체 실행:
 
 ```bash
-ros2 launch malbut_bringup robot.launch.py
+ros2 launch malbut_bringup bringup.launch.py
 ```
 
 기본 토픽 이름은 사용자가 제공한 ROSOrin/Aurora 실기기 목록과 일치한다.
@@ -272,7 +303,7 @@ SLAM·AMCL·Nav2·사람 추적은 드라이버의 `/scan_raw`를 직접 사용�
 예를 들어 LiDAR가 `/scan`을 제공한다면:
 
 ```bash
-ros2 launch malbut_bringup robot.launch.py scan_topic:=/scan
+ros2 launch malbut_bringup bringup.launch.py scan_topic:=/scan
 ```
 
 RGB-D 위치 추정은 **RGB에 정렬된 Depth와 해당 RGB CameraInfo**를 사용해야
@@ -320,7 +351,7 @@ Bringup이 스스로 끝나면 `Bringup exited (코드): <처음 죽은 노드> 
 터미널로 직접 구성하려면 지도 없이 실행하고:
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py
+ros2 launch malbut_bringup bringup.launch.py
 ```
 
 준비 완료 후 다른 터미널에서 관리자를 통해 요청한다:
@@ -345,7 +376,7 @@ ros2 service call /malbut/localization/load_map nav2_msgs/srv/LoadMap \
 연결된 이미지 파일도 존재해야 한다.
 
 ```bash
-ros2 launch malbut_bringup robot.launch.py \
+ros2 launch malbut_bringup bringup.launch.py \
   map:="$HOME/.ros/malbut/maps/home2.yaml" publish_debug_image:=true
 ```
 
@@ -545,28 +576,18 @@ Bringup 시작/종료는 비활성화한다. 단독 패널과 같은 포트로 �
 ## 준비 확인과 미션 요청
 
 - 모든 Malbut 노드는 `use_sim_time=false`. 제조사 include에도 이를 전달한다.
-- 관리자는 Bringup과 함께 바로 시작해 위치 추정을 켜지만, 준비 검사기가
-  `/malbut/bringup/status`로 READY를 보내기 전에는 `BOOTING`으로 미션을 거부한다.
-- 준비 검사기는 최근 Scan·Odometry·RGB·Depth·CameraInfo와 TF를 확인한다.
-  Scan은 최신 TF의 존재만 보지 않고, 최근 서로 다른 두 스캔의 원본 시각에
-  `LiDAR → odom`, `LiDAR → map` 변환이 가능한지 확인한다.
-  최신 스캔보다 TF가 조금 늦게 도착해도 이전의 최근 헤더로 비동기 재확인한다.
-  인식을 켰다면 3D 인식 결과 수신도 확인한다. 사람이 없는 빈 검출도 정상이다.
-- 지도·costmap, `map ↔ base` TF, Nav2 lifecycle `ACTIVE`(controller·planner·behavior·
-  teleop_behavior·bt_navigator·velocity_smoother·collision_monitor)와 Nav2·순찰·수동 조작·AutoSLAM·
-  위치 보정(인식을 켰다면 추적) Action 서버를 확인한다. AMCL·map_server는 관리자가
-  켜고 끄므로 lifecycle 대상이 아니다. 저장 지도로 시작했다면 위치 보정이 끝나야
-  `map` TF가 생긴다.
-- 빠진 항목을 로그로 표시하며, 정해진 몇 초가 지났다는 이유로 READY를 보내지 않는다.
-  `sensor_timeout_s`(기본 3초)는 센서의 신선도 기준이지 부팅 제한시간이 아니다.
-- 준비 검사는 부팅 시 한 번이다. 이후 지도 전환의 상태는 `/malbut/localization/state`로 본다.
-- 검사기는 지속 안전감시·비상정지가 아니다.
-- 소유한 Malbut 프로세스가 종료되거나 자식 프로세스가 오류 종료하면 launch를
-  종료한다. Ctrl+C도 이 launch가 실행한 프로세스에만 전달한다.
-  이것만으로 모터 정지를 보장하지는 않는다. 제조사 드라이버는 `/cmd_vel` 수신이
+- 관리자는 함께 시작해 위치 추정을 켜고, 기능별 요청 시 실제 서버·지도 조건을 확인한다.
+  선택 기능의 부재를 전체 미션 차단 조건으로 사용하지 않는다.
+- `wait_for_robot`의 센서·TF·Nav2 진단 코드는 남아 있지만 모듈 시작 조건으로 실행하지 않는다.
+- 웹의 `ready`는 실행 중인 관리자에게 요청을 전달할 수 있다는 의미다.
+  음성 모델 로딩이 다른 기능 버튼을 막지 않으며, 개별 기능의 실제 준비를 보장하지 않는다.
+  음성 준비는 `/malbut/speech/status`, 지도 상태는 `/malbut/localization/state`,
+  실제 Action·Topic은 웹의 진단 화면에서 따로 확인한다.
+- 한 응용 노드 종료로 전체 launch를 종료하지 않는다. Ctrl+C 또는 웹 종료는 소유한
+  프로세스들에 전달하며, 외부에서 실행한 노드는 종료하지 않는다.
+- 이것만으로 모터 정지를 보장하지는 않는다. 제조사 드라이버는 `/cmd_vel` 수신이
   끊겨도 마지막 속도를 유지하는 코드이므로 실제 정지 동작은 하드웨어 검증 대상이다.
   Collision Monitor도 입력이 끊기면 아무것도 보내지 않으므로 이를 대신하지 않는다.
-  이미 외부에서 실행하던 드라이버는 종료하지 않는다.
 
 준비 이후 요청하기 전에는 추적/순찰을 시작하지 않는다.
 

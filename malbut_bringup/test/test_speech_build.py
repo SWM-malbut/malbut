@@ -70,7 +70,7 @@ elif name in ('system-python', 'python') and args[0] == '-c':
            'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
            'BASH_ENV': str(bash_env), 'MOCK_COMMAND': str(command),
            'BUILD_EVENTS': str(events), 'XDG_CACHE_HOME': str(cache)}
-    for variable in ('MALBUT_BUILD_SPEECH', 'MALBUT_SPEECH_RUNTIME',
+    for variable in ('MALBUT_BUILD_SPEECH', 'MALBUT_BUILD_FALL_POSE', 'MALBUT_SPEECH_RUNTIME',
                      'MALBUT_STT_BUILD_DIR', 'WHISPER_CPP_SOURCE_DIR',
                      'MALBUT_STT_MODEL_PATH'):
         env.pop(variable, None)
@@ -89,6 +89,8 @@ elif name in ('system-python', 'python') and args[0] == '-c':
         cloud_script = robot / 'homecam_agent/scripts/build_robot_cloud.sh'
         cloud_script.parent.mkdir(parents=True)
         cloud_script.write_text('#!/bin/bash\n"$MOCK_COMMAND" cloud\n')
+        (cloud_script.parent / 'prepare_fall_pose_runtime.sh').write_text(
+            '#!/bin/bash\n"$MOCK_COMMAND" fall "$@"\n')
         script = robot / 'build.sh'
         shutil.copyfile(ROOT / 'build.sh', script)
         result = subprocess.run(['bash', str(script)], text=True,
@@ -127,6 +129,8 @@ def test_default_build_prepares_isolated_speech_before_colcon(robot_build, layou
     ]]
     assert calls[-1]['name'] == 'colcon'
     assert calls[-2]['name'] == 'cloud'
+    assert calls[-3]['name'] == 'fall'
+    assert calls[-3]['args'] == ['--gpu']
     assert calls[-1]['path'] == '/usr/bin:/bin'
     assert all('pip' not in call['args'] for call in calls if call['name'] != 'python')
     assert not (robot / '.venv').exists()
@@ -212,6 +216,27 @@ def test_explicit_skip_does_not_touch_speech_environment(robot_build):
         'MALBUT_STT_MODEL_PATH': '/missing model',
     })
     assert result.returncode == 0, result.stderr
-    assert [call['name'] for call in calls] == ['cloud', 'colcon']
+    assert [call['name'] for call in calls] == ['fall', 'cloud', 'colcon']
     assert not (cache / 'runtime').exists()
     assert not (cache / 'whisper-cpp-build').exists()
+
+
+def test_explicit_fall_skip_does_not_prepare_gpu_runtime(robot_build):
+    result, calls, _, _ = robot_build(overrides={
+        'MALBUT_BUILD_SPEECH': '0', 'MALBUT_BUILD_FALL_POSE': '0'})
+    assert result.returncode == 0, result.stderr
+    assert [call['name'] for call in calls] == ['cloud', 'colcon']
+
+
+def test_fall_preparation_failure_stops_build(robot_build):
+    result, calls, _, _ = robot_build(overrides={
+        'MALBUT_BUILD_SPEECH': '0', 'FAIL_STAGE': 'fall'})
+    assert result.returncode == 19
+    assert [call['name'] for call in calls] == ['fall']
+
+
+def test_invalid_fall_build_flag_fails_before_install(robot_build):
+    result, calls, _, _ = robot_build(overrides={
+        'MALBUT_BUILD_SPEECH': '0', 'MALBUT_BUILD_FALL_POSE': 'yes'})
+    assert result.returncode != 0 and calls == []
+    assert 'MALBUT_BUILD_FALL_POSE must be' in result.stderr

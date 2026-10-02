@@ -181,11 +181,13 @@ Python 실행 의존성이 모두 설치되는 것은 아니다.
 `malbut_fall_pose`·낙상 코디네이터를 각각 한 번 시작한다. 기존 홈캠 미디어의 `start_detector=false`는
 유지한다. 영상 저장용 감지기를 별도로 켜서 두 번 실행하지 않는다.
 
-Pose 실행 환경은 다음처럼 따로 준비한다. 명령은 의존성을 설치하지만 모델 다운로드,
-카메라 사용, Cloud 호출은 하지 않는다. 시스템 Torch/CUDA는 변경하지 않는다.
+실기기 `build.sh`가 Pose 전용 `~/.cache/malbut_fall_pose/runtime`을 준비한다.
+환경만 별도로 준비하려면 아래 명령을 쓴다. GPU용 ONNX Runtime과 작은 Python 의존성만
+설치하고 기존 CUDA·cuDNN·Torch는 그대로 사용한다. OSNet/ReID 가상환경과도 분리한다.
+모델 다운로드, 카메라 사용, Cloud 호출은 하지 않는다.
 
 ```bash
-bash ~/ros2_ws/src/malbut/homecam_agent/scripts/prepare_fall_pose_runtime.sh
+bash ~/ros2_ws/src/malbut/homecam_agent/scripts/prepare_fall_pose_runtime.sh --gpu
 ```
 
 전체 저장소를 옮긴 구조라면 경로의 `malbut/` 뒤에 `malbut_test/`를 붙인다.
@@ -215,24 +217,28 @@ Pose에도 같은 GPU 선택·스레드 제한을 적용한다. 이번 기본값
 
 #### GPU 환경 준비와 적용 확인
 
-코드만 업데이트해도 스레드 제한은 적용되지만, CPU 전용 ONNX Runtime에 GPU 기능이
-생기지는 않는다. 설치 스크립트의 기본 모드는 기존 ORT가 있으면 유지하며 GPU 버전에
-CPU 패키지를 덮어쓰지 않는다. GPU가 없는 환경은 경고와 함께 CPU로 시작한다.
+로봇 빌드는 `--gpu`로 준비한다. JetPack 6 / L4T R36·aarch64·Python 3.10에서는
+기존 ReID 설치 스크립트에서도 사용하는 GPU ORT 1.23.0 wheel을, x86_64에서는
+`onnxruntime-gpu==1.23.2`를 사용한다. 실행 환경은 ReID와 별개다.
+해당 venv 안의 CPU ORT만 교체하며 사용자·시스템 패키지는 삭제하지 않는다.
+이미 같은 GPU wheel이 있으면 재다운로드하지 않는다. NVIDIA wheel 라이브러리가
+사용자 site-packages에 설치돼 있으면 해당 `nvidia` 디렉터리만 연결해 재사용한다.
+GPU를 찾지 못하면 실행 시 `auto`가 CPU를 선택하는 기존 정책은 유지한다.
 
-GPU 설치는 해당 로봇의 Python·aarch64·JetPack·CUDA·cuDNN에 맞는 **로컬 wheel**을
-준비한 뒤 별도로 실행한다. 스크립트는 wheel을 자동으로 고르거나 Torch/CUDA를 바꾸지
-않는다. [ORT의 CUDA/cuDNN 호환 조건](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#requirements)을
+다른 대상에서는 호환 **로컬 wheel**을 지정한다.
+[ORT의 CUDA/cuDNN 호환 조건](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#requirements)을
 확인해야 하며 PC용 wheel을 Jetson에 그대로 설치하면 안 된다.
 
 ```bash
 bash homecam_agent/scripts/prepare_fall_pose_runtime.sh --cuda-wheel /absolute/path/to/compatible.whl
-export MALBUT_FALL_POSE_PYTHON="${XDG_CACHE_HOME:-$HOME/.cache}/malbut_fall_pose/runtime-cuda/bin/python"
 ros2 run malbut_agent_server malbut-fall-preflight --probe --pose-execution-provider cuda
 ```
 
-GPU 설치는 기존 `runtime`을 보존하고 `runtime-cuda`를 사용한다. 위 환경변수는
-Bringup을 실행하는 셸이나 서비스에도 설정한다. 이미 검증된 GPU Python을 쓰려면 그
-경로를 지정해도 된다. preflight에만 경로를 지정하고 Bringup에는 빠뜨리지 않는다.
+GPU 설치도 `malbut_fall_pose/runtime`을 사용하며 Bringup·preflight 기본 경로와 같다.
+별도 경로 export는 필요 없다. 기존 `MALBUT_FALL_POSE_PYTHON` 또는 launch 인자가
+있으면 그 명시값이 우선하므로, 새 기본 환경을 쓸 때는 기존 경로 지정을 제거한다.
+환경 준비만 생략하려면 빌드에 `MALBUT_BUILD_FALL_POSE=0`을 지정한다.
+스크립트를 옵션 없이 직접 실행하면 기존 ORT를 유지하며 새 환경은 CPU용으로 준비한다.
 `--probe`는 같은 모델을 요청한 제공자로 불러오지만 실제 카메라 추론/속도까지 검증하지 않는다.
 단순 provider 목록에 CUDA가 보인다는 것만으로 GPU 준비 완료로 처리하지 않는다.
 

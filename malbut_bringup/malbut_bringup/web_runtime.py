@@ -222,7 +222,7 @@ class RuntimeSupervisor:
             # One Bringup for both: the mode only picks the first localization.
             from ament_index_python.packages import get_package_share_directory
             launch_file = (Path(get_package_share_directory('malbut_bringup'))
-                           / 'launch/robot.launch.py')
+                           / 'launch/bringup.launch.py')
             command = ['ros2', 'run', 'malbut_system_manager', 'managed_bringup',
                        str(launch_file),
                        'web_panel:=false', 'publish_debug_image:=true',

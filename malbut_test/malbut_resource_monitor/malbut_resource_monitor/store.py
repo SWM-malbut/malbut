@@ -33,6 +33,9 @@ class Store:
                 'Process CPU: one core = 100%; system CPU: entire machine = 100%.',
                 'RSS includes shared pages; do not sum process RSS as physical RAM.',
                 'Per-process GPU utilization is unavailable on this Jetson collector.',
+                'jtop per-process GPU memory is not GPU utilization; missing values are null.',
+                'Launch membership comes from an inherited launch marker, not ROS node guesses.',
+                'Launch channels repeat process samples; do not add both views together.',
                 'Action times are status receipt times, not request or motor start times.',
                 'Topic Hz/bytes are received CDR samples, '
                 'not guaranteed publish Hz or wire traffic.',

@@ -156,6 +156,9 @@ class RecoveryOwner(Node):
 
     def recoverable(self):
         """Allow manual recovery after READY or after a reached startup gate failed."""
+        if self.launch_context is not None and getattr(
+                self.launch_context.locals, 'malbut_modular_bringup', False):
+            return False  # Module-aware recovery is a separate follow-up.
         return self.complete() or (self.launch_context is not None and getattr(
             self.launch_context.locals, 'malbut_startup_failed', False))
 

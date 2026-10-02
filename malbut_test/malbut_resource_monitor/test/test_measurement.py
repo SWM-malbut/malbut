@@ -254,7 +254,7 @@ def test_session_label_is_persistent_but_never_changes_collector_logs(tmp_path):
 
 def test_deployment_wiring_only():
     deployment = Path(__file__).resolve().parents[2]
-    launch = (deployment / 'malbut_bringup/launch/robot.launch.py').read_text()
-    assert "'resource_monitor': 'true'" in launch
+    launch = (deployment / 'malbut_bringup/launch/bringup.launch.py').read_text()
+    assert "'resource_monitor', default_value='true'" in launch
     assert "return record_first(startup, value('resource_log_root'))" in launch
     assert '"$robot_source_dir/malbut_resource_monitor"' in (deployment / 'build.sh').read_text()

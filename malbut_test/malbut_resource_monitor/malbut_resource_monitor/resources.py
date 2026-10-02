@@ -165,8 +165,9 @@ class LinuxSampler:
         self.tracked = set()  # (pid, start ticks); retain reparented children, not reused PIDs
         self.hz = os.sysconf('SC_CLK_TCK')
         self.last_time = None
+        self.launches = {}
 
-    def sample(self):
+    def sample(self, gpu_processes=None):
         now = time.monotonic()
         dt = None if self.last_time is None else now - self.last_time
         ticks = cpu_ticks(read(self.proc / 'stat'))
@@ -176,7 +177,8 @@ class LinuxSampler:
         for core, value in ticks.items():
             if core != 'cpu':
                 system[f'{core}_percent'] = cpu_percent(value, self.last_cpu.get(core))
-                mhz = read(self.sys / f'devices/system/cpu/{core}/cpufreq/scaling_cur_freq').strip()
+                frequency_path = self.sys / f'devices/system/cpu/{core}/cpufreq/scaling_cur_freq'
+                mhz = read(frequency_path).strip()
                 system[f'{core}_mhz'] = float(mhz) / 1000 if mhz.isdigit() else None
         for key, value in memory.items():
             if key in ('MemTotal', 'MemAvailable', 'SwapTotal', 'SwapFree'):
@@ -229,6 +231,17 @@ class LinuxSampler:
             previous = self.last_proc.get(identity)
             status = kilobytes(read(self.proc / str(pid) / 'status'))
             group = classify(argv, pid, os.getpid())
+            if not self.launches.get(identity):
+                try:
+                    # Inspect only our non-secret marker; never persist the environment.
+                    environment = (self.proc / str(pid) / 'environ').read_bytes().split(b'\0')
+                    marker = next((item.split(b'=', 1)[1].decode() for item in environment
+                                   if item.startswith(b'MALBUT_MEASUREMENT_LAUNCH=')), '')
+                except (OSError, UnicodeError):
+                    marker = ''
+                self.launches[identity] = (marker if re.fullmatch(r'[a-z][a-z0-9_]{0,63}', marker)
+                                           else None)
+            launch = 'observer' if group == 'observer' else self.launches[identity]
             try:
                 executable = os.readlink(self.proc / str(pid) / 'exe')
                 cwd = os.readlink(self.proc / str(pid) / 'cwd')
@@ -246,19 +259,29 @@ class LinuxSampler:
             self.store.process(identity, {
                 'pid': pid, 'start_ticks': start, 'group': group, 'executable': executable,
                 'entrypoint': entrypoint, 'ros_node_names': node_names,
+                'launch': launch, 'launch_source': (
+                    'collector' if group == 'observer' else 'environment' if launch else None),
                 'shared_process': group in ('nav2_shared', 'components_shared'),
             })
             channel = 'processes/' + group
             self.store.register(channel, kind='process', label=group)
-            self.store.write(channel, {
+            record = {
+                **self.store.stamp(),
                 'identity': identity, 'pid': pid, 'ppid': ppid, 'state': state,
                 'cpu_percent': (100 * (used - previous) / self.hz / dt
                                 if previous is not None and dt and used >= previous else None),
                 'ram_rss_mib': status.get('VmRSS', 0) / 1048576 if 'VmRSS' in status else None,
                 'swap_mib': status.get('VmSwap', 0) / 1048576 if 'VmSwap' in status else None,
                 'gpu_percent': None,
-            })
+                'gpu_memory_mib': (gpu_processes or {}).get(identity, {}).get('gpu_memory_mib'),
+                'gpu_memory_source': ('jtop' if identity in (gpu_processes or {}) else None),
+            }
+            self.store.write(channel, record)
+            launch_channel = 'launches/' + (launch or 'unassigned')
+            self.store.register(launch_channel, kind='launch', label=launch or 'unassigned')
+            self.store.write(launch_channel, record)
             current[identity] = used
+        self.launches = {key: value for key, value in self.launches.items() if key in current}
         self.tracked = {(pid, found[pid][1]) for pid in selected}
         self.last_proc, self.last_cpu, self.last_time = current, ticks, now
         system['sample_window_s'] = dt

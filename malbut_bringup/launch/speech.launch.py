@@ -1,4 +1,4 @@
-"""Start Agent, TTS, then STT without loading Whisper twice."""
+"""Start independent speech peers without waiting for robot control."""
 
 from math import isfinite
 from pathlib import Path
@@ -9,12 +9,14 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument, EmitEvent, ExecuteProcess, OpaqueFunction,
-    RegisterEventHandler, TimerAction,
+    LogInfo, RegisterEventHandler, TimerAction,
 )
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+from malbut_bringup.launch_support import file_path, module_actions
 
 
 def _setup(context):
@@ -45,15 +47,9 @@ def _setup(context):
     navigation_targets = value('navigation_targets')
     preflight_only = value('preflight_only') == 'true'
     input_has_aec = value('input_has_aec') == 'true'
-    control_server = value('control_server')
     command = [python, '-m', 'malbut_bringup.speech_preflight']
     supervised = [python, '-m', 'malbut_bringup.speech_process',
                   '--startup-timeout-s', str(timeouts['preflight_timeout_s'])]
-    control = ExecuteProcess(
-        cmd=[*command, '--wait-for-control', control_server,
-             '--timeout-s', str(timeouts['peer_timeout_s'])],
-        name='speech_control_readiness', output='screen',
-    ) if control_server != 'none' else None
     preflight = ExecuteProcess(
         cmd=[*supervised, '--', *command,
              '--stt-model-path', model, '--stt-library-path', library,
@@ -61,11 +57,7 @@ def _setup(context):
              '--cpp-threads', str(threads), '--agent-provider', agent_provider],
         name='speech_preflight', output='screen',
     )
-    peers = ExecuteProcess(
-        cmd=[*command, '--wait-for-peers', '--timeout-s', str(timeouts['peer_timeout_s'])],
-        name='speech_peer_readiness', output='screen',
-    )
-    stage = 'control' if control else 'preflight'
+    stage = 'preflight'
     runtime_nodes = []
     stt = None
 
@@ -99,6 +91,9 @@ def _setup(context):
         nonlocal stage, stt
         if launch_context.is_shutdown:
             return []
+        for path, label in ((python, 'speech Python'), (model, 'STT model'),
+                            (library, 'STT CUDA library')):
+            file_path(path, label)
         config = Path(get_package_share_directory('malbut_stt')) / 'config/jetson.yaml'
         if not config.is_file():
             return fail(f'Speech STT configuration is missing: {config}')
@@ -131,56 +126,24 @@ def _setup(context):
             }],
         )
         runtime_nodes.extend([agent, tts, stt])
-        stage = 'peers'
-        return [agent, tts, peers, watchdog('peers', timeouts['peer_timeout_s'])]
-
-    def start_after_control(launch_context):
-        nonlocal stage
-        if preflight_only:
-            stage = 'preflight'
-            return [preflight, watchdog('preflight', timeouts['preflight_timeout_s'])]
-        # Normal Bringup skips the disposable model/audio preflight. Keep the
-        # explicit preflight_only diagnostic; STT still validates its own startup.
-        # stage = 'preflight'
-        # return [preflight, watchdog('preflight', timeouts['preflight_timeout_s'])]
-        return start_runtime(launch_context)
-
-    def control_exited(event, launch_context):
-        if launch_context.is_shutdown or stage != 'control':
-            return []
-        if event.returncode != 0:
-            return fail('Speech robot control readiness failed')
-        return start_after_control(launch_context)
-
-    def peers_exited(event, launch_context):
-        nonlocal stage
-        if launch_context.is_shutdown or stage != 'peers':
-            return []
-        if event.returncode != 0:
-            return fail('Speech peer readiness failed')
         stage = 'running'
-        return [stt]
+        return [agent, tts, stt]
 
     def child_exited(event, launch_context):
-        if launch_context.is_shutdown or stage == 'stopped':
+        if launch_context.is_shutdown or event.action not in runtime_nodes:
             return []
-        if event.action in runtime_nodes:
-            if (getattr(launch_context.locals, 'malbut_recovery_owner', False)
-                    and getattr(launch_context.locals, 'malbut_startup_complete', False)):
-                return []  # Recorded by the owner for manual recovery.
-            return fail(f'Speech runtime child exited: {event.process_name}')
-        return []
+        # A module-local failure must not shut down another module.
+        # Module-aware recovery is a separate follow-up.
+        return [LogInfo(msg=f'Speech child stopped: {event.process_name} '
+                            f'(code {event.returncode}); other modules remain running')]
 
     registrations = [
         RegisterEventHandler(OnProcessExit(target_action=preflight, on_exit=preflight_exited)),
-        RegisterEventHandler(OnProcessExit(target_action=peers, on_exit=peers_exited)),
         RegisterEventHandler(OnProcessExit(on_exit=child_exited)),
     ]
-    if control:
-        return [*registrations, RegisterEventHandler(OnProcessExit(
-            target_action=control, on_exit=control_exited)),
-            control, watchdog('control', timeouts['peer_timeout_s'])]
-    return [*registrations, *start_after_control(context)]
+    if preflight_only:
+        return [*registrations, preflight, watchdog('preflight', timeouts['preflight_timeout_s'])]
+    return [*registrations, *start_runtime(context)]
 
 
 def generate_launch_description():
@@ -193,6 +156,7 @@ def generate_launch_description():
         'agent_conversation_db': '~/.local/state/malbut/speech-dialogue.sqlite3',
         'python_executable': sys.executable, 'preflight_only': 'false',
         'preflight_timeout_s': '120.0', 'peer_timeout_s': '30.0',
+        # Accepted for old callers; external control never gates speech startup.
         'control_server': 'none',
         'manager_commands': 'true', 'navigation_targets': '',
     }
@@ -205,5 +169,5 @@ def generate_launch_description():
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=default, choices=choices.get(name))
           for name, default in defaults.items()],
-        OpaqueFunction(function=_setup),
+        module_actions('speech', _setup),
     ])

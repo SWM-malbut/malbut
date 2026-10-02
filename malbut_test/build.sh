@@ -148,6 +148,13 @@ if "include-system-site-packages=true" not in config.splitlines():
     echo 'MALBUT_BUILD_SPEECH must be 1 (robot default) or 0 (skip speech setup).' >&2
     exit 1 ;;
 esac
+# Prepare the dedicated fall interpreter, never another feature's Python.
+# The GPU wheel reuses installed CUDA/cuDNN; no Torch/CUDA toolkit download.
+case "${MALBUT_BUILD_FALL_POSE:-1}" in
+  1) bash "$robot_source_dir/homecam_agent/scripts/prepare_fall_pose_runtime.sh" --gpu ;;
+  0) echo 'Skipping fall pose runtime preparation (MALBUT_BUILD_FALL_POSE=0).' ;;
+  *) echo 'MALBUT_BUILD_FALL_POSE must be 1 or 0.' >&2; exit 1 ;;
+esac
 # The deployment copy includes cloud media. Its helper prepares/reuses the SDK
 # without installing OS packages; setup.sh owns OS dependency installation.
 bash "$robot_source_dir/homecam_agent/scripts/build_robot_cloud.sh"

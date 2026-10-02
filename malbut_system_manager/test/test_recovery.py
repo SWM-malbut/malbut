@@ -89,6 +89,15 @@ def test_recovery_does_not_overlap_a_timed_out_lifecycle_command():
     assert owner._goal(request) == GoalResponse.REJECT
 
 
+def test_modular_bringup_rejects_legacy_recovery_until_followup():
+    """No empty-record success while module-aware recovery is deferred."""
+    owner = _owner()
+    owner.launch_context.extend_globals({'malbut_modular_bringup': True})
+    request = SimpleNamespace(capability_id='recovery', arguments_yaml='{}')
+    assert not owner.recoverable()
+    assert owner._goal(request) == GoalResponse.REJECT
+
+
 def test_probe_uses_original_timeout_and_does_not_reuse_old_exit(tmp_path):
     """Each pass must wait for the fresh probe, never the cached startup result."""
     params = tmp_path / 'probe.yaml'

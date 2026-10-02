@@ -44,6 +44,15 @@ def test_robot_speech_launch_and_native_assets_match_source():
     """Ship the launch gate, preflight modules and Jetson model bridge together."""
     for path in (
         'malbut_bringup/launch/robot.launch.py',
+        'malbut_bringup/launch/bringup.launch.py',
+        'malbut_bringup/launch/tracking.launch.py',
+        'malbut_bringup/launch/patrol.launch.py',
+        'malbut_bringup/launch/autoslam.launch.py',
+        'malbut_bringup/launch/manual.launch.py',
+        'malbut_bringup/launch/relocalization.launch.py',
+        'malbut_bringup/launch/homecam.launch.py',
+        'malbut_bringup/launch/fall.launch.py',
+        'malbut_bringup/malbut_bringup/launch_support.py',
         'malbut_bringup/launch/speech.launch.py',
         'malbut_bringup/malbut_bringup/speech_preflight.py',
         'malbut_bringup/malbut_bringup/speech_process.py',
@@ -58,8 +67,12 @@ def test_robot_speech_launch_and_native_assets_match_source():
     ):
         original = (SOURCE / path).read_text()
         deployed = (ROBOT / path).read_text()
-        if path == 'malbut_bringup/launch/robot.launch.py':
+        if path == 'malbut_bringup/launch/bringup.launch.py':
             deployed = _without_resource_monitor(deployed)
+        if path == 'malbut_bringup/malbut_bringup/launch_support.py':
+            hook = "        SetEnvironmentVariable('MALBUT_MEASUREMENT_LAUNCH', name),\n"
+            assert deployed.count(hook) == 1
+            deployed = deployed.replace(hook, '', 1)
         assert original == deployed, path
 
 
@@ -67,23 +80,43 @@ def _without_resource_monitor(deployed):
     """Allow only the reviewed test-only observer hooks, not application drift."""
     replacements = (
         ('from malbut_resource_monitor.launch_support import record_first\n', ''),
-        ("        if (isinstance(event.action, Node)\n"
-         "                and str(event.action.node_package) == 'malbut_resource_monitor'):\n"
-         '            # Measurement is optional and must never stop an application.\n'
-         '            return []\n', ''),
-        ('    startup = [\n', '    return [\n'),
-        ("    if value('resource_monitor') == 'true':\n"
+        ('from launch.actions import DeclareLaunchArgument, LogInfo,',
+         'from launch.actions import LogInfo,'),
+        ("    startup = actions\n"
+         "    if value('resource_monitor') == 'true':\n"
          "        return record_first(startup, value('resource_log_root'))\n"
-         '    return startup\n', ''),
-        ("        'resource_monitor': 'true',\n"
-         "        'resource_log_root': str(Path.home() / '.ros/malbut/resource_logs'),\n", ''),
-        ("            'start_hardware', 'perception', 'resource_monitor',\n",
-         "            'start_hardware', 'perception',\n"),
+         "    return startup\n", '    return actions\n'),
+        ("        DeclareLaunchArgument('resource_monitor', default_value='true', "
+         "choices=['true', 'false']),\n"
+         "        DeclareLaunchArgument('resource_log_root',\n"
+         "                              default_value=str(Path.home() / "
+         "'.ros/malbut/resource_logs')),\n", ''),
     )
     for hook, original in replacements:
         assert deployed.count(hook) == 1, hook
         deployed = deployed.replace(hook, original, 1)
     return deployed
+
+
+def test_robot_measurement_launch_marker_is_scoped():
+    """Tag nested processes without leaking the module marker to siblings."""
+    from launch import LaunchContext
+    from launch.utilities import visit_all_entities_and_collect_futures
+
+    support = runpy.run_path(str(ROBOT / 'malbut_bringup/malbut_bringup/launch_support.py'))
+    context = LaunchContext()
+    context.environment['MALBUT_MEASUREMENT_LAUNCH'] = 'outer'
+    observed = []
+
+    def capture(ctx):
+        observed.append(ctx.environment['MALBUT_MEASUREMENT_LAUNCH'])
+        return []
+
+    for name in ('tracking', 'fall', 'robot'):
+        action = support['module_actions'](name, capture)
+        visit_all_entities_and_collect_futures(action, context)
+        assert context.environment['MALBUT_MEASUREMENT_LAUNCH'] == 'outer'
+    assert observed == ['tracking', 'fall', 'robot']
 
 
 def test_robot_fall_startup_helper_matches_source():

@@ -116,7 +116,7 @@ def test_navigation_launch_uses_only_fixed_argv_and_explicit_selected_map(runtim
         f'map_directory:={supervisor.catalog.directory}',
         f'map:={supervisor.catalog.resolve("home.yaml")}']
     assert kwargs['start_new_session'] is True
-    assert args[0][4].endswith('/malbut_bringup/launch/robot.launch.py')
+    assert args[0][4].endswith('/malbut_bringup/launch/bringup.launch.py')
     assert not kwargs.get('shell', False)
     with pytest.raises(RuntimeError, match='Stop'):
         supervisor.start('mapping')

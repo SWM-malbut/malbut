@@ -16,13 +16,16 @@ pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Br
 `homecam_detector`도 빌드 목록에 포함한다. Pose는 영상 저장 ON/OFF가 아니라
 낙상 감지 설정·카메라 허용·VLM 실행 상태를 보고 동작한다.
 
-VLM 설정·Cloud 키 외에 YOLO26s pose ONNX 모델과 실행 환경을 별도로 준비해야 한다.
-`bash homecam_agent/scripts/prepare_fall_pose_runtime.sh`로 Pose 전용 Python 환경을
-만들 수 있다. 이 명령은 모델을 내려받거나 카메라·Cloud를 실행하지 않는다.
+VLM 설정·Cloud 키 외에 YOLO26s pose ONNX 모델을 별도로 준비해야 한다.
+`build.sh`는 `~/.cache/malbut_fall_pose/runtime`에 GPU용 ONNX Runtime을 준비하고
+Bringup은 이 낙상 전용 Python을 기본 사용한다. 기존 CUDA·cuDNN·Torch는 재설치하지
+않고 OSNet/ReID 가상환경도 건드리지 않는다. 환경만 준비하려면
+`bash homecam_agent/scripts/prepare_fall_pose_runtime.sh --gpu`를 쓴다.
+모델을 내려받거나 카메라·Cloud를 실행하지 않는다.
 낙상 Pose는 이제 기본 `auto / ORT 스레드 2 / spinning OFF / OpenCV 스레드 1`로
-실행한다. `auto`가 CPU를 선택하면 경고를 남긴다. 코드 업데이트만으로 GPU 의존성이
-설치되는 것은 아니며, 호환 wheel을 준비한 경우 설치 스크립트의 `--cuda-wheel`과
-아래 문서의 CUDA 사전 점검을 사용한다.
+실행한다. `auto`가 CPU를 선택하면 경고를 남긴다. JetPack 6 / Python 3.10은
+고정 GPU wheel을 사용하며 다른 환경은 `--cuda-wheel`로 호환 wheel을 지정할 수 있다.
+실제 GPU 초기화 확인은 아래 문서의 CUDA 사전 점검을 사용한다.
 기본 모델 경로, 실행 인자와 테스트 순서는
 [낙상 감지 로봇 실행 준비](malbut_agent_server/docs/fall/fall_robot_preparation.md)를 따른다.
 PC에서 연결 테스트를 통과해도 Jetson 성능과 카메라 수신이 검증된 것은 아니다.
@@ -66,7 +69,7 @@ PC에서 연결 테스트를 통과해도 Jetson 성능과 카메라 수신이 �
 Gazebo·actor·시나리오·벤치마크는 포함하지 않는다.
 STT·Agent·TTS 음성 기능과 실기기용 간단한 웹 테스트 패널은 포함한다.
 `build.sh` 하나가 음성 런타임·STT CUDA 라이브러리와 ROS 패키지를 빌드하고,
-`robot.launch.py` 하나가 로봇 전체와 STT·Agent·TTS를 기본으로 함께 실행한다.
+`bringup.launch.py` 하나가 로봇 전체와 STT·Agent·TTS를 기본으로 함께 실행한다.
 실행 모드는 없으며, 저장 지도 선택 여부만 실행 중에 바뀐다
 ([실행 구성](malbut_bringup/README.md#실행-구성)).
 홈캠 영상 전송도 위 빌드에 포함한다. 서비스 웹 자체는 AWS에 별도 배포한다.
@@ -114,7 +117,8 @@ bash ~/ros2_ws/src/malbut/setup.sh
 
 준비가 성공하면 빌드한다. 이후 코드만 갱신한 경우에는 아래 빌드부터 실행한다.
 `build.sh`는 긴 홈캠 빌드 전에 음성 소스·모델·CUDA 도구를 확인하고, 빠진 준비가 있으면
-`setup.sh` 실행을 안내한다. 음성 가상환경·CUDA 라이브러리·ROS 빌드는 여기서 처리한다.
+`setup.sh` 실행을 안내한다. 음성 가상환경·CUDA 라이브러리·낙상 전용 GPU ORT 환경·ROS
+빌드는 여기서 처리한다. 낙상 환경은 이미 준비된 동일 버전을 재사용한다.
 
 ```zsh
 cd ~/ros2_ws
@@ -126,8 +130,10 @@ source ~/ros2_ws/install/malbut_test/local_setup.zsh
 YOLO 소스도 적용본 안에 있으므로 별도로 다운로드하지 않는다.
 메모리 부족 시 빌드 명령 뒤에 `--parallel-workers 1`을 붙여 colcon 동시 빌드를 줄일 수 있다.
 STT 네이티브 빌드는 `nproc`으로 현재 프로세스에서 사용 가능한 CPU 수를 확인해 자동으로 병렬 빌드한다.
-CUDA 없는 CI나 센서 전용 빌드는 `MALBUT_BUILD_SPEECH=0 bash src/malbut/build.sh`로
-음성 환경·네이티브 빌드를 생략할 수 있으며, 그 결과로 실행할 때는 `speech:=false`를 지정한다.
+CUDA 없는 CI나 센서 전용 빌드는
+`MALBUT_BUILD_SPEECH=0 MALBUT_BUILD_FALL_POSE=0 bash src/malbut/build.sh`로
+음성·낙상 환경 준비를 생략할 수 있다. 해당 기능 없이 실행하려면
+`speech:=false fall_monitor:=false`를 지정한다.
 `0`은 캐시된 whisper 브리지(`~/.cache/malbut_speech/whisper-cpp-build`)를 그대로 쓴다.
 `malbut_stt`가 요구하는 브리지 ABI가 바뀌면(예: 2→3) `build.sh`가 이 불일치를 찾아
 실패하므로, 그때는 `MALBUT_BUILD_SPEECH=1`로 한 번 빌드한다(`cmake`·`nvcc` 필요, 없으면
@@ -175,7 +181,7 @@ Bringup도 `robot_name=/`, `master_name=/`를 전달한다.
 GPU·음성 준비 전에는 인식과 음성을 끄고 센서·Nav2·관리자만 확인할 수 있다.
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py perception:=false speech:=false
+ros2 launch malbut_bringup bringup.launch.py perception:=false speech:=false
 ```
 
 확인이 끝나면 이 실행을 종료하고 웹 패널을 한 번 실행한다.
@@ -245,7 +251,7 @@ OSNet 준비 중 GPU provider가 표시되더라도 실제 모델 추론까지 �
 평소에는 이 명령을 따로 실행할 필요 없다.
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py publish_debug_image:=true speech:=false
+ros2 launch malbut_bringup bringup.launch.py publish_debug_image:=true speech:=false
 ```
 
 ## 4. 저장 지도로 Bringup 및 기능 요청
@@ -259,7 +265,7 @@ Bringup이 켜져 있으면 재시작 없이 SLAM을 끄고 저장 지도·AMCL�
 웹 대신 터미널로 직접 실행하는 경우, 처음부터 저장 지도로 켜거나:
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py \
+ros2 launch malbut_bringup bringup.launch.py \
   map:="$HOME/.ros/malbut/maps/home2.yaml" publish_debug_image:=true
 ```
 
@@ -278,8 +284,10 @@ LiDAR 스캔이 지도와 맞는지 확인한다. 맞지 않거나 기록이 없
 AMCL 위치는 5초 주기로 `~/.ros/malbut/localization/last_pose.yaml`에 저장한다.
 찾지 못하거나 결과가 실제와 다르면 RViz의 **2D Pose Estimate**로 실제 위치를 지정한다.
 지도 YAML·이미지가 바뀌면 이전 위치는 쓰지 않는다.
-관리자는 처음부터 켜져 위치 추정을 관리하고, 센서·TF·Nav2와 응용 서버가 준비되면
-미션을 받기 시작한다. 준비 검사기는 **부팅 확인용**이며 주행 안전감시기를 대체하지 않는다.
+관리자는 처음부터 켜져 위치 추정을 관리한다. 각 기능은 외부 ROS 준비와 무관하게
+실행되며, 실제 요청 처리 시 필요한 Action·지도·센서 조건을 확인한다.
+공통 기반만 실행할 때는 `robot.launch.py`, 전체 실행에는 `bringup.launch.py`를 사용한다.
+단계형 수동 복구는 새 모듈 구조에 맞추는 후속 작업까지 사용할 수 없다.
 아래 요청 전에는 로봇이 자동으로 순찰/추적을 시작하지 않는다.
 같은 웹 주소에서 지도·영상 확인·추적·순찰·이 패널의 요청 취소가 가능하다.
 위치 보정이 실패하면 웹의 지도 표시만으로 초기화되지 않으므로
@@ -329,13 +337,13 @@ ros2 service call /malbut/mission/execute/_action/cancel_goal \
 음성 launch를 중복 실행하지 않는다. 저장 지도로 켜려면 위 4절처럼 `map:=...`을 지정한다.
 
 ```zsh
-ros2 launch malbut_bringup robot.launch.py
+ros2 launch malbut_bringup bringup.launch.py
 ```
 
-`speech:=true`가 기본값이다. 로봇 준비 확인 뒤 음성 점검을 시작하며,
-점검 → Agent·TTS → 관리자 준비 확인 → STT 순서이고, 실패 시 Bringup 전체가 종료된다.
+`speech:=true`가 기본값이다. Agent·TTS·STT는 관리자·Nav2 준비를 기다리지 않고
+실행한다. 음성 초기화 실패는 다른 모듈을 종료하지 않으며 로그로 확인한다.
 STT는 로컬 whisper.cpp CUDA, Agent와 TTS는 기본 OpenAI API를 사용한다.
-말로 추적·순찰을 실행하는 연결은 별도 범위다.
+Agent의 로봇 명령은 실제 요청 시 관리자 Action 연결이 필요하다.
 
 기본 모델 경로는 `~/.cache/malbut_speech/models/ggml-small.bin`, CUDA 라이브러리는
 `~/.cache/malbut_speech/whisper-cpp-build/bin/libmalbut_whisper.so`다.

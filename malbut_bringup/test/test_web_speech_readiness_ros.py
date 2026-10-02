@@ -7,8 +7,8 @@ import pytest
 from malbut_bringup.web_panel import PanelData, RosBridge
 
 
-def test_web_receives_latched_speech_ready_and_clears_it_after_publisher_exit(monkeypatch):
-    """An Action server alone is insufficient; a departed STT cannot stay ready."""
+def test_speech_presence_does_not_gate_manager_readiness(monkeypatch):
+    """Speech status is observable, but STT exit does not block other features."""
     rclpy = pytest.importorskip('rclpy')
     actions = pytest.importorskip('malbut_interfaces.action')
     from rclpy.action import ActionServer
@@ -50,8 +50,18 @@ def test_web_receives_latched_speech_ready_and_clears_it_after_publisher_exit(mo
     try:
         assert not bridge.data.snapshot()['runtime']['ready']
         wait_for(True)
+        deadline = time.monotonic() + 5.0
+        while not bridge.speech_ready and time.monotonic() < deadline:
+            executor.spin_once(timeout_sec=0.05)
+        assert bridge.speech_ready
         speech.destroy_publisher(publisher)
-        wait_for(False)
+        deadline = time.monotonic() + 5.0
+        while (bridge.node.count_publishers('/malbut/speech/status')
+               and time.monotonic() < deadline):
+            executor.spin_once(timeout_sec=0.05)
+        assert bridge.node.count_publishers('/malbut/speech/status') == 0
+        bridge._refresh()
+        assert bridge.data.snapshot()['runtime']['ready']
     finally:
         bridge.runtime.close()
         executor.shutdown()
