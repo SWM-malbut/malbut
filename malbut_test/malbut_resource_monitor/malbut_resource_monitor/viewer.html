@@ -45,23 +45,36 @@
   #speechRows td {vertical-align:top} #speechRows .speech-text {white-space:pre-wrap; min-width:200px}
   #speechRows .speech-stt {color:#88baff} #speechRows .speech-tts {color:#65dece}
   #speechRows small {display:block; margin-top:5px; overflow-wrap:anywhere}
+  .pages {display:flex; gap:8px; overflow-x:auto; padding:18px 0 4px}
+  .pages a {white-space:nowrap; color:#b4c6d4; text-decoration:none; border-radius:8px; padding:11px 16px; border:1px solid #314454}
+  .pages a[aria-current="page"] {background:#214b58; color:#fff; border-color:#65dece}
+  .page-heading {margin:22px 0 0}.page-heading h2 {font-size:21px;margin-bottom:6px}
+  .session-tools {border-top:1px solid #314454; padding-top:12px}
+  .summary-cards {display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:16px}
+  .summary-card {background:#111d27;border:1px solid #314454;border-radius:9px;padding:14px}
+  .summary-card strong {display:block;font-size:23px;margin:7px 0}.summary-card small {display:block}
+  .gpu-notice {border-left:3px solid #88baff;padding:10px 14px;background:#111d27;line-height:1.6}
   @media(max-width:650px) {body{padding:14px}.panel{padding:14px}canvas.chart{height:300px}.metric-groups{grid-template-columns:1fr}}
 </style>
 <header><div class="tag">MALBUT / OBSERVATION ONLY</div><h1>실기기 측정 로그</h1>
 <div class="muted">저장한 실측값을 조회합니다. 이 화면은 ROS에 연결하거나 로봇을 제어하지 않습니다.</div></header>
+<nav id="pages" class="pages" aria-label="측정 페이지">
+  <a href="#system">전체 자원</a><a href="#launch">launch별</a><a href="#process">기능별</a>
+  <a href="#topic">토픽</a><a href="#speech">음성 대화</a><a href="#action">실행 기록</a><a href="#catalog">프로세스 / 원본</a>
+</nav>
+<div class="page-heading"><h2 id="pageTitle">전체 자원</h2><div id="pageDescription" class="muted"></div></div>
 <section class="panel">
   <div class="grid">
     <label>실행 회차<select id="session"></select></label>
-    <label>로그 종류<select id="kind"><option value="system">로봇 컴퓨터 전체</option><option value="process">기능별 프로세스</option><option value="topic">토픽 수신 지표</option><option value="speech">음성 대화 · STT / TTS</option></select></label>
+    <label hidden>로그 종류<select id="kind"><option value="system">로봇 컴퓨터 전체</option><option value="launch">launch별</option><option value="process">기능별 프로세스</option><option value="topic">토픽 수신 지표</option><option value="speech">음성 대화 · STT / TTS</option><option value="action">실행 기록</option><option value="catalog">프로세스 / 원본</option></select></label>
     <label id="channelField">로그<select id="channel"></select></label>
   </div>
-  <p id="sessionInfo" class="muted"></p>
-  <form id="nameForm" class="row">
+  <details id="sessionDetails" class="session-tools"><summary>회차 정보 / 이름 편집</summary><p id="sessionInfo" class="muted"></p><form id="nameForm" class="row">
     <label for="sessionName">회차 이름</label><input id="sessionName" maxlength="80" placeholder="예: 거실 · 사람 추적 1차" autocomplete="off">
     <button id="saveName" type="submit">이름 저장</button><span id="nameStatus" role="status"></span>
-  </form>
+  </form></details>
   <div id="functionPanel" hidden>
-    <p class="muted">그래프에 표시할 기능을 체크하세요. 체크는 로봇 실행 상태가 아니라 <strong>그래프 표시 여부</strong>입니다.</p>
+    <p id="groupHint" class="muted">체크는 로봇 실행 상태가 아니라 그래프 표시 여부입니다.</p>
     <div class="row"><button id="allFunctions" type="button">모든 기능 표시</button><button id="noFunctions" type="button">모두 숨김</button><small id="functionCount"></small></div>
     <div id="functions" class="checks"></div>
   </div>
@@ -69,7 +82,7 @@
     <small id="liveStatus">2초마다 변경된 로그만 자동 갱신합니다.</small></div>
   <div id="processDownloads" class="row"></div>
 </section>
-<section class="panel">
+<section class="panel" id="dataPanel">
   <div class="grid">
     <label id="metricField">지표<select id="metric"></select></label>
     <label>시작 (회차 시작 후 초)<input id="start" type="number" min="0" step="0.1" value="0"></label>
@@ -77,6 +90,8 @@
     <label id="actionField">Action 상태 표시<select id="action"><option value="">선택 안 함</option></select></label>
   </div>
   <p id="notice"></p>
+  <div id="systemSummary" class="summary-cards" hidden></div>
+  <p id="gpuNotice" class="gpu-notice" hidden></p>
   <div id="systemMetrics" hidden>
     <h2>함께 볼 지표</h2>
     <p class="muted">같은 단위는 한 그래프에, 다른 단위는 별도 그래프에 표시합니다. 모든 그래프의 시간축은 같습니다. 체크는 표시만 바꾸며 수집에는 영향을 주지 않습니다.</p>
@@ -96,13 +111,13 @@
   </div>
 </section>
 <section class="panel" id="actionPanel"><h2>Action 실행 구간</h2>
-  <p class="muted">상태 토픽을 수신한 시각입니다. 요청 전송·모터 시작 시각과 다릅니다. 행을 누르면 해당 관측 구간으로 그래프를 좁힙니다.</p>
+  <p class="muted">상태 토픽을 수신한 시각입니다. 요청 전송·모터 시작 시각과 다릅니다. 행을 누르면 전체 자원 페이지에서 해당 구간을 봅니다.</p>
   <div class="scroll"><table><thead><tr><th>Goal UUID</th><th>첫 관측 (초)</th><th>마지막 관측 (초)</th><th>상태</th><th>구간 관측 길이</th></tr></thead><tbody id="events"></tbody></table></div>
 </section>
 <section class="panel" id="catalogPanel"><h2>프로세스 식별 / 저장 경로</h2>
   <p class="muted">여러 노드를 담은 컨테이너는 공유 프로세스로 표시합니다. PID별 RAM(RSS) 합계는 실제 전체 RAM과 같지 않습니다.</p>
   <p id="identityHelp" class="muted" hidden></p>
-  <div class="scroll"><table><thead><tr><th>기능</th><th>PID / 시작 tick</th><th>실행 파일 / 진입점</th><th>ROS 이름</th></tr></thead><tbody id="catalog"></tbody></table></div>
+  <div class="scroll"><table><thead><tr><th>기능 / launch</th><th>PID / 시작 tick</th><th>실행 파일 / 진입점</th><th>ROS 이름</th></tr></thead><tbody id="catalog"></tbody></table></div>
   <details><summary>기타 원본 로그 / 측정 한계</summary><div id="otherLogs" class="row"></div><ul id="limitations"></ul></details>
 </section>
 <script>
@@ -115,16 +130,20 @@
   try {restored=JSON.parse(localStorage.getItem(storageKey))} catch {}
   let groupChoices=restored?.groups||{}, hiddenSeries=new Set(restored?.hiddenSeries||[]);
   const systemChoices=restored?.systemMetrics||{}, expandedUnits=new Set(restored?.expandedUnits||['%','MiB']);
-  const systemPlots=new Map();
+  const systemPlots=new Map(), pageSelections=restored?.pageSelections||{};
   let legacyProcess=restored?.values?.process||'';
   for(const id of ['kind','start','end'])if(typeof restored?.values?.[id]==='string')$(id).value=restored.values[id];
   if(!$('kind').value)$('kind').value='system';
+  const pageInfo={system:['전체 자원','로봇 컴퓨터 전체의 CPU·RAM·GPU와 온도·전력을 확인합니다.'],launch:['launch별 자원','각 launch에서 시작된 프로세스를 비교합니다. 공통 Nav2·센서는 robot.launch.py 소속입니다.'],process:['기능별 자원','실행 파일·노드 이름으로 분류한 기능 그룹을 비교합니다.'],topic:['토픽 수신 지표','수집기가 받은 메시지의 빈도와 크기입니다. 발행률·네트워크 전송량과 다를 수 있습니다.'],speech:['음성 대화','STT 인식 문장, TTS 요청 문장과 재생 상태를 확인합니다.'],action:['실행 기록','Action 상태 토픽으로 관측한 시작·진행·종료 기록입니다.'],catalog:['프로세스 / 원본','프로세스 이름·실행 경로·launch 소속과 원본 로그를 확인합니다.']};
+  const initialPage=location.hash.slice(1);
+  if(pageInfo[initialPage]){if(restored&&restored.values?.kind!==initialPage){restored.values={...restored.values,kind:initialPage,...(pageSelections[initialPage]||{channel:'',metric:'',action:''})};restored.scrollY=0}$('kind').value=initialPage}
+  function processView(){return ['process','launch'].includes($('kind').value)}
   const details=document.querySelector('details');
   if(restored)details.open=restored.details===true;
   function preferred(id){return restored?.values?.[id]??$(id).value}
-  function saveState(){if(restored)return;try{localStorage.setItem(storageKey,JSON.stringify({values:Object.fromEntries(selectionIds.map(id=>[id,$(id).value])),groups:groupChoices,hiddenSeries:[...hiddenSeries],systemMetrics:systemChoices,expandedUnits:[...expandedUnits],scrollY:window.scrollY,details:details.open}))}catch{}}
+  function saveState(){if(restored)return;pageSelections[$('kind').value]=Object.fromEntries(['channel','metric','action'].map(id=>[id,$(id).value]));try{localStorage.setItem(storageKey,JSON.stringify({values:Object.fromEntries(selectionIds.map(id=>[id,$(id).value])),pageSelections,groups:groupChoices,hiddenSeries:[...hiddenSeries],systemMetrics:systemChoices,expandedUnits:[...expandedUnits],scrollY:window.scrollY,details:details.open}))}catch{}}
   function changed(key,value,render){const signature=JSON.stringify(value);if(rendered.get(key)===signature)return;render();rendered.set(key,signature)}
-  const labels={cpu_percent:'CPU (%)',ram_used_mib:'사용 RAM (MiB)',ram_rss_mib:'프로세스 RSS (MiB)',swap_used_mib:'사용 Swap (MiB)',swap_mib:'프로세스 Swap (MiB)',gpu_percent:'GPU (%) · 프로세스별 미지원',emc_percent:'EMC 대역폭 사용률 (%)',emc_mhz:'EMC 클럭 (MHz)',received_hz:'수집기 수신 Hz',received_bytes_per_s:'수신 CDR 바이트/초',collection_duration_ms:'수집 소요시간 (ms)',schedule_lateness_ms:'수집 일정 지연 (ms)'};
+  const labels={cpu_percent:'CPU (%)',ram_used_mib:'사용 RAM (MiB)',ram_rss_mib:'프로세스 RSS (MiB)',swap_used_mib:'사용 Swap (MiB)',swap_mib:'프로세스 Swap (MiB)',gpu_percent:'GPU (%) · 프로세스별 미지원',gpu_memory_mib:'GPU 메모리 (MiB) · jtop',emc_percent:'EMC 대역폭 사용률 (%)',emc_mhz:'EMC 클럭 (MHz)',received_hz:'수집기 수신 Hz',received_bytes_per_s:'수신 CDR 바이트/초',collection_duration_ms:'수집 소요시간 (ms)',schedule_lateness_ms:'수집 일정 지연 (ms)'};
   const unitTitles={'%':'사용률','MiB':'메모리 · RAM / Swap','MHz':'클럭','°C':'온도','mW':'전력','ms':'수집 처리시간','s':'표본 간격 · 경과시간'};
   function metricInfo(field){
     let unit='',name=labels[field]||field,match;
@@ -139,10 +158,12 @@
     if(field.startsWith('power_avg.'))name=field.slice(10,-3)+' 평균 전력';
     if(field==='sample_window_s')name='실제 표본 간격';
     if(field==='tegrastats_age_s')name='GPU 측정 경과시간';
+    if(field==='jtop_age_s')name='jtop 측정 경과시간';
+    if((match=/^gpu\.(.+)_(percent|mhz)$/.exec(field)))name=`${match[1]} GPU ${match[2]==='percent'?'사용률':'클럭'} · jtop`;
     // Unknown fields never share an axis on the assumption that their units match.
     return {field,unit,key:unit||'unknown:'+field,name,heading:unit?`${unitTitles[unit]} (${unit})`:field};
   }
-  function numericFields(list){const omit=new Set(['t','wall_ns','pid','ppid','received_total']);return [...new Set(list.flatMap(r=>Object.keys(r).filter(k=>!omit.has(k)&&(typeof r[k]==='number'||r[k]===null))))]}
+  function numericFields(list){const omit=new Set(['t','wall_ns','pid','ppid','received_total','gpu_memory_source','jtop_error']);return [...new Set(list.flatMap(r=>Object.keys(r).filter(k=>!omit.has(k)&&(typeof r[k]==='number'||r[k]===null))))]}
   function systemKey(){return JSON.stringify([$('session').value,$('channel').value])}
   function systemGroups(){
     const groups=new Map();for(const field of numericFields(rows)){const info=metricInfo(field);if(!groups.has(info.key))groups.set(info.key,{...info,fields:[]});groups.get(info.key).fields.push(info)}
@@ -154,6 +175,7 @@
     const fields=groups.flatMap(g=>g.fields.map(f=>f.field)),key=systemKey();
     if(!Array.isArray(systemChoices[key])&&fields.length){
       const previous=preferred('metric'),defaults=['cpu_percent','gpu_percent','emc_percent','ram_used_mib','swap_used_mib'];
+      defaults.push(...fields.filter(f=>/^gpu\..+_percent$/.test(f)));
       if(previous==='__cores'||previous==='__clocks')defaults.push(...fields.filter(f=>(previous==='__cores'?/^cpu\d+_percent$/:/^cpu\d+_mhz$/).test(f)));
       else if(previous)defaults.push(previous);
       systemChoices[key]=[...new Set(defaults.filter(f=>fields.includes(f)))];
@@ -175,6 +197,9 @@
     });
   }
   const groupLabels={perception:'인식 · YOLO / OSNet / 위치변환',follow_person:'사람 추적',patrol:'순찰',autoslam:'AutoSLAM',localization:'SLAM / 위치보정',nav2_shared:'Nav2 공유 프로세스',manager:'시스템 관리자',speech:'음성 / Agent',web_media:'웹 / 영상',fall:'낙상',observer:'측정기 자체 부하',other_robot:'기타 로봇 프로세스'};
+  const launchLabels={robot:'공통 기반',tracking:'사람 추적 · 인식',patrol:'순찰',autoslam:'AutoSLAM',manual:'수동 이동',relocalization:'위치 보정',speech:'음성',fall:'낙상',homecam:'홈캠',observer:'측정기',unassigned:'소속 미기록'};
+  function launchLabel(name){return !name||name==='unassigned'?'소속 미기록':name==='observer'?'측정기':`${name}.launch.py · ${launchLabels[name]||name}`}
+  function channelLabel(value){return value.kind==='launch'?launchLabel(value.label):groupLabels[value.label]||value.label}
   const nodeLabels={yolo_node:'YOLO 감지',tracking_node:'영상 객체 추적',debug_node:'인식 디버그 영상',detect_3d_node:'객체 3D 변환',person_localizer:'사람 위치 추정',person_reidentifier:'OSNet 사람 식별',person_follower:'사람 추적',lidar_foreground_preprocessor:'LiDAR 추적 전처리',patrol_manager:'순찰',autoslam:'AutoSLAM',map_saver_server:'지도 저장',relocalization:'위치 보정',zone_filter:'주행 구역 필터',sync_slam_toolbox_node:'SLAM',async_slam_toolbox_node:'SLAM',system_manager:'시스템 관리자',manual_control:'수동 이동',stt:'음성 인식 STT',stt_node:'음성 인식 STT',tts_node:'음성 출력 TTS',tts_receiver:'음성 출력 TTS',agent_communication:'대화 Agent',speech_runtime:'음성 런타임',homecam_media_agent_node:'홈캠 영상·음성',robot_cloud_sync:'웹 연결',fall_coordinator:'낙상 처리',resource_recorder:'성능 수집기',resource_viewer:'성능 뷰어',tegrastats:'Jetson 자원 측정',nav2_container:'Nav2 공유 프로세스'};
   const basename=path=>(path||'').split('/').pop();
   function processInfo(id){
@@ -184,8 +209,9 @@
     const unknown=!raw||/^(python[\d.]*|bash|sh)$/.test(raw);
     return {name:unknown?'미식별 프로세스':name,raw,unknown,pid:p.pid??id.split(/[-:]/)[0],group:groupLabels[p.group]||p.group||'기타',path:p.entrypoint||p.executable||'실행 경로 미기록',identity:id};
   }
-  function processChannels(){return Object.entries(metadata.channels||{}).filter(([,v])=>v.kind==='process')}
-  function selectedGroups(){return groupChoices[$('session').value]||[]}
+  function processChannels(){return Object.entries(metadata.channels||{}).filter(([,v])=>v.kind===($('kind').value==='launch'?'launch':'process'))}
+  function groupKey(){return $('session').value+($('kind').value==='launch'?':launch':'')}
+  function selectedGroups(){return groupChoices[groupKey()]||[]}
   function curveKey(id,field){return JSON.stringify([$('session').value,$('kind').value,id||$('channel').value,id?'':field])}
   function curveStyle(id,field){
     const keys=id?Object.keys(metadata.process_catalog||{}):['cpu_percent','gpu_percent','emc_percent','ram_used_mib','swap_used_mib'];
@@ -196,18 +222,26 @@
   }
   function checkbox(label,checked,onchange){const card=document.createElement('label');card.className='check'+(checked?'':' off');const input=document.createElement('input');input.type='checkbox';input.checked=checked;input.setAttribute('aria-label',label);input.onchange=()=>onchange(input.checked);card.append(input);return card}
   function functions(){
-    const speech=$('kind').value==='speech';$('speechPanel').hidden=!speech;
-    for(const id of ['graph','metricField','actionField','actionPanel','catalogPanel'])$(id).hidden=speech;
+    const kind=$('kind').value,speech=kind==='speech',records=kind==='action',inventory=kind==='catalog';$('speechPanel').hidden=!speech;
+    $('pageTitle').textContent=pageInfo[kind][0];$('pageDescription').textContent=pageInfo[kind][1];
+    for(const link of $('pages').querySelectorAll('a')){if(link.hash==='#'+kind)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current')}
+    $('dataPanel').hidden=inventory;$('graph').hidden=speech||records||inventory;
+    $('actionField').hidden=speech||inventory;$('actionPanel').hidden=!records;$('catalogPanel').hidden=!inventory;
     const system=$('kind').value==='system';$('systemMetrics').hidden=!system;$('metricField').hidden=speech||system;$('singleGraph').hidden=system;$('systemCharts').hidden=!system;
-    const process=$('kind').value==='process',choices=processChannels();$('functionPanel').hidden=!process;$('channelField').hidden=process;$('download').hidden=process;$('processDownloads').hidden=!process;
+    $('metricField').hidden=speech||system||records||inventory;$('systemSummary').hidden=!system;
+    const process=processView(),choices=processChannels();$('functionPanel').hidden=!process;$('channelField').hidden=kind!=='topic';$('download').hidden=process||inventory;$('processDownloads').hidden=!process;
+    $('gpuNotice').hidden=!process;
+    $('gpuNotice').textContent='Jetson의 프로세스별 GPU 연산 사용률(%)은 미지원입니다. 지표에서 GPU 메모리(MiB)를 선택하면 jtop이 관측한 프로세스별 값을 볼 수 있습니다. GPU 전체 사용률은 전체 자원 페이지에 표시합니다. 미수집 값은 0이 아닌 빈 값입니다.';
+    $('groupHint').textContent=kind==='launch'?'실제 launch 표시를 상속한 프로세스만 묶습니다. 이전 로그·별도 실행 프로세스는 소속 미기록입니다. 체크는 그래프 표시만 바꿉니다.':'실행 파일·노드명으로 분류한 기능을 체크하세요. 체크는 그래프 표시만 바꿉니다.';
+    $('allFunctions').textContent=kind==='launch'?'모든 launch 표시':'모든 기능 표시';
     if(!process)return;
-    const session=$('session').value;
+    const session=groupKey();
     if(!Array.isArray(groupChoices[session]))groupChoices[session]=choices.some(([k])=>k===preferred('channel'))?[preferred('channel')]:choices.slice(0,1).map(([k])=>k);
     changed('functions',[session,choices,selectedGroups()],()=>{
-      $('functions').replaceChildren();for(const [key,value] of choices){const name=groupLabels[value.label]||value.label,checked=selectedGroups().includes(key);const card=checkbox(name,checked,on=>{groupChoices[session]=on?[...selectedGroups(),key]:selectedGroups().filter(k=>k!==key);functionsChanged()});const text=document.createElement('span');text.textContent=name;const badge=document.createElement('span');badge.className='badge';badge.textContent=checked?'표시':'숨김';card.append(text,badge);$('functions').append(card)}
+      $('functions').replaceChildren();for(const [key,value] of choices){const name=channelLabel(value),checked=selectedGroups().includes(key);const card=checkbox(name,checked,on=>{groupChoices[session]=on?[...selectedGroups(),key]:selectedGroups().filter(k=>k!==key);functionsChanged()});const text=document.createElement('span');text.textContent=name;const badge=document.createElement('span');badge.className='badge';badge.textContent=checked?'표시':'숨김';card.append(text,badge);$('functions').append(card)}
     });
-    $('functionCount').textContent=`${choices.filter(([k])=>selectedGroups().includes(k)).length} / ${choices.length}개 기능 표시`;
-    changed('processDownloads',[session,choices,selectedGroups()],()=>{$('processDownloads').replaceChildren();for(const [key,value] of choices){if(!selectedGroups().includes(key))continue;const link=document.createElement('a');link.className='button';link.textContent=(groupLabels[value.label]||value.label)+' JSONL';link.href=downloadLink(key);$('processDownloads').append(link)}});
+    $('functionCount').textContent=`${choices.filter(([k])=>selectedGroups().includes(k)).length} / ${choices.length}개 그룹 표시`;
+    changed('processDownloads',[session,choices,selectedGroups()],()=>{$('processDownloads').replaceChildren();for(const [key,value] of choices){if(!selectedGroups().includes(key))continue;const link=document.createElement('a');link.className='button';link.textContent=channelLabel(value)+' JSONL';link.href=downloadLink(key);$('processDownloads').append(link)}});
   }
   function functionsChanged(){restored=null;legacyProcess='';functions();catalog();chart();saveState();refresh()}
   function option(select,value,label){const o=document.createElement('option');o.value=value;o.textContent=label;select.append(o)}
@@ -232,15 +266,17 @@
     changed('sessionInfo',[metadata.session,metadata.hostname,metadata.started_wall_ns,metadata.finished,metadata.stop_reason],()=>{$('sessionInfo').textContent=metadata.hostname+' · '+new Date(metadata.started_wall_ns/1e6).toLocaleString()+' · '+(metadata.finished?'기록 종료: '+metadata.stop_reason:'종료 기록 없음 (수집 중 또는 비정상 종료)')+' · 원본 ID: '+metadata.session});
     if(namedSession!==metadata.session){namedSession=metadata.session;nameDirty=false;$('nameStatus').textContent=''}
     if(!nameDirty&&document.activeElement!==$('sessionName'))$('sessionName').value=metadata.display_name||'';
-    replaceOptions($('action'),[['','선택 안 함'],...Object.entries(metadata.channels).filter(([,v])=>v.kind==='action').map(([k,v])=>[k,v.label])],preferred('action'));
+    const actions=Object.entries(metadata.channels).filter(([,v])=>v.kind==='action').map(([k,v])=>[k,v.label]);
+    replaceOptions($('action'),[['','선택 안 함'],...actions],preferred('action')||($('kind').value==='action'?actions[0]?.[0]:''));
     changed('limitations',metadata.limitations,()=>{$('limitations').replaceChildren();(metadata.limitations||[]).forEach(t=>{const li=document.createElement('li');li.textContent=t;$('limitations').append(li)})});
     changed('otherLogs',[$('session').value,metadata.channels],()=>{$('otherLogs').replaceChildren();Object.entries(metadata.channels).filter(([,v])=>['mission','phase','raw','diagnostic','action'].includes(v.kind)).forEach(([k,v])=>{const a=document.createElement('a');a.className='button';a.textContent=v.label;a.href=downloadLink(k);$('otherLogs').append(a)})});
-    const choices=Object.entries(metadata.channels).filter(([,v])=>v.kind===$('kind').value).map(([k,v])=>[k,groupLabels[v.label]||v.label]);replaceOptions($('channel'),choices,preferred('channel'));
+    const choices=Object.entries(metadata.channels).filter(([,v])=>v.kind===$('kind').value).map(([k,v])=>[k,channelLabel(v)]);replaceOptions($('channel'),choices,preferred('channel'));
     functions();catalog();await data(signal);await action(signal);
   }
   async function data(signal){
-    const channels=$('kind').value==='process'?processChannels().map(([key])=>key).filter(key=>selectedGroups().includes(key)):[$('channel').value].filter(Boolean);
-    if(!channels.length){displayedData=null;rows=[];$('download').removeAttribute('href');$('notice').textContent=$('kind').value==='process'?'표시할 기능을 체크하세요.':'이 종류의 로그가 없습니다.';if($('kind').value==='speech')speech();else chart();return}
+    if(['action','catalog'].includes($('kind').value)){rows=[];$('notice').textContent='';return}
+    const channels=processView()?processChannels().map(([key])=>key).filter(key=>selectedGroups().includes(key)):[$('channel').value].filter(Boolean);
+    if(!channels.length){displayedData=null;rows=[];$('download').removeAttribute('href');$('notice').textContent=$('kind').value==='launch'&&!processChannels().length?'이 회차에는 launch 소속 기록이 없습니다. 업데이트한 실기기 Bringup으로 새 회차를 시작하세요.':processView()?'표시할 그룹을 체크하세요.':'이 종류의 로그가 없습니다.';if($('kind').value==='speech')speech();else chart();return}
     const paths=channels.map(channel=>url('/api/data',{channel,start:$('start').value||0,end:$('end').value||'inf'}));
     const results=await Promise.all(paths.map(path=>get(path,signal)));if(signal.aborted)return;
     const key=JSON.stringify(paths);
@@ -253,7 +289,7 @@
     const fields=numericFields(rows);
     const options=fields.map(k=>[k,labels[k]||k]);if(fields.some(k=>/^cpu\d+_percent$/.test(k)))options.unshift(['__cores','코어별 CPU (%)']);if(fields.some(k=>/^cpu\d+_mhz$/.test(k)))options.push(['__clocks','코어별 클럭 (MHz)']);
     replaceOptions($('metric'),options,preferred('metric')||'cpu_percent');chart();}
-  function catalog(){const selected=$('kind').value==='process'?selectedGroups():null;changed('catalog',[selected,metadata.process_catalog],()=>{$('catalog').replaceChildren();const unknown=[];for(const [id,p] of Object.entries(metadata.process_catalog||{})){if(selected&&!selected.includes('processes/'+p.group))continue;const info=processInfo(id),tr=document.createElement('tr');textCell(tr,info.group+(p.shared_process?' (공유)':''));textCell(tr,id);textCell(tr,(p.executable||'알 수 없음')+'\n'+(p.entrypoint||''));textCell(tr,(p.ros_node_names||[]).join(', ')||'remap 이름 없음');$('catalog').append(tr);if(info.unknown)unknown.push(info.pid)}$('identityHelp').hidden=!unknown.length;$('identityHelp').textContent=unknown.length?'이름 미식별 PID: '+unknown.join(', ')+'. 같은 로봇에서 프로세스가 살아 있을 때 ps -p '+unknown.join(',')+' -o pid=,comm=,args= 로 확인하세요. args에 키가 있다면 공유 전에 가려주세요. 이미 종료된 PID의 이름은 현재 ps로 복원할 수 없고, PID가 재사용됐을 수도 있습니다.':''})}
+  function catalog(){changed('catalog',metadata.process_catalog,()=>{$('catalog').replaceChildren();const unknown=[];for(const [id,p] of Object.entries(metadata.process_catalog||{})){const info=processInfo(id),tr=document.createElement('tr');textCell(tr,info.group+(p.shared_process?' (공유)':'')+' · '+launchLabel(p.launch));textCell(tr,id);textCell(tr,(p.executable||'알 수 없음')+'\n'+(p.entrypoint||''));textCell(tr,(p.ros_node_names||[]).join(', ')||'remap 이름 없음');$('catalog').append(tr);if(info.unknown)unknown.push(info.pid)}$('identityHelp').hidden=!unknown.length;$('identityHelp').textContent=unknown.length?'이름 미식별 PID: '+unknown.join(', ')+'. 같은 로봇에서 프로세스가 살아 있을 때 ps -p '+unknown.join(',')+' -o pid=,comm=,args= 로 확인하세요. args에 키가 있다면 공유 전에 가려주세요. 이미 종료된 PID의 이름은 현재 ps로 복원할 수 없고, PID가 재사용됐을 수도 있습니다.':''})}
   function speech(){
     $('download').hidden=!rows.length;
     const available=Object.values(metadata.channels||{}).some(v=>v.kind==='speech');
@@ -283,9 +319,10 @@
       }
     });
   }
-  async function action(signal){if($('kind').value==='speech')return;const channel=$('action').value,path=channel?url('/api/data',{channel}):'',result=channel?await get(path,signal):null;
+  async function action(signal){if(['speech','catalog'].includes($('kind').value))return;const channel=$('action').value,path=channel?url('/api/data',{channel}):'',result=channel?await get(path,signal):null;
+    if($('kind').value==='action'){$('download').hidden=!channel;if(channel)$('download').href=downloadLink(channel);$('notice').textContent=channel?'':'이 회차에 관측된 Action 기록이 없습니다.'}
     if(displayedAction?.path===path&&displayedAction.result===result)return;
-    displayedAction={path,result};events=result?.rows||[];const goals=new Map();events.forEach(e=>{if(!goals.has(e.goal_id))goals.set(e.goal_id,[]);goals.get(e.goal_id).push(e)});$('events').replaceChildren();for(const [goal,list]of goals){const first=list[0],last=list[list.length-1],terminal=['SUCCEEDED','CANCELED','ABORTED'].includes(last.state);const tr=document.createElement('tr');textCell(tr,goal);textCell(tr,first.t.toFixed(3));textCell(tr,last.t.toFixed(3));textCell(tr,last.state+(first.initial_terminal?' (과거 종료 상태 첫 수신)':''));textCell(tr,first.initial_terminal?'시작 미관측':terminal?(last.t-first.t).toFixed(3)+'s (관측 기준)':'종료 미관측');tr.onclick=()=>{$('start').value=Math.max(0,first.t-2).toFixed(2);$('end').value=terminal?(last.t+2).toFixed(2):'';selectionChanged()};$('events').append(tr)}chart()}
+    displayedAction={path,result};events=result?.rows||[];const goals=new Map();events.forEach(e=>{if(!goals.has(e.goal_id))goals.set(e.goal_id,[]);goals.get(e.goal_id).push(e)});$('events').replaceChildren();for(const [goal,list]of goals){const first=list[0],last=list[list.length-1],terminal=['SUCCEEDED','CANCELED','ABORTED'].includes(last.state);const tr=document.createElement('tr');textCell(tr,goal);textCell(tr,first.t.toFixed(3));textCell(tr,last.t.toFixed(3));textCell(tr,last.state+(first.initial_terminal?' (과거 종료 상태 첫 수신)':''));textCell(tr,first.initial_terminal?'시작 미관측':terminal?(last.t-first.t).toFixed(3)+'s (관측 기준)':'종료 미관측');tr.onclick=()=>{$('start').value=Math.max(0,first.t-2).toFixed(2);$('end').value=terminal?(last.t+2).toFixed(2):'';pageSelections.system={...pageSelections.system,action:channel};location.hash='system'};$('events').append(tr)}chart()}
   async function refresh(){
     clearTimeout(timer);request?.abort();const active=new AbortController();request=active;
     const timeout=setTimeout(()=>active.abort(),10000);
@@ -297,6 +334,16 @@
     finally{clearTimeout(timeout);if(request===active){request=null;if(!document.hidden)timer=setTimeout(refresh,2000)}}
   }
   function selectionChanged(){restored=null;saveState();refresh()}
+  function navigatePage(){
+    const page=location.hash.slice(1);if(!pageInfo[page]||page===$('kind').value)return;
+    restored=null;saveState();$('kind').value=page;
+    for(const id of ['channel','metric','action'])$(id).value=pageSelections[page]?.[id]||'';
+    // Select options may not exist until the page's metadata/data has arrived.
+    restored={values:{session:$('session').value,kind:page,start:$('start').value,end:$('end').value,...(pageSelections[page]||{channel:'',metric:'',action:''})},scrollY:0};
+    rows=[];events=[];displayedData=null;displayedAction=null;functions();window.scrollTo(0,0);refresh();
+  }
+  window.addEventListener('hashchange',navigatePage);
+  if(!pageInfo[location.hash.slice(1)])history.replaceState(null,'','#'+$('kind').value);
   function legend(all){
     const visible=all.filter(s=>!hiddenSeries.has(s.key));
     $('seriesCount').textContent=`${visible.length} / ${all.length}개 곡선 표시 · 체크 해제 시 해당 곡선만 숨깁니다.`;
@@ -306,6 +353,14 @@
   }
   function timeExtent(list){let minimum=Infinity,maximum=-Infinity;for(const row of list){minimum=Math.min(minimum,row.t);maximum=Math.max(maximum,row.t)}if(!list.length)return [0,1];return [minimum,maximum>minimum?maximum:minimum+1]}
   function systemChart(){
+    const latest=rows.at(-1)||{};
+    changed('systemSummary',[metadata.session,latest],()=>{
+      $('systemSummary').replaceChildren();
+      const gpuKeys=Object.keys(latest).filter(k=>/^gpu\..+_percent$/.test(k));
+      const cards=[['CPU',latest.cpu_percent,'%', '장치 전체 = 100%'],['RAM',latest.ram_used_mib,'MiB','전체 용량 − 사용 가능'],['GPU',latest.gpu_percent,'%','tegrastats · 장치 전체'],...gpuKeys.map(k=>[metricInfo(k).name,latest[k],'%','jtop · 장치 전체'])];
+      for(const [title,value,unit,source] of cards){const card=document.createElement('div');card.className='summary-card';const heading=document.createElement('span'),metric=document.createElement('strong'),detail=document.createElement('small');heading.textContent=title;metric.textContent=typeof value==='number'&&Number.isFinite(value)?value.toFixed(1)+' '+unit:'미수집';detail.textContent=source;card.append(heading,metric,detail);$('systemSummary').append(card)}
+      if(rows.length){const detail=document.createElement('small');detail.textContent=`선택 구간 마지막 표본: ${latest.t.toFixed(2)}초 · jtop: ${latest.jtop_available?'연결됨':'미수집 (패키지·서비스·권한 확인)'}`;$('systemSummary').append(detail)}
+    });
     const groups=systemGroups();metricControls(groups);const selected=new Set(selectedMetrics()),extent=timeExtent(rows),active=new Set();
     for(const group of groups){
       const fields=group.fields.filter(f=>selected.has(f.field));if(!fields.length)continue;active.add(group.key);
@@ -322,8 +377,8 @@
     for(const [key,plot] of systemPlots)if(!active.has(key))plot.root.hidden=true;
     let empty=$('systemEmpty');if(!empty){empty=document.createElement('p');empty.id='systemEmpty';empty.className='empty';$('systemCharts').append(empty)}empty.hidden=active.size>0;empty.textContent=rows.length?'표시할 지표를 체크하세요.':'이 구간에 측정 기록이 없습니다.';
   }
-  function chart(){if($('kind').value==='speech')return;if($('kind').value==='system'){systemChart();return}let series=[];
-    const metric=$('metric').value,filtered=$('kind').value==='process'?rows.filter(r=>selectedGroups().includes(r._channel)):rows;const fields=metric==='__cores'||metric==='__clocks'?[...new Set(filtered.flatMap(r=>Object.keys(r)))].filter(k=>(metric==='__cores'?/^cpu\d+_percent$/:/^cpu\d+_mhz$/).test(k)):[metric];
+  function chart(){if(['speech','action','catalog'].includes($('kind').value))return;if($('kind').value==='system'){systemChart();return}let series=[];
+    const metric=$('metric').value,filtered=processView()?rows.filter(r=>selectedGroups().includes(r._channel)):rows;const fields=metric==='__cores'||metric==='__clocks'?[...new Set(filtered.flatMap(r=>Object.keys(r)))].filter(k=>(metric==='__cores'?/^cpu\d+_percent$/:/^cpu\d+_mhz$/).test(k)):[metric];
     const grouped=new Map();filtered.forEach(r=>{const key=r.identity||'';if(!grouped.has(key))grouped.set(key,[]);grouped.get(key).push(r)});for(const[id,list]of grouped)for(const field of fields){const info=id?processInfo(id):null;series.push({key:curveKey(id,field),name:info?info.name:(labels[field]||field),detail:info?`${info.group} · ${info.raw} · PID ${info.pid} · ${labels[field]||field}`:($('kind').value==='system'?'로봇 컴퓨터 전체':$('channel').selectedOptions[0]?.textContent||''),path:info?info.path+' · '+id:'',field,rows:list,...curveStyle(id,field)})}
     drawChart($('chart'),$('hover'),legend(series),timeExtent(filtered));
   }
@@ -342,8 +397,8 @@
   $('metric').onchange=()=>{restored=null;saveState();chart()};
   $('allMetrics').onclick=()=>{systemChoices[systemKey()]=numericFields(rows);metricsChanged()};
   $('noMetrics').onclick=()=>{systemChoices[systemKey()]=[];metricsChanged()};
-  $('allFunctions').onclick=()=>{groupChoices[$('session').value]=processChannels().map(([key])=>key);functionsChanged()};
-  $('noFunctions').onclick=()=>{groupChoices[$('session').value]=[];functionsChanged()};
+  $('allFunctions').onclick=()=>{groupChoices[groupKey()]=processChannels().map(([key])=>key);functionsChanged()};
+  $('noFunctions').onclick=()=>{groupChoices[groupKey()]=[];functionsChanged()};
   $('sessionName').oninput=()=>{nameDirty=true;$('nameStatus').textContent='저장 전'};
   $('nameForm').onsubmit=async e=>{e.preventDefault();const session=$('session').value;if(!session)return;const name=$('sessionName').value;$('saveName').disabled=true;try{const r=await fetch(url('/api/session/name'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name}),signal:AbortSignal.timeout(10000)});if(!r.ok)throw new Error('이름 저장 실패: '+r.status);if($('session').value===session){nameDirty=false;$('nameStatus').textContent='저장됨';refresh()}}catch(e){$('nameStatus').textContent=e.message}finally{$('saveName').disabled=false}};
   $('refresh').onclick=()=>refresh();

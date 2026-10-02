@@ -25,9 +25,7 @@ def defaults():
     stt_build = Path(os.environ.get(
         'MALBUT_STT_BUILD_DIR', speech_cache / 'whisper-cpp-build')).expanduser()
     pose_cache = cache_root / 'malbut_fall_pose'
-    pose_python = pose_cache / 'runtime-cuda/bin/python'
-    if not (pose_python.is_file() and os.access(pose_python, os.X_OK)):
-        pose_python = pose_cache / 'runtime/bin/python'
+    pose_python = pose_cache / 'runtime/bin/python'
     values = {
         'start_hardware': 'true',
         'relocalization': 'true',
@@ -147,6 +145,7 @@ def module_actions(name, setup):
         return actions
 
     return GroupAction([
+        SetEnvironmentVariable('MALBUT_MEASUREMENT_LAUNCH', name),
         OpaqueFunction(function=start),
     ], scoped=True)
 

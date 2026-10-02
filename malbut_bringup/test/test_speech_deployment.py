@@ -69,6 +69,10 @@ def test_robot_speech_launch_and_native_assets_match_source():
         deployed = (ROBOT / path).read_text()
         if path == 'malbut_bringup/launch/bringup.launch.py':
             deployed = _without_resource_monitor(deployed)
+        if path == 'malbut_bringup/malbut_bringup/launch_support.py':
+            hook = "        SetEnvironmentVariable('MALBUT_MEASUREMENT_LAUNCH', name),\n"
+            assert deployed.count(hook) == 1
+            deployed = deployed.replace(hook, '', 1)
         assert original == deployed, path
 
 
@@ -92,6 +96,27 @@ def _without_resource_monitor(deployed):
         assert deployed.count(hook) == 1, hook
         deployed = deployed.replace(hook, original, 1)
     return deployed
+
+
+def test_robot_measurement_launch_marker_is_scoped():
+    """Tag nested processes without leaking the module marker to siblings."""
+    from launch import LaunchContext
+    from launch.utilities import visit_all_entities_and_collect_futures
+
+    support = runpy.run_path(str(ROBOT / 'malbut_bringup/malbut_bringup/launch_support.py'))
+    context = LaunchContext()
+    context.environment['MALBUT_MEASUREMENT_LAUNCH'] = 'outer'
+    observed = []
+
+    def capture(ctx):
+        observed.append(ctx.environment['MALBUT_MEASUREMENT_LAUNCH'])
+        return []
+
+    for name in ('tracking', 'fall', 'robot'):
+        action = support['module_actions'](name, capture)
+        visit_all_entities_and_collect_futures(action, context)
+        assert context.environment['MALBUT_MEASUREMENT_LAUNCH'] == 'outer'
+    assert observed == ['tracking', 'fall', 'robot']
 
 
 def test_robot_fall_startup_helper_matches_source():

@@ -14,7 +14,8 @@ playwright = pytest.importorskip('playwright.sync_api')
 @pytest.fixture(scope='module')
 def browser():
     with playwright.sync_playwright() as runtime:
-        browser = runtime.chromium.launch(headless=True)
+        browser = runtime.chromium.launch(
+            headless=True, executable_path=os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'))
         yield browser
         browser.close()
 
@@ -117,14 +118,79 @@ def test_live_updates_keep_selection_and_missing_values(viewer):
 
 def test_other_log_views_still_use_original_single_metric(viewer):
     page, _, _ = viewer
-    page.locator('#kind').select_option('process')
+    page.get_by_role('link', name='기능별', exact=True).click()
     page.wait_for_selector('#legend .check')
     assert 'YOLO 감지' in page.locator('#legend').text_content()
     assert page.locator('#systemMetrics').is_hidden()
     assert page.locator('#chart').is_visible()
-    page.locator('#kind').select_option('topic')
+    page.get_by_role('link', name='토픽', exact=True).click()
     playwright.expect(page.locator('#metric')).to_have_value('received_hz')
     assert '수집기 수신 Hz' in page.locator('#legend').text_content()
-    page.locator('#kind').select_option('system')
+    page.get_by_role('link', name='전체 자원', exact=True).click()
     page.wait_for_selector('#systemCharts .unit-chart:visible')
     assert visible_units(page) == ['%', 'MiB']
+
+
+def test_launch_gpu_selection_pages_and_browser_history(viewer):
+    page, store, _ = viewer
+    for launch, pid, name in [('tracking', 123, 'yolo_node'), ('fall', 456, 'fall_coordinator')]:
+        store.register('launches/' + launch, kind='launch', label=launch)
+        store.process(f'{pid}-45', dict(pid=pid, launch=launch, group='perception',
+                                        executable='/test/' + name, ros_node_names=[name]))
+        for t in range(1, 5):
+            store.write('launches/' + launch, dict(
+                t=t, identity=f'{pid}-45', cpu_percent=5,
+                gpu_percent=None, gpu_memory_mib=128 if t < 4 else None,
+                gpu_memory_source='jtop' if t < 4 else None))
+    page.get_by_role('link', name='launch별', exact=True).click()
+    playwright.expect(page.locator('#functionCount')).to_contain_text('/ 2개')
+    page.get_by_role('button', name='모든 launch 표시').click()
+    page.locator('#metric').select_option('gpu_memory_mib')
+    playwright.expect(page.locator('#seriesCount')).to_contain_text('2 / 2')
+    assert 'GPU 메모리' in page.locator('#legend').text_content()
+    assert 'gpu_memory_source' not in page.locator('#metric').text_content()
+    assert page.locator('#catalogPanel').is_hidden()
+    assert page.locator('#actionPanel').is_hidden()
+    assert page.evaluate('rows.at(-1).gpu_memory_mib') is None
+    page.get_by_role('checkbox', name='fall.launch.py · 낙상', exact=True).uncheck()
+    playwright.expect(page.locator('#seriesCount')).to_contain_text('1 / 1')
+    page.get_by_role('link', name='프로세스 / 원본', exact=True).click()
+    playwright.expect(page.locator('#catalogPanel')).to_be_visible()
+    assert page.locator('#dataPanel').is_hidden()
+    assert 'tracking.launch.py' in page.locator('#catalog').text_content()
+    page.go_back()
+    playwright.expect(page.locator('#metric')).to_have_value('gpu_memory_mib')
+    page.reload()
+    playwright.expect(page.locator('#pageTitle')).to_have_text('launch별 자원')
+    playwright.expect(page.locator('#metric')).to_have_value('gpu_memory_mib')
+    assert not page.get_by_role('checkbox', name='fall.launch.py · 낙상', exact=True).is_checked()
+    assert page.locator('#pages a[aria-current="page"]').get_attribute('href') == '#launch'
+
+
+def test_old_logs_do_not_invent_launch_membership(viewer):
+    page, _, _ = viewer
+    page.get_by_role('link', name='launch별', exact=True).click()
+    playwright.expect(page.locator('#notice')).to_contain_text('launch 소속 기록이 없습니다')
+    assert page.locator('#functions input').count() == 0
+    assert page.locator('#legend input').count() == 0
+
+
+def test_action_and_speech_live_in_separate_pages(viewer):
+    page, store, _ = viewer
+    store.register('actions/follow', kind='action', label='/follow_person')
+    store.write('actions/follow', dict(t=1, goal_id='test-goal', state='EXECUTING'))
+    store.write('actions/follow', dict(t=3, goal_id='test-goal', state='SUCCEEDED'))
+    store.register('speech', kind='speech', label='speech')
+    store.write('speech', dict(t=2, event='stt_transcript', text='안녕하세요'))
+    page.get_by_role('link', name='실행 기록', exact=True).click()
+    playwright.expect(page.locator('#events')).to_contain_text('SUCCEEDED')
+    assert page.locator('#graph').is_hidden()
+    assert page.locator('#speechPanel').is_hidden()
+    page.locator('#events tr').click()
+    playwright.expect(page.locator('#pageTitle')).to_have_text('전체 자원')
+    playwright.expect(page.locator('#action')).to_have_value('actions/follow')
+    assert page.locator('#end').input_value() == '5.00'
+    page.get_by_role('link', name='음성 대화', exact=True).click()
+    playwright.expect(page.locator('#speechRows')).to_contain_text('안녕하세요')
+    assert page.locator('#actionPanel').is_hidden()
+    assert page.locator('#catalogPanel').is_hidden()

@@ -111,10 +111,11 @@ ros2 launch malbut_bringup bringup.launch.py map:=/실제/지도.yaml fall_monit
 
 낙상 Pose의 기본값은 `fall_pose_execution_provider:=auto`, ORT 스레드 `2`,
 spinning `false`, OpenCV 스레드 `1`이다. 추가 인자 없이 스레드 제한이 적용된다.
-실행 Python은 캐시의 `malbut_fall_pose/runtime-cuda/bin/python`이 실행 가능하면
-우선 선택하고, 없으면 기존 `runtime/bin/python`을 사용한다. 환경변수
+실행 Python은 낙상 전용 `~/.cache/malbut_fall_pose/runtime/bin/python`이다
+(`XDG_CACHE_HOME` 지원). 실기기 `build.sh`가 이 환경에 GPU용 ONNX Runtime을 준비한다.
+OSNet/ReID 가상환경을 재사용하거나 `runtime-cuda`를 자동 선택하지 않는다. 환경변수
 `MALBUT_FALL_POSE_PYTHON` 또는 `fall_pose_python_executable` 인자를 명시하면 그 값이 우선한다.
-CUDA용 ONNX Runtime 설치 자체는 별도로 필요하며, 이 선택이 GPU 라이브러리를 설치하지는 않는다.
+이미 설치된 CUDA·cuDNN·Torch는 변경하지 않는다. Bringup 실행 중에는 설치하지 않는다.
 일반 홈캠의 YOLO·Pose에도 같은 스레드 제한과 GPU 선택 정책을 적용한다.
 `auto`는 **해당 노드의 실행 Python**에 CUDA EP가
 있으면 CUDA를 선택하고, 없으면 CPU를 선택하면서 GPU 미사용 경고를 남긴다.
@@ -127,7 +128,8 @@ GPU 실행을 필수로 하려면 `fall_pose_execution_provider:=cuda`를 사용
 `cpu`, `0`, `true`, `0` 값은 새 기본값보다 우선하므로 함께 확인한다.
 GPU 의존성 설치와 사전 점검은
 [로봇 준비 문서](../malbut_agent_server/docs/fall/fall_robot_preparation.md#1-1-낙상용-yolo-pose-준비)를 따른다.
-코드 업데이트만으로 CPU 전용 ONNX Runtime이 GPU 버전으로 바뀌지는 않는다.
+소스만 갱신하고 로봇 빌드를 생략하면 기존 Python 환경은 바뀌지 않는다.
+`MALBUT_BUILD_FALL_POSE=0`으로 환경 준비를 생략할 수 있으며 실행 시 `auto` 정책은 그대로다.
 Jetson에서의 실제 처리 fps·CPU/GPU 부하는 별도 확인 대상이다.
 [PC 비교 결과와 실행 예시](../homecam_agent/docs/FALL_POSE_PERFORMANCE_20260929.md)를 참고한다.
 

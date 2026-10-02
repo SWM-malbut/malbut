@@ -16,13 +16,16 @@ pytest 파일을 복제하지 않는다. 복사본의 빌드 경계는 원본 Br
 `homecam_detector`도 빌드 목록에 포함한다. Pose는 영상 저장 ON/OFF가 아니라
 낙상 감지 설정·카메라 허용·VLM 실행 상태를 보고 동작한다.
 
-VLM 설정·Cloud 키 외에 YOLO26s pose ONNX 모델과 실행 환경을 별도로 준비해야 한다.
-`bash homecam_agent/scripts/prepare_fall_pose_runtime.sh`로 Pose 전용 Python 환경을
-만들 수 있다. 이 명령은 모델을 내려받거나 카메라·Cloud를 실행하지 않는다.
+VLM 설정·Cloud 키 외에 YOLO26s pose ONNX 모델을 별도로 준비해야 한다.
+`build.sh`는 `~/.cache/malbut_fall_pose/runtime`에 GPU용 ONNX Runtime을 준비하고
+Bringup은 이 낙상 전용 Python을 기본 사용한다. 기존 CUDA·cuDNN·Torch는 재설치하지
+않고 OSNet/ReID 가상환경도 건드리지 않는다. 환경만 준비하려면
+`bash homecam_agent/scripts/prepare_fall_pose_runtime.sh --gpu`를 쓴다.
+모델을 내려받거나 카메라·Cloud를 실행하지 않는다.
 낙상 Pose는 이제 기본 `auto / ORT 스레드 2 / spinning OFF / OpenCV 스레드 1`로
-실행한다. `auto`가 CPU를 선택하면 경고를 남긴다. 코드 업데이트만으로 GPU 의존성이
-설치되는 것은 아니며, 호환 wheel을 준비한 경우 설치 스크립트의 `--cuda-wheel`과
-아래 문서의 CUDA 사전 점검을 사용한다.
+실행한다. `auto`가 CPU를 선택하면 경고를 남긴다. JetPack 6 / Python 3.10은
+고정 GPU wheel을 사용하며 다른 환경은 `--cuda-wheel`로 호환 wheel을 지정할 수 있다.
+실제 GPU 초기화 확인은 아래 문서의 CUDA 사전 점검을 사용한다.
 기본 모델 경로, 실행 인자와 테스트 순서는
 [낙상 감지 로봇 실행 준비](malbut_agent_server/docs/fall/fall_robot_preparation.md)를 따른다.
 PC에서 연결 테스트를 통과해도 Jetson 성능과 카메라 수신이 검증된 것은 아니다.
@@ -114,7 +117,8 @@ bash ~/ros2_ws/src/malbut/setup.sh
 
 준비가 성공하면 빌드한다. 이후 코드만 갱신한 경우에는 아래 빌드부터 실행한다.
 `build.sh`는 긴 홈캠 빌드 전에 음성 소스·모델·CUDA 도구를 확인하고, 빠진 준비가 있으면
-`setup.sh` 실행을 안내한다. 음성 가상환경·CUDA 라이브러리·ROS 빌드는 여기서 처리한다.
+`setup.sh` 실행을 안내한다. 음성 가상환경·CUDA 라이브러리·낙상 전용 GPU ORT 환경·ROS
+빌드는 여기서 처리한다. 낙상 환경은 이미 준비된 동일 버전을 재사용한다.
 
 ```zsh
 cd ~/ros2_ws
@@ -126,8 +130,10 @@ source ~/ros2_ws/install/malbut_test/local_setup.zsh
 YOLO 소스도 적용본 안에 있으므로 별도로 다운로드하지 않는다.
 메모리 부족 시 빌드 명령 뒤에 `--parallel-workers 1`을 붙여 colcon 동시 빌드를 줄일 수 있다.
 STT 네이티브 빌드는 `nproc`으로 현재 프로세스에서 사용 가능한 CPU 수를 확인해 자동으로 병렬 빌드한다.
-CUDA 없는 CI나 센서 전용 빌드는 `MALBUT_BUILD_SPEECH=0 bash src/malbut/build.sh`로
-음성 환경·네이티브 빌드를 생략할 수 있으며, 그 결과로 실행할 때는 `speech:=false`를 지정한다.
+CUDA 없는 CI나 센서 전용 빌드는
+`MALBUT_BUILD_SPEECH=0 MALBUT_BUILD_FALL_POSE=0 bash src/malbut/build.sh`로
+음성·낙상 환경 준비를 생략할 수 있다. 해당 기능 없이 실행하려면
+`speech:=false fall_monitor:=false`를 지정한다.
 `0`은 캐시된 whisper 브리지(`~/.cache/malbut_speech/whisper-cpp-build`)를 그대로 쓴다.
 `malbut_stt`가 요구하는 브리지 ABI가 바뀌면(예: 2→3) `build.sh`가 이 불일치를 찾아
 실패하므로, 그때는 `MALBUT_BUILD_SPEECH=1`로 한 번 빌드한다(`cmake`·`nvcc` 필요, 없으면

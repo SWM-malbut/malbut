@@ -526,7 +526,8 @@ def test_media_and_fall_share_session_ids_without_start_order(launch_module, fal
 
 
 @pytest.mark.parametrize('cuda_mode', [None, 0o644, 0o755])
-def test_fall_python_prefers_installed_cuda_runtime(tmp_path, monkeypatch, cuda_mode):
+def test_fall_python_uses_dedicated_runtime_even_with_legacy_cuda_dir(
+        tmp_path, monkeypatch, cuda_mode):
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
     monkeypatch.delenv('MALBUT_FALL_POSE_PYTHON', raising=False)
     cuda_python = tmp_path / 'malbut_fall_pose/runtime-cuda/bin/python'
@@ -534,12 +535,12 @@ def test_fall_python_prefers_installed_cuda_runtime(tmp_path, monkeypatch, cuda_
         cuda_python.parent.mkdir(parents=True)
         cuda_python.write_text('#!/bin/sh\nexit 0\n')
         cuda_python.chmod(cuda_mode)
-    expected = (cuda_python if cuda_mode == 0o755
-                else tmp_path / 'malbut_fall_pose/runtime/bin/python')
+    expected = tmp_path / 'malbut_fall_pose/runtime/bin/python'
     for name in ('fall', 'bringup'):
         module = _load(name)
         context = _context(module)
         assert context.launch_configurations['fall_pose_python_executable'] == str(expected)
+        assert context.launch_configurations['fall_pose_execution_provider'] == 'auto'
         context = _context(module, fall_pose_python_executable='/explicit/python')
         assert context.launch_configurations['fall_pose_python_executable'] == '/explicit/python'
     monkeypatch.setenv('MALBUT_FALL_POSE_PYTHON', '/custom/python')

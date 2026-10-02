@@ -25,6 +25,8 @@ def _cloud_build_fixture(robot, tmp_path, bin_dir):
     scripts.mkdir(parents=True)
     shutil.copyfile(ROOT / 'homecam_agent/scripts/build_robot_cloud.sh',
                     scripts / 'build_robot_cloud.sh')
+    (scripts / 'prepare_fall_pose_runtime.sh').write_text(
+        '#!/bin/bash\nset -eu\nprintf "%s\\n" "$@" >> "$FALL_CALLS"\n')
     (scripts / 'build_kvs_webrtc_sdk.sh').write_text(
         '#!/bin/bash\nset -eu\n'
         'printf "%s\\n" "$1" >> "$SDK_CALLS"\n')
@@ -43,6 +45,7 @@ def _cloud_build_fixture(robot, tmp_path, bin_dir):
         '    log.write(json.dumps(sys.argv[1:]) + "\\n")\n')
     colcon.chmod(0o755)
     return {'PKG_CONFIG_LIBDIR': str(pkgconfig), 'PKG_CONFIG_PATH': '',
+            'FALL_CALLS': str(tmp_path / 'fall-calls'),
             'SDK_CALLS': str(tmp_path / 'sdk-calls')}
 
 
@@ -67,6 +70,7 @@ def test_build_selects_only_robot_copy_and_separate_output(tmp_path, layout):
     recorded = tmp_path / 'arguments.json'
     env = {**os.environ, **cloud_env, 'ROS_DISTRO': 'humble',
            'MALBUT_BUILD_SPEECH': '0',
+           'MALBUT_BUILD_FALL_POSE': '1',
            'PATH': str(bin_dir) + os.pathsep + os.environ['PATH'],
            'BUILD_ARGUMENTS': str(recorded)}
     result = subprocess.run(['bash', str(script), '--parallel-workers', '1'],
@@ -84,6 +88,7 @@ def test_build_selects_only_robot_copy_and_separate_output(tmp_path, layout):
         'install/malbut_test'
     assert Path(env['SDK_CALLS']).read_text().strip() == str(
         workspace / '.deps/amazon-kinesis-video-streams-webrtc-sdk-c-v1.19.1')
+    assert Path(env['FALL_CALLS']).read_text().strip() == '--gpu'
     start = arguments.index('--base-paths') + 1
     end = arguments.index('--build-base')
     assert arguments[start:end] == list(map(str, expected))

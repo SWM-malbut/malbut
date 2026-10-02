@@ -9,6 +9,7 @@ import signal
 import threading
 import time
 
+from .gpu import JtopSampler
 from .resources import LinuxSampler, Tegra
 from .store import Store
 
@@ -41,12 +42,13 @@ def main(argv=None):
 
     signal.signal(signal.SIGINT, interrupted)
     signal.signal(signal.SIGTERM, interrupted)
-    tegra, observer, rclpy = None, None, None
+    tegra, gpu, observer, rclpy = None, None, None, None
     try:
         tegra = Tegra(store, args.interval)
         if tegra.error:
             store.write('observer', {'notice': tegra.error})
         sampler = LinuxSampler(args.parent_pid, store)
+        gpu = JtopSampler(args.interval)
         if not args.no_ros:
             import rclpy
             from rclpy.signals import SignalHandlerOptions
@@ -56,8 +58,10 @@ def main(argv=None):
         store.update_metadata(ros_observation=not args.no_ros, topics=topics,
                               ros_domain_id=os.environ.get('ROS_DOMAIN_ID', '0'),
                               ros_distro=os.environ.get('ROS_DISTRO'),
+                              gpu_process_source='jtop (optional; GPU memory only)',
                               tegrastats_executable=shutil.which('tegrastats'))
-        store.write('system', {**sampler.sample(), **tegra.sample()})
+        gpu_system, gpu_processes = gpu.sample()
+        store.write('system', {**sampler.sample(gpu_processes), **tegra.sample(), **gpu_system})
         print('MALBUT_RESOURCE_MONITOR_READY', flush=True)
         deadline = time.monotonic() + args.interval
         while not stop.wait(max(0, deadline - time.monotonic())):
@@ -66,7 +70,8 @@ def main(argv=None):
                 raise RuntimeError('Less than 256 MiB free; stop recording, robot remains running')
             if observer and observer.error:
                 raise RuntimeError('ROS observer stopped: ' + observer.error)
-            system = {**sampler.sample(), **tegra.sample()}
+            gpu_system, gpu_processes = gpu.sample()
+            system = {**sampler.sample(gpu_processes), **tegra.sample(), **gpu_system}
             if observer:
                 observer.sample()
             system['collection_duration_ms'] = (time.monotonic() - started) * 1000
@@ -87,6 +92,8 @@ def main(argv=None):
             rclpy.shutdown()
         if tegra:
             tegra.close()
+        if gpu:
+            gpu.close()
         store.close(reason)
 
 
