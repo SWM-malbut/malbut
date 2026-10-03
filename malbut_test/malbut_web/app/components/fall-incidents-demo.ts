@@ -121,6 +121,10 @@ function counts(opinions: Array<{ label: string }>) {
   return result;
 }
 
+let fallSettings = { settingsRevision: "3", enabled: true, cameraEnabled: true, cloudConsent: true };
+let cloudKey = { configured: true, last4: "7f3a", keyVersion: 2, updatedAt: minutes(60 * 24), robotModel: "gemma4:31b",
+  robotHasCurrent: true };
+
 function demoTimeline(url: URL) {
   const from = Date.parse(url.searchParams.get("from") ?? ""), to = Date.parse(url.searchParams.get("to") ?? "");
   const end = Math.min(to, Date.now());
@@ -143,6 +147,22 @@ export async function demoIncidentFetch(url: string, init?: RequestInit): Promis
   const body = () => JSON.parse(String(init?.body ?? "{}"));
   if (path.endsWith("/fall-timeline")) return reply(demoTimeline(parsed));
   if (path.endsWith("/recording-playback")) return reply({ error: "로컬 데모에는 녹화 영상이 없습니다." }, 404);
+  if (path.endsWith("/fall-settings")) {
+    if (method === "PATCH") {
+      const patch = body();
+      fallSettings = { ...fallSettings, ...patch, settingsRevision: String(Number(fallSettings.settingsRevision) + 1) };
+      delete (fallSettings as Record<string, unknown>).expectedRevision;
+      return reply({ saved: true, savedRevision: fallSettings.settingsRevision });
+    }
+    return reply({ settings: fallSettings, receiptState: "reported", reports: [] });
+  }
+  if (path.endsWith("/fall-cloud-key")) {
+    if (method === "PUT") cloudKey = { ...cloudKey, configured: true, last4: String(body().apiKey).slice(-4),
+      keyVersion: cloudKey.keyVersion + 1, robotHasCurrent: false };
+    if (method === "DELETE") cloudKey = { ...cloudKey, configured: false, last4: "", keyVersion: cloudKey.keyVersion + 1,
+      robotHasCurrent: false };
+    return reply({ ...cloudKey, last4: cloudKey.configured ? cloudKey.last4 : null });
+  }
   if (path.endsWith("/fall-reports")) {
     const { momentAt, memo, requestAiReview } = body();
     const id = `demo-report-${incidents.length + 1}`;

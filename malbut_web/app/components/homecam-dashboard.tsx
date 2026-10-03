@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
+import { FallHomecamSettings } from "./fall-homecam-settings";
 import { FallIncidentsPanel } from "./fall-incidents-panel";
-import { FallSettingsPanel } from "./fall-settings-panel";
 import { FallTimelinePanel, type TimelineMode } from "./fall-timeline-panel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -894,6 +894,12 @@ export function HomecamDashboard({
     value: boolean,
   ) => {
     if (!selectedDevice || busy) return;
+    if (LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID) {
+      // Local UI demo: no server, change the shown state only.
+      setDevices((current) => current.map((device) =>
+        device.id === selectedDevice.id ? { ...device, [key]: value } : device));
+      return;
+    }
     if (key === "monitoringEnabled") {
       setStorageGraceUntilMs(value ? Date.now() + 15_000 : 0);
     }
@@ -1579,47 +1585,18 @@ export function HomecamDashboard({
                 </div>
               </section>
 
-              <section className="homecam-settings-card">
-                <div className="settings-card-heading">
-                  <span className="settings-heading-icon" aria-hidden="true">
-                    <Camera size={21} weight="regular" />
-                  </span>
-                  <div>
-                    <h2>카메라와 녹화</h2>
-                    <p>설정 상태는 로봇 화면에도 항상 표시됩니다.</p>
-                  </div>
-                </div>
-                <div className="homecam-setting-row">
-                  <div><strong>연속 녹화</strong><span>끄면 앞으로의 저장만 멈춰요 · 저장된 영상은 7일 뒤 자동 삭제</span></div>
-                  <Switch
-                    checked={Boolean(selectedDevice?.monitoringEnabled)}
-                    disabled={!selectedDevice || !isOwner || Boolean(busy)}
-                    label="연속 녹화"
-                    onChange={(value) => void updateSetting("monitoringEnabled", value)}
-                  />
-                </div>
-                <div className="homecam-setting-row">
-                  <div><strong>카메라</strong><span>끄면 라이브와 감지를 모두 중지합니다.</span></div>
-                  <Switch
-                    checked={Boolean(selectedDevice?.cameraEnabled)}
-                    disabled={!selectedDevice || !isOwner || Boolean(busy)}
-                    label="카메라"
-                    onChange={(value) => void updateSetting("cameraEnabled", value)}
-                  />
-                </div>
-                <div className="homecam-setting-row">
-                  <div><strong>로봇 마이크</strong><span>집 안의 소리를 보호자에게 전달합니다.</span></div>
-                  <Switch
-                    checked={Boolean(selectedDevice?.microphoneEnabled)}
-                    disabled={!selectedDevice || !isOwner || Boolean(busy)}
-                    label="로봇 마이크"
-                    onChange={(value) => void updateSetting("microphoneEnabled", value)}
-                  />
-                </div>
-              </section>
-
-              {selectedDevice && selectedDevice.id !== LOCAL_DEMO_DEVICE_ID && (
-                <FallSettingsPanel key={selectedDevice.id} deviceId={selectedDevice.id} isOwner={isOwner} />
+              {selectedDevice && (
+                <FallHomecamSettings
+                  key={selectedDevice.id}
+                  deviceId={selectedDevice.id}
+                  demo={LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID}
+                  isOwner={isOwner}
+                  cameraEnabled={selectedDevice.cameraEnabled}
+                  recordingEnabled={selectedDevice.monitoringEnabled}
+                  microphoneEnabled={selectedDevice.microphoneEnabled}
+                  settingBusy={Boolean(busy)}
+                  onUpdateSetting={(settingKey, value) => void updateSetting(settingKey, value)}
+                />
               )}
 
               <section className="homecam-settings-card">

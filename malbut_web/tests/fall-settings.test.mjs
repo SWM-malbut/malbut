@@ -64,7 +64,7 @@ test("robot web copy includes the same fall settings integration", () => {
   for (const file of [
     "app/api/device/v1/heartbeat/route.ts",
     "app/api/devices/[deviceId]/fall-settings/route.ts",
-    "app/components/fall-settings-panel.tsx",
+    "app/components/fall-homecam-settings.tsx",
     "app/components/homecam-dashboard.tsx",
     "app/fall-settings-contract.ts", "db/fall-settings.ts", "db/schema.ts",
     "db/migrations/0011_fall_settings.sql", "docs/fall_settings.md",
