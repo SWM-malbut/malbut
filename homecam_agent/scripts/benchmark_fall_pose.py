@@ -165,6 +165,8 @@ def main():
     errors = []
     logger = SimpleNamespace(error=errors.append, warning=errors.append, info=lambda _: None)
     results = []
+    # Older source trees still have a general mode selected by fall_only.
+    fall_only = {'fall_only': True} if 'fall_only' in DetectorConfig.__dataclass_fields__ else {}
     for case in selected:
         path = args.dataset / case['source_path']
         if digest(path) != case['sha256']:
@@ -196,7 +198,7 @@ def main():
             record = {k: [] for k in ['inference_ms', 'estimate_ms', 'conversion_ms',
                                      'callback_ms', 'inferred_frame_indices', 'poses', 'frame_age_ms']}
             node = SimpleNamespace(
-                _config=DetectorConfig(fall_only=True), _refresh_fall_control=lambda: True,
+                _config=DetectorConfig(**fall_only), _refresh_fall_control=lambda: True,
                 _bridge=SimpleNamespace(imgmsg_to_cv2=convert), _pose_estimator=estimator,
                 _pose_gate=PersonPoseGate(5), _pose_tracker=PersonPoseTracker(),
                 _fall_detector=FallCandidateDetector(), _pose_frame_context=None,

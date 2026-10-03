@@ -142,19 +142,16 @@ import sys
 
 import numpy as np
 
-from homecam_detector.yolo import YoloOnnxDetector
 from homecam_detector.pose import PersonPoseEstimator
 
 
-detector = YoloOnnxDetector(sys.argv[1])
-result = detector.detect(np.zeros((400, 640, 3), dtype=np.uint8))
-if not isinstance(result, dict):
-    raise RuntimeError('homecam detector returned an invalid result')
+# The detection model's output shape was validated with ONNX Runtime above;
+# the homecam detector package keeps only the pose loader.
 pose_estimator = PersonPoseEstimator(sys.argv[2])
 pose = pose_estimator.estimate(np.zeros((400, 640, 3), dtype=np.uint8))
 if pose is not None:
     raise RuntimeError('blank frame unexpectedly returned a person pose')
-print('Validated detection and pose with the homecam runtime loaders')
+print('Validated pose with the homecam runtime loader')
 PY
 sha256sum "$model_path" "$pose_model_path"
 echo "Prepared detection model: $model_path"

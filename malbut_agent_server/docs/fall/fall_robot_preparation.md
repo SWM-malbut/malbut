@@ -178,8 +178,8 @@ Python 실행 의존성이 모두 설치되는 것은 아니다.
 
 `malbut_test`에는 원본의 여러 사람 추적, 낙상 후보 생성, RGB/depth 처리 모듈도 함께 넣는다.
 빌드 목록에 `homecam_detector`와 `malbut_fall_coordinator`를 포함하고, Bringup이 준비되면 VLM·
-`malbut_fall_pose`·낙상 코디네이터를 각각 한 번 시작한다. 기존 홈캠 미디어의 `start_detector=false`는
-유지한다. 영상 저장용 감지기를 별도로 켜서 두 번 실행하지 않는다.
+`malbut_fall_pose`·낙상 코디네이터를 각각 한 번 시작한다. 홈캠 미디어 실행 파일은 영상 전송만 하며
+감지기를 띄우지 않는다(일반 감지 모드는 2026-10-03 제거).
 
 실기기 `build.sh`가 Pose 전용 `~/.cache/malbut_fall_pose/runtime`을 준비한다.
 환경만 별도로 준비하려면 아래 명령을 쓴다. GPU용 ONNX Runtime과 작은 Python 의존성만
@@ -211,8 +211,7 @@ bash ~/ros2_ws/src/malbut/homecam_agent/scripts/prepare_fall_pose_runtime.sh --g
 
 모델 파일·Python 경로가 없으면 Bringup 시작 전에 실패한다.
 ONNX Runtime이나 모델을 불러오지 못하면 Pose 노드 시작에 실패하고 Bringup도 종료한다.
-CUDA를 선택했는데 초기화가 실패하면 CPU로 조용히 바꾸지 않는다. 일반 홈캠의 YOLO와
-Pose에도 같은 GPU 선택·스레드 제한을 적용한다. 이번 기본값은 PC 측정값을 바탕으로 정했으며 Jetson의 처리 fps와
+CUDA를 선택했는데 초기화가 실패하면 CPU로 조용히 바꾸지 않는다. 이번 기본값은 PC 측정값을 바탕으로 정했으며 Jetson의 처리 fps와
 주행·음성 동시 부하는 별도 검증 대상이다. TensorRT 실행 경로를 추가한 것은 아니다.
 
 #### GPU 환경 준비와 적용 확인
@@ -257,13 +256,6 @@ ros2 param get /malbut_fall_pose pose_opencv_num_threads      # 1
 명시했다면 제거하거나 새 값으로 바꾼다. 이 값들은 기본값보다 우선한다.
 `fall_runtime.json`의 Cloud 설정과 Pose 실행 설정은 별개이며 실행 중 param 변경으로는
 추론 세션이 바뀌지 않는다.
-
-별도로 일반 홈캠 이벤트 감지기를 실행할 때는 같은 GPU Python 경로를
-`MALBUT_HOMECAM_DETECTOR_PYTHON` 환경변수 또는 `detector_python_executable` 인자로
-지정한다. 일반 YOLO의 옵션은 `yolo_execution_provider`, `yolo_intra_op_num_threads`,
-`yolo_allow_spinning`이며 Pose의 옵션과 독립적으로 조정한다. `homecam_aurora.launch.py`와
-`homecam_sim.launch.py`에 연결했다. 로봇 통합 실행의 `start_detector=false`는 유지하므로
-이번 변경이 일반 홈캠 감지기를 추가로 켜지는 않는다.
 
 Pose는 `/malbut/falls/status`에서 **이번 실행의 VLM ID**와 상태 번호를 확인한다.
 설정 적용 완료·낙상 감지 ON·카메라 허용·영상 수신 가능이 모두 참일 때만 영상을 처리한다.

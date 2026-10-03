@@ -15,7 +15,7 @@ setup(
     maintainer="SWM Malbut contributors",
     maintainer_email="maintainers@example.com",
     description=(
-        "On-device home-camera motion and person, dog, and cat event detector."
+        "On-device fall pose candidate detector for the home camera."
     ),
     license="Apache-2.0",
     tests_require=["pytest"],

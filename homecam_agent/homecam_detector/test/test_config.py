@@ -1,62 +1,56 @@
-"""Tests for detector configuration validation."""
+"""Tests for fall pose node configuration validation."""
 
 from dataclasses import replace
 
-from homecam_detector.config import (
-    DetectorConfig,
-    is_allowed_backend_url,
-    is_valid_device_id,
-    validate_config,
-)
+from homecam_detector.config import DetectorConfig, validate_config
 
 
-def test_default_config_is_valid() -> None:
-    assert validate_config(DetectorConfig()) == []
+VALID = DetectorConfig(fall_runtime_id="runtime-1", pose_model_path="/models/pose.onnx")
+
+
+def test_minimal_fall_config_is_valid() -> None:
+    assert validate_config(VALID) == []
+
+
+def test_runtime_id_and_pose_model_are_required() -> None:
+    assert validate_config(DetectorConfig()) == [
+        "fall_runtime_id is required",
+        "pose_model_path is required",
+    ]
+    assert validate_config(replace(VALID, fall_runtime_id="  ")) == ["fall_runtime_id is required"]
 
 
 def test_model_execution_settings_use_tuned_defaults_and_validate_overrides():
-    default = DetectorConfig()
+    default = VALID
     assert (default.pose_execution_provider, default.pose_intra_op_num_threads,
             default.pose_allow_spinning, default.pose_opencv_num_threads) == ('auto', 2, False, 1)
-    assert (default.yolo_execution_provider, default.yolo_intra_op_num_threads,
-            default.yolo_allow_spinning) == ('auto', 2, False)
     assert validate_config(replace(
         default, pose_execution_provider='cuda',
         pose_intra_op_num_threads=2, pose_allow_spinning=False, pose_opencv_num_threads=1)) == []
     assert validate_config(replace(default, pose_execution_provider='auto')) == []
     for changes in ({'pose_execution_provider': 'invalid'}, {'pose_intra_op_num_threads': True},
                     {'pose_intra_op_num_threads': -1}, {'pose_opencv_num_threads': -1},
-                    {'pose_allow_spinning': 'false'}, {'yolo_execution_provider': 'invalid'},
-                    {'yolo_intra_op_num_threads': True}, {'yolo_intra_op_num_threads': 257},
-                    {'yolo_allow_spinning': 'false'}):
+                    {'pose_allow_spinning': 'false'}, {'pose_intra_op_num_threads': 257}):
         assert validate_config(replace(default, **changes))
 
 
 def test_navigation_status_topic_must_be_absolute_or_disabled() -> None:
     assert validate_config(
-        DetectorConfig(navigation_status_topic="navigate_to_pose/_action/status")
+        replace(VALID, navigation_status_topic="navigate_to_pose/_action/status")
     ) == [
         "navigation_status_topic must be empty or an absolute ROS topic"
     ]
-    assert validate_config(DetectorConfig(navigation_status_topic="")) == []
+    assert validate_config(replace(VALID, navigation_status_topic="")) == []
 
 
-def test_rejects_unsafe_backend_and_bad_thresholds() -> None:
-    config = DetectorConfig(
-        image_topic="relative",
-        backend_url="http://public.example.test",
-        confidence_threshold=0.0,
-        consecutive_frames=0,
-        max_frame_gap_sec=0.0,
-        motion_area_ratio=2.0,
-    )
-    errors = validate_config(config)
-    assert len(errors) >= 6
+def test_rejects_relative_image_topic() -> None:
+    assert validate_config(replace(VALID, image_topic="relative")) == [
+        "image_topic must be an absolute ROS topic"
+    ]
 
 
 def test_rejects_nan_and_infinite_motion_parameters() -> None:
     float_fields = [
-        "confidence_threshold",
         "pose_confidence_threshold",
         "pose_keypoint_threshold",
         "pose_inference_fps",
@@ -65,29 +59,26 @@ def test_rejects_nan_and_infinite_motion_parameters() -> None:
         "fall_temporal_window_sec",
         "fall_found_down_hold_sec",
         "fall_max_frame_gap_sec",
-        "event_cooldown_sec",
-        "max_frame_gap_sec",
         "stationary_after_sec",
         "odom_timeout_sec",
         "linear_motion_threshold",
         "angular_motion_threshold",
-        "motion_area_ratio",
         "depth_scale_m",
         "depth_max_stamp_delta_sec",
         "camera_height_m",
         "camera_pitch_rad",
     ]
-    defaults = DetectorConfig()
+    defaults = VALID
     for field in float_fields:
         assert validate_config(replace(defaults, **{field: float("nan")}))
         assert validate_config(replace(defaults, **{field: float("inf")}))
 
 
 def test_pose_rate_is_bounded() -> None:
-    assert validate_config(DetectorConfig(pose_inference_fps=0.0)) == [
+    assert validate_config(replace(VALID, pose_inference_fps=0.0)) == [
         "pose_inference_fps must be in (0, 30]"
     ]
-    assert validate_config(DetectorConfig(pose_inference_fps=30.1)) == [
+    assert validate_config(replace(VALID, pose_inference_fps=30.1)) == [
         "pose_inference_fps must be in (0, 30]"
     ]
 
@@ -100,88 +91,38 @@ def test_pose_tracking_limits_and_threshold_order() -> None:
         "pose_track_max_people": (0, 129, True, 2.5),
     }.items():
         for value in values:
-            assert validate_config(replace(DetectorConfig(), **{field: value}))
+            assert validate_config(replace(VALID, **{field: value}))
 
 
 def test_fall_candidate_window_parameters_are_validated():
     for name in ("fall_temporal_window_sec", "fall_found_down_hold_sec", "fall_max_frame_gap_sec"):
-        assert validate_config(replace(DetectorConfig(), **{name: 0}))
-    assert validate_config(DetectorConfig(fall_found_down_hold_sec=3))
-    assert validate_config(DetectorConfig(fall_max_frame_gap_sec=3))
+        assert validate_config(replace(VALID, **{name: 0}))
+    assert validate_config(replace(VALID, fall_found_down_hold_sec=3))
+    assert validate_config(replace(VALID, fall_max_frame_gap_sec=3))
 
 
 def test_depth_topics_must_be_paired_and_explicitly_aligned() -> None:
-    assert validate_config(DetectorConfig(depth_image_topic="relative"))
+    assert validate_config(replace(VALID, depth_image_topic="relative"))
     assert validate_config(
-        DetectorConfig(depth_image_topic="/camera/depth/aligned")
+        replace(VALID, depth_image_topic="/camera/depth/aligned")
     ) == [
         "depth_image_topic and depth_camera_info_topic must be set together"
     ]
-    assert validate_config(DetectorConfig(depth_aligned_to_rgb=True)) == [
+    assert validate_config(replace(VALID, depth_aligned_to_rgb=True)) == [
         "depth_aligned_to_rgb requires configured depth topics"
     ]
     assert "explicitly aligned" in validate_config(
-        DetectorConfig(
+        replace(
+            VALID,
             depth_image_topic="/camera/depth/aligned",
             depth_camera_info_topic="/camera/depth/camera_info",
         )
     )[0]
     assert validate_config(
-        DetectorConfig(
+        replace(
+            VALID,
             depth_image_topic="/camera/depth/aligned",
             depth_camera_info_topic="/camera/depth/camera_info",
             depth_aligned_to_rgb=True,
         )
     ) == []
-
-
-def test_allows_local_development_http() -> None:
-    config = DetectorConfig(
-        backend_url="http://localhost:3000",
-        device_id="local-device",
-    )
-    assert validate_config(config) == []
-
-
-def test_plaintext_http_allows_only_exact_loopback_hosts() -> None:
-    allowed = [
-        "http://localhost",
-        "http://LOCALHOST:3000/api",
-        "http://127.0.0.1:8080",
-        "http://[::1]:3000",
-    ]
-    rejected = [
-        "http://localhost.evil",
-        "http://localhost@evil.example",
-        "http://127.0.0.1.evil",
-        "http://[::1].evil",
-        "http://[::1]evil",
-        "http://localhost:",
-        "http://localhost:70000",
-        "http://localhost:0",
-        "http://192.168.0.10",
-        "http://example.com",
-    ]
-    assert all(is_allowed_backend_url(value) for value in allowed)
-    assert not any(is_allowed_backend_url(value) for value in rejected)
-
-
-def test_https_requires_host_and_rejects_userinfo() -> None:
-    assert is_allowed_backend_url("https://homecam.example.test")
-    assert is_allowed_backend_url("HTTPS://homecam.example.test:443/api")
-    assert not is_allowed_backend_url("https://")
-    assert not is_allowed_backend_url("https://user@homecam.example.test")
-    assert not is_allowed_backend_url("ftp://homecam.example.test")
-
-
-def test_backend_device_id_matches_broker_contract() -> None:
-    assert is_valid_device_id("gazebo-homecam:sim")
-    assert is_valid_device_id("A")
-    assert not is_valid_device_id(".leading-dot")
-    assert not is_valid_device_id("contains space")
-    assert not is_valid_device_id("a" * 129)
-    config = DetectorConfig(
-        backend_url="https://homecam.example.test",
-        device_id=".invalid",
-    )
-    assert validate_config(config)

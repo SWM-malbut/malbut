@@ -7,7 +7,6 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 from sensor_msgs.msg import Image
-from std_msgs.msg import Bool
 
 import homecam_detector.detector_node as detector_node
 from homecam_detector.config import DetectorConfig
@@ -18,9 +17,8 @@ from homecam_detector.pose_tracker import PersonPoseTracker
 
 
 @pytest.mark.parametrize('overrides,expected', [
-    ({'fall_only': True}, ('auto', 2, False, 1)),
-    ({'fall_only': False}, ('auto', 2, False, 1)),
-    ({'fall_only': True, 'pose_execution_provider': 'cpu', 'pose_intra_op_num_threads': 3},
+    ({}, ('auto', 2, False, 1)),
+    ({'pose_execution_provider': 'cpu', 'pose_intra_op_num_threads': 3},
      ('cpu', 3, False, 1)),
 ])
 def test_direct_node_defaults_and_explicit_overrides(overrides, expected):
@@ -33,21 +31,27 @@ def test_direct_node_defaults_and_explicit_overrides(overrides, expected):
     config = detector_node.HomecamDetectorNode._read_config(node)
     assert (config.pose_execution_provider, config.pose_intra_op_num_threads,
             config.pose_allow_spinning, config.pose_opencv_num_threads) == expected
-    assert (config.yolo_execution_provider, config.yolo_intra_op_num_threads,
-            config.yolo_allow_spinning) == ('auto', 2, False)
+    assert not {'fall_only', 'model_path', 'monitoring_enabled', 'backend_url',
+                'yolo_execution_provider'} & set(parameters)
+
+
+def set_vlm_status(node, allowed=True):
+    node._status_sequence = getattr(node, '_status_sequence', 0) + 1
+    node._on_fall_status(SimpleNamespace(
+        runtime_id='vlm-1', sequence=node._status_sequence, settings_applied=True,
+        enabled=True, camera_enabled=True, accepting_images=allowed))
 
 
 @pytest.fixture
 def node(monkeypatch):
     # Bind production callbacks to a test double: no node initialization,
-    # subscriptions, DDS publications, event POSTs, or model downloads.
+    # subscriptions, DDS publications, or model downloads.
     pose = PersonPose(0.9, (0.1, 0.2, 0.8, 0.9), (), 0)
     value = SimpleNamespace(
         now=1.0,
-        _config=DetectorConfig(monitoring_enabled=True),
-        _monitoring_state_received=True,
+        _config=DetectorConfig(fall_runtime_id='vlm-1', pose_model_path='test.onnx'),
+        _fall_active=False,
         _bridge=Mock(),
-        _model=Mock(),
         _pose_estimator=Mock(),
         _pose_gate=PersonPoseGate(5.0),
         _pose_tracker=PersonPoseTracker(),
@@ -62,29 +66,18 @@ def node(monkeypatch):
         _poses_publisher=Mock(),
         _depth_evidence=Mock(return_value={"usable": False}),
         _motion_gate=Mock(),
-        _motion_detector=Mock(),
-        _inference_health=Mock(),
-        _dedupe=Mock(),
-        _segmenter=Mock(),
-        _storage_session_id="",
-        _poster=None,
-        _clip_poster=None,
         get_logger=Mock(return_value=Mock()),
     )
     value._bridge.imgmsg_to_cv2.return_value = np.zeros(
         (8, 8, 3), dtype=np.uint8
     )
-    value._model.detect.return_value = {}
     value._pose_estimator.estimate_all.return_value = (pose,)
-    value._motion_gate.generic_motion_allowed.return_value = False
     value._motion_gate.pose_motion_state.return_value = "unknown"
-    value._dedupe.observe.return_value = []
-    value._segmenter.observe.return_value = []
     for name in (
         "_on_image", "_observe_person_pose", "_publish_pose_absent",
         "_publish_tracked_poses",
         "_publish_fall_candidates",
-        "_reset_pose_state", "_on_monitoring_state", "_on_parameter_update",
+        "_reset_pose_state", "_on_parameter_update",
         "_on_fall_status", "_refresh_fall_control",
     ):
         setattr(value, name, MethodType(
@@ -93,29 +86,20 @@ def node(monkeypatch):
     monkeypatch.setattr(detector_node, "time", SimpleNamespace(
         monotonic=lambda: value.now, time=lambda: 1000.0 + value.now
     ))
+    value._fall_control = FallPoseControl('vlm-1', clock=lambda: value.now)
+    set_vlm_status(value)
     return value
 
 
-def test_fall_only_runs_with_recording_off_and_stops_on_status_expiry(node):
-    node._config = DetectorConfig(
-        fall_only=True, fall_runtime_id='vlm-1', pose_model_path='test.onnx',
-        monitoring_enabled=False,
-    )
-    node._monitoring_state_received = False
+def test_pose_waits_for_vlm_status_and_stops_on_status_expiry(node):
     node._fall_control = FallPoseControl('vlm-1', clock=lambda: node.now)
     node._fall_active = False
+    node._status_sequence = 0
     node._on_image(camera_image(node))
     node._pose_estimator.estimate_all.assert_not_called()
-    state = SimpleNamespace(runtime_id='vlm-1', sequence=1, settings_applied=True,
-                            enabled=True, camera_enabled=True, accepting_images=True)
-    node._on_fall_status(state)
-    node._on_monitoring_state(Bool(data=False))
+    set_vlm_status(node)
     node._on_image(camera_image(node))
     node._pose_estimator.estimate_all.assert_called_once()
-    node._model.detect.assert_not_called()
-    node._dedupe.observe.assert_not_called()
-    node._segmenter.observe.assert_not_called()
-    assert node._pose_tracker is not None
     node.now += 5
     node._on_image(camera_image(node))
     node._pose_estimator.estimate_all.assert_called_once()
@@ -131,8 +115,7 @@ def camera_image(node):
     return message
 
 
-def test_fall_only_converts_only_due_frames_and_checks_control_first(node):
-    node._config = DetectorConfig(fall_only=True)
+def test_only_due_frames_are_converted_and_control_is_checked_first(node):
     node._refresh_fall_control = Mock(return_value=True)
     for i in range(30):
         node.now = 1 + i / 30
@@ -146,17 +129,7 @@ def test_fall_only_converts_only_due_frames_and_checks_control_first(node):
     assert node._bridge.imgmsg_to_cv2.call_count == 5
 
 
-def test_general_homecam_still_converts_frames_between_pose_samples(node):
-    for i in range(30):
-        node.now = 1 + i / 30
-        node._on_image(camera_image(node))
-    assert node._bridge.imgmsg_to_cv2.call_count == 30
-    assert node._model.detect.call_count == 30
-    assert node._pose_estimator.estimate_all.call_count == 5
-
-
 def test_bad_fall_frames_cannot_bypass_conversion_budget(node):
-    node._config = DetectorConfig(fall_only=True)
     node._refresh_fall_control = Mock(return_value=True)
     node._bridge.imgmsg_to_cv2.side_effect = detector_node.CvBridgeError('bad pixels')
     for i in range(30):
@@ -175,68 +148,42 @@ def multi_payload(node):
     return json.loads(node._poses_publisher.publish.call_args.args[0].data)
 
 
-@pytest.mark.parametrize("general_result", [{}, {"cat": 0.9}])
-def test_pose_runs_without_general_person_result(node, general_result):
-    node._model.detect.return_value = general_result
-
-    node._on_image(camera_image(node))
-
-    node._pose_estimator.estimate_all.assert_called_once()
-    assert payloads(node)[0]["present"] is True
-    # Independent pose output must not invent a person/fall event.
-    assert node._dedupe.observe.call_args.args[0] == general_result
-
-
-def test_pose_runs_without_general_model(node):
-    node._model = None
-    node._on_image(camera_image(node))
-    node._pose_estimator.estimate_all.assert_called_once()
-    assert payloads(node)[0]["present"] is True
-
-
-@pytest.mark.parametrize("error", [RuntimeError, ValueError])
-def test_pose_publishes_before_general_inference_failure(node, error):
-    def fail(_frame):
-        assert payloads(node)[0]["present"] is True
-        raise error("general inference failed")
-
-    node._model.detect.side_effect = fail
-    node._on_image(camera_image(node))
-
-    node._pose_estimator.estimate_all.assert_called_once()
-    node._inference_health.record_failure.assert_called_once()
-    assert node._pose_failure_count == 0
-    assert node._pose_present
-
-
-@pytest.mark.parametrize("received,enabled", [
-    (False, False), (False, True), (True, False),
-])
-def test_privacy_guard_blocks_both_models(node, received, enabled):
-    node._monitoring_state_received = received
-    node._config = DetectorConfig(monitoring_enabled=enabled)
+@pytest.mark.parametrize("status", ["none", "not_accepting", "expired"])
+def test_vlm_status_gate_blocks_conversion_and_output(node, status):
+    node._fall_control = FallPoseControl('vlm-1', clock=lambda: node.now)
+    node._fall_active = False
+    node._status_sequence = 0
+    if status == "not_accepting":
+        set_vlm_status(node, allowed=False)
+    elif status == "expired":
+        set_vlm_status(node)
+        node.now += 5
+    node._poses_publisher.reset_mock()
+    node._fall_candidates_publisher.reset_mock()
     node._on_image(camera_image(node))
     node._bridge.imgmsg_to_cv2.assert_not_called()
     node._pose_estimator.estimate_all.assert_not_called()
-    node._model.detect.assert_not_called()
     assert payloads(node) == []
-    node._poses_publisher.publish.assert_not_called()
-    node._fall_candidates_publisher.publish.assert_not_called()
+    # Expiry may announce "disabled" once; it must never carry people or candidates.
+    for publisher, key in ((node._poses_publisher, "persons"),
+                           (node._fall_candidates_publisher, "candidates")):
+        for call in publisher.publish.call_args_list:
+            output = json.loads(call.args[0].data)
+            assert output["status"] == "disabled" and output[key] == []
 
 
-def test_parameter_on_cannot_bypass_initial_privacy_state(node):
-    node._monitoring_state_received = False
-    node._on_parameter_update([
+def test_parameter_updates_cannot_enable_pose(node):
+    node._fall_control = FallPoseControl('vlm-1', clock=lambda: node.now)
+    node._fall_active = False
+    result = node._on_parameter_update([
         SimpleNamespace(name="monitoring_enabled", value=True)
     ])
+    assert not result.successful
     node._on_image(camera_image(node))
     node._pose_estimator.estimate_all.assert_not_called()
-    node._on_monitoring_state(Bool(data=True))
-    node._on_image(camera_image(node))
-    node._pose_estimator.estimate_all.assert_called_once()
 
 
-def test_pose_is_rate_limited_and_not_cleared_by_general_absence(node):
+def test_pose_is_rate_limited(node):
     node._on_image(camera_image(node))
     node.now = 1.1
     node._on_image(camera_image(node))
@@ -251,25 +198,15 @@ def test_pose_is_rate_limited_and_not_cleared_by_general_absence(node):
     assert len(payloads(node)) == 2
 
 
-@pytest.mark.parametrize("control", ["topic", "parameter"])
-def test_off_clears_pose_and_on_resets_rate_limit(node, control):
-    def set_enabled(enabled):
-        if control == "topic":
-            node._on_monitoring_state(Bool(data=enabled))
-        else:
-            result = node._on_parameter_update([
-                SimpleNamespace(name="monitoring_enabled", value=enabled)
-            ])
-            assert result.successful
-
+def test_vlm_off_clears_pose_and_on_resets_rate_limit(node):
     node._on_image(camera_image(node))
-    set_enabled(False)
+    set_vlm_status(node, allowed=False)
     assert payloads(node)[-1] == {"present": False}
     assert not node._pose_present
     node.now = 1.1
     node._on_image(camera_image(node))
     node._pose_estimator.estimate_all.assert_called_once()
-    set_enabled(True)
+    set_vlm_status(node)
     node._on_image(camera_image(node))
     assert node._pose_estimator.estimate_all.call_count == 2
     assert payloads(node)[-1]["present"] is True
@@ -277,7 +214,6 @@ def test_off_clears_pose_and_on_resets_rate_limit(node, control):
 
 def test_only_pose_result_clears_previous_pose(node):
     node._on_image(camera_image(node))
-    node._model.detect.return_value = {"person": 0.99}
     node._pose_estimator.estimate_all.return_value = ()
     node.now = 1.2
     node._on_image(camera_image(node))
@@ -286,35 +222,13 @@ def test_only_pose_result_clears_previous_pose(node):
 
 
 @pytest.mark.parametrize("error", [RuntimeError, ValueError])
-def test_pose_failure_does_not_stop_general_detection(node, error):
+def test_pose_failure_is_counted_and_clears_previous_pose(node, error):
     node._on_image(camera_image(node))
     node._pose_estimator.estimate_all.side_effect = error("pose failed")
-    node._model.detect.return_value = {"person": 0.9, "dog": 0.8}
     node.now = 1.2
     node._on_image(camera_image(node))
     assert node._pose_failure_count == 1
     assert payloads(node)[-1] == {"present": False}
-    assert node._dedupe.observe.call_args.args[0] == {
-        "person": 0.9, "dog": 0.8
-    }
-
-
-def test_missing_pose_model_does_not_stop_general_detection(node):
-    node._pose_estimator = None
-    node._on_image(camera_image(node))
-    node._model.detect.assert_called_once()
-    assert payloads(node) == []
-
-
-def test_pose_does_not_require_storage_session_or_stationary_robot(node):
-    node._config = DetectorConfig(
-        monitoring_enabled=True, event_clips_enabled=True
-    )
-    node._on_image(camera_image(node))
-    node._pose_estimator.estimate_all.assert_called_once()
-    assert payloads(node)[0]["present"] is True
-    node._motion_detector.detect.assert_not_called()
-    node._segmenter.discard.assert_called_once()
 
 
 def test_bad_camera_image_does_not_infer(node):
@@ -323,7 +237,6 @@ def test_bad_camera_image_does_not_infer(node):
     )
     node._on_image(camera_image(node))
     node._pose_estimator.estimate_all.assert_not_called()
-    node._model.detect.assert_not_called()
     output = json.loads(node._fall_candidates_publisher.publish.call_args.args[0].data)
     assert output["status"] == "invalid_image"
     assert output["candidates"] == []
@@ -363,12 +276,12 @@ def test_multiple_poses_in_one_inference_and_legacy_remains_strong_only(node):
 def test_off_clears_all_ids_without_reusing_them(node):
     node._on_image(camera_image(node))
     old_id = multi_payload(node)["persons"][0]["trackId"]
-    node._on_monitoring_state(Bool(data=False))
+    set_vlm_status(node, allowed=False)
     result = multi_payload(node)
     assert result["status"] == "disabled"
     assert result["persons"] == []
     assert result["expiredTrackIds"] == [old_id]
-    node._on_monitoring_state(Bool(data=True))
+    set_vlm_status(node)
     assert multi_payload(node)["status"] == "waiting_frame"
     node.now += 0.1
     node._on_image(camera_image(node))
@@ -429,10 +342,9 @@ def test_invalid_candidate_is_reported_without_killing_callback(node):
     )
     node._on_image(camera_image(node))
     assert multi_payload(node)["status"] == "inference_error"
-    node._model.detect.assert_called_once()
 
 
-def test_fall_candidates_reach_local_output_without_creating_remote_events(node):
+def test_fall_candidates_reach_local_output(node):
     # Four reliable torso joints, with horizontal geometry in the 8x8 test image.
     from homecam_detector.pose import PoseKeypoint
     lying = PersonPose(0.38, (0.1, 0.4, 0.9, 0.6), tuple(
@@ -454,16 +366,14 @@ def test_fall_candidates_reach_local_output_without_creating_remote_events(node)
     assert candidates[0]["requiresVerification"]
     assert "weak_pose_detection" in candidates[0]["uncertainties"]
     assert node._pose_estimator.estimate_all.call_count == 5
-    assert all(call.args[0] == {} for call in node._dedupe.observe.call_args_list)
-    assert node._poster is None and node._clip_poster is None
-    node._on_monitoring_state(Bool(data=False))
+    set_vlm_status(node, allowed=False)
     disabled = json.loads(node._fall_candidates_publisher.publish.call_args.args[0].data)
     assert disabled["status"] == "disabled"
     assert not disabled["candidates"]
     assert not node._fall_detector._states
 
 
-def test_fall_analysis_failure_does_not_stop_pose_or_general_detection(node):
+def test_fall_analysis_failure_does_not_stop_pose(node):
     node._fall_detector.update = Mock(side_effect=ValueError("test"))
     node._on_image(camera_image(node))
     payload = json.loads(node._fall_candidates_publisher.publish.call_args.args[0].data)
@@ -471,4 +381,3 @@ def test_fall_analysis_failure_does_not_stop_pose_or_general_detection(node):
     assert payload["candidates"] == []
     assert multi_payload(node)["status"] == "ok"
     assert node._pose_present
-    node._model.detect.assert_called_once()

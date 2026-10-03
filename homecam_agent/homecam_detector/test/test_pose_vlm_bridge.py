@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from test_detector_pose import camera_image, node  # noqa: F401
+from test_detector_pose import camera_image, node, set_vlm_status  # noqa: F401
 from test_fall_candidate import body
 
 
@@ -47,11 +47,10 @@ def test_detected_person_reaches_cloud_request_once(node, monkeypatch):  # noqa:
     node._bridge.imgmsg_to_cv2.return_value = pixels
     node._pose_estimator.estimate_all.return_value = (body('lying'),)
     node._motion_gate.pose_motion_state.return_value = 'stationary'
-    # General YOLO sees nobody. Pose still runs and produces its own subject.
-    node._model.detect.return_value = {}
     incidents = set()
     for index in range(8):
         node.now = 100 + index * .2
+        set_vlm_status(node)  # The VLM keeps its liveness status fresh.
         image = camera_image(node)
         stamp = node._stamp_seconds(image)
         inputs.rgb(jpeg, capture=stamp, frame_id=image.header.frame_id,

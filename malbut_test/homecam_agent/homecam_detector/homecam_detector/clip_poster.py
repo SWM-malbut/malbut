@@ -10,7 +10,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 from .credentials import is_valid_device_token
-from .event_poster import build_no_redirect_opener
+from .device_http import build_no_redirect_opener
 from .event_segmenter import EventClipBoundary
 
 

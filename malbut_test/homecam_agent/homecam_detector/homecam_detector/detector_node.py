@@ -1,4 +1,4 @@
-"""ROS 2 node for privacy-aware home-camera event detection."""
+"""ROS 2 node that turns camera frames into fall pose candidates."""
 
 import json
 import math
@@ -15,28 +15,19 @@ from rcl_interfaces.msg import SetParametersResult
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo, Image
-from std_msgs.msg import Bool
 from std_msgs.msg import String
 
-from .clip_poster import EventClipPoster
 from .aurora_depth import AuroraDepthEvidenceExtractor, CameraIntrinsics
 from .config import DetectorConfig, EXECUTION_PARAMETER_NAMES, validate_config
-from .credentials import load_device_token
-from .event_dedupe import EventDedupe
-from .event_poster import EventPoster
-from .event_segmenter import EventSegmenter
 from .fall_candidate import FallCandidateConfig, FallCandidateDetector
 from .fall_pose_control import FallPoseControl
-from .inference_health import InferenceHealth
-from .motion_detector import FrameMotionDetector
 from .motion_gate import MotionGate
 from .pose import PersonPoseEstimator, PersonPoseGate
 from .pose_tracker import PersonPoseTracker, PoseTrackingResult
-from .yolo import YoloOnnxDetector
 
 
 class HomecamDetectorNode(Node):
-    """Detect events without publishing any robot motion command."""
+    """Publish fall pose candidates without any robot motion command."""
 
     def __init__(self) -> None:
         super().__init__("homecam_detector")
@@ -45,8 +36,7 @@ class HomecamDetectorNode(Node):
         errors = validate_config(self._config)
         if errors:
             raise ValueError("invalid detector configuration: " + "; ".join(errors))
-        self._fall_control = (FallPoseControl(self._config.fall_runtime_id)
-                              if self._config.fall_only else None)
+        self._fall_control = FallPoseControl(self._config.fall_runtime_id)
         self._fall_active = False
 
         self._bridge = CvBridge()
@@ -62,117 +52,46 @@ class HomecamDetectorNode(Node):
             maximum_stamp_delta_s=self._config.depth_max_stamp_delta_sec,
             keypoint_threshold=self._config.pose_keypoint_threshold,
         )
-        # Never process an image before the media agent publishes its
-        # transient-local effective camera/monitoring privacy state.
-        self._monitoring_state_received = False
         self._motion_gate = MotionGate(
             stationary_after_sec=self._config.stationary_after_sec,
             odom_timeout_sec=self._config.odom_timeout_sec,
             linear_threshold=self._config.linear_motion_threshold,
             angular_threshold=self._config.angular_motion_threshold,
         )
-        self._motion_detector = FrameMotionDetector(
-            area_ratio=self._config.motion_area_ratio
-        )
-        self._dedupe = EventDedupe(
-            device_id=self._config.device_id,
-            consecutive_frames=self._config.consecutive_frames,
-            cooldown_sec=self._config.event_cooldown_sec,
-            max_frame_gap_sec=self._config.max_frame_gap_sec,
-        )
-        self._segmenter = EventSegmenter(
-            device_id=self._config.device_id or "local-homecam",
-            confirmation_window_frames=(
-                self._config.event_confirmation_window_frames
-            ),
-            confirmation_required_frames=(
-                self._config.event_confirmation_required_frames
-            ),
-            pre_roll_sec=self._config.event_pre_roll_sec,
-            merge_gap_sec=self._config.event_merge_gap_sec,
-            max_segment_sec=self._config.max_event_clip_sec,
-            notification_cooldown_sec=self._config.event_cooldown_sec,
-            max_frame_gap_sec=self._config.max_frame_gap_sec,
-        )
-        self._storage_session_id = ""
         if self._config.pose_opencv_num_threads:
             import cv2
             cv2.setNumThreads(self._config.pose_opencv_num_threads)
-        self._model: Optional[YoloOnnxDetector] = None
-        if self._config.model_path:
-            try:
-                self._model = YoloOnnxDetector(
-                    self._config.model_path,
-                    confidence_threshold=self._config.confidence_threshold,
-                    execution_provider=self._config.yolo_execution_provider,
-                    intra_op_num_threads=self._config.yolo_intra_op_num_threads,
-                    allow_spinning=self._config.yolo_allow_spinning,
-                )
-                self.get_logger().info(
-                    f"Loaded YOLO ONNX model: {self._config.model_path}; "
-                    f"provider={self._model.execution_provider} "
-                    f"(requested={self._config.yolo_execution_provider}), "
-                    f"threads={self._config.yolo_intra_op_num_threads}, "
-                    f"spinning={self._config.yolo_allow_spinning}, "
-                    f"opencv_threads={self._config.pose_opencv_num_threads}"
-                )
-                if (self._config.yolo_execution_provider == 'auto'
-                        and self._model.execution_provider == 'cpu'):
-                    self.get_logger().warning(
-                        'Homecam YOLO auto selected CPU: this Python has no CUDAExecutionProvider. '
-                        'GPU acceleration is NOT active. Select a compatible GPU runtime using '
-                        'detector_python_executable; yolo_execution_provider:=cuda requires GPU.')
-            except (FileNotFoundError, RuntimeError, ValueError) as error:
-                if self._config.yolo_execution_provider == 'cuda':
-                    raise RuntimeError(f"Required YOLO CUDA model could not be loaded: {error}") from error
-                self.get_logger().error(
-                    f"YOLO unavailable; continuing with generic motion only: {error}"
-                )
-        else:
-            self.get_logger().warning(
-                "model_path is empty; person, dog, and cat detection is disabled"
-            )
         self._pose_estimator: Optional[PersonPoseEstimator] = None
-        if self._config.pose_model_path:
-            try:
-                self._pose_estimator = PersonPoseEstimator(
-                    self._config.pose_model_path,
-                    confidence_threshold=(
-                        self._config.pose_confidence_threshold
-                    ),
-                    keypoint_threshold=self._config.pose_keypoint_threshold,
-                    keep_aspect=self._config.pose_keep_aspect,
-                    execution_provider=self._config.pose_execution_provider,
-                    intra_op_num_threads=self._config.pose_intra_op_num_threads,
-                    allow_spinning=self._config.pose_allow_spinning,
-                )
-                self.get_logger().info(
-                    "Loaded independent YOLO pose ONNX model: "
-                    f"{self._config.pose_model_path}; "
-                    f"provider={self._pose_estimator.execution_provider} "
-                    f"(requested={self._config.pose_execution_provider}), "
-                    f"threads={self._config.pose_intra_op_num_threads}, "
-                    f"spinning={self._config.pose_allow_spinning}, "
-                    f"opencv_threads={self._config.pose_opencv_num_threads}"
-                )
-                if (self._config.pose_execution_provider == 'auto'
-                        and self._pose_estimator.execution_provider == 'cpu'):
-                    self.get_logger().warning(
-                        'YOLO pose auto selected CPU: this Python has no CUDAExecutionProvider. '
-                        'GPU acceleration is NOT active. Prepare a compatible GPU runtime and '
-                        'select it as the detector Python; set pose_execution_provider=cuda '
-                        '(Bringup: fall_pose_execution_provider:=cuda) to require GPU execution.')
-            except (FileNotFoundError, RuntimeError, ValueError) as error:
-                if self._config.fall_only or self._config.pose_execution_provider == 'cuda':
-                    raise RuntimeError(f"Required pose model could not be loaded: {error}") from error
-                self.get_logger().error(
-                    "YOLO pose unavailable; person and pet events remain "
-                    f"enabled without pose enrichment: {error}"
-                )
-        else:
-            self.get_logger().info(
-                "pose_model_path is empty; person pose is disabled"
+        try:
+            self._pose_estimator = PersonPoseEstimator(
+                self._config.pose_model_path,
+                confidence_threshold=(
+                    self._config.pose_confidence_threshold
+                ),
+                keypoint_threshold=self._config.pose_keypoint_threshold,
+                keep_aspect=self._config.pose_keep_aspect,
+                execution_provider=self._config.pose_execution_provider,
+                intra_op_num_threads=self._config.pose_intra_op_num_threads,
+                allow_spinning=self._config.pose_allow_spinning,
             )
+            self.get_logger().info(
+                "Loaded independent YOLO pose ONNX model: "
+                f"{self._config.pose_model_path}; "
+                f"provider={self._pose_estimator.execution_provider} "
+                f"(requested={self._config.pose_execution_provider}), "
+                f"threads={self._config.pose_intra_op_num_threads}, "
+                f"spinning={self._config.pose_allow_spinning}, "
+                f"opencv_threads={self._config.pose_opencv_num_threads}"
+            )
+            if (self._config.pose_execution_provider == 'auto'
+                    and self._pose_estimator.execution_provider == 'cpu'):
+                self.get_logger().warning(
+                    'YOLO pose auto selected CPU: this Python has no CUDAExecutionProvider. '
+                    'GPU acceleration is NOT active. Prepare a compatible GPU runtime and '
+                    'select it as the detector Python; set pose_execution_provider=cuda '
+                    '(Bringup: fall_pose_execution_provider:=cuda) to require GPU execution.')
+        except (FileNotFoundError, RuntimeError, ValueError) as error:
+            raise RuntimeError(f"Required pose model could not be loaded: {error}") from error
         self._pose_gate = PersonPoseGate(self._config.pose_inference_fps)
         self._pose_tracker = PersonPoseTracker(
             strong_threshold=self._config.pose_confidence_threshold,
@@ -191,36 +110,6 @@ class HomecamDetectorNode(Node):
         self._last_pose_source_stamp = None
         self._pose_failure_count = 0
         self._pose_present = False
-        self._inference_health = InferenceHealth(
-            model_available=self._model is not None,
-            active=self._config.monitoring_enabled,
-            now=time.monotonic(),
-        )
-
-        token = "" if self._config.fall_only else load_device_token()
-        self._poster: Optional[EventPoster] = None
-        self._clip_poster: Optional[EventClipPoster] = None
-        if self._config.backend_url and token:
-            if self._config.event_clips_enabled:
-                self._clip_poster = EventClipPoster(
-                    self._config.backend_url,
-                    token,
-                    enabled=self._config.monitoring_enabled,
-                    on_error=self.get_logger().error,
-                )
-            else:
-                self._poster = EventPoster(
-                    self._config.backend_url,
-                    token,
-                    enabled=self._config.monitoring_enabled,
-                    on_error=self.get_logger().error,
-                )
-        else:
-            self.get_logger().warning(
-                "Remote event delivery disabled. Set backend_url and "
-                "HOMECAM_DEVICE_TOKEN_FILE; confirmed events will only be logged."
-            )
-
         self._image_subscription = self.create_subscription(
             Image,
             self._config.image_topic,
@@ -258,36 +147,11 @@ class HomecamDetectorNode(Node):
                 self._on_navigation_status,
                 10,
             )
-        monitoring_qos = rclpy.qos.QoSProfile(
-            depth=1,
-            reliability=rclpy.qos.ReliabilityPolicy.RELIABLE,
-            durability=rclpy.qos.DurabilityPolicy.TRANSIENT_LOCAL,
-        )
-        self._monitoring_subscription = self.create_subscription(
-            Bool,
-            "/homecam/monitoring_enabled",
-            self._on_monitoring_state,
-            monitoring_qos,
-        )
-        self._storage_session_subscription = self.create_subscription(
-            String,
-            "/homecam/storage_session_id",
-            self._on_storage_session,
-            monitoring_qos,
-        )
-        self._fall_status_subscription = None
-        if self._config.fall_only:
-            from malbut_interfaces.msg import FallRuntimeStatus
+        from malbut_interfaces.msg import FallRuntimeStatus
 
-            self._fall_status_subscription = self.create_subscription(
-                FallRuntimeStatus, "/malbut/falls/status",
-                self._on_fall_status, 1,
-            )
-        self._health_publisher = self.create_publisher(
-            Bool, "/homecam/detector_healthy", monitoring_qos
-        )
-        self._pose_health_publisher = self.create_publisher(
-            Bool, "/homecam/pose_healthy", monitoring_qos
+        self._fall_status_subscription = self.create_subscription(
+            FallRuntimeStatus, "/malbut/falls/status",
+            self._on_fall_status, 1,
         )
         self._pose_publisher = self.create_publisher(
             String,
@@ -301,17 +165,16 @@ class HomecamDetectorNode(Node):
         self._fall_candidates_publisher = self.create_publisher(
             String, "/homecam/fall_candidates", 10
         )
-        self._health_timer = self.create_timer(1.0, self._publish_health)
-        self._publish_health()
+        # Expire a stale VLM status even when no camera frame arrives.
+        self._fall_control_timer = self.create_timer(1.0, self._refresh_fall_control)
+        self._refresh_fall_control()
         self.add_on_set_parameters_callback(self._on_parameter_update)
         self.get_logger().info(
-            f"Detector listening on {self._config.image_topic}; "
-            f"monitoring={'on' if self._config.monitoring_enabled else 'off'}. "
+            f"Fall pose node listening on {self._config.image_topic}. "
             "Odometry is read-only and /cmd_vel is never published."
         )
 
     def _declare_parameters(self) -> None:
-        self.declare_parameter("fall_only", False)
         self.declare_parameter("fall_runtime_id", "")
         self.declare_parameter("pose_keep_aspect", False)
         defaults = DetectorConfig()
@@ -329,11 +192,7 @@ class HomecamDetectorNode(Node):
         self.declare_parameter(
             "navigation_status_topic", "/navigate_to_pose/_action/status"
         )
-        self.declare_parameter("model_path", "")
         self.declare_parameter("pose_model_path", "")
-        self.declare_parameter("device_id", "")
-        self.declare_parameter("backend_url", "")
-        self.declare_parameter("confidence_threshold", 0.45)
         self.declare_parameter("pose_confidence_threshold", 0.45)
         self.declare_parameter("pose_keypoint_threshold", 0.5)
         self.declare_parameter("pose_inference_fps", 5.0)
@@ -344,30 +203,15 @@ class HomecamDetectorNode(Node):
         self.declare_parameter("fall_temporal_window_sec", 2.0)
         self.declare_parameter("fall_found_down_hold_sec", 0.6)
         self.declare_parameter("fall_max_frame_gap_sec", 0.5)
-        self.declare_parameter("consecutive_frames", 3)
-        self.declare_parameter("event_cooldown_sec", 30.0)
-        self.declare_parameter("event_confirmation_window_frames", 5)
-        self.declare_parameter("event_confirmation_required_frames", 3)
-        self.declare_parameter("event_pre_roll_sec", 5.0)
-        self.declare_parameter("event_merge_gap_sec", 10.0)
-        self.declare_parameter("max_event_clip_sec", 120.0)
-        self.declare_parameter("event_clips_enabled", False)
-        self.declare_parameter("max_frame_gap_sec", 1.0)
         self.declare_parameter("stationary_after_sec", 2.0)
         self.declare_parameter("odom_timeout_sec", 2.0)
         self.declare_parameter("linear_motion_threshold", 0.03)
         self.declare_parameter("angular_motion_threshold", 0.05)
-        self.declare_parameter("motion_area_ratio", 0.02)
-        self.declare_parameter("monitoring_enabled", False)
 
     def _read_config(self) -> DetectorConfig:
         return DetectorConfig(
-            fall_only=bool(self.get_parameter("fall_only").value),
             fall_runtime_id=self.get_parameter("fall_runtime_id").value,
             pose_keep_aspect=bool(self.get_parameter("pose_keep_aspect").value),
-            yolo_execution_provider=self.get_parameter('yolo_execution_provider').value,
-            yolo_intra_op_num_threads=self.get_parameter('yolo_intra_op_num_threads').value,
-            yolo_allow_spinning=self.get_parameter('yolo_allow_spinning').value,
             pose_execution_provider=self.get_parameter('pose_execution_provider').value,
             pose_intra_op_num_threads=self.get_parameter('pose_intra_op_num_threads').value,
             pose_allow_spinning=self.get_parameter('pose_allow_spinning').value,
@@ -394,13 +238,7 @@ class HomecamDetectorNode(Node):
             navigation_status_topic=self.get_parameter(
                 "navigation_status_topic"
             ).value,
-            model_path=self.get_parameter("model_path").value,
             pose_model_path=self.get_parameter("pose_model_path").value,
-            device_id=self.get_parameter("device_id").value,
-            backend_url=self.get_parameter("backend_url").value,
-            confidence_threshold=float(
-                self.get_parameter("confidence_threshold").value
-            ),
             pose_confidence_threshold=float(
                 self.get_parameter("pose_confidence_threshold").value
             ),
@@ -423,31 +261,6 @@ class HomecamDetectorNode(Node):
             fall_temporal_window_sec=float(self.get_parameter("fall_temporal_window_sec").value),
             fall_found_down_hold_sec=float(self.get_parameter("fall_found_down_hold_sec").value),
             fall_max_frame_gap_sec=float(self.get_parameter("fall_max_frame_gap_sec").value),
-            consecutive_frames=int(self.get_parameter("consecutive_frames").value),
-            event_cooldown_sec=float(
-                self.get_parameter("event_cooldown_sec").value
-            ),
-            event_confirmation_window_frames=int(
-                self.get_parameter("event_confirmation_window_frames").value
-            ),
-            event_confirmation_required_frames=int(
-                self.get_parameter("event_confirmation_required_frames").value
-            ),
-            event_pre_roll_sec=float(
-                self.get_parameter("event_pre_roll_sec").value
-            ),
-            event_merge_gap_sec=float(
-                self.get_parameter("event_merge_gap_sec").value
-            ),
-            max_event_clip_sec=float(
-                self.get_parameter("max_event_clip_sec").value
-            ),
-            event_clips_enabled=bool(
-                self.get_parameter("event_clips_enabled").value
-            ),
-            max_frame_gap_sec=float(
-                self.get_parameter("max_frame_gap_sec").value
-            ),
             stationary_after_sec=float(
                 self.get_parameter("stationary_after_sec").value
             ),
@@ -458,41 +271,11 @@ class HomecamDetectorNode(Node):
             angular_motion_threshold=float(
                 self.get_parameter("angular_motion_threshold").value
             ),
-            motion_area_ratio=float(self.get_parameter("motion_area_ratio").value),
-            monitoring_enabled=bool(
-                self.get_parameter("monitoring_enabled").value
-            ),
         )
 
     def _on_parameter_update(self, parameters) -> SetParametersResult:
-        if self._config.fall_only:
-            return SetParametersResult(
-                successful=False, reason="Fall pose permissions come from VLM status")
-        for parameter in parameters:
-            if parameter.name != "monitoring_enabled":
-                return SetParametersResult(
-                    successful=False,
-                    reason=(
-                        f"{parameter.name} requires a node restart; only "
-                        "monitoring_enabled is dynamic"
-                    ),
-                )
-        for parameter in parameters:
-            enabled = bool(parameter.value)
-            object.__setattr__(self._config, "monitoring_enabled", enabled)
-            self._inference_health.set_active(enabled, time.monotonic())
-            if self._poster is not None:
-                self._poster.set_enabled(enabled)
-            if self._clip_poster is not None:
-                self._clip_poster.set_enabled(enabled)
-            self._motion_detector.reset()
-            self._dedupe.reset()
-            self._segmenter.discard()
-            self._reset_pose_state()
-            self.get_logger().info(
-                f"Monitoring changed to {'on' if enabled else 'off'}"
-            )
-        return SetParametersResult(successful=True)
+        return SetParametersResult(
+            successful=False, reason="Fall pose permissions come from VLM status")
 
     def _on_odom(self, message: Odometry) -> None:
         linear = message.twist.twist.linear
@@ -510,63 +293,8 @@ class HomecamDetectorNode(Node):
         active = any(
             status.status in active_statuses for status in message.status_list
         )
-        if self._motion_gate.set_navigation_active(active):
-            # Never compare a post-navigation frame with a pre-navigation
-            # background. Semantic YOLO candidates remain available.
-            self._motion_detector.reset()
-            state = "paused" if active else "stabilizing"
-            self.get_logger().info(
-                f"Generic motion detection {state} for robot navigation"
-            )
-
-    def _on_monitoring_state(self, message: Bool) -> None:
-        if self._config.fall_only:
-            return
-        enabled = bool(message.data)
-        self._monitoring_state_received = True
-        if enabled == self._config.monitoring_enabled:
-            return
-        object.__setattr__(self._config, "monitoring_enabled", enabled)
-        self._inference_health.set_active(enabled, time.monotonic())
-        if self._poster is not None:
-            self._poster.set_enabled(enabled)
-        if self._clip_poster is not None:
-            self._clip_poster.set_enabled(enabled)
-        self._motion_detector.reset()
-        self._dedupe.reset()
-        self._segmenter.discard()
-        self._reset_pose_state()
-        self.get_logger().info(
-            f"Monitoring state received from media agent: "
-            f"{'on' if enabled else 'off'}"
-        )
-
-    def _on_storage_session(self, message: String) -> None:
-        if self._config.fall_only:
-            return
-        session_id = message.data.strip()
-        if session_id and not _is_uuid(session_id):
-            self.get_logger().error("Ignoring malformed storage session ID")
-            return
-        if not session_id and self._storage_session_id:
-            self._segmenter.discard()
-        self._storage_session_id = session_id
-
-    def _publish_health(self) -> None:
-        if self._config.fall_only:
-            self._refresh_fall_control()
-            return  # Do not report health for the separate media event detector.
-        message = Bool()
-        # While monitoring, health requires recent successful inference and
-        # becomes false immediately after three consecutive inference errors.
-        message.data = self._inference_health.healthy(time.monotonic())
-        self._health_publisher.publish(message)
-        pose_health = Bool()
-        pose_health.data = (
-            self._pose_estimator is not None
-            and self._pose_failure_count < 3
-        )
-        self._pose_health_publisher.publish(pose_health)
+        # A finished run needs a new stable period before poses count as stationary.
+        self._motion_gate.set_navigation_active(active)
 
     def _on_fall_status(self, message) -> None:
         if self._fall_control.receive(message):
@@ -590,9 +318,7 @@ class HomecamDetectorNode(Node):
         self._last_pose_source_stamp = None
         self._publish_tracked_poses(
             PoseTrackingResult((), (), expired), None,
-            status="waiting_frame" if (
-                self._fall_active if self._config.fall_only
-                else self._config.monitoring_enabled) else "disabled",
+            status="waiting_frame" if self._fall_active else "disabled",
         )
 
     @staticmethod
@@ -603,7 +329,7 @@ class HomecamDetectorNode(Node):
         )
 
     def _on_depth_image(self, message: Image) -> None:
-        if self._config.fall_only and not self._refresh_fall_control():
+        if not self._refresh_fall_control():
             return
         try:
             depth = self._bridge.imgmsg_to_cv2(
@@ -826,113 +552,30 @@ class HomecamDetectorNode(Node):
         self._fall_candidates_publisher.publish(message)
 
     def _on_image(self, message: Image) -> None:
-        pose_sample_time = None
-        if self._config.fall_only:
-            if not self._refresh_fall_control():
-                return
-            # Only the dedicated fall node can skip conversion. General homecam
-            # consumers still need this frame even when pose inference is idle.
-            pose_sample_time = time.monotonic()
-            if not self._pose_gate.is_due(pose_sample_time):
-                return
-        elif (
-            not self._monitoring_state_received
-            or not self._config.monitoring_enabled
-        ):
+        if not self._refresh_fall_control():
+            return
+        # Check the rate limit before conversion: frames between pose samples
+        # have no other consumer in this node.
+        pose_sample_time = time.monotonic()
+        if not self._pose_gate.is_due(pose_sample_time):
             return
         try:
             frame = self._bridge.imgmsg_to_cv2(message, desired_encoding="bgr8")
         except CvBridgeError as error:
-            if pose_sample_time is not None:
-                # A stream of corrupt images must not bypass the conversion
-                # budget just because no inference was reached.
-                self._pose_gate.should_infer(pose_sample_time)
+            # A stream of corrupt images must not bypass the conversion
+            # budget just because no inference was reached.
+            self._pose_gate.should_infer(pose_sample_time)
             self.get_logger().error(f"Cannot convert camera frame: {error}")
             self._publish_fall_candidates(
                 PoseTrackingResult((), (), ()), message, [], "invalid_image", ()
             )
             return
 
-        candidates: Dict[str, float] = {}
-        now_monotonic = (pose_sample_time if pose_sample_time is not None
-                         else time.monotonic())
-        # The pose model finds people itself. Run it before general detection
-        # so an empty result, missing model, or failure there cannot gate pose.
-        # The privacy guard above and the pose rate limit still apply.
         self._observe_person_pose(
             frame,
             image_message=message,
-            now=now_monotonic,
+            now=pose_sample_time,
         )
-        if self._config.fall_only:
-            return  # No legacy recording, object detection, or remote event POST.
-        if self._motion_gate.generic_motion_allowed(now_monotonic):
-            if self._motion_detector.detect(frame):
-                candidates["motion"] = 1.0
-        else:
-            # Reset on every suppressed frame so the first frame after the
-            # stable-stop window becomes a fresh background, not an event.
-            self._motion_detector.reset()
-
-        if self._model is not None:
-            try:
-                candidates.update(self._model.detect(frame))
-                self._inference_health.record_success(now_monotonic)
-            except (RuntimeError, ValueError) as error:
-                self._inference_health.record_failure()
-                self.get_logger().error(f"YOLO inference failed: {error}")
-
-        now_wall = time.time()
-        if self._config.event_clips_enabled:
-            if not self._storage_session_id:
-                self._segmenter.discard()
-                return
-            for boundary in self._segmenter.observe(
-                candidates,
-                occurred_at=now_wall,
-                observed_at=now_monotonic,
-                session_id=self._storage_session_id,
-            ):
-                self.get_logger().info(
-                    f"Event clip {boundary.phase}: {boundary.primary_type} "
-                    f"(group={boundary.event_group_id}, "
-                    f"segment={boundary.segment_index})"
-                )
-                if self._clip_poster is not None:
-                    self._clip_poster.enqueue(boundary)
-        else:
-            for event in self._dedupe.observe(
-                candidates,
-                occurred_at=now_wall,
-                observed_at=now_monotonic,
-            ):
-                self.get_logger().info(
-                    f"Confirmed {event.event_type} event "
-                    f"(confidence={event.confidence:.3f}, "
-                    f"id={event.idempotency_key[:8]})"
-                )
-                if self._poster is not None:
-                    self._poster.enqueue(event)
-
-    def destroy_node(self):
-        """Stop delivery before ROS tears down the logger and subscriptions."""
-        if self._poster is not None:
-            self._poster.close()
-            self._poster = None
-        if self._clip_poster is not None:
-            self._clip_poster.close()
-            self._clip_poster = None
-        return super().destroy_node()
-
-
-def _is_uuid(value: str) -> bool:
-    import uuid
-
-    try:
-        parsed = uuid.UUID(value)
-        return parsed.version == 4 and str(parsed) == value.lower()
-    except ValueError:
-        return False
 
 
 def main(args=None) -> int:

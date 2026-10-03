@@ -29,8 +29,7 @@ def generate_launch_description() -> LaunchDescription:
                 FindPackageShare("homecam_media_agent"), "launch", "homecam_aurora.launch.py",
             ])),
             launch_arguments={
-                **{name: LaunchConfiguration(name) for name in defaults},
-                "start_detector": "false",
+                name: LaunchConfiguration(name) for name in defaults
             }.items(),
         ),
     ])

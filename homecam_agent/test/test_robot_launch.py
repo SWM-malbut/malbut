@@ -28,7 +28,7 @@ def _launch(name, *, root=ROOT, **overrides):
     return description.entities, context
 
 
-@pytest.mark.parametrize('profile', ['homecam_aurora.launch.py', 'homecam_sim.launch.py'])
+@pytest.mark.parametrize('profile', ['homecam_sim.launch.py'])
 @pytest.mark.parametrize('root', [ROOT, ROOT.parent / 'malbut_test/homecam_agent'])
 @pytest.mark.parametrize('overrides,expected', [
     ({}, ('auto', 2, False, 'auto', 2, False, 1)),
@@ -65,7 +65,7 @@ def test_robot_reuses_media_with_real_camera_and_no_duplicate_detector():
         name: perform_substitutions(context, normalize_to_list_of_substitutions(value))
         for name, value in include.launch_arguments
     }
-    assert options["start_detector"] == "false"
+    assert "start_detector" not in options
     children, child_context = _launch("homecam_aurora.launch.py", **options)
     active = [action for action in children if isinstance(action, Node)
               and (action.condition is None or action.condition.evaluate(child_context))]
@@ -84,13 +84,20 @@ def test_robot_reuses_media_with_real_camera_and_no_duplicate_detector():
     assert parameters["fall_vlm_runtime_id"] == "vlm"
 
 
-def test_standalone_aurora_keeps_optional_detector_compatibility():
-    actions, context = _launch("homecam_aurora.launch.py", image_topic="/custom/rgb")
-    detector = next(action for action in actions
-                    if isinstance(action, Node) and action.node_package == "homecam_detector")
-    assert detector.condition.evaluate(context)
-    context.launch_configurations["start_detector"] = "false"
-    assert not detector.condition.evaluate(context)
+@pytest.mark.parametrize('root', [ROOT, ROOT.parent / 'malbut_test/homecam_agent'])
+def test_standalone_aurora_starts_media_only(root):
+    actions, context = _launch("homecam_aurora.launch.py", root=root, image_topic="/custom/rgb")
+    nodes = [action for action in actions if isinstance(action, Node)]
+    assert [node.node_package for node in nodes] == ["homecam_media_agent"]
+    declared = {action.name for action in actions if isinstance(action, DeclareLaunchArgument)}
+    assert not declared & {"start_detector", "model_path", "pose_model_path",
+                           "event_clips_enabled", "detector_python_executable",
+                           "yolo_execution_provider", "pose_execution_provider"}
+    media_parameters = {}
+    for values in evaluate_parameters(context, nodes[0]._Node__parameters):
+        if isinstance(values, dict):
+            media_parameters.update(values)
+    assert media_parameters["image_topic"] == "/custom/rgb"
 
 
 def test_robot_service_does_not_inject_a_second_inference_runtime():

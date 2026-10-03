@@ -1,11 +1,13 @@
 # homecam_agent
 
 ROS 2 Humble 기반 이동형 홈캠 PoC 에이전트다. Gazebo 또는 Aurora RGB
-이미지를 H.264/Opus로 변환해 AWS KVS WebRTC로 전송하고, 사람·개·고양이
-및 일반 움직임 이벤트를 온디바이스에서 판정한다.
+이미지를 H.264/Opus로 변환해 AWS KVS WebRTC로 전송한다. 로봇에서는 같은
+`homecam_detector` 패키지의 낙상 Pose 노드(`malbut_fall_pose`)가 낙상 후보를 만든다.
+사람·개·고양이·일반 움직임 이벤트를 만들던 일반 감지 모드(`fall_only=false`)는
+2026-10-03 제거됐다. 이벤트 클립은 낙상 사건 기준으로 다시 만든다.
 
-이 저장소는 자율주행 소유권을 침범하지 않는다. `/odom`은 일반 움직임
-오탐을 억제하기 위해 읽기만 하며 `/cmd_vel` publisher를 만들지 않는다.
+이 저장소는 자율주행 소유권을 침범하지 않는다. `/odom`은 낙상 후보에 로봇 이동
+여부를 붙이기 위해 읽기만 하며 `/cmd_vel` publisher를 만들지 않는다.
 
 ## 현재 구현 상태
 
@@ -18,9 +20,8 @@ ROS 2 Humble 기반 이동형 홈캠 PoC 에이전트다. Gazebo 또는 Aurora R
 | 수신 Opus→ALSA PTT 재생 경로 | transport callback까지 연결 |
 | 백엔드 heartbeat와 desired state 적용 | 구현 |
 | `POST`/`DELETE /api/device/v1/session`, 단기 AWS credential 갱신 | 구현 |
-| YOLO ONNX 사람·개·고양이 감지 | 모델이 있을 때 구현 |
-| `/odom` 정지 확인, frame confirmation, cooldown | 구현 |
-| idempotent HTTPS 이벤트 전송 | 구현 |
+| 낙상 Pose 후보(`malbut_fall_pose`), `/odom` 이동 여부 표시 | 구현 |
+| 사람·개·고양이·움직임 이벤트(일반 감지 모드) | 제거됨. 낙상 사건 영상으로 대체 예정 |
 | AWS KVS P2P/Storage signaling, H.264/Opus `writeFrame` | SDK 활성 빌드에서 구현 |
 | KVS 수신 Opus→단일 PTT 재생 | 구현, 점유 권한은 백엔드·클라이언트가 중재 |
 
@@ -234,27 +235,10 @@ colcon build \
 
 SDK 저작권·라이선스 고지는 `THIRD_PARTY_NOTICES.md`에 기록되어 있다.
 
-`model_path`가 비어 있거나 파일을 읽지 못하면 노드는 종료하지 않고
-motion-only 모드로 내려간다. 이벤트 탭의 분류 의미는 다음과 같다.
+일반 감지 모드는 제거됐다. `homecam_aurora.launch.py`는 영상 전송 노드만 실행한다.
 
-- `사람`: YOLO가 COCO person 클래스를 인식
-- `반려동물`: YOLO가 COCO dog 또는 cat 클래스를 인식
-- `움직임`: 객체 종류를 특정하지 못했지만 프레임 차이가 확인됨
-
-한 구간에서 사람과 일반 움직임이 함께 확인되면 클립은 중복 생성하지 않고
-`사람`을 대표 유형으로 표시하며 두 라벨은 모두 보존한다. generic motion은
-다음 조건을 모두 만족할 때만 이벤트가 된다.
-
-- 최근 2초 이내 `/odom`을 받음
-- 선속도와 각속도가 threshold 이하
-- 활성 Nav2 목적지 주행이 없음
-- 2초 이상 정지
-- 여러 연속 프레임에서 움직임 확인
-
-`/odom`이 없거나 오래되거나 로봇이 이동 중이거나 Nav2 goal이 실행 중이면
-generic motion은 억제된다. 주행 종료 후 2초 동안 배경을 다시 잡으므로 카메라
-시점 변화 자체가 `움직임` 클립이 되지 않는다. 사람·개·고양이 YOLO 감지는
-로봇 주행 중에도 계속 수행된다.
+> 알려진 문제: Gazebo 시뮬레이션은 아직 일반 감지 모드를 전제로 한다. 지금 실행하면
+> 감지기 시작이 실패하고 시뮬레이션 전체가 종료된다. 아래 Gazebo 이벤트 설명은 제거 전 기록이다.
 
 Gazebo 이벤트 검증에서는 아래 고정 스크립트를 사용한다. 이 스크립트는
 `small_house`에서 로봇 카메라 앞의 열린 바닥만 왕복하며, 사람의 팔 너비까지
@@ -313,9 +297,7 @@ ros2 launch homecam_media_agent homecam_aurora.launch.py \
   image_topic:='/DISCOVERED_RGB_TOPIC' \
   camera_info_topic:='/DISCOVERED_CAMERA_INFO_TOPIC' \
   backend_url:='https://YOUR_BACKEND' \
-  device_id:='REGISTERED_DEVICE_ID' \
-  model_path:='/opt/homecam/models/yolo26n.onnx' \
-  pose_model_path:='/opt/homecam/models/yolo26n-pose.onnx'
+  device_id:='REGISTERED_DEVICE_ID'
 unset HOMECAM_DEVICE_TOKEN
 ```
 

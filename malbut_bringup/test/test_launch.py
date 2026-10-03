@@ -561,7 +561,7 @@ def test_fall_pose_keeps_robot_defaults(launch_module, fall_config, overrides, e
     assert (params['pose_execution_provider'], params['pose_intra_op_num_threads'],
             params['pose_allow_spinning'], params['pose_opencv_num_threads']) == expected
     assert params['pose_keep_aspect'] is True and params['pose_inference_fps'] == 5.0
-    assert params['fall_only'] is True
+    assert 'fall_only' not in params
 
 
 @pytest.mark.parametrize('changes', [
