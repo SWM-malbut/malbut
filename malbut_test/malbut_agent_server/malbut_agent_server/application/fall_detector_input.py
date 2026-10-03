@@ -221,14 +221,14 @@ class FallDetectorInput:
             if floor is not None and (
                     type(floor) not in (float, int) or not math.isfinite(floor) or floor < 0):
                 raise ValueError('invalid floor distance')
-            prepared.append((item, kind, end, floor))
+            prepared.append((item, kind, start, end, floor))
         observed_frame = None
         if subjects is not None:
             observed_frame = self._time(
                 capture, source_now=source_now, now=now, channel='subject_frame',
                 frame_id=data['frameId'])
         result = []
-        for item, kind, end, floor in prepared:
+        for item, kind, start, end, floor in prepared:
             key = item['candidateId']
             previous = self._revisions.get(key)
             if previous is not None:
@@ -242,9 +242,12 @@ class FallDetectorInput:
                                   frame_id=data.get('frameId'))
             subject = f'pose:{self._generation}:{item["targetTrackId"]}'
             sensor = SensorSummary(observed, floor_distance_m=floor) if floor is not None else None
+            # Same source clock offset as the converted end; no extra bookkeeping.
+            started = max(0.0, observed - (end - start))
             iid = self.monitor.candidate(FallCandidate(
                 key + ':' + str(item['revision']), subject, 'yolo_pose', kind,
-                observed, significant_change=item['revision'] > 1, sensors=sensor))
+                observed, significant_change=item['revision'] > 1, sensors=sensor,
+                evidence_started_at=started))
             if iid is not None:
                 self._revisions[key] = (item['revision'], item['targetTrackId'])
                 self._revisions.move_to_end(key)

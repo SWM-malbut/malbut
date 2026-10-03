@@ -13,6 +13,7 @@ import time
 from typing import Callable, Optional
 from uuid import uuid4
 
+from malbut_agent_server.application.fall_clip_planner import FallClipPlanner, RecordedClip
 from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
 from malbut_agent_server.application.fall_normal_closure import (
     normal_closure_supported, normal_path_ready,
@@ -56,7 +57,9 @@ class CloudFallMonitor:
                  policy: FallRuntimePolicy, buffer: FallFrameBuffer,
                  provider: CloudFallProvider,
                  journal: Optional[FallEventJournal] = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 wall_clock: Callable[[], float] = time.time,
+                 clip_planner: Optional[FallClipPlanner] = None) -> None:
         identifier(device_id)
         identifier(boot_id)
         if provider.execution_target != 'cloud':
@@ -66,6 +69,12 @@ class CloudFallMonitor:
         self._provider, self._clock = provider, clock
         self._journal = journal
         self._storage_failed = False
+        # Clip ranges are auxiliary: a clip failure must never stop fall handling.
+        self._wall_clock = wall_clock
+        self._clips = clip_planner or FallClipPlanner()
+        self._clip_offsets = {}
+        self._clip_ranges = []
+        self.clip_storage_failures = 0
         self._enabled = self._camera = self._consent = self._connected = False
         self._epoch = 0
         self._incidents = {}
@@ -121,6 +130,42 @@ class CloudFallMonitor:
         """Caller must persist/route these; this is not a delivery receipt."""
         events, self._events = tuple(self._events), []
         return events
+
+    def drain_clip_ranges(self):
+        """Recorded clip ranges since the last drain; not an upload receipt."""
+        ranges, self._clip_ranges = tuple(self._clip_ranges), []
+        return ranges
+
+    def _record_clip(self, incident: FallIncident, start: float, end: float, *,
+                     anchor_kind: str, found_down: bool = False) -> None:
+        """Map an evidence window (monotonic) to wall-clock recording ranges."""
+        try:
+            changed = self._clips.observe(incident.incident_id, start, end,
+                                          anchor_kind=anchor_kind, found_down=found_down)
+        except ValueError:
+            self.clip_storage_failures += 1
+            return
+        if not changed:
+            return
+        offset = self._wall_clock() - self._now()
+        first = self._clip_offsets.setdefault(incident.incident_id, offset)
+        stepped = abs(offset - first) > 1.0
+        for segment in changed:
+            # Each segment keeps the offset it was first recorded with: frames
+            # archived before a clock step stay at their original wall time.
+            fixed = self._clip_offsets.setdefault(
+                (incident.incident_id, segment.segment_index), offset)
+            clip = RecordedClip(
+                incident.incident_id, self.boot_id, segment.segment_index, segment.revision,
+                segment.start + fixed, segment.end + fixed, segment.anchor_kinds,
+                segment.found_down, stepped)
+            if self._journal is not None and hasattr(self._journal, 'append_clip'):
+                try:
+                    self._journal.append_clip(device_id=self.device_id, clip=clip)
+                except Exception:
+                    self.clip_storage_failures += 1
+                    continue
+            self._clip_ranges.append(clip)
 
     def incident(self, incident_id: str) -> FallIncident:
         return replace(self._incidents[incident_id])
@@ -350,6 +395,7 @@ class CloudFallMonitor:
             current.last_candidate_id = candidate.candidate_id
             current.last_observed_at = candidate.observed_at
             current.sensors = candidate.sensors
+            self._record_candidate_clip(current, candidate)
             # Any fresh suspicion invalidates earlier clearance, even if it
             # does not warrant a new question/evidence revision.
             current.normal_checks = ()
@@ -380,10 +426,29 @@ class CloudFallMonitor:
                 candidate.subject_key, candidate.observed_at))
         self._incidents[current.incident_id] = current
         self._emit('incident_opened', current)
+        self._record_candidate_clip(current, candidate)
         if self._runtime_cloud_block is not None:
             current.pending = False
             self._failure(current, self._runtime_cloud_block)
         return current.incident_id
+
+    def _record_window_clip(self, incident: FallIncident, request, finding) -> None:
+        # The analyzed window, not the reply arrival time; the motion inside it
+        # cannot be pinned down further, so the whole window is kept.
+        frames = request.window.frames
+        self._record_clip(incident, frames[0].captured_at, frames[-1].captured_at,
+                          anchor_kind='cloud_window',
+                          found_down=finding.kind is CandidateKind.ALREADY_DOWN)
+
+    def _record_candidate_clip(self, incident: FallIncident, candidate: FallCandidate) -> None:
+        if candidate.kind is CandidateKind.ALREADY_DOWN:
+            # The fall itself happened before discovery; anchor on the discovery.
+            self._record_clip(incident, candidate.observed_at, candidate.observed_at,
+                              anchor_kind='pose_found_down')
+            return
+        start = (candidate.evidence_started_at if candidate.evidence_started_at is not None
+                 else candidate.observed_at)
+        self._record_clip(incident, start, candidate.observed_at, anchor_kind='pose_motion')
 
     def ask_question(self, incident_id: str) -> Optional[str]:
         incident = self._incidents[incident_id]
@@ -896,6 +961,9 @@ class CloudFallMonitor:
         self._incidents[target.incident_id] = target
         entry.discovery = linked
         self._events.extend(events)
+        self._record_clip(target, discovery.sample_times[0], discovery.sample_times[-1],
+                          anchor_kind='cloud_window',
+                          found_down=finding.kind is CandidateKind.ALREADY_DOWN)
         return DiscoveryLinkResult('matched_after_tracking', target.incident_id)
 
     def _record_unidentified_scene(self, request, finding):
@@ -940,6 +1008,7 @@ class CloudFallMonitor:
         current.video_revision = current.revision
         if new:
             self._emit('incident_opened', current, reason='target_unidentified')
+        self._record_window_clip(current, request, finding)
         self._emit('analysis_completed', current, request=request, reply=current.video,
                    reason='target_unidentified')
         if current.question_id is None:
@@ -997,6 +1066,7 @@ class CloudFallMonitor:
         current.last_failure = None
         if new:
             self._emit('incident_opened', current)
+        self._record_window_clip(current, request, finding)
         self._emit('analysis_completed', current, request=request, reply=current.video)
         if current.question_id is None:
             self.ask_question(current.incident_id)

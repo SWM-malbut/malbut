@@ -58,6 +58,17 @@ class SqliteFallJournal:
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id TEXT UNIQUE NOT NULL,
                 payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS incident_clips(
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id TEXT NOT NULL,
+                segment_index INTEGER NOT NULL,
+                revision INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at REAL NOT NULL DEFAULT 0,
+                last_error TEXT,
+                UNIQUE(incident_id, segment_index));
         ''')
         try:
             self._db.execute('BEGIN IMMEDIATE')
@@ -151,6 +162,67 @@ class SqliteFallJournal:
                 else:
                     self._append_incident(device_id=device_id, boot_id=boot_id,
                                           event=event, incident=incident)
+
+    def append_clip(self, *, device_id, clip):
+        """Keep only the newest revision of each incident segment; time is wall clock."""
+        if device_id != self.device_id:
+            raise ValueError('journal identity mismatch')
+
+        def iso(value):
+            return datetime.fromtimestamp(value, timezone.utc).isoformat(
+                timespec='milliseconds').replace('+00:00', 'Z')
+        payload = json.dumps(dict(
+            schemaVersion=1, incidentId=clip.incident_id, bootId=clip.boot_id,
+            segmentIndex=clip.segment_index, revision=clip.revision,
+            startAt=iso(clip.start_at), endAt=iso(clip.end_at),
+            anchorKinds=list(clip.anchor_kinds), foundDown=clip.found_down,
+            clockSource='wall', clockStepped=clip.clock_stepped,
+        ), separators=(',', ':'), allow_nan=False)
+        with self._lock, self._db:
+            self._db.execute(
+                'INSERT INTO incident_clips(incident_id,segment_index,revision,payload) '
+                'VALUES(?,?,?,?) ON CONFLICT(incident_id,segment_index) DO UPDATE SET '
+                "revision=excluded.revision,payload=excluded.payload,status='pending',"
+                'attempt_count=0,next_attempt_at=0,last_error=NULL '
+                'WHERE excluded.revision > incident_clips.revision',
+                (clip.incident_id, clip.segment_index, clip.revision, payload))
+
+    def pending_clip(self):
+        with self._lock:
+            row = self._db.execute(
+                'SELECT incident_id,segment_index,revision,payload,attempt_count '
+                "FROM incident_clips WHERE status='pending' AND next_attempt_at<=? "
+                'ORDER BY sequence LIMIT 1', (self._clock(),)).fetchone()
+            return dict(row) if row else None
+
+    def acknowledge_clip(self, incident_id, segment_index, revision):
+        # A newer revision recorded meanwhile stays pending.
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE incident_clips SET status='stored',last_error=NULL "
+                'WHERE incident_id=? AND segment_index=? AND revision=?',
+                (incident_id, segment_index, revision))
+
+    def failed_clip(self, incident_id, segment_index, revision, *, code, blocked=False):
+        # Codes are bounded caller-generated tokens, never HTTP bodies/secrets.
+        if code not in {'upload_failed', 'invalid_ack', 'not_supported', 'http_400',
+                        'http_401', 'http_403', 'http_409', 'http_413', 'http_429',
+                        'http_503'}:
+            code = 'upload_failed'
+        with self._lock, self._db:
+            self._db.execute(
+                'UPDATE incident_clips SET status=?,last_error=?,'
+                'attempt_count=attempt_count+1,'
+                'next_attempt_at=?+MIN(300,5*(1 << MIN(attempt_count,6))) '
+                'WHERE incident_id=? AND segment_index=? AND revision=?',
+                ('blocked' if blocked else 'pending', code, self._clock(),
+                 incident_id, segment_index, revision))
+
+    def clip_status(self):
+        with self._lock:
+            return [dict(row) for row in self._db.execute(
+                'SELECT incident_id,segment_index,revision,status,last_error '
+                'FROM incident_clips ORDER BY sequence')]
 
     def discoveries(self, *, after_sequence=0, limit=100):
         """Paginated local review, not a guardian delivery or a resolved incident."""
