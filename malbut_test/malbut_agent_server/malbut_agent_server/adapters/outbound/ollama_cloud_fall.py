@@ -286,6 +286,11 @@ def build_payload(request, *, model, box_format=LEGACY_BOX_FORMAT):
         raise CloudFallProviderError('cloud_input_invalid') from None
 
 
+def valid_cloud_key(api_key):
+    return (isinstance(api_key, str) and api_key.isascii() and 1 <= len(api_key) <= 4096
+            and all(33 <= ord(c) <= 126 for c in api_key))
+
+
 class OllamaCloudFallProvider:
     execution_target = 'cloud'
 
@@ -295,16 +300,22 @@ class OllamaCloudFallProvider:
         if (not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}', model)
                 or model.endswith(('cloud', '-cloud'))):
             raise ValueError('use direct Cloud API model name, e.g. gemma4:31b')
-        if (not isinstance(api_key, str) or not api_key.isascii()
-                or not 1 <= len(api_key) <= 4096
-                or any(not 33 <= ord(c) <= 126 for c in api_key)):
+        # None: no key yet (server key sync pending or deleted); Cloud calls are blocked.
+        if api_key is not None and not valid_cloud_key(api_key):
             raise ValueError('invalid Cloud credential')
         if (isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float))
                 or not math.isfinite(timeout_s) or not 0 < timeout_s <= 20):
             raise ValueError('Cloud timeout must be at most 20 seconds')
         self.model, self._api_key, self.timeout_s = model, api_key, timeout_s
         self.box_format = box_format
-        self._blocked = None
+        self._blocked = None if api_key is not None else 'cloud_auth_required'
+
+    def replace_key(self, api_key):
+        """Swap the credential without a restart; a new key clears an auth/quota block."""
+        if api_key is not None and not valid_cloud_key(api_key):
+            raise ValueError('invalid Cloud credential')
+        self._api_key = api_key
+        self._blocked = None if api_key is not None else 'cloud_auth_required'
 
     async def analyze(self, request):
         if self._blocked:
@@ -317,6 +328,9 @@ class OllamaCloudFallProvider:
     async def _post(self, body):
         import aiohttp
 
+        key = self._api_key
+        if key is None:
+            raise CloudFallProviderError('cloud_auth_required')
         try:
             timeout = aiohttp.ClientTimeout(total=self.timeout_s, connect=min(5, self.timeout_s))
             async with aiohttp.ClientSession(
@@ -324,14 +338,17 @@ class OllamaCloudFallProvider:
                     cookie_jar=aiohttp.DummyCookieJar()) as session:
                 async with session.post(
                         ENDPOINT, data=body, allow_redirects=False,
-                        headers={'Authorization': 'Bearer ' + self._api_key,
+                        headers={'Authorization': 'Bearer ' + key,
                                  'Content-Type': 'application/json',
                                  'Accept-Encoding': 'identity'}) as response:
                     if response.status in {401, 402, 403, 429}:
-                        self._blocked = {401: 'cloud_auth_required', 403: 'cloud_auth_required',
-                                         402: 'cloud_payment_required',
-                                         429: 'cloud_quota_exhausted'}[response.status]
-                        raise CloudFallProviderError(self._blocked)
+                        code = {401: 'cloud_auth_required', 403: 'cloud_auth_required',
+                                402: 'cloud_payment_required',
+                                429: 'cloud_quota_exhausted'}[response.status]
+                        # A key replaced during this call is not blocked by the old key's reply.
+                        if self._api_key is key:
+                            self._blocked = code
+                        raise CloudFallProviderError(code)
                     if response.status != 200:
                         raise CloudFallProviderError('cloud_http_error')
                     if response.content_type != 'application/json':
