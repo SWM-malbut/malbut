@@ -39,9 +39,10 @@ type Queryable = SqlExecutor;
 
 export async function ensureFallReviewSchema() {
   const result = await getPostgresPool().query(
-    "SELECT 1 FROM homecam_schema_migrations WHERE version = '0012_fall_incident_review'",
+    `SELECT count(*)::int AS n FROM homecam_schema_migrations
+     WHERE version IN ('0012_fall_incident_review','0014_fall_report_memo')`,
   );
-  if (!result.rowCount) throw new Error("FALL_REVIEW_MIGRATION_REQUIRED");
+  if (result.rows[0]?.n !== 2) throw new Error("FALL_REVIEW_MIGRATION_REQUIRED");
 }
 
 async function transaction<T>(deviceId: string, work: (client: Queryable) => Promise<T>) {
@@ -107,7 +108,7 @@ export async function storeFallClip(deviceId: string, clip: FallClipInput) {
 const SUMMARY_COLUMNS = `
   i.incident_id,i.origin,i.state,i.fall_seen,i.assessment,i.answer,i.notification_rank,
   i.occurred_at,i.updated_at,i.review_state,i.closed_at,i.closed_by,i.reopened_at,
-  i.unacknowledged_since,i.reported_by,i.reported_moment_at,
+  i.unacknowledged_since,i.reported_by,i.reported_moment_at,i.report_memo,
   ${ROBOT_NORMAL_SQL} AS robot_normal,
   (SELECT e.payload_json::jsonb->>'eventKind' FROM fall_incident_events e
     WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
@@ -124,7 +125,7 @@ type SummaryRow = {
   assessment: string | null; answer: string | null; notification_rank: number;
   occurred_at: unknown; updated_at: unknown; review_state: "open" | "closed"; closed_at: unknown;
   closed_by: string | null; reopened_at: unknown; unacknowledged_since: unknown;
-  reported_by: string | null; reported_moment_at: unknown; robot_normal: boolean;
+  reported_by: string | null; reported_moment_at: unknown; report_memo: string | null; robot_normal: boolean;
   last_analysis_kind: string | null; found_down: boolean; opinion_counts: Record<string, number> | null;
 };
 
@@ -146,7 +147,7 @@ function summary(row: SummaryRow) {
     unacknowledged: open && row.unacknowledged_since !== null,
     reviewPending: open && category === "normal",
     foundDown: row.found_down,
-    reportedBy: row.reported_by, reportedMomentAt: iso(row.reported_moment_at),
+    reportedBy: row.reported_by, reportedMomentAt: iso(row.reported_moment_at), reportMemo: row.report_memo,
     opinionCounts: row.opinion_counts ?? {},
   };
 }
@@ -416,15 +417,18 @@ export async function closeFallIncident(deviceId: string, incidentId: string, us
 }
 
 /** Missed fall: one user-picked moment, −10 s/+20 s, recorded without notifying anyone. */
-export async function reportMissedFall(deviceId: string, userEmail: string, momentAt: string, now = Date.now()) {
+export async function reportMissedFall(deviceId: string, userEmail: string, momentAt: string, now = Date.now(),
+  memo: string | null = null) {
   const moment = Date.parse(momentAt);
+  const note = memo?.trim() || null;
+  if (note !== null && note.length > 500) throw new Error("FALL_REPORT_INVALID");
   if (!Number.isFinite(moment) || new Date(moment).toISOString() !== momentAt) throw new Error("FALL_REPORT_INVALID");
   if (moment > now || moment - REPORT_PRE_MS < now - RECORDING_RETENTION_MS) throw new Error("FALL_REPORT_OUT_OF_RANGE");
   const incidentId = randomUUID();
   return transaction(deviceId, async (db) => {
     await db.query(
-      `INSERT INTO fall_incidents(device_id,incident_id,origin,occurred_at,reported_by,reported_moment_at)
-       VALUES($1,$2,'user_report',$3,$4,$3)`, [deviceId, incidentId, momentAt, userEmail],
+      `INSERT INTO fall_incidents(device_id,incident_id,origin,occurred_at,reported_by,reported_moment_at,report_memo)
+       VALUES($1,$2,'user_report',$3,$4,$3,$5)`, [deviceId, incidentId, momentAt, userEmail, note],
     );
     await db.query(
       `INSERT INTO fall_incident_clips(device_id,incident_id,segment_index,revision,start_at,end_at,anchor_kinds)
@@ -433,8 +437,8 @@ export async function reportMissedFall(deviceId: string, userEmail: string, mome
         new Date(moment + REPORT_POST_MS).toISOString()],
     );
     await db.query(
-      `INSERT INTO fall_incident_activity(device_id,incident_id,actor_email,action)
-       VALUES($1,$2,$3,'reported')`, [deviceId, incidentId, userEmail],
+      `INSERT INTO fall_incident_activity(device_id,incident_id,actor_email,action,memo)
+       VALUES($1,$2,$3,'reported',$4)`, [deviceId, incidentId, userEmail, note],
     );
     return { incidentId };
   });
@@ -590,4 +594,38 @@ export async function finishFallNotice(claim: ClaimedFallNotice, complete: boole
     [claim.deviceId, claim.noticeId, claim.leaseId, complete, error],
   );
   return !!result.rowCount;
+}
+
+// ---------------------------------------------------------------- timeline
+
+/**
+ * One day of the continuous recording for the 연속 녹화 screen: recorded
+ * spans (gaps are "녹화 없음") and incident marks. Wall time, retention-bounded.
+ */
+export async function getFallTimeline(deviceId: string, from: string, to: string, now = Date.now()) {
+  await ensureFallReviewSchema();
+  const start = Date.parse(from), end = Date.parse(to);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 26 * 3600_000 ||
+      end < now - RECORDING_RETENTION_MS || start > now + 60_000) throw new Error("FALL_TIMELINE_RANGE_INVALID");
+  const spans = (await recordingSpans(deviceId, from, to)).map((s) => ({
+    startAt: new Date(Math.max(s.start, start)).toISOString(),
+    endAt: new Date(Math.min(s.end ?? now, end)).toISOString(),
+  })).filter((s) => s.endAt > s.startAt).sort((a, b) => a.startAt.localeCompare(b.startAt));
+  const incidents = (await getPostgresPool().query(
+    `SELECT incident_id,origin,occurred_at,reported_moment_at,fall_seen,assessment FROM fall_incidents
+     WHERE device_id=$1 AND COALESCE(reported_moment_at,occurred_at) BETWEEN $2 AND $3
+     ORDER BY COALESCE(reported_moment_at,occurred_at) LIMIT 500`, [deviceId, from, to],
+  )).rows.map((row) => ({
+    incidentId: row.incident_id,
+    at: iso(row.reported_moment_at ?? row.occurred_at)!,
+    kind: row.origin === "user_report" ? "report"
+      : row.fall_seen || row.assessment === "observed_fall" ? "fall" : "suspected",
+  }));
+  return { from: new Date(start).toISOString(), to: new Date(end).toISOString(), recordings: spans, incidents };
+}
+
+/** Stream ARN of the recording that covers [from, to] on this device, if any. */
+export async function recordingStreamFor(deviceId: string, from: string, to: string) {
+  const spans = await recordingSpans(deviceId, from, to);
+  return [...new Set(spans.map((s) => s.streamArn))];
 }

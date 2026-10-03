@@ -97,6 +97,12 @@ const details: Record<string, Record<string, unknown>> = {
   },
 };
 
+function queuedReview(momentAt: string) {
+  return { reviewId: `demo-review-${Date.now()}`, requestedBy: ME, momentAt, status: "queued", assessment: null,
+    explanation: null, errorCode: null, frameCount: null, createdAt: new Date().toISOString(), completedAt: null,
+    questions: [] };
+}
+
 const FILTER: Record<string, (row: Row) => boolean> = {
   all: () => true,
   check: (r) => r.reviewState === "open" && r.category === "check",
@@ -115,9 +121,40 @@ function counts(opinions: Array<{ label: string }>) {
   return result;
 }
 
+function demoTimeline(url: URL) {
+  const from = Date.parse(url.searchParams.get("from") ?? ""), to = Date.parse(url.searchParams.get("to") ?? "");
+  const end = Math.min(to, Date.now());
+  // Recorded all day except a gap from 01:30 to 03:00.
+  const gapStart = from + 90 * 60_000, gapEnd = from + 180 * 60_000;
+  const recordings = [[from, Math.min(gapStart, end)], [gapEnd, end]].filter(([a, b]) => b > a)
+    .map(([a, b]) => ({ startAt: new Date(a).toISOString(), endAt: new Date(b).toISOString() }));
+  const marks = incidents.map((i) => ({ incidentId: i.incidentId,
+    at: String(i.origin === "user_report" ? i.reportedMomentAt : i.occurredAt),
+    kind: i.origin === "user_report" ? "report" : i.fallSeen ? "fall" : "suspected" }))
+    .filter((m) => Date.parse(m.at) >= from && Date.parse(m.at) < to);
+  return { from: new Date(from).toISOString(), to: new Date(to).toISOString(), recordings, incidents: marks };
+}
+
 export async function demoIncidentFetch(url: string, init?: RequestInit): Promise<Response> {
   await new Promise((resolve) => setTimeout(resolve, 150));
-  const path = new URL(url, "http://demo").pathname;
+  const parsed = new URL(url, "http://demo");
+  const path = parsed.pathname;
+  const method = init?.method ?? "GET";
+  const body = () => JSON.parse(String(init?.body ?? "{}"));
+  if (path.endsWith("/fall-timeline")) return reply(demoTimeline(parsed));
+  if (path.endsWith("/recording-playback")) return reply({ error: "로컬 데모에는 녹화 영상이 없습니다." }, 404);
+  if (path.endsWith("/fall-reports")) {
+    const { momentAt, memo, requestAiReview } = body();
+    const id = `demo-report-${incidents.length + 1}`;
+    incidents.push(summary(id, { origin: "user_report", category: "report", state: null, assessment: null,
+      needsCheck: false, notificationRank: 0, reportedBy: ME, reportedMomentAt: momentAt, occurredAt: momentAt,
+      sceneState: "available", linkedCount: 0, notification: null }));
+    details[id] = { clips: [{ segmentIndex: 0, startAt: new Date(Date.parse(momentAt) - 10_000).toISOString(),
+      endAt: new Date(Date.parse(momentAt) + 20_000).toISOString(), anchorKinds: ["user_report"], foundDown: false,
+      clockStepped: false, playbackState: "available" }], robotEvents: [], notifications: [], opinions: [],
+      linkedIncidentIds: [], aiReviews: requestAiReview ? [queuedReview(momentAt)] : [], reportMemo: memo };
+    return reply({ incidentId: id, ...(requestAiReview ? { aiReview: { reviewId: "demo-review" } } : {}) }, 201);
+  }
   const list = /\/fall-incidents$/.test(path);
   if (list) {
     const filter = new URL(url, "http://demo").searchParams.get("filter") ?? "all";
@@ -155,6 +192,16 @@ export async function demoIncidentFetch(url: string, init?: RequestInit): Promis
     Object.assign(row, { reviewState: "closed", closedAt: new Date().toISOString(), closedBy: ME, needsCheck: false,
       unacknowledged: false, reviewPending: false, closedLabels: detail.opinions.map((o) => o.label) });
     return reply({ closed: true, changed: true });
+  }
+  if (action === "/ai-reviews") {
+    const { momentAt } = body();
+    const range = (details[row.incidentId] as { clips: Array<{ startAt: string; endAt: string }> }).clips;
+    const at = Date.parse(momentAt);
+    if (!range.some((c) => at >= Date.parse(c.startAt) && at <= Date.parse(c.endAt))) {
+      return reply({ error: "이 시간은 원래 사건 밖이에요. 놓친 넘어짐으로 새로 신고할까요?", reason: "outside_incident" }, 409);
+    }
+    (details[row.incidentId] as { aiReviews: unknown[] }).aiReviews.push(queuedReview(momentAt));
+    return reply({ review: { status: "queued" } }, 202);
   }
   if (action.endsWith("/playback")) {
     return reply({ error: "로컬 데모에는 녹화 영상이 없습니다." }, 404);

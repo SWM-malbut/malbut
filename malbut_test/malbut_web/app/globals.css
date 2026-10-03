@@ -9791,3 +9791,68 @@ a:focus-visible {
   /* Full-bleed like the mockup's 390 px screens. */
   .fall-page { margin-inline: -16px; border-radius: 0; }
 }
+
+/* 연속 녹화 (Timeline.dc.html) */
+.fall-tl-top { justify-content: space-between; }
+.fall-tl-top h1 { margin: 0; font-size: 16px; font-weight: 700; }
+.fall-tl-top > span { width: 64px; }
+.fall-tl-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.fall-tl-body .fall-card { margin: 0; }
+.fall-tl-clock { position: absolute; right: 12px; bottom: 10px; color: #ffffff; font-size: 12px; pointer-events: none; }
+.fall-tl-days { display: flex; justify-content: space-between; font-size: 13px; }
+.fall-tl-days button {
+  min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid #c9ced5; background: #ffffff;
+  color: #1b1f24; cursor: pointer;
+}
+.fall-tl-days button:disabled { opacity: .45; cursor: not-allowed; }
+.fall-tl-days span { align-self: center; font-weight: 500; }
+.fall-hint.is-center { text-align: center; }
+.fall-card.is-flat { gap: 10px; }
+.fall-card.is-blue { border-color: #1d5fd1; gap: 12px; }
+.fall-card.is-purple { border-color: #5b3fb5; gap: 12px; }
+.fall-tl-track { position: relative; height: 40px; cursor: pointer; }
+.fall-tl-gap, .fall-tl-rec { position: absolute; top: 16px; height: 8px; }
+.fall-tl-gap { left: 0; right: 0; border-radius: 4px; background: #d6dae0; }
+.fall-tl-rec { background: #c9d8f5; }
+.fall-tl-mark { position: absolute; top: 6px; width: 4px; height: 28px; margin-left: -2px; border-radius: 2px; }
+.fall-tl-mark.is-fall { background: #b42318; }
+.fall-tl-mark.is-suspected { background: #c48a00; }
+.fall-tl-mark.is-report { background: #5b3fb5; }
+.fall-tl-range {
+  position: absolute; top: 2px; height: 36px; border: 2px solid #5b3fb5; border-radius: 6px;
+  background: rgba(91, 63, 181, 0.12); box-sizing: border-box; pointer-events: none;
+}
+.fall-tl-zoom-title { margin-top: 6px; }
+.fall-tl-pointer-row { position: relative; height: 12px; margin-top: -8px; }
+.fall-tl-pointer {
+  position: absolute; top: 0; transform: translateX(-50%); font-size: 11px; line-height: 12px; color: #1b1f24;
+  transition: left .15s ease-out; pointer-events: none;
+}
+.fall-tl-tick { position: absolute; top: 14px; width: 1px; height: 12px; background: #8a929c; pointer-events: none; }
+.fall-tl-tick.is-major { top: 10px; height: 20px; }
+.fall-tl-ai { position: absolute; top: 14px; height: 12px; background: #5b3fb5; border-radius: 2px; pointer-events: none; }
+.fall-tl-legend i.is-ai { background: #5b3fb5; }
+.fall-tl-ticks { display: flex; justify-content: space-between; font-size: 11px; color: #5b6470; }
+.fall-tl-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: #5b6470; }
+.fall-tl-legend span { display: flex; align-items: center; gap: 4px; }
+.fall-tl-legend i { width: 10px; height: 10px; border-radius: 2px; box-sizing: border-box; }
+.fall-tl-legend i.is-fall { background: #b42318; }
+.fall-tl-legend i.is-suspected { background: #c48a00; }
+.fall-tl-legend i.is-gap { background: #d6dae0; }
+.fall-tl-legend i.is-range { border: 2px solid #5b3fb5; }
+.fall-tl-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #5b6470; }
+.fall-tl-field input {
+  min-height: 44px; border-radius: 8px; border: 1px solid #c9ced5; padding: 0 10px; font: inherit; color: #1b1f24; background: #ffffff;
+}
+.fall-tl-box { font-size: 12px; color: #5b6470; background: #f5f6f8; border-radius: 8px; padding: 10px; }
+.fall-tl-warn {
+  border: 1px solid #c48a00; background: #fff8e6; border-radius: 10px; padding: 12px;
+  display: flex; flex-direction: column; gap: 10px; font-size: 13px;
+}
+.fall-tl-actions { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid #eef0f3; padding-top: 12px; }
+.fall-tl-progress { display: flex; gap: 8px; align-items: center; font-size: 13px; color: #8a5a00; }
+.fall-tl-progress i { width: 8px; height: 8px; border-radius: 4px; background: #c48a00; }
+.fall-link.is-left { align-self: flex-start; padding-left: 0; }
+.fall-button.is-soft { border-color: #c9ced5; }
+.fall-button.is-purple { border: none; background: #5b3fb5; color: #ffffff; font-weight: 700; }
+.fall-button.is-purple-line { border-color: #5b3fb5; color: #5b3fb5; font-weight: 700; }

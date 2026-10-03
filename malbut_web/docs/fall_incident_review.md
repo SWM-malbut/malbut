@@ -27,7 +27,9 @@
 | `GET /api/devices/{id}/fall-incidents/{incidentId}` | 사건 + 장면 + 자동 판정 기록 + 알림 이력 + 의견 + 활동 기록 + 같은 장면의 다른 사건 |
 | `PUT .../{incidentId}/opinion` `{"label":"fall\|suspected_fall\|normal\|null","memo":"..."}` | 내 의견 하나. `null`이면 해제. 메모 500자 이하 |
 | `POST .../{incidentId}/close` `{}` | 처리 완료. 사건이 닫히는 유일한 방법. 의견(누구 것이든)이 하나도 없으면 `409 needs_opinion` |
-| `POST /api/devices/{id}/fall-reports` `{"momentAt":"..."}` | 놓친 넘어짐 신고. 그 순간 −10 s ~ +20 s, 알림 없음 |
+| `POST /api/devices/{id}/fall-reports` `{"momentAt":"...","memo":"..."}` | 놓친 넘어짐 신고. 그 순간 −10 s ~ +20 s, 알림 없음. 메모 500자 이하(선택) |
+| `GET /api/devices/{id}/fall-timeline?from=…&to=…` | 연속 녹화 화면의 하루(26시간 이하): 녹화된 구간과 사건 위치 |
+| `POST /api/devices/{id}/recording-playback` `{"startAt","endAt"}` | 순간을 고르기 위한 녹화 재생(10분 이하, 그 로봇 녹화가 있는 시간만). 영상 0초 = `alignedStartAt` |
 | `POST .../{incidentId}/clips/{segmentIndex}/playback` | 장면 HLS 재생 주소 (5분) |
 
 변경 요청은 같은 사이트의 JSON 요청만 받는다. 권한이 없으면 사건이 있는지도 알려 주지 않고 `404`.
@@ -65,6 +67,14 @@
 - 마지막 재발신 뒤 한 간격이 더 지나도 의견이 없으면 `unacknowledged`("아무도 확인하지 않음").
 - 처리 완료하면 남은 재발신을 모두 취소한다.
 - `POST /api/internal/maintenance`가 매분 예약·전송한다(EventBridge 1분). 실제 발송 시각은 최대 1분 늦을 수 있다.
+
+## 화면 (PR-5)
+
+검토한 목업(사건 목록·사건 상세·연속 녹화·홈캠 설정) 그대로 만든다. 글꼴은 앱 글꼴을 쓴다.
+- 사건 탭: 목록(가장 먼저 확인할 사건 / 오늘 / 어제 / 지난 기록) → 상세. 처리 완료는 의견이 하나 있어야 누를 수 있다.
+- 연속 녹화: 사건 목록의 "연속 녹화 보기"(놓친 넘어짐 신고) 또는 사건의 "AI에게 다시 검토 받기"(의심 시점으로 채워짐).
+  영상을 멈추거나 옮기면 그 시각이 "넘어지기 시작한 순간"이 된다. 원래 사건 구간 밖이면 새 신고를 제안한다.
+- 로컬 데모: `NEXT_PUBLIC_HOMECAM_UI_DEMO=1 npx next dev --webpack` → `http://localhost:3000/?view=events`.
 
 ## 클라우드 AI 키와 AI 검토
 

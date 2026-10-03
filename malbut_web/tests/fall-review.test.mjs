@@ -36,8 +36,9 @@ async function withRepo(work, overrides = {}) {
 
 async function recording(h, deviceId, start, end) {
   const id = randomUUID();
-  await h.db.query(`INSERT INTO stream_sessions(id,room_code,device_id,started_by,started_at,expires_at)
-    VALUES($1,$2,$3,'device',$4,$5)`, [id, id, deviceId, start, at(86_400_000)]);
+  // Only one active session per device: a finished recording is an ended session.
+  await h.db.query(`INSERT INTO stream_sessions(id,room_code,device_id,started_by,started_at,expires_at,status)
+    VALUES($1,$2,$3,'device',$4,$5,$6)`, [id, id, deviceId, start, at(86_400_000), end === null ? "active" : "ended"]);
   await h.db.query(`INSERT INTO recording_sessions(session_id,kvs_stream_arn,kvs_channel_arn,started_at,ended_at)
     VALUES($1,'arn:stream:a','arn:channel:a',$2,$3)`, [id, start, end]);
 }
@@ -549,4 +550,76 @@ test("사건 screen: incidents replace general events; demo API only for the loc
   assert.match(dashboard, /demo=\{LOCAL_HOME_CAM_DEMO && selectedDevice\.id === LOCAL_DEMO_DEVICE_ID\}/);
   assert.match(header, /<span>사건<\/span>/);
   assert.doesNotMatch(dashboard, /\/events\?\$\{params\}|EventPlayback|removeEventFromList/);
+});
+
+test("연속 녹화: day timeline marks, recorded spans and report memo", async () => {
+  await withRepo(async ({ h, events, review }) => {
+    const now = Math.floor(Date.now() / 1000) * 1000;
+    const at = (offset) => new Date(now + offset).toISOString();
+    await recording(h, "robot-a", at(-3 * 3600_000), at(-2 * 3600_000));
+    await recording(h, "robot-a", at(-3600_000), null);
+    const fall = notice({ occurredAt: at(-30 * 60_000), fallSeen: true });
+    await events.storeFallEvent("robot-a", fall);
+    const report = await review.reportMissedFall("robot-a", "family@example.com", at(-10 * 60_000), now, "  거실에서 넘어지심 ");
+    const timeline = await review.getFallTimeline("robot-a", at(-4 * 3600_000), at(60_000), now);
+    assert.equal(timeline.recordings.length, 2);
+    assert.equal(timeline.recordings[1].endAt, at(0)); // an open recording ends now
+    assert.deepEqual(timeline.incidents.map((i) => i.kind), ["fall", "report"]);
+    assert.equal((await review.getFallIncidentDetail("robot-a", report.incidentId)).reportMemo, "거실에서 넘어지심");
+    await assert.rejects(review.getFallTimeline("robot-a", at(0), at(-1000), now), /RANGE_INVALID/);
+    await assert.rejects(review.getFallTimeline("robot-a", at(-30 * 3600_000), at(0), now), /RANGE_INVALID/);
+    await assert.rejects(review.reportMissedFall("robot-a", "owner@example.com", at(-60_000), now, "x".repeat(501)), /INVALID/);
+    assert.deepEqual(await review.recordingStreamFor("robot-a", at(-90 * 60_000), at(-80 * 60_000)), []);
+    assert.deepEqual(await review.recordingStreamFor("robot-a", at(-10 * 60_000), at(-9 * 60_000)), ["arn:stream:a"]);
+  });
+});
+
+test("recording playback: member-only, ≤ 10 min, only where this device recorded", async () => {
+  const h = await fallDatabase();
+  const broker = [];
+  const load = moduleLoader({
+    [path.join(h.root, "app/server-auth.ts")]: { async getRequestUserEmail(req) { return req.headers.get("x-test-email"); } },
+    [path.join(h.root, "app/runtime-env.ts")]: { getRuntimeEnvironment() { return { KVS_BROKER_SECRET: "s".repeat(64) }; } },
+    [path.join(h.root, "app/kvs-device-config.ts")]: { resolveDeviceKvsResources() { return { streamArn: "arn:stream:a" }; } },
+    [path.join(h.root, "app/kvs-broker.ts")]: { async requestBrokerEventPlayback(input) {
+      broker.push(input);
+      return { playbackUrl: "https://kvs.example.com/hls/v1/getHLSMasterPlaylist.m3u8?SessionToken=t",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(), alignedStartAt: input.startAt, streamArn: input.streamArn };
+    } },
+    [path.join(h.root, "app/recording-playback-proxy.ts")]: { async createFallClipPlaybackProxy() {
+      return { playbackUrl: "/api/devices/robot-a/fall-hls/p/getHLSMasterPlaylist.m3u8", setCookie: "c=1" };
+    } },
+  });
+  const pg = load("db/postgres.ts");
+  const route = load("app/api/devices/[deviceId]/recording-playback/route.ts");
+  const now = Math.floor(Date.now() / 1000) * 1000;
+  const at = (offset) => new Date(now + offset).toISOString();
+  const call = (body, email = "family@example.com") => route.POST(new Request("https://web.test/api", {
+    method: "POST", body: JSON.stringify(body),
+    headers: { "x-test-email": email, "content-type": "application/json", origin: "https://web.test" },
+  }), { params: Promise.resolve({ deviceId: "robot-a" }) });
+  try { await pg.withPostgresPoolForTest(h.pool, async () => {
+    await recording(h, "robot-a", at(-3600_000), null);
+    assert.equal((await call({ startAt: at(-600_000), endAt: at(-300_000) }, "stranger@example.com")).status, 404);
+    assert.equal((await call({ startAt: at(-1200_000), endAt: at(0) })).status, 400); // > 10 min
+    assert.equal((await call({ startAt: at(-2 * 3600_000), endAt: at(-2 * 3600_000 + 60_000) })).status, 404);
+    const ok = await call({ startAt: at(-600_000), endAt: at(-300_000) });
+    assert.equal(ok.status, 200);
+    assert.equal((await ok.json()).alignedStartAt, at(-600_000));
+    assert.equal(broker.length, 1);
+  }); } finally { await h.db.close(); }
+});
+
+test("연속 녹화 screen follows the mockup", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const [timeline, dashboard] = await Promise.all([
+    readFile(new URL("../app/components/fall-timeline-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
+  ]);
+  for (const text of ["최근 7일까지 볼 수 있어요", "24시간 타임라인 · 표시는 사건 위치", "사건 다시 검토",
+    "이 시간은 원래 사건 밖이에요. 놓친 넘어짐으로 새로 신고할까요?", "놓친 넘어짐 신고", "신고만 남기기",
+    "신고하고 AI에게 검토 받기", "검토 진행 중 · 결과는 원래 사건에 기록돼요", "고른 순간 주변 2분", "AI에게 보내는 5초"]) {
+    assert.ok(timeline.includes(text), text);
+  }
+  assert.match(dashboard, /<FallTimelinePanel/);
 });
