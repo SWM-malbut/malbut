@@ -1,3 +1,4 @@
+import { listFallAiReviews } from "../../../../../../db/fall-ai-review";
 import { getFallIncidentDetail } from "../../../../../../db/fall-review";
 import { noStore } from "../../../../../api-response";
 import { fallMember, fallReviewFailure } from "../../../../../fall-review-route";
@@ -12,6 +13,8 @@ export async function GET(request: Request, context: Context) {
   try {
     const incident = await getFallIncidentDetail(deviceId, incidentId);
     if (!incident) return noStore({ error: "사건을 찾을 수 없습니다." }, 404);
-    return noStore({ incident });
+    // "AI 검토 결과": recorded next to the incident, never replacing the automatic judgment.
+    const aiReviews = await listFallAiReviews(deviceId, incidentId);
+    return noStore({ incident: { ...incident, aiReviews } });
   } catch (error) { return fallReviewFailure(error); }
 }
