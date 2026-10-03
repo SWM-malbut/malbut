@@ -129,6 +129,12 @@ test("incident list filters: needs check, AI failure, normal awaiting review, re
     assert.equal(byId[normal.incidentId].reviewPending, true);
     assert.equal(byId[normal.incidentId].reviewState, "open");
     assert.equal(byId[report.incidentId].origin, "user_report");
+    // List cards: alert counts, scene state and same-scene incidents.
+    assert.deepEqual(byId[urgent.incidentId].notification, { level: "urgent", sent: 1, total: 3 });
+    assert.equal(byId[failed.incidentId].notification, null);
+    assert.equal(byId[urgent.incidentId].sceneState, null);
+    assert.equal(byId[report.incidentId].sceneState, "expired");
+    assert.equal(byId[report.incidentId].linkedCount, 0);
     // Closing needs at least one opinion (anyone's).
     await assert.rejects(review.closeFallIncident("robot-a", normal.incidentId, "owner@example.com"), /NEEDS_OPINION/);
     await review.setFallOpinion("robot-a", normal.incidentId, "family@example.com", "normal", null);
@@ -521,4 +527,26 @@ test("review fixes: microsecond timestamps, robot-normal reminders, reopened nor
     assert.equal(detail.clips[0].playbackState, "unavailable");
     assert.equal(typeof clipPlaybackState, "function");
   });
+});
+
+test("사건 screen: incidents replace general events; demo API only for the local demo device", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const [panel, dashboard, header] = await Promise.all([
+    readFile(new URL("../app/components/fall-incidents-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/homecam-header.tsx", import.meta.url), "utf8"),
+  ]);
+  for (const text of ["가장 먼저 확인할 사건", "아무도 확인하지 않음", "AI 검증 실패", "검수 전",
+    "넘어진 순간은 녹화되지 않았을 수 있음", "의견을 남기면 모든 사용자에게 가는 [재발신]이 멈춰요",
+    "참고 답변 · 판정 결과에는 반영되지 않아요", "자동 판정 기록", "알림 이력", "처리 완료"]) {
+    assert.ok(panel.includes(text), text);
+  }
+  // 처리 완료 needs at least one opinion (anyone's).
+  assert.match(panel, /disabled=\{busy === "close" \|\| detail\.opinions\.length === 0\}/);
+  // Toggle buttons: pressing the selected label again clears it.
+  assert.match(panel, /setDraftLabel\(draftLabel === key \? null : key\)/);
+  assert.match(panel, /demo \? demoIncidentFetch\(url, init\) : fetch\(url, init\)/);
+  assert.match(dashboard, /demo=\{LOCAL_HOME_CAM_DEMO && selectedDevice\.id === LOCAL_DEMO_DEVICE_ID\}/);
+  assert.match(header, /<span>사건<\/span>/);
+  assert.doesNotMatch(dashboard, /\/events\?\$\{params\}|EventPlayback|removeEventFromList/);
 });

@@ -9647,3 +9647,147 @@ a:focus-visible {
   padding-left: 20px;
   font-size: 0.875rem;
 }
+
+/* ---- Fall incidents (사건) ----------------------------------------------
+   Values from the reviewed mockup (Main.dc.html / Incident.dc.html).
+   Status is never color-only: every badge carries its text. */
+.fall-page {
+  max-width: 720px; margin: 0 auto; display: flex; flex-direction: column;
+  color: #1b1f24; background: #f5f6f8; border-radius: 12px; overflow: hidden;
+}
+.fall-page button { font: inherit; }
+.fall-list-head, .fall-topbar, .fall-head { background: #ffffff; border-bottom: 1px solid #e3e6ea; }
+.fall-list-head { padding: 20px 20px 12px; display: flex; flex-direction: column; gap: 12px; }
+.fall-list-head > div:first-child { display: flex; justify-content: space-between; align-items: center; }
+.fall-list-head h2 { margin: 0; font-size: 22px; font-weight: 700; }
+.fall-link { padding: 10px 4px; border: 0; background: none; color: #1d5fd1; font-size: 14px; cursor: pointer; }
+.fall-link:hover { color: #164aa3; }
+.fall-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.fall-chips button {
+  min-height: 36px; padding: 0 14px; border-radius: 18px; font-size: 13px; cursor: pointer;
+  border: 1px solid #c9ced5; background: #ffffff; color: #1b1f24;
+}
+.fall-chips button.is-on { border-color: #1b1f24; background: #1b1f24; color: #ffffff; }
+.fall-list { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.fall-group-block { display: flex; flex-direction: column; gap: 12px; }
+.fall-group { font-size: 13px; color: #5b6470; font-weight: 500; margin-top: 8px; }
+.fall-list > .fall-group:first-child { margin-top: 0; }
+.fall-empty { margin: 0; padding: 24px 16px; color: #5b6470; font-size: 14px; text-align: center; }
+.fall-incident-card {
+  display: flex; flex-direction: column; gap: 8px; padding: 14px; text-align: left; cursor: pointer;
+  color: inherit; background: #ffffff; border: 1px solid #e3e6ea; border-radius: 12px;
+}
+.fall-incident-card.is-urgent { border: 2px solid #b42318; }
+.fall-incident-card.is-report { border: 1px dashed #5b3fb5; }
+.fall-incident-card > strong { font-size: 16px; font-weight: 700; }
+.fall-sub { font-size: 13px; color: #5b6470; }
+.fall-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.fall-badges span { font-size: 12px; font-weight: 500; padding: 3px 8px; border-radius: 6px; color: #5b6470; background: #eef0f3; }
+.fall-badges .is-alert { font-weight: 700; color: #ffffff; background: #b42318; }
+.fall-badges .is-alert-soft { color: #b42318; background: #fde8e6; }
+.fall-badges .is-check { font-weight: 700; color: #8a5a00; background: #fff4d6; }
+.fall-badges .is-ok { font-weight: 700; color: #1f6f43; background: #e6f4ec; }
+.fall-badges .is-report { font-weight: 700; color: #5b3fb5; background: #efeafd; }
+.fall-scene-state { display: flex; gap: 8px; align-items: center; font-size: 12px; }
+.fall-scene-state i { width: 8px; height: 8px; border-radius: 4px; }
+.fall-scene-state.is-ok { color: #1f6f43; } .fall-scene-state.is-ok i { background: #1f6f43; }
+.fall-scene-state.is-warn { color: #8a5a00; } .fall-scene-state.is-warn i { background: #c48a00; }
+.fall-scene-state.is-off { color: #5b6470; } .fall-scene-state.is-off i { background: #8a929c; }
+.fall-card-link { font-size: 12px; color: #1d5fd1; border-top: 1px solid #eef0f3; padding-top: 8px; }
+
+.fall-topbar { padding: 12px 16px; display: flex; align-items: center; gap: 8px; }
+.fall-head { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.fall-head h1 { margin: 0; font-size: 20px; font-weight: 700; }
+.fall-linked {
+  padding: 10px 12px; border: 0; border-radius: 8px; text-align: left; cursor: pointer;
+  font-size: 13px; color: #1d5fd1; background: #eef4fe;
+}
+.fall-notice { margin: 12px 16px 0; padding: 10px 12px; border-radius: 8px; font-size: 13px; background: #eef4fe; color: #1b1f24; }
+.fall-scene-section { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.fall-segments { display: flex; gap: 8px; flex-wrap: wrap; }
+.fall-segments button {
+  min-height: 36px; padding: 0 12px; border-radius: 18px; font-size: 13px; cursor: pointer;
+  border: 1px solid #c9ced5; background: #ffffff; color: #1b1f24;
+}
+.fall-segments button.is-on { border-color: #1b1f24; background: #1b1f24; color: #ffffff; }
+.fall-scene {
+  position: relative; width: 100%; aspect-ratio: 358 / 224; border-radius: 10px; overflow: hidden; background: #2a2f36;
+}
+.fall-scene video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.fall-scene-hint, .fall-scene-message { position: absolute; left: 12px; top: 10px; right: 12px; font-size: 12px; color: #e3e6ea; }
+.fall-scene-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 12px; display: flex; justify-content: space-between;
+  color: #ffffff; font-size: 12px; background: rgba(0, 0, 0, 0.55); pointer-events: none;
+}
+.fall-scene-note { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #5b6470; }
+.fall-hint { margin: 0; font-size: 12px; color: #5b6470; }
+.fall-two-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.fall-button {
+  min-height: 44px; padding: 0 12px; border-radius: 10px; cursor: pointer;
+  border: 1px solid #1b1f24; background: #ffffff; color: #1b1f24; font-size: 14px; font-weight: 500;
+}
+.fall-two-buttons .fall-button:not(.is-dark) { border-color: #c9ced5; }
+.fall-button.is-dark { border-color: #1b1f24; background: #1b1f24; color: #ffffff; }
+.fall-button.is-blue { border: none; background: #1d5fd1; color: #ffffff; font-weight: 700; }
+.fall-button.is-large { min-height: 48px; font-size: 15px; }
+.fall-button:disabled { opacity: .45; cursor: not-allowed; }
+.fall-card {
+  margin: 0 16px 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px;
+  background: #ffffff; border: 1px solid #e3e6ea; border-radius: 12px;
+}
+.fall-card h2 { margin: 0; font-size: 15px; font-weight: 700; }
+.fall-opinion { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid #eef0f3; padding-top: 10px; }
+.fall-opinion > div { display: flex; gap: 8px; align-items: center; }
+.fall-opinion strong { font-size: 13px; }
+.fall-opinion p { margin: 0; font-size: 13px; color: #5b6470; }
+.fall-pill { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px; color: #5b6470; background: #eef0f3; }
+.fall-pill.is-fall, .fall-pill.is-fall { color: #b42318; background: #fde8e6; }
+.fall-pill.is-suspected_fall, .fall-pill.is-suspected { color: #8a5a00; background: #fff4d6; }
+.fall-pill.is-normal { color: #1f6f43; background: #e6f4ec; }
+.fall-opinion-pick { border-top: 1px solid #eef0f3; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.fall-label { font-size: 13px; font-weight: 700; }
+.fall-toggle {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid #c9ced5; border-radius: 10px; overflow: hidden;
+}
+.fall-toggle button {
+  min-height: 48px; border: none; font-size: 14px; font-weight: 700; cursor: pointer; background: #ffffff; color: #1b1f24;
+}
+.fall-toggle button + button { border-left: 1px solid #c9ced5; }
+.fall-toggle button.is-on.is-fall { background: #b42318; color: #ffffff; }
+.fall-toggle button.is-on.is-suspected_fall { background: #c48a00; color: #1b1f24; }
+.fall-toggle button.is-on.is-normal { background: #1f6f43; color: #ffffff; }
+.fall-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.fall-field.is-strong { font-weight: 700; }
+.fall-field input {
+  min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid #c9ced5; font: inherit; font-weight: 400;
+  color: #1b1f24; background: #ffffff;
+}
+.fall-ai-result { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fall-ai-result p { flex-basis: 100%; margin: 0; font-size: 13px; }
+.fall-ask { border-top: 1px solid #eef0f3; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.fall-switch-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 44px; font-size: 13px; }
+.fall-switch {
+  flex: none; width: 52px; height: 32px; border-radius: 16px; border: none; padding: 3px; display: flex; cursor: pointer;
+  background: #c9ced5; justify-content: flex-start;
+}
+.fall-switch.is-on { background: #1d5fd1; justify-content: flex-end; }
+.fall-switch span { width: 26px; height: 26px; border-radius: 13px; background: #ffffff; display: block; }
+.fall-answer { background: #f5f6f8; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.fall-answer > span { font-size: 12px; font-weight: 700; color: #5b6470; }
+.fall-answer p { margin: 0; }
+.fall-fold { padding: 0 14px; gap: 0; }
+.fall-fold summary { min-height: 48px; display: flex; align-items: center; font-size: 15px; font-weight: 700; cursor: pointer; }
+.fall-fold[open] { padding-bottom: 14px; }
+.fall-fold > .fall-hint { margin-bottom: 8px; }
+.fall-log { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 6px 10px; font-size: 13px; }
+.fall-log > div { display: contents; }
+.fall-log > div > span:first-child { color: #5b6470; }
+.fall-bottom { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.fall-bottom .fall-button { width: 100%; }
+.fall-bottom p { margin: 0; font-size: 12px; color: #5b6470; text-align: center; }
+.fall-bottom .fall-closed { font-size: 14px; color: #1b1f24; font-weight: 700; }
+.fall-bottom .fall-needs-opinion { font-size: 13px; color: #8a5a00; font-weight: 700; }
+@media (max-width: 640px) {
+  /* Full-bleed like the mockup's 390 px screens. */
+  .fall-page { margin-inline: -16px; border-radius: 0; }
+}

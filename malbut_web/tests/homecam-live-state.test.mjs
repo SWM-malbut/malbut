@@ -59,11 +59,9 @@ test("live dashboard uses rendered media state and exposes one camera control", 
   assert.match(dashboard, /\? 1_000 : 15_000/);
   // The general event detector was removed; fall status is shown elsewhere.
   assert.doesNotMatch(dashboard, /detectorReady|<span>이벤트 감지<\/span>|"움직임만"/);
-  assert.match(dashboard, /AI가 사람을 인식한 이벤트/);
-  assert.match(
-    dashboard,
-    /말벗이 정지한 상태에서 확인된 일반 화면 변화/,
-  );
+  // General person/pet/motion events were replaced by fall incidents (사건).
+  assert.doesNotMatch(dashboard, /AI가 사람을 인식한 이벤트|일반 화면 변화/);
+  assert.match(dashboard, /url\.searchParams\.set\("incident", focusedIncidentId\)/);
   assert.match(dashboard, /requestedView === "live"/);
   assert.match(dashboard, /url\.searchParams\.set\("view", tab\)/);
   assert.match(dashboard, /url\.searchParams\.set\("mapMode", mapEntryMode\)/);

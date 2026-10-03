@@ -112,4 +112,4 @@
 - KVS broker Lambda도 함께 배포해야 한다(`GET_IMAGES`). broker 역할에 `kinesisvideo:GetImages` 권한이 추가된다.
 - 새 비밀값 `fall-key-encryption-secret`이 생긴다. 바꾸면 저장된 키를 읽을 수 없으니 소유자가 다시 등록해야 한다.
 - 웹 서버가 `https://ollama.com`으로 나갈 수 있어야 한다.
-- 알림을 누르면 아직 실시간 보기로 간다. 사건 화면이 생기면(PR-5) 사건으로 바꾼다.
+- 알림을 누르면 사건 화면(`/?view=events&device=…&incident=…`)으로 간다. broker를 먼저 배포해야 새 주소가 통과한다.
