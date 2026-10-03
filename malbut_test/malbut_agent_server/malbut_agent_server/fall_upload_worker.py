@@ -8,7 +8,7 @@ import sqlite3
 import time
 
 from malbut_agent_server.adapters.outbound.homecam_fall_events import (
-    FallEventUploader, HomecamFallEventClient,
+    FallClipUploader, FallEventUploader, HomecamFallClipClient, HomecamFallEventClient,
 )
 from malbut_agent_server.adapters.outbound.sqlite_fall_journal import SqliteFallJournal
 
@@ -37,6 +37,8 @@ def main(argv=None):
     parser.add_argument('--token-file', default=os.environ.get('HOMECAM_DEVICE_TOKEN_FILE'))
     parser.add_argument('--execute', action='store_true', help='Actually upload stored metadata')
     parser.add_argument('--once', action='store_true', help='Process at most one pending event')
+    parser.add_argument('--upload-clips', action='store_true',
+                        help='Also upload incident clip ranges (needs web support)')
     parser.add_argument('--retry-auth-failed', action='store_true',
                         help='Explicitly requeue 401/403 records after repairing credentials')
     args = parser.parse_args(argv)
@@ -47,19 +49,26 @@ def main(argv=None):
     try:
         # Dry-run validation does not read a credential, create a DB, or call HTTP.
         HomecamFallEventClient(device_token='validation-only', **options)
+        if args.upload_clips:
+            HomecamFallClipClient(device_token='validation-only', **options)
         if not args.execute:
             print('configuration: ok (no upload)')
             return 0
         if not args.token_file:
             parser.error('--token-file or HOMECAM_DEVICE_TOKEN_FILE is required for --execute')
-        client = HomecamFallEventClient(device_token=_read_token(args.token_file), **options)
+        token = _read_token(args.token_file)
+        client = HomecamFallEventClient(device_token=token, **options)
         journal = SqliteFallJournal(args.journal, device_id=args.device_id)
         try:
             if args.retry_auth_failed:
                 journal.retry_auth_failed()
-            uploader = FallEventUploader(journal, client)
+            uploaders = [FallEventUploader(journal, client)]
+            if args.upload_clips:
+                uploaders.append(FallClipUploader(
+                    journal, HomecamFallClipClient(device_token=token, **options)))
             while True:
-                processed = uploader.run_once()
+                # Events first: an alert must never wait behind a clip range.
+                processed = any(uploader.run_once() for uploader in uploaders)
                 if args.once:
                     break
                 if not processed:

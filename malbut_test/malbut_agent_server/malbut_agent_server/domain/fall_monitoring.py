@@ -310,11 +310,17 @@ class FallCandidate:
     observed_at: float
     significant_change: bool = False
     sensors: Optional[SensorSummary] = None
+    # When the suspicious motion began (same clock); None means observed_at.
+    evidence_started_at: Optional[float] = None
 
     def __post_init__(self) -> None:
         identifier(self.candidate_id)
         identifier(self.subject_key)
         timestamp(self.observed_at)
+        if self.evidence_started_at is not None:
+            timestamp(self.evidence_started_at)
+            if self.evidence_started_at > self.observed_at:
+                raise ValueError('evidence starts after it was observed')
         if self.source not in {'yolo_pose', 'cloud_crosscheck'}:
             raise ValueError('unsupported source')
         if not isinstance(self.kind, CandidateKind):
