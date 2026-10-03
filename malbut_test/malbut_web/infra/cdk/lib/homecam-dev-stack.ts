@@ -307,6 +307,12 @@ export class HomecamDevStack extends Stack {
       "PushBrokerSecret",
       `${prefix}/push-broker-secret`,
     );
+    // Derives the AES key for per-robot fall Cloud keys at rest.
+    const fallKeyEncryptionSecret = generatedSecret(
+      this,
+      "FallKeyEncryptionSecret",
+      `${prefix}/fall-key-encryption-secret`,
+    );
     const maintenanceSecret = generatedSecret(
       this,
       "MaintenanceSecret",
@@ -426,6 +432,8 @@ export class HomecamDevStack extends Stack {
           "kinesisvideo:DescribeStream",
           "kinesisvideo:GetHLSStreamingSessionURL",
           "kinesisvideo:ListFragments",
+          // Fall AI review stills (moment to +5 s).
+          "kinesisvideo:GetImages",
         ],
         resources: streamArns,
       }),
@@ -716,6 +724,7 @@ export class HomecamDevStack extends Stack {
           "publicKey",
         ),
         MAINTENANCE_SECRET: ecs.Secret.fromSecretsManager(maintenanceSecret),
+        FALL_KEY_ENCRYPTION_SECRET: ecs.Secret.fromSecretsManager(fallKeyEncryptionSecret),
         DEVICE_PROVISIONING_SECRET:
           ecs.Secret.fromSecretsManager(provisioningSecret),
         ...(usesApplicationSession

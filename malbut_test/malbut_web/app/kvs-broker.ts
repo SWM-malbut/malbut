@@ -154,6 +154,30 @@ export async function requestBrokerPlayback(input: {
   return payload as KvsBrokerPlayback;
 }
 
+export type KvsBrokerImage = { at: string | null; jpegBase64: string | null; error: string | null };
+
+/** Stills from the archive (fall AI review). Missing frames come back with an error code. */
+export async function requestBrokerImages(input: {
+  deviceId: string;
+  streamArn: string;
+  startAt: string;
+  endAt: string;
+  count: number;
+}): Promise<KvsBrokerImage[]> {
+  const payload = (await requestBroker({ action: "GET_IMAGES", ...input })) as {
+    streamArn?: unknown; images?: unknown;
+  };
+  if (payload.streamArn !== input.streamArn || !Array.isArray(payload.images) ||
+      payload.images.length > input.count) throw new Error("KVS_BROKER_RESPONSE_INVALID");
+  return payload.images.map((image) => {
+    const i = image as Record<string, unknown>;
+    const at = typeof i.at === "string" && Number.isFinite(Date.parse(i.at)) ? i.at : null;
+    const jpeg = typeof i.jpegBase64 === "string" && /^[A-Za-z0-9+/]+={0,2}$/.test(i.jpegBase64) &&
+      i.jpegBase64.length <= 2_000_000 ? i.jpegBase64 : null;
+    return { at, jpegBase64: at ? jpeg : null, error: typeof i.error === "string" ? i.error.slice(0, 40) : null };
+  });
+}
+
 export async function requestBrokerEventPlayback(input: {
   deviceId: string;
   streamArn: string;

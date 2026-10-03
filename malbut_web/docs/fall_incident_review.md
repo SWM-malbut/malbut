@@ -66,8 +66,50 @@
 - 처리 완료하면 남은 재발신을 모두 취소한다.
 - `POST /api/internal/maintenance`가 매분 예약·전송한다(EventBridge 1분). 실제 발송 시각은 최대 1분 늦을 수 있다.
 
+## 클라우드 AI 키와 AI 검토
+
+마이그레이션: `db/migrations/0013_fall_ai_review.sql`.
+
+### 로봇별 키
+
+- 낙상 확인용 Ollama Cloud 키 하나를 로봇마다 둔다(대화 이미지 분석 키와 별개). 등록·변경·삭제는 소유자만.
+- `PUT/DELETE /api/devices/{id}/fall-cloud-key` (소유자), `GET` (모든 사용자: 등록 여부·끝 4자리·로봇이 최신 키를 받았는지).
+- 서버는 AES-256-GCM으로 암호화해 보관한다. 암호 키는 `FALL_KEY_ENCRYPTION_SECRET`(Secrets Manager)에서 만들고,
+  로봇 ID와 키 버전을 함께 묶어 다른 로봇·버전으로 옮겨 쓸 수 없다. 키 원문은 사용자 응답·감사 기록에 남지 않는다.
+- 로봇 낙상 노드가 주기적으로 `POST /api/device/v1/fall-cloud-key` `{"knownVersion":2,"model":"gemma4:31b"}`를 보낸다.
+  응답 `{"keyVersion":3,"changed":true,"apiKey":"…"|null}`. 키는 로봇 사본이 오래됐을 때만 보낸다.
+  `keyVersion` 0은 소유자가 키를 등록한 적 없음 → 로봇 자체 키 파일을 그대로 쓴다. `changed:true, apiKey:null`은 삭제.
+  보고한 `model`은 서버 AI 검토가 같은 모델을 쓰는 데 쓴다. `robotHasCurrent`는 로봇이 다음 동기화에서
+  그 버전을 가지고 있다고 알려 온 뒤에야 참이 된다(보낸 것만으로는 아님).
+
+### AI 검토 (사진만으로 판정)
+
+- `POST .../fall-incidents/{incidentId}/ai-reviews` `{"momentAt":"..."}`: 그 순간부터 5초 후까지 같은 간격 12장을
+  연속 녹화에서 꺼내(KVS GetImages, 폭 640) 로봇과 같은 모델·판정 질문으로 1회 보낸다.
+  - 순간은 사건 장면 구간 안이어야 한다. 밖이면 `409 outside_incident` → 앱이 "놓친 넘어짐으로 새로 신고할까요?"를 묻는다.
+  - 사용자 신고 사건은 신고한 순간으로만 검토한다.
+  - 클라우드 분석 동의가 꺼져 있거나(`consent_off`) 키가 없거나(`key_missing`) 로봇이 아직 모델을 알려 주지 않았으면
+    (`model_unknown`) 받지 않는다.
+  - 한 사건에 진행 중인 검토는 하나. 끝나면 횟수 제한 없이 다시 요청할 수 있다.
+- `POST /api/devices/{id}/fall-reports` `{"momentAt":"...","requestAiReview":true}`: 신고하고 AI에게 검토 받기.
+  검토를 시작하지 못해도 신고는 남는다.
+- 결과는 사건 상세의 `aiReviews`에 "AI 검토 결과"(observed_fall/suspected_fall/normal_activity/unobservable)로 기록만 한다.
+  사건 상태·자동 판정·의견·알림은 바꾸지 않는다.
+- 추가 질문: `POST .../ai-reviews/{reviewId}/questions` `{"question":"...","includeContext":true}`. 같은 사진에
+  (스위치가 켜져 있으면) 메모와 이전 판정을 함께 보내고, 답은 "참고 답변"으로만 남긴다. 판정과 집계에 쓰지 않는다.
+- 우선순위: 그 로봇에 최근 1분 안에 "확인 중" 사건이 있으면 사용자 검토를 미룬다. 429·시간 초과·연결 오류는
+  최대 6번까지 물러났다 다시 시도한다. 사진이 6장 미만이면 실패로 기록하고 추측하지 않는다.
+- 녹화가 끝난 지 15초가 안 된 순간은 저장이 끝날 때까지 기다린다. 2분 안의 순간인데 사진이 모자라면 실패 대신 다시 시도한다.
+- 요청은 바로 `202`로 답하고 검토는 응답 뒤에 돌린다(웹 프로세스당 동시에 1건). 결과는 사건 상세에서 다시 읽는다.
+  maintenance(매분)도 1건씩 뒤에서 시작한다. 작업자가 6번 죽으면 `worker_lost`로 끝낸다.
+- 판정 질문은 로봇 코드(`ollama_cloud_fall.py`)와 같아야 한다. `tests/fall-ai-review.test.mjs`가 파이썬과 비교한다.
+  웹은 JSON 중복 키를 따로 거르지 않는다(로봇은 거른다). 판정은 기록용이라 이 차이는 받아들였다.
+
 ## 배포 시 확인
 
 - push broker Lambda를 웹보다 **먼저** 배포해야 한다(`infra/aws/push-broker/fall-notification.mjs`의 [재발신]·다시 열림 형식).
   옛 broker는 `resend`와 `reopened_by_opinion`을 거부해 재발신·다시 열림 알림이 계속 실패한다.
+- KVS broker Lambda도 함께 배포해야 한다(`GET_IMAGES`). broker 역할에 `kinesisvideo:GetImages` 권한이 추가된다.
+- 새 비밀값 `fall-key-encryption-secret`이 생긴다. 바꾸면 저장된 키를 읽을 수 없으니 소유자가 다시 등록해야 한다.
+- 웹 서버가 `https://ollama.com`으로 나갈 수 있어야 한다.
 - 알림을 누르면 아직 실시간 보기로 간다. 사건 화면이 생기면(PR-5) 사건으로 바꾼다.
