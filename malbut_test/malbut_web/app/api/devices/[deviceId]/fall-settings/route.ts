@@ -3,7 +3,7 @@ import { readFallSettingsView, saveFallSettings } from "../../../../../db/fall-s
 import { parseFallSettingsPatch } from "../../../../fall-settings-contract";
 import { getRequestUserEmail } from "../../../../server-auth";
 import { noStore } from "../../../../api-response";
-import { getRuntimeEnvironment } from "../../../../runtime-env";
+import { sameOriginJsonRequest } from "../../../../same-origin-request";
 
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ deviceId: string }> };
@@ -38,19 +38,4 @@ export async function PATCH(request: Request, context: Context) {
     const saved = await saveFallSettings(deviceId, email, patch);
     return noStore({ saved: true, savedRevision: saved.settingsRevision });
   } catch (error) { return failure(error); }
-}
-
-function sameOriginJsonRequest(request: Request) {
-  if (request.headers.get("sec-fetch-site")?.toLowerCase() === "cross-site") return false;
-  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") return false;
-  const configured = getRuntimeEnvironment().AUTH_PUBLIC_ORIGIN?.trim();
-  let expected = new URL(request.url).origin;
-  if (configured) {
-    try {
-      const url = new URL(configured);
-      if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash || url.username || url.password) return false;
-      expected = url.origin;
-    } catch { return false; }
-  }
-  return request.headers.get("origin") === expected;
 }

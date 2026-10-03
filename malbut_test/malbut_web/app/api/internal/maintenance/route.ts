@@ -7,7 +7,8 @@ import {
 } from "../../../../db/homecam";
 import { noStore } from "../../../api-response";
 import { dispatchHomecamEventPush } from "../../../push-broker";
-import { deliverPendingFallPush } from "../../../fall-event-push";
+import { deliverPendingFallNotice, deliverPendingFallPush } from "../../../fall-event-push";
+import { scheduleFallReminders } from "../../../../db/fall-review";
 
 export const dynamic = "force-dynamic";
 
@@ -81,6 +82,21 @@ export async function POST(request: Request) {
       break;
     }
   }
+  // [재발신]: create due reminders, then deliver them (and any reopen notice).
+  let fallReminders: unknown = { created: 0 };
+  try { fallReminders = await scheduleFallReminders(); }
+  catch { fallReminders = { created: 0, reason: "fall_reminders_unavailable" }; }
+  const fallNotices = [];
+  for (let index = 0; index < 5; index += 1) {
+    try {
+      const result = await deliverPendingFallNotice();
+      fallNotices.push(result);
+      if (!result.processed) break;
+    } catch {
+      fallNotices.push({ processed: false, accepted: false, reason: "fall_notice_worker_unavailable" });
+      break;
+    }
+  }
   return noStore(
     {
       retentionCleanup: true,
@@ -88,6 +104,8 @@ export async function POST(request: Request) {
       delivered,
       pending,
       fallPushes,
+      fallReminders,
+      fallNotices,
     },
     200,
   );
