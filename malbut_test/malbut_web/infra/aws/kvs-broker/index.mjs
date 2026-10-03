@@ -6,6 +6,7 @@ import {
 } from "@aws-sdk/client-kinesis-video";
 import {
   GetHLSStreamingSessionURLCommand,
+  GetImagesCommand,
   KinesisVideoArchivedMediaClient,
   ListFragmentsCommand,
 } from "@aws-sdk/client-kinesis-video-archived-media";
@@ -34,6 +35,9 @@ const clientIdPattern = /^(?!AWS_)[A-Za-z0-9_-]{1,128}$/;
 const deviceIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const maxHlsPlaybackRangeMs = 60 * 60 * 1000;
+// Fall AI review: a few seconds of stills, never a clip download.
+const maxImageRangeMs = 10_000;
+const maxImageCount = 12;
 const deviceResourceConfiguration = loadDeviceResourceConfiguration(
   process.env,
   region,
@@ -78,6 +82,7 @@ export async function handler(event) {
       "EVENT_PLAYBACK",
       "LIVE_PLAYBACK",
       "DEVICE_CREDENTIALS",
+      "GET_IMAGES",
     ].includes(
       action,
     )
@@ -106,6 +111,24 @@ export async function handler(event) {
         return response(404, { error: "No live media was found" });
       }
       return response(502, { error: "Live HLS playback could not be created" });
+    }
+  }
+
+  if (action === "GET_IMAGES") {
+    const input = validateImagesInput(payload);
+    if (!input) return response(400, { error: "Invalid image request" });
+    const resources = resolveDeviceResources(deviceResourceConfiguration, input.deviceId);
+    if (!resources?.streamArn || input.streamArn !== resources.streamArn) {
+      return response(403, { error: "Stream is not allowed" });
+    }
+    try {
+      return response(200, await getImages(input));
+    } catch (error) {
+      console.error("KVS images failed", error instanceof Error ? error.name : "UnknownError");
+      if (error instanceof Error && error.name === "ResourceNotFoundException") {
+        return response(404, { error: "No media was found for the requested range" });
+      }
+      return response(502, { error: "Images could not be read" });
     }
   }
 
@@ -519,6 +542,50 @@ async function createEventPlayback(input) {
   const alignedStartAt = aligned.ServerTimestamp.toISOString();
   const playback = await createHlsPlayback({ ...input, startAt: alignedStartAt });
   return { ...playback, alignedStartAt };
+}
+
+async function getImages(input) {
+  const endpoint = await kinesisVideo.send(
+    new GetDataEndpointCommand({ APIName: "GET_IMAGES", StreamARN: input.streamArn }),
+  );
+  if (!endpoint.DataEndpoint || new URL(endpoint.DataEndpoint).protocol !== "https:") {
+    throw new Error("Invalid KVS image endpoint");
+  }
+  const archivedMedia = new KinesisVideoArchivedMediaClient({ region, endpoint: endpoint.DataEndpoint });
+  const start = Date.parse(input.startAt), end = Date.parse(input.endAt);
+  const result = await archivedMedia.send(new GetImagesCommand({
+    StreamARN: input.streamArn,
+    ImageSelectorType: "SERVER_TIMESTAMP",
+    StartTimestamp: new Date(start),
+    // GetImages excludes the end; include the last sample time.
+    EndTimestamp: new Date(end + 1),
+    SamplingInterval: Math.max(200, Math.floor((end - start) / (input.count - 1))),
+    Format: "JPEG",
+    FormatConfig: { JPEGQuality: "90" },
+    WidthPixels: 640,
+    MaxResults: input.count,
+  }));
+  const images = (result.Images ?? []).slice(0, input.count).map((image) => ({
+    at: image.TimeStamp instanceof Date ? image.TimeStamp.toISOString() : null,
+    jpegBase64: !image.Error && typeof image.ImageContent === "string" ? image.ImageContent : null,
+    error: image.Error ?? null,
+  }));
+  return { streamArn: input.streamArn, images };
+}
+
+function validateImagesInput(payload) {
+  if (!hasOnlyKeys(payload, ["action", "deviceId", "streamArn", "startAt", "endAt", "count"])) return null;
+  if (
+    typeof payload.deviceId !== "string" || !deviceIdPattern.test(payload.deviceId) ||
+    typeof payload.streamArn !== "string" ||
+    typeof payload.startAt !== "string" || !isCanonicalTimestamp(payload.startAt) ||
+    typeof payload.endAt !== "string" || !isCanonicalTimestamp(payload.endAt) ||
+    !Number.isInteger(payload.count) || payload.count < 2 || payload.count > maxImageCount
+  ) return null;
+  const start = Date.parse(payload.startAt), end = Date.parse(payload.endAt);
+  if (end <= start || end - start > maxImageRangeMs) return null;
+  return { deviceId: payload.deviceId, streamArn: payload.streamArn, startAt: payload.startAt,
+    endAt: payload.endAt, count: payload.count };
 }
 
 async function getChannelEndpoints(role, protocols, channelArn) {

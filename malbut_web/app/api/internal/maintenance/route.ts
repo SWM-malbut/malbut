@@ -9,6 +9,8 @@ import { noStore } from "../../../api-response";
 import { dispatchHomecamEventPush } from "../../../push-broker";
 import { deliverPendingFallNotice, deliverPendingFallPush } from "../../../fall-event-push";
 import { scheduleFallReminders } from "../../../../db/fall-review";
+import { recoverFallAiJobs } from "../../../../db/fall-ai-review";
+import { startFallAiJob } from "../../../fall-ai-review-worker";
 
 export const dynamic = "force-dynamic";
 
@@ -97,6 +99,15 @@ export async function POST(request: Request) {
       break;
     }
   }
+  // User-requested AI reviews take up to ~30 s each, longer than this
+  // request may run: start one in the background and return.
+  let fallAiJobs: unknown;
+  try {
+    await recoverFallAiJobs();
+    fallAiJobs = { started: startFallAiJob() };
+  } catch {
+    fallAiJobs = { started: false, reason: "fall_ai_worker_unavailable" };
+  }
   return noStore(
     {
       retentionCleanup: true,
@@ -106,6 +117,7 @@ export async function POST(request: Request) {
       fallPushes,
       fallReminders,
       fallNotices,
+      fallAiJobs,
     },
     200,
   );

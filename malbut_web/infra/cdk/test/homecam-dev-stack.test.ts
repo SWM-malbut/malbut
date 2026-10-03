@@ -176,7 +176,11 @@ test("uses HTTPS, no-echo bootstrap inputs, and server-side secrets", () => {
     Protocol: "HTTPS",
   });
   template.hasResourceProperties("AWS::Lambda::Url", { AuthType: "NONE" });
-  template.resourceCountIs("AWS::SecretsManager::Secret", 9);
+  // +1: fall-key-encryption-secret (per-robot Cloud VLM keys at rest).
+  template.resourceCountIs("AWS::SecretsManager::Secret", 10);
+  template.hasResourceProperties("AWS::SecretsManager::Secret", {
+    Name: "malbut-homecam-dev/fall-key-encryption-secret",
+  });
   template.hasResourceProperties("AWS::SecretsManager::Secret", {
     Name: "malbut-homecam-dev/auth-session-secret",
     GenerateSecretString: {
