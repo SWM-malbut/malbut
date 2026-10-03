@@ -40,8 +40,10 @@ export async function dispatchFallPush(input: {
   incidentId: string;
   level: "info" | "check" | "urgent";
   reason: "fall_observed_person_okay" | "person_no_response" |
-    "check_required_not_confirmed_fall" | "help_requested" | "confirmation_help_required";
+    "check_required_not_confirmed_fall" | "help_requested" | "confirmation_help_required" |
+    "reopened_by_opinion";
   occurredAt: string;
+  resend?: true;
 }, hooks: PushDispatchHooks = {}) {
   const notification = buildFallNotification(input);
   if (!notification) throw new Error("FALL_NOTIFICATION_INVALID");

@@ -79,6 +79,22 @@ export async function createDeviceLivePlaybackProxy(
   );
 }
 
+export async function createFallClipPlaybackProxy(
+  input: Omit<CreatePlaybackProxyInput, "subjectId" | "proxyPath"> & {
+    deviceId: string;
+  },
+  secret: string,
+) {
+  return createPlaybackProxy(
+    {
+      ...input,
+      subjectId: `fall-clip:${input.deviceId}`,
+      proxyPath: `/api/devices/${encodeURIComponent(input.deviceId)}/fall-hls`,
+    },
+    secret,
+  );
+}
+
 async function createPlaybackProxy(
   input: CreatePlaybackProxyInput,
   secret: string,
@@ -171,6 +187,16 @@ export async function resolveDeviceLivePlaybackProxy(
 ): Promise<ResolvedPlaybackProxy | null> {
   return resolvePlaybackProxy(
     { ...input, subjectId: `device-live:${input.deviceId}` },
+    secret,
+  );
+}
+
+export async function resolveFallClipPlaybackProxy(
+  input: Omit<ResolvePlaybackProxyInput, "subjectId"> & { deviceId: string },
+  secret: string,
+): Promise<ResolvedPlaybackProxy | null> {
+  return resolvePlaybackProxy(
+    { ...input, subjectId: `fall-clip:${input.deviceId}` },
     secret,
   );
 }

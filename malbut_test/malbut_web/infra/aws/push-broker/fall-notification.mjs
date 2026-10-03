@@ -7,11 +7,14 @@ const messages = {
   check_required_not_confirmed_fall: ["check", "낙상 의심 상황을 확인하지 못했습니다. 상태를 확인해 주세요."],
   help_requested: ["urgent", "대상자가 도움을 요청했습니다. 즉시 확인해 주세요."],
   confirmation_help_required: ["urgent", "상황 확인 결과 도움이 필요한 것으로 판단되었습니다. 즉시 확인해 주세요."],
+  // Web-originated only; robots cannot request it (see app/fall-contract.ts).
+  reopened_by_opinion: ["check", "처리 완료된 낙상 사건에 다른 의견이 달렸습니다. 다시 확인해 주세요."],
 };
+export const WEB_ONLY_FALL_REASONS = ["reopened_by_opinion"];
 
 export function buildFallNotification(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
-  const { deviceId, notificationId, incidentId, level, reason, occurredAt } = input;
+  const { deviceId, notificationId, incidentId, level, reason, occurredAt, resend } = input;
   const entry = typeof reason === "string" && Object.hasOwn(messages, reason)
     ? messages[reason] : null;
   if (
@@ -20,12 +23,16 @@ export function buildFallNotification(input) {
     typeof incidentId !== "string" || !uuid.test(incidentId) ||
     !entry || level !== entry[0] ||
     typeof occurredAt !== "string" || !Number.isFinite(Date.parse(occurredAt)) ||
-    new Date(occurredAt).toISOString() !== occurredAt
+    new Date(occurredAt).toISOString() !== occurredAt ||
+    !(resend === undefined || resend === true || resend === "true")
   ) return null;
   return {
-    body: entry[1],
+    // [재발신]: same level and message as the first notification.
+    body: resend ? `[재발신] ${entry[1]}` : entry[1],
     data: {
       kind: "fall", deviceId, notificationId, incidentId, level, reason, occurredAt,
+      // Push data values are strings; round-trips through isFallNotification.
+      ...(resend ? { resend: "true" } : {}),
       // A fall detail page does not exist yet; open this device's live view.
       url: `/?view=live&device=${encodeURIComponent(deviceId)}`,
     },

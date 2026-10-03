@@ -1,4 +1,4 @@
-import { buildFallNotification } from "../infra/aws/push-broker/fall-notification.mjs";
+import { buildFallNotification, WEB_ONLY_FALL_REASONS } from "../infra/aws/push-broker/fall-notification.mjs";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const states = ["verifying", "recheck_required", "help_required", "resolved"];
@@ -49,6 +49,7 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
       !(v.assessment === null || (typeof v.assessment === "string" && assessments.includes(v.assessment))) ||
       !(v.answer === null || (typeof v.answer === "string" && answers.includes(v.answer))) ||
       !(v.reason === null || (typeof v.reason === "string" && /^[a-z_]{1,80}$/.test(v.reason)))) return null;
+  if (WEB_ONLY_FALL_REASONS.includes(v.reason as string)) return null;
   if (v.eventKind === "notification_requested") {
     if (!buildFallNotification({
       deviceId: "validated-by-auth", notificationId: v.eventId, incidentId: v.incidentId,
@@ -79,9 +80,15 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
 }
 
 export async function readFallEvent(request: Request): Promise<FallEventInput | null> {
-  if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") return null;
+  const value = await readBoundedJson(request, 8192);
+  return value === undefined ? null : parseFallEvent(value);
+}
+
+/** JSON body of at most `limit` bytes; undefined when absent, oversized or invalid. */
+export async function readBoundedJson(request: Request, limit: number): Promise<unknown> {
+  if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") return undefined;
   const reader = request.body?.getReader();
-  if (!reader) return null;
+  if (!reader) return undefined;
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
@@ -89,13 +96,13 @@ export async function readFallEvent(request: Request): Promise<FallEventInput | 
       const part = await reader.read();
       if (part.done) break;
       size += part.value.byteLength;
-      if (size > 8192) { await reader.cancel(); return null; }
+      if (size > limit) { await reader.cancel(); return undefined; }
       chunks.push(part.value);
     }
     const buffer = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.byteLength; }
-    return parseFallEvent(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer)));
-  } catch { return null; }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer));
+  } catch { return undefined; }
   finally { reader.releaseLock(); }
 }

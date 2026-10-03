@@ -991,8 +991,9 @@ export class HomecamDevStack extends Stack {
     });
     const maintenanceRule = new events.Rule(this, "MaintenanceSchedule", {
       ruleName: `${prefix}-maintenance`,
-      description: "Retries push outbox and removes expired homecam metadata",
-      schedule: events.Schedule.rate(Duration.minutes(5)),
+      description: "Retries push outbox, sends fall [재발신] reminders and removes expired homecam metadata",
+      // Fall reminders are 2-3 minutes apart, so this runs every minute.
+      schedule: events.Schedule.rate(Duration.minutes(1)),
       enabled: true,
     });
     maintenanceRule.addTarget(
