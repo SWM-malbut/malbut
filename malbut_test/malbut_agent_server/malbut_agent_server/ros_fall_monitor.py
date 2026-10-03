@@ -195,13 +195,22 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
     return FallNode()
 
 
-async def spin_runtime(node):
+async def spin_runtime(node, *, key_sync=None, key_sync_interval_s=None, clock=time.monotonic):
     """ROS callbacks and monitor state share one loop; network waits yield it."""
     import rclpy
 
     check = None
+    key_fetch, next_key_sync = None, clock()
     try:
         while rclpy.ok():
+            if key_sync is not None:
+                # HTTP off the loop; the key is applied on the loop thread.
+                if key_fetch is not None and key_fetch.done():
+                    key_sync.apply(key_fetch.result())
+                    key_fetch = None
+                if key_fetch is None and clock() >= next_key_sync:
+                    key_fetch = asyncio.ensure_future(asyncio.to_thread(key_sync.fetch))
+                    next_key_sync = clock() + key_sync_interval_s
             rclpy.spin_once(node, timeout_sec=0)
             node.control.refresh()
             if node.tracking is not None:
@@ -223,6 +232,8 @@ async def spin_runtime(node):
             if check is not None:
                 check.cancel()
                 await asyncio.gather(check, return_exceptions=True)
+            if key_fetch is not None:
+                await asyncio.gather(key_fetch, return_exceptions=True)
             node.publish_events()
 
 
@@ -248,8 +259,25 @@ def main(argv=None):
         import aiohttp  # noqa: F401: check optional dependency before opening the journal
         import rclpy
 
-        provider = OllamaCloudFallProvider(model=settings.model,
-                                           api_key=_read_token(settings.cloud_key_file))
+        key_sync = None
+        if settings.key_sync is None:
+            api_key = _read_token(settings.cloud_key_file)
+        else:
+            # With server key sync the robot may start before any key exists.
+            api_key = (_read_token(settings.cloud_key_file)
+                       if settings.cloud_key_file.exists() else None)
+        provider = OllamaCloudFallProvider(model=settings.model, api_key=api_key)
+        if settings.key_sync is not None:
+            from malbut_agent_server.adapters.outbound.homecam_fall_key import HomecamFallKeyClient
+            from malbut_agent_server.application.fall_key_sync import FallCloudKeySync
+            sync = settings.key_sync
+            key_sync = FallCloudKeySync(
+                client=HomecamFallKeyClient(
+                    base_url=sync.base_url, device_id=settings.device_id,
+                    device_token=_read_token(sync.token_file),
+                    allowed_hosts=set(sync.allow_hosts), timeout_s=5),
+                key_file=settings.cloud_key_file, model=settings.model,
+                apply_key=provider.replace_key)
         tracker_factory = None
         if settings.tracking is not None:
             from functools import partial
@@ -264,7 +292,9 @@ def main(argv=None):
                 nonlocal node
                 node = create_fall_node(settings, provider=provider, journal=journal,
                                         tracker_factory=tracker_factory)
-                await spin_runtime(node)
+                await spin_runtime(node, key_sync=key_sync,
+                                   key_sync_interval_s=settings.key_sync.interval_s
+                                   if settings.key_sync else None)
             asyncio.run(run())
         finally:
             if node is not None:

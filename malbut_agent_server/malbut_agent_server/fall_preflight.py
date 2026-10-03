@@ -106,6 +106,19 @@ def credential_reason(path):
         return 'not_accessible'
 
 
+def key_directory_reason(path):
+    """Server-synced keys are replaced in place: only this account may write there."""
+    try:
+        info = path.parent.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+            return 'not_owned'
+        if stat.S_IMODE(info.st_mode) & 0o022:
+            return 'writable_by_others'
+        return 'ok' if os.access(path.parent, os.W_OK | os.X_OK) else 'not_writable'
+    except (OSError, ValueError):
+        return 'not_accessible'
+
+
 def journal_checks(path):
     hint = '실행 계정 소유 0700 디렉터리와 0600 DB 파일을 준비하세요. 기존 DB는 삭제하지 마세요.'
     try:
@@ -206,8 +219,18 @@ async def inspect(config, pose_model, pose_python, *, probe=False, prefix_lookup
         checks.append(item('device_id', 'placeholder' if settings.device_id ==
                            'REPLACE_WITH_REGISTERED_DEVICE_ID' else 'ok',
                            '예시 ID가 아닌 서버에 등록된 로봇 ID를 지정하세요.'))
-        checks.append(item('cloud_key_metadata', credential_reason(settings.cloud_key_file),
+        key_reason = credential_reason(settings.cloud_key_file)
+        if settings.key_sync is not None and key_reason == 'missing':
+            key_reason = 'ok'  # The owner's key arrives from the server.
+        checks.append(item('cloud_key_metadata', key_reason,
                            'Ollama 키 파일을 실행 계정 소유 0600으로 준비하세요. 키 내용은 검사하지 않습니다.'))
+        if settings.key_sync is not None:
+            token = credential_reason(settings.key_sync.token_file)
+            checks.append(item('key_sync_token_metadata', token,
+                               '기기 토큰 파일을 실행 계정 소유 0600으로 준비하세요.'))
+            directory = key_directory_reason(settings.cloud_key_file)
+            checks.append(item('key_sync_key_directory', directory,
+                               '키 파일 디렉터리를 실행 계정 소유로, 다른 계정은 쓸 수 없게(예: 0700) 준비하세요.'))
         checks.extend(journal_checks(settings.journal_path))
     for package, executable in PACKAGE_EXECUTABLES.items():
         try:

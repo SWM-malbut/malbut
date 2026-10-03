@@ -32,6 +32,7 @@ class FallNodeSettings:
     max_source_age_s: float
     control_lease_s: float
     tracking: Optional['SamTrackingSettings'] = None
+    key_sync: Optional['FallKeySyncSettings'] = None
 
     @classmethod
     def parse(cls, text):
@@ -39,7 +40,7 @@ class FallNodeSettings:
         fields = {'device_id', 'journal_path', 'cloud_key_file', 'model', 'image_topic',
                   'policy', 'retention_s', 'buffer_bytes', 'buffer_frames', 'input_fps',
                   'max_source_age_s', 'control_lease_s'}
-        if set(data) - {'tracking'} != fields:
+        if set(data) - {'tracking', 'key_sync'} != fields:
             raise ValueError('runtime configuration fields do not match contract')
         if not isinstance(data['policy'], dict):
             raise ValueError('policy must be an object')
@@ -69,10 +70,46 @@ class FallNodeSettings:
                 or data['max_source_age_s'] > policy.max_frame_age_s):
             raise ValueError('inconsistent runtime limits')
         data['policy'] = policy
+        if data.get('key_sync') is not None:
+            data['key_sync'] = FallKeySyncSettings.parse(data['key_sync'])
+        else:
+            data.pop('key_sync', None)
         if data.get('tracking') is not None:
             from malbut_agent_server.adapters.outbound.sam_tracking import SamTrackingSettings
             data['tracking'] = SamTrackingSettings.parse(data['tracking'])
         return cls(**data)
+
+
+@dataclass(frozen=True)
+class FallKeySyncSettings:
+    """Fetch the owner-registered Cloud key from the web server (optional)."""
+    base_url: str
+    allow_hosts: tuple
+    token_file: Path
+    interval_s: float = 60.0
+
+    @classmethod
+    def parse(cls, data):
+        required = {'base_url', 'allow_hosts', 'token_file'}
+        if (not isinstance(data, dict) or not required <= set(data)
+                or set(data) - required - {'interval_s'}):
+            raise ValueError('key_sync fields do not match contract')
+        hosts = data['allow_hosts']
+        if (not isinstance(hosts, list) or not 1 <= len(hosts) <= 4
+                or not all(isinstance(h, str) and re.fullmatch(r'[a-z0-9.-]{1,253}', h)
+                           for h in hosts)):
+            raise ValueError('invalid key_sync hosts')
+        if not isinstance(data['token_file'], str) or not Path(data['token_file']).is_absolute():
+            raise ValueError('protected paths must be absolute')
+        interval = data.get('interval_s', 60)
+        if (isinstance(interval, bool) or not isinstance(interval, (int, float))
+                or not 30 <= interval <= 3600):
+            raise ValueError('key_sync interval must be 30-3600 seconds')
+        from malbut_agent_server.adapters.outbound.homecam_fall_key import HomecamFallKeyClient
+        # Validate the origin without reading a credential.
+        HomecamFallKeyClient(base_url=data['base_url'], device_id='validation-only',
+                             device_token='validation-only', allowed_hosts=set(hosts))
+        return cls(data['base_url'], tuple(hosts), Path(data['token_file']), float(interval))
 
 
 class FallRuntimeControl:

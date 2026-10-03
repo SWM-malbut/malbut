@@ -57,6 +57,25 @@ Git·Jira·설정 JSON에는 키 값을 넣지 않고 JSON의 `cloud_key_file`�
 Google Gemini 키로 대체하지 않는다. 키가 없으면 실제 실행이 실패하며,
 `--config`만 실행하는 구성 검사는 키를 읽지 않는다.
 
+#### 앱에서 등록한 키 받기 (`key_sync`, 선택)
+
+소유자가 앱에서 등록한 로봇별 키를 낙상 노드가 서버에서 직접 받는다. 설정 JSON에 추가한다.
+
+```json
+"key_sync": {"base_url": "https://malbut.hyenje29.click", "allow_hosts": ["malbut.hyenje29.click"],
+             "token_file": "/etc/malbut-homecam.token", "interval_s": 60}
+```
+
+- 주기(`interval_s`, 30~3600초, 기본 60)마다 `POST /api/device/v1/fall-cloud-key`로 가진 키 버전과
+  모델 이름(`model`)을 보낸다. 서버 AI 검토는 이 모델을 쓴다.
+- 서버에 키가 한 번도 등록되지 않았으면 로봇의 `cloud_key_file`을 그대로 쓴다.
+- 새 키가 오면 `cloud_key_file`을 같은 디렉터리의 임시 파일로 쓴 뒤 바꿔 넣고(0600), 버전을
+  `cloud_key_file.version`에 남긴 다음 재시작 없이 새 키로 바꾼다. 앱에서 지우면 키 파일도 지우고 Cloud 확인을 멈춘다.
+- 서버 연결이 실패하면 마지막 키를 계속 쓴다. 키 파일 디렉터리는 실행 계정이 쓸 수 있어야 한다
+  (예: `/var/lib/malbut-falls/ollama-cloud.key`). `/etc/malbut`처럼 root만 쓸 수 있으면 받은 키를 저장하지 못한다.
+- `key_sync`가 있으면 시작할 때 키 파일이 없어도 실행된다. 첫 동기화 전까지 Cloud 확인은 `cloud_auth_required`로 멈춘다.
+- 키 값은 로그·상태·저널에 남기지 않는다. 기기 토큰은 업로드 워커와 같은 파일을 쓴다.
+
 이번 PC의 기본 런타임 설정/키/Pose 경로가 준비됐다는 뜻은 아니다.
 운영 서버의 설정 전달, Jetson의 모델 실행 환경, 동시 주행·음성 부하, 웹 상태/알림은
 실기기 단계에서 확인해야 한다. 이번 변경은 실제 영상 업로드나 추가 과금을 실행하지 않았다.
