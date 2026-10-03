@@ -15,6 +15,7 @@ export async function GET(request: Request, context: Context) {
     if (!incident) return noStore({ error: "사건을 찾을 수 없습니다." }, 404);
     // "AI 검토 결과": recorded next to the incident, never replacing the automatic judgment.
     const aiReviews = await listFallAiReviews(deviceId, incidentId);
-    return noStore({ incident: { ...incident, aiReviews } });
+    // viewerEmail lets the app mark "my" opinion; members already see each other's emails.
+    return noStore({ incident: { ...incident, aiReviews, viewerEmail: member.email } });
   } catch (error) { return fallReviewFailure(error); }
 }

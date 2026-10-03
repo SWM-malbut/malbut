@@ -33,8 +33,8 @@ export function buildFallNotification(input) {
       kind: "fall", deviceId, notificationId, incidentId, level, reason, occurredAt,
       // Push data values are strings; round-trips through isFallNotification.
       ...(resend ? { resend: "true" } : {}),
-      // A fall detail page does not exist yet; open this device's live view.
-      url: `/?view=live&device=${encodeURIComponent(deviceId)}`,
+      // Opens the incident screen (사건) for this device.
+      url: `/?view=events&device=${encodeURIComponent(deviceId)}&incident=${encodeURIComponent(incidentId)}`,
     },
   };
 }

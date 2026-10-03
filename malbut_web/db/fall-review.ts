@@ -159,7 +159,43 @@ export async function listFallIncidentSummaries(deviceId: string, filter: Incide
      ORDER BY (i.review_state='open' AND i.unacknowledged_since IS NOT NULL) DESC,
        i.occurred_at DESC,i.incident_id LIMIT 50`, [deviceId, ANALYSIS_KINDS],
   )).rows;
-  return rows.map(summary);
+  if (!rows.length) return [];
+  const pool = getPostgresPool();
+  const ids = rows.map((row) => row.incident_id);
+  // List cards show the scene state, same-scene incidents and how many alerts went out.
+  const clips = (await pool.query(
+    `SELECT incident_id,start_at,end_at FROM fall_incident_clips
+     WHERE device_id=$1 AND incident_id=ANY($2::text[]) ORDER BY segment_index`, [deviceId, ids],
+  )).rows;
+  const spans = clips.length ? await recordingSpans(deviceId,
+    new Date(Math.min(...clips.map((c) => Date.parse(iso(c.start_at)!)))).toISOString(),
+    new Date(Math.max(...clips.map((c) => Date.parse(iso(c.end_at)!)))).toISOString()) : [];
+  const linked = new Map((await pool.query(
+    `SELECT mine.incident_id,count(DISTINCT o.incident_id)::int AS n FROM fall_incident_clips mine
+     JOIN fall_incident_clips o ON o.device_id=mine.device_id AND o.incident_id<>mine.incident_id
+       AND o.start_at<mine.end_at AND o.end_at>mine.start_at
+     WHERE mine.device_id=$1 AND mine.incident_id=ANY($2::text[]) GROUP BY mine.incident_id`, [deviceId, ids],
+  )).rows.map((r) => [r.incident_id, r.n as number]));
+  const levels = new Map((await pool.query(
+    `SELECT incident_id,(array_agg(level ORDER BY ${LEVEL_RANK_SQL} DESC))[1] AS level FROM fall_push_outbox
+     WHERE device_id=$1 AND incident_id=ANY($2::text[]) AND status<>'superseded' GROUP BY incident_id`, [deviceId, ids],
+  )).rows.map((r) => [r.incident_id, r.level as string]));
+  const resends = new Map((await pool.query(
+    `SELECT incident_id,count(*)::int AS n FROM fall_web_notices WHERE device_id=$1
+       AND incident_id=ANY($2::text[]) AND kind='resend' AND status='accepted' GROUP BY incident_id`, [deviceId, ids],
+  )).rows.map((r) => [r.incident_id, r.n as number]));
+  return rows.map((row) => {
+    const first = clips.find((c) => c.incident_id === row.incident_id);
+    const level = levels.get(row.incident_id) ?? null;
+    const total = level === "urgent" ? 3 : level === "check" ? 2 : 1;
+    return {
+      ...summary(row),
+      sceneState: first ? clipPlaybackState(iso(first.start_at)!, iso(first.end_at)!, spans) : null,
+      linkedCount: linked.get(row.incident_id) ?? 0,
+      // "알림: 긴급 · 3/3회 발송": first notification plus delivered [재발신].
+      notification: level ? { level, sent: Math.min(total, 1 + (resends.get(row.incident_id) ?? 0)), total } : null,
+    };
+  });
 }
 
 type RecordingSpan = { start: number; end: number | null; streamArn: string };
@@ -240,9 +276,11 @@ export async function getFallIncidentDetail(deviceId: string, incidentId: string
       createdAt: iso(n.created_at), acceptedAt: iso(n.accepted_at) })),
   ].sort((a, b) => a.createdAt!.localeCompare(b.createdAt!));
   const opinions = (await pool.query(
-    `SELECT user_email,label,memo,updated_at FROM fall_incident_opinions
-     WHERE device_id=$1 AND incident_id=$2 ORDER BY updated_at`, [deviceId, incidentId],
-  )).rows.map((o) => ({ userEmail: o.user_email, label: o.label, memo: o.memo, updatedAt: iso(o.updated_at) }));
+    `SELECT o.user_email,o.label,o.memo,o.updated_at,m.role FROM fall_incident_opinions o
+     LEFT JOIN device_memberships m ON m.device_id=o.device_id AND m.user_email=o.user_email
+     WHERE o.device_id=$1 AND o.incident_id=$2 ORDER BY o.updated_at`, [deviceId, incidentId],
+  )).rows.map((o) => ({ userEmail: o.user_email, role: o.role ?? null, label: o.label, memo: o.memo,
+    updatedAt: iso(o.updated_at) }));
   const activity = (await pool.query(
     `SELECT actor_email,action,label,memo,created_at FROM fall_incident_activity
      WHERE device_id=$1 AND incident_id=$2 ORDER BY created_at,id`, [deviceId, incidentId],

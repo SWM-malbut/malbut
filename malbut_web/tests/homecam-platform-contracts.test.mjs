@@ -45,7 +45,8 @@ test("settings, event pagination, idempotency, push, and viewer grants stay hard
   );
   assert.match(database, /ORDER BY occurred_at DESC, id DESC LIMIT \?/);
   assert.match(eventRoute, /beforeId/);
-  assert.match(dashboard, /params\.set\("beforeId", options\.before\.id\)/);
+  // The dashboard no longer lists general events (replaced by fall incidents).
+  assert.doesNotMatch(dashboard, /params\.set\("beforeId"/);
 
   assert.match(migration, /request_fingerprint TEXT NOT NULL/i);
   assert.match(database, /eventRequestFingerprint/);
@@ -130,9 +131,10 @@ test("bounded event clips keep privacy deletion and direct destination navigatio
       readFile(new URL("../infra/cdk/lib/homecam-dev-stack.ts", import.meta.url), "utf8"),
     ]);
   assert.match(dashboard, /onClick=\{\(\) => onOpenMap\("navigate"\)\}>목적지 선택/);
-  assert.match(dashboard, /목록에서 삭제/);
-  assert.match(dashboard, /response\.status !== 425/);
-  assert.match(dashboard, /homecam-event-delete-button/);
+  // General event clips were replaced by fall incidents: no per-clip delete,
+  // the recording expires after 7 days (spec 6).
+  assert.doesNotMatch(dashboard, /homecam-event-delete-button/);
+  assert.match(dashboard, /<FallIncidentsPanel/);
   assert.match(playbackRoute, /"retry-after": "2"/);
   assert.match(deletionRoute, /rawMediaDeletion:\s*"retention"/);
   assert.match(clipRoute, /Idempotency-Key 헤더가 본문과 일치/);

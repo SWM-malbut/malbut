@@ -28,7 +28,8 @@ test("fall messages separate observation from notification grade without raw vid
     assert.ok(isFallNotification(notification));
     assert.equal(notification.data.level, level);
     assert.equal(notification.data.incidentId, input.incidentId);
-    assert.equal(notification.data.url, "/?view=live&device=robot-a");
+    assert.equal(notification.data.url,
+      `/?view=events&device=robot-a&incident=${input.incidentId}`);
     assert.doesNotMatch(notification.body, /의식.*없|낙상 확정/);
     assert.equal(notification.data.image, undefined);
   }
@@ -195,5 +196,6 @@ test("service worker separates fall notification levels and opens the live view"
   }
   assert.equal(new Set(displayed.map((n) => n.tag)).size, 3);
   assert.ok(displayed.every((n) => n.tag.includes(input.incidentId)));
-  assert.deepEqual(roundtrip(displayed[0].data), { url: "/?view=live&device=robot-a" });
+  assert.deepEqual(roundtrip(displayed[0].data),
+    { url: `/?view=events&device=robot-a&incident=${input.incidentId}` });
 });

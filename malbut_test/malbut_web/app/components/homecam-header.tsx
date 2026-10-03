@@ -141,7 +141,7 @@ export function HomecamHeader({
             size={20}
             weight={activeTab === "events" ? "fill" : "regular"}
           />
-          <span>이벤트</span>
+          <span>사건</span>
         </button>
         <button
           type="button"
