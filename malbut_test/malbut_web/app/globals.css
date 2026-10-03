@@ -9856,3 +9856,24 @@ a:focus-visible {
 .fall-button.is-soft { border-color: #c9ced5; }
 .fall-button.is-purple { border: none; background: #5b3fb5; color: #ffffff; font-weight: 700; }
 .fall-button.is-purple-line { border-color: #5b3fb5; color: #5b3fb5; font-weight: 700; }
+
+/* 홈캠 설정 (Settings.dc.html) */
+.fall-settings { margin-bottom: 16px; }
+.fall-settings-banner { background: #eef4fe; border-radius: 10px; padding: 12px; font-size: 13px; color: #164aa3; }
+.fall-settings-list { padding: 0; gap: 0; }
+.fall-settings-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px; }
+.fall-settings-row + .fall-settings-row { border-top: 1px solid #eef0f3; }
+.fall-settings-row.is-dim { opacity: .55; }
+.fall-settings-row > span { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.fall-settings-row strong { font-size: 15px; font-weight: 700; }
+.fall-settings-row small { font-size: 12px; color: #5b6470; }
+.fall-switch:disabled { cursor: not-allowed; }
+.fall-key-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  background: #f5f6f8; border-radius: 8px; padding: 10px 12px;
+}
+.fall-key-row > span:first-child { font-size: 14px; letter-spacing: 1px; }
+.fall-key-row > span:last-child { font-size: 12px; }
+.fall-key-row .is-ok { color: #1f6f43; }
+.fall-key-row .is-muted { color: #5b6470; }
+.fall-button.is-danger-line { border-color: #b42318; color: #b42318; }

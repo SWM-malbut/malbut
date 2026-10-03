@@ -610,10 +610,11 @@ test("recording playback: member-only, ≤ 10 min, only where this device record
   }); } finally { await h.db.close(); }
 });
 
-test("연속 녹화 screen follows the mockup", async () => {
+test("연속 녹화·설정 screens follow the mockup and only the owner edits settings", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [timeline, dashboard] = await Promise.all([
+  const [timeline, settings, dashboard] = await Promise.all([
     readFile(new URL("../app/components/fall-timeline-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/fall-homecam-settings.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
   ]);
   for (const text of ["최근 7일까지 볼 수 있어요", "24시간 타임라인 · 표시는 사건 위치", "사건 다시 검토",
@@ -621,5 +622,13 @@ test("연속 녹화 screen follows the mockup", async () => {
     "신고하고 AI에게 검토 받기", "검토 진행 중 · 결과는 원래 사건에 기록돼요", "고른 순간 주변 2분", "AI에게 보내는 5초"]) {
     assert.ok(timeline.includes(text), text);
   }
+  for (const text of ["카메라 사용", "연속 녹화", "넘어짐 감지", "클라우드 AI 확인 동의", "클라우드 AI 키",
+    "설정은 소유자만 바꿀 수 있어요. 지금 상태만 보여요.", "끝 네 자리만 표시해요", "저장된 영상"]) {
+    assert.ok(settings.includes(text), text);
+  }
+  assert.doesNotMatch(settings, /음성 녹음/); // not built yet; left out on purpose
+  assert.match(settings, /const disabled = !isOwner \|\| blocked \|\| row\.busy/);
   assert.match(dashboard, /<FallTimelinePanel/);
+  assert.match(dashboard, /<FallHomecamSettings/);
+  assert.doesNotMatch(dashboard, /FallSettingsPanel/);
 });
