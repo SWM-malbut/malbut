@@ -60,7 +60,7 @@ def _setup(context):
             package='homecam_detector', executable='homecam_detector_node',
             name='malbut_fall_pose', output='screen', prefix=[shlex.quote(pose_python)],
             parameters=[{
-                'use_sim_time': False, 'fall_only': True,
+                'use_sim_time': False,
                 'fall_runtime_id': fall_ids['vlm'],
                 'image_topic': value('rgb_topic'), 'odom_topic': value('odom_topic'),
                 'pose_model_path': pose_model, 'pose_keep_aspect': True,

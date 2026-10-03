@@ -1,11 +1,13 @@
 # homecam_agent
 
 ROS 2 Humble 기반 이동형 홈캠 PoC 에이전트다. Gazebo 또는 Aurora RGB
-이미지를 H.264/Opus로 변환해 AWS KVS WebRTC로 전송하고, 사람·개·고양이
-및 일반 움직임 이벤트를 온디바이스에서 판정한다.
+이미지를 H.264/Opus로 변환해 AWS KVS WebRTC로 전송한다. 로봇에서는 같은
+`homecam_detector` 패키지의 낙상 Pose 노드(`malbut_fall_pose`)가 낙상 후보를 만든다.
+사람·개·고양이·일반 움직임 이벤트를 만들던 일반 감지 모드(`fall_only=false`)는
+2026-10-03 제거됐다. 이벤트 클립은 낙상 사건 기준으로 다시 만든다.
 
-이 저장소는 자율주행 소유권을 침범하지 않는다. `/odom`은 일반 움직임
-오탐을 억제하기 위해 읽기만 하며 `/cmd_vel` publisher를 만들지 않는다.
+이 저장소는 자율주행 소유권을 침범하지 않는다. `/odom`은 낙상 후보에 로봇 이동
+여부를 붙이기 위해 읽기만 하며 `/cmd_vel` publisher를 만들지 않는다.
 
 ## 현재 구현 상태
 
@@ -22,9 +24,8 @@ ROS 2 Humble 기반 이동형 홈캠 PoC 에이전트다. Gazebo 또는 Aurora R
 | 수신 Opus→ALSA PTT 재생 경로 | transport callback까지 연결 |
 | 백엔드 heartbeat와 desired state 적용 | 구현 |
 | `POST`/`DELETE /api/device/v1/session`, 단기 AWS credential 갱신 | 구현 |
-| YOLO ONNX 사람·개·고양이 감지 | 모델이 있을 때 구현 |
-| `/odom` 정지 확인, frame confirmation, cooldown | 구현 |
-| idempotent HTTPS 이벤트 전송 | 구현 |
+| 낙상 Pose 후보(`malbut_fall_pose`), `/odom` 이동 여부 표시 | 구현 |
+| 사람·개·고양이·움직임 이벤트(일반 감지 모드) | 제거됨. 낙상 사건 영상으로 대체 예정 |
 | AWS KVS P2P/Storage signaling, H.264/Opus `writeFrame` | SDK 활성 빌드에서 구현 |
 | KVS 수신 Opus→단일 PTT 재생 | 구현, 점유 권한은 백엔드·클라이언트가 중재 |
 
@@ -60,15 +61,8 @@ Gazebo 실행 스크립트는 해당 사용자 캐시 환경을 자동 연결하
 공용 인식과 중복되지 않도록 별도 홈캠 검출기를 실행하지 않는다.
 
 Ultralytics 모델·코드의 상용 이용 조건은 배포 전에 별도로 검토해야 한다.
-모니터링 중 `detectorHealthy`는 단순 모델 로드 여부가 아니라 최근 10초 내
-성공한 inference가 있는지를 나타낸다. 연속 세 번 inference가 실패하면 즉시
-false가 되고, 다음 성공 시 복구된다.
-pose는 일반 모델보다 먼저 실행하며, 일반 모델이 없거나 사람을 찾지 못해도
-실행한다. pose 자체가 사람을 찾지 못하거나 추론에 실패한 경우에는 현재 자세를
-없음으로 표시한다. 일반 검출 실패만으로 자세 출력을 지우지는 않는다.
-두 모델은 아직 같은 이미지 콜백에서 순차 실행되므로 처리 지연과 자원 사용까지
-분리된 것은 아니다. 실행 스레드 분리와 Jetson 부하 검증은 별도 작업이다.
-`/homecam/pose_healthy`는 pose 모델 준비와 연속 실패 상태를,
+일반 감지(사람·반려동물·움직임 이벤트)는 제거되어 `homecam_detector`는 낙상 Pose만 실행한다.
+pose가 사람을 찾지 못하거나 추론에 실패한 경우에는 현재 자세를 없음으로 표시한다.
 `/homecam/person_poses`는 사람별 추적 ID와 정규화된 COCO 17개 관절 관측 JSON을
 제공한다. 모델은 프레임당 한 번 실행하고, 사람마다 따로 실행하지 않는다.
 낮은 신뢰도 후보는 `weak`, 잠시 안 보이는 ID는 `missing`, 누구인지 연결하기
@@ -253,57 +247,15 @@ colcon build \
 
 SDK 저작권·라이선스 고지는 `THIRD_PARTY_NOTICES.md`에 기록되어 있다.
 
-일반 홈캠(`fall_only=false`)의 YOLO와 Pose도 GPU 선택·스레드 제한을 적용한다.
-기본값은 각각 `yolo_execution_provider=auto`, `pose_execution_provider=auto`,
-ORT 스레드 `2`, spinning `false`다. `auto`는 실행 Python에 CUDA EP가 있으면
-CUDA를 선택하고, 없으면 CPU와 GPU 미사용 경고를 선택한다. GPU 초기화 실패를
-CPU 추론 성공으로 숨기지 않는다. `yolo_intra_op_num_threads`, `yolo_allow_spinning`,
-`pose_intra_op_num_threads`, `pose_allow_spinning`으로 모델별 조정이 가능하다.
-기존 이름인 `pose_opencv_num_threads`는 실제로 OpenCV 프로세스 전체에 적용되며
-기본 `1`이다. 일반 YOLO 전처리와 움직임 감지에도 적용한다.
-
-`homecam_aurora.launch.py`와 `homecam_sim.launch.py`에서 위 인자를 사용할 수 있다.
-GPU 환경은 낙상과 마찬가지로 별도 준비해야 한다. 설치 절차는
+일반 감지 모드는 제거됐다. 낙상 Pose의 GPU 선택·스레드 설정과 실행 환경 준비는
 [로봇 준비 문서](../malbut_agent_server/docs/fall/fall_robot_preparation.md#gpu-환경-준비와-적용-확인)를 따른다.
-기존에 검증한 CUDA Python이 있다면 다음처럼 일반 홈캠 감지기에 지정한다.
+`homecam_aurora.launch.py`는 이제 영상 전송 노드만 실행한다.
 
-```bash
-export MALBUT_HOMECAM_DETECTOR_PYTHON="${XDG_CACHE_HOME:-$HOME/.cache}/malbut_fall_pose/runtime-cuda/bin/python"
-ros2 launch homecam_media_agent homecam_aurora.launch.py \
-  image_topic:=/depth_cam/rgb0/image_raw \
-  model_path:=/absolute/path/to/yolo26n.onnx \
-  yolo_execution_provider:=cuda
-```
-
-`detector_python_executable` 인자로도 경로를 지정할 수 있다. C++ 미디어 노드의
-실행 환경은 바꾸지 않는다. 시작 로그에 각 모델의 실제 `provider=cuda/cpu`를 남긴다.
-권한/모니터링 조건, 이벤트 구간 판단과 영상 저장·전송 규칙은 그대로이며,
-일반 홈캠은 움직임 감지에도 프레임을 쓰므로 낙상 전용의 5fps 변환 생략을 적용하지 않는다.
-모델 추론은 GPU로 보낼 수 있지만 영상 변환·움직임 감지·이벤트 처리가 모두 GPU로
-옮겨지는 것은 아니다. 실제 Jetson CPU/GPU 부하와 처리 속도는 별도 측정이 필요하다.
-
-`model_path`가 비어 있으면 motion-only 모드로 실행한다. 기본 `auto`/명시적 `cpu`에서
-모델을 읽지 못하면 오류를 알리고 motion-only로 계속한다. `yolo_execution_provider=cuda`를
-명시했는데 모델/CUDA를 불러오지 못하면 시작에 실패한다. 이벤트 탭의 분류 의미는 다음과 같다.
-
-- `사람`: YOLO가 COCO person 클래스를 인식
-- `반려동물`: YOLO가 COCO dog 또는 cat 클래스를 인식
-- `움직임`: 객체 종류를 특정하지 못했지만 프레임 차이가 확인됨
-
-한 구간에서 사람과 일반 움직임이 함께 확인되면 클립은 중복 생성하지 않고
-`사람`을 대표 유형으로 표시하며 두 라벨은 모두 보존한다. generic motion은
-다음 조건을 모두 만족할 때만 이벤트가 된다.
-
-- 최근 2초 이내 `/odom`을 받음
-- 선속도와 각속도가 threshold 이하
-- 활성 Nav2 목적지 주행이 없음
-- 2초 이상 정지
-- 여러 연속 프레임에서 움직임 확인
-
-`/odom`이 없거나 오래되거나 로봇이 이동 중이거나 Nav2 goal이 실행 중이면
-generic motion은 억제된다. 주행 종료 후 2초 동안 배경을 다시 잡으므로 카메라
-시점 변화 자체가 `움직임` 클립이 되지 않는다. 사람·개·고양이 YOLO 감지는
-로봇 주행 중에도 계속 수행된다.
+> 알려진 문제: Gazebo 시뮬레이션(`homecam_sim.launch.py`, `scripts/run_gazebo_homecam.sh`)은
+> 아직 일반 감지 모드를 전제로 한다. 지금 실행하면 감지기 시작이 실패하고 시뮬레이션 전체가
+> 종료된다. `model_path`를 주면 `scripts/lib/portable_runtime.sh`의 사전 검사도 지워진
+> `homecam_detector.yolo`를 불러오다 바로 실패한다(`sim.yaml`의 `event_clips_enabled`·`model_path`도 남아 있음).
+> 시뮬레이션은 별도로 정리할 예정이며, 아래 Gazebo 이벤트 설명은 제거 전 기록이다.
 
 Gazebo 이벤트 검증에서는 아래 고정 스크립트를 사용한다. 이 스크립트는
 `small_house`에서 로봇 카메라 앞의 열린 바닥만 왕복하며, 사람의 팔 너비까지
@@ -336,11 +288,9 @@ Bringup 종료 시 해당 영상 노드도 함께 종료되며 웹 연결은 유
 `HOMECAM_ENABLE_KVS=ON`, SDK, GStreamer, CURL이 필요하며 적용본 빌드가 이를 지정한다.
 Jetson의 `nvvidconv`, `nvv4l2h264enc`도 설치되어 있어야 한다.
 
-이 경로는 **미디어 연결만** 담당한다. 공용 YOLO 결과를 기존 홈캠 이벤트 API로
-변환하는 adapter는 아직 없으므로 사람·반려동물 이벤트를 새로 생성하지 않으며,
-별도 health publisher가 없는 상태에서 `detectorHealthy`는 false다. 이를 정상으로
-위장하지 않는다. `monitoringEnabled`에 따른 기존 Storage 전송 동작은 유지한다.
-단독 홈캠 검출기가 필요한 기존 구성은 아래 Aurora launch를 그대로 사용할 수 있다.
+이 경로는 **미디어 연결만** 담당한다. 사람·반려동물 이벤트는 만들지 않는다(일반 감지 제거).
+`monitoringEnabled`에 따른 기존 Storage 전송 동작은 유지한다.
+낙상 Pose는 Bringup `fall.launch.py`의 `malbut_fall_pose`가 실행한다.
 
 ## Aurora / Jetson 단독 홈캠 실행
 
@@ -362,9 +312,7 @@ ros2 launch homecam_media_agent homecam_aurora.launch.py \
   image_topic:='/DISCOVERED_RGB_TOPIC' \
   camera_info_topic:='/DISCOVERED_CAMERA_INFO_TOPIC' \
   backend_url:='https://YOUR_BACKEND' \
-  device_id:='REGISTERED_DEVICE_ID' \
-  model_path:='/opt/homecam/models/yolo26n.onnx' \
-  pose_model_path:='/opt/homecam/models/yolo26n-pose.onnx'
+  device_id:='REGISTERED_DEVICE_ID'
 unset HOMECAM_DEVICE_TOKEN
 ```
 
@@ -389,7 +337,7 @@ token 안의 credential UUID는 장치 ID가 아니며 서로 바꿔 쓰면 sess
 
 에이전트는 `POST /api/device/v1/heartbeat`에 `sourceProfile`,
 `imageTopic`, `streamMode`, `mediaHealthy`, `p2pHealthy`,
-`storageHealthy`, `detectorHealthy`를 보낸다.
+`storageHealthy`를 보낸다.
 응답의 `desiredState.monitoringEnabled`, `cameraEnabled`,
 `microphoneEnabled`를 적용한다.
 

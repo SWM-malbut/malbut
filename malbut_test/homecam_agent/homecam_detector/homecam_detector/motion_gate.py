@@ -1,4 +1,4 @@
-"""Read-only odometry gate for generic camera-motion events."""
+"""Read-only odometry context for fall pose candidates."""
 
 from dataclasses import dataclass
 import math
@@ -7,7 +7,7 @@ from typing import Optional
 
 @dataclass
 class MotionGate:
-    """Allow generic motion only after navigation and odometry are stable."""
+    """Report whether the robot is moving, settled, or unknown for pose candidates."""
 
     stationary_after_sec: float = 2.0
     odom_timeout_sec: float = 2.0
@@ -44,7 +44,7 @@ class MotionGate:
         elif self.stationary_since is None:
             self.stationary_since = now
 
-    def generic_motion_allowed(self, now: float) -> bool:
+    def _settled(self, now: float) -> bool:
         """Return false for absent, stale, moving, or not-yet-stable odometry."""
         if self.navigation_active:
             return False
@@ -64,4 +64,4 @@ class MotionGate:
         if (abs(self.last_linear_speed) > self.linear_threshold
                 or abs(self.last_angular_speed) > self.angular_threshold):
             return "moving"
-        return "stationary" if self.generic_motion_allowed(now) else "unknown"
+        return "stationary" if self._settled(now) else "unknown"

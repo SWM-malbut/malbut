@@ -1640,12 +1640,6 @@ export function HomecamDashboard({
     !storageReady &&
     !storageConnecting,
   );
-  const detectorReady = Boolean(
-    selectedDevice?.online &&
-    selectedDevice?.cameraEnabled &&
-    selectedDevice?.monitoringEnabled &&
-    selectedDevice.detectorHealthy === true,
-  );
   const storageStateLabel = !storageEnabled
     ? "저장 안 함"
     : !selectedDevice?.cameraEnabled
@@ -1990,26 +1984,6 @@ export function HomecamDashboard({
                         onChange={(value) => void updateSetting("monitoringEnabled", value)}
                       />
                     )}
-                  </div>
-                  <div>
-                    <i
-                      className={
-                        detectorReady
-                          ? "is-good"
-                          : storageCanRun
-                            ? "is-pending"
-                            : ""
-                      }
-                      aria-hidden="true"
-                    />
-                    <span>이벤트 감지</span>
-                    <strong>
-                      {!storageCanRun
-                        ? "꺼짐"
-                        : detectorReady
-                          ? "정상"
-                          : "움직임만"}
-                    </strong>
                   </div>
                 </div>
               </article>

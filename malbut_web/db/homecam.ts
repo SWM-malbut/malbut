@@ -616,7 +616,9 @@ export async function updateDeviceHeartbeat(input: {
   const detectorHealthy =
     refreshed.cameraEnabled &&
     refreshed.monitoringEnabled &&
-    (input.detectorHealthy ?? current.detectorHealthy);
+    // General detection was removed; robots no longer report it, so an old
+    // stored value must not linger.
+    (input.detectorHealthy ?? false);
   const nowIso = new Date().toISOString();
   await getD1()
     .prepare(

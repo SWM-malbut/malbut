@@ -104,8 +104,7 @@ std::string heartbeat_to_json(const HeartbeatStatus & status)
        << "\"streamMode\":\"" << json_escape(status.stream_mode) << "\","
        << "\"mediaHealthy\":" << (status.media_healthy ? "true" : "false") << ","
        << "\"p2pHealthy\":" << (status.p2p_healthy ? "true" : "false") << ","
-       << "\"storageHealthy\":" << (status.storage_healthy ? "true" : "false") << ","
-       << "\"detectorHealthy\":" << (status.detector_healthy ? "true" : "false");
+       << "\"storageHealthy\":" << (status.storage_healthy ? "true" : "false");
   if (status.fall_settings_report) {
     json << ",\"fallSettingsReport\":" << status.fall_settings_report->dump();
   }

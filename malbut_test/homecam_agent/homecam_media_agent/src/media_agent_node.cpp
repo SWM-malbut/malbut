@@ -240,13 +240,6 @@ public:
     storage_session_publisher_ = create_publisher<std_msgs::msg::String>(
       "/homecam/storage_session_id",
       rclcpp::QoS(1).reliable().transient_local());
-    detector_health_subscription_ = create_subscription<std_msgs::msg::Bool>(
-      "/homecam/detector_healthy",
-      rclcpp::QoS(1).reliable().transient_local(),
-      [this](const std_msgs::msg::Bool::ConstSharedPtr message) {
-        detector_reported_healthy_.store(message->data);
-        detector_health_received_at_ns_.store(steady_now_ns());
-      });
     publish_monitoring_state();
     publish_storage_session_id();
 
@@ -969,16 +962,6 @@ private:
   {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count();
-  }
-
-  bool detector_is_healthy() const
-  {
-    const auto received_at = detector_health_received_at_ns_.load();
-    if (!detector_reported_healthy_.load() || received_at == 0) {
-      return false;
-    }
-    constexpr std::int64_t timeout_ns = 3'000'000'000;
-    return steady_now_ns() - received_at <= timeout_ns;
   }
 
   static std::int64_t unix_now_ms()
@@ -2031,7 +2014,6 @@ private:
     status.storage_healthy =
       status.camera_healthy && config_.monitoring_enabled &&
       storage_transport_->implemented() && storage_transport_running;
-    status.detector_healthy = detector_is_healthy();
     status.source_profile = config_.source_profile;
     status.image_topic = config_.image_topic;
     status.stream_mode =
@@ -2288,16 +2270,12 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr monitoring_publisher_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr
     storage_session_publisher_;
-  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr
-    detector_health_subscription_;
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
   rclcpp::TimerBase::SharedPtr session_timer_;
   std::atomic<std::uint64_t> frames_received_{0};
   std::atomic<bool> has_frame_{false};
   std::atomic<bool> camera_info_received_{false};
   std::atomic<bool> odom_received_{false};
-  std::atomic<bool> detector_reported_healthy_{false};
-  std::atomic<std::int64_t> detector_health_received_at_ns_{0};
   SharedMediaTimeline media_timeline_;
   std::chrono::steady_clock::time_point last_frame_time_{
     std::chrono::steady_clock::now()};

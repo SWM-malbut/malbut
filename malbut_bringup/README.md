@@ -116,7 +116,6 @@ spinning `false`, OpenCV 스레드 `1`이다. 추가 인자 없이 스레드 제
 OSNet/ReID 가상환경을 재사용하거나 `runtime-cuda`를 자동 선택하지 않는다. 환경변수
 `MALBUT_FALL_POSE_PYTHON` 또는 `fall_pose_python_executable` 인자를 명시하면 그 값이 우선한다.
 이미 설치된 CUDA·cuDNN·Torch는 변경하지 않는다. Bringup 실행 중에는 설치하지 않는다.
-일반 홈캠의 YOLO·Pose에도 같은 스레드 제한과 GPU 선택 정책을 적용한다.
 `auto`는 **해당 노드의 실행 Python**에 CUDA EP가
 있으면 CUDA를 선택하고, 없으면 CPU를 선택하면서 GPU 미사용 경고를 남긴다.
 CUDA가 설치돼 있지만 초기화에 실패하면 CPU로 조용히 바꾸지 않고 시작에 실패한다.

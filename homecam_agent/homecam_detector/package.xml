@@ -2,7 +2,7 @@
 <package format="3">
   <name>homecam_detector</name>
   <version>0.1.0</version>
-  <description>On-device home-camera motion and person, dog, and cat event detector.</description>
+  <description>On-device fall pose candidate detector for the home camera.</description>
   <maintainer email="maintainers@example.com">SWM Malbut contributors</maintainer>
   <license>Apache-2.0</license>
 

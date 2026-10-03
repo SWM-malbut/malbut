@@ -1,11 +1,10 @@
-"""Launch the Jetson/Aurora home-camera profile with a discovered RGB topic."""
+"""Launch the Jetson/Aurora home-camera media profile with a discovered RGB topic.
 
-import os
-import sys
+Fall pose analysis is started separately by the robot Bringup (malbut_fall_pose).
+"""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, EmitEvent, RegisterEventHandler
-from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
@@ -15,15 +14,6 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description() -> LaunchDescription:
-    execution_defaults = {
-        'yolo_execution_provider': ('auto', str),
-        'yolo_intra_op_num_threads': ('2', int),
-        'yolo_allow_spinning': ('false', bool),
-        'pose_execution_provider': ('auto', str),
-        'pose_intra_op_num_threads': ('2', int),
-        'pose_allow_spinning': ('false', bool),
-        'pose_opencv_num_threads': ('1', int),
-    }
     config = PathJoinSubstitution(
         [FindPackageShare("homecam_media_agent"), "config", "aurora.yaml"]
     )
@@ -31,11 +21,7 @@ def generate_launch_description() -> LaunchDescription:
     camera_info_topic = LaunchConfiguration("camera_info_topic")
     backend_url = LaunchConfiguration("backend_url")
     device_id = LaunchConfiguration("device_id")
-    model_path = LaunchConfiguration("model_path")
-    pose_model_path = LaunchConfiguration("pose_model_path")
     monitoring_enabled = LaunchConfiguration("monitoring_enabled")
-    event_clips_enabled = LaunchConfiguration("event_clips_enabled")
-    navigation_status_topic = LaunchConfiguration("navigation_status_topic")
     audio_source = LaunchConfiguration("audio_source")
     audio_sink = LaunchConfiguration("audio_sink")
     microphone_enabled = LaunchConfiguration("microphone_enabled")
@@ -77,53 +63,15 @@ def generate_launch_description() -> LaunchDescription:
             },
         ],
     )
-    detector_node = Node(
-        package="homecam_detector",
-        executable="homecam_detector_node",
-        name="homecam_detector",
-        prefix=[LaunchConfiguration('detector_python_executable')],
-        output="screen",
-        condition=IfCondition(LaunchConfiguration("start_detector")),
-        parameters=[
-            config,
-            common_overrides,
-            {
-                "model_path": ParameterValue(model_path, value_type=str),
-                **{name: ParameterValue(LaunchConfiguration(name), value_type=kind)
-                   for name, (_, kind) in execution_defaults.items()},
-                "pose_model_path": ParameterValue(
-                    pose_model_path, value_type=str
-                ),
-                "navigation_status_topic": ParameterValue(
-                    navigation_status_topic, value_type=str
-                ),
-                "event_clips_enabled": ParameterValue(
-                    event_clips_enabled, value_type=bool
-                ),
-            },
-        ],
-    )
     return LaunchDescription(
         [
             # No default on purpose: the Aurora driver topic must be discovered.
             DeclareLaunchArgument("image_topic"),
             DeclareLaunchArgument("camera_info_topic", default_value=""),
             DeclareLaunchArgument("odom_topic", default_value="/odom"),
-            DeclareLaunchArgument(
-                "navigation_status_topic",
-                default_value="/navigate_to_pose/_action/status",
-            ),
             DeclareLaunchArgument("backend_url", default_value=""),
             DeclareLaunchArgument("device_id", default_value="jetson-homecam"),
-            DeclareLaunchArgument("model_path", default_value=""),
-            DeclareLaunchArgument('detector_python_executable', default_value=os.environ.get(
-                'MALBUT_HOMECAM_DETECTOR_PYTHON', sys.executable)),
-            *[DeclareLaunchArgument(name, default_value=value)
-              for name, (value, _) in execution_defaults.items()],
-            DeclareLaunchArgument("pose_model_path", default_value=""),
-            DeclareLaunchArgument("start_detector", default_value="true"),
             DeclareLaunchArgument("monitoring_enabled", default_value="false"),
-            DeclareLaunchArgument("event_clips_enabled", default_value="true"),
             DeclareLaunchArgument("audio_source", default_value="default"),
             DeclareLaunchArgument("audio_sink", default_value="default"),
             DeclareLaunchArgument("microphone_enabled", default_value="true"),
@@ -139,17 +87,6 @@ def generate_launch_description() -> LaunchDescription:
                     ],
                 )
             ),
-            RegisterEventHandler(
-                OnProcessExit(
-                    target_action=detector_node,
-                    on_exit=[
-                        EmitEvent(
-                            event=Shutdown(reason="homecam detector exited")
-                        )
-                    ],
-                )
-            ),
             media_node,
-            detector_node,
         ]
     )

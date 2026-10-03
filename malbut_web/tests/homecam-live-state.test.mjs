@@ -57,11 +57,8 @@ test("live dashboard uses rendered media state and exposes one camera control", 
   assert.match(dashboard, /"저장 오류"/);
   assert.match(dashboard, /const devicePollIntervalMs = Boolean\(/);
   assert.match(dashboard, /\? 1_000 : 15_000/);
-  assert.match(
-    dashboard,
-    /const detectorReady = Boolean\([\s\S]*monitoringEnabled[\s\S]*detectorHealthy/,
-  );
-  assert.match(dashboard, /<span>이벤트 감지<\/span>[\s\S]*"움직임만"/);
+  // The general event detector was removed; fall status is shown elsewhere.
+  assert.doesNotMatch(dashboard, /detectorReady|<span>이벤트 감지<\/span>|"움직임만"/);
   assert.match(dashboard, /AI가 사람을 인식한 이벤트/);
   assert.match(
     dashboard,
