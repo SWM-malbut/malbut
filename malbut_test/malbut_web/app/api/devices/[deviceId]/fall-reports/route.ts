@@ -20,9 +20,10 @@ export async function POST(request: Request, context: { params: Promise<{ device
   if (!sameOriginJsonRequest(request)) return noStore({ error: "요청 출처를 확인해 주세요." }, 403);
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object" || Array.isArray(body) ||
-      !Object.keys(body).every((k) => k === "momentAt" || k === "requestAiReview") ||
+      !Object.keys(body).every((k) => ["momentAt", "requestAiReview", "memo"].includes(k)) ||
       typeof body.momentAt !== "string" ||
-      !(body.requestAiReview === undefined || typeof body.requestAiReview === "boolean")) {
+      !(body.requestAiReview === undefined || typeof body.requestAiReview === "boolean") ||
+      !(body.memo === undefined || body.memo === null || (typeof body.memo === "string" && body.memo.length <= 500))) {
     return noStore({ error: "신고 형식을 확인해 주세요." }, 400);
   }
   try {
@@ -30,7 +31,7 @@ export async function POST(request: Request, context: { params: Promise<{ device
       scope: "fall-report", limit: 10 }))) {
       return noStore({ error: "신고가 너무 많습니다. 1분 뒤 다시 시도해 주세요." }, 429, { "retry-after": "60" });
     }
-    const report = await reportMissedFall(deviceId, member.email, body.momentAt);
+    const report = await reportMissedFall(deviceId, member.email, body.momentAt, Date.now(), body.memo ?? null);
     if (!body.requestAiReview) return noStore(report, 201);
     try {
       const { reviewId } = await requestFallAiReview(deviceId, report.incidentId, member.email, body.momentAt);

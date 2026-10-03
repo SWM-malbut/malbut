@@ -44,7 +44,7 @@ test("migration runner applies shared-prefix migrations once by full filename", 
       await import(script.href);
       // Existing deployed IDs stay unchanged; restarting must not run them again.
       assert.deepEqual(applied, ["0011_fall_settings", "0011_manual_move_stream", "0012_fall_incident_review",
-        "0013_fall_ai_review"]);
+        "0013_fall_ai_review", "0014_fall_report_memo"]);
       const versions = (await h.db.query(
         "SELECT version FROM homecam_schema_migrations ORDER BY version",
       )).rows.map((row) => row.version);

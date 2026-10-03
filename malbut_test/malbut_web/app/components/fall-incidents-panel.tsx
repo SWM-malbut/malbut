@@ -231,8 +231,9 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
   initialIncidentId?: string;
   onIncidentChange?: (incidentId: string | null) => void;
   onOpenLive?: () => void;
-  /** 연속 녹화 화면 (PR-5b); with an incident it opens "AI에게 다시 검토 받기". */
-  onOpenTimeline?: (incident?: { incidentId: string; momentAt: string }) => void;
+  /** 연속 녹화 화면; with an incident it opens "AI에게 다시 검토 받기" pre-filled. */
+  onOpenTimeline?: (incident?: { incidentId: string; momentAt: string; title: string;
+    rangeStart: string; rangeEnd: string }) => void;
   /** Local UI demo: an in-memory API instead of the server. */
   demo?: boolean;
 }) {
@@ -420,7 +421,13 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           {onOpenTimeline && (
             <>
               <button type="button" className="fall-button"
-                onClick={() => onOpenTimeline({ incidentId: detail.incidentId, momentAt: moment })}>AI에게 다시 검토 받기 ›</button>
+                onClick={() => onOpenTimeline({
+                  incidentId: detail.incidentId, momentAt: moment,
+                  title: `${title(detail)} · ${when(moment)}`,
+                  // The original scene range: inside it, the result attaches to this incident.
+                  rangeStart: detail.clips[0]?.startAt ?? new Date(Date.parse(moment) - 10_000).toISOString(),
+                  rangeEnd: detail.clips.at(-1)?.endAt ?? new Date(Date.parse(moment) + 20_000).toISOString(),
+                })}>AI에게 다시 검토 받기 ›</button>
               <p className="fall-hint">연속 녹화에서 이 사건의 순간을 확인하고 고친 뒤 보내요.</p>
             </>
           )}

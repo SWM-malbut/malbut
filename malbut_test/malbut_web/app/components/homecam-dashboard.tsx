@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { FallIncidentsPanel } from "./fall-incidents-panel";
 import { FallSettingsPanel } from "./fall-settings-panel";
+import { FallTimelinePanel, type TimelineMode } from "./fall-timeline-panel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
@@ -520,6 +521,7 @@ export function HomecamDashboard({
   }>>([]);
   const [incidentsLoading, setIncidentsLoading] = useState(false);
   const [focusedIncidentId, setFocusedIncidentId] = useState("");
+  const [timelineMode, setTimelineMode] = useState<TimelineMode | null>(null);
   const [family, setFamily] = useState<FamilyMember[]>([]);
   const [familyLoading, setFamilyLoading] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -1460,7 +1462,16 @@ export function HomecamDashboard({
         {tab === "events" && (
           <section className="homecam-section" aria-labelledby="homecam-events-title">
             <h1 id="homecam-events-title" className="sr-only">사건</h1>
-            {selectedDevice ? (
+            {selectedDevice && timelineMode ? (
+              <FallTimelinePanel
+                key={`${selectedDevice.id}-${timelineMode.kind}`}
+                deviceId={selectedDevice.id}
+                demo={LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID}
+                mode={timelineMode}
+                onBack={() => setTimelineMode(null)}
+                onOpenIncident={(incidentId) => { setFocusedIncidentId(incidentId); setTimelineMode(null); }}
+              />
+            ) : selectedDevice ? (
               <FallIncidentsPanel
                 key={selectedDevice.id}
                 deviceId={selectedDevice.id}
@@ -1468,6 +1479,7 @@ export function HomecamDashboard({
                 initialIncidentId={focusedIncidentId || undefined}
                 onIncidentChange={(incidentId) => setFocusedIncidentId(incidentId ?? "")}
                 onOpenLive={() => void openLive()}
+                onOpenTimeline={(incident) => setTimelineMode(incident ? { kind: "recheck", ...incident } : { kind: "report" })}
               />
             ) : (
               <div className="homecam-empty-state"><strong>등록된 말벗이 없어요</strong><p>로봇을 연결하면 낙상 사건이 여기에 표시됩니다.</p></div>

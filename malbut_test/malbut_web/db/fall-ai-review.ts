@@ -318,9 +318,14 @@ export async function readFallAiContext(deviceId: string, secret: string) {
 
 export async function readFallAiQuestionContext(deviceId: string, incidentId: string) {
   const pool = getPostgresPool();
+  // The report memo comes first, then opinion memos.
   const memos = (await pool.query(
-    `SELECT memo FROM fall_incident_opinions WHERE device_id=$1 AND incident_id=$2 AND memo IS NOT NULL
-     ORDER BY updated_at`, [deviceId, incidentId],
+    `SELECT memo FROM (
+       SELECT report_memo AS memo,occurred_at AS at FROM fall_incidents
+         WHERE device_id=$1 AND incident_id=$2 AND report_memo IS NOT NULL
+       UNION ALL
+       SELECT memo,updated_at FROM fall_incident_opinions WHERE device_id=$1 AND incident_id=$2 AND memo IS NOT NULL
+     ) m ORDER BY at`, [deviceId, incidentId],
   )).rows.map((r) => r.memo as string);
   const verdicts = (await pool.query(
     `SELECT assessment,explanation FROM fall_ai_reviews WHERE device_id=$1 AND incident_id=$2
