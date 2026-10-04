@@ -28,12 +28,8 @@ type HomecamHeaderProps = {
   showInstall?: boolean;
 };
 
-export function HomecamHeader({
-  activeTab,
-  onNavigate,
-  onInstall,
-  showInstall = false,
-}: HomecamHeaderProps) {
+/** Login state and sign-out, shared by the header and the 설정 account card. */
+export function useHomecamAuth() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [signingOut, setSigningOut] = useState(false);
 
@@ -91,6 +87,17 @@ export function HomecamHeader({
       window.location.replace(redirectTo);
     }
   };
+
+  return { authStatus, signingOut, signOut };
+}
+
+export function HomecamHeader({
+  activeTab,
+  onNavigate,
+  onInstall,
+  showInstall = false,
+}: HomecamHeaderProps) {
+  const { authStatus, signingOut, signOut } = useHomecamAuth();
 
   return (
     <header className="homecam-header">

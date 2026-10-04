@@ -9940,3 +9940,278 @@ a:focus-visible {
 .fall-people-legend i.is-target { border: 3px solid var(--ui-warn); }
 .fall-people-legend i.is-other { border: 1.5px solid var(--ui-icon-muted); }
 .fall-people-legend i.is-cloud { border: 2px dashed var(--ui-text-muted); }
+
+/* ---- 새 디자인: 앱 틀 · 홈 · 홈캠 · 설정 (앱 UI 개편 목업) ---------------------
+   휴대폰 화면 기준. 넓은 화면은 같은 화면을 가운데 한 줄(720px)로 보여 준다.
+   색은 --ui-* 이름만 쓰고, 글자는 rem이라 "큰 글자"를 따른다. 지도·개발자 화면은
+   기존 모양을 그대로 쓴다(다음 단계에서 다시 그림). */
+.homecam-dashboard-shell.ui-app,
+.homecam-dashboard-shell.ui-app.tab-live {
+  display: block; min-height: 100dvh; color: var(--ui-text); background: var(--ui-bg);
+}
+.homecam-dashboard-shell.ui-app .homecam-main.ui-main {
+  width: 100%; max-width: 720px; min-width: 0; margin: 0 auto; border-radius: 0; background: transparent;
+  padding: 0 0 calc(84px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column;
+}
+.homecam-dashboard-shell.ui-app.tab-map .homecam-main.ui-main,
+.homecam-dashboard-shell.ui-app.tab-robot .homecam-main.ui-main { max-width: none; padding-left: 16px; padding-right: 16px; }
+.ui-app button { font: inherit; }
+
+/* 위쪽 머리: 화면 이름 · 연결 상태 · 연결된 말벗 */
+.ui-top {
+  background: var(--ui-surface); border-bottom: 1px solid var(--ui-border);
+  padding: 1.25rem 1.25rem 0.875rem; display: flex; flex-direction: column; gap: 0.75rem;
+}
+.ui-top-row { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; }
+.ui-top h1 { margin: 0; font-size: 1.375rem; font-weight: 700; color: var(--ui-text); }
+.ui-pill {
+  display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.625rem; border-radius: 999px;
+  font-size: 0.8125rem; color: var(--ui-text-muted); background: var(--ui-neutral-soft);
+}
+.ui-pill i { width: 8px; height: 8px; border-radius: 4px; background: var(--ui-icon-muted); }
+.ui-pill.is-ok { color: var(--ui-ok); background: var(--ui-ok-soft); }
+.ui-pill.is-ok i { background: var(--ui-ok); }
+.ui-top-sub { display: flex; flex-wrap: wrap; gap: 0.25rem 0.375rem; font-size: 0.8125rem; color: var(--ui-text-muted); }
+.ui-top-sub b { font-weight: 400; }
+.ui-top-sub .is-ready { color: var(--ui-ok); }
+.ui-top-sub .is-pending { color: var(--ui-warn-text); }
+.ui-top-sub .is-error { color: var(--ui-danger); }
+.ui-device { display: flex; align-items: center; gap: 0.625rem; }
+.ui-device-avatar {
+  flex: none; width: 2rem; height: 2rem; border-radius: 0.625rem; display: flex; align-items: center; justify-content: center;
+  font-size: 0.875rem; font-weight: 700; color: var(--ui-on-strong); background: var(--ui-strong);
+}
+.ui-device-text { display: flex; flex-direction: column; min-width: 0; }
+.ui-device-text label { font-size: 0.75rem; color: var(--ui-text-muted); }
+.ui-device-text strong, .ui-device-text select { font-size: 0.9375rem; font-weight: 700; color: var(--ui-text); }
+.ui-device-text select { border: 0; padding: 0; background: transparent; }
+
+/* 공통 조각 */
+.ui-screen { padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.ui-card {
+  background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: 12px;
+  padding: 0.875rem; display: flex; flex-direction: column; gap: 0.625rem; color: var(--ui-text);
+}
+.ui-card h2 { margin: 0; font-size: 1rem; font-weight: 700; }
+.ui-card-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+.ui-card-head h2 span { color: var(--ui-text-muted); font-weight: 500; }
+.ui-caption { font-size: 0.8125rem; color: var(--ui-text-muted); }
+.ui-hint { margin: 0; font-size: 0.8125rem; color: var(--ui-text-muted); }
+.ui-note { font-size: 0.75rem; color: var(--ui-text-muted); line-height: 1.6; }
+.ui-info { margin: 0; padding: 0.75rem; border-radius: 10px; font-size: 0.8125rem; color: var(--ui-accent-strong); background: var(--ui-accent-soft); }
+.ui-text-button {
+  border: 0; padding: 0.5rem 0; background: none; color: var(--ui-accent); font-size: 0.8125rem; cursor: pointer; white-space: nowrap;
+}
+.ui-text-button:hover { color: var(--ui-accent-strong); }
+.ui-button {
+  min-height: 46px; padding: 0 0.875rem; border-radius: 10px; border: 1px solid var(--ui-control-border);
+  background: var(--ui-surface); color: var(--ui-text); font-size: 0.875rem; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.375rem;
+}
+.ui-button.is-strong { border-color: var(--ui-strong); background: var(--ui-strong); color: var(--ui-on-strong); font-weight: 700; }
+.ui-button.is-danger { border-color: var(--ui-danger); background: var(--ui-danger); color: var(--ui-on-strong); font-weight: 700; }
+.ui-button.is-danger-line { border-color: var(--ui-danger); color: var(--ui-danger); }
+.ui-button.ui-small { min-height: 40px; padding: 0 0.75rem; font-size: 0.8125rem; }
+.ui-button:disabled { opacity: 0.5; cursor: not-allowed; }
+.ui-wide { width: 100%; }
+.ui-two-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+.ui-chips { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+.ui-chips span { font-size: 0.75rem; padding: 0.25rem 0.625rem; border-radius: 6px; color: var(--ui-text-muted); background: var(--ui-neutral-soft); }
+.ui-chips span.is-ok { color: var(--ui-ok); background: var(--ui-ok-soft); }
+.ui-badge {
+  display: inline-block; font-size: 0.75rem; font-weight: 700; padding: 0.125rem 0.5rem; border-radius: 6px;
+  color: var(--ui-text-muted); background: var(--ui-neutral-soft); vertical-align: middle;
+}
+.ui-badge.is-danger { color: var(--ui-on-strong); background: var(--ui-danger); }
+.ui-badge.is-warn { color: var(--ui-warn-text); background: var(--ui-warn-soft); }
+.ui-badge.is-accent { color: var(--ui-accent-strong); background: var(--ui-accent-soft); }
+.ui-loading { display: flex; align-items: center; gap: 0.5rem; padding: 1rem; font-size: 0.875rem; color: var(--ui-text-muted); }
+.ui-notice {
+  margin: 0 1rem 1rem; padding: 0.75rem; border-radius: 10px; display: flex; align-items: center; gap: 0.5rem;
+  font-size: 0.8125rem; color: var(--ui-text); background: var(--ui-surface); border: 1px solid var(--ui-border);
+}
+.ui-notice p { margin: 0; flex: 1; }
+
+/* 홈 */
+.ui-hero { padding: 1rem; gap: 0.75rem; }
+.ui-hero-title { font-size: 1.25rem; font-weight: 700; line-height: 1.4; }
+.ui-hero .ui-button { min-height: 46px; }
+.ui-camera-card { padding: 0; overflow: hidden; cursor: pointer; text-align: left; gap: 0; }
+.ui-camera-media {
+  position: relative; height: 190px; display: flex; align-items: center; justify-content: center;
+  background: var(--ui-media); color: var(--ui-border);
+}
+.ui-live-tag {
+  position: absolute; left: 0.75rem; top: 0.75rem; font-size: 0.75rem; font-weight: 700; padding: 0.1875rem 0.5rem;
+  border-radius: 6px; color: var(--ui-on-strong); background: var(--ui-danger);
+}
+.ui-camera-text { padding: 0.75rem 0.875rem; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+.ui-camera-text > span:first-child { display: flex; flex-direction: column; gap: 0.125rem; }
+.ui-camera-text strong { font-size: 0.9375rem; font-weight: 700; }
+.ui-camera-text small { font-size: 0.75rem; color: var(--ui-text-muted); }
+.ui-link-text { font-size: 0.8125rem; color: var(--ui-accent); white-space: nowrap; }
+.ui-incident {
+  border: 1px solid var(--ui-border); border-radius: 10px; padding: 0.75rem; background: var(--ui-surface);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.375rem; text-align: left; cursor: pointer; color: var(--ui-text);
+}
+.ui-incident.is-urgent { border: 2px solid var(--ui-danger); }
+.ui-incident strong { font-size: 0.9375rem; font-weight: 700; }
+.ui-incident small { font-size: 0.8125rem; color: var(--ui-text-muted); }
+.ui-safe { margin: 0; display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; font-size: 0.875rem; color: var(--ui-ok); }
+.ui-map-preview {
+  position: relative; height: 150px; border: 1px solid var(--ui-border); border-radius: 10px; overflow: hidden;
+  background: var(--ui-neutral-soft); cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.ui-rooms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.375rem; }
+.ui-rooms button {
+  min-height: 72px; border: 0; border-radius: 8px; padding: 0.5rem; display: flex; align-items: flex-end;
+  font-size: 0.75rem; color: var(--ui-text); cursor: pointer; text-align: left;
+}
+.ui-privacy { flex-direction: row; align-items: center; gap: 0.75rem; }
+.ui-privacy > span { flex: 1; display: flex; flex-direction: column; gap: 0.125rem; }
+.ui-privacy small { font-size: 0.75rem; color: var(--ui-text-muted); }
+.ui-privacy strong { font-size: 0.875rem; font-weight: 500; }
+
+/* 홈캠 */
+.homecam-dashboard-shell.ui-app .ui-main > .homecam-live-view:not(.is-pip) {
+  display: flex; flex-direction: column; align-items: stretch; gap: 0.75rem; padding: 1rem; min-height: 0; color: var(--ui-text);
+}
+.ui-app .ui-main > .homecam-live-view:not(.is-pip) > * { min-width: 0; max-width: 100%; }
+.ui-app .homecam-live-view:not(.is-pip) .homecam-stream-shell.is-embedded .homecam-stream-view {
+  display: block; padding: 0; min-width: 0;
+}
+.ui-app .homecam-live-view:not(.is-pip) .homecam-stream-shell.is-embedded video { width: 100%; max-width: 100%; height: 100%; object-fit: cover; }
+.homecam-dashboard-shell.ui-app.tab-live .homecam-quick-grid.ui-live-cards {
+  display: flex; flex-direction: column; gap: 0.75rem; padding: 0; width: auto; min-width: 0;
+}
+.ui-video {
+  position: relative; height: 214px; border-radius: 12px; background: var(--ui-media); color: var(--ui-border);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem; text-align: center;
+}
+.ui-video strong { font-size: 0.875rem; font-weight: 500; }
+.ui-video-tags { position: absolute; left: 0.625rem; top: 0.625rem; right: 0.625rem; display: flex; gap: 0.375rem; flex-wrap: wrap; }
+.ui-video-tags span { font-size: 0.75rem; font-weight: 700; padding: 0.1875rem 0.5rem; border-radius: 6px; color: var(--ui-on-strong); background: var(--ui-scrim); }
+.ui-video-clock { position: absolute; right: 0.75rem; bottom: 0.625rem; font-size: 0.75rem; color: var(--ui-border); }
+.ui-rows { padding: 0; gap: 0; }
+.ui-rows h2 { padding: 0.875rem 0.875rem 0.375rem; }
+.ui-rows > div {
+  display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;
+  padding: 0.75rem 0.875rem; font-size: 0.875rem; border-top: 1px solid var(--ui-divider);
+}
+.ui-rows > h2 + div { border-top: 0; }
+.ui-rows strong { font-weight: 500; color: var(--ui-text-muted); }
+.ui-rows strong.is-good { color: var(--ui-ok); }
+.ui-rows strong.is-pending { color: var(--ui-warn-text); }
+.ui-rows strong.is-error { color: var(--ui-danger); }
+/* 홈캠 화면 안의 실시간 영상(기존 영상 부품)을 새 디자인에 맞춤 */
+.ui-app .homecam-stream-shell.is-embedded { display: block; min-height: 0; padding: 0; background: transparent; color: var(--ui-text); }
+.ui-app .homecam-stream-shell.is-embedded > .homecam-header,
+.ui-app .homecam-stream-shell.is-embedded .homecam-stream-context,
+.ui-app .homecam-stream-shell.is-embedded .homecam-stream-privacy { display: none; }
+.ui-app .homecam-stream-shell.is-embedded .homecam-stream-main { padding: 0; background: transparent; }
+.ui-app .homecam-live-view:not(.is-pip) .homecam-stream-shell.is-embedded .homecam-stream-video-frame {
+  border-radius: 12px; overflow: hidden; background: var(--ui-media);
+}
+.ui-app .homecam-live-view:not(.is-pip) .homecam-stream-shell.is-embedded .homecam-stream-video-card {
+  display: block; height: auto; overflow: visible; padding: 0; border: 0; background: transparent;
+}
+.ui-app .homecam-live-view:not(.is-pip) .homecam-stream-shell.is-embedded .homecam-stream-video-frame {
+  aspect-ratio: 16 / 10; height: auto; min-height: 0;
+}
+.ui-app .homecam-live-view:not(.is-pip) .homecam-stream-shell.is-embedded .homecam-stream-controls {
+  grid-row: auto; grid-column: auto; align-self: auto; z-index: auto;
+  margin: 0.5rem 0 0; padding: 0; min-height: 0; background: transparent; border: 0;
+}
+.ui-app .homecam-live-view:not(.is-pip) .homecam-stream-shell.is-embedded .homecam-stream-control-buttons {
+  display: flex; flex-wrap: wrap; gap: 0.5rem; width: 100%;
+}
+.ui-app .homecam-stream-shell.is-embedded .homecam-stream-control-button,
+.ui-app .homecam-stream-shell.is-embedded .homecam-stream-status-chip {
+  flex: 0 0 auto; width: auto;
+  min-height: 40px; padding: 0 0.75rem; border-radius: 10px; border: 1px solid var(--ui-control-border);
+  background: var(--ui-surface); color: var(--ui-text); font-size: 0.8125rem;
+  display: inline-flex; align-items: center; gap: 0.375rem;
+}
+
+/* 설정 */
+.ui-account { flex-direction: row; align-items: center; gap: 0.75rem; }
+.ui-account-avatar {
+  flex: none; width: 2.5rem; height: 2.5rem; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; background: var(--ui-neutral-soft);
+}
+.ui-account-text { display: flex; flex-direction: column; gap: 0.125rem; }
+.ui-account-text strong { font-size: 0.9375rem; font-weight: 700; }
+.ui-account-text small { font-size: 0.75rem; color: var(--ui-text-muted); }
+.ui-account-actions { margin-top: -0.25rem; }
+.ui-group { display: flex; flex-direction: column; gap: 0.375rem; }
+.ui-group-title { padding: 0 0.25rem; font-size: 0.8125rem; font-weight: 500; color: var(--ui-text-muted); }
+.ui-list { padding: 0; gap: 0; }
+.ui-list > button, .ui-list-row {
+  min-height: 44px; padding: 0.875rem; border: 0; border-top: 1px solid var(--ui-divider); background: none;
+  display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; text-align: left; color: var(--ui-text);
+}
+.ui-list > :first-child { border-top: 0; }
+.ui-list > button { cursor: pointer; }
+.ui-list > button > span:first-child { display: flex; flex-direction: column; gap: 0.1875rem; }
+.ui-list strong { font-size: 0.9375rem; font-weight: 700; }
+.ui-list small { font-size: 0.75rem; color: var(--ui-text-muted); }
+.ui-list > button svg { flex: none; color: var(--ui-icon-muted); }
+.ui-list.is-dev { border-style: dashed; border-color: var(--ui-control-border); }
+.ui-list.is-dev > button { font-size: 0.875rem; }
+.ui-setting { gap: 0.5rem; }
+.ui-setting > span, .ui-setting-row > span { display: flex; flex-direction: column; gap: 0.25rem; }
+.ui-setting strong { font-size: 0.9375rem; font-weight: 700; }
+.ui-setting small { font-size: 0.75rem; color: var(--ui-text-muted); line-height: 1.6; }
+.ui-setting-row { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; }
+.ui-segment { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--ui-control-border); border-radius: 10px; overflow: hidden; }
+.ui-segment button { min-height: 40px; border: 0; background: var(--ui-surface); color: var(--ui-text); font-size: 0.8125rem; cursor: pointer; }
+.ui-segment button + button { border-left: 1px solid var(--ui-control-border); }
+.ui-segment button.is-on { background: var(--ui-strong); color: var(--ui-on-strong); }
+.ui-app .homecam-switch {
+  flex: none; width: 52px; height: 32px; border-radius: 16px; border: 0; padding: 3px; display: flex;
+  justify-content: flex-start; background: var(--ui-control-border); cursor: pointer;
+}
+.ui-app .homecam-switch.is-on { justify-content: flex-end; background: var(--ui-accent); }
+.ui-app .homecam-switch span { width: 26px; height: 26px; border-radius: 13px; background: var(--ui-surface); display: block; }
+.ui-app .homecam-switch:disabled { opacity: 0.55; cursor: not-allowed; }
+.ui-subhead {
+  margin: -1rem -1rem 0; padding: 0.75rem 1.25rem 0.875rem; display: flex; flex-direction: column; gap: 0.375rem;
+  background: var(--ui-surface); border-bottom: 1px solid var(--ui-border);
+}
+.ui-subhead h1 { margin: 0; font-size: 1.375rem; font-weight: 700; }
+.ui-back { align-self: flex-start; border: 0; padding: 0.5rem 0; background: none; color: var(--ui-accent); font-size: 0.875rem; cursor: pointer; }
+.ui-person { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-top: 1px solid var(--ui-divider); }
+.ui-people > h2 + .ui-person, .ui-people > p + .ui-person { border-top: 0; }
+.ui-person-avatar {
+  flex: none; width: 2.25rem; height: 2.25rem; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 0.875rem; font-weight: 700; background: var(--ui-neutral-soft);
+}
+.ui-person-text { flex: 1; min-width: 0; }
+.ui-person-text strong { font-size: 0.9375rem; font-weight: 700; overflow-wrap: anywhere; }
+.ui-confirm { padding: 0.75rem; border-radius: 10px; background: var(--ui-danger-soft); display: flex; flex-direction: column; gap: 0.625rem; font-size: 0.875rem; }
+.ui-field { display: flex; flex-direction: column; gap: 0.375rem; font-size: 0.8125rem; font-weight: 500; }
+.ui-field input {
+  min-height: 48px; border-radius: 8px; border: 1px solid var(--ui-control-border); padding: 0 0.75rem;
+  font: inherit; font-size: 1rem; color: var(--ui-text); background: var(--ui-surface);
+}
+.ui-settings-sub .fall-settings-card, .ui-settings-sub .homecam-legacy { margin: 0; }
+
+/* 아래 탭 */
+.ui-tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding: 6px 4px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: var(--ui-surface); border-top: 1px solid var(--ui-border);
+}
+.ui-tabbar button {
+  min-height: 52px; border: 0; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.25rem; font-size: 0.6875rem; color: var(--ui-text-muted); cursor: pointer;
+}
+.ui-tabbar button.is-active { color: var(--ui-text); font-weight: 700; }
+@media (min-width: 760px) {
+  .ui-tabbar { left: 50%; right: auto; width: 720px; transform: translateX(-50%); border-left: 1px solid var(--ui-border); border-right: 1px solid var(--ui-border); }
+}
+/* 설정 › 홈캠 설정 화면에서는 위 머리(‹ 설정 · 홈캠 설정)가 제목을 대신한다. */
+.ui-settings-sub .fall-page > .fall-list-head { display: none; }
+.ui-settings-sub .fall-page { border-radius: 0; background: transparent; }
