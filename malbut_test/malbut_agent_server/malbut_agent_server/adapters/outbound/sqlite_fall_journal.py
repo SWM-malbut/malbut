@@ -69,6 +69,17 @@ class SqliteFallJournal:
                 next_attempt_at REAL NOT NULL DEFAULT 0,
                 last_error TEXT,
                 UNIQUE(incident_id, segment_index));
+            CREATE TABLE IF NOT EXISTS incident_people(
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id TEXT NOT NULL,
+                segment_index INTEGER NOT NULL,
+                revision INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at REAL NOT NULL DEFAULT 0,
+                last_error TEXT,
+                UNIQUE(incident_id, segment_index));
         ''')
         try:
             self._db.execute('BEGIN IMMEDIATE')
@@ -178,32 +189,52 @@ class SqliteFallJournal:
             anchorKinds=list(clip.anchor_kinds), foundDown=clip.found_down,
             clockSource='wall', clockStepped=clip.clock_stepped,
         ), separators=(',', ':'), allow_nan=False)
+        self._put_segment('incident_clips', clip.incident_id, clip.segment_index,
+                          clip.revision, payload)
+
+    def append_people(self, *, device_id, people):
+        """Person boxes of one clip segment: ms from the segment start, 1/1000 of the frame."""
+        if device_id != self.device_id:
+            raise ValueError('journal identity mismatch')
+        payload = json.dumps(dict(
+            schemaVersion=1, incidentId=people.incident_id, bootId=people.boot_id,
+            segmentIndex=people.segment_index, revision=people.revision,
+            truncated=people.truncated,
+            tracks=[dict(key=t.key, target=t.target, samples=[list(s) for s in t.samples])
+                    for t in people.tracks],
+            cloud=[list(s) for s in people.cloud],
+        ), separators=(',', ':'), allow_nan=False)
+        self._put_segment('incident_people', people.incident_id, people.segment_index,
+                          people.revision, payload)
+
+    def _put_segment(self, table, incident_id, segment_index, revision, payload):
+        # Table names are fixed literals from this class, never caller input.
         with self._lock, self._db:
             self._db.execute(
-                'INSERT INTO incident_clips(incident_id,segment_index,revision,payload) '
+                f'INSERT INTO {table}(incident_id,segment_index,revision,payload) '
                 'VALUES(?,?,?,?) ON CONFLICT(incident_id,segment_index) DO UPDATE SET '
                 "revision=excluded.revision,payload=excluded.payload,status='pending',"
                 'attempt_count=0,next_attempt_at=0,last_error=NULL '
-                'WHERE excluded.revision > incident_clips.revision',
-                (clip.incident_id, clip.segment_index, clip.revision, payload))
+                f'WHERE excluded.revision > {table}.revision',
+                (incident_id, segment_index, revision, payload))
 
-    def pending_clip(self):
+    def _pending_segment(self, table):
         with self._lock:
             row = self._db.execute(
                 'SELECT incident_id,segment_index,revision,payload,attempt_count '
-                "FROM incident_clips WHERE status='pending' AND next_attempt_at<=? "
+                f"FROM {table} WHERE status='pending' AND next_attempt_at<=? "
                 'ORDER BY sequence LIMIT 1', (self._clock(),)).fetchone()
             return dict(row) if row else None
 
-    def acknowledge_clip(self, incident_id, segment_index, revision):
+    def _acknowledge_segment(self, table, incident_id, segment_index, revision):
         # A newer revision recorded meanwhile stays pending.
         with self._lock, self._db:
             self._db.execute(
-                "UPDATE incident_clips SET status='stored',last_error=NULL "
+                f"UPDATE {table} SET status='stored',last_error=NULL "
                 'WHERE incident_id=? AND segment_index=? AND revision=?',
                 (incident_id, segment_index, revision))
 
-    def failed_clip(self, incident_id, segment_index, revision, *, code, blocked=False):
+    def _failed_segment(self, table, incident_id, segment_index, revision, *, code, blocked):
         # Codes are bounded caller-generated tokens, never HTTP bodies/secrets.
         if code not in {'upload_failed', 'invalid_ack', 'not_supported', 'http_400',
                         'http_401', 'http_403', 'http_409', 'http_413', 'http_429',
@@ -211,18 +242,44 @@ class SqliteFallJournal:
             code = 'upload_failed'
         with self._lock, self._db:
             self._db.execute(
-                'UPDATE incident_clips SET status=?,last_error=?,'
+                f'UPDATE {table} SET status=?,last_error=?,'
                 'attempt_count=attempt_count+1,'
                 'next_attempt_at=?+MIN(300,5*(1 << MIN(attempt_count,6))) '
                 'WHERE incident_id=? AND segment_index=? AND revision=?',
                 ('blocked' if blocked else 'pending', code, self._clock(),
                  incident_id, segment_index, revision))
 
-    def clip_status(self):
+    def _segment_status(self, table):
         with self._lock:
             return [dict(row) for row in self._db.execute(
                 'SELECT incident_id,segment_index,revision,status,last_error '
-                'FROM incident_clips ORDER BY sequence')]
+                f'FROM {table} ORDER BY sequence')]
+
+    def pending_clip(self):
+        return self._pending_segment('incident_clips')
+
+    def acknowledge_clip(self, incident_id, segment_index, revision):
+        self._acknowledge_segment('incident_clips', incident_id, segment_index, revision)
+
+    def failed_clip(self, incident_id, segment_index, revision, *, code, blocked=False):
+        self._failed_segment('incident_clips', incident_id, segment_index, revision,
+                             code=code, blocked=blocked)
+
+    def clip_status(self):
+        return self._segment_status('incident_clips')
+
+    def pending_people(self):
+        return self._pending_segment('incident_people')
+
+    def acknowledge_people(self, incident_id, segment_index, revision):
+        self._acknowledge_segment('incident_people', incident_id, segment_index, revision)
+
+    def failed_people(self, incident_id, segment_index, revision, *, code, blocked=False):
+        self._failed_segment('incident_people', incident_id, segment_index, revision,
+                             code=code, blocked=blocked)
+
+    def people_status(self):
+        return self._segment_status('incident_people')
 
     def discoveries(self, *, after_sequence=0, limit=100):
         """Paginated local review, not a guardian delivery or a resolved incident."""
