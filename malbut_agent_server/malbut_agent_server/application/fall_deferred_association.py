@@ -105,3 +105,7 @@ class DeferredDiscovery:
     source_revision: int
     track: Optional[DiscoveryTrack] = None
     session_id: Optional[str] = None
+    # Frozen measured metadata only; never retain JPEGs or model text here.
+    pose_snapshot: tuple = ()
+    pose_generation: int = -1
+    incident_versions: Optional[dict] = None

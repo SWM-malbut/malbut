@@ -21,6 +21,22 @@ def make():
     return coordinator, next(iter(coordinator.requests.values()))
 
 
+@pytest.mark.parametrize('change', [
+    {'confirmation_scope': 'subject'}, {'reason': 'normal_verified'},
+    {'merged_into_incident_ids': []}, {'merged_into_incident_ids': ['incident']},
+    {'merged_into_incident_ids': ['target', 'target']},
+    {'merged_into_incident_ids': [{}]}, {'merged_into_incident_ids': ['target'] * 129},
+    {'evidence_revision': 0}, {'runtime_id': 'other'},
+])
+def test_invalid_merge_cannot_cancel_scene_question(change):
+    coordinator = FallConfirmationCoordinator(runtime_id='vlm')
+    coordinator.receive(event(confirmation_scope='scene', subject_key=None))
+    payload = dict(kind='incident_merged', confirmation_scope='scene', subject_key=None,
+                   reason='findings_associated', merged_into_incident_ids=['target'])
+    assert not coordinator.receive(event(**(payload | change)))
+    assert len(coordinator.requests) == 1
+
+
 def test_vlm_summary_is_generic_bounded_and_replayed_request_is_deduplicated():
     coordinator, request = make()
     assert '낙상이 의심' in request.summary

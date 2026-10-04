@@ -117,6 +117,8 @@ class SqliteFallJournal:
             answer=incident.answer.value if incident.answer else None,
             reason=event.reason,
             notificationLevel=event.notification_level.value if event.notification_level else None)
+        if event.kind == 'incident_merged':
+            payload['mergedIntoIncidentIds'] = list(event.merged_into_incident_ids)
         # Private proof retained across restart. Keep the existing web wire
         # contract unchanged; never store pixels, transcript or model text.
         proof = None
@@ -163,7 +165,7 @@ class SqliteFallJournal:
         self._db.execute('INSERT INTO cloud_discoveries(event_id,payload) VALUES(?,?)',
                          (event.event_id, json.dumps(payload, allow_nan=False)))
 
-    def append_association(self, *, device_id, boot_id, events, incident):
+    def append_association(self, *, device_id, boot_id, events, incident, source_incident=None):
         # Do not call the public single-event methods here: their context
         # managers would commit a partial transition before the link is saved.
         with self._lock, self._db:
@@ -171,8 +173,10 @@ class SqliteFallJournal:
                 if event.discovery is not None:
                     self._append_discovery(device_id=device_id, boot_id=boot_id, event=event)
                 else:
+                    owner = (source_incident if source_incident is not None
+                             and event.incident_id == source_incident.incident_id else incident)
                     self._append_incident(device_id=device_id, boot_id=boot_id,
-                                          event=event, incident=incident)
+                                          event=event, incident=owner)
 
     def append_clip(self, *, device_id, clip):
         """Keep only the newest revision of each incident segment; time is wall clock."""

@@ -60,7 +60,11 @@ def test_later_pose_attaches_to_same_incident_without_call_or_recheck():
     assert target.candidate_sources == ('yolo_pose', 'cloud_crosscheck')
     assert target.attempts == target.rechecks == 0
     assert len(p.calls) == 1  # Completed crosscheck reused, not sent again.
-    assert m.incident(source.incident_id) == source
+    merged = m.incident(source.incident_id)
+    assert merged.state is IncidentState.RESOLVED
+    assert merged.close_reason == 'findings_associated'
+    assert merged.merged_into_incident_ids == (iid,)
+    assert merged.video == source.video and merged.answer == source.answer
     events = m.drain_events()
     linked = next(e.discovery for e in events if e.kind == 'cloud_discovery_linked')
     assert linked.discovery_id == ds[0].discovery_id
@@ -139,7 +143,10 @@ def test_does_not_transfer_scene_answer_or_close_other_discovery():
     iid, result = link(m, c, start(m, ds[0]))
     assert result.incident_id == iid
     assert m.incident(iid).answer is None
-    assert m.incident(source_id) == before and before.state is IncidentState.RECHECK_REQUIRED
+    after = m.incident(source_id)
+    assert after == replace(before, unresolved_discovery_ids=(ds[1].discovery_id,),
+                            associated_incident_ids=(iid,))
+    assert after.state is IncidentState.RECHECK_REQUIRED
     assert m._discoveries[ds[1].discovery_id].discovery == ds[1]
     with pytest.raises(ValueError, match='normal closure'):
         m._incidents[iid].pending = False
@@ -155,7 +162,8 @@ def test_scene_help_remains_urgent_and_is_not_attributed_to_target():
     before = m.incident(ds[0].incident_id)
     iid, result = link(m, c, start(m, ds[0]))
     assert result.incident_id == iid
-    assert m.incident(ds[0].incident_id) == before
+    assert m.incident(ds[0].incident_id) == replace(
+        before, unresolved_discovery_ids=(), associated_incident_ids=(iid,))
     assert before.state is IncidentState.HELP_REQUIRED
     assert m.incident(iid).answer is None
 
@@ -265,7 +273,13 @@ def test_persists_original_and_link_without_rgb_and_reopens(tmp_path):
     journal.close()
     reopened = SqliteFallJournal(path, device_id='robot')
     assert reopened.discoveries() == rows
-    assert len(reopened.unresolved()) == 2  # Source scene is not falsely cleared.
+    assert len(reopened.unresolved()) == 1  # Source is merged, never labeled normal.
+    merged = json.loads(reopened._db.execute(
+        'SELECT payload FROM incident_events WHERE incident_id=? ORDER BY sequence DESC LIMIT 1',
+        (ds[0].incident_id,)).fetchone()[0])
+    assert merged['eventKind'] == 'incident_merged'
+    assert merged['assessment'] == 'suspected_fall'
+    assert merged['mergedIntoIncidentIds'] == [iid]
     reopened.close()
 
 
@@ -292,16 +306,16 @@ def test_sqlite_failure_rolls_back_target_and_link_before_exposing_events(tmp_pa
     journal.close()
 
 
-def test_manager_routes_target_question_without_overwriting_scene_question():
+def test_manager_retires_scene_question_and_routes_only_target_question():
     m, c, _, ds, initial = setup()
     iid, result = link(m, c, start(m, ds[0]))
     coordinator = FallConfirmationCoordinator(runtime_id='run')
     for event in (*initial, *m.drain_events()):
         coordinator.receive(json.dumps(dict(event_metadata(event), boot_id='boot-1', runtime_id='run')))
     requests = tuple(coordinator.requests.values())
-    assert len(requests) == 2
-    assert {r.incident_id for r in requests} == {ds[0].incident_id, iid}
-    assert {r.subject_key for r in requests} == {None, 'person-1'}
+    assert len(requests) == 1
+    assert {r.incident_id for r in requests} == {iid}
+    assert {r.subject_key for r in requests} == {'person-1'}
 
 
 def test_newer_pose_evidence_keeps_its_first_analysis_queued():

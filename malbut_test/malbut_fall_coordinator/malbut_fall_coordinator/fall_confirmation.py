@@ -75,7 +75,7 @@ class FallConfirmationCoordinator:
             return False
         kind = event.get('kind')
         if not isinstance(kind, str) or kind not in {
-                'incident_opened', 'incident_updated', 'incident_resolved',
+                'incident_opened', 'incident_updated', 'incident_resolved', 'incident_merged',
                 'confirmation_completed', 'analysis_completed', 'question_requested'}:
             return False
         scope = event.get('confirmation_scope', 'subject')
@@ -103,6 +103,13 @@ class FallConfirmationCoordinator:
                     or (video == 'normal_activity'
                         and event.get('reason') != 'prior_fall_observed')):
                 return False
+        if kind == 'incident_merged':
+            targets = event.get('merged_into_incident_ids')
+            if (scope != 'scene' or event.get('reason') != 'findings_associated'
+                    or not isinstance(targets, list) or not 1 <= len(targets) <= 128
+                    or not all(_identifier(t) and t != iid for t in targets)
+                    or len(set(targets)) != len(targets)):
+                return False
         if self.boot_id != boot:
             if self.boot_id is not None:
                 self.retired_boots.add(self.boot_id)
@@ -119,7 +126,7 @@ class FallConfirmationCoordinator:
             return False
         if revision > self.revisions.get(iid, 0):
             self.revisions[iid] = revision
-        if kind == 'incident_resolved':
+        if kind in {'incident_resolved', 'incident_merged'}:
             self.terminal_revisions[iid] = revision
             for rid, request in tuple(self.requests.items()):
                 if request.incident_id == iid:

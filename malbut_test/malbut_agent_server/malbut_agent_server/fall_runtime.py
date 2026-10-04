@@ -251,6 +251,8 @@ def event_metadata(event):
                   notification_level=(event.notification_level.value
                                       if event.notification_level else None))
     result['confirmation_scope'] = event.confirmation_scope
+    if event.kind == 'incident_merged':
+        result['merged_into_incident_ids'] = list(event.merged_into_incident_ids)
     if event.reply is not None:
         result['video_assessment'] = event.reply.assessment.value
         # Free model explanations are not instructions and are not routed to

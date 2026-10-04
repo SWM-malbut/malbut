@@ -385,7 +385,7 @@ class CloudPersonFinding:
 
 @dataclass(frozen=True)
 class CloudAssociationEvidence:
-    """Availability at Cloud dispatch, not proof that Pose found this person."""
+    """Measured availability used for association, not proof of person identity."""
 
     scope: str
     samples: int
@@ -444,6 +444,44 @@ class CloudDiscoveryLink:
 
 
 @dataclass(frozen=True)
+class CloudPoseLink:
+    """Measured timestamp association, distinct from visual tracking proof."""
+
+    source_incident_id: str
+    source_revision: int
+    target_token: str
+    confirmed_at: float
+    rgb_times: Tuple[float, ...]
+    pose_times: Tuple[Tuple[float, ...], ...]
+
+    def __post_init__(self):
+        identifier(self.source_incident_id)
+        identifier(self.target_token)
+        timestamp(self.confirmed_at)
+        if (type(self.source_revision) is not int or self.source_revision < 1
+                or len(self.rgb_times) < 2 or len(self.rgb_times) != len(self.pose_times)):
+            raise ValueError('invalid timestamp association proof')
+        for rgb, poses in zip(self.rgb_times, self.pose_times):
+            timestamp(rgb)
+            if len(poses) not in (1, 2):
+                raise ValueError('invalid timestamp association samples')
+            for pose in poses:
+                timestamp(pose)
+                if pose > self.confirmed_at or abs(pose - rgb) > .1 + 1e-6:
+                    raise ValueError('timestamp association outside bound')
+            if (len(poses) == 1 and poses[0] != rgb
+                    or len(poses) == 2 and not poses[0] < rgb < poses[1]):
+                raise ValueError('timestamp association requires exact or both neighbors')
+
+    def metadata(self):
+        return dict(source_incident_id=self.source_incident_id,
+                    source_revision=self.source_revision, target_token=self.target_token,
+                    confirmed_at=self.confirmed_at, method='measured_pose_timestamps_v1',
+                    max_offset_s=.1, rgb_times=list(self.rgb_times),
+                    pose_times=[list(times) for times in self.pose_times])
+
+
+@dataclass(frozen=True)
 class CloudDiscovery:
     discovery_id: str
     request_id: str
@@ -454,7 +492,7 @@ class CloudDiscovery:
     subject_key: Optional[str] = None
     incident_id: Optional[str] = None
     association_evidence: Optional[CloudAssociationEvidence] = None
-    association_link: Optional[CloudDiscoveryLink] = None
+    association_link: Optional[CloudDiscoveryLink | CloudPoseLink] = None
 
     def metadata(self):
         """Private local record; excludes RGB, model prose and Cloud credentials."""
@@ -523,6 +561,7 @@ class FallRuntimeEvent:
     reply: Optional[CloudFallReply] = None
     discovery: Optional[CloudDiscovery] = None
     confirmation_scope: str = 'subject'
+    merged_into_incident_ids: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -563,3 +602,9 @@ class FallIncident:
     # The Manager's final confirmation is separate from the legacy voice enum.
     situation_assessment: Optional[str] = None
     help_needed: Optional[bool] = None
+    # Scene completeness must outlive the bounded discovery retry cache. An
+    # overflow fails closed: pruning a finding must never imply it was linked.
+    unresolved_discovery_ids: Tuple[str, ...] = ()
+    discovery_overflow: bool = False
+    associated_incident_ids: Tuple[str, ...] = ()
+    merged_into_incident_ids: Tuple[str, ...] = ()
