@@ -25,7 +25,7 @@ class VoiceDemo:
         self.status = None
         with ExitStack() as cleanup:
             self.tts = SpeechRuntime(synthesizer, player_factory,
-                                    lambda pid, state, interim:
+                                    lambda pid, state, interim, request_id='':
                                     self.events.put(('playback', pid, state)))
             cleanup.callback(self.tts.close)
             self.stt = DialoguePipeline(

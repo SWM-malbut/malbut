@@ -72,7 +72,13 @@ class StoryRuntimeStore:
         with self.conversations._lock:
             conn = self.conversations._connection
             if conn.in_transaction:
-                raise StoryMemoryError('story operation requires its own transaction')
+                if write:
+                    raise StoryMemoryError('story write requires its own transaction')
+                # Confirmation commits revalidate a reply inside the owning
+                # conversation transaction. Join its snapshot for read guards;
+                # never commit or roll back the caller's transaction here.
+                yield conn
+                return
             conn.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
             try:
                 yield conn
@@ -135,6 +141,27 @@ class StoryRuntimeStore:
     def close(self):
         """The runtime owns the shared connection and closes it separately."""
 
+    def reply_record(self, user, request_id):
+        """Read a completed owner's reply and legacy story provenance together."""
+        user, request_id = _id(user, 'user_id'), _id(request_id, 'request_id')
+        with self._transaction() as conn:
+            row = conn.execute('SELECT status,response_json FROM conversation_turns '
+                               'WHERE user_id=? AND request_id=?', (user, request_id)).fetchone()
+            if row is None or row['status'] != 'completed' or row['response_json'] is None:
+                return None
+            receipt = conn.execute('SELECT stories_json FROM story_runtime_replies '
+                                   'WHERE user_id=? AND request_id=?', (user, request_id)).fetchone()
+            return {'response': json.loads(row['response_json']),
+                    'has_story_dependencies': bool(receipt and json.loads(receipt[0]))}
+
+    def reply_dependency_revision(self, user, request_id):
+        """Return identifier-only short-context lineage while a turn is pending."""
+        user, request_id = _id(user, 'user_id'), _id(request_id, 'request_id')
+        with self._transaction() as conn:
+            row = conn.execute('SELECT revision,stories_json FROM story_runtime_replies '
+                               'WHERE user_id=? AND request_id=?', (user, request_id)).fetchone()
+            return row['revision'] if row and json.loads(row['stories_json']) else None
+
     @staticmethod
     def _policy(conn, user):
         row = conn.execute('SELECT * FROM story_runtime_policy WHERE user_id=?',
@@ -188,8 +215,13 @@ class StoryRuntimeStore:
                          (user, marker, '{}', self._now()))
 
     def set_enabled(self, user, enabled, external_consent=False, include_history=False,
-                    history_scope=None):
+                    history_scope=None, expected_revision=None):
+        from .story_memory import StoryConflictError
+
         user = _id(user, 'user_id')
+        if expected_revision is not None and (
+                type(expected_revision) is not int or expected_revision < 0):
+            raise StoryMemoryError('invalid expected policy revision')
         if any(type(v) is not bool for v in (enabled, external_consent, include_history)):
             raise StoryMemoryError('consent values must be boolean')
         if include_history and not enabled:
@@ -200,6 +232,8 @@ class StoryRuntimeStore:
             raise StoryMemoryError('invalid history consent snapshot')
         with self._transaction(True) as conn:
             old = self._policy(conn, user)
+            if expected_revision is not None and old['revision'] != expected_revision:
+                raise StoryConflictError('story policy changed')
             changed = (bool(old['enabled']) != enabled
                        or bool(old['external_consent']) != external_consent or include_history)
             if not changed:
@@ -294,6 +328,24 @@ class StoryRuntimeStore:
         refs = self._raw_refs(conn, user, row)
         if not refs:
             return False
+        if any(self._resolve(conn, user, ref) is None for ref in refs):
+            # A fact tombstone revokes retained raw text without erasing it.
+            # Do not recreate a cancelled extraction on each recovery pass.
+            # Release the rest of an in-flight batch so valid members can be
+            # claimed again without waiting for the old lease to expire.
+            claims = [item[0] for item in conn.execute(
+                "SELECT claim FROM story_runtime_jobs WHERE user_id=? "
+                "AND request_id=? AND state='running' AND claim IS NOT NULL",
+                (user, request_id))]
+            for claim in claims:
+                conn.execute("UPDATE story_runtime_jobs SET state='cancelled',claim=NULL, "
+                             "lease_until=NULL,read_sources_json='[]',error_code='source_revoked' "
+                             "WHERE user_id=? AND state='running' AND claim=?", (user, claim))
+            conn.execute("UPDATE story_runtime_jobs SET state='cancelled',claim=NULL, "
+                         "lease_until=NULL,read_sources_json='[]',error_code='source_revoked' "
+                         "WHERE user_id=? AND request_id=? AND state IN ('queued','running','failed')",
+                         (user, request_id))
+            return False
         digest = _digest([ref.key for ref in refs])
         existing = conn.execute('SELECT * FROM story_runtime_jobs WHERE user_id=? '
                                 'AND request_id=? AND source_digest=?', (user, request_id, digest)).fetchone()
@@ -353,6 +405,28 @@ class StoryRuntimeStore:
                              'AND request_id=?', (user, row['request_id'])).fetchone() if row else None
         if scope is None or scope[0] != _identity(row):
             return None
+        # Fact deletion/correction retains raw conversation text, but revokes
+        # its source and any turns explicitly stamped as depending on it.
+        # Story-only reply markers have no fact source: do not treat disabling
+        # story recall as a deletion of the underlying retained story.
+        source_key = {key: row[key] for key in (
+            'conversation_id', 'session_instance_id', 'generation',
+            'turn_id', 'request_id',
+        )}
+        dependencies = set()
+        if self._has_table(conn, 'memory_turn_state'):
+            stamp = conn.execute('SELECT dependencies_json FROM memory_turn_state '
+                                 'WHERE user_id=? AND request_id=?',
+                                 (user, row['request_id'])).fetchone()
+            if stamp is not None:
+                dependencies = set(json.loads(stamp[0]))
+        for tombstone in conn.execute(
+                'SELECT memory_id,source_key FROM memory_tombstones WHERE user_id=?',
+                (user,)):
+            revoked = json.loads(tombstone['source_key'])
+            if revoked and (revoked == source_key
+                            or tombstone['memory_id'] in dependencies):
+                return None
         if conn.execute('SELECT 1 FROM story_runtime_exclusions WHERE user_id=? '
                         'AND message_key=? AND sha256=?',
                         (user, _message_key(ref), ref.sha256)).fetchone():
@@ -844,6 +918,110 @@ class StoryRuntimeStore:
         return replace(ref, start=ref.start - shift, end=ref.end - shift,
                        sha256=hashlib.sha256(change['new'].encode('utf-8')).hexdigest())
 
+    def delete_conversation(self, user, conversation_id):
+        """Delete raw dialogue and fence its derived memory in one transaction.
+
+        A story can combine several sessions. Its affected derived record is
+        dropped conservatively, but other sessions' user messages are retained.
+        Assistant paraphrases with explicit story lineage are cleared as well.
+        """
+        from .conversation import validate_conversation_id
+
+        user = _id(user, 'user_id')
+        conversation_id = validate_conversation_id(conversation_id)
+        with self._transaction(True) as conn:
+            if not conn.execute('SELECT 1 FROM conversation_sessions WHERE user_id=? '
+                                'AND conversation_id=?', (user, conversation_id)).fetchone():
+                return False
+            pending_sequences = [(row[0], row[1]) for row in conn.execute(
+                "SELECT sequence,state FROM story_runtime_jobs WHERE user_id=? "
+                "AND state IN ('queued','running','failed')", (user,))]
+            turns = conn.execute('SELECT * FROM conversation_turns WHERE user_id=?',
+                                 (user,)).fetchall()
+            removed_requests = {row['request_id'] for row in turns
+                                if row['conversation_id'] == conversation_id}
+            removed_identities = {(row['conversation_id'], row['session_instance_id'],
+                                   row['generation'], row['turn_id']) for row in turns
+                                  if row['request_id'] in removed_requests}
+            stories = conn.execute('SELECT story_id,refs_json FROM story_runtime_stories '
+                                   'WHERE user_id=?', (user,)).fetchall()
+            replies = conn.execute('SELECT request_id,stories_json FROM story_runtime_replies '
+                                   'WHERE user_id=?', (user,)).fetchall()
+            affected_stories, dependent_replies = set(), set()
+            # Follow explicit assistant provenance until no additional story is
+            # affected. Text equality never authorizes deleting another source.
+            while True:
+                before = (len(affected_stories), len(dependent_replies))
+                reply_identities = {(row['conversation_id'], row['session_instance_id'],
+                                     row['generation'], row['turn_id']) for row in turns
+                                    if row['request_id'] in dependent_replies}
+                for story in stories:
+                    if any((ref.conversation_id, ref.session_instance_id, ref.generation,
+                            ref.turn_id) in removed_identities or (
+                                ref.role == 'assistant' and
+                                (ref.conversation_id, ref.session_instance_id, ref.generation,
+                                 ref.turn_id) in reply_identities)
+                           for ref in _refs(story['refs_json'])):
+                        affected_stories.add(story['story_id'])
+                for reply in replies:
+                    if affected_stories.intersection(json.loads(reply['stories_json'])):
+                        dependent_replies.add(reply['request_id'])
+                if before == (len(affected_stories), len(dependent_replies)):
+                    break
+            affected_requests = removed_requests | dependent_replies
+            sessions = {conversation_id}
+            for row in turns:
+                if row['request_id'] not in dependent_replies:
+                    continue
+                self._mark_reply_stale(conn, user, row['request_id'])
+                if row['conversation_id'] == conversation_id:
+                    continue
+                sessions.add(row['conversation_id'])
+                content = row['assistant_content'] or ''
+                key = _json([row['conversation_id'], row['session_instance_id'],
+                             row['generation'], row['turn_id'], 'assistant'])
+                conn.execute('INSERT OR IGNORE INTO story_runtime_exclusions VALUES (?,?,?)',
+                             (user, key, hashlib.sha256(content.encode('utf-8')).hexdigest()))
+                conn.execute("UPDATE conversation_turns SET assistant_content='',response_json='{}',"
+                             'request_fingerprint=? WHERE user_id=? AND request_id=?',
+                             ('story-revoked-' + secrets.token_hex(16), user, row['request_id']))
+            for story_id in affected_stories:
+                conn.execute('DELETE FROM story_runtime_stories WHERE user_id=? AND story_id=?',
+                             (user, story_id))
+            for request_id in affected_requests:
+                conn.execute('DELETE FROM story_runtime_replies WHERE user_id=? AND request_id=?',
+                             (user, request_id))
+                conn.execute('DELETE FROM story_runtime_scope WHERE user_id=? AND request_id=?',
+                             (user, request_id))
+                conn.execute("UPDATE story_runtime_jobs SET state='cancelled',claim=NULL,"
+                             "lease_until=NULL,read_sources_json='[]',result_digest=NULL "
+                             'WHERE user_id=? AND request_id=?', (user, request_id))
+            fact_ids = [fact.id for fact in self.memory.list_for_user(user, connection=conn)
+                        if fact.metadata.get('source', {}).get('conversation_id') == conversation_id]
+            if fact_ids:
+                self.memory.remove_facts(user, fact_ids, connection=conn)
+            for session in sessions:
+                conn.execute('DELETE FROM conversation_summaries WHERE user_id=? AND conversation_id=?',
+                             (user, session))
+                conn.execute('UPDATE conversation_sessions SET revision=revision+1 '
+                             'WHERE user_id=? AND conversation_id=?', (user, session))
+            conn.execute('DELETE FROM conversation_sessions WHERE user_id=? AND conversation_id=?',
+                         (user, conversation_id))
+            # Also create the epoch for a legacy user who never enabled stories.
+            conn.execute('INSERT OR IGNORE INTO story_runtime_policy(user_id) VALUES (?)', (user,))
+            conn.execute('UPDATE story_runtime_policy SET revision=revision+1,data_revision=data_revision+1 '
+                         'WHERE user_id=?', (user,))
+            self._fence(conn, user)
+            revision = self._policy(conn, user)['revision']
+            for sequence, state in pending_sequences:
+                job = conn.execute('SELECT * FROM story_runtime_jobs WHERE sequence=?', (sequence,)).fetchone()
+                if job['request_id'] not in affected_requests and all(
+                        self._resolve(conn, user, ref) is not None for ref in _refs(job['sources_json'])):
+                    conn.execute('UPDATE story_runtime_jobs SET state=?,policy_revision=?,available_at=? '
+                                 'WHERE sequence=?', ('failed' if state == 'failed' else 'queued',
+                                                     revision, self._now(), sequence))
+            return True
+
     def delete_story(self, user, story_id, require_settled=False):
         user, story_id = _id(user, 'user_id'), _id(story_id, 'story_id')
         if type(require_settled) is not bool:
@@ -868,7 +1046,8 @@ class StoryRuntimeStore:
                 for turn in completed:
                     if not self._grant(conn, user, turn, policy):
                         continue
-                    source_refs = self._raw_refs(conn, user, turn)
+                    source_refs = [ref for ref in self._raw_refs(conn, user, turn)
+                                   if self._resolve(conn, user, ref) is not None]
                     if not any(ref.role == 'user' for ref in source_refs):
                         continue
                     jobs = conn.execute('SELECT processed,sources_json FROM story_runtime_jobs '

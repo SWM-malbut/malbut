@@ -17,7 +17,7 @@ from malbut_agent_server.gateway import (
 from malbut_agent_server.memory import SQLiteMemoryStore
 from malbut_agent_server.memory_source_review import MemorySourceReviewer
 from malbut_agent_server.orchestrator import AgentOrchestrator
-from malbut_agent_server.providers.base import AgentProvider
+from malbut_agent_server.providers.base import AgentProvider, accepts_memory_context
 from malbut_agent_server.providers.mock import MockProvider
 from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
@@ -36,9 +36,13 @@ from malbut_agent_server.speech_addressee import SpeechAddresseeClassifier
 from malbut_agent_server.semantic_summary import (
     OpenAISemanticSummarizer, count_tokens,
 )
+from malbut_agent_server.story_extractor import OpenAIStoryExtractor
+from malbut_agent_server.story_memory_provider import StoryMemoryProvider
+from malbut_agent_server.story_memory_service import StoryMemoryService
 
 
 RAI_SIDECAR_MODULE = 'malbut_agent_server.rai_sidecar_runtime'
+_DEFAULT_STORY_EXTRACTOR = object()
 
 
 def _openai_adapter(
@@ -208,10 +212,13 @@ def build_orchestrator(
     http_server: bool = True,
     weather_executor=None,
     weather_location_executor=None,
+    story_extractor=_DEFAULT_STORY_EXTRACTOR,
 ) -> AgentOrchestrator:
     """Build one runtime while keeping model output non-actuating."""
     memory_store = SQLiteMemoryStore(settings.database_path)
     conversation_store = None
+    story_memory = None
+    context_compactor = None
     try:
         conversation_store = SQLiteConversationStore(
             settings.database_path,
@@ -260,6 +267,24 @@ def build_orchestrator(
                 robot_planner_provider=planner_provider,
                 fallback_provider=provider,
             )
+        if story_extractor is _DEFAULT_STORY_EXTRACTOR:
+            story_extractor = (
+                OpenAIStoryExtractor(
+                    api_key=settings.openai_api_key,
+                    model=settings.openai_summary_model or settings.openai_model,
+                    base_url=settings.openai_base_url,
+                    reasoning_effort=(settings.openai_summary_reasoning_effort
+                                      or settings.openai_reasoning_effort),
+                    timeout=max(30, settings.request_timeout_seconds),
+                ) if settings.provider == 'openai' else None
+            )
+        story_memory = StoryMemoryService(
+            conversation_store, memory_store, story_extractor, autostart=False,
+        )
+        story_provider = None
+        if accepts_memory_context(provider):
+            story_provider = StoryMemoryProvider(provider, story_memory)
+            provider = story_provider
         speech_addressee = SpeechAddresseeClassifier(
             _openai_adapter(
                 settings,
@@ -296,12 +321,18 @@ def build_orchestrator(
             background_memory=settings.provider != 'mock',
             automatic_memory_extractor=memory_extractor,
             context_compactor=context_compactor,
+            story_memory=story_memory,
+            story_provider=story_provider,
             weather_executor=weather_executor,
             weather_location_executor=weather_location_executor,
         )
         runtime.speech_addressee = speech_addressee
         return runtime
     except Exception:
+        if story_memory is not None:
+            story_memory.close()
+        if context_compactor is not None:
+            context_compactor.close()
         if conversation_store is not None:
             conversation_store.close()
         memory_store.close()

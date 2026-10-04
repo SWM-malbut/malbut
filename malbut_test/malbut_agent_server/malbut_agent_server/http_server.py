@@ -42,6 +42,7 @@ from malbut_agent_server.schemas import (
     validate_conversation_id,
     validate_user_id,
 )
+from malbut_agent_server.story_http import StoryHTTPBoundary, StoryHTTPError
 
 if TYPE_CHECKING:
     from malbut_agent_server.text_turn import TextTurnService
@@ -102,6 +103,7 @@ class AgentHTTPServer(ThreadingHTTPServer):
             orchestrator.capability_registry
         )
         self.text_turn_service = text_turn_service
+        self.story_http = StoryHTTPBoundary(orchestrator)
         self.max_request_bytes = max_request_bytes
         self.auth_token = auth_token
         self.allowed_user_id = validate_user_id(allowed_user_id)
@@ -249,6 +251,14 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         """Route JSON-only mutation and query endpoints."""
         try:
+            if self.path.startswith('/v1/stories/') and not self.server.auth_token:
+                self.close_connection = True
+                self._send_error(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    'story_auth_required',
+                    'Story management requires configured authentication.',
+                )
+                return
             if not self._authorized():
                 self.close_connection = True
                 self._send_error(
@@ -266,7 +276,12 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 )
                 return
             body = self._read_json_body()
-            if self.path == '/v1/agent/respond':
+            if self.path.startswith('/v1/stories/'):
+                status, result = self.server.story_http.handle(
+                    self.path, body, self.server.allowed_user_id,
+                )
+                self._send_json(status, result)
+            elif self.path == '/v1/agent/respond':
                 self._handle_agent(body)
             elif self.path == '/v1/text/turns':
                 self._handle_text_turn(body)
@@ -288,6 +303,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                     'not_found',
                     'Endpoint not found.',
                 )
+        except StoryHTTPError as error:
+            self._send_error(error.status, error.code,
+                             'The story operation could not be completed.')
         except GatewayConflictError as error:
             self._send_error(
                 HTTPStatus.CONFLICT,
@@ -451,7 +469,19 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 f'non-finite JSON number is not allowed: {value}'
             )
 
-        body = json.loads(decoded, parse_constant=reject_constant)
+        def unique_story_fields(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise StoryHTTPError(HTTPStatus.BAD_REQUEST, 'invalid_story_request')
+                result[key] = value
+            return result
+
+        body = json.loads(
+            decoded, parse_constant=reject_constant,
+            object_pairs_hook=(unique_story_fields
+                               if self.path.startswith('/v1/stories/') else None),
+        )
         if not isinstance(body, dict):
             raise ValidationError('request body must be an object')
         return body
@@ -529,6 +559,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         user_id, conversation_id = (
             self._validated_conversation_identity(body)
         )
+        story_service = getattr(self.server.orchestrator, 'story_memory', None)
+        story_policy = story_service.policy(user_id) if story_service is not None else None
+        fact_revision = self.server.memory_store.policy_state(user_id)['revision']
         snapshot = self.server.conversation_store.snapshot(
             user_id,
             conversation_id,
@@ -539,22 +572,24 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             for turn in snapshot.turns
             for message in turn.to_messages()
         ]
-        self._send_json(
-            HTTPStatus.OK,
-            {
-                'conversation': snapshot.session.to_dict(),
-                'turns': [
-                    turn.to_dict()
-                    for turn in snapshot.turns
-                ],
-                'messages': messages,
-                'summary': (
-                    snapshot.summary.to_dict()
-                    if snapshot.summary is not None
-                    else None
-                ),
-            },
-        )
+        payload = {
+            'conversation': snapshot.session.to_dict(),
+            'turns': [turn.to_dict() for turn in snapshot.turns],
+            'messages': messages,
+            'summary': (snapshot.summary.to_dict()
+                        if snapshot.summary is not None else None),
+        }
+        current = self.server.conversation_store.get(user_id, conversation_id)
+        if any(getattr(current, field) != getattr(snapshot.session, field)
+               for field in ('session_instance_id', 'generation', 'revision', 'status')):
+            raise ConversationChangedError('conversation changed while it was read')
+        if story_service is not None:
+            latest = story_service.policy(user_id)
+            if any(story_policy[key] != latest[key] for key in ('revision', 'data_revision')):
+                raise StoryHTTPError(HTTPStatus.CONFLICT, 'story_changed')
+        if self.server.memory_store.policy_state(user_id)['revision'] != fact_revision:
+            raise MemoryChangedError('memory changed while the conversation was read')
+        self._send_json(HTTPStatus.OK, payload)
 
     def _handle_reset_conversation(
         self,
@@ -568,6 +603,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         user_id, conversation_id = (
             self._validated_conversation_identity(body)
         )
+        self._checkpoint_story_memory(user_id)
         session = self.server.conversation_store.reset(
             user_id,
             conversation_id,
@@ -594,6 +630,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         user_id, conversation_id = (
             self._validated_conversation_identity(body)
         )
+        self._checkpoint_story_memory(user_id)
         session = self.server.conversation_store.close_session(
             user_id,
             conversation_id,
@@ -615,7 +652,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         user_id, conversation_id = (
             self._validated_conversation_identity(body)
         )
-        deleted = self.server.conversation_store.delete(
+        deleted = self.server.orchestrator.delete_conversation(
             user_id,
             conversation_id,
         )
@@ -641,6 +678,15 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             body.get('conversation_id')
         )
         return user_id, conversation_id
+
+    def _checkpoint_story_memory(self, user_id):
+        """Preserved raw turns remain recoverable if this short attempt fails."""
+        try:
+            self.server.orchestrator.checkpoint_story_memory(user_id, timeout=0.25)
+        except Exception:
+            # Reset/close retain originals; background failure must not turn
+            # those existing lifecycle actions into model-dependent operations.
+            pass
 
     def _reject_unknown_fields(
         self,

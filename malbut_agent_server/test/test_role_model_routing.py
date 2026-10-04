@@ -12,6 +12,7 @@ from malbut_agent_server.domain.front_route import (
 from malbut_agent_server.factory import build_orchestrator
 from malbut_agent_server.providers.reliable import ReliableProvider
 from malbut_agent_server.providers.routed import RoutedAgentProvider
+from malbut_agent_server.story_memory_provider import StoryMemoryProvider
 from malbut_agent_server.schemas import AgentRequest, RobotState
 from malbut_agent_server.tools import TOOL_SPECS
 
@@ -122,7 +123,8 @@ def test_each_route_sends_only_its_model_and_tool_scope() -> None:
         front_router=router,
     )
     try:
-        routed = runtime.provider
+        assert isinstance(runtime.provider, StoryMemoryProvider)
+        routed = runtime.provider.provider
         assert isinstance(routed, RoutedAgentProvider)
         general = RecordingTransport('message')
         planner = RecordingTransport('tool_call')
@@ -180,7 +182,8 @@ def test_explicit_planner_model_uses_model_neutral_payload() -> None:
     )
     planner = RecordingTransport('tool_call')
     try:
-        routed = runtime.provider
+        assert isinstance(runtime.provider, StoryMemoryProvider)
+        routed = runtime.provider.provider
         _underlying(routed.robot_planner_provider).transport = planner
 
         result = routed.complete(
@@ -220,7 +223,8 @@ def test_general_failure_does_not_call_or_open_the_planner() -> None:
         raise AssertionError('abstain fallback must not be called')
 
     try:
-        routed = runtime.provider
+        assert isinstance(runtime.provider, StoryMemoryProvider)
+        routed = runtime.provider.provider
         general_provider = routed.general_provider
         planner_provider = routed.robot_planner_provider
         _underlying(general_provider).transport = fail_general
@@ -277,7 +281,8 @@ def test_planner_failure_does_not_call_or_open_general_chat() -> None:
         raise AssertionError('abstain fallback must not be called')
 
     try:
-        routed = runtime.provider
+        assert isinstance(runtime.provider, StoryMemoryProvider)
+        routed = runtime.provider.provider
         general_provider = routed.general_provider
         planner_provider = routed.robot_planner_provider
         _underlying(general_provider).transport = general
@@ -334,7 +339,8 @@ def test_abstain_keeps_role_models_idle_and_uses_legacy_chain() -> None:
         raise AssertionError('planner role must stay idle')
 
     try:
-        routed = runtime.provider
+        assert isinstance(runtime.provider, StoryMemoryProvider)
+        routed = runtime.provider.provider
         _underlying(routed.general_provider).transport = fail_general
         _underlying(routed.robot_planner_provider).transport = fail_planner
         routed.fallback_provider._providers[0].transport = fallback
