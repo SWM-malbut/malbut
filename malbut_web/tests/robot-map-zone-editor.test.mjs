@@ -141,7 +141,11 @@ test("common drive mode blocks conflicting destination commands and stays owner-
   assert.match(panel, /type RobotDriveModeSnapshot/);
   assert.match(panel, /const autonomousModeActive/);
   assert.match(panel, /autonomousModeActive\) return/);
-  assert.match(panel, /disabled=\{!isOwner \|\| !snapshot\?\.online \|\| autonomousModeActive/);
+  // 보내기는 보호자도 쓰지만, 자율주행 중에는 막힌다. 자율주행 시작은 소유자만.
+  assert.match(panel, /disabled=\{!snapshot\?\.online \|\| autonomousModeActive/);
+  assert.match(panel, /disabled=\{!isOwner \|\| !snapshot\?\.online \|\| snapshot\?\.state\?\.localization\.state !== "ok" \|\| navigationDriving \|\| autonomousModeActive/);
+  assert.match(panel, /if \(!isOwner && mapMode !== "navigate"\) return;/);
+  assert.match(panel, /자율주행은 소유자만 할 수 있어요/);
   assert.match(panel, /주행 모드 제어는 소유자 계정에서만/);
   assert.match(panel, /function driveModeCopy/);
 });

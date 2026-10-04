@@ -53,7 +53,7 @@ export async function POST(
       return noStore({ error: "현재 로봇이 지원하지 않는 명령입니다." }, 409);
     }
     if (error instanceof Error && error.message === "FORBIDDEN") {
-      return noStore({ error: "소유자만 지도와 주행 모드를 제어할 수 있습니다." }, 403);
+      return noStore({ error: "지도 만들기·편집과 자율주행은 소유자만 할 수 있습니다." }, 403);
     }
     if (error instanceof Error && error.message === "ROBOT_OFFLINE") {
       return noStore({ error: "로봇이 오프라인이라 명령을 실행할 수 없습니다." }, 409);

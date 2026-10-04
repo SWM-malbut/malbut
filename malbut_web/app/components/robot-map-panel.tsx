@@ -588,7 +588,8 @@ export function RobotMapPanel({
       return;
     }
     const geometry = snapshot?.map?.geometry;
-    if (!geometry || !isOwner || !snapshot?.online || navigationDriving) return;
+    if (!geometry || !snapshot?.online || navigationDriving) return;
+    if (!isOwner && mapMode !== "navigate") return;
     const bounds = event.currentTarget.getBoundingClientRect();
     const fractionX = (event.clientX - bounds.left) / bounds.width;
     const fractionY = (event.clientY - bounds.top) / bounds.height;
@@ -1163,13 +1164,14 @@ export function RobotMapPanel({
     );
   }
 
-  // 일반 지도: 지도(보기·목적지 선택) → 방·구역 편집 / 지도 관리. 편집과 관리는 소유자만 연다.
+  // 일반 지도: 지도(보기·목적지 선택) → 방·구역 편집 / 지도 관리. 편집·관리·자율주행은 소유자만,
+  // 보내기(목적지 선택·방 이름으로 보내기·이동 취소)는 보호자도 쓴다.
   const activeScreen: MapScreen = !isOwner || (screen === "edit" && mapping) ? "map" : screen;
   const openScreen = (next: MapScreen, mode: MapMode = "view") => {
     changeMapMode(mode);
     setScreen(next);
   };
-  const navigating = isOwner && mapMode === "navigate";
+  const navigating = mapMode === "navigate";
   const canStartPreview = navigating && Boolean(previewToken) && !navigationDriving;
   const localizedPose = snapshot?.state?.localization.state === "ok" ? snapshot.state.pose : null;
   const currentRoom = localizedPose
@@ -1571,14 +1573,16 @@ export function RobotMapPanel({
               {snapshot?.online ? "연결됨" : loading ? "확인 중" : "오프라인"}
             </span>
           </div>
-          {isOwner && (
-            <div className="ui-choice-chips" role="group" aria-label="지도 모드">
-              <button type="button" className={mapMode === "view" ? "is-active" : ""} aria-pressed={mapMode === "view"} onClick={() => changeMapMode("view")}>보기</button>
-              <button type="button" className={mapMode === "navigate" ? "is-active" : ""} aria-pressed={mapMode === "navigate"} disabled={Boolean(mapping)} onClick={() => changeMapMode("navigate")}>목적지 선택</button>
-              <button type="button" disabled={Boolean(mapping)} onClick={() => openScreen("edit", "rooms")}>방 편집</button>
-              <button type="button" disabled={Boolean(mapping)} onClick={() => openScreen("edit", "zones")}>구역 편집</button>
-            </div>
-          )}
+          <div className="ui-choice-chips" role="group" aria-label="지도 모드">
+            <button type="button" className={mapMode === "view" ? "is-active" : ""} aria-pressed={mapMode === "view"} onClick={() => changeMapMode("view")}>보기</button>
+            <button type="button" className={mapMode === "navigate" ? "is-active" : ""} aria-pressed={mapMode === "navigate"} disabled={Boolean(mapping)} onClick={() => changeMapMode("navigate")}>목적지 선택</button>
+            {isOwner && (
+              <>
+                <button type="button" disabled={Boolean(mapping)} onClick={() => openScreen("edit", "rooms")}>방 편집</button>
+                <button type="button" disabled={Boolean(mapping)} onClick={() => openScreen("edit", "zones")}>구역 편집</button>
+              </>
+            )}
+          </div>
         </header>
         <div className="ui-screen">
           <p className="ui-hint">
@@ -1631,11 +1635,11 @@ export function RobotMapPanel({
             {canStartPreview && (
               <div className="ui-two-buttons">
                 <button type="button" className="ui-button" onClick={() => { setNavigationPreview(null); setPreviewExpiresAt(0); }}>다시 선택</button>
-                <button type="button" className="ui-button is-strong" onClick={() => void sendCommand("navigation_start", { previewToken })} disabled={!isOwner || !snapshot?.online || autonomousModeActive || Boolean(activeCommand) || busy}>이 위치로 이동</button>
+                <button type="button" className="ui-button is-strong" onClick={() => void sendCommand("navigation_start", { previewToken })} disabled={!snapshot?.online || autonomousModeActive || Boolean(activeCommand) || busy}>이 위치로 이동</button>
               </div>
             )}
             {navigationDriving && typeof navigation?.session_id === "string" && (
-              <button type="button" className="ui-button is-danger-line" onClick={() => void sendCommand("navigation_cancel", { sessionId: navigation.session_id })} disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}>이동 취소</button>
+              <button type="button" className="ui-button is-danger-line" onClick={() => void sendCommand("navigation_cancel", { sessionId: navigation.session_id })} disabled={!snapshot?.online || Boolean(activeCommand) || busy}>이동 취소</button>
             )}
             <dl className="ui-map-facts">
               <dt>현재 위치</dt>
@@ -1649,7 +1653,7 @@ export function RobotMapPanel({
             </dl>
           </article>
 
-          {isOwner && !mapping && roomDrafts.length > 0 && (
+          {!mapping && roomDrafts.length > 0 && (
             <article className="ui-card">
               <h2>방 이름으로 보내기</h2>
               <span className="ui-caption">방마다 정해 둔 대표 위치로 이동해요.</span>
@@ -1739,7 +1743,7 @@ export function RobotMapPanel({
               </button>
             </div>
           )}
-          <p className="ui-note ui-map-owner-note">지도 만들기와 방·구역 편집, 보내기와 자율주행은 소유자만 할 수 있어요.</p>
+          <p className="ui-note ui-map-owner-note">지도 만들기와 방·구역 편집, 자율주행은 소유자만 할 수 있어요. 보호자에게는 보기와 보내기만 보여요.</p>
         </div>
       </section>
     );

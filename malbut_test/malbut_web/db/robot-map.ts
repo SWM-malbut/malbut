@@ -7,11 +7,16 @@ import type {
 import {
   ensureHomecamSchema,
   userCanManageDevice,
+  userCanNavigateDevice,
   userCanViewDevice,
   writeAuditLog,
 } from "./homecam";
 
 const ROBOT_ONLINE_MS = 15_000;
+// 보호자도 쓰는 명령: 지도에서 보내기와 멈추기(누가 보낸 이동이든 취소할 수 있다).
+const NAVIGATION_OPERATIONS = new Set<RobotOperation>([
+  "navigation_preview", "navigation_start", "navigation_cancel",
+]);
 // A held velocity the robot has not claimed quickly is dropped, never run late.
 const MANUAL_MOVE_QUEUE_MS = 2_000;
 // Velocities arrive several times a second while driving; finished ones are trimmed.
@@ -265,7 +270,10 @@ export async function createRobotCommand(input: {
   payload?: Record<string, unknown>;
 }) {
   await ensureHomecamSchema();
-  if (!(await userCanManageDevice(input.deviceId, input.userEmail))) {
+  const permitted = NAVIGATION_OPERATIONS.has(input.operation)
+    ? await userCanNavigateDevice(input.deviceId, input.userEmail)
+    : await userCanManageDevice(input.deviceId, input.userEmail);
+  if (!permitted) {
     throw new Error("FORBIDDEN");
   }
   await assertDriveCommandAllowed(input);
