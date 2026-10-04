@@ -12,6 +12,30 @@ import pytest
 from test_agent_console_support import CONSOLE_SCRIPT, restore_console_umask  # noqa: F401
 
 
+def test_weather_key_from_loaded_env_reaches_console(tmp_path, monkeypatch, capsys):
+    import console
+
+    received = []
+    original_core = console.ConsoleCore
+
+    def core(settings, **kwargs):
+        received.append(kwargs['weather_service_key'])
+        return original_core(settings, **kwargs)
+
+    monkeypatch.setattr(console, 'load_env_file',
+                        lambda _path, target: target.update(KMA_SERVICE_KEY='fixture-key'))
+    monkeypatch.setattr(console, 'ConsoleCore', core)
+    monkeypatch.setattr('builtins.input', lambda _prompt: '/quit')
+    monkeypatch.setattr(sys, 'argv', [
+        'console.py', '--provider', 'mock', '--no-tts',
+        '--database', str(tmp_path / 'agent.sqlite3'),
+    ])
+    assert console.main() == 0
+    assert received == ['fixture-key']
+    captured = capsys.readouterr()
+    assert 'fixture-key' not in captured.out + captured.err
+
+
 @pytest.mark.parametrize('error', [RuntimeError, KeyboardInterrupt])
 def test_startup_failure_closes_core(tmp_path, monkeypatch, error):
     import console

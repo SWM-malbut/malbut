@@ -1,16 +1,18 @@
-"""Terminal access to the current Agent, with isolated storage and mock tools."""
+"""Terminal Agent with isolated storage, local weather, and simulated robot tools."""
 
 import re
 import time
 import uuid
 from dataclasses import replace
+from datetime import datetime, timezone
 
+from console_weather import ConsoleWeather
 from malbut_agent_server.conversation_preferences import response_settings
 from malbut_agent_server.factory import build_orchestrator
-from malbut_agent_server.gateway import ToolGateway, ToolQuery
+from malbut_agent_server.gateway import GatewayResult, ToolGateway, ToolQuery
 from malbut_agent_server.schemas import SpeechAgentRequest, ValidationError
 from malbut_agent_server.speech_dialogue import starts_new_conversation
-from malbut_agent_server.tools import TOOL_SPECS
+from malbut_agent_server.tools import TOOL_SPECS, validate_tool_arguments
 from malbut_agent_server.story_memory_service import StoryServiceError
 
 
@@ -27,7 +29,8 @@ STORY_CONSENT = (
 class ConsoleCore:
     """Keep the terminal on the production dialogue and memory boundaries."""
 
-    def __init__(self, settings, *, story_extractor=_DEFAULT_EXTRACTOR):
+    def __init__(self, settings, *, weather_service_key='',
+                 story_extractor=_DEFAULT_EXTRACTOR):
         if settings.tool_mode != 'simulation':
             raise ValueError('The terminal console requires simulation tool mode')
         self.settings = settings
@@ -36,9 +39,15 @@ class ConsoleCore:
             factory_arguments['story_extractor'] = story_extractor
         self.runtime = build_orchestrator(settings, http_server=False, **factory_arguments)
         self.gateway = None
+        self.weather = None
         self.story_memory = None
         self._story_pending = None
         try:
+            weather_path = (':memory:' if settings.database_path == ':memory:'
+                            else settings.database_path + '.weather.sqlite3')
+            self.weather = ConsoleWeather(weather_path, service_key=weather_service_key)
+            self.runtime.weather_executor = self.weather.execute
+            self.runtime.weather_location_executor = self.weather.set_location
             self.gateway = ToolGateway(self.runtime.capability_registry)
             self.story_memory = self.runtime.story_memory
             self._story_available = self.story_memory.policy(settings.user_id)['available']
@@ -64,8 +73,7 @@ class ConsoleCore:
             'turn_id': 'console-turn-' + identity,
             'utterance': text,
             'robot_state': {},
-            # Match SpeechDialogueWorker without a connected Manager.
-            'available_tools': [],
+            'available_tools': ['get_weather', 'set_weather_location'],
         })
         starts_new = starts_new_conversation(request.utterance)
         if starts_new:
@@ -156,7 +164,9 @@ class ConsoleCore:
                 'simulation' if capability['executable'] else 'unavailable'
             )
             if name in {'get_weather', 'set_weather_location'}:
-                capability['console_note'] = 'Manager 날씨 실행기가 연결되지 않았습니다.'
+                capability.update(mode='local_weather', executable=True, blocked_by=None,
+                                  console_status='local_weather',
+                                  console_note='로컬 날씨 조회·지역 저장 실행기가 연결되었습니다.')
         registry['physical_authorized'] = False
         return registry
 
@@ -167,10 +177,27 @@ class ConsoleCore:
             'tool_name': name,
             'arguments': arguments,
         })
-        result = self.gateway.query(query).to_dict()
-        result['physical_authorized'] = False
         if name in {'get_weather', 'set_weather_location'}:
-            result['console_note'] = 'Manager 날씨 실행기가 연결되지 않았습니다.'
+            try:
+                arguments = validate_tool_arguments(name, query.arguments)
+            except ValidationError:
+                result = self.gateway.query(query).to_dict()
+            else:
+                started_at = datetime.now(timezone.utc).isoformat()
+                weather = (self.weather.execute(query.request_id) if name == 'get_weather'
+                           else self.weather.set_location(query.request_id, arguments['location']))
+                failed = weather['status'] == 'unavailable'
+                result = GatewayResult(
+                    result_id='console-weather-' + uuid.uuid4().hex,
+                    request_id=query.request_id, tool_name=name, mode='local_weather',
+                    status='failed' if failed else 'succeeded', started_at=started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(), result=weather,
+                    error=({'code': weather.get('error_code', 'weather_unavailable'),
+                            'message': '날씨 기능을 처리하지 못했습니다.'} if failed else None),
+                ).to_dict()
+        else:
+            result = self.gateway.query(query).to_dict()
+        result['physical_authorized'] = False
         return result
 
     def _assert_management_policy(self, saved):
@@ -372,4 +399,8 @@ class ConsoleCore:
             if self.gateway is not None:
                 self.gateway.close()
         finally:
-            self.runtime.close()
+            try:
+                self.runtime.close()
+            finally:
+                if self.weather is not None:
+                    self.weather.close()

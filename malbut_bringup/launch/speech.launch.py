@@ -115,6 +115,10 @@ def _setup(context):
             package='malbut_tts', executable='tts_node', prefix=prefix, output='screen',
             parameters=[{'backend': 'openai', 'output_device': output_device}],
         )
+        weather = Node(
+            package='malbut_agent_server', executable='weather',
+            prefix=prefix, output='screen',
+        )
         stt = Node(
             package='malbut_stt', executable='stt', output='screen',
             prefix=shlex.join([*supervised, '--wait-for-ready', '--', python]),
@@ -125,9 +129,9 @@ def _setup(context):
                 'input_has_aec': input_has_aec,
             }],
         )
-        runtime_nodes.extend([agent, tts, stt])
+        runtime_nodes.extend([agent, tts, stt, weather])
         stage = 'running'
-        return [agent, tts, stt]
+        return [agent, tts, weather, stt]
 
     def child_exited(event, launch_context):
         if launch_context.is_shutdown or event.action not in runtime_nodes:

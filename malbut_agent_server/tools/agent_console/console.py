@@ -41,7 +41,7 @@ Enter / /voice  마이크로 한 번 말하기 → 같은 대화로 답변
 /fall text      낙상 확인 텍스트 체험 (/silence로 무응답 입력)
 /robot          이동 제안 · 목적지 확인 · 승인/취소 체험 [모의 로봇]
 /tools          도구별 연결 상태와 입력 형식
-/tool 이름 JSON 도구 직접 시험 [모의 실행]
+/tool 이름 JSON 도구 직접 시험 [날씨 조회·지역 설정 / 로봇 모의 실행]
 /memory         사실 기억·이야기 기억과 각각의 동의 상태
 /stories        같은 이야기로 묶인 장기기억 목록·처리 상태
 /stories on     설명 확인 후 장기 이야기 기억 켜기 (별도 동의)
@@ -64,6 +64,7 @@ Enter / /voice  마이크로 한 번 말하기 → 같은 대화로 답변
 사실 기억 예시: 개인화에 동의해 / 내 강아지 이름은 초코야. 기억해줘
 설정 예시: 답변은 짧게 해줘 / 나를 현재라고 불러줘
 도구 예시: /tool navigate {"location":"거실"}
+날씨 예시: 여기는 서울 강남구야 → 오늘 날씨 어때?
 '''
 
 
@@ -195,7 +196,9 @@ def main():
         f' / 대화 {settings.openai_model} / 낙상 {settings.openai_general_model or settings.openai_model}'
         if args.provider == 'openai' else ''), flush=True)
     print('대화·기억·설정: 실제 코드 / 선택 음성: 로컬 STT + OpenAI TTS', flush=True)
-    print('로봇 도구: 모의 실행 / 날씨·실제 로봇·카메라 감지: 미연결', flush=True)
+    print('날씨: 기상청 조회·지역 저장 / 로봇 도구: 모의 실행 / 실제 로봇·카메라 감지: 미연결', flush=True)
+    if not env.get('KMA_SERVICE_KEY', '').strip():
+        print('날씨 조회에는 .env의 KMA_SERVICE_KEY 설정이 필요합니다.', flush=True)
     print(f'체험 DB: {settings.database_path}', flush=True)
     print('대화·기억은 이 DB에 유지됩니다. 녹음 파일은 저장하지 않습니다.', flush=True)
     print('OpenAI 대화 모드는 대화 텍스트를 외부 API로 전송합니다.', flush=True)
@@ -220,7 +223,7 @@ def main():
 
     print('대화 엔진 준비 중…', flush=True)
     state_path = args.database.expanduser().with_suffix('.status.json')
-    core = ConsoleCore(settings)
+    core = ConsoleCore(settings, weather_service_key=env.get('KMA_SERVICE_KEY', ''))
     audio = None
     last = None
     def get_audio():
@@ -318,6 +321,7 @@ def main():
                             'test_agent_console_core.py', 'test_agent_console_audio.py',
                             'test_agent_console_robot.py', 'test_agent_console_cli.py',
                             'test_agent_console_story.py', 'test_agent_console_fall.py',
+                            'test_agent_console_weather.py',
                         )), str(ROOT / 'malbut_bringup/test/test_confirmation_audio.py')]
                     test_env = dict(os.environ, PYTHONPATH=os.pathsep.join(
                         str(ROOT / p) for p in ('malbut_agent_server', 'malbut_stt', 'malbut_tts')))

@@ -76,7 +76,9 @@ def test_tool_boundaries_and_input_validation():
             'message': '테스트', 'image_id': None,
         })
         assert notification['result']['delivered'] is False
-        assert core.query_tool('get_weather', {})['status'] == 'rejected'
+        weather = core.query_tool('get_weather', {})
+        assert weather['status'] == 'succeeded'
+        assert weather['result'] == {'status': 'location_required'}
         assert core.query_tool('navigate', {})['error']['code'] == 'invalid_arguments'
         assert core.query_tool('missing', {})['error']['code'] == 'unknown_tool'
         with pytest.raises(ValidationError):
