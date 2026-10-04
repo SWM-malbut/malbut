@@ -36,6 +36,7 @@ def _setup(context):
             options[key] = options[key] or str(uuid4())
     if value('speech') == 'true':
         enabled.append('speech')
+    observed = list(enabled)
     # Shared microphone setup is local wiring, not a ROS readiness prerequisite.
     # A failure affects only the two microphone consumers, never navigation.
     actions = [SetEnvironmentVariable('need_compile', 'False')]
@@ -74,6 +75,40 @@ def _setup(context):
         actions.append(include(
             package_file('malbut_bringup', f'launch/{name}.launch.py'), settings,
             environment=audio_env if name in ('homecam', 'speech') else None))
+    nodes = {
+        'robot': ['system_manager', 'controller_server', 'planner_server', 'bt_navigator',
+                  'behavior_server', 'teleop_behavior_server', 'velocity_smoother',
+                  'collision_monitor', 'smoother_server', 'waypoint_follower'],
+        'tracking': ['yolo/yolo_node', 'person_reidentifier', 'person_localizer',
+                     'person_follower', 'lidar_foreground_preprocessor'],
+        'patrol': ['patrol_manager'], 'autoslam': ['autoslam', 'autoslam_map_saver'],
+        'manual': ['manual_control'], 'relocalization': ['relocalization'],
+        'homecam': ['homecam_media_agent'],
+        'fall': ['fall_coordinator', 'malbut_fall_pose', 'malbut_cloud_fall_monitor'],
+        'speech': ['malbut_stt', 'malbut_agent_communication', 'malbut_tts'],
+    }
+    endpoints = {
+        'robot': ['/malbut/mission/execute', '/navigate_to_pose', '/compute_path_to_pose',
+                  '/follow_path', '/spin', '/wait', '/backup', '/assisted_teleop'],
+        'tracking': ['/follow_person'], 'patrol': ['/patrol'], 'autoslam': ['/autoslam'],
+        'relocalization': ['/relocalize'],
+    }
+    topic_options = ['scan_topic', 'odom_topic', 'static_map_topic',
+                     'global_costmap_topic', 'patrol_costmap_topic']
+    if 'tracking' in observed:
+        topic_options += ['rgb_topic', 'depth_topic', 'camera_info_topic']
+    elif 'homecam' in observed or 'fall' in observed:
+        topic_options.append('rgb_topic')
+    # A read-only sibling, not a gate or an owner of any module's process.
+    actions.append(Node(
+        package='malbut_bringup', executable='wait_for_robot', name='bringup_connections',
+        output='screen', parameters=[{
+            'use_sim_time': False, 'observe_only': True, 'speech': 'speech' in observed,
+            'startup_nodes': ','.join(node for name in observed for node in nodes[name]),
+            'required_actions': ','.join(action for name in observed
+                                         for action in endpoints.get(name, [])),
+            'required_topics': ','.join(dict.fromkeys(value(name) for name in topic_options)),
+        }]))
     if value('web_panel') == 'true':
         actions.append(Node(
             package='malbut_bringup', executable='robot_web_panel',

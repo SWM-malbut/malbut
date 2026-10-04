@@ -24,6 +24,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile
+from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
 
 from malbut_autoslam.autoslam_node import AutoSlamNode, Navigation, map_base
@@ -50,7 +51,7 @@ class _Backend(Node):
     """Provide synthetic map/TF and inert Nav2/save endpoints in a private context."""
 
     def __init__(self, context, prefix, directory, scene, navigation,
-                 planning, navigation_succeeds):
+                 planning, navigation_succeeds, owned_mapping):
         super().__init__('autoslam_test_backend', context=context)
         self.directory = directory
         self.scene = scene
@@ -64,7 +65,20 @@ class _Backend(Node):
         self.planning_mode = planning
         self.navigation_succeeds = navigation_succeeds
         self.navigation_active = Event()
+        self.mapping_events = []
+        self.mapping_started = Event()
+        self.release_start = Event()
+        self.release_start.set()
+        self.mapping_start_success = True
+        self.mapping_stop_success = True
         self.group = ReentrantCallbackGroup()
+        if owned_mapping:
+            self.create_service(
+                Trigger, prefix + '/start_mapping', self._start_mapping,
+                callback_group=self.group)
+            self.create_service(
+                Trigger, prefix + '/stop_mapping', self._stop_mapping,
+                callback_group=self.group)
         self.publisher = self.create_publisher(
             OccupancyGrid, prefix + '/map',
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
@@ -84,6 +98,21 @@ class _Backend(Node):
                 execute_callback=self._navigate,
                 cancel_callback=lambda _handle: CancelResponse.ACCEPT,
                 callback_group=self.group)
+
+    def _start_mapping(self, _request, response):
+        self.mapping_events.append('start')
+        self.mapping_started.set()
+        assert self.release_start.wait(TIMEOUT_S)
+        response.success = self.mapping_start_success
+        response.message = 'started' if response.success else 'SLAM startup failed'
+        return response
+
+    def _stop_mapping(self, _request, response):
+        assert not self.navigation_active.is_set()
+        self.mapping_events.append('stop')
+        response.success = self.mapping_stop_success
+        response.message = 'stopped' if response.success else 'SLAM shutdown failed'
+        return response
 
     def _publish(self):
         message = OccupancyGrid()
@@ -167,13 +196,14 @@ class _System:
     """Own a test-only executor whose requests cannot address real robot actions."""
 
     def __init__(self, directory, scene='complete', navigation=True,
-                 planning='reachable', navigation_succeeds=False, **settings):
+                 planning='reachable', navigation_succeeds=False,
+                 owned_mapping=False, **settings):
         self.context = Context()
         rclpy.init(context=self.context, domain_id=160 + os.getpid() % 30)
         self.prefix = '/test_autoslam_' + uuid4().hex
         self.backend = _Backend(
             self.context, self.prefix, directory, scene, navigation,
-            planning, navigation_succeeds)
+            planning, navigation_succeeds, owned_mapping)
         defaults = {
             'map_directory': str(directory), 'map_topic': self.prefix + '/map',
             'navigation_action': self.prefix + '/navigate',
@@ -183,6 +213,9 @@ class _System:
             'ready_timeout_s': 2.0, 'navigation_timeout_s': 4.0,
         }
         defaults.update(settings)
+        if owned_mapping:
+            defaults.update(start_mapping_service=self.prefix + '/start_mapping',
+                            stop_mapping_service=self.prefix + '/stop_mapping')
         self.node = AutoSlamNode(
             context=self.context, use_global_arguments=False,
             parameter_overrides=[Parameter(name, value=value)
@@ -215,6 +248,7 @@ class _System:
         self.node.wake.set()
         self.backend.stopping.set()
         self.backend.release_cancel.set()
+        self.backend.release_start.set()
         try:
             _wait_until(lambda: not self.node.busy)
         finally:
@@ -297,6 +331,70 @@ def test_duplicate_rejected_and_cancel_waits_for_child_terminal(system_factory):
     assert result.status == GoalStatus.STATUS_CANCELED
     assert not result.result.success
     assert system.backend.save_requests == []
+
+
+def test_owned_slam_starts_on_request_and_stops_before_success(system_factory):
+    """Idle servers do not start SLAM; completed mapping releases its backend."""
+    system = system_factory(owned_mapping=True)
+    assert system.backend.mapping_events == []
+    result = _result(system.request().get_result_async())
+    assert result.status == GoalStatus.STATUS_SUCCEEDED
+    assert result.result.success
+    assert system.backend.mapping_events == ['start', 'stop']
+    assert len(system.backend.save_requests) == 1
+
+
+def test_owned_slam_cancel_waits_for_navigation_before_stopping(system_factory):
+    """Do not remove mapping while the child navigation Action can still move."""
+    system = system_factory(owned_mapping=True, scene='frontier')
+    handle = system.request()
+    assert system.backend.started.wait(TIMEOUT_S)
+    result = handle.get_result_async()
+    assert _result(handle.cancel_goal_async()).goals_canceling
+    assert system.backend.cancel_seen.wait(TIMEOUT_S)
+    assert not result.done()
+    assert system.backend.mapping_events == ['start']
+    system.backend.release_cancel.set()
+    assert _result(result).status == GoalStatus.STATUS_CANCELED
+    assert system.backend.mapping_events == ['start', 'stop']
+
+
+def test_cancel_during_slam_start_settles_start_then_stops(system_factory):
+    """A non-cancellable backend request must not start SLAM after cancellation."""
+    system = system_factory(owned_mapping=True)
+    system.backend.release_start.clear()
+    handle = system.request()
+    assert system.backend.mapping_started.wait(TIMEOUT_S)
+    result = handle.get_result_async()
+    assert _result(handle.cancel_goal_async()).goals_canceling
+    assert not result.done()
+    system.backend.release_start.set()
+    assert _result(result).status == GoalStatus.STATUS_CANCELED
+    assert system.backend.mapping_events == ['start', 'stop']
+    assert not system.backend.navigation_requests
+    assert not system.backend.save_requests
+
+
+def test_owned_slam_start_failure_still_requests_cleanup(system_factory):
+    """Partial backend startup is cleaned up before an aborted result."""
+    system = system_factory(owned_mapping=True)
+    system.backend.mapping_start_success = False
+    result = _result(system.request().get_result_async())
+    assert result.status == GoalStatus.STATUS_ABORTED
+    assert 'SLAM startup failed' in result.result.message
+    assert system.backend.mapping_events == ['start', 'stop']
+    assert not system.backend.navigation_requests
+
+
+def test_owned_slam_cleanup_failure_is_not_reported_as_success(system_factory):
+    """An unconfirmed backend shutdown does not silently admit another run."""
+    system = system_factory(owned_mapping=True)
+    system.backend.mapping_stop_success = False
+    result = _result(system.request().get_result_async())
+    assert result.status == GoalStatus.STATUS_ABORTED
+    assert not result.result.success
+    assert 'mapping cleanup failed: SLAM shutdown failed' in result.result.message
+    assert not system.request('other').accepted
 
 
 def test_navigation_timeout_waits_for_confirmed_stop(system_factory):
@@ -560,13 +658,15 @@ def test_central_manifest_builds_the_actual_action_goal(tmp_path):
     assert goal.map_name == AutoSlam.Goal().map_name == 'home'
 
 
-def test_manager_executes_autoslam_and_returns_saved_map(system_factory, tmp_path):
+@pytest.mark.parametrize('owned_mapping', [False, True])
+def test_manager_executes_autoslam_and_returns_saved_map(system_factory, tmp_path, owned_mapping):
     """Drive the real manager-to-AutoSlam Action chain using only mock backends."""
     from malbut_interfaces.action import ExecuteMission
+    from malbut_system_manager.models import LocalizationMode
     from malbut_system_manager.system_manager_node import SystemManagerNode
     import yaml
 
-    system = system_factory()
+    system = system_factory(owned_mapping=owned_mapping)
     manifests = tmp_path / 'capabilities'
     manifests.mkdir()
     source = (Path(__file__).parents[2] / 'malbut_interfaces/capabilities'
@@ -576,6 +676,7 @@ def test_manager_executes_autoslam_and_returns_saved_map(system_factory, tmp_pat
     # localhost domain without changing its production constructor.
     rclpy.init(domain_id=system.context.get_domain_id())
     manager = SystemManagerNode(manifest_directory=str(manifests))
+    manager._on_localization_mode(LocalizationMode.LOCALIZATION)
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(manager)
     thread = Thread(target=executor.spin, daemon=True)
@@ -593,6 +694,7 @@ def test_manager_executes_autoslam_and_returns_saved_map(system_factory, tmp_pat
         assert output['map_yaml'] == str(tmp_path / 'home.yaml')
         assert len(system.backend.save_requests) == 1
         assert not system.backend.started.is_set()
+        assert system.backend.mapping_events == (['start', 'stop'] if owned_mapping else [])
         _wait_until(lambda: manager.downstream_execution_count == 0)
     finally:
         manager.begin_shutdown()

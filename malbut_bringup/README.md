@@ -63,7 +63,7 @@ PulseAudio 공유 설정을 적용하며, 단독 실행에서는 같은 입력 �
 
 | 저장 지도 | 위치 추정 | 가능한 이동 미션 |
 | --- | --- | --- |
-| 선택 안 됨 (기본, `map` 인자 없음) | slam_toolbox로 지도 작성 | 자동 지도 만들기, 수동 조작 |
+| 선택 안 됨 (기본, `map` 인자 없음) | 기본 미확인 지도 + AMCL | 센서 기반 주행, 자동 지도 만들기, 수동 조작 |
 | 선택됨 (`map:=...` 또는 실행 중 선택) | 저장 지도 + AMCL, 선택할 때 위치 보정 | 사람 추적, 순찰, 목적지 이동, 위치 보정, 수동 조작 |
 
 관리자는 시작하자마자 위치 추정을 켠다. Nav2 global costmap은 `map` TF가 생겨야
@@ -175,6 +175,13 @@ Nav2 컨테이너에만 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`와
 `nav2_params_file`, `slam_params_file`, `hardware_launch_file`로 지정한다.
 제조사 원본은 수정하지 않는다. 하드웨어 launch가 description과 카메라를 포함하므로
 별도 `malbut_description` 또는 카메라 드라이버를 중복 실행하지 않는다.
+
+`map`을 지정하지 않으면 `config/default_map.yaml`을 기존 map_server·AMCL 경로로
+불러온다. 20×20 m, 해상도 0.05 m의 모든 칸이 미지(-1)인 지도다. 기본 지도에서는
+자동 전역 위치 보정 대신 기존 AMCL 초기위치 서비스로 (0, 0)을 지정한다.
+실제 지도에는 기존 위치 보정을 그대로 사용한다. Nav2 그룹·좌표계·설정은 바꾸지 않으며,
+별도 TF 발행기도 없다. 기본 지도에는 절대 위치를 보정할 지형 정보가 없으므로
+실제 집 좌표에 대한 위치 추정이나 저장 지도 역할을 대신하지 않는다.
 
 ## 로봇에서 처음 준비
 
@@ -325,18 +332,19 @@ TF가 맞는지도 확인한다. 시뮬레이션의 frame 보정이나 fake stat
 연결만으로는 다른 노드를 켜거나 움직이지 않는다. LAN 테스트 패널
 (`robot_web_panel`)도 남아 있지만 현재 사용하지 않는다.
 
-1. **지도 만들기 모드** → Bringup이 지도 없이 켜지고 준비 완료를 확인한다.
-2. 새 지도 이름 입력 → **자동 지도 만들기**. 이 요청부터 탐색할 수 있다.
-3. 완료 결과와 저장 지도를 확인한다. Bringup은 끄지 않는다.
-4. 저장 지도 목록에서 지도를 선택 → **선택한 지도로 전환**. 재시작 없이 SLAM을
-   끄고 저장 지도와 AMCL로 바꾼 뒤 [위치 보정](#위치-보정)으로 로봇 위치를 찾는다.
+1. **Bringup 시작** → 기본 미확인 지도 + AMCL로 켜지고 연결 상태를 표시한다.
+2. 새 지도 이름 입력 → **자동 지도 만들기**. 이 요청에서만 SLAM을 켜고 탐색한다.
+3. 완료 결과와 저장 지도를 확인한다. 완료·취소·실패 시 SLAM만 종료하고 기본 지도로 돌아온다.
+4. 저장 지도 목록에서 지도를 선택 → **선택한 지도로 전환**. 재시작 없이 저장 지도와
+   AMCL로 바꾼 뒤 [위치 보정](#위치-보정)으로 로봇 위치를 찾는다.
    위치를 찾지 못했을 때 제자리에서 한 바퀴 돌 수 있으므로 주변을 비운다.
 5. 웹의 **위치 추정** 줄과 지도 위 로봇 위치를 확인한 뒤 사람 추적·순찰을 별도로 요청한다.
    위치가 틀리면 **위치 보정**에서 다시 찾거나 **현재 위치 지정**으로 직접 정한다.
 
 Bringup이 꺼져 있을 때 4번을 누르면 선택한 지도로 바로 켠다. 다시 지도를 만들려면
-**지도 만들기로 전환**을 누른다. 두 버튼 모두 이동 미션이 남아 있으면 거부되므로 먼저
-취소한다. 자동 지도 만들기가 종료되면 목록이 갱신된다. 필요 없는 지도는
+**자동 지도 만들기**를 요청한다. 다른 이동 미션과의 충돌은 기존 관리자 정책을 따른다.
+저장 지도 전환은 이동 미션이 남아 있으면 거부된다. 자동 지도 만들기가 종료되면
+목록이 갱신된다. 필요 없는 지도는
 **선택한 지도 삭제**로 지운다(사용 중인 지도는 제외). 기본 저장·조회 폴더는
 `~/.ros/malbut/maps`이며, 다른 폴더는 `cloud.launch.py`의 `map_directory`로 지정한다.
 
@@ -362,7 +370,7 @@ ros2 action send_goal /malbut/mission/execute \
   "{capability_id: autoslam, arguments_yaml: '{map_name: home2}'}" --feedback
 ```
 
-Bringup 안의 AutoSLAM은 Bringup이 켠 SLAM·Nav2를 그대로 사용하고 새 구성을 켜지 않는다.
+AutoSLAM은 관리자에게 SLAM 시작·종료만 요청한다. Nav2 launch·설정·lifecycle 그룹은 바꾸지 않는다.
 
 저장 결과는 `~/.ros/malbut/maps/home2.yaml`과 이미지다. 같은 이름은 덮어쓰지 않는다.
 실행 중 저장 지도로 바꾸려면:
@@ -405,6 +413,7 @@ ros2 launch navigation rviz_navigation.launch.py
 | --- | --- | --- |
 | `/malbut/localization/load_map` | `nav2_msgs/srv/LoadMap` | slam_toolbox 종료 → map_server·AMCL 시작 → 지도 로드 → 위치 보정 |
 | `/malbut/localization/start_mapping` | `std_srvs/srv/Trigger` | map_server·AMCL 정리(RESET) → slam_toolbox 시작 |
+| `/malbut/localization/stop_mapping` | `std_srvs/srv/Trigger` | slam_toolbox 종료 확인 → 기본 지도·AMCL 복원 |
 | `/malbut/localization/state` | `std_msgs/String`(JSON) | `mode`(`SWITCHING`·`MAPPING`·`LOCALIZATION`·`ERROR`), `map`, `message` |
 
 - `BASE`를 쓰는 미션이 실행·대기 중이면 전환을 거부한다. 먼저 취소한다.
@@ -579,10 +588,11 @@ Bringup 시작/종료는 비활성화한다. 단독 패널과 같은 포트로 �
 - 관리자는 함께 시작해 위치 추정을 켜고, 기능별 요청 시 실제 서버·지도 조건을 확인한다.
   선택 기능의 부재를 전체 미션 차단 조건으로 사용하지 않는다.
 - `wait_for_robot`의 센서·TF·Nav2 진단 코드는 남아 있지만 모듈 시작 조건으로 실행하지 않는다.
-- 웹의 `ready`는 실행 중인 관리자에게 요청을 전달할 수 있다는 의미다.
-  음성 모델 로딩이 다른 기능 버튼을 막지 않으며, 개별 기능의 실제 준비를 보장하지 않는다.
-  음성 준비는 `/malbut/speech/status`, 지도 상태는 `/malbut/localization/state`,
-  실제 Action·Topic은 웹의 진단 화면에서 따로 확인한다.
+- 통합 launch의 읽기 전용 관측기가 선택된 노드의 응답·Nav2 활성 상태·Action 연결·
+  Topic 발행자와 음성 준비 상태를 확인해 `/malbut/bringup/status`·`progress`로 보낸다.
+  웹은 이를 연결 수와 준비 완료 표시로 사용한다. 모듈 실행 순서나 다른 기능 요청을
+  막는 조건으로 사용하지 않는다. 센서 데이터·TF 품질 검증이나 자동 복구를 수행하지 않는다.
+  음성 준비는 `/malbut/speech/status`, 지도 상태는 `/malbut/localization/state`로 확인한다.
 - 한 응용 노드 종료로 전체 launch를 종료하지 않는다. Ctrl+C 또는 웹 종료는 소유한
   프로세스들에 전달하며, 외부에서 실행한 노드는 종료하지 않는다.
 - 이것만으로 모터 정지를 보장하지는 않는다. 제조사 드라이버는 `/cmd_vel` 수신이

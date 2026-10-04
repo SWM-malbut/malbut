@@ -511,19 +511,24 @@ class RosBridge:
         with self.data.lock:
             booting = (self.data.system or {}).get('system_state', 0) == 0
         server_ready = bool(self.data.servers['manager']) and not booting
+        connected = getattr(self, 'startup_status', {}).get('state') == 'READY'
         if self.runtime:
             if status['state'] not in ('STARTING', 'RUNNING'):
                 self.speech_ready = False
             # Optional speech startup must not block unrelated robot commands.
             # Each capability still checks its own Action/data prerequisites.
-            status['ready'] = status['state'] == 'RUNNING' and server_ready
+            status['ready'] = status['state'] == 'RUNNING' and server_ready and connected
         else:
-            status['ready'] = server_ready
+            status['ready'] = server_ready and connected
         status['waiting'] = []
         if (self.runtime and status['state'] == 'RUNNING'
                 and not status['ready']):
-            status['waiting'] = ['manager: Action server startup']
-            status['message'] = '관리자 Action 서버 준비 대기'
+            status['waiting'] = (
+                getattr(self, 'startup_status', {}).get('missing')
+                or ['bringup: node/interface connections'])
+            if not server_ready:
+                status['waiting'] = ['manager: Action server startup', *status['waiting']]
+            status['message'] = '노드·인터페이스 연결 확인 중'
         if self.runtime_message:
             status['message'] = self.runtime_message
         if self.stopping_runtime is not None:
@@ -532,7 +537,7 @@ class RosBridge:
         progress = getattr(self, 'startup_progress', {})
         if status['state'] in ('STARTING', 'RUNNING') and progress:
             status['progress'] = dict(progress)
-            status['message'] = (f"준비 {progress['completed']}/{progress['total']} 단계 · "
+            status['message'] = (f"연결 {progress['completed']}/{progress['total']} · "
                                  f"{progress['stage']}")
             if progress['state'] != 'READY' or progress['completed'] < progress['total']:
                 # A separately run diagnostic is informational, not admission
@@ -678,11 +683,13 @@ class RosBridge:
 
     def _switch_localization(self, payload):
         if payload['mode'] == 'mapping':
-            future = self.start_mapping.call_async(self.start_mapping_request())
-        else:
-            request = self.load_map_request()
-            request.map_url = str(self.catalog.resolve(payload['map']))
-            future = self.load_map.call_async(request)
+            # The legacy no-map start command is now Bringup-only.
+            # AutoSLAM owns SLAM startup; do not start it from a mode button.
+            self.runtime_message = 'Bringup is running; request AutoSLAM to create a map'
+            return
+        request = self.load_map_request()
+        request.map_url = str(self.catalog.resolve(payload['map']))
+        future = self.load_map.call_async(request)
         self.runtime_message = 'Switching localization; missions using the base must be stopped'
         future.add_done_callback(lambda done: self._switched(payload, done))
 
@@ -692,14 +699,11 @@ class RosBridge:
         except Exception as error:
             self.runtime_message = f'Localization switch failed: {error}'
             return
-        if payload['mode'] == 'mapping':
-            ok, message = response.success, response.message
-        else:
-            # The manager's localization message tells whether the pose was found.
-            ok = response.result == 0
-            message = ('Saved map loaded' if ok else
-                       f'Map was not loaded (result {response.result}); '
-                       'cancel base missions or check the map')
+        # The manager's localization message tells whether the pose was found.
+        ok = response.result == 0
+        message = ('Saved map loaded' if ok else
+                   f'Map was not loaded (result {response.result}); '
+                   'cancel base missions or check the map')
         self.runtime_message = message if ok else f'Localization switch failed: {message}'
 
     def _stop_runtime(self):

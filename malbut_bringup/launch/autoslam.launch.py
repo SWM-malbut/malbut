@@ -18,6 +18,8 @@ def _setup(context):
             'map_directory': value('map_directory'),
             'map_topic': value('static_map_topic'),
             'base_frame': value('robot_frame'),
+            'start_mapping_service': '/malbut/localization/start_mapping',
+            'stop_mapping_service': '/malbut/localization/stop_mapping',
         })]
 
 
