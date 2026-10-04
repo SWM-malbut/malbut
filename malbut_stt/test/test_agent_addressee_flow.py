@@ -80,9 +80,20 @@ def test_candidate_is_classified_before_normal_dialogue_and_correlated_back_to_s
 
     try:
         pipeline.session.activate()
-        say('안녕')
+        first_uid = say('안녕')
         first = drain_one(worker)
         assert first['kind'] == 'answer'
+        pipeline.on_playback_status('first-answer', 'playing', request_id=first_uid)
+        pipeline.feed(b'\x01\x00' * (320 * 4) + bytes(640) * 150)
+        assert pipeline.jobs.empty() and controls == []
+        assert len(transcripts) == 1 and requests == []
+        pipeline.on_playback_status('first-answer', 'finished', request_id=first_uid)
+        assert not pipeline.session.active
+        pipeline.results.put_nowait(('wake', pipeline._generation, None, '제이크야', None))
+        pipeline.poll()
+        assert pipeline.session.active
+        # A fresh wake permits classifying speech over unrelated playback;
+        # speech during this turn's own reply is blocked above, even with AEC.
         pipeline.on_playback_status('reply-1', 'playing')
         interrupted_text = '지금 그 이야기는 잠깐 멈춰'
         uid = say(interrupted_text)
