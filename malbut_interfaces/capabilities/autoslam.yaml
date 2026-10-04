@@ -3,7 +3,7 @@ schema_version: 1
 capability:
   id: autoslam
   title: 자동 지도 만들기
-  description: 현재 SLAM 지도의 미탐색 경계를 따라 이동하고 탐색이 끝나면 주행용 지도를 저장한다.
+  description: 지도 작성을 시작해 미탐색 경계를 따라 이동하고 탐색이 끝나면 주행용 지도를 저장한다.
 
 command:
   kind: ACTION
@@ -21,10 +21,9 @@ execution:
   mode: FOREGROUND
   priority: NORMAL
   resources: [BASE]
-  map_requirement: NOT_SELECTED
 
-# 기본 실기기 실행은 Goal 수신 후 없는 드라이버·SLAM·Nav2 구성만 준비한다.
-# 관리자를 켜지 않아도 /autoslam Action을 직접 요청할 수 있다.
+# 실기기 Bringup에서는 Goal 수명에 SLAM 시작·종료를 연결한다.
+# 독립 실행은 외부 SLAM·Nav2를 사용하며 /autoslam을 직접 요청할 수 있다.
 # 남은 경계가 없거나 접근 불가·무진행·탐색 시간 제한에 도달하면 지도 저장 후 종료한다.
 # 종료 사유는 Result.message로 구분하며, 센서/TF/저장 오류는 실패로 반환한다.
 # 성공은 탐색 절차와 저장 완료이며 모든 공간의 완전한 탐색을 보장하지 않는다.

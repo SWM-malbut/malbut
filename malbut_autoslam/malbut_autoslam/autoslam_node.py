@@ -11,6 +11,7 @@ from malbut_interfaces.action import AutoSlam
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.srv import SaveMap
 from nav_msgs.msg import OccupancyGrid
+from std_srvs.srv import Trigger
 import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -103,6 +104,7 @@ class AutoSlamNode(Node):
             'planning_action': '/compute_path_to_pose',
             'save_map_service': '/autoslam_map_saver/save_map',
             'map_directory': str(Path.home() / '.ros/malbut/maps'),
+            'start_mapping_service': '', 'stop_mapping_service': '',
             'minimum_frontier_cells': 8, 'robot_clearance_m': 0.30,
             'minimum_goal_distance_m': 0.45,
             'exploration_period_s': 1.0, 'completion_delay_s': 12.0,
@@ -151,6 +153,14 @@ class AutoSlamNode(Node):
         )
         self.saver = self.create_client(
             SaveMap, self.settings['save_map_service'], callback_group=self.group)
+        if bool(self.settings['start_mapping_service']) != bool(
+                self.settings['stop_mapping_service']):
+            raise ValueError('mapping start and stop services must be configured together')
+        self.mapping_clients = {
+            name: self.create_client(Trigger, self.settings[name + '_mapping_service'],
+                                     callback_group=self.group)
+            for name in ('start', 'stop') if self.settings[name + '_mapping_service']
+        }
         self.server = ActionServer(
             self, AutoSlam, '/autoslam', execute_callback=self._execute,
             goal_callback=self._goal, cancel_callback=self._cancel,
@@ -542,12 +552,42 @@ class AutoSlamNode(Node):
                 # unreachable goals and allowed loops across a large map.
                 blacklist.append((target.x, target.y))
 
+    def _mapping_call(self, operation, handle):
+        client = self.mapping_clients[operation]
+        if not client.wait_for_service(timeout_sec=self.settings['ready_timeout_s']):
+            raise RuntimeError(f'mapping {operation} service is unavailable')
+        if operation == 'start':
+            self.mapping_requested = True
+        future = client.call_async(Trigger.Request())
+        done = threading.Event()
+        future.add_done_callback(lambda _: done.set())
+        # Mapping switches are non-cancellable services. Settle their reply before
+        # cleanup, including when this Action is canceled during SLAM startup.
+        while not done.wait(0.2):
+            if self.stopping.is_set():
+                client.remove_pending_request(future)
+                raise Interrupted('AutoSLAM is shutting down')
+            self._feedback(handle, 'CANCELING' if handle.is_cancel_requested
+                           else 'STARTING' if operation == 'start' else 'STOPPING')
+        response = future.result()
+        if not response.success:
+            raise RuntimeError(response.message or f'mapping {operation} failed')
+
     def _execute(self, handle):
         result = AutoSlam.Result()
         self.known_area_m2 = 0.0
         self.frontier_count = 0
         self.planned_path = []
+        self.mapping_requested = False
         try:
+            if self.mapping_clients:
+                self._check(handle)
+                self._mapping_call('start', handle)
+                with self.lock:
+                    # Ignore a cached saved map from before the backend switch.
+                    self.message = None
+                    self.received_at = 0.0
+                self._check(handle)
             self._explore(handle, result)
         except Interrupted as error:
             result.message = str(error)
@@ -557,6 +597,13 @@ class AutoSlamNode(Node):
         finally:
             # Do not report completion while an accepted or pending goal can move.
             self._settle_child(handle)
+            if self.mapping_requested and not self.stopping.is_set():
+                try:
+                    self._mapping_call('stop', handle)
+                except Exception as error:
+                    result.success = False
+                    result.message += f'; mapping cleanup failed: {error}'
+                    self.save_uncertain = True
             with self.lock:
                 if handle.is_cancel_requested:
                     result.success = False

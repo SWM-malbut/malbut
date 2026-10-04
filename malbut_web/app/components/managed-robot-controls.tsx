@@ -7,6 +7,7 @@ import type { RobotSnapshot } from "./robot-map-panel";
 type SendCommand = (operation: RobotOperation, payload?: Record<string, unknown>) => Promise<boolean>;
 const terminal = new Set(["SUCCEEDED", "CANCELED", "ABORTED", "REJECTED", "ERROR"]);
 const LOCALIZATION_LABEL: Record<string, string> = {
+  NONE: "센서 기반 · 지도 없음",
   MAPPING: "지도 작성 중(SLAM)",
   LOCALIZATION: "저장 지도 사용 중(AMCL)",
   SWITCHING: "전환 중",
@@ -38,8 +39,9 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
   const stopped = runtime.state === "STOPPED";
   const running = runtime.state === "RUNNING";
   const switching = localization.mode === "SWITCHING";
-  const navigationReady = !recovering && runtime.mode === "navigation" && runtime.ready === true && servers.manager === true;
-  const mappingReady = !recovering && runtime.mode === "mapping" && runtime.ready === true && servers.autoslam === true;
+  const basicReady = !recovering && !switching && running && servers.manager === true;
+  const navigationReady = basicReady && runtime.mode === "navigation";
+  const mappingReady = basicReady && servers.autoslam === true;
   const inUse = !stopped && typeof runtime.map === "string" ? runtime.map : "";
   const knownMap = maps.some((map) => map.id === selectedMap);
   const mission = (capability: string, args: Record<string, unknown>) => sendCommand("mission_start", { capability, arguments: args });
@@ -53,6 +55,7 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
       <h3>로봇 Bringup</h3>
       {!managed && <p>실로봇 연결을 기다리고 있습니다.</p>}
       <p>{String(runtime.message || runtime.state || "상태 수신 대기")}</p>
+      {running && <p>{runtime.ready === true ? "선택한 전체 구성 연결 완료" : "구성 연결 확인 중 · 준비된 기능은 사용 가능"}</p>}
       {Array.isArray(runtime.waiting) && runtime.waiting.length > 0 && <p>준비 대기: {runtime.waiting.join(", ")}</p>}
       {typeof localization.mode === "string" && <p>
         위치 추정: {LOCALIZATION_LABEL[localization.mode] ?? localization.mode}
@@ -60,9 +63,9 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
         {localization.message ? ` · ${String(localization.message)}` : ""}
       </p>}
       <div className="robot-map-actions is-inline">
-        <button disabled={disabled || recovering || switching || !(stopped || (running && runtime.mode !== "mapping"))}
+        <button disabled={disabled || recovering || switching || !(stopped || (running && runtime.mode !== "idle"))}
           onClick={() => void sendCommand("runtime_start", { mode: "mapping" })}>
-          {stopped ? "Bringup 시작 (새 지도)" : "위치 추정 전환 (새 지도 / SLAM)"}
+          {stopped ? "지도 없이 Bringup 시작" : "선택 지도 해제"}
         </button>
         <button className="is-secondary"
           disabled={disabled || !running || servers.manager !== true || switching || recovering}
@@ -103,7 +106,7 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
         <input type="number" min="0.2" step="0.1" value={distance} onChange={(event) => setDistance(event.target.value)} />
       </label>
       <div className="robot-map-actions">
-        <button disabled={disabled || !navigationReady || !Number.isFinite(Number(distance)) || Number(distance) < 0.2} onClick={() => void mission("follow_person", { target_mode: 0, target_person_id: "", desired_distance_m: Number(distance) })}>앞에 보이는 사람 따라가기</button>
+        <button disabled={disabled || !basicReady || !Number.isFinite(Number(distance)) || Number(distance) < 0.2} onClick={() => void mission("follow_person", { target_mode: 0, target_person_id: "", desired_distance_m: Number(distance) })}>앞에 보이는 사람 따라가기</button>
       </div>
       <label>순찰 꼼꼼함
         <select value={thoroughness} onChange={(event) => setThoroughness(Number(event.target.value))}>

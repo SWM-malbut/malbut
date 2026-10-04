@@ -118,6 +118,68 @@ def test_extension_waits_for_service_response_not_just_node_discovery(monkeypatc
     assert node._extension_missing() == []
 
 
+def test_connection_observer_is_read_only_and_never_times_out(monkeypatch):
+    node = _node(monkeypatch)
+    node.stage = 'extensions'
+    node.started_at, node.startup_timeout = 0.0, 1.0
+    node.settings.update(observe_only=True, speech=False, required_topics='/scan_raw')
+    node.probes, node.probe_requested = {}, {}
+    node.progress_publisher = Mock()
+    node.count_publishers = Mock(return_value=0)
+    node.check()
+    assert not node.ready
+    assert json.loads(node.status_publisher.publish.call_args.args[0].data) == {
+        'state': 'WAITING', 'missing': ['publisher:/scan_raw']}
+    node.count_publishers.return_value = 1
+    node.check()
+    assert node.ready
+    progress = json.loads(node.progress_publisher.publish.call_args.args[0].data)
+    assert progress['completed'] == progress['total'] == 1
+    node.count_publishers.return_value = 0
+    node.check()
+    assert not node.ready
+    node.tf.can_transform.assert_not_called()
+
+
+def test_connection_observer_rechecks_executor_and_revokes_stale_success(monkeypatch):
+    node = _node(monkeypatch)
+    node.stage = 'extensions'
+    node.settings['observe_only'] = True
+    first, second = Future(), Future()
+    first.set_result(SimpleNamespace(values=[]))
+    client = Mock()
+    client.service_is_ready.return_value = True
+    client.call_async.return_value = second
+    node.probes = {'person_follower': [client, first, False]}
+    node.probe_requested = {'person_follower': 5.0}
+    assert node._extension_missing() == []
+    client.call_async.assert_called_once()
+    assert node.probes['person_follower'][1] is second
+    monkeypatch.setattr('malbut_bringup.readiness.time.monotonic', lambda: 14.0)
+    assert node._extension_missing() == ['init:person_follower']
+    assert second.cancelled()
+    client.service_is_ready.return_value = False
+    assert node._extension_missing() == ['init:person_follower']
+
+
+def test_connection_observer_requires_active_lifecycle_not_only_action_discovery(monkeypatch):
+    node = _node(monkeypatch)
+    node.stage = 'extensions'
+    node.settings.update(observe_only=True, speech=False, required_topics='')
+    node.probes, node.probe_requested = {}, {}
+    node.progress_publisher = Mock()
+    reply = Future()
+    reply.set_result(SimpleNamespace(current_state=SimpleNamespace(id=2, label='inactive')))
+    service = Mock()
+    service.service_is_ready.return_value = True
+    node.lifecycle['planner_server'] = [service, reply, False, 'missing']
+    node.check()
+    assert not node.ready
+    assert json.loads(node.status_publisher.publish.call_args.args[0].data)['missing'] == [
+        'lifecycle:planner_server=inactive']
+    service.call_async.assert_called_once()
+
+
 def test_disconnected_depth_frame_is_not_ready(monkeypatch):
     """Receiving images alone cannot prove they can be used by the localizer."""
     node = _node(monkeypatch)

@@ -247,6 +247,8 @@ def _bridge(manager_ready=False, autoslam_ready=True):
     bridge.start_mapping = Mock()
     bridge.start_mapping.service_is_ready.return_value = False
     bridge.start_mapping_request = SimpleNamespace
+    bridge.stop_mapping = Mock()
+    bridge.stop_mapping.service_is_ready.return_value = False
     bridge.tf_buffer = Mock()
     bridge.topics = {'map_topic': '/map'}
     bridge.guard = Mock()
@@ -428,8 +430,9 @@ def test_startup_progress_appears_in_existing_runtime_message(monkeypatch):
     bridge._refresh()
     status = bridge.data.snapshot()['runtime']
     assert '준비 4/6 단계 · 홈캠·낙상 초기화' in status['message']
-    assert status['ready'] and status['waiting'] == ['init:malbut_fall_pose']
+    assert not status['ready'] and status['waiting'] == ['init:malbut_fall_pose']
     progress.update(completed=6, state='READY', missing=[])
+    bridge._bringup_status(SimpleNamespace(data=json.dumps({'state': 'READY', 'missing': []})))
     bridge._startup_progress(SimpleNamespace(data=json.dumps(progress)))
     bridge._refresh()
     assert bridge.data.snapshot()['runtime']['ready']
@@ -454,8 +457,8 @@ def test_readiness_reason_is_exposed_without_changing_manager(monkeypatch):
     bridge._refresh()
     runtime = bridge.data.snapshot()['runtime']
     assert runtime['state'] == 'RUNNING' and not runtime['ready']
-    assert runtime['waiting'] == ['manager: Action server startup']
-    assert runtime['message'] == '관리자 Action 서버 준비 대기'
+    assert runtime['waiting'] == ['TF:map->base_footprint (set initial pose)']
+    assert runtime['message'] == 'Bringup 연결 확인 대기'
     bridge._bringup_status(SimpleNamespace(data='invalid JSON'))
     assert bridge.startup_status['state'] == 'WAITING'
 
@@ -472,8 +475,12 @@ def test_manager_requests_are_independent_of_speech_capture(monkeypatch, mode):
     bridge.node.count_publishers.return_value = 1
     bridge._refresh()
     status = bridge.data.snapshot()['runtime']
-    assert status['ready']
-    assert status['waiting'] == []
+    assert not status['ready']
+    # Whole-Bringup display is not an admission gate: a ready capability runs.
+    request_id = bridge.submit(_command())
+    bridge._drain()
+    assert bridge.data.requests[request_id]['route'] == 'manager'
+    bridge._bringup_status(SimpleNamespace(data=json.dumps({'state': 'READY', 'missing': []})))
     # DDS data delivery can precede the graph cache's writer discovery.
     bridge.node.count_publishers.return_value = 0
     bridge._speech_status(SimpleNamespace(data='ready'))
@@ -536,6 +543,7 @@ def test_booting_manager_is_not_ready_and_live_localization_sets_mode(monkeypatc
     bridge._refresh()
     assert not bridge.data.snapshot()['runtime']['ready']
     bridge.data.system = {'system_state': 1}
+    bridge._bringup_status(SimpleNamespace(data=json.dumps({'state': 'READY', 'missing': []})))
     bridge._localization(SimpleNamespace(data=json.dumps({
         'mode': 'LOCALIZATION', 'map': '/maps/home.yaml', 'message': 'loaded'})))
     bridge._refresh()
@@ -544,7 +552,7 @@ def test_booting_manager_is_not_ready_and_live_localization_sets_mode(monkeypatc
     assert runtime['mode'] == 'navigation' and runtime['map'] == 'home.yaml'
 
 
-@pytest.mark.parametrize('mode,service', [('mapping', 'start_mapping'),
+@pytest.mark.parametrize('mode,service', [('mapping', 'stop_mapping'),
                                           ('navigation', 'load_map')])
 def test_running_bringup_switches_localization_instead_of_relaunching(mode, service):
     """Map selection in a running Bringup never starts a second robot stack."""
@@ -552,7 +560,7 @@ def test_running_bringup_switches_localization_instead_of_relaunching(mode, serv
     bridge.runtime = Mock()
     bridge.catalog = Mock()
     bridge.catalog.resolve.return_value = Path('/maps/home.yaml')
-    for client in (bridge.load_map, bridge.start_mapping):
+    for client in (bridge.load_map, bridge.stop_mapping):
         client.service_is_ready.return_value = True
     response = (SimpleNamespace(success=True, message='mapping') if mode == 'mapping'
                 else SimpleNamespace(result=0))

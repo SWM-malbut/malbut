@@ -96,6 +96,34 @@ def test_deployed_nav2_parameters_match_source(config):
     assert yaml.safe_load(path.read_text()) == config
 
 
+def test_mapless_profile_preserves_lidar_and_restores_original_map_parameters(monkeypatch, config):
+    """Only static-map dependencies change, not scan ranges or footprint safety."""
+    import json
+    from malbut_bringup import nav2_stack
+    root = Path(__file__).parents[1]
+    monkeypatch.setattr(nav2_stack, 'get_package_share_directory', lambda name: str(root))
+    overlay = yaml.safe_load((root / 'config/nav2_mapless.yaml').read_text())
+    global_overrides = overlay['global_costmap']['global_costmap']['ros__parameters']
+    original = config['global_costmap']['global_costmap']['ros__parameters']
+    assert global_overrides['global_frame'] == 'odom'
+    assert global_overrides['rolling_window'] is True
+    assert global_overrides['plugins'] == ['obstacle_layer', 'inflation_layer']
+    assert global_overrides['filters'] == []
+    effective = {**original, **global_overrides}
+    assert effective['obstacle_layer'] == original['obstacle_layer']
+    assert effective['inflation_layer'] == original['inflation_layer']
+    assert effective['footprint'] == original['footprint']
+    profiles = json.loads(nav2_stack.navigation_profiles(root / 'config/nav2_params.yaml'))
+    restored = profiles['mapped']['/global_costmap/global_costmap']
+    assert restored['global_frame'] == 'map' and not restored['rolling_window']
+    assert restored['plugins'] == original['plugins']
+    assert restored['filters'] == original['filters']
+    assert profiles['mapless']['/local_costmap/local_costmap']['keepout_filter.enabled'] is False
+    assert profiles['mapped']['/local_costmap/local_costmap']['keepout_filter.enabled'] is True
+    deployed = root.parent / 'malbut_test/malbut_bringup/config/nav2_mapless.yaml'
+    assert deployed.read_bytes() == (root / 'config/nav2_mapless.yaml').read_bytes()
+
+
 def test_saved_map_zones_reach_both_costmaps_through_keepout_filter(config):
     """zone_filter loads the mask; both costmaps read it through filter info."""
     mask = config['zone_filter_mask_server']['ros__parameters']

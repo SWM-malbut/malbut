@@ -69,13 +69,13 @@ def _map(tmp_path, name='home.yaml'):
     return str(path)
 
 
-def test_start_without_map_runs_only_slam(monkeypatch):
-    """No saved map selected: SLAM owns map->odom and only mapping is allowed."""
+def test_start_without_map_leaves_slam_off(monkeypatch):
+    """No saved map is needed for sensor-based functions, nor idle mapping."""
     controller, events, modes, node = _controller(monkeypatch)
     controller.start('')
-    assert events == ['slam_start']
-    assert modes == [LocalizationMode.SWITCHING, LocalizationMode.MAPPING]
-    assert json.loads(node.published[-1].data)['mode'] == 'MAPPING'
+    assert events == []
+    assert modes == [LocalizationMode.NONE]
+    assert json.loads(node.published[-1].data)['mode'] == 'NONE'
 
 
 def test_selecting_a_map_stops_slam_before_amcl_and_back(monkeypatch, tmp_path):
@@ -86,8 +86,8 @@ def test_selecting_a_map_stops_slam_before_amcl_and_back(monkeypatch, tmp_path):
     request.map_url = _map(tmp_path)
     response = controller._load_map_request(request, LoadMap.Response())
     assert response.result == LoadMap.Response.RESULT_SUCCESS
-    assert events[1:] == ['slam_stop', ('lifecycle', ManageLifecycleNodes.Request.STARTUP),
-                          ('load_map', request.map_url)]
+    assert events == ['slam_stop', ('lifecycle', ManageLifecycleNodes.Request.STARTUP),
+                      ('load_map', request.map_url)]
     assert json.loads(node.published[-1].data) == {
         'mode': 'LOCALIZATION', 'map': request.map_url,
         'message': 'saved map loaded; confirm the robot pose before driving'}
@@ -105,7 +105,7 @@ def test_switch_is_refused_while_the_base_is_in_use(monkeypatch, tmp_path):
     request.map_url = _map(tmp_path)
     response = controller._load_map_request(request, LoadMap.Response())
     assert response.result == LoadMap.Response.RESULT_UNDEFINED_FAILURE
-    assert events == ['slam_start'] and modes[-1] is LocalizationMode.MAPPING
+    assert events == [] and modes[-1] is LocalizationMode.NONE
 
 
 @pytest.mark.parametrize('name', ['missing.yaml', 'home.pgm'])
@@ -118,7 +118,7 @@ def test_unknown_map_files_are_rejected_before_switching(monkeypatch, tmp_path, 
     request.map_url = str(tmp_path / name)
     response = controller._load_map_request(request, LoadMap.Response())
     assert response.result == LoadMap.Response.RESULT_MAP_DOES_NOT_EXIST
-    assert events == ['slam_start']
+    assert events == []
 
 
 def test_rejected_map_reports_error_instead_of_localization(monkeypatch, tmp_path):
@@ -221,3 +221,70 @@ def test_unfinished_pose_search_is_canceled_and_reported(monkeypatch, tmp_path):
     assert client.canceled == ['cancel']
     state = json.loads(node.published[-1].data)
     assert state['mode'] == 'LOCALIZATION' and 'finding the pose failed' in state['message']
+
+
+def test_mapping_services_start_only_on_request_and_stop_to_mapless(monkeypatch):
+    controller, events, modes, _ = _controller(monkeypatch, busy=True)
+    controller._can_map = lambda: True  # The requesting AutoSLAM already owns BASE.
+    controller.start('')
+    response = controller._start_mapping_request(None, SimpleNamespace())
+    assert response.success and events == ['slam_start']
+    response = controller._stop_mapping_request(None, SimpleNamespace())
+    assert response.success and events == ['slam_start', 'slam_stop']
+    assert modes[-1] is LocalizationMode.NONE
+    controller._stop_mapping_request(None, SimpleNamespace())
+    assert events == ['slam_start', 'slam_stop']
+
+
+def test_other_base_missions_cannot_unload_the_map(monkeypatch, tmp_path):
+    controller, events, _, _ = _controller(monkeypatch, busy=True)
+    controller.start(_map(tmp_path))
+    before = list(events)
+    response = controller._stop_mapping_request(None, SimpleNamespace())
+    assert not response.success and events == before
+    assert controller.mode is LocalizationMode.LOCALIZATION
+
+
+def test_pose_search_precedes_map_planning_activation(monkeypatch, tmp_path):
+    """Spin stays in the independent motion group while map TF is established."""
+    controller, events, _, _ = _controller(monkeypatch)
+    controller._navigation = SimpleNamespace(
+        pause=lambda mapped: events.append(('nav_pause', mapped)),
+        activate=lambda mapped: events.append(('nav_activate', mapped)))
+    monkeypatch.setattr(controller, '_find_pose',
+                        lambda path: events.append('find_pose') or 'pose confirmed')
+    controller.start(_map(tmp_path))
+    assert events.index('find_pose') < events.index(('nav_activate', True))
+    assert events[0] == ('nav_pause', True)
+
+
+def test_failed_mapping_start_can_be_cleaned_up(monkeypatch):
+    controller, events, modes, _ = _controller(monkeypatch)
+    controller.start('')
+    monkeypatch.setattr(controller._slam, 'start',
+                        lambda: (_ for _ in ()).throw(OSError('missing executable')))
+    response = controller._start_mapping_request(None, SimpleNamespace())
+    assert not response.success and modes[-1] is LocalizationMode.ERROR
+    assert controller._stop_mapping_request(None, SimpleNamespace()).success
+    assert modes[-1] is LocalizationMode.NONE and events == ['slam_stop']
+
+
+@pytest.mark.parametrize('active,busy,allowed', [
+    (['autoslam'], True, True),
+    (['autoslam', 'follow_person'], True, False),
+    (['follow_person'], True, False),
+    ([], True, False),
+    ([], False, True),
+])
+def test_mapping_cleanup_uses_current_base_owner_not_queued_replacements(active, busy, allowed):
+    """A waiting replacement must not prevent AutoSLAM from releasing its backend."""
+    from threading import Lock
+    from malbut_system_manager.models import ExecutionResource
+    from malbut_system_manager.system_manager_node import SystemManagerNode
+    missions = [SimpleNamespace(resources=[ExecutionResource.BASE],
+                                capability=SimpleNamespace(capability_id=name))
+                for name in active]
+    node = SimpleNamespace(
+        _lock=Lock(), _state=SimpleNamespace(active=lambda: iter(missions)),
+        _scheduler=SimpleNamespace(base_busy=lambda: busy))
+    assert SystemManagerNode._mapping_may_switch(node) is allowed

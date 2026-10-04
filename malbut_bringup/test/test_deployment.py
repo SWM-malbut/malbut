@@ -183,6 +183,24 @@ def test_robot_fall_coordinator_matches_source_without_manager_domain_code():
     assert (ROOT.parent / manifest).read_bytes() == (ROOT / manifest).read_bytes()
 
 
+@pytest.mark.parametrize('path', [
+    'malbut_system_manager/malbut_system_manager/navigation.py',
+    'malbut_system_manager/malbut_system_manager/localization.py',
+    'malbut_system_manager/malbut_system_manager/system_manager_node.py',
+    'malbut_bringup/malbut_bringup/nav2_stack.py',
+    'malbut_bringup/malbut_bringup/readiness.py',
+    'malbut_bringup/config/nav2_mapless.yaml',
+    'malbut_autoslam/malbut_autoslam/autoslam_node.py',
+    'malbut_tracking/malbut_tracking/person_follower_node.py',
+    'malbut_tracking/src/lidar_foreground_preprocessor.cpp',
+    'malbut_interfaces/capabilities/follow_person.yaml',
+    'malbut_interfaces/capabilities/autoslam.yaml',
+])
+def test_robot_mapless_runtime_matches_source(path):
+    """Frame wiring, backend ownership and manifests must ship together."""
+    assert (ROOT.parent / path).read_bytes() == (ROOT / path).read_bytes()
+
+
 def test_robot_detector_matches_source_and_has_new_topics():
     """Never ship the old one-person detector beside a multi-person consumer."""
     original = ROOT.parent / 'homecam_agent/homecam_detector'

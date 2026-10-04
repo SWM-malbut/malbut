@@ -39,6 +39,7 @@ class MapRequirement(str, Enum):
 class LocalizationMode(str, Enum):
     """Runtime localization owned by the manager when enabled."""
 
+    NONE = 'NONE'
     SWITCHING = 'SWITCHING'
     MAPPING = 'MAPPING'
     LOCALIZATION = 'LOCALIZATION'

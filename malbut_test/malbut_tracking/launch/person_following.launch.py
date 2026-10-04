@@ -36,6 +36,7 @@ def generate_launch_description():
             default_value='/perception/lidar/foreground_clusters',
         ),
         DeclareLaunchArgument('global_frame', default_value='map'),
+        DeclareLaunchArgument('follow_costmap_frame', default_value='false'),
         DeclareLaunchArgument('robot_frame', default_value='base_footprint'),
     ]
     node = Node(
@@ -55,6 +56,7 @@ def generate_launch_description():
                     'lidar_clusters_topic'
                 ),
                 'global_frame': LaunchConfiguration('global_frame'),
+                'follow_costmap_frame': LaunchConfiguration('follow_costmap_frame'),
                 'robot_frame': LaunchConfiguration('robot_frame'),
             },
         ],
@@ -70,6 +72,7 @@ def generate_launch_description():
             'static_map_topic': LaunchConfiguration('static_map_topic'),
             'clusters_topic': LaunchConfiguration('lidar_clusters_topic'),
             'global_frame': LaunchConfiguration('global_frame'),
+            'follow_costmap_frame': LaunchConfiguration('follow_costmap_frame'),
         }.items(),
     )
     return LaunchDescription(arguments + [

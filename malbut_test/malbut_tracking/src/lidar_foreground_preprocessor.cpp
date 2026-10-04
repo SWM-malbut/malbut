@@ -123,6 +123,23 @@ public:
     scan_subscription_ = create_subscription<sensor_msgs::msg::LaserScan>(
       scan_topic_, rclcpp::SensorDataQoS(),
       std::bind(&LidarForegroundPreprocessor::queue_scan, this, std::placeholders::_1));
+    if (follow_costmap_frame_) {
+      costmap_subscription_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
+        "/global_costmap/costmap", rclcpp::QoS(1).transient_local().reliable(),
+        [this](nav_msgs::msg::OccupancyGrid::ConstSharedPtr message) {
+          const auto & frame = message->header.frame_id;
+          if ((frame != "map" && frame != "odom") || frame == global_frame_) {
+            return;
+          }
+          global_frame_ = frame;
+          map_ready_ = false;
+          pending_scan_.reset();
+          latest_scan_.reset();
+          if (last_map_ && last_map_->header.frame_id == frame) {
+            on_static_map(last_map_);
+          }
+        });
+    }
     scan_transform_timer_ = create_wall_timer(
       std::chrono::milliseconds(20),
       std::bind(&LidarForegroundPreprocessor::process_pending_scan, this));
@@ -142,6 +159,7 @@ private:
     declare_parameter(
       "processing_trace_topic", "/perception/sensor_processing_trace");
     declare_parameter("global_frame", "map");
+    declare_parameter("follow_costmap_frame", false);
     declare_parameter("static_occupied_threshold", 65);
     declare_parameter("static_exclusion_radius_m", 0.20);
     declare_parameter("cluster_gap_m", 0.20);
@@ -159,6 +177,7 @@ private:
     clusters_topic_ = get_parameter("clusters_topic").as_string();
     processing_trace_topic_ = get_parameter("processing_trace_topic").as_string();
     global_frame_ = get_parameter("global_frame").as_string();
+    follow_costmap_frame_ = get_parameter("follow_costmap_frame").as_bool();
     occupied_threshold_ = get_parameter("static_occupied_threshold").as_int();
     exclusion_radius_m_ = get_parameter("static_exclusion_radius_m").as_double();
     cluster_gap_m_ = get_parameter("cluster_gap_m").as_double();
@@ -195,6 +214,10 @@ private:
 
   void on_static_map(const nav_msgs::msg::OccupancyGrid::SharedPtr message)
   {
+    last_map_ = message;
+    if (follow_costmap_frame_ && message->header.frame_id != global_frame_) {
+      return;
+    }
     const auto expected_size =
       static_cast<std::size_t>(message->info.width) * message->info.height;
     if (message->header.frame_id != global_frame_ || message->info.resolution <= 0.0 ||
@@ -253,6 +276,9 @@ private:
 
   std::optional<float> static_clearance(float world_x, float world_y) const
   {
+    if (!map_ready_) {
+      return std::numeric_limits<float>::infinity();
+    }
     const double offset_x = static_cast<double>(world_x) - map_origin_x_;
     const double offset_y = static_cast<double>(world_y) - map_origin_y_;
     const double local_x = map_origin_cos_ * offset_x + map_origin_sin_ * offset_y;
@@ -276,7 +302,7 @@ private:
   void queue_scan(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan)
   {
     const auto receipt_steady_time_ns = monotonic_time_ns();
-    if (!map_ready_ || scan->header.frame_id.empty()) {
+    if ((!map_ready_ && !follow_costmap_frame_) || scan->header.frame_id.empty()) {
       return;
     }
     // Do not replace a scan still waiting for its measurement-time TF: a TF
@@ -441,6 +467,9 @@ private:
   std::string clusters_topic_;
   std::string processing_trace_topic_;
   std::string global_frame_;
+  bool follow_costmap_frame_{false};
+  nav_msgs::msg::OccupancyGrid::SharedPtr last_map_;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_subscription_;
   std::int64_t occupied_threshold_{65};
   double exclusion_radius_m_{0.20};
   double cluster_gap_m_{0.20};

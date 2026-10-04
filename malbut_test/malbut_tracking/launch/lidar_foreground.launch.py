@@ -27,6 +27,7 @@ def generate_launch_description():
             default_value='/perception/sensor_processing_trace',
         ),
         DeclareLaunchArgument('global_frame', default_value='map'),
+        DeclareLaunchArgument('follow_costmap_frame', default_value='false'),
     ]
     node = Node(
         package='malbut_tracking',
@@ -44,6 +45,7 @@ def generate_launch_description():
                     'processing_trace_topic'
                 ),
                 'global_frame': LaunchConfiguration('global_frame'),
+                'follow_costmap_frame': LaunchConfiguration('follow_costmap_frame'),
             },
         ],
     )

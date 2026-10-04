@@ -21,7 +21,7 @@ from rclpy.clock import Clock, ClockType
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.task import Future
 from rclpy.time import Time
 from std_msgs.msg import String
@@ -128,6 +128,9 @@ class PersonFollowerNode(Node):
             self.get_parameter('odometry_frame').value
         )
         self._robot_frame = str(self.get_parameter('robot_frame').value)
+        self._follow_costmap_frame = bool(self.get_parameter('follow_costmap_frame').value)
+        self._expected_costmap_frame = None
+        self._localization_switching = False
         self._tf_buffer = Buffer()
         # One executor owns this node. All TF lookups are non-blocking so its
         # subscriptions can fill the buffer before the pending-frame retry.
@@ -218,6 +221,10 @@ class PersonFollowerNode(Node):
             self._on_global_costmap,
             1,
         )
+        self._localization_subscription = (self.create_subscription(
+            String, '/malbut/localization/state', self._on_localization_state,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+            if self._follow_costmap_frame else None)
         self._action_server = ActionServer(
             self,
             FollowPerson,
@@ -369,6 +376,7 @@ class PersonFollowerNode(Node):
         self.declare_parameter('navigation_retry_delay_s', 0.75)
         self.declare_parameter('nav2_planning_timeout_s', 0.20)
         self.declare_parameter('global_frame', 'map')
+        self.declare_parameter('follow_costmap_frame', False)
         self.declare_parameter('odometry_frame', 'odom')
         self.declare_parameter('robot_frame', 'base_footprint')
         self.declare_parameter('minimum_confidence', 0.20)
@@ -546,6 +554,10 @@ class PersonFollowerNode(Node):
     def _goal_callback(self, request) -> GoalResponse:
         if self._active_goal is not None or self._result_future is not None:
             self.get_logger().warning('Rejecting concurrent follow action')
+            return GoalResponse.REJECT
+        if getattr(self, '_follow_costmap_frame', False) and (
+                self._localization_switching or self._latest_global_costmap is None):
+            self.get_logger().warning('Waiting for a costmap in the current navigation frame')
             return GoalResponse.REJECT
         try:
             self._settings_for_goal(request)
@@ -922,8 +934,39 @@ class PersonFollowerNode(Node):
             self.get_parameter('bearing_only_variance_threshold_m2').value
         )
 
+    def _on_localization_state(self, message: String) -> None:
+        """Discard the previous frame's grid while the manager changes profiles."""
+        try:
+            mode = json.loads(message.data)['mode']
+        except (ValueError, KeyError, TypeError):
+            return
+        if mode in ('SWITCHING', 'ERROR'):
+            self._localization_switching = True
+            self._latest_global_costmap = None
+        elif mode in ('NONE', 'MAPPING', 'LOCALIZATION'):
+            frame = self._odometry_frame if mode == 'NONE' else 'map'
+            if self._localization_switching or frame != self._expected_costmap_frame:
+                self._latest_global_costmap = None
+            self._expected_costmap_frame = frame
+            self._localization_switching = False
+
     def _on_global_costmap(self, message: Costmap) -> None:
         """Cache the merged Nav2 grid for the camera-ray target and fallback."""
+        if getattr(self, '_localization_switching', False):
+            return
+        expected = getattr(self, '_expected_costmap_frame', None)
+        if expected and message.header.frame_id != expected:
+            return
+        if (self.get_parameter('follow_costmap_frame').value
+                and message.header.frame_id in ('map', self._odometry_frame)
+                and message.header.frame_id != self._global_frame):
+            if self._active_goal is not None or self._result_future is not None:
+                return  # Never change coordinates under a live follow Goal.
+            self._global_frame = message.header.frame_id
+            self._obstacle_tracker.reset()
+            self._camera_estimator.reset()
+            self._last_lidar_stamp_s = None
+            self._pending_detection = None
         try:
             grid = self._costmap_grid(message)
         except ValueError as error:

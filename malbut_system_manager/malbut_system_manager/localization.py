@@ -17,10 +17,12 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 from .models import LocalizationMode
+from .navigation import NavigationProfile
 
 
 LOAD_MAP_SERVICE = '/malbut/localization/load_map'
 START_MAPPING_SERVICE = '/malbut/localization/start_mapping'
+STOP_MAPPING_SERVICE = '/malbut/localization/stop_mapping'
 STATE_TOPIC = '/malbut/localization/state'
 _PR_SET_PDEATHSIG = 1
 
@@ -88,11 +90,15 @@ class LocalizationController:
         service_timeout_s: float,
         relocalize_action: str = '',
         relocalize_timeout_s: float = 90.0,
+        navigation_profiles: dict | None = None,
+        initially_mapped: bool = False,
+        can_map: Callable[[], bool] | None = None,
     ) -> None:
         self._node = node
         self._slam = slam
         self._on_mode = on_mode
         self._can_switch = can_switch
+        self._can_map = can_map or can_switch
         self._timeout_s = service_timeout_s
         self._relocalize_timeout_s = relocalize_timeout_s
         self._closing = False
@@ -111,6 +117,9 @@ class LocalizationController:
             ManageLifecycleNodes, lifecycle_service, callback_group=group)
         self._map_server = node.create_client(
             LoadMap, map_server_load_service, callback_group=group)
+        self._navigation = (NavigationProfile(
+            node, group, navigation_profiles, initially_mapped, self._call)
+            if navigation_profiles else None)
         # Finds the robot on each loaded map; empty leaves it to the operator.
         self._relocalize = (ActionClient(node, Relocalize, relocalize_action,
                                          callback_group=group)
@@ -120,6 +129,8 @@ class LocalizationController:
                                 callback_group=group),
             node.create_service(Trigger, START_MAPPING_SERVICE,
                                 self._start_mapping_request, callback_group=group),
+            node.create_service(Trigger, STOP_MAPPING_SERVICE,
+                                self._stop_mapping_request, callback_group=group),
         ]
         self._monitor = node.create_timer(1.0, self._check_slam, callback_group=group)
         self._publish('starting localization')
@@ -131,8 +142,8 @@ class LocalizationController:
                 if initial_map:
                     self._to_localization(_map_file(initial_map))
                 else:
-                    self._to_mapping()
-            except (LocalizationError, OSError) as error:
+                    self._set(LocalizationMode.NONE, None, self._message(LocalizationMode.NONE))
+            except (RuntimeError, OSError) as error:
                 self._fail(str(error))
 
     def close(self) -> None:
@@ -149,6 +160,34 @@ class LocalizationController:
     def _start_mapping_request(self, request, response):
         del request
         response.success, response.message = self._switch(None)
+        return response
+
+    def _stop_mapping_request(self, request, response):
+        del request
+        if not self._switch_lock.acquire(blocking=False):
+            response.success, response.message = False, 'localization switch is in progress'
+            return response
+        try:
+            if not self._can_map():
+                response.success = False
+                response.message = 'cancel base missions before stopping mapping'
+                return response
+            if self.mode is not LocalizationMode.NONE:
+                self._set(LocalizationMode.SWITCHING, None, 'stopping mapping')
+                if self._navigation:
+                    self._navigation.pause(False)
+                self._slam.stop()
+                if self._localization_started:
+                    self._reset_localization()
+                if self._navigation:
+                    self._navigation.activate(False)
+                self._set(LocalizationMode.NONE, None, self._message(LocalizationMode.NONE))
+            response.success, response.message = True, self._last_message
+        except (RuntimeError, OSError) as error:
+            self._fail(str(error))
+            response.success, response.message = False, str(error)
+        finally:
+            self._switch_lock.release()
         return response
 
     def _load_map_request(self, request, response):
@@ -173,14 +212,14 @@ class LocalizationController:
                       else LocalizationMode.MAPPING)
             if self.mode is target and self.map_path == map_path:
                 return True, f'already {target.value.lower()}'
-            if not self._can_switch():
+            if not (self._can_switch() if map_path else self._can_map()):
                 return False, 'cancel missions that use the base before switching maps'
             if map_path:
                 self._to_localization(map_path)
             else:
                 self._to_mapping()
             return True, self._last_message
-        except (LocalizationError, OSError) as error:
+        except (RuntimeError, OSError) as error:
             self._fail(str(error))
             return False, str(error)
         finally:
@@ -188,14 +227,20 @@ class LocalizationController:
 
     def _to_mapping(self) -> None:
         self._set(LocalizationMode.SWITCHING, None, 'switching to mapping')
+        if self._navigation:
+            self._navigation.pause(True)
         if self._localization_started:
             # RESET also removes map_server's latched map and AMCL's map->odom.
             self._reset_localization()
         self._slam.start()
+        if self._navigation:
+            self._navigation.activate(True)
         self._set(LocalizationMode.MAPPING, None, self._message(LocalizationMode.MAPPING))
 
     def _to_localization(self, map_path: str) -> None:
         self._set(LocalizationMode.SWITCHING, map_path, 'switching to the saved map')
+        if self._navigation:
+            self._navigation.pause(True)
         self._slam.stop()
         if self._localization_started and self._loaded_map != map_path:
             # AMCL keeps its particles across maps; start the new map without a pose.
@@ -210,7 +255,10 @@ class LocalizationController:
             raise LocalizationError(
                 f'map_server rejected {map_path} (result {response.result})')
         self._loaded_map = map_path
-        self._set(LocalizationMode.LOCALIZATION, map_path, self._find_pose(map_path))
+        message = self._find_pose(map_path)
+        if self._navigation:
+            self._navigation.activate(True)
+        self._set(LocalizationMode.LOCALIZATION, map_path, message)
 
     def _reset_localization(self) -> None:
         self._manage_nodes(ManageLifecycleNodes.Request.RESET)
@@ -295,7 +343,9 @@ class LocalizationController:
     def _message(self, mode: LocalizationMode | None = None) -> str:
         mode = mode or self.mode
         if mode is LocalizationMode.MAPPING:
-            return 'mapping: no saved map selected; only mapping missions are available'
+            return 'SLAM is running for map creation'
+        if mode is LocalizationMode.NONE:
+            return 'no map selected; sensor-based functions are available'
         if mode is LocalizationMode.LOCALIZATION:
             return 'saved map loaded; confirm the robot pose before driving'
         return mode.value.lower()

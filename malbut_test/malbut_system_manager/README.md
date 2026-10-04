@@ -67,19 +67,24 @@ NORMAL·LOW 이동을 취소하고 수동 조작 중 NORMAL·LOW 이동 요청�
 아래 parameter는 기본값이 꺼져 있어 단독 실행·시뮬레이션 실험은 이전과 같습니다.
 실로봇 Bringup이 켭니다.
 
-- `ready_topic`: 준비 검사기의 `/malbut/bringup/status`가 READY를 보내기 전까지
-  `BOOTING`으로 미션을 거부합니다.
+- `ready_topic`: 지정하면 해당 Topic의 READY 전까지 `BOOTING`으로 미션을 거부합니다.
+  실로봇 모듈형 Bringup은 빈 값으로 두며 전체 연결 신호는 웹 표시에만 씁니다.
 - `localization_control`: 관리자 내부 모듈(`localization.py`)이 map→odom을 내는 위치
-  추정을 하나만 유지합니다. 저장 지도가 없으면 slam_toolbox를 자식 프로세스로 실행하고,
+  추정을 하나만 유지합니다. 저장 지도가 없으면 `NONE`으로 대기하고,
   선택되면 SLAM을 끄고 `lifecycle_manager_localization`으로 map_server·AMCL을 켠 뒤
   지도를 로드합니다. 전환은 `/malbut/localization/load_map`(`nav2_msgs/srv/LoadMap`),
-  `/malbut/localization/start_mapping`(`std_srvs/srv/Trigger`)으로 요청하고 상태는
+  `/malbut/localization/start_mapping`, `/malbut/localization/stop_mapping`
+  (`std_srvs/srv/Trigger`)으로 요청하고 상태는
   `/malbut/localization/state`(`std_msgs/String` JSON)로 발행합니다. `BASE` 미션이
   실행·대기 중이면 전환을 거부합니다. Manifest의 `execution.map_requirement`에 따라
   `SELECTED` 기능은 저장 지도 선택 후, `NOT_SELECTED` 기능은 지도 작성 중에만 받습니다.
   전환 중(`SWITCHING`)에는 둘 다 거부하고, 위치 보정이 로봇을 회전시킬 수 있으므로
   `BASE`를 쓰는 다른 미션(수동 조작 포함)도 거부합니다. 다른 저장 지도로 바꿀 때는
   AMCL을 RESET해 이전 지도의 위치를 넘기지 않습니다.
+  AutoSLAM은 자신의 BASE 점유 상태에서 SLAM 시작·종료를 요청할 수 있지만 다른 BASE
+  미션이 아직 실행·취소 중이면 전환하지 않습니다. 다음 미션의 대기는 정리를 막지 않습니다.
+  추적·AutoSLAM은 저장 지도 조건이 없고,
+  순찰·목적지 이동·위치 보정은 저장 지도가 필요합니다.
 - `relocalize_action`: 저장 지도를 불러올 때마다 이 Action(Bringup에서는
   `/relocalize`, `malbut_relocalization`)을 `AUTO`로 요청하고, 결과가 나올 때까지
   `SWITCHING`을 유지합니다. 결과는 위치 추정 상태의 `message`로 알립니다.

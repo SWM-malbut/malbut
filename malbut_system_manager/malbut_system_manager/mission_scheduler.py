@@ -487,7 +487,7 @@ class MissionScheduler:
             return f'localization is {localization.value}; retry after it settles'
         if (requirement is MapRequirement.SELECTED
                 and localization is not LocalizationMode.LOCALIZATION):
-            return 'select a saved map first; only mapping is available'
+            return 'select a saved map first for this capability'
         if (requirement is MapRequirement.NOT_SELECTED
                 and localization is not LocalizationMode.MAPPING):
             return 'switch to mapping first; a saved map is selected'

@@ -1,0 +1,19 @@
+# Only the map-dependent inputs change. LiDAR, footprint, inflation and driving
+# parameters still come from nav2_params.yaml. The window spans the 3 m scan raytrace.
+bt_navigator:
+  ros__parameters:
+    global_frame: odom
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      global_frame: odom
+      rolling_window: true
+      width: 6
+      height: 6
+      plugins: [obstacle_layer, inflation_layer]
+      filters: []
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      keepout_filter:
+        enabled: false

@@ -2,8 +2,10 @@
 
 from types import SimpleNamespace
 from unittest.mock import Mock
+import json
 
 import pytest
+from rclpy.action import GoalResponse
 
 from malbut_tracking.follow_policy import FollowSettings
 from malbut_tracking.geometry import Point2D
@@ -33,6 +35,53 @@ def test_goal_distance_accepts_minimum_and_retains_zero_as_default():
             PersonFollowerNode._settings_for_goal(
                 follower, SimpleNamespace(desired_distance_m=requested),
             )
+
+
+@pytest.mark.parametrize('active', [False, True])
+def test_costmap_frame_changes_only_between_follow_goals(active):
+    """Mapless odom targets must not reuse a map-frame estimator history."""
+    grid = object()
+    follower = SimpleNamespace(
+        get_parameter=lambda name: SimpleNamespace(value=True),
+        _odometry_frame='odom', _global_frame='map',
+        _active_goal=object() if active else None, _result_future=None,
+        _obstacle_tracker=Mock(), _camera_estimator=Mock(),
+        _last_lidar_stamp_s=4.0, _pending_detection=object(),
+        _costmap_grid=Mock(return_value=grid), _latest_global_costmap=None)
+    PersonFollowerNode._on_global_costmap(
+        follower, SimpleNamespace(header=SimpleNamespace(frame_id='odom')))
+    if active:
+        assert follower._global_frame == 'map'
+        follower._costmap_grid.assert_not_called()
+        follower._camera_estimator.reset.assert_not_called()
+    else:
+        assert follower._global_frame == 'odom' and follower._latest_global_costmap is grid
+        follower._obstacle_tracker.reset.assert_called_once()
+        follower._camera_estimator.reset.assert_called_once()
+        assert follower._pending_detection is None and follower._last_lidar_stamp_s is None
+
+
+def test_map_transition_discards_old_grid_and_requires_a_current_frame_before_following():
+    """A delayed mapless grid must not lock a new Goal into the previous frame."""
+    follower = SimpleNamespace(
+        _odometry_frame='odom', _localization_switching=False,
+        _expected_costmap_frame='odom', _latest_global_costmap=object(),
+        _active_goal=None, _result_future=None, _follow_costmap_frame=True,
+        get_logger=Mock(), _settings_for_goal=Mock(), _validate_target_request=Mock(),
+        _costmap_grid=Mock())
+    PersonFollowerNode._on_localization_state(
+        follower, SimpleNamespace(data=json.dumps({'mode': 'SWITCHING'})))
+    assert follower._latest_global_costmap is None
+    assert PersonFollowerNode._goal_callback(follower, object()) == GoalResponse.REJECT
+    PersonFollowerNode._on_localization_state(
+        follower, SimpleNamespace(data=json.dumps({'mode': 'LOCALIZATION'})))
+    assert follower._expected_costmap_frame == 'map'
+    PersonFollowerNode._on_global_costmap(
+        follower, SimpleNamespace(header=SimpleNamespace(frame_id='odom')))
+    follower._costmap_grid.assert_not_called()
+    assert PersonFollowerNode._goal_callback(follower, object()) == GoalResponse.REJECT
+    follower._latest_global_costmap = object()
+    assert PersonFollowerNode._goal_callback(follower, object()) == GoalResponse.ACCEPT
 
 
 def test_nav2_feedback_forwards_only_the_current_goal():

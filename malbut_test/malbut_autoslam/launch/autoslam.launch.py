@@ -18,6 +18,8 @@ def generate_launch_description():
         DeclareLaunchArgument('base_frame', default_value='base_footprint'),
         DeclareLaunchArgument('navigation_action', default_value='/navigate_to_pose'),
         DeclareLaunchArgument('planning_action', default_value='/compute_path_to_pose'),
+        DeclareLaunchArgument('start_mapping_service', default_value=''),
+        DeclareLaunchArgument('stop_mapping_service', default_value=''),
         DeclareLaunchArgument('ready_timeout_s', default_value='30.0'),
         DeclareLaunchArgument('max_exploration_time_s', default_value='1200.0'),
         DeclareLaunchArgument('map_directory', default_value=str(
@@ -45,7 +47,8 @@ def generate_launch_description():
                 **{
                     name: LaunchConfiguration(name) for name in (
                         'map_topic', 'base_frame', 'navigation_action',
-                        'planning_action', 'map_directory')
+                        'planning_action', 'map_directory', 'start_mapping_service',
+                        'stop_mapping_service')
                 }}],
         ),
     ])

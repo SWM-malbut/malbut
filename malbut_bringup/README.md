@@ -48,7 +48,8 @@ ros2 launch malbut_bringup patrol.launch.py
 다른 모듈의 실행을 막거나 정상 노드를 종료하지 않는다. 단독 launch의 잘못된
 설정은 오류로 종료한다. 프로세스 실행은 기능 준비 완료/안전한 주행을 뜻하지 않는다.
 
-모듈 분리는 프로세스 분리가 아니다. Nav2는 기존 컨테이너와 lifecycle 구성을 유지한다.
+모듈 분리는 프로세스 분리가 아니다. Nav2는 기존 컨테이너를 유지하되,
+기본 주행과 지도 기반 경로 계획의 lifecycle 관리를 분리한다.
 이번 변경에서는 복구를 개편하지 않는다. 새 통합 launch의 기존 단계형 복구 요청은
 거절하며, 모듈별 복구 연결은 후속 작업이다. 빈 복구 작업을 성공으로 보고하지 않는다.
 `malbut_test`의 자원 기록기는 통합 진입점에서 모듈들보다 먼저 실행되며,
@@ -63,12 +64,22 @@ PulseAudio 공유 설정을 적용하며, 단독 실행에서는 같은 입력 �
 
 | 저장 지도 | 위치 추정 | 가능한 이동 미션 |
 | --- | --- | --- |
-| 선택 안 됨 (기본, `map` 인자 없음) | slam_toolbox로 지도 작성 | 자동 지도 만들기, 수동 조작 |
+| 선택 안 됨 (기본, `map` 인자 없음) | odom + 센서 장애물, SLAM·AMCL 미실행 | 사람 추적, 자동 지도 만들기, 수동 조작 |
 | 선택됨 (`map:=...` 또는 실행 중 선택) | 저장 지도 + AMCL, 선택할 때 위치 보정 | 사람 추적, 순찰, 목적지 이동, 위치 보정, 수동 조작 |
 
-관리자는 시작하자마자 위치 추정을 켠다. Nav2 global costmap은 `map` TF가 생겨야
-활성화되기 때문이다. 관리자는 선택 기능 전체의 READY를 기다리지 않으며,
-미션별 Action 연결·지도 모드·안전 조건을 확인한다([위치 추정 전환](#위치-추정-전환)).
+지도 없이는 `nav2_mapless.yaml`을 추가 적용해 global costmap을 odom rolling window로
+사용한다. LiDAR·inflation·차체 footprint는 유지하고 static map·금지 구역 입력만 뺀다.
+저장 지도를 선택하면 원래 map 기반 설정을 복원한다. 사람 추적은 유휴 시 costmap
+좌표계에 맞추며 실행 중에는 좌표계를 바꾸지 않는다.
+
+자동 지도 만들기 Goal을 받으면 기존 관리자 서비스로 SLAM을 시작한다. 완료·실패·취소 시
+하위 Nav2 종료를 확인한 뒤 SLAM을 종료하고 지도 없는 상태로 돌아온다. 저장 지도를
+사용하려면 새로 저장한 지도를 선택한다. 관리자는 전체 READY를 기다리지 않고 기능별
+Action·지도·안전 조건만 확인한다.
+
+통합 launch의 `bringup_connections`는 노드 응답·Nav2 lifecycle·Action·센서 발행자와
+기존 음성 상태를 조회해 `/malbut/bringup/status`와 `/malbut/bringup/progress`로 알린다.
+웹 완료 표시에만 쓰며, 준비가 늦어도 다른 모듈을 막거나 종료·복구하지 않는다.
 
 STT·Agent·TTS는 기본 포함이며 Nav2·관리자 준비를 기다리지 않고 시작한다.
 STT의 기존 CUDA 초기화 재시도와 제한시간은 유지하되, 음성 실패가 전체 Bringup을
@@ -405,13 +416,14 @@ ros2 launch navigation rviz_navigation.launch.py
 | --- | --- | --- |
 | `/malbut/localization/load_map` | `nav2_msgs/srv/LoadMap` | slam_toolbox 종료 → map_server·AMCL 시작 → 지도 로드 → 위치 보정 |
 | `/malbut/localization/start_mapping` | `std_srvs/srv/Trigger` | map_server·AMCL 정리(RESET) → slam_toolbox 시작 |
-| `/malbut/localization/state` | `std_msgs/String`(JSON) | `mode`(`SWITCHING`·`MAPPING`·`LOCALIZATION`·`ERROR`), `map`, `message` |
+| `/malbut/localization/stop_mapping` | `std_srvs/srv/Trigger` | SLAM·AMCL 정리 → odom 센서 기반 주행 복원 |
+| `/malbut/localization/state` | `std_msgs/String`(JSON) | `mode`(`NONE`·`SWITCHING`·`MAPPING`·`LOCALIZATION`·`ERROR`), `map`, `message` |
 
-- `BASE`를 쓰는 미션이 실행·대기 중이면 전환을 거부한다. 먼저 취소한다.
+- `BASE`를 쓰는 다른 미션이 실행·대기 중이면 전환을 거부한다. 먼저 취소한다.
+  AutoSLAM 자체가 요청하는 지도 작성 시작·종료는 허용한다.
 - 전환 중(`SWITCHING`, 위치 보정 포함)에는 `BASE`를 쓰는 미션을 모두 거부한다.
   위치 보정이 로봇을 회전시킬 수 있기 때문이다. 수동 조작도 이때만 거부되며
-  전환이 끝나면 다시 요청된다. 오류 상태에서는 지도가 필요한 미션과 자동 지도
-  만들기를 거부한다.
+  전환이 끝나면 다시 요청된다. 오류 상태에서는 지도가 필요한 미션을 거부한다.
 - 다른 저장 지도로 바꿀 때는 AMCL을 RESET한 뒤 다시 켠다. AMCL이 이전 지도의
   위치를 새 지도에 넘기지 않게 하기 위해서다.
 - slam_toolbox는 관리자가 자식 프로세스로 실행하며, 관리자가 종료되거나 강제

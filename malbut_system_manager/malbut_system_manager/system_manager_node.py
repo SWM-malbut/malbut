@@ -32,6 +32,7 @@ from .mission_scheduler import MissionScheduler
 from .models import (
     ControlMode,
     ExecutionMode,
+    ExecutionResource,
     LocalizationMode,
     MissionCompletion,
     MissionPriority,
@@ -212,8 +213,12 @@ class SystemManagerNode(Node):
                 'relocalize_action', ''
             ).value,
             relocalize_timeout_s=relocalize_timeout_s,
+            navigation_profiles=json.loads(
+                self.declare_parameter('navigation_profiles', '{}').value),
+            initially_mapped=bool(self.declare_parameter('initial_map', '').value),
+            can_map=self._mapping_may_switch,
         )
-        initial_map = self.declare_parameter('initial_map', '').value
+        initial_map = self.get_parameter('initial_map').value
 
         def start_once() -> None:
             timer.cancel()
@@ -232,6 +237,21 @@ class SystemManagerNode(Node):
     def _base_is_free(self) -> bool:
         with self._lock:
             return not self._scheduler.base_busy()
+
+    def _mapping_may_switch(self) -> bool:
+        # AutoSLAM already owns BASE when it requests its mapping backend.
+        # Other base missions must still settle before changing coordinate frames.
+        with self._lock:
+            active = list(self._state.active())
+            if not any(ExecutionResource.BASE in mission.resources
+                       and mission.capability.capability_id == 'autoslam'
+                       for mission in active):
+                return not self._scheduler.base_busy()
+            # Replacement missions wait for AutoSLAM's cleanup. Counting them
+            # here would reject that cleanup and leave SLAM running on preemption.
+            return all(ExecutionResource.BASE not in mission.resources
+                       or mission.capability.capability_id == 'autoslam'
+                       for mission in active)
 
     def _on_readiness(self, message: String) -> None:
         try:

@@ -730,6 +730,7 @@ def test_high_priority_manual_drive_reports_manual_and_blocks_normal_motion():
 
 @pytest.mark.parametrize('localization,allowed', [
     (None, {'map', 'mapping', 'any', 'speak'}),
+    (LocalizationMode.NONE, {'any', 'speak'}),
     (LocalizationMode.MAPPING, {'mapping', 'any', 'speak'}),
     (LocalizationMode.LOCALIZATION, {'map', 'any', 'speak'}),
     # Finding the pose may rotate the robot: nothing that drives starts meanwhile.
@@ -737,7 +738,7 @@ def test_high_priority_manual_drive_reports_manual_and_blocks_normal_motion():
     (LocalizationMode.ERROR, {'any', 'speak'}),
 ])
 def test_map_requirement_gates_only_declared_capabilities(localization, allowed):
-    """Without a selected map only mapping runs; unmanaged maps never gate."""
+    """Mapless capabilities remain available; unmanaged maps never gate."""
     requirements = {
         'map': (MapRequirement.SELECTED, None),
         'mapping': (MapRequirement.NOT_SELECTED, None),

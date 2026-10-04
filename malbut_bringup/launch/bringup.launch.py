@@ -36,6 +36,7 @@ def _setup(context):
             options[key] = options[key] or str(uuid4())
     if value('speech') == 'true':
         enabled.append('speech')
+    observed = tuple(enabled)  # Keep failed selected modules visible as incomplete.
     # Shared microphone setup is local wiring, not a ROS readiness prerequisite.
     # A failure affects only the two microphone consumers, never navigation.
     actions = [SetEnvironmentVariable('need_compile', 'False')]
@@ -74,6 +75,34 @@ def _setup(context):
         actions.append(include(
             package_file('malbut_bringup', f'launch/{name}.launch.py'), settings,
             environment=audio_env if name in ('homecam', 'speech') else None))
+    nodes = {
+        'robot': ['system_manager', 'controller_server', 'planner_server', 'bt_navigator',
+                  'behavior_server', 'teleop_behavior_server', 'collision_monitor'],
+        'tracking': ['yolo/yolo_node', 'person_reidentifier', 'person_localizer',
+                     'person_follower', 'lidar_foreground_preprocessor'],
+        'patrol': ['patrol_manager'], 'autoslam': ['autoslam', 'autoslam_map_saver'],
+        'manual': ['manual_control'], 'relocalization': ['relocalization'],
+        'homecam': ['homecam_media_agent'],
+        'fall': ['fall_coordinator', 'malbut_fall_pose', 'malbut_cloud_fall_monitor'],
+        'speech': ['malbut_stt', 'malbut_agent_communication', 'malbut_tts'],
+    }
+    endpoints = {
+        'robot': ['/malbut/mission/execute', '/navigate_to_pose', '/compute_path_to_pose',
+                  '/follow_path', '/spin', '/wait', '/backup', '/assisted_teleop'],
+        'tracking': ['/follow_person'], 'patrol': ['/patrol'], 'autoslam': ['/autoslam'],
+        'relocalization': ['/relocalize'],
+    }
+    actions.append(Node(
+        package='malbut_bringup', executable='wait_for_robot', name='bringup_connections',
+        output='screen', parameters=[{
+            'use_sim_time': False, 'observe_only': True, 'startup_stage': 'extensions',
+            'speech': 'speech' in observed,
+            'startup_nodes': ','.join(node for name in observed for node in nodes[name]),
+            'required_actions': ','.join(action for name in observed
+                                         for action in endpoints.get(name, [])),
+            'required_topics': ','.join(value(name) for name in (
+                'scan_topic', 'odom_topic', 'rgb_topic', 'depth_topic', 'camera_info_topic')),
+        }]))
     if value('web_panel') == 'true':
         actions.append(Node(
             package='malbut_bringup', executable='robot_web_panel',

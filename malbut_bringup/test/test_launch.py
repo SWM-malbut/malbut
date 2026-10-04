@@ -288,19 +288,25 @@ def test_nav2_is_composed_with_collision_monitor_and_zone_filter(launch_module):
         'nav2_collision_monitor::CollisionMonitor')
     for name, item in components.items():
         if not name.startswith('lifecycle_manager'):
-            assert [str(path) for path in item['parameters']] == [params], name
+            assert [str(path) for path in item['parameters']] == [
+                params, str(ROOT / 'malbut_bringup/config/nav2_mapless.yaml')], name
             assert item['remappings']['/scan_raw'] == '/laser_raw', name
     navigation = components['lifecycle_manager_navigation']['parameters'][0]
+    motion = components['lifecycle_manager_motion']['parameters'][0]
     localization = components['lifecycle_manager_localization']['parameters'][0]
     assert navigation['autostart'] is True and localization['autostart'] is False
     assert navigation['attempt_respawn_reconnection'] is False
     assert localization['attempt_respawn_reconnection'] is False
-    order = list(navigation['node_names'])
+    assert motion['autostart'] is True
+    assert motion['attempt_respawn_reconnection'] is False
+    order = list(motion['node_names'])
     assert order[:2] == ['zone_filter_mask_server', 'zone_filter_info_server']
     # Spinning to find the pose must not wait for the map-frame global costmap.
     for name in ('behavior_server', 'teleop_behavior_server', 'velocity_smoother',
                  'collision_monitor'):
-        assert order.index(name) < order.index('planner_server'), name
+        assert name in order and name not in navigation['node_names'], name
+    assert list(navigation['node_names']) == [
+        'planner_server', 'bt_navigator', 'waypoint_follower']
     assert list(localization['node_names']) == ['map_server', 'amcl']
     assert _nodes(actions, 'zone_filter')[0].node_package == 'malbut_bringup'
 
@@ -320,9 +326,9 @@ def test_nav2_recovery_reloads_components_and_selected_map_without_motion(launch
     second = reload({'mode': 'MAPPING'}, None)
     assert first[0] is not second[0]
     saved = _components(context, first)
-    assert saved['map_server']['parameters'][1]['yaml_filename'] == '/maps/home.yaml'
-    assert saved['amcl']['parameters'][1]['set_initial_pose'] is True
-    assert saved['amcl']['parameters'][1]['initial_pose.x'] == 1.5
+    assert saved['map_server']['parameters'][-1]['yaml_filename'] == '/maps/home.yaml'
+    assert saved['amcl']['parameters'][-1]['set_initial_pose'] is True
+    assert saved['amcl']['parameters'][-1]['initial_pose.x'] == 1.5
     assert saved['lifecycle_manager_localization']['parameters'][0]['autostart'] is False
     assert saved['lifecycle_manager_navigation']['parameters'][0]['autostart'] is False
     mapping = _components(context, second)
@@ -330,11 +336,13 @@ def test_nav2_recovery_reloads_components_and_selected_map_without_motion(launch
     groups = container._malbut_recovery_lifecycle(
         {'mode': 'LOCALIZATION', 'map': '/maps/home.yaml'}, pose)
     assert [group['manager'] for group in groups] == [
-        'lifecycle_manager_localization', 'lifecycle_manager_navigation']
+        'lifecycle_manager_localization', 'lifecycle_manager_motion',
+        'lifecycle_manager_navigation']
     assert groups[0]['parameters']['map_server']['yaml_filename'] == '/maps/home.yaml'
     assert groups[0]['parameters']['amcl']['initial_pose.x'] == 1.5
     groups = container._malbut_recovery_lifecycle({'mode': 'MAPPING'}, None)
-    assert [group['manager'] for group in groups] == ['lifecycle_manager_navigation']
+    assert [group['manager'] for group in groups] == [
+        'lifecycle_manager_motion', 'lifecycle_manager_navigation']
 
 
 @pytest.fixture
@@ -370,14 +378,21 @@ def test_robot_contains_only_shared_nodes_and_no_external_readiness_gate(launch_
     assert manager['initial_map'] == ''
 
 
-def test_aggregate_schedules_all_enabled_modules_without_probes(launch_module, fall_config):
+def test_aggregate_schedules_all_enabled_modules_with_informational_observer(
+        launch_module, fall_config):
     module = _load('bringup')
     context = _context(module, fall_monitor='true', fall_config=str(fall_config))
     actions = module._setup(context)
     includes = _included_modules(actions)
     assert set(includes) == {
         'robot', 'tracking', 'patrol', 'autoslam', 'manual', 'relocalization', 'fall', 'speech'}
-    assert not _nodes(actions, 'wait_for_robot')
+    observers = _nodes(actions, 'wait_for_robot')
+    assert len(observers) == 1
+    settings = _parameters(context, observers[0])
+    assert settings['observe_only'] is True
+    assert settings['startup_stage'] == 'extensions'
+    assert '/follow_person' in settings['required_actions'].split(',')
+    assert 'malbut_stt' in settings['startup_nodes'].split(',')
     assert not any(type(item).__name__ in ('TimerAction', 'RegisterEventHandler')
                    for item in actions)
     assert 'control_server' not in includes['speech']

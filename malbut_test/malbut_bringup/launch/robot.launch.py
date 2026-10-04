@@ -1,6 +1,6 @@
 """robot: start only this module, without waiting for external ROS peers."""
 
-from malbut_bringup.nav2_stack import nav2_actions
+from malbut_bringup.nav2_stack import nav2_actions, navigation_profiles
 
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -30,8 +30,7 @@ def _setup(context):
     slam_params = (_file(value('slam_params_file'), 'SLAM parameters')
                    if value('slam_params_file') else _package_file(
                        'malbut_bringup', 'config/slam_toolbox.yaml'))
-    # No map starts SLAM mapping; a map starts saved-map AMCL. The manager
-    # switches between them at runtime, so this only picks the first state.
+    # No map uses only odometry and live obstacles; SLAM starts on request.
     initial_map = _file(value('map'), 'saved map YAML') if value('map') else ''
 
     hardware_actions = []
@@ -55,7 +54,8 @@ def _setup(context):
         }))
 
     actions = [*hardware_actions, *nav2_actions(
-        params, scan_topic=value('scan_topic'), odom_topic=value('odom_topic'))]
+        params, scan_topic=value('scan_topic'), odom_topic=value('odom_topic'),
+        mapless=not bool(initial_map))]
     actions.append(Node(
         package='malbut_system_manager', executable='system_manager',
         name='system_manager', output='screen', parameters=[{
@@ -64,6 +64,7 @@ def _setup(context):
             'ready_topic': '',
             'localization_control': True, 'initial_map': initial_map,
             'slam_params_file': slam_params, 'scan_topic': value('scan_topic'),
+            'navigation_profiles': navigation_profiles(params),
             'relocalize_action': '/relocalize' if value('restore_pose') == 'true' else '',
         }],
     ))

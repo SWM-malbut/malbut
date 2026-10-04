@@ -9,9 +9,10 @@ YAML·PGM을 저장한다.
 
 ## 실행
 
-실로봇 Bringup(`malbut_bringup/robot.launch.py`)이 이 서버를 포함한다. Bringup과
-시스템 관리자가 켠 SLAM·Nav2를 그대로 사용하며, 관리자는 저장 지도가 선택되지 않은
-동안에만 자동 지도 만들기를 받는다. 이 서버는 SLAM·Nav2·드라이버를 직접 켜지 않는다.
+실로봇 통합 Bringup이 `malbut_bringup/autoslam.launch.py`로 이 서버를 포함한다.
+Goal 수신 시 기존 관리자 서비스로 SLAM을 켜고, 하위 Nav2 종료를 확인한 뒤
+완료·실패·취소 모두 SLAM을 종료한다. 저장 지도 선택 여부와 관계없이 요청할 수 있으며,
+종료 후에는 지도 없는 센서 기반 상태로 돌아온다. 드라이버·Nav2를 새로 띄우지 않는다.
 
 다른 환경(시뮬레이션 등)에서 이미 켠 SLAM·Nav2에 붙여 쓸 때는 서버만 실행한다.
 
@@ -42,14 +43,15 @@ ros2 action send_goal /malbut/mission/execute \
   "{capability_id: autoslam, arguments_yaml: '{map_name: home}'}" --feedback
 ```
 
-자동 탐색 없이 조이스틱으로 지도만 작성하려면 이 Action을 요청하지 않아도 된다.
+독립 실행에서 `start_mapping_service`와 `stop_mapping_service`는 기본 빈 값이다.
+이 경우 외부에서 실행한 SLAM을 건드리지 않는다. 둘을 지정할 때는 함께 지정한다.
 
 ## 명세
 
 | 구분 | 필드 | 의미 |
 | --- | --- | --- |
 | Goal | `map_name: string` | 파일 이름, 기본 `home`. 경로·확장자 없이 입력 |
-| Feedback | `state: string` | `WAITING`, `EXPLORING`, `NAVIGATING`, `SAVING`, `CANCELING` |
+| Feedback | `state: string` | `STARTING`, `WAITING`, `EXPLORING`, `NAVIGATING`, `SAVING`, `STOPPING`, `CANCELING` |
 | Feedback | `frontier_count: uint32` | 마지막 계획에서 선택 가능한 탐색 경계 수 |
 | Feedback·Result | `known_area_m2: float32` | 현재 지도에서 알려진 면적. 전체 집 면적 대비 관측률이 아님 |
 | Result | `success: bool`, `message: string` | 완료 여부와 사유 |

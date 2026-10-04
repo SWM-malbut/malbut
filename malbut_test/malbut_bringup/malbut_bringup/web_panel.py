@@ -32,7 +32,8 @@ RUNTIME_ACTIONS = ('/malbut/mission/execute', '/autoslam', '/follow_person', '/p
                    '/assisted_teleop', '/relocalize')
 LOAD_MAP_SERVICE = '/malbut/localization/load_map'
 START_MAPPING_SERVICE = '/malbut/localization/start_mapping'
-LOCALIZATION_MODES = {'MAPPING': 'mapping', 'LOCALIZATION': 'navigation'}
+STOP_MAPPING_SERVICE = '/malbut/localization/stop_mapping'
+LOCALIZATION_MODES = {'NONE': 'idle', 'MAPPING': 'mapping', 'LOCALIZATION': 'navigation'}
 # manual_drive input: bounded by the vendor driver's /cmd_vel limits (m/s, m/s, rad/s).
 TELEOP_TOPIC = '/cmd_vel_teleop'
 TELEOP_LIMITS = {'linear_x': 0.2, 'linear_y': 0.2, 'angular_z': 0.5}
@@ -413,6 +414,7 @@ class RosBridge:
         self.load_map_request = LoadMap.Request
         self.start_mapping = self.node.create_client(Trigger, START_MAPPING_SERVICE)
         self.start_mapping_request = Trigger.Request
+        self.stop_mapping = self.node.create_client(Trigger, STOP_MAPPING_SERVICE)
         self.localization = {}
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self.node)
@@ -516,14 +518,15 @@ class RosBridge:
                 self.speech_ready = False
             # Optional speech startup must not block unrelated robot commands.
             # Each capability still checks its own Action/data prerequisites.
-            status['ready'] = status['state'] == 'RUNNING' and server_ready
+            status['ready'] = (status['state'] == 'RUNNING' and server_ready
+                               and self.startup_status.get('state') == 'READY')
         else:
-            status['ready'] = server_ready
+            status['ready'] = server_ready and self.startup_status.get('state') == 'READY'
         status['waiting'] = []
         if (self.runtime and status['state'] == 'RUNNING'
                 and not status['ready']):
-            status['waiting'] = ['manager: Action server startup']
-            status['message'] = '관리자 Action 서버 준비 대기'
+            status['waiting'] = self.startup_status.get('missing', ['Bringup: 연결 확인 대기'])
+            status['message'] = 'Bringup 연결 확인 대기'
         if self.runtime_message:
             status['message'] = self.runtime_message
         if self.stopping_runtime is not None:
@@ -532,8 +535,12 @@ class RosBridge:
         progress = getattr(self, 'startup_progress', {})
         if status['state'] in ('STARTING', 'RUNNING') and progress:
             status['progress'] = dict(progress)
-            status['message'] = (f"준비 {progress['completed']}/{progress['total']} 단계 · "
-                                 f"{progress['stage']}")
+            if progress['stage'] == '노드·인터페이스 연결 확인':
+                status['message'] = (f"연결 {progress['completed']}/{progress['total']} · "
+                                     f"{progress['stage']}")
+            else:
+                status['message'] = (f"준비 {progress['completed']}/{progress['total']} 단계 · "
+                                     f"{progress['stage']}")
             if progress['state'] != 'READY' or progress['completed'] < progress['total']:
                 # A separately run diagnostic is informational, not admission
                 # control for independent modules.
@@ -633,7 +640,7 @@ class RosBridge:
     def _start_runtime(self, payload):
         if self.stopping_runtime is not None:
             raise ValueError('Wait for Bringup shutdown to finish')
-        if self.load_map.service_is_ready() and self.start_mapping.service_is_ready():
+        if self.load_map.service_is_ready() and self.stop_mapping.service_is_ready():
             # Bringup is already running: switch localization, never relaunch.
             self._switch_localization(payload)
             return
@@ -678,7 +685,9 @@ class RosBridge:
 
     def _switch_localization(self, payload):
         if payload['mode'] == 'mapping':
-            future = self.start_mapping.call_async(self.start_mapping_request())
+            # Legacy "mapping" start request now means map-free Bringup. Only
+            # an AutoSLAM Goal starts SLAM; selecting no map stops its backend.
+            future = self.stop_mapping.call_async(self.start_mapping_request())
         else:
             request = self.load_map_request()
             request.map_url = str(self.catalog.resolve(payload['map']))
