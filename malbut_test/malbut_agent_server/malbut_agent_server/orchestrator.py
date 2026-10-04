@@ -68,6 +68,41 @@ class MemoryChangedError(ValidationError):
 
 
 @dataclass(frozen=True)
+class StoryReplyBinding:
+    """Immutable, content-free provenance for a persisted conversational reply."""
+
+    policy_revision: int
+    readset: tuple
+
+    @classmethod
+    def from_dict(cls, value):
+        if (type(value) is not dict or set(value) != {'policy_revision', 'readset'}
+                or type(value['policy_revision']) is not int or value['policy_revision'] < 0
+                or type(value['readset']) is not list or len(value['readset']) > 20):
+            raise ValueError('invalid story binding')
+        entries, seen = [], set()
+        for item in value['readset']:
+            if type(item) is not dict or set(item) != {'story_id', 'entry_hashes'}:
+                raise ValueError('invalid story readset')
+            identifier, hashes = item['story_id'], item['entry_hashes']
+            if (type(identifier) is not str or not identifier or len(identifier) > 256
+                    or identifier != identifier.strip() or identifier in seen
+                    or any(ord(char) < 32 or ord(char) == 127 for char in identifier)
+                    or type(hashes) is not list or not 1 <= len(hashes) <= 64
+                    or any(type(digest) is not str or re.fullmatch(r'[0-9a-f]{64}', digest) is None
+                           for digest in hashes) or len(set(hashes)) != len(hashes)):
+                raise ValueError('invalid story readset')
+            seen.add(identifier)
+            entries.append((identifier, tuple(hashes)))
+        return cls(value['policy_revision'], tuple(entries))
+
+    def to_dict(self):
+        return {'policy_revision': self.policy_revision,
+                'readset': [{'story_id': identifier, 'entry_hashes': list(hashes)}
+                            for identifier, hashes in self.readset]}
+
+
+@dataclass(frozen=True)
 class ServerClarification:
     """One non-action clarification produced by trusted server policy."""
 
@@ -141,6 +176,7 @@ class OrchestrationResult:
     memory_validator: Callable[[], None] | None = field(
         default=None, repr=False, compare=False,
     )
+    story_binding: StoryReplyBinding | None = field(default=None, repr=False)
     state_evidence_id: str | None = None
     state_observed_at: float | None = None
     safety_policy_revision: str | None = None
@@ -208,6 +244,8 @@ class OrchestrationResult:
             'public': self.to_dict(include_raw_decision=False),
             'memory_revision': self.memory_revision,
         }
+        if self.story_binding is not None:
+            value['story_binding'] = self.story_binding.to_dict()
         if (self.raw_decision.type == 'tool_call'
                 and self.raw_decision.tool_name in {'get_weather', 'set_weather_location'}
                 and self.safety.allowed and self.decision.type != 'tool_call'):
@@ -250,8 +288,10 @@ class OrchestrationResult:
             state_evidence_id = None
             state_observed_at = None
             safety_policy_revision = None
+            story_binding = (StoryReplyBinding.from_dict(value['story_binding'])
+                             if 'story_binding' in value else None)
             if schema_version == 3:
-                if frozenset(value) != frozenset({
+                if frozenset(value) - {'story_binding'} != frozenset({
                     'schema_version',
                     'public',
                     'memory_revision',
@@ -362,6 +402,7 @@ class OrchestrationResult:
                 expires_at=expires_at,
                 state_trusted=bool(execution['state_trusted']),
                 memory_revision=int(value['memory_revision']),
+                story_binding=story_binding,
                 state_evidence_id=state_evidence_id,
                 state_observed_at=state_observed_at,
                 safety_policy_revision=safety_policy_revision,
@@ -425,6 +466,8 @@ class AgentOrchestrator:
         weather_executor: Callable[[str], dict] | None = None,
         weather_location_executor: Callable[[str, str], dict] | None = None,
         context_compactor=None,
+        story_memory=None,
+        story_provider=None,
     ) -> None:
         """Initialize provider, memory, session, and safety services."""
         if memory_limit < 1 or memory_limit > 10:
@@ -459,6 +502,8 @@ class AgentOrchestrator:
         self.memory_source_reviewer = memory_source_reviewer
         self.automatic_memory_extractor = automatic_memory_extractor
         self.context_compactor = context_compactor
+        self.story_memory = story_memory
+        self.story_provider = story_provider
         self.weather_executor = weather_executor
         self.weather_location_executor = weather_location_executor
         if type(background_memory) is not bool:
@@ -475,11 +520,31 @@ class AgentOrchestrator:
         """Recover queued work when serving, not during construction."""
         if self.automatic_memory_worker is not None and not self._closed:
             self.automatic_memory_worker.start()
+        if self.story_memory is not None and not self._closed:
+            self.story_memory.start()
 
     def stop_background_memory(self):
         """Drain the owned worker before callers close the shared stores."""
         if self.automatic_memory_worker is not None:
             self.automatic_memory_worker.close()
+        if self.story_memory is not None:
+            self.story_memory.close()
+
+    def checkpoint_story_memory(self, user_id, timeout=0.25):
+        """Try a short checkpoint; reset retains originals for durable recovery."""
+        if self.story_memory is None:
+            return True
+        self.start_background_memory()
+        return self.story_memory.flush(user_id, timeout=timeout)
+
+    def delete_conversation(self, user_id, conversation_id):
+        """Delete a session through shared story/source lineage when installed."""
+        with self._handle_lock:
+            if self._closed:
+                raise RuntimeError('orchestrator is closed')
+            if self.story_memory is not None:
+                return self.story_memory.store.delete_conversation(user_id, conversation_id)
+            return self.conversation_store.delete(user_id, conversation_id)
 
     def close(self):
         """Reject new turns, join the worker, then close SQLite handles."""
@@ -498,13 +563,47 @@ class AgentOrchestrator:
     def _memory_guard(self, user_id, request_id):
         """Bind a response to its durable user-specific memory version."""
         def validate():
-            try:
-                self.personal_memory.assert_fresh(user_id, request_id)
-            except ValidationError as error:
-                raise MemoryChangedError(
-                    'memory changed; submit a new turn'
-                ) from error
+            self.assert_reply_fresh(user_id, request_id)
         return validate
+
+    def _assert_story_binding(self, user_id, request_id, binding):
+        if binding is None:
+            return
+        if self.story_memory is None:
+            raise MemoryChangedError('story memory is unavailable; submit a new turn')
+        value = binding.to_dict()
+        if not self.story_memory.validate_reply_binding(
+            user_id, value['policy_revision'], value['readset'], request_id=request_id,
+        ):
+            raise MemoryChangedError('memory changed; submit a new turn')
+
+    def assert_reply_fresh(self, user_id, request_id):
+        """Check durable fact and story provenance, including delayed/cache use."""
+        if self._closed:
+            raise MemoryChangedError('orchestrator is closed')
+        try:
+            with self.conversation_store._lock:
+                self.personal_memory.assert_fresh(user_id, request_id)
+                if self.story_memory is not None:
+                    record = self.story_memory.store.reply_record(user_id, request_id)
+                else:
+                    row = self.conversation_store._connection.execute(
+                        'SELECT response_json FROM conversation_turns '
+                        "WHERE user_id=? AND request_id=? AND status='completed'",
+                        (user_id, request_id),
+                    ).fetchone()
+                    record = ({'response': json.loads(row[0]), 'has_story_dependencies': False}
+                              if row is not None and row[0] is not None else None)
+                if record is None:
+                    raise MemoryChangedError('reply is unavailable; submit a new turn')
+                restored = OrchestrationResult.from_persisted_dict(record['response'])
+                if record['has_story_dependencies'] and restored.story_binding is None:
+                    raise MemoryChangedError('legacy story reply cannot be verified; submit a new turn')
+                self._assert_story_binding(user_id, request_id, restored.story_binding)
+        except (ValidationError, ValueError, RuntimeError) as error:
+            if isinstance(error, MemoryChangedError):
+                raise
+            raise MemoryChangedError('memory changed; submit a new turn') from error
 
     def _admit_memory_turn(self, connection, request):
         """Ordinary turns preserve jobs; explicit memory intent fences them.
@@ -607,6 +706,7 @@ class AgentOrchestrator:
                 raise RuntimeError(
                     'conversation begin returned no token'
                 )
+            committed = False
             try:
                 memory_snapshot = self.personal_memory.snapshot(
                     request, token, begin.history, begin.summary,
@@ -688,13 +788,19 @@ class AgentOrchestrator:
                         request, token, memory_snapshot, result, connection,
                     )
 
-                session, _turn = self.conversation_store.complete_turn(
-                    token,
-                    assistant_content=result.decision.message,
-                    response=result.to_persisted_dict(),
-                    commit_callback=commit_memory,
-                    **completion_arguments,
-                )
+                with self.conversation_store._lock:
+                    # Policy/erasure writes use this same lock. Keep validation
+                    # and the completed response commit in one protected window.
+                    self._assert_story_binding(request.user_id, request.request_id,
+                                               result.story_binding)
+                    session, _turn = self.conversation_store.complete_turn(
+                        token,
+                        assistant_content=result.decision.message,
+                        response=result.to_persisted_dict(),
+                        commit_callback=commit_memory,
+                        **completion_arguments,
+                    )
+                committed = True
                 if (
                     session.generation
                     != result.conversation_generation
@@ -708,9 +814,18 @@ class AgentOrchestrator:
                     request.user_id, request.request_id,
                 )
                 self.start_background_memory()
+                if self.story_memory is not None:
+                    try:
+                        self.story_memory.after_turn(request.user_id, request.request_id)
+                    except Exception:
+                        # The completed reply already owns durable raw sources.
+                        # Recovery fills an enqueue gap without replaying inference.
+                        self.story_memory.note_enqueue_failure(request.user_id)
+                result.memory_validator()
                 return result
             except Exception as error:
-                self.conversation_store.fail_turn(token)
+                if not committed:
+                    self.conversation_store.fail_turn(token)
                 if (
                     isinstance(error, ValidationError)
                     and str(error) == 'memory_changed'
@@ -946,6 +1061,11 @@ class AgentOrchestrator:
             expires_at=expires_at,
             state_trusted=state_trusted,
             memory_revision=memory_revision,
+            story_binding=(StoryReplyBinding.from_dict(binding)
+                           if (self.story_provider is not None
+                               and (binding := self.story_provider.reply_binding(
+                                   request.user_id, request.request_id)) is not None)
+                           else None),
             state_evidence_id=state_evidence_id,
             state_observed_at=state_observed_at,
             safety_policy_revision=(

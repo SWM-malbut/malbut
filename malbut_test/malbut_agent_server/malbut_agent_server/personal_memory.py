@@ -1017,12 +1017,22 @@ class PersonalMemory:
             self.memory.set_personalization(
                 token.user_id, False, source, connection=conn
             )
-            return (
-                reply(
-                    '개인화를 중단했어요. 자동 저장과 활용을 멈추고, 기존 기억은 유지할게요.'
-                ),
-                [],
+            message = (
+                '개인화를 중단했어요. 개인 사실 기억의 자동 저장과 활용을 멈추고, '
+                '기존 기억은 유지할게요.'
             )
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                            "AND name='story_runtime_policy'").fetchone():
+                story_policy = conn.execute(
+                    'SELECT enabled FROM story_runtime_policy WHERE user_id=?',
+                    (token.user_id,),
+                ).fetchone()
+                if story_policy and story_policy['enabled']:
+                    message += (
+                        ' 별도로 동의한 이야기 기억 설정은 계속 켜져 있어요. '
+                        '이야기 기억도 멈추려면 이야기 기억 설정에서 중단해 주세요.'
+                    )
+            return reply(message), []
         if control == 'enable':
             proposal = {
                 'operation': 'enable',

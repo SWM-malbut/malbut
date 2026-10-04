@@ -7,7 +7,7 @@ import pytest
 
 from malbut_agent_server.conversation import SQLiteConversationStore
 from malbut_agent_server.memory import SQLiteMemoryStore
-from malbut_agent_server.story_memory import StoryMemoryError
+from malbut_agent_server.story_memory import StoryConflictError, StoryMemoryError
 from malbut_agent_server.story_runtime_store import StoryRuntimeStore
 from malbut_agent_server.summarization import SummaryResult
 
@@ -155,6 +155,80 @@ def test_external_processing_needs_its_own_consent(runtime):
     token = runtime.complete()
     assert not runtime.store.enqueue_completed('alice', token.request_id)
     runtime.store.recover('alice')
+    assert runtime.store.claim('alice') is None
+
+
+def test_consent_cas_accepts_current_revision_and_preserves_noop_revision(runtime):
+    initial = runtime.store.policy('alice')
+    enabled = runtime.store.set_enabled(
+        'alice', True, external_consent=True,
+        expected_revision=initial['revision'],
+    )
+    assert enabled['enabled'] and enabled['external_consent']
+    assert enabled['revision'] == initial['revision'] + 1
+    before = tuple(runtime.conversations._connection.iterdump())
+    repeated = runtime.store.set_enabled(
+        'alice', True, external_consent=True,
+        expected_revision=enabled['revision'],
+    )
+    assert repeated == enabled
+    assert tuple(runtime.conversations._connection.iterdump()) == before
+    for mismatched in (initial['revision'], enabled['revision'] + 1):
+        with pytest.raises(StoryConflictError):
+            runtime.store.set_enabled(
+                'alice', True, external_consent=True,
+                expected_revision=mismatched,
+            )
+        assert tuple(runtime.conversations._connection.iterdump()) == before
+
+
+@pytest.mark.parametrize('invalid_revision', [-1, True, False, 0.0, 1.0, '0', [], {}])
+def test_consent_cas_rejects_non_integer_or_negative_revision_without_writes(
+    runtime, invalid_revision,
+):
+    runtime.complete('동의 전 원문이 자동 승인되면 안 돼.')
+    before = tuple(runtime.conversations._connection.iterdump())
+    with pytest.raises(StoryMemoryError):
+        runtime.store.set_enabled(
+            'alice', True, external_consent=True, include_history=True,
+            expected_revision=invalid_revision,
+        )
+    assert tuple(runtime.conversations._connection.iterdump()) == before
+
+
+def test_explicit_none_expected_revision_preserves_legacy_consent_calls(runtime):
+    enabled = runtime.store.set_enabled(
+        'alice', True, external_consent=True, expected_revision=None,
+    )
+    disabled = runtime.store.set_enabled('alice', False, expected_revision=None)
+    assert enabled['enabled'] and not disabled['enabled']
+    assert disabled['revision'] == enabled['revision'] + 1
+
+
+@pytest.mark.parametrize('requested_enabled', [True, False])
+def test_old_consent_revision_after_disable_cannot_mutate_policy_scope_or_jobs(
+    runtime, requested_enabled,
+):
+    enabled = runtime.allow(expected_revision=0)
+    _token, running = runtime.claim_turn()
+    disabled = runtime.store.set_enabled(
+        'alice', False, expected_revision=enabled['revision'],
+    )
+    off_turn = runtime.complete('기억을 끈 동안의 별도 논의야.')
+    preview = runtime.store.history_preview('alice')
+    before = tuple(runtime.conversations._connection.iterdump())
+    with pytest.raises(StoryConflictError):
+        runtime.store.set_enabled(
+            'alice', requested_enabled,
+            external_consent=requested_enabled,
+            include_history=requested_enabled,
+            history_scope=preview if requested_enabled else None,
+            expected_revision=enabled['revision'],
+        )
+    assert tuple(runtime.conversations._connection.iterdump()) == before
+    assert runtime.store.policy('alice') == disabled
+    assert runtime.store.job_source(running) is None
+    assert not runtime.store.enqueue_completed('alice', off_turn.request_id)
     assert runtime.store.claim('alice') is None
 
 

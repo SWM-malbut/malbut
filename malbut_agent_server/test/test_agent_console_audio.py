@@ -25,6 +25,33 @@ def test_listen_once_reuses_model_and_closes_each_microphone(tmp_path, monkeypat
 
     def pipeline(**kwargs):
         value = original_pipeline(**kwargs)
+        capture_gate = Event()
+        capture = value._capture
+        start_session = value.start_session
+        close = value.close
+
+        def capture_when_ready():
+            capture_gate.wait()
+            capture()
+
+        def start_ready_session(session_id):
+            started = start_session(session_id)
+            if started:
+                capture_gate.set()
+                if mode not in ('capture_error', 'stalled'):
+                    assert value.capture_ready.wait(3)
+            return started
+
+        def close_ready_pipeline():
+            capture_gate.set()
+            close()
+
+        # Session activation drains pre-session frames and increments the
+        # capture generation. Start this short fixture utterance only after
+        # that boundary, before the fake clock advances its silence deadline.
+        value._capture = capture_when_ready
+        value.start_session = start_ready_session
+        value.close = close_ready_pipeline
         pipelines.append(value)
         return value
 
@@ -161,6 +188,31 @@ def test_rejected_reply_never_reaches_speaker(monkeypatch):
 
     assert console.speak('옛 답변', validate=reject) is False
     console.close()
+
+
+@pytest.mark.parametrize('with_request_id', [False, True])
+@pytest.mark.parametrize('terminal', ['finished', 'failed', 'stopped'])
+def test_speak_accepts_legacy_and_correlated_tts_events(monkeypatch, with_request_id, terminal):
+    closed = []
+
+    def runtime(_synthesizer, _player_factory, on_status):
+        suffix = ('turn-request',) if with_request_id else ()
+
+        def submit(_text, *, validate=None):
+            on_status('other-playback', 'finished', False, *suffix)
+            on_status('selected-playback', 'playing', False, *suffix)
+            on_status('selected-playback', terminal, False, *suffix)
+            return 'selected-playback'
+
+        return SimpleNamespace(submit=submit, close=lambda: closed.append(True))
+
+    monkeypatch.setattr(audio, 'SpeechRuntime', runtime)
+    console = audio.ConsoleAudio(None)
+    try:
+        assert console.speak('안녕하세요') is (terminal == 'finished')
+        assert closed == [True]
+    finally:
+        console.close()
 
 
 @pytest.mark.parametrize('failure', ['synthesis', 'write', 'drain', 'validation', 'cleanup'])

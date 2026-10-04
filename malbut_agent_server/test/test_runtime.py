@@ -19,6 +19,7 @@ from malbut_agent_server.providers.openai_responses import (
 )
 from malbut_agent_server.providers.reliable import ReliableProvider
 from malbut_agent_server.providers.routed import RoutedAgentProvider
+from malbut_agent_server.story_memory_provider import StoryMemoryProvider
 from malbut_agent_server.schemas import (
     AgentDecision,
     ProviderResult,
@@ -182,13 +183,16 @@ def test_tool_mode_is_explicit_and_independent_from_provider() -> None:
         invalid.validate_for_server()
 
 
-def test_factory_builds_mock_runtime_without_wrapper() -> None:
+def test_factory_builds_mock_runtime_without_network_adapters() -> None:
     """Mock remains deterministic and avoids reliability/network layers."""
     runtime = build_orchestrator(
         Settings(database_path=':memory:'),
     )
     try:
-        assert runtime.provider.name == 'mock'
+        assert isinstance(runtime.provider, StoryMemoryProvider)
+        provider = runtime.provider.provider
+        assert provider.name == 'mock'
+        assert not isinstance(provider, (ReliableProvider, RoutedAgentProvider))
     finally:
         runtime.conversation_store.close()
         runtime.memory_store.close()
@@ -206,14 +210,16 @@ def test_factory_wraps_only_an_explicit_front_router() -> None:
         front_router=AbstainingFrontRouter(),
     )
     try:
-        assert isinstance(runtime.provider, RoutedAgentProvider)
-        assert runtime.provider.general_provider is (
-            runtime.provider.robot_planner_provider
+        assert isinstance(runtime.provider, StoryMemoryProvider)
+        routed = runtime.provider.provider
+        assert isinstance(routed, RoutedAgentProvider)
+        assert routed.general_provider is (
+            routed.robot_planner_provider
         )
-        assert runtime.provider.general_provider is (
-            runtime.provider.fallback_provider
+        assert routed.general_provider is (
+            routed.fallback_provider
         )
-        assert runtime.provider.fallback_provider.name == 'mock'
+        assert routed.fallback_provider.name == 'mock'
     finally:
         runtime.conversation_store.close()
         runtime.memory_store.close()
@@ -302,7 +308,8 @@ def test_factory_isolates_explicit_openai_role_models() -> None:
         front_router=GeneralRouter(),
     )
     try:
-        routed = runtime.provider
+        assert isinstance(runtime.provider, StoryMemoryProvider)
+        routed = runtime.provider.provider
         assert isinstance(routed, RoutedAgentProvider)
         assert isinstance(routed.general_provider, ReliableProvider)
         assert isinstance(
@@ -395,7 +402,8 @@ def test_factory_preserves_unspecified_role_fallback_chain(
         front_router=GeneralRouter(),
     )
     try:
-        routed = runtime.provider
+        assert isinstance(runtime.provider, StoryMemoryProvider)
+        routed = runtime.provider.provider
         assert [
             item.model for item in routed.general_provider._providers
         ] == expected_general
@@ -435,7 +443,8 @@ def test_factory_ignores_role_models_while_front_router_is_off() -> None:
         )
     )
     try:
-        provider = runtime.provider
+        assert isinstance(runtime.provider, StoryMemoryProvider)
+        provider = runtime.provider.provider
         assert isinstance(provider, ReliableProvider)
         assert not isinstance(provider, RoutedAgentProvider)
         assert [
@@ -467,7 +476,8 @@ def test_factory_preserves_shared_provider_without_role_settings() -> None:
         front_router=AbstainingFrontRouter(),
     )
     try:
-        routed = runtime.provider
+        assert isinstance(runtime.provider, StoryMemoryProvider)
+        routed = runtime.provider.provider
         assert isinstance(routed, RoutedAgentProvider)
         assert routed.general_provider is routed.fallback_provider
         assert routed.robot_planner_provider is routed.fallback_provider

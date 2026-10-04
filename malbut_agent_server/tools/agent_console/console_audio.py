@@ -102,7 +102,8 @@ class ConsoleAudio:
             if playback_id is None:
                 return False
             while True:
-                pid, state, _interim = events.get()
+                # Newer TTS runtimes append the originating request ID.
+                pid, state, _interim, *_correlation = events.get()
                 if pid == playback_id and state in TERMINAL_STATES:
                     return state == 'finished'
         finally:

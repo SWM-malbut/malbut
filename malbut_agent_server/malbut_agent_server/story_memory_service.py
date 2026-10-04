@@ -16,9 +16,17 @@ from malbut_agent_server.story_runtime_store import StoryRuntimeStore
 class StoryServiceError(RuntimeError):
     """A story operation cannot currently be completed."""
 
+    default_code = 'story_error'
+
+    def __init__(self, message, *, code=None):
+        super().__init__(message)
+        self.code = code or self.default_code
+
 
 class StoryUnavailableError(StoryServiceError):
     """No authorized extractor has been configured for this runtime."""
+
+    default_code = 'story_unavailable'
 
 
 class StoryMemoryService:
@@ -26,7 +34,9 @@ class StoryMemoryService:
 
     def __init__(self, conversation_store, memory_store, extractor, *,
                  debounce_seconds=2.0, max_delay_seconds=10.0,
-                 batch_size=3, runtime_store=None):
+                 batch_size=3, runtime_store=None, autostart=True):
+        if type(autostart) is not bool:
+            raise ValueError('autostart must be a bool')
         for name, value in (('debounce_seconds', debounce_seconds),
                             ('max_delay_seconds', max_delay_seconds)):
             if (isinstance(value, bool) or not isinstance(value, (int, float))
@@ -48,6 +58,7 @@ class StoryMemoryService:
         self._last_recovery = {}
         self._stop = threading.Event()
         self._thread = None
+        self._started = autostart
         # Queue state is in SQLite. Recovery only starts work already permitted
         # by a persisted policy; constructing a service never grants consent.
         for user in self.store.pending_users():
@@ -62,7 +73,7 @@ class StoryMemoryService:
 
     def _start(self):
         with self._condition:
-            if self._stop.is_set() or self.extractor is None:
+            if self._stop.is_set() or self.extractor is None or not self._started:
                 return
             if self._thread is None:
                 self._thread = threading.Thread(
@@ -70,6 +81,15 @@ class StoryMemoryService:
                 )
                 self._thread.start()
             self._condition.notify_all()
+
+    def start(self):
+        """Start permitted recovery only when the owning runtime is serving."""
+        with self._condition:
+            if self._stop.is_set():
+                return
+            self._started = True
+        if self._due or self.store.pending_users():
+            self._start()
 
     def _schedule(self, user, *, immediate=False):
         now = time.monotonic()
@@ -90,7 +110,7 @@ class StoryMemoryService:
         policy['error'] = self._errors.get(user) or stats.get('last_error') or stats.get('error')
         return policy
 
-    def enable(self, user, include_history=False, history_scope=None):
+    def enable(self, user, include_history=False, history_scope=None, expected_revision=None):
         self._open()
         if self.extractor is None:
             raise StoryUnavailableError('기억을 정리할 AI가 연결되지 않아 기능을 켤 수 없습니다.')
@@ -99,16 +119,17 @@ class StoryMemoryService:
         # This method is invoked only after the caller's explicit consent UI,
         # including disclosure of the configured external AI and input scope.
         self.store.set_enabled(user, True, external_consent=True,
-                               include_history=include_history, history_scope=history_scope)
+                               include_history=include_history, history_scope=history_scope,
+                               expected_revision=expected_revision)
         self.store.recover(user)
         self._errors.pop(user, None)
         self._schedule(user)
         self._start()
         return self.policy(user)
 
-    def disable(self, user):
+    def disable(self, user, expected_revision=None):
         self._open()
-        self.store.set_enabled(user, False)
+        self.store.set_enabled(user, False, expected_revision=expected_revision)
         with self._condition:
             self._due.pop(user, None)
             self._forced.discard(user)
@@ -126,6 +147,10 @@ class StoryMemoryService:
             self._start()
         return queued
 
+    def note_enqueue_failure(self, user):
+        """Expose a recoverable post-commit queue gap without losing the reply."""
+        self._errors[user] = 'story_enqueue_failed'
+
     def list_stories(self, user):
         return self.store.list_stories(user)
 
@@ -134,6 +159,17 @@ class StoryMemoryService:
 
     def validate(self, user, revision, data_revision=None):
         return not self._stop.is_set() and self.store.validate(user, revision, data_revision)
+
+    def reply_dependency_revision(self, user, request_id):
+        return self.store.reply_dependency_revision(user, request_id)
+
+    def validate_reply_binding(self, user, revision, readset=(), request_id=None):
+        """Short-context lineage remains valid when long-term reuse is off."""
+        if self._stop.is_set() or type(revision) is not int:
+            return False
+        if readset:
+            return self.validate_readset(user, revision, readset, request_id=request_id)
+        return self.store.policy(user)['revision'] == revision
 
     @staticmethod
     def _entry_hash(entry):
@@ -265,17 +301,17 @@ class StoryMemoryService:
         unsettled = ('정리되지 않은 대화가 있어 삭제 범위를 확정하지 못했어요. '
                      '/stories sync 후 다시 삭제해 주세요.')
         if not self.flush(user, timeout=timeout):
-            raise StoryServiceError(unsettled)
+            raise StoryServiceError(unsettled, code='story_not_settled')
         try:
             result = self.store.delete_story(user, story_id, require_settled=True)
         except StoryMemoryError as exc:
             if str(exc) == 'story_delete_requires_settled_sources':
-                raise StoryServiceError(unsettled) from exc
+                raise StoryServiceError(unsettled, code='story_not_settled') from exc
             if str(exc) == 'story_delete_requires_history_review':
                 raise StoryServiceError(
                     '이전에 승인했지만 아직 정리되지 않은 원문이 있어 삭제 범위를 확정하지 못했어요. '
                     '/stories history에서 미처리 원문 범위를 확인하고 그 기록 정리에 '
-                    '다시 동의한 뒤 삭제해 주세요.') from exc
+                    '다시 동의한 뒤 삭제해 주세요.', code='history_review_required') from exc
             raise
         with self._condition:
             self._due.pop(user, None)

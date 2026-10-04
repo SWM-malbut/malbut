@@ -6,6 +6,7 @@ import test_agent_console_support  # noqa: F401
 
 from console_core import ConsoleCore
 from malbut_agent_server.config import Settings
+from malbut_agent_server.orchestrator import MemoryChangedError
 from malbut_agent_server.schemas import ValidationError
 from malbut_agent_server.tools import TOOL_SPECS
 
@@ -46,7 +47,7 @@ def test_memory_preferences_sessions_and_restart(tmp_path):
         core.validate_reply(recalled)
         core.chat('강아지 이름을 두부로 정정해줘')
         assert '두부' in core.memories()['items'][0]['content']
-        with pytest.raises(ValidationError, match='memory_changed'):
+        with pytest.raises(MemoryChangedError, match='memory changed; submit a new turn'):
             core.validate_reply(recalled)
         core.chat('강아지 이름을 잊어줘')
         assert core.memories()['items'] == []

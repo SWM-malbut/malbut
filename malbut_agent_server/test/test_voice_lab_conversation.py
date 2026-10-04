@@ -13,6 +13,7 @@ from malbut_agent_server.config import Settings
 from malbut_agent_server.providers.openai_responses import OpenAIResponsesProvider
 from malbut_agent_server.providers.reliable import ReliableProvider
 from malbut_agent_server.providers.routed import RoutedAgentProvider
+from malbut_agent_server.story_memory_provider import StoryMemoryProvider
 from malbut_agent_server.speech_mission_policy import configure_speech_missions
 
 
@@ -213,9 +214,11 @@ def test_live_runtime_startup_is_lazy_and_role_models_do_not_replace_foreground(
     try:
         configure_speech_missions(runtime)
         runtime.start_background_memory()
-        assert isinstance(runtime.provider, ReliableProvider)
-        assert not isinstance(runtime.provider, RoutedAgentProvider)
-        assert runtime.provider._providers[0].model == 'test-primary'
+        assert isinstance(runtime.provider, StoryMemoryProvider)
+        provider = runtime.provider.provider
+        assert isinstance(provider, ReliableProvider)
+        assert not isinstance(provider, RoutedAgentProvider)
+        assert provider._providers[0].model == 'test-primary'
         assert runtime.speech_addressee.provider.model == 'test-addressee'
         assert runtime.context_compactor.summarizer.model == 'test-summary'
         assert 'request_follow_person' in runtime.speech_mission_tools

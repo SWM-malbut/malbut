@@ -9,6 +9,7 @@ from test_agent_console_support import CONSOLE_SCRIPT, restore_console_umask  # 
 
 from console_core import ConsoleCore
 from malbut_agent_server.config import Settings
+from malbut_agent_server.orchestrator import MemoryChangedError
 from malbut_agent_server.schemas import ValidationError
 from malbut_agent_server.story_memory_service import StoryServiceError
 
@@ -277,5 +278,82 @@ def test_delete_preserves_specific_recovery_guidance(tmp_path, monkeypatch, reco
         assert '아직 삭제하지 않았어요' in result['text']
         assert recovery in result['text']
         assert len(core.stories()['items']) == 1
+    finally:
+        core.close()
+
+
+def test_console_reuses_one_runtime_service_and_enqueues_and_closes_once(tmp_path, monkeypatch):
+    from malbut_agent_server.story_memory_provider import StoryMemoryProvider
+
+    extractor = FixtureExtractor()
+    core = ConsoleCore(Settings(database_path=str(tmp_path / 'owned.sqlite3'),
+                                user_id='console-owned-user', tool_mode='simulation'),
+                       story_extractor=extractor)
+    calls = []
+    closes = []
+    service = core.runtime.story_memory
+    original_after_turn = service.after_turn
+    original_close = service.close
+    def after_turn(user, request_id):
+        calls.append((user, request_id))
+        return original_after_turn(user, request_id)
+    def close():
+        closes.append(True)
+        return original_close()
+    monkeypatch.setattr(service, 'after_turn', after_turn)
+    monkeypatch.setattr(service, 'close', close)
+    try:
+        assert core.story_memory is service
+        assert service.extractor is extractor
+        assert core.runtime.provider is core.runtime.story_provider
+        assert not isinstance(core.runtime.story_provider.provider, StoryMemoryProvider)
+        enable(core)
+        result = core.chat('바다 전시를 보고 편안했어.')
+        assert calls == [(core.settings.user_id, result['metadata']['request_id'])]
+        assert 'story_readset' not in result['metadata']
+        assert 'story_revision' not in result['metadata']
+        core.validate_reply(result)
+    finally:
+        core.close()
+        core.close()
+    assert closes == [True]
+
+
+def test_console_new_conversation_uses_runtime_checkpoint(tmp_path, monkeypatch):
+    core = make_core(tmp_path)
+    calls = []
+    try:
+        monkeypatch.setattr(core.runtime, 'checkpoint_story_memory',
+                            lambda user, timeout: calls.append((user, timeout)))
+        before = core.conversation_id
+        core.new_conversation()
+        assert core.conversation_id != before
+        assert calls == [(core.settings.user_id, 45)]
+    finally:
+        core.close()
+
+
+def test_console_delayed_story_reply_uses_persisted_guard_after_restart(tmp_path):
+    core = make_core(tmp_path)
+    try:
+        enable(core)
+        core.chat('바다 전시에서 푸른 그림을 보니 마음이 편해졌어.')
+        assert core.story_memory.flush(core.settings.user_id, timeout=10)
+        core.new_conversation()
+        reply = core.chat('바다 전시 이야기를 이어가자.')
+        request_id = reply['metadata']['request_id']
+        assert core.runtime.story_provider.reply_readset(core.settings.user_id, request_id)
+        assert core.story_memory.flush(core.settings.user_id, timeout=10)
+        core.validate_reply(reply)
+    finally:
+        core.close()
+    core = make_core(tmp_path)
+    try:
+        # No process-local provider receipt survives this restart.
+        assert core.runtime.story_provider.reply_binding(core.settings.user_id, request_id) is None
+        core.validate_reply(reply)
+        core.story_memory.disable(core.settings.user_id)
+        with pytest.raises(MemoryChangedError, match='memory changed; submit a new turn'):
+            core.validate_reply(reply)
     finally:
         core.close()
