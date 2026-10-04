@@ -177,6 +177,7 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                 last_error_code=analysis.last_error_code))
 
         def publish_events(self):
+            self.monitor.flush_people()
             events = list(self.monitor.drain_events())
             if clock() - self._last_question_handoff >= 1.0:
                 self._last_question_handoff = clock()

@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from malbut_agent_server.application.fall_clip_planner import FallClipPlanner, RecordedClip
 from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
+from malbut_agent_server.application.fall_people_recorder import FallPeopleRecorder
 from malbut_agent_server.application.fall_normal_closure import (
     normal_closure_supported, normal_path_ready,
 )
@@ -59,7 +60,8 @@ class CloudFallMonitor:
                  journal: Optional[FallEventJournal] = None,
                  clock: Callable[[], float] = time.monotonic,
                  wall_clock: Callable[[], float] = time.time,
-                 clip_planner: Optional[FallClipPlanner] = None) -> None:
+                 clip_planner: Optional[FallClipPlanner] = None,
+                 people_recorder: Optional[FallPeopleRecorder] = None) -> None:
         identifier(device_id)
         identifier(boot_id)
         if provider.execution_target != 'cloud':
@@ -73,8 +75,13 @@ class CloudFallMonitor:
         self._wall_clock = wall_clock
         self._clips = clip_planner or FallClipPlanner()
         self._clip_offsets = {}
-        self._clip_ranges = []
+        # Test/diagnostic handoff only; production never drains, so keep it bounded.
+        self._clip_ranges = deque(maxlen=256)
         self.clip_storage_failures = 0
+        # Person boxes for the clip overlay: auxiliary like clip ranges.
+        self._people = people_recorder or FallPeopleRecorder(boot_id=boot_id)
+        self._people_ready = deque(maxlen=256)
+        self.people_storage_failures = 0
         self._enabled = self._camera = self._consent = self._connected = False
         self._epoch = 0
         self._incidents = {}
@@ -133,8 +140,43 @@ class CloudFallMonitor:
 
     def drain_clip_ranges(self):
         """Recorded clip ranges since the last drain; not an upload receipt."""
-        ranges, self._clip_ranges = tuple(self._clip_ranges), []
+        ranges = tuple(self._clip_ranges)
+        self._clip_ranges.clear()
         return ranges
+
+    def drain_people(self):
+        """Finalized person boxes since the last drain; not an upload receipt."""
+        ready = tuple(self._people_ready)
+        self._people_ready.clear()
+        return ready
+
+    def _people_call(self, method, *args) -> None:
+        try:
+            method(*args)
+        except Exception:
+            self.people_storage_failures += 1
+
+    def flush_people(self) -> None:
+        """Persist segments whose boxes are complete; never stops fall handling."""
+        try:
+            ready = self._people.due(self._now())
+        except Exception:
+            self.people_storage_failures += 1
+            return
+        for people in ready:
+            if self._journal is not None and hasattr(self._journal, 'append_people'):
+                try:
+                    self._journal.append_people(device_id=self.device_id, people=people)
+                except Exception:
+                    self.people_storage_failures += 1
+                    continue
+            self._people_ready.append(people)
+
+    def _record_cloud_boxes(self, incident: FallIncident, times, finding) -> None:
+        for region in finding.regions:
+            if region.frame_index < len(times):
+                self._people_call(self._people.cloud, incident.incident_id,
+                                  times[region.frame_index], region.box)
 
     def _record_clip(self, incident: FallIncident, start: float, end: float, *,
                      anchor_kind: str, found_down: bool = False) -> None:
@@ -155,6 +197,8 @@ class CloudFallMonitor:
             # archived before a clock step stay at their original wall time.
             fixed = self._clip_offsets.setdefault(
                 (incident.incident_id, segment.segment_index), offset)
+            self._people_call(self._people.segment, incident.incident_id, incident.subject_key,
+                              segment.segment_index, segment.start, segment.end)
             clip = RecordedClip(
                 incident.incident_id, self.boot_id, segment.segment_index, segment.revision,
                 segment.start + fixed, segment.end + fixed, segment.anchor_kinds,
@@ -221,6 +265,7 @@ class CloudFallMonitor:
         if not enabled or not camera_enabled:
             self.buffer.clear()
             self._subject_evidence.clear()
+            self._people.clear_history()
             self._discoveries.clear()
             self._person_observation = None
             self._last_person_seen = None
@@ -332,6 +377,8 @@ class CloudFallMonitor:
                 or now - frame.observed_at > self.policy.max_person_observation_age_s):
             return False
         self._subject_evidence.append(frame)
+        self._people_call(self._people.observe, frame.observed_at, tuple(
+            (p.subject_key, p.box) for p in frame.subjects if p.box is not None))
         for incident in self._incidents.values():
             if incident.state is IncidentState.RESOLVED:
                 continue
@@ -439,6 +486,7 @@ class CloudFallMonitor:
         self._record_clip(incident, frames[0].captured_at, frames[-1].captured_at,
                           anchor_kind='cloud_window',
                           found_down=finding.kind is CandidateKind.ALREADY_DOWN)
+        self._record_cloud_boxes(incident, tuple(f.captured_at for f in frames), finding)
 
     def _record_candidate_clip(self, incident: FallIncident, candidate: FallCandidate) -> None:
         if candidate.kind is CandidateKind.ALREADY_DOWN:
@@ -964,6 +1012,7 @@ class CloudFallMonitor:
         self._record_clip(target, discovery.sample_times[0], discovery.sample_times[-1],
                           anchor_kind='cloud_window',
                           found_down=finding.kind is CandidateKind.ALREADY_DOWN)
+        self._record_cloud_boxes(target, discovery.sample_times, finding)
         return DiscoveryLinkResult('matched_after_tracking', target.incident_id)
 
     def _record_unidentified_scene(self, request, finding):

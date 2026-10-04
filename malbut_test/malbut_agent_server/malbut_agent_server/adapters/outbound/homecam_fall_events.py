@@ -28,6 +28,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 class HomecamFallEventClient:
     _path = '/api/device/v1/fall-events'
     _not_found_code = 'upload_failed'
+    _max_body = 8192
 
     def __init__(self, *, base_url, device_id, device_token, allowed_hosts, timeout_s=10):
         identifier(device_id)
@@ -53,7 +54,7 @@ class HomecamFallEventClient:
 
     def _post(self, payload, ack_matches):
         data = payload.encode('utf-8')
-        if len(data) > 8192:
+        if len(data) > self._max_body:
             raise FallUploadError('http_413', blocked=True)
         request = urllib.request.Request(self._url, data=data, method='POST', headers={
             'Authorization': 'Bearer ' + self._token, 'Content-Type': 'application/json',
@@ -96,6 +97,12 @@ class HomecamFallClipClient(HomecamFallEventClient):
         self._post(payload, lambda result: all(result.get(k) == sent[k] for k in key))
 
 
+class HomecamFallPeopleClient(HomecamFallClipClient):
+    """Person boxes of a clip segment: positions only, no media or identities."""
+    _path = '/api/device/v1/fall-incident-people'
+    _max_body = 262144
+
+
 class FallEventUploader:
     def __init__(self, journal, client):
         self._journal, self._client = journal, client
@@ -122,6 +129,8 @@ class FallEventUploader:
 
 
 class FallClipUploader:
+    _kind = 'clip'
+
     def __init__(self, journal, client):
         self._journal, self._client = journal, client
         self._lock = threading.Lock()
@@ -130,18 +139,24 @@ class FallClipUploader:
         if not self._lock.acquire(blocking=False):
             return False
         try:
-            pending = self._journal.pending_clip()
+            pending = getattr(self._journal, 'pending_' + self._kind)()
             if pending is None:
                 return False
             key = (pending['incident_id'], pending['segment_index'], pending['revision'])
+            failed = getattr(self._journal, 'failed_' + self._kind)
             try:
                 self._client.store(pending['payload'])
             except FallUploadError as error:
-                self._journal.failed_clip(*key, code=error.code, blocked=error.blocked)
+                failed(*key, code=error.code, blocked=error.blocked)
             except Exception:
-                self._journal.failed_clip(*key, code='upload_failed')
+                failed(*key, code='upload_failed')
             else:
-                self._journal.acknowledge_clip(*key)
+                getattr(self._journal, 'acknowledge_' + self._kind)(*key)
             return True
         finally:
             self._lock.release()
+
+
+class FallPeopleUploader(FallClipUploader):
+    """After clips: the web needs the clip segment before its boxes (503 until then)."""
+    _kind = 'people'
