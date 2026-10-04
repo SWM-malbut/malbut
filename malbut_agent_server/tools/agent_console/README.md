@@ -16,6 +16,12 @@ python3 -m venv .runtime/agent-console/venv
 `mock --no-tts`는 외부 키, 음성 패키지, 모델 파일, 마이크, 스피커 없이 동작한다.
 자동 이야기 요약은 실제 OpenAI 모드에서 제공한다. mock 모드에서 기억을 켜도 저장했다고 가장하지 않는다.
 
+날씨는 로컬 지역 저장과 기상청 조회 실행기를 연결한다. 실제 조회에는 `.env` 또는 환경변수의
+`KMA_SERVICE_KEY`가 필요하다. OpenAI 대화에서 “여기는 서울 강남구야” 다음 “오늘 날씨 어때?”라고
+말하거나, `/tool set_weather_location {"location":"서울 강남구"}` 다음 `/tool get_weather`로 직접 확인한다.
+지역은 체험 DB 옆의 `<DB 경로>.weather.sqlite3`에 유지하며, 지역이 모호하면 선택을 요청한다.
+시작할 때는 외부 날씨 API를 호출하지 않는다. 로봇 도구는 계속 모의 실행이다.
+
 다른 Python을 쓰려면 `MALBUT_AGENT_CONSOLE_PYTHON`에 해당 실행 파일 경로를 지정한다.
 런처는 `.runtime/agent-console/venv`를 우선 사용하고, 기존 Mac 체험용
 `.runtime/fall-voice-20260925/venv`가 있으면 재사용할 수 있다. 패키지를 자동 설치하거나 모델을 다운로드하지 않는다.

@@ -236,8 +236,8 @@ def test_actual_command_loop_shows_story_sources_and_cross_session_state(tmp_pat
     import console
 
     original_core = console.ConsoleCore
-    monkeypatch.setattr(console, 'ConsoleCore', lambda settings: original_core(
-        settings, story_extractor=FixtureExtractor(),
+    monkeypatch.setattr(console, 'ConsoleCore', lambda settings, **kwargs: original_core(
+        settings, story_extractor=FixtureExtractor(), **kwargs,
     ))
     commands = iter([
         '/stories on', '네', '바다 전시를 보니 기분이 편안했어.',
