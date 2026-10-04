@@ -126,10 +126,24 @@ class AssociationExperiment:
         self.records.append(dict(association=asdict(result), regions=regions))
         return result
 
+    def aligned_timed(self, finding, samples):
+        """Adapt the aligned replay's exact samples to the monitor's timed hook.
+
+        FrozenFeatures is indexed by the original Cloud RGB frame. Do not
+        flatten neighboring Pose samples and accidentally extract appearance
+        from a different frame, or discard one neighbor's identity evidence.
+        Temporal-neighbor ablations need their own timestamp-bound RGB inputs.
+        """
+        if any(len(group) > 1 for group in samples):
+            raise ValueError('offline appearance replay requires exact-frame Pose samples')
+        snapshot = tuple(group[0][1] if group else () for group in samples)
+        return self(finding, snapshot)
+
 
 @contextmanager
 def offline_associator(experiment):
     """Single-process replay injection; restored even on exception, no disk edit."""
     with patch('replay_reviewed_pose_cloud.associate_finding', experiment), patch(
-            'malbut_agent_server.application.cloud_fall_monitor.associate_finding', experiment):
+            'malbut_agent_server.application.cloud_fall_monitor.associate_timed_finding',
+            experiment.aligned_timed):
         yield
