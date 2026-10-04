@@ -32,11 +32,21 @@ def test_discovery_order_and_negative_controls(tmp_path, mode):
         assert result['scene_cases'] == 0 and result['manager_questions'] == 1
         assert result['call_purposes'] == ['incident', 'crosscheck']
     elif mode in {'pose_first_deferred', 'cloud_first_deferred'}:
-        # Known remaining UX issue: a scene question and a person question
-        # coexist. Do not assert that same-person linkage cancels the former.
-        assert result['scene_cases'] == 1 and result['manager_questions'] == 2
+        # Preserve scene history, but retire its question once every finding
+        # has been linked. Duplicate delivery must not resurrect that request.
+        assert result['scene_cases'] == 1 and result['manager_questions'] == 1
+        recorded = json.loads((tmp_path / mode / 'result.json').read_text())
+        merged = [e for e in recorded['events'] if e['kind'] == 'incident_merged']
+        assert len(merged) == 1
+        assert merged[0]['reason'] == 'findings_associated'
+        assert merged[0]['merged_into_incident_ids'] == [recorded['target_id']]
+        assert merged[0]['incident_id'] != recorded['target_id']
+        for phase in recorded['phases']:
+            if phase['name'] in {'tracking_finished', 'after_duplicate_delivery'}:
+                assert [q['incident_id'] for q in phase['questions']] == [recorded['target_id']]
     if mode == 'old_answer':
-        assert result['obsolete_answer_rejected']
+        assert result['original_answer_accepted']
+        assert result['newer_evidence_unresolved']
     if mode == 'candidate_during_cloud':
         assert result['person_cases'] == 1 and result['scene_cases'] == 0
         assert result['call_purposes'] == ['crosscheck', 'incident']

@@ -21,7 +21,7 @@ from malbut_agent_server.application.fall_normal_closure import (
 )
 from malbut_agent_server.application.fall_subject_evidence import FallSubjectEvidence
 from malbut_agent_server.application.fall_cloud_association import (
-    associate_finding, association_evidence,
+    associate_timed_finding, supplement_samples, timed_association_evidence,
 )
 from malbut_agent_server.application.fall_deferred_association import (
     DeferredDiscovery, DiscoveryLinkResult, DiscoveryTrack,
@@ -32,7 +32,7 @@ from malbut_agent_server.domain.fall_monitoring import (
     NotificationLevel, PersonObservation, PersonVisibility,
     NormalVideoCheck, SubjectCheckState, SubjectObservation, SubjectFrame,
     VideoAssessment, VoiceAnswer, identifier, timestamp,
-    CandidateKind, CloudDiscovery, CloudDiscoveryLink, CloudPersonFinding,
+    CandidateKind, CloudDiscovery, CloudDiscoveryLink, CloudPersonFinding, CloudPoseLink,
 )
 from malbut_agent_server.ports.cloud_fall import CloudFallProvider, CloudFallProviderError
 from malbut_agent_server.ports.fall_event_journal import FallEventJournal, FallJournalError
@@ -85,6 +85,8 @@ class CloudFallMonitor:
         self._enabled = self._camera = self._consent = self._connected = False
         self._epoch = 0
         self._incidents = {}
+        # One immutable question context per incident; live evidence may advance.
+        self._questions = {}
         self._events = []
         self._calls = deque()
         self._task: Optional[asyncio.Task] = None
@@ -391,6 +393,7 @@ class CloudFallMonitor:
                     incident, now=now,
                     max_observation_age_s=self.policy.max_person_observation_age_s):
                 self._decision_needed(incident)
+        self._retry_pose_associations()
         return True
 
     def _refresh_subject(self, incident):
@@ -453,7 +456,7 @@ class CloudFallMonitor:
                 current.kind = candidate.kind
                 self.request_recheck(current.incident_id)
                 # Old answers cannot describe the newly observed change.
-                current.question_id = None
+                current.question_id = self._pending_question_id(current)
                 current.answer = None
                 current.situation_assessment = None
                 current.help_needed = None
@@ -498,6 +501,10 @@ class CloudFallMonitor:
                  else candidate.observed_at)
         self._record_clip(incident, start, candidate.observed_at, anchor_kind='pose_motion')
 
+    def _pending_question_id(self, incident):
+        question = self._questions.get(incident.incident_id)
+        return question.question_id if question is not None and question.answer is None else None
+
     def ask_question(self, incident_id: str) -> Optional[str]:
         incident = self._incidents[incident_id]
         if incident.state is IncidentState.RESOLVED:
@@ -509,12 +516,28 @@ class CloudFallMonitor:
         incident.answer_question_played = False
         incident.situation_assessment = None
         incident.help_needed = None
+        if incident.video is not None:
+            self._questions[incident_id] = replace(incident)
         self._emit('question_requested', incident,
                    question_id=incident.question_id, reply=incident.video,
                    reason=('prior_fall_observed' if incident.fall_seen and incident.video
                            and incident.video.assessment is VideoAssessment.NORMAL_ACTIVITY
                            else None))
         return incident.question_id
+
+    def _continue_confirmation(self, incident):
+        """Reassess the latest evidence once an older question has finished."""
+        if incident.state is IncidentState.HELP_REQUIRED:
+            return
+        incident.question_id = None
+        if (incident.video is None or incident.video_revision != incident.revision
+                or incident.pending or self._active_incident == incident.incident_id):
+            return
+        if (incident.video.assessment is not VideoAssessment.NORMAL_ACTIVITY
+                or incident.fall_seen):
+            self.ask_question(incident.incident_id)
+        else:
+            self._emit('analysis_completed', incident, reply=incident.video)
 
     def confirmation_result(self, *, incident_id, question_id, subject_key,
                             evidence_revision, situation_assessment, help_needed):
@@ -532,10 +555,15 @@ class CloudFallMonitor:
                 or situation_assessment not in {'confirmed_incident', 'resolved', 'unknown'}
                 or type(help_needed) is not bool):
             raise ValueError('invalid confirmation result')
-        incident = self._incidents.get(incident_id)
+        current = self._incidents.get(incident_id)
+        question = self._questions.get(incident_id, current)
+        incident = (question if question is not None and current is not None
+                    and question.revision != current.revision else current)
         if (incident is None or incident.question_id != question_id
                 or incident.subject_key != subject_key
-                or incident.revision != evidence_revision):
+                or incident.revision != evidence_revision
+                or incident.answer is VoiceAnswer.FAILED
+                or (incident is not current and current.state is IncidentState.RESOLVED)):
             return False
         if incident.situation_assessment is not None:
             return (incident.situation_assessment == situation_assessment
@@ -545,12 +573,35 @@ class CloudFallMonitor:
         incident.situation_assessment = situation_assessment
         incident.help_needed = help_needed
         incident.pending = False
+        if incident is not current:
+            # This answer belongs to the question's original evidence, not to
+            # observations collected while the user was answering it.
+            incident.answer = (VoiceAnswer.HELP if help_needed else
+                               VoiceAnswer.UNCLEAR if incident.subject_key is None
+                               else VoiceAnswer.OKAY)
+            incident.state = (IncidentState.HELP_REQUIRED if help_needed
+                              else IncidentState.RECHECK_REQUIRED)
+            self._emit('confirmation_completed' if help_needed else 'voice_result',
+                       incident, question_id=question_id,
+                       reason=('scene_answer_unassociated' if incident.answer is VoiceAnswer.UNCLEAR
+                               else situation_assessment))
+            if help_needed:
+                current.state = IncidentState.HELP_REQUIRED
+                current.answer = VoiceAnswer.HELP
+                current.help_needed = True
+                incident.notification_level = current.notification_level
+                self._notify(incident, NotificationLevel.URGENT, 'confirmation_help_required')
+                current.notification_level = incident.notification_level
+            self._emit('incident_updated', current, reason='confirmation_finished_newer_evidence')
+            self._continue_confirmation(current)
+            return True
         if incident.subject_key is None and not help_needed:
             # The speaker has not been associated with the person(s) seen by
             # Cloud. Keep the reply, but never treat it as their clearance.
             incident.answer = VoiceAnswer.UNCLEAR
             if incident.state is not IncidentState.HELP_REQUIRED:
                 incident.state = IncidentState.RECHECK_REQUIRED
+            self._questions[incident_id] = replace(incident)
             self._emit('voice_result', incident, question_id=question_id,
                        reason='scene_answer_unassociated')
             self._emit('decision_required', incident, reason='target_unidentified')
@@ -560,6 +611,7 @@ class CloudFallMonitor:
         if not help_needed:
             incident.close_reason = ('risk_cleared' if situation_assessment == 'resolved'
                                      else 'response_completed')
+        self._questions[incident_id] = replace(incident)
         self._emit('confirmation_completed', incident, question_id=question_id,
                    reason=situation_assessment)
         if help_needed:
@@ -572,22 +624,47 @@ class CloudFallMonitor:
 
     def confirmation_failed(self, *, incident_id, question_id, evidence_revision):
         """Record an unavailable/failed conversation without inventing an answer."""
-        incident = self._incidents.get(incident_id)
+        current = self._incidents.get(incident_id)
+        question = self._questions.get(incident_id, current)
+        incident = (question if question is not None and current is not None
+                    and question.revision != current.revision else current)
         if (incident is None or incident.question_id != question_id
                 or incident.revision != evidence_revision
                 or incident.state is IncidentState.RESOLVED
+                or current.state is IncidentState.RESOLVED
                 or incident.situation_assessment is not None):
             return False
+        if incident.answer is VoiceAnswer.FAILED:
+            return True
         incident.answer = VoiceAnswer.FAILED
         incident.state = IncidentState.RECHECK_REQUIRED
+        self._questions[incident_id] = replace(incident)
         self._emit('agent_check_failed', incident, question_id=question_id,
                    reason='confirmation_transport_failed')
+        if incident is not current:
+            self._emit('incident_updated', current, reason='confirmation_finished_newer_evidence')
+            self._continue_confirmation(current)
         return True
 
     def pending_questions(self):
         """Retransmit unfinished handoffs so a late-starting Manager can receive them."""
         events = []
-        for incident in self._incidents.values():
+        for current in self._incidents.values():
+            if current.merged_into_incident_ids:
+                # Retransmit the terminal tombstone too: a lost merge event
+                # must not leave an old scene question alive in the Manager.
+                events.append(FallRuntimeEvent(
+                    event_id=current.incident_id, kind='incident_merged',
+                    incident_id=current.incident_id, question_id=current.question_id,
+                    evidence_revision=current.revision, confirmation_scope='scene',
+                    reason='findings_associated',
+                    merged_into_incident_ids=current.merged_into_incident_ids))
+                continue
+            if current.state is IncidentState.RESOLVED:
+                continue
+            incident = self._questions.get(current.incident_id, current)
+            if incident.answer is not None:
+                incident = current
             if (incident.state is IncidentState.RESOLVED or incident.answer is not None
                     or incident.video is None or incident.video_revision != incident.revision):
                 continue
@@ -608,11 +685,15 @@ class CloudFallMonitor:
         """Agent owns playback, waiting, speaker association and answer interpretation."""
         if not isinstance(reply, AgentCheckReply):
             raise ValueError('invalid Agent reply')
-        incident = self._incidents.get(reply.incident_id)
+        current = self._incidents.get(reply.incident_id)
+        question = self._questions.get(reply.incident_id, current)
+        incident = (question if question is not None and current is not None
+                    and question.revision != current.revision else current)
         if (incident is None or incident.question_id != reply.question_id
                 or incident.subject_key != reply.subject_key
                 or incident.revision != reply.evidence_revision
-                or incident.state is IncidentState.RESOLVED):
+                or incident.state is IncidentState.RESOLVED
+                or current.state is IncidentState.RESOLVED):
             return False
         answer = reply.answer
         # A help request can supersede an earlier answer to this question.
@@ -620,6 +701,9 @@ class CloudFallMonitor:
             return False
         incident.answer = answer
         incident.answer_question_played = reply.question_played
+        if incident is not current:
+            incident.notification_level = current.notification_level
+            incident.state = IncidentState.RECHECK_REQUIRED
         if answer is VoiceAnswer.HELP:
             incident.state = IncidentState.HELP_REQUIRED
             self._notify(incident, NotificationLevel.URGENT, 'help_requested')
@@ -629,6 +713,17 @@ class CloudFallMonitor:
             if answer is VoiceAnswer.FAILED:
                 self._emit('agent_check_failed', incident, reason='agent_failed')
         self._emit('voice_result', incident, reason=answer.value)
+        if incident.incident_id in self._questions:
+            self._questions[incident.incident_id] = replace(incident)
+        if incident is not current:
+            current.notification_level = incident.notification_level
+            if answer is VoiceAnswer.HELP:
+                current.state = IncidentState.HELP_REQUIRED
+                current.answer = VoiceAnswer.HELP
+                current.help_needed = True
+            self._emit('incident_updated', current, reason='confirmation_finished_newer_evidence')
+            self._continue_confirmation(current)
+            return True
         if answer is not VoiceAnswer.HELP:
             self._decision_needed(incident)
         return True
@@ -741,11 +836,33 @@ class CloudFallMonitor:
             for i in self._incidents.values()
         }
 
-    def _record_crosscheck(self, request, reply, snapshot, versions):
+    @staticmethod
+    def _new_candidate_covered(current, before, after, times):
+        # Only a first, unanswered/unanalysed candidate already present in
+        # this video may consume its Cloud result. Newer falls need new video.
+        return (not before and len(after) == 1 and current is not None
+                and current.state is IncidentState.VERIFYING
+                and current.revision == 1 and current.answer is None
+                and current.attempts == 0 and current.pending
+                and times[0] - .1 <= current.last_observed_at <= times[-1])
+
+    def _record_crosscheck(self, request, reply, snapshot, versions, *,
+                           pose_snapshot=None, pose_generation=None):
         if reply.assessment not in (
             VideoAssessment.OBSERVED_FALL, VideoAssessment.SUSPECTED_FALL,
         ):
             return  # A scene-level normal result never clears a person's case.
+        times = tuple(f.captured_at for f in request.window.frames)
+        if pose_snapshot is None:
+            # Compatibility for internal callers with an exact-only snapshot.
+            pose_snapshot = tuple(((t, observations),) if observations else ()
+                                  for t, observations in zip(times, snapshot))
+        if pose_generation is None:
+            pose_generation = self._subject_evidence.generation
+        measured = pose_snapshot
+        if pose_generation == self._subject_evidence.generation:
+            measured = supplement_samples(
+                pose_snapshot, self._subject_evidence.association_samples(times))
         findings = reply.findings or (CloudPersonFinding(
             reply.assessment, CandidateKind.MOTION_SEEN
             if reply.assessment is VideoAssessment.OBSERVED_FALL else CandidateKind.UNKNOWN),)
@@ -758,7 +875,7 @@ class CloudFallMonitor:
             and self._incidents[iid].state is IncidentState.RESOLVED
             for iid, v in versions.items())
         for index, finding in order:
-            match = associate_finding(finding, snapshot)
+            match = associate_timed_finding(finding, measured)
             reason = 'invalid_locations' if reply.localization_failed else match.reason
             iid = None
             if reason == 'matched':
@@ -772,17 +889,19 @@ class CloudFallMonitor:
                     before = {k: v for k, v in versions.items() if v[0] == match.subject_key}
                     after = {k: v for k, v in self._scene_incident_versions().items()
                              if v[0] == match.subject_key}
-                    if before != after:
+                    current = next((i for i in self._incidents.values()
+                                    if i.subject_key == match.subject_key
+                                    and i.state is not IncidentState.RESOLVED), None)
+                    consume_initial = self._new_candidate_covered(current, before, after, times)
+                    if before != after and not consume_initial:
                         reason = 'incident_changed_during_scan'
                     else:
-                        current = next((i for i in self._incidents.values()
-                                        if i.subject_key == match.subject_key
-                                        and i.state is not IncidentState.RESOLVED), None)
                         if current and current.subject_association_token != match.token:
                             reason = 'incident_target_continuity_unverified'
                         else:
                             iid = self._merge_cloud_person(
-                                request, finding, match.subject_key, match.token)
+                                request, finding, match.subject_key, match.token,
+                                consume_initial=consume_initial)
                             if iid is None:
                                 reason = 'incident_capacity'
                             else:
@@ -794,19 +913,91 @@ class CloudFallMonitor:
                 iid = self._record_unidentified_scene(request, finding)
                 if iid is None:
                     reason = 'incident_capacity'
+            proof = None
+            if subject_key and (measured != pose_snapshot
+                                or any(len(group) == 2 for group in measured)):
+                proof = self._pose_link_proof(
+                    iid, self._incidents[iid].revision, match.token,
+                    times, finding, measured)
             discovery = CloudDiscovery(
                 str(uuid4()), request.request_id, index, finding,
                 tuple(f.captured_at for f in request.window.frames), reason,
-                subject_key, iid, association_evidence(finding, snapshot))
+                subject_key, iid, timed_association_evidence(finding, measured), proof)
+            if iid and subject_key is None:
+                scene = self._incidents[iid]
+                if len(scene.unresolved_discovery_ids) < 256:
+                    scene.unresolved_discovery_ids += (discovery.discovery_id,)
+                else:
+                    scene.discovery_overflow = True
             # Every finding remains distinct, including discoveries sharing a
             # scene-level verification. An incident ID does not prove identity.
             self._emit('cloud_discovery', reason=reason, discovery=discovery)
             self._prune_discoveries()
             self._discoveries[discovery.discovery_id] = DeferredDiscovery(
                 discovery, self._epoch, self._now(),
-                self._incidents[iid].revision if iid else 0)
+                self._incidents[iid].revision if iid else 0,
+                pose_snapshot=measured, pose_generation=pose_generation,
+                incident_versions=versions)
             while len(self._discoveries) > 256:
                 self._discoveries.popitem(last=False)
+
+    def _pose_link_proof(self, source_id, revision, token, times, finding, measured):
+        return CloudPoseLink(
+            source_id, revision, token, self._now(),
+            tuple(times[r.frame_index] for r in finding.regions),
+            tuple(tuple(t for t, _ in measured[r.frame_index]) for r in finding.regions))
+
+    def _retry_pose_associations(self):
+        """Recheck recent unmatched findings when measured Pose arrives.
+
+        Local metadata only: never wait for Pose before starting Cloud-only
+        verification, never call Cloud again, and never transfer a scene's
+        answer to a person. Source scene lifecycle remains explicit because
+        it can contain other, still-unidentified people.
+        """
+        self._prune_discoveries()
+        for entry in tuple(self._discoveries.values()):
+            d = entry.discovery
+            if (d.subject_key is not None or d.association_link is not None
+                    or d.reason not in {'no_matching_track', 'current_target_unavailable'}
+                    or not entry.pose_snapshot or entry.incident_versions is None
+                    or entry.pose_generation != self._subject_evidence.generation
+                    or self._now() - entry.received_at > 2
+                    or self._discovery_link_block(entry)):
+                continue
+            measured = supplement_samples(entry.pose_snapshot,
+                self._subject_evidence.association_samples(d.sample_times))
+            match = associate_timed_finding(d.finding, measured)
+            if match.reason != 'matched':
+                continue
+            key, token = match.subject_key, match.token
+            latest = self._subject_evidence.latest(key)
+            if (latest is None or latest[1] != token
+                    or self._now() - latest[0] > self.policy.max_person_observation_age_s):
+                continue
+            current = next((i for i in self._incidents.values() if i.subject_key == key
+                            and i.state is not IncidentState.RESOLVED), None)
+            # Do not create another question/person case solely because a late
+            # Pose appeared. A later Pose candidate can supply the target case.
+            if (current is None or current.subject_association_token != token
+                    or self._active_incident == current.incident_id):
+                continue
+            before = {k: v for k, v in entry.incident_versions.items() if v[0] == key}
+            after = {k: v for k, v in self._scene_incident_versions().items() if v[0] == key}
+            if before != after:
+                # A new candidate from the requested video is allowed. Revised,
+                # answered or closed pre-existing cases must not be overwritten.
+                if not self._new_candidate_covered(current, before, after, d.sample_times):
+                    continue
+            if any(other.discovery.discovery_id != d.discovery_id
+                   and other.discovery.request_id == d.request_id
+                   and other.discovery.subject_key == key
+                   for other in self._discoveries.values()):
+                continue
+            proof = self._pose_link_proof(d.incident_id, entry.source_revision, token,
+                                         d.sample_times, d.finding, measured)
+            self._attach_discovery(entry, key, token, latest[0], current,
+                                   proof=proof, reason='matched_after_pose_arrival')
 
     def _prune_discoveries(self):
         for did, entry in tuple(self._discoveries.items()):
@@ -930,8 +1121,13 @@ class CloudFallMonitor:
             return DiscoveryLinkResult('incident_capacity')
         return self._attach_discovery(entry, key, token, observed_at, current)
 
-    def _attach_discovery(self, entry, key, token, observed_at, current):
-        """Stage a per-discovery transition; never move/close its source scene."""
+    def _attach_discovery(self, entry, key, token, observed_at, current, *,
+                          proof=None, reason='matched_after_tracking'):
+        """Atomically link evidence and retire only a fully associated scene.
+
+        Scene answers/alerts are never attributed to a person. A scene with
+        another unidentified finding or an unassigned help request stays open.
+        """
         discovery = entry.discovery
         finding = discovery.finding
         new = current is None
@@ -956,7 +1152,8 @@ class CloudFallMonitor:
                 and (target.answer is not None or (target.video is not None
                      and target.video.assessment is VideoAssessment.NORMAL_ACTIVITY))):
             target.revision += 1
-            target.question_id = target.answer = None
+            target.question_id = self._pending_question_id(target)
+            target.answer = None
             target.answer_question_played = False
             target.situation_assessment = target.help_needed = None
             target.state = IncidentState.VERIFYING
@@ -971,13 +1168,14 @@ class CloudFallMonitor:
         target.normal_evidence_after = max(target.normal_evidence_after, end, observed_at)
         if (target.video is None or
                 target.video.assessment is not VideoAssessment.OBSERVED_FALL):
-            target.video = CloudFallReply(finding.assessment, '추적 후 해당 대상에 연결한 영상 근거')
+            target.video = CloudFallReply(finding.assessment, '해당 대상에 연결한 영상 근거')
             target.kind = finding.kind
         target.video_revision = target.revision
-        proof = CloudDiscoveryLink(
-            discovery.incident_id, entry.source_revision, token, entry.track.seed_time,
-            observed_at, entry.track.samples, entry.track.pending[2])
-        linked = replace(discovery, reason='matched_after_tracking', subject_key=key,
+        if proof is None:
+            proof = CloudDiscoveryLink(
+                discovery.incident_id, entry.source_revision, token, entry.track.seed_time,
+                observed_at, entry.track.samples, entry.track.pending[2])
+        linked = replace(discovery, reason=reason, subject_key=key,
                          incident_id=target.incident_id, association_link=proof)
         events = []
 
@@ -991,15 +1189,41 @@ class CloudFallMonitor:
         if target.answer is None:
             if target.question_id is None:
                 target.question_id = str(uuid4())
-            # Existing pending handoffs reuse their ID; Manager deduplicates
-            # them. This also supplies video for an earlier video-less question.
-            stage('question_requested', question_id=target.question_id, reply=target.video)
-        stage('cloud_discovery_linked', discovery=linked, reason='matched_after_tracking')
+            # Keep an ongoing target conversation bound to its original
+            # evidence even while the separate source scene is retired.
+            question = self._questions.get(target.incident_id)
+            if question is None or question.answer is not None:
+                question = replace(target)
+                stage('question_requested', question_id=target.question_id, reply=target.video)
+        stage('cloud_discovery_linked', discovery=linked, reason=reason)
+        source = self._incidents[discovery.incident_id]
+        source = replace(source,
+            unresolved_discovery_ids=tuple(did for did in source.unresolved_discovery_ids
+                                          if did != discovery.discovery_id),
+            associated_incident_ids=tuple(dict.fromkeys(
+                (*source.associated_incident_ids, target.incident_id))))
+        if (source.subject_key is None and not source.unresolved_discovery_ids
+                and not source.discovery_overflow
+                and len(source.associated_incident_ids) <= 128
+                and discovery.discovery_id in self._incidents[source.incident_id].unresolved_discovery_ids
+                and source.state is not IncidentState.HELP_REQUIRED
+                and source.answer is not VoiceAnswer.HELP
+                and source.notification_level is not NotificationLevel.URGENT):
+            source.state = IncidentState.RESOLVED
+            source.pending = False
+            source.close_reason = 'findings_associated'
+            source.merged_into_incident_ids = source.associated_incident_ids
+            # Cancel the source before exposing a target question to Manager.
+            events.insert(0, FallRuntimeEvent(
+                str(uuid4()), 'incident_merged', incident_id=source.incident_id,
+                evidence_revision=source.revision, question_id=source.question_id,
+                confirmation_scope='scene', reason=source.close_reason,
+                merged_into_incident_ids=source.merged_into_incident_ids))
         if self._journal is not None:
             try:
                 self._journal.append_association(
                     device_id=self.device_id, boot_id=self.boot_id,
-                    events=tuple(events), incident=target)
+                    events=tuple(events), incident=target, source_incident=source)
             except Exception:
                 self._storage_failed = True
                 self.configure(enabled=False, camera_enabled=False,
@@ -1007,13 +1231,16 @@ class CloudFallMonitor:
                 raise FallJournalError('fall association persistence failed') from None
         # Atomic journal success precedes state/events visible to consumers.
         self._incidents[target.incident_id] = target
+        self._incidents[source.incident_id] = source
+        if target.answer is None:
+            self._questions[target.incident_id] = question
         entry.discovery = linked
         self._events.extend(events)
         self._record_clip(target, discovery.sample_times[0], discovery.sample_times[-1],
                           anchor_kind='cloud_window',
                           found_down=finding.kind is CandidateKind.ALREADY_DOWN)
         self._record_cloud_boxes(target, discovery.sample_times, finding)
-        return DiscoveryLinkResult('matched_after_tracking', target.incident_id)
+        return DiscoveryLinkResult(reason, target.incident_id)
 
     def _record_unidentified_scene(self, request, finding):
         """Start verification without Pose, reusing the completed Cloud result.
@@ -1041,7 +1268,7 @@ class CloudFallMonitor:
                       and finding.assessment is VideoAssessment.OBSERVED_FALL)
         if escalation and current.state is not IncidentState.HELP_REQUIRED:
             current.revision += 1
-            current.question_id = None
+            current.question_id = self._pending_question_id(current)
             current.answer = None
             current.answer_question_played = False
             current.situation_assessment = None
@@ -1066,7 +1293,7 @@ class CloudFallMonitor:
             self._emit('decision_required', current, reason='target_unidentified')
         return current.incident_id
 
-    def _merge_cloud_person(self, request, finding, subject_key, token):
+    def _merge_cloud_person(self, request, finding, subject_key, token, *, consume_initial=False):
         current = next((i for i in self._incidents.values() if i.subject_key == subject_key
                         and i.state is not IncidentState.RESOLVED), None)
         observed_at = request.window.frames[finding.regions[-1].frame_index].captured_at
@@ -1086,14 +1313,18 @@ class CloudFallMonitor:
         else:
             if 'cloud_crosscheck' not in current.candidate_sources:
                 current.candidate_sources += ('cloud_crosscheck',)
+            if consume_initial:
+                current.pending = False
+                current.attempts = 1
+                current.next_attempt_at = self._now() + self.policy.retry_interval_s
             previous = current.video.assessment if current.video else None
             escalation = previous not in (VideoAssessment.OBSERVED_FALL,
                                           VideoAssessment.SUSPECTED_FALL) or (
                 previous is VideoAssessment.SUSPECTED_FALL
                 and finding.assessment is VideoAssessment.OBSERVED_FALL)
-            if escalation and current.answer is not VoiceAnswer.HELP:
+            if escalation and not consume_initial and current.answer is not VoiceAnswer.HELP:
                 current.revision += 1
-                current.question_id = None
+                current.question_id = self._pending_question_id(current)
                 current.answer = None
                 current.answer_question_played = False
                 current.situation_assessment = None
@@ -1191,6 +1422,9 @@ class CloudFallMonitor:
             request = replace(request, target=self._subject_evidence.target(
                 incident.subject_key, window))
         scene_snapshot = self._subject_evidence.snapshot(window) if incident is None else ()
+        pose_snapshot = (self._subject_evidence.association_samples(
+            tuple(f.captured_at for f in window.frames)) if incident is None else ())
+        pose_generation = self._subject_evidence.generation
         scene_versions = self._scene_incident_versions() if incident is None else {}
         if incident:
             incident.last_window_end = window.frames[-1].captured_at
@@ -1269,7 +1503,8 @@ class CloudFallMonitor:
                 self.ask_question(incident.incident_id)
             self._decision_needed(incident)
         else:
-            self._record_crosscheck(request, reply, scene_snapshot, scene_versions)
+            self._record_crosscheck(request, reply, scene_snapshot, scene_versions,
+                                   pose_snapshot=pose_snapshot, pose_generation=pose_generation)
             self._emit('crosscheck_completed', request=request, reply=reply)
         return True
 

@@ -41,7 +41,7 @@ class ConfirmationRequest:
 
 class FallConfirmationCoordinator:
     """
-    Deduplicate replayed handoffs and reject obsolete evidence/results.
+    Keep outstanding conversations stable while newer evidence arrives.
 
     It never calls a guardian or interprets transport failures as user silence.
     Only successful Agent final results may carry a help-needed judgment.
@@ -75,7 +75,7 @@ class FallConfirmationCoordinator:
             return False
         kind = event.get('kind')
         if not isinstance(kind, str) or kind not in {
-                'incident_opened', 'incident_updated', 'incident_resolved',
+                'incident_opened', 'incident_updated', 'incident_resolved', 'incident_merged',
                 'confirmation_completed', 'analysis_completed', 'question_requested'}:
             return False
         scope = event.get('confirmation_scope', 'subject')
@@ -103,6 +103,13 @@ class FallConfirmationCoordinator:
                     or (video == 'normal_activity'
                         and event.get('reason') != 'prior_fall_observed')):
                 return False
+        if kind == 'incident_merged':
+            targets = event.get('merged_into_incident_ids')
+            if (scope != 'scene' or event.get('reason') != 'findings_associated'
+                    or not isinstance(targets, list) or not 1 <= len(targets) <= 128
+                    or not all(_identifier(t) and t != iid for t in targets)
+                    or len(set(targets)) != len(targets)):
+                return False
         if self.boot_id != boot:
             if self.boot_id is not None:
                 self.retired_boots.add(self.boot_id)
@@ -112,23 +119,27 @@ class FallConfirmationCoordinator:
             self.terminal_revisions.clear()
             self.finished.clear()
             self.commands.clear()
-        if revision < self.revisions.get(iid, 0):
+        # A question retains its original evidence revision until its session
+        # ends. Its replay or completion may follow a newer incident update.
+        if (revision < self.revisions.get(iid, 0)
+                and kind not in {'question_requested', 'confirmation_completed'}):
             return False
         if revision > self.revisions.get(iid, 0):
             self.revisions[iid] = revision
+        if kind in {'incident_resolved', 'incident_merged'}:
+            self.terminal_revisions[iid] = revision
             for rid, request in tuple(self.requests.items()):
                 if request.incident_id == iid:
                     del self.requests[rid]
                     self._remember(rid)
-        if kind in {'incident_resolved', 'confirmation_completed'}:
-            if kind == 'incident_resolved':
-                self.terminal_revisions[iid] = revision
-            elif _identifier(event.get('question_id')):
-                self._remember(event['question_id'])
-            for rid, request in tuple(self.requests.items()):
-                if request.incident_id == iid:
-                    del self.requests[rid]
-                    self._remember(rid)
+            return True
+        if kind == 'confirmation_completed':
+            qid = event.get('question_id')
+            if _identifier(qid):
+                self._remember(qid)
+                request = self.requests.get(qid)
+                if request is not None and request.incident_id == iid:
+                    del self.requests[qid]
             return True
         if kind == 'analysis_completed' and event.get('video_assessment') == 'normal_activity':
             # Runtime revalidates that there was no earlier observed fall or
@@ -153,11 +164,10 @@ class FallConfirmationCoordinator:
             return True
         if len(self.requests) >= 128:
             return False
-        # The runtime guarantees at most one current question per incident.
-        for rid, request in tuple(self.requests.items()):
-            if request.incident_id == iid:
-                del self.requests[rid]
-                self._remember(rid)
+        # Runtime replays unfinished handoffs. A newer one must wait for this
+        # incident's current conversation instead of replacing it.
+        if any(request.incident_id == iid for request in self.requests.values()):
+            return True
         summary = VIDEO_SUMMARIES[video]
         if scope == 'scene':
             summary += (' 영상 속 대상과 대답하는 사람의 연결은 확인되지 않았습니다.'

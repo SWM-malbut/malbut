@@ -8,7 +8,7 @@ const kinds = [
   "incident_opened", "incident_updated", "question_requested", "voice_result", "decision_required",
   "notification_requested", "agent_check_failed", "analysis_completed",
   "analysis_unavailable", "stale_analysis_result", "recheck_unavailable", "incident_resolved",
-  "confirmation_completed",
+  "confirmation_completed", "incident_merged",
 ];
 
 export type FallEventInput = {
@@ -26,6 +26,7 @@ export type FallEventInput = {
   answer: string | null;
   reason: string | null;
   notificationLevel: "info" | "check" | "urgent" | null;
+  mergedIntoIncidentIds?: string[];
 };
 
 export function parseFallEvent(value: unknown): FallEventInput | null {
@@ -34,6 +35,7 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
   const keys = ["schemaVersion", "eventId", "incidentId", "bootId", "sequence",
     "evidenceRevision", "occurredAt", "eventKind", "state", "fallSeen", "assessment",
     "answer", "reason", "notificationLevel"];
+  if (v.eventKind === "incident_merged") keys.push("mergedIntoIncidentIds");
   if (Object.keys(v).length !== keys.length || !keys.every((k) => Object.hasOwn(v, k))) return null;
   if (v.schemaVersion !== 1 || typeof v.eventId !== "string" || !uuid.test(v.eventId) ||
       typeof v.incidentId !== "string" || !uuid.test(v.incidentId) ||
@@ -50,6 +52,13 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
       !(v.answer === null || (typeof v.answer === "string" && answers.includes(v.answer))) ||
       !(v.reason === null || (typeof v.reason === "string" && /^[a-z_]{1,80}$/.test(v.reason)))) return null;
   if (WEB_ONLY_FALL_REASONS.includes(v.reason as string)) return null;
+  if (v.eventKind === "incident_merged") {
+    const targets = v.mergedIntoIncidentIds;
+    if (v.state !== "resolved" || v.reason !== "findings_associated" || v.answer === "help_request" ||
+        !Array.isArray(targets) || targets.length < 1 || targets.length > 128 ||
+        !targets.every((id) => typeof id === "string" && uuid.test(id) && id !== v.incidentId) ||
+        new Set(targets).size !== targets.length) return null;
+  }
   if (v.eventKind === "notification_requested") {
     if (!buildFallNotification({
       deviceId: "validated-by-auth", notificationId: v.eventId, incidentId: v.incidentId,
@@ -70,7 +79,7 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
           (v.state === "resolved" && v.answer === "okay"))) return null;
   }
   if (v.state === "resolved") {
-    if (v.eventKind !== "confirmation_completed" && (v.eventKind !== "incident_resolved" ||
+    if (v.eventKind !== "incident_merged" && v.eventKind !== "confirmation_completed" && (v.eventKind !== "incident_resolved" ||
         !["normal_verified", "risk_cleared", "response_completed"].includes(v.reason as string))) return null;
     if (v.reason === "normal_verified" && (v.fallSeen || v.answer !== "okay" || v.assessment !== "normal_activity")) return null;
   }

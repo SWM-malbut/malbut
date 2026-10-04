@@ -16,6 +16,20 @@ function notice(change = {}) {
     answer: "help_request", notificationLevel: "urgent", reason: "help_requested", ...change });
 }
 
+test("scene merge is a separate bounded terminal contract, never a normal judgment", () => {
+  const { parseFallEvent } = moduleLoader()("app/fall-contract.ts");
+  const merged = event({ eventKind: "incident_merged", state: "resolved",
+    reason: "findings_associated", assessment: "suspected_fall", mergedIntoIncidentIds: [randomUUID()] });
+  assert.deepEqual(parseFallEvent(merged), merged);
+  for (const change of [
+    { mergedIntoIncidentIds: [] }, { mergedIntoIncidentIds: [merged.incidentId] },
+    { mergedIntoIncidentIds: ["bad"] }, { mergedIntoIncidentIds: Array(129).fill(randomUUID()) },
+    { mergedIntoIncidentIds: [merged.mergedIntoIncidentIds[0], merged.mergedIntoIncidentIds[0]] },
+    { state: "verifying" }, { reason: "normal_verified" }, { answer: "help_request" },
+    { notificationLevel: "urgent" }, { eventKind: "incident_resolved" },
+  ]) assert.equal(parseFallEvent({ ...merged, ...change }), null);
+});
+
 test("fall request contract is strict, bounded, and excludes recipients/media/device spoofing", async () => {
   const { parseFallEvent, readFallEvent } = moduleLoader()("app/fall-contract.ts");
   assert.ok(parseFallEvent(event()));
@@ -262,6 +276,13 @@ test("Manager confirmation journal preserves all six outcomes through storage an
     for (const record of records) assert.equal((await repo.storeFallEvent("robot-a", record)).stored, true);
     const confirmations = records.filter((r) => r.eventKind === "confirmation_completed");
     assert.equal(confirmations.length, 6);
+    const oldAnswer = records.filter((r) => r.eventKind === "voice_result");
+    assert.equal(oldAnswer.length, 1);
+    assert.equal(oldAnswer[0].evidenceRevision, 1);
+    assert.equal(oldAnswer[0].state, "recheck_required");
+    const latestAnswer = confirmations.find((r) => r.incidentId === oldAnswer[0].incidentId);
+    assert.equal(latestAnswer.evidenceRevision, 2);
+    assert.equal(latestAnswer.state, "resolved");
     assert.ok(records.some((r) => r.eventKind === "incident_updated"));
     assert.equal(new Set(confirmations.map((r) => `${r.reason}:${r.state}`)).size, 6);
     const incidents = await repo.listFallIncidents("robot-a");

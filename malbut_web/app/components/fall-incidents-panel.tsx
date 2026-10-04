@@ -12,7 +12,8 @@ type OpinionLabel = "fall" | "suspected_fall" | "normal";
 type SceneState = "preparing" | "available" | "partial" | "unavailable" | "expired";
 
 type IncidentSummary = {
-  incidentId: string; origin: "robot" | "user_report"; category: "check" | "normal" | "report";
+  incidentId: string; origin: "robot" | "user_report"; category: "check" | "normal" | "report" | "merged";
+  mergedIntoIncidentIds?: string[];
   state: string | null; fallSeen: boolean; assessment: string | null; answer: string | null;
   notificationRank: number; occurredAt: string; updatedAt: string; reviewState: "open" | "closed";
   closedAt: string | null; closedBy: string | null; reopenedAt: string | null;
@@ -65,6 +66,7 @@ const EVENT_LABEL: Record<string, string> = {
   agent_check_failed: "로봇 질문 실패", analysis_completed: "클라우드 AI",
   analysis_unavailable: "클라우드 AI 분석 실패", stale_analysis_result: "늦게 도착한 분석 결과",
   recheck_unavailable: "재확인 실패", incident_resolved: "로봇이 사건 종료", confirmation_completed: "상황 확인 완료",
+  incident_merged: "사람 연결 완료 · 연결된 사건에서 계속 확인",
 };
 const ANSWER_LABEL: Record<string, string> = {
   help_request: "본인이 도움을 요청함", okay: "괜찮다고 답함", unclear: "답이 불분명", no_response: "무응답", failed: "질문 실패",
@@ -112,6 +114,7 @@ function badges(i: IncidentSummary): Array<[string, string]> {
     if (i.notification) list.push(["is-alert-soft", `알림: ${LEVEL_LABEL[i.notification.level]} · ${i.notification.sent}/${i.notification.total}회 발송`]);
   } else if (i.reviewState === "open" && i.needsCheck) list.push(["is-check", "확인 필요"]);
   if (i.category === "normal") list.push(["is-ok", "정상으로 확인됨"]);
+  if (i.category === "merged") list.push(["is-neutral", "다른 사건에 병합됨"]);
   if (i.category === "report") list.push(["is-report", "사용자 신고"], ["is-neutral", "자동 감지 아님"]);
   if (i.reviewState === "closed") list.push(["is-neutral", "처리 완료"]);
   else if (i.reviewPending) list.push(["is-neutral", "검수 전"]);
@@ -462,9 +465,14 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           <Badges items={badges(detail)} />
           <h1>{title(detail)}</h1>
           <div className="fall-sub">{when(moment)}{detail.reportedBy ? ` · ${detail.reportedBy} 신고` : ""}</div>
-          {detail.linkedIncidentIds.map((id) => (
+          {(detail.mergedIntoIncidentIds ?? []).map((id) => (
+            <button type="button" key={`merged-${id}`} className="fall-linked" onClick={() => open(id)}>
+              사람 연결을 확인했어요. 이어서 처리하는 사건 보기 ›
+            </button>
+          ))}
+          {detail.linkedIncidentIds.filter((id) => !detail.mergedIntoIncidentIds?.includes(id)).map((id) => (
             <button type="button" key={id} className="fall-linked" onClick={() => open(id)}>
-              같은 시간에 다른 사람의 사건도 있어요 ›
+              같은 시간대의 관련 사건 보기 ›
             </button>
           ))}
         </header>

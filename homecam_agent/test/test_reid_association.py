@@ -132,14 +132,62 @@ def test_all_region_failures_remain_in_diagnostics():
 def test_injection_is_scoped_and_restored_even_on_failure():
     import replay_reviewed_pose_cloud as replay
     import malbut_agent_server.application.cloud_fall_monitor as monitor
-    original_replay, original_monitor = replay.associate_finding, monitor.associate_finding
+    original_replay = replay.associate_finding
+    original_monitor = monitor.associate_timed_finding
     trial=AssociationExperiment('wider_iou_reid',constant)
     with pytest.raises(RuntimeError):
         with offline_associator(trial):
-            assert replay.associate_finding is monitor.associate_finding is trial
+            assert replay.associate_finding is trial
+            assert monitor.associate_timed_finding == trial.aligned_timed
             raise RuntimeError('synthetic')
     assert replay.associate_finding is original_replay
-    assert monitor.associate_finding is original_monitor
+    assert monitor.associate_timed_finding is original_monitor
+
+
+def test_timed_adapter_keeps_original_rgb_indices_and_missing_samples():
+    seen = []
+    def appearance(index, box):
+        seen.append(index)
+        return constant(index, box)
+    trial = AssociationExperiment('wider_iou_reid', appearance)
+    query = finding((0, BOX), (2, BOX))
+    samples = (((100., (pose(),)),), (), ((101., (pose(),)),))
+    assert trial.aligned_timed(query, samples).reason == 'matched'
+    assert seen == [0, 0, 2, 2]
+    assert trial.aligned_timed(query, (samples[0], (), ())).reason == 'no_matching_track'
+
+
+@pytest.mark.parametrize('arm', ARMS)
+def test_aligned_replay_never_discards_or_reindexes_temporal_neighbors(arm):
+    def forbidden(*args):
+        raise AssertionError('neighbor RGB was not supplied')
+    trial = AssociationExperiment(arm, forbidden)
+    samples = (((99.95, (pose(),)), (100.05, (pose(),))),
+               ((100.95, (pose(),)), (101.05, (pose(),))))
+    with pytest.raises(ValueError, match='exact-frame Pose'):
+        trial.aligned_timed(finding((0, BOX), (1, BOX)), samples)
+    assert not trial.records
+
+
+@pytest.mark.parametrize('arm', ARMS)
+def test_experiment_changes_actual_monitor_association_not_only_diagnostics(arm, tmp_path):
+    rows, originals, record, result, config, _ = fixture()
+    for row in rows:
+        row['candidate_payload']['tracks'][0]['box'] = [.1, .3, .3, .8]
+    # IoU 1/3 fails production's .60 gate but passes the trial's .20 gate.
+    # This assertion must fail if only replay diagnostics, not the monitor,
+    # receive the experimental associator.
+    with offline_associator(AssociationExperiment(arm, constant)):
+        replay = replay_scene(rows, originals, record, result, config, tmp_path/'trial.sqlite')
+    discovery = next(e['discovery'] for e in replay['events'] if e['discovery'])
+    if arm == 'baseline':
+        assert discovery['reason'] == 'no_matching_track'
+        assert discovery['subject_key'] is None
+        assert len(replay['after']) == 2
+    else:
+        assert discovery['subject_key'] is not None
+        assert len(replay['after']) == 1
+        assert replay['after'][0]['sources'] == ('yolo_pose', 'cloud_crosscheck')
 
 
 @pytest.mark.parametrize('arm', ARMS)

@@ -19,6 +19,7 @@ class FallEventJournal(Protocol):
         ...
 
     def append_association(self, *, device_id: str, boot_id: str,
-                           events: tuple, incident: FallIncident) -> None:
-        """Commit the target's events and per-discovery link in ONE transaction."""
+                           events: tuple, incident: FallIncident,
+                           source_incident: FallIncident = None) -> None:
+        """Commit target, discovery and optional source retirement atomically."""
         ...

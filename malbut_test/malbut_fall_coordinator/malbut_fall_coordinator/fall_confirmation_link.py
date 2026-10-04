@@ -60,6 +60,7 @@ class FallConfirmationLink:
         self.server_missing_since = None
         self.next_attempt = 0.0
         self.manager_state = None
+        self.canceling_requests = set()
         self.states = node.create_subscription(
             SystemState, '/malbut/state', self.on_state,
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -86,14 +87,41 @@ class FallConfirmationLink:
             self.manager_state = message
             self._drive()
 
-    def _cancel_current(self):
+    def _cancel_current(self, *, wait_for_result=False):
         handle = self.handle
         pending = self.goal_future
+        request = self.request
+        if wait_for_result and request is not None:
+            if not hasattr(self, 'canceling_requests'):
+                self.canceling_requests = set()
+            self.canceling_requests.add(request.request_id)
         self.request = self.handle = self.goal_future = None
         self.accepted_at = self.server_missing_since = None
         if handle is not None:
+            if wait_for_result:
+                self._wait_for_canceled_result(request, handle)
             return self._cancel_handle(handle)
         return pending
+
+    def _wait_for_canceled_result(self, request, handle):
+        # A cancellation ACK is only acceptance, not proof that speech stopped.
+        # Keep the next conversation queued until this mission actually ends.
+        try:
+            handle.get_result_async().add_done_callback(
+                lambda done: self._canceled_done(request, done))
+        except Exception:
+            self.node.get_logger().warning('confirmation_merge_cancel_unconfirmed')
+
+    def _canceled_done(self, request, future):
+        with self.lock:
+            try:
+                if future.result().status not in (4, 5, 6):
+                    return
+            except Exception:
+                self.node.get_logger().warning('confirmation_merge_cancel_unconfirmed')
+                return
+            self.canceling_requests.discard(request.request_id)
+            self._drive()
 
     def _cancel_handle(self, handle):
         if handle is not None:
@@ -129,9 +157,14 @@ class FallConfirmationLink:
         self._publish()
         if (self.request is not None
                 and self.coordinator.requests.get(self.request.request_id) != self.request):
-            self._cancel_current()
+            terminal_scene = (self.request.subject_key is None and
+                self.coordinator.terminal_revisions.get(self.request.incident_id, 0)
+                >= self.request.revision)
+            self._cancel_current(wait_for_result=terminal_scene)
         if self.request is not None:
             self._expire_current()
+            return
+        if getattr(self, 'canceling_requests', None):
             return
         if self.clock() < self.next_attempt or not self.client.server_is_ready():
             return
@@ -179,7 +212,12 @@ class FallConfirmationLink:
                     or self.goal_future is not future
                     or self.coordinator.requests.get(request.request_id) != request):
                 if handle.accepted:
+                    if request.request_id in getattr(self, 'canceling_requests', ()):
+                        self._wait_for_canceled_result(request, handle)
                     self._cancel_handle(handle)
+                elif request.request_id in getattr(self, 'canceling_requests', ()):
+                    self.canceling_requests.discard(request.request_id)
+                    self._drive()
                 return
             self.goal_future = None
             if not handle.accepted:
