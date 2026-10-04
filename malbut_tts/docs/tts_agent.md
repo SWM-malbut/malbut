@@ -65,7 +65,8 @@ flowchart LR
   - `/malbut/speech/playback_status` ROS 2 Topic을 사용한다.
   - 메시지 타입은 [SpeechPlaybackStatus](../../malbut_interfaces/msg/SpeechPlaybackStatus.msg)이다.
   - 전달 데이터: `playback_id: string` — 음성 재생의 고유 ID, `state: string` — 현재 재생 상태.
-  - `interim: bool`은 원래 `SpeechRequest`의 값을 모든 상태에서 그대로 전달한다. 중간 안내의 `finished`는 그 안내의 재생 완료이며 최종 답변 완료를 뜻하지 않는다. STT는 해당 안내 뒤 일반 대화의 5초 종료 대기를 시작하지 않는다.
+  - `request_id: string`은 원래 일반 요청의 값을 모든 상태에 전달한다. STT는 같은 발화의 최종 답변이 완료·실패·중단되면 입력 차단을 풀고 호출어 대기로 돌아간다. `CONFIRMATION`은 빈 값이며 기존 재생 ID 기반 제어를 유지한다.
+  - `interim: bool`은 원래 `SpeechRequest`의 값을 모든 상태에서 그대로 전달한다. 중간 안내의 `finished`는 그 안내의 재생 완료이며 최종 답변 완료를 뜻하지 않는다. STT는 해당 안내 뒤에도 일반 요청의 입력 차단을 유지한다.
   - 재생 상태는 `playing`(재생 중), `paused`(일시정지), `finished`(정상 완료), `failed`(실패), `stopped`(중지)로 구분한다.
   - Agent는 질문의 `playback_id`에 대응하는 `finished`를 받은 뒤 답변 시작 대기 시간을 계산한다. `failed`나 `stopped`를 정상 완료로 처리하지 않는다.
 

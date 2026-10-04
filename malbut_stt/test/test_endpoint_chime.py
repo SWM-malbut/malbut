@@ -45,6 +45,19 @@ def reply(state, job, text='문을 닫아 주세요.', error=None):
     state.pipeline.poll()
 
 
+def finish_answer_and_wake(state, uid):
+    p = state.pipeline
+    p.on_playback_status('answer', 'playing', request_id=uid)
+    p.on_playback_status('answer', 'finished', request_id=uid)
+    assert not p.session.active
+    state.now += .31  # Drain the chime and raw playback tails before calling again.
+    p.feed(VOICE * 4 + QUIET * 20)
+    wake = p.jobs.get_nowait()
+    assert wake[0] == 'wake'
+    reply(state, wake, '제이크야')
+    assert p.session.active and p.session.utterance_id is None
+
+
 def test_provisional_pause_and_resumed_speech_only_chime_at_final_endpoint(run):
     p = run.pipeline
     old = candidate(run)
@@ -105,6 +118,10 @@ def test_chime_echo_queue_and_tail_are_excluded_then_new_speech_is_accepted(run,
     assert p.session.utterance_id is None
     run.now = .46
     p.feed(SECOND)
+    assert p.session.utterance_id is None and not p.command_stream.collector.started
+    assert not p.session.active and p._reply_request_id == job[2][0]
+    finish_answer_and_wake(run, job[2][0])
+    p.feed(SECOND)
     assert p.session.utterance_id is not None
     assert p.command_stream.collector.audio == SECOND
 
@@ -134,8 +151,12 @@ def test_failed_output_preserves_transcript_and_releases_echo_gate(run):
     assert run.chimes == ['attempt']
     assert run.transcripts == [(job[2][0], '문을 닫아 주세요.')]
     assert 'endpoint_chime_failed:RuntimeError' in run.reports
-    assert not run.pipeline._chime_playing and run.pipeline.session.active
+    assert not run.pipeline._chime_playing and not run.pipeline.session.active
     run.now = .31
+    run.pipeline.feed(SECOND)
+    assert not run.pipeline.command_stream.collector.started
+    assert run.pipeline._reply_request_id == job[2][0]
+    finish_answer_and_wake(run, job[2][0])
     run.pipeline.feed(SECOND)
     assert run.pipeline.command_stream.collector.started
 
@@ -150,6 +171,10 @@ def test_feedback_drops_remaining_events_precomputed_from_the_same_pcm_chunk(run
     assert run.transcripts == [(job[2][0], '문을 닫고')]
     assert p.session.utterance_id is None and not p.command_stream.collector.started
     run.now = .31
+    p.feed(SECOND)
+    assert p.session.utterance_id is None and not p.command_stream.collector.started
+    assert not p.session.active and p._reply_request_id == job[2][0]
+    finish_answer_and_wake(run, job[2][0])
     p.feed(SECOND)
     assert p.session.utterance_id is not None and p.command_stream.collector.audio == SECOND
 

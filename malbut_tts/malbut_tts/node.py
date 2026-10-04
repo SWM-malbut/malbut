@@ -131,18 +131,19 @@ def create_tts_node(runtime_factory=None):
             )
             return response
 
-        def _queue_status(self, playback_id, state, interim):
+        def _queue_status(self, playback_id, state, interim, request_id):
             if not self._closing:
-                self._statuses.put((playback_id, state, interim))
+                self._statuses.put((playback_id, state, interim, request_id))
 
         def _publish_statuses(self):
             while not self._closing:
                 try:
-                    playback_id, state, interim = self._statuses.get_nowait()
+                    playback_id, state, interim, request_id = self._statuses.get_nowait()
                 except Empty:
                     return
                 self._status_publisher.publish(SpeechPlaybackStatus(
                     playback_id=playback_id, state=state, interim=interim,
+                    request_id=request_id,
                 ))
 
         def destroy_node(self):

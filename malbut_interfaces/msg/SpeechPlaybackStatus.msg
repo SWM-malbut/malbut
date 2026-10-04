@@ -11,3 +11,7 @@ string state
 
 # 해당 SpeechRequest의 interim 값. 한 재생 ID의 모든 상태에서 동일하다.
 bool interim
+
+# 원본 SpeechRequest의 request_id. CONFIRMATION은 기존 정책대로 빈 값이다.
+# PLAYING 이전에 실패하거나 취소한 경우에도 동일하게 전달한다.
+string request_id

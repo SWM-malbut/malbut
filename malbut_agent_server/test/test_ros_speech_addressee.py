@@ -1,5 +1,6 @@
 """Exercise asynchronous Service callbacks without a ROS installation."""
 
+import sqlite3
 import sys
 from types import SimpleNamespace
 
@@ -417,6 +418,43 @@ def test_overlong_final_speech_is_rejected_with_notice_without_receipt(node):
     assert node._receipts.lookup('too-long', text) is None
     messages = node.sent[ros_communication.RESPONSE_TOPIC]
     assert len(messages) == 1 and '16000' in messages[0].text
+    assert messages[0].request_id == 'too-long'
+    assert messages[0].interim is False
+    assert node.dialogue.requests == []
+
+
+@pytest.mark.parametrize('failure', ['startup', 'capacity', 'submit', 'lookup', 'store'])
+def test_rejected_speech_sends_correlated_final_notice(node, monkeypatch, failure):
+    """Every failed new turn can release STT's matching response wait."""
+    def storage_error(*_args):
+        raise sqlite3.OperationalError('receipt unavailable')
+
+    if failure == 'startup':
+        node.dialogue.startup_error = 'Unavailable'
+    elif failure == 'capacity':
+        node.dialogue.accept = False
+    elif failure == 'submit':
+        monkeypatch.setattr(node.dialogue, 'submit', lambda *_: False)
+    elif failure == 'lookup':
+        monkeypatch.setattr(node._receipts, 'lookup', storage_error)
+    else:
+        monkeypatch.setattr(node._receipts, 'receive', storage_error)
+
+    node._receive_speech(request(uid='rejected', text='안녕'))
+
+    messages = node.sent[ros_communication.RESPONSE_TOPIC]
+    assert len(messages) == 1
+    assert messages[0].request_id == 'rejected'
+    assert messages[0].request_type == SpeechRequest.DIALOGUE
+    assert messages[0].interim is False
+    assert node.dialogue.requests == []
+
+
+@pytest.mark.parametrize('text', ['안녕', '다른 내용'])
+def test_previously_received_speech_does_not_send_another_final_notice(node, text):
+    node._receipts.receive('existing', '안녕')
+    node._receive_speech(request(uid='existing', text=text))
+    assert node.sent[ros_communication.RESPONSE_TOPIC] == []
     assert node.dialogue.requests == []
 
 

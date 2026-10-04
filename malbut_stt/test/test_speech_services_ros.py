@@ -101,7 +101,7 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
             state.decisions.append((uid, pid, result))
             self.pending_addressee = None
 
-        def on_playback_status(self, pid, playback_state, *, interim=False):
+        def on_playback_status(self, pid, playback_state, *, interim=False, request_id=''):
             state.statuses.append((pid, playback_state, interim))
             self.session.playback_state = playback_state
 

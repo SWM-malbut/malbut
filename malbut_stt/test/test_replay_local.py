@@ -56,8 +56,8 @@ def runtime(tmp_path, monkeypatch):
     return state
 
 
-def test_real_pipeline_observes_continuation_after_its_first_early_result(runtime, tmp_path):
-    """The runner must reveal both outputs instead of truncating the WAV after one."""
+def test_real_pipeline_emits_full_wav_but_accepts_one_request_until_reply(runtime, tmp_path):
+    """Continue observing the WAV while the pending reply blocks additional requests."""
     pcm = b'\x01\x00' * 1600 + bytes(2 * 28800) + b'\x02\x00' * 1600
     path = write_wav(tmp_path / 'continuation.wav', pcm)
     transcriber = LocalWhisperTranscriber(runtime.model_dir)
@@ -66,15 +66,13 @@ def test_real_pipeline_observes_continuation_after_its_first_early_result(runtim
     assert result['status'] == 'completed' and result['clean_shutdown']
     assert result['replay']['all_input_emitted']
     assert result['replay']['elapsed_s'] >= 6.0
-    assert result['transcript_count'] == 2
-    assert [item['text'] for item in result['transcripts']] == ['알려줘.', '이동해줘.']
-    first, second = result['transcripts']
-    assert first['utterance_id'] != second['utterance_id']
-    assert first['at_s'] < result['source']['duration_s'] < second['at_s']
+    assert result['transcript_count'] == 1
+    assert [item['text'] for item in result['transcripts']] == ['알려줘.']
+    assert result['transcripts'][0]['at_s'] < result['source']['duration_s']
     assert all(item['vad_last_speech_to_text_s'] > 0.9 for item in result['transcripts'])
     assert result['source']['pcm_sha256'] == hashlib.sha256(pcm).hexdigest()
-    assert result['model_transcribe_calls'] == 2
-    assert len(result['inference']) == len(runtime.requests) == 2
+    assert result['model_transcribe_calls'] == 1
+    assert len(result['inference']) == len(runtime.requests) == 1
     assert all(call['elapsed_s'] is not None for call in result['inference'])
     assert all(call['initial_prompt'] is None for call in result['inference'])
     assert any(item['event'].startswith('checking_endpoint:') for item in result['events'])
@@ -157,7 +155,7 @@ def test_resumed_voice_keeps_first_onset_but_updates_its_own_last_voice(runtime,
     assert transcript['vad_last_speech_to_text_s'] > 0.9
 
 
-def test_required_wake_opens_dialogue_and_two_followups_keep_distinct_timing(runtime, tmp_path):
+def test_required_wake_accepts_one_command_and_blocks_followup_without_reply(runtime, tmp_path):
     pcm = (b'\x01\x00' * 1600 + bytes(2 * 12800)
            + b'\x02\x00' * 1600 + bytes(2 * 32000) + b'\x03\x00' * 1600)
     path = write_wav(tmp_path / 'wake-and-two-commands.wav', pcm)
@@ -176,15 +174,14 @@ def test_required_wake_opens_dialogue_and_two_followups_keep_distinct_timing(run
     event_names = [item['event'] for item in result['events']]
     assert event_names.count('wake_detected') == 1
     assert 'replay_started:waiting_for_wake' in event_names
-    assert result['model_transcribe_calls'] == 3 and result['transcript_count'] == 2
-    assert [item['text'] for item in result['transcripts']] == ['날씨 알려줘.', '거실로 이동해줘.']
-    first, second = result['transcripts']
-    assert first['utterance_id'] != second['utterance_id']
+    assert result['model_transcribe_calls'] == 2 and result['transcript_count'] == 1
+    assert [item['text'] for item in result['transcripts']] == ['날씨 알려줘.']
+    first = result['transcripts'][0]
     assert 0.8 < first['first_vad_speech_at_s'] < 1.2
-    assert 2.9 < second['first_vad_speech_at_s'] < 3.3
+    assert 'waiting_for_reply' in event_names
     assert all(item['vad_last_speech_to_text_s'] > 0.9 for item in result['transcripts'])
     assert [call['initial_prompt'] for call in result['inference']] == [
-        '로봇 이름은 제이크입니다.', None, None,
+        '로봇 이름은 제이크입니다.', None,
     ]
     assert len(runtime.loads) == 1
 

@@ -23,7 +23,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     parser.add_argument('--wake-only', action='store_true', help='detect wake words without STT')
     parser.add_argument('--local', action='store_true', help='transcribe commands locally without API')
     parser.add_argument('--dialogue', action='store_true',
-                        help='continuous local dialogue; no TTS events to test its 5s timeout')
+                        help='local STT dialogue with terminal-only reply acknowledgement')
     parser.add_argument('--model-path', help='downloaded model directory for the local backend')
     parser.add_argument('--backend', choices=('faster-whisper', 'mlx'),
                         help='local inference backend (default: faster-whisper)')
@@ -172,12 +172,19 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 from threading import Event
                 from malbut_stt.dialogue_pipeline import DialoguePipeline
 
+                def publish_local(utterance_id, text):
+                    emit('transcript', utterance_id=utterance_id, text=text)
+                    # This STT-only CLI has no Agent/TTS; terminal output completes its turn.
+                    pipeline.on_playback_status(
+                        utterance_id, 'finished', request_id=utterance_id)
+                    if options.manual:
+                        pipeline.session.activate()
+
                 pipeline = DialoguePipeline(
                     recorder_factory=recorder_factory,
                     wake=wake or LocalWakeRecognizer.from_transcriber(transcriber),
                     transcriber=transcriber, is_speech=vad.is_speech,
-                    publish_transcript=lambda uid, text: emit(
-                        'transcript', utterance_id=uid, text=text),
+                    publish_transcript=publish_local,
                     on_partial=lambda uid, text: emit(
                         'partial_transcript', utterance_id=uid, text=text),
                     publish_control=lambda *_: None, publish_interruption=lambda *_: None,
@@ -190,8 +197,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 emit('ready', mode='dialogue', wake_required=not options.manual,
                      model='small', backend='local', local_backend=backend,
                      local_compute_type=compute_type, device_index=options.device_index,
-                     output='terminal_only', tts_completion_events=False,
-                     tts_5s_timeout_testable=False)
+                     output='terminal_only', tts_completion_events=False)
                 pipeline.start()
                 wait = Event()
                 while True:

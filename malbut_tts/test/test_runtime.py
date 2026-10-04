@@ -73,6 +73,7 @@ class Harness:
         self.players = Queue()
         self.events = []
         self.interim_flags = []
+        self.request_ids = []
         self.condition = Condition()
         self.runtime = SpeechRuntime(
             self.synth, self.make_player, self.status,
@@ -84,10 +85,11 @@ class Harness:
         self.players.put(player)
         return player
 
-    def status(self, playback_id, state, interim):
+    def status(self, playback_id, state, interim, request_id):
         with self.condition:
             self.events.append((playback_id, state))
             self.interim_flags.append(interim)
+            self.request_ids.append(request_id)
             self.condition.notify_all()
 
     def wait(self, playback_id, state):
@@ -315,6 +317,7 @@ def test_rejected_final_does_not_cancel_generating_progress_or_retire_request():
         queued = h.runtime.submit('other request', request_id='other')
         rejected = h.runtime.submit('rejected final', request_id='request')
         h.wait(rejected, 'failed')
+        assert h.request_ids[h.events.index((rejected, 'failed'))] == 'request'
         assert not player.cancel.is_set()
         release.set()
         h.wait(progress, 'playing')
@@ -420,6 +423,8 @@ def test_confirmation_still_preempts_with_a_finalized_request_id(h):
     h.active(question).drain.set()
     h.wait(question, 'finished')
     assert h.synth.texts == ['final', 'question']
+    assert all(request_id == '' for event, request_id in zip(h.events, h.request_ids)
+               if event[0] == question)
 
 
 def test_stop_all_clears_active_and_waiting_before_question_is_available(h):
@@ -455,6 +460,18 @@ def test_stop_before_confirmation_receipt_suppresses_late_audio_and_preemption(h
     h.wait(active, 'finished')
 
 
+@pytest.mark.parametrize('interim', [False, True])
+def test_stop_before_dialogue_receipt_retains_request_correlation(h, interim):
+    assert h.runtime.control('late-answer', 'stop')
+    assert h.runtime.submit('취소된 답변', playback_id='late-answer',
+                            request_id='utterance', interim=interim) == 'late-answer'
+    h.wait('late-answer', 'stopped')
+    assert h.events == [('late-answer', 'stopped')]
+    assert h.request_ids == ['utterance']
+    assert h.interim_flags == [interim]
+    assert h.synth.texts == []
+
+
 def test_stop_reservations_are_bounded_and_reject_invalid_ids(h):
     for invalid in ('', '  ', None, 'x' * 201):
         assert not h.runtime.control(invalid, 'stop')
@@ -487,7 +504,8 @@ def test_finished_waits_for_full_device_drain_and_is_emitted_once(h):
 @pytest.mark.parametrize('interim', [False, True])
 @pytest.mark.parametrize('terminal', ['finished', 'stopped', 'failed'])
 def test_interim_flag_is_preserved_from_playing_through_terminal(h, interim, terminal):
-    pid = h.runtime.submit('답변을 준비하고 있어요.', interim=interim)
+    pid = h.runtime.submit('답변을 준비하고 있어요.', interim=interim,
+                           request_id='utterance')
     player = h.active(pid)
     assert h.interim_flags == [interim]
     if terminal == 'stopped':
@@ -498,6 +516,7 @@ def test_interim_flag_is_preserved_from_playing_through_terminal(h, interim, ter
     h.wait(pid, terminal)
     assert h.events == [(pid, 'playing'), (pid, terminal)]
     assert h.interim_flags == [interim, interim]
+    assert h.request_ids == ['utterance', 'utterance']
 
 
 def test_invalid_interim_flag_is_rejected_before_synthesis(h):
@@ -545,13 +564,14 @@ def test_stop_drops_active_audio_and_keeps_other_pending_requests(h):
 @pytest.mark.parametrize('text', ['synthesis failure', 'empty audio'])
 def test_synthesis_failure_is_terminal_and_next_request_runs(h, text):
     """One failed request does not stall the request queue."""
-    failed = h.runtime.submit(text)
+    failed = h.runtime.submit(text, request_id='failed-utterance')
     next_id = h.runtime.submit('next')
     h.wait(failed, 'failed')
     assert h.players.get(timeout=3).closed.is_set()
     h.active(next_id).drain.set()
     h.wait(next_id, 'finished')
     assert (failed, 'finished') not in h.events
+    assert h.request_ids[h.events.index((failed, 'failed'))] == 'failed-utterance'
 
 
 def test_device_failure_is_not_finished(h):

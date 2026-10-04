@@ -33,6 +33,8 @@ class DialoguePipeline:
 
     One utterance may await inference or addressee classification. Additional
     utterances are explicitly discarded through their endpoint while it is busy.
+    An accepted ordinary request blocks capture until its final reply terminates;
+    the next request requires a new wake. Agent-owned sessions keep their policy.
     ``input_has_aec`` asserts that the selected microphone already supplies AEC;
     this class does not remove playback echo from raw microphone audio.
     """
@@ -46,6 +48,7 @@ class DialoguePipeline:
         self.recorder_factory = recorder_factory
         self.wake = wake
         self.transcriber = transcriber
+        self.publish_transcript = publish_transcript
         self.publish_interruption = publish_interruption
         self.publish_control = publish_control
         self.report = report
@@ -60,7 +63,7 @@ class DialoguePipeline:
         self.input_has_aec = input_has_aec
         self.session = ConversationSession(
             clock=lambda: self.clock() if self._event_time is None else self._event_time,
-            publish_transcript=publish_transcript,
+            publish_transcript=self._publish_transcript,
             publish_control=self._publish_control,
         )
         settings = settings or CaptureSettings(
@@ -103,6 +106,7 @@ class DialoguePipeline:
         self._discard_capture = False
         self._utterance_playback_id = None
         self._pending = None
+        self._reply_request_id = None
         self._retired_session_ids = OrderedDict()
         self._raw_playback_gate = False
         self._raw_gate_until = 0.0
@@ -198,6 +202,14 @@ class DialoguePipeline:
                 self.session.session_id or isinstance(uid, str) and uid.strip()):
             self.publish_input_status(
                 self.session.session_id, uid, state)
+
+    def _publish_transcript(self, utterance_id, text):
+        if not self.session.session_id:
+            # One wake accepts one ordinary request, including during reply generation.
+            self._terminate('waiting_for_reply')
+            self._reply_request_id = utterance_id
+            self._tail_stream = None
+        self.publish_transcript(utterance_id, text)
 
     def _capture(self):
         try:
@@ -322,6 +334,7 @@ class DialoguePipeline:
         if callable(cancel):
             cancel()
         self._pending = None
+        self._reply_request_id = None
         self._utterance_playback_id = None
         self._reset_audio()
         self._tail_stream = tail
@@ -339,7 +352,11 @@ class DialoguePipeline:
         if self._pending is not None and self.clock() >= self._pending[3]:
             self._terminate('addressee_unknown:timeout')
         if self.overflow.is_set():
-            self._terminate('audio_queue_overflow')
+            if self._reply_request_id is None:
+                self._terminate('audio_queue_overflow')
+            else:
+                self._reset_audio()
+                self.report('audio_queue_overflow')
             self.overflow.clear()
         try:
             result = self.results.get_nowait()
@@ -373,7 +390,8 @@ class DialoguePipeline:
             self._terminate('session_ended:tts_timeout')
 
     def _input_blocked(self, captured_at):
-        return self._chime_playing or captured_at < self._chime_gate_until or (
+        return (self._reply_request_id is not None
+                or self._chime_playing or captured_at < self._chime_gate_until) or (
             not self.input_has_aec and (
                 self._raw_playback_gate or captured_at < self._raw_gate_until
             )
@@ -679,7 +697,7 @@ class DialoguePipeline:
             self.session.finish_utterance(uid, text, addressed=True)
         self._utterance_playback_id = None
 
-    def on_playback_status(self, playback_id, state, *, interim=False):
+    def on_playback_status(self, playback_id, state, *, interim=False, request_id=''):
         """Track acknowledged playback and discard raw echo on gate transitions."""
         if self.stopping.is_set():
             return
@@ -700,6 +718,10 @@ class DialoguePipeline:
             self._utterance_playback_id = self.session.interrupted_playback_id
         if self._pending is not None and self._pending[1] != self.session.playback_id:
             self._terminate('addressee_unknown:stale_playback')
+        if (self._reply_request_id is not None and request_id == self._reply_request_id
+                and not interim and state in ('finished', 'failed', 'stopped')):
+            # Failed synthesis can terminate before PLAYING; progress cannot unlock input.
+            self._terminate('waiting_for_wake')
 
     def on_addressee(self, utterance_id, playback_id, decision):
         """Accept exactly one matching decision before the held candidate expires."""

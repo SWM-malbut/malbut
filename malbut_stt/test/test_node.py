@@ -43,7 +43,7 @@ def runtime(monkeypatch, tmp_path):
             return
         state.callbacks['/malbut/speech/playback_status'](
             SimpleNamespace(playback_id='p1', state=state.messages.SpeechPlaybackStatus.PLAYING,
-                            interim=True))
+                            interim=True, request_id='u1'))
         state.callbacks['/malbut/speech/playback_status'](
             SimpleNamespace(playback_id='p1', state='invalid'))
         for client in state.clients.values():
@@ -213,10 +213,10 @@ def runtime(monkeypatch, tmp_path):
             state.pipeline_args['on_wake']()
             state.pipeline_args['on_endpoint']()
 
-        def on_playback_status(self, pid, status, *, interim=False):
+        def on_playback_status(self, pid, status, *, interim=False, request_id=''):
             if status == 'invalid':
                 raise ValueError('private invalid content')
-            state.calls['playback_status'] = (pid, status, interim)
+            state.calls['playback_status'] = (pid, status, interim, request_id)
 
         def on_addressee(self, uid, pid, decision):
             state.calls['addressee'] = (uid, pid, decision)
@@ -356,7 +356,7 @@ def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert runtime.pipeline_args['settings'].max_buffer_s == 60.0
     assert runtime.pipeline_args['endpoint_predecode_s'] == 0.8
     assert runtime.calls['spin_timeout'] == 0.02
-    assert runtime.calls['playback_status'] == ('p1', 'playing', True)
+    assert runtime.calls['playback_status'] == ('p1', 'playing', True, 'u1')
     assert runtime.calls['addressee'] == ('u2', 'p1', 'addressed')
     assert ('warning', 'invalid_playback_status') in runtime.logs
     assert ('warning', 'barge_in_requires_aec') in runtime.logs
@@ -760,7 +760,7 @@ def test_generated_constants_are_used_at_ros_boundaries(runtime):
     runtime.decision = 'wire-addressed'
     assert main() == 0
     assert runtime.clients['/malbut/speech/playback_control'].requests[0].command == 'wire-pause'
-    assert runtime.calls['playback_status'] == ('p1', 'playing', True)
+    assert runtime.calls['playback_status'] == ('p1', 'playing', True, 'u1')
     assert runtime.decisions == [('u2', 'p1', 'addressed')]
 
 

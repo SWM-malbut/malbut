@@ -46,7 +46,7 @@ def main(argv=None):
     terminal = {}
     active_id = None
 
-    def on_status(playback_id, state, interim):
+    def on_status(playback_id, state, interim, request_id):
         nonlocal active_id
         with condition:
             if state in ('playing', 'paused'):

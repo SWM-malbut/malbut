@@ -1,7 +1,8 @@
 # Malbut STT → Agent
 
 ROS STT 노드는 로컬 Whisper로 **“제이크” 또는 “제이크야”**를 확인한 뒤
-대화 모드에서 호출어 없이 다음 발화를 수집합니다. 호출어와 문장 전사는 모두
+일반 발화 하나를 수집합니다. Agent에 전달한 뒤에는 최종 답변 종료까지 입력을
+차단하고, 다음 요청에는 다시 호출어가 필요합니다. 호출어와 문장 전사는 모두
 로컬에서 실행하며 STT 노드에는 `OPENAI_API_KEY`가 필요하지 않습니다.
 끼어든 발화의 대상 판단은 별도 Agent가 최근 대화 문맥으로 수행합니다.
 Agent를 OpenAI로 실행하면 대상 판단과 답변 생성에는 모델 API를 사용합니다.
@@ -69,11 +70,15 @@ Agent Topic이나 발화 대상 판정 Service에 전달하지 않습니다. 노
 현재 발화를 버리지 않으며, 최종 인식 실패만 기존 실패 처리로 이어집니다.
 MLX 선택 경로와 한 문장 실행기는 기존 전사 방식을 사용합니다.
 
-TTS의 정상 `finished`부터 5초를 기다립니다. 그 안에 사용자 음성이 시작되면
-종료 대기를 취소하며, 다음 TTS 완료에서 새 5초를 시작합니다.
-`paused`, `stopped`, `failed`는 정상 완료로 처리하지 않습니다.
+일반 전사를 Agent에 전달하면 답변 준비와 TTS 재생 중 새 발화·호출어를 모두
+버립니다. 같은 `request_id`의 최종 답변(`interim=false`)이 `finished`, `failed`,
+`stopped`에 도달하면 호출어 대기로 돌아갑니다. 재생 전 실패도 포함하며,
+중간 안내나 다른 요청의 종료는 입력 차단을 해제하지 않습니다. 재생 후 호출어
+없는 5초 후속 발화 대기는 열지 않습니다. Agent 주도 확인 세션의 정책은 유지합니다.
 
-끼어들기는 현재 재생에 `pause`를 요청한 뒤 `utterance_id`, `playback_id`, `text`를
+일반 요청의 답변 대기 중에는 끼어들기를 받지 않습니다. 요청 전달 전에 다른
+재생과 겹친 발화는 검증된 AEC 입력에서 기존 끼어들기 처리를 사용합니다.
+현재 재생에 `pause`를 요청한 뒤 `utterance_id`, `playback_id`, `text`를
 Agent Service에 보냅니다. Agent는 판정 발화를 일반 대화 기록에 추가하지 않고
 `addressed`, `not_addressed`, `unknown` 중 하나를 응답합니다. ROS가 응답을 요청과
 연결하고, STT는 요청에 보낸 두 ID로 현재 대기 중인 판정인지 확인합니다.
@@ -120,6 +125,8 @@ STT 노트북 실행기 `smoke`는 최종 원문을 터미널 JSON에 출력합�
 `SpeechPipeline`을 사용합니다. 기본 명령 인식은 `OpenAITranscriber`이므로
 **API 없이 시험하려면 `--local`을 명시합니다.** `--wake-only`도 API를 호출하지 않습니다.
 이 실행기에는 ROS Topic 발행·Agent·TTS·로봇 동작이 연결되어 있지 않습니다.
+`--dialogue`는 전사를 출력한 뒤 로컬 완료 처리하여 다음 호출을 받습니다.
+`--manual`은 STT 진단용으로 다음 발화를 바로 수집하며, 실제 재생 완료를 검증하지 않습니다.
 
 저장소 루트에서 전용 환경을 준비합니다. `.runtime`은 Git에서 제외됩니다.
 macOS에서는 설치된 Python 3.12를 사용하고, 다른 환경에서는 해당 Python 명령으로
@@ -192,7 +199,7 @@ env -u OPENAI_API_KEY -u PICOVOICE_ACCESS_KEY HF_HUB_OFFLINE=1 TRANSFORMERS_OFFL
 ```
 
 `waiting_for_wake`에서 “제이크야”만 말하고, `wake_detected` 뒤에 명령을 따로
-말합니다. 이후 대화 모드에서는 이름을 다시 부르지 않습니다. 호출어와 일반
+말합니다. 전사가 출력된 뒤 다음 문장을 시험하려면 호출어를 다시 부릅니다. 호출어와 일반
 발화는 모델 하나를 공유하되 이름 힌트는 호출어에만 적용합니다.
 
 MLX를 사용하지 않을 때는 기존 CPU int8 환경으로 같은 연속 대화 파이프라인을
@@ -209,7 +216,7 @@ CPU의 `float32`를 따로 비교하려면 마지막 명령의 `--compute-type i
 `--compute-type float32`로 바꿉니다. MLX 전용 모델과 faster-whisper 모델은
 파일 형식이 다르므로 각각 지정한 디렉터리를 사용합니다.
 
-마이크 없이 준비된 파일로 호출어와 후속 대화를 확인할 수도 있습니다.
+마이크 없이 준비된 파일로 호출어와 한 요청의 전사·추가 입력 차단을 확인할 수도 있습니다.
 `replay_local.py`는 **비압축 mono 16kHz PCM16 WAV**만 받으며, 파일을 실제 시간에
 맞춰 파이프라인에 공급합니다. 마이크를 열거나 스피커로 파일을 재생하지 않습니다.
 다음 명령은 현재 준비된 개발용 합성 시퀀스를 CPU int8로 처리합니다.
@@ -227,15 +234,16 @@ env -u OPENAI_API_KEY -u PICOVOICE_ACCESS_KEY HF_HUB_OFFLINE=1 TRANSFORMERS_OFFL
 `status: completed`는 파일 관측이 끝났다는 뜻이며 인식 성공을 보장하지 않습니다.
 결과 JSON에서 `clean_shutdown`, `events`의 `wake_detected`, `transcript_count`,
 `transcripts`의 원문을 확인합니다. 이 파일의 기대 결과는 호출어 검출 1회와
-“창문을 열어 줘.”, “저녁은 언제 먹을까?”라는 후속 전사 2개이며, 호출어 자체가
-전송되지 않아야 합니다. 기존 개발 음성을 연결한 점검이므로 독립 평가나 실제
+“창문을 열어 줘.”라는 전사 1개입니다. 이 재생 도구에는 답변 완료가 연결되어
+있지 않아 이후 “저녁은 언제 먹을까?”는 차단되며, 호출어 자체도 전송하지 않습니다.
+기존 개발 음성을 연결한 점검이므로 독립 평가나 실제
 사용자 마이크 성능으로 해석하지 않습니다.
 
 `--dialogue`에는 `--local`이 필수이며 `--once`, `--wake-only`를 함께 사용할 수
 없습니다. 결과는 터미널에만 출력하고 원본 녹음을 자동 저장하지 않습니다.
-TTS 완료 이벤트가 없으므로 **TTS 발화 완료 뒤 5초 무음으로 대화를 종료하는
-기능은 이 CLI에서 검증할 수 없습니다.** `ready`의 `tts_completion_events`와
-`tts_5s_timeout_testable`도 `false`입니다. 끼어들기와 실제 TTS 제어 역시 별도
+이 CLI는 전사 출력으로만 로컬 완료 처리하므로 **Agent 답변 준비와 실제 TTS
+종료까지 입력이 차단되는지는 ROS 연결 시험이 필요합니다.** `ready`의
+`tts_completion_events`는 `false`입니다. 끼어들기와 실제 TTS 제어 역시 별도
 연결 시험이 필요합니다.
 
 ### 1. Enter로 시작하는 한 문장 시험

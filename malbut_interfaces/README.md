@@ -33,15 +33,18 @@
 
 `SpeechRequest.interim`과 `SpeechPlaybackStatus.interim`은 기본값이 `false`인 `bool`이다.
 Agent는 최종 답변을 준비하는 중의 지연·재시도 안내에만 `true`를 지정하고, TTS는 해당
-요청의 모든 재생 상태에 같은 값을 전달한다. STT는 `PLAYING`에서 재생 ID와 함께 이
-값을 기억하며, 중간 안내의 `FINISHED`로 일반 대화의 5초 종료 대기를 시작하지 않는다.
-최종 답변의 `interim=false` 재생이 정상 완료된 뒤 기존 5초 대기를 적용한다.
+요청의 모든 재생 상태에 같은 값을 전달한다. 일반 호출어 대화는 전사 하나를 전달한
+시점부터 새 입력을 차단한다. 같은 요청의 `interim=false`인 재생이 완료·실패·중단되면
+호출어 대기로 돌아간다. 중간 안내와 다른 요청의 종료는 이 차단을 해제하지 않는다.
 
 `SpeechRequest.request_id`는 같은 사용자 요청의 진행 안내와 최종 답변을 묶는다.
 빈 값이면 기존 독립 재생을 유지하며, 지정할 때는 공백뿐인 값 없이 최대 256자를
 사용한다. Agent는 원래 발화 ID를 전달한다. 최종 답변 접수 시 TTS는 같은 요청의
 아직 재생하지 않은 진행 안내를 `stopped`로 취소하고, 이미 재생·일시정지 중인
 음성은 유지한다. 각 발화의 `playback_id`는 계속 고유하며 상태 연결에 사용한다.
+`SpeechPlaybackStatus.request_id`에도 이 값을 전달하므로 STT는 재생 전 실패를 포함해
+자신이 전달한 발화의 최종 종료를 확인할 수 있다. `CONFIRMATION`은 기존 재생 ID 기반
+제어를 유지하며 상태의 `request_id`는 빈 값이다.
 
 [FallCoordinator](../malbut_fall_coordinator/README.md)는 VLM 사건을 해석하고
 `ExecuteMission`으로 `fall_confirmation`을 요청한다. Manager는
