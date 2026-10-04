@@ -17,9 +17,9 @@ from replay_reviewed_pose_cloud import (
     SqliteFallJournal, digest, read, require, save,
 )
 from malbut_agent_server.domain.fall_monitoring import (
-    FallCandidate, SubjectFrame, SubjectPose, SubjectCheckState,
+    FallCandidate, IncidentState, SubjectFrame, SubjectPose, SubjectCheckState,
 )
-from malbut_agent_server.fall_runtime import event_metadata
+from malbut_agent_server.fall_runtime import apply_decision, event_metadata
 from malbut_fall_coordinator.fall_confirmation import FallConfirmationCoordinator
 
 BOX = (.1, .4, .7, .9)
@@ -100,7 +100,7 @@ async def trial(mode, destination):
 
     target_id = None
     reason = None
-    late_answer_rejected = None
+    original_answer_accepted = newer_evidence_unresolved = None
     try:
         pose_first = mode.startswith('pose_first')
         initially_visible = pose_first or mode == 'candidate_during_cloud'
@@ -193,13 +193,25 @@ async def trial(mode, destination):
             require(duplicate_growth == (0, 0, 0), 'duplicate delivery created work')
         if mode == 'old_answer':
             old = m.incident(target_id)
+            request = manager.requests[old.question_id]
             feed(161.0)
             require(candidate(161, 'changed-action', True) == target_id, 'new evidence changed ID')
-            late_answer_rejected = not m.confirmation_result(incident_id=target_id,
-                question_id=old.question_id, subject_key='P1', evidence_revision=old.revision,
-                situation_assessment='resolved', help_needed=False)
-            require(late_answer_rejected, 'obsolete answer accepted')
-            phase('obsolete_answer_rejected')
+            phase('new_evidence_during_confirmation')
+            require(manager.requests.get(old.question_id) == request,
+                    'new evidence replaced the active question')
+            require(manager.complete(request, situation_assessment='resolved', help_needed=False),
+                    'original confirmation could not finish')
+            decision, = manager.drain_commands()
+            original_answer_accepted = apply_decision(m, json.dumps(decision))
+            require(original_answer_accepted, 'original question answer rejected')
+            current = m.incident(target_id)
+            newer_evidence_unresolved = (
+                current.revision == old.revision + 1 and current.pending
+                and current.state is not IncidentState.RESOLVED
+                and current.answer is current.situation_assessment is current.help_needed is None)
+            require(newer_evidence_unresolved, 'original answer cleared newer evidence')
+            require(old.question_id not in manager.requests, 'completed question still queued')
+            phase('original_answer_recorded_newer_evidence_pending')
         unresolved, discovery_rows = journal.unresolved(), journal.discoveries()
         result = dict(mode=mode, reason=reason, linked=linked, target_id=target_id,
             phases=phases, events=events, fake_provider_calls=len(provider.calls),
@@ -207,7 +219,8 @@ async def trial(mode, destination):
             person_cases=sum(i.subject_key is not None for i in m._incidents.values()),
             scene_cases=sum(i.subject_key is None for i in m._incidents.values()),
             manager_questions=len(manager.requests), duplicate_growth=duplicate_growth,
-            obsolete_answer_rejected=late_answer_rejected, real_api_calls=0)
+            original_answer_accepted=original_answer_accepted,
+            newer_evidence_unresolved=newer_evidence_unresolved, real_api_calls=0)
     finally:
         journal.close()
     reopened = SqliteFallJournal(destination / 'events.sqlite', device_id='ordering')

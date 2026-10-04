@@ -204,24 +204,33 @@ def test_repeated_scene_handoffs_retry_result_not_question_or_analysis(handoff):
     flow.link.agent_presence.send_goal_async.assert_not_called()
 
 
-def test_new_scene_evidence_cancels_old_mission_and_ignores_its_result(handoff):
+def test_new_scene_evidence_waits_for_current_confirmation_result(handoff):
     flow = handoff
     events = flow.scan()
     first = next(event for event in events if event.kind == 'question_requested')
     old_handle, old_result = flow.accept()
     events = flow.scan(suspected_scene(VideoAssessment.OBSERVED_FALL), stamp=220)
+    assert not any(event.kind == 'question_requested' for event in events)
+    flow.relay(flow.monitor.pending_questions())
+    old_handle.cancel_goal_async.assert_not_called()
+    assert flow.link.request.question_id == first.question_id
+    assert flow.link.request.revision == first.evidence_revision
+    assert flow.link.client.send_goal_async.call_count == 1
+    flow.complete(old_result)
+    old_command, = flow.commands()
+    assert old_command['question_id'] == first.question_id
+    assert flow.apply(old_command)
+    assert flow.monitor.incident(first.incident_id).state is not IncidentState.RESOLVED
+    events = flow.monitor.drain_events()
     current = next(event for event in events if event.kind == 'question_requested')
     assert current.incident_id == first.incident_id
     assert current.evidence_revision == first.evidence_revision + 1
     assert current.question_id != first.question_id
-    old_handle.cancel_goal_async.assert_called_once()
+    flow.relay(events)
     assert flow.link.request.question_id == current.question_id
     _, new_result = flow.accept()
-    flow.complete(old_result)
-    assert flow.commands() == []
-    assert flow.link.request.question_id == current.question_id
     flow.complete(new_result, assessment='unknown', help_needed=True)
-    command, = flow.commands()
+    command = flow.commands()[-1]
     assert command['evidence_revision'] == current.evidence_revision
     assert flow.apply(command)
     assert flow.monitor.incident(first.incident_id).state is IncidentState.HELP_REQUIRED
