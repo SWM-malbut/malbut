@@ -629,6 +629,33 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
         payload: { mode: "destination" },
       }), null);
 
+      // 보호자도 지도에서 말벗을 보내고 멈출 수 있다. 지도 만들기·편집·자율주행은 소유자만.
+      for (const [operation, payload] of [
+        ["navigation_preview", { x: 1, y: 1 }],
+        ["navigation_start", { previewToken: "preview_token_123" }],
+        ["navigation_cancel", { sessionId: "navigation_session_1" }],
+      ]) {
+        const guardianCommand = await robotMap.createRobotCommand({
+          deviceId: "living-room", userEmail: "family@example.com", operation, payload,
+        });
+        assert.equal((await robotMap.claimRobotCommands("living-room"))[0].id, guardianCommand.id);
+        await robotMap.completeRobotCommand({
+          deviceId: "living-room", commandId: guardianCommand.id, ok: true, result: {},
+        });
+      }
+      await assert.rejects(
+        robotMap.createRobotCommand({
+          deviceId: "living-room", userEmail: "family@example.com", operation: "start",
+        }),
+        /FORBIDDEN/,
+      );
+      await assert.rejects(
+        robotMap.createRobotCommand({
+          deviceId: "living-room", userEmail: "stranger@example.com",
+          operation: "navigation_preview", payload: { x: 1, y: 1 },
+        }),
+        /FORBIDDEN/,
+      );
       await assert.rejects(
         robotMap.createRobotCommand({
           deviceId: "living-room",

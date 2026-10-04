@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import {
   ArrowClockwise,
+  CaretRight,
   MapTrifold,
 } from "@phosphor-icons/react";
 import type { HomecamDevice } from "./homecam-dashboard";
@@ -61,7 +62,7 @@ export type RobotSnapshot = {
 };
 
 // 지도 만들기 진행 표시는 장치가 보내는 state 를 그대로 따라간다.
-// 예전에는 제목·진행바·단계 목록이 모두 리터럴이라, 장치가 review 로
+// 예전에는 제목·단계 목록이 모두 리터럴이라, 장치가 review 로
 // 넘어가도 화면은 "이동하고 있어요" 3단계에 붙박여 있었다.
 const MAPPING_STEPS: Array<{ label: string; states: string[] }> = [
   { label: "주변을 인식하고 있어요", states: ["waiting_for_map"] },
@@ -71,16 +72,8 @@ const MAPPING_STEPS: Array<{ label: string; states: string[] }> = [
   { label: "지도를 안전하게 저장하고 있어요", states: ["saving"] },
 ];
 
-const MAPPING_PROGRESS: Record<string, number> = {
-  waiting_for_map: 12,
-  waiting_for_navigation: 30,
-  navigating: 62,
-  exploring: 78,
-  review: 92,
-  saving: 98,
-};
-
 export type MapMode = "view" | "navigate" | "rooms" | "zones" | "pose";
+type MapScreen = "map" | "edit" | "manage";
 type RoomTool = "select" | "split" | "merge";
 type SplitLine = Array<[number, number]>;
 type SplitValidation = "idle" | "ready" | "checking" | "valid" | "invalid";
@@ -128,6 +121,9 @@ export function RobotMapPanel({
   const [previewExpiresAt, setPreviewExpiresAt] = useState(0);
   const [clockNow, setClockNow] = useState(0);
   const [mapMode, setMapMode] = useState<MapMode>(initialMode);
+  const [screen, setScreen] = useState<MapScreen>(
+    initialMode === "rooms" || initialMode === "zones" ? "edit" : "map",
+  );
   const [semantics, setSemantics] = useState<RobotSemantics | null>(null);
   const [roomDrafts, setRoomDrafts] = useState<GeoFeature[]>([]);
   const [roomTool, setRoomTool] = useState<RoomTool>("select");
@@ -195,7 +191,7 @@ export function RobotMapPanel({
         { cache: "no-store" },
       );
       const payload = await response.json().catch(() => ({})) as RobotSnapshot & { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "로봇 지도를 불러오지 못했습니다.");
+      if (!response.ok) throw new Error(payload.error ?? "말벗 지도를 불러오지 못했습니다.");
       setSnapshot(payload);
       setClockNow(Date.now());
       const command = payload.command;
@@ -210,7 +206,7 @@ export function RobotMapPanel({
           setNotice("");
         } else if (command.status === "failed") {
           const result = isRecord(command.result) ? command.result : {};
-          const message = typeof result.error === "string" ? result.error : "로봇이 명령을 완료하지 못했습니다.";
+          const message = typeof result.error === "string" ? result.error : "말벗이 명령을 완료하지 못했습니다.";
           if (command.operation === "room_split") {
             const action = pendingRoomAction.current;
             if (action?.signature === splitDraftSignatureRef.current) {
@@ -320,7 +316,7 @@ export function RobotMapPanel({
       }
       if (!quiet) setNotice("");
     } catch (error) {
-      if (!quiet) setNotice(error instanceof Error ? error.message : "로봇 지도를 불러오지 못했습니다.");
+      if (!quiet) setNotice(error instanceof Error ? error.message : "말벗 지도를 불러오지 못했습니다.");
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -441,7 +437,6 @@ export function RobotMapPanel({
   const mappingStep = MAPPING_STEPS.findIndex(
     (step) => step.states.includes(snapshot?.state?.state ?? ""),
   );
-  const mappingProgress = MAPPING_PROGRESS[snapshot?.state?.state ?? ""] ?? 62;
   const mapping = snapshot?.state && [
     "waiting_for_map", "waiting_for_navigation", "exploring", "navigating", "review", "saving",
   ].includes(snapshot.state.state);
@@ -540,7 +535,7 @@ export function RobotMapPanel({
           : operation === "zones_save" ? "구역 저장을 요청했습니다."
           : operation === "robot_ping" ? "로봇 응답 시간을 재고 있습니다."
           : operation === "robot_diagnostics" ? "로봇 진단을 요청했습니다."
-          : operation === "start" ? "로봇에 지도 생성을 요청했습니다."
+          : operation === "start" ? "말벗에 지도 생성을 요청했습니다."
           : operation === "finish" ? "탐색 완료와 지도 저장을 요청했습니다."
             : operation === "cancel" ? "지도 생성을 중지하도록 요청했습니다."
               : operation === "navigation_preview" ? "현재 costmap으로 안전한 경로를 확인하고 있습니다."
@@ -550,8 +545,8 @@ export function RobotMapPanel({
                       : operation === "drive_mode_pause" ? "자율주행 일시정지를 요청했습니다."
                         : operation === "drive_mode_resume" ? "자율주행 재개를 요청했습니다."
                           : operation === "drive_mode_stop" ? "자율주행 중지를 요청했습니다."
-                            : operation === "room_split" ? "로봇에서 분할 가능 여부를 확인하고 있습니다."
-                      : operation === "room_merge" ? "로봇에서 두 방의 인접 여부를 확인하고 있습니다."
+                            : operation === "room_split" ? "말벗에서 분할 가능 여부를 확인하고 있습니다."
+                      : operation === "room_merge" ? "말벗에서 두 방의 인접 여부를 확인하고 있습니다."
                         : operation === "rooms_save" ? "방 설정을 말벗에 저장하고 있습니다."
                           : "구역 설정을 말벗에 적용하고 있습니다.",
       );
@@ -593,7 +588,8 @@ export function RobotMapPanel({
       return;
     }
     const geometry = snapshot?.map?.geometry;
-    if (!geometry || !isOwner || !snapshot?.online || navigationDriving) return;
+    if (!geometry || !snapshot?.online || navigationDriving) return;
+    if (!isOwner && mapMode !== "navigate") return;
     const bounds = event.currentTarget.getBoundingClientRect();
     const fractionX = (event.clientX - bounds.left) / bounds.width;
     const fractionY = (event.clientY - bounds.top) / bounds.height;
@@ -707,7 +703,7 @@ export function RobotMapPanel({
       return;
     }
     setSplitValidation("checking");
-    setSplitValidationMessage("로봇에서 최소 면적과 연결성을 확인하고 있습니다.");
+    setSplitValidationMessage("말벗에서 최소 면적과 연결성을 확인하고 있습니다.");
     pendingRoomAction.current = {
       operation: "room_split",
       sourceIds: [featureId(selectedRoom)],
@@ -1036,69 +1032,69 @@ export function RobotMapPanel({
     };
   }, [draggingZone, snapshot?.map?.geometry, walkableArea]);
 
-  return (
-    <section className={`homecam-section robot-map-section ${managed ? "managed-robot-section" : ""}`} aria-labelledby="robot-map-title">
-      <div className="robot-map-topbar">
-        <h1 id="robot-map-title">{managed ? "로봇 기능" : mapping ? "집 둘러보는 중" : navigationDriving ? "이동 중" : navigationSucceeded ? "이동 완료" : "우리 집"}</h1>
-        <div className="robot-map-mode-tabs" aria-label="지도 모드">
-          {([
-            ["view", "보기"],
-            ["navigate", "목적지 선택"],
-            ["pose", "현재 위치 지정"],
-            ["rooms", "방 편집"],
-            ["zones", "구역 편집"],
-          ] as Array<[MapMode, string]>).filter(([mode]) => managed ? mode !== "rooms" : mode !== "pose").map(([mode, label]) => (
-            <button
-              key={mode}
-              type="button"
-              className={mapMode === mode ? "is-active" : ""}
-              disabled={Boolean(mapping) && mode !== "view"}
-              onClick={() => {
-                setMapMode(mode);
-                setRoomTool("select");
-                setMergeTargetId("");
-                setValidatedSplit(null);
-                setZoneGoalMode(false);
-                setDraggingZone(null);
-                setZoneCreateMode("closed");
-                clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <span className={`robot-map-top-status ${snapshot?.online ? "is-online" : ""}`}>
-          <i aria-hidden="true" />
-          {snapshot?.online ? "연결됨" : "오프라인"} · {localizationCopy(snapshot?.state?.localization.state)}
-        </span>
-        <button type="button" className="robot-map-refresh" onClick={() => void load()} disabled={loading} aria-label="지도 새로고침">
-          <ArrowClockwise size={18} weight="bold" aria-hidden="true" />
-        </button>
-      </div>
+  const changeMapMode = (mode: MapMode) => {
+    setMapMode(mode);
+    setRoomTool("select");
+    setMergeTargetId("");
+    setValidatedSplit(null);
+    setZoneGoalMode(false);
+    setDraggingZone(null);
+    setZoneCreateMode("closed");
+    clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
+  };
 
-      <div className="robot-map-layout">
-        <div className="robot-map-primary">
-          <div className={`robot-map-mode-banner mode-${mapping ? "mapping" : mapMode}`}>
-            <strong>
-              {mapping ? "지도 만들기 모드"
-                : mapMode === "navigate" ? "목적지 선택 모드"
-                  : mapMode === "pose" ? "현재 위치 지정 모드"
-                  : mapMode === "rooms" ? "방 편집 모드"
-                    : mapMode === "zones" ? "구역 편집 모드"
-                      : "지도 보기 모드"}
-            </strong>
-            <span>
-              {mapping ? "새로운 공간을 확인하는 동안 목적지 선택과 편집을 사용할 수 없어요."
-                : mapMode === "navigate" ? "지도에서 보낼 곳을 누르세요. 방과 구역은 선택을 방해하지 않아요."
-                  : mapMode === "pose" ? "로봇이 실제로 있는 곳을 누른 채 바라보는 방향으로 끌어 놓으면 위치 보정에 쓸 수 있어요."
-                  : mapMode === "rooms" ? "방 경계와 이름을 정리할 수 있어요. 저장하면 말벗에 반영됩니다."
-                    : mapMode === "zones" ? "진입 금지·회피 구역을 확인하고 편집할 수 있어요."
-                      : "저장된 공간과 말벗의 현재 위치를 확인하세요."}
-            </span>
+  // 개발자 화면(로봇 기능)은 디자인을 바꾸지 않는다.
+  if (managed) {
+    return (
+      <section className="homecam-section robot-map-section managed-robot-section" aria-labelledby="robot-map-title">
+        <div className="robot-map-topbar">
+          <h1 id="robot-map-title">로봇 기능</h1>
+          <div className="robot-map-mode-tabs" aria-label="지도 모드">
+            {([
+              ["view", "보기"],
+              ["navigate", "목적지 선택"],
+              ["pose", "현재 위치 지정"],
+              ["zones", "구역 편집"],
+            ] as Array<[MapMode, string]>).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                className={mapMode === mode ? "is-active" : ""}
+                disabled={Boolean(mapping) && mode !== "view"}
+                onClick={() => changeMapMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          {managed ? (
-            snapshot?.map ? (
+          <span className={`robot-map-top-status ${snapshot?.online ? "is-online" : ""}`}>
+            <i aria-hidden="true" />
+            {snapshot?.online ? "연결됨" : "오프라인"} · {localizationCopy(snapshot?.state?.localization.state)}
+          </span>
+          <button type="button" className="robot-map-refresh" onClick={() => void load()} disabled={loading} aria-label="지도 새로고침">
+            <ArrowClockwise size={18} weight="bold" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="robot-map-layout">
+          <div className="robot-map-primary">
+            <div className={`robot-map-mode-banner mode-${mapping ? "mapping" : mapMode}`}>
+              <strong>
+                {mapping ? "지도 만들기 모드"
+                  : mapMode === "navigate" ? "목적지 선택 모드"
+                    : mapMode === "pose" ? "현재 위치 지정 모드"
+                      : mapMode === "zones" ? "구역 편집 모드"
+                        : "지도 보기 모드"}
+              </strong>
+              <span>
+                {mapping ? "새로운 공간을 확인하는 동안 목적지 선택과 편집을 사용할 수 없어요."
+                  : mapMode === "navigate" ? "지도에서 보낼 곳을 누르세요. 방과 구역은 선택을 방해하지 않아요."
+                    : mapMode === "pose" ? "로봇이 실제로 있는 곳을 누른 채 바라보는 방향으로 끌어 놓으면 위치 보정에 쓸 수 있어요."
+                      : mapMode === "zones" ? "진입 금지·회피 구역을 확인하고 편집할 수 있어요."
+                        : "저장된 공간과 말벗의 현재 위치를 확인하세요."}
+              </span>
+            </div>
+            {snapshot?.map ? (
               <ManagedRobotMap
                 key={`${deviceId}:${snapshot.map.mapId}`}
                 deviceId={deviceId}
@@ -1130,392 +1126,20 @@ export function RobotMapPanel({
                 <strong>{loading ? "지도를 확인하고 있어요" : "로봇의 지도를 기다리고 있어요"}</strong>
                 <p>오른쪽에서 지도 만들기 모드 또는 저장 지도 주행을 준비하세요.</p>
               </div></div>
-            )
-          ) : <div className={`robot-map-card mode-${mapping ? "mapping" : mapMode}`}>
-            {snapshot?.map ? (
-              <div
-                ref={mapCanvasRef}
-                className={`robot-map-canvas ${runtimeMode === "navigation" && mapMode === "navigate" ? "is-navigation" : ""}`}
-                style={{ aspectRatio: `${snapshot.map.geometry.width} / ${snapshot.map.geometry.height}` }}
-                onClick={selectDestination}
-              >
-              <Image
-                src={`/api/devices/${encodeURIComponent(device?.id ?? "")}/robot/map?revision=${encodeURIComponent(snapshot.map.revision)}`}
-                alt="로봇이 생성한 우리 집 지도"
-                fill
-                unoptimized
-                sizes="(max-width: 820px) 100vw, 70vw"
-                priority
-              />
-              {(roomDrafts.length > 0 || renderedZoneFeatures.length > 0 || splitLines.length > 0 || pendingSplitPoint) && (
-                <svg
-                  className={`robot-map-semantics ${mapMode === "rooms" || mapMode === "zones" ? "is-interactive" : ""}`}
-                  viewBox="0 0 100 100"
-                  preserveAspectRatio="none"
-                  style={mapMode === "rooms" || mapMode === "zones"
-                    ? { pointerEvents: "auto", touchAction: "none", userSelect: "none" }
-                    : undefined}
-                  aria-hidden="true"
-                >
-                  <defs>
-                    <pattern id="restricted-hatch" width="1.8" height="1.8" patternUnits="userSpaceOnUse">
-                      <rect width="1.8" height="1.8" fill="rgba(192,64,47,.08)" />
-                      <path d="M-.45 1.35 L1.35 -.45 M.45 2.25 L2.25 .45" stroke="rgba(192,64,47,.48)" strokeWidth=".18" />
-                    </pattern>
-                    <pattern id="avoid-dots" width="2.2" height="2.2" patternUnits="userSpaceOnUse">
-                      <rect width="2.2" height="2.2" fill="rgba(200,144,26,.07)" />
-                      <circle cx="1.1" cy="1.1" r=".22" fill="rgba(200,144,26,.65)" />
-                    </pattern>
-                  </defs>
-                  {renderedZoneFeatures.map((zone) => {
-                    const path = featureGeometryPath(zone, snapshot.map!.geometry);
-                    const behavior = zoneBehaviorOf(zone);
-                    const id = featureId(zone);
-                    const wall = virtualWallEndpoints(zone);
-                    if (!path) return null;
-                    if (wall) {
-                      const start = worldToPercent(wall[0][0], wall[0][1], snapshot.map!.geometry);
-                      const end = worldToPercent(wall[1][0], wall[1][1], snapshot.map!.geometry);
-                      return (
-                        <g key={id}>
-                          <line
-                            className="robot-map-virtual-wall-hit"
-                            x1={start.left}
-                            y1={start.top}
-                            x2={end.left}
-                            y2={end.top}
-                            onClick={(event) => {
-                              if (mapMode !== "zones") return;
-                              event.stopPropagation();
-                              setSelectedZoneId(id);
-                              setZoneGoalMode(false);
-                            }}
-                            onPointerDown={(event) => {
-                              if (mapMode !== "zones" || !isOwner || zoneCommandPending || busy) return;
-                              const canvas = mapCanvasRef.current;
-                              if (!canvas) return;
-                              event.preventDefault();
-                              event.stopPropagation();
-                              event.currentTarget.setPointerCapture(event.pointerId);
-                              suppressMapClick.current = true;
-                              setSelectedZoneId(id);
-                              setZoneGoalMode(false);
-                              setDraggingZone({
-                                type: "move",
-                                zoneId: id,
-                                origin: pointerToWorld(event.clientX, event.clientY, canvas, snapshot.map!.geometry),
-                                geometry: cloneFeature(zone).geometry,
-                                preferredGoal: null,
-                                wallEndpoints: wall.map((point) => [...point]) as [[number, number], [number, number]],
-                              });
-                            }}
-                          />
-                          <line
-                            className={`robot-map-virtual-wall ${mapMode === "zones" && selectedZoneId === id ? "is-selected" : ""}`}
-                            x1={start.left}
-                            y1={start.top}
-                            x2={end.left}
-                            y2={end.top}
-                            stroke={zoneColor(zone)}
-                          />
-                        </g>
-                      );
-                    }
-                    return (
-                      <path
-                        key={id}
-                        className={`robot-map-zone-shape is-${behavior} ${mapMode === "zones" && selectedZoneId === id ? "is-selected" : ""}`}
-                        d={path}
-                        fill={behavior === "restricted" ? "url(#restricted-hatch)" : behavior === "avoid" ? "url(#avoid-dots)" : "rgba(46,125,81,.15)"}
-                        fillRule="evenodd"
-                        stroke={zoneColor(zone)}
-                        onClick={(event) => {
-                          if (mapMode !== "zones") return;
-                          event.stopPropagation();
-                          setSelectedZoneId(id);
-                          setZoneGoalMode(false);
-                        }}
-                        onPointerDown={(event) => {
-                          if (mapMode !== "zones" || !isOwner || zoneCommandPending || busy) return;
-                          const ring = polygonOuterRing(zone);
-                          const canvas = mapCanvasRef.current;
-                          if (!ring || !canvas) return;
-                          event.preventDefault();
-                          event.stopPropagation();
-                          event.currentTarget.setPointerCapture(event.pointerId);
-                          suppressMapClick.current = true;
-                          setSelectedZoneId(id);
-                          setZoneGoalMode(false);
-                          setDraggingZone({
-                            type: "move",
-                            zoneId: id,
-                            origin: pointerToWorld(event.clientX, event.clientY, canvas, snapshot.map!.geometry),
-                            geometry: cloneFeature(zone).geometry,
-                            preferredGoal: validPoint(zone.properties.preferred_goal)
-                              ? [...zone.properties.preferred_goal] as [number, number]
-                              : null,
-                            wallEndpoints: null,
-                          });
-                        }}
-                      />
-                    );
-                  })}
-                  {roomDrafts.map((room) => {
-                    const path = walkableArea
-                      ? roomInternalBoundaryPath(
-                        room,
-                        walkableArea,
-                        snapshot.map!.geometry,
-                        snapshot.map!.geometry.resolution,
-                      )
-                      : "";
-                    if (!path) return null;
-                    const id = featureId(room);
-                    return (
-                      <path
-                        key={id}
-                        className={`robot-map-room-divider ${mapMode !== "rooms" ? "is-context" : ""} ${selectedRoomId === id ? "is-selected" : ""} ${mergeTargetId === id ? "is-merge-target" : ""}`}
-                        d={path}
-                      />
-                    );
-                  })}
-                  {mapMode === "rooms" && splitLines.map((line, lineIndex) => (
-                    <g key={`split-line-${lineIndex}`}>
-                      <polyline
-                        className={`robot-map-split-draft is-${splitValidation}`}
-                        points={worldPointsToPolyline(line, snapshot.map!.geometry)}
-                      />
-                      {line.map((point, pointIndex) => {
-                        const mapped = worldToPercent(point[0], point[1], snapshot.map!.geometry);
-                        const endpoint = pointIndex === 0 || pointIndex === line.length - 1;
-                        return (
-                          <circle
-                            key={`${lineIndex}-${pointIndex}`}
-                            className={`robot-map-split-handle ${endpoint ? "is-endpoint" : "is-corner"}`}
-                            cx={mapped.left}
-                            cy={mapped.top}
-                            r={endpoint ? 0.82 : 0.7}
-                            onClick={(event) => event.stopPropagation()}
-                            onPointerDown={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              suppressMapClick.current = true;
-                              setDraggingSplitPoint({ lineIndex, pointIndex });
-                            }}
-                          />
-                        );
-                      })}
-                      {line.length === 2 && (() => {
-                        const center: [number, number] = [
-                          (line[0][0] + line[1][0]) / 2,
-                          (line[0][1] + line[1][1]) / 2,
-                        ];
-                        const mapped = worldToPercent(center[0], center[1], snapshot.map!.geometry);
-                        return (
-                          <circle
-                            className="robot-map-split-handle is-bend"
-                            cx={mapped.left}
-                            cy={mapped.top}
-                            r={0.66}
-                            onClick={(event) => event.stopPropagation()}
-                            onPointerDown={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              suppressMapClick.current = true;
-                              setValidatedSplit(null);
-                              setSplitValidation("ready");
-                              setSplitValidationMessage("");
-                              setSplitLines((current) => current.map((candidate, index) =>
-                                index === lineIndex ? [candidate[0], center, candidate[1]] : candidate));
-                              setDraggingSplitPoint({ lineIndex, pointIndex: 1 });
-                            }}
-                          />
-                        );
-                      })()}
-                    </g>
-                  ))}
-                  {mapMode === "rooms" && pendingSplitPoint && (() => {
-                    const mapped = worldToPercent(pendingSplitPoint[0], pendingSplitPoint[1], snapshot.map!.geometry);
-                    return <circle className="robot-map-split-handle is-pending" cx={mapped.left} cy={mapped.top} r={0.9} />;
-                  })()}
-                  {mapMode === "zones" && selectedZone && selectedZoneBounds && (() => {
-                    const bounds = selectedZoneBounds;
-                    const corners = [
-                      { point: [bounds.minX, bounds.minY] as [number, number], opposite: [bounds.maxX, bounds.maxY] as [number, number] },
-                      { point: [bounds.maxX, bounds.minY] as [number, number], opposite: [bounds.minX, bounds.maxY] as [number, number] },
-                      { point: [bounds.maxX, bounds.maxY] as [number, number], opposite: [bounds.minX, bounds.minY] as [number, number] },
-                      { point: [bounds.minX, bounds.maxY] as [number, number], opposite: [bounds.maxX, bounds.minY] as [number, number] },
-                    ];
-                    const edges: Array<{ point: [number, number]; side: keyof ZoneBounds }> = [
-                      { point: [(bounds.minX + bounds.maxX) / 2, bounds.minY], side: "minY" },
-                      { point: [bounds.maxX, (bounds.minY + bounds.maxY) / 2], side: "maxX" },
-                      { point: [(bounds.minX + bounds.maxX) / 2, bounds.maxY], side: "maxY" },
-                      { point: [bounds.minX, (bounds.minY + bounds.maxY) / 2], side: "minX" },
-                    ];
-                    return (
-                      <g className="robot-map-zone-handles">
-                        {corners.map(({ point, opposite }) => {
-                          const mapped = worldToPercent(point[0], point[1], snapshot.map!.geometry);
-                          return (
-                            <circle
-                              key={`corner-${point.join("-")}`}
-                              className="robot-map-zone-handle is-corner"
-                              cx={mapped.left}
-                              cy={mapped.top}
-                              r={0.82}
-                              onClick={(event) => event.stopPropagation()}
-                              onPointerDown={(event) => {
-                                if (!isOwner || zoneCommandPending || busy) return;
-                                event.preventDefault();
-                                event.stopPropagation();
-                                event.currentTarget.setPointerCapture(event.pointerId);
-                                suppressMapClick.current = true;
-                                setDraggingZone({ type: "corner", zoneId: featureId(selectedZone), opposite });
-                              }}
-                            />
-                          );
-                        })}
-                        {edges.map(({ point, side }) => {
-                          const mapped = worldToPercent(point[0], point[1], snapshot.map!.geometry);
-                          return (
-                            <rect
-                              key={`edge-${side}`}
-                              className={`robot-map-zone-handle is-edge is-${side.toLowerCase()}`}
-                              x={mapped.left - 0.65}
-                              y={mapped.top - 0.65}
-                              width={1.3}
-                              height={1.3}
-                              rx={0.3}
-                              onClick={(event) => event.stopPropagation()}
-                              onPointerDown={(event) => {
-                                if (!isOwner || zoneCommandPending || busy) return;
-                                event.preventDefault();
-                                event.stopPropagation();
-                                event.currentTarget.setPointerCapture(event.pointerId);
-                                suppressMapClick.current = true;
-                                setDraggingZone({ type: "edge", zoneId: featureId(selectedZone), side, bounds: { ...bounds } });
-                              }}
-                            />
-                          );
-                        })}
-                      </g>
-                    );
-                  })()}
-                  {mapMode === "zones" && selectedZone && selectedWallEndpoints && selectedWallEndpoints.map((endpoint, endpointIndex) => {
-                    const mapped = worldToPercent(endpoint[0], endpoint[1], snapshot.map!.geometry);
-                    const opposite = selectedWallEndpoints[endpointIndex === 0 ? 1 : 0];
-                    return (
-                      <circle
-                        key={`wall-endpoint-${endpointIndex}`}
-                        className="robot-map-virtual-wall-handle"
-                        cx={mapped.left}
-                        cy={mapped.top}
-                        r={0.86}
-                        onClick={(event) => event.stopPropagation()}
-                        onPointerDown={(event) => {
-                          if (!isOwner || zoneCommandPending || busy) return;
-                          event.preventDefault();
-                          event.stopPropagation();
-                          event.currentTarget.setPointerCapture(event.pointerId);
-                          suppressMapClick.current = true;
-                          setDraggingZone({
-                            type: "wall-endpoint",
-                            zoneId: featureId(selectedZone),
-                            endpointIndex: endpointIndex as 0 | 1,
-                            opposite: [...opposite] as [number, number],
-                            width: virtualWallWidth(selectedZone),
-                          });
-                        }}
-                      />
-                    );
-                  })}
-                  {mapMode === "zones" && selectedZone && validPoint(selectedZone.properties.preferred_goal) && (() => {
-                    const goal = selectedZone.properties.preferred_goal;
-                    const mapped = worldToPercent(goal[0], goal[1], snapshot.map!.geometry);
-                    return <circle className="robot-map-zone-goal" cx={mapped.left} cy={mapped.top} r={0.92} />;
-                  })()}
-                </svg>
-              )}
-              {roomDrafts.map((room) => {
-                const label = featureLabelPoint(room, snapshot.map!.geometry);
-                if (!label) return null;
-                return (
-                  <span
-                    key={`${featureId(room)}-label`}
-                    className={`robot-map-room-label ${mapMode !== "rooms" ? "is-context" : ""} ${selectedRoomId === featureId(room) ? "is-selected" : ""}`}
-                    style={{ left: `${label.left}%`, top: `${label.top}%` }}
-                  >
-                    {featureName(room, "이름 없는 방")}
-                  </span>
-                );
-              })}
-              {previewPolyline && (
-                <svg className="robot-map-path is-preview" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  <polyline points={previewPolyline} />
-                </svg>
-              )}
-              {livePolyline && (
-                <svg className="robot-map-path is-live" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  <polyline points={livePolyline} />
-                </svg>
-              )}
-              {trailPolyline && (
-                <svg className="robot-map-path is-trail" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  <polyline points={trailPolyline} />
-                </svg>
-              )}
-              {isRecord(visibleGoal) &&
-                typeof visibleGoal.x === "number" &&
-                typeof visibleGoal.y === "number" && (() => {
-                  const goal = worldToPercent(
-                    visibleGoal.x,
-                    visibleGoal.y,
-                    snapshot.map.geometry,
-                  );
-                  return <span className={`robot-map-goal ${runtimeMode === "mapping" ? "is-exploration" : ""}`} style={{ left: `${goal.left}%`, top: `${goal.top}%` }} aria-label={runtimeMode === "mapping" ? "다음 자동 탐색 목표" : "선택한 목적지"} />;
-                })()}
-              {marker && (
-                <span
-                  className={`robot-map-marker ${navigationDriving ? "is-driving" : ""}`}
-                  aria-label="말벗 현재 위치"
-                  style={{ left: `${marker.left}%`, top: `${marker.top}%`, transform: `translate(-50%, -50%) rotate(${marker.heading}deg)` }}
-                >
-                  <span />
-                </span>
-              )}
-              </div>
-            ) : (
-              <div className="robot-map-empty">
-                <MapTrifold size={44} weight="light" aria-hidden="true" />
-                <strong>{loading ? "지도를 확인하고 있어요" : "아직 저장된 지도가 없어요"}</strong>
-                <p>소유자가 지도 생성을 시작하고 집 안을 한 번 탐색한 뒤 완료하면 이곳에 저장됩니다.</p>
-              </div>
             )}
-          </div>}
-          <div className="robot-map-legend">
-            <span><i className="is-robot" />말벗 위치와 방향</span>
-            <span><i className="is-goal" />선택·탐색 지점</span>
-            {!managed && <span><i className="is-route" />예상·실행 경로</span>}
-            {managed && <><span><i className="is-wall" />장애물</span><span><i className="is-free" />빈 공간</span><span><i className="is-unknown" />미확인</span></>}
-            {managed && workspace.zones.zones.length > 0 && <>
-              <span><i className="is-zone is-restricted" />진입 금지</span>
-              <span><i className="is-zone is-avoid" />우회 권장</span>
-            </>}
-            {roomDrafts.length > 0 && <span><i className="is-room" />방 경계·이름</span>}
-            {renderedZoneFeatures.length > 0 && (
-              <>
+            <div className="robot-map-legend">
+              <span><i className="is-robot" />말벗 위치와 방향</span>
+              <span><i className="is-goal" />선택·탐색 지점</span>
+              <span><i className="is-wall" />장애물</span><span><i className="is-free" />빈 공간</span><span><i className="is-unknown" />미확인</span>
+              {workspace.zones.zones.length > 0 && <>
                 <span><i className="is-zone is-restricted" />진입 금지</span>
                 <span><i className="is-zone is-avoid" />우회 권장</span>
-                <span><i className="is-zone is-allow" />통행 허용</span>
-                <span><i className="is-virtual-wall" />가상 벽</span>
-              </>
-            )}
+              </>}
+            </div>
           </div>
-        </div>
 
-        <aside className="robot-map-sidebar">
-          {managed ? (
-            snapshot ? <>
+          <aside className="robot-map-sidebar">
+            {snapshot ? <>
               <ManagedRobotControls key={deviceId} snapshot={snapshot} isOwner={isOwner}
                 busy={busy || Boolean(activeCommand)} sendCommand={sendCommand} goal={currentManagedGoal} />
               <ManagedRobotTools snapshot={snapshot} isOwner={isOwner}
@@ -1525,152 +1149,878 @@ export function RobotMapPanel({
                 busy={busy || Boolean(activeCommand)} sendCommand={sendCommand} now={clockNow}
                 report={managedDiagnostics?.deviceId === deviceId ? managedDiagnostics.report : null} />}
             </>
-              : <div className="robot-map-panel-card"><h3>로봇 연결 대기</h3><p>연결 후 실행 준비와 기능 요청을 사용할 수 있습니다.</p></div>
-          ) : mapping ? (
-            <>
-              <div className="robot-map-summary">
-                <h2>{snapshot?.state?.message ?? MAPPING_STEPS[Math.max(0, mappingStep)].label}</h2>
-                <div className="robot-map-progress"><i style={{ width: `${mappingProgress}%` }} /></div>
-                <div className="robot-map-summary-grid">
-                  <div><span>로봇 연결</span><strong>{snapshot?.online ? "정상" : "오프라인"}</strong></div>
-                  <div><span>현재 위치</span><strong>{localizationShortCopy(snapshot?.state?.localization.state)}</strong></div>
-                  <div><span>지도 상태</span><strong>생성 중</strong></div>
-                  <div><span>현재 단계</span><strong>{snapshot?.state?.state === "review" ? "검토" : "탐색"}</strong></div>
-                </div>
+              : <div className="robot-map-panel-card"><h3>로봇 연결 대기</h3><p>연결 후 실행 준비와 기능 요청을 사용할 수 있습니다.</p></div>}
+            {isOwner && device && (
+              <a
+                className="robot-map-admin-link"
+                href={`/scenario-admin?device=${encodeURIComponent(device.id)}`}
+              >시연 관리자 열기</a>
+            )}
+            {!isOwner && <small className="robot-map-owner-note">지도 생성과 공간 편집, 주행 모드 제어는 소유자 계정에서만 할 수 있습니다.</small>}
+            {notice && <p className="robot-map-notice" role="status">{notice}</p>}
+          </aside>
+        </div>
+      </section>
+    );
+  }
+
+  // 일반 지도: 지도(보기·목적지 선택) → 방·구역 편집 / 지도 관리. 편집·관리·자율주행은 소유자만,
+  // 보내기(목적지 선택·방 이름으로 보내기·이동 취소)는 보호자도 쓴다.
+  const activeScreen: MapScreen = !isOwner || (screen === "edit" && mapping) ? "map" : screen;
+  const openScreen = (next: MapScreen, mode: MapMode = "view") => {
+    changeMapMode(mode);
+    setScreen(next);
+  };
+  const navigating = mapMode === "navigate";
+  const canStartPreview = navigating && Boolean(previewToken) && !navigationDriving;
+  const localizedPose = snapshot?.state?.localization.state === "ok" ? snapshot.state.pose : null;
+  const currentRoom = localizedPose
+    ? roomDrafts.find((room) => featureContains(room, localizedPose.x, localizedPose.y)) ?? null
+    : null;
+  const mapStateCopy = mapping ? "생성 중" : snapshot?.map ? snapshot.map.finalized ? "저장됨" : "생성 중" : "없음";
+  const zoneChecked = Boolean(previewToken || navigationDriving || navigationSucceeded);
+  const noticeLine = notice ? <p className="ui-info" role="status">{notice}</p> : null;
+
+  const mapFrame = (
+    <div className={`robot-map-card ui-map-frame mode-${mapping ? "mapping" : mapMode}`}>
+      {snapshot?.map ? (
+        <div
+          ref={mapCanvasRef}
+          className={`robot-map-canvas ${runtimeMode === "navigation" && mapMode === "navigate" ? "is-navigation" : ""}`}
+          style={{ aspectRatio: `${snapshot.map.geometry.width} / ${snapshot.map.geometry.height}` }}
+          onClick={selectDestination}
+        >
+        <Image
+          src={`/api/devices/${encodeURIComponent(device?.id ?? "")}/robot/map?revision=${encodeURIComponent(snapshot.map.revision)}`}
+          alt="말벗이 만든 우리 집 지도"
+          fill
+          unoptimized
+          sizes="(max-width: 820px) 100vw, 70vw"
+          priority
+        />
+        {(roomDrafts.length > 0 || renderedZoneFeatures.length > 0 || splitLines.length > 0 || pendingSplitPoint) && (
+          <svg
+            className={`robot-map-semantics ${mapMode === "rooms" || mapMode === "zones" ? "is-interactive" : ""}`}
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            style={mapMode === "rooms" || mapMode === "zones"
+              ? { pointerEvents: "auto", touchAction: "none", userSelect: "none" }
+              : undefined}
+            aria-hidden="true"
+          >
+            <defs>
+              <pattern id="restricted-hatch" width="1.8" height="1.8" patternUnits="userSpaceOnUse">
+                <rect width="1.8" height="1.8" fill="rgba(192,64,47,.08)" />
+                <path d="M-.45 1.35 L1.35 -.45 M.45 2.25 L2.25 .45" stroke="rgba(192,64,47,.48)" strokeWidth=".18" />
+              </pattern>
+              <pattern id="avoid-dots" width="2.2" height="2.2" patternUnits="userSpaceOnUse">
+                <rect width="2.2" height="2.2" fill="rgba(200,144,26,.07)" />
+                <circle cx="1.1" cy="1.1" r=".22" fill="rgba(200,144,26,.65)" />
+              </pattern>
+            </defs>
+            {renderedZoneFeatures.map((zone) => {
+              const path = featureGeometryPath(zone, snapshot.map!.geometry);
+              const behavior = zoneBehaviorOf(zone);
+              const id = featureId(zone);
+              const wall = virtualWallEndpoints(zone);
+              if (!path) return null;
+              if (wall) {
+                const start = worldToPercent(wall[0][0], wall[0][1], snapshot.map!.geometry);
+                const end = worldToPercent(wall[1][0], wall[1][1], snapshot.map!.geometry);
+                return (
+                  <g key={id}>
+                    <line
+                      className="robot-map-virtual-wall-hit"
+                      x1={start.left}
+                      y1={start.top}
+                      x2={end.left}
+                      y2={end.top}
+                      onClick={(event) => {
+                        if (mapMode !== "zones") return;
+                        event.stopPropagation();
+                        setSelectedZoneId(id);
+                        setZoneGoalMode(false);
+                      }}
+                      onPointerDown={(event) => {
+                        if (mapMode !== "zones" || !isOwner || zoneCommandPending || busy) return;
+                        const canvas = mapCanvasRef.current;
+                        if (!canvas) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                        suppressMapClick.current = true;
+                        setSelectedZoneId(id);
+                        setZoneGoalMode(false);
+                        setDraggingZone({
+                          type: "move",
+                          zoneId: id,
+                          origin: pointerToWorld(event.clientX, event.clientY, canvas, snapshot.map!.geometry),
+                          geometry: cloneFeature(zone).geometry,
+                          preferredGoal: null,
+                          wallEndpoints: wall.map((point) => [...point]) as [[number, number], [number, number]],
+                        });
+                      }}
+                    />
+                    <line
+                      className={`robot-map-virtual-wall ${mapMode === "zones" && selectedZoneId === id ? "is-selected" : ""}`}
+                      x1={start.left}
+                      y1={start.top}
+                      x2={end.left}
+                      y2={end.top}
+                      stroke={zoneColor(zone)}
+                    />
+                  </g>
+                );
+              }
+              return (
+                <path
+                  key={id}
+                  className={`robot-map-zone-shape is-${behavior} ${mapMode === "zones" && selectedZoneId === id ? "is-selected" : ""}`}
+                  d={path}
+                  fill={behavior === "restricted" ? "url(#restricted-hatch)" : behavior === "avoid" ? "url(#avoid-dots)" : "rgba(46,125,81,.15)"}
+                  fillRule="evenodd"
+                  stroke={zoneColor(zone)}
+                  onClick={(event) => {
+                    if (mapMode !== "zones") return;
+                    event.stopPropagation();
+                    setSelectedZoneId(id);
+                    setZoneGoalMode(false);
+                  }}
+                  onPointerDown={(event) => {
+                    if (mapMode !== "zones" || !isOwner || zoneCommandPending || busy) return;
+                    const ring = polygonOuterRing(zone);
+                    const canvas = mapCanvasRef.current;
+                    if (!ring || !canvas) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    suppressMapClick.current = true;
+                    setSelectedZoneId(id);
+                    setZoneGoalMode(false);
+                    setDraggingZone({
+                      type: "move",
+                      zoneId: id,
+                      origin: pointerToWorld(event.clientX, event.clientY, canvas, snapshot.map!.geometry),
+                      geometry: cloneFeature(zone).geometry,
+                      preferredGoal: validPoint(zone.properties.preferred_goal)
+                        ? [...zone.properties.preferred_goal] as [number, number]
+                        : null,
+                      wallEndpoints: null,
+                    });
+                  }}
+                />
+              );
+            })}
+            {roomDrafts.map((room) => {
+              const path = walkableArea
+                ? roomInternalBoundaryPath(
+                  room,
+                  walkableArea,
+                  snapshot.map!.geometry,
+                  snapshot.map!.geometry.resolution,
+                )
+                : "";
+              if (!path) return null;
+              const id = featureId(room);
+              return (
+                <path
+                  key={id}
+                  className={`robot-map-room-divider ${mapMode !== "rooms" ? "is-context" : ""} ${selectedRoomId === id ? "is-selected" : ""} ${mergeTargetId === id ? "is-merge-target" : ""}`}
+                  d={path}
+                />
+              );
+            })}
+            {mapMode === "rooms" && splitLines.map((line, lineIndex) => (
+              <g key={`split-line-${lineIndex}`}>
+                <polyline
+                  className={`robot-map-split-draft is-${splitValidation}`}
+                  points={worldPointsToPolyline(line, snapshot.map!.geometry)}
+                />
+                {line.map((point, pointIndex) => {
+                  const mapped = worldToPercent(point[0], point[1], snapshot.map!.geometry);
+                  const endpoint = pointIndex === 0 || pointIndex === line.length - 1;
+                  return (
+                    <circle
+                      key={`${lineIndex}-${pointIndex}`}
+                      className={`robot-map-split-handle ${endpoint ? "is-endpoint" : "is-corner"}`}
+                      cx={mapped.left}
+                      cy={mapped.top}
+                      r={endpoint ? 0.82 : 0.7}
+                      onClick={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        suppressMapClick.current = true;
+                        setDraggingSplitPoint({ lineIndex, pointIndex });
+                      }}
+                    />
+                  );
+                })}
+                {line.length === 2 && (() => {
+                  const center: [number, number] = [
+                    (line[0][0] + line[1][0]) / 2,
+                    (line[0][1] + line[1][1]) / 2,
+                  ];
+                  const mapped = worldToPercent(center[0], center[1], snapshot.map!.geometry);
+                  return (
+                    <circle
+                      className="robot-map-split-handle is-bend"
+                      cx={mapped.left}
+                      cy={mapped.top}
+                      r={0.66}
+                      onClick={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        suppressMapClick.current = true;
+                        setValidatedSplit(null);
+                        setSplitValidation("ready");
+                        setSplitValidationMessage("");
+                        setSplitLines((current) => current.map((candidate, index) =>
+                          index === lineIndex ? [candidate[0], center, candidate[1]] : candidate));
+                        setDraggingSplitPoint({ lineIndex, pointIndex: 1 });
+                      }}
+                    />
+                  );
+                })()}
+              </g>
+            ))}
+            {mapMode === "rooms" && pendingSplitPoint && (() => {
+              const mapped = worldToPercent(pendingSplitPoint[0], pendingSplitPoint[1], snapshot.map!.geometry);
+              return <circle className="robot-map-split-handle is-pending" cx={mapped.left} cy={mapped.top} r={0.9} />;
+            })()}
+            {mapMode === "zones" && selectedZone && selectedZoneBounds && (() => {
+              const bounds = selectedZoneBounds;
+              const corners = [
+                { point: [bounds.minX, bounds.minY] as [number, number], opposite: [bounds.maxX, bounds.maxY] as [number, number] },
+                { point: [bounds.maxX, bounds.minY] as [number, number], opposite: [bounds.minX, bounds.maxY] as [number, number] },
+                { point: [bounds.maxX, bounds.maxY] as [number, number], opposite: [bounds.minX, bounds.minY] as [number, number] },
+                { point: [bounds.minX, bounds.maxY] as [number, number], opposite: [bounds.maxX, bounds.minY] as [number, number] },
+              ];
+              const edges: Array<{ point: [number, number]; side: keyof ZoneBounds }> = [
+                { point: [(bounds.minX + bounds.maxX) / 2, bounds.minY], side: "minY" },
+                { point: [bounds.maxX, (bounds.minY + bounds.maxY) / 2], side: "maxX" },
+                { point: [(bounds.minX + bounds.maxX) / 2, bounds.maxY], side: "maxY" },
+                { point: [bounds.minX, (bounds.minY + bounds.maxY) / 2], side: "minX" },
+              ];
+              return (
+                <g className="robot-map-zone-handles">
+                  {corners.map(({ point, opposite }) => {
+                    const mapped = worldToPercent(point[0], point[1], snapshot.map!.geometry);
+                    return (
+                      <circle
+                        key={`corner-${point.join("-")}`}
+                        className="robot-map-zone-handle is-corner"
+                        cx={mapped.left}
+                        cy={mapped.top}
+                        r={0.82}
+                        onClick={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => {
+                          if (!isOwner || zoneCommandPending || busy) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          event.currentTarget.setPointerCapture(event.pointerId);
+                          suppressMapClick.current = true;
+                          setDraggingZone({ type: "corner", zoneId: featureId(selectedZone), opposite });
+                        }}
+                      />
+                    );
+                  })}
+                  {edges.map(({ point, side }) => {
+                    const mapped = worldToPercent(point[0], point[1], snapshot.map!.geometry);
+                    return (
+                      <rect
+                        key={`edge-${side}`}
+                        className={`robot-map-zone-handle is-edge is-${side.toLowerCase()}`}
+                        x={mapped.left - 0.65}
+                        y={mapped.top - 0.65}
+                        width={1.3}
+                        height={1.3}
+                        rx={0.3}
+                        onClick={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => {
+                          if (!isOwner || zoneCommandPending || busy) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          event.currentTarget.setPointerCapture(event.pointerId);
+                          suppressMapClick.current = true;
+                          setDraggingZone({ type: "edge", zoneId: featureId(selectedZone), side, bounds: { ...bounds } });
+                        }}
+                      />
+                    );
+                  })}
+                </g>
+              );
+            })()}
+            {mapMode === "zones" && selectedZone && selectedWallEndpoints && selectedWallEndpoints.map((endpoint, endpointIndex) => {
+              const mapped = worldToPercent(endpoint[0], endpoint[1], snapshot.map!.geometry);
+              const opposite = selectedWallEndpoints[endpointIndex === 0 ? 1 : 0];
+              return (
+                <circle
+                  key={`wall-endpoint-${endpointIndex}`}
+                  className="robot-map-virtual-wall-handle"
+                  cx={mapped.left}
+                  cy={mapped.top}
+                  r={0.86}
+                  onClick={(event) => event.stopPropagation()}
+                  onPointerDown={(event) => {
+                    if (!isOwner || zoneCommandPending || busy) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    suppressMapClick.current = true;
+                    setDraggingZone({
+                      type: "wall-endpoint",
+                      zoneId: featureId(selectedZone),
+                      endpointIndex: endpointIndex as 0 | 1,
+                      opposite: [...opposite] as [number, number],
+                      width: virtualWallWidth(selectedZone),
+                    });
+                  }}
+                />
+              );
+            })}
+            {mapMode === "zones" && selectedZone && validPoint(selectedZone.properties.preferred_goal) && (() => {
+              const goal = selectedZone.properties.preferred_goal;
+              const mapped = worldToPercent(goal[0], goal[1], snapshot.map!.geometry);
+              return <circle className="robot-map-zone-goal" cx={mapped.left} cy={mapped.top} r={0.92} />;
+            })()}
+          </svg>
+        )}
+        {roomDrafts.map((room) => {
+          const label = featureLabelPoint(room, snapshot.map!.geometry);
+          if (!label) return null;
+          return (
+            <span
+              key={`${featureId(room)}-label`}
+              className={`robot-map-room-label ${mapMode !== "rooms" ? "is-context" : ""} ${selectedRoomId === featureId(room) ? "is-selected" : ""}`}
+              style={{ left: `${label.left}%`, top: `${label.top}%` }}
+            >
+              {featureName(room, "이름 없는 방")}
+            </span>
+          );
+        })}
+        {previewPolyline && (
+          <svg className="robot-map-path is-preview" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points={previewPolyline} />
+          </svg>
+        )}
+        {livePolyline && (
+          <svg className="robot-map-path is-live" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points={livePolyline} />
+          </svg>
+        )}
+        {trailPolyline && (
+          <svg className="robot-map-path is-trail" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points={trailPolyline} />
+          </svg>
+        )}
+        {isRecord(visibleGoal) &&
+          typeof visibleGoal.x === "number" &&
+          typeof visibleGoal.y === "number" && (() => {
+            const goal = worldToPercent(
+              visibleGoal.x,
+              visibleGoal.y,
+              snapshot.map.geometry,
+            );
+            return <span className={`robot-map-goal ${runtimeMode === "mapping" ? "is-exploration" : ""}`} style={{ left: `${goal.left}%`, top: `${goal.top}%` }} aria-label={runtimeMode === "mapping" ? "다음 자동 탐색 목표" : "선택한 목적지"} />;
+          })()}
+        {marker && (
+          <span
+            className={`robot-map-marker ${navigationDriving ? "is-driving" : ""}`}
+            aria-label="말벗 현재 위치"
+            style={{ left: `${marker.left}%`, top: `${marker.top}%`, transform: `translate(-50%, -50%) rotate(${marker.heading}deg)` }}
+          >
+            <span />
+          </span>
+        )}
+        </div>
+      ) : (
+        <div className="robot-map-empty ui-map-empty">
+          <MapTrifold size={40} weight="light" aria-hidden="true" />
+          <strong>{loading ? "지도를 확인하고 있어요" : "아직 저장된 지도가 없어요"}</strong>
+          <p>{isOwner ? "지도 관리에서 새 지도를 만들면 이곳에 보여요." : "소유자가 지도를 만들면 이곳에 보여요."}</p>
+        </div>
+      )}
+    </div>
+  );
+
+  const mapLegend = (
+    <div className="robot-map-legend ui-map-legend">
+      <span><i className="is-robot" />말벗</span>
+      <span><i className="is-goal" />목적지</span>
+      <span><i className="is-route" />경로</span>
+      {roomDrafts.length > 0 && <span><i className="is-room" />방 경계·이름</span>}
+      {renderedZoneFeatures.length > 0 && (
+        <>
+          <span><i className="is-zone is-restricted" />진입 금지</span>
+          <span><i className="is-zone is-avoid" />우회 권장</span>
+          <span><i className="is-zone is-allow" />통행 허용</span>
+          <span><i className="is-virtual-wall" />가상 벽</span>
+        </>
+      )}
+    </div>
+  );
+
+  if (activeScreen === "map") {
+    return (
+      <section className="ui-map" aria-labelledby="robot-map-title">
+        <header className="ui-top">
+          <div className="ui-top-row">
+            <h1 id="robot-map-title">지도</h1>
+            <span className={`ui-pill ${snapshot?.online ? "is-ok" : ""}`}>
+              <i aria-hidden="true" />
+              {snapshot?.online ? "연결됨" : loading ? "확인 중" : "오프라인"}
+            </span>
+          </div>
+          <div className="ui-choice-chips" role="group" aria-label="지도 모드">
+            <button type="button" className={mapMode === "view" ? "is-active" : ""} aria-pressed={mapMode === "view"} onClick={() => changeMapMode("view")}>보기</button>
+            <button type="button" className={mapMode === "navigate" ? "is-active" : ""} aria-pressed={mapMode === "navigate"} disabled={Boolean(mapping)} onClick={() => changeMapMode("navigate")}>목적지 선택</button>
+            {isOwner && (
+              <>
+                <button type="button" disabled={Boolean(mapping)} onClick={() => openScreen("edit", "rooms")}>방 편집</button>
+                <button type="button" disabled={Boolean(mapping)} onClick={() => openScreen("edit", "zones")}>구역 편집</button>
+              </>
+            )}
+          </div>
+        </header>
+        <div className="ui-screen">
+          <p className="ui-hint">
+            {mapping ? "새로운 공간을 확인하는 동안 목적지 선택과 편집을 사용할 수 없어요."
+              : navigating ? "지도에서 보낼 곳을 누르세요. 방과 구역은 선택을 방해하지 않아요."
+                : "저장된 공간과 말벗의 현재 위치를 확인하세요."}
+          </p>
+          {mapFrame}
+          {mapLegend}
+          {noticeLine}
+
+          <article className="ui-card ui-map-status">
+            <span className="ui-caption">지금 말벗은</span>
+            {mapping && <span className="ui-badge is-accent">집 둘러보는 중</span>}
+            <strong className="ui-map-status-title">
+              {mapping ? snapshot?.state?.message ?? MAPPING_STEPS[Math.max(0, mappingStep)].label
+                : navigationDriving ? "주변 장애물을 확인하며 이동하고 있어요"
+                  : navigationSucceeded ? "선택한 목적지에 도착했어요"
+                    : canStartPreview ? "선택한 위치까지 이동할 수 있어요"
+                      : navigating ? "지도에서 보낼 곳을 선택해 주세요"
+                        : snapshot?.map ? "저장된 지도를 사용하고 있어요" : "아직 저장된 지도가 없어요"}
+            </strong>
+            {(navigationDriving || navigationSucceeded) && (
+              <div
+                className="ui-progress"
+                role="progressbar"
+                aria-label="목적지 이동 진행률"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={navigationProgress}
+              >
+                <i style={{ width: `${navigationProgress}%` }} />
               </div>
-              <div className="robot-map-panel-card">
-                <h3>지금까지의 단계</h3>
-                <ol className="robot-map-steps">
-                  {MAPPING_STEPS.map((step, index) => (
-                    <li
-                      key={step.label}
-                      className={
-                        index < mappingStep ? "is-done"
-                          : index === mappingStep ? "is-current"
-                            : undefined
-                      }
-                    >{step.label}</li>
-                  ))}
-                </ol>
+            )}
+            {navigationDriving && (
+              <div className="ui-map-meta-row">
+                <span>남은 거리 {formatMeters(navigation?.distance_remaining_m)}</span>
+                <span>도착까지 {formatEta(navigation?.estimated_time_remaining_s)}</span>
               </div>
-              <div className="robot-map-help">
-                <span>새 지도를 저장하기 전까지 기존 지도는 그대로 유지됩니다. 중지해도 저장된 지도와 방·구역 설정은 지워지지 않아요.</span>
+            )}
+            {canStartPreview && (
+              <div className="ui-map-meta-row">
+                <span>거리 {formatMeters(isRecord(navigationPreview?.path) ? navigationPreview.path.length_m : null)}</span>
+                <span>예상 시간 {formatEta(estimateSeconds(navigationPreview))}</span>
               </div>
-              <div className="robot-map-actions is-inline">
-                <button type="button" className="is-secondary" onClick={() => void sendCommand("cancel")} disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}>
-                  지도 생성 중지
-                </button>
-                <button type="button" onClick={() => void sendCommand("finish")} disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}>
-                  탐색 완료·저장
-                </button>
+            )}
+            {canStartPreview && numberValue(navigationPreview?.snap_distance_m) > 0 && (
+              <p className="ui-note">누른 곳에서 {Math.round(numberValue(navigationPreview?.snap_distance_m) * 100)}cm 옆의 안전한 바닥에 도착해요.</p>
+            )}
+            {canStartPreview && (
+              <div className="ui-two-buttons">
+                <button type="button" className="ui-button" onClick={() => { setNavigationPreview(null); setPreviewExpiresAt(0); }}>다시 선택</button>
+                <button type="button" className="ui-button is-strong" onClick={() => void sendCommand("navigation_start", { previewToken })} disabled={!snapshot?.online || autonomousModeActive || Boolean(activeCommand) || busy}>이 위치로 이동</button>
               </div>
-            </>
-          ) : mapMode === "rooms" ? (
-            <>
-              <div className="robot-map-panel-card robot-map-editor-card">
-                <h2>{selectedRoom ? featureName(selectedRoom, "이름 없는 방") : "편집할 방을 선택하세요"}</h2>
-                <label>
-                  <span>이름</span>
-                  <input
-                    value={selectedRoom ? featureName(selectedRoom, "") : ""}
-                    disabled={!selectedRoom}
-                    onChange={(event) => updateSelectedRoom({ name: event.target.value })}
-                    maxLength={40}
-                    placeholder="방 이름"
-                  />
-                </label>
-                <div className="robot-map-editor-field">
-                  <span>종류</span>
-                  <div className="robot-map-choice-chips">
-                    {([
-                      ["unassigned", "미지정"],
-                      ["living_room", "거실"],
-                      ["bedroom", "침실"],
-                      ["kitchen", "주방"],
-                      ["dining_room", "식당"],
-                      ["bathroom", "욕실"],
-                      ["entrance", "현관"],
-                      ["hallway", "복도"],
-                      ["workspace", "작업 공간"],
-                      ["storage", "수납 공간"],
-                      ["utility", "다용도실"],
-                      ["custom", "기타"],
-                    ] as Array<[string, string]>).map(([category, label]) => (
+            )}
+            {navigationDriving && typeof navigation?.session_id === "string" && (
+              <button type="button" className="ui-button is-danger-line" onClick={() => void sendCommand("navigation_cancel", { sessionId: navigation.session_id })} disabled={!snapshot?.online || Boolean(activeCommand) || busy}>이동 취소</button>
+            )}
+            <dl className="ui-map-facts">
+              <dt>현재 위치</dt>
+              <dd>{currentRoom ? featureName(currentRoom, "이름 없는 방") : localizationShortCopy(snapshot?.state?.localization.state)}</dd>
+              <dt>지도 상태</dt>
+              <dd>{mapStateCopy}</dd>
+              <dt>말벗 연결</dt>
+              <dd className={snapshot?.online ? "is-ok" : "is-error"}>{snapshot?.online ? "정상" : "오프라인"}</dd>
+              <dt>구역 확인</dt>
+              <dd className={zoneChecked ? "is-ok" : ""}>{zoneChecked ? "문제 없음" : "선택 전"}</dd>
+            </dl>
+          </article>
+
+          {!mapping && roomDrafts.length > 0 && (
+            <article className="ui-card">
+              <h2>방 이름으로 보내기</h2>
+              <span className="ui-caption">방마다 정해 둔 대표 위치로 이동해요.</span>
+              <div className="ui-map-room-send">
+                {roomDrafts.map((room) => (
+                  <button
+                    key={featureId(room)}
+                    type="button"
+                    className="ui-button"
+                    disabled={!snapshot?.online || navigationDriving || autonomousModeActive || Boolean(activeCommand) || busy}
+                    onClick={() => {
+                      const point = featureWorldLabelPoint(room);
+                      if (!point) return;
+                      if (mapMode !== "navigate") changeMapMode("navigate");
+                      void sendCommand("navigation_preview", { x: point[0], y: point[1] });
+                    }}
+                  >{featureName(room, "공간")}</button>
+                ))}
+              </div>
+            </article>
+          )}
+
+          {isOwner && !mapping && (
+            <article className="ui-card">
+              <h2>자율주행</h2>
+              <span className="ui-caption">방 순찰·자율 배회 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요.</span>
+              {activeAutonomousMode && autonomousSession ? (
+                <>
+                  <p className="ui-info"><strong>{driveModeCopy(driveMode)}</strong><br />{driveModeDetailCopy(driveMode)}</p>
+                  <div className="ui-two-buttons">
+                    {activeAutonomousMode !== "person_following" && driveMode?.state === "paused" ? (
                       <button
-                        key={category}
                         type="button"
-                        className={selectedRoom?.properties.category === category ? "is-active" : ""}
-                        disabled={!selectedRoom}
-                        onClick={() => updateSelectedRoom({ category })}
-                      >
-                        {label}
-                      </button>
-                    ))}
+                        className="ui-button"
+                        onClick={() => void sendCommand("drive_mode_resume", { mode: activeAutonomousMode, sessionId: autonomousSession })}
+                        disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}
+                      >다시 시작</button>
+                    ) : activeAutonomousMode !== "person_following" && driveMode?.state !== "failed" ? (
+                      <button
+                        type="button"
+                        className="ui-button"
+                        onClick={() => void sendCommand("drive_mode_pause", { mode: activeAutonomousMode, sessionId: autonomousSession })}
+                        disabled={!isOwner || !snapshot?.online || !["active"].includes(driveMode?.state ?? "") || Boolean(activeCommand) || busy}
+                      >일시정지</button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="ui-button is-danger-line"
+                      onClick={() => void sendCommand("drive_mode_stop", { mode: activeAutonomousMode, sessionId: autonomousSession })}
+                      disabled={!isOwner || !snapshot?.online || driveMode?.state === "stopping" || Boolean(activeCommand) || busy}
+                    >중지</button>
                   </div>
+                </>
+              ) : (
+                <div className="ui-map-stack">
+                  <button
+                    type="button"
+                    className="ui-button is-emphasis"
+                    onClick={() => void sendCommand("drive_mode_start", { mode: "patrol" })}
+                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("patrol") || Boolean(activeCommand) || busy}
+                  >방 순찰 시작</button>
+                  <button
+                    type="button"
+                    className="ui-button"
+                    onClick={() => void sendCommand("drive_mode_start", { mode: "roaming" })}
+                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("roaming") || Boolean(activeCommand) || busy}
+                  >자율 배회 시작</button>
+                  <button
+                    type="button"
+                    className="ui-button"
+                    onClick={() => void sendCommand("drive_mode_start", { mode: "person_following" })}
+                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("person_following") || Boolean(activeCommand) || busy}
+                  >사람 따라가기</button>
                 </div>
-                {selectedRoom && (
-                  <p className="robot-map-representative-note">
-                    대표 위치 자동 계산됨
-                    {typeof selectedRoom.properties.clearance_m === "number"
-                      ? ` · 가장 가까운 벽에서 ${selectedRoom.properties.clearance_m.toFixed(2)}m`
-                      : ""}
-                  </p>
-                )}
+              )}
+            </article>
+          )}
+
+          {isOwner && (
+            <div className="ui-card ui-list">
+              <button type="button" onClick={() => openScreen("manage")}>
+                <span>
+                  <strong>지도 관리</strong>
+                  <small>{mapping ? "집 둘러보는 중이에요" : "새 지도 만들기"}</small>
+                </span>
+                <CaretRight size={18} aria-hidden="true" />
+              </button>
+            </div>
+          )}
+          <p className="ui-note ui-map-owner-note">지도 만들기와 방·구역 편집, 자율주행은 소유자만 할 수 있어요. 보호자에게는 보기와 보내기만 보여요.</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (activeScreen === "edit") {
+    return (
+      <section className="ui-screen ui-map-sub" aria-labelledby="robot-map-title">
+        <header className="ui-subhead">
+          <button type="button" className="ui-back" onClick={() => openScreen("map")}>‹ 지도</button>
+          <h1 id="robot-map-title">방 · 구역 편집</h1>
+          <div className="ui-segment" role="group" aria-label="편집 종류">
+            <button type="button" className={mapMode === "rooms" ? "is-on" : ""} aria-pressed={mapMode === "rooms"} onClick={() => mapMode !== "rooms" && changeMapMode("rooms")}>방 편집</button>
+            <button type="button" className={mapMode === "zones" ? "is-on" : ""} aria-pressed={mapMode === "zones"} onClick={() => mapMode !== "zones" && changeMapMode("zones")}>구역 편집</button>
+          </div>
+          <small className="ui-caption">소유자만 볼 수 있어요. 저장하면 말벗에 반영돼요.</small>
+        </header>
+        {mapFrame}
+        {mapLegend}
+        {noticeLine}
+
+        {mapMode === "zones" ? (
+          <>
+            <article className="ui-card ui-map-editor">
+              <h2>{selectedZone ? featureName(selectedZone, "이름 없는 구역") : "편집할 구역을 선택하세요"}</h2>
+              <span className="ui-caption">구역은 방 이름이 아니라 말벗의 이동 규칙이에요.</span>
+              {selectedZone ? (
+                <>
+                  {isVirtualWall(selectedZone) ? (
+                    <p className="ui-info">진입 금지 가상 벽이에요. 말벗은 이 선을 넘어가지 않아요.</p>
+                  ) : (
+                    <>
+                      <div className="ui-rule-choices" role="radiogroup" aria-label="이동 규칙">
+                        {(["restricted", "avoid", "allow"] as ZoneBehavior[]).map((behavior) => (
+                          <button
+                            key={behavior}
+                            type="button"
+                            role="radio"
+                            aria-checked={zoneBehaviorOf(selectedZone) === behavior}
+                            className={zoneBehaviorOf(selectedZone) === behavior ? "is-active" : ""}
+                            onClick={() => updateSelectedZone({ behavior })}
+                          >
+                            {zoneBehaviorLabel(behavior)}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="ui-caption">{zoneRuleHint(zoneBehaviorOf(selectedZone))}</span>
+                    </>
+                  )}
+                  <label className="ui-field">
+                    <span>이름</span>
+                    <input
+                      value={featureName(selectedZone, "")}
+                      maxLength={40}
+                      onChange={(event) => updateSelectedZone({ name: event.target.value.slice(0, 40) })}
+                      placeholder="구역 이름"
+                    />
+                  </label>
+                  <div className="ui-map-goal-row">
+                    <span><strong>{isVirtualWall(selectedZone) ? "길이" : "크기"}</strong></span>
+                    <span>{isVirtualWall(selectedZone) ? formatMeters(wallLength(virtualWallEndpoints(selectedZone)!)) : formatSquareMeters(zoneArea(selectedZone))}</span>
+                  </div>
+                  {!isVirtualWall(selectedZone) && (
+                    <label className="ui-field ui-map-color">
+                      <span>표시 색상</span>
+                      <input type="color" value={zoneColor(selectedZone)} onChange={(event) => updateSelectedZone({ color: event.target.value })} />
+                    </label>
+                  )}
+                  {zoneBehaviorOf(selectedZone) !== "restricted" && (
+                    <div className="ui-map-goal-row">
+                      <span>
+                        <strong>대표 목적지</strong>
+                        <small>{validPoint(selectedZone.properties.preferred_goal) ? "지정됨" : "지정 안 됨"}</small>
+                      </span>
+                      <button type="button" className={`ui-button ui-small ${zoneGoalMode ? "is-selected" : ""}`} onClick={() => setZoneGoalMode((current) => !current)}>
+                        {zoneGoalMode ? "지도에서 위치 선택 중" : "대표 위치 지정"}
+                      </button>
+                    </div>
+                  )}
+                  <p className="ui-note">{isVirtualWall(selectedZone)
+                    ? "선을 끌어 옮기고, 양 끝 점을 끌어 길이와 각도를 바꿔요."
+                    : "구역 안을 끌어 옮기고, 네 모서리와 변의 점을 끌어 크기를 바꿔요."}</p>
+                  <button type="button" className="ui-button is-danger-line" onClick={removeSelectedZone} disabled={zoneCommandPending || busy}>{isVirtualWall(selectedZone) ? "이 가상 벽 삭제" : "이 구역 삭제"}</button>
+                </>
+              ) : (
+                <p className="ui-hint">지도나 아래 목록에서 구역을 누르세요.</p>
+              )}
+              <h3 className="ui-map-section-head">새 구역 규칙</h3>
+              <div className="ui-rule-choices" role="radiogroup" aria-label="새 구역 규칙">
+                {(["restricted", "avoid", "allow"] as ZoneBehavior[]).map((behavior) => (
+                  <button
+                    key={behavior}
+                    type="button"
+                    role="radio"
+                    aria-checked={newZoneBehavior === behavior}
+                    className={newZoneBehavior === behavior ? "is-active" : ""}
+                    onClick={() => setNewZoneBehavior(behavior)}
+                  >
+                    {zoneBehaviorLabel(behavior)}
+                  </button>
+                ))}
               </div>
-              <div className="robot-map-panel-card">
-                <h3>방 편집 도구</h3>
-                <div className="robot-map-tool-grid">
-                  {(["select", "split", "merge"] as RoomTool[]).map((tool) => (
-                    <button key={tool} type="button" className={roomTool === tool ? "is-active" : ""} onClick={() => chooseRoomTool(tool)}>
-                      {tool === "select" ? "방 선택" : tool === "split" ? "나누는 선 그리기" : "방 두 개 합치기"}
+              <div className="ui-map-create">
+                <button type="button" className="ui-button" onClick={addDefaultZone} disabled={!isOwner || zoneCommandPending || busy}>사각형 구역</button>
+                <button type="button" className="ui-button" onClick={addVirtualWall} disabled={!isOwner || zoneCommandPending || busy}>가상 벽</button>
+                <button
+                  type="button"
+                  className={`ui-button ${zoneCreateMode === "room" ? "is-selected" : ""}`}
+                  aria-pressed={zoneCreateMode === "room"}
+                  onClick={() => setZoneCreateMode((current) => current === "room" ? "closed" : "room")}
+                  disabled={!isOwner || zoneCommandPending || busy}
+                >방 전체 적용</button>
+              </div>
+              {zoneCreateMode === "room" ? (
+                <div className="ui-map-room-zone">
+                  <p className="ui-note">저장된 방 경계를 그대로 사용해요. 구역으로 만들 방을 고르세요.</p>
+                  {roomDrafts.map((room, index) => (
+                    <button key={featureId(room)} type="button" className="ui-button" onClick={() => addRoomAsZone(room)} disabled={!isOwner || zoneCommandPending || busy}>
+                      <i style={{ background: roomColor(room, index) }} />
+                      <span>{featureName(room, `공간 ${index + 1}`)}</span>
+                      <small>전체 추가</small>
                     </button>
                   ))}
                 </div>
-                {roomTool === "split" && (
-                  <div className="robot-map-split-guide">
-                    <p>벽 두 곳을 누르면 선이 생깁니다. 여러 선을 만들 수 있고, 선 중앙의 작은 주황 포인터를 끌면 ㄱ자로 꺾입니다.</p>
-                    <div className="robot-map-split-legend">
-                      <span><i className="is-endpoint" />벽 끝점</span>
-                      <span><i className="is-bend" />직각 꺾임</span>
-                      <span><i className="is-pending" />다음 벽 선택 중</span>
-                    </div>
-                    <div className={`robot-map-split-status is-${splitValidation}`} role="status">
-                      {pendingSplitPoint
-                        ? "시작점을 정했습니다. 연결할 두 번째 벽을 선택하세요."
-                        : splitValidation === "checking"
-                          ? splitValidationMessage
-                          : splitValidation === "valid"
-                            ? splitValidationMessage
-                          : splitValidation === "invalid"
-                            ? splitValidationMessage
-                            : splitLines.length > 0
-                              ? `${splitLines.length}개 분할선 · 적용하면 최소 1㎡와 정확히 두 공간인지 로봇이 최종 확인합니다.`
-                              : "분할선의 양 끝점은 벽에서 25cm 이내에 지정해야 합니다."}
-                    </div>
-                    <div className="robot-map-editor-buttons">
-                      <button type="button" onClick={undoSplitPoint} disabled={!pendingSplitPoint && splitLines.length === 0}>마지막 선 되돌리기</button>
-                      <button type="button" onClick={() => clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage)} disabled={!pendingSplitPoint && splitLines.length === 0}>모두 지우기</button>
-                    </div>
-                    <button type="button" className="robot-map-apply-tool" onClick={applyRoomSplit} disabled={splitLines.length === 0 || Boolean(pendingSplitPoint) || splitValidation === "invalid" || splitValidation === "checking" || roomCommandPending || busy}>
-                      {splitValidation === "valid" ? "확인된 선대로 방 나누기" : "분할 가능 여부 확인"}
+              ) : (
+                <p className="ui-note">가상 벽: 출입구나 좁은 통로를 선으로 막아요. 말벗은 이 선을 넘어가지 않아요.</p>
+              )}
+            </article>
+
+            <article className="ui-card ui-map-list robot-map-list-card">
+              <h2>구역 {zoneDrafts.length}개</h2>
+              {zoneDrafts.length === 0 && <p className="ui-hint">설정한 이동 규칙 구역이 없어요.</p>}
+              {zoneDrafts.map((zone) => (
+                <button
+                  key={featureId(zone)}
+                  type="button"
+                  className={selectedZoneId === featureId(zone) ? "is-selected" : ""}
+                  onClick={() => {
+                    setSelectedZoneId(featureId(zone));
+                    setZoneGoalMode(false);
+                  }}
+                >
+                  <i className={isVirtualWall(zone) ? "is-virtual-wall" : `is-${zoneBehaviorOf(zone)}`} />
+                  <span>{featureName(zone, "이름 없는 구역")} · {isVirtualWall(zone) ? "가상 벽" : zoneBehaviorLabel(zoneBehaviorOf(zone))}</span>
+                  {selectedZoneId === featureId(zone) && <strong>편집 중</strong>}
+                </button>
+              ))}
+            </article>
+            <div className="ui-two-buttons">
+              <button type="button" className="ui-button" onClick={() => {
+                setZoneDrafts(zoneFeatures.map(cloneFeature));
+                setSelectedZoneId("");
+                setZoneGoalMode(false);
+              }} disabled={!zonesDirty || zoneCommandPending || busy}>저장 전 변경 취소</button>
+              <button type="button" className="ui-button is-strong" onClick={saveZones} disabled={!isOwner || !zonesDirty || zoneCommandPending || busy}>구역 설정 저장</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <article className="ui-card ui-map-editor">
+              <h2>{selectedRoom ? featureName(selectedRoom, "이름 없는 방") : "편집할 방을 선택하세요"}</h2>
+              {!selectedRoom && <p className="ui-hint">지도나 아래 방 목록에서 방을 누르세요.</p>}
+              <label className="ui-field">
+                <span>이름</span>
+                <input
+                  value={selectedRoom ? featureName(selectedRoom, "") : ""}
+                  disabled={!selectedRoom}
+                  onChange={(event) => updateSelectedRoom({ name: event.target.value })}
+                  maxLength={40}
+                  placeholder="방 이름"
+                />
+              </label>
+              <div className="ui-field">
+                <span>종류</span>
+                <div className="ui-choice-chips">
+                  {([
+                    ["unassigned", "미지정"],
+                    ["living_room", "거실"],
+                    ["bedroom", "침실"],
+                    ["kitchen", "주방"],
+                    ["dining_room", "식당"],
+                    ["bathroom", "욕실"],
+                    ["entrance", "현관"],
+                    ["hallway", "복도"],
+                    ["workspace", "작업 공간"],
+                    ["storage", "수납 공간"],
+                    ["utility", "다용도실"],
+                    ["custom", "기타"],
+                  ] as Array<[string, string]>).map(([category, label]) => (
+                    <button
+                      key={category}
+                      type="button"
+                      className={selectedRoom?.properties.category === category ? "is-active" : ""}
+                      aria-pressed={selectedRoom?.properties.category === category}
+                      disabled={!selectedRoom}
+                      onClick={() => updateSelectedRoom({ category })}
+                    >
+                      {label}
                     </button>
-                  </div>
-                )}
-                {roomTool === "merge" && (
-                  <div className="robot-map-split-guide">
-                    <p><strong>{featureName(selectedRoom!, "현재 방")}</strong>과 맞닿아 있는 방 하나를 지도나 목록에서 선택하세요. 떨어진 방은 합칠 수 없습니다.</p>
-                    <div className={`robot-map-split-status ${mergeTarget ? "is-ready" : "is-idle"}`}>
-                      {mergeTarget ? `${featureName(selectedRoom!, "현재 방")} + ${featureName(mergeTarget, "다른 방")}` : "합칠 두 번째 방을 기다리고 있습니다."}
-                    </div>
-                    <button type="button" className="robot-map-apply-tool" onClick={applyRoomMerge} disabled={!mergeTarget || roomCommandPending || busy}>선택한 두 방 합치기</button>
-                  </div>
-                )}
+                  ))}
+                </div>
               </div>
-              <div className="robot-map-panel-card robot-map-list-card">
-                <h3>방 목록 {roomDrafts.length}곳</h3>
-                {roomDrafts.map((room, index) => (
-                  <button key={featureId(room)} type="button" onClick={() => {
-                    const id = featureId(room);
+              {selectedRoom && (
+                <div className="ui-map-goal-row">
+                  <span>
+                    <strong>대표 목적지</strong>
+                    <small>방 이름으로 보낼 때 가는 곳</small>
+                  </span>
+                  {validPoint(selectedRoom.properties.representative_point)
+                    ? <span className="is-ok">지정됨</span>
+                    : <span>없음</span>}
+                </div>
+              )}
+              <h3>방 편집 도구</h3>
+              <div className="ui-two-buttons">
+                {(["split", "merge"] as RoomTool[]).map((tool) => (
+                  <button
+                    key={tool}
+                    type="button"
+                    className={`ui-button ${roomTool === tool ? "is-selected" : ""}`}
+                    aria-pressed={roomTool === tool}
+                    onClick={() => chooseRoomTool(roomTool === tool ? "select" : tool)}
+                  >
+                    {tool === "split" ? "방 나누기" : "맞닿은 방과 합치기"}
+                  </button>
+                ))}
+              </div>
+              {roomTool === "select" && (
+                <p className="ui-note">나누기: 벽 두 곳을 누르면 선이 생겨요. 선 가운데 점을 끌면 ㄱ자로 꺾여요.</p>
+              )}
+              {roomTool === "split" && (
+                <div className="ui-map-tool">
+                  <p className="ui-note">벽 두 곳을 누르면 선이 생겨요. 여러 선을 만들 수 있고, 선 가운데 작은 주황 점을 끌면 ㄱ자로 꺾여요.</p>
+                  <div className="robot-map-split-legend">
+                    <span><i className="is-endpoint" />벽 끝점</span>
+                    <span><i className="is-bend" />직각 꺾임</span>
+                    <span><i className="is-pending" />다음 벽 선택 중</span>
+                  </div>
+                  <div className={`robot-map-split-status is-${splitValidation}`} role="status">
+                    {pendingSplitPoint
+                      ? "시작점을 정했습니다. 연결할 두 번째 벽을 선택하세요."
+                      : splitValidation === "checking"
+                        ? splitValidationMessage
+                        : splitValidation === "valid"
+                          ? splitValidationMessage
+                        : splitValidation === "invalid"
+                          ? splitValidationMessage
+                          : splitLines.length > 0
+                            ? `${splitLines.length}개 분할선 · 적용하면 최소 1㎡와 정확히 두 공간인지 말벗이 최종 확인합니다.`
+                            : "분할선의 양 끝점은 벽에서 25cm 이내에 지정해야 합니다."}
+                  </div>
+                  <div className="ui-two-buttons">
+                    <button type="button" className="ui-button ui-small" onClick={undoSplitPoint} disabled={!pendingSplitPoint && splitLines.length === 0}>마지막 선 되돌리기</button>
+                    <button type="button" className="ui-button ui-small" onClick={() => clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage)} disabled={!pendingSplitPoint && splitLines.length === 0}>모두 지우기</button>
+                  </div>
+                  <button type="button" className="ui-button is-strong" onClick={applyRoomSplit} disabled={splitLines.length === 0 || Boolean(pendingSplitPoint) || splitValidation === "invalid" || splitValidation === "checking" || roomCommandPending || busy}>
+                    {splitValidation === "valid" ? "확인된 선대로 방 나누기" : "분할 가능 여부 확인"}
+                  </button>
+                </div>
+              )}
+              {roomTool === "merge" && (
+                <div className="ui-map-tool">
+                  <p className="ui-note"><strong>{selectedRoom ? featureName(selectedRoom, "현재 방") : "현재 방"}</strong>과 맞닿아 있는 방 하나를 지도나 목록에서 고르세요. 떨어진 방은 합칠 수 없어요.</p>
+                  <div className={`robot-map-split-status ${mergeTarget ? "is-ready" : "is-idle"}`}>
+                    {mergeTarget && selectedRoom ? `${featureName(selectedRoom, "현재 방")} + ${featureName(mergeTarget, "다른 방")}` : "합칠 두 번째 방을 기다리고 있습니다."}
+                  </div>
+                  <button type="button" className="ui-button is-strong" onClick={applyRoomMerge} disabled={!mergeTarget || roomCommandPending || busy}>선택한 두 방 합치기</button>
+                </div>
+              )}
+            </article>
+
+            <article className="ui-card ui-map-list robot-map-list-card">
+              <h2>방 목록 {roomDrafts.length}곳</h2>
+              {roomDrafts.map((room, index) => {
+                const id = featureId(room);
+                return (
+                  <button key={id} type="button" className={selectedRoomId === id ? "is-selected" : ""} onClick={() => {
                     if (roomTool === "merge" && selectedRoomId && id !== selectedRoomId) {
                       setMergeTargetId(id);
                     } else {
@@ -1680,330 +2030,83 @@ export function RobotMapPanel({
                     }
                   }}>
                     <i style={{ background: roomColor(room, index) }} />
-                    {featureName(room, `공간 ${index + 1}`)}
-                    {selectedRoomId === featureId(room) && <strong>현재 방</strong>}
-                    {mergeTargetId === featureId(room) && <strong>합칠 방</strong>}
+                    <span>{featureName(room, `공간 ${index + 1}`)}</span>
+                    {selectedRoomId === id ? <strong>현재 방</strong>
+                      : mergeTargetId === id ? <strong>합칠 방</strong>
+                        : <small>{validPoint(room.properties.representative_point) ? "대표 목적지 있음" : "대표 목적지 없음"}</small>}
                   </button>
-                ))}
-              </div>
-              <div className="robot-map-actions is-inline">
-                <button type="button" className="is-secondary" onClick={() => {
-                  setRoomDrafts(originalRooms);
-                  setSelectedRoomId("");
-                  setMergeTargetId("");
-                  setRoomTool("select");
-                  clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
-                }} disabled={!roomsDirty}>저장 전 변경 취소</button>
-                <button type="button" onClick={saveRooms} disabled={!isOwner || roomDrafts.length === 0 || !roomsDirty || roomCommandPending || busy}>방 설정 저장</button>
-              </div>
-            </>
-          ) : mapMode === "zones" ? (
-            <>
-              <div className="robot-map-panel-card robot-map-editor-card">
-                <div className="robot-map-editor-heading">
-                  <div>
-                    <small>이동 규칙</small>
-                    <h2>{selectedZone ? featureName(selectedZone, "이름 없는 구역") : "편집할 구역을 선택하세요"}</h2>
-                  </div>
-                  <button
-                    type="button"
-                    className={`robot-map-zone-add ${zoneCreateMode !== "closed" ? "is-active" : ""}`}
-                    onClick={() => setZoneCreateMode((current) => current === "closed" ? "menu" : "closed")}
-                    disabled={!isOwner || zoneCommandPending || busy}
-                  >
-                    {zoneCreateMode === "closed" ? "+ 추가" : "닫기"}
-                  </button>
-                </div>
-                {zoneCreateMode !== "closed" && (
-                  <div className="robot-map-zone-create-menu">
-                    <div className="robot-map-zone-create-rule">
-                      <span>새 구역 규칙</span>
-                      <div className="robot-map-zone-choices is-compact">
-                        {(["restricted", "avoid", "allow"] as ZoneBehavior[]).map((behavior) => (
-                          <button key={behavior} type="button" className={`is-${behavior} ${newZoneBehavior === behavior ? "is-active" : ""}`} onClick={() => setNewZoneBehavior(behavior)}>
-                            <i />
-                            <span>{zoneBehaviorLabel(behavior)}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="robot-map-zone-create-actions">
-                      <button type="button" onClick={addDefaultZone}>
-                        <i className="is-rectangle" />
-                        <span><strong>사각형 구역</strong><small>끌어서 이동하고 크기를 조절해요</small></span>
-                      </button>
-                      <button type="button" onClick={addVirtualWall}>
-                        <i className="is-wall" />
-                        <span><strong>가상 벽</strong><small>출입구나 좁은 통로를 선으로 막아요</small></span>
-                      </button>
-                      <button type="button" onClick={() => setZoneCreateMode("room")} className={zoneCreateMode === "room" ? "is-active" : ""}>
-                        <i className="is-room" />
-                        <span><strong>방 전체 적용</strong><small>저장된 방 경계를 그대로 사용해요</small></span>
-                      </button>
-                    </div>
-                    {zoneCreateMode === "room" && (
-                      <div className="robot-map-room-zone-list">
-                        {roomDrafts.map((room, index) => (
-                          <button key={featureId(room)} type="button" onClick={() => addRoomAsZone(room)} disabled={!isOwner || zoneCommandPending || busy}>
-                            <i style={{ background: roomColor(room, index) }} />
-                            <span>{featureName(room, `공간 ${index + 1}`)}</span>
-                            <strong>전체 추가</strong>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {selectedZone ? (
-                  <>
-                    <label>
-                      <span>이름</span>
-                      <input
-                        value={featureName(selectedZone, "")}
-                        maxLength={40}
-                        onChange={(event) => updateSelectedZone({ name: event.target.value.slice(0, 40) })}
-                        placeholder="구역 이름"
-                      />
-                    </label>
-                    <div className="robot-map-zone-meta">
-                      <span>{isVirtualWall(selectedZone) ? "길이" : "크기"}</span>
-                      <strong>{isVirtualWall(selectedZone) ? formatMeters(wallLength(virtualWallEndpoints(selectedZone)!)) : formatSquareMeters(zoneArea(selectedZone))}</strong>
-                    </div>
-                    {isVirtualWall(selectedZone) ? (
-                      <div className="robot-map-virtual-wall-note">
-                        <i />
-                        <span><strong>진입 금지 가상 벽</strong><small>말벗은 이 선을 가로질러 이동하지 않습니다.</small></span>
-                      </div>
-                    ) : (
-                      <div className="robot-map-editor-field">
-                        <span>이동 규칙</span>
-                        <div className="robot-map-zone-choices">
-                          {(["restricted", "avoid", "allow"] as ZoneBehavior[]).map((behavior) => (
-                            <button
-                              key={behavior}
-                              type="button"
-                              className={`is-${behavior} ${zoneBehaviorOf(selectedZone) === behavior ? "is-active" : ""}`}
-                              onClick={() => updateSelectedZone({ behavior })}
-                            >
-                              <i />
-                              <span>{zoneBehaviorLabel(behavior)}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {!isVirtualWall(selectedZone) && (
-                      <label className="robot-map-zone-color">
-                        <span>표시 색상</span>
-                        <input type="color" value={zoneColor(selectedZone)} onChange={(event) => updateSelectedZone({ color: event.target.value })} />
-                      </label>
-                    )}
-                    {zoneBehaviorOf(selectedZone) !== "restricted" && (
-                      <div className="robot-map-zone-goal-setting">
-                        <div>
-                          <span>대표 목적지</span>
-                          <strong>{validPoint(selectedZone.properties.preferred_goal) ? "지정됨" : "지정 안 됨"}</strong>
-                        </div>
-                        <button type="button" className={zoneGoalMode ? "is-active" : ""} onClick={() => setZoneGoalMode((current) => !current)}>
-                          {zoneGoalMode ? "지도에서 위치 선택 중" : "대표 위치 지정"}
-                        </button>
-                      </div>
-                    )}
-                    <p>{isVirtualWall(selectedZone)
-                      ? "선을 끌어 이동하고, 양 끝 포인터를 끌어 길이와 각도를 조절하세요."
-                      : "구역 안을 끌어 이동하고, 네 모서리와 변의 포인터를 끌어 크기를 조절하세요."}</p>
-                    <button type="button" className="robot-map-zone-delete" onClick={removeSelectedZone} disabled={zoneCommandPending || busy}>{isVirtualWall(selectedZone) ? "이 가상 벽 삭제" : "이 구역 삭제"}</button>
-                  </>
-                ) : (
-                  <div className="robot-map-zone-empty">
-                    <p>지도나 아래 목록에서 구역을 선택하세요.</p>
-                    <span>추가 메뉴에서 사각형 구역·가상 벽·방 전체 적용 중 하나를 선택할 수 있습니다.</span>
-                  </div>
-                )}
-              </div>
+                );
+              })}
+            </article>
+            <div className="ui-two-buttons">
+              <button type="button" className="ui-button" onClick={() => {
+                setRoomDrafts(originalRooms);
+                setSelectedRoomId("");
+                setMergeTargetId("");
+                setRoomTool("select");
+                clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
+              }} disabled={!roomsDirty}>저장 전 변경 취소</button>
+              <button type="button" className="ui-button is-strong" onClick={saveRooms} disabled={!isOwner || roomDrafts.length === 0 || !roomsDirty || roomCommandPending || busy}>방 설정 저장</button>
+            </div>
+          </>
+        )}
+      </section>
+    );
+  }
 
-              <div className="robot-map-panel-card robot-map-list-card">
-                <h3>구역 {zoneDrafts.length}개</h3>
-                {zoneDrafts.length === 0 && <p>설정한 이동 규칙 구역이 없습니다.</p>}
-                {zoneDrafts.map((zone) => (
-                  <button
-                    key={featureId(zone)}
-                    type="button"
-                    className={selectedZoneId === featureId(zone) ? "is-selected" : ""}
-                    onClick={() => {
-                      setSelectedZoneId(featureId(zone));
-                      setZoneGoalMode(false);
-                    }}
-                  >
-                    <i className={isVirtualWall(zone) ? "is-virtual-wall" : `is-${zoneBehaviorOf(zone)}`} />
-                    <span>{featureName(zone, "이름 없는 구역")} · {isVirtualWall(zone) ? "가상 벽" : zoneBehaviorLabel(zoneBehaviorOf(zone))}</span>
-                    {selectedZoneId === featureId(zone) && <strong>편집 중</strong>}
-                  </button>
-                ))}
-              </div>
-              <div className="robot-map-actions is-inline">
-                <button type="button" className="is-secondary" onClick={() => {
-                  setZoneDrafts(zoneFeatures.map(cloneFeature));
-                  setSelectedZoneId("");
-                  setZoneGoalMode(false);
-                }} disabled={!zonesDirty || zoneCommandPending || busy}>저장 전 변경 취소</button>
-                <button type="button" onClick={saveZones} disabled={!isOwner || !zonesDirty || zoneCommandPending || busy}>구역 설정 저장</button>
-              </div>
-              <div className="robot-map-help"><span>구역은 방 이름이 아니라 말벗의 이동 규칙입니다.<br />진입 금지를 해제하면 해당 공간으로 들어갈 수 있어요.</span></div>
-            </>
-          ) : (
-            <>
-              <div className={`robot-map-summary ${navigationDriving ? "is-driving" : navigationSucceeded ? "is-succeeded" : ""}`}>
-                <small>지금 말벗은</small>
-                <h2>
-                  {navigationDriving ? "주변 장애물을 확인하며 이동하고 있어요"
-                    : navigationSucceeded ? "선택한 목적지에 도착했어요"
-                    : previewToken ? "선택한 위치까지 이동할 수 있어요"
-                      : mapMode === "navigate" ? "지도에서 보낼 곳을 선택해 주세요"
-                        : "저장된 지도를 사용하고 있어요"}
-                </h2>
-                {(navigationDriving || navigationSucceeded) && (
-                  <div className="robot-map-progress-row">
-                    <div
-                      className="robot-map-progress"
-                      role="progressbar"
-                      aria-label="목적지 이동 진행률"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={navigationProgress}
-                    >
-                      <i style={{ width: `${navigationProgress}%` }} />
-                    </div>
-                    <strong>{navigationProgress}%</strong>
-                  </div>
-                )}
-                <div className="robot-map-summary-grid">
-                  {mapMode === "navigate" || navigationDriving || navigationSucceeded ? (
-                    <>
-                      <div><span>{navigationDriving || navigationSucceeded ? "남은 거리" : "거리"}</span><strong>{navigationSucceeded ? "0.0m" : formatMeters(navigationDriving ? navigation?.distance_remaining_m : isRecord(navigationPreview?.path) ? navigationPreview.path.length_m : null)}</strong></div>
-                      <div><span>{navigationDriving || navigationSucceeded ? "도착까지" : "예상 시간"}</span><strong>{navigationSucceeded ? "도착" : formatEta(navigationDriving ? navigation?.estimated_time_remaining_s : estimateSeconds(navigationPreview))}</strong></div>
-                      <div><span>현재 위치</span><strong>{localizationShortCopy(snapshot?.state?.localization.state)}</strong></div>
-                      <div><span>구역 확인</span><strong>{previewToken || navigationDriving || navigationSucceeded ? "문제 없음" : "선택 전"}</strong></div>
-                    </>
-                  ) : (
-                    <>
-                      <div><span>로봇 연결</span><strong>{snapshot?.online ? "정상" : "오프라인"}</strong></div>
-                      <div><span>현재 위치</span><strong>{localizationShortCopy(snapshot?.state?.localization.state)}</strong></div>
-                      <div><span>지도 상태</span><strong>{snapshot?.map?.finalized ? "저장됨" : "생성 중"}</strong></div>
-                      <div><span>주행 모드</span><strong>{driveModeCopy(driveMode)}</strong></div>
-                    </>
-                  )}
-                </div>
-                {previewToken && numberValue(navigationPreview?.snap_distance_m) > 0 && (
-                  <div className="robot-map-snap-note">누른 곳에서 {Math.round(numberValue(navigationPreview?.snap_distance_m) * 100)}cm 옆의 안전한 바닥에 도착해요.</div>
-                )}
-                <div className="robot-map-actions is-inline">
-                  {mapMode === "navigate" && previewToken && !navigationDriving && (
-                    <>
-                      <button type="button" className="is-secondary" onClick={() => { setNavigationPreview(null); setPreviewExpiresAt(0); }}>다시 선택</button>
-                      <button type="button" onClick={() => void sendCommand("navigation_start", { previewToken })} disabled={!isOwner || !snapshot?.online || autonomousModeActive || Boolean(activeCommand) || busy}>이 위치로 이동</button>
-                    </>
-                  )}
-                  {navigationDriving && typeof navigation?.session_id === "string" && (
-                    <button type="button" className="is-danger" onClick={() => void sendCommand("navigation_cancel", { sessionId: navigation.session_id })} disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}>이동 취소</button>
-                  )}
-                </div>
-              </div>
-              {mapMode === "navigate" && roomDrafts.length > 0 && (
-                <div className="robot-map-panel-card">
-                  <h3>방 이름으로 보내기</h3>
-                  <div className="robot-map-choice-chips">
-                    {roomDrafts.map((room) => (
-                      <button key={featureId(room)} type="button" onClick={() => {
-                        const point = featureWorldLabelPoint(room);
-                        if (point) void sendCommand("navigation_preview", { x: point[0], y: point[1] });
-                      }}>{featureName(room, "공간")}</button>
-                    ))}
-                  </div>
-                  <p>방마다 정해 둔 대표 위치로 이동합니다.</p>
-                </div>
-              )}
-              {mapMode === "view" && (
-                <div className="robot-map-panel-card robot-drive-mode-card">
-                  <h3>자율주행</h3>
-                  {activeAutonomousMode && autonomousSession ? (
-                    <>
-                      <div className="robot-drive-mode-status">
-                        <strong>{driveModeCopy(driveMode)}</strong>
-                        <span>{driveModeDetailCopy(driveMode)}</span>
-                      </div>
-                      <div className="robot-map-actions is-inline">
-                        {activeAutonomousMode !== "person_following" && driveMode?.state === "paused" ? (
-                          <button
-                            type="button"
-                            onClick={() => void sendCommand("drive_mode_resume", { mode: activeAutonomousMode, sessionId: autonomousSession })}
-                            disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}
-                          >다시 시작</button>
-                        ) : activeAutonomousMode !== "person_following" && driveMode?.state !== "failed" ? (
-                          <button
-                            type="button"
-                            className="is-secondary"
-                            onClick={() => void sendCommand("drive_mode_pause", { mode: activeAutonomousMode, sessionId: autonomousSession })}
-                            disabled={!isOwner || !snapshot?.online || !["active"].includes(driveMode?.state ?? "") || Boolean(activeCommand) || busy}
-                          >일시정지</button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="is-danger"
-                          onClick={() => void sendCommand("drive_mode_stop", { mode: activeAutonomousMode, sessionId: autonomousSession })}
-                          disabled={!isOwner || !snapshot?.online || driveMode?.state === "stopping" || Boolean(activeCommand) || busy}
-                        >중지</button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <p>방 순찰·자율 배회 또는 카메라로 확인한 사람 따라가기를 시작할 수 있습니다.</p>
-                      <div className="robot-map-actions is-inline">
-                        <button
-                          type="button"
-                          onClick={() => void sendCommand("drive_mode_start", { mode: "patrol" })}
-                          disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("patrol") || Boolean(activeCommand) || busy}
-                        >방 순찰 시작</button>
-                        <button
-                          type="button"
-                          onClick={() => void sendCommand("drive_mode_start", { mode: "roaming" })}
-                          disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("roaming") || Boolean(activeCommand) || busy}
-                        >자율 배회 시작</button>
-                        <button
-                          type="button"
-                          onClick={() => void sendCommand("drive_mode_start", { mode: "person_following" })}
-                          disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("person_following") || Boolean(activeCommand) || busy}
-                        >사람 따라가기</button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-              {mapMode === "view" && (
-                <div className="robot-map-panel-card">
-                  <h3>지도 관리</h3>
-                  <p>{snapshot?.state?.message ?? "말벗의 현재 위치와 저장된 공간을 실시간으로 확인합니다."}</p>
-                  <button type="button" className="robot-map-apply-tool" onClick={() => void sendCommand("start")} disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}>
-                    <MapTrifold size={17} weight="bold" /> 지도 다시 만들기
-                  </button>
-                  {isOwner && device && (
-                    <a
-                      className="robot-map-admin-link"
-                      href={`/scenario-admin?device=${encodeURIComponent(device.id)}`}
-                    >시연 관리자 열기</a>
-                  )}
-                </div>
-              )}
-              <div className="robot-map-help">
-                <strong>선택할 수 없는 위치일 때</strong>
-                <span>장애물 · 미탐색 공간 · 진입 금지 구역 · 이어진 길이 없는 위치는 이유와 다음 행동을 함께 안내합니다.</span>
-              </div>
-            </>
-          )}
-          {!isOwner && <small className="robot-map-owner-note">지도 생성과 공간 편집, 주행 모드 제어는 소유자 계정에서만 할 수 있습니다.</small>}
-          {notice && <p className="robot-map-notice" role="status">{notice}</p>}
-        </aside>
-      </div>
+  return (
+    <section className="ui-screen ui-map-sub" aria-labelledby="robot-map-title">
+      <header className="ui-subhead">
+        <button type="button" className="ui-back" onClick={() => openScreen("map")}>‹ 지도</button>
+        <h1 id="robot-map-title">지도 관리</h1>
+        <small className="ui-caption">소유자만 볼 수 있어요</small>
+      </header>
+      <article className="ui-card ui-map-summary">
+        <div>
+          <span>지도 상태</span>
+          <strong className={mapping ? "is-accent" : snapshot?.map?.finalized ? "is-ok" : ""}>{mapStateCopy}</strong>
+        </div>
+        <div>
+          <span>저장된 방</span>
+          <span>{originalRooms.length}곳</span>
+        </div>
+      </article>
+      {noticeLine}
+      {mapping ? (
+        <article className="ui-card ui-map-mapping">
+          <span className="ui-badge is-accent">집 둘러보는 중</span>
+          <strong className="ui-map-status-title">{snapshot?.state?.message ?? MAPPING_STEPS[Math.max(0, mappingStep)].label}</strong>
+          <h3>지금까지의 단계</h3>
+          <ol className="ui-steps">
+            {MAPPING_STEPS.map((step, index) => (
+              <li
+                key={step.label}
+                className={
+                  index < mappingStep ? "is-done"
+                    : index === mappingStep ? "is-current"
+                      : undefined
+                }
+              ><i aria-hidden="true" />{step.label}</li>
+            ))}
+          </ol>
+          <div className="ui-two-buttons">
+            <button type="button" className="ui-button is-danger-line" onClick={() => void sendCommand("cancel")} disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}>
+              중지
+            </button>
+            <button type="button" className="ui-button is-strong" onClick={() => void sendCommand("finish")} disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}>
+              탐색 완료·저장
+            </button>
+          </div>
+        </article>
+      ) : (
+        <article className="ui-card">
+          <h2>새 지도 만들기</h2>
+          <p className="ui-hint">말벗이 집 안을 한 번 둘러보며 지도를 만들어요. 새 지도를 저장하기 전까지 기존 지도는 그대로 유지되고, 중지해도 저장된 지도와 방·구역 설정은 지워지지 않아요.</p>
+          <button type="button" className="ui-button is-strong" onClick={() => void sendCommand("start")} disabled={!isOwner || !snapshot?.online || Boolean(activeCommand) || busy}>
+            지도 만들기 시작
+          </button>
+        </article>
+      )}
     </section>
   );
 }
@@ -3069,6 +3172,12 @@ function roomColor(feature: GeoFeature, index: number) {
     return feature.properties.color;
   }
   return ["#E7EBE3", "#E3E7EE", "#EFE7DE", "#DDE9E8", "#EDE6DC", "#F0EDE6"][index % 6];
+}
+
+function zoneRuleHint(behavior: ZoneBehavior) {
+  if (behavior === "avoid") return "되도록 피해서 지나가요.";
+  if (behavior === "allow") return "평소처럼 지나가요.";
+  return "들어가지 않아요. 해제하면 다시 들어갈 수 있어요.";
 }
 
 function zoneBehaviorOf(feature: GeoFeature): ZoneBehavior {

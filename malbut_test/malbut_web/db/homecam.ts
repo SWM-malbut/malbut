@@ -8,6 +8,7 @@ import {
 } from "./homecam-security";
 import {
   canManageHomecam,
+  canNavigateHomecam,
   canViewHomecam,
   type DeviceSettingsPatch,
   type HomecamEventClipInput,
@@ -77,6 +78,10 @@ export async function userCanViewDevice(deviceId: string, userEmail: string) {
 
 export async function userCanManageDevice(deviceId: string, userEmail: string) {
   return canManageHomecam(await getMembershipRole(deviceId, userEmail));
+}
+
+export async function userCanNavigateDevice(deviceId: string, userEmail: string) {
+  return canNavigateHomecam(await getMembershipRole(deviceId, userEmail));
 }
 
 export async function listHomecamDevices(userEmail: string) {

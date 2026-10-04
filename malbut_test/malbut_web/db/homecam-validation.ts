@@ -55,6 +55,11 @@ export function canManageHomecam(role: string | null | undefined): boolean {
   return role === "owner";
 }
 
+/** 보호자도 지도에서 말벗을 보내고 멈출 수 있다. 지도 만들기·편집·자율주행은 소유자만. */
+export function canNavigateHomecam(role: string | null | undefined): boolean {
+  return role === "owner" || role === "family";
+}
+
 export function parseDeviceSettingsPatch(value: unknown): DeviceSettingsPatch | null {
   if (!isRecord(value)) return null;
   const allowed = ["monitoringEnabled", "cameraEnabled", "microphoneEnabled"];
