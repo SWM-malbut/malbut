@@ -17,8 +17,8 @@ class StoryMemoryProvider:
     """Wrap only foreground dialogue; extraction and robot approval stay separate.
 
     The service validates policy before network submission and after inference.
-    Console delivery and delayed voice playback repeat that validation. A small
-    in-memory receipt cache contains revisions only, never recalled text.
+    The common runtime persists the resulting binding and repeats validation
+    on cache replay and delayed delivery. This cache never contains recalled text.
     """
 
     def __init__(self, provider, service):
@@ -44,6 +44,12 @@ class StoryMemoryProvider:
             receipt = self._revisions.get((user_id, request_id))
             return copy.deepcopy(receipt[1]) if receipt else []
 
+    def reply_binding(self, user_id, request_id):
+        with self._lock:
+            receipt = self._revisions.get((user_id, request_id))
+            return ({'policy_revision': receipt[0], 'readset': copy.deepcopy(receipt[1])}
+                    if receipt else None)
+
     def validate_reply(self, user_id, request_id):
         revision = self.reply_revision(user_id, request_id)
         if revision is None:
@@ -52,8 +58,12 @@ class StoryMemoryProvider:
 
     def _validate(self, user_id, revision, readset=(), request_id=None):
         try:
-            valid = self.service.validate(user_id, revision)
-            if valid is not False and readset:
+            if hasattr(self.service, 'validate_reply_binding'):
+                valid = self.service.validate_reply_binding(
+                    user_id, revision, readset, request_id=request_id)
+            else:
+                valid = self.service.validate(user_id, revision)
+            if valid is not False and readset and not hasattr(self.service, 'validate_reply_binding'):
                 valid = self.service.validate_readset(
                     user_id, revision, readset, request_id=request_id,
                 )
@@ -108,7 +118,7 @@ class StoryMemoryProvider:
                     canonical = json.dumps(value, ensure_ascii=False, sort_keys=True,
                                            separators=(',', ':'))
                     hashes.append(hashlib.sha256(canonical.encode('utf-8')).hexdigest())
-                readset.append({'story_id': story['story_id'], 'entry_hashes': hashes})
+                readset.append({'story_id': story['story_id'], 'entry_hashes': sorted(set(hashes))})
             self._validate(request.user_id, revision, readset, request.request_id)
             if story_ids:
                 registered = self.service.record_reply(
@@ -127,6 +137,10 @@ class StoryMemoryProvider:
         )
         if registered is False:
             raise ValidationError('memory_changed')
+        if revision is None and hasattr(self.service, 'reply_dependency_revision'):
+            revision = self.service.reply_dependency_revision(request.user_id, request.request_id)
+        if revision is not None:
+            self._validate(request.user_id, revision, readset, request.request_id)
         result = self.provider.complete(
             request, memories, conversation_turns, tools,
             conversation_summary=conversation_summary, **arguments,
@@ -134,6 +148,15 @@ class StoryMemoryProvider:
         if revision is not None:
             self._validate(request.user_id, revision, readset, request.request_id)
             with self._lock:
+                prior = self._revisions.get((request.user_id, request.request_id))
+                if prior is not None:
+                    if prior[0] != revision:
+                        raise ValidationError('memory_changed')
+                    merged = {}
+                    for item in [*prior[1], *readset]:
+                        merged.setdefault(item['story_id'], set()).update(item['entry_hashes'])
+                    readset = [{'story_id': identifier, 'entry_hashes': sorted(hashes)}
+                               for identifier, hashes in merged.items()]
                 self._revisions[(request.user_id, request.request_id)] = (revision, readset)
                 self._revisions.move_to_end((request.user_id, request.request_id))
                 while len(self._revisions) > 256:

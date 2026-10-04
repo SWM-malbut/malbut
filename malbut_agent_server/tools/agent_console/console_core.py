@@ -11,9 +11,7 @@ from malbut_agent_server.gateway import ToolGateway, ToolQuery
 from malbut_agent_server.schemas import SpeechAgentRequest, ValidationError
 from malbut_agent_server.speech_dialogue import starts_new_conversation
 from malbut_agent_server.tools import TOOL_SPECS
-from malbut_agent_server.story_extractor import OpenAIStoryExtractor
-from malbut_agent_server.story_memory_provider import StoryMemoryProvider
-from malbut_agent_server.story_memory_service import StoryMemoryService, StoryServiceError
+from malbut_agent_server.story_memory_service import StoryServiceError
 
 
 _DEFAULT_EXTRACTOR = object()
@@ -33,30 +31,17 @@ class ConsoleCore:
         if settings.tool_mode != 'simulation':
             raise ValueError('The terminal console requires simulation tool mode')
         self.settings = settings
-        self.runtime = build_orchestrator(settings, http_server=False)
-        self.gateway = ToolGateway(self.runtime.capability_registry)
+        factory_arguments = {}
+        if story_extractor is not _DEFAULT_EXTRACTOR:
+            factory_arguments['story_extractor'] = story_extractor
+        self.runtime = build_orchestrator(settings, http_server=False, **factory_arguments)
+        self.gateway = None
         self.story_memory = None
         self._story_pending = None
         try:
-            if story_extractor is _DEFAULT_EXTRACTOR:
-                story_extractor = (
-                    OpenAIStoryExtractor(
-                        api_key=settings.openai_api_key,
-                        model=settings.openai_summary_model or settings.openai_model,
-                        base_url=settings.openai_base_url,
-                        reasoning_effort=settings.openai_summary_reasoning_effort,
-                        timeout=max(30, settings.request_timeout_seconds),
-                    ) if settings.provider == 'openai' else None
-                )
-            self._story_available = story_extractor is not None
-            self.story_memory = StoryMemoryService(
-                self.runtime.conversation_store, self.runtime.memory_store,
-                story_extractor,
-            )
-            self.story_provider = StoryMemoryProvider(
-                self.runtime.provider, self.story_memory,
-            )
-            self.runtime.provider = self.story_provider
+            self.gateway = ToolGateway(self.runtime.capability_registry)
+            self.story_memory = self.runtime.story_memory
+            self._story_available = self.story_memory.policy(settings.user_id)['available']
             self.runtime.start_background_memory()
             self.conversation_id = self.runtime.conversation_store.resume_or_create(
                 settings.user_id,
@@ -84,7 +69,7 @@ class ConsoleCore:
         })
         starts_new = starts_new_conversation(request.utterance)
         if starts_new:
-            self.story_memory.flush(self.settings.user_id, timeout=45)
+            self.runtime.checkpoint_story_memory(self.settings.user_id, timeout=45)
         self.conversation_id = self.runtime.conversation_store.resume_or_create(
             self.settings.user_id, self.conversation_id, start_new=starts_new,
         ).conversation_id
@@ -93,16 +78,6 @@ class ConsoleCore:
         result = self.runtime.handle(request)
         # The existing serializer runs memory_validator before releasing text.
         metadata = result.to_dict()
-        metadata['story_revision'] = self.story_provider.reply_revision(
-            self.settings.user_id, request.request_id,
-        )
-        metadata['story_readset'] = self.story_provider.reply_readset(
-            self.settings.user_id, request.request_id,
-        )
-        if metadata['story_revision'] is not None:
-            self._validate_story_revision(metadata['story_revision'], metadata['story_readset'],
-                                          request_id=request.request_id)
-        self.story_memory.after_turn(self.settings.user_id, request.request_id)
         return {
             'text': result.decision.message,
             'decision_type': result.decision.type,
@@ -112,37 +87,20 @@ class ConsoleCore:
             'physical_authorized': False,
         }
 
-    def _validate_story_revision(self, revision, readset=(), *, request_id=None):
-        try:
-            valid = self.story_memory.validate(self.settings.user_id, revision)
-            if valid is not False and readset:
-                valid = self.story_memory.validate_readset(
-                    self.settings.user_id, revision, readset, request_id=request_id,
-                )
-        except (ValueError, RuntimeError) as error:
-            raise ValidationError('memory_changed') from error
-        if valid is False:
-            raise ValidationError('memory_changed')
-
     def validate_reply(self, reply):
-        """Use the reply's own revision, even after provider receipts are evicted."""
+        """Recheck runtime-owned persisted guards immediately before delivery."""
         if reply.get('local_story_control'):
             saved = reply['metadata'].get('story_management_policy')
             if saved is not None:
                 self._assert_management_policy(saved)
             return
-        revision = reply['metadata'].get('story_revision')
-        if revision is not None:
-            self._validate_story_revision(revision, reply['metadata'].get('story_readset', ()),
-                                          request_id=reply['metadata']['request_id'])
-        if not reply.get('local_story_control'):
-            self.runtime.personal_memory.assert_fresh(
-                self.settings.user_id, reply['metadata']['request_id'],
-            )
+        self.runtime.assert_reply_fresh(
+            self.settings.user_id, reply['metadata']['request_id'],
+        )
 
     def new_conversation(self):
         self._story_pending = None
-        self.story_memory.flush(self.settings.user_id, timeout=45)
+        self.runtime.checkpoint_story_memory(self.settings.user_id, timeout=45)
         self.conversation_id = self.runtime.conversation_store.resume_or_create(
             self.settings.user_id, self.conversation_id, start_new=True,
         ).conversation_id
@@ -411,10 +369,7 @@ class ConsoleCore:
 
     def close(self):
         try:
-            self.gateway.close()
+            if self.gateway is not None:
+                self.gateway.close()
         finally:
-            try:
-                if self.story_memory is not None:
-                    self.story_memory.close()
-            finally:
-                self.runtime.close()
+            self.runtime.close()

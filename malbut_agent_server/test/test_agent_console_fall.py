@@ -127,6 +127,27 @@ class Rig:
         assert self.demo.status == 'succeeded'
 
 
+@pytest.mark.parametrize('with_request_id', [False, True])
+def test_fall_accepts_legacy_and_correlated_tts_events(monkeypatch, with_request_id):
+    original_runtime = demo_module.SpeechRuntime
+
+    def runtime(synthesizer, player_factory, on_status, *args, **kwargs):
+        def status(pid, state, interim, *_request_id):
+            suffix = ('fall-request',) if with_request_id else ()
+            on_status(pid, state, interim, *suffix)
+        return original_runtime(synthesizer, player_factory, status, *args, **kwargs)
+
+    monkeypatch.setattr(demo_module, 'SpeechRuntime', runtime)
+    rig = Rig()
+    try:
+        rig.start()
+        assert rig.demo.session.phase == 'speaking'
+        rig.listen()
+        assert rig.demo.session.phase == 'listening'
+    finally:
+        rig.demo.close()
+
+
 def test_closing_audio_failure_does_not_deny_already_delivered_silence_result():
     rig = Rig()
     messages = []

@@ -56,7 +56,8 @@ python3 -m venv .runtime/agent-console/venv
 기본 DB는 `.runtime/agent-console/agent.sqlite3`다. `--database 경로`로 다른 DB를 쓸 수 있다.
 기존 체험 DB를 쓰려면 그 경로를 명시한다. 기존 DB를 자동 복사하거나 삭제하지 않는다.
 원문·요약과 정정·삭제 범위의 자세한 기준은 [장기기억 명세](../../docs/LONG_TERM_CONTEXT_MEMORY.md)를 따른다.
-이 콘솔 연결이 일반 HTTP/ROS 서버의 장기기억 기능까지 켜는 것은 아니다.
+콘솔과 일반 서버는 같은 이야기 기억 엔진을 사용한다. 동의와 기억은 DB·사용자 ID별로 유지한다.
+일반 서버의 인증·동의·기억 관리 API는 [명세 8.8절](../../docs/LONG_TERM_CONTEXT_MEMORY.md#88-일반-서버에서-쓰는-방법--구현한-범위)을 참고한다.
 
 ## 선택: 실제 음성
 
