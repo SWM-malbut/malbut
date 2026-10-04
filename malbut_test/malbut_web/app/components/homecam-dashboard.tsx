@@ -667,7 +667,7 @@ export function HomecamDashboard({
     try {
       const response = await fetch("/api/devices", { cache: "no-store" });
       const payload = asRecord(await response.json().catch(() => ({})));
-      if (!response.ok) throw new Error(stringValue(payload.error) ?? "등록된 기기를 불러오지 못했습니다.");
+      if (!response.ok) throw new Error(stringValue(payload.error) ?? "등록된 말벗을 불러오지 못했습니다.");
       const rawDevices = Array.isArray(payload.devices)
         ? payload.devices
         : Array.isArray(payload.items)
@@ -688,7 +688,7 @@ export function HomecamDashboard({
         setNotice(
           reason instanceof Error
             ? reason.message
-            : "홈캠 기기 API가 아직 연결되지 않았습니다.",
+            : "말벗 API가 아직 연결되지 않았습니다.",
         );
       }
     }
@@ -858,7 +858,7 @@ export function HomecamDashboard({
         { cache: "no-store" },
       );
       const payload = asRecord(await response.json().catch(() => ({})));
-      if (!response.ok) throw new Error(stringValue(payload.error) ?? "가족 목록을 불러오지 못했습니다.");
+      if (!response.ok) throw new Error(stringValue(payload.error) ?? "보호자 목록을 불러오지 못했습니다.");
       const rawMembers = Array.isArray(payload.members)
         ? payload.members
         : Array.isArray(payload.family)
@@ -878,7 +878,7 @@ export function HomecamDashboard({
       setNotice(
         reason instanceof Error
           ? reason.message
-          : "가족 관리 API가 아직 연결되지 않았습니다.",
+          : "보호자 관리 API가 아직 연결되지 않았습니다.",
       );
     } finally {
       setFamilyLoading(false);
@@ -1016,7 +1016,7 @@ export function HomecamDashboard({
         setPushEnabled(false);
         setPushSubscriptionId("");
         setPushEndpointRegistrationCount((count) => Math.max(0, count - 1));
-        setNotice("이 기기의 알림을 껐습니다.");
+        setNotice("이 말벗의 알림을 껐습니다.");
         return;
       }
 
@@ -1081,12 +1081,12 @@ export function HomecamDashboard({
         },
       );
       const payload = asRecord(await response.json().catch(() => ({})));
-      if (!response.ok) throw new Error(stringValue(payload.error) ?? "가족을 초대하지 못했습니다.");
+      if (!response.ok) throw new Error(stringValue(payload.error) ?? "보호자를 초대하지 못했습니다.");
       setInviteEmail("");
-      setNotice("가족 계정에 홈캠 접근 권한을 부여했습니다.");
+      setNotice("보호자 계정에 홈캠 접근 권한을 부여했습니다.");
       await loadFamily();
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "가족을 초대하지 못했습니다.");
+      setNotice(reason instanceof Error ? reason.message : "보호자를 초대하지 못했습니다.");
     } finally {
       setBusy("");
     }
@@ -1106,11 +1106,11 @@ export function HomecamDashboard({
         },
       );
       const payload = asRecord(await response.json().catch(() => ({})));
-      if (!response.ok) throw new Error(stringValue(payload.error) ?? "가족 권한을 해제하지 못했습니다.");
+      if (!response.ok) throw new Error(stringValue(payload.error) ?? "보호자 권한을 해제하지 못했습니다.");
       setFamily((current) => current.filter((item) => item.id !== member.id));
       setNotice(`${member.email}의 접근 권한을 해제했습니다.`);
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "가족 권한을 해제하지 못했습니다.");
+      setNotice(reason instanceof Error ? reason.message : "보호자 권한을 해제하지 못했습니다.");
     } finally {
       setBusy("");
     }
@@ -1171,7 +1171,7 @@ export function HomecamDashboard({
           <h1>{tab === "home" ? "홈" : tab === "live" ? "홈캠" : tab === "events" ? "사건" : "설정"}</h1>
           <div className="homecam-device-selector">
             <span className="homecam-device-avatar" aria-hidden="true">말</span>
-            <label htmlFor="homecam-device-select">말벗 기기</label>
+            <label htmlFor="homecam-device-select">말벗</label>
             {devices.length > 1 ? (
               <select
                 id="homecam-device-select"
@@ -1236,7 +1236,7 @@ export function HomecamDashboard({
                         : "연결을 기다리고 있어요"}
                     </h1>
                     <div className="homecam-home-chips">
-                      <span>{selectedDevice?.online ? "기기 연결됨" : "기기 오프라인"}</span>
+                      <span>{selectedDevice?.online ? "말벗 연결됨" : "말벗 오프라인"}</span>
                       <span>{selectedDevice?.p2pHealthy ? "실시간 영상 준비됨" : "영상 연결 준비 중"}</span>
                       <span>{selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"} · {selectedDevice?.microphoneEnabled ? "마이크 켜짐" : "마이크 꺼짐"}</span>
                     </div>
@@ -1271,7 +1271,7 @@ export function HomecamDashboard({
                           <span className="fall-incident-icon is-check"><Warning size={20} weight="bold" /></span>
                           <span>
                             <strong>{incident.unacknowledged ? "아무도 확인하지 않음 · " : ""}{incident.fallSeen ? "낙상" : "낙상 의심"}</strong>
-                            <small>{formatIncidentTime(incident.occurredAt)}{incident.aiFailed ? " · AI 검증 실패" : ""}</small>
+                            <small>{formatIncidentTime(incident.occurredAt)}{incident.aiFailed ? " · AI 판정 실패" : ""}</small>
                           </span>
                           <CaretRight size={17} weight="bold" />
                         </button>
@@ -1488,7 +1488,7 @@ export function HomecamDashboard({
                 onOpenTimeline={(incident) => setTimelineMode(incident ? { kind: "recheck", ...incident } : { kind: "report" })}
               />
             ) : (
-              <div className="homecam-empty-state"><strong>등록된 말벗이 없어요</strong><p>로봇을 연결하면 낙상 사건이 여기에 표시됩니다.</p></div>
+              <div className="homecam-empty-state"><strong>등록된 말벗이 없어요</strong><p>말벗을 연결하면 낙상 사건이 여기에 표시됩니다.</p></div>
             )}
           </section>
         )}
@@ -1514,22 +1514,22 @@ export function HomecamDashboard({
                 {selectedDevice?.role === "owner"
                   ? "소유자"
                   : selectedDevice?.role === "family"
-                    ? "가족"
+                    ? "보호자"
                     : "읽기 전용"}
               </span>
             </div>
             <div className="homecam-settings-workspace">
               <aside className="homecam-settings-nav" aria-label="설정 항목">
                 <button type="button" className="is-active">화면 모드</button>
-                <button type="button">가족 구성원</button>
-                <button type="button">로봇 이름</button>
+                <button type="button">보호자</button>
+                <button type="button">말벗 이름</button>
                 <button type="button">카메라와 마이크</button>
                 <button type="button">알림</button>
                 <button type="button">영상 보관</button>
                 <button type="button">낙상 감지</button>
                 <button type="button">개인정보</button>
                 <button type="button" onClick={() => openMap("view")}>지도 관리</button>
-                <button type="button">연결된 장치</button>
+                <button type="button">연결된 말벗</button>
                 <button type="button">소프트웨어 정보</button>
               </aside>
               <div className="homecam-settings-grid">
@@ -1610,7 +1610,7 @@ export function HomecamDashboard({
                   </div>
                 </div>
                 <div className="homecam-setting-row">
-                  <div><strong>Web Push</strong><span>넘어짐이 의심되면 알려드려요. 아무도 확인하지 않으면 [재발신]해요.</span></div>
+                  <div><strong>Web Push</strong><span>낙상이 의심되면 알려드려요. 아무도 확인하지 않으면 [재발신]해요.</span></div>
                   <Switch
                     checked={pushEnabled}
                     disabled={busy === "push"}
@@ -1629,14 +1629,14 @@ export function HomecamDashboard({
                     <UsersThree size={21} weight="regular" />
                   </span>
                   <div>
-                    <h2>가족 계정</h2>
-                    <p>가족은 라이브·지난 영상·PTT를 사용할 수 있습니다.</p>
+                    <h2>보호자 계정</h2>
+                    <p>보호자는 실시간 보기·지난 영상·말하기를 사용할 수 있습니다.</p>
                   </div>
                 </div>
                 {isOwner && (
                   <div className="homecam-family-invite">
                     <label>
-                      <span className="sr-only">초대할 가족 이메일</span>
+                      <span className="sr-only">초대할 보호자 이메일</span>
                       <input
                         type="email"
                         value={inviteEmail}

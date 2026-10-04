@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "로그인 | MALBUT 홈캠",
-  description: "MALBUT 홈캠 소유자와 가족을 위한 보안 로그인",
+  description: "MALBUT 홈캠 소유자와 보호자를 위한 보안 로그인",
 };
 
 type LoginPageProps = {

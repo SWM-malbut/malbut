@@ -20,7 +20,7 @@ export async function GET(request: Request, context: Context) {
   const email = await getRequestUserEmail(request);
   if (!email) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
-  if (!(await userCanViewDevice(deviceId, email))) return noStore({ error: "로봇을 볼 권한이 없습니다." }, 403);
+  if (!(await userCanViewDevice(deviceId, email))) return noStore({ error: "말벗을 볼 권한이 없습니다." }, 403);
   try { return noStore(await readFallSettingsView(deviceId)); }
   catch (error) { return failure(error); }
 }

@@ -150,7 +150,7 @@ export function HomecamHeader({
           aria-current={activeTab === "robot" ? "page" : undefined}
         >
           <Robot size={20} weight={activeTab === "robot" ? "fill" : "regular"} />
-          <span>로봇 기능</span>
+          <span>개발자 화면</span>
         </button>
         <button
           type="button"

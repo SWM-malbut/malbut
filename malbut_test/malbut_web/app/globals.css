@@ -9648,132 +9648,170 @@ a:focus-visible {
   font-size: 0.875rem;
 }
 
+/* ---- 새 디자인 색 (이름 붙인 색) -------------------------------------------
+   새 디자인 화면은 색 값을 직접 쓰지 않고 이 이름만 쓴다. 다크 모드는 나중에
+   이 이름들의 어두운 값만 한 벌 더 정한다 (앱 UI 개편 설계). */
+:root {
+  --ui-bg: #f5f6f8;
+  --ui-surface: #ffffff;
+  --ui-border: #e3e6ea;
+  --ui-divider: #eef0f3;
+  --ui-text: #1b1f24;
+  --ui-text-muted: #5b6470;
+  --ui-icon-muted: #8a929c;
+  --ui-control-border: #c9ced5;
+  --ui-strong: #1b1f24;
+  --ui-on-strong: #ffffff;
+  --ui-neutral-soft: #eef0f3;
+  --ui-accent: #1d5fd1;
+  --ui-accent-strong: #164aa3;
+  --ui-accent-soft: #eef4fe;
+  --ui-ok: #1f6f43;
+  --ui-ok-soft: #e6f4ec;
+  --ui-warn: #c48a00;
+  --ui-warn-text: #8a5a00;
+  --ui-warn-soft: #fff4d6;
+  --ui-warn-faint: #fff8e6;
+  --ui-danger: #b42318;
+  --ui-danger-soft: #fde8e6;
+  --ui-report: #5b3fb5;
+  --ui-report-soft: #efeafd;
+  --ui-report-band: rgba(91, 63, 181, 0.12);
+  --ui-track: #d6dae0;
+  --ui-recorded: #c9d8f5;
+  --ui-highlight: #ffd166;
+  --ui-media: #2a2f36;
+  --ui-media-black: #000;
+  --ui-scrim: rgba(0, 0, 0, 0.55);
+  --ui-overlay: rgba(27, 31, 36, 0.75);
+}
+
 /* ---- Fall incidents (사건) ----------------------------------------------
    Values from the reviewed mockup (Main.dc.html / Incident.dc.html).
    Status is never color-only: every badge carries its text. */
 .fall-page {
   max-width: 720px; margin: 0 auto; display: flex; flex-direction: column;
-  color: #1b1f24; background: #f5f6f8; border-radius: 12px; overflow: hidden;
+  color: var(--ui-text); background: var(--ui-bg); border-radius: 12px; overflow: hidden;
 }
 .fall-page button { font: inherit; }
-.fall-list-head, .fall-topbar, .fall-head { background: #ffffff; border-bottom: 1px solid #e3e6ea; }
+.fall-list-head, .fall-topbar, .fall-head { background: var(--ui-surface); border-bottom: 1px solid var(--ui-border); }
 .fall-list-head { padding: 20px 20px 12px; display: flex; flex-direction: column; gap: 12px; }
 .fall-list-head > div:first-child { display: flex; justify-content: space-between; align-items: center; }
 .fall-list-head h2 { margin: 0; font-size: 22px; font-weight: 700; }
-.fall-link { padding: 10px 4px; border: 0; background: none; color: #1d5fd1; font-size: 14px; cursor: pointer; }
-.fall-link:hover { color: #164aa3; }
+.fall-link { padding: 10px 4px; border: 0; background: none; color: var(--ui-accent); font-size: 14px; cursor: pointer; }
+.fall-link:hover { color: var(--ui-accent-strong); }
 .fall-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .fall-chips button {
   min-height: 36px; padding: 0 14px; border-radius: 18px; font-size: 13px; cursor: pointer;
-  border: 1px solid #c9ced5; background: #ffffff; color: #1b1f24;
+  border: 1px solid var(--ui-control-border); background: var(--ui-surface); color: var(--ui-text);
 }
-.fall-chips button.is-on { border-color: #1b1f24; background: #1b1f24; color: #ffffff; }
+.fall-chips button.is-on { border-color: var(--ui-strong); background: var(--ui-strong); color: var(--ui-on-strong); }
 .fall-list { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .fall-group-block { display: flex; flex-direction: column; gap: 12px; }
-.fall-group { font-size: 13px; color: #5b6470; font-weight: 500; margin-top: 8px; }
+.fall-group { font-size: 13px; color: var(--ui-text-muted); font-weight: 500; margin-top: 8px; }
 .fall-list > .fall-group:first-child { margin-top: 0; }
-.fall-empty { margin: 0; padding: 24px 16px; color: #5b6470; font-size: 14px; text-align: center; }
+.fall-empty { margin: 0; padding: 24px 16px; color: var(--ui-text-muted); font-size: 14px; text-align: center; }
 .fall-incident-card {
   display: flex; flex-direction: column; gap: 8px; padding: 14px; text-align: left; cursor: pointer;
-  color: inherit; background: #ffffff; border: 1px solid #e3e6ea; border-radius: 12px;
+  color: inherit; background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: 12px;
 }
-.fall-incident-card.is-urgent { border: 2px solid #b42318; }
-.fall-incident-card.is-report { border: 1px dashed #5b3fb5; }
+.fall-incident-card.is-urgent { border: 2px solid var(--ui-danger); }
+.fall-incident-card.is-report { border: 1px dashed var(--ui-report); }
 .fall-incident-card > strong { font-size: 16px; font-weight: 700; }
-.fall-sub { font-size: 13px; color: #5b6470; }
+.fall-sub { font-size: 13px; color: var(--ui-text-muted); }
 .fall-badges { display: flex; gap: 6px; flex-wrap: wrap; }
-.fall-badges span { font-size: 12px; font-weight: 500; padding: 3px 8px; border-radius: 6px; color: #5b6470; background: #eef0f3; }
-.fall-badges .is-alert { font-weight: 700; color: #ffffff; background: #b42318; }
-.fall-badges .is-alert-soft { color: #b42318; background: #fde8e6; }
-.fall-badges .is-check { font-weight: 700; color: #8a5a00; background: #fff4d6; }
-.fall-badges .is-ok { font-weight: 700; color: #1f6f43; background: #e6f4ec; }
-.fall-badges .is-report { font-weight: 700; color: #5b3fb5; background: #efeafd; }
+.fall-badges span { font-size: 12px; font-weight: 500; padding: 3px 8px; border-radius: 6px; color: var(--ui-text-muted); background: var(--ui-neutral-soft); }
+.fall-badges .is-alert { font-weight: 700; color: var(--ui-on-strong); background: var(--ui-danger); }
+.fall-badges .is-alert-soft { color: var(--ui-danger); background: var(--ui-danger-soft); }
+.fall-badges .is-check { font-weight: 700; color: var(--ui-warn-text); background: var(--ui-warn-soft); }
+.fall-badges .is-ok { font-weight: 700; color: var(--ui-ok); background: var(--ui-ok-soft); }
+.fall-badges .is-report { font-weight: 700; color: var(--ui-report); background: var(--ui-report-soft); }
 .fall-scene-state { display: flex; gap: 8px; align-items: center; font-size: 12px; }
 .fall-scene-state i { width: 8px; height: 8px; border-radius: 4px; }
-.fall-scene-state.is-ok { color: #1f6f43; } .fall-scene-state.is-ok i { background: #1f6f43; }
-.fall-scene-state.is-warn { color: #8a5a00; } .fall-scene-state.is-warn i { background: #c48a00; }
-.fall-scene-state.is-off { color: #5b6470; } .fall-scene-state.is-off i { background: #8a929c; }
-.fall-card-link { font-size: 12px; color: #1d5fd1; border-top: 1px solid #eef0f3; padding-top: 8px; }
+.fall-scene-state.is-ok { color: var(--ui-ok); } .fall-scene-state.is-ok i { background: var(--ui-ok); }
+.fall-scene-state.is-warn { color: var(--ui-warn-text); } .fall-scene-state.is-warn i { background: var(--ui-warn); }
+.fall-scene-state.is-off { color: var(--ui-text-muted); } .fall-scene-state.is-off i { background: var(--ui-icon-muted); }
+.fall-card-link { font-size: 12px; color: var(--ui-accent); border-top: 1px solid var(--ui-divider); padding-top: 8px; }
 
 .fall-topbar { padding: 12px 16px; display: flex; align-items: center; gap: 8px; }
 .fall-head { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .fall-head h1 { margin: 0; font-size: 20px; font-weight: 700; }
 .fall-linked {
   padding: 10px 12px; border: 0; border-radius: 8px; text-align: left; cursor: pointer;
-  font-size: 13px; color: #1d5fd1; background: #eef4fe;
+  font-size: 13px; color: var(--ui-accent); background: var(--ui-accent-soft);
 }
-.fall-notice { margin: 12px 16px 0; padding: 10px 12px; border-radius: 8px; font-size: 13px; background: #eef4fe; color: #1b1f24; }
+.fall-notice { margin: 12px 16px 0; padding: 10px 12px; border-radius: 8px; font-size: 13px; background: var(--ui-accent-soft); color: var(--ui-text); }
 .fall-scene-section { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .fall-segments { display: flex; gap: 8px; flex-wrap: wrap; }
 .fall-segments button {
   min-height: 36px; padding: 0 12px; border-radius: 18px; font-size: 13px; cursor: pointer;
-  border: 1px solid #c9ced5; background: #ffffff; color: #1b1f24;
+  border: 1px solid var(--ui-control-border); background: var(--ui-surface); color: var(--ui-text);
 }
-.fall-segments button.is-on { border-color: #1b1f24; background: #1b1f24; color: #ffffff; }
+.fall-segments button.is-on { border-color: var(--ui-strong); background: var(--ui-strong); color: var(--ui-on-strong); }
 .fall-scene {
-  position: relative; width: 100%; aspect-ratio: 358 / 224; border-radius: 10px; overflow: hidden; background: #2a2f36;
+  position: relative; width: 100%; aspect-ratio: 358 / 224; border-radius: 10px; overflow: hidden; background: var(--ui-media);
 }
-.fall-scene video { width: 100%; height: 100%; object-fit: contain; background: #000; }
-.fall-scene-hint, .fall-scene-message { position: absolute; left: 12px; top: 10px; right: 12px; font-size: 12px; color: #e3e6ea; }
+.fall-scene video { width: 100%; height: 100%; object-fit: contain; background: var(--ui-media-black); }
+.fall-scene-hint, .fall-scene-message { position: absolute; left: 12px; top: 10px; right: 12px; font-size: 12px; color: var(--ui-border); }
 .fall-scene-bar {
   position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 12px; display: flex; justify-content: space-between;
-  color: #ffffff; font-size: 12px; background: rgba(0, 0, 0, 0.55); pointer-events: none;
+  color: var(--ui-on-strong); font-size: 12px; background: var(--ui-scrim); pointer-events: none;
 }
-.fall-scene-note { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #5b6470; }
-.fall-hint { margin: 0; font-size: 12px; color: #5b6470; }
+.fall-scene-note { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--ui-text-muted); }
+.fall-hint { margin: 0; font-size: 12px; color: var(--ui-text-muted); }
 .fall-two-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .fall-button {
   min-height: 44px; padding: 0 12px; border-radius: 10px; cursor: pointer;
-  border: 1px solid #1b1f24; background: #ffffff; color: #1b1f24; font-size: 14px; font-weight: 500;
+  border: 1px solid var(--ui-strong); background: var(--ui-surface); color: var(--ui-text); font-size: 14px; font-weight: 500;
 }
-.fall-two-buttons .fall-button:not(.is-dark) { border-color: #c9ced5; }
-.fall-button.is-dark { border-color: #1b1f24; background: #1b1f24; color: #ffffff; }
-.fall-button.is-blue { border: none; background: #1d5fd1; color: #ffffff; font-weight: 700; }
+.fall-two-buttons .fall-button:not(.is-dark) { border-color: var(--ui-control-border); }
+.fall-button.is-dark { border-color: var(--ui-strong); background: var(--ui-strong); color: var(--ui-on-strong); }
+.fall-button.is-blue { border: none; background: var(--ui-accent); color: var(--ui-on-strong); font-weight: 700; }
 .fall-button.is-large { min-height: 48px; font-size: 15px; }
 .fall-button:disabled { opacity: .45; cursor: not-allowed; }
 .fall-card {
   margin: 0 16px 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px;
-  background: #ffffff; border: 1px solid #e3e6ea; border-radius: 12px;
+  background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: 12px;
 }
 .fall-card h2 { margin: 0; font-size: 15px; font-weight: 700; }
-.fall-opinion { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid #eef0f3; padding-top: 10px; }
+.fall-opinion { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--ui-divider); padding-top: 10px; }
 .fall-opinion > div { display: flex; gap: 8px; align-items: center; }
 .fall-opinion strong { font-size: 13px; }
-.fall-opinion p { margin: 0; font-size: 13px; color: #5b6470; }
-.fall-pill { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px; color: #5b6470; background: #eef0f3; }
-.fall-pill.is-fall, .fall-pill.is-fall { color: #b42318; background: #fde8e6; }
-.fall-pill.is-suspected_fall, .fall-pill.is-suspected { color: #8a5a00; background: #fff4d6; }
-.fall-pill.is-normal { color: #1f6f43; background: #e6f4ec; }
-.fall-opinion-pick { border-top: 1px solid #eef0f3; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.fall-opinion p { margin: 0; font-size: 13px; color: var(--ui-text-muted); }
+.fall-pill { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px; color: var(--ui-text-muted); background: var(--ui-neutral-soft); }
+.fall-pill.is-fall, .fall-pill.is-fall { color: var(--ui-danger); background: var(--ui-danger-soft); }
+.fall-pill.is-suspected_fall, .fall-pill.is-suspected { color: var(--ui-warn-text); background: var(--ui-warn-soft); }
+.fall-pill.is-normal { color: var(--ui-ok); background: var(--ui-ok-soft); }
+.fall-opinion-pick { border-top: 1px solid var(--ui-divider); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .fall-label { font-size: 13px; font-weight: 700; }
 .fall-toggle {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid #c9ced5; border-radius: 10px; overflow: hidden;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--ui-control-border); border-radius: 10px; overflow: hidden;
 }
 .fall-toggle button {
-  min-height: 48px; border: none; font-size: 14px; font-weight: 700; cursor: pointer; background: #ffffff; color: #1b1f24;
+  min-height: 48px; border: none; font-size: 14px; font-weight: 700; cursor: pointer; background: var(--ui-surface); color: var(--ui-text);
 }
-.fall-toggle button + button { border-left: 1px solid #c9ced5; }
-.fall-toggle button.is-on.is-fall { background: #b42318; color: #ffffff; }
-.fall-toggle button.is-on.is-suspected_fall { background: #c48a00; color: #1b1f24; }
-.fall-toggle button.is-on.is-normal { background: #1f6f43; color: #ffffff; }
+.fall-toggle button + button { border-left: 1px solid var(--ui-control-border); }
+.fall-toggle button.is-on.is-fall { background: var(--ui-danger); color: var(--ui-on-strong); }
+.fall-toggle button.is-on.is-suspected_fall { background: var(--ui-warn); color: var(--ui-text); }
+.fall-toggle button.is-on.is-normal { background: var(--ui-ok); color: var(--ui-on-strong); }
 .fall-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .fall-field.is-strong { font-weight: 700; }
 .fall-field input {
-  min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid #c9ced5; font: inherit; font-weight: 400;
-  color: #1b1f24; background: #ffffff;
+  min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--ui-control-border); font: inherit; font-weight: 400;
+  color: var(--ui-text); background: var(--ui-surface);
 }
 .fall-ai-result { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .fall-ai-result p { flex-basis: 100%; margin: 0; font-size: 13px; }
-.fall-ask { border-top: 1px solid #eef0f3; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.fall-ask { border-top: 1px solid var(--ui-divider); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .fall-switch-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 44px; font-size: 13px; }
 .fall-switch {
   flex: none; width: 52px; height: 32px; border-radius: 16px; border: none; padding: 3px; display: flex; cursor: pointer;
-  background: #c9ced5; justify-content: flex-start;
+  background: var(--ui-control-border); justify-content: flex-start;
 }
-.fall-switch.is-on { background: #1d5fd1; justify-content: flex-end; }
-.fall-switch span { width: 26px; height: 26px; border-radius: 13px; background: #ffffff; display: block; }
-.fall-answer { background: #f5f6f8; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
-.fall-answer > span { font-size: 12px; font-weight: 700; color: #5b6470; }
+.fall-switch.is-on { background: var(--ui-accent); justify-content: flex-end; }
+.fall-switch span { width: 26px; height: 26px; border-radius: 13px; background: var(--ui-surface); display: block; }
+.fall-answer { background: var(--ui-bg); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.fall-answer > span { font-size: 12px; font-weight: 700; color: var(--ui-text-muted); }
 .fall-answer p { margin: 0; }
 .fall-fold { padding: 0 14px; gap: 0; }
 .fall-fold summary { min-height: 48px; display: flex; align-items: center; font-size: 15px; font-weight: 700; cursor: pointer; }
@@ -9781,12 +9819,12 @@ a:focus-visible {
 .fall-fold > .fall-hint { margin-bottom: 8px; }
 .fall-log { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 6px 10px; font-size: 13px; }
 .fall-log > div { display: contents; }
-.fall-log > div > span:first-child { color: #5b6470; }
+.fall-log > div > span:first-child { color: var(--ui-text-muted); }
 .fall-bottom { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .fall-bottom .fall-button { width: 100%; }
-.fall-bottom p { margin: 0; font-size: 12px; color: #5b6470; text-align: center; }
-.fall-bottom .fall-closed { font-size: 14px; color: #1b1f24; font-weight: 700; }
-.fall-bottom .fall-needs-opinion { font-size: 13px; color: #8a5a00; font-weight: 700; }
+.fall-bottom p { margin: 0; font-size: 12px; color: var(--ui-text-muted); text-align: center; }
+.fall-bottom .fall-closed { font-size: 14px; color: var(--ui-text); font-weight: 700; }
+.fall-bottom .fall-needs-opinion { font-size: 13px; color: var(--ui-warn-text); font-weight: 700; }
 @media (max-width: 640px) {
   /* Full-bleed like the mockup's 390 px screens. */
   .fall-page { margin-inline: -16px; border-radius: 0; }
@@ -9798,85 +9836,86 @@ a:focus-visible {
 .fall-tl-top > span { width: 64px; }
 .fall-tl-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .fall-tl-body .fall-card { margin: 0; }
-.fall-tl-clock { position: absolute; right: 12px; bottom: 10px; color: #ffffff; font-size: 12px; pointer-events: none; }
+.fall-tl-clock { position: absolute; right: 12px; bottom: 10px; color: var(--ui-on-strong); font-size: 12px; pointer-events: none; }
 .fall-tl-days { display: flex; justify-content: space-between; font-size: 13px; }
 .fall-tl-days button {
-  min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid #c9ced5; background: #ffffff;
-  color: #1b1f24; cursor: pointer;
+  min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--ui-control-border); background: var(--ui-surface);
+  color: var(--ui-text); cursor: pointer;
 }
 .fall-tl-days button:disabled { opacity: .45; cursor: not-allowed; }
 .fall-tl-days span { align-self: center; font-weight: 500; }
 .fall-hint.is-center { text-align: center; }
 .fall-card.is-flat { gap: 10px; }
-.fall-card.is-blue { border-color: #1d5fd1; gap: 12px; }
-.fall-card.is-purple { border-color: #5b3fb5; gap: 12px; }
+.fall-card.is-blue { border-color: var(--ui-accent); gap: 12px; }
+.fall-card.is-purple { border-color: var(--ui-report); gap: 12px; }
 .fall-tl-track { position: relative; height: 40px; cursor: pointer; }
 .fall-tl-gap, .fall-tl-rec { position: absolute; top: 16px; height: 8px; }
-.fall-tl-gap { left: 0; right: 0; border-radius: 4px; background: #d6dae0; }
-.fall-tl-rec { background: #c9d8f5; }
+.fall-tl-gap { left: 0; right: 0; border-radius: 4px; background: var(--ui-track); }
+.fall-tl-rec { background: var(--ui-recorded); }
 .fall-tl-mark { position: absolute; top: 6px; width: 4px; height: 28px; margin-left: -2px; border-radius: 2px; }
-.fall-tl-mark.is-fall { background: #b42318; }
-.fall-tl-mark.is-suspected { background: #c48a00; }
-.fall-tl-mark.is-report { background: #5b3fb5; }
+.fall-tl-mark.is-fall { background: var(--ui-danger); }
+.fall-tl-mark.is-suspected { background: var(--ui-warn); }
+.fall-tl-mark.is-report { background: var(--ui-report); }
 .fall-tl-range {
-  position: absolute; top: 2px; height: 36px; border: 2px solid #5b3fb5; border-radius: 6px;
-  background: rgba(91, 63, 181, 0.12); box-sizing: border-box; pointer-events: none;
+  position: absolute; top: 2px; height: 36px; border: 2px solid var(--ui-report); border-radius: 6px;
+  background: var(--ui-report-band); box-sizing: border-box; pointer-events: none;
 }
 .fall-tl-zoom-title { margin-top: 6px; }
 .fall-tl-pointer-row { position: relative; height: 12px; margin-top: -8px; }
 .fall-tl-pointer {
-  position: absolute; top: 0; transform: translateX(-50%); font-size: 11px; line-height: 12px; color: #1b1f24;
+  position: absolute; top: 0; transform: translateX(-50%); font-size: 11px; line-height: 12px; color: var(--ui-text);
   transition: left .15s ease-out; pointer-events: none;
 }
-.fall-tl-tick { position: absolute; top: 14px; width: 1px; height: 12px; background: #8a929c; pointer-events: none; }
+.fall-tl-tick { position: absolute; top: 14px; width: 1px; height: 12px; background: var(--ui-icon-muted); pointer-events: none; }
 .fall-tl-tick.is-major { top: 10px; height: 20px; }
-.fall-tl-ai { position: absolute; top: 14px; height: 12px; background: #5b3fb5; border-radius: 2px; pointer-events: none; }
-.fall-tl-legend i.is-ai { background: #5b3fb5; }
-.fall-tl-ticks { display: flex; justify-content: space-between; font-size: 11px; color: #5b6470; }
-.fall-tl-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: #5b6470; }
+.fall-tl-ai { position: absolute; top: 14px; height: 12px; background: var(--ui-report); border-radius: 2px; pointer-events: none; }
+.fall-tl-legend i.is-ai { background: var(--ui-report); }
+.fall-tl-ticks { display: flex; justify-content: space-between; font-size: 11px; color: var(--ui-text-muted); }
+.fall-tl-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--ui-text-muted); }
 .fall-tl-legend span { display: flex; align-items: center; gap: 4px; }
 .fall-tl-legend i { width: 10px; height: 10px; border-radius: 2px; box-sizing: border-box; }
-.fall-tl-legend i.is-fall { background: #b42318; }
-.fall-tl-legend i.is-suspected { background: #c48a00; }
-.fall-tl-legend i.is-gap { background: #d6dae0; }
-.fall-tl-legend i.is-range { border: 2px solid #5b3fb5; }
-.fall-tl-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #5b6470; }
+.fall-tl-legend i.is-fall { background: var(--ui-danger); }
+.fall-tl-legend i.is-suspected { background: var(--ui-warn); }
+.fall-tl-legend i.is-gap { background: var(--ui-track); }
+.fall-tl-legend i.is-range { border: 2px solid var(--ui-report); }
+.fall-tl-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ui-text-muted); }
 .fall-tl-field input {
-  min-height: 44px; border-radius: 8px; border: 1px solid #c9ced5; padding: 0 10px; font: inherit; color: #1b1f24; background: #ffffff;
+  min-height: 44px; border-radius: 8px; border: 1px solid var(--ui-control-border); padding: 0 10px; font: inherit; color: var(--ui-text); background: var(--ui-surface);
 }
-.fall-tl-box { font-size: 12px; color: #5b6470; background: #f5f6f8; border-radius: 8px; padding: 10px; }
+.fall-tl-box { font-size: 12px; color: var(--ui-text-muted); background: var(--ui-bg); border-radius: 8px; padding: 10px; }
 .fall-tl-warn {
-  border: 1px solid #c48a00; background: #fff8e6; border-radius: 10px; padding: 12px;
+  border: 1px solid var(--ui-warn); background: var(--ui-warn-faint); border-radius: 10px; padding: 12px;
   display: flex; flex-direction: column; gap: 10px; font-size: 13px;
 }
-.fall-tl-actions { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid #eef0f3; padding-top: 12px; }
-.fall-tl-progress { display: flex; gap: 8px; align-items: center; font-size: 13px; color: #8a5a00; }
-.fall-tl-progress i { width: 8px; height: 8px; border-radius: 4px; background: #c48a00; }
+.fall-tl-actions { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--ui-divider); padding-top: 12px; }
+.fall-tl-progress { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ui-warn-text); }
+.fall-tl-progress i { width: 8px; height: 8px; border-radius: 4px; background: var(--ui-warn); }
 .fall-link.is-left { align-self: flex-start; padding-left: 0; }
-.fall-button.is-soft { border-color: #c9ced5; }
-.fall-button.is-purple { border: none; background: #5b3fb5; color: #ffffff; font-weight: 700; }
-.fall-button.is-purple-line { border-color: #5b3fb5; color: #5b3fb5; font-weight: 700; }
+.fall-button.is-soft { border-color: var(--ui-control-border); }
+.fall-button.is-purple { border: none; background: var(--ui-report); color: var(--ui-on-strong); font-weight: 700; }
+.fall-button.is-purple-line { border-color: var(--ui-report); color: var(--ui-report); font-weight: 700; }
 
 /* 홈캠 설정 (Settings.dc.html) */
 .fall-settings { margin-bottom: 16px; }
-.fall-settings-banner { background: #eef4fe; border-radius: 10px; padding: 12px; font-size: 13px; color: #164aa3; }
+.fall-settings-banner { background: var(--ui-accent-soft); border-radius: 10px; padding: 12px; font-size: 13px; color: var(--ui-accent-strong); }
 .fall-settings-list { padding: 0; gap: 0; }
 .fall-settings-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px; }
-.fall-settings-row + .fall-settings-row { border-top: 1px solid #eef0f3; }
+.fall-settings-row + .fall-settings-row { border-top: 1px solid var(--ui-divider); }
 .fall-settings-row.is-dim { opacity: .55; }
 .fall-settings-row > span { display: flex; flex-direction: column; gap: 4px; flex: 1; }
 .fall-settings-row strong { font-size: 15px; font-weight: 700; }
-.fall-settings-row small { font-size: 12px; color: #5b6470; }
+.fall-settings-row small { font-size: 12px; color: var(--ui-text-muted); }
 .fall-switch:disabled { cursor: not-allowed; }
 .fall-key-row {
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  background: #f5f6f8; border-radius: 8px; padding: 10px 12px;
+  background: var(--ui-bg); border-radius: 8px; padding: 10px 12px;
 }
 .fall-key-row > span:first-child { font-size: 14px; letter-spacing: 1px; }
 .fall-key-row > span:last-child { font-size: 12px; }
-.fall-key-row .is-ok { color: #1f6f43; }
-.fall-key-row .is-muted { color: #5b6470; }
-.fall-button.is-danger-line { border-color: #b42318; color: #b42318; }
+.fall-key-row .is-ok { color: var(--ui-ok); }
+.fall-key-row .is-muted { color: var(--ui-text-muted); }
+.fall-button.is-danger-line { border-color: var(--ui-danger); color: var(--ui-danger); }
+/* 로컬 데모 전용 정지 배경(실제 영상 자리): 화면 색이 아니라 그림이라 이름 붙인 색을 쓰지 않는다. */
 .fall-scene-still {
   position: absolute; inset: 0;
   background: linear-gradient(180deg, #4a5059 0%, #3d434b 58%, #6b5d4f 58%, #5a4e42 100%);
@@ -9887,17 +9926,17 @@ a:focus-visible {
   position: absolute; left: -2px; bottom: 100%; margin-bottom: 2px; padding: 1px 6px; border-radius: 4px;
   font-size: 11px; font-weight: 600; white-space: nowrap;
 }
-.fall-person.is-target { border: 3px solid #ffd166; }
-.fall-person.is-target span { background: #ffd166; color: #1b1f24; }
-.fall-person.is-other { border: 1.5px solid #c9ced5; }
-.fall-person.is-other span { background: rgba(27, 31, 36, 0.75); color: #e3e6ea; }
-.fall-person.is-cloud { border: 2px dashed #ffffff; }
-.fall-person.is-cloud span { top: 100%; bottom: auto; margin: 2px 0 0; background: rgba(27, 31, 36, 0.75); color: #ffffff; }
-.fall-people-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #1b1f24; cursor: pointer; }
-.fall-people-toggle input { width: 16px; height: 16px; margin: 0; accent-color: #1b1f24; }
-.fall-people-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: #5b6470; }
+.fall-person.is-target { border: 3px solid var(--ui-highlight); }
+.fall-person.is-target span { background: var(--ui-highlight); color: var(--ui-text); }
+.fall-person.is-other { border: 1.5px solid var(--ui-control-border); }
+.fall-person.is-other span { background: var(--ui-overlay); color: var(--ui-border); }
+.fall-person.is-cloud { border: 2px dashed var(--ui-surface); }
+.fall-person.is-cloud span { top: 100%; bottom: auto; margin: 2px 0 0; background: var(--ui-overlay); color: var(--ui-on-strong); }
+.fall-people-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ui-text); cursor: pointer; }
+.fall-people-toggle input { width: 16px; height: 16px; margin: 0; accent-color: var(--ui-strong); }
+.fall-people-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--ui-text-muted); }
 .fall-people-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .fall-people-legend i { width: 14px; height: 10px; border-radius: 2px; box-sizing: border-box; }
-.fall-people-legend i.is-target { border: 3px solid #c48a00; }
-.fall-people-legend i.is-other { border: 1.5px solid #8a929c; }
-.fall-people-legend i.is-cloud { border: 2px dashed #5b6470; }
+.fall-people-legend i.is-target { border: 3px solid var(--ui-warn); }
+.fall-people-legend i.is-other { border: 1.5px solid var(--ui-icon-muted); }
+.fall-people-legend i.is-cloud { border: 2px dashed var(--ui-text-muted); }

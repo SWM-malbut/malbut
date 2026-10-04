@@ -9,7 +9,7 @@ import { sameOriginJsonRequest } from "../../../../same-origin-request";
 export const dynamic = "force-dynamic";
 
 /**
- * 놓친 넘어짐 신고: one moment picked on the recording; recorded only, nobody is
+ * 놓친 낙상 신고: one moment picked on the recording; recorded only, nobody is
  * notified. [신고하고 AI에게 검토 받기] also queues a photo-only review; if that
  * cannot start (no consent or key), the report is still kept.
  */

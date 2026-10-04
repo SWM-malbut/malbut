@@ -250,7 +250,7 @@ export async function demoIncidentFetch(url: string, init?: RequestInit): Promis
     const range = (details[row.incidentId] as { clips: Array<{ startAt: string; endAt: string }> }).clips;
     const at = Date.parse(momentAt);
     if (!range.some((c) => at >= Date.parse(c.startAt) && at <= Date.parse(c.endAt))) {
-      return reply({ error: "이 시간은 원래 사건 밖이에요. 놓친 넘어짐으로 새로 신고할까요?", reason: "outside_incident" }, 409);
+      return reply({ error: "이 시간은 원래 사건 밖이에요. 놓친 낙상으로 새로 신고할까요?", reason: "outside_incident" }, 409);
     }
     (details[row.incidentId] as { aiReviews: unknown[] }).aiReviews.push(queuedReview(momentAt));
     return reply({ review: { status: "queued" } }, 202);
