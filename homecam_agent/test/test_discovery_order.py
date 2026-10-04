@@ -36,7 +36,8 @@ def test_discovery_order_and_negative_controls(tmp_path, mode):
         # coexist. Do not assert that same-person linkage cancels the former.
         assert result['scene_cases'] == 1 and result['manager_questions'] == 2
     if mode == 'old_answer':
-        assert result['obsolete_answer_rejected']
+        assert result['original_answer_accepted']
+        assert result['newer_evidence_unresolved']
     if mode == 'candidate_during_cloud':
         assert result['person_cases'] == 1 and result['scene_cases'] == 0
         assert result['call_purposes'] == ['crosscheck', 'incident']
