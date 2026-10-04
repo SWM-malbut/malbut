@@ -575,7 +575,7 @@ test("사건 screen: incidents replace general events; demo API only for the loc
     readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/homecam-header.tsx", import.meta.url), "utf8"),
   ]);
-  for (const text of ["가장 먼저 확인할 사건", "아무도 확인하지 않음", "AI 검증 실패", "검수 전",
+  for (const text of ["가장 먼저 확인할 사건", "아무도 확인하지 않음", "AI 판정 실패", "검수 전",
     "넘어진 순간은 녹화되지 않았을 수 있음", "의견을 남기면 모든 사용자에게 가는 [재발신]이 멈춰요",
     "참고 답변 · 판정 결과에는 반영되지 않아요", "자동 판정 기록", "알림 이력", "처리 완료"]) {
     assert.ok(panel.includes(text), text);
@@ -656,11 +656,11 @@ test("연속 녹화·설정 screens follow the mockup and only the owner edits s
     readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
   ]);
   for (const text of ["최근 7일까지 볼 수 있어요", "24시간 타임라인 · 표시는 사건 위치", "사건 다시 검토",
-    "이 시간은 원래 사건 밖이에요. 놓친 넘어짐으로 새로 신고할까요?", "놓친 넘어짐 신고", "신고만 남기기",
+    "이 시간은 원래 사건 밖이에요. 놓친 낙상으로 새로 신고할까요?", "놓친 낙상 신고", "신고만 남기기",
     "신고하고 AI에게 검토 받기", "검토 진행 중 · 결과는 원래 사건에 기록돼요", "고른 순간 주변 2분", "AI에게 보내는 5초"]) {
     assert.ok(timeline.includes(text), text);
   }
-  for (const text of ["카메라 사용", "연속 녹화", "넘어짐 감지", "클라우드 AI 확인 동의", "클라우드 AI 키",
+  for (const text of ["카메라 사용", "연속 녹화", "낙상 감지", "클라우드 AI 확인 동의", "클라우드 AI 키",
     "설정은 소유자만 바꿀 수 있어요. 지금 상태만 보여요.", "끝 네 자리만 표시해요", "저장된 영상"]) {
     assert.ok(settings.includes(text), text);
   }

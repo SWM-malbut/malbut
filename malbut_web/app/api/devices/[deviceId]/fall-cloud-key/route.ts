@@ -12,7 +12,7 @@ type Context = { params: Promise<{ deviceId: string }> };
 async function member(request: Request, deviceId: string) {
   const email = await getRequestUserEmail(request);
   if (!email) return { response: noStore({ error: "로그인이 필요합니다." }, 401) };
-  if (!(await userCanViewDevice(deviceId, email))) return { response: noStore({ error: "로봇을 찾을 수 없습니다." }, 404) };
+  if (!(await userCanViewDevice(deviceId, email))) return { response: noStore({ error: "말벗을 찾을 수 없습니다." }, 404) };
   return { email };
 }
 

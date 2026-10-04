@@ -44,7 +44,7 @@ export async function POST(
   });
   if (!lease) {
     return noStore(
-      { error: "다른 가족이 말하기 기능을 사용 중입니다." },
+      { error: "다른 보호자가 말하기 기능을 사용 중입니다." },
       409,
       { "retry-after": "2" },
     );

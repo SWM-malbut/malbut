@@ -69,7 +69,7 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error ?? "설정을 저장하지 못했습니다.");
-      setMessage("저장했어요. 로봇이 적용하면 상태가 바뀌어요.");
+      setMessage("저장했어요. 말벗이 적용하면 상태가 바뀌어요.");
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : "설정을 저장하지 못했습니다.");
     } finally {
@@ -90,7 +90,7 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
       setKey(body);
       setEditingKey(false);
       setNewKey("");
-      setMessage(value === null ? "키를 지웠어요. 로봇도 곧 키를 지워요." : "키를 저장했어요. 로봇에 곧 전해져요.");
+      setMessage(value === null ? "키를 지웠어요. 말벗도 곧 키를 지워요." : "키를 저장했어요. 로봇에 곧 전해져요.");
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : "키를 저장하지 못했습니다.");
     } finally { setBusy(""); }
@@ -102,14 +102,14 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
     { title: "연속 녹화", desc: "집 안 영상을 계속 저장해 7일 동안 다시 볼 수 있어요. 끄면 새 녹화만 멈춰요.",
       checked: recordingEnabled, needsCamera: true, busy: settingBusy,
       onChange: () => onUpdateSetting("monitoringEnabled", !recordingEnabled) },
-    { title: "넘어짐 감지", desc: "로봇이 넘어짐을 살펴요. 끄면 녹화와 실시간 보기는 그대로예요.",
+    { title: "낙상 감지", desc: "말벗이 낙상을 살펴요. 끄면 녹화와 실시간 보기는 그대로예요.",
       checked: fall?.settings.enabled ?? false, needsCamera: true, busy: !fall || busy === "enabled",
       onChange: () => void updateFall("enabled", !fall?.settings.enabled) },
-    { title: "클라우드 AI 확인 동의", desc: "넘어짐이 의심될 때, 그리고 사용자가 신고한 순간을 외부 AI로 보내 한 번 더 확인해요.",
+    { title: "클라우드 AI 확인 동의", desc: "낙상이 의심될 때, 그리고 사용자가 신고한 순간을 외부 AI로 보내 한 번 더 확인해요.",
       checked: fall?.settings.cloudConsent ?? false, needsCamera: true, busy: !fall || busy === "cloudConsent",
       onChange: () => void updateFall("cloudConsent", !fall?.settings.cloudConsent) },
     // Not in the mockup: the existing live microphone switch is kept so the feature does not disappear.
-    { title: "로봇 마이크", desc: "실시간 보기에서 집 안의 소리를 보호자에게 전해요.", checked: microphoneEnabled,
+    { title: "말벗 마이크", desc: "실시간 보기에서 집 안의 소리를 보호자에게 전해요.", checked: microphoneEnabled,
       needsCamera: false, busy: settingBusy, onChange: () => onUpdateSetting("microphoneEnabled", !microphoneEnabled) },
   ];
 
@@ -129,8 +129,8 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
                 <span>
                   <strong>{row.title}</strong>
                   <small>{blocked ? "카메라가 꺼져 있어 동작하지 않아요." : row.desc}</small>
-                  {row.title === "넘어짐 감지" && fall?.receiptState === "waiting" && <small>저장됨 · 로봇 적용 확인 중</small>}
-                  {row.title === "넘어짐 감지" && fall?.receiptState === "no_response" && <small>로봇이 아직 적용했다고 알려 오지 않았어요</small>}
+                  {row.title === "낙상 감지" && fall?.receiptState === "waiting" && <small>저장됨 · 말벗 적용 확인 중</small>}
+                  {row.title === "낙상 감지" && fall?.receiptState === "no_response" && <small>말벗이 아직 적용했다고 알려 오지 않았어요</small>}
                 </span>
                 <Switch checked={row.checked && !blocked} disabled={disabled} label={row.title} onChange={row.onChange} />
               </div>
@@ -140,12 +140,12 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
 
         <div className="fall-card is-flat">
           <h2>클라우드 AI 키</h2>
-          <div className="fall-hint">이 로봇의 모든 사용자가 함께 쓰는 키예요. AI 확인 비용이 이 키로 나가요. 로봇에 직접 넣지 않아도 서버가 전해 줘요.</div>
+          <div className="fall-hint">이 말벗의 모든 사용자가 함께 쓰는 키예요. AI 확인 비용이 이 키로 나가요. 로봇에 직접 넣지 않아도 서버가 전해 줘요.</div>
           <div className="fall-key-row">
             <span>{key?.configured ? `•••• •••• •••• ${key.last4}` : "등록된 키 없음"}</span>
             <span className={key?.configured ? "is-ok" : "is-muted"}>
               {!key ? "확인 중" : !key.configured ? "AI 확인을 쓰려면 키가 필요해요"
-                : key.robotHasCurrent ? "로봇에 전달됨" : "로봇에 전달하는 중"}
+                : key.robotHasCurrent ? "말벗에 전달됨" : "말벗에 전달하는 중"}
             </span>
           </div>
           {isOwner && editingKey && (
@@ -165,7 +165,7 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
             <div className="fall-two-buttons">
               <button type="button" className="fall-button" onClick={() => setEditingKey(true)}>키 바꾸기</button>
               <button type="button" className="fall-button is-danger-line" disabled={!key?.configured || busy === "key"}
-                onClick={() => { if (window.confirm("키를 지울까요? 로봇의 클라우드 AI 확인도 멈춰요.")) void saveKey(null); }}>키 지우기</button>
+                onClick={() => { if (window.confirm("키를 지울까요? 말벗의 클라우드 AI 확인도 멈춰요.")) void saveKey(null); }}>키 지우기</button>
             </div>
           )}
           <div className="fall-hint">입력한 키는 다시 보여 주지 않고 끝 네 자리만 표시해요. 소유자만 바꿀 수 있어요.</div>

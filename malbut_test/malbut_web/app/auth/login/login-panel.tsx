@@ -304,7 +304,7 @@ export function LoginPanel({ returnTo }: LoginPanelProps) {
         </div>
 
         <footer className="homecam-login-footer">
-          <span>초대받은 소유자와 가족만 이용할 수 있습니다.</span>
+          <span>초대받은 소유자와 보호자만 이용할 수 있습니다.</span>
           <span>영상과 음성은 허용된 계정에만 연결됩니다.</span>
         </footer>
       </section>
