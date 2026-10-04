@@ -1664,7 +1664,7 @@ function Viewer({
         if (!response.ok || !leaseId) {
           throw new Error(
             response.status === 409
-              ? "다른 가족이 말하고 있어요. 잠시 후 다시 눌러 주세요."
+              ? "다른 보호자가 말하고 있어요. 잠시 후 다시 눌러 주세요."
               : payload?.error ?? "말하기 권한을 받지 못했습니다.",
           );
         }
@@ -1853,8 +1853,8 @@ function Viewer({
               )}
 
               <div className="homecam-video-bottom">
-                <span>{recordingEnabled ? "이벤트 영상 저장" : "저장 안 함"}</span>
-                <span>허용된 가족 계정만 볼 수 있어요</span>
+                <span>{recordingEnabled ? "연속 녹화" : "녹화 안 함"}</span>
+                <span>허용된 보호자만 볼 수 있어요</span>
               </div>
             </div>
 
@@ -1870,8 +1870,8 @@ function Viewer({
                 <ShieldCheck size={17} weight="regular" aria-hidden="true" />
                 <span>
                   {recordingEnabled
-                    ? "실시간 보기는 P2P로 연결되고 이벤트 영상은 별도로 저장됩니다."
-                    : "P2P 실시간 영상은 저장하지 않습니다."}
+                    ? "실시간 보기는 말벗과 직접 연결되고, 연속 녹화는 따로 저장돼요."
+                    : "실시간 영상은 저장하지 않아요."}
                 </span>
               </div>
               {embedded ? (
@@ -1891,7 +1891,7 @@ function Viewer({
                     {device?.cameraEnabled === false ? "카메라 꺼짐" : "카메라 켜짐"}
                   </span>
                   <button type="button" className="homecam-stream-control-button is-clips" onClick={onOpenEmbeddedEvents}>
-                    최근 클립 {embeddedEventCount}건
+                    확인할 사건 {embeddedEventCount}건
                   </button>
                 </div>
               ) : <div className="homecam-stream-control-buttons">

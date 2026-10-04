@@ -7,27 +7,17 @@ import { FallTimelinePanel, type TimelineMode } from "./fall-timeline-panel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
-  Bell,
-  Camera,
   CaretRight,
   CheckCircle,
   CornersOut,
   Info,
   MapTrifold,
-  Moon,
-  Play,
   ShieldCheck,
-  Sun,
-  TextAa,
-  UsersThree,
   VideoCamera,
-  Warning,
   X,
 } from "@phosphor-icons/react";
-import {
-  HomecamHeader,
-  type HomecamTab,
-} from "./homecam-header";
+import { type HomecamTab, useHomecamAuth } from "./homecam-header";
+import { UiTabBar } from "./ui-tab-bar";
 import {
   RobotMapPanel,
   RobotMapSummaryOverlay,
@@ -88,7 +78,6 @@ type FamilyMember = {
 };
 
 type ApiAvailability = "loading" | "ready" | "unavailable";
-type HomecamColorMode = "dark" | "light";
 
 type HomecamDashboardProps = {
   initialTab?: HomecamTab;
@@ -193,51 +182,48 @@ function HomeMapSummary({
     : rooms;
 
   return (
-    <>
-      <article className="homecam-home-map-card">
+    <article className="ui-card ui-map-card">
+      <div className="ui-card-head">
         <h2>지도</h2>
-        <button type="button" className="homecam-home-map-preview" onClick={() => onOpenMap("view")}>
-          {localDemo ? (
-            <span className="homecam-home-map-demo" aria-label="로컬 데모 우리 집 지도">
-              <i className="is-room-one" />
-              <i className="is-room-two" />
-              <i className="is-zone" />
-              <b aria-label="말벗 현재 위치" />
-            </span>
-          ) : device && revision ? (
-            <>
-              <Image
-                src={`/api/devices/${encodeURIComponent(device.id)}/robot/map?revision=${encodeURIComponent(revision)}`}
-                alt="저장된 우리 집 지도"
-                fill
-                unoptimized
-                sizes="376px"
-              />
-              <RobotMapSummaryOverlay snapshot={robotSnapshot} semantics={semantics} />
-            </>
-          ) : (
-            <span>저장된 지도를 확인하고 있어요</span>
-          )}
-        </button>
-        <div className="homecam-home-map-actions">
-          <button type="button" onClick={() => onOpenMap("navigate")}>목적지 선택</button>
-          <button type="button" onClick={() => onOpenMap("view")}>지도 열기</button>
-        </div>
-      </article>
-      <article className="homecam-home-favorites">
-        <h2>주요 목적지</h2>
-        <div>
-          {visibleRooms.length === 0 && <p>방을 나누고 이름을 정하면 여기에 표시됩니다.</p>}
+        <button type="button" className="ui-text-button" onClick={() => onOpenMap("view")}>지도 열기</button>
+      </div>
+      <button type="button" className="homecam-home-map-preview ui-map-preview" onClick={() => onOpenMap("view")}
+        aria-label="우리 집 지도 열기">
+        {localDemo ? (
+          <span className="homecam-home-map-demo" aria-label="로컬 데모 우리 집 지도">
+            <i className="is-room-one" />
+            <i className="is-room-two" />
+            <i className="is-zone" />
+            <b aria-label="말벗 현재 위치" />
+          </span>
+        ) : device && revision ? (
+          <>
+            <Image
+              src={`/api/devices/${encodeURIComponent(device.id)}/robot/map?revision=${encodeURIComponent(revision)}`}
+              alt="저장된 우리 집 지도"
+              fill
+              unoptimized
+              sizes="376px"
+            />
+            <RobotMapSummaryOverlay snapshot={robotSnapshot} semantics={semantics} />
+          </>
+        ) : (
+          <span className="ui-hint">저장된 지도를 확인하고 있어요</span>
+        )}
+      </button>
+      {visibleRooms.length === 0 ? (
+        <p className="ui-hint">방을 나누고 이름을 정하면 여기에 표시돼요.</p>
+      ) : (
+        <div className="ui-rooms" aria-label="방 이름으로 보내기">
           {visibleRooms.slice(0, 4).map((room) => (
-            <button type="button" key={room.id} onClick={() => onOpenMap("navigate")}>
-              <i style={{ background: room.color }} />
-              <strong>{room.name}</strong>
-              <span>지도에서 선택</span>
+            <button type="button" key={room.id} style={{ background: room.color }}
+              onClick={() => onOpenMap("navigate")} aria-label={`${room.name}(으)로 보내기`}>
+              {room.name}
             </button>
           ))}
         </div>
-      </article>
-    </>
+      )}
+    </article>
   );
 }
 
@@ -530,10 +516,10 @@ export function HomecamDashboard({
   const [pushEndpointRegistrationCount, setPushEndpointRegistrationCount] = useState(0);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [standalone, setStandalone] = useState(false);
-  const [legacyOpen, setLegacyOpen] = useState(false);
   const [legacyCode, setLegacyCode] = useState("");
   const [legacyPassword, setLegacyPassword] = useState("");
-  const [colorMode, setColorMode] = useState<HomecamColorMode>("dark");
+  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians" | "legacy">("main");
+  const [removeTarget, setRemoveTarget] = useState<FamilyMember | null>(null);
   const [textSize, setTextSize] = useState<"default" | "large">("default");
   const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
   const [storageGraceUntilMs, setStorageGraceUntilMs] = useState(0);
@@ -544,19 +530,12 @@ export function HomecamDashboard({
     offsetX: number;
     offsetY: number;
   } | null>(null);
+  const { authStatus, signingOut, signOut } = useHomecamAuth();
   const localDemoAutoplayRef = useRef(false);
   const navigationStateReadyRef = useRef(false);
   const openMap = useCallback((mode: MapMode) => {
     setMapEntryMode(mode);
     setTab("map");
-  }, []);
-
-  useEffect(() => {
-    const stored = window.localStorage.getItem("malbut-color-mode");
-    const preferred = stored === "dark" || stored === "light"
-      ? stored
-      : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    window.queueMicrotask(() => setColorMode(preferred));
   }, []);
 
   useEffect(() => {
@@ -1154,142 +1133,136 @@ export function HomecamDashboard({
       : storageConnecting
         ? "연속 녹화 준비 중"
         : "연속 녹화 오류";
-  return (
-    <div className={`homecam-shell homecam-dashboard-shell tab-${tab} theme-${colorMode}`}>
-      <HomecamHeader
-        activeTab={tab}
-        onNavigate={(nextTab) => {
-          if (nextTab === "map") openMap("view");
-          else setTab(nextTab);
-        }}
-        onInstall={installApp}
-        showInstall={!standalone && Boolean(installPrompt)}
-      />
+  const isGuardianView = selectedDevice?.role !== "owner";
+  const roleLabel = selectedDevice?.role === "owner" ? "소유자" : selectedDevice?.role === "family" ? "보호자" : "읽기 전용";
+  const connectionText = selectedDevice?.online
+    ? tab === "live" && displayedMediaReady ? "실시간 연결됨" : "연결됨"
+    : "오프라인";
+  const showTopBar = tab === "home" || tab === "live" || (tab === "settings" && settingsView === "main");
+  const navigate = (nextTab: HomecamTab) => {
+    if (nextTab === "map") openMap("view");
+    else {
+      if (nextTab === "settings") setSettingsView("main");
+      setTab(nextTab);
+    }
+  };
+  const settingsBack = (title: string) => (
+    <div className="ui-subhead">
+      <button type="button" className="ui-back" onClick={() => setSettingsView("main")}>‹ 설정</button>
+      <h1>{title}</h1>
+    </div>
+  );
 
-      <main className="homecam-main">
-        {tab !== "map" && tab !== "robot" && <div className="homecam-device-bar">
-          <h1>{tab === "home" ? "홈" : tab === "live" ? "홈캠" : tab === "events" ? "사건" : "설정"}</h1>
-          <div className="homecam-device-selector">
-            <span className="homecam-device-avatar" aria-hidden="true">말</span>
-            <label htmlFor="homecam-device-select">말벗</label>
-            {devices.length > 1 ? (
-              <select
-                id="homecam-device-select"
-                value={selectedDevice?.id ?? ""}
-                onChange={(event) => setSelectedDeviceId(event.target.value)}
-              >
-                {devices.map((device) => (
-                  <option key={device.id} value={device.id}>{device.displayName}</option>
-                ))}
-              </select>
+  return (
+    <div className={`homecam-shell homecam-dashboard-shell ui-app tab-${tab}`}>
+      <main className="homecam-main ui-main">
+        {showTopBar && (
+          <header className="ui-top">
+            <div className="ui-top-row">
+              <h1>{tab === "home" ? "홈" : tab === "live" ? "홈캠" : "설정"}</h1>
+              <span className={`ui-pill ${selectedDevice?.online ? "is-ok" : ""}`}><i aria-hidden="true" />{connectionText}</span>
+            </div>
+            {tab === "live" ? (
+              <span className="ui-top-sub" aria-live="polite">
+                <span>{selectedDevice?.displayName ?? "등록된 말벗 없음"}</span>
+                <b aria-hidden="true">·</b>
+                <span className={displayedMediaReady ? "is-ready" : "is-pending"}>
+                  {displayedMediaReady ? "보안 영상 채널 연결됨" : "영상 채널 연결 중"}
+                </span>
+                <b aria-hidden="true">·</b>
+                <span className={storageReady ? "is-ready" : storageConnecting ? "is-pending" : storageError ? "is-error" : ""}>
+                  {storageStateLabel}
+                </span>
+              </span>
             ) : (
-              <strong>{selectedDevice?.displayName ?? "등록된 말벗 없음"}</strong>
+              <div className="ui-device">
+                <span className="ui-device-avatar" aria-hidden="true">말</span>
+                <span className="ui-device-text">
+                  <label htmlFor="homecam-device-select">연결된 말벗</label>
+                  {devices.length > 1 ? (
+                    <select id="homecam-device-select" value={selectedDevice?.id ?? ""}
+                      onChange={(event) => setSelectedDeviceId(event.target.value)}>
+                      {devices.map((device) => (
+                        <option key={device.id} value={device.id}>{device.displayName}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <strong>{selectedDevice?.displayName ?? "등록된 말벗 없음"}</strong>
+                  )}
+                </span>
+              </div>
             )}
-          </div>
-          <span className={`homecam-connection-pill ${selectedDevice?.online ? "is-online" : ""}`}>
-            <i aria-hidden="true" />
-            {selectedDevice?.online
-              ? tab === "live" && displayedMediaReady ? "실시간 연결됨" : "연결됨"
-              : "오프라인"}
-          </span>
-          {tab === "live" && (
-            <span className="homecam-device-bar-meta homecam-live-channel-summary" aria-live="polite">
-              <span className={displayedMediaReady ? "is-ready" : "is-pending"}>
-                {displayedMediaReady ? "보안 영상 채널 연결됨" : "영상 채널 연결 중"}
-              </span>
-              <b aria-hidden="true">·</b>
-              <span
-                className={
-                  storageReady
-                    ? "is-ready"
-                    : storageConnecting
-                      ? "is-pending"
-                      : storageError
-                        ? "is-error"
-                        : ""
-                }
-              >
-                {storageStateLabel}
-              </span>
-            </span>
-          )}
-          {tab === "settings" && <span className="homecam-device-bar-meta">{selectedDevice?.role === "owner" ? "소유자 설정" : "읽기 전용"}</span>}
-        </div>}
+          </header>
+        )}
 
         {availability === "loading" && (
-          <div className="homecam-loading" role="status">
+          <div className="ui-loading" role="status">
             <span aria-hidden="true" />
-            등록된 홈캠을 확인하고 있습니다.
+            등록된 말벗을 확인하고 있어요.
           </div>
         )}
 
         {tab === "home" && (
-          <section className="homecam-home-view" aria-label="말벗 지금 상태">
-            <div className="homecam-home-workspace">
-              <div className="homecam-home-primary">
-                <article className="homecam-home-hero">
-                  <div>
-                    <span>지금 말벗은</span>
-                    <h1>
-                      {selectedDevice?.online
-                        ? "집 안에서 대기하고 있어요"
-                        : "연결을 기다리고 있어요"}
-                    </h1>
-                    <div className="homecam-home-chips">
-                      <span>{selectedDevice?.online ? "말벗 연결됨" : "말벗 오프라인"}</span>
-                      <span>{selectedDevice?.p2pHealthy ? "실시간 영상 준비됨" : "영상 연결 준비 중"}</span>
-                      <span>{selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"} · {selectedDevice?.microphoneEnabled ? "마이크 켜짐" : "마이크 꺼짐"}</span>
-                    </div>
-                  </div>
-                  <div className="homecam-home-actions">
-                    <button type="button" onClick={() => openMap("navigate")}>지도에서 보내기</button>
-                    <button type="button" className="is-secondary" onClick={() => setTab("live")}>홈캠 열기</button>
-                  </div>
-                </article>
-
-                <div className="homecam-home-main-grid">
-                  <button type="button" className="homecam-home-camera" onClick={() => setTab("live")}>
-                    <span className="homecam-home-live"><i aria-hidden="true" />실시간</span>
-                    <VideoCamera size={42} weight="light" aria-hidden="true" />
-                    <strong>{selectedDevice?.online ? "거실 실시간 영상 열기" : "홈캠 연결 상태 확인"}</strong>
-                    <small>보호자 계정으로 안전하게 연결합니다</small>
-                    <span className="homecam-home-camera-action">홈캠 크게 보기</span>
-                  </button>
-
-                  <article className="homecam-home-events">
-                    <header>
-                      <div><h2>확인이 필요해요</h2><span>{openIncidents.length}건</span></div>
-                      <button type="button" onClick={() => setTab("events")}>전체 보기</button>
-                    </header>
-                    <div>
-                      {incidentsLoading && openIncidents.length === 0 && <p>사건을 확인하고 있어요…</p>}
-                      {!incidentsLoading && openIncidents.length === 0 && (
-                        <p className="is-safe"><CheckCircle size={24} weight="fill" /> 확인할 사건이 없어요</p>
-                      )}
-                      {openIncidents.slice(0, 3).map((incident) => (
-                        <button type="button" key={incident.incidentId} onClick={() => { setFocusedIncidentId(incident.incidentId); setTab("events"); }}>
-                          <span className="fall-incident-icon is-check"><Warning size={20} weight="bold" /></span>
-                          <span>
-                            <strong>{incident.unacknowledged ? "아무도 확인하지 않음 · " : ""}{incident.fallSeen ? "낙상" : "낙상 의심"}</strong>
-                            <small>{formatIncidentTime(incident.occurredAt)}{incident.aiFailed ? " · AI 판정 실패" : ""}</small>
-                          </span>
-                          <CaretRight size={17} weight="bold" />
-                        </button>
-                      ))}
-                    </div>
-                  </article>
-                </div>
+          <section className="ui-screen ui-home" aria-label="말벗 지금 상태">
+            <article className="ui-card ui-hero">
+              <span className="ui-caption">지금 말벗은</span>
+              <strong className="ui-hero-title">
+                {selectedDevice?.online ? "집 안에서 대기하고 있어요" : "연결을 기다리고 있어요"}
+              </strong>
+              <div className="ui-chips">
+                <span className={selectedDevice?.online ? "is-ok" : ""}>{selectedDevice?.online ? "말벗 연결됨" : "말벗 오프라인"}</span>
+                <span className={selectedDevice?.p2pHealthy ? "is-ok" : ""}>{selectedDevice?.p2pHealthy ? "실시간 영상 준비됨" : "영상 연결 준비 중"}</span>
+                <span className={selectedDevice?.online ? "is-ok" : ""}>{selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"} · {selectedDevice?.microphoneEnabled ? "마이크 켜짐" : "마이크 꺼짐"}</span>
               </div>
+              <div className="ui-two-buttons">
+                <button type="button" className="ui-button is-strong" onClick={() => setTab("live")}>홈캠 열기</button>
+                <button type="button" className="ui-button" onClick={() => openMap("navigate")}>지도에서 보내기</button>
+              </div>
+            </article>
 
-              <aside className="homecam-home-sidebar">
-                <HomeMapSummary device={selectedDevice} onOpenMap={openMap} />
-                <article className="homecam-home-privacy">
-                  <ShieldCheck size={24} weight="regular" aria-hidden="true" />
-                  <div><span>개인정보</span><strong>{selectedDevice?.monitoringEnabled ? "연속 녹화로 저장하고 있어요 (7일 보관)" : "영상 저장을 사용하지 않아요"}</strong></div>
-                  <button type="button" onClick={() => setTab("settings")}>저장 설정 보기</button>
-                </article>
-              </aside>
-            </div>
+            <button type="button" className="ui-card ui-camera-card" onClick={() => setTab("live")} aria-label="거실 실시간 영상 열기">
+              <span className="ui-camera-media">
+                <span className="ui-live-tag">● 실시간</span>
+                <VideoCamera size={44} weight="light" aria-hidden="true" />
+              </span>
+              <span className="ui-camera-text">
+                <span>
+                  <strong>{selectedDevice?.online ? "거실 실시간 영상 열기" : "홈캠 연결 상태 확인"}</strong>
+                  <small>보호자 계정으로 안전하게 연결합니다</small>
+                </span>
+                <span className="ui-link-text">크게 보기</span>
+              </span>
+            </button>
+
+            <article className="ui-card ui-incidents">
+              <div className="ui-card-head">
+                <h2>확인이 필요해요 <span>{openIncidents.length}건</span></h2>
+                <button type="button" className="ui-text-button" onClick={() => setTab("events")}>전체 보기</button>
+              </div>
+              {incidentsLoading && openIncidents.length === 0 && <p className="ui-hint">사건을 확인하고 있어요…</p>}
+              {!incidentsLoading && openIncidents.length === 0 && (
+                <p className="ui-safe"><CheckCircle size={20} weight="bold" aria-hidden="true" /> 확인할 사건이 없어요</p>
+              )}
+              {openIncidents.slice(0, 3).map((incident) => (
+                <button type="button" key={incident.incidentId}
+                  className={`ui-incident ${incident.unacknowledged ? "is-urgent" : ""}`}
+                  onClick={() => { setFocusedIncidentId(incident.incidentId); setTab("events"); }}>
+                  <span className={`ui-badge ${incident.unacknowledged ? "is-danger" : "is-warn"}`}>
+                    {incident.unacknowledged ? "아무도 확인하지 않음" : "확인 필요"}
+                  </span>
+                  <strong>{incident.fallSeen ? "낙상" : "낙상 의심"}</strong>
+                  <small>{formatIncidentTime(incident.occurredAt)}{incident.aiFailed ? " · AI 판정 실패" : ""}</small>
+                </button>
+              ))}
+            </article>
+
+            <HomeMapSummary device={selectedDevice} onOpenMap={openMap} />
+
+            <article className="ui-card ui-privacy">
+              <ShieldCheck size={24} weight="regular" aria-hidden="true" />
+              <span><small>개인정보</small><strong>{selectedDevice?.monitoringEnabled ? "연속 녹화로 저장하고 있어요 (7일 보관)" : "영상 저장을 사용하지 않아요"}</strong></span>
+              <button type="button" className="ui-text-button" onClick={() => { setSettingsView("homecam"); setTab("settings"); }}>저장 설정</button>
+            </article>
           </section>
         )}
 
@@ -1334,133 +1307,110 @@ export function HomecamDashboard({
               eventCount: openIncidents.length,
               openEvents: () => setTab("events"),
               device: selectedDevice,
-            }) ?? <div className="homecam-video-card">
-              <div className="homecam-video-frame">
-                <div className="homecam-video-topbar">
-                  <span className="homecam-video-clock">{formatLiveClock(liveClockMs)}</span>
-                  <button type="button" onClick={() => void openLive()} disabled={!selectedDevice?.online || !selectedDevice.cameraEnabled || busy === "live"} aria-label="실시간 영상을 크게 보기">
-                    <CornersOut size={19} weight="regular" aria-hidden="true" />
-                  </button>
+            }) ?? (
+              <div className="ui-video">
+                <div className="ui-video-tags">
+                  <span>{selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"}</span>
+                  <span>{selectedDevice?.monitoringEnabled ? "연속 녹화" : "녹화 안 함"}</span>
                 </div>
-                <div className="homecam-video-message">
-                  <VideoCamera size={38} weight="light" aria-hidden="true" />
-                  <h2>
-                    {!selectedDevice
-                      ? "홈캠을 연결해 주세요"
-                      : !selectedDevice.cameraEnabled
-                        ? "카메라가 꺼져 있어요"
-                        : selectedDevice.online
-                          ? "보안 채널 연결 대기 중"
-                          : "홈캠이 오프라인이에요"}
-                  </h2>
-                  <button
-                    type="button"
-                    className="homecam-live-button"
-                    onClick={() => void openLive()}
-                    disabled={!selectedDevice?.online || !selectedDevice.cameraEnabled || busy === "live"}
-                  >
-                    <Play size={15} weight="fill" aria-hidden="true" />
-                    {busy === "live" ? "연결 중" : "실시간 보기"}
-                  </button>
-                </div>
-                <div className="homecam-video-bottom">
-                  <span className="homecam-video-control-chip">
-                    <Camera size={16} weight="regular" aria-hidden="true" />
-                    {selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"}
-                  </span>
-                  <span className="homecam-video-control-chip">
-                    <ShieldCheck size={16} weight="regular" aria-hidden="true" />
-                    {selectedDevice?.monitoringEnabled ? "연속 녹화" : "녹화 안 함"}
-                  </span>
-                  <button type="button" onClick={() => setTab("events")}>
-                    확인할 사건 {openIncidents.length}건
-                  </button>
-                </div>
+                <VideoCamera size={38} weight="light" aria-hidden="true" />
+                <strong>
+                  {!selectedDevice
+                    ? "홈캠을 연결해 주세요"
+                    : !selectedDevice.cameraEnabled
+                      ? "카메라가 꺼져 있어요"
+                      : selectedDevice.online
+                        ? "보안 채널 연결 대기 중"
+                        : "홈캠이 오프라인이에요"}
+                </strong>
+                <span className="ui-video-clock">{formatLiveClock(liveClockMs)}</span>
               </div>
-            </div>}
+            )}
 
-            <div className="homecam-quick-grid">
-              <article className="homecam-live-state-card">
+            <div className="homecam-quick-grid ui-live-cards">
+              <button type="button" className="ui-button is-strong ui-wide" onClick={() => void openLive()}
+                disabled={!selectedDevice?.online || !selectedDevice.cameraEnabled || busy === "live"}>
+                <ArrowClockwise size={16} weight="bold" aria-hidden="true" />
+                {busy === "live" ? "연결 중" : liveViewer ? "연결 재시도" : "실시간 연결"}
+              </button>
+
+              <article className="ui-card ui-rows">
                 <h2>현재 상태</h2>
-                <div className="homecam-live-state-list">
-                  <div>
-                    <i className={displayedMediaReady ? "is-good" : ""} aria-hidden="true" />
-                    <span>영상 연결</span>
-                    <strong>{displayedMediaReady ? "연결됨" : selectedDevice?.online ? "연결 중" : "오프라인"}</strong>
-                  </div>
-                  <div>
-                    <i className={selectedDevice?.cameraEnabled ? "is-good" : ""} aria-hidden="true" />
-                    <span>카메라 전원</span>
-                    <strong>{selectedDevice?.cameraEnabled ? "켜짐" : "꺼짐"}</strong>
-                    {selectedDevice && (
-                      <Switch
-                        checked={selectedDevice.cameraEnabled}
-                        disabled={!isOwner || Boolean(busy)}
-                        label="카메라 전원"
-                        onChange={(value) => void updateSetting("cameraEnabled", value)}
-                      />
-                    )}
-                  </div>
-                  <div>
-                    <i className={selectedDevice?.microphoneEnabled ? "is-good" : ""} aria-hidden="true" />
-                    <span>보호자 마이크</span>
-                    <strong>{selectedDevice?.microphoneEnabled ? "사용 가능" : "꺼짐"}</strong>
-                  </div>
-                  <div>
-                    <i
-                      className={
-                        storageReady
-                          ? "is-good"
-                          : storageConnecting
-                            ? "is-pending"
-                            : storageError
-                              ? "is-error"
-                              : ""
-                      }
-                      aria-hidden="true"
+                <div>
+                  <span>영상 연결</span>
+                  <strong className={displayedMediaReady ? "is-good" : ""}>{displayedMediaReady ? "연결됨" : selectedDevice?.online ? "연결 중" : "오프라인"}</strong>
+                </div>
+                <div>
+                  <span>카메라 전원</span>
+                  {selectedDevice && (
+                    <Switch
+                      checked={selectedDevice.cameraEnabled}
+                      disabled={!isOwner || Boolean(busy)}
+                      label="카메라 전원"
+                      onChange={(value) => void updateSetting("cameraEnabled", value)}
                     />
-                    <span>영상 저장</span>
-                    <strong aria-live="polite">
-                      {!storageEnabled
-                        ? "안 함"
-                        : !selectedDevice?.cameraEnabled
-                          ? "카메라 꺼짐"
-                        : storageReady
-                          ? "저장 중"
-                          : storageConnecting
-                            ? "준비 중"
-                            : "저장 오류"}
-                    </strong>
-                    {selectedDevice && (
-                      <Switch
-                        checked={selectedDevice.monitoringEnabled}
-                        disabled={!isOwner || Boolean(busy)}
-                        label="연속 녹화"
-                        onChange={(value) => void updateSetting("monitoringEnabled", value)}
-                      />
-                    )}
-                  </div>
+                  )}
+                </div>
+                <div>
+                  <span>보호자 마이크</span>
+                  <strong className={selectedDevice?.microphoneEnabled ? "is-good" : ""}>{selectedDevice?.microphoneEnabled ? "사용 가능" : "꺼짐"}</strong>
+                </div>
+                <div>
+                  <span>영상 저장</span>
+                  <strong
+                    aria-live="polite"
+                    className={
+                      storageReady
+                        ? "is-good"
+                        : storageConnecting
+                          ? "is-pending"
+                          : storageError
+                            ? "is-error"
+                            : ""
+                    }
+                  >
+                    {!storageEnabled
+                      ? "안 함"
+                      : !selectedDevice?.cameraEnabled
+                        ? "카메라 꺼짐"
+                      : storageReady
+                        ? "저장 중 · 연속 녹화"
+                        : storageConnecting
+                          ? "준비 중"
+                          : "저장 오류"}
+                  </strong>
+                </div>
+                <div>
+                  <span>연속 녹화</span>
+                  {selectedDevice && (
+                    <Switch
+                      checked={selectedDevice.monitoringEnabled}
+                      disabled={!isOwner || Boolean(busy)}
+                      label="연속 녹화"
+                      onChange={(value) => void updateSetting("monitoringEnabled", value)}
+                    />
+                  )}
                 </div>
               </article>
-              <article className="homecam-live-recent-card">
-                <div><h2>확인이 필요한 사건</h2><button type="button" onClick={() => setTab("events")}>전체 보기</button></div>
-                <section>
-                  {openIncidents.slice(0, 2).map((incident) => (
-                    <button type="button" key={incident.incidentId} onClick={() => { setFocusedIncidentId(incident.incidentId); setTab("events"); }}>
-                      <span className="fall-incident-icon is-check"><Warning size={18} weight="bold" /></span>
-                      <small>{formatIncidentTime(incident.occurredAt)}</small>
-                      <strong>{incident.fallSeen ? "낙상" : "낙상 의심"}</strong>
-                    </button>
-                  ))}
-                  {openIncidents.length === 0 && <p>확인할 사건이 없어요.</p>}
-                </section>
+
+              <article className="ui-card ui-incidents">
+                <div className="ui-card-head">
+                  <h2>확인이 필요한 사건</h2>
+                  <button type="button" className="ui-text-button" onClick={() => setTab("events")}>전체 보기</button>
+                </div>
+                {openIncidents.length === 0 && <p className="ui-hint">확인할 사건이 없어요.</p>}
+                {openIncidents.slice(0, 2).map((incident) => (
+                  <button type="button" key={incident.incidentId}
+                    className={`ui-incident ${incident.unacknowledged ? "is-urgent" : ""}`}
+                    onClick={() => { setFocusedIncidentId(incident.incidentId); setTab("events"); }}>
+                    <span className={`ui-badge ${incident.unacknowledged ? "is-danger" : "is-warn"}`}>
+                      {incident.unacknowledged ? "아무도 확인하지 않음" : "확인 필요"}
+                    </span>
+                    <strong>{incident.fallSeen ? "낙상" : "낙상 의심"}</strong>
+                    <small>{formatIncidentTime(incident.occurredAt)}</small>
+                  </button>
+                ))}
               </article>
-              <div className="homecam-live-side-actions">
-                <button type="button" onClick={() => void openLive()} disabled={!selectedDevice?.online || !selectedDevice.cameraEnabled || busy === "live"}>
-                  <ArrowClockwise size={16} weight="bold" aria-hidden="true" />
-                  {liveViewer ? "연결 재시도" : "실시간 연결"}
-                </button>
-              </div>
             </div>
           </section>
         )}
@@ -1503,197 +1453,186 @@ export function HomecamDashboard({
           <RobotMapPanel key={`robot-${selectedDevice?.id ?? ""}`} device={selectedDevice} controlsMode="managed" />
         )}
 
-        {tab === "settings" && (
-          <section className="homecam-section" aria-labelledby="homecam-settings-title">
-            <div className="homecam-section-heading">
-              <div>
-                <span>개인정보 보호</span>
-                <h1 id="homecam-settings-title">홈캠 설정</h1>
-              </div>
-              <span className="homecam-role-badge">
-                {selectedDevice?.role === "owner"
-                  ? "소유자"
-                  : selectedDevice?.role === "family"
-                    ? "보호자"
-                    : "읽기 전용"}
+        {tab === "settings" && settingsView === "main" && (
+          <section className="ui-screen ui-settings" aria-label="설정">
+            <article className="ui-card ui-account">
+              <span className="ui-account-avatar" aria-hidden="true">{authStatus?.authenticated ? "나" : "?"}</span>
+              <span className="ui-account-text">
+                <strong>{authStatus?.authenticated ? "로그인한 계정" : "로그인 상태 확인 중"} <span className={`ui-badge ${isOwner ? "is-accent" : ""}`}>{roleLabel}</span></strong>
+                <small>이메일로 로그인 중</small>
               </span>
+            </article>
+            <div className="ui-two-buttons ui-account-actions">
+              <button type="button" className="ui-button" onClick={() => void signOut()}
+                disabled={!authStatus?.authenticated || signingOut}>
+                {signingOut ? "로그아웃 중" : "로그아웃"}
+              </button>
             </div>
-            <div className="homecam-settings-workspace">
-              <aside className="homecam-settings-nav" aria-label="설정 항목">
-                <button type="button" className="is-active">화면 모드</button>
-                <button type="button">보호자</button>
-                <button type="button">말벗 이름</button>
-                <button type="button">카메라와 마이크</button>
-                <button type="button">알림</button>
-                <button type="button">영상 보관</button>
-                <button type="button">낙상 감지</button>
-                <button type="button">개인정보</button>
-                <button type="button" onClick={() => openMap("view")}>지도 관리</button>
-                <button type="button">연결된 말벗</button>
-                <button type="button">소프트웨어 정보</button>
-              </aside>
-              <div className="homecam-settings-grid">
-              <section className="homecam-settings-card homecam-display-settings">
-                <div className="settings-card-heading">
-                  <span className="settings-heading-icon" aria-hidden="true">
-                    {colorMode === "dark"
-                      ? <Moon size={21} weight="regular" />
-                      : <Sun size={21} weight="regular" />}
-                  </span>
-                  <div>
-                    <h2>화면 모드</h2>
-                    <p>홈·홈캠·사건·지도·설정 화면의 밝기를 선택합니다.</p>
-                  </div>
-                </div>
-                <div className="homecam-theme-options" role="group" aria-label="화면 모드 선택">
-                  <button type="button" className={colorMode === "light" ? "is-active" : ""} onClick={() => {
-                    window.localStorage.setItem("malbut-color-mode", "light");
-                    setColorMode("light");
-                  }}>
-                    <Sun size={19} weight="regular" aria-hidden="true" />
-                    라이트 모드
-                  </button>
-                  <button type="button" className={colorMode === "dark" ? "is-active" : ""} onClick={() => {
-                    window.localStorage.setItem("malbut-color-mode", "dark");
-                    setColorMode("dark");
-                  }}>
-                    <Moon size={19} weight="regular" aria-hidden="true" />
-                    다크 모드
-                  </button>
-                </div>
-                <div className="homecam-setting-row homecam-text-size-row">
-                  <div>
-                    <strong>큰 글자</strong>
-                    <span>화면 전체 글자를 키웁니다 · 본문 16→18px</span>
-                  </div>
-                  <div className="homecam-theme-options" role="group" aria-label="글자 크기 선택">
-                    <button type="button" className={textSize === "default" ? "is-active" : ""} onClick={() => {
-                      window.localStorage.setItem("malbut-text-size", "default");
-                      setTextSize("default");
-                    }}>
-                      <TextAa size={19} weight="regular" aria-hidden="true" />
-                      기본
-                    </button>
-                    <button type="button" className={textSize === "large" ? "is-active" : ""} onClick={() => {
-                      window.localStorage.setItem("malbut-text-size", "large");
-                      setTextSize("large");
-                    }}>
-                      <TextAa size={22} weight="bold" aria-hidden="true" />
-                      크게
-                    </button>
-                  </div>
-                </div>
-              </section>
 
-              {selectedDevice && (
-                <FallHomecamSettings
-                  key={selectedDevice.id}
-                  deviceId={selectedDevice.id}
-                  demo={LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID}
-                  isOwner={isOwner}
-                  cameraEnabled={selectedDevice.cameraEnabled}
-                  recordingEnabled={selectedDevice.monitoringEnabled}
-                  microphoneEnabled={selectedDevice.microphoneEnabled}
-                  settingBusy={Boolean(busy)}
-                  onUpdateSetting={(settingKey, value) => void updateSetting(settingKey, value)}
-                />
-              )}
+            {isGuardianView && <p className="ui-info">설정은 소유자만 바꿀 수 있어요. 지금 상태만 보여요.</p>}
 
-              <section className="homecam-settings-card">
-                <div className="settings-card-heading">
-                  <span className="settings-heading-icon" aria-hidden="true">
-                    <Bell size={21} weight="regular" />
-                  </span>
-                  <div>
-                    <h2>낙상 알림</h2>
-                    <p>알림에는 사진 없이 단계와 시각만 표시합니다.</p>
-                  </div>
-                </div>
-                <div className="homecam-setting-row">
-                  <div><strong>Web Push</strong><span>낙상이 의심되면 알려드려요. 아무도 확인하지 않으면 [재발신]해요.</span></div>
+            <div className="ui-group">
+              <span className="ui-group-title">우리 집 말벗</span>
+              <div className="ui-card ui-list">
+                <button type="button" onClick={() => setSettingsView("homecam")}>
+                  <span><strong>홈캠 설정</strong><small>카메라 · 연속 녹화 · 낙상 감지 · 클라우드 AI · 말벗 마이크</small></span>
+                  <CaretRight size={18} aria-hidden="true" />
+                </button>
+                <button type="button" onClick={() => setSettingsView("guardians")}>
+                  <span><strong>보호자</strong><small>{isOwner ? "함께 보는 사람 · 보호자 초대" : "함께 보는 사람 보기"}</small></span>
+                  <CaretRight size={18} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+
+            <div className="ui-group">
+              <span className="ui-group-title">알림</span>
+              <article className="ui-card ui-setting">
+                <div className="ui-setting-row">
+                  <span><strong>낙상 알림</strong><small>낙상이 의심되면 알려드려요. 아무도 확인하지 않으면 [재발신]해요.</small></span>
                   <Switch
                     checked={pushEnabled}
                     disabled={busy === "push"}
-                    label="Web Push 알림"
+                    label="낙상 알림"
                     onChange={() => void togglePush()}
                   />
                 </div>
-                <p className="homecam-ios-note">
-                  iPhone·iPad는 이 사이트를 홈 화면에 설치한 뒤 알림을 켤 수 있습니다.
-                </p>
-              </section>
+                <small className="ui-note">알림에는 사진 없이 단계와 시각만 표시해요. 이 휴대폰에만 적용돼요.</small>
+                <small className="ui-note">iPhone·iPad는 이 사이트를 홈 화면에 설치한 뒤 알림을 켤 수 있어요.</small>
+              </article>
+            </div>
 
-              <section className="homecam-settings-card homecam-family-card">
-                <div className="settings-card-heading">
-                  <span className="settings-heading-icon" aria-hidden="true">
-                    <UsersThree size={21} weight="regular" />
-                  </span>
-                  <div>
-                    <h2>보호자 계정</h2>
-                    <p>보호자는 실시간 보기·지난 영상·말하기를 사용할 수 있습니다.</p>
-                  </div>
-                </div>
-                {isOwner && (
-                  <div className="homecam-family-invite">
-                    <label>
-                      <span className="sr-only">초대할 보호자 이메일</span>
-                      <input
-                        type="email"
-                        value={inviteEmail}
-                        onChange={(event) => setInviteEmail(event.target.value)}
-                        placeholder="family@example.com"
-                        autoComplete="email"
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => void inviteFamily()}
-                      disabled={!inviteEmail.includes("@") || busy === "family"}
-                    >
-                      초대
+            <div className="ui-group">
+              <span className="ui-group-title">화면</span>
+              <article className="ui-card ui-setting">
+                <span><strong>큰 글자</strong><small>화면 전체 글자를 키워요 · 본문 16→18px</small></span>
+                <div className="ui-segment" role="group" aria-label="글자 크기">
+                  {(["default", "large"] as const).map((size) => (
+                    <button type="button" key={size} aria-pressed={textSize === size}
+                      className={textSize === size ? "is-on" : ""}
+                      onClick={() => {
+                        window.localStorage.setItem("malbut-text-size", size);
+                        setTextSize(size);
+                      }}>
+                      {size === "default" ? "기본" : "크게"}
                     </button>
-                  </div>
-                )}
-                <div className="homecam-family-list" aria-busy={familyLoading}>
-                  {familyLoading && <p>가족 계정을 불러오는 중입니다…</p>}
-                  {!familyLoading && family.length === 0 && <p>아직 연결된 가족 계정이 없습니다.</p>}
-                  {!familyLoading && family.map((member) => (
-                    <div key={member.id}>
-                      <span className="family-avatar" aria-hidden="true">{member.email.slice(0, 1).toUpperCase()}</span>
-                      <span><strong>{member.email}</strong><small>{member.role === "owner" ? "소유자" : "가족"}</small></span>
-                      {isOwner && member.role !== "owner" && (
-                        <button
-                          type="button"
-                          onClick={() => void removeFamily(member)}
-                          disabled={busy === `family:${member.id}`}
-                        >
-                          권한 해제
-                        </button>
-                      )}
-                    </div>
                   ))}
                 </div>
-              </section>
+              </article>
+            </div>
+
+            <div className="ui-group">
+              <span className="ui-group-title">정보</span>
+              <div className="ui-card ui-list">
+                <div className="ui-list-row"><span>연결된 말벗</span><small>{devices.length}대</small></div>
+                {!standalone && installPrompt && (
+                  <button type="button" onClick={() => void installApp()}>
+                    <span><strong>홈 화면에 설치</strong><small>앱처럼 바로 열고 알림을 받을 수 있어요</small></span>
+                    <CaretRight size={18} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="ui-group">
+              <span className="ui-group-title">개발자 메뉴 (디자인 그대로)</span>
+              <div className="ui-card ui-list is-dev">
+                <button type="button" onClick={() => setTab("robot")}>
+                  <span>개발자 화면 (주행·디버그)</span>
+                  <CaretRight size={18} aria-hidden="true" />
+                </button>
+                <button type="button" onClick={() => setSettingsView("legacy")}>
+                  <span>개발 · 이전 버전 연결</span>
+                  <CaretRight size={18} aria-hidden="true" />
+                </button>
               </div>
             </div>
           </section>
         )}
 
-        {(externalError || (notice && (tab !== "live" || selectedDevice))) && (
-          <div className="homecam-notice" role="status">
-            <Info size={18} weight="bold" aria-hidden="true" />
-            <p>{externalError || notice}</p>
-            {availability === "unavailable" && (
-              <button type="button" onClick={() => void loadDevices()}>다시 확인</button>
-            )}
-          </div>
+        {tab === "settings" && settingsView === "homecam" && (
+          <section className="ui-screen ui-settings-sub" aria-label="홈캠 설정">
+            {settingsBack("홈캠 설정")}
+            {selectedDevice ? (
+              <FallHomecamSettings
+                key={selectedDevice.id}
+                deviceId={selectedDevice.id}
+                demo={LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID}
+                isOwner={isOwner}
+                cameraEnabled={selectedDevice.cameraEnabled}
+                recordingEnabled={selectedDevice.monitoringEnabled}
+                microphoneEnabled={selectedDevice.microphoneEnabled}
+                settingBusy={Boolean(busy)}
+                onUpdateSetting={(settingKey, value) => void updateSetting(settingKey, value)}
+              />
+            ) : <p className="ui-hint">등록된 말벗이 없어요.</p>}
+          </section>
         )}
 
-        {tab === "settings" && (
-          <details className="homecam-legacy" open={legacyOpen} onToggle={(event) => setLegacyOpen(event.currentTarget.open)}>
-            <summary>개발·이전 버전 연결</summary>
-            <div>
-              <p>등록된 가족 계정 연결이 준비되지 않았을 때만 기존 코드+비밀번호 시청 방식을 사용합니다.</p>
+        {tab === "settings" && settingsView === "guardians" && (
+          <section className="ui-screen ui-settings-sub" aria-label="보호자">
+            {settingsBack("보호자")}
+            <p className="ui-hint">{isOwner ? "소유자 화면 · 보호자는 목록만 볼 수 있어요" : "보호자는 목록만 볼 수 있어요"}</p>
+            <article className="ui-card ui-people" aria-busy={familyLoading}>
+              <h2>함께 보는 사람</h2>
+              {familyLoading && <p className="ui-hint">보호자 목록을 불러오는 중이에요…</p>}
+              {!familyLoading && family.length === 0 && <p className="ui-hint">아직 함께 보는 보호자가 없어요.</p>}
+              {!familyLoading && family.map((member) => (
+                <div key={member.id} className="ui-person">
+                  <span className="ui-person-avatar" aria-hidden="true">{member.email.slice(0, 1).toUpperCase()}</span>
+                  <span className="ui-person-text">
+                    <strong>{member.email} <span className={`ui-badge ${member.role === "owner" ? "is-accent" : ""}`}>{member.role === "owner" ? "소유자" : "보호자"}</span></strong>
+                  </span>
+                  {isOwner && member.role !== "owner" && (
+                    <button type="button" className="ui-button is-danger-line ui-small"
+                      onClick={() => setRemoveTarget(member)} disabled={busy === `family:${member.id}`}>
+                      내보내기
+                    </button>
+                  )}
+                </div>
+              ))}
+              {removeTarget && (
+                <div className="ui-confirm">
+                  <span>{removeTarget.email} 님을 내보낼까요? 이 말벗의 영상과 사건을 더 볼 수 없어요.</span>
+                  <div className="ui-two-buttons">
+                    <button type="button" className="ui-button" onClick={() => setRemoveTarget(null)}>취소</button>
+                    <button type="button" className="ui-button is-danger"
+                      onClick={() => { const member = removeTarget; setRemoveTarget(null); void removeFamily(member); }}>
+                      내보내기
+                    </button>
+                  </div>
+                </div>
+              )}
+            </article>
+            {isOwner && (
+              <article className="ui-card ui-invite">
+                <h2>보호자 초대</h2>
+                <small className="ui-note">초대한 계정으로 로그인하면 이 말벗의 영상과 사건을 함께 볼 수 있어요.</small>
+                <label className="ui-field">
+                  <span>초대할 보호자 이메일</span>
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(event) => setInviteEmail(event.target.value)}
+                    placeholder="guardian@example.com"
+                    autoComplete="email"
+                  />
+                </label>
+                <button type="button" className="ui-button is-strong"
+                  onClick={() => void inviteFamily()}
+                  disabled={!inviteEmail.includes("@") || busy === "family"}>
+                  초대
+                </button>
+              </article>
+            )}
+          </section>
+        )}
+
+        {tab === "settings" && settingsView === "legacy" && (
+          <section className="ui-screen ui-settings-sub" aria-label="개발 · 이전 버전 연결">
+            {settingsBack("개발 · 이전 버전 연결")}
+            <div className="homecam-legacy is-open">
+              <p>등록된 보호자 계정 연결이 준비되지 않았을 때만 기존 코드+비밀번호 시청 방식을 사용합니다.</p>
               <div className="homecam-legacy-actions">
                 <button
                   type="button"
@@ -1732,10 +1671,20 @@ export function HomecamDashboard({
               </div>
               {legacyArchive && <div className="homecam-legacy-archive">{legacyArchive}</div>}
             </div>
-          </details>
+          </section>
+        )}
+
+        {(externalError || (notice && (tab !== "live" || selectedDevice))) && (
+          <div className="ui-notice" role="status">
+            <Info size={18} weight="bold" aria-hidden="true" />
+            <p>{externalError || notice}</p>
+            {availability === "unavailable" && (
+              <button type="button" className="ui-text-button" onClick={() => void loadDevices()}>다시 확인</button>
+            )}
+          </div>
         )}
       </main>
-
+      <UiTabBar activeTab={tab} onNavigate={navigate} />
     </div>
   );
 }
