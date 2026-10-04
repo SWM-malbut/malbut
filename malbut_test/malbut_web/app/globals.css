@@ -9943,8 +9943,8 @@ a:focus-visible {
 
 /* ---- 새 디자인: 앱 틀 · 홈 · 홈캠 · 설정 (앱 UI 개편 목업) ---------------------
    휴대폰 화면 기준. 넓은 화면은 같은 화면을 가운데 한 줄(720px)로 보여 준다.
-   색은 --ui-* 이름만 쓰고, 글자는 rem이라 "큰 글자"를 따른다. 지도·개발자 화면은
-   기존 모양을 그대로 쓴다(다음 단계에서 다시 그림). */
+   색은 --ui-* 이름만 쓰고, 글자는 rem이라 "큰 글자"를 따른다. 개발자 화면은
+   기존 모양을 그대로 쓴다. */
 .homecam-dashboard-shell.ui-app,
 .homecam-dashboard-shell.ui-app.tab-live {
   display: block; min-height: 100dvh; color: var(--ui-text); background: var(--ui-bg);
@@ -9954,7 +9954,6 @@ a:focus-visible {
   padding: 0 0 calc(84px + env(safe-area-inset-bottom, 0px));
   display: flex; flex-direction: column;
 }
-.homecam-dashboard-shell.ui-app.tab-map .homecam-main.ui-main,
 .homecam-dashboard-shell.ui-app.tab-robot .homecam-main.ui-main { max-width: none; padding-left: 16px; padding-right: 16px; }
 .ui-app button { font: inherit; }
 
@@ -10215,3 +10214,151 @@ a:focus-visible {
 /* 설정 › 홈캠 설정 화면에서는 위 머리(‹ 설정 · 홈캠 설정)가 제목을 대신한다. */
 .ui-settings-sub .fall-page > .fall-list-head { display: none; }
 .ui-settings-sub .fall-page { border-radius: 0; background: transparent; }
+
+/* ---- 새 디자인: 지도 · 방·구역 편집 · 지도 관리 (앱 UI 개편 목업) ---------------
+   지도 그림 안쪽(방 경계·구역·분할선 그리기)은 기존 CSS를 그대로 쓰고, 틀·표시·카드만 바꾼다. */
+.ui-map { display: flex; flex-direction: column; }
+.ui-map .ui-note, .ui-map-sub .ui-note { margin: 0; }
+.ui-card h3 { margin: 0; font-size: 0.875rem; font-weight: 700; }
+.ui-choice-chips { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+.ui-choice-chips button {
+  min-height: 36px; padding: 0 0.875rem; border-radius: 999px; border: 1px solid var(--ui-control-border);
+  background: var(--ui-surface); color: var(--ui-text); font-size: 0.8125rem; cursor: pointer;
+}
+.ui-choice-chips button.is-active { border-color: var(--ui-strong); background: var(--ui-strong); color: var(--ui-on-strong); }
+.ui-choice-chips button:disabled { opacity: 0.5; cursor: not-allowed; }
+.ui-button.is-emphasis { border-color: var(--ui-strong); }
+.ui-button.is-selected { border: 2px solid var(--ui-strong); font-weight: 700; }
+.ui-two-buttons > :only-child { grid-column: 1 / -1; }
+
+/* 지도 틀: 흰 카드 안에 지도 그림 */
+.homecam-dashboard-shell.ui-app .robot-map-card.ui-map-frame {
+  display: block; flex: none; min-height: 0; padding: 0;
+  border: 1px solid var(--ui-border); border-radius: 12px; background: var(--ui-surface); overflow: hidden;
+}
+.homecam-dashboard-shell.ui-app .ui-map-frame .robot-map-canvas { border-radius: 0; background: var(--ui-surface); }
+.homecam-dashboard-shell.ui-app .ui-map-frame .ui-map-empty { margin: 0 auto; padding: 2.5rem 1rem; color: var(--ui-text-muted); }
+.homecam-dashboard-shell.ui-app .ui-map-frame .ui-map-empty strong { margin-top: 0.75rem; color: var(--ui-text); font-size: 1rem; }
+.homecam-dashboard-shell.ui-app .ui-map-frame .ui-map-empty p { font-size: 0.8125rem; }
+.homecam-dashboard-shell.ui-app .ui-map-frame .robot-map-marker {
+  border-color: var(--ui-surface); background: var(--ui-accent); box-shadow: 0 0 0 1px var(--ui-accent);
+}
+.homecam-dashboard-shell.ui-app .ui-map-frame .robot-map-marker > span { background: var(--ui-accent); }
+.homecam-dashboard-shell.ui-app .ui-map-frame .robot-map-goal {
+  width: 16px; height: 16px; border: 2px solid var(--ui-surface); border-radius: 4px;
+  background: var(--ui-warn); box-shadow: none; transform: translate(-50%, -50%) rotate(45deg);
+}
+.homecam-dashboard-shell.ui-app .ui-map-frame .robot-map-goal.is-exploration { border-color: var(--ui-warn); background: transparent; }
+.homecam-dashboard-shell.ui-app .ui-map-frame .robot-map-path polyline { stroke: var(--ui-warn); }
+.homecam-dashboard-shell.ui-app .ui-map-frame .robot-map-path.is-trail polyline { stroke: var(--ui-accent); }
+.homecam-dashboard-shell.ui-app .ui-map-frame .robot-map-room-label {
+  border-color: var(--ui-border); color: var(--ui-text); background: color-mix(in srgb, var(--ui-surface) 92%, transparent);
+  font-weight: 500;
+}
+.homecam-dashboard-shell.ui-app .ui-map-frame .robot-map-room-label.is-selected {
+  border-color: var(--ui-strong); color: var(--ui-on-strong); background: var(--ui-strong);
+}
+.homecam-dashboard-shell.ui-app .ui-map-legend {
+  flex-wrap: wrap; overflow: visible; gap: 0.375rem 0.875rem; min-height: 0; padding: 0 0.25rem;
+  color: var(--ui-text-muted); font-size: 0.75rem;
+}
+.homecam-dashboard-shell.ui-app .ui-map-legend span { gap: 0.3125rem; }
+.homecam-dashboard-shell.ui-app .ui-map-legend i.is-robot { width: 8px; height: 8px; background: var(--ui-accent); }
+.homecam-dashboard-shell.ui-app .ui-map-legend i.is-goal {
+  width: 8px; height: 8px; border-radius: 2px; background: var(--ui-warn); transform: rotate(45deg);
+}
+.homecam-dashboard-shell.ui-app .ui-map-legend i.is-route { width: 16px; border-top-color: var(--ui-warn); }
+
+/* 지도: 지금 말벗은 · 방 이름으로 보내기 · 자율주행 */
+.ui-map-status-title { font-size: 1.0625rem; font-weight: 700; line-height: 1.45; }
+.ui-map-status .ui-badge, .ui-map-mapping .ui-badge { align-self: flex-start; }
+.ui-progress { height: 8px; border-radius: 4px; background: var(--ui-neutral-soft); overflow: hidden; }
+.ui-progress i { display: block; height: 100%; background: var(--ui-accent); transition: width 900ms linear; }
+.ui-map-meta-row { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.8125rem; color: var(--ui-text-muted); }
+.ui-map-facts {
+  margin: 0; padding-top: 0.625rem; border-top: 1px solid var(--ui-divider);
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem 0.75rem; font-size: 0.8125rem;
+}
+.ui-map-facts dt { color: var(--ui-text-muted); }
+.ui-map-facts dd { margin: 0; }
+.ui-map-facts dd.is-ok { color: var(--ui-ok); }
+.ui-map-facts dd.is-error { color: var(--ui-danger); }
+.ui-map-room-send { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; }
+.ui-map-room-send .ui-button { min-height: 44px; padding: 0 0.375rem; word-break: keep-all; }
+.ui-map-stack { display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-map-owner-note { padding: 0 0.25rem; }
+
+/* 방·구역 편집 */
+.ui-map-sub .ui-segment { margin-top: 0.25rem; }
+.ui-map-editor { gap: 0.75rem; }
+.ui-map-editor .ui-field > span { color: var(--ui-text); }
+.ui-map-editor .ui-field input:disabled { color: var(--ui-text-muted); background: var(--ui-neutral-soft); }
+.ui-map-editor .ui-field .ui-choice-chips button { min-height: 34px; padding: 0 0.75rem; }
+.ui-map-goal-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;
+  padding-top: 0.625rem; border-top: 1px solid var(--ui-divider); font-size: 0.8125rem;
+}
+.ui-map-goal-row > span:first-child { display: flex; flex-direction: column; gap: 0.125rem; }
+.ui-map-goal-row strong { font-size: 0.875rem; font-weight: 700; }
+.ui-map-goal-row small { font-size: 0.8125rem; color: var(--ui-text-muted); }
+.ui-map-goal-row .is-ok { color: var(--ui-ok); }
+.ui-map-color input[type="color"] { width: 3.5rem; height: 2.5rem; min-height: 0; padding: 0.125rem; cursor: pointer; }
+.ui-map-tool { display: flex; flex-direction: column; gap: 0.625rem; }
+.ui-rule-choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; }
+.ui-rule-choices button {
+  min-height: 46px; border-radius: 10px; border: 1px solid var(--ui-control-border);
+  background: var(--ui-surface); color: var(--ui-text); font-size: 0.8125rem; cursor: pointer;
+}
+.ui-rule-choices button.is-active { border: 2px solid var(--ui-strong); font-weight: 700; }
+.ui-card h3.ui-map-section-head { margin-top: 0.25rem; padding-top: 0.75rem; border-top: 1px solid var(--ui-divider); }
+.ui-map-create { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; }
+.ui-map-create .ui-button { padding: 0 0.375rem; font-size: 0.8125rem; word-break: keep-all; }
+.ui-map-room-zone { display: flex; flex-direction: column; gap: 0.375rem; }
+.ui-map-room-zone .ui-button { justify-content: flex-start; gap: 0.625rem; min-height: 44px; }
+.ui-map-room-zone .ui-button i { flex: none; width: 14px; height: 14px; border-radius: 4px; }
+.ui-map-room-zone .ui-button span { flex: 1; text-align: left; }
+.ui-map-room-zone .ui-button small { font-size: 0.75rem; color: var(--ui-accent); }
+.homecam-dashboard-shell.ui-app .ui-map-editor .robot-map-split-legend { gap: 0.375rem 0.75rem; color: var(--ui-text-muted); }
+.homecam-dashboard-shell.ui-app .ui-map-editor .robot-map-split-status {
+  min-height: 0; padding: 0.625rem 0.75rem; border: 0; border-radius: 10px;
+  color: var(--ui-text-muted); background: var(--ui-bg); font-size: 0.8125rem; font-weight: 400;
+}
+.homecam-dashboard-shell.ui-app .ui-map-editor .robot-map-split-status.is-ready { color: var(--ui-ok); background: var(--ui-ok-soft); }
+.homecam-dashboard-shell.ui-app .ui-map-editor .robot-map-split-status.is-valid { color: var(--ui-ok); background: var(--ui-ok-soft); font-weight: 700; }
+.homecam-dashboard-shell.ui-app .ui-map-editor .robot-map-split-status.is-invalid { color: var(--ui-danger); background: var(--ui-danger-soft); }
+.homecam-dashboard-shell.ui-app .ui-map-editor .robot-map-split-status.is-checking { color: var(--ui-warn-text); background: var(--ui-warn-soft); }
+
+/* 방 목록 · 구역 목록 */
+.homecam-dashboard-shell.ui-app .ui-map-list.robot-map-list-card { padding: 0; gap: 0; }
+.ui-map-list > h2 { padding: 0.875rem 0.875rem 0.375rem; font-size: 0.875rem; }
+.ui-map-list > p { padding: 0 0.875rem 0.875rem; }
+.homecam-dashboard-shell.ui-app .ui-map-list.robot-map-list-card > button {
+  margin: 0; min-height: 44px; padding: 0.625rem 0.875rem; border: 0; border-top: 1px solid var(--ui-divider); border-radius: 0;
+  display: flex; align-items: center; gap: 0.625rem; color: var(--ui-text); background: none; font-size: 0.875rem; text-align: left;
+}
+.homecam-dashboard-shell.ui-app .ui-map-list.robot-map-list-card > button.is-selected {
+  margin: 0; padding: 0.625rem 0.875rem; border-radius: 0; background: var(--ui-accent-soft);
+}
+.ui-map-list > button > span { flex: 1; min-width: 0; }
+.homecam-dashboard-shell.ui-app .ui-map-list.robot-map-list-card strong {
+  margin-left: 0; color: var(--ui-accent-strong); font-size: 0.75rem; font-weight: 700;
+}
+.ui-map-list > button > small { font-size: 0.75rem; color: var(--ui-text-muted); }
+
+/* 지도 관리 */
+.ui-map-summary { gap: 0.5rem; }
+.ui-map-summary > div { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.875rem; }
+.ui-map-summary > div > span:first-child { color: var(--ui-text-muted); }
+.ui-map-summary strong { font-weight: 500; }
+.ui-map-summary strong.is-ok { color: var(--ui-ok); }
+.ui-map-summary strong.is-accent { color: var(--ui-accent-strong); }
+.ui-map-sub .ui-card > .ui-hint { line-height: 1.6; }
+.ui-map-mapping { gap: 0.75rem; border: 2px solid var(--ui-accent); }
+.ui-map-mapping h3 { font-size: 0.8125rem; font-weight: 500; color: var(--ui-text-muted); }
+.ui-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-steps li { display: flex; align-items: center; gap: 0.625rem; font-size: 0.875rem; color: var(--ui-icon-muted); }
+.ui-steps li i { flex: none; width: 12px; height: 12px; box-sizing: border-box; border-radius: 6px; border: 2px solid var(--ui-control-border); }
+.ui-steps li.is-done { color: var(--ui-text-muted); }
+.ui-steps li.is-done i { border: 0; background: var(--ui-ok); }
+.ui-steps li.is-current { color: var(--ui-text); font-weight: 700; }
+.ui-steps li.is-current i { border: 0; background: var(--ui-accent); }
