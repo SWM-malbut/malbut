@@ -9,7 +9,8 @@ from malbut_agent_server.adapters.outbound.sqlite_fall_journal import SqliteFall
 from malbut_agent_server.application.cloud_fall_monitor import CloudFallMonitor
 from malbut_agent_server.application.fall_frame_buffer import FallFrameBuffer
 from malbut_agent_server.domain.fall_monitoring import (
-    CandidateKind, CloudFallReply, FallCandidate, FallRuntimePolicy, RgbFrame, VideoAssessment,
+    CandidateKind, CloudFallReply, FallCandidate, FallRuntimePolicy, IncidentState,
+    RgbFrame, VideoAssessment,
 )
 
 
@@ -41,12 +42,25 @@ with TemporaryDirectory() as directory:
                 asyncio.run(monitor.run_once())
                 # Exercise the newly emitted revision event as well as final outcomes.
                 if assessment == 'confirmed_incident' and not help_needed:
+                    original = monitor.incident(iid)
                     now[0] += 3
                     monitor.ingest_rgb(RgbFrame(now[0], b'\xff\xd8test\xff\xd9'))
                     monitor.candidate(FallCandidate(
                         'changed', subject, 'yolo_pose', CandidateKind.MOTION_SEEN, now[0],
                         significant_change=True))
                     asyncio.run(monitor.run_once())
+                    # The ongoing question is still bound to its original
+                    # evidence. Finish it before answering the newer question;
+                    # never forge its result using the current incident revision.
+                    assert monitor.incident(iid).question_id == original.question_id
+                    assert monitor.confirmation_result(
+                        incident_id=iid, question_id=original.question_id, subject_key=subject,
+                        evidence_revision=original.revision, situation_assessment=assessment,
+                        help_needed=help_needed)
+                    current = monitor.incident(iid)
+                    assert current.state is not IncidentState.RESOLVED
+                    assert current.answer is None
+                    assert current.question_id != original.question_id
                 incident = monitor.incident(iid)
                 assert monitor.confirmation_result(
                     incident_id=iid, question_id=incident.question_id, subject_key=subject,

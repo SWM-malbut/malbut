@@ -276,6 +276,13 @@ test("Manager confirmation journal preserves all six outcomes through storage an
     for (const record of records) assert.equal((await repo.storeFallEvent("robot-a", record)).stored, true);
     const confirmations = records.filter((r) => r.eventKind === "confirmation_completed");
     assert.equal(confirmations.length, 6);
+    const oldAnswer = records.filter((r) => r.eventKind === "voice_result");
+    assert.equal(oldAnswer.length, 1);
+    assert.equal(oldAnswer[0].evidenceRevision, 1);
+    assert.equal(oldAnswer[0].state, "recheck_required");
+    const latestAnswer = confirmations.find((r) => r.incidentId === oldAnswer[0].incidentId);
+    assert.equal(latestAnswer.evidenceRevision, 2);
+    assert.equal(latestAnswer.state, "resolved");
     assert.ok(records.some((r) => r.eventKind === "incident_updated"));
     assert.equal(new Set(confirmations.map((r) => `${r.reason}:${r.state}`)).size, 6);
     const incidents = await repo.listFallIncidents("robot-a");
