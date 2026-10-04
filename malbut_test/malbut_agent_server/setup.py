@@ -20,7 +20,8 @@ setup(
         ),
         (
             'share/' + package_name + '/docs',
-            ['docs/SEMANTIC_MEMORY.md', 'docs/MANAGER_VOICE_COMMANDS.md',
+            ['docs/SEMANTIC_MEMORY.md', 'docs/LONG_TERM_CONTEXT_MEMORY.md',
+             'docs/MANAGER_VOICE_COMMANDS.md',
              'docs/MANAGER_VOICE_SPEC.md', 'docs/MANAGER_VOICE_INTERFACE.md',
              'docs/MANAGER_VOICE_LAB.md'],
         ),
