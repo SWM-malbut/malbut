@@ -19,18 +19,36 @@
 - 사건 이벤트가 아직 없으면 `503`(로봇이 다시 보냄). 같은 판인데 내용이 다르거나 다른 실행(`bootId`)의 사건이면 `409`.
 - 클립 등록은 알림을 만들지 않는다.
 
+### 사람 표시 박스
+
+`POST /api/device/v1/fall-incident-people` (같은 인증, JSON 256 KB 이하). 마이그레이션: `0015_fall_incident_people.sql`.
+
+```json
+{"schemaVersion":1,"incidentId":"<uuid>","bootId":"boot-1","segmentIndex":0,"revision":1,"truncated":false,
+ "tracks":[{"key":"3f2a9c01b7de","target":true,"samples":[[0,100,200,300,800],[200,101,200,301,800]]}],
+ "cloud":[[4000,100,400,700,900]]}
+```
+
+- 표본 `[구간 시작부터 ms, 왼쪽, 위, 오른쪽, 아래]`, 좌표는 화면의 1/1000 정수. 위치만 받고 영상·추적 ID는 받지 않는다.
+- `tracks`: 로봇 자세 분석 박스(초당 최대 5번), 사람 12명·사람당 650개 이하. `key`는 로봇이 만든 12자 해시로
+  같은 장면의 연결된 사건끼리 같은 사람을 맞추는 데만 쓴다. `target`은 이 사건의 사람(최대 1명).
+- `cloud`: 클라우드 AI가 분석한 사진의 추정 위치, 32개 이하.
+- 같은 구간의 클립이 아직 없으면 `503`(로봇이 다시 보냄). 판(`revision`) 처리와 `409`는 클립과 같다.
+- 영상 보관 기간(7일)이 지난 구간의 박스는 정기 작업에서 지운다.
+
 ## 사용자 API (소유자·공유 사용자 모두)
 
 | 경로 | 내용 |
 |---|---|
 | `GET /api/devices/{id}/fall-incidents?filter=all\|check\|closed\|normal\|report` | 목록 50개. "아무도 확인하지 않음"이 맨 앞 |
-| `GET /api/devices/{id}/fall-incidents/{incidentId}` | 사건 + 장면 + 자동 판정 기록 + 알림 이력 + 의견 + 활동 기록 + 같은 장면의 다른 사건 |
+| `GET /api/devices/{id}/fall-incidents/{incidentId}` | 사건 + 장면(사람 표시 박스가 있으면 `hasPeople`) + 자동 판정 기록 + 알림 이력 + 의견 + 활동 기록 + 같은 장면의 다른 사건 |
 | `PUT .../{incidentId}/opinion` `{"label":"fall\|suspected_fall\|normal\|null","memo":"..."}` | 내 의견 하나. `null`이면 해제. 메모 500자 이하 |
 | `POST .../{incidentId}/close` `{}` | 처리 완료. 사건이 닫히는 유일한 방법. 의견(누구 것이든)이 하나도 없으면 `409 needs_opinion` |
 | `POST /api/devices/{id}/fall-reports` `{"momentAt":"...","memo":"..."}` | 놓친 넘어짐 신고. 그 순간 −10 s ~ +20 s, 알림 없음. 메모 500자 이하(선택) |
 | `GET /api/devices/{id}/fall-timeline?from=…&to=…` | 연속 녹화 화면의 하루(26시간 이하): 녹화된 구간과 사건 위치 |
 | `POST /api/devices/{id}/recording-playback` `{"startAt","endAt"}` | 순간을 고르기 위한 녹화 재생(10분 이하, 그 로봇 녹화가 있는 시간만). 영상 0초 = `alignedStartAt` |
 | `POST .../{incidentId}/clips/{segmentIndex}/playback` | 장면 HLS 재생 주소 (5분) |
+| `GET .../{incidentId}/clips/{segmentIndex}/people` | 사람 표시 박스. "사람 N"은 이 구간과 겹치는 사건들에서 처음 나타난 순서로 매겨 연결된 사건끼리 같다. 없으면 `404` |
 
 변경 요청은 같은 사이트의 JSON 요청만 받는다. 권한이 없으면 사건이 있는지도 알려 주지 않고 `404`.
 

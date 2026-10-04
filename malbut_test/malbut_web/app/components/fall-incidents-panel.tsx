@@ -24,7 +24,13 @@ type IncidentSummary = {
 };
 type Clip = {
   segmentIndex: number; startAt: string; endAt: string; anchorKinds: string[]; foundDown: boolean;
-  clockStepped: boolean; playbackState: SceneState;
+  clockStepped: boolean; playbackState: SceneState; hasPeople?: boolean;
+};
+/** [ms from the clip start, left, top, right, bottom] in 1/1000 of the frame. */
+type PeopleSample = [number, number, number, number, number];
+type ScenePeople = {
+  people: Array<{ label: string; target: boolean; samples: PeopleSample[] }>;
+  cloud: PeopleSample[];
 };
 type IncidentDetail = IncidentSummary & {
   viewerEmail: string;
@@ -131,15 +137,82 @@ async function json(response: Response) {
 
 type Request = (url: string, init?: RequestInit) => Promise<Response>;
 
-function useScenePlayer({ deviceId, incidentId, clip, request }: {
+const OVERLAY_KEY = "malbut.fall.personOverlay";
+const POSE_GAP_MS = 600;
+const CLOUD_SHOW_MS = 500;
+
+type Box = [number, number, number, number];
+
+/** Robot Pose: interpolated between samples; hidden across a gap in tracking. */
+function poseBoxAt(samples: PeopleSample[], now: number): Box | null {
+  let i = 0;
+  while (i < samples.length && samples[i][0] <= now) i += 1;
+  const before = samples[i - 1], after = samples[i];
+  if (before && after && after[0] - before[0] <= POSE_GAP_MS) {
+    const k = (now - before[0]) / (after[0] - before[0]);
+    return [1, 2, 3, 4].map((j) => before[j] + (after[j] - before[j]) * k) as Box;
+  }
+  if (before && now - before[0] <= POSE_GAP_MS / 2) return before.slice(1) as Box;
+  return null;
+}
+
+/** Cloud AI: only around the analyzed photo it came from. */
+function cloudBoxesAt(samples: PeopleSample[], now: number): Box[] {
+  return samples.filter((s) => Math.abs(s[0] - now) <= CLOUD_SHOW_MS).map((s) => s.slice(1) as Box);
+}
+
+function PersonBox({ box, kind, label }: { box: Box; kind: string; label: string }) {
+  return (
+    <div className={`fall-person ${kind}`} style={{
+      left: `${box[0] / 10}%`, top: `${box[1] / 10}%`,
+      width: `${(box[2] - box[0]) / 10}%`, height: `${(box[3] - box[1]) / 10}%`,
+    }}><span>{label}</span></div>
+  );
+}
+
+function PeopleOverlay({ scene, now }: { scene: ScenePeople; now: number }) {
+  return (
+    <div className="fall-people" aria-hidden>
+      {scene.people.map((person) => {
+        const box = poseBoxAt(person.samples, now);
+        return box && <PersonBox key={person.label} box={box} label={person.label}
+          kind={person.target ? "is-target" : "is-other"} />;
+      })}
+      {cloudBoxesAt(scene.cloud, now).map((box, i) => <PersonBox key={`ai-${i}`} box={box} kind="is-cloud" label="AI 추정" />)}
+    </div>
+  );
+}
+
+function useScenePlayer({ deviceId, incidentId, clip, request, scene, demo }: {
   deviceId: string; incidentId: string; clip: Clip; request: Request;
+  /** Boxes to draw, or null when 사람 표시 is off or has nothing. */
+  scene: ScenePeople | null; demo: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [message, setMessage] = useState("");
+  // Milliseconds from the clip start of the frame on screen.
+  const [now, setNow] = useState<number | null>(null);
+  const offsetRef = useRef(0);
 
   useEffect(() => {
-    if (!playing) return;
+    if (!playing || !scene) return;
+    const clipLength = Date.parse(clip.endAt) - Date.parse(clip.startAt);
+    const startedAt = performance.now();
+    let frame = 0;
+    const tick = () => {
+      const video = videoRef.current;
+      // Local demo has no video: loop the clip's time on a still image.
+      if (demo) setNow((performance.now() - startedAt) % clipLength);
+      else if (video && video.readyState >= 2) setNow((video.currentTime - offsetRef.current) * 1000);
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playing, scene, demo, clip.startAt, clip.endAt]);
+
+  useEffect(() => {
+    if (!playing || demo) return;
     const video = videoRef.current;
     const controller = new AbortController();
     let dispose = () => undefined as void;
@@ -157,6 +230,7 @@ function useScenePlayer({ deviceId, incidentId, clip, request }: {
         const body = await response.json().catch(() => ({}));
         if (response.ok && typeof body.playbackUrl === "string") {
           start = Number(body.seekAdjustmentSeconds) || 0;
+          offsetRef.current = start;
           end = start + (Number(body.durationSeconds) || Number.POSITIVE_INFINITY);
           return body.playbackUrl as string;
         }
@@ -188,11 +262,13 @@ function useScenePlayer({ deviceId, incidentId, clip, request }: {
       video.removeAttribute("src");
       video.load();
     };
-  }, [deviceId, incidentId, clip.segmentIndex, playing, request]);
+  }, [deviceId, incidentId, clip.segmentIndex, playing, request, demo]);
 
   return { playing, setPlaying, view: (
     <div className="fall-scene">
-      <video ref={videoRef} controls={playing} playsInline hidden={!playing} />
+      <video ref={videoRef} controls={playing} playsInline hidden={!playing || demo} />
+      {playing && demo && <div className="fall-scene-still" />}
+      {playing && scene && now !== null && <PeopleOverlay scene={scene} now={now} />}
       {!playing && <span className="fall-scene-hint">당시 영상 보기를 누르면 이 구간을 재생해요</span>}
       {message && <span className="fall-scene-message" role="status">{message}</span>}
       <div className="fall-scene-bar">
@@ -203,22 +279,61 @@ function useScenePlayer({ deviceId, incidentId, clip, request }: {
   ) };
 }
 
-function Scene({ deviceId, incidentId, clip, request, onOpenLive }: {
-  deviceId: string; incidentId: string; clip: Clip; request: Request; onOpenLive?: () => void;
+function readOverlayPreference() {
+  try { return window.localStorage.getItem(OVERLAY_KEY) !== "off"; } catch { return true; }
+}
+
+function Scene({ deviceId, incidentId, clip, request, demo, onOpenLive }: {
+  deviceId: string; incidentId: string; clip: Clip; request: Request; demo: boolean;
+  onOpenLive?: () => void;
 }) {
-  const player = useScenePlayer({ deviceId, incidentId, clip, request });
+  // Scene mounts only after the detail loads on the client, so storage is readable here.
+  const [showPeople, setShowPeople] = useState(readOverlayPreference);
+  const [loaded, setLoaded] = useState<ScenePeople | null>(null);
+  const [wanted, setWanted] = useState(false);
+  const toggle = (on: boolean) => {
+    setShowPeople(on);
+    try { window.localStorage.setItem(OVERLAY_KEY, on ? "on" : "off"); } catch { /* preference only */ }
+  };
+  // Boxes are fetched once, when the scene is first played with 사람 표시 on.
+  useEffect(() => {
+    if (!wanted || !showPeople || !clip.hasPeople || loaded) return;
+    const controller = new AbortController();
+    const url = `/api/devices/${encodeURIComponent(deviceId)}/fall-incidents/${encodeURIComponent(incidentId)}` +
+      `/clips/${clip.segmentIndex}/people`;
+    void request(url, { signal: controller.signal }).then(async (response) => {
+      if (response.ok) setLoaded(await response.json() as ScenePeople);
+    }).catch(() => undefined); // The video plays without boxes.
+    return () => controller.abort();
+  }, [wanted, showPeople, clip.hasPeople, clip.segmentIndex, loaded, deviceId, incidentId, request]);
+  const scene = showPeople ? loaded : null;
+  const player = useScenePlayer({ deviceId, incidentId, clip, request, scene, demo });
   const playable = ["available", "partial", "preparing"].includes(clip.playbackState);
   return (
     <>
       {player.view}
       <div className="fall-scene-note">
         <span>{clip.anchorKinds.includes("user_report") ? "신고한 순간 10초 전 ~ 20초 후" : "의심 시점 10초 전 ~ 20초 후"}</span>
+        {clip.hasPeople && (
+          <label className="fall-people-toggle">
+            <input type="checkbox" checked={showPeople} onChange={(e) => toggle(e.target.checked)} /> 사람 표시
+          </label>
+        )}
       </div>
+      {scene && (
+        <div className="fall-people-legend">
+          {scene.people.some((p) => p.target) && <span><i className="is-target" />이 사건의 사람</span>}
+          {scene.people.some((p) => !p.target) && <span><i className="is-other" />다른 사람</span>}
+          {scene.cloud.length > 0 && <span><i className="is-cloud" />클라우드 AI 추정 위치</span>}
+        </div>
+      )}
       {clip.foundDown && <p className="fall-hint">넘어진 순간은 녹화되지 않았을 수 있음 · 이미 쓰러진 모습을 발견한 시점 기준이에요.</p>}
-      {clip.clockStepped && <p className="fall-hint">로봇 시계가 바뀌어 시각이 정확하지 않을 수 있어요.</p>}
+      {clip.clockStepped && <p className="fall-hint">{clip.hasPeople && showPeople
+        ? "로봇 시계가 바뀌어 시각과 사람 표시가 조금 어긋날 수 있어요."
+        : "로봇 시계가 바뀌어 시각이 정확하지 않을 수 있어요."}</p>}
       <div className="fall-two-buttons">
         <button type="button" className="fall-button is-dark" disabled={!playable}
-          onClick={() => player.setPlaying(true)}>당시 영상 보기</button>
+          onClick={() => { setWanted(true); player.setPlaying(true); }}>당시 영상 보기</button>
         <button type="button" className="fall-button" disabled={!onOpenLive} onClick={onOpenLive}>지금 실시간으로 보기</button>
       </div>
     </>
@@ -368,7 +483,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           )}
           {clip ? (
             <Scene key={`${detail.incidentId}-${clip.segmentIndex}`} deviceId={deviceId} incidentId={detail.incidentId}
-              clip={clip} request={request} onOpenLive={onOpenLive} />
+              clip={clip} request={request} demo={demo} onOpenLive={onOpenLive} />
           ) : <p className="fall-hint">아직 장면 구간이 도착하지 않았어요.</p>}
         </section>
 

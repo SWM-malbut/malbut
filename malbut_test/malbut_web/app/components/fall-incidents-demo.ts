@@ -6,6 +6,38 @@ const minutes = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
 const range = (n: number) => ({ startAt: minutes(n + 0.17), endAt: minutes(n - 0.33) });
 
 type Row = Record<string, unknown> & { incidentId: string };
+type Box = [number, number, number, number]; // left, top, width, height (fractions)
+type Sample = [number, number, number, number, number]; // same as the people API
+
+// Demo person boxes in the people API format: Pose tracks at 5 per second,
+// Cloud AI boxes at a few analyzed frames. `at(t)` is a box `t` s into the clip.
+const lerp = (a: Box, b: Box, k: number) => a.map((v, i) => v + (b[i] - v) * Math.min(1, Math.max(0, k))) as Box;
+const sample = (t: number, [l, top, w, h]: Box): Sample =>
+  [Math.round(t * 1000), Math.round(l * 1000), Math.round(top * 1000), Math.round((l + w) * 1000), Math.round((top + h) * 1000)];
+function track(label: string, target: boolean, seconds: number, at: (t: number) => Box) {
+  const samples: Sample[] = [];
+  for (let n = 0; n * 0.2 <= seconds; n += 1) samples.push(sample(n * 0.2, at(n * 0.2)));
+  return { label, target, samples };
+}
+const STANDING: Box = [0.15, 0.26, 0.12, 0.52];
+const LYING: Box = [0.33, 0.62, 0.3, 0.17];
+const people: Record<string, { people: ReturnType<typeof track>[]; cloud: Sample[] }> = {
+  "demo-1": {
+    people: [
+      track("사람 1", true, 30, (t) => t < 9
+        ? lerp(STANDING, [0.36, 0.26, 0.12, 0.52], t / 9)
+        : lerp([0.36, 0.26, 0.12, 0.52], LYING, (t - 9) / 1.5)),
+      track("사람 2", false, 30, (t) => t < 14 ? [0.74, 0.3, 0.11, 0.48]
+        : t < 20 ? lerp([0.74, 0.3, 0.11, 0.48], [0.6, 0.3, 0.11, 0.48], (t - 14) / 6)
+        : lerp([0.6, 0.3, 0.11, 0.48], [0.58, 0.46, 0.14, 0.33], (t - 20) / 2)),
+    ],
+    cloud: [sample(11, [0.31, 0.6, 0.33, 0.2]), sample(14, [0.32, 0.61, 0.32, 0.19]), sample(17, [0.31, 0.6, 0.34, 0.2])],
+  },
+  "demo-3": {
+    people: [track("사람 1", true, 30, () => LYING)],
+    cloud: [sample(10, [0.31, 0.6, 0.33, 0.2]), sample(13, [0.32, 0.61, 0.32, 0.19])],
+  },
+};
 
 function summary(id: string, change: Record<string, unknown>): Row {
   return {
@@ -36,7 +68,7 @@ const incidents: Row[] = [
 const details: Record<string, Record<string, unknown>> = {
   "demo-1": {
     clips: [{ segmentIndex: 0, ...range(18), anchorKinds: ["pose_motion"], foundDown: false, clockStepped: false,
-      playbackState: "available" }],
+      playbackState: "available", hasPeople: true }],
     robotEvents: [
       { sequence: 1, eventKind: "incident_opened", occurredAt: minutes(18), assessment: null, answer: null },
       { sequence: 2, eventKind: "analysis_completed", occurredAt: minutes(17.9), assessment: "observed_fall", answer: null },
@@ -73,8 +105,8 @@ const details: Record<string, Record<string, unknown>> = {
         answer: "세 번째 사진부터 오른손으로 바닥을 짚는 모습이 보입니다.", createdAt: minutes(11) }] }],
   },
   "demo-3": {
-    clips: [{ segmentIndex: 0, ...range(160), anchorKinds: ["cloud_window"], foundDown: true, clockStepped: false,
-      playbackState: "partial" }],
+    clips: [{ segmentIndex: 0, ...range(160), anchorKinds: ["cloud_window"], foundDown: true, clockStepped: true,
+      playbackState: "partial", hasPeople: true }],
     robotEvents: [
       { sequence: 1, eventKind: "incident_opened", occurredAt: minutes(160), assessment: null, answer: null },
       { sequence: 2, eventKind: "analysis_unavailable", occurredAt: minutes(159.7), assessment: null, answer: null },
@@ -222,6 +254,11 @@ export async function demoIncidentFetch(url: string, init?: RequestInit): Promis
     }
     (details[row.incidentId] as { aiReviews: unknown[] }).aiReviews.push(queuedReview(momentAt));
     return reply({ review: { status: "queued" } }, 202);
+  }
+  if (action.endsWith("/people")) {
+    const scene = people[row.incidentId];
+    return scene ? reply({ segmentIndex: 0, revision: 1, truncated: false, ...scene })
+      : reply({ error: "이 장면에는 사람 표시가 없습니다." }, 404);
   }
   if (action.endsWith("/playback")) {
     return reply({ error: "로컬 데모에는 녹화 영상이 없습니다." }, 404);
