@@ -85,6 +85,8 @@ class CloudFallMonitor:
         self._enabled = self._camera = self._consent = self._connected = False
         self._epoch = 0
         self._incidents = {}
+        # One immutable question context per incident; live evidence may advance.
+        self._questions = {}
         self._events = []
         self._calls = deque()
         self._task: Optional[asyncio.Task] = None
@@ -453,7 +455,7 @@ class CloudFallMonitor:
                 current.kind = candidate.kind
                 self.request_recheck(current.incident_id)
                 # Old answers cannot describe the newly observed change.
-                current.question_id = None
+                current.question_id = self._pending_question_id(current)
                 current.answer = None
                 current.situation_assessment = None
                 current.help_needed = None
@@ -498,6 +500,10 @@ class CloudFallMonitor:
                  else candidate.observed_at)
         self._record_clip(incident, start, candidate.observed_at, anchor_kind='pose_motion')
 
+    def _pending_question_id(self, incident):
+        question = self._questions.get(incident.incident_id)
+        return question.question_id if question is not None and question.answer is None else None
+
     def ask_question(self, incident_id: str) -> Optional[str]:
         incident = self._incidents[incident_id]
         if incident.state is IncidentState.RESOLVED:
@@ -509,12 +515,28 @@ class CloudFallMonitor:
         incident.answer_question_played = False
         incident.situation_assessment = None
         incident.help_needed = None
+        if incident.video is not None:
+            self._questions[incident_id] = replace(incident)
         self._emit('question_requested', incident,
                    question_id=incident.question_id, reply=incident.video,
                    reason=('prior_fall_observed' if incident.fall_seen and incident.video
                            and incident.video.assessment is VideoAssessment.NORMAL_ACTIVITY
                            else None))
         return incident.question_id
+
+    def _continue_confirmation(self, incident):
+        """Reassess the latest evidence once an older question has finished."""
+        if incident.state is IncidentState.HELP_REQUIRED:
+            return
+        incident.question_id = None
+        if (incident.video is None or incident.video_revision != incident.revision
+                or incident.pending or self._active_incident == incident.incident_id):
+            return
+        if (incident.video.assessment is not VideoAssessment.NORMAL_ACTIVITY
+                or incident.fall_seen):
+            self.ask_question(incident.incident_id)
+        else:
+            self._emit('analysis_completed', incident, reply=incident.video)
 
     def confirmation_result(self, *, incident_id, question_id, subject_key,
                             evidence_revision, situation_assessment, help_needed):
@@ -532,10 +554,15 @@ class CloudFallMonitor:
                 or situation_assessment not in {'confirmed_incident', 'resolved', 'unknown'}
                 or type(help_needed) is not bool):
             raise ValueError('invalid confirmation result')
-        incident = self._incidents.get(incident_id)
+        current = self._incidents.get(incident_id)
+        question = self._questions.get(incident_id, current)
+        incident = (question if question is not None and current is not None
+                    and question.revision != current.revision else current)
         if (incident is None or incident.question_id != question_id
                 or incident.subject_key != subject_key
-                or incident.revision != evidence_revision):
+                or incident.revision != evidence_revision
+                or incident.answer is VoiceAnswer.FAILED
+                or (incident is not current and current.state is IncidentState.RESOLVED)):
             return False
         if incident.situation_assessment is not None:
             return (incident.situation_assessment == situation_assessment
@@ -545,12 +572,35 @@ class CloudFallMonitor:
         incident.situation_assessment = situation_assessment
         incident.help_needed = help_needed
         incident.pending = False
+        if incident is not current:
+            # This answer belongs to the question's original evidence, not to
+            # observations collected while the user was answering it.
+            incident.answer = (VoiceAnswer.HELP if help_needed else
+                               VoiceAnswer.UNCLEAR if incident.subject_key is None
+                               else VoiceAnswer.OKAY)
+            incident.state = (IncidentState.HELP_REQUIRED if help_needed
+                              else IncidentState.RECHECK_REQUIRED)
+            self._emit('confirmation_completed' if help_needed else 'voice_result',
+                       incident, question_id=question_id,
+                       reason=('scene_answer_unassociated' if incident.answer is VoiceAnswer.UNCLEAR
+                               else situation_assessment))
+            if help_needed:
+                current.state = IncidentState.HELP_REQUIRED
+                current.answer = VoiceAnswer.HELP
+                current.help_needed = True
+                incident.notification_level = current.notification_level
+                self._notify(incident, NotificationLevel.URGENT, 'confirmation_help_required')
+                current.notification_level = incident.notification_level
+            self._emit('incident_updated', current, reason='confirmation_finished_newer_evidence')
+            self._continue_confirmation(current)
+            return True
         if incident.subject_key is None and not help_needed:
             # The speaker has not been associated with the person(s) seen by
             # Cloud. Keep the reply, but never treat it as their clearance.
             incident.answer = VoiceAnswer.UNCLEAR
             if incident.state is not IncidentState.HELP_REQUIRED:
                 incident.state = IncidentState.RECHECK_REQUIRED
+            self._questions[incident_id] = replace(incident)
             self._emit('voice_result', incident, question_id=question_id,
                        reason='scene_answer_unassociated')
             self._emit('decision_required', incident, reason='target_unidentified')
@@ -560,6 +610,7 @@ class CloudFallMonitor:
         if not help_needed:
             incident.close_reason = ('risk_cleared' if situation_assessment == 'resolved'
                                      else 'response_completed')
+        self._questions[incident_id] = replace(incident)
         self._emit('confirmation_completed', incident, question_id=question_id,
                    reason=situation_assessment)
         if help_needed:
@@ -572,22 +623,37 @@ class CloudFallMonitor:
 
     def confirmation_failed(self, *, incident_id, question_id, evidence_revision):
         """Record an unavailable/failed conversation without inventing an answer."""
-        incident = self._incidents.get(incident_id)
+        current = self._incidents.get(incident_id)
+        question = self._questions.get(incident_id, current)
+        incident = (question if question is not None and current is not None
+                    and question.revision != current.revision else current)
         if (incident is None or incident.question_id != question_id
                 or incident.revision != evidence_revision
                 or incident.state is IncidentState.RESOLVED
+                or current.state is IncidentState.RESOLVED
                 or incident.situation_assessment is not None):
             return False
+        if incident.answer is VoiceAnswer.FAILED:
+            return True
         incident.answer = VoiceAnswer.FAILED
         incident.state = IncidentState.RECHECK_REQUIRED
+        self._questions[incident_id] = replace(incident)
         self._emit('agent_check_failed', incident, question_id=question_id,
                    reason='confirmation_transport_failed')
+        if incident is not current:
+            self._emit('incident_updated', current, reason='confirmation_finished_newer_evidence')
+            self._continue_confirmation(current)
         return True
 
     def pending_questions(self):
         """Retransmit unfinished handoffs so a late-starting Manager can receive them."""
         events = []
-        for incident in self._incidents.values():
+        for current in self._incidents.values():
+            if current.state is IncidentState.RESOLVED:
+                continue
+            incident = self._questions.get(current.incident_id, current)
+            if incident.answer is not None:
+                incident = current
             if (incident.state is IncidentState.RESOLVED or incident.answer is not None
                     or incident.video is None or incident.video_revision != incident.revision):
                 continue
@@ -608,11 +674,15 @@ class CloudFallMonitor:
         """Agent owns playback, waiting, speaker association and answer interpretation."""
         if not isinstance(reply, AgentCheckReply):
             raise ValueError('invalid Agent reply')
-        incident = self._incidents.get(reply.incident_id)
+        current = self._incidents.get(reply.incident_id)
+        question = self._questions.get(reply.incident_id, current)
+        incident = (question if question is not None and current is not None
+                    and question.revision != current.revision else current)
         if (incident is None or incident.question_id != reply.question_id
                 or incident.subject_key != reply.subject_key
                 or incident.revision != reply.evidence_revision
-                or incident.state is IncidentState.RESOLVED):
+                or incident.state is IncidentState.RESOLVED
+                or current.state is IncidentState.RESOLVED):
             return False
         answer = reply.answer
         # A help request can supersede an earlier answer to this question.
@@ -620,6 +690,9 @@ class CloudFallMonitor:
             return False
         incident.answer = answer
         incident.answer_question_played = reply.question_played
+        if incident is not current:
+            incident.notification_level = current.notification_level
+            incident.state = IncidentState.RECHECK_REQUIRED
         if answer is VoiceAnswer.HELP:
             incident.state = IncidentState.HELP_REQUIRED
             self._notify(incident, NotificationLevel.URGENT, 'help_requested')
@@ -629,6 +702,17 @@ class CloudFallMonitor:
             if answer is VoiceAnswer.FAILED:
                 self._emit('agent_check_failed', incident, reason='agent_failed')
         self._emit('voice_result', incident, reason=answer.value)
+        if incident.incident_id in self._questions:
+            self._questions[incident.incident_id] = replace(incident)
+        if incident is not current:
+            current.notification_level = incident.notification_level
+            if answer is VoiceAnswer.HELP:
+                current.state = IncidentState.HELP_REQUIRED
+                current.answer = VoiceAnswer.HELP
+                current.help_needed = True
+            self._emit('incident_updated', current, reason='confirmation_finished_newer_evidence')
+            self._continue_confirmation(current)
+            return True
         if answer is not VoiceAnswer.HELP:
             self._decision_needed(incident)
         return True
@@ -956,7 +1040,8 @@ class CloudFallMonitor:
                 and (target.answer is not None or (target.video is not None
                      and target.video.assessment is VideoAssessment.NORMAL_ACTIVITY))):
             target.revision += 1
-            target.question_id = target.answer = None
+            target.question_id = self._pending_question_id(target)
+            target.answer = None
             target.answer_question_played = False
             target.situation_assessment = target.help_needed = None
             target.state = IncidentState.VERIFYING
@@ -991,9 +1076,12 @@ class CloudFallMonitor:
         if target.answer is None:
             if target.question_id is None:
                 target.question_id = str(uuid4())
-            # Existing pending handoffs reuse their ID; Manager deduplicates
-            # them. This also supplies video for an earlier video-less question.
-            stage('question_requested', question_id=target.question_id, reply=target.video)
+            # Retransmission of an existing question uses its frozen snapshot
+            # in pending_questions(), not this newer association's evidence.
+            question = self._questions.get(target.incident_id)
+            if question is None or question.answer is not None:
+                question = replace(target)
+                stage('question_requested', question_id=target.question_id, reply=target.video)
         stage('cloud_discovery_linked', discovery=linked, reason='matched_after_tracking')
         if self._journal is not None:
             try:
@@ -1007,6 +1095,8 @@ class CloudFallMonitor:
                 raise FallJournalError('fall association persistence failed') from None
         # Atomic journal success precedes state/events visible to consumers.
         self._incidents[target.incident_id] = target
+        if target.answer is None:
+            self._questions[target.incident_id] = question
         entry.discovery = linked
         self._events.extend(events)
         self._record_clip(target, discovery.sample_times[0], discovery.sample_times[-1],
@@ -1041,7 +1131,7 @@ class CloudFallMonitor:
                       and finding.assessment is VideoAssessment.OBSERVED_FALL)
         if escalation and current.state is not IncidentState.HELP_REQUIRED:
             current.revision += 1
-            current.question_id = None
+            current.question_id = self._pending_question_id(current)
             current.answer = None
             current.answer_question_played = False
             current.situation_assessment = None
@@ -1093,7 +1183,7 @@ class CloudFallMonitor:
                 and finding.assessment is VideoAssessment.OBSERVED_FALL)
             if escalation and current.answer is not VoiceAnswer.HELP:
                 current.revision += 1
-                current.question_id = None
+                current.question_id = self._pending_question_id(current)
                 current.answer = None
                 current.answer_question_played = False
                 current.situation_assessment = None

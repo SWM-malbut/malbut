@@ -71,14 +71,40 @@ def test_transport_failure_does_not_become_help_needed_or_user_silence():
     assert 'situation_assessment' not in command
 
 
-def test_new_revision_cancels_old_question_and_rejects_its_result():
+def test_new_revision_keeps_current_question_and_its_original_result_correlation():
     coordinator, request = make()
-    coordinator.receive(event(kind='incident_updated', evidence_revision=2))
+    assert coordinator.receive(event(kind='incident_updated', evidence_revision=2))
+    assert coordinator.receive(event(question_id='new-question', evidence_revision=2))
+    assert list(coordinator.requests.values()) == [request]
+    assert coordinator.receive(event())
+    assert coordinator.complete(request, situation_assessment='resolved', help_needed=False)
+    command, = coordinator.drain_commands()
+    assert command['question_id'] == 'question' and command['evidence_revision'] == 1
+    assert coordinator.receive(event())
     assert not coordinator.requests
-    assert not coordinator.complete(request, situation_assessment='resolved', help_needed=False)
-    assert not coordinator.receive(event())
+    assert coordinator.drain_commands() == (command,)
     assert coordinator.receive(event(question_id='new-question', evidence_revision=2))
     assert list(coordinator.requests) == ['new-question']
+
+
+def test_late_coordinator_accepts_outstanding_question_after_newer_evidence():
+    coordinator = FallConfirmationCoordinator(runtime_id='vlm')
+    assert coordinator.receive(event(kind='incident_updated', evidence_revision=2))
+    assert coordinator.receive(event())
+    request, = coordinator.requests.values()
+    assert request.revision == 1
+    assert coordinator.revisions['incident'] == 2
+
+
+def test_old_question_completion_does_not_remove_next_question():
+    coordinator, request = make()
+    assert coordinator.complete(request, situation_assessment='resolved', help_needed=False)
+    coordinator.drain_commands()
+    assert coordinator.receive(event(question_id='new-question', evidence_revision=2))
+    assert coordinator.receive(event(kind='confirmation_completed'))
+    assert list(coordinator.requests) == ['new-question']
+    assert coordinator.receive(event())
+    assert not coordinator.drain_commands()
 
 
 def test_resolution_and_boot_restart_cannot_resurrect_old_questions():
@@ -102,9 +128,11 @@ def test_normal_video_requests_runtime_clearance_without_agent_conversation():
                            evidence_revision=1)
 
 
-def test_later_normal_video_does_not_interrupt_in_progress_confirmation():
+@pytest.mark.parametrize('revision', [1, 2])
+def test_later_normal_video_does_not_interrupt_in_progress_confirmation(revision):
     coordinator, request = make()
-    coordinator.receive(event(kind='analysis_completed', video_assessment='normal_activity'))
+    coordinator.receive(event(kind='analysis_completed', video_assessment='normal_activity',
+                              evidence_revision=revision))
     assert list(coordinator.requests.values()) == [request]
     assert coordinator.drain_commands() == ()
 
