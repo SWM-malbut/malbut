@@ -8,7 +8,8 @@ import sqlite3
 import time
 
 from malbut_agent_server.adapters.outbound.homecam_fall_events import (
-    FallClipUploader, FallEventUploader, HomecamFallClipClient, HomecamFallEventClient,
+    FallClipUploader, FallEventUploader, FallPeopleUploader, HomecamFallClipClient,
+    HomecamFallEventClient, HomecamFallPeopleClient,
 )
 from malbut_agent_server.adapters.outbound.sqlite_fall_journal import SqliteFallJournal
 
@@ -38,7 +39,8 @@ def main(argv=None):
     parser.add_argument('--execute', action='store_true', help='Actually upload stored metadata')
     parser.add_argument('--once', action='store_true', help='Process at most one pending event')
     parser.add_argument('--upload-clips', action='store_true',
-                        help='Also upload incident clip ranges (needs web support)')
+                        help='Also upload incident clip ranges and their person boxes '
+                             '(needs web support)')
     parser.add_argument('--retry-auth-failed', action='store_true',
                         help='Explicitly requeue 401/403 records after repairing credentials')
     args = parser.parse_args(argv)
@@ -66,8 +68,10 @@ def main(argv=None):
             if args.upload_clips:
                 uploaders.append(FallClipUploader(
                     journal, HomecamFallClipClient(device_token=token, **options)))
+                uploaders.append(FallPeopleUploader(
+                    journal, HomecamFallPeopleClient(device_token=token, **options)))
             while True:
-                # Events first: an alert must never wait behind a clip range.
+                # Events first: an alert must never wait behind a clip range or boxes.
                 processed = any(uploader.run_once() for uploader in uploaders)
                 if args.once:
                     break
