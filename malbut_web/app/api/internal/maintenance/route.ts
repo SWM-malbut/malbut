@@ -10,6 +10,7 @@ import { dispatchHomecamEventPush } from "../../../push-broker";
 import { deliverPendingFallNotice, deliverPendingFallPush } from "../../../fall-event-push";
 import { scheduleFallReminders } from "../../../../db/fall-review";
 import { recoverFallAiJobs } from "../../../../db/fall-ai-review";
+import { purgeExpiredFallPeople } from "../../../../db/fall-people";
 import { startFallAiJob } from "../../../fall-ai-review-worker";
 
 export const dynamic = "force-dynamic";
@@ -108,6 +109,10 @@ export async function POST(request: Request) {
   } catch {
     fallAiJobs = { started: false, reason: "fall_ai_worker_unavailable" };
   }
+  // 사람 표시 boxes go with the video they were drawn on.
+  let fallPeople: unknown;
+  try { fallPeople = { purged: await purgeExpiredFallPeople() }; }
+  catch { fallPeople = { purged: 0, reason: "fall_people_cleanup_unavailable" }; }
   return noStore(
     {
       retentionCleanup: true,
@@ -118,6 +123,7 @@ export async function POST(request: Request) {
       fallReminders,
       fallNotices,
       fallAiJobs,
+      fallPeople,
     },
     200,
   );

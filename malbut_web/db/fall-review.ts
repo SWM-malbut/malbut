@@ -231,6 +231,19 @@ export function clipPlaybackState(startAt: string, endAt: string, spans: Recordi
   return reached >= end - 1000 ? "available" : "partial";
 }
 
+/** Segments with person boxes (사람 표시); none before migration 0015. */
+async function peopleSegments(deviceId: string, incidentId: string) {
+  const pool = getPostgresPool();
+  const ready = (await pool.query(
+    "SELECT 1 FROM homecam_schema_migrations WHERE version='0015_fall_incident_people'",
+  )).rows.length === 1;
+  if (!ready) return new Set<number>();
+  return new Set((await pool.query(
+    "SELECT segment_index FROM fall_incident_people WHERE device_id=$1 AND incident_id=$2",
+    [deviceId, incidentId],
+  )).rows.map((r) => r.segment_index as number));
+}
+
 async function clipsWithState(deviceId: string, incidentId: string) {
   const rows = (await getPostgresPool().query(
     `SELECT segment_index,revision,start_at,end_at,anchor_kinds,found_down,clock_stepped
@@ -239,11 +252,12 @@ async function clipsWithState(deviceId: string, incidentId: string) {
   )).rows;
   if (!rows.length) return [];
   const spans = await recordingSpans(deviceId, iso(rows[0].start_at)!, iso(rows[rows.length - 1].end_at)!);
+  const people = await peopleSegments(deviceId, incidentId);
   return rows.map((row) => {
     const startAt = iso(row.start_at)!, endAt = iso(row.end_at)!;
     return { segmentIndex: row.segment_index, revision: row.revision, startAt, endAt,
       anchorKinds: row.anchor_kinds, foundDown: row.found_down, clockStepped: row.clock_stepped,
-      playbackState: clipPlaybackState(startAt, endAt, spans) };
+      playbackState: clipPlaybackState(startAt, endAt, spans), hasPeople: people.has(row.segment_index) };
   });
 }
 
