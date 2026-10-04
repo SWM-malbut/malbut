@@ -289,7 +289,10 @@ def test_changes_while_cloud_pending_do_not_attach_old_result(during, expected):
         elif during == 'stale':
             clock.value = 180
         else:
-            monitor.candidate(candidate(t=160))
+            # This candidate is NEWER than the captured window. A delayed
+            # candidate inside the window is covered by the temporal tests.
+            clock.value = 160.1
+            monitor.candidate(candidate(t=160.1))
             monitor.drain_events()
         provider.release.set()
         await task

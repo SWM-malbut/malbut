@@ -52,6 +52,44 @@ async function outboxCreatedAt(h, incidentId) {
   )).rows[0].created_at);
 }
 
+test("merged source keeps history and clips, but no duplicate check or robot reminder", async () => {
+  await withRepo(async ({ h, events, review }) => {
+    const source = event({ assessment: "suspected_fall" }), target = event();
+    await events.storeFallEvent("robot-a", source);
+    await review.storeFallClip("robot-a", clip({ incidentId: source.incidentId }));
+    await events.storeFallEvent("robot-a", notice({ incidentId: source.incidentId, sequence: 2,
+      state: "recheck_required", answer: "no_response", reason: "person_no_response", notificationLevel: "check" }));
+    const start = await outboxCreatedAt(h, source.incidentId);
+    await review.scheduleFallReminders(start + 180_001);
+    const merged = event({ incidentId: source.incidentId, sequence: 3, eventKind: "incident_merged",
+      state: "resolved", assessment: "suspected_fall", answer: "no_response",
+      reason: "findings_associated", mergedIntoIncidentIds: [target.incidentId] });
+    // The source merge can arrive before the target's events (offline upload).
+    await events.storeFallEvent("robot-a", merged);
+    assert.equal((await events.storeFallEvent("robot-a", merged)).created, false);
+    await events.storeFallEvent("robot-a", target);
+    const detail = await review.getFallIncidentDetail("robot-a", source.incidentId);
+    assert.equal(detail.category, "merged");
+    assert.equal(detail.assessment, "suspected_fall");
+    assert.equal(detail.needsCheck, false);
+    assert.equal(detail.unacknowledged, false);
+    assert.deepEqual(detail.mergedIntoIncidentIds, [target.incidentId]);
+    assert.equal(detail.robotEvents.length, 3);
+    assert.equal(detail.clips.length, 1);
+    const ids = async (filter) => (await review.listFallIncidentSummaries("robot-a", filter)).map((i) => i.incidentId);
+    assert.deepEqual(await ids("check"), [target.incidentId]);
+    assert.deepEqual(await ids("closed"), [source.incidentId]);
+    assert.deepEqual(await ids("normal"), []);
+    assert.equal(await review.claimFallNotice("robot-a"), null);
+    await review.scheduleFallReminders(start + 180_002);
+    assert.equal((await h.db.query("SELECT status FROM fall_web_notices WHERE incident_id=$1",
+      [source.incidentId])).rows[0].status, "canceled");
+    // Earlier alerts remain as historical evidence, not erased by the merge.
+    assert.equal((await h.db.query("SELECT count(*)::int AS n FROM fall_push_outbox WHERE incident_id=$1",
+      [source.incidentId])).rows[0].n, 1);
+  });
+});
+
 test("clip contract is strict: wall-clock ranges only, no media or session IDs", () => {
   const { parseFallClip } = moduleLoader()("app/fall-clip-contract.ts");
   assert.ok(parseFallClip(clip()));

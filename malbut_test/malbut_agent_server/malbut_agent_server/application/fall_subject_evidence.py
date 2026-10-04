@@ -19,8 +19,10 @@ class FallSubjectEvidence:
         self._frames = OrderedDict()
         self._tokens = {}
         self._gap = None
+        self.generation = 0
 
     def clear(self):
+        self.generation += 1
         self._frames.clear()
         self._tokens.clear()
         self._gap = None
@@ -80,3 +82,30 @@ class FallSubjectEvidence:
         return tuple(tuple((key, token, pose) for key, (token, pose) in
                            self._frames.get(frame.captured_at, {}).items())
                      for frame in window.frames)
+
+    def association_samples(self, sample_times, *, tolerance_s=.1):
+        """Exact observations, or BOTH neighbors within 100ms; no interpolation.
+
+        Preserve explicit empty/weak observations. A missing timestamp is not
+        permission to extrapolate from only one side or carry a box forward.
+        The caller must verify the same unambiguous token in every sample.
+        This tolerance is a development bound, not validated robot accuracy.
+        Exact-only target selection/normal closure above are unchanged.
+        """
+        if not 0 <= tolerance_s <= .1:
+            raise ValueError('association tolerance must be within 100ms')
+        stamps = tuple(self._frames)
+        result = []
+        for stamp in sample_times:
+            if stamp in self._frames:
+                result.append(((stamp, self.at(stamp)),))
+                continue
+            before = next((t for t in reversed(stamps) if t < stamp), None)
+            after = next((t for t in stamps if t > stamp), None)
+            if (before is None or after is None or tolerance_s == 0
+                    or stamp - before > tolerance_s + 1e-6
+                    or after - stamp > tolerance_s + 1e-6):
+                result.append(())
+            else:
+                result.append(((before, self.at(before)), (after, self.at(after))))
+        return tuple(result)

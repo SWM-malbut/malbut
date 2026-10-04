@@ -16,6 +16,20 @@ function notice(change = {}) {
     answer: "help_request", notificationLevel: "urgent", reason: "help_requested", ...change });
 }
 
+test("scene merge is a separate bounded terminal contract, never a normal judgment", () => {
+  const { parseFallEvent } = moduleLoader()("app/fall-contract.ts");
+  const merged = event({ eventKind: "incident_merged", state: "resolved",
+    reason: "findings_associated", assessment: "suspected_fall", mergedIntoIncidentIds: [randomUUID()] });
+  assert.deepEqual(parseFallEvent(merged), merged);
+  for (const change of [
+    { mergedIntoIncidentIds: [] }, { mergedIntoIncidentIds: [merged.incidentId] },
+    { mergedIntoIncidentIds: ["bad"] }, { mergedIntoIncidentIds: Array(129).fill(randomUUID()) },
+    { mergedIntoIncidentIds: [merged.mergedIntoIncidentIds[0], merged.mergedIntoIncidentIds[0]] },
+    { state: "verifying" }, { reason: "normal_verified" }, { answer: "help_request" },
+    { notificationLevel: "urgent" }, { eventKind: "incident_resolved" },
+  ]) assert.equal(parseFallEvent({ ...merged, ...change }), null);
+});
+
 test("fall request contract is strict, bounded, and excludes recipients/media/device spoofing", async () => {
   const { parseFallEvent, readFallEvent } = moduleLoader()("app/fall-contract.ts");
   assert.ok(parseFallEvent(event()));

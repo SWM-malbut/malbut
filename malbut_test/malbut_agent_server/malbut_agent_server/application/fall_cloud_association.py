@@ -7,7 +7,7 @@ Missing/ambiguous evidence is retained as an unidentified discovery by the calle
 from dataclasses import dataclass
 from typing import Optional
 
-from malbut_agent_server.domain.fall_monitoring import CloudAssociationEvidence
+from malbut_agent_server.domain.fall_monitoring import CloudAssociationEvidence, CloudPersonRegion
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,7 @@ def box_iou(a, b):
 def association_evidence(finding, snapshot):
     """Distinguish no usable counterpart observations from unverified identity.
 
-    Count ONLY frozen dispatch samples. A helper's box can make evidence
+    Count ONLY supplied measured samples. A helper's box can make evidence
     available; this never means Pose found the person in the Cloud finding.
     Missing Cloud locations use the whole request window for availability only.
     """
@@ -47,10 +47,14 @@ def association_evidence(finding, snapshot):
 
 
 def associate_finding(finding, snapshot):
-    if len(finding.regions) < 2:
+    return _associate_regions(finding.regions, snapshot)
+
+
+def _associate_regions(regions, snapshot):
+    if len(regions) < 2:
         return SceneAssociation('insufficient_locations')
     matched = set()
-    for region in finding.regions:
+    for region in regions:
         if region.frame_index >= len(snapshot):
             return SceneAssociation('invalid_sample_index')
         # Weak tracks can still be competing boxes: do not ignore them and
@@ -70,3 +74,39 @@ def associate_finding(finding, snapshot):
         return SceneAssociation('track_changed')
     key, token = next(iter(matched))
     return SceneAssociation('matched', key, token)
+
+
+def supplement_samples(frozen, current):
+    """Only fill observations not available at dispatch; never replace evidence."""
+    if len(frozen) != len(current):
+        raise ValueError('association snapshots must cover the same RGB frames')
+    return tuple(old or new for old, new in zip(frozen, current))
+
+
+def timed_association_evidence(finding, samples):
+    # Availability is counted per Cloud image, not per neighboring Pose image.
+    return association_evidence(finding, tuple(
+        tuple(entry for _, observed in group for entry in observed) for group in samples))
+
+
+def associate_timed_finding(finding, samples):
+    """Every measured neighbor must independently identify the SAME token.
+
+    Existing IoU and ambiguity guards apply to each neighbor, including weak
+    competing people. We never invent/interpolate a box at the RGB timestamp.
+    """
+    if len(finding.regions) < 2:
+        return SceneAssociation('insufficient_locations')
+    expanded, regions = [], []
+    for region in finding.regions:
+        if region.frame_index >= len(samples):
+            return SceneAssociation('invalid_sample_index')
+        group = samples[region.frame_index]
+        if not group:
+            return SceneAssociation('no_matching_track')
+        for _, observed in group:
+            regions.append(CloudPersonRegion(len(expanded), region.box))
+            expanded.append(observed)
+    # Four Cloud regions may require eight measured neighbors. Keep that
+    # internal expansion separate from the Cloud reply's four-region limit.
+    return _associate_regions(regions, expanded)

@@ -112,15 +112,17 @@ def test_deferred_link_through_real_ros_events_and_journal(tmp_path, mode):
                 coordinator = FallConfirmationCoordinator(runtime_id=flow.ids['vlm'])
                 for event in flow.events:
                     coordinator.receive(json.dumps(event))
-                assert {r.incident_id for r in coordinator.requests.values()} == {iid, source_id}
-                # A scene-level 'okay' cannot close the linked person's case.
+                assert {r.incident_id for r in coordinator.requests.values()} == {iid}
+                # A late answer to the retired scene cannot clear the person.
                 scene_question = next(
                     e for e in flow.events
                     if e['kind'] == 'question_requested' and e['incident_id'] == source_id)
                 flow.confirm(scene_question, situation_assessment='resolved', help_needed=False)
-                await flow.until(lambda: monitor.incident(source_id).answer is not None)
+                await flow.pump(.3)
                 assert monitor.incident(iid).state is not IncidentState.RESOLVED
-                assert monitor.incident(source_id).state is not IncidentState.RESOLVED
+                assert monitor.incident(source_id).state is IncidentState.RESOLVED
+                assert monitor.incident(source_id).close_reason == 'findings_associated'
+                assert monitor.incident(source_id).answer is None
             else:
                 assert not links
                 assert monitor.incident(source_id).question_id == source.question_id
