@@ -65,13 +65,10 @@ test("live dashboard uses rendered media state and exposes one camera control", 
   assert.match(dashboard, /requestedView === "live"/);
   assert.match(dashboard, /url\.searchParams\.set\("view", tab\)/);
   assert.match(dashboard, /url\.searchParams\.set\("mapMode", mapEntryMode\)/);
-  assert.match(
-    styles,
-    /theme-light\.tab-live \.homecam-connection-pill\.is-online[\s\S]*color: #1f6641/,
-  );
-  assert.match(styles, /homecam-live-channel-summary > span\.is-ready/);
-  assert.match(styles, /homecam-live-channel-summary > span\.is-error/);
-  assert.match(styles, /homecam-live-state-list i\.is-error/);
+  // 새 디자인의 홈캠 "현재 상태" 줄: 저장 상태를 색으로 구분한다.
+  assert.match(styles, /\.ui-rows strong\.is-good \{[^}]*color: var\(--ui-ok\)/);
+  assert.match(styles, /\.ui-rows strong\.is-pending \{[^}]*color: var\(--ui-warn-text\)/);
+  assert.match(styles, /\.ui-rows strong\.is-error \{[^}]*color: var\(--ui-danger\)/);
   assert.match(styles, /\.homecam-live-view\.is-pip \{[\s\S]*position: fixed;/);
   assert.match(styles, /\.homecam-live-view\.is-pip \{[\s\S]*touch-action: none;/);
   assert.match(styles, /\.homecam-live-view\.is-pip \.homecam-quick-grid \{[\s\S]*display: none !important;/);
