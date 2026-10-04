@@ -117,18 +117,27 @@ def test_short_confirmation_survives_the_default_onset_guard(dialogue):
 
 def test_separate_real_identical_utterances_are_each_accepted(dialogue):
     """The guard checks audio onset, never a blacklist or repeated text."""
-    run = dialogue(text='감사합니다.')
-    for _ in range(2):
-        run.feed(QUIET * 16)  # Let the previous endpoint chime drain.
+    run = dialogue(awake=False, text='감사합니다.')
+    for turn in range(2):
+        run.feed(QUIET * 16)  # Let the previous endpoint chime drain before wake.
+        run.feed(VOICE * 4 + QUIET * 20)
+        assert run.pipeline.session.active
+        run.feed(QUIET * 16)  # Let the new wake chime drain before the utterance.
         run.feed(VOICE * 4)
         run.feed(QUIET * 100)
+        uid = run.transcripts[-1][0]
+        assert not run.pipeline.session.active and run.pipeline._reply_request_id == uid
+        run.pipeline.on_playback_status(f'answer-{turn}', 'playing', request_id=uid)
+        run.pipeline.on_playback_status(f'answer-{turn}', 'finished', request_id=uid)
+        assert not run.pipeline.session.active and run.pipeline._reply_request_id is None
 
     assert [text for _, text in run.transcripts] == ['감사합니다.', '감사합니다.']
     ids = [uid for uid, _ in run.transcripts]
     assert len(set(ids)) == 2
     assert run.statuses == [('', uid, 'started') for uid in ids]
-    assert [kind for kind, _ in run.calls] == ['command', 'command']
+    assert [kind for kind, _ in run.calls] == ['wake', 'command', 'wake', 'command']
     assert run.endpoint_chimes == ['endpoint', 'endpoint']
+    assert run.wake_chimes == ['wake', 'wake']
 
 
 def test_quiet_gap_requires_a_new_consecutive_onset(dialogue):

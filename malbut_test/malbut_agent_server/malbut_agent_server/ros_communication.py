@@ -231,13 +231,16 @@ def create_communication_node(
                 previous = self._receipts.lookup(utterance_id, text)
             except SpeechInputTooLongError as error:
                 self.get_logger().warning(f'speech_dialogue invalid input: {error}')
-                self.say('한 번에 처리할 수 있는 16000자를 넘었어요. 나누어 말씀해 주세요.')
+                self.say('한 번에 처리할 수 있는 16000자를 넘었어요. 나누어 말씀해 주세요.',
+                         request_id=utterance_id)
                 return
             except ValueError:
                 self.get_logger().warning('speech_dialogue invalid input')
                 return
             except sqlite3.Error:
                 self.get_logger().error('speech_dialogue receipt unavailable')
+                self.say('대화를 접수하지 못했어요. 다시 말씀해 주세요.',
+                         request_id=utterance_id)
                 return
             if previous is not None:
                 receive_transcript(
@@ -246,20 +249,27 @@ def create_communication_node(
                 return
             if self.dialogue.startup_error:
                 self.get_logger().error('speech_dialogue startup failed')
-                self.say('대화 처리를 준비하지 못했어요. 실행 설정을 확인해 주세요.')
+                self.say('대화 처리를 준비하지 못했어요. 실행 설정을 확인해 주세요.',
+                         request_id=utterance_id)
                 return
             if not self.dialogue.has_capacity():
                 self.get_logger().warning('speech_dialogue busy; not accepted')
-                self.say('앞선 대화를 처리하고 있어요. 잠시 뒤 다시 말씀해 주세요.')
+                self.say('앞선 대화를 처리하고 있어요. 잠시 뒤 다시 말씀해 주세요.',
+                         request_id=utterance_id)
                 return
             outcome = receive_transcript(
                 self._receipts, utterance_id, text, self.get_logger(),
             )
+            if outcome == 'storage_error':
+                self.say('대화를 접수하지 못했어요. 다시 말씀해 주세요.',
+                         request_id=utterance_id)
+                return
             if outcome == 'received' and not self.dialogue.submit(
                 utterance_id, text,
             ):
                 self.get_logger().error('speech_dialogue submission failed')
-                self.say('대화를 처리하지 못했어요. 다시 말씀해 주세요.')
+                self.say('대화를 처리하지 못했어요. 다시 말씀해 주세요.',
+                         request_id=utterance_id)
 
         async def _classify_addressee(self, request, response):
             """Yield to the executor while the dialogue worker classifies."""

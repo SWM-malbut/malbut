@@ -47,7 +47,7 @@ class AudioRig:
         self.asr_allowed.set()
         self.tts = SpeechRuntime(
             SimpleNamespace(generate=self.synthesize), self.player,
-            lambda pid, state, interim: self.events.put(('playback', pid, state)),
+            lambda pid, state, interim, request_id: self.events.put(('playback', pid, state)),
         )
         self.stt = DialoguePipeline(
             recorder_factory=lambda: SimpleNamespace(

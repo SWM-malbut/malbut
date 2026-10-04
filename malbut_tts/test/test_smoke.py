@@ -26,7 +26,7 @@ def test_single_request_uses_selected_backend_and_same_runtime(
 
         def submit(self, text):
             received['text'] = text
-            self.on_status('test-id', 'finished', False)
+            self.on_status('test-id', 'finished', False, '')
             return 'test-id'
 
         def close(self):
@@ -71,7 +71,7 @@ def test_default_api_request_needs_no_local_model_and_discloses_external_audio(
 
         def submit(self, text):
             received['text'] = text
-            self.on_status('api-id', 'finished', False)
+            self.on_status('api-id', 'finished', False, '')
             return 'api-id'
 
         def close(self):

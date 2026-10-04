@@ -126,18 +126,47 @@ def interrupt(harness, pipeline):
     return uid
 
 
-def test_one_open_microphone_runs_wake_then_consecutive_commands(harness):
-    pipeline = harness.create()
+@pytest.mark.parametrize('aec', [False, True])
+def test_each_command_requires_wake_and_waits_for_its_final_reply(harness, aec):
+    pipeline = harness.create(aec=aec)
     wake_up(harness, pipeline)
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.transcripts) == 1)
     first_id = harness.transcripts[0][0]
+    assert not pipeline.session.active
+    # TV speech and even wake phrases cannot queue while Agent/TTS prepares.
+    finish_command(pipeline)
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    pipeline.poll()
+    assert len(harness.command_calls) == len(harness.wake_calls) == 1
+    for state in ('playing', 'finished'):
+        pipeline.on_playback_status('progress', state, interim=True, request_id=first_id)
+    pipeline.on_playback_status('other', 'failed', request_id='unrelated')
+    harness.now = 1.0
+    finish_command(pipeline)
+    assert len(harness.transcripts) == 1 and pipeline.jobs.empty()
+    pipeline.on_playback_status('answer', 'playing', request_id=first_id)
+    finish_command(pipeline)
+    assert len(harness.transcripts) == 1
+    pipeline.on_playback_status('answer', 'finished', request_id=first_id)
+    assert not pipeline.session.active
+    harness.now = 1.31
+    pipeline.wake.transcribe = lambda pcm, rate: '구독과 좋아요 부탁드려요'
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    pump(pipeline, lambda: 'not_wake' in harness.reports)
+    assert len(harness.transcripts) == 1
+    pipeline.wake.transcribe = lambda pcm, rate: '제이크야'
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    pump(pipeline, lambda: pipeline.session.active)
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.transcripts) == 2)
     assert harness.transcripts == [(first_id, '문장 1'),
                                    (harness.transcripts[1][0], '문장 2')]
     assert harness.transcripts[1][0] != first_id
-    assert len(harness.wake_calls) == 1 and len(harness.command_calls) == 2
+    # A late terminal from the old request cannot unlock the new pending turn.
+    pipeline.on_playback_status('answer', 'finished', request_id=first_id)
+    finish_command(pipeline)
+    assert len(harness.command_calls) == 2
     assert harness.recorder.active and harness.closed == []
     assert 'wake_chime_unavailable' in harness.reports
     pipeline.close()
@@ -145,6 +174,57 @@ def test_one_open_microphone_runs_wake_then_consecutive_commands(harness):
     assert harness.closed == ['stop', 'delete']
     assert not pipeline.capture_thread.is_alive() and not pipeline.asr_thread.is_alive()
     assert pipeline.audio.empty() and pipeline.jobs.empty() and pipeline.results.empty()
+
+
+@pytest.mark.parametrize('state', ['failed', 'stopped'])
+def test_reply_terminal_before_playing_reopens_wake_and_discards_buffered_audio(harness, state):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    uid = harness.transcripts[0][0]
+    # A queued progress notice may fail or be cancelled without finishing the turn.
+    pipeline.on_playback_status('progress', state, interim=True, request_id=uid)
+    assert pipeline._input_blocked(harness.now)
+    pipeline.audio.put_nowait((pipeline._audio_generation, harness.now, VOICE * 4, False))
+    pipeline.on_playback_status('answer', state, request_id=uid)
+    assert not pipeline._input_blocked(harness.now)
+    assert not pipeline.session.active and pipeline.audio.empty()
+    assert not pipeline.wake_stream.collector.started
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    pump(pipeline, lambda: pipeline.session.active)
+    assert len(harness.wake_calls) == 2
+
+
+def test_proactive_session_replaces_pending_reply_without_waiting_for_it(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    ordinary_id = harness.transcripts[0][0]
+    assert pipeline.start_session('incident-1')
+    pipeline.on_playback_status('old-answer', 'failed', request_id=ordinary_id)
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 2)
+    assert pipeline.session.session_id == 'incident-1'
+    assert pipeline.session.active and not pipeline._input_blocked(harness.now)
+
+
+def test_audio_overflow_during_reply_wait_cannot_reopen_input(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    uid = harness.transcripts[0][0]
+    pipeline.overflow.set()
+    pipeline.poll()
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    finish_command(pipeline)
+    assert len(harness.wake_calls) == len(harness.command_calls) == 1
+    assert 'audio_queue_overflow' in harness.reports
+    assert pipeline._input_blocked(harness.now)
+    pipeline.on_playback_status('answer', 'failed', request_id=uid)
+    assert not pipeline._input_blocked(harness.now)
 
 
 def test_proactive_session_stops_question_at_speech_start_without_addressee(harness):
@@ -368,7 +448,7 @@ def test_addressed_interruption_stops_and_publishes_once_after_matching_decision
     pipeline.on_addressee(uid, 'p1', 'addressed')
     assert harness.controls == [('p1', 'pause'), ('p1', 'stop')]
     assert harness.transcripts == [(uid, '문장 1')]
-    assert pipeline.session.active
+    assert not pipeline.session.active and pipeline._input_blocked(harness.now)
 
 
 def test_not_addressed_waits_for_pause_ack_then_resumes_without_transcript(harness):
@@ -495,6 +575,8 @@ def test_busy_backlog_stays_discarded_after_result_is_ready(harness):
     assert pipeline.session.utterance_id is None
     pipeline.feed(VOICE * 20 + QUIET * 100)
     assert pipeline.jobs.empty() and harness.command_calls == []
+    pipeline.on_playback_status('reply', 'finished', request_id=uid)
+    wake_up(harness, pipeline)
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.transcripts) == 2)
     assert len(harness.command_calls) == 1

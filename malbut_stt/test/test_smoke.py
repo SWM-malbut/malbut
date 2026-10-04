@@ -530,6 +530,9 @@ def dialogue_runtime(runtime, monkeypatch):
                     self.recorder.stop()
                 self.recorder.delete()
 
+        def on_playback_status(self, playback_id, state, *, request_id):
+            assert playback_id == request_id and state == 'finished'
+
     monkeypatch.setitem(sys.modules, 'malbut_stt.dialogue_pipeline', SimpleNamespace(
         DialoguePipeline=Dialogue))
     monkeypatch.setattr('threading.Event', lambda: SimpleNamespace(
@@ -562,7 +565,7 @@ def test_dialogue_uses_one_capture_and_continues_until_ctrl_c_without_api(
     assert ready['mode'] == 'dialogue' and ready['local_backend'] == backend
     assert ready['wake_required'] is not manual
     assert ready['output'] == 'terminal_only'
-    assert ready['tts_completion_events'] is ready['tts_5s_timeout_testable'] is False
+    assert ready['tts_completion_events'] is False
     assert runtime.dialogue_active is manual and runtime.dialogue_closed
     assert runtime.events.count('enter') == int(manual)
     assert runtime.events.count('recorder') == runtime.events.count('start') == 1
@@ -583,6 +586,49 @@ def test_dialogue_rejects_api_or_incompatible_attempt_modes(runtime, mode_args):
     with pytest.raises(SystemExit) as error:
         main(['--dialogue'] + mode_args)
     assert error.value.code == 2 and runtime.events == []
+
+
+@pytest.mark.parametrize('manual', [False, True])
+def test_local_output_releases_real_reply_gate_before_next_turn(
+    runtime, monkeypatch, tmp_path, capsys, manual,
+):
+    from malbut_stt.dialogue_pipeline import DialoguePipeline
+
+    def create_pipeline(**kwargs):
+        pipeline = DialoguePipeline(**kwargs)
+        poll = pipeline.poll
+        delivering = False
+        turns = 0
+
+        def drive():
+            nonlocal delivering, turns
+            if delivering:
+                return poll()
+            if turns == 2:
+                raise KeyboardInterrupt
+            assert pipeline.session.active is manual
+            if not manual:
+                pipeline._accept_result('wake', pipeline._generation, None, '제이크야', None)
+            uid = pipeline.session.user_speech_started()
+            delivering = True
+            assert pipeline.session.finish_utterance(uid, '질문', addressed=True)
+            delivering = False
+            assert pipeline._reply_request_id is None
+            assert pipeline.session.active is manual
+            turns += 1
+
+        # Drive the real session, publish callback and reply gate without audio hardware.
+        pipeline.start = lambda: None
+        pipeline.poll = drive
+        return pipeline
+
+    monkeypatch.setattr('malbut_stt.dialogue_pipeline.DialoguePipeline', create_pipeline)
+    assert main(model_args(tmp_path) + ['--local', '--dialogue']
+                + (['--manual'] if manual else [])) == 0
+    output = events(capsys)
+    assert len([row for row in output if row['event'] == 'transcript']) == 2
+    assert [row['event'] for row in output].count('waiting_for_reply') == 2
+    assert [row['event'] for row in output].count('wake_detected') == (0 if manual else 2)
 
 
 @pytest.mark.parametrize('phase', ['start', 'poll'])

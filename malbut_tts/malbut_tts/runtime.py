@@ -110,7 +110,8 @@ class SpeechRuntime:
             if playback_id in self._retired_ids:
                 if self._retired_ids[playback_id] == 'canceled_before_receipt':
                     # Topic delivery may follow an already accepted STOP service.
-                    request = _Request(playback_id, text, None, interim=interim, state='stopped')
+                    request = _Request(playback_id, text, None, interim=interim,
+                                       request_id=correlated_id, state='stopped')
                     self._report_status(request, 'stopped')
                     return playback_id
                 return None
@@ -314,7 +315,7 @@ class SpeechRuntime:
             with self._condition:
                 self._remember_retired(request.playback_id, state)
         try:
-            self._on_status(request.playback_id, state, request.interim)
+            self._on_status(request.playback_id, state, request.interim, request.request_id)
         except Exception as error:
             self._logger.error(f'tts_status_failed: {error}')
 

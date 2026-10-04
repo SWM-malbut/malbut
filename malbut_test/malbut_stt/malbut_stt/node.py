@@ -354,7 +354,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
                 try:
                     pipeline.on_playback_status(
                         message.playback_id, playback_states[message.state],
-                        interim=message.interim)
+                        interim=message.interim, request_id=message.request_id)
                 except (KeyError, ValueError):
                     node.get_logger().warning('invalid_playback_status')
 

@@ -68,6 +68,7 @@ def test_generated_request_kind_service_and_worker_status_round_trip():
         assert SpeechRequest().interim is False
         assert SpeechRequest().request_id == ''
         assert SpeechPlaybackStatus().interim is False
+        assert SpeechPlaybackStatus().request_id == ''
         tts = tts_node.create_tts_node(ControlledRuntime)
         peer = Node('tts_adapter_test_peer')
         executor.add_node(tts)
@@ -122,16 +123,16 @@ def test_generated_request_kind_service_and_worker_status_round_trip():
         assert not invalid.result().accepted
 
         worker = Thread(target=lambda: [
-            tts._runtime.on_status('ros-playback-1', state, True)
+            tts._runtime.on_status('ros-playback-1', state, True, 'weather-request')
             for state in ('playing', 'paused', 'playing', 'finished')
         ])
         worker.start()
         worker.join(timeout=2)
         assert not worker.is_alive()
         spin_until(lambda: len(received) == 4)
-        assert [(message.playback_id, message.state, message.interim)
+        assert [(message.playback_id, message.state, message.interim, message.request_id)
                 for message in received] == [
-            ('ros-playback-1', state, True)
+            ('ros-playback-1', state, True, 'weather-request')
             for state in ('playing', 'paused', 'playing', 'finished')
         ]
         runtime = tts._runtime

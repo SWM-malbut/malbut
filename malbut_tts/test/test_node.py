@@ -154,7 +154,7 @@ def test_worker_states_are_published_in_order_only_by_executor(fake_ros, interim
     """Audio threads enqueue actual states without publishing ROS messages."""
     node = tts_node.create_tts_node(FakeRuntime)
     worker = Thread(target=lambda: [
-        node._runtime.on_status('playback-1', state, interim)
+        node._runtime.on_status('playback-1', state, interim, 'utterance-1')
         for state in ('playing', 'paused', 'playing', 'finished')
     ])
     worker.start()
@@ -162,9 +162,9 @@ def test_worker_states_are_published_in_order_only_by_executor(fake_ros, interim
     assert not worker.is_alive()
     assert fake_ros.published == []
     fake_ros.timers[0][1]()
-    assert [(message.playback_id, message.state, message.interim)
+    assert [(message.playback_id, message.state, message.interim, message.request_id)
             for _, message in fake_ros.published] == [
-        ('playback-1', state, interim)
+        ('playback-1', state, interim, 'utterance-1')
         for state in ('playing', 'paused', 'playing', 'finished')
     ]
     assert {thread_id for thread_id, _ in fake_ros.published} == {get_ident()}
@@ -198,7 +198,7 @@ def test_destruction_closes_audio_before_ros_and_ignores_late_events(fake_ros):
 
     def close():
         fake_ros.destruction.append('runtime')
-        runtime.on_status('playback-1', 'stopped', False)
+        runtime.on_status('playback-1', 'stopped', False, '')
 
     runtime.close = close
     assert node.destroy_node()
