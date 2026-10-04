@@ -1,5 +1,6 @@
 """Scene retirement is a lifecycle transition, never a normal/person answer."""
 
+import asyncio
 from concurrent.futures import Future
 import json
 import sys
@@ -7,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from malbut_agent_server.domain.fall_monitoring import IncidentState
+from malbut_agent_server.domain.fall_monitoring import CloudFallReply, IncidentState, VideoAssessment
 from malbut_fall_coordinator.fall_confirmation import FallConfirmationCoordinator
 from malbut_agent_server.fall_runtime import event_metadata
 from test_cloud_fall_monitor import candidate
@@ -42,6 +43,44 @@ def test_lost_merge_event_is_replayed_and_old_question_cannot_resurrect():
         question_id=source.question_id, subject_key=None, evidence_revision=source.revision,
         situation_assessment='resolved', help_needed=False)
     assert not m.drain_events()
+
+
+def test_scene_retirement_preserves_target_question_original_evidence_after_update():
+    m, c, provider, ds, initial = setup()
+    coordinator = FallConfirmationCoordinator(runtime_id='vlm')
+    relay(coordinator, m, initial)
+    source = m.incident(ds[0].incident_id)
+    sid = start(m, ds[0])
+    feed(m, c, 160.25)
+    iid = m.candidate(candidate(c()))
+    provider.reply = CloudFallReply(VideoAssessment.SUSPECTED_FALL, 'target fixture')
+    assert asyncio.run(m.run_once())
+    relay(coordinator, m, m.drain_events())
+    original = next(r for r in coordinator.requests.values() if r.incident_id == iid)
+    m.ingest_discovery_track(sid, observed_at=c(), box=BOX)
+
+    for t in (160.5, 160.75):
+        feed(m, c, t)
+        if t == 160.5:
+            assert m.candidate(candidate(t, cid='new-evidence', change=True)) == iid
+        m.ingest_discovery_track(sid, observed_at=t, box=BOX)
+    relay(coordinator, m, m.drain_events())
+    relay(coordinator, m, m.pending_questions())
+    assert list(coordinator.requests.values()) == [original]
+    assert m.incident(iid).revision == 2
+    assert m.incident(source.incident_id).close_reason == 'findings_associated'
+    replay = next(e for e in m.pending_questions() if e.incident_id == iid)
+    assert replay.question_id == original.question_id and replay.evidence_revision == 1
+
+    assert not m.confirmation_result(incident_id=source.incident_id,
+        question_id=source.question_id, subject_key=None, evidence_revision=source.revision,
+        situation_assessment='resolved', help_needed=False)
+    assert m.confirmation_result(incident_id=iid, question_id=original.question_id,
+        subject_key=original.subject_key, evidence_revision=original.revision,
+        situation_assessment='resolved', help_needed=False)
+    current = m.incident(iid)
+    assert current.state is not IncidentState.RESOLVED
+    assert current.answer is None and current.pending
 
 
 def test_pruned_other_discovery_does_not_mean_whole_scene_associated():

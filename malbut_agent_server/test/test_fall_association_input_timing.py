@@ -144,10 +144,12 @@ def test_input_timing_incident_outcome(mode, reason, box_samples, record_propert
             assert linked.incident_id == original
             assert linked.association_link.source_incident_id == discovery.incident_id
             assert monitor.incident(original).question_id == question
-            # Linking one finding does not clear the scene's other possible
-            # people, transfer an answer or erase its already issued question.
+            # Keep scene history and the already issued target question. Its
+            # original evidence is replayed rather than emitting a replacement.
             assert monitor.incident(discovery.incident_id).subject_key is None
-            assert {e.question_id for e in later if e.kind == 'question_requested'} == {question}
+            assert not any(e.kind == 'question_requested' for e in later)
+            assert {e.question_id for e in monitor.pending_questions()
+                    if e.kind == 'question_requested'} == {question}
 
         # Show what is known locally AFTER the reply, without modifying the
         # dispatch snapshot or invoking deferred visual tracking.

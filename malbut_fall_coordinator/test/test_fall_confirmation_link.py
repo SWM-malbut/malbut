@@ -98,7 +98,7 @@ def test_result_before_deadline_is_forwarded_once(rig):
 
 def test_obsolete_goal_cancel_failure_does_not_affect_replacement(rig):
     old_future = rig.link.goal_future
-    rig.link.on_event(SimpleNamespace(data=event(question_id='next', evidence_revision=2)))
+    rig.link.on_event(SimpleNamespace(data=event(boot_id='boot-2', question_id='next')))
     current_future, current_request = rig.link.goal_future, rig.link.request
     rig.handle.cancel_goal_async.side_effect = RuntimeError('transport unavailable')
     old_future.set_result(rig.handle)
@@ -113,12 +113,51 @@ def test_obsolete_goal_cancel_failure_does_not_affect_replacement(rig):
 
 def test_late_result_does_not_finish_replacement_request(rig):
     rig.link.goal_future.set_result(rig.handle)
-    rig.link.on_event(SimpleNamespace(data=event(question_id='next', evidence_revision=2)))
+    rig.link.on_event(SimpleNamespace(data=event(boot_id='boot-2', question_id='next')))
     current_future, current_request = rig.link.goal_future, rig.link.request
     rig.result.set_result(success())
     assert rig.link.request == current_request
     assert rig.link.goal_future is current_future
     assert commands(rig.link) == []
+
+
+@pytest.mark.parametrize('accepted', [False, True])
+def test_new_vlm_evidence_does_not_cancel_pending_or_accepted_confirmation(rig, accepted):
+    link = rig.link
+    request, pending = link.request, link.goal_future
+    if accepted:
+        pending.set_result(rig.handle)
+    link.on_event(SimpleNamespace(data=event(kind='incident_updated', evidence_revision=2)))
+    link.on_event(SimpleNamespace(data=event(question_id='next', evidence_revision=2)))
+    link.on_event(SimpleNamespace(data=event()))
+    assert link.request == request
+    assert link.client.send_goal_async.call_count == 1
+    assert commands(link) == []
+    if not accepted:
+        pending.set_result(rig.handle)
+    rig.handle.cancel_goal_async.assert_not_called()
+    rig.result.set_result(success())
+    command, = commands(link)
+    assert command['question_id'] == 'question' and command['evidence_revision'] == 1
+    assert link.request is None
+    link.on_event(SimpleNamespace(data=event(question_id='next', evidence_revision=2)))
+    assert link.request.request_id == 'next'
+    assert link.client.send_goal_async.call_count == 2
+
+
+def test_other_incident_waits_until_current_confirmation_finishes(rig):
+    link = rig.link
+    request = link.request
+    link.goal_future.set_result(rig.handle)
+    link.on_event(SimpleNamespace(data=event(incident_id='other', question_id='other-question')))
+    assert link.request == request
+    assert len(link.coordinator.requests) == 2
+    assert link.client.send_goal_async.call_count == 1
+    rig.handle.cancel_goal_async.assert_not_called()
+    rig.result.set_result(success())
+    assert commands(link)[0]['question_id'] == 'question'
+    assert link.request.request_id == 'other-question'
+    assert link.client.send_goal_async.call_count == 2
 
 
 def test_rejected_goal_can_retry_same_request_without_old_deadline(rig):

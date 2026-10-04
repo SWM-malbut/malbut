@@ -179,16 +179,24 @@ def test_vlm_event_is_sent_via_manager_action_and_only_final_result_is_forwarded
     assert decisions[0] == decisions[1]
 
 
-def test_new_revision_cancels_previous_conversation_and_ignores_its_result(graph):
+def test_new_revision_waits_for_current_conversation_and_preserves_its_result(graph):
     link, agent, decisions, publish = graph
     agent.hold.add('question')
     publish()
     wait_for(lambda: len(agent.requests) == 1)
-    publish(kind='incident_updated', evidence_revision=2)
     publish(question_id='new-question', evidence_revision=2)
-    wait_for(lambda: 'question' in agent.cancelled and len(decisions) == 1)
-    assert decisions[0]['question_id'] == 'new-question'
-    assert decisions[0]['evidence_revision'] == 2
+    wait_for(lambda: link.coordinator.revisions.get('incident') == 2)
+    assert link.request.request_id == 'question'
+    assert not agent.cancelled and not decisions
+    agent.hold.remove('question')
+    wait_for(lambda: len(decisions) == 1)
+    assert decisions[0]['question_id'] == 'question'
+    assert decisions[0]['evidence_revision'] == 1
+    assert len(agent.requests) == 1 and not agent.cancelled
+    publish(question_id='new-question', evidence_revision=2)
+    wait_for(lambda: len(decisions) == 2)
+    assert decisions[1]['question_id'] == 'new-question'
+    assert decisions[1]['evidence_revision'] == 2
 
 
 def test_aborted_agent_is_runtime_failure_without_fabricated_user_judgment(graph):

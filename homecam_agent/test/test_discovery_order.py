@@ -45,7 +45,8 @@ def test_discovery_order_and_negative_controls(tmp_path, mode):
             if phase['name'] in {'tracking_finished', 'after_duplicate_delivery'}:
                 assert [q['incident_id'] for q in phase['questions']] == [recorded['target_id']]
     if mode == 'old_answer':
-        assert result['obsolete_answer_rejected']
+        assert result['original_answer_accepted']
+        assert result['newer_evidence_unresolved']
     if mode == 'candidate_during_cloud':
         assert result['person_cases'] == 1 and result['scene_cases'] == 0
         assert result['call_purposes'] == ['crosscheck', 'incident']
