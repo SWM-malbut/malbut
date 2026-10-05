@@ -18,6 +18,7 @@ import {
 } from "@phosphor-icons/react";
 import { type HomecamTab, useHomecamAuth } from "./homecam-header";
 import { UiTabBar } from "./ui-tab-bar";
+import { DisplayNameForm } from "./display-name-form";
 import {
   RobotMapPanel,
   RobotMapSummaryOverlay,
@@ -337,6 +338,18 @@ function formatLiveClock(value: number) {
   }).format(new Date(value));
 }
 
+const LOGIN_METHOD_COPY: Record<string, string> = {
+  kakao: "카카오로 로그인 중",
+  naver: "네이버로 로그인 중",
+  google: "Google로 로그인 중",
+  email: "이메일로 로그인 중",
+};
+
+function loginMethodCopy(providers: string[]) {
+  const first = ["kakao", "naver", "google", "email"].find((provider) => providers.includes(provider));
+  return first ? LOGIN_METHOD_COPY[first] : "로그인 정보를 확인하고 있어요";
+}
+
 function Switch({
   checked,
   disabled,
@@ -496,7 +509,8 @@ export function HomecamDashboard({
   const [pushEndpointRegistrationCount, setPushEndpointRegistrationCount] = useState(0);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [standalone, setStandalone] = useState(false);
-  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians">("main");
+  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians" | "name">("main");
+  const [account, setAccount] = useState<{ name: string | null; email: string | null; providers: string[] } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<FamilyMember | null>(null);
   const [textSize, setTextSize] = useState<"default" | "large">("default");
   const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
@@ -509,6 +523,25 @@ export function HomecamDashboard({
     offsetY: number;
   } | null>(null);
   const { authStatus, signingOut, signOut } = useHomecamAuth();
+
+  useEffect(() => {
+    if (!authStatus?.authenticated) return;
+    const controller = new AbortController();
+    void fetch("/api/account", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const payload = asRecord(await response.json().catch(() => ({})));
+        setAccount({
+          name: stringValue(payload.displayName) ?? null,
+          email: stringValue(payload.email) ?? null,
+          providers: Array.isArray(payload.providers)
+            ? payload.providers.filter((value): value is string => typeof value === "string")
+            : [],
+        });
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [authStatus?.authenticated]);
   const localDemoAutoplayRef = useRef(false);
   const navigationStateReadyRef = useRef(false);
   const openMap = useCallback((mode: MapMode) => {
@@ -1434,13 +1467,17 @@ export function HomecamDashboard({
         {tab === "settings" && settingsView === "main" && (
           <section className="ui-screen ui-settings" aria-label="설정">
             <article className="ui-card ui-account">
-              <span className="ui-account-avatar" aria-hidden="true">{authStatus?.authenticated ? "나" : "?"}</span>
+              <span className="ui-account-avatar" aria-hidden="true">{account?.name ? [...account.name][0] : authStatus?.authenticated ? "나" : "?"}</span>
               <span className="ui-account-text">
-                <strong>{authStatus?.authenticated ? "로그인한 계정" : "로그인 상태 확인 중"} <span className={`ui-badge ${isOwner ? "is-accent" : ""}`}>{roleLabel}</span></strong>
-                <small>이메일로 로그인 중</small>
+                <strong>{account?.name ?? account?.email ?? (authStatus?.authenticated ? "로그인한 계정" : "로그인 상태 확인 중")} <span className={`ui-badge ${isOwner ? "is-accent" : ""}`}>{roleLabel}</span></strong>
+                <small>{loginMethodCopy(account?.providers ?? [])}</small>
               </span>
             </article>
             <div className="ui-two-buttons ui-account-actions">
+              <button type="button" className="ui-button" onClick={() => setSettingsView("name")}
+                disabled={!authStatus?.authenticated}>
+                이름 바꾸기
+              </button>
               <button type="button" className="ui-button" onClick={() => void signOut()}
                 disabled={!authStatus?.authenticated || signingOut}>
                 {signingOut ? "로그아웃 중" : "로그아웃"}
@@ -1540,6 +1577,24 @@ export function HomecamDashboard({
                 onUpdateSetting={(settingKey, value) => void updateSetting(settingKey, value)}
               />
             ) : <p className="ui-hint">등록된 말벗이 없어요.</p>}
+          </section>
+        )}
+
+        {tab === "settings" && settingsView === "name" && (
+          <section className="ui-screen ui-settings-sub" aria-label="이름 바꾸기">
+            {settingsBack("이름 바꾸기")}
+            <article className="ui-card">
+              <p className="ui-hint">함께 보는 다른 보호자에게 이 이름으로 보여요. 사건에 남긴 의견이나 처리한 사람도 이 이름으로 표시돼요.</p>
+              <DisplayNameForm
+                initialName={account?.name ?? ""}
+                submitLabel="저장"
+                onSaved={(name) => {
+                  setAccount((current) => ({ email: null, providers: [], ...current, name }));
+                  setSettingsView("main");
+                  setNotice("이름을 바꿨어요.");
+                }}
+              />
+            </article>
           </section>
         )}
 

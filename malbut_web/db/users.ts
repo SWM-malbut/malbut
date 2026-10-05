@@ -2,7 +2,7 @@ import { getD1 } from ".";
 import { ensureDatabaseSchema } from "./migration-state";
 
 /** Login methods that identify a person. Social providers are added with social login. */
-export type IdentityProvider = "email";
+export type IdentityProvider = "email" | "kakao" | "naver" | "google";
 
 export type UserLabel = { userId: string; name: string };
 
@@ -72,4 +72,44 @@ export async function userLabels(userIds: Iterable<string | null | undefined>) {
 export function labelFor(labels: Map<string, string>, userId: string | null | undefined) {
   if (!userId) return null;
   return labels.get(userId) ?? UNNAMED_USER;
+}
+
+export const DISPLAY_NAME_MAX = 20;
+
+/** A name people type for themselves: 1–20 characters, no control characters. */
+export function normalizeDisplayName(value: unknown) {
+  if (typeof value !== "string") return null;
+  const name = value.normalize("NFC").replace(/\s+/g, " ").trim();
+  if (!name || [...name].length > DISPLAY_NAME_MAX || /[\u0000-\u001f\u007f]/.test(name)) return null;
+  return name;
+}
+
+export async function getUserProfile(userId: string) {
+  await ensureDatabaseSchema();
+  const row = await getD1()
+    .prepare(
+      `SELECT u.display_name,
+              MIN(i.subject) FILTER (WHERE i.provider = 'email') AS email,
+              COALESCE(array_agg(DISTINCT i.provider) FILTER (WHERE i.provider IS NOT NULL), '{}') AS providers
+       FROM users u
+       LEFT JOIN user_identities i ON i.user_id = u.id
+       WHERE u.id = ?
+       GROUP BY u.id, u.display_name`,
+    )
+    .bind(userId)
+    .first<{ display_name: string | null; email: string | null; providers: string[] }>();
+  return {
+    displayName: row?.display_name ?? null,
+    email: row?.email ?? null,
+    providers: (row?.providers ?? []) as IdentityProvider[],
+  };
+}
+
+export async function setDisplayName(userId: string, name: string) {
+  await ensureDatabaseSchema();
+  const result = await getD1()
+    .prepare("UPDATE users SET display_name = ? WHERE id = ?")
+    .bind(name, userId)
+    .run();
+  return result.meta.changes > 0;
 }

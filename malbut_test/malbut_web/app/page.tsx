@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { requireChatGPTUser } from "./chatgpt-auth";
 import { HomecamApp } from "./components/homecam-app";
 
@@ -12,7 +13,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   const localUiDemo =
     process.env.NODE_ENV !== "production" &&
     process.env.NEXT_PUBLIC_HOMECAM_UI_DEMO === "1";
-  if (!localUiDemo) await requireChatGPTUser(returnTo);
+  if (!localUiDemo) {
+    const user = await requireChatGPTUser(returnTo);
+    // First sign-in: "어떻게 불러 드릴까요?" before anything else.
+    if (!user.chosenName) redirect(`/auth/name?${new URLSearchParams({ return_to: returnTo })}`);
+  }
   return <HomecamApp />;
 }
 
