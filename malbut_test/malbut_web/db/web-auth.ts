@@ -383,6 +383,11 @@ function randomToken() {
   return randomBytes(32).toString("base64url");
 }
 
+/** Registration codes are kept like session tokens: only an HMAC under the session secret. */
+export function registrationCodeDigest(code: string, sessionSecret: string) {
+  return tokenDigest(`registration-code:${code}`, sessionSecret);
+}
+
 function tokenDigest(token: string, sessionSecret: string) {
   return createHmac("sha256", secretKey(sessionSecret)).update(token).digest("hex");
 }

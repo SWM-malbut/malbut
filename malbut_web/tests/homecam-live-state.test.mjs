@@ -79,6 +79,8 @@ test("live dashboard uses rendered media state and exposes one camera control", 
   );
   assert.match(dashboard, /label="카메라 전원"/);
   assert.match(dashboard, /updateSetting\("cameraEnabled", value\)/);
+  // 연속 녹화는 설정 › 홈캠 설정에서만 바꾼다.
+  assert.doesNotMatch(dashboard, /label="연속 녹화"/);
   assert.doesNotMatch(dashboard, /카메라 끄기/);
   assert.doesNotMatch(dashboard, /카메라 켜기/);
 });
