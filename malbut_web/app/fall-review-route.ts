@@ -1,17 +1,17 @@
 import { userCanViewDevice } from "../db/homecam";
 import { noStore } from "./api-response";
-import { getRequestUserEmail } from "./server-auth";
+import { getRequestUserId } from "./server-auth";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** Signed-in owner or shared member of the device; incidents are hidden (404) otherwise. */
 export async function fallMember(request: Request, deviceId: string, incidentId?: string) {
-  const email = await getRequestUserEmail(request);
-  if (!email) return { response: noStore({ error: "로그인이 필요합니다." }, 401) };
-  if ((incidentId !== undefined && !uuid.test(incidentId)) || !(await userCanViewDevice(deviceId, email))) {
+  const userId = await getRequestUserId(request);
+  if (!userId) return { response: noStore({ error: "로그인이 필요합니다." }, 401) };
+  if ((incidentId !== undefined && !uuid.test(incidentId)) || !(await userCanViewDevice(deviceId, userId))) {
     return { response: noStore({ error: "사건을 찾을 수 없습니다." }, 404) };
   }
-  return { email };
+  return { userId };
 }
 
 export function fallReviewFailure(error: unknown) {

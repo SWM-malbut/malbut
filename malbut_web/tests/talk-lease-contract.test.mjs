@@ -26,7 +26,7 @@ test("PTT lease is bound to one viewer client and released on every exit path", 
   assert.match(database, /talk_leases\.client_id = excluded\.client_id/);
   assert.match(
     database,
-    /WHERE device_id = \? AND user_email = \? AND lease_id = \? AND client_id = \?/,
+    /WHERE device_id = \? AND user_id = \? AND lease_id = \? AND client_id = \?/,
   );
   assert.match(route, /isValidClientId\(payload\.clientId\)/);
   assert.match(page, /clientId:\s*viewerClientIdRef\.current/);

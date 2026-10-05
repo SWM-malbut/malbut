@@ -1,6 +1,6 @@
 import { getRuntimeEnvironment } from "../../../runtime-env";
 import { noStore } from "../../../api-response";
-import { getRequestUserEmail } from "../../../server-auth";
+import { getRequestUserId } from "../../../server-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +9,7 @@ type PushPublicEnv = {
 };
 
 export async function GET(request: Request) {
-  if (!(await getRequestUserEmail(request))) {
+  if (!(await getRequestUserId(request))) {
     return noStore({ error: "로그인이 필요합니다." }, 401);
   }
   const publicKey = (getRuntimeEnvironment() as PushPublicEnv).PUSH_VAPID_PUBLIC_KEY?.trim();

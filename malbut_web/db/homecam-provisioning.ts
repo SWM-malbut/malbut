@@ -1,5 +1,6 @@
 import { getD1 } from ".";
 import { ensureHomecamSchema } from "./homecam";
+import { ensureUserForIdentity } from "./users";
 import type { HomecamProvisioningRequest } from "./homecam-provisioning-input";
 
 type HomecamProvisioningInput = HomecamProvisioningRequest & {
@@ -54,17 +55,23 @@ export class HomecamProvisioningConflict extends Error {
 
   constructor(
     snapshot: ProvisioningSnapshot,
-    input: HomecamProvisioningInput,
+    input: OwnedProvisioningInput,
   ) {
     super("HOMECAM_PROVISIONING_CONFLICT");
     this.details = provisioningConflictDetails(snapshot, input);
   }
 }
 
+type OwnedProvisioningInput = HomecamProvisioningInput & { ownerUserId: string };
+
 export async function provisionHomecamDevice(
-  input: HomecamProvisioningInput,
+  manifestInput: HomecamProvisioningInput,
 ) {
   await ensureHomecamSchema();
+  const input: OwnedProvisioningInput = {
+    ...manifestInput,
+    ownerUserId: await ensureUserForIdentity("email", manifestInput.ownerEmail),
+  };
   const before = await provisioningSnapshot(input);
   if (isCompleteAndCompatible(before, input)) {
     return { deviceId: input.deviceId, created: false, migrated: false };
@@ -78,7 +85,7 @@ export async function provisionHomecamDevice(
   throw new HomecamProvisioningConflict(before, input);
 }
 
-async function createProvisionedDevice(input: HomecamProvisioningInput) {
+async function createProvisionedDevice(input: OwnedProvisioningInput) {
   const d1 = getD1();
   const nowIso = new Date().toISOString();
   const statements = [
@@ -96,10 +103,10 @@ async function createProvisionedDevice(input: HomecamProvisioningInput) {
     d1
       .prepare(
         `INSERT INTO device_memberships
-         (device_id, user_email, role, created_at)
+         (device_id, user_id, role, created_at)
          VALUES (?, ?, 'owner', ?)`,
       )
-      .bind(input.deviceId, input.ownerEmail, nowIso),
+      .bind(input.deviceId, input.ownerUserId, nowIso),
     d1
       .prepare(
         `INSERT INTO device_state
@@ -162,7 +169,7 @@ async function createProvisionedDevice(input: HomecamProvisioningInput) {
 
 async function migrateLegacyDevice(
   before: ProvisioningSnapshot,
-  input: HomecamProvisioningInput,
+  input: OwnedProvisioningInput,
 ) {
   const legacyDeviceId = before.deviceByChannel?.id;
   if (!legacyDeviceId) {
@@ -180,7 +187,7 @@ async function migrateLegacyDevice(
                 WHERE device_id = ?) = 1
            AND EXISTS (
              SELECT 1 FROM device_memberships
-             WHERE device_id = ? AND user_email = ? AND role = 'owner'
+             WHERE device_id = ? AND user_id = ? AND role = 'owner'
            )
            AND NOT EXISTS (
              SELECT 1 FROM device_credentials WHERE device_id = ?
@@ -203,7 +210,7 @@ async function migrateLegacyDevice(
         input.deviceId,
         legacyDeviceId,
         legacyDeviceId,
-        input.ownerEmail,
+        input.ownerUserId,
         legacyDeviceId,
         legacyDeviceId,
         legacyDeviceId,
@@ -431,7 +438,7 @@ async function migrateLegacyDevice(
 }
 
 async function provisioningSnapshot(
-  input: HomecamProvisioningInput,
+  input: OwnedProvisioningInput,
 ): Promise<ProvisioningSnapshot> {
   const d1 = getD1();
   const [
@@ -462,20 +469,20 @@ async function provisioningSnapshot(
     d1
       .prepare(
         `SELECT role FROM device_memberships
-         WHERE device_id = ? AND user_email = ?`,
+         WHERE device_id = ? AND user_id = ?`,
       )
-      .bind(input.deviceId, input.ownerEmail)
+      .bind(input.deviceId, input.ownerUserId)
       .first<ProvisioningSnapshot["membership"]>(),
     d1
       .prepare(
         `SELECT
            COUNT(*) AS total,
            COALESCE(SUM(CASE
-             WHEN user_email = ? AND role = 'owner' THEN 1 ELSE 0
+             WHEN user_id = ? AND role = 'owner' THEN 1 ELSE 0
            END), 0) AS exact_count
          FROM device_memberships WHERE device_id = ?`,
       )
-      .bind(input.ownerEmail, input.deviceId)
+      .bind(input.ownerUserId, input.deviceId)
       .first<ProvisioningSnapshot["membershipSummary"]>(),
     d1
       .prepare("SELECT device_id FROM device_state WHERE device_id = ?")
@@ -522,7 +529,7 @@ async function provisioningSnapshot(
                 WHERE device_id = devices.id) AS membership_count,
                (SELECT COUNT(*) FROM device_memberships
                 WHERE device_id = devices.id
-                  AND user_email = ? AND role = 'owner')
+                  AND user_id = ? AND role = 'owner')
                  AS requested_owner_count,
                (SELECT COUNT(*) FROM device_credentials
                 WHERE device_id = devices.id) AS credential_count,
@@ -544,7 +551,7 @@ async function provisioningSnapshot(
                 WHERE device_id = devices.id) AS last_seen_at
              FROM devices WHERE devices.id = ?`,
           )
-          .bind(input.ownerEmail, new Date().toISOString(), deviceByChannel.id)
+          .bind(input.ownerUserId, new Date().toISOString(), deviceByChannel.id)
           .first<ProvisioningSnapshot["channelOwnerSummary"]>()
       : null;
   return {
@@ -577,7 +584,7 @@ function isEmpty(snapshot: ProvisioningSnapshot) {
 
 function canMigrateLegacyDevice(
   snapshot: ProvisioningSnapshot,
-  input: HomecamProvisioningInput,
+  input: OwnedProvisioningInput,
 ) {
   const summary = snapshot.channelOwnerSummary;
   return (
@@ -602,7 +609,7 @@ function canMigrateLegacyDevice(
 
 function isCompleteAndCompatible(
   snapshot: ProvisioningSnapshot,
-  input: HomecamProvisioningInput,
+  input: OwnedProvisioningInput,
 ) {
   return (
     Boolean(
@@ -623,7 +630,7 @@ function isCompleteAndCompatible(
 
 function isCompatible(
   snapshot: ProvisioningSnapshot,
-  input: HomecamProvisioningInput,
+  input: OwnedProvisioningInput,
 ) {
   return (
     snapshot.deviceById?.display_name === input.displayName &&
@@ -641,7 +648,7 @@ function isCompatible(
 
 function provisioningConflictDetails(
   snapshot: ProvisioningSnapshot,
-  input: HomecamProvisioningInput,
+  input: OwnedProvisioningInput,
 ) {
   const targetDevice = !snapshot.deviceById
     ? "absent"

@@ -14,7 +14,7 @@ import {
   resolveDeviceKvsResources,
   type DeviceKvsEnvironment,
 } from "../../../../kvs-device-config";
-import { getRequestUserEmail } from "../../../../server-auth";
+import { getRequestUserId } from "../../../../server-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -22,10 +22,10 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ deviceId: string }> },
 ) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return noStore({ authorized: false }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ authorized: false }, 401);
   const { deviceId } = await context.params;
-  if (!(await userCanViewDevice(deviceId, userEmail))) {
+  if (!(await userCanViewDevice(deviceId, userId))) {
     return noStore({ authorized: false }, 403);
   }
   return noStore({ authorized: true }, 200);
@@ -35,10 +35,10 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ deviceId: string }> },
 ) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
-  if (!(await userCanViewDevice(deviceId, userEmail))) {
+  if (!(await userCanViewDevice(deviceId, userId))) {
     return noStore({ error: "이 홈캠을 볼 권한이 없습니다." }, 403);
   }
   const payload = (await request.json().catch(() => null)) as {
@@ -63,7 +63,7 @@ export async function POST(
   }
   const mode = "p2p" as const;
   const canIssueCredentials = await consumeRequestRateLimit({
-    userEmail,
+    userId,
     roomCode: activeSession.roomCode,
     scope: "homecam-viewer-credentials",
     limit: 10,
@@ -101,7 +101,7 @@ export async function POST(
       return noStore({ error: "AWS 홈캠 채널 설정이 일치하지 않습니다." }, 503);
     }
     if (
-      !(await userCanViewDevice(deviceId, userEmail)) ||
+      !(await userCanViewDevice(deviceId, userId)) ||
       (await getActiveMediaSession(deviceId, "p2p"))?.id !== activeSession.id
     ) {
       return noStore(
@@ -112,7 +112,7 @@ export async function POST(
     await writeAuditLog({
       deviceId,
       actorType: "user",
-      actorId: userEmail,
+      actorId: userId,
       action: "live.view",
       metadata: { mode, sessionId: activeSession.id },
     });

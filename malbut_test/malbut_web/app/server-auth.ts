@@ -4,6 +4,7 @@ import {
   WEB_SESSION_COOKIE,
 } from "../db/web-auth";
 import { getRuntimeEnvironment } from "./runtime-env";
+import { ensureUserForIdentity } from "../db/users";
 
 const ALB_CLAIMS_HEADER = "x-amzn-oidc-data";
 const ALB_IDENTITY_HEADER = "x-amzn-oidc-identity";
@@ -55,8 +56,10 @@ type CachedPublicKey = {
 
 const publicKeyCache = new Map<string, CachedPublicKey>();
 
-export async function getRequestUserEmail(request: Request): Promise<string | null> {
-  return (await getAuthenticatedUser(request.headers, request.url))?.email ?? null;
+/** The signed-in person's user ID. Email logins map to an 'email' identity (created on first sight). */
+export async function getRequestUserId(request: Request): Promise<string | null> {
+  const user = await getAuthenticatedUser(request.headers, request.url);
+  return user ? ensureUserForIdentity("email", user.email) : null;
 }
 
 export async function getAuthenticatedUser(

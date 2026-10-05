@@ -3,7 +3,7 @@ import test from "node:test";
 import path from "node:path";
 import { readFileSync, readdirSync } from "node:fs";
 import pg from "pg";
-import { fallDatabase, moduleLoader } from "./helpers/fall-db-harness.mjs";
+import { fallDatabase, moduleLoader, testUserId } from "./helpers/fall-db-harness.mjs";
 
 function report(change = {}) {
   return { bridgeRuntimeId: "bridge-a", managerRuntimeId: "manager-a", runtimeId: "vlm-a",
@@ -44,7 +44,7 @@ test("migration runner applies shared-prefix migrations once by full filename", 
       await import(script.href);
       // Existing deployed IDs stay unchanged; restarting must not run them again.
       assert.deepEqual(applied, ["0011_fall_settings", "0011_manual_move_stream", "0012_fall_incident_review",
-        "0013_fall_ai_review", "0014_fall_report_memo", "0015_fall_incident_people"]);
+        "0013_fall_ai_review", "0014_fall_report_memo", "0015_fall_incident_people", "0016_user_identities"]);
       const versions = (await h.db.query(
         "SELECT version FROM homecam_schema_migrations ORDER BY version",
       )).rows.map((row) => row.version);
@@ -93,12 +93,12 @@ test("owner settings use compare-and-swap; camera shares revision; media/heartbe
   await withDatabase(async (h, repo) => {
     let snap = await repo.readFallSettingsSnapshot("robot-a");
     assert.deepEqual(snap.settings, { settingsRevision: "1", enabled: false, cameraEnabled: true, cloudConsent: false });
-    await assert.rejects(repo.saveFallSettings("robot-a", "family@example.com", { expectedRevision: "1", enabled: true }), /FORBIDDEN/);
-    await assert.rejects(repo.saveFallSettings("robot-a", "outsider@example.com", { expectedRevision: "1", enabled: true }), /FORBIDDEN/);
-    assert.deepEqual(await repo.saveFallSettings("robot-a", "owner@example.com", { expectedRevision: "1", enabled: true }), { settingsRevision: "2" });
-    await assert.rejects(repo.saveFallSettings("robot-a", "owner@example.com", { expectedRevision: "1", cloudConsent: true }), /REVISION_CONFLICT/);
+    await assert.rejects(repo.saveFallSettings("robot-a", "u-family", { expectedRevision: "1", enabled: true }), /FORBIDDEN/);
+    await assert.rejects(repo.saveFallSettings("robot-a", "u-outsider", { expectedRevision: "1", enabled: true }), /FORBIDDEN/);
+    assert.deepEqual(await repo.saveFallSettings("robot-a", "u-owner", { expectedRevision: "1", enabled: true }), { settingsRevision: "2" });
+    await assert.rejects(repo.saveFallSettings("robot-a", "u-owner", { expectedRevision: "1", cloudConsent: true }), /REVISION_CONFLICT/);
     const before = await repo.readFallSettingsSnapshot("robot-a");
-    await repo.saveFallSettings("robot-a", "owner@example.com", { expectedRevision: "2", enabled: true });
+    await repo.saveFallSettings("robot-a", "u-owner", { expectedRevision: "2", enabled: true });
     assert.equal((await repo.readFallSettingsSnapshot("robot-a")).savedAt, before.savedAt);
     // This is also the existing camera endpoint's database update path.
     await h.db.query("UPDATE device_state SET camera_enabled=0 WHERE device_id=$1", ["robot-a"]);
@@ -111,8 +111,8 @@ test("owner settings use compare-and-swap; camera shares revision; media/heartbe
     assert.equal((await repo.readFallSettingsSnapshot("robot-a")).settings.settingsRevision, "3");
     assert.equal((await h.db.query("SELECT * FROM fall_settings_versions WHERE device_id='robot-a'")).rows.length, 3);
     const results = await Promise.allSettled([
-      repo.saveFallSettings("robot-a", "owner@example.com", { expectedRevision: "3", cloudConsent: true }),
-      repo.saveFallSettings("robot-a", "owner@example.com", { expectedRevision: "3", enabled: false }),
+      repo.saveFallSettings("robot-a", "u-owner", { expectedRevision: "3", cloudConsent: true }),
+      repo.saveFallSettings("robot-a", "u-owner", { expectedRevision: "3", enabled: false }),
     ]);
     assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
     assert.equal((await repo.readFallSettingsSnapshot("robot-a")).settings.settingsRevision, "4");
@@ -137,7 +137,7 @@ test("reports are historical only, device scoped, validated, and retries never r
     assert.equal(view.receiptState, "history_only");
     assert.equal(view.runtimeVerified, false);
     assert.equal(view.reports[0].applied, true);
-    await repo.saveFallSettings("robot-a", "owner@example.com", { expectedRevision: "1", enabled: true });
+    await repo.saveFallSettings("robot-a", "u-owner", { expectedRevision: "1", enabled: true });
     // Late old-version and old-run responses are stored, not applied to latest settings.
     await repo.storeFallSettingsReport("robot-a", report({ sequence: "2", runtimeId: "old-run" }));
     const next = await repo.readFallSettingsView("robot-a");
@@ -178,7 +178,7 @@ test("web owner save, camera change, heartbeat delivery and apply receipt round-
   await withDatabase(async (h, repo, originalLoad) => {
     const load = moduleLoader({
       [path.join(h.root, "db/postgres.ts")]: originalLoad("db/postgres.ts"),
-      [path.join(h.root, "app/server-auth.ts")]: { getRequestUserEmail: async (r) => r.headers.get("x-test-email") },
+      [path.join(h.root, "app/server-auth.ts")]: { getRequestUserId: async (r) => testUserId(r.headers.get("x-test-email")) },
       [path.join(h.root, "app/device-auth.ts")]: { getRequestDevice: async (r) =>
         r.headers.get("authorization") === "Bearer robot-a" ? { deviceId: "robot-a" } : null },
       [path.join(h.root, "app/runtime-env.ts")]: { getRuntimeEnvironment: () => ({}) },
@@ -244,7 +244,7 @@ test("uint64 report IDs and saved revision survive beyond JavaScript safe intege
     // Insert a restored device state at a high revision; updates still use the DB trigger.
     await h.db.query("INSERT INTO device_state(device_id,fall_settings_revision) VALUES('robot-a',9007199254740993)");
     assert.equal((await repo.readFallSettingsSnapshot("robot-a")).settings.settingsRevision, "9007199254740993");
-    await repo.saveFallSettings("robot-a", "owner@example.com", { expectedRevision: "9007199254740993", enabled: true });
+    await repo.saveFallSettings("robot-a", "u-owner", { expectedRevision: "9007199254740993", enabled: true });
     assert.equal((await repo.readFallSettingsSnapshot("robot-a")).settings.settingsRevision, "9007199254740994");
     await repo.storeFallSettingsReport("robot-a", report({ sequence: "18446744073709551615", snapshotSequence: "9007199254740995",
       requestedRevision: "9007199254740994", appliedRevision: "9007199254740994", enabled: true }));

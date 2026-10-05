@@ -39,7 +39,7 @@ export async function POST(request: Request, context: { params: Promise<{ device
   if (!streamArn || !streams.includes(streamArn)) {
     return noStore({ error: "이 시간의 녹화 영상이 없습니다.", playbackState: "unavailable" }, 404);
   }
-  if (!(await consumeRequestRateLimit({ userEmail: member.email, roomCode: deviceId,
+  if (!(await consumeRequestRateLimit({ userId: member.userId, roomCode: deviceId,
     scope: "recording-playback", limit: 30 }))) {
     return noStore({ error: "재생 요청이 너무 많습니다. 1분 뒤 다시 시도해 주세요." }, 429, { "retry-after": "60" });
   }
@@ -48,7 +48,7 @@ export async function POST(request: Request, context: { params: Promise<{ device
       endAt: body.endAt, expiresSeconds: 300 });
     const proxy = await createFallClipPlaybackProxy({
       requestUrl: request.url, publicOrigin: runtime.AUTH_PUBLIC_ORIGIN, playbackUrl: playback.playbackUrl,
-      deviceId, userEmail: member.email, expiresAt: playback.expiresAt,
+      deviceId, userId: member.userId, expiresAt: playback.expiresAt,
     }, runtime.KVS_BROKER_SECRET ?? "");
     // Video time 0 is alignedStartAt (the first archived fragment), not startAt.
     return noStore({ playbackUrl: proxy.playbackUrl, expiresAt: playback.expiresAt,

@@ -5,7 +5,7 @@ import {
 } from "../../../../../db/homecam";
 import { isValidClientId } from "../../../../../db/homecam-validation";
 import { noStore } from "../../../../api-response";
-import { getRequestUserEmail } from "../../../../server-auth";
+import { getRequestUserId } from "../../../../server-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -13,10 +13,10 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ deviceId: string }> },
 ) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
-  if (!(await userCanViewDevice(deviceId, userEmail))) {
+  if (!(await userCanViewDevice(deviceId, userId))) {
     return noStore({ error: "이 홈캠에서 말하기를 사용할 권한이 없습니다." }, 403);
   }
   const payload = (await request.json().catch(() => ({}))) as {
@@ -38,7 +38,7 @@ export async function POST(
   }
   const lease = await acquireTalkLease({
     deviceId,
-    userEmail,
+    userId,
     clientId: payload.clientId,
     existingLeaseId: payload.leaseId as string | undefined,
   });
@@ -56,10 +56,10 @@ export async function DELETE(
   request: Request,
   context: { params: Promise<{ deviceId: string }> },
 ) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
-  if (!(await userCanViewDevice(deviceId, userEmail))) {
+  if (!(await userCanViewDevice(deviceId, userId))) {
     return noStore({ error: "이 홈캠에서 말하기를 사용할 권한이 없습니다." }, 403);
   }
   const payload = (await request.json().catch(() => null)) as {
@@ -79,7 +79,7 @@ export async function DELETE(
   }
   const released = await releaseTalkLease({
     deviceId,
-    userEmail,
+    userId,
     leaseId: payload.leaseId,
     clientId: payload.clientId,
   });

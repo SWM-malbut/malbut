@@ -16,6 +16,6 @@ export async function GET(request: Request, context: Context) {
     // "AI 검토 결과": recorded next to the incident, never replacing the automatic judgment.
     const aiReviews = await listFallAiReviews(deviceId, incidentId);
     // viewerEmail lets the app mark "my" opinion; members already see each other's emails.
-    return noStore({ incident: { ...incident, aiReviews, viewerEmail: member.email } });
+    return noStore({ incident: { ...incident, aiReviews, viewerUserId: member.userId } });
   } catch (error) { return fallReviewFailure(error); }
 }

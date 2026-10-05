@@ -37,7 +37,7 @@ export async function readFallSettingsSnapshot(deviceId: string) {
       monitoringEnabled: row.monitoringEnabled as boolean, microphoneEnabled: row.microphoneEnabled as boolean } };
 }
 
-export async function saveFallSettings(deviceId: string, userEmail: string, input: FallSettingsPatch) {
+export async function saveFallSettings(deviceId: string, userId: string, input: FallSettingsPatch) {
   const patch = parseFallSettingsPatch(input);
   if (!patch) throw new Error("FALL_SETTINGS_INVALID");
   await requireSchema();
@@ -46,8 +46,8 @@ export async function saveFallSettings(deviceId: string, userEmail: string, inpu
     await client.query("BEGIN");
     // Lock membership until COMMIT: removing ownership cannot race this write.
     const owner = await client.query(
-      "SELECT role FROM device_memberships WHERE device_id=$1 AND user_email=$2 FOR SHARE",
-      [deviceId, userEmail],
+      "SELECT role FROM device_memberships WHERE device_id=$1 AND user_id=$2 FOR SHARE",
+      [deviceId, userId],
     );
     if (owner.rows[0]?.role !== "owner") throw new Error("FALL_SETTINGS_FORBIDDEN");
     await client.query("INSERT INTO device_state(device_id) VALUES($1) ON CONFLICT DO NOTHING", [deviceId]);
@@ -62,7 +62,7 @@ export async function saveFallSettings(deviceId: string, userEmail: string, inpu
     await client.query(
       `INSERT INTO access_audit_log(id,device_id,actor_type,actor_id,action,metadata_json)
        VALUES($1,$2,'user',$3,'fall_settings_updated',$4)`,
-      [randomUUID(), deviceId, userEmail, JSON.stringify({ ...patch, savedRevision: result.rows[0].revision })],
+      [randomUUID(), deviceId, userId, JSON.stringify({ ...patch, savedRevision: result.rows[0].revision })],
     );
     await client.query("COMMIT");
     return { settingsRevision: result.rows[0].revision as string };

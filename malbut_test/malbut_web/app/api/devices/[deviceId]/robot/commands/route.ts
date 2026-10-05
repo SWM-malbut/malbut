@@ -1,7 +1,7 @@
 import { createRobotCommand, listRobotCommands } from "../../../../../../db/robot-map";
 import { parseRobotCommand, readRobotCommandJson } from "../../../../../robot-contract";
 import { noStore } from "../../../../../api-response";
-import { getRequestUserEmail } from "../../../../../server-auth";
+import { getRequestUserId } from "../../../../../server-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -9,10 +9,10 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ deviceId: string }> },
 ) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
-  const commands = await listRobotCommands(deviceId, userEmail);
+  const commands = await listRobotCommands(deviceId, userId);
   if (!commands) return noStore({ error: "소유자만 명령 기록을 볼 수 있습니다." }, 403);
   return noStore({ commands }, 200);
 }
@@ -21,8 +21,8 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ deviceId: string }> },
 ) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
   let payload: unknown;
   try {
@@ -43,7 +43,7 @@ export async function POST(
   try {
     const command = await createRobotCommand({
       deviceId,
-      userEmail,
+      userId,
       operation: parsed.operation,
       payload: parsed.payload,
     });

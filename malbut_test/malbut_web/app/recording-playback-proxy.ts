@@ -27,7 +27,7 @@ type CreatePlaybackProxyInput = {
   playbackUrl: string;
   subjectId: string;
   proxyPath: string;
-  userEmail: string;
+  userId: string;
   expiresAt: string;
 };
 
@@ -36,7 +36,7 @@ type ResolvePlaybackProxyInput = {
   subjectId: string;
   playbackId: string;
   resource: string;
-  userEmail: string;
+  userId: string;
   cookieHeader: string | null;
 };
 
@@ -110,7 +110,7 @@ async function createPlaybackProxy(
     version: PLAYBACK_GRANT_VERSION,
     subjectId: input.subjectId,
     playbackId,
-    userHash: await sha256(input.userEmail.trim().toLowerCase()),
+    userHash: await sha256(input.userId),
     hostname: upstream.hostname,
     sessionToken: sessionTokens[0],
     expiresAt,
@@ -208,7 +208,7 @@ async function resolvePlaybackProxy(
     !KVS_ARCHIVED_MEDIA_HOST.test(grant.hostname) ||
     !(await constantTimeEqual(
       grant.userHash,
-      await sha256(input.userEmail.trim().toLowerCase()),
+      await sha256(input.userId),
     ))
   ) {
     return null;

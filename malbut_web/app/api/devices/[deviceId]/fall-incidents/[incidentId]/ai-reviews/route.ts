@@ -21,11 +21,11 @@ export async function POST(request: Request, context: Context) {
     return noStore({ error: "넘어진 순간 형식을 확인해 주세요." }, 400);
   }
   try {
-    if (!(await consumeRequestRateLimit({ userEmail: member.email, roomCode: deviceId,
+    if (!(await consumeRequestRateLimit({ userId: member.userId, roomCode: deviceId,
       scope: "fall-ai-review", limit: 10 }))) {
       return noStore({ error: "요청이 너무 많습니다. 1분 뒤 다시 시도해 주세요." }, 429, { "retry-after": "60" });
     }
-    const { reviewId } = await requestFallAiReview(deviceId, incidentId, member.email, body.momentAt);
+    const { reviewId } = await requestFallAiReview(deviceId, incidentId, member.userId, body.momentAt);
     // Answer now; the review runs after the response (or in the maintenance worker).
     startFallAiJob({ deviceId, jobId: reviewId });
     const review = (await listFallAiReviews(deviceId, incidentId)).find((r) => r.reviewId === reviewId);

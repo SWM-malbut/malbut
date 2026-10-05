@@ -4,7 +4,7 @@ import {
   userCanManageDevice,
 } from "../../../../../db/homecam";
 import { noStore } from "../../../../api-response";
-import { getRequestUserEmail } from "../../../../server-auth";
+import { getRequestUserId } from "../../../../server-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -12,10 +12,10 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ deviceId: string }> },
 ) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
-  if (!(await userCanManageDevice(deviceId, userEmail))) {
+  if (!(await userCanManageDevice(deviceId, userId))) {
     return noStore({ error: "소유자만 장치 토큰을 관리할 수 있습니다." }, 403);
   }
   return noStore({ credentials: await listDeviceCredentials(deviceId) }, 200);
@@ -25,10 +25,10 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ deviceId: string }> },
 ) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
-  if (!(await userCanManageDevice(deviceId, userEmail))) {
+  if (!(await userCanManageDevice(deviceId, userId))) {
     return noStore({ error: "소유자만 장치 토큰을 만들 수 있습니다." }, 403);
   }
   const payload = (await request.json().catch(() => null)) as {
@@ -58,7 +58,7 @@ export async function POST(
   }
   const credential = await createDeviceCredential({
     deviceId,
-    userEmail,
+    userId,
     label: payload.label.trim(),
     expiresAt,
   });
