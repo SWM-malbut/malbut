@@ -1149,6 +1149,8 @@ export function HomecamDashboard({
   const connectionText = selectedDevice?.online
     ? tab === "live" && displayedMediaReady ? "실시간 연결됨" : "연결됨"
     : "오프라인";
+  // 홈 영상 카드: 지금 볼 수 없으면 빨간 "실시간" 대신 그 이유를 회색으로.
+  const homeLiveBlocked = !selectedDevice?.online ? "오프라인" : !selectedDevice.cameraEnabled ? "카메라 꺼짐" : null;
   const showTopBar = tab === "home" || tab === "live" || (tab === "settings" && settingsView === "main");
   const navigate = (nextTab: HomecamTab) => {
     if (nextTab === "map") openMap("view");
@@ -1243,7 +1245,7 @@ export function HomecamDashboard({
 
             <button type="button" className="ui-card ui-camera-card" onClick={() => setTab("live")} aria-label="거실 실시간 영상 열기">
               <span className="ui-camera-media">
-                <span className="ui-live-tag">● 실시간</span>
+                <span className={`ui-live-tag ${homeLiveBlocked ? "is-off" : ""}`}>● {homeLiveBlocked ?? "실시간"}</span>
                 <VideoCamera size={44} weight="light" aria-hidden="true" />
               </span>
               <span className="ui-camera-text">

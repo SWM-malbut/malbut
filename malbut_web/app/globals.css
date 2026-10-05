@@ -4515,6 +4515,7 @@ a:focus-visible {
   position: absolute; left: 0.75rem; top: 0.75rem; font-size: 0.75rem; font-weight: 700; padding: 0.1875rem 0.5rem;
   border-radius: 6px; color: var(--ui-on-strong); background: var(--ui-danger);
 }
+.ui-live-tag.is-off { color: var(--ui-text-muted); background: var(--ui-neutral-soft); }
 .ui-camera-text { padding: 0.75rem 0.875rem; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
 .ui-camera-text > span:first-child { display: flex; flex-direction: column; gap: 0.125rem; }
 .ui-camera-text strong { font-size: 0.9375rem; font-weight: 700; }
