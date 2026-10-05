@@ -671,6 +671,10 @@ test("연속 녹화·설정 screens follow the mockup and only the owner edits s
   assert.doesNotMatch(settings, /음성 녹음/); // not built yet; left out on purpose
   assert.match(settings, /const disabled = !isOwner \|\| blocked \|\| row\.busy/);
   assert.match(dashboard, /<FallTimelinePanel/);
+  // Today keeps recording: refetch every 30 s, and at once for a moment after the last fetch.
+  assert.match(timeline, /window\.setInterval\(\(\) => setReload\(\(count\) => count \+ 1\), 30_000\)/);
+  assert.match(timeline, /if \(showsToday && loadedAt && moment > loadedAt\)/);
+  assert.match(timeline, /\}, \[base, day0, request, reload\]\);/);
   assert.match(dashboard, /<FallHomecamSettings/);
   assert.doesNotMatch(dashboard, /FallSettingsPanel/);
 });
