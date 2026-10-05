@@ -2,19 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("settings, event pagination, idempotency, push, and viewer grants stay hardened", async () => {
-  const [database, migration, eventRoute, dashboard, pushBroker, liveRoute] =
+test("settings, idempotency, push, and viewer grants stay hardened", async () => {
+  const [database, migration, dashboard, pushBroker, liveRoute] =
     await Promise.all([
       readFile(new URL("../db/homecam.ts", import.meta.url), "utf8"),
       readFile(
         new URL("../db/migrations/0001_initial.sql", import.meta.url),
-        "utf8",
-      ),
-      readFile(
-        new URL(
-          "../app/api/devices/[deviceId]/events/route.ts",
-          import.meta.url,
-        ),
         "utf8",
       ),
       readFile(
@@ -39,12 +32,6 @@ test("settings, event pagination, idempotency, push, and viewer grants stay hard
     database,
     /AND NOT \(COALESCE\(\?, 0\) = 1 AND COALESCE\(\?, camera_enabled\) = 0\)/,
   );
-  assert.match(
-    database,
-    /occurred_at < \? OR \(occurred_at = \? AND id < \?\)/,
-  );
-  assert.match(database, /ORDER BY occurred_at DESC, id DESC LIMIT \?/);
-  assert.match(eventRoute, /beforeId/);
   // The dashboard no longer lists general events (replaced by fall incidents).
   assert.doesNotMatch(dashboard, /params\.set\("beforeId"/);
 
@@ -108,22 +95,11 @@ test("the container binds Next to loopback-safe all interfaces on Fargate", asyn
 });
 
 test("bounded event clips keep privacy deletion and direct destination navigation explicit", async () => {
-  const [dashboard, playbackRoute, clipRoute, deletionRoute, migration, broker, stack] =
+  const [dashboard, clipRoute, migration, broker, stack] =
     await Promise.all([
       readFile(new URL("../app/components/homecam-dashboard.tsx", import.meta.url), "utf8"),
       readFile(
-        new URL(
-          "../app/api/devices/[deviceId]/events/[eventId]/playback/route.ts",
-          import.meta.url,
-        ),
-        "utf8",
-      ),
-      readFile(
         new URL("../app/api/device/v1/event-clips/[phase]/route.ts", import.meta.url),
-        "utf8",
-      ),
-      readFile(
-        new URL("../app/api/devices/[deviceId]/events/[eventId]/route.ts", import.meta.url),
         "utf8",
       ),
       readFile(new URL("../db/migrations/0005_event_clips.sql", import.meta.url), "utf8"),
@@ -137,8 +113,6 @@ test("bounded event clips keep privacy deletion and direct destination navigatio
   // the recording expires after 7 days (spec 6).
   assert.doesNotMatch(dashboard, /homecam-event-delete-button/);
   assert.match(dashboard, /<FallIncidentsPanel/);
-  assert.match(playbackRoute, /"retry-after": "2"/);
-  assert.match(deletionRoute, /rawMediaDeletion:\s*"retention"/);
   assert.match(clipRoute, /Idempotency-Key 헤더가 본문과 일치/);
   assert.match(migration, /clip_state IN \('detected', 'recording', 'ready', 'incomplete'/);
   assert.match(broker, /new ListFragmentsCommand/);

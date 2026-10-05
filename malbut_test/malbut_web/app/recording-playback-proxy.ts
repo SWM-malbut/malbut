@@ -47,22 +47,6 @@ export type ResolvedPlaybackProxy = {
   rewritePlaylist: boolean;
 };
 
-export async function createRecordingPlaybackProxy(
-  input: Omit<CreatePlaybackProxyInput, "subjectId" | "proxyPath"> & {
-    recordingId: string;
-  },
-  secret: string,
-) {
-  return createPlaybackProxy(
-    {
-      ...input,
-      subjectId: input.recordingId,
-      proxyPath: `/api/recordings/${encodeURIComponent(input.recordingId)}/hls`,
-    },
-    secret,
-  );
-}
-
 export async function createDeviceLivePlaybackProxy(
   input: Omit<CreatePlaybackProxyInput, "subjectId" | "proxyPath"> & {
     deviceId: string;
@@ -169,16 +153,6 @@ function playbackPublicOrigin(configured: string | undefined, fallback: string) 
     throw new Error("PLAYBACK_PUBLIC_ORIGIN_INVALID");
   }
   return origin.origin;
-}
-
-export async function resolveRecordingPlaybackProxy(
-  input: Omit<ResolvePlaybackProxyInput, "subjectId"> & { recordingId: string },
-  secret: string,
-): Promise<ResolvedPlaybackProxy | null> {
-  return resolvePlaybackProxy(
-    { ...input, subjectId: input.recordingId },
-    secret,
-  );
 }
 
 export async function resolveDeviceLivePlaybackProxy(

@@ -1,6 +1,6 @@
 import { getFallClipForPlayback } from "../../../../../../../../../db/fall-review";
 import { writeAuditLog } from "../../../../../../../../../db/homecam";
-import { consumeRequestRateLimit } from "../../../../../../../../../db/petcam";
+import { consumeRequestRateLimit } from "../../../../../../../../../db/request-rate-limit";
 import { noStore } from "../../../../../../../../api-response";
 import { fallMember } from "../../../../../../../../fall-review-route";
 import { requestBrokerEventPlayback } from "../../../../../../../../kvs-broker";

@@ -1,5 +1,5 @@
 import { listFallAiReviews, requestFallAiReview } from "../../../../../../../db/fall-ai-review";
-import { consumeRequestRateLimit } from "../../../../../../../db/petcam";
+import { consumeRequestRateLimit } from "../../../../../../../db/request-rate-limit";
 import { noStore } from "../../../../../../api-response";
 import { fallAiFailure } from "../../../../../../fall-ai-route";
 import { startFallAiJob } from "../../../../../../fall-ai-review-worker";

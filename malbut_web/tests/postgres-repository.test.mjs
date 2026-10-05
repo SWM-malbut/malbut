@@ -75,7 +75,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
     const loadModule = createTypescriptModuleLoader();
     const postgres = loadModule(path.join(projectDirectory, "db/postgres.ts"));
     const homecam = loadModule(path.join(projectDirectory, "db/homecam.ts"));
-    const petcam = loadModule(path.join(projectDirectory, "db/petcam.ts"));
+    const rateLimit = loadModule(path.join(projectDirectory, "db/request-rate-limit.ts"));
     const robotMap = loadModule(path.join(projectDirectory, "db/robot-map.ts"));
     const robotContract = loadModule(path.join(projectDirectory, "app/robot-contract.ts"));
     const pool = pglitePoolAdapter(database);
@@ -181,14 +181,6 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
       assert.equal(firstEvent.created, true);
       assert.equal(duplicateEvent.created, false);
       assert.equal(duplicateEvent.event.id, firstEvent.event.id);
-
-      const events = await homecam.listHomecamEvents({
-        deviceId: "living-room",
-        eventTypes: ["person"],
-        limit: 10,
-      });
-      assert.equal(events.length, 1);
-      assert.deepEqual(plain(events[0]), plain(firstEvent.event));
 
       const clipStartAt = new Date(
         Date.parse(activeSession.recordingStartedAt) + 2_000,
@@ -296,76 +288,15 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
           ),
         );
       }
-      const groupedEvents = await homecam.listHomecamEvents({
-        deviceId: "living-room",
-        eventTypes: [],
-        limit: 10,
-      });
-      const groupedClipEvents = groupedEvents.filter(
-        (event) => event.eventGroupId === clipStarted.eventGroupId,
-      );
-      assert.equal(groupedClipEvents.length, 1);
-      assert.equal(groupedClipEvents[0].id, startedClip.event.id);
-      assert.equal(groupedClipEvents[0].segmentCount, 3);
-      assert.equal(groupedClipEvents[0].clipStartAt, clipStartAt);
-      assert.equal(
-        groupedClipEvents[0].clipEndAt,
-        new Date(Date.parse(clipStartAt) + 300_000).toISOString(),
-      );
-      assert.equal(groupedClipEvents[0].monotonicDurationMs, 300_000);
-      const playbackInfo = await homecam.getEventClipPlayback(
-        "living-room",
-        endedClip.event.id,
-      );
-      assert.equal(playbackInfo?.streamArn, "arn:test:kvs:archive");
-      assert.equal(playbackInfo?.event.segmentCount, 3);
-      assert.equal(playbackInfo?.event.clipStartAt, clipStartAt);
-      assert.equal(
-        playbackInfo?.event.clipEndAt,
-        new Date(Date.parse(clipStartAt) + 300_000).toISOString(),
-      );
-      assert.equal(
-        await homecam.softDeleteHomecamEvent({
-          deviceId: "living-room",
-          eventId: endedClip.event.id,
-          userEmail: "owner@example.com",
-        }),
-        true,
-      );
-      assert.equal(
-        await homecam.getHomecamEvent(
-          "living-room",
-          segmentEvents[1].event.id,
-        ),
-        null,
-      );
-      assert.equal(
-        await homecam.softDeleteHomecamEvent({
-          deviceId: "living-room",
-          eventId: endedClip.event.id,
-          userEmail: "owner@example.com",
-        }),
-        false,
-      );
-      const eventsAfterDeletion = await homecam.listHomecamEvents({
-        deviceId: "living-room",
-        eventTypes: ["person"],
-        limit: 10,
-      });
-      assert.equal(
-        eventsAfterDeletion.some((event) => event.id === endedClip.event.id),
-        false,
-      );
-
       const rateLimitInput = {
         userEmail: "owner@example.com",
         roomCode: session.roomCode,
         scope: "repository-integration",
         limit: 2,
       };
-      assert.equal(await petcam.consumeRequestRateLimit(rateLimitInput), true);
-      assert.equal(await petcam.consumeRequestRateLimit(rateLimitInput), true);
-      assert.equal(await petcam.consumeRequestRateLimit(rateLimitInput), false);
+      assert.equal(await rateLimit.consumeRequestRateLimit(rateLimitInput), true);
+      assert.equal(await rateLimit.consumeRequestRateLimit(rateLimitInput), true);
+      assert.equal(await rateLimit.consumeRequestRateLimit(rateLimitInput), false);
       const rateKey = `${rateLimitInput.scope}:${rateLimitInput.userEmail}:${rateLimitInput.roomCode}`;
       const currentWindow = await database.query(
         `SELECT window_started_at, request_count
@@ -381,7 +312,7 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
          WHERE rate_key = $1`,
         [rateKey],
       );
-      assert.equal(await petcam.consumeRequestRateLimit(rateLimitInput), true);
+      assert.equal(await rateLimit.consumeRequestRateLimit(rateLimitInput), true);
       const resetWindow = await database.query(
         `SELECT request_count FROM request_rate_limits WHERE rate_key = $1`,
         [rateKey],

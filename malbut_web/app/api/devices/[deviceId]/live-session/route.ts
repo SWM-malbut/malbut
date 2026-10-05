@@ -5,7 +5,7 @@ import {
   userCanViewDevice,
   writeAuditLog,
 } from "../../../../../db/homecam";
-import { consumeRequestRateLimit } from "../../../../../db/petcam";
+import { consumeRequestRateLimit } from "../../../../../db/request-rate-limit";
 import { isValidClientId } from "../../../../../db/homecam-validation";
 import { noStore } from "../../../../api-response";
 import { requestBrokerSession } from "../../../../kvs-broker";

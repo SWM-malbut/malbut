@@ -1,5 +1,4 @@
 import { getD1 } from ".";
-import { ensurePetcamSchema } from "./petcam";
 import {
   createDeviceToken,
   hashDeviceToken,
@@ -57,7 +56,6 @@ type StateRow = {
 };
 
 export async function ensureHomecamSchema() {
-  await ensurePetcamSchema();
   await ensureDatabaseSchema();
 }
 
@@ -1259,86 +1257,6 @@ export async function upsertHomecamEventClip(
   return { created: false, event: mapEvent(stored) };
 }
 
-export async function softDeleteHomecamEvent(input: {
-  deviceId: string;
-  eventId: string;
-  userEmail: string;
-}) {
-  await ensureHomecamSchema();
-  const event = await getHomecamEvent(input.deviceId, input.eventId);
-  if (!event) return false;
-  const nowIso = new Date().toISOString();
-  const result = await getD1()
-    .prepare(
-      `UPDATE homecam_events SET deleted_at = ?
-       WHERE device_id = ? AND deleted_at IS NULL
-         AND (id = ? OR (event_group_id IS NOT NULL AND event_group_id = ?))`,
-    )
-    .bind(
-      nowIso,
-      input.deviceId,
-      input.eventId,
-      event.eventGroupId ?? "",
-    )
-    .run();
-  if (result.meta.changes > 0) {
-    await getD1()
-      .prepare(
-        `DELETE FROM homecam_push_outbox
-         WHERE delivered_at IS NULL AND event_id IN (
-           SELECT id FROM homecam_events
-           WHERE device_id = ?
-             AND (id = ? OR (event_group_id IS NOT NULL AND event_group_id = ?))
-         )`,
-      )
-      .bind(input.deviceId, input.eventId, event.eventGroupId ?? "")
-      .run();
-    await writeAuditLog({
-      deviceId: input.deviceId,
-      actorType: "user",
-      actorId: input.userEmail,
-      action: "event.remove_from_list",
-      metadata: {
-        eventId: event.id,
-        eventGroupId: event.eventGroupId,
-        segmentCount: event.segmentCount,
-      },
-    });
-  }
-  return result.meta.changes > 0;
-}
-
-export async function getEventClipPlayback(deviceId: string, eventId: string) {
-  const event = await getHomecamEvent(deviceId, eventId);
-  if (
-    !event ||
-    event.clipState !== "ready" ||
-    !event.clipStartAt ||
-    !event.clipEndAt ||
-    !event.recordingId
-  ) {
-    return null;
-  }
-  const clipStartAt = event.clipStartAt;
-  const clipEndAt = event.clipEndAt;
-  const recordingId = event.recordingId;
-  const recording = await getD1()
-    .prepare(
-      `SELECT recording_sessions.kvs_stream_arn
-       FROM recording_sessions
-       INNER JOIN stream_sessions
-         ON stream_sessions.id = recording_sessions.session_id
-       WHERE recording_sessions.session_id = ? AND stream_sessions.device_id = ?`,
-    )
-    .bind(recordingId, deviceId)
-    .first<{ kvs_stream_arn: string }>();
-  if (!recording) return null;
-  return {
-    event: { ...event, clipStartAt, clipEndAt, recordingId },
-    streamArn: recording.kvs_stream_arn,
-  };
-}
-
 type EventClipSessionRow = {
   session_id: string;
   session_started_at: string;
@@ -1460,163 +1378,6 @@ async function eventRequestFingerprint(event: HomecamEventInput) {
   return Array.from(digest, (byte) =>
     byte.toString(16).padStart(2, "0"),
   ).join("");
-}
-
-export async function listHomecamEvents(input: {
-  deviceId: string;
-  eventTypes: string[];
-  before?: { occurredAt: string; id: string };
-  limit: number;
-}) {
-  await ensureHomecamSchema();
-  await cleanupExpiredHomecamData();
-  const placeholders = input.eventTypes.map(() => "?").join(",");
-  const typeClause = placeholders ? `AND event_type IN (${placeholders})` : "";
-  const beforeClause = input.before
-    ? "AND (occurred_at < ? OR (occurred_at = ? AND id < ?))"
-    : "";
-  const bindings: unknown[] = [
-    input.deviceId,
-    new Date(Date.now() - EVENT_RETENTION_MS).toISOString(),
-    ...input.eventTypes,
-  ];
-  if (input.before) {
-    bindings.push(
-      input.before.occurredAt,
-      input.before.occurredAt,
-      input.before.id,
-    );
-  }
-  bindings.push(input.limit);
-  const result = await getD1()
-    .prepare(
-      `WITH ranked_events AS (
-         SELECT id, event_type, confidence, occurred_at, received_at,
-                recording_session_id, recording_offset_ms,
-                event_group_id, segment_index, labels_json,
-                clip_start_at, clip_end_at, clip_state,
-                monotonic_duration_ms, clock_stepped,
-                ai_status, ai_summary, ai_labels_json,
-                ai_severity, ai_confidence, ai_error,
-                ROW_NUMBER() OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                  ORDER BY COALESCE(segment_index, -1) DESC,
-                           occurred_at DESC, id DESC
-                ) AS row_rank,
-                FIRST_VALUE(id) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                  ORDER BY CASE WHEN segment_index IS NULL THEN 0 ELSE 1 END,
-                           segment_index ASC, occurred_at ASC, id ASC
-                ) AS group_event_id,
-                MIN(occurred_at) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_occurred_at,
-                MIN(clip_start_at) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_clip_start_at,
-                MAX(clip_end_at) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_clip_end_at,
-                COUNT(monotonic_duration_ms) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_duration_count,
-                SUM(monotonic_duration_ms) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_duration_ms,
-                MAX(clock_stepped) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_clock_stepped,
-                COUNT(*) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_segment_count,
-                SUM(CASE WHEN clip_state = 'recording' THEN 1 ELSE 0 END) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_recording_count,
-                SUM(CASE WHEN clip_state <> 'ready' THEN 1 ELSE 0 END) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_not_ready_count
-         FROM homecam_events
-         WHERE device_id = ? AND occurred_at >= ? AND deleted_at IS NULL
-       ), grouped_events AS (
-         SELECT group_event_id AS id, event_type, confidence,
-                group_occurred_at AS occurred_at, received_at,
-                recording_session_id, recording_offset_ms,
-                event_group_id, segment_index, labels_json,
-                group_clip_start_at AS clip_start_at,
-                group_clip_end_at AS clip_end_at,
-                CASE
-                  WHEN group_recording_count > 0 THEN 'recording'
-                  WHEN group_not_ready_count = 0 THEN 'ready'
-                  ELSE clip_state
-                END AS clip_state,
-                CASE WHEN group_duration_count = 0 THEN NULL
-                     ELSE group_duration_ms END AS monotonic_duration_ms,
-                group_clock_stepped AS clock_stepped,
-                ai_status, ai_summary, ai_labels_json,
-                ai_severity, ai_confidence, ai_error,
-                group_segment_count AS segment_count
-         FROM ranked_events WHERE row_rank = 1
-       )
-       SELECT id, event_type, confidence, occurred_at, received_at,
-              recording_session_id, recording_offset_ms,
-              event_group_id, segment_index, labels_json,
-              clip_start_at, clip_end_at, clip_state,
-              monotonic_duration_ms, clock_stepped, ai_status, ai_summary,
-              ai_labels_json, ai_severity, ai_confidence, ai_error,
-              segment_count
-       FROM grouped_events
-       WHERE 1 = 1 ${typeClause} ${beforeClause}
-       ORDER BY occurred_at DESC, id DESC LIMIT ?`,
-    )
-    .bind(...bindings)
-    .all<HomecamEventViewRow>();
-  return result.results.map(mapEvent);
-}
-
-export async function getHomecamEvent(deviceId: string, eventId: string) {
-  await ensureHomecamSchema();
-  await cleanupExpiredHomecamData();
-  const row = await getD1()
-    .prepare(
-      `SELECT id, event_type, confidence, occurred_at, received_at,
-              recording_session_id, recording_offset_ms,
-              event_group_id, segment_index, labels_json,
-              clip_start_at, clip_end_at, clip_state,
-              monotonic_duration_ms, clock_stepped, ai_status, ai_summary,
-              ai_labels_json, ai_severity, ai_confidence, ai_error
-       FROM homecam_events
-       WHERE id = ? AND device_id = ? AND occurred_at >= ? AND deleted_at IS NULL`,
-    )
-    .bind(
-      eventId,
-      deviceId,
-      new Date(Date.now() - EVENT_RETENTION_MS).toISOString(),
-    )
-    .first<HomecamEventViewRow>();
-  if (!row) return null;
-  if (!row.event_group_id) return mapEvent(row);
-  const segments = await getD1()
-    .prepare(
-      `SELECT id, event_type, confidence, occurred_at, received_at,
-              recording_session_id, recording_offset_ms,
-              event_group_id, segment_index, labels_json,
-              clip_start_at, clip_end_at, clip_state,
-              monotonic_duration_ms, clock_stepped, ai_status, ai_summary,
-              ai_labels_json, ai_severity, ai_confidence, ai_error
-       FROM homecam_events
-       WHERE device_id = ? AND event_group_id = ?
-         AND occurred_at >= ? AND deleted_at IS NULL
-       ORDER BY segment_index ASC, occurred_at ASC, id ASC`,
-    )
-    .bind(
-      deviceId,
-      row.event_group_id,
-      new Date(Date.now() - EVENT_RETENTION_MS).toISOString(),
-    )
-    .all<HomecamEventViewRow>();
-  return segments.results.length > 0
-    ? mapEvent(mergeEventSegments(segments.results))
-    : null;
 }
 
 export async function claimPendingHomecamPushes(input: {
@@ -2194,59 +1955,6 @@ function mapState(row: StateRow) {
     detectorHealthy: Boolean(row.detector_healthy),
     lastSeenAt: row.last_seen_at,
     updatedAt: row.updated_at,
-  };
-}
-
-function mergeEventSegments(rows: HomecamEventViewRow[]): HomecamEventViewRow {
-  if (rows.length === 0) throw new Error("EVENT_SEGMENTS_EMPTY");
-  const ordered = [...rows].sort((left, right) => {
-    const leftIndex = left.segment_index ?? -1;
-    const rightIndex = right.segment_index ?? -1;
-    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
-    return Date.parse(left.occurred_at) - Date.parse(right.occurred_at);
-  });
-  const first = ordered[0];
-  const latest = ordered.at(-1)!;
-  const clipStarts = ordered
-    .map((row) => row.clip_start_at)
-    .filter((value): value is string => Boolean(value));
-  const clipEnds = ordered
-    .map((row) => row.clip_end_at)
-    .filter((value): value is string => Boolean(value));
-  const durations = ordered
-    .map((row) => row.monotonic_duration_ms)
-    .filter((value): value is number => typeof value === "number");
-  const allReady = ordered.every((row) => row.clip_state === "ready");
-  const anyRecording = ordered.some((row) => row.clip_state === "recording");
-  return {
-    ...latest,
-    id: first.id,
-    occurred_at: ordered.reduce(
-      (earliest, row) =>
-        Date.parse(row.occurred_at) < Date.parse(earliest)
-          ? row.occurred_at
-          : earliest,
-      first.occurred_at,
-    ),
-    clip_start_at:
-      clipStarts.length > 0
-        ? clipStarts.reduce((earliest, value) =>
-            Date.parse(value) < Date.parse(earliest) ? value : earliest,
-          )
-        : null,
-    clip_end_at:
-      clipEnds.length > 0
-        ? clipEnds.reduce((latestValue, value) =>
-            Date.parse(value) > Date.parse(latestValue) ? value : latestValue,
-          )
-        : null,
-    clip_state: anyRecording ? "recording" : allReady ? "ready" : latest.clip_state,
-    monotonic_duration_ms:
-      durations.length > 0
-        ? durations.reduce((total, value) => total + value, 0)
-        : null,
-    clock_stepped: ordered.some((row) => Boolean(row.clock_stepped)) ? 1 : 0,
-    segment_count: ordered.length,
   };
 }
 

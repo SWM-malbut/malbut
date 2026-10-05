@@ -5,7 +5,7 @@ import {
   userCanViewDevice,
   writeAuditLog,
 } from "../../../../../db/homecam";
-import { consumeRequestRateLimit } from "../../../../../db/petcam";
+import { consumeRequestRateLimit } from "../../../../../db/request-rate-limit";
 import { requestBrokerLivePlayback } from "../../../../kvs-broker";
 import {
   resolveDeviceKvsResources,
