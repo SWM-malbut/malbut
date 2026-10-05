@@ -16,7 +16,7 @@ import {
 import { recordingPlaybackPosition } from "../app/recording-segments";
 import { ensureDatabaseSchema } from "./migration-state";
 import { MEDIA_SESSION_TTL_MS, RECORDING_END_SQL } from "./recording-end";
-import { ensureUserForIdentity, labelFor, userLabels } from "./users";
+import { labelFor, userLabels } from "./users";
 
 const HEARTBEAT_ONLINE_MS = 30_000;
 const EVENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -1509,50 +1509,25 @@ export async function listFamilyMembers(deviceId: string) {
   await ensureHomecamSchema();
   const result = await getD1()
     .prepare(
-      `SELECT user_id, role, created_at FROM device_memberships
-       WHERE device_id = ? AND role IN ('owner', 'family')
-       ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, created_at ASC`,
+      `SELECT m.user_id, m.role, m.created_at, m.invite_id IS NOT NULL AS via_invite,
+         (SELECT i.provider FROM user_identities i WHERE i.user_id = m.user_id
+          ORDER BY CASE i.provider WHEN 'email' THEN 1 ELSE 0 END LIMIT 1) AS provider
+       FROM device_memberships m
+       WHERE m.device_id = ? AND m.role IN ('owner', 'family')
+       ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END, m.created_at ASC`,
     )
     .bind(deviceId)
-    .all<{ user_id: string; role: string; created_at: string }>();
+    .all<{ user_id: string; role: string; created_at: string; via_invite: boolean; provider: string | null }>();
   const labels = await userLabels(result.results.map((row) => row.user_id));
   return result.results.map((row) => ({
     userId: row.user_id,
     name: labelFor(labels, row.user_id),
     role: row.role,
     createdAt: row.created_at,
+    // 보호자 목록의 "구글 · 10월 3일 링크로 들어옴".
+    provider: row.provider,
+    viaInvite: Boolean(row.via_invite),
   }));
-}
-
-/** Until invite links exist, an owner invites a guardian by email and access starts at once. */
-export async function inviteFamilyMember(input: {
-  deviceId: string;
-  ownerUserId: string;
-  familyEmail: string;
-}) {
-  await ensureHomecamSchema();
-  const familyUserId = await ensureUserForIdentity("email", input.familyEmail);
-  if (familyUserId === input.ownerUserId) throw new Error("MEMBER_IS_SELF");
-  const existing = await getMembershipRole(input.deviceId, familyUserId);
-  if (existing === "owner") throw new Error("MEMBER_IS_OWNER");
-  const createdAt = new Date().toISOString();
-  await getD1()
-    .prepare(
-      `INSERT INTO device_memberships (device_id, user_id, role, created_at)
-       VALUES (?, ?, 'family', ?)
-       ON CONFLICT(device_id, user_id) DO UPDATE SET role = 'family'`,
-    )
-    .bind(input.deviceId, familyUserId, createdAt)
-    .run();
-  await writeAuditLog({
-    deviceId: input.deviceId,
-    actorType: "user",
-    actorId: input.ownerUserId,
-    action: "family.invite",
-    metadata: { userId: familyUserId },
-  });
-  const labels = await userLabels([familyUserId]);
-  return { userId: familyUserId, name: labelFor(labels, familyUserId), role: "family" as const, createdAt };
 }
 
 export async function revokeFamilyMember(input: {

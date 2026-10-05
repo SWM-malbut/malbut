@@ -383,6 +383,23 @@ function randomToken() {
   return randomBytes(32).toString("base64url");
 }
 
+/** Invite links: looked up by HMAC, and kept sealed so the owner can copy the link again. */
+export function newInviteToken() {
+  return randomToken();
+}
+
+export function inviteTokenDigest(token: string, sessionSecret: string) {
+  return tokenDigest(`invite:${token}`, sessionSecret);
+}
+
+export function sealInviteToken(token: string, sessionSecret: string) {
+  return encryptCognitoSession(token, sessionSecret);
+}
+
+export function openInviteToken(sealed: string, sessionSecret: string) {
+  return decryptCognitoSession(sealed, sessionSecret);
+}
+
 /** Registration codes are kept like session tokens: only an HMAC under the session secret. */
 export function registrationCodeDigest(code: string, sessionSecret: string) {
   return tokenDigest(`registration-code:${code}`, sessionSecret);

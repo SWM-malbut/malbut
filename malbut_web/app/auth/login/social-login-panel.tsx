@@ -13,6 +13,24 @@ const ERROR_COPY: Record<string, string> = {
   unavailable: "이 로그인 방법은 아직 준비 중이에요.",
 };
 
+/** 카카오·네이버·Google로 계속하기: the login page and the invite page both use these. */
+export function SocialProviderButtons({ returnTo, enabled }: { returnTo: string; enabled: readonly SocialProvider[] }) {
+  const query = new URLSearchParams({ return_to: returnTo }).toString();
+  return (
+    <div className="ui-login-providers">
+      {PROVIDERS.map(({ provider, label }) => enabled.includes(provider) ? (
+        <a key={provider} className={`ui-login-provider is-${provider}`} href={`/auth/oidc/${provider}?${query}`}>
+          {label}
+        </a>
+      ) : (
+        <span key={provider} className={`ui-login-provider is-${provider} is-unavailable`} aria-disabled="true">
+          {label}<small>준비 중</small>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** 로그인 화면(목업): 카카오·네이버·Google로 계속하기. */
 export function SocialLoginPanel({
   returnTo,
@@ -35,17 +53,7 @@ export function SocialLoginPanel({
 
       {message && <p className="ui-login-error" role="alert">{message}</p>}
 
-      <div className="ui-login-providers">
-        {PROVIDERS.map(({ provider, label }) => enabled.includes(provider) ? (
-          <a key={provider} className={`ui-login-provider is-${provider}`} href={`/auth/oidc/${provider}?${query}`}>
-            {label}
-          </a>
-        ) : (
-          <span key={provider} className={`ui-login-provider is-${provider} is-unavailable`} aria-disabled="true">
-            {label}<small>준비 중</small>
-          </span>
-        ))}
-      </div>
+      <SocialProviderButtons returnTo={returnTo} enabled={enabled} />
 
       <div className="ui-login-note">
         <strong>처음 가입한 방법으로 로그인하세요</strong>
