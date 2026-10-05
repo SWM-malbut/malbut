@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getPostgresPool, type SqlExecutor } from "./postgres";
+import { quietRecordingEnd } from "./recording-end";
 import { labelFor, userLabels } from "./users";
 import type { FallClipInput } from "../app/fall-clip-contract";
 
@@ -216,15 +217,16 @@ export async function listFallIncidentSummaries(deviceId: string, filter: Incide
 
 type RecordingSpan = { start: number; end: number | null; streamArn: string };
 
-async function recordingSpans(deviceId: string, from: string, to: string): Promise<RecordingSpan[]> {
+async function recordingSpans(deviceId: string, from: string, to: string, now = Date.now()): Promise<RecordingSpan[]> {
   return (await getPostgresPool().query(
-    `SELECT COALESCE(r.started_at,s.started_at) AS started_at,r.ended_at,r.kvs_stream_arn FROM recording_sessions r
+    `SELECT COALESCE(r.started_at,s.started_at) AS started_at,r.ended_at,r.kvs_stream_arn,s.expires_at FROM recording_sessions r
      JOIN stream_sessions s ON s.id=r.session_id
      WHERE s.device_id=$1 AND COALESCE(r.started_at,s.started_at)<$3
        AND (r.ended_at IS NULL OR r.ended_at>$2)`, [deviceId, from, to],
   )).rows.filter((row) => row.started_at !== null).map((row) => ({
     start: Date.parse(iso(row.started_at)!),
-    end: row.ended_at === null ? null : Date.parse(iso(row.ended_at)!),
+    // Still open: a robot that stopped reporting stopped recording then, even before the server closes it.
+    end: row.ended_at === null ? quietRecordingEnd(iso(row.expires_at)!, now) : Date.parse(iso(row.ended_at)!),
     streamArn: row.kvs_stream_arn,
   }));
 }
@@ -647,7 +649,7 @@ export async function getFallTimeline(deviceId: string, from: string, to: string
   const start = Date.parse(from), end = Date.parse(to);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 26 * 3600_000 ||
       end < now - RECORDING_RETENTION_MS || start > now + 60_000) throw new Error("FALL_TIMELINE_RANGE_INVALID");
-  const spans = (await recordingSpans(deviceId, from, to)).map((s) => ({
+  const spans = (await recordingSpans(deviceId, from, to, now)).map((s) => ({
     startAt: new Date(Math.max(s.start, start)).toISOString(),
     endAt: new Date(Math.min(s.end ?? now, end)).toISOString(),
   })).filter((s) => s.endAt > s.startAt).sort((a, b) => a.startAt.localeCompare(b.startAt));
