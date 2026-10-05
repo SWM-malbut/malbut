@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from malbut_agent_server.providers.base import AgentProvider
 from malbut_agent_server.schemas import ValidationError
 from malbut_agent_server.story_memory_provider import StoryMemoryProvider
 
@@ -66,6 +67,12 @@ class Provider:
 
 def request():
     return SimpleNamespace(user_id='user-a', request_id='req-a', utterance='그 전시 말이야')
+
+
+def test_wrapper_implements_agent_provider_contract():
+    wrapper = StoryMemoryProvider(Provider(), Service())
+    assert isinstance(wrapper, AgentProvider)
+    assert wrapper.complete(request(), [], [], []) == 'answer'
 
 
 def test_injects_related_data_preserving_settings_and_tracks_reply():
