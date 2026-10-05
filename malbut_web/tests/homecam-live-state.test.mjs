@@ -23,7 +23,7 @@ test("live dashboard uses rendered media state and exposes one camera control", 
   assert.match(app, /LOCAL DEMO · LIVE/);
   assert.match(page, /process\.env\.NODE_ENV !== "production"/);
   assert.match(page, /process\.env\.NEXT_PUBLIC_HOMECAM_UI_DEMO === "1"/);
-  assert.match(page, /if \(!localUiDemo\) await requireChatGPTUser\(returnTo\)/);
+  assert.match(page, /if \(!localUiDemo\) \{\s*const user = await requireChatGPTUser\(returnTo\)/);
   assert.match(app, /onReleaseLive=\{closeInlineViewer\}/);
   assert.match(app, /device\?\.id === inlineViewerDevice\.id/);
   assert.match(app, /"playing",[\s\S]*"timeupdate",[\s\S]*"resize"/);

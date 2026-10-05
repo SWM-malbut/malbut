@@ -43,8 +43,13 @@ type AlbClaims = Record<string, unknown> & {
   name?: unknown;
 };
 
+/**
+ * Social login sessions carry a user ID and no email. Email logins (Cognito session,
+ * ALB, development header) carry an email that maps to a user.
+ */
 export type AuthenticatedUser = {
-  email: string;
+  userId: string | null;
+  email: string | null;
   fullName: string | null;
   subject: string;
 };
@@ -59,7 +64,12 @@ const publicKeyCache = new Map<string, CachedPublicKey>();
 /** The signed-in person's user ID. Email logins map to an 'email' identity (created on first sight). */
 export async function getRequestUserId(request: Request): Promise<string | null> {
   const user = await getAuthenticatedUser(request.headers, request.url);
-  return user ? ensureUserForIdentity("email", user.email) : null;
+  return user ? userIdFor(user) : null;
+}
+
+export async function userIdFor(user: AuthenticatedUser) {
+  if (user.userId) return user.userId;
+  return user.email ? ensureUserForIdentity("email", user.email) : null;
 }
 
 export async function getAuthenticatedUser(
@@ -105,9 +115,13 @@ async function opaqueSessionUser(
   try {
     const user = await getWebSessionUser(token, secret);
     if (!user) return null;
+    if (user.userId) {
+      return { userId: user.userId, email: null, fullName: null, subject: `user:${user.userId}` };
+    }
     const email = normalizeEmail(user.email);
-    if (!email || !validSubject(user.subject)) return null;
+    if (!email || !user.subject || !validSubject(user.subject)) return null;
     return {
+      userId: null,
       email,
       fullName: normalizeDisplayName(user.fullName),
       subject: user.subject,
@@ -190,7 +204,7 @@ async function verifiedAlbUser(
   const email = normalizeEmail(claims[claimName]);
   if (!email) return null;
   const fullName = normalizeDisplayName(claims.name);
-  return { email, fullName, subject };
+  return { userId: null, email, fullName, subject };
 }
 
 function developmentHeaderUser(
@@ -204,7 +218,7 @@ function developmentHeaderUser(
   const expectedEmail = normalizeEmail(runtime.AUTH_DEV_USER_EMAIL);
   const presentedEmail = normalizeEmail(headers.get(DEV_USER_HEADER));
   if (!expectedEmail || presentedEmail !== expectedEmail) return null;
-  return { email: expectedEmail, fullName: null, subject: `dev:${expectedEmail}` };
+  return { userId: null, email: expectedEmail, fullName: null, subject: `dev:${expectedEmail}` };
 }
 
 function isLoopbackRequest(headers: Headers, requestUrl?: string): boolean {

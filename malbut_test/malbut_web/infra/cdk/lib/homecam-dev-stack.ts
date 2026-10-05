@@ -345,6 +345,18 @@ export class HomecamDevStack extends Stack {
       },
     });
     vapidSecret.applyRemovalPolicy(RemovalPolicy.DESTROY);
+    // Kakao·Naver·Google OpenID Connect clients; an empty pair keeps that button "준비 중".
+    const socialLoginSecret = new secretsmanager.Secret(this, "SocialLoginSecret", {
+      secretName: `${prefix}/social-login`,
+      description: "OpenID Connect client IDs and secrets for Kakao, Naver and Google sign-in",
+      secretObjectValue: Object.fromEntries(
+        SOCIAL_LOGIN_PROVIDERS.flatMap((provider) => [
+          [`${provider}ClientId`, SecretValue.cfnParameter(parameters[`${provider}ClientId`])],
+          [`${provider}ClientSecret`, SecretValue.cfnParameter(parameters[`${provider}ClientSecret`])],
+        ]),
+      ),
+    });
+    socialLoginSecret.applyRemovalPolicy(RemovalPolicy.DESTROY);
 
     const deviceResources = props.deviceIds.map((deviceId) =>
       createDeviceKvsResources(this, prefix, deviceId),
@@ -730,6 +742,14 @@ export class HomecamDevStack extends Stack {
           ? {
               AUTH_SESSION_SECRET:
                 ecs.Secret.fromSecretsManager(authSessionSecret),
+              ...Object.fromEntries(
+                SOCIAL_LOGIN_PROVIDERS.flatMap((provider) => [
+                  [`AUTH_${provider.toUpperCase()}_CLIENT_ID`,
+                    ecs.Secret.fromSecretsManager(socialLoginSecret, `${provider}ClientId`)],
+                  [`AUTH_${provider.toUpperCase()}_CLIENT_SECRET`,
+                    ecs.Secret.fromSecretsManager(socialLoginSecret, `${provider}ClientSecret`)],
+                ]),
+              ),
             }
           : {}),
       },
@@ -1155,6 +1175,7 @@ function deploymentParameters(stack: Stack, usesCloudFront: boolean) {
       noEcho: true,
       minLength: 20,
     }),
+    ...socialLoginParameters(stack),
     serviceDesiredCount: new CfnParameter(stack, "ServiceDesiredCount", {
       type: "Number",
       description:
@@ -1319,3 +1340,28 @@ exports.handler = async () => {
   return { statusCode: response.status };
 };
 `;
+
+const SOCIAL_LOGIN_PROVIDERS = ["kakao", "naver", "google"] as const;
+
+function socialLoginParameters(stack: Stack) {
+  const parameters = {} as Record<
+    `${(typeof SOCIAL_LOGIN_PROVIDERS)[number]}Client${"Id" | "Secret"}`,
+    CfnParameter
+  >;
+  for (const provider of SOCIAL_LOGIN_PROVIDERS) {
+    const name = `${provider.charAt(0).toUpperCase()}${provider.slice(1)}`;
+    parameters[`${provider}ClientId`] = new CfnParameter(stack, `${name}ClientId`, {
+      type: "String",
+      description: `${name} OpenID Connect client ID (empty until the developer console app exists)`,
+      default: "",
+      noEcho: true,
+    });
+    parameters[`${provider}ClientSecret`] = new CfnParameter(stack, `${name}ClientSecret`, {
+      type: "String",
+      description: `${name} OpenID Connect client secret (empty until the developer console app exists)`,
+      default: "",
+      noEcho: true,
+    });
+  }
+  return parameters;
+}

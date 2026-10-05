@@ -177,7 +177,7 @@ test("uses HTTPS, no-echo bootstrap inputs, and server-side secrets", () => {
   });
   template.hasResourceProperties("AWS::Lambda::Url", { AuthType: "NONE" });
   // +1: fall-key-encryption-secret (per-robot Cloud VLM keys at rest).
-  template.resourceCountIs("AWS::SecretsManager::Secret", 10);
+  template.resourceCountIs("AWS::SecretsManager::Secret", 11);
   template.hasResourceProperties("AWS::SecretsManager::Secret", {
     Name: "malbut-homecam-dev/fall-key-encryption-secret",
   });
@@ -195,6 +195,11 @@ test("uses HTTPS, no-echo bootstrap inputs, and server-side secrets", () => {
   };
   assert.equal(rendered.Parameters.VapidPublicKey?.NoEcho, true);
   assert.equal(rendered.Parameters.VapidPrivateKey?.NoEcho, true);
+  // Social login keys stay hidden and are optional until each developer console app exists.
+  for (const name of ["Kakao", "Naver", "Google"]) {
+    assert.equal(rendered.Parameters[`${name}ClientId`]?.NoEcho, true);
+    assert.equal(rendered.Parameters[`${name}ClientSecret`]?.NoEcho, true);
+  }
   assert.equal(
     rendered.Parameters.DeviceProvisioningManifestSha256?.NoEcho,
     true,

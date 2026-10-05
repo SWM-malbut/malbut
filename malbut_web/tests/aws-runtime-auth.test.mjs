@@ -149,9 +149,26 @@ test("opaque Cognito sessions authenticate from the HttpOnly cookie", async () =
     cookie: "other=1; __Host-malbut_session=opaque-session-token",
   }));
   assert.deepEqual(JSON.parse(JSON.stringify(user)), {
-    email: "owner@example.com", fullName: "Malbut Owner", subject: "subject-1",
+    userId: null, email: "owner@example.com", fullName: "Malbut Owner", subject: "subject-1",
   });
   assert.equal(harness.lookedUpToken(), "opaque-session-token");
+});
+
+test("social login sessions authenticate as their user without an email", async () => {
+  const harness = await serverAuthHarness({
+    AUTH_MODE: "cognito_session",
+    AUTH_SESSION_SECRET: Buffer.alloc(32, 5).toString("base64url"),
+    NODE_ENV: "production",
+  }, { userId: "user-1", email: null, fullName: null, subject: null });
+  const user = await harness.auth.getAuthenticatedUser(new Headers({
+    cookie: "__Host-malbut_session=social-session-token",
+  }));
+  assert.deepEqual(JSON.parse(JSON.stringify(user)), {
+    userId: "user-1", email: null, fullName: null, subject: "user:user-1",
+  });
+  assert.equal(await harness.auth.getRequestUserId(new Request("https://homecam.example.com/api", {
+    headers: { cookie: "__Host-malbut_session=social-session-token" },
+  })), "user-1");
 });
 
 test("dual auth prefers an opaque session over a valid legacy ALB identity", async () => {
@@ -168,7 +185,7 @@ test("dual auth prefers an opaque session over a valid legacy ALB identity", asy
   }));
 
   assert.deepEqual(JSON.parse(JSON.stringify(user)), {
-    email: "session@example.com", fullName: "Session User", subject: "session-subject",
+    userId: null, email: "session@example.com", fullName: "Session User", subject: "session-subject",
   });
   assert.equal(harness.lookedUpToken(), "preferred-session-token");
   assert.equal(harness.fetchCount(), 0);
@@ -186,7 +203,7 @@ test("dual auth falls back to a valid signed ALB identity after an invalid sessi
   }));
 
   assert.deepEqual(JSON.parse(JSON.stringify(user)), {
-    email: "legacy@example.com", fullName: "Legacy ALB User", subject: "alb-user-123",
+    userId: null, email: "legacy@example.com", fullName: "Legacy ALB User", subject: "alb-user-123",
   });
   assert.equal(harness.lookedUpToken(), "invalid-session-token");
   assert.equal(harness.fetchCount(), 1);
