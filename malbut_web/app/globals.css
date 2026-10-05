@@ -4068,7 +4068,7 @@ a:focus-visible {
   --ui-report-soft: #efeafd;
   --ui-report-band: rgba(91, 63, 181, 0.12);
   --ui-track: #d6dae0;
-  --ui-recorded: #c9d8f5;
+  --ui-recorded: #5b8ae0;
   --ui-highlight: #ffd166;
   --ui-media: #2a2f36;
   --ui-media-black: #000;
@@ -4239,9 +4239,10 @@ a:focus-visible {
 .fall-card.is-blue { border-color: var(--ui-accent); gap: 12px; }
 .fall-card.is-purple { border-color: var(--ui-report); gap: 12px; }
 .fall-tl-track { position: relative; height: 40px; cursor: pointer; }
-.fall-tl-gap, .fall-tl-rec { position: absolute; top: 16px; height: 8px; }
-.fall-tl-gap { left: 0; right: 0; border-radius: 4px; background: var(--ui-track); }
-.fall-tl-rec { background: var(--ui-recorded); }
+.fall-tl-gap {
+  position: absolute; top: 16px; left: 0; right: 0; height: 8px; border-radius: 4px; overflow: hidden; background: var(--ui-track);
+}
+.fall-tl-rec { position: absolute; top: 0; bottom: 0; background: var(--ui-recorded); }
 .fall-tl-mark { position: absolute; top: 6px; width: 4px; height: 28px; margin-left: -2px; border-radius: 2px; }
 .fall-tl-mark.is-fall { background: var(--ui-danger); }
 .fall-tl-mark.is-suspected { background: var(--ui-warn); }
