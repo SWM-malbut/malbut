@@ -46,6 +46,10 @@ async function serverAuthHarness(runtime, sessionUser = null) {
     },
     require(specifier) {
       if (specifier === "./runtime-env") return { getRuntimeEnvironment: () => runtime };
+      // Email logins resolve to a user; the auth checks here only care about the email.
+      if (specifier === "../db/users") {
+        return { ensureUserForIdentity: async (provider, subject) => `${provider}:${subject}` };
+      }
       if (specifier === "../db/web-auth") {
         return {
           WEB_SESSION_COOKIE: "__Host-malbut_session",
@@ -242,6 +246,7 @@ test("auth action paths stay same-origin and reject open redirect return paths",
       if (specifier === "next/navigation") return { redirect: () => undefined };
       if (specifier === "./runtime-env") return { getRuntimeValue: (name) => runtime[name] };
       if (specifier === "./server-auth") return { getAuthenticatedUser: async () => null };
+      if (specifier === "../db/users") return { ensureUserForIdentity: async () => "user" };
       throw new Error(`Unexpected import: ${specifier}`);
     },
   });

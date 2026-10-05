@@ -53,7 +53,7 @@ test("settings, idempotency, push, and viewer grants stay hardened", async () =>
   assert.doesNotMatch(liveRoute, /homecam-storage-join/);
   assert.match(liveRoute, /getActiveMediaSession\(deviceId, "p2p"\)/);
   assert.ok(
-    liveRoute.lastIndexOf("userCanViewDevice(deviceId, userEmail)") >
+    liveRoute.lastIndexOf("userCanViewDevice(deviceId, userId)") >
       liveRoute.indexOf("requestBrokerSession"),
     "membership must be checked again after issuing broker credentials",
   );

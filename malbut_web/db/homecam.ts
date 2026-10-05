@@ -15,6 +15,7 @@ import {
 } from "./homecam-validation";
 import { recordingPlaybackPosition } from "../app/recording-segments";
 import { ensureDatabaseSchema } from "./migration-state";
+import { ensureUserForIdentity, labelFor, userLabels } from "./users";
 
 const HEARTBEAT_ONLINE_MS = 30_000;
 // KVS storage sessions have a one-hour service boundary. A one-hour backend
@@ -59,40 +60,40 @@ export async function ensureHomecamSchema() {
   await ensureDatabaseSchema();
 }
 
-export async function getMembershipRole(deviceId: string, userEmail: string) {
+export async function getMembershipRole(deviceId: string, userId: string) {
   await ensureHomecamSchema();
   const row = await getD1()
     .prepare(
-      "SELECT role FROM device_memberships WHERE device_id = ? AND user_email = ?",
+      "SELECT role FROM device_memberships WHERE device_id = ? AND user_id = ?",
     )
-    .bind(deviceId, userEmail)
+    .bind(deviceId, userId)
     .first<{ role: string }>();
   return row?.role ?? null;
 }
 
-export async function userCanViewDevice(deviceId: string, userEmail: string) {
-  return canViewHomecam(await getMembershipRole(deviceId, userEmail));
+export async function userCanViewDevice(deviceId: string, userId: string) {
+  return canViewHomecam(await getMembershipRole(deviceId, userId));
 }
 
-export async function userCanManageDevice(deviceId: string, userEmail: string) {
-  return canManageHomecam(await getMembershipRole(deviceId, userEmail));
+export async function userCanManageDevice(deviceId: string, userId: string) {
+  return canManageHomecam(await getMembershipRole(deviceId, userId));
 }
 
-export async function userCanNavigateDevice(deviceId: string, userEmail: string) {
-  return canNavigateHomecam(await getMembershipRole(deviceId, userEmail));
+export async function userCanNavigateDevice(deviceId: string, userId: string) {
+  return canNavigateHomecam(await getMembershipRole(deviceId, userId));
 }
 
-export async function listHomecamDevices(userEmail: string) {
+export async function listHomecamDevices(userId: string) {
   await ensureHomecamSchema();
   await cleanupExpiredHomecamData();
   const d1 = getD1();
   await d1
     .prepare(
       `INSERT INTO device_state (device_id)
-       SELECT device_id FROM device_memberships WHERE user_email = ?
+       SELECT device_id FROM device_memberships WHERE user_id = ?
        ON CONFLICT(device_id) DO NOTHING`,
     )
-    .bind(userEmail)
+    .bind(userId)
     .run();
   await expireMediaSessions();
 
@@ -141,7 +142,7 @@ export async function listHomecamDevices(userEmail: string) {
          ON storage_session.id = device_state.storage_session_id
         AND storage_session.status = 'active'
         AND storage_session.expires_at > ?
-       WHERE device_memberships.user_email = ?
+       WHERE device_memberships.user_id = ?
          AND device_memberships.role IN ('owner', 'family', 'broadcaster')
        ORDER BY devices.created_at ASC`,
     )
@@ -149,7 +150,7 @@ export async function listHomecamDevices(userEmail: string) {
       new Date().toISOString(),
       new Date().toISOString(),
       new Date().toISOString(),
-      userEmail,
+      userId,
     )
     .all<{
       id: string;
@@ -293,7 +294,7 @@ export async function getDeviceSettings(deviceId: string) {
 
 export async function updateDeviceSettings(input: {
   deviceId: string;
-  userEmail: string;
+  userId: string;
   patch: DeviceSettingsPatch;
 }) {
   await getDeviceSettings(input.deviceId);
@@ -392,7 +393,7 @@ export async function updateDeviceSettings(input: {
   await writeAuditLog({
     deviceId: input.deviceId,
     actorType: "user",
-    actorId: input.userEmail,
+    actorId: input.userId,
     action: "settings.update",
     metadata: {
       monitoringEnabled: updated.monitoringEnabled,
@@ -405,7 +406,7 @@ export async function updateDeviceSettings(input: {
 
 export async function createDeviceCredential(input: {
   deviceId: string;
-  userEmail: string;
+  userId: string;
   label: string;
   expiresAt?: string | null;
 }) {
@@ -431,7 +432,7 @@ export async function createDeviceCredential(input: {
   await writeAuditLog({
     deviceId: input.deviceId,
     actorType: "user",
-    actorId: input.userEmail,
+    actorId: input.userId,
     action: "credential.create",
     metadata: { credentialId: generated.credentialId, label: input.label },
   });
@@ -481,7 +482,7 @@ export async function listDeviceCredentials(deviceId: string) {
 export async function revokeDeviceCredential(input: {
   deviceId: string;
   credentialId: string;
-  userEmail: string;
+  userId: string;
 }) {
   await ensureHomecamSchema();
   const nowIso = new Date().toISOString();
@@ -496,7 +497,7 @@ export async function revokeDeviceCredential(input: {
     await writeAuditLog({
       deviceId: input.deviceId,
       actorType: "user",
-      actorId: input.userEmail,
+      actorId: input.userId,
       action: "credential.revoke",
       metadata: { credentialId: input.credentialId },
     });
@@ -1497,93 +1498,95 @@ export async function listFamilyMembers(deviceId: string) {
   await ensureHomecamSchema();
   const result = await getD1()
     .prepare(
-      `SELECT user_email, role, created_at FROM device_memberships
+      `SELECT user_id, role, created_at FROM device_memberships
        WHERE device_id = ? AND role IN ('owner', 'family')
        ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, created_at ASC`,
     )
     .bind(deviceId)
-    .all<{ user_email: string; role: string; created_at: string }>();
-  return result.results.map((row: {
-    user_email: string;
-    role: string;
-    created_at: string;
-  }) => ({
-    email: row.user_email,
+    .all<{ user_id: string; role: string; created_at: string }>();
+  const labels = await userLabels(result.results.map((row) => row.user_id));
+  return result.results.map((row) => ({
+    userId: row.user_id,
+    name: labelFor(labels, row.user_id),
     role: row.role,
     createdAt: row.created_at,
   }));
 }
 
+/** Until invite links exist, an owner invites a guardian by email and access starts at once. */
 export async function inviteFamilyMember(input: {
   deviceId: string;
-  ownerEmail: string;
+  ownerUserId: string;
   familyEmail: string;
 }) {
   await ensureHomecamSchema();
-  const existing = await getMembershipRole(input.deviceId, input.familyEmail);
+  const familyUserId = await ensureUserForIdentity("email", input.familyEmail);
+  if (familyUserId === input.ownerUserId) throw new Error("MEMBER_IS_SELF");
+  const existing = await getMembershipRole(input.deviceId, familyUserId);
   if (existing === "owner") throw new Error("MEMBER_IS_OWNER");
   const createdAt = new Date().toISOString();
   await getD1()
     .prepare(
-      `INSERT INTO device_memberships (device_id, user_email, role, created_at)
+      `INSERT INTO device_memberships (device_id, user_id, role, created_at)
        VALUES (?, ?, 'family', ?)
-       ON CONFLICT(device_id, user_email) DO UPDATE SET role = 'family'`,
+       ON CONFLICT(device_id, user_id) DO UPDATE SET role = 'family'`,
     )
-    .bind(input.deviceId, input.familyEmail, createdAt)
+    .bind(input.deviceId, familyUserId, createdAt)
     .run();
   await writeAuditLog({
     deviceId: input.deviceId,
     actorType: "user",
-    actorId: input.ownerEmail,
+    actorId: input.ownerUserId,
     action: "family.invite",
-    metadata: { userEmail: input.familyEmail },
+    metadata: { userId: familyUserId },
   });
-  return { email: input.familyEmail, role: "family" as const, createdAt };
+  const labels = await userLabels([familyUserId]);
+  return { userId: familyUserId, name: labelFor(labels, familyUserId), role: "family" as const, createdAt };
 }
 
 export async function revokeFamilyMember(input: {
   deviceId: string;
-  ownerEmail: string;
-  familyEmail: string;
+  ownerUserId: string;
+  familyUserId: string;
 }) {
   await ensureHomecamSchema();
   const d1 = getD1();
   const result = await d1
     .prepare(
       `DELETE FROM device_memberships
-       WHERE device_id = ? AND user_email = ? AND role = 'family'`,
+       WHERE device_id = ? AND user_id = ? AND role = 'family'`,
     )
-    .bind(input.deviceId, input.familyEmail)
+    .bind(input.deviceId, input.familyUserId)
     .run();
   if (result.meta.changes > 0) {
     await d1
       .prepare(
         `UPDATE push_subscriptions SET revoked_at = ?
-         WHERE device_id = ? AND user_email = ? AND revoked_at IS NULL`,
+         WHERE device_id = ? AND user_id = ? AND revoked_at IS NULL`,
       )
-      .bind(new Date().toISOString(), input.deviceId, input.familyEmail)
+      .bind(new Date().toISOString(), input.deviceId, input.familyUserId)
       .run();
     await writeAuditLog({
       deviceId: input.deviceId,
       actorType: "user",
-      actorId: input.ownerEmail,
+      actorId: input.ownerUserId,
       action: "family.revoke",
-      metadata: { userEmail: input.familyEmail },
+      metadata: { userId: input.familyUserId },
     });
   }
   return result.meta.changes > 0;
 }
 
-export async function listPushSubscriptions(userEmail: string) {
+export async function listPushSubscriptions(userId: string) {
   await ensureHomecamSchema();
   const result = await getD1()
     .prepare(
       `SELECT id, device_id, endpoint, created_at, updated_at
        FROM push_subscriptions
-       WHERE user_email = ? AND revoked_at IS NULL
+       WHERE user_id = ? AND revoked_at IS NULL
        ORDER BY created_at DESC`,
     )
-    .bind(userEmail)
+    .bind(userId)
     .all<{
       id: string;
       device_id: string;
@@ -1608,7 +1611,7 @@ export async function listPushSubscriptions(userEmail: string) {
 
 export async function upsertPushSubscription(input: {
   deviceId: string;
-  userEmail: string;
+  userId: string;
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -1618,18 +1621,18 @@ export async function upsertPushSubscription(input: {
   const existing = await d1
     .prepare(
       `SELECT id FROM push_subscriptions
-       WHERE device_id = ? AND user_email = ? AND endpoint = ?`,
+       WHERE device_id = ? AND user_id = ? AND endpoint = ?`,
     )
-    .bind(input.deviceId, input.userEmail, input.endpoint)
+    .bind(input.deviceId, input.userId, input.endpoint)
     .first<{ id: string }>();
   const id = existing?.id ?? crypto.randomUUID();
   const nowIso = new Date().toISOString();
   await d1
     .prepare(
       `INSERT INTO push_subscriptions
-       (id, device_id, user_email, endpoint, p256dh, auth, created_at, updated_at)
+       (id, device_id, user_id, endpoint, p256dh, auth, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(user_email, device_id, endpoint) DO UPDATE SET
+       ON CONFLICT(user_id, device_id, endpoint) DO UPDATE SET
          p256dh = excluded.p256dh,
          auth = excluded.auth,
          updated_at = excluded.updated_at,
@@ -1638,7 +1641,7 @@ export async function upsertPushSubscription(input: {
     .bind(
       id,
       input.deviceId,
-      input.userEmail,
+      input.userId,
       input.endpoint,
       input.p256dh,
       input.auth,
@@ -1650,16 +1653,16 @@ export async function upsertPushSubscription(input: {
 }
 
 export async function revokePushSubscription(
-  userEmail: string,
+  userId: string,
   subscriptionId: string,
 ) {
   await ensureHomecamSchema();
   const result = await getD1()
     .prepare(
       `UPDATE push_subscriptions SET revoked_at = ?
-       WHERE id = ? AND user_email = ? AND revoked_at IS NULL`,
+       WHERE id = ? AND user_id = ? AND revoked_at IS NULL`,
     )
-    .bind(new Date().toISOString(), subscriptionId, userEmail)
+    .bind(new Date().toISOString(), subscriptionId, userId)
     .run();
   return result.meta.changes > 0;
 }
@@ -1674,7 +1677,7 @@ export async function listActivePushTargets(deviceId: string) {
        FROM push_subscriptions
        INNER JOIN device_memberships
          ON device_memberships.device_id = push_subscriptions.device_id
-        AND device_memberships.user_email = push_subscriptions.user_email
+        AND device_memberships.user_id = push_subscriptions.user_id
         AND device_memberships.role IN ('owner', 'family', 'broadcaster')
        INNER JOIN devices ON devices.id = push_subscriptions.device_id
        WHERE push_subscriptions.device_id = ?
@@ -1718,7 +1721,7 @@ export async function revokePushSubscriptionsById(ids: string[]) {
 
 export async function acquireTalkLease(input: {
   deviceId: string;
-  userEmail: string;
+  userId: string;
   clientId: string;
   existingLeaseId?: string;
 }) {
@@ -1731,16 +1734,16 @@ export async function acquireTalkLease(input: {
   const lease = await d1
     .prepare(
       `INSERT INTO talk_leases
-       (device_id, lease_id, user_email, client_id, expires_at, created_at, updated_at)
+       (device_id, lease_id, user_id, client_id, expires_at, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(device_id) DO UPDATE SET
          lease_id = CASE
            WHEN talk_leases.expires_at <= ? THEN excluded.lease_id
            ELSE talk_leases.lease_id
          END,
-         user_email = CASE
-           WHEN talk_leases.expires_at <= ? THEN excluded.user_email
-           ELSE talk_leases.user_email
+         user_id = CASE
+           WHEN talk_leases.expires_at <= ? THEN excluded.user_id
+           ELSE talk_leases.user_id
          END,
          client_id = CASE
            WHEN talk_leases.expires_at <= ? THEN excluded.client_id
@@ -1750,7 +1753,7 @@ export async function acquireTalkLease(input: {
          updated_at = excluded.updated_at
        WHERE talk_leases.expires_at <= ?
           OR (
-            talk_leases.user_email = excluded.user_email
+            talk_leases.user_id = excluded.user_id
             AND talk_leases.client_id = excluded.client_id
             AND CAST(? AS TEXT) IS NOT NULL
             AND talk_leases.lease_id = ?
@@ -1760,7 +1763,7 @@ export async function acquireTalkLease(input: {
     .bind(
       input.deviceId,
       proposedLeaseId,
-      input.userEmail,
+      input.userId,
       input.clientId,
       expiresAt,
       nowIso,
@@ -1777,7 +1780,7 @@ export async function acquireTalkLease(input: {
   await writeAuditLog({
     deviceId: input.deviceId,
     actorType: "user",
-    actorId: input.userEmail,
+    actorId: input.userId,
     action: "talk.acquire",
     metadata: { leaseId: lease.lease_id, clientId: input.clientId },
   });
@@ -1786,7 +1789,7 @@ export async function acquireTalkLease(input: {
 
 export async function releaseTalkLease(input: {
   deviceId: string;
-  userEmail: string;
+  userId: string;
   leaseId: string;
   clientId: string;
 }) {
@@ -1794,15 +1797,15 @@ export async function releaseTalkLease(input: {
   const result = await getD1()
     .prepare(
       `DELETE FROM talk_leases
-       WHERE device_id = ? AND user_email = ? AND lease_id = ? AND client_id = ?`,
+       WHERE device_id = ? AND user_id = ? AND lease_id = ? AND client_id = ?`,
     )
-    .bind(input.deviceId, input.userEmail, input.leaseId, input.clientId)
+    .bind(input.deviceId, input.userId, input.leaseId, input.clientId)
     .run();
   if (result.meta.changes > 0) {
     await writeAuditLog({
       deviceId: input.deviceId,
       actorType: "user",
-      actorId: input.userEmail,
+      actorId: input.userId,
       action: "talk.release",
       metadata: { leaseId: input.leaseId, clientId: input.clientId },
     });

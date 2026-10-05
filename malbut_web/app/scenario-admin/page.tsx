@@ -14,7 +14,7 @@ export default async function ScenarioAdminPage({
   const user = await requireChatGPTUser('/scenario-admin');
   const requested = (await searchParams).device;
   const requestedDevice = Array.isArray(requested) ? requested[0] : requested;
-  const devices = (await listHomecamDevices(user.email))
+  const devices = (await listHomecamDevices(user.userId))
     .filter((device) => device.role === 'owner')
     .map((device) => ({
       id: device.id,

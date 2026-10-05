@@ -2,8 +2,10 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getRuntimeValue } from "./runtime-env";
 import { getAuthenticatedUser } from "./server-auth";
+import { ensureUserForIdentity } from "../db/users";
 
 export type ChatGPTUser = {
+  userId: string;
   displayName: string;
   email: string;
   fullName: string | null;
@@ -19,6 +21,7 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   const user = await getAuthenticatedUser(requestHeaders, requestUrl(requestHeaders));
   if (!user) return null;
   return {
+    userId: await ensureUserForIdentity("email", user.email),
     displayName: user.fullName ?? user.email,
     email: user.email,
     fullName: user.fullName,

@@ -73,7 +73,7 @@ const LOCAL_DEMO_DEVICE: HomecamDevice = {
 
 type FamilyMember = {
   id: string;
-  email: string;
+  name: string;
   role: "owner" | "family";
 };
 
@@ -824,11 +824,11 @@ export function HomecamDashboard({
       setFamily(
         rawMembers.flatMap((value) => {
           const raw = asRecord(value);
-          const email = stringValue(raw.email, raw.userEmail, raw.user_email);
-          const id = stringValue(raw.id, raw.memberId, raw.member_id) ?? email;
+          const id = stringValue(raw.userId);
+          const name = stringValue(raw.name) ?? "이름 없는 사용자";
           const roleValue = stringValue(raw.role);
-          if (!id || !email || (roleValue !== "owner" && roleValue !== "family")) return [];
-          return [{ id, email, role: roleValue }];
+          if (!id || (roleValue !== "owner" && roleValue !== "family")) return [];
+          return [{ id, name, role: roleValue }];
         }),
       );
     } catch (reason) {
@@ -1059,13 +1059,13 @@ export function HomecamDashboard({
         {
           method: "DELETE",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email: member.email }),
+          body: JSON.stringify({ userId: member.id }),
         },
       );
       const payload = asRecord(await response.json().catch(() => ({})));
       if (!response.ok) throw new Error(stringValue(payload.error) ?? "보호자 권한을 해제하지 못했습니다.");
       setFamily((current) => current.filter((item) => item.id !== member.id));
-      setNotice(`${member.email}의 접근 권한을 해제했습니다.`);
+      setNotice(`${member.name}의 접근 권한을 해제했습니다.`);
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : "보호자 권한을 해제하지 못했습니다.");
     } finally {
@@ -1553,9 +1553,9 @@ export function HomecamDashboard({
               {!familyLoading && family.length === 0 && <p className="ui-hint">아직 함께 보는 보호자가 없어요.</p>}
               {!familyLoading && family.map((member) => (
                 <div key={member.id} className="ui-person">
-                  <span className="ui-person-avatar" aria-hidden="true">{member.email.slice(0, 1).toUpperCase()}</span>
+                  <span className="ui-person-avatar" aria-hidden="true">{member.name.slice(0, 1).toUpperCase()}</span>
                   <span className="ui-person-text">
-                    <strong>{member.email} <span className={`ui-badge ${member.role === "owner" ? "is-accent" : ""}`}>{member.role === "owner" ? "소유자" : "보호자"}</span></strong>
+                    <strong>{member.name} <span className={`ui-badge ${member.role === "owner" ? "is-accent" : ""}`}>{member.role === "owner" ? "소유자" : "보호자"}</span></strong>
                   </span>
                   {isOwner && member.role !== "owner" && (
                     <button type="button" className="ui-button is-danger-line ui-small"
@@ -1567,7 +1567,7 @@ export function HomecamDashboard({
               ))}
               {removeTarget && (
                 <div className="ui-confirm">
-                  <span>{removeTarget.email} 님을 내보낼까요? 이 말벗의 영상과 사건을 더 볼 수 없어요.</span>
+                  <span>{removeTarget.name} 님을 내보낼까요? 이 말벗의 영상과 사건을 더 볼 수 없어요.</span>
                   <div className="ui-two-buttons">
                     <button type="button" className="ui-button" onClick={() => setRemoveTarget(null)}>취소</button>
                     <button type="button" className="ui-button is-danger"

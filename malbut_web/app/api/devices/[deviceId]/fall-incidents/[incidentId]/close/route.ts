@@ -13,6 +13,6 @@ export async function POST(request: Request, context: Context) {
   if (member.response) return member.response;
   if (!sameOriginJsonRequest(request)) return noStore({ error: "요청 출처를 확인해 주세요." }, 403);
   try {
-    return noStore(await closeFallIncident(deviceId, incidentId, member.email));
+    return noStore(await closeFallIncident(deviceId, incidentId, member.userId));
   } catch (error) { return fallReviewFailure(error); }
 }

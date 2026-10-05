@@ -3,7 +3,7 @@ import { ensureDatabaseSchema } from "./migration-state";
 
 /** Per-minute request counter shared by playback, live and fall review routes. */
 export async function consumeRequestRateLimit(input: {
-  userEmail: string;
+  userId: string;
   roomCode: string;
   scope: string;
   limit: number;
@@ -31,6 +31,6 @@ export async function consumeRequestRateLimit(input: {
   return Boolean(result && result.request_count <= input.limit);
 }
 
-function rateLimitKey(input: { userEmail: string; roomCode: string; scope: string }) {
-  return `${input.scope}:${input.userEmail}:${input.roomCode}`;
+function rateLimitKey(input: { userId: string; roomCode: string; scope: string }) {
+  return `${input.scope}:${input.userId}:${input.roomCode}`;
 }

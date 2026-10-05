@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { fallDatabase, moduleLoader } from "./helpers/fall-db-harness.mjs";
+import { fallDatabase, moduleLoader, testUserId } from "./helpers/fall-db-harness.mjs";
 
 const SECRET = "s".repeat(64);
 const KEY = "ollama-test-key-1234";
@@ -87,9 +87,9 @@ test("only the owner sets or deletes the key; members see the last 4; the robot 
   await withAi(async ({ h, ai }) => {
     assert.deepEqual(await ai.readFallCloudKeyView("robot-a"), { configured: false, last4: null, keyVersion: 0,
       updatedAt: null, robotModel: null, robotHasCurrent: false });
-    await assert.rejects(ai.setFallCloudKey("robot-a", "family@example.com", KEY, SECRET), /FORBIDDEN/);
-    await assert.rejects(ai.setFallCloudKey("robot-a", "owner@example.com", "bad key", SECRET), /INVALID/);
-    await ai.setFallCloudKey("robot-a", "owner@example.com", KEY, SECRET);
+    await assert.rejects(ai.setFallCloudKey("robot-a", "u-family", KEY, SECRET), /FORBIDDEN/);
+    await assert.rejects(ai.setFallCloudKey("robot-a", "u-owner", "bad key", SECRET), /INVALID/);
+    await ai.setFallCloudKey("robot-a", "u-owner", KEY, SECRET);
     const view = await ai.readFallCloudKeyView("robot-a");
     assert.equal(view.last4, "1234");
     assert.equal(view.keyVersion, 1);
@@ -105,7 +105,7 @@ test("only the owner sets or deletes the key; members see the last 4; the robot 
     // Up to date: the key is not sent again.
     assert.deepEqual(await sync(1), { keyVersion: 1, changed: false, apiKey: null });
     assert.equal((await ai.readFallCloudKeyView("robot-a")).robotHasCurrent, true);
-    await ai.setFallCloudKey("robot-a", "owner@example.com", null, SECRET);
+    await ai.setFallCloudKey("robot-a", "u-owner", null, SECRET);
     assert.deepEqual(await sync(1), { keyVersion: 2, changed: true, apiKey: null });
     assert.equal((await ai.readFallCloudKeyView("robot-a")).configured, false);
     // Never set on the server: the robot keeps its own key file.
@@ -121,7 +121,7 @@ test("only the owner sets or deletes the key; members see the last 4; the robot 
 });
 
 async function ready(h, ai) {
-  await ai.setFallCloudKey("robot-a", "owner@example.com", KEY, SECRET);
+  await ai.setFallCloudKey("robot-a", "u-owner", KEY, SECRET);
   await ai.syncFallCloudKeyForDevice("robot-a", 0, "gemma4:31b", SECRET);
   await h.db.query("INSERT INTO device_state(device_id,fall_cloud_consent) VALUES('robot-a',true) ON CONFLICT(device_id) DO UPDATE SET fall_cloud_consent=true");
 }
@@ -135,23 +135,23 @@ test("review requests: inside the incident only, consent and key required, one a
       revision: 1, startAt: "2026-09-17T23:59:50.000Z", endAt: "2026-09-18T00:00:20.000Z",
       anchorKinds: ["pose_motion"], foundDown: false, clockSource: "wall", clockStepped: false });
     const inside = "2026-09-18T00:00:05.000Z";
-    await assert.rejects(ai.requestFallAiReview("robot-a", id, "family@example.com", "2026-09-18T00:00:25.000Z"),
+    await assert.rejects(ai.requestFallAiReview("robot-a", id, "u-family", "2026-09-18T00:00:25.000Z"),
       /OUTSIDE_INCIDENT/);
-    await assert.rejects(ai.requestFallAiReview("robot-a", id, "family@example.com", inside), /CONSENT_OFF/);
+    await assert.rejects(ai.requestFallAiReview("robot-a", id, "u-family", inside), /CONSENT_OFF/);
     await h.db.query("INSERT INTO device_state(device_id,fall_cloud_consent) VALUES('robot-a',true) ON CONFLICT(device_id) DO UPDATE SET fall_cloud_consent=true");
-    await assert.rejects(ai.requestFallAiReview("robot-a", id, "family@example.com", inside), /KEY_MISSING/);
-    await ai.setFallCloudKey("robot-a", "owner@example.com", KEY, SECRET);
-    await assert.rejects(ai.requestFallAiReview("robot-a", id, "family@example.com", inside), /MODEL_UNKNOWN/);
+    await assert.rejects(ai.requestFallAiReview("robot-a", id, "u-family", inside), /KEY_MISSING/);
+    await ai.setFallCloudKey("robot-a", "u-owner", KEY, SECRET);
+    await assert.rejects(ai.requestFallAiReview("robot-a", id, "u-family", inside), /MODEL_UNKNOWN/);
     await ai.syncFallCloudKeyForDevice("robot-a", 0, "gemma4:31b", SECRET);
-    const { reviewId } = await ai.requestFallAiReview("robot-a", id, "family@example.com", inside);
-    await assert.rejects(ai.requestFallAiReview("robot-a", id, "owner@example.com", inside), /IN_PROGRESS/);
+    const { reviewId } = await ai.requestFallAiReview("robot-a", id, "u-family", inside);
+    await assert.rejects(ai.requestFallAiReview("robot-a", id, "u-owner", inside), /IN_PROGRESS/);
     const listed = await ai.listFallAiReviews("robot-a", id);
     assert.deepEqual(listed.map((r) => [r.reviewId, r.status, r.momentAt]), [[reviewId, "queued", inside]]);
     // A missed-fall report is reviewed at its own moment only.
-    const report = await review.reportMissedFall("robot-a", "family@example.com", inside, Date.parse(inside) + 60_000);
-    await assert.rejects(ai.requestFallAiReview("robot-a", report.incidentId, "owner@example.com",
+    const report = await review.reportMissedFall("robot-a", "u-family", inside, Date.parse(inside) + 60_000);
+    await assert.rejects(ai.requestFallAiReview("robot-a", report.incidentId, "u-owner",
       "2026-09-18T00:00:06.000Z"), /OUTSIDE_INCIDENT/);
-    assert.ok(await ai.requestFallAiReview("robot-a", report.incidentId, "owner@example.com", inside));
+    assert.ok(await ai.requestFallAiReview("robot-a", report.incidentId, "u-owner", inside));
   });
 });
 
@@ -186,8 +186,8 @@ test("worker: 12 photos from the recording, robot prompt and model, verdict reco
       const worker = load("app/fall-ai-review-worker.ts");
       await ready(h, ai);
       const moment = second(Date.now() - 120_000);
-      const report = await review.reportMissedFall("robot-a", "family@example.com", moment);
-      const { reviewId } = await ai.requestFallAiReview("robot-a", report.incidentId, "family@example.com", moment);
+      const report = await review.reportMissedFall("robot-a", "u-family", moment);
+      const { reviewId } = await ai.requestFallAiReview("robot-a", report.incidentId, "u-family", moment);
       // The robot's own incident check goes first on the shared key.
       const busy = event();
       await events.storeFallEvent("robot-a", busy);
@@ -214,8 +214,8 @@ test("worker: 12 photos from the recording, robot prompt and model, verdict reco
       assert.deepEqual(detail.opinions, []);
 
       // Follow-up: memo and earlier verdicts go along; the answer is reference only.
-      await review.setFallOpinion("robot-a", report.incidentId, "owner@example.com", "fall", "오른쪽으로 쓰러짐");
-      await ai.askFallAiQuestion("robot-a", report.incidentId, reviewId, "owner@example.com", "손으로 짚었나요?");
+      await review.setFallOpinion("robot-a", report.incidentId, "u-owner", "fall", "오른쪽으로 쓰러짐");
+      await ai.askFallAiQuestion("robot-a", report.incidentId, reviewId, "u-owner", "손으로 짚었나요?");
       state.content = "손으로 바닥을 짚는 모습이 보입니다.";
       assert.equal((await worker.processFallAiJob()).kind, "question");
       const followup = state.posts.at(-1).body.messages[1].content;
@@ -225,7 +225,7 @@ test("worker: 12 photos from the recording, robot prompt and model, verdict reco
       assert.equal(after.assessment, "observed_fall");
       assert.deepEqual(after.questions.map((q) => [q.status, q.answer]), [["completed", state.content]]);
       // Switch off: only the question and the photos.
-      await ai.askFallAiQuestion("robot-a", report.incidentId, reviewId, "owner@example.com", "앉았나요?", false);
+      await ai.askFallAiQuestion("robot-a", report.incidentId, reviewId, "u-owner", "앉았나요?", false);
       await worker.processFallAiJob();
       assert.doesNotMatch(state.posts.at(-1).body.messages[1].content, /오른쪽으로 쓰러짐|observed_fall/);
     }, workerOverrides(root, state));
@@ -242,8 +242,8 @@ test("worker failures: quota retries later, missing frames and withdrawn consent
       const worker = load("app/fall-ai-review-worker.ts");
       await ready(h, ai);
       const moment = second(Date.now() - 120_000);
-      const report = await review.reportMissedFall("robot-a", "family@example.com", moment);
-      await ai.requestFallAiReview("robot-a", report.incidentId, "family@example.com", moment);
+      const report = await review.reportMissedFall("robot-a", "u-family", moment);
+      await ai.requestFallAiReview("robot-a", report.incidentId, "u-family", moment);
       assert.equal((await worker.processFallAiJob()).reason, "cloud_quota_exhausted");
       let [r] = await ai.listFallAiReviews("robot-a", report.incidentId);
       assert.deepEqual([r.status, r.errorCode], ["queued", "cloud_quota_exhausted"]);
@@ -253,8 +253,8 @@ test("worker failures: quota retries later, missing frames and withdrawn consent
       [r] = await ai.listFallAiReviews("robot-a", report.incidentId);
       assert.equal(r.status, "failed");
       // A recent moment whose stills are not archived yet is retried, not failed.
-      const fresh = await review.reportMissedFall("robot-a", "owner@example.com", second(Date.now() - 40_000));
-      await ai.requestFallAiReview("robot-a", fresh.incidentId, "owner@example.com", second(Date.now() - 40_000));
+      const fresh = await review.reportMissedFall("robot-a", "u-owner", second(Date.now() - 40_000));
+      await ai.requestFallAiReview("robot-a", fresh.incidentId, "u-owner", second(Date.now() - 40_000));
       assert.equal((await worker.processFallAiJob()).reason, "frames_unavailable_yet");
       assert.equal((await ai.listFallAiReviews("robot-a", fresh.incidentId))[0].status, "queued");
       // A worker that keeps dying gives up after the attempt limit.
@@ -264,13 +264,13 @@ test("worker failures: quota retries later, missing frames and withdrawn consent
       const lost = (await ai.listFallAiReviews("robot-a", fresh.incidentId))[0];
       assert.deepEqual([lost.status, lost.errorCode], ["failed", "worker_lost"]);
       // A new request is allowed after the previous one finished.
-      await ai.requestFallAiReview("robot-a", report.incidentId, "owner@example.com", moment);
+      await ai.requestFallAiReview("robot-a", report.incidentId, "u-owner", moment);
       await h.db.query("UPDATE device_state SET fall_cloud_consent=false");
       assert.equal((await worker.processFallAiJob()).reason, "cloud_consent_off");
       // Recording not settled yet: wait, do not fail.
       await h.db.query("UPDATE device_state SET fall_cloud_consent=true");
-      const recent = await review.reportMissedFall("robot-a", "owner@example.com", second(Date.now() - 2_000));
-      await ai.requestFallAiReview("robot-a", recent.incidentId, "owner@example.com", second(Date.now() - 2_000));
+      const recent = await review.reportMissedFall("robot-a", "u-owner", second(Date.now() - 2_000));
+      await ai.requestFallAiReview("robot-a", recent.incidentId, "u-owner", second(Date.now() - 2_000));
       assert.equal((await worker.processFallAiJob()).reason, "recording_not_ready");
       assert.equal((await ai.listFallAiReviews("robot-a", recent.incidentId))[0].status, "queued");
     }, workerOverrides(root, state));
@@ -293,7 +293,7 @@ test("jpegSize reads SOF dimensions and rejects non-JPEG data", () => {
 test("HTTP: key routes, robot key sync, review route errors", async () => {
   const h = await fallDatabase();
   const load = moduleLoader({
-    [path.join(h.root, "app/server-auth.ts")]: { async getRequestUserEmail(req) { return req.headers.get("x-test-email"); } },
+    [path.join(h.root, "app/server-auth.ts")]: { async getRequestUserId(req) { return testUserId(req.headers.get("x-test-email")); } },
     [path.join(h.root, "app/device-auth.ts")]: { async getRequestDevice(req) {
       return req.headers.get("authorization") === "Bearer device-a" ? { deviceId: "robot-a" } : null;
     } },

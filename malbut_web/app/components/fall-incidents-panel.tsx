@@ -16,9 +16,9 @@ type IncidentSummary = {
   mergedIntoIncidentIds?: string[];
   state: string | null; fallSeen: boolean; assessment: string | null; answer: string | null;
   notificationRank: number; occurredAt: string; updatedAt: string; reviewState: "open" | "closed";
-  closedAt: string | null; closedBy: string | null; reopenedAt: string | null;
+  closedAt: string | null; closedBy: string | null; closedByName: string | null; reopenedAt: string | null;
   needsCheck: boolean; aiFailed: boolean; unacknowledged: boolean; reviewPending: boolean;
-  foundDown: boolean; reportedBy: string | null; reportedMomentAt: string | null;
+  foundDown: boolean; reportedBy: string | null; reportedByName: string | null; reportedMomentAt: string | null;
   opinionCounts: Partial<Record<OpinionLabel, number>>;
   sceneState?: SceneState | null; linkedCount?: number;
   notification?: { level: string; sent: number; total: number } | null;
@@ -34,13 +34,13 @@ type ScenePeople = {
   cloud: PeopleSample[];
 };
 type IncidentDetail = IncidentSummary & {
-  viewerEmail: string;
+  viewerUserId: string;
   clips: Clip[];
   robotEvents: Array<{ sequence: number; eventKind: string; occurredAt: string; assessment: string | null;
     answer: string | null; reason: string | null; notificationLevel: string | null }>;
   notifications: Array<{ kind: "first" | "resend" | "reopen"; round: number; level: string; reason: string;
     status: string; createdAt: string; acceptedAt: string | null }>;
-  opinions: Array<{ userEmail: string; role: "owner" | "family" | null; label: OpinionLabel; memo: string | null;
+  opinions: Array<{ userId: string; userName: string; role: "owner" | "family" | null; label: OpinionLabel; memo: string | null;
     updatedAt: string }>;
   linkedIncidentIds: string[];
   aiReviews: Array<{ reviewId: string; requestedBy: string; momentAt: string; status: string;
@@ -100,7 +100,7 @@ function title(i: IncidentSummary) {
 
 function subtitle(i: IncidentSummary) {
   if (i.origin === "user_report") {
-    return `${when(i.reportedMomentAt ?? i.occurredAt)} 구간 · ${i.reportedBy ?? "사용자"} 신고`;
+    return `${when(i.reportedMomentAt ?? i.occurredAt)} 구간 · ${i.reportedByName ?? "사용자"} 신고`;
   }
   const reason = i.aiFailed ? "AI가 시간 안에 답하지 못함"
     : i.answer ? ANSWER_LABEL[i.answer] ?? null : i.foundDown ? "이미 쓰러진 모습 발견" : null;
@@ -391,7 +391,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
       const incident = body.incident as IncidentDetail;
       setDetail(incident);
       if (!keepDraft) {
-        const mine = incident.opinions.find((o) => o.userEmail === incident.viewerEmail);
+        const mine = incident.opinions.find((o) => o.userId === incident.viewerUserId);
         setDraftLabel(mine?.label ?? null);
         setDraftMemo(mine?.memo ?? "");
       }
@@ -451,20 +451,20 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
       );
     }
     const incidentPath = `${base}/fall-incidents/${encodeURIComponent(detail.incidentId)}`;
-    const mine = detail.opinions.find((o) => o.userEmail === detail.viewerEmail) ?? null;
+    const mine = detail.opinions.find((o) => o.userId === detail.viewerUserId) ?? null;
     const changed = (mine?.label ?? null) !== draftLabel || (draftLabel !== null && (mine?.memo ?? "") !== draftMemo);
     const latest = detail.aiReviews.at(-1) ?? null;
     const clip = detail.clips[Math.min(segment, Math.max(0, detail.clips.length - 1))];
     const moment = detail.origin === "user_report" ? detail.reportedMomentAt ?? detail.occurredAt : detail.occurredAt;
     const who = (o: IncidentDetail["opinions"][number]) =>
-      `${o.role === "owner" ? "소유자" : o.role === "family" ? "보호자" : o.userEmail}${o.userEmail === detail.viewerEmail ? " (나)" : ""}`;
+      `${o.role === "owner" ? "소유자" : o.role === "family" ? "보호자" : o.userName}${o.userId === detail.viewerUserId ? " (나)" : ""}`;
     return (
       <div className="fall-page">
         <div className="fall-topbar"><button type="button" className="fall-link" onClick={back}>‹ 사건 목록</button></div>
         <header className="fall-head">
           <Badges items={badges(detail)} />
           <h1>{title(detail)}</h1>
-          <div className="fall-sub">{when(moment)}{detail.reportedBy ? ` · ${detail.reportedBy} 신고` : ""}</div>
+          <div className="fall-sub">{when(moment)}{detail.reportedBy ? ` · ${detail.reportedByName} 신고` : ""}</div>
           {(detail.mergedIntoIncidentIds ?? []).map((id) => (
             <button type="button" key={`merged-${id}`} className="fall-linked" onClick={() => open(id)}>
               사람 연결을 확인했어요. 이어서 처리하는 사건 보기 ›
@@ -499,7 +499,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           <h2>사용자 의견</h2>
           <p className="fall-hint">의견은 기록만 하며, 사건은 &quot;처리 완료&quot;를 눌러야 닫혀요.</p>
           {detail.opinions.map((o) => (
-            <div className="fall-opinion" key={o.userEmail}>
+            <div className="fall-opinion" key={o.userId}>
               <div><strong>{who(o)} · {clock(o.updatedAt)}</strong>
                 <span className={`fall-pill is-${o.label}`}>{OPINION_LABEL[o.label]}</span></div>
               {o.memo && <p>메모: {o.memo}</p>}
@@ -621,7 +621,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
 
         <div className="fall-bottom">
           {detail.reviewState === "closed" ? (
-            <p className="fall-closed">처리 완료됨 · {detail.closedBy === detail.viewerEmail ? "나" : detail.closedBy} · {when(detail.closedAt ?? detail.updatedAt)}</p>
+            <p className="fall-closed">처리 완료됨 · {detail.closedBy === detail.viewerUserId ? "나" : detail.closedByName} · {when(detail.closedAt ?? detail.updatedAt)}</p>
           ) : (
             <button type="button" className="fall-button is-blue is-large"
               disabled={busy === "close" || detail.opinions.length === 0}

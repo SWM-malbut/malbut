@@ -5,22 +5,22 @@ import {
   userCanViewDevice,
 } from "../../../db/homecam";
 import { noStore } from "../../api-response";
-import { getRequestUserEmail } from "../../server-auth";
+import { getRequestUserId } from "../../server-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   return noStore(
-    { subscriptions: await listPushSubscriptions(userEmail) },
+    { subscriptions: await listPushSubscriptions(userId) },
     200,
   );
 }
 
 export async function POST(request: Request) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const payload = (await request.json().catch(() => null)) as {
     deviceId?: unknown;
     endpoint?: unknown;
@@ -41,12 +41,12 @@ export async function POST(request: Request) {
   ) {
     return noStore({ error: "Web Push 구독 형식을 확인해 주세요." }, 400);
   }
-  if (!(await userCanViewDevice(payload.deviceId, userEmail))) {
+  if (!(await userCanViewDevice(payload.deviceId, userId))) {
     return noStore({ error: "이 홈캠의 알림을 구독할 권한이 없습니다." }, 403);
   }
   const subscription = await upsertPushSubscription({
     deviceId: payload.deviceId,
-    userEmail,
+    userId,
     endpoint: payload.endpoint,
     p256dh: payload.keys.p256dh,
     auth: payload.keys.auth,
@@ -55,8 +55,8 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const payload = (await request.json().catch(() => null)) as {
     id?: unknown;
   } | null;
@@ -68,7 +68,7 @@ export async function DELETE(request: Request) {
   ) {
     return noStore({ error: "삭제할 Web Push 구독 ID가 필요합니다." }, 400);
   }
-  const revoked = await revokePushSubscription(userEmail, payload.id);
+  const revoked = await revokePushSubscription(userId, payload.id);
   return noStore({ revoked }, revoked ? 200 : 404);
 }
 

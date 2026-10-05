@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import test from "node:test";
-import { fallDatabase, moduleLoader } from "./helpers/fall-db-harness.mjs";
+import { fallDatabase, moduleLoader, testUserId } from "./helpers/fall-db-harness.mjs";
 import { buildFallNotification, isFallNotification } from "../infra/aws/push-broker/fall-notification.mjs";
 
 const T0 = "2026-09-18T00:00:00.000Z";
@@ -154,7 +154,7 @@ test("incident list filters: needs check, AI failure, normal awaiting review, re
     await events.storeFallEvent("robot-a", event({ incidentId: normal.incidentId, sequence: 2,
       eventKind: "incident_resolved", state: "resolved", reason: "normal_verified",
       answer: "okay", assessment: "normal_activity" }));
-    const report = await review.reportMissedFall("robot-a", "family@example.com", T0, Date.parse(T0) + 60_000);
+    const report = await review.reportMissedFall("robot-a", "u-family", T0, Date.parse(T0) + 60_000);
     const ids = async (filter) => (await review.listFallIncidentSummaries("robot-a", filter)).map((i) => i.incidentId).sort();
     assert.deepEqual(await ids("check"), [urgent.incidentId, failed.incidentId].sort());
     assert.deepEqual(await ids("normal"), [normal.incidentId]);
@@ -175,9 +175,9 @@ test("incident list filters: needs check, AI failure, normal awaiting review, re
     assert.equal(byId[report.incidentId].sceneState, "expired");
     assert.equal(byId[report.incidentId].linkedCount, 0);
     // Closing needs at least one opinion (anyone's).
-    await assert.rejects(review.closeFallIncident("robot-a", normal.incidentId, "owner@example.com"), /NEEDS_OPINION/);
-    await review.setFallOpinion("robot-a", normal.incidentId, "family@example.com", "normal", null);
-    await review.closeFallIncident("robot-a", normal.incidentId, "owner@example.com");
+    await assert.rejects(review.closeFallIncident("robot-a", normal.incidentId, "u-owner"), /NEEDS_OPINION/);
+    await review.setFallOpinion("robot-a", normal.incidentId, "u-family", "normal", null);
+    await review.closeFallIncident("robot-a", normal.incidentId, "u-owner");
     assert.deepEqual(await ids("closed"), [normal.incidentId]);
     assert.equal((await review.listFallIncidentSummaries("robot-a", "normal"))[0].reviewPending, false);
     assert.deepEqual(await review.listFallIncidentSummaries("robot-b"), []);
@@ -187,14 +187,16 @@ test("incident list filters: needs check, AI failure, normal awaiting review, re
 test("missed-fall report is −10/+20 s, recorded only, and limited to the retention window", async () => {
   await withRepo(async ({ h, review }) => {
     const now = Date.parse(T0) + 60_000;
-    const { incidentId } = await review.reportMissedFall("robot-a", "family@example.com", T0, now);
+    const { incidentId } = await review.reportMissedFall("robot-a", "u-family", T0, now);
     const detail = await review.getFallIncidentDetail("robot-a", incidentId);
     assert.deepEqual(detail.clips.map((c) => [c.startAt, c.endAt]), [[at(-10_000), at(20_000)]]);
-    assert.equal(detail.reportedBy, "family@example.com");
+    assert.equal(detail.reportedBy, "u-family");
+    // Without a chosen name, people are shown by their login email.
+    assert.equal(detail.reportedByName, "family@example.com");
     assert.deepEqual(detail.notifications, []);
     assert.equal((await h.db.query("SELECT * FROM fall_web_notices")).rows.length, 0);
     for (const moment of [at(120_000), at(-8 * 86_400_000), "2026-09-18T00:00:00Z", "bad"]) {
-      await assert.rejects(review.reportMissedFall("robot-a", "owner@example.com", moment, now), /FALL_REPORT/);
+      await assert.rejects(review.reportMissedFall("robot-a", "u-owner", moment, now), /FALL_REPORT/);
     }
   });
 });
@@ -210,14 +212,14 @@ test("detail shows clips, automatic judgments, notifications, all opinions and l
     await review.storeFallClip("robot-a", clip({ incidentId: b.incidentId, startAt: recent(0), endAt: recent(30_000),
       anchorKinds: ["pose_found_down"], foundDown: true }));
     await recording(h, "robot-a", recent(-60_000), null);
-    await review.setFallOpinion("robot-a", a.incidentId, "owner@example.com", "fall", "바닥에 누워 있음");
-    await review.setFallOpinion("robot-a", a.incidentId, "family@example.com", "suspected_fall", null);
+    await review.setFallOpinion("robot-a", a.incidentId, "u-owner", "fall", "바닥에 누워 있음");
+    await review.setFallOpinion("robot-a", a.incidentId, "u-family", "suspected_fall", null);
     const detail = await review.getFallIncidentDetail("robot-a", a.incidentId);
     assert.equal(detail.clips[0].playbackState, "available");
     assert.deepEqual(detail.robotEvents.map((e) => e.eventKind), ["notification_requested"]);
     assert.deepEqual(detail.notifications.map((n) => [n.kind, n.level]), [["first", "urgent"]]);
-    assert.deepEqual(detail.opinions.map((o) => [o.userEmail, o.label]),
-      [["owner@example.com", "fall"], ["family@example.com", "suspected_fall"]]);
+    assert.deepEqual(detail.opinions.map((o) => [o.userId, o.userName, o.label]),
+      [["u-owner", "owner@example.com", "fall"], ["u-family", "family@example.com", "suspected_fall"]]);
     assert.deepEqual(detail.opinionCounts, { fall: 1, suspected_fall: 1 });
     assert.deepEqual(detail.linkedIncidentIds, [b.incidentId]);
     assert.equal((await review.getFallIncidentDetail("robot-a", b.incidentId)).foundDown, true);
@@ -230,15 +232,15 @@ test("closing records the labels; only a new label reopens and notifies everyone
     const opened = event();
     await events.storeFallEvent("robot-a", opened);
     const id = opened.incidentId;
-    await review.setFallOpinion("robot-a", id, "owner@example.com", "normal", null);
-    assert.deepEqual(await review.closeFallIncident("robot-a", id, "family@example.com"), { closed: true, changed: true });
-    assert.deepEqual(await review.closeFallIncident("robot-a", id, "owner@example.com"), { closed: true, changed: false });
+    await review.setFallOpinion("robot-a", id, "u-owner", "normal", null);
+    assert.deepEqual(await review.closeFallIncident("robot-a", id, "u-family"), { closed: true, changed: true });
+    assert.deepEqual(await review.closeFallIncident("robot-a", id, "u-owner"), { closed: true, changed: false });
     // Same label: recorded only.
-    assert.equal((await review.setFallOpinion("robot-a", id, "family@example.com", "normal", "괜찮아 보임")).reopened, false);
+    assert.equal((await review.setFallOpinion("robot-a", id, "u-family", "normal", "괜찮아 보임")).reopened, false);
     assert.equal((await review.getFallIncidentDetail("robot-a", id)).reviewState, "closed");
     // Clearing an opinion never reopens.
-    assert.equal((await review.setFallOpinion("robot-a", id, "family@example.com", null, null)).reopened, false);
-    const result = await review.setFallOpinion("robot-a", id, "family@example.com", "fall", null);
+    assert.equal((await review.setFallOpinion("robot-a", id, "u-family", null, null)).reopened, false);
+    const result = await review.setFallOpinion("robot-a", id, "u-family", "fall", null);
     assert.equal(result.reopened, true);
     const detail = await review.getFallIncidentDetail("robot-a", id);
     assert.equal(detail.reviewState, "open");
@@ -249,9 +251,9 @@ test("closing records the labels; only a new label reopens and notifies everyone
     assert.deepEqual(notices.map(({ notice_id, ...n }) => (assert.equal(notice_id, result.noticeId), n)),
       [{ kind: "reopen", level: "check", reason: "reopened_by_opinion", status: "pending" }]);
     // Closing again cancels the pending notice.
-    await review.closeFallIncident("robot-a", id, "owner@example.com");
+    await review.closeFallIncident("robot-a", id, "u-owner");
     assert.equal((await h.db.query("SELECT status FROM fall_web_notices")).rows[0].status, "canceled");
-    await assert.rejects(review.setFallOpinion("robot-a", randomUUID(), "owner@example.com", "fall", null), /NOT_FOUND/);
+    await assert.rejects(review.setFallOpinion("robot-a", randomUUID(), "u-owner", "fall", null), /NOT_FOUND/);
   });
 });
 
@@ -279,7 +281,7 @@ test("urgent: [재발신] at 2 and 4 minutes, then flagged as nobody checked", a
     assert.equal(list[0].incidentId, urgent.incidentId);
     assert.equal(list[0].unacknowledged, true);
     // An opinion acknowledges and clears the flag.
-    await review.setFallOpinion("robot-a", urgent.incidentId, "family@example.com", "fall", null);
+    await review.setFallOpinion("robot-a", urgent.incidentId, "u-family", "fall", null);
     assert.equal((await review.listFallIncidentSummaries("robot-a", "check"))
       .find((i) => i.incidentId === urgent.incidentId).unacknowledged, false);
   });
@@ -291,7 +293,7 @@ test("one opinion stops reminders for everyone; info has none; check is 3 min ×
     await events.storeFallEvent("robot-a", urgent);
     const t = await outboxCreatedAt(h, urgent.incidentId);
     await review.scheduleFallReminders(t + 120_000);
-    await review.setFallOpinion("robot-a", urgent.incidentId, "owner@example.com", "suspected_fall", null);
+    await review.setFallOpinion("robot-a", urgent.incidentId, "u-owner", "suspected_fall", null);
     assert.equal((await h.db.query("SELECT status FROM fall_web_notices")).rows[0].status, "canceled");
     assert.equal((await review.scheduleFallReminders(t + 240_000)).created, 0);
     assert.equal((await review.scheduleFallReminders(t + 600_000)).created, 0);
@@ -331,8 +333,8 @@ test("escalation to urgent starts a new cycle and cancels the lower one; closing
     assert.equal((await review.scheduleFallReminders(u + 120_000)).created, 1);
     assert.equal((await h.db.query("SELECT level,round FROM fall_web_notices WHERE status='pending'")).rows[0].level,
       "urgent");
-    await review.setFallOpinion("robot-a", check.incidentId, "owner@example.com", "fall", null);
-    await review.closeFallIncident("robot-a", check.incidentId, "owner@example.com");
+    await review.setFallOpinion("robot-a", check.incidentId, "u-owner", "fall", null);
+    await review.closeFallIncident("robot-a", check.incidentId, "u-owner");
     assert.equal((await h.db.query("SELECT 1 FROM fall_web_notices WHERE status='pending'")).rows.length, 0);
     assert.equal((await review.scheduleFallReminders(u + 240_000)).created, 0);
   });
@@ -343,15 +345,15 @@ test("reopen notice gets one [재발신] after 3 min unless someone answers", as
     const opened = event();
     await events.storeFallEvent("robot-a", opened);
     const id = opened.incidentId;
-    await review.setFallOpinion("robot-a", id, "family@example.com", "normal", null);
-    await review.closeFallIncident("robot-a", id, "owner@example.com");
-    await review.setFallOpinion("robot-a", id, "owner@example.com", "fall", null);
+    await review.setFallOpinion("robot-a", id, "u-family", "normal", null);
+    await review.closeFallIncident("robot-a", id, "u-owner");
+    await review.setFallOpinion("robot-a", id, "u-owner", "fall", null);
     const r = ms((await h.db.query("SELECT created_at FROM fall_web_notices")).rows[0].created_at);
     // The reopening opinion itself does not acknowledge the new cycle.
     assert.equal((await review.scheduleFallReminders(r + 180_000)).created, 1);
     const resend = (await h.db.query("SELECT kind,round,level,reason FROM fall_web_notices WHERE kind='resend'")).rows;
     assert.deepEqual(resend, [{ kind: "resend", round: 2, level: "check", reason: "reopened_by_opinion" }]);
-    await review.setFallOpinion("robot-a", id, "family@example.com", "fall", null);
+    await review.setFallOpinion("robot-a", id, "u-family", "fall", null);
     assert.equal((await h.db.query("SELECT status FROM fall_web_notices WHERE kind='resend'")).rows[0].status, "canceled");
   });
 });
@@ -405,7 +407,7 @@ test("HTTP: device clip upload, member-only review routes and same-origin mutati
     [path.join(root, "app/device-auth.ts")]: { async getRequestDevice(req) {
       return req.headers.get("authorization") === "Bearer device-a" ? { deviceId: "robot-a" } : null;
     } },
-    [path.join(root, "app/server-auth.ts")]: { async getRequestUserEmail(req) { return req.headers.get("x-test-email"); } },
+    [path.join(root, "app/server-auth.ts")]: { async getRequestUserId(req) { return testUserId(req.headers.get("x-test-email")); } },
     [path.join(root, "app/runtime-env.ts")]: { getRuntimeEnvironment() { return {}; } },
     [path.join(root, "app/fall-event-push.ts")]: {
       async deliverPendingFallNotice(input) { delivered.push(input); return { processed: true }; },
@@ -485,7 +487,7 @@ test("clip playback answers expired / no recording / preparing without calling K
   const h = await fallDatabase();
   const broker = [];
   const load = moduleLoader({
-    [path.join(h.root, "app/server-auth.ts")]: { async getRequestUserEmail(req) { return req.headers.get("x-test-email"); } },
+    [path.join(h.root, "app/server-auth.ts")]: { async getRequestUserId(req) { return testUserId(req.headers.get("x-test-email")); } },
     [path.join(h.root, "app/kvs-broker.ts")]: { async requestBrokerEventPlayback(input) { broker.push(input); throw new Error("no"); } },
   });
   const pg = load("db/postgres.ts"), events = load("db/fall-incidents.ts"), review = load("db/fall-review.ts");
@@ -517,9 +519,9 @@ test("review fixes: microsecond timestamps, robot-normal reminders, reopened nor
     // Real Postgres stores microseconds; the reopening opinion must still not acknowledge.
     const opened = event();
     await events.storeFallEvent("robot-a", opened);
-    await review.setFallOpinion("robot-a", opened.incidentId, "family@example.com", "normal", null);
-    await review.closeFallIncident("robot-a", opened.incidentId, "owner@example.com");
-    await review.setFallOpinion("robot-a", opened.incidentId, "owner@example.com", "fall", null);
+    await review.setFallOpinion("robot-a", opened.incidentId, "u-family", "normal", null);
+    await review.closeFallIncident("robot-a", opened.incidentId, "u-owner");
+    await review.setFallOpinion("robot-a", opened.incidentId, "u-owner", "fall", null);
     await h.db.query("UPDATE fall_web_notices SET created_at='2026-09-18T00:00:00.123Z'");
     await h.db.query(`UPDATE fall_incident_activity SET created_at='2026-09-18T00:00:00.123456Z'
       WHERE action='opinion_set' AND label='fall'`);
@@ -545,9 +547,9 @@ test("review fixes: microsecond timestamps, robot-normal reminders, reopened nor
     assert.equal(normal.reviewPending, true);
 
     // Reopening a robot-normal incident puts it back in 확인 필요.
-    await review.setFallOpinion("robot-a", check.incidentId, "owner@example.com", "normal", null);
-    await review.closeFallIncident("robot-a", check.incidentId, "owner@example.com");
-    await review.setFallOpinion("robot-a", check.incidentId, "family@example.com", "fall", null);
+    await review.setFallOpinion("robot-a", check.incidentId, "u-owner", "normal", null);
+    await review.closeFallIncident("robot-a", check.incidentId, "u-owner");
+    await review.setFallOpinion("robot-a", check.incidentId, "u-family", "fall", null);
     const reopened = (await review.listFallIncidentSummaries("robot-a", "check"))
       .find((i) => i.incidentId === check.incidentId);
     assert.equal(reopened.needsCheck, true);
@@ -561,7 +563,7 @@ test("review fixes: microsecond timestamps, robot-normal reminders, reopened nor
     await h.db.query(`INSERT INTO recording_sessions(session_id,kvs_stream_arn,kvs_channel_arn,started_at,ended_at)
       VALUES($1,'arn:stream:a','arn:channel:a',NULL,NULL)`, [id]);
     const recent = new Date(Math.floor(Date.now() / 1000) * 1000 - 120_000).toISOString();
-    const report = await review.reportMissedFall("robot-a", "owner@example.com", recent);
+    const report = await review.reportMissedFall("robot-a", "u-owner", recent);
     const detail = await review.getFallIncidentDetail("robot-a", report.incidentId);
     assert.equal(detail.clips[0].playbackState, "unavailable");
     assert.equal(typeof clipPlaybackState, "function");
@@ -598,7 +600,7 @@ test("연속 녹화: day timeline marks, recorded spans and report memo", async 
     await recording(h, "robot-a", at(-3600_000), null);
     const fall = notice({ occurredAt: at(-30 * 60_000), fallSeen: true });
     await events.storeFallEvent("robot-a", fall);
-    const report = await review.reportMissedFall("robot-a", "family@example.com", at(-10 * 60_000), now, "  거실에서 넘어지심 ");
+    const report = await review.reportMissedFall("robot-a", "u-family", at(-10 * 60_000), now, "  거실에서 넘어지심 ");
     const timeline = await review.getFallTimeline("robot-a", at(-4 * 3600_000), at(60_000), now);
     assert.equal(timeline.recordings.length, 2);
     assert.equal(timeline.recordings[1].endAt, at(0)); // an open recording ends now
@@ -606,7 +608,7 @@ test("연속 녹화: day timeline marks, recorded spans and report memo", async 
     assert.equal((await review.getFallIncidentDetail("robot-a", report.incidentId)).reportMemo, "거실에서 넘어지심");
     await assert.rejects(review.getFallTimeline("robot-a", at(0), at(-1000), now), /RANGE_INVALID/);
     await assert.rejects(review.getFallTimeline("robot-a", at(-30 * 3600_000), at(0), now), /RANGE_INVALID/);
-    await assert.rejects(review.reportMissedFall("robot-a", "owner@example.com", at(-60_000), now, "x".repeat(501)), /INVALID/);
+    await assert.rejects(review.reportMissedFall("robot-a", "u-owner", at(-60_000), now, "x".repeat(501)), /INVALID/);
     assert.deepEqual(await review.recordingStreamFor("robot-a", at(-90 * 60_000), at(-80 * 60_000)), []);
     assert.deepEqual(await review.recordingStreamFor("robot-a", at(-10 * 60_000), at(-9 * 60_000)), ["arn:stream:a"]);
   });
@@ -616,7 +618,7 @@ test("recording playback: member-only, ≤ 10 min, only where this device record
   const h = await fallDatabase();
   const broker = [];
   const load = moduleLoader({
-    [path.join(h.root, "app/server-auth.ts")]: { async getRequestUserEmail(req) { return req.headers.get("x-test-email"); } },
+    [path.join(h.root, "app/server-auth.ts")]: { async getRequestUserId(req) { return testUserId(req.headers.get("x-test-email")); } },
     [path.join(h.root, "app/runtime-env.ts")]: { getRuntimeEnvironment() { return { KVS_BROKER_SECRET: "s".repeat(64) }; } },
     [path.join(h.root, "app/kvs-device-config.ts")]: { resolveDeviceKvsResources() { return { streamArn: "arn:stream:a" }; } },
     [path.join(h.root, "app/kvs-broker.ts")]: { async requestBrokerEventPlayback(input) {

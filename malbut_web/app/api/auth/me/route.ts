@@ -1,4 +1,4 @@
-import { getRequestUserEmail } from "../../../server-auth";
+import { getRequestUserId } from "../../../server-auth";
 import {
   chatGPTSignInPath,
   chatGPTSignOutPath,
@@ -7,7 +7,7 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const authenticated = Boolean(await getRequestUserEmail(request));
+  const authenticated = Boolean(await getRequestUserId(request));
   return Response.json(
     {
       authenticated,

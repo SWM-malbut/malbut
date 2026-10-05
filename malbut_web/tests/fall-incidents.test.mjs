@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
-import { fallDatabase, moduleLoader } from "./helpers/fall-db-harness.mjs";
+import { fallDatabase, moduleLoader, testUserId } from "./helpers/fall-db-harness.mjs";
 
 function event(change = {}) {
   return { schemaVersion: 1, eventId: randomUUID(), incidentId: randomUUID(), bootId: "boot-1",
@@ -165,7 +165,7 @@ test("authenticated ingestion acknowledges durable storage even when push is off
       return req.headers.get("authorization") === "Bearer device-a" ? { deviceId: "robot-a" } : null;
     } },
     [path.join(h.root, "app/fall-event-push.ts")]: { async deliverPendingFallPush() { throw new Error("offline"); } },
-    [path.join(h.root, "app/server-auth.ts")]: { async getRequestUserEmail(req) { return req.headers.get("x-test-email"); } },
+    [path.join(h.root, "app/server-auth.ts")]: { async getRequestUserId(req) { return testUserId(req.headers.get("x-test-email")); } },
   };
   const load = moduleLoader(overrides), pg = load("db/postgres.ts");
   const api = load("app/api/device/v1/fall-events/route.ts");
@@ -244,8 +244,8 @@ test("Python runtime journal -> authenticated API -> database -> push broker pay
     return Response.json({ results: body.subscriptions.map((s) => ({ subscriptionId: s.subscriptionId, status: 201 })) });
   };
   try { await pg.withPostgresPoolForTest(h.pool, async () => {
-    await h.db.query(`INSERT INTO push_subscriptions(id,user_email,device_id,endpoint,p256dh,auth)
-      VALUES($1,'owner@example.com','robot-a','https://fcm.googleapis.com/test',$2,$3)`,
+    await h.db.query(`INSERT INTO push_subscriptions(id,user_id,device_id,endpoint,p256dh,auth)
+      VALUES($1,'u-owner','robot-a','https://fcm.googleapis.com/test',$2,$3)`,
     [randomUUID(), "a".repeat(60), "b".repeat(24)]);
     for (const record of records) {
       const req = new Request("https://web.example.com/api/device/v1/fall-events", {
