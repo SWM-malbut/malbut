@@ -37,8 +37,10 @@ async function withRepo(work, overrides = {}) {
 async function recording(h, deviceId, start, end) {
   const id = randomUUID();
   // Only one active session per device: a finished recording is an ended session.
+  // An open one belongs to a robot still reporting, whose lease slides to now + 1 h.
+  const expiresAt = end === null ? new Date(Date.now() + 3600_000).toISOString() : at(86_400_000);
   await h.db.query(`INSERT INTO stream_sessions(id,room_code,device_id,started_by,started_at,expires_at,status)
-    VALUES($1,$2,$3,'device',$4,$5,$6)`, [id, id, deviceId, start, at(86_400_000), end === null ? "active" : "ended"]);
+    VALUES($1,$2,$3,'device',$4,$5,$6)`, [id, id, deviceId, start, expiresAt, end === null ? "active" : "ended"]);
   await h.db.query(`INSERT INTO recording_sessions(session_id,kvs_stream_arn,kvs_channel_arn,started_at,ended_at)
     VALUES($1,'arn:stream:a','arn:channel:a',$2,$3)`, [id, start, end]);
 }
