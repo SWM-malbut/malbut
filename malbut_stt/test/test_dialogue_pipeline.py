@@ -1,6 +1,7 @@
 """Continuous dialogue tests use deterministic PCM, local-model fakes, and no ROS."""
 
 from queue import Queue
+import json
 from threading import Event
 from time import monotonic, sleep
 from types import SimpleNamespace
@@ -543,7 +544,7 @@ def test_normal_tts_completion_ends_session_after_five_seconds(harness):
     harness.now = 5.0
     pipeline.poll()
     assert not pipeline.session.active
-    assert 'session_ended:tts_timeout' in harness.reports
+    assert 'session_ended:input_timeout' in harness.reports
 
 
 def test_predeadline_queued_onset_is_processed_before_late_status_callback(harness):
@@ -591,7 +592,7 @@ def test_busy_capture_timestamp_tag_survives_a_result_accepted_before_enqueue(ha
     assert 'speech_discarded:busy' in harness.reports
 
 
-def test_busy_utterance_tail_stays_discarded_after_asr_failure_without_ending_dialogue(harness):
+def test_busy_utterance_tail_is_discarded_after_asr_failure(harness):
     pipeline = harness.create()
     pipeline.session.activate()
     uid = pipeline.session.user_speech_started()
@@ -599,18 +600,20 @@ def test_busy_utterance_tail_stays_discarded_after_asr_failure_without_ending_di
     pipeline.feed(VOICE)
     pipeline.results.put_nowait(('command', pipeline._generation, uid, None, 'RuntimeError'))
     pipeline.poll()
-    assert pipeline.session.active and pipeline.session.utterance_id is None
+    assert not pipeline.session.active and pipeline.session.utterance_id is None
     pipeline.feed(VOICE + QUIET * 20)
     assert pipeline.jobs.empty() and harness.wake_calls == []
+    pipeline.on_playback_status('retry', 'failed', request_id=uid)
     pipeline.feed(QUIET * 130)
+    wake_up(harness, pipeline)
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.transcripts) == 1)
     assert harness.transcripts[0][0] != uid
-    assert harness.wake_calls == []
+    assert len(harness.wake_calls) == 1
 
 
 @pytest.mark.parametrize('failure', ['', ' \n', None, RuntimeError('private model details')])
-def test_failed_command_waits_for_new_speech_without_another_wake(harness, failure):
+def test_failed_command_closes_turn_and_requires_another_wake(harness, failure):
     statuses = []
     pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
     wake_up(harness, pipeline)
@@ -629,19 +632,144 @@ def test_failed_command_waits_for_new_speech_without_another_wake(harness, failu
         'empty_transcript'
     )
     pump(pipeline, lambda: expected in harness.reports)
-    assert pipeline.session.active and pipeline.session.utterance_id is None
+    assert not pipeline.session.active and pipeline.session.utterance_id is None
     assert pipeline.session.deadline is None and not pipeline._busy
     assert pipeline.pending_addressee is None
     assert harness.transcripts == [] and harness.candidates == []
     assert harness.controls == []
-    assert statuses == [('', first, 'started'), ('', first, 'failed')]
+    assert statuses == [('', first, 'started')] + (
+        [('', first, 'failed')] if isinstance(failure, Exception) else [])
+    if isinstance(failure, Exception):
+        assert pipeline._reply_request_id == first
+        finish_command(pipeline)
+        assert pipeline.jobs.empty()
+        pipeline.on_playback_status('retry', 'failed', request_id=first)
+    assert pipeline._reply_request_id is None
+    pipeline.wake.transcribe = lambda pcm, rate: '호출어 없는 말'
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    pump(pipeline, lambda: 'not_wake' in harness.reports)
+    assert harness.transcripts == []
+    pipeline.wake.transcribe = lambda pcm, rate: '제이크야'
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    pump(pipeline, lambda: pipeline.session.active)
     pipeline.transcriber.transcribe = original
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.transcripts) == 1)
     assert harness.transcripts[0][0] != first
     assert harness.transcripts[0][1] == '문장 1'
-    assert len(harness.wake_calls) == 1
     assert statuses[-1] == ('', harness.transcripts[0][0], 'started')
+
+
+@pytest.mark.parametrize('terminal', ['finished', 'failed', 'stopped'])
+def test_failed_command_gates_retry_before_notification_until_matching_terminal(harness, terminal):
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(
+        (*args, pipeline._input_blocked(harness.now))))
+    wake_up(harness, pipeline)
+    pipeline.feed(VOICE)
+    uid, generation = pipeline.session.utterance_id, pipeline._generation
+    pipeline._accept_result('command', generation, uid, None, 'ValueError')
+    assert statuses[-1] == ('', uid, 'failed', True)
+    pipeline.on_playback_status('retry', terminal, interim=True, request_id=uid)
+    pipeline.on_playback_status('other', terminal, request_id='other')
+    assert pipeline._input_blocked(harness.now)
+    pipeline.audio.put_nowait((pipeline._audio_generation, harness.now, VOICE, False))
+    pipeline.on_playback_status('retry-final', terminal, request_id=uid)
+    assert not pipeline._input_blocked(harness.now) and pipeline.audio.empty()
+    wake_up_count = len(harness.wake_calls)
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    pump(pipeline, lambda: pipeline.session.active)
+    pipeline._accept_result('command', generation, uid, '이전 결과', None)
+    assert harness.transcripts == [] and len(harness.wake_calls) == wake_up_count + 1
+
+
+@pytest.mark.parametrize('text,error', [('', None), (None, 'ValueError')])
+def test_confirmation_failure_remains_owned_by_agent(harness, text, error):
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
+    assert pipeline.start_session('confirmation')
+    pipeline.feed(VOICE)
+    uid = pipeline.session.utterance_id
+    pipeline._accept_result('command', pipeline._generation, uid, text, error)
+    assert statuses == [('confirmation', uid, 'started'), ('confirmation', uid, 'failed')]
+    assert pipeline.session_is_active('confirmation')
+    assert pipeline._reply_request_id is None
+    assert pipeline.stop_session('confirmation')
+    assert not pipeline.session.active
+
+
+def test_wake_without_command_times_out_after_chime_guard(harness):
+    pipeline = harness.create(on_wake=lambda: setattr(harness, 'now', 2.0))
+    wake_up(harness, pipeline)
+    harness.now = 7.299
+    pipeline.poll()
+    assert pipeline.session.active
+    harness.now = 7.3
+    pipeline.poll()
+    assert not pipeline.session.active and harness.transcripts == []
+    assert harness.command_calls == []
+
+
+def test_missing_retry_notice_cannot_leave_input_blocked_forever(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    pipeline.feed(VOICE)
+    uid = pipeline.session.utterance_id
+    pipeline._accept_result('command', pipeline._generation, uid, None, 'ValueError')
+    harness.now = 44.999
+    pipeline.poll()
+    assert pipeline._input_blocked(harness.now)
+    harness.now = 45.0
+    pipeline.poll()
+    assert not pipeline._input_blocked(harness.now) and not pipeline.session.active
+    assert 'retry_notice_timeout' in harness.reports
+
+
+def test_command_start_before_wake_timeout_survives_late_poll(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    pipeline.audio.put_nowait((pipeline._audio_generation, 4.9, VOICE, False))
+    harness.now = 5.1
+    pipeline.poll()
+    assert pipeline.session.active and pipeline.session.utterance_id is not None
+    assert pipeline.session.deadline is None
+    assert pipeline._command_start_deadline is None
+
+
+def test_unrelated_playback_cannot_erase_wake_listening_deadline(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    pipeline.on_playback_status('old-progress', 'playing', interim=True)
+    pipeline.on_playback_status('old-progress', 'finished', interim=True)
+    harness.now = 5.0
+    pipeline.poll()
+    assert not pipeline.session.active and pipeline._command_start_deadline is None
+
+
+def test_diagnostics_correlate_worker_error_and_wake_boundary(harness, tmp_path):
+    from malbut_stt.diagnostics import TranscriptionDiagnostics
+
+    diagnostics = TranscriptionDiagnostics(tmp_path)
+    pipeline = harness.create(diagnostics=diagnostics)
+    wake_up(harness, pipeline)
+
+    def fail(pcm, rate):
+        raise ValueError('incremental transcription omitted recent speech')
+
+    pipeline.transcriber.transcribe = fail
+    pipeline.feed(VOICE)
+    uid = pipeline.session.utterance_id
+    generation = pipeline._generation
+    pipeline.feed(QUIET * 100)
+    pump(pipeline, lambda: 'transcription_failed:ValueError' in harness.reports)
+    events = [json.loads(line) for line in (tmp_path / 'events.jsonl').read_text().splitlines()]
+    result = next(e for e in events if e['event'] == 'inference_result'
+                  and e['context']['kind'] == 'command')
+    assert result['context']['utterance_id'] == uid
+    assert result['context']['generation'] == generation
+    assert result['error_detail'] == 'incremental transcription omitted recent speech'
+    assert any(e['event'] == 'wake_input_ready' for e in events)
+    assert all('omitted recent speech' not in message for message in harness.reports)
 
 
 def test_ordinary_input_status_ignores_empty_ids_and_busy_discard(harness):

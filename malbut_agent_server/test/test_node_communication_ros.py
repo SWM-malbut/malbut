@@ -505,7 +505,7 @@ def test_ordinary_recognition_failure_guidance_and_followup_use_existing_topics(
         publisher.publish(SpeechInputStatus(
             session_id=session_id, utterance_id=uid, state=state))
 
-    notice = '잘 알아듣지 못했어요. 다시 말씀해 주세요.'
+    notice = '잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.'
     status('', SpeechInputStatus.STARTED)
     status('', SpeechInputStatus.FAILED)
     status('old', SpeechInputStatus.STARTED)
@@ -594,8 +594,8 @@ def test_recognition_feedback_preserves_an_earlier_pending_answer(
         for state in (SpeechInputStatus.STARTED, SpeechInputStatus.FAILED):
             publisher.publish(SpeechInputStatus(utterance_id='missed', state=state))
         _wait_until(lambda: len(messages) == 1)
-        assert messages[0].text == '잘 알아듣지 못했어요. 다시 말씀해 주세요.'
-        assert messages[0].interim is True
+        assert messages[0].text == '잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.'
+        assert messages[0].interim is False
         assert graph.receipts == ['received'] and len(provider.calls) == 1
         monkeypatch.setattr(graph.agent.dialogue, 'drain', drain)
         provider.release.set()
@@ -603,7 +603,7 @@ def test_recognition_feedback_preserves_an_earlier_pending_answer(
         assert messages[1].text == '대화 연결 확인 응답'
         assert messages[1].interim is False
         assert [message.request_id for message in messages] == [
-            '', 'earlier-answer',
+            'missed', 'earlier-answer',
         ]
         assert messages[0].playback_id != messages[1].playback_id
         for state in (SpeechInputStatus.STARTED, SpeechInputStatus.FAILED):
@@ -611,6 +611,7 @@ def test_recognition_feedback_preserves_an_earlier_pending_answer(
         _wait_until(lambda: len(messages) == 3)
         assert messages[2].text == messages[0].text
         assert messages[2].interim is False
+        assert messages[2].request_id == 'after-answer'
         assert graph.receipts == ['received'] and len(provider.calls) == 1
     finally:
         provider.release.set()
