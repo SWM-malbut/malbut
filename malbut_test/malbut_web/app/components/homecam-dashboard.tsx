@@ -364,7 +364,7 @@ function Switch({
   return (
     <button
       type="button"
-      className={`homecam-switch ${checked ? "is-on" : ""}`}
+      className={`fall-switch ${checked ? "is-on" : ""}`}
       role="switch"
       aria-checked={checked}
       aria-label={label}
@@ -509,7 +509,7 @@ export function HomecamDashboard({
   const [pushEndpointRegistrationCount, setPushEndpointRegistrationCount] = useState(0);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [standalone, setStandalone] = useState(false);
-  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians" | "name">("main");
+  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians" | "owner" | "name">("main");
   const [account, setAccount] = useState<{ name: string | null; email: string | null; providers: string[] } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<FamilyMember | null>(null);
   const [textSize, setTextSize] = useState<"default" | "large">("default");
@@ -1149,6 +1149,8 @@ export function HomecamDashboard({
   const connectionText = selectedDevice?.online
     ? tab === "live" && displayedMediaReady ? "실시간 연결됨" : "연결됨"
     : "오프라인";
+  // 홈 영상 카드: 지금 볼 수 없으면 빨간 "실시간" 대신 그 이유를 회색으로.
+  const homeLiveBlocked = !selectedDevice?.online ? "오프라인" : !selectedDevice.cameraEnabled ? "카메라 꺼짐" : null;
   const showTopBar = tab === "home" || tab === "live" || (tab === "settings" && settingsView === "main");
   const navigate = (nextTab: HomecamTab) => {
     if (nextTab === "map") openMap("view");
@@ -1213,7 +1215,17 @@ export function HomecamDashboard({
           </div>
         )}
 
-        {tab === "home" && (
+        {tab === "home" && availability === "ready" && devices.length === 0 && (
+          <section className="ui-screen" aria-label="말벗 등록">
+            <article className="ui-card">
+              <h2>아직 연결된 말벗이 없어요</h2>
+              <p className="ui-hint ui-long">등록 코드를 입력하면 이 계정이 말벗의 소유자가 돼요. 소유자는 설정을 바꾸고 보호자를 초대할 수 있어요.</p>
+              <a className="ui-button is-strong" href="/register">등록 코드 입력하기</a>
+            </article>
+          </section>
+        )}
+
+        {tab === "home" && !(availability === "ready" && devices.length === 0) && (
           <section className="ui-screen ui-home" aria-label="말벗 지금 상태">
             <article className="ui-card ui-hero">
               <span className="ui-caption">지금 말벗은</span>
@@ -1233,7 +1245,7 @@ export function HomecamDashboard({
 
             <button type="button" className="ui-card ui-camera-card" onClick={() => setTab("live")} aria-label="거실 실시간 영상 열기">
               <span className="ui-camera-media">
-                <span className="ui-live-tag">● 실시간</span>
+                <span className={`ui-live-tag ${homeLiveBlocked ? "is-off" : ""}`}>● {homeLiveBlocked ?? "실시간"}</span>
                 <VideoCamera size={44} weight="light" aria-hidden="true" />
               </span>
               <span className="ui-camera-text">
@@ -1353,14 +1365,17 @@ export function HomecamDashboard({
                 </div>
                 <div>
                   <span>카메라 전원</span>
-                  {selectedDevice && (
+                  {/* 보면서 바로 끄는 것은 카메라뿐: 연속 녹화는 설정 › 홈캠 설정에서 바꾼다. */}
+                  {selectedDevice && (isOwner ? (
                     <Switch
                       checked={selectedDevice.cameraEnabled}
-                      disabled={!isOwner || Boolean(busy)}
+                      disabled={Boolean(busy)}
                       label="카메라 전원"
                       onChange={(value) => void updateSetting("cameraEnabled", value)}
                     />
-                  )}
+                  ) : (
+                    <strong className={selectedDevice.cameraEnabled ? "is-good" : ""}>{selectedDevice.cameraEnabled ? "켜짐" : "꺼짐"}</strong>
+                  ))}
                 </div>
                 <div>
                   <span>보호자 마이크</span>
@@ -1390,17 +1405,6 @@ export function HomecamDashboard({
                           ? "준비 중"
                           : "저장 오류"}
                   </strong>
-                </div>
-                <div>
-                  <span>연속 녹화</span>
-                  {selectedDevice && (
-                    <Switch
-                      checked={selectedDevice.monitoringEnabled}
-                      disabled={!isOwner || Boolean(busy)}
-                      label="연속 녹화"
-                      onChange={(value) => void updateSetting("monitoringEnabled", value)}
-                    />
-                  )}
                 </div>
               </article>
 
@@ -1497,6 +1501,12 @@ export function HomecamDashboard({
                   <span><strong>보호자</strong><small>{isOwner ? "함께 보는 사람 · 보호자 초대" : "함께 보는 사람 보기"}</small></span>
                   <CaretRight size={18} aria-hidden="true" />
                 </button>
+                {isOwner && (
+                  <button type="button" onClick={() => setSettingsView("owner")}>
+                    <span><strong>소유자 넘기기 · 다시 등록</strong><small>관리를 다른 보호자에게 맡기거나 말벗을 옮길 때</small></span>
+                    <CaretRight size={18} aria-hidden="true" />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1577,6 +1587,18 @@ export function HomecamDashboard({
                 onUpdateSetting={(settingKey, value) => void updateSetting(settingKey, value)}
               />
             ) : <p className="ui-hint">등록된 말벗이 없어요.</p>}
+          </section>
+        )}
+
+        {tab === "settings" && settingsView === "owner" && (
+          <section className="ui-screen ui-settings-sub" aria-label="소유자 넘기기 · 다시 등록">
+            {settingsBack("소유자 넘기기 · 다시 등록")}
+            <article className="ui-card">
+              <h2>등록 코드로 다시 등록</h2>
+              <p className="ui-hint ui-long">소유자 계정을 쓸 수 없게 됐거나 말벗을 다른 집으로 옮길 때 써요. 새 등록 코드를 입력한 사람이 새 소유자가 되고, 지금의 소유자와 보호자는 모두 지워져요.</p>
+              <p className="ui-hint ui-long">지난 사건 기록과 의견을 지울지 남길지는 다시 등록할 때 골라요. 새 등록 코드는 말벗 팀에게 받을 수 있어요.</p>
+              <a className="ui-button is-danger-line" href="/register">등록 코드 입력하기</a>
+            </article>
           </section>
         )}
 

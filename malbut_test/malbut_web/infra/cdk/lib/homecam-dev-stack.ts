@@ -840,7 +840,11 @@ export class HomecamDevStack extends Stack {
           ],
         ],
         ["MaintenanceApi", 6, ["/api/internal/maintenance"]],
-        ["DeviceProvisioningApi", 7, ["/api/internal/device-provisioning"]],
+        [
+          "DeviceProvisioningApi",
+          7,
+          ["/api/internal/device-provisioning", "/api/internal/registration-codes"],
+        ],
         [
           "PublicPwaRuntime",
           8,

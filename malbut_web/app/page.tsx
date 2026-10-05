@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireChatGPTUser } from "./chatgpt-auth";
 import { HomecamApp } from "./components/homecam-app";
+import { userHasHomecam } from "../db/homecam";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     const user = await requireChatGPTUser(returnTo);
     // First sign-in: "어떻게 불러 드릴까요?" before anything else.
     if (!user.chosenName) redirect(`/auth/name?${new URLSearchParams({ return_to: returnTo })}`);
+    // No 말벗 yet: the next step is a registration code (or a guardian's invite link).
+    if (!(await userHasHomecam(user.userId))) redirect("/register");
   }
   return <HomecamApp />;
 }

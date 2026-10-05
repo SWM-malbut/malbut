@@ -421,45 +421,6 @@ a:focus-visible {
   background: #eef2df;
   font-size: 1.125rem;
 }
-
-.homecam-switch {
-  position: relative;
-  width: 44px;
-  height: 26px;
-  flex: 0 0 auto;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: #ccd2ce;
-  cursor: pointer;
-  transition: background 160ms ease;
-}
-
-.homecam-switch span {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 2px 6px rgb(17 27 24 / 0.2);
-  transition: transform 160ms ease;
-}
-
-.homecam-switch.is-on {
-  background: #658522;
-}
-
-.homecam-switch.is-on span {
-  transform: translateX(18px);
-}
-
-.homecam-switch:disabled {
-  cursor: not-allowed;
-  opacity: 0.42;
-}
-
 .homecam-section {
   padding: 32px 0 42px;
 }
@@ -1196,47 +1157,6 @@ a:focus-visible {
   font-size: 1.0625rem;
   font-weight: 600;
 }
-
-.homecam-summary-card .homecam-switch {
-  margin-top: auto;
-}
-
-.homecam-switch {
-  width: 42px;
-  height: 24px;
-  border: 1px solid rgb(28 27 27 / 0.22);
-  background: #cdcdc7;
-}
-
-.homecam-switch span {
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  box-shadow: none;
-}
-
-.homecam-switch.is-on {
-  background: var(--homecam-ink);
-}
-
-.homecam-switch.is-on span {
-  transform: translateX(18px);
-}
-
-.homecam-summary-card:first-child .homecam-switch {
-  border-color: rgb(255 255 255 / 0.32);
-  background: #71706d;
-}
-
-.homecam-summary-card:first-child .homecam-switch.is-on {
-  background: #fff;
-}
-
-.homecam-summary-card:first-child .homecam-switch.is-on span {
-  background: var(--homecam-ink);
-}
-
 .homecam-section {
   padding: 36px 0 34px;
 }
@@ -4148,7 +4068,7 @@ a:focus-visible {
   --ui-report-soft: #efeafd;
   --ui-report-band: rgba(91, 63, 181, 0.12);
   --ui-track: #d6dae0;
-  --ui-recorded: #c9d8f5;
+  --ui-recorded: #5b8ae0;
   --ui-highlight: #ffd166;
   --ui-media: #2a2f36;
   --ui-media-black: #000;
@@ -4319,9 +4239,10 @@ a:focus-visible {
 .fall-card.is-blue { border-color: var(--ui-accent); gap: 12px; }
 .fall-card.is-purple { border-color: var(--ui-report); gap: 12px; }
 .fall-tl-track { position: relative; height: 40px; cursor: pointer; }
-.fall-tl-gap, .fall-tl-rec { position: absolute; top: 16px; height: 8px; }
-.fall-tl-gap { left: 0; right: 0; border-radius: 4px; background: var(--ui-track); }
-.fall-tl-rec { background: var(--ui-recorded); }
+.fall-tl-gap {
+  position: absolute; top: 16px; left: 0; right: 0; height: 8px; border-radius: 4px; overflow: hidden; background: var(--ui-track);
+}
+.fall-tl-rec { position: absolute; top: 0; bottom: 0; background: var(--ui-recorded); }
 .fall-tl-mark { position: absolute; top: 6px; width: 4px; height: 28px; margin-left: -2px; border-radius: 2px; }
 .fall-tl-mark.is-fall { background: var(--ui-danger); }
 .fall-tl-mark.is-suspected { background: var(--ui-warn); }
@@ -4515,6 +4436,7 @@ a:focus-visible {
   position: absolute; left: 0.75rem; top: 0.75rem; font-size: 0.75rem; font-weight: 700; padding: 0.1875rem 0.5rem;
   border-radius: 6px; color: var(--ui-on-strong); background: var(--ui-danger);
 }
+.ui-live-tag.is-off { color: var(--ui-text-muted); background: var(--ui-neutral-soft); }
 .ui-camera-text { padding: 0.75rem 0.875rem; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
 .ui-camera-text > span:first-child { display: flex; flex-direction: column; gap: 0.125rem; }
 .ui-camera-text strong { font-size: 0.9375rem; font-weight: 700; }
@@ -4637,13 +4559,6 @@ a:focus-visible {
 .ui-segment button { min-height: 40px; border: 0; background: var(--ui-surface); color: var(--ui-text); font-size: 0.8125rem; cursor: pointer; }
 .ui-segment button + button { border-left: 1px solid var(--ui-control-border); }
 .ui-segment button.is-on { background: var(--ui-strong); color: var(--ui-on-strong); }
-.ui-app .homecam-switch {
-  flex: none; width: 52px; height: 32px; border-radius: 16px; border: 0; padding: 3px; display: flex;
-  justify-content: flex-start; background: var(--ui-control-border); cursor: pointer;
-}
-.ui-app .homecam-switch.is-on { justify-content: flex-end; background: var(--ui-accent); }
-.ui-app .homecam-switch span { width: 26px; height: 26px; border-radius: 13px; background: var(--ui-surface); display: block; }
-.ui-app .homecam-switch:disabled { opacity: 0.55; cursor: not-allowed; }
 .ui-subhead {
   margin: -1rem -1rem 0; padding: 0.75rem 1.25rem 0.875rem; display: flex; flex-direction: column; gap: 0.375rem;
   background: var(--ui-surface); border-bottom: 1px solid var(--ui-border);
@@ -4886,3 +4801,56 @@ body:has(.ui-login) { background: var(--ui-bg); }
 .ui-name-hint { font-size: 0.75rem; color: var(--ui-text-muted); }
 .ui-name-hint.is-error { color: var(--ui-danger); }
 .ui-name-error { margin: 0; font-size: 0.8125rem; color: var(--ui-danger); }
+
+/* ---- 새 디자인: 말벗 등록 (목업 Register) ----------------------------------- */
+.ui-register { max-width: 720px; min-height: 100dvh; margin: 0 auto; color: var(--ui-text); background: var(--ui-bg); }
+body:has(.ui-register) { background: var(--ui-bg); }
+.ui-register-top {
+  background: var(--ui-surface); border-bottom: 1px solid var(--ui-border);
+  padding: 1.25rem 1.25rem 0.875rem; display: flex; flex-direction: column; gap: 0.375rem;
+}
+.ui-register-top h1 { margin: 0; font-size: 1.375rem; font-weight: 700; }
+.ui-register-body { padding: 1.25rem 1rem; display: flex; flex-direction: column; gap: 0.875rem; }
+.ui-register-intro { display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-register-intro h2 { margin: 0; font-size: 1.125rem; font-weight: 700; }
+.ui-register-intro p { margin: 0; font-size: 0.875rem; line-height: 1.6; color: var(--ui-text-muted); }
+.ui-register-form input { letter-spacing: 2px; }
+.ui-register-form input[aria-invalid="true"] { border-color: var(--ui-danger); }
+.ui-register-error { font-size: 0.8125rem; color: var(--ui-danger); }
+.ui-register .ui-button { min-height: 48px; }
+.ui-register .ui-register-main { font-size: 0.9375rem; text-decoration: none; }
+.ui-register-taken { border: 2px solid var(--ui-danger); }
+.ui-register-taken .ui-badge { align-self: flex-start; }
+.ui-register-taken > strong { font-size: 1rem; font-weight: 700; }
+.ui-register-taken > p { margin: 0; font-size: 0.875rem; line-height: 1.6; }
+.ui-register-taken > p.is-muted { font-size: 0.8125rem; color: var(--ui-text-muted); }
+.ui-register-taken .ui-button.is-danger:disabled {
+  border-color: var(--ui-control-border); background: var(--ui-control-border); opacity: 1;
+}
+.ui-register-history {
+  display: flex; flex-direction: column; gap: 0.5rem; padding-top: 0.625rem; border-top: 1px solid var(--ui-divider);
+}
+.ui-register-history > strong { font-size: 0.875rem; font-weight: 700; }
+.ui-radio-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-radio-option {
+  min-height: 56px; border-radius: 10px; padding: 0.5rem 0.75rem; display: flex; align-items: center; gap: 0.75rem;
+  border: 1px solid var(--ui-control-border); background: var(--ui-surface); color: var(--ui-text);
+  text-align: left; cursor: pointer;
+}
+.ui-radio-option.is-active { border: 2px solid var(--ui-strong); }
+.ui-radio-dot {
+  flex: none; width: 18px; height: 18px; border-radius: 9px; box-sizing: border-box; border: 2px solid var(--ui-icon-muted);
+}
+.ui-radio-option.is-active .ui-radio-dot { border: 6px solid var(--ui-strong); }
+.ui-radio-option > span:last-child { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.ui-radio-option strong { font-size: 0.875rem; font-weight: 700; }
+.ui-radio-option small { font-size: 0.75rem; color: var(--ui-text-muted); }
+.ui-register-done { padding: 1.125rem 0.875rem; align-items: flex-start; }
+.ui-register-done > strong { font-size: 1.125rem; font-weight: 700; }
+.ui-register-done > p { margin: 0; font-size: 0.875rem; line-height: 1.6; color: var(--ui-text-muted); }
+.ui-register-done .ui-button { align-self: stretch; }
+.ui-badge.is-ok { color: var(--ui-ok); background: var(--ui-ok-soft); }
+.ui-register-invite { line-height: 1.6; }
+.ui-hint.ui-long { line-height: 1.6; }
+a.ui-button { text-decoration: none; }
+a.ui-back { text-decoration: none; }

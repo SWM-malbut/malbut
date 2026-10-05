@@ -273,11 +273,13 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
               if (e.key === "ArrowLeft") setCursor(moment - 60_000);
               if (e.key === "ArrowRight") setCursor(moment + 60_000);
             }}>
-            <div className="fall-tl-gap" />
-            {timeline?.recordings.map((r) => (
-              <div key={r.startAt} className="fall-tl-rec"
-                style={{ left: `${percent(Date.parse(r.startAt))}%`, width: `${Math.max(0.2, percent(Date.parse(r.endAt)) - percent(Date.parse(r.startAt)))}%` }} />
-            ))}
+            {/* Recorded spans sit inside the rounded bar: only its two ends are round, back-to-back recordings join flat. */}
+            <div className="fall-tl-gap">
+              {timeline?.recordings.map((r) => (
+                <div key={r.startAt} className="fall-tl-rec"
+                  style={{ left: `${percent(Date.parse(r.startAt))}%`, width: `${Math.max(0.2, percent(Date.parse(r.endAt)) - percent(Date.parse(r.startAt)))}%` }} />
+              ))}
+            </div>
             {timeline?.incidents.map((i) => (
               <div key={i.incidentId} className={`fall-tl-mark is-${i.kind}`} style={{ left: `${percent(Date.parse(i.at))}%` }}
                 title={hms(Date.parse(i.at))} />
@@ -300,11 +302,12 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
               if (e.key === "ArrowLeft") setCursor(moment - 1000);
               if (e.key === "ArrowRight") setCursor(moment + 1000);
             }}>
-            <div className="fall-tl-gap" />
-            {timeline?.recordings.map((r) => {
-              const a = zoom(Date.parse(r.startAt)), b = zoom(Date.parse(r.endAt));
-              return b > a ? <div key={r.startAt} className="fall-tl-rec" style={{ left: `${a}%`, width: `${b - a}%` }} /> : null;
-            })}
+            <div className="fall-tl-gap">
+              {timeline?.recordings.map((r) => {
+                const a = zoom(Date.parse(r.startAt)), b = zoom(Date.parse(r.endAt));
+                return b > a ? <div key={r.startAt} className="fall-tl-rec" style={{ left: `${a}%`, width: `${b - a}%` }} /> : null;
+              })}
+            </div>
             {Array.from({ length: 11 }, (_, index) => (
               <div key={index} className={`fall-tl-tick ${index === 5 ? "is-major" : ""}`} style={{ left: `${(index + 1) * (100 / 12)}%` }} />
             ))}
