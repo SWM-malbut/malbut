@@ -90,25 +90,17 @@ test("the application page authenticates before mounting polling clients", async
   assert.match(app, /HomecamDashboard/);
 });
 
-test("both account headers POST logout while keeping sign-in as a link", async () => {
-  const [header, app] = await Promise.all([
-    readFile(
-      new URL("../app/components/homecam-header.tsx", import.meta.url),
-      "utf8",
-    ),
-    readFile(
-      new URL("../app/components/homecam-app.tsx", import.meta.url),
-      "utf8",
-    ),
-  ]);
+test("the account header POSTs logout while keeping sign-in as a link", async () => {
+  const source = await readFile(
+    new URL("../app/components/homecam-header.tsx", import.meta.url),
+    "utf8",
+  );
 
-  for (const source of [header, app]) {
-    assert.match(source, /fetch\(authStatus\.signOutPath/);
-    assert.match(source, /method:\s*"POST"/);
-    assert.match(source, /"content-type":\s*"application\/json"/);
-    assert.match(source, /body:\s*"\{\}"/);
-    assert.match(source, /credentials:\s*"same-origin"/);
-    assert.match(source, /window\.location\.replace\(redirectTo\)/);
-    assert.match(source, /href=\{authStatus.*signInPath/s);
-  }
+  assert.match(source, /fetch\(authStatus\.signOutPath/);
+  assert.match(source, /method:\s*"POST"/);
+  assert.match(source, /"content-type":\s*"application\/json"/);
+  assert.match(source, /body:\s*"\{\}"/);
+  assert.match(source, /credentials:\s*"same-origin"/);
+  assert.match(source, /window\.location\.replace\(redirectTo\)/);
+  assert.match(source, /href=\{authStatus.*signInPath/s);
 });

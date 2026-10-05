@@ -82,11 +82,6 @@ type ApiAvailability = "loading" | "ready" | "unavailable";
 type HomecamDashboardProps = {
   initialTab?: HomecamTab;
   onOpenLive: (device: HomecamDevice) => Promise<void>;
-  onCreateLegacyBroadcast: () => Promise<void>;
-  onJoinLegacy: (roomCode: string, password: string) => void;
-  creatingLegacyBroadcast: boolean;
-  externalError?: string;
-  legacyArchive?: React.ReactNode;
   liveMediaReady?: boolean;
   onReleaseLive?: () => void;
   liveViewer?: (context: {
@@ -227,7 +222,6 @@ function HomeMapSummary({
   );
 }
 
-const LEGACY_PASSWORD_LENGTH = 16;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
@@ -341,15 +335,6 @@ function formatLiveClock(value: number) {
     minute: "2-digit",
     second: "2-digit",
   }).format(new Date(value));
-}
-
-function normalizeLegacyCode(value: string) {
-  return value.replace(/[^A-HJ-NP-Z2-9]/gi, "").slice(0, 6).toUpperCase();
-}
-
-function normalizeLegacyPassword(value: string) {
-  const raw = value.replace(/[^A-HJ-NP-Z2-9]/gi, "").slice(0, LEGACY_PASSWORD_LENGTH).toUpperCase();
-  return raw.match(/.{1,4}/g)?.join("-") ?? raw;
 }
 
 function Switch({
@@ -485,11 +470,6 @@ function LocalDemoMapPanel({
 export function HomecamDashboard({
   initialTab = "home",
   onOpenLive,
-  onCreateLegacyBroadcast,
-  onJoinLegacy,
-  creatingLegacyBroadcast,
-  externalError = "",
-  legacyArchive,
   liveMediaReady = false,
   onReleaseLive,
   liveViewer,
@@ -516,9 +496,7 @@ export function HomecamDashboard({
   const [pushEndpointRegistrationCount, setPushEndpointRegistrationCount] = useState(0);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [standalone, setStandalone] = useState(false);
-  const [legacyCode, setLegacyCode] = useState("");
-  const [legacyPassword, setLegacyPassword] = useState("");
-  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians" | "legacy">("main");
+  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians">("main");
   const [removeTarget, setRemoveTarget] = useState<FamilyMember | null>(null);
   const [textSize, setTextSize] = useState<"default" | "large">("default");
   const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
@@ -1541,10 +1519,6 @@ export function HomecamDashboard({
                   <span>개발자 화면 (주행·디버그)</span>
                   <CaretRight size={18} aria-hidden="true" />
                 </button>
-                <button type="button" onClick={() => setSettingsView("legacy")}>
-                  <span>개발 · 이전 버전 연결</span>
-                  <CaretRight size={18} aria-hidden="true" />
-                </button>
               </div>
             </div>
           </section>
@@ -1628,56 +1602,10 @@ export function HomecamDashboard({
           </section>
         )}
 
-        {tab === "settings" && settingsView === "legacy" && (
-          <section className="ui-screen ui-settings-sub" aria-label="개발 · 이전 버전 연결">
-            {settingsBack("개발 · 이전 버전 연결")}
-            <div className="homecam-legacy is-open">
-              <p>등록된 보호자 계정 연결이 준비되지 않았을 때만 기존 코드+비밀번호 시청 방식을 사용합니다.</p>
-              <div className="homecam-legacy-actions">
-                <button
-                  type="button"
-                  onClick={() => void onCreateLegacyBroadcast()}
-                  disabled={creatingLegacyBroadcast}
-                >
-                  {creatingLegacyBroadcast ? "세션 만드는 중" : "브라우저 카메라 송출"}
-                </button>
-                <label>
-                  <span className="sr-only">기존 세션 코드</span>
-                  <input
-                    value={legacyCode}
-                    onChange={(event) => setLegacyCode(normalizeLegacyCode(event.target.value))}
-                    placeholder="6자리 코드"
-                    maxLength={6}
-                    autoComplete="one-time-code"
-                  />
-                </label>
-                <label>
-                  <span className="sr-only">기존 시청 비밀번호</span>
-                  <input
-                    value={legacyPassword}
-                    onChange={(event) => setLegacyPassword(normalizeLegacyPassword(event.target.value))}
-                    placeholder="기존 시청 비밀번호"
-                    maxLength={19}
-                    autoComplete="off"
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => onJoinLegacy(legacyCode, legacyPassword)}
-                  disabled={legacyCode.length !== 6 || legacyPassword.replace(/-/g, "").length !== LEGACY_PASSWORD_LENGTH}
-                >
-                  기존 세션 입장
-                </button>
-              </div>
-              {legacyArchive && <div className="homecam-legacy-archive">{legacyArchive}</div>}
-            </div>
-          </section>
-        )}
-
-        {(externalError || (notice && (tab !== "live" || selectedDevice))) && (
+        {notice && (tab !== "live" || selectedDevice) && (
           <div className="ui-notice" role="status">
             <Info size={18} weight="bold" aria-hidden="true" />
-            <p>{externalError || notice}</p>
+            <p>{notice}</p>
             {availability === "unavailable" && (
               <button type="button" className="ui-text-button" onClick={() => void loadDevices()}>다시 확인</button>
             )}

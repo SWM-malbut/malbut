@@ -696,7 +696,6 @@ export class HomecamDevStack extends Stack {
           : {}),
         AUTH_PUBLIC_ORIGIN: Fn.join("", ["https://", homecamDomainName]),
         PETCAM_DEVICE_ID: props.deviceIds[0]!,
-        PETCAM_BROADCASTER_EMAILS: parameters.initialOwnerEmail.valueAsString,
         DEVICE_PROVISIONING_MANIFEST_SHA256:
           parameters.deviceProvisioningManifestSha256.valueAsString,
         DEVICE_PROVISIONING_EXPIRES_AT:

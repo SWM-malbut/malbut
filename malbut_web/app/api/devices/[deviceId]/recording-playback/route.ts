@@ -1,5 +1,5 @@
 import { RECORDING_RETENTION_MS, recordingStreamFor } from "../../../../../db/fall-review";
-import { consumeRequestRateLimit } from "../../../../../db/petcam";
+import { consumeRequestRateLimit } from "../../../../../db/request-rate-limit";
 import { noStore } from "../../../../api-response";
 import { fallMember } from "../../../../fall-review-route";
 import { requestBrokerEventPlayback } from "../../../../kvs-broker";

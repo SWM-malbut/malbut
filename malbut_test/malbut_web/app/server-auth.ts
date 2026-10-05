@@ -25,7 +25,6 @@ type AuthRuntimeEnvironment = {
   AUTH_OIDC_ISSUER?: string;
   AUTH_EMAIL_CLAIM?: string;
   AUTH_DEV_USER_EMAIL?: string;
-  PETCAM_BROADCASTER_EMAILS?: string;
   NODE_ENV?: string;
 };
 
@@ -91,18 +90,6 @@ export async function getAuthenticatedUser(
   }
 
   return null;
-}
-
-export function canBroadcastForConfiguredAccount(userEmail: string) {
-  const runtime = getRuntimeEnvironment() as AuthRuntimeEnvironment;
-  const configured = runtime.PETCAM_BROADCASTER_EMAILS ?? "";
-  const normalizedUser = normalizeEmail(userEmail);
-  if (!normalizedUser) return false;
-  return configured
-    .split(",")
-    .map(normalizeEmail)
-    .filter((email): email is string => Boolean(email))
-    .includes(normalizedUser);
 }
 
 async function opaqueSessionUser(
