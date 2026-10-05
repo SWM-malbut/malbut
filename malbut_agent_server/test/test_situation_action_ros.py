@@ -92,7 +92,13 @@ def rig(monkeypatch, tmp_path):
             if predicate():
                 return
             executor.spin_once(timeout_sec=0.01)
-        raise AssertionError('confirmation did not progress')
+        raise AssertionError(
+            'confirmation did not progress: '
+            f'phase={getattr(agent.situation._session, "phase", None)}, '
+            f'spoken={len(state.spoken)}, '
+            f'input_subscribers={inputs.get_subscription_count()}, '
+            f'transcript_subscribers={transcripts.get_subscription_count()}'
+        )
 
     def start(request_id=None):
         spin_until(lambda: client.server_is_ready() and agent.dialogue.ready
@@ -111,6 +117,9 @@ def rig(monkeypatch, tmp_path):
         return handle
 
     def answer(text, session_id=None):
+        # Coordinator-driven tests do not pass through start()'s discovery gate.
+        spin_until(lambda: inputs.get_subscription_count() > 0
+                   and transcripts.get_subscription_count() > 0)
         uid = uuid4().hex
         sid = session_id or state.session_id
         inputs.publish(SpeechInputStatus(session_id=sid, utterance_id=uid, state='started'))
