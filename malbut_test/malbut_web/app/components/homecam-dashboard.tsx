@@ -509,7 +509,7 @@ export function HomecamDashboard({
   const [pushEndpointRegistrationCount, setPushEndpointRegistrationCount] = useState(0);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [standalone, setStandalone] = useState(false);
-  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians" | "name">("main");
+  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians" | "owner" | "name">("main");
   const [account, setAccount] = useState<{ name: string | null; email: string | null; providers: string[] } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<FamilyMember | null>(null);
   const [textSize, setTextSize] = useState<"default" | "large">("default");
@@ -1213,7 +1213,17 @@ export function HomecamDashboard({
           </div>
         )}
 
-        {tab === "home" && (
+        {tab === "home" && availability === "ready" && devices.length === 0 && (
+          <section className="ui-screen" aria-label="말벗 등록">
+            <article className="ui-card">
+              <h2>아직 연결된 말벗이 없어요</h2>
+              <p className="ui-hint ui-long">등록 코드를 입력하면 이 계정이 말벗의 소유자가 돼요. 소유자는 설정을 바꾸고 보호자를 초대할 수 있어요.</p>
+              <a className="ui-button is-strong" href="/register">등록 코드 입력하기</a>
+            </article>
+          </section>
+        )}
+
+        {tab === "home" && !(availability === "ready" && devices.length === 0) && (
           <section className="ui-screen ui-home" aria-label="말벗 지금 상태">
             <article className="ui-card ui-hero">
               <span className="ui-caption">지금 말벗은</span>
@@ -1497,6 +1507,12 @@ export function HomecamDashboard({
                   <span><strong>보호자</strong><small>{isOwner ? "함께 보는 사람 · 보호자 초대" : "함께 보는 사람 보기"}</small></span>
                   <CaretRight size={18} aria-hidden="true" />
                 </button>
+                {isOwner && (
+                  <button type="button" onClick={() => setSettingsView("owner")}>
+                    <span><strong>소유자 넘기기 · 다시 등록</strong><small>관리를 다른 보호자에게 맡기거나 말벗을 옮길 때</small></span>
+                    <CaretRight size={18} aria-hidden="true" />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1577,6 +1593,18 @@ export function HomecamDashboard({
                 onUpdateSetting={(settingKey, value) => void updateSetting(settingKey, value)}
               />
             ) : <p className="ui-hint">등록된 말벗이 없어요.</p>}
+          </section>
+        )}
+
+        {tab === "settings" && settingsView === "owner" && (
+          <section className="ui-screen ui-settings-sub" aria-label="소유자 넘기기 · 다시 등록">
+            {settingsBack("소유자 넘기기 · 다시 등록")}
+            <article className="ui-card">
+              <h2>등록 코드로 다시 등록</h2>
+              <p className="ui-hint ui-long">소유자 계정을 쓸 수 없게 됐거나 말벗을 다른 집으로 옮길 때 써요. 새 등록 코드를 입력한 사람이 새 소유자가 되고, 지금의 소유자와 보호자는 모두 지워져요.</p>
+              <p className="ui-hint ui-long">지난 사건 기록과 의견을 지울지 남길지는 다시 등록할 때 골라요. 새 등록 코드는 말벗 팀에게 받을 수 있어요.</p>
+              <a className="ui-button is-danger-line" href="/register">등록 코드 입력하기</a>
+            </article>
           </section>
         )}
 

@@ -289,6 +289,7 @@ test("prepare preserves the deployed ALB auth resources and task contract", () =
     "/api/device/v1/robot/commands/*/complete",
     "/api/internal/maintenance",
     "/api/internal/device-provisioning",
+    "/api/internal/registration-codes",
   ]) {
     const rule = ruleForPath(template, path);
     assert.ok(rule, `missing public route for ${path}`);

@@ -83,6 +83,16 @@ export async function userCanNavigateDevice(deviceId: string, userId: string) {
   return canNavigateHomecam(await getMembershipRole(deviceId, userId));
 }
 
+/** Whether the person can see any 말벗; without one, the app starts at 말벗 등록. */
+export async function userHasHomecam(userId: string) {
+  await ensureHomecamSchema();
+  const row = await getD1()
+    .prepare("SELECT 1 AS found FROM device_memberships WHERE user_id = ? LIMIT 1")
+    .bind(userId)
+    .first<{ found: number }>();
+  return Boolean(row);
+}
+
 export async function listHomecamDevices(userId: string) {
   await ensureHomecamSchema();
   await cleanupExpiredHomecamData();
