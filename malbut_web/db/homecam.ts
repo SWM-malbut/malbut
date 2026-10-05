@@ -15,14 +15,10 @@ import {
 } from "./homecam-validation";
 import { recordingPlaybackPosition } from "../app/recording-segments";
 import { ensureDatabaseSchema } from "./migration-state";
+import { MEDIA_SESSION_TTL_MS, RECORDING_END_SQL } from "./recording-end";
 import { ensureUserForIdentity, labelFor, userLabels } from "./users";
 
 const HEARTBEAT_ONLINE_MS = 30_000;
-// KVS storage sessions have a one-hour service boundary. A one-hour backend
-// lease lets the device perform its own 50-minute soft refresh and 55-minute
-// hard cutover instead of replacing both signaling credentials every five
-// minutes. Heartbeats still extend a healthy session as a sliding lease.
-const MEDIA_SESSION_TTL_MS = 60 * 60 * 1000;
 const EVENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const AUDIT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const TALK_LEASE_MS = 15_000;
@@ -755,13 +751,14 @@ export async function prepareDeviceMediaSession(input: {
     const statements = [
       d1
         .prepare(
-          `UPDATE recording_sessions SET ended_at = COALESCE(ended_at, ?)
-           WHERE session_id IN (
-             SELECT id FROM stream_sessions
-             WHERE device_id = ? AND mode = ? AND status = 'active'
-           )`,
+          `UPDATE recording_sessions
+           SET ended_at = COALESCE(recording_sessions.ended_at, ${RECORDING_END_SQL})
+           FROM stream_sessions
+           WHERE stream_sessions.id = recording_sessions.session_id
+             AND stream_sessions.device_id = ? AND stream_sessions.mode = ?
+             AND stream_sessions.status = 'active'`,
         )
-        .bind(nowIso, input.deviceId, input.mode),
+        .bind(nowIso, nowIso, input.deviceId, input.mode),
       d1
         .prepare(
           `UPDATE stream_sessions SET status = 'ended', ended_at = ?
@@ -880,9 +877,13 @@ export async function stopDeviceMediaSession(
   const results = await d1.batch([
     d1
       .prepare(
-        "UPDATE recording_sessions SET ended_at = COALESCE(ended_at, ?) WHERE session_id = ?",
+        `UPDATE recording_sessions
+         SET ended_at = COALESCE(recording_sessions.ended_at, ${RECORDING_END_SQL})
+         FROM stream_sessions
+         WHERE stream_sessions.id = recording_sessions.session_id
+           AND recording_sessions.session_id = ?`,
       )
-      .bind(nowIso, sessionId),
+      .bind(nowIso, nowIso, sessionId),
     d1
       .prepare(
         `UPDATE stream_sessions SET status = 'ended', ended_at = ?
@@ -1874,13 +1875,13 @@ async function expireMediaSessions() {
   await d1.batch([
     d1
       .prepare(
-        `UPDATE recording_sessions SET ended_at = COALESCE(ended_at, ?)
-         WHERE session_id IN (
-           SELECT id FROM stream_sessions
-           WHERE status = 'active' AND expires_at <= ?
-         )`,
+        `UPDATE recording_sessions
+         SET ended_at = COALESCE(recording_sessions.ended_at, ${RECORDING_END_SQL})
+         FROM stream_sessions
+         WHERE stream_sessions.id = recording_sessions.session_id
+           AND stream_sessions.status = 'active' AND stream_sessions.expires_at <= ?`,
       )
-      .bind(nowIso, nowIso),
+      .bind(nowIso, nowIso, nowIso),
     d1
       .prepare(
         `UPDATE stream_sessions SET status = 'expired', ended_at = expires_at
