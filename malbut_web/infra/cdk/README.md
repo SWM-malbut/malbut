@@ -178,7 +178,7 @@ CloudFormation 배포 시 다음 parameter가 반드시 필요하다. 값은 저
 |---|---|
 | `HomecamHostedZoneId` | 기존 public child Hosted Zone의 ID. `hyenje29.click` parent zone ID가 아니라 `malbut.hyenje29.click` zone ID |
 | `HomecamHostedZoneName` | 홈캠 주소로 사용할 child zone apex. 현재 값은 `malbut.hyenje29.click` |
-| `InitialOwnerEmail` | 최초 owner/broadcaster 이메일 |
+| `InitialOwnerEmail` | 최초 owner 이메일 |
 | `DeviceProvisioningManifestSha256` | helper가 생성한 one-time provisioning manifest의 소문자 SHA-256 |
 | `DeviceProvisioningExpiresAt` | provisioning 만료 UTC ISO 시각. 예: `2026-08-13T00:00:00.000Z` |
 | `VapidSubject` | `mailto:` 또는 HTTPS 연락처 |

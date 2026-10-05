@@ -1,6 +1,6 @@
 import { getFallClipForPlayback } from "../../../../../../../../../db/fall-review";
 import { writeAuditLog } from "../../../../../../../../../db/homecam";
-import { consumeRequestRateLimit } from "../../../../../../../../../db/petcam";
+import { consumeRequestRateLimit } from "../../../../../../../../../db/request-rate-limit";
 import { noStore } from "../../../../../../../../api-response";
 import { fallMember } from "../../../../../../../../fall-review-route";
 import { requestBrokerEventPlayback } from "../../../../../../../../kvs-broker";
@@ -38,7 +38,7 @@ export async function POST(request: Request, context: Context) {
   if (!streamArn || !clip.streamArns.includes(streamArn)) {
     return noStore({ error: "이 시간의 녹화 영상이 없습니다.", playbackState: "unavailable" }, 404);
   }
-  if (!(await consumeRequestRateLimit({ userEmail: member.email, roomCode: incidentId,
+  if (!(await consumeRequestRateLimit({ userId: member.userId, roomCode: incidentId,
     scope: "fall-clip-playback", limit: 20 }))) {
     return noStore({ error: "재생 요청이 너무 많습니다. 1분 뒤 다시 시도해 주세요." }, 429, { "retry-after": "60" });
   }
@@ -48,9 +48,9 @@ export async function POST(request: Request, context: Context) {
     });
     const proxy = await createFallClipPlaybackProxy({
       requestUrl: request.url, publicOrigin: runtime.AUTH_PUBLIC_ORIGIN, playbackUrl: playback.playbackUrl,
-      deviceId, userEmail: member.email, expiresAt: playback.expiresAt,
+      deviceId, userId: member.userId, expiresAt: playback.expiresAt,
     }, runtime.KVS_BROKER_SECRET ?? "");
-    await writeAuditLog({ deviceId, actorType: "user", actorId: member.email, action: "fall_clip.play",
+    await writeAuditLog({ deviceId, actorType: "user", actorId: member.userId, action: "fall_clip.play",
       metadata: { incidentId, segmentIndex: Number(segmentIndex) } }).catch(() => undefined);
     return noStore({
       playbackUrl: proxy.playbackUrl, expiresAt: playback.expiresAt,

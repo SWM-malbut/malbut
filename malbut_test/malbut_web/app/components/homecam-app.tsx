@@ -21,10 +21,6 @@ import {
 } from "@phosphor-icons/react";
 import {
   connectAuthorizedDeviceViewer,
-  connectKvsMaster,
-  connectKvsViewer,
-  createLiveSession,
-  endLiveSession,
   type KvsConnection,
   type KvsConnectionState,
 } from "../lib/kvs-client";
@@ -36,9 +32,7 @@ import {
   authorizedP2pReconnectDelayMs,
   canAutomaticallyReconnectAuthorizedP2p,
 } from "../lib/viewer-reconnect";
-import { logoutNavigationPath } from "../auth/logout/logout-flow";
 
-type Mode = "landing" | "broadcaster" | "viewer";
 type ConnectionState =
   | "idle"
   | "preparing"
@@ -47,20 +41,6 @@ type ConnectionState =
   | "live"
   | "offline"
   | "error";
-
-const VIDEO_CONSTRAINTS: MediaStreamConstraints = {
-  video: {
-    width: { ideal: 1280 },
-    height: { ideal: 720 },
-    frameRate: { ideal: 15, max: 20 },
-  },
-  audio: {
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-    channelCount: 1,
-  },
-};
 
 const VIEWER_AUDIO_CONSTRAINTS: MediaStreamConstraints = {
   video: false,
@@ -163,18 +143,6 @@ function drawLocalHomecamDemo(
   );
 }
 
-type Recording = {
-  id: string;
-  segment: number;
-  deviceId: string;
-  displayName: string;
-  startedAt: string;
-  endedAt: string | null;
-  status: string;
-};
-
-type RecordingPlaybackState = "loading" | "ready" | "autoplay-blocked" | "error";
-
 type ViewerTalkLease = {
   leaseId: string;
   clientId: string;
@@ -191,36 +159,6 @@ const STATE_COPY: Record<ConnectionState, string> = {
   error: "연결 오류",
 };
 
-function normalizeRoomCode(value: string) {
-  return value.replace(/[^A-HJ-NP-Z2-9]/gi, "").slice(0, 6).toUpperCase();
-}
-
-function normalizeViewerPassword(value: string) {
-  const raw = value.replace(/[^A-HJ-NP-Z2-9]/gi, "").slice(0, 16).toUpperCase();
-  return raw.match(/.{1,4}/g)?.join("-") ?? raw;
-}
-
-function isCompleteViewerPassword(value: string) {
-  return value.replace(/-/g, "").length === 16;
-}
-
-function viewerUrl(roomCode: string) {
-  const url = new URL(window.location.href);
-  url.search = "";
-  url.searchParams.set("role", "viewer");
-  url.searchParams.set("room", roomCode);
-  return url.toString();
-}
-
-function formatRecordingTime(value: string) {
-  return new Intl.DateTimeFormat("ko-KR", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
 function formatViewerClock(value: number) {
   return new Intl.DateTimeFormat("ko-KR", {
     hour: "2-digit",
@@ -229,640 +167,7 @@ function formatViewerClock(value: number) {
   }).format(new Date(value));
 }
 
-async function markRecordingStarted(roomCode: string, shouldContinue: () => boolean) {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    if (!shouldContinue()) return false;
-    if (attempt > 0) {
-      await new Promise((resolve) =>
-        window.setTimeout(resolve, attempt < 3 ? 2_000 : 30_000),
-      );
-      if (!shouldContinue()) return false;
-    }
-
-    const response = await fetch("/api/recordings", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ roomCode }),
-      signal: AbortSignal.timeout(10_000),
-    }).catch(() => null);
-    if (response?.ok) return true;
-    if (response && response.status < 500 && response.status !== 429) {
-      return false;
-    }
-  }
-  return false;
-}
-
-function StatusBadge({ state }: { state: ConnectionState }) {
-  return (
-    <span className={`status-badge status-${state}`} data-testid="connection-status">
-      <span className="status-dot" aria-hidden="true" />
-      {STATE_COPY[state]}
-    </span>
-  );
-}
-
-function RecordingPlayer({ recording, onClose }: { recording: Recording; onClose: () => void }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const playbackRequestRef = useRef(0);
-  const [playbackState, setPlaybackState] = useState<RecordingPlaybackState>("loading");
-  const [error, setError] = useState("");
-
-  const playRecording = useCallback(async (requestId = playbackRequestRef.current) => {
-    const video = videoRef.current;
-    if (!video || requestId !== playbackRequestRef.current) return;
-
-    try {
-      await video.play();
-      if (requestId !== playbackRequestRef.current) return;
-      setError("");
-      setPlaybackState("ready");
-    } catch (reason) {
-      if (requestId !== playbackRequestRef.current) return;
-      if (reason instanceof Error && reason.name === "AbortError") return;
-      if (reason instanceof Error && reason.name === "NotAllowedError") {
-        setPlaybackState("autoplay-blocked");
-        return;
-      }
-      playbackRequestRef.current += 1;
-      setError("녹화를 재생하지 못했습니다.");
-      setPlaybackState("error");
-    }
-  }, []);
-
-  useEffect(() => {
-    const requestId = playbackRequestRef.current + 1;
-    playbackRequestRef.current = requestId;
-    const controller = new AbortController();
-    const video = videoRef.current;
-    let dispose: () => void = () => undefined;
-    let loadTimer: number | undefined;
-
-    if (!video) return () => controller.abort();
-
-    const clearLoadTimer = () => {
-      if (loadTimer === undefined) return;
-      window.clearTimeout(loadTimer);
-      loadTimer = undefined;
-    };
-    const fail = (message: string) => {
-      if (requestId !== playbackRequestRef.current) return;
-      playbackRequestRef.current += 1;
-      clearLoadTimer();
-      setError(message);
-      setPlaybackState("error");
-    };
-    const armLoadTimer = () => {
-      clearLoadTimer();
-      loadTimer = window.setTimeout(() => {
-        fail("녹화 영상을 불러오는 데 시간이 오래 걸리고 있습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.");
-      }, 20_000);
-    };
-    const markReady = () => {
-      if (requestId !== playbackRequestRef.current) return;
-      clearLoadTimer();
-      setError("");
-      setPlaybackState((current) => current === "autoplay-blocked" ? current : "ready");
-    };
-    const handleCanPlay = () => {
-      markReady();
-      void playRecording(requestId);
-    };
-    const handlePlaying = () => {
-      if (requestId !== playbackRequestRef.current) return;
-      clearLoadTimer();
-      setError("");
-      setPlaybackState("ready");
-    };
-    const handleWaiting = () => {
-      if (requestId !== playbackRequestRef.current || video.paused) return;
-      setPlaybackState("loading");
-      armLoadTimer();
-    };
-    const handleMediaError = () => {
-      fail("녹화 영상을 불러오지 못했거나 이 브라우저가 영상 형식을 지원하지 않습니다.");
-    };
-
-    video.addEventListener("canplay", handleCanPlay);
-    video.addEventListener("playing", handlePlaying);
-    video.addEventListener("waiting", handleWaiting);
-    video.addEventListener("stalled", handleWaiting);
-    video.addEventListener("error", handleMediaError);
-    setError("");
-    setPlaybackState("loading");
-    armLoadTimer();
-
-    void (async () => {
-      try {
-        const response = await fetch(`/api/recordings/${encodeURIComponent(recording.id)}/playback`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ segment: recording.segment }),
-          signal: controller.signal,
-        });
-        const payload = (await response.json()) as { playbackUrl?: string; error?: string };
-        if (!response.ok || !payload.playbackUrl) {
-          throw new Error(payload.error ?? "녹화 재생 주소를 만들지 못했습니다.");
-        }
-        if (controller.signal.aborted) return;
-
-        if (video.canPlayType("application/vnd.apple.mpegurl")) {
-          video.src = payload.playbackUrl;
-          video.load();
-        } else {
-          const { default: Hls } = await import("hls.js");
-          if (controller.signal.aborted) return;
-          if (!Hls.isSupported()) throw new Error("이 브라우저는 HLS 녹화 재생을 지원하지 않습니다.");
-          const player = new Hls({ enableWorker: true });
-          player.on(Hls.Events.ERROR, (_event, data) => {
-            if (!data.fatal || controller.signal.aborted) return;
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-              fail("녹화 데이터를 불러오지 못했습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.");
-              return;
-            }
-            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-              fail("이 브라우저에서 녹화 영상 형식을 해석하지 못했습니다.");
-              return;
-            }
-            fail("녹화 재생 중 오류가 발생했습니다.");
-          });
-          player.on(Hls.Events.MANIFEST_PARSED, () => {
-            void playRecording(requestId);
-          });
-          player.loadSource(payload.playbackUrl);
-          player.attachMedia(video);
-          dispose = () => player.destroy();
-        }
-      } catch (reason) {
-        if (!controller.signal.aborted) {
-          fail(reason instanceof Error ? reason.message : "녹화를 재생하지 못했습니다.");
-        }
-      }
-    })();
-
-    return () => {
-      controller.abort();
-      if (requestId === playbackRequestRef.current) playbackRequestRef.current += 1;
-      clearLoadTimer();
-      video.removeEventListener("canplay", handleCanPlay);
-      video.removeEventListener("playing", handlePlaying);
-      video.removeEventListener("waiting", handleWaiting);
-      video.removeEventListener("stalled", handleWaiting);
-      video.removeEventListener("error", handleMediaError);
-      dispose();
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-    };
-  }, [playRecording, recording.id, recording.segment]);
-
-  return (
-    <div
-      className="recording-player"
-      role="region"
-      aria-label="클라우드 녹화 재생"
-      aria-busy={playbackState === "loading"}
-    >
-      <div className="recording-player-heading">
-        <div>
-          <span className="card-label">CLOUD PLAYBACK</span>
-          <strong>{formatRecordingTime(recording.startedAt)} 녹화</strong>
-        </div>
-        <button className="text-button" onClick={onClose}>닫기</button>
-      </div>
-      <video ref={videoRef} controls playsInline data-testid="recording-video" />
-      {playbackState === "loading" && (
-        <p className="recording-playback-status" role="status">녹화 영상을 불러오는 중입니다…</p>
-      )}
-      {playbackState === "autoplay-blocked" && (
-        <div className="recording-playback-action">
-          <p>브라우저가 자동 재생을 막았습니다.</p>
-          <button type="button" className="button secondary compact" onClick={() => void playRecording()}>
-            재생하기
-          </button>
-        </div>
-      )}
-      {playbackState === "error" && error && <p className="error-message" role="alert">{error}</p>}
-      <p className="recording-token-note">각 1시간 이하 구간마다 재생 시간과 여유 시간만큼 유효한 비공개 재생 세션을 새로 발급합니다.</p>
-    </div>
-  );
-}
-
-function RecordingArchive() {
-  const [recordings, setRecordings] = useState<Recording[] | null>(null);
-  const [selected, setSelected] = useState<Recording | null>(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch("/api/recordings", { signal: controller.signal, cache: "no-store" })
-      .then(async (response) => {
-        if (response.status === 401) return null;
-        const payload = (await response.json()) as { recordings?: Recording[]; error?: string };
-        if (!response.ok) throw new Error(payload.error ?? "녹화 목록을 불러오지 못했습니다.");
-        return payload.recordings ?? [];
-      })
-      .then((items) => {
-        if (!controller.signal.aborted) setRecordings(items);
-      })
-      .catch((reason) => {
-        if (!controller.signal.aborted) {
-          setError(reason instanceof Error ? reason.message : "녹화 목록을 불러오지 못했습니다.");
-        }
-      });
-    return () => controller.abort();
-  }, []);
-
-  if (recordings === null && !error) return null;
-
-  return (
-    <section className="recordings-section" aria-labelledby="recordings-title">
-      <div className="section-heading recordings-heading">
-        <div>
-          <span className="eyebrow">PRIVATE CLOUD ARCHIVE</span>
-          <h2 id="recordings-title">지난 영상</h2>
-        </div>
-        <p>송출 권한이 있는 ID만 최근 7일 녹화를 볼 수 있습니다.</p>
-      </div>
-      {error && <p className="error-message" role="alert">{error}</p>}
-      {recordings?.length === 0 && (
-        <div className="recording-empty">아직 재생할 수 있는 녹화가 없습니다.</div>
-      )}
-      {recordings && recordings.length > 0 && (
-        <div className="recording-list">
-          {recordings.map((recording) => (
-            <article className="recording-row" key={`${recording.id}:${recording.segment}`}>
-              <div>
-                <strong>{recording.displayName}</strong>
-                <span>
-                  {formatRecordingTime(recording.startedAt)}
-                  {recording.endedAt ? ` · ${formatRecordingTime(recording.endedAt)} 종료` : " · 녹화 중"}
-                  {recording.endedAt ? ` · 구간 ${recording.segment + 1}` : ""}
-                </span>
-              </div>
-              <button
-                className="button secondary compact"
-                disabled={!recording.endedAt}
-                onClick={() => setSelected(recording)}
-              >
-                {recording.endedAt ? "재생" : "LIVE"}
-              </button>
-            </article>
-          ))}
-        </div>
-      )}
-      {selected && <RecordingPlayer recording={selected} onClose={() => setSelected(null)} />}
-    </section>
-  );
-}
-
-function Broadcaster({
-  roomCode,
-  viewerPassword,
-  onExit,
-}: {
-  roomCode: string;
-  viewerPassword: string;
-  onExit: () => void;
-}) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const guardianAudioRef = useRef<HTMLAudioElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const connectionRef = useRef<KvsConnection | null>(null);
-  const connectionRequestRef = useRef(0);
-  const startRequestRef = useRef(0);
-  const startPendingRef = useRef(false);
-  const recordingMarkedRef = useRef(false);
-  const storageModeRef = useRef(false);
-  const [state, setState] = useState<ConnectionState>("idle");
-  const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
-  const [isBroadcasting, setIsBroadcasting] = useState(false);
-  const [recordingActive, setRecordingActive] = useState(false);
-  const [speakerMuted, setSpeakerMuted] = useState(false);
-  const [speakerBlocked, setSpeakerBlocked] = useState(false);
-  const [storageMode, setStorageMode] = useState<boolean | null>(null);
-
-  const updateKvsState = useCallback((next: KvsConnectionState) => {
-    setState(next);
-    if (next === "live" && storageModeRef.current && !recordingMarkedRef.current) {
-      recordingMarkedRef.current = true;
-      void markRecordingStarted(
-        roomCode,
-        () => Boolean(streamRef.current && storageModeRef.current),
-      ).then((started) => {
-        if (!streamRef.current || !storageModeRef.current) {
-          recordingMarkedRef.current = false;
-          return;
-        }
-        recordingMarkedRef.current = started;
-        setRecordingActive(started);
-      });
-    }
-  }, [roomCode]);
-
-  const connectMaster = useCallback(
-    async (stream: MediaStream) => {
-      const connectionRequest = connectionRequestRef.current + 1;
-      connectionRequestRef.current = connectionRequest;
-      connectionRef.current?.close();
-      connectionRef.current = null;
-      setError("");
-      setState("connecting");
-      try {
-        const connection = await connectKvsMaster({
-          roomCode,
-          stream,
-          onRemoteStream: (remoteStream) => {
-            if (
-              connectionRequestRef.current !== connectionRequest ||
-              streamRef.current !== stream
-            ) {
-              return;
-            }
-            const audio = guardianAudioRef.current;
-            if (!audio) return;
-            audio.srcObject = remoteStream;
-            void audio.play().catch(() => setSpeakerBlocked(true));
-          },
-          callbacks: {
-            onState: (next) => {
-              if (
-                connectionRequestRef.current === connectionRequest &&
-                streamRef.current === stream
-              ) {
-                updateKvsState(next);
-              }
-            },
-            onError: (reason) => {
-              if (
-                connectionRequestRef.current !== connectionRequest ||
-                streamRef.current !== stream
-              ) {
-                return;
-              }
-              setError(reason.message || "AWS KVS 연결에 실패했습니다.");
-              setState("error");
-            },
-          },
-        });
-        if (
-          connectionRequestRef.current !== connectionRequest ||
-          streamRef.current !== stream
-        ) {
-          connection.close();
-          return;
-        }
-        storageModeRef.current = connection.storageMode;
-        setStorageMode(connection.storageMode);
-        connectionRef.current = connection;
-      } catch (reason) {
-        if (
-          connectionRequestRef.current === connectionRequest &&
-          streamRef.current === stream
-        ) {
-          throw reason;
-        }
-      }
-    },
-    [roomCode, updateKvsState],
-  );
-
-  const stopBroadcast = useCallback(
-    (notifyServer = true, updateState = true) => {
-      startRequestRef.current += 1;
-      connectionRequestRef.current += 1;
-      startPendingRef.current = false;
-      connectionRef.current?.close();
-      connectionRef.current = null;
-      recordingMarkedRef.current = false;
-      storageModeRef.current = false;
-      const stream = streamRef.current;
-      streamRef.current = null;
-      stream?.getTracks().forEach((track) => track.stop());
-      if (videoRef.current) videoRef.current.srcObject = null;
-      if (guardianAudioRef.current) guardianAudioRef.current.srcObject = null;
-      if (notifyServer) void endLiveSession(roomCode);
-      if (updateState) {
-        setIsBroadcasting(false);
-        setRecordingActive(false);
-        setSpeakerBlocked(false);
-        setStorageMode(null);
-        setState("idle");
-      }
-    },
-    [roomCode],
-  );
-
-  useEffect(() => () => stopBroadcast(false, false), [stopBroadcast]);
-
-  useEffect(() => {
-    const handlePageHide = () => {
-      if (streamRef.current) void endLiveSession(roomCode);
-    };
-    window.addEventListener("pagehide", handlePageHide);
-    return () => window.removeEventListener("pagehide", handlePageHide);
-  }, [roomCode]);
-
-  const startBroadcast = async () => {
-    if (startPendingRef.current || isBroadcasting) return;
-    startPendingRef.current = true;
-    const requestId = startRequestRef.current + 1;
-    startRequestRef.current = requestId;
-    setError("");
-    setState("preparing");
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      startPendingRef.current = false;
-      setError("이 브라우저는 카메라 접근을 지원하지 않습니다.");
-      setState("error");
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(VIDEO_CONSTRAINTS);
-      if (requestId !== startRequestRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-      setIsBroadcasting(true);
-
-      stream.getTracks().forEach((track) => {
-        track.addEventListener(
-          "ended",
-          () => {
-            if (streamRef.current !== stream) return;
-            stopBroadcast();
-            setError("카메라 또는 마이크 입력이 종료되었습니다. 장치를 확인해 주세요.");
-            setState("error");
-          },
-          { once: true },
-        );
-      });
-
-      await connectMaster(stream);
-    } catch (reason) {
-      if (requestId !== startRequestRef.current) return;
-      const fallback = "카메라·마이크 권한과 AWS 연결 상태를 확인한 뒤 다시 시도해 주세요.";
-      stopBroadcast(false);
-      setError(reason instanceof Error && reason.name !== "NotAllowedError" ? reason.message : fallback);
-      setState("error");
-    } finally {
-      if (requestId === startRequestRef.current) startPendingRef.current = false;
-    }
-  };
-
-  const reconnect = async () => {
-    const stream = streamRef.current;
-    if (!stream) return;
-    try {
-      await connectMaster(stream);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "AWS KVS에 다시 연결하지 못했습니다.");
-      setState("error");
-    }
-  };
-
-  const toggleGuardianSpeaker = async () => {
-    const audio = guardianAudioRef.current;
-    if (!audio) return;
-    const nextMuted = speakerBlocked ? false : !speakerMuted;
-    audio.muted = nextMuted;
-    setSpeakerMuted(nextMuted);
-    if (!nextMuted) {
-      try {
-        await audio.play();
-        setSpeakerBlocked(false);
-      } catch {
-        setSpeakerBlocked(true);
-      }
-    }
-  };
-
-  const copyViewerInvite = async () => {
-    await navigator.clipboard.writeText(
-      `${viewerUrl(roomCode)}\n세션 코드: ${roomCode}\n시청 비밀번호: ${viewerPassword}`,
-    );
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1400);
-  };
-
-  return (
-    <main className="app-shell">
-      <Header />
-      <section className="session-heading">
-        <div>
-          <span className="eyebrow">CAMERA NODE · AWS MASTER</span>
-          <h1>노트북 카메라 송출</h1>
-          <p>영상과 로봇 쪽 음성을 서울 리전으로 전송하고, 연결된 보호자 음성을 실시간으로 받습니다.</p>
-        </div>
-        <StatusBadge state={state} />
-      </section>
-
-      <section className="workspace-grid">
-        <div className="video-panel">
-          <div className="video-toolbar">
-            <span>로봇 시점 미리보기</span>
-            <span className="quality-label">720P TARGET · 15 FPS</span>
-          </div>
-          <div className="video-frame">
-            <video ref={videoRef} autoPlay playsInline muted className="local-video" />
-            <audio ref={guardianAudioRef} autoPlay muted={speakerMuted} />
-            {!isBroadcasting && (
-              <div className="video-placeholder">
-                <div className="lens" aria-hidden="true"><span /></div>
-                <strong>카메라가 아직 꺼져 있어요</strong>
-                <span>브라우저 권한을 허용하면 이곳에 미리보기가 나타납니다.</span>
-              </div>
-            )}
-            {state === "live" && <span className="live-corner">{recordingActive ? "REC · LIVE" : "LIVE"}</span>}
-          </div>
-          <p className="recording-notice">
-            {storageMode === false
-              ? "현재 P2P 폴백 모드에서는 실시간 영상만 전송하며 녹화하지 않습니다."
-              : "송출이 연결되면 영상과 양방향 음성이 AWS에 자동 녹화되며 7일 뒤 삭제됩니다."}
-          </p>
-          {error && <p className="error-message" role="alert">{error}</p>}
-          <div className="button-row">
-            {!isBroadcasting ? (
-              <button
-                className="button primary"
-                onClick={startBroadcast}
-                disabled={state === "preparing"}
-                data-testid="start-camera"
-              >
-                {state === "preparing" ? "카메라 연결 중" : "카메라 켜기"}
-              </button>
-            ) : (
-              <button className="button danger" onClick={() => stopBroadcast()}>
-                송출 종료
-              </button>
-            )}
-            {isBroadcasting && ["offline", "error"].includes(state) && (
-              <button className="button secondary" onClick={reconnect}>AWS 다시 연결</button>
-            )}
-            {isBroadcasting && (
-              <button className="button secondary" onClick={toggleGuardianSpeaker}>
-                {speakerBlocked ? "보호자 소리 재생" : `보호자 소리 ${speakerMuted ? "켜기" : "끄기"}`}
-              </button>
-            )}
-            <button
-              className="button secondary"
-              onClick={() => window.open(viewerUrl(roomCode), "_blank", "noopener,noreferrer")}
-              disabled={!isBroadcasting}
-            >
-              보호자 화면 열기
-            </button>
-          </div>
-        </div>
-
-        <aside className="control-panel">
-          <div className="panel-card room-card">
-            <span className="card-label">보호자 접속 정보</span>
-            <strong className="room-code" data-testid="room-code">{roomCode}</strong>
-            <span className="password-label">시청 비밀번호</span>
-            <strong className="viewer-password" data-testid="viewer-password">
-              {viewerPassword}
-            </strong>
-            <p>링크에는 코드만 포함됩니다. 보호자는 ID 로그인 후 코드와 비밀번호를 모두 입력해야 합니다.</p>
-            <button className="text-button" onClick={copyViewerInvite}>
-              {copied ? "초대 정보를 복사했어요" : "보호자 초대 정보 복사"}
-            </button>
-          </div>
-
-          <div className="panel-card checklist-card">
-            <span className="card-label">연결 상태</span>
-            <ul>
-              <li className={isBroadcasting ? "done" : ""}>브라우저 카메라 권한</li>
-              <li className={isBroadcasting ? "done" : ""}>로봇 마이크 권한</li>
-              <li className={["waiting", "connecting", "live"].includes(state) ? "done" : ""}>AWS KVS 시그널링</li>
-              <li className={state === "live" ? "done" : ""}>보호자 영상·음성 연결</li>
-              <li className={recordingActive ? "done" : ""}>
-                {storageMode === false ? "P2P 폴백 · 녹화 안 함" : "클라우드 녹화 · 7일 보관"}
-              </li>
-            </ul>
-          </div>
-
-          <button
-            className="back-button"
-            onClick={() => {
-              stopBroadcast();
-              onExit();
-            }}
-          >
-            역할 선택으로 돌아가기
-          </button>
-        </aside>
-      </section>
-    </main>
-  );
-}
-
 function Viewer({
-  roomCode,
-  viewerPassword,
   deviceId,
   device,
   onExit,
@@ -871,9 +176,7 @@ function Viewer({
   onOpenEmbeddedEvents,
   onMediaReadyChange,
 }: {
-  roomCode: string;
-  viewerPassword: string;
-  deviceId?: string;
+  deviceId: string;
   device?: HomecamDevice;
   onExit: (tab?: HomecamTab) => void;
   embedded?: boolean;
@@ -1469,28 +772,22 @@ function Viewer({
             },
           },
         };
-        const connection = deviceId
-          ? await connectAuthorizedDeviceViewer({
-              deviceId,
-              signal: setupController?.signal,
-              onStorageMode: (nextStorageMode) => {
-                connectionStorageMode = nextStorageMode;
-                if (!isCurrentGeneration()) return;
-                storageModeRef.current = nextStorageMode;
-                setStorageMode(nextStorageMode);
-                if (nextStorageMode) {
-                  clearConnectTimer();
-                  clearMediaTimer();
-                  cancelAutomaticReconnect();
-                }
-              },
-              ...connectionInput,
-            })
-          : await connectKvsViewer({
-              roomCode,
-              viewerPassword,
-              ...connectionInput,
-            });
+        const connection = await connectAuthorizedDeviceViewer({
+          deviceId,
+          signal: setupController?.signal,
+          onStorageMode: (nextStorageMode) => {
+            connectionStorageMode = nextStorageMode;
+            if (!isCurrentGeneration()) return;
+            storageModeRef.current = nextStorageMode;
+            setStorageMode(nextStorageMode);
+            if (nextStorageMode) {
+              clearConnectTimer();
+              clearMediaTimer();
+              cancelAutomaticReconnect();
+            }
+          },
+          ...connectionInput,
+        });
         localConnection = connection;
         clearSetupTimer();
         connectionStorageMode = connection.storageMode;
@@ -1581,8 +878,6 @@ function Viewer({
     expectedStorageMode,
     localDemoViewer,
     releaseTalkLease,
-    roomCode,
-    viewerPassword,
   ]);
 
   const prepareMicrophone = async () => {
@@ -1664,7 +959,7 @@ function Viewer({
         if (!response.ok || !leaseId) {
           throw new Error(
             response.status === 409
-              ? "다른 가족이 말하고 있어요. 잠시 후 다시 눌러 주세요."
+              ? "다른 보호자가 말하고 있어요. 잠시 후 다시 눌러 주세요."
               : payload?.error ?? "말하기 권한을 받지 못했습니다.",
           );
         }
@@ -1808,7 +1103,7 @@ function Viewer({
               aria-hidden="true"
             />
             <strong>
-              {device?.displayName ?? (deviceId ? "등록된 홈캠" : `세션 ${roomCode}`)}
+              {device?.displayName ?? "등록된 홈캠"}
             </strong>
             <span data-testid="connection-status">{STATE_COPY[state]}</span>
           </div>
@@ -1853,8 +1148,8 @@ function Viewer({
               )}
 
               <div className="homecam-video-bottom">
-                <span>{recordingEnabled ? "이벤트 영상 저장" : "저장 안 함"}</span>
-                <span>허용된 가족 계정만 볼 수 있어요</span>
+                <span>{recordingEnabled ? "연속 녹화" : "녹화 안 함"}</span>
+                <span>허용된 보호자만 볼 수 있어요</span>
               </div>
             </div>
 
@@ -1870,8 +1165,8 @@ function Viewer({
                 <ShieldCheck size={17} weight="regular" aria-hidden="true" />
                 <span>
                   {recordingEnabled
-                    ? "실시간 보기는 P2P로 연결되고 이벤트 영상은 별도로 저장됩니다."
-                    : "P2P 실시간 영상은 저장하지 않습니다."}
+                    ? "실시간 보기는 말벗과 직접 연결되고, 연속 녹화는 따로 저장돼요."
+                    : "실시간 영상은 저장하지 않아요."}
                 </span>
               </div>
               {embedded ? (
@@ -1891,7 +1186,7 @@ function Viewer({
                     {device?.cameraEnabled === false ? "카메라 꺼짐" : "카메라 켜짐"}
                   </span>
                   <button type="button" className="homecam-stream-control-button is-clips" onClick={onOpenEmbeddedEvents}>
-                    최근 클립 {embeddedEventCount}건
+                    확인할 사건 {embeddedEventCount}건
                   </button>
                 </div>
               ) : <div className="homecam-stream-control-buttons">
@@ -2028,201 +1323,14 @@ function Viewer({
   );
 }
 
-function Header() {
-  const [authStatus, setAuthStatus] = useState<{
-    authenticated: boolean;
-    signInPath: string;
-    signOutPath: string;
-  } | null>(null);
-  const [signingOut, setSigningOut] = useState(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    void fetch("/api/auth/me", {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("AUTH_STATUS_UNAVAILABLE");
-        const payload = (await response.json()) as {
-          authenticated?: boolean;
-          signInPath?: string;
-          signOutPath?: string;
-        };
-        return {
-          authenticated: payload.authenticated === true,
-          signInPath: safeAuthActionPath(payload.signInPath, "/auth/login?return_to=%2F"),
-          signOutPath: safeAuthActionPath(payload.signOutPath, "/auth/logout?return_to=%2F"),
-        };
-      })
-      .then((status) => {
-        if (!controller.signal.aborted) setAuthStatus(status);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setAuthStatus({
-            authenticated: false,
-            signInPath: "/auth/login?return_to=%2F",
-            signOutPath: "/auth/logout?return_to=%2F",
-          });
-        }
-      });
-
-    return () => controller.abort();
-  }, []);
-
-  const signOut = async () => {
-    if (!authStatus?.authenticated || signingOut) return;
-    setSigningOut(true);
-    let redirectTo = "/";
-    try {
-      const response = await fetch(authStatus.signOutPath, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-        credentials: "same-origin",
-        cache: "no-store",
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (response.ok) {
-        redirectTo = logoutNavigationPath(payload, "/");
-      }
-    } catch {
-      redirectTo = "/";
-    } finally {
-      window.location.replace(redirectTo);
-    }
-  };
-
-  return (
-    <header className="site-header">
-      <div className="brand">
-        <span className="brand-mark" aria-hidden="true">P</span>
-        <span><strong>PETCAM</strong><small>LIVE LAB</small></span>
-      </div>
-      <div className="header-actions">
-        <span className="prototype-chip">AWS KVS WEBRTC · PRIVATE ALPHA</span>
-        {authStatus === null ? (
-          <span className="login-link auth-loading" aria-live="polite">
-            로그인 확인 중
-          </span>
-        ) : authStatus.authenticated ? (
-          <button
-            type="button"
-            className="login-link"
-            onClick={() => void signOut()}
-            disabled={signingOut}
-            data-testid="auth-action"
-          >
-            {signingOut ? "로그아웃 중" : "로그아웃"}
-          </button>
-        ) : (
-          <a
-            className="login-link"
-            href={authStatus.signInPath}
-            data-testid="auth-action"
-          >
-            ID 로그인
-          </a>
-        )}
-      </div>
-    </header>
-  );
-}
-
-function safeAuthActionPath(value: unknown, fallback: string): string {
-  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) {
-    return fallback;
-  }
-  return value;
-}
-
 export function HomecamApp() {
-  const [mode, setMode] = useState<Mode>("landing");
-  const [dashboardTab, setDashboardTab] = useState<HomecamTab>("home");
-  const [roomCode, setRoomCode] = useState("");
-  const [viewerPassword, setViewerPassword] = useState("");
-  const [viewerDeviceId, setViewerDeviceId] = useState("");
-  const [viewerDevice, setViewerDevice] = useState<HomecamDevice | null>(null);
   const [inlineViewerDevice, setInlineViewerDevice] = useState<HomecamDevice | null>(null);
   const [inlineViewerReady, setInlineViewerReady] = useState(false);
-  const [creatingSession, setCreatingSession] = useState(false);
-  const [landingError, setLandingError] = useState("");
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const requestedMode = params.get("role");
-    const requestedRoom = normalizeRoomCode(params.get("room") ?? "");
-    if (requestedMode === "viewer" && requestedRoom.length === 6) {
-      window.history.replaceState({}, "", window.location.pathname);
-      window.queueMicrotask(() => {
-        setLandingError(
-          `기존 세션 ${requestedRoom}의 시청 비밀번호를 ‘개발·이전 버전 연결’에서 입력해 주세요.`,
-        );
-      });
-    }
-  }, []);
 
   const closeInlineViewer = useCallback(() => {
     setInlineViewerReady(false);
     setInlineViewerDevice(null);
   }, []);
-
-  const reset = (tab: HomecamTab = "home") => {
-    window.history.replaceState({}, "", window.location.pathname);
-    setDashboardTab(tab);
-    setMode("landing");
-    setRoomCode("");
-    setViewerPassword("");
-    setViewerDeviceId("");
-    setViewerDevice(null);
-    setInlineViewerDevice(null);
-    setInlineViewerReady(false);
-    setLandingError("");
-  };
-
-  if (mode === "broadcaster") {
-    return <Broadcaster roomCode={roomCode} viewerPassword={viewerPassword} onExit={reset} />;
-  }
-  if (mode === "viewer") {
-    return (
-      <Viewer
-        roomCode={roomCode}
-        viewerPassword={viewerPassword}
-        deviceId={viewerDeviceId || undefined}
-        device={viewerDevice ?? undefined}
-        onExit={reset}
-      />
-    );
-  }
-
-  const createBroadcast = async () => {
-    if (creatingSession) return;
-    setCreatingSession(true);
-    setLandingError("");
-    try {
-      const session = await createLiveSession();
-      setRoomCode(session.roomCode);
-      setViewerPassword(session.viewerPassword);
-      setMode("broadcaster");
-    } catch (reason) {
-      setLandingError(reason instanceof Error ? reason.message : "세션을 만들지 못했습니다.");
-    } finally {
-      setCreatingSession(false);
-    }
-  };
-
-  const joinLegacyBroadcast = (legacyRoomCode: string, legacyPassword: string) => {
-    const code = normalizeRoomCode(legacyRoomCode);
-    const password = normalizeViewerPassword(legacyPassword);
-    if (code.length !== 6 || !isCompleteViewerPassword(password)) return;
-    setRoomCode(code);
-    setViewerPassword(password);
-    setViewerDeviceId("");
-    setViewerDevice(null);
-    setMode("viewer");
-  };
 
   const openRegisteredDevice = async (device: HomecamDevice) => {
     setInlineViewerDevice(null);
@@ -2233,19 +1341,12 @@ export function HomecamApp() {
 
   return (
     <HomecamDashboard
-      initialTab={dashboardTab}
       onOpenLive={openRegisteredDevice}
-      onCreateLegacyBroadcast={createBroadcast}
-      onJoinLegacy={joinLegacyBroadcast}
-      creatingLegacyBroadcast={creatingSession}
-      externalError={landingError}
       liveMediaReady={inlineViewerReady}
       onReleaseLive={closeInlineViewer}
       liveViewer={inlineViewerDevice ? ({ eventCount, openEvents, device }) => (
         device?.id === inlineViewerDevice.id ? (
           <Viewer
-            roomCode={inlineViewerDevice.activeSession?.roomCode ?? ""}
-            viewerPassword=""
             deviceId={inlineViewerDevice.id}
             device={device}
             embedded
@@ -2256,15 +1357,6 @@ export function HomecamApp() {
           />
         ) : null
       ) : undefined}
-      legacyArchive={
-        <>
-          <p className="sr-only">
-            이전 버전은 AWS로 실시간 연결하는 AWS 세션 만들기, 실시간 시청자,
-            양방향 음성, 클라우드 7일 보관, 코드+비밀번호 시청 기능을 제공합니다.
-          </p>
-          <RecordingArchive />
-        </>
-      }
     />
   );
 }

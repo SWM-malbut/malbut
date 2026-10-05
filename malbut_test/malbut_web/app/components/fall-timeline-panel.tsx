@@ -5,7 +5,7 @@ import { demoIncidentFetch } from "./fall-incidents-demo";
 
 // 연속 녹화 screen from the reviewed mockup (Timeline.dc.html): pick the moment
 // a fall started on the continuous recording, then either re-review an
-// incident with AI or file a missed-fall report (놓친 넘어짐 신고).
+// incident with AI or file a missed-fall report (놓친 낙상 신고).
 
 export type TimelineMode =
   | { kind: "report"; momentAt?: string }
@@ -217,7 +217,7 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
       }));
       const aiError = body.aiReview?.error as string | undefined;
       setResult({ kind: "report", ai: withAi && !aiError, incidentId: body.incidentId,
-        text: "놓친 넘어짐 신고로 사건 목록에 추가됐어요. 다른 사용자에게 알림은 가지 않아요." +
+        text: "놓친 낙상 신고로 사건 목록에 추가됐어요. 다른 사용자에게 알림은 가지 않아요." +
           (aiError === "consent_off" ? " 클라우드 분석 동의가 꺼져 있어 AI 검토는 보내지 않았어요."
             : aiError === "key_missing" ? " 클라우드 AI 키가 없어 AI 검토는 보내지 않았어요."
               : aiError ? " AI 검토는 시작하지 못했어요." : "") });
@@ -341,7 +341,7 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
             <div className="fall-tl-box">원래 사건 구간: {hms(rangeStart)} ~ {hms(rangeEnd)} · 이 안에서 고치면 결과가 원래 사건에 붙어요</div>
             {outside && (
               <div className="fall-tl-warn">
-                <div>이 시간은 원래 사건 밖이에요. 놓친 넘어짐으로 새로 신고할까요?</div>
+                <div>이 시간은 원래 사건 밖이에요. 놓친 낙상으로 새로 신고할까요?</div>
                 <div className="fall-two-buttons">
                   <button type="button" className="fall-button is-soft" onClick={() => setCursor(Date.parse(recheck.momentAt))}>순간 다시 고르기</button>
                   <button type="button" className="fall-button is-purple"
@@ -364,8 +364,8 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
 
         {!recheck && !result && (
           <div className="fall-card is-flat is-purple">
-            <h2>놓친 넘어짐 신고</h2>
-            <div className="fall-sub">자동으로 감지되지 않은 넘어짐을 남겨요. 영상을 움직여 넘어지기 시작한 순간을 찍어 주세요.</div>
+            <h2>놓친 낙상 신고</h2>
+            <div className="fall-sub">자동으로 감지되지 않은 낙상을 남겨요. 영상을 움직여 넘어지기 시작한 순간을 찍어 주세요.</div>
             {momentField("넘어지기 시작한 순간")}
             <div className="fall-tl-box">장면 영상: {hms(moment - PRE_MS)} ~ {hms(moment + POST_MS)} (순간 10초 전 ~ 20초 후)</div>
             <label className="fall-tl-field">메모 (선택)

@@ -16,9 +16,9 @@ type IncidentSummary = {
   mergedIntoIncidentIds?: string[];
   state: string | null; fallSeen: boolean; assessment: string | null; answer: string | null;
   notificationRank: number; occurredAt: string; updatedAt: string; reviewState: "open" | "closed";
-  closedAt: string | null; closedBy: string | null; reopenedAt: string | null;
+  closedAt: string | null; closedBy: string | null; closedByName: string | null; reopenedAt: string | null;
   needsCheck: boolean; aiFailed: boolean; unacknowledged: boolean; reviewPending: boolean;
-  foundDown: boolean; reportedBy: string | null; reportedMomentAt: string | null;
+  foundDown: boolean; reportedBy: string | null; reportedByName: string | null; reportedMomentAt: string | null;
   opinionCounts: Partial<Record<OpinionLabel, number>>;
   sceneState?: SceneState | null; linkedCount?: number;
   notification?: { level: string; sent: number; total: number } | null;
@@ -34,13 +34,13 @@ type ScenePeople = {
   cloud: PeopleSample[];
 };
 type IncidentDetail = IncidentSummary & {
-  viewerEmail: string;
+  viewerUserId: string;
   clips: Clip[];
   robotEvents: Array<{ sequence: number; eventKind: string; occurredAt: string; assessment: string | null;
     answer: string | null; reason: string | null; notificationLevel: string | null }>;
   notifications: Array<{ kind: "first" | "resend" | "reopen"; round: number; level: string; reason: string;
     status: string; createdAt: string; acceptedAt: string | null }>;
-  opinions: Array<{ userEmail: string; role: "owner" | "family" | null; label: OpinionLabel; memo: string | null;
+  opinions: Array<{ userId: string; userName: string; role: "owner" | "family" | null; label: OpinionLabel; memo: string | null;
     updatedAt: string }>;
   linkedIncidentIds: string[];
   aiReviews: Array<{ reviewId: string; requestedBy: string; momentAt: string; status: string;
@@ -60,7 +60,7 @@ const ASSESSMENT: Record<string, [string, string]> = {
 };
 const LEVEL_LABEL: Record<string, string> = { urgent: "긴급", check: "확인 필요", info: "일반" };
 const EVENT_LABEL: Record<string, string> = {
-  incident_opened: "자세 분석: 넘어짐 의심", incident_updated: "새 근거로 사건 갱신",
+  incident_opened: "자세 분석: 낙상 의심", incident_updated: "새 근거로 사건 갱신",
   question_requested: "로봇이 \"괜찮으세요?\" 질문", voice_result: "질문에 대한 답",
   decision_required: "추가 판단 필요", notification_requested: "알림 요청",
   agent_check_failed: "로봇 질문 실패", analysis_completed: "클라우드 AI",
@@ -94,13 +94,13 @@ function dayLabel(value: string) {
 const when = (value: string) => `${dayLabel(value)} ${clock(value)}`;
 
 function title(i: IncidentSummary) {
-  if (i.origin === "user_report") return "놓친 넘어짐 신고";
+  if (i.origin === "user_report") return "놓친 낙상 신고";
   return i.fallSeen || i.assessment === "observed_fall" ? "낙상" : "낙상 의심";
 }
 
 function subtitle(i: IncidentSummary) {
   if (i.origin === "user_report") {
-    return `${when(i.reportedMomentAt ?? i.occurredAt)} 구간 · ${i.reportedBy ?? "사용자"} 신고`;
+    return `${when(i.reportedMomentAt ?? i.occurredAt)} 구간 · ${i.reportedByName ?? "사용자"} 신고`;
   }
   const reason = i.aiFailed ? "AI가 시간 안에 답하지 못함"
     : i.answer ? ANSWER_LABEL[i.answer] ?? null : i.foundDown ? "이미 쓰러진 모습 발견" : null;
@@ -119,7 +119,7 @@ function badges(i: IncidentSummary): Array<[string, string]> {
   if (i.reviewState === "closed") list.push(["is-neutral", "처리 완료"]);
   else if (i.reviewPending) list.push(["is-neutral", "검수 전"]);
   if (i.reopenedAt && i.reviewState === "open") list.push(["is-neutral", "다시 열림"]);
-  if (i.aiFailed) list.push(["is-neutral", "AI 검증 실패"]);
+  if (i.aiFailed) list.push(["is-neutral", "AI 판정 실패"]);
   if (Object.keys(i.opinionCounts).length > 1) list.push(["is-neutral", "의견이 엇갈림"]);
   if (!i.unacknowledged && i.reviewState === "open" && i.notification && i.notification.sent > 1) {
     // Same count as 알림 이력: this send / all sends of the level.
@@ -272,7 +272,7 @@ function useScenePlayer({ deviceId, incidentId, clip, request, scene, demo }: {
       <video ref={videoRef} controls={playing} playsInline hidden={!playing || demo} />
       {playing && demo && <div className="fall-scene-still" />}
       {playing && scene && now !== null && <PeopleOverlay scene={scene} now={now} />}
-      {!playing && <span className="fall-scene-hint">당시 영상 보기를 누르면 이 구간을 재생해요</span>}
+      {!playing && <span className="fall-scene-hint">장면 영상 보기를 누르면 이 구간을 재생해요</span>}
       {message && <span className="fall-scene-message" role="status">{message}</span>}
       <div className="fall-scene-bar">
         <span>{clock(clip.startAt, true)} – {clock(clip.endAt, true)}</span>
@@ -336,7 +336,7 @@ function Scene({ deviceId, incidentId, clip, request, demo, onOpenLive }: {
         : "로봇 시계가 바뀌어 시각이 정확하지 않을 수 있어요."}</p>}
       <div className="fall-two-buttons">
         <button type="button" className="fall-button is-dark" disabled={!playable}
-          onClick={() => { setWanted(true); player.setPlaying(true); }}>당시 영상 보기</button>
+          onClick={() => { setWanted(true); player.setPlaying(true); }}>장면 영상 보기</button>
         <button type="button" className="fall-button" disabled={!onOpenLive} onClick={onOpenLive}>지금 실시간으로 보기</button>
       </div>
     </>
@@ -391,7 +391,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
       const incident = body.incident as IncidentDetail;
       setDetail(incident);
       if (!keepDraft) {
-        const mine = incident.opinions.find((o) => o.userEmail === incident.viewerEmail);
+        const mine = incident.opinions.find((o) => o.userId === incident.viewerUserId);
         setDraftLabel(mine?.label ?? null);
         setDraftMemo(mine?.memo ?? "");
       }
@@ -451,20 +451,20 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
       );
     }
     const incidentPath = `${base}/fall-incidents/${encodeURIComponent(detail.incidentId)}`;
-    const mine = detail.opinions.find((o) => o.userEmail === detail.viewerEmail) ?? null;
+    const mine = detail.opinions.find((o) => o.userId === detail.viewerUserId) ?? null;
     const changed = (mine?.label ?? null) !== draftLabel || (draftLabel !== null && (mine?.memo ?? "") !== draftMemo);
     const latest = detail.aiReviews.at(-1) ?? null;
     const clip = detail.clips[Math.min(segment, Math.max(0, detail.clips.length - 1))];
     const moment = detail.origin === "user_report" ? detail.reportedMomentAt ?? detail.occurredAt : detail.occurredAt;
     const who = (o: IncidentDetail["opinions"][number]) =>
-      `${o.role === "owner" ? "소유자" : o.role === "family" ? "공유 사용자" : o.userEmail}${o.userEmail === detail.viewerEmail ? " (나)" : ""}`;
+      `${o.role === "owner" ? "소유자" : o.role === "family" ? "보호자" : o.userName}${o.userId === detail.viewerUserId ? " (나)" : ""}`;
     return (
       <div className="fall-page">
         <div className="fall-topbar"><button type="button" className="fall-link" onClick={back}>‹ 사건 목록</button></div>
         <header className="fall-head">
           <Badges items={badges(detail)} />
           <h1>{title(detail)}</h1>
-          <div className="fall-sub">{when(moment)}{detail.reportedBy ? ` · ${detail.reportedBy} 신고` : ""}</div>
+          <div className="fall-sub">{when(moment)}{detail.reportedBy ? ` · ${detail.reportedByName} 신고` : ""}</div>
           {(detail.mergedIntoIncidentIds ?? []).map((id) => (
             <button type="button" key={`merged-${id}`} className="fall-linked" onClick={() => open(id)}>
               사람 연결을 확인했어요. 이어서 처리하는 사건 보기 ›
@@ -499,7 +499,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
           <h2>사용자 의견</h2>
           <p className="fall-hint">의견은 기록만 하며, 사건은 &quot;처리 완료&quot;를 눌러야 닫혀요.</p>
           {detail.opinions.map((o) => (
-            <div className="fall-opinion" key={o.userEmail}>
+            <div className="fall-opinion" key={o.userId}>
               <div><strong>{who(o)} · {clock(o.updatedAt)}</strong>
                 <span className={`fall-pill is-${o.label}`}>{OPINION_LABEL[o.label]}</span></div>
               {o.memo && <p>메모: {o.memo}</p>}
@@ -621,7 +621,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
 
         <div className="fall-bottom">
           {detail.reviewState === "closed" ? (
-            <p className="fall-closed">처리 완료됨 · {detail.closedBy === detail.viewerEmail ? "나" : detail.closedBy} · {when(detail.closedAt ?? detail.updatedAt)}</p>
+            <p className="fall-closed">처리 완료됨 · {detail.closedBy === detail.viewerUserId ? "나" : detail.closedByName} · {when(detail.closedAt ?? detail.updatedAt)}</p>
           ) : (
             <button type="button" className="fall-button is-blue is-large"
               disabled={busy === "close" || detail.opinions.length === 0}
@@ -679,7 +679,7 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
         {error && <p className="fall-notice" role="alert">{error}</p>}
         {loading && incidents.length === 0 && <p className="fall-empty" role="status">사건을 불러오는 중입니다…</p>}
         {!loading && !error && incidents.length === 0 && (
-          <p className="fall-empty">표시할 사건이 없어요. 넘어짐이 의심되면 사건이 생기고, 그 장면을 연속 녹화에서 바로 볼 수 있어요.</p>
+          <p className="fall-empty">표시할 사건이 없어요. 낙상이 의심되면 사건이 생기고, 그 장면을 연속 녹화에서 바로 볼 수 있어요.</p>
         )}
         {first.length > 0 && <div className="fall-group">가장 먼저 확인할 사건</div>}
         {first.map(card)}

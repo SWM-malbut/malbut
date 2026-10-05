@@ -32,7 +32,7 @@ export async function PUT(request: Request, context: Context) {
   const opinion = parseOpinion(await request.json().catch(() => null));
   if (!opinion) return noStore({ error: "의견 형식을 확인해 주세요." }, 400);
   try {
-    const result = await setFallOpinion(deviceId, incidentId, member.email, opinion.label, opinion.memo);
+    const result = await setFallOpinion(deviceId, incidentId, member.userId, opinion.label, opinion.memo);
     if (result.noticeId) {
       // Saved first; delivery failures are retried by the maintenance worker.
       await deliverPendingFallNotice({ deviceId, noticeId: result.noticeId }).catch(() => undefined);

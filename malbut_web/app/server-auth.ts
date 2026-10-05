@@ -4,6 +4,7 @@ import {
   WEB_SESSION_COOKIE,
 } from "../db/web-auth";
 import { getRuntimeEnvironment } from "./runtime-env";
+import { ensureUserForIdentity } from "../db/users";
 
 const ALB_CLAIMS_HEADER = "x-amzn-oidc-data";
 const ALB_IDENTITY_HEADER = "x-amzn-oidc-identity";
@@ -25,7 +26,6 @@ type AuthRuntimeEnvironment = {
   AUTH_OIDC_ISSUER?: string;
   AUTH_EMAIL_CLAIM?: string;
   AUTH_DEV_USER_EMAIL?: string;
-  PETCAM_BROADCASTER_EMAILS?: string;
   NODE_ENV?: string;
 };
 
@@ -43,8 +43,13 @@ type AlbClaims = Record<string, unknown> & {
   name?: unknown;
 };
 
+/**
+ * Social login sessions carry a user ID and no email. Email logins (Cognito session,
+ * ALB, development header) carry an email that maps to a user.
+ */
 export type AuthenticatedUser = {
-  email: string;
+  userId: string | null;
+  email: string | null;
   fullName: string | null;
   subject: string;
 };
@@ -56,8 +61,15 @@ type CachedPublicKey = {
 
 const publicKeyCache = new Map<string, CachedPublicKey>();
 
-export async function getRequestUserEmail(request: Request): Promise<string | null> {
-  return (await getAuthenticatedUser(request.headers, request.url))?.email ?? null;
+/** The signed-in person's user ID. Email logins map to an 'email' identity (created on first sight). */
+export async function getRequestUserId(request: Request): Promise<string | null> {
+  const user = await getAuthenticatedUser(request.headers, request.url);
+  return user ? userIdFor(user) : null;
+}
+
+export async function userIdFor(user: AuthenticatedUser) {
+  if (user.userId) return user.userId;
+  return user.email ? ensureUserForIdentity("email", user.email) : null;
 }
 
 export async function getAuthenticatedUser(
@@ -93,18 +105,6 @@ export async function getAuthenticatedUser(
   return null;
 }
 
-export function canBroadcastForConfiguredAccount(userEmail: string) {
-  const runtime = getRuntimeEnvironment() as AuthRuntimeEnvironment;
-  const configured = runtime.PETCAM_BROADCASTER_EMAILS ?? "";
-  const normalizedUser = normalizeEmail(userEmail);
-  if (!normalizedUser) return false;
-  return configured
-    .split(",")
-    .map(normalizeEmail)
-    .filter((email): email is string => Boolean(email))
-    .includes(normalizedUser);
-}
-
 async function opaqueSessionUser(
   headers: Headers,
   runtime: AuthRuntimeEnvironment,
@@ -115,9 +115,13 @@ async function opaqueSessionUser(
   try {
     const user = await getWebSessionUser(token, secret);
     if (!user) return null;
+    if (user.userId) {
+      return { userId: user.userId, email: null, fullName: null, subject: `user:${user.userId}` };
+    }
     const email = normalizeEmail(user.email);
-    if (!email || !validSubject(user.subject)) return null;
+    if (!email || !user.subject || !validSubject(user.subject)) return null;
     return {
+      userId: null,
       email,
       fullName: normalizeDisplayName(user.fullName),
       subject: user.subject,
@@ -200,7 +204,7 @@ async function verifiedAlbUser(
   const email = normalizeEmail(claims[claimName]);
   if (!email) return null;
   const fullName = normalizeDisplayName(claims.name);
-  return { email, fullName, subject };
+  return { userId: null, email, fullName, subject };
 }
 
 function developmentHeaderUser(
@@ -214,7 +218,7 @@ function developmentHeaderUser(
   const expectedEmail = normalizeEmail(runtime.AUTH_DEV_USER_EMAIL);
   const presentedEmail = normalizeEmail(headers.get(DEV_USER_HEADER));
   if (!expectedEmail || presentedEmail !== expectedEmail) return null;
-  return { email: expectedEmail, fullName: null, subject: `dev:${expectedEmail}` };
+  return { userId: null, email: expectedEmail, fullName: null, subject: `dev:${expectedEmail}` };
 }
 
 function isLoopbackRequest(headers: Headers, requestUrl?: string): boolean {

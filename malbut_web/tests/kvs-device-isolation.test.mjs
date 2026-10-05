@@ -166,7 +166,7 @@ test("all broker actions carry deviceId and validate the selected resource", asy
   );
   const playbackRoute = await readFile(
     new URL(
-      "../app/api/recordings/[recordingId]/playback/route.ts",
+      "../app/api/devices/[deviceId]/fall-incidents/[incidentId]/clips/[segmentIndex]/playback/route.ts",
       import.meta.url,
     ),
     "utf8",
@@ -204,8 +204,8 @@ test("all broker actions carry deviceId and validate the selected resource", asy
   assert.match(viewerRoute, /requestBrokerSession\(\{[\s\S]*deviceId,/);
   assert.doesNotMatch(viewerRoute, /requestBrokerJoinStorage/);
   assert.match(viewerRoute, /channelMode:\s*mode/);
-  assert.match(playbackRoute, /deviceId:\s*recording\.deviceId/);
-  assert.match(livePlaybackRoute, /userCanViewDevice\(deviceId,\s*userEmail\)/);
+  assert.match(playbackRoute, /requestBrokerEventPlayback\(\{\s*deviceId,/);
+  assert.match(livePlaybackRoute, /userCanViewDevice\(deviceId,\s*userId\)/);
   assert.match(livePlaybackRoute, /resolveDeviceKvsResources\(runtime,\s*deviceId\)/);
   assert.match(livePlaybackRoute, /requestBrokerLivePlayback\(\{[\s\S]*deviceId,/);
   assert.match(lambda, /resolveDeviceResources\(\s*deviceResourceConfiguration,/);

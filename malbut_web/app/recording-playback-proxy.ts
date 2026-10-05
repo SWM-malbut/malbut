@@ -27,7 +27,7 @@ type CreatePlaybackProxyInput = {
   playbackUrl: string;
   subjectId: string;
   proxyPath: string;
-  userEmail: string;
+  userId: string;
   expiresAt: string;
 };
 
@@ -36,7 +36,7 @@ type ResolvePlaybackProxyInput = {
   subjectId: string;
   playbackId: string;
   resource: string;
-  userEmail: string;
+  userId: string;
   cookieHeader: string | null;
 };
 
@@ -46,22 +46,6 @@ export type ResolvedPlaybackProxy = {
   sessionToken: string;
   rewritePlaylist: boolean;
 };
-
-export async function createRecordingPlaybackProxy(
-  input: Omit<CreatePlaybackProxyInput, "subjectId" | "proxyPath"> & {
-    recordingId: string;
-  },
-  secret: string,
-) {
-  return createPlaybackProxy(
-    {
-      ...input,
-      subjectId: input.recordingId,
-      proxyPath: `/api/recordings/${encodeURIComponent(input.recordingId)}/hls`,
-    },
-    secret,
-  );
-}
 
 export async function createDeviceLivePlaybackProxy(
   input: Omit<CreatePlaybackProxyInput, "subjectId" | "proxyPath"> & {
@@ -126,7 +110,7 @@ async function createPlaybackProxy(
     version: PLAYBACK_GRANT_VERSION,
     subjectId: input.subjectId,
     playbackId,
-    userHash: await sha256(input.userEmail.trim().toLowerCase()),
+    userHash: await sha256(input.userId),
     hostname: upstream.hostname,
     sessionToken: sessionTokens[0],
     expiresAt,
@@ -169,16 +153,6 @@ function playbackPublicOrigin(configured: string | undefined, fallback: string) 
     throw new Error("PLAYBACK_PUBLIC_ORIGIN_INVALID");
   }
   return origin.origin;
-}
-
-export async function resolveRecordingPlaybackProxy(
-  input: Omit<ResolvePlaybackProxyInput, "subjectId"> & { recordingId: string },
-  secret: string,
-): Promise<ResolvedPlaybackProxy | null> {
-  return resolvePlaybackProxy(
-    { ...input, subjectId: input.recordingId },
-    secret,
-  );
 }
 
 export async function resolveDeviceLivePlaybackProxy(
@@ -234,7 +208,7 @@ async function resolvePlaybackProxy(
     !KVS_ARCHIVED_MEDIA_HOST.test(grant.hostname) ||
     !(await constantTimeEqual(
       grant.userHash,
-      await sha256(input.userEmail.trim().toLowerCase()),
+      await sha256(input.userId),
     ))
   ) {
     return null;

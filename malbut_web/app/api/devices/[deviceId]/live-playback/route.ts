@@ -5,7 +5,7 @@ import {
   userCanViewDevice,
   writeAuditLog,
 } from "../../../../../db/homecam";
-import { consumeRequestRateLimit } from "../../../../../db/petcam";
+import { consumeRequestRateLimit } from "../../../../../db/request-rate-limit";
 import { requestBrokerLivePlayback } from "../../../../kvs-broker";
 import {
   resolveDeviceKvsResources,
@@ -13,7 +13,7 @@ import {
 } from "../../../../kvs-device-config";
 import { createDeviceLivePlaybackProxy } from "../../../../recording-playback-proxy";
 import { getRuntimeEnvironment } from "../../../../runtime-env";
-import { getRequestUserEmail } from "../../../../server-auth";
+import { getRequestUserId } from "../../../../server-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -26,10 +26,10 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ deviceId: string }> },
 ) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
-  if (!(await userCanViewDevice(deviceId, userEmail))) {
+  if (!(await userCanViewDevice(deviceId, userId))) {
     return noStore({ error: "이 홈캠을 볼 권한이 없습니다." }, 403);
   }
 
@@ -52,7 +52,7 @@ export async function POST(
   }
 
   const canIssuePlayback = await consumeRequestRateLimit({
-    userEmail,
+    userId,
     roomCode: session.roomCode,
     scope: "homecam-live-hls",
     limit: 30,
@@ -83,7 +83,7 @@ export async function POST(
       expiresSeconds: 300,
     });
     if (
-      !(await userCanViewDevice(deviceId, userEmail)) ||
+      !(await userCanViewDevice(deviceId, userId)) ||
       (await getActiveMediaSession(deviceId, "storage"))?.id !== session.id
     ) {
       return noStore({ error: "홈캠 접근 권한 또는 활성 세션이 변경되었습니다." }, 403);
@@ -94,7 +94,7 @@ export async function POST(
         publicOrigin: runtime.AUTH_PUBLIC_ORIGIN,
         playbackUrl: playback.playbackUrl,
         deviceId,
-        userEmail,
+        userId,
         expiresAt: playback.expiresAt,
       },
       runtime.KVS_BROKER_SECRET ?? "",
@@ -102,7 +102,7 @@ export async function POST(
     await writeAuditLog({
       deviceId,
       actorType: "user",
-      actorId: userEmail,
+      actorId: userId,
       action: "live.view",
       metadata: { mode: "storage-hls", sessionId: session.id },
     }).catch(() => undefined);

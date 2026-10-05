@@ -39,10 +39,10 @@ async function transaction<T>(deviceId: string, work: (db: SqlExecutor) => Promi
   } finally { client.release(); }
 }
 
-async function requireOwner(db: SqlExecutor, deviceId: string, userEmail: string) {
+async function requireOwner(db: SqlExecutor, deviceId: string, userId: string) {
   const role = (await db.query(
-    "SELECT role FROM device_memberships WHERE device_id=$1 AND user_email=$2 FOR SHARE",
-    [deviceId, userEmail],
+    "SELECT role FROM device_memberships WHERE device_id=$1 AND user_id=$2 FOR SHARE",
+    [deviceId, userId],
   )).rows[0]?.role;
   if (role !== "owner") throw new Error("FALL_KEY_FORBIDDEN");
 }
@@ -50,10 +50,10 @@ async function requireOwner(db: SqlExecutor, deviceId: string, userEmail: string
 // ---------------------------------------------------------------- key
 
 /** Owner only. The key is never returned to users; only its last 4 characters. */
-export async function setFallCloudKey(deviceId: string, userEmail: string, apiKey: string | null, secret: string) {
+export async function setFallCloudKey(deviceId: string, userId: string, apiKey: string | null, secret: string) {
   if (apiKey !== null && !isValidFallCloudKey(apiKey)) throw new Error("FALL_KEY_INVALID");
   return transaction(deviceId, async (db) => {
-    await requireOwner(db, deviceId, userEmail);
+    await requireOwner(db, deviceId, userId);
     const current = (await db.query(
       "SELECT key_version FROM fall_cloud_keys WHERE device_id=$1 FOR UPDATE", [deviceId],
     )).rows[0];
@@ -63,12 +63,12 @@ export async function setFallCloudKey(deviceId: string, userEmail: string, apiKe
       `INSERT INTO fall_cloud_keys(device_id,key_version,ciphertext,last4,updated_by) VALUES($1,$2,$3,$4,$5)
        ON CONFLICT(device_id) DO UPDATE SET key_version=excluded.key_version,ciphertext=excluded.ciphertext,
          last4=excluded.last4,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP`,
-      [deviceId, version, ciphertext, apiKey === null ? null : apiKey.slice(-4), userEmail],
+      [deviceId, version, ciphertext, apiKey === null ? null : apiKey.slice(-4), userId],
     );
     await db.query(
       `INSERT INTO access_audit_log(id,device_id,actor_type,actor_id,action,metadata_json)
        VALUES($1,$2,'user',$3,$4,$5)`,
-      [randomUUID(), deviceId, userEmail, apiKey === null ? "fall_cloud_key_deleted" : "fall_cloud_key_set",
+      [randomUUID(), deviceId, userId, apiKey === null ? "fall_cloud_key_deleted" : "fall_cloud_key_set",
         JSON.stringify({ keyVersion: version })],
     );
     return { keyVersion: version, configured: apiKey !== null };
@@ -146,7 +146,7 @@ async function cloudConsent(db: SqlExecutor, deviceId: string) {
  * incident's range (10 s before to 20 s after its anchor); otherwise the
  * caller offers a new missed-fall report instead.
  */
-export async function requestFallAiReview(deviceId: string, incidentId: string, userEmail: string, momentAt: string) {
+export async function requestFallAiReview(deviceId: string, incidentId: string, userId: string, momentAt: string) {
   const moment = Date.parse(momentAt);
   if (!Number.isFinite(moment) || new Date(moment).toISOString() !== momentAt) throw new Error("FALL_AI_MOMENT_INVALID");
   return transaction(deviceId, async (db) => {
@@ -183,14 +183,14 @@ export async function requestFallAiReview(deviceId: string, incidentId: string, 
     const reviewId = randomUUID();
     await db.query(
       `INSERT INTO fall_ai_reviews(device_id,review_id,incident_id,requested_by,moment_at) VALUES($1,$2,$3,$4,$5)`,
-      [deviceId, reviewId, incidentId, userEmail, momentAt],
+      [deviceId, reviewId, incidentId, userId, momentAt],
     );
     return { reviewId };
   });
 }
 
 export async function askFallAiQuestion(deviceId: string, incidentId: string, reviewId: string,
-  userEmail: string, question: string, includeContext = true) {
+  userId: string, question: string, includeContext = true) {
   const text = question.trim();
   if (!text || text.length > 500) throw new Error("FALL_AI_QUESTION_INVALID");
   return transaction(deviceId, async (db) => {
@@ -209,7 +209,7 @@ export async function askFallAiQuestion(deviceId: string, incidentId: string, re
     await db.query(
       `INSERT INTO fall_ai_questions(device_id,question_id,review_id,asked_by,question,include_context)
        VALUES($1,$2,$3,$4,$5,$6)`,
-      [deviceId, questionId, reviewId, userEmail, text, includeContext],
+      [deviceId, questionId, reviewId, userId, text, includeContext],
     );
     return { questionId };
   });

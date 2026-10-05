@@ -71,19 +71,43 @@ export const fallPushOutbox = pgTable("fall_push_outbox", {
   index("fall_push_due_idx").on(t.status, t.nextAttemptAt),
   foreignKey({ columns: [t.deviceId, t.notificationId], foreignColumns: [fallIncidentEvents.deviceId, fallIncidentEvents.eventId] }).onDelete("cascade")]);
 
+export const users = pgTable("users", {
+  id: text("id").primaryKey(),
+  displayName: text("display_name"),
+  createdAt: timestampText("created_at").notNull().defaultNow(),
+});
+
+export const userIdentities = pgTable(
+  "user_identities",
+  {
+    provider: text("provider").notNull(),
+    subject: text("subject").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestampText("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.provider, table.subject] }),
+    index("user_identities_user_id_idx").on(table.userId),
+  ],
+);
+
 export const deviceMemberships = pgTable(
   "device_memberships",
   {
     deviceId: text("device_id")
       .notNull()
       .references(() => devices.id, { onDelete: "cascade" }),
-    userEmail: text("user_email").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
     role: text("role").notNull().default("owner"),
     createdAt: timestampText("created_at").notNull().defaultNow(),
   },
   (table) => [
-    primaryKey({ columns: [table.deviceId, table.userEmail] }),
-    index("device_memberships_user_email_idx").on(table.userEmail),
+    primaryKey({ columns: [table.deviceId, table.userId] }),
+    index("device_memberships_user_id_idx").on(table.userId),
   ],
 );
 
@@ -301,7 +325,9 @@ export const pushSubscriptions = pgTable(
     deviceId: text("device_id")
       .notNull()
       .references(() => devices.id, { onDelete: "cascade" }),
-    userEmail: text("user_email").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
     endpoint: text("endpoint").notNull(),
     p256dh: text("p256dh").notNull(),
     auth: text("auth").notNull(),
@@ -310,8 +336,8 @@ export const pushSubscriptions = pgTable(
     revokedAt: timestampText("revoked_at"),
   },
   (table) => [
-    uniqueIndex("push_subscriptions_user_device_endpoint_idx").on(
-      table.userEmail,
+    uniqueIndex("push_subscriptions_user_device_endpoint_key").on(
+      table.userId,
       table.deviceId,
       table.endpoint,
     ),
@@ -342,7 +368,9 @@ export const talkLeases = pgTable("talk_leases", {
     .primaryKey()
     .references(() => devices.id, { onDelete: "cascade" }),
   leaseId: text("lease_id").notNull(),
-  userEmail: text("user_email").notNull(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   clientId: text("client_id").notNull(),
   expiresAt: timestampText("expires_at").notNull(),
   createdAt: timestampText("created_at").notNull().defaultNow(),

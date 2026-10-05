@@ -4,16 +4,16 @@ import { noStore } from "../../../../api-response";
 import { fallAiFailure } from "../../../../fall-ai-route";
 import { getRuntimeEnvironment } from "../../../../runtime-env";
 import { sameOriginJsonRequest } from "../../../../same-origin-request";
-import { getRequestUserEmail } from "../../../../server-auth";
+import { getRequestUserId } from "../../../../server-auth";
 
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ deviceId: string }> };
 
 async function member(request: Request, deviceId: string) {
-  const email = await getRequestUserEmail(request);
-  if (!email) return { response: noStore({ error: "로그인이 필요합니다." }, 401) };
-  if (!(await userCanViewDevice(deviceId, email))) return { response: noStore({ error: "로봇을 찾을 수 없습니다." }, 404) };
-  return { email };
+  const userId = await getRequestUserId(request);
+  if (!userId) return { response: noStore({ error: "로그인이 필요합니다." }, 401) };
+  if (!(await userCanViewDevice(deviceId, userId))) return { response: noStore({ error: "말벗을 찾을 수 없습니다." }, 404) };
+  return { userId };
 }
 
 /** Members see whether a key exists and its last 4 characters, never the key. */
@@ -31,7 +31,7 @@ async function write(request: Request, context: Context, apiKey: string | null) 
   if (!sameOriginJsonRequest(request)) return noStore({ error: "요청 출처를 확인해 주세요." }, 403);
   try {
     const secret = getRuntimeEnvironment().FALL_KEY_ENCRYPTION_SECRET ?? "";
-    await setFallCloudKey(deviceId, user.email, apiKey, secret);
+    await setFallCloudKey(deviceId, user.userId, apiKey, secret);
     return noStore(await readFallCloudKeyView(deviceId));
   } catch (error) { return fallAiFailure(error); }
 }

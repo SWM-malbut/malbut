@@ -4,7 +4,7 @@ import {
   rewriteRecordingPlaylist,
 } from "../../../../../../recording-playback-proxy";
 import { getRuntimeEnvironment } from "../../../../../../runtime-env";
-import { getRequestUserEmail } from "../../../../../../server-auth";
+import { getRequestUserId } from "../../../../../../server-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -25,10 +25,10 @@ export async function GET(
     params: Promise<{ deviceId: string; playbackId: string; resource: string }>;
   },
 ) {
-  const userEmail = await getRequestUserEmail(request);
-  if (!userEmail) return failure(401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return failure(401);
   const { deviceId, playbackId, resource } = await context.params;
-  if (!(await userCanViewDevice(deviceId, userEmail))) return failure(403);
+  if (!(await userCanViewDevice(deviceId, userId))) return failure(403);
 
   const runtime = getRuntimeEnvironment() as PlaybackProxyEnv;
   const playback = await resolveFallClipPlaybackProxy(
@@ -37,7 +37,7 @@ export async function GET(
       deviceId,
       playbackId,
       resource,
-      userEmail,
+      userId,
       cookieHeader: request.headers.get("cookie"),
     },
     runtime.KVS_BROKER_SECRET ?? "",

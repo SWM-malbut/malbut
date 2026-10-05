@@ -1,5 +1,4 @@
 import { getD1 } from ".";
-import { ensurePetcamSchema } from "./petcam";
 import {
   createDeviceToken,
   hashDeviceToken,
@@ -8,6 +7,7 @@ import {
 } from "./homecam-security";
 import {
   canManageHomecam,
+  canNavigateHomecam,
   canViewHomecam,
   type DeviceSettingsPatch,
   type HomecamEventClipInput,
@@ -15,6 +15,7 @@ import {
 } from "./homecam-validation";
 import { recordingPlaybackPosition } from "../app/recording-segments";
 import { ensureDatabaseSchema } from "./migration-state";
+import { ensureUserForIdentity, labelFor, userLabels } from "./users";
 
 const HEARTBEAT_ONLINE_MS = 30_000;
 // KVS storage sessions have a one-hour service boundary. A one-hour backend
@@ -56,40 +57,43 @@ type StateRow = {
 };
 
 export async function ensureHomecamSchema() {
-  await ensurePetcamSchema();
   await ensureDatabaseSchema();
 }
 
-export async function getMembershipRole(deviceId: string, userEmail: string) {
+export async function getMembershipRole(deviceId: string, userId: string) {
   await ensureHomecamSchema();
   const row = await getD1()
     .prepare(
-      "SELECT role FROM device_memberships WHERE device_id = ? AND user_email = ?",
+      "SELECT role FROM device_memberships WHERE device_id = ? AND user_id = ?",
     )
-    .bind(deviceId, userEmail)
+    .bind(deviceId, userId)
     .first<{ role: string }>();
   return row?.role ?? null;
 }
 
-export async function userCanViewDevice(deviceId: string, userEmail: string) {
-  return canViewHomecam(await getMembershipRole(deviceId, userEmail));
+export async function userCanViewDevice(deviceId: string, userId: string) {
+  return canViewHomecam(await getMembershipRole(deviceId, userId));
 }
 
-export async function userCanManageDevice(deviceId: string, userEmail: string) {
-  return canManageHomecam(await getMembershipRole(deviceId, userEmail));
+export async function userCanManageDevice(deviceId: string, userId: string) {
+  return canManageHomecam(await getMembershipRole(deviceId, userId));
 }
 
-export async function listHomecamDevices(userEmail: string) {
+export async function userCanNavigateDevice(deviceId: string, userId: string) {
+  return canNavigateHomecam(await getMembershipRole(deviceId, userId));
+}
+
+export async function listHomecamDevices(userId: string) {
   await ensureHomecamSchema();
   await cleanupExpiredHomecamData();
   const d1 = getD1();
   await d1
     .prepare(
       `INSERT INTO device_state (device_id)
-       SELECT device_id FROM device_memberships WHERE user_email = ?
+       SELECT device_id FROM device_memberships WHERE user_id = ?
        ON CONFLICT(device_id) DO NOTHING`,
     )
-    .bind(userEmail)
+    .bind(userId)
     .run();
   await expireMediaSessions();
 
@@ -138,7 +142,7 @@ export async function listHomecamDevices(userEmail: string) {
          ON storage_session.id = device_state.storage_session_id
         AND storage_session.status = 'active'
         AND storage_session.expires_at > ?
-       WHERE device_memberships.user_email = ?
+       WHERE device_memberships.user_id = ?
          AND device_memberships.role IN ('owner', 'family', 'broadcaster')
        ORDER BY devices.created_at ASC`,
     )
@@ -146,7 +150,7 @@ export async function listHomecamDevices(userEmail: string) {
       new Date().toISOString(),
       new Date().toISOString(),
       new Date().toISOString(),
-      userEmail,
+      userId,
     )
     .all<{
       id: string;
@@ -290,7 +294,7 @@ export async function getDeviceSettings(deviceId: string) {
 
 export async function updateDeviceSettings(input: {
   deviceId: string;
-  userEmail: string;
+  userId: string;
   patch: DeviceSettingsPatch;
 }) {
   await getDeviceSettings(input.deviceId);
@@ -389,7 +393,7 @@ export async function updateDeviceSettings(input: {
   await writeAuditLog({
     deviceId: input.deviceId,
     actorType: "user",
-    actorId: input.userEmail,
+    actorId: input.userId,
     action: "settings.update",
     metadata: {
       monitoringEnabled: updated.monitoringEnabled,
@@ -402,7 +406,7 @@ export async function updateDeviceSettings(input: {
 
 export async function createDeviceCredential(input: {
   deviceId: string;
-  userEmail: string;
+  userId: string;
   label: string;
   expiresAt?: string | null;
 }) {
@@ -428,7 +432,7 @@ export async function createDeviceCredential(input: {
   await writeAuditLog({
     deviceId: input.deviceId,
     actorType: "user",
-    actorId: input.userEmail,
+    actorId: input.userId,
     action: "credential.create",
     metadata: { credentialId: generated.credentialId, label: input.label },
   });
@@ -478,7 +482,7 @@ export async function listDeviceCredentials(deviceId: string) {
 export async function revokeDeviceCredential(input: {
   deviceId: string;
   credentialId: string;
-  userEmail: string;
+  userId: string;
 }) {
   await ensureHomecamSchema();
   const nowIso = new Date().toISOString();
@@ -493,7 +497,7 @@ export async function revokeDeviceCredential(input: {
     await writeAuditLog({
       deviceId: input.deviceId,
       actorType: "user",
-      actorId: input.userEmail,
+      actorId: input.userId,
       action: "credential.revoke",
       metadata: { credentialId: input.credentialId },
     });
@@ -1254,86 +1258,6 @@ export async function upsertHomecamEventClip(
   return { created: false, event: mapEvent(stored) };
 }
 
-export async function softDeleteHomecamEvent(input: {
-  deviceId: string;
-  eventId: string;
-  userEmail: string;
-}) {
-  await ensureHomecamSchema();
-  const event = await getHomecamEvent(input.deviceId, input.eventId);
-  if (!event) return false;
-  const nowIso = new Date().toISOString();
-  const result = await getD1()
-    .prepare(
-      `UPDATE homecam_events SET deleted_at = ?
-       WHERE device_id = ? AND deleted_at IS NULL
-         AND (id = ? OR (event_group_id IS NOT NULL AND event_group_id = ?))`,
-    )
-    .bind(
-      nowIso,
-      input.deviceId,
-      input.eventId,
-      event.eventGroupId ?? "",
-    )
-    .run();
-  if (result.meta.changes > 0) {
-    await getD1()
-      .prepare(
-        `DELETE FROM homecam_push_outbox
-         WHERE delivered_at IS NULL AND event_id IN (
-           SELECT id FROM homecam_events
-           WHERE device_id = ?
-             AND (id = ? OR (event_group_id IS NOT NULL AND event_group_id = ?))
-         )`,
-      )
-      .bind(input.deviceId, input.eventId, event.eventGroupId ?? "")
-      .run();
-    await writeAuditLog({
-      deviceId: input.deviceId,
-      actorType: "user",
-      actorId: input.userEmail,
-      action: "event.remove_from_list",
-      metadata: {
-        eventId: event.id,
-        eventGroupId: event.eventGroupId,
-        segmentCount: event.segmentCount,
-      },
-    });
-  }
-  return result.meta.changes > 0;
-}
-
-export async function getEventClipPlayback(deviceId: string, eventId: string) {
-  const event = await getHomecamEvent(deviceId, eventId);
-  if (
-    !event ||
-    event.clipState !== "ready" ||
-    !event.clipStartAt ||
-    !event.clipEndAt ||
-    !event.recordingId
-  ) {
-    return null;
-  }
-  const clipStartAt = event.clipStartAt;
-  const clipEndAt = event.clipEndAt;
-  const recordingId = event.recordingId;
-  const recording = await getD1()
-    .prepare(
-      `SELECT recording_sessions.kvs_stream_arn
-       FROM recording_sessions
-       INNER JOIN stream_sessions
-         ON stream_sessions.id = recording_sessions.session_id
-       WHERE recording_sessions.session_id = ? AND stream_sessions.device_id = ?`,
-    )
-    .bind(recordingId, deviceId)
-    .first<{ kvs_stream_arn: string }>();
-  if (!recording) return null;
-  return {
-    event: { ...event, clipStartAt, clipEndAt, recordingId },
-    streamArn: recording.kvs_stream_arn,
-  };
-}
-
 type EventClipSessionRow = {
   session_id: string;
   session_started_at: string;
@@ -1457,163 +1381,6 @@ async function eventRequestFingerprint(event: HomecamEventInput) {
   ).join("");
 }
 
-export async function listHomecamEvents(input: {
-  deviceId: string;
-  eventTypes: string[];
-  before?: { occurredAt: string; id: string };
-  limit: number;
-}) {
-  await ensureHomecamSchema();
-  await cleanupExpiredHomecamData();
-  const placeholders = input.eventTypes.map(() => "?").join(",");
-  const typeClause = placeholders ? `AND event_type IN (${placeholders})` : "";
-  const beforeClause = input.before
-    ? "AND (occurred_at < ? OR (occurred_at = ? AND id < ?))"
-    : "";
-  const bindings: unknown[] = [
-    input.deviceId,
-    new Date(Date.now() - EVENT_RETENTION_MS).toISOString(),
-    ...input.eventTypes,
-  ];
-  if (input.before) {
-    bindings.push(
-      input.before.occurredAt,
-      input.before.occurredAt,
-      input.before.id,
-    );
-  }
-  bindings.push(input.limit);
-  const result = await getD1()
-    .prepare(
-      `WITH ranked_events AS (
-         SELECT id, event_type, confidence, occurred_at, received_at,
-                recording_session_id, recording_offset_ms,
-                event_group_id, segment_index, labels_json,
-                clip_start_at, clip_end_at, clip_state,
-                monotonic_duration_ms, clock_stepped,
-                ai_status, ai_summary, ai_labels_json,
-                ai_severity, ai_confidence, ai_error,
-                ROW_NUMBER() OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                  ORDER BY COALESCE(segment_index, -1) DESC,
-                           occurred_at DESC, id DESC
-                ) AS row_rank,
-                FIRST_VALUE(id) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                  ORDER BY CASE WHEN segment_index IS NULL THEN 0 ELSE 1 END,
-                           segment_index ASC, occurred_at ASC, id ASC
-                ) AS group_event_id,
-                MIN(occurred_at) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_occurred_at,
-                MIN(clip_start_at) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_clip_start_at,
-                MAX(clip_end_at) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_clip_end_at,
-                COUNT(monotonic_duration_ms) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_duration_count,
-                SUM(monotonic_duration_ms) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_duration_ms,
-                MAX(clock_stepped) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_clock_stepped,
-                COUNT(*) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_segment_count,
-                SUM(CASE WHEN clip_state = 'recording' THEN 1 ELSE 0 END) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_recording_count,
-                SUM(CASE WHEN clip_state <> 'ready' THEN 1 ELSE 0 END) OVER (
-                  PARTITION BY COALESCE(event_group_id, id)
-                ) AS group_not_ready_count
-         FROM homecam_events
-         WHERE device_id = ? AND occurred_at >= ? AND deleted_at IS NULL
-       ), grouped_events AS (
-         SELECT group_event_id AS id, event_type, confidence,
-                group_occurred_at AS occurred_at, received_at,
-                recording_session_id, recording_offset_ms,
-                event_group_id, segment_index, labels_json,
-                group_clip_start_at AS clip_start_at,
-                group_clip_end_at AS clip_end_at,
-                CASE
-                  WHEN group_recording_count > 0 THEN 'recording'
-                  WHEN group_not_ready_count = 0 THEN 'ready'
-                  ELSE clip_state
-                END AS clip_state,
-                CASE WHEN group_duration_count = 0 THEN NULL
-                     ELSE group_duration_ms END AS monotonic_duration_ms,
-                group_clock_stepped AS clock_stepped,
-                ai_status, ai_summary, ai_labels_json,
-                ai_severity, ai_confidence, ai_error,
-                group_segment_count AS segment_count
-         FROM ranked_events WHERE row_rank = 1
-       )
-       SELECT id, event_type, confidence, occurred_at, received_at,
-              recording_session_id, recording_offset_ms,
-              event_group_id, segment_index, labels_json,
-              clip_start_at, clip_end_at, clip_state,
-              monotonic_duration_ms, clock_stepped, ai_status, ai_summary,
-              ai_labels_json, ai_severity, ai_confidence, ai_error,
-              segment_count
-       FROM grouped_events
-       WHERE 1 = 1 ${typeClause} ${beforeClause}
-       ORDER BY occurred_at DESC, id DESC LIMIT ?`,
-    )
-    .bind(...bindings)
-    .all<HomecamEventViewRow>();
-  return result.results.map(mapEvent);
-}
-
-export async function getHomecamEvent(deviceId: string, eventId: string) {
-  await ensureHomecamSchema();
-  await cleanupExpiredHomecamData();
-  const row = await getD1()
-    .prepare(
-      `SELECT id, event_type, confidence, occurred_at, received_at,
-              recording_session_id, recording_offset_ms,
-              event_group_id, segment_index, labels_json,
-              clip_start_at, clip_end_at, clip_state,
-              monotonic_duration_ms, clock_stepped, ai_status, ai_summary,
-              ai_labels_json, ai_severity, ai_confidence, ai_error
-       FROM homecam_events
-       WHERE id = ? AND device_id = ? AND occurred_at >= ? AND deleted_at IS NULL`,
-    )
-    .bind(
-      eventId,
-      deviceId,
-      new Date(Date.now() - EVENT_RETENTION_MS).toISOString(),
-    )
-    .first<HomecamEventViewRow>();
-  if (!row) return null;
-  if (!row.event_group_id) return mapEvent(row);
-  const segments = await getD1()
-    .prepare(
-      `SELECT id, event_type, confidence, occurred_at, received_at,
-              recording_session_id, recording_offset_ms,
-              event_group_id, segment_index, labels_json,
-              clip_start_at, clip_end_at, clip_state,
-              monotonic_duration_ms, clock_stepped, ai_status, ai_summary,
-              ai_labels_json, ai_severity, ai_confidence, ai_error
-       FROM homecam_events
-       WHERE device_id = ? AND event_group_id = ?
-         AND occurred_at >= ? AND deleted_at IS NULL
-       ORDER BY segment_index ASC, occurred_at ASC, id ASC`,
-    )
-    .bind(
-      deviceId,
-      row.event_group_id,
-      new Date(Date.now() - EVENT_RETENTION_MS).toISOString(),
-    )
-    .all<HomecamEventViewRow>();
-  return segments.results.length > 0
-    ? mapEvent(mergeEventSegments(segments.results))
-    : null;
-}
-
 export async function claimPendingHomecamPushes(input: {
   deviceId: string;
   preferredEventId?: string;
@@ -1731,93 +1498,95 @@ export async function listFamilyMembers(deviceId: string) {
   await ensureHomecamSchema();
   const result = await getD1()
     .prepare(
-      `SELECT user_email, role, created_at FROM device_memberships
+      `SELECT user_id, role, created_at FROM device_memberships
        WHERE device_id = ? AND role IN ('owner', 'family')
        ORDER BY CASE role WHEN 'owner' THEN 0 ELSE 1 END, created_at ASC`,
     )
     .bind(deviceId)
-    .all<{ user_email: string; role: string; created_at: string }>();
-  return result.results.map((row: {
-    user_email: string;
-    role: string;
-    created_at: string;
-  }) => ({
-    email: row.user_email,
+    .all<{ user_id: string; role: string; created_at: string }>();
+  const labels = await userLabels(result.results.map((row) => row.user_id));
+  return result.results.map((row) => ({
+    userId: row.user_id,
+    name: labelFor(labels, row.user_id),
     role: row.role,
     createdAt: row.created_at,
   }));
 }
 
+/** Until invite links exist, an owner invites a guardian by email and access starts at once. */
 export async function inviteFamilyMember(input: {
   deviceId: string;
-  ownerEmail: string;
+  ownerUserId: string;
   familyEmail: string;
 }) {
   await ensureHomecamSchema();
-  const existing = await getMembershipRole(input.deviceId, input.familyEmail);
+  const familyUserId = await ensureUserForIdentity("email", input.familyEmail);
+  if (familyUserId === input.ownerUserId) throw new Error("MEMBER_IS_SELF");
+  const existing = await getMembershipRole(input.deviceId, familyUserId);
   if (existing === "owner") throw new Error("MEMBER_IS_OWNER");
   const createdAt = new Date().toISOString();
   await getD1()
     .prepare(
-      `INSERT INTO device_memberships (device_id, user_email, role, created_at)
+      `INSERT INTO device_memberships (device_id, user_id, role, created_at)
        VALUES (?, ?, 'family', ?)
-       ON CONFLICT(device_id, user_email) DO UPDATE SET role = 'family'`,
+       ON CONFLICT(device_id, user_id) DO UPDATE SET role = 'family'`,
     )
-    .bind(input.deviceId, input.familyEmail, createdAt)
+    .bind(input.deviceId, familyUserId, createdAt)
     .run();
   await writeAuditLog({
     deviceId: input.deviceId,
     actorType: "user",
-    actorId: input.ownerEmail,
+    actorId: input.ownerUserId,
     action: "family.invite",
-    metadata: { userEmail: input.familyEmail },
+    metadata: { userId: familyUserId },
   });
-  return { email: input.familyEmail, role: "family" as const, createdAt };
+  const labels = await userLabels([familyUserId]);
+  return { userId: familyUserId, name: labelFor(labels, familyUserId), role: "family" as const, createdAt };
 }
 
 export async function revokeFamilyMember(input: {
   deviceId: string;
-  ownerEmail: string;
-  familyEmail: string;
+  ownerUserId: string;
+  familyUserId: string;
 }) {
   await ensureHomecamSchema();
   const d1 = getD1();
   const result = await d1
     .prepare(
       `DELETE FROM device_memberships
-       WHERE device_id = ? AND user_email = ? AND role = 'family'`,
+       WHERE device_id = ? AND user_id = ? AND role = 'family'`,
     )
-    .bind(input.deviceId, input.familyEmail)
+    .bind(input.deviceId, input.familyUserId)
     .run();
   if (result.meta.changes > 0) {
     await d1
       .prepare(
         `UPDATE push_subscriptions SET revoked_at = ?
-         WHERE device_id = ? AND user_email = ? AND revoked_at IS NULL`,
+         WHERE device_id = ? AND user_id = ? AND revoked_at IS NULL`,
       )
-      .bind(new Date().toISOString(), input.deviceId, input.familyEmail)
+      .bind(new Date().toISOString(), input.deviceId, input.familyUserId)
       .run();
     await writeAuditLog({
       deviceId: input.deviceId,
       actorType: "user",
-      actorId: input.ownerEmail,
+      actorId: input.ownerUserId,
       action: "family.revoke",
-      metadata: { userEmail: input.familyEmail },
+      metadata: { userId: input.familyUserId },
     });
   }
   return result.meta.changes > 0;
 }
 
-export async function listPushSubscriptions(userEmail: string) {
+export async function listPushSubscriptions(userId: string) {
   await ensureHomecamSchema();
   const result = await getD1()
     .prepare(
       `SELECT id, device_id, endpoint, created_at, updated_at
        FROM push_subscriptions
-       WHERE user_email = ? AND revoked_at IS NULL
+       WHERE user_id = ? AND revoked_at IS NULL
        ORDER BY created_at DESC`,
     )
-    .bind(userEmail)
+    .bind(userId)
     .all<{
       id: string;
       device_id: string;
@@ -1842,7 +1611,7 @@ export async function listPushSubscriptions(userEmail: string) {
 
 export async function upsertPushSubscription(input: {
   deviceId: string;
-  userEmail: string;
+  userId: string;
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -1852,18 +1621,18 @@ export async function upsertPushSubscription(input: {
   const existing = await d1
     .prepare(
       `SELECT id FROM push_subscriptions
-       WHERE device_id = ? AND user_email = ? AND endpoint = ?`,
+       WHERE device_id = ? AND user_id = ? AND endpoint = ?`,
     )
-    .bind(input.deviceId, input.userEmail, input.endpoint)
+    .bind(input.deviceId, input.userId, input.endpoint)
     .first<{ id: string }>();
   const id = existing?.id ?? crypto.randomUUID();
   const nowIso = new Date().toISOString();
   await d1
     .prepare(
       `INSERT INTO push_subscriptions
-       (id, device_id, user_email, endpoint, p256dh, auth, created_at, updated_at)
+       (id, device_id, user_id, endpoint, p256dh, auth, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(user_email, device_id, endpoint) DO UPDATE SET
+       ON CONFLICT(user_id, device_id, endpoint) DO UPDATE SET
          p256dh = excluded.p256dh,
          auth = excluded.auth,
          updated_at = excluded.updated_at,
@@ -1872,7 +1641,7 @@ export async function upsertPushSubscription(input: {
     .bind(
       id,
       input.deviceId,
-      input.userEmail,
+      input.userId,
       input.endpoint,
       input.p256dh,
       input.auth,
@@ -1884,16 +1653,16 @@ export async function upsertPushSubscription(input: {
 }
 
 export async function revokePushSubscription(
-  userEmail: string,
+  userId: string,
   subscriptionId: string,
 ) {
   await ensureHomecamSchema();
   const result = await getD1()
     .prepare(
       `UPDATE push_subscriptions SET revoked_at = ?
-       WHERE id = ? AND user_email = ? AND revoked_at IS NULL`,
+       WHERE id = ? AND user_id = ? AND revoked_at IS NULL`,
     )
-    .bind(new Date().toISOString(), subscriptionId, userEmail)
+    .bind(new Date().toISOString(), subscriptionId, userId)
     .run();
   return result.meta.changes > 0;
 }
@@ -1908,7 +1677,7 @@ export async function listActivePushTargets(deviceId: string) {
        FROM push_subscriptions
        INNER JOIN device_memberships
          ON device_memberships.device_id = push_subscriptions.device_id
-        AND device_memberships.user_email = push_subscriptions.user_email
+        AND device_memberships.user_id = push_subscriptions.user_id
         AND device_memberships.role IN ('owner', 'family', 'broadcaster')
        INNER JOIN devices ON devices.id = push_subscriptions.device_id
        WHERE push_subscriptions.device_id = ?
@@ -1952,7 +1721,7 @@ export async function revokePushSubscriptionsById(ids: string[]) {
 
 export async function acquireTalkLease(input: {
   deviceId: string;
-  userEmail: string;
+  userId: string;
   clientId: string;
   existingLeaseId?: string;
 }) {
@@ -1965,16 +1734,16 @@ export async function acquireTalkLease(input: {
   const lease = await d1
     .prepare(
       `INSERT INTO talk_leases
-       (device_id, lease_id, user_email, client_id, expires_at, created_at, updated_at)
+       (device_id, lease_id, user_id, client_id, expires_at, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(device_id) DO UPDATE SET
          lease_id = CASE
            WHEN talk_leases.expires_at <= ? THEN excluded.lease_id
            ELSE talk_leases.lease_id
          END,
-         user_email = CASE
-           WHEN talk_leases.expires_at <= ? THEN excluded.user_email
-           ELSE talk_leases.user_email
+         user_id = CASE
+           WHEN talk_leases.expires_at <= ? THEN excluded.user_id
+           ELSE talk_leases.user_id
          END,
          client_id = CASE
            WHEN talk_leases.expires_at <= ? THEN excluded.client_id
@@ -1984,7 +1753,7 @@ export async function acquireTalkLease(input: {
          updated_at = excluded.updated_at
        WHERE talk_leases.expires_at <= ?
           OR (
-            talk_leases.user_email = excluded.user_email
+            talk_leases.user_id = excluded.user_id
             AND talk_leases.client_id = excluded.client_id
             AND CAST(? AS TEXT) IS NOT NULL
             AND talk_leases.lease_id = ?
@@ -1994,7 +1763,7 @@ export async function acquireTalkLease(input: {
     .bind(
       input.deviceId,
       proposedLeaseId,
-      input.userEmail,
+      input.userId,
       input.clientId,
       expiresAt,
       nowIso,
@@ -2011,7 +1780,7 @@ export async function acquireTalkLease(input: {
   await writeAuditLog({
     deviceId: input.deviceId,
     actorType: "user",
-    actorId: input.userEmail,
+    actorId: input.userId,
     action: "talk.acquire",
     metadata: { leaseId: lease.lease_id, clientId: input.clientId },
   });
@@ -2020,7 +1789,7 @@ export async function acquireTalkLease(input: {
 
 export async function releaseTalkLease(input: {
   deviceId: string;
-  userEmail: string;
+  userId: string;
   leaseId: string;
   clientId: string;
 }) {
@@ -2028,15 +1797,15 @@ export async function releaseTalkLease(input: {
   const result = await getD1()
     .prepare(
       `DELETE FROM talk_leases
-       WHERE device_id = ? AND user_email = ? AND lease_id = ? AND client_id = ?`,
+       WHERE device_id = ? AND user_id = ? AND lease_id = ? AND client_id = ?`,
     )
-    .bind(input.deviceId, input.userEmail, input.leaseId, input.clientId)
+    .bind(input.deviceId, input.userId, input.leaseId, input.clientId)
     .run();
   if (result.meta.changes > 0) {
     await writeAuditLog({
       deviceId: input.deviceId,
       actorType: "user",
-      actorId: input.userEmail,
+      actorId: input.userId,
       action: "talk.release",
       metadata: { leaseId: input.leaseId, clientId: input.clientId },
     });
@@ -2189,59 +1958,6 @@ function mapState(row: StateRow) {
     detectorHealthy: Boolean(row.detector_healthy),
     lastSeenAt: row.last_seen_at,
     updatedAt: row.updated_at,
-  };
-}
-
-function mergeEventSegments(rows: HomecamEventViewRow[]): HomecamEventViewRow {
-  if (rows.length === 0) throw new Error("EVENT_SEGMENTS_EMPTY");
-  const ordered = [...rows].sort((left, right) => {
-    const leftIndex = left.segment_index ?? -1;
-    const rightIndex = right.segment_index ?? -1;
-    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
-    return Date.parse(left.occurred_at) - Date.parse(right.occurred_at);
-  });
-  const first = ordered[0];
-  const latest = ordered.at(-1)!;
-  const clipStarts = ordered
-    .map((row) => row.clip_start_at)
-    .filter((value): value is string => Boolean(value));
-  const clipEnds = ordered
-    .map((row) => row.clip_end_at)
-    .filter((value): value is string => Boolean(value));
-  const durations = ordered
-    .map((row) => row.monotonic_duration_ms)
-    .filter((value): value is number => typeof value === "number");
-  const allReady = ordered.every((row) => row.clip_state === "ready");
-  const anyRecording = ordered.some((row) => row.clip_state === "recording");
-  return {
-    ...latest,
-    id: first.id,
-    occurred_at: ordered.reduce(
-      (earliest, row) =>
-        Date.parse(row.occurred_at) < Date.parse(earliest)
-          ? row.occurred_at
-          : earliest,
-      first.occurred_at,
-    ),
-    clip_start_at:
-      clipStarts.length > 0
-        ? clipStarts.reduce((earliest, value) =>
-            Date.parse(value) < Date.parse(earliest) ? value : earliest,
-          )
-        : null,
-    clip_end_at:
-      clipEnds.length > 0
-        ? clipEnds.reduce((latestValue, value) =>
-            Date.parse(value) > Date.parse(latestValue) ? value : latestValue,
-          )
-        : null,
-    clip_state: anyRecording ? "recording" : allReady ? "ready" : latest.clip_state,
-    monotonic_duration_ms:
-      durations.length > 0
-        ? durations.reduce((total, value) => total + value, 0)
-        : null,
-    clock_stepped: ordered.some((row) => Boolean(row.clock_stepped)) ? 1 : 0,
-    segment_count: ordered.length,
   };
 }
 

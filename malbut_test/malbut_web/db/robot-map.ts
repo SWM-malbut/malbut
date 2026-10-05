@@ -7,11 +7,16 @@ import type {
 import {
   ensureHomecamSchema,
   userCanManageDevice,
+  userCanNavigateDevice,
   userCanViewDevice,
   writeAuditLog,
 } from "./homecam";
 
 const ROBOT_ONLINE_MS = 15_000;
+// 보호자도 쓰는 명령: 지도에서 보내기와 멈추기(누가 보낸 이동이든 취소할 수 있다).
+const NAVIGATION_OPERATIONS = new Set<RobotOperation>([
+  "navigation_preview", "navigation_start", "navigation_cancel",
+]);
 // A held velocity the robot has not claimed quickly is dropped, never run late.
 const MANUAL_MOVE_QUEUE_MS = 2_000;
 // Velocities arrive several times a second while driving; finished ones are trimmed.
@@ -174,9 +179,9 @@ export async function storeRobotMap(deviceId: string, map: RobotMapUpload) {
   }
 }
 
-export async function getRobotSnapshot(deviceId: string, userEmail: string) {
+export async function getRobotSnapshot(deviceId: string, userId: string) {
   await ensureHomecamSchema();
-  if (!(await userCanViewDevice(deviceId, userEmail))) return null;
+  if (!(await userCanViewDevice(deviceId, userId))) return null;
   const [state, savedMap, draftMap, command] = await Promise.all([
     getD1()
       .prepare("SELECT * FROM robot_runtime_state WHERE device_id = ?")
@@ -217,11 +222,11 @@ export async function getRobotSnapshot(deviceId: string, userEmail: string) {
 
 export async function getRobotMapPreview(
   deviceId: string,
-  userEmail: string,
+  userId: string,
   revision = "",
 ) {
   await ensureHomecamSchema();
-  if (!(await userCanViewDevice(deviceId, userEmail))) return null;
+  if (!(await userCanViewDevice(deviceId, userId))) return null;
   const [saved, draft] = await Promise.all([
     getD1()
       .prepare("SELECT revision, preview_base64 FROM robot_maps WHERE device_id = ?")
@@ -238,9 +243,9 @@ export async function getRobotMapPreview(
   return saved ?? draft;
 }
 
-export async function getRobotMapSemantics(deviceId: string, userEmail: string) {
+export async function getRobotMapSemantics(deviceId: string, userId: string) {
   await ensureHomecamSchema();
-  if (!(await userCanViewDevice(deviceId, userEmail))) return null;
+  if (!(await userCanViewDevice(deviceId, userId))) return null;
   const map = await getD1()
     .prepare(
       `SELECT revision, map_id, map_revision, user_map_json, semantic_zones_json
@@ -260,12 +265,15 @@ export async function getRobotMapSemantics(deviceId: string, userEmail: string) 
 
 export async function createRobotCommand(input: {
   deviceId: string;
-  userEmail: string;
+  userId: string;
   operation: RobotOperation;
   payload?: Record<string, unknown>;
 }) {
   await ensureHomecamSchema();
-  if (!(await userCanManageDevice(input.deviceId, input.userEmail))) {
+  const permitted = NAVIGATION_OPERATIONS.has(input.operation)
+    ? await userCanNavigateDevice(input.deviceId, input.userId)
+    : await userCanManageDevice(input.deviceId, input.userId);
+  if (!permitted) {
     throw new Error("FORBIDDEN");
   }
   await assertDriveCommandAllowed(input);
@@ -312,7 +320,7 @@ export async function createRobotCommand(input: {
       input.deviceId,
       input.operation,
       JSON.stringify(input.payload ?? {}),
-      input.userEmail,
+      input.userId,
       now,
       input.deviceId,
     )
@@ -328,7 +336,7 @@ export async function createRobotCommand(input: {
     await writeAuditLog({
       deviceId: input.deviceId,
       actorType: "user",
-      actorId: input.userEmail,
+      actorId: input.userId,
       action: `robot.${input.operation}`,
       metadata: { commandId: id },
     });
@@ -458,9 +466,9 @@ async function expireStaleRobotCommands(deviceId: string) {
 }
 
 /** Recent requests with bounded results, for the owner's debugging view. */
-export async function listRobotCommands(deviceId: string, userEmail: string, limit = 20) {
+export async function listRobotCommands(deviceId: string, userId: string, limit = 20) {
   await ensureHomecamSchema();
-  if (!(await userCanManageDevice(deviceId, userEmail))) return null;
+  if (!(await userCanManageDevice(deviceId, userId))) return null;
   const result = await getD1()
     .prepare(
       // Held joystick velocities (5 Hz) would fill the list; the pad reports them.

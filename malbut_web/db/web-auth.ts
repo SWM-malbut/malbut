@@ -3,16 +3,30 @@ import { getD1 } from "./index";
 
 export const WEB_SESSION_COOKIE = "__Host-malbut_session";
 export const WEB_CHALLENGE_COOKIE = "__Host-malbut_challenge";
+export const OIDC_LOGIN_COOKIE = "__Host-malbut_oidc";
+export const OIDC_LOGIN_TTL_SECONDS = 10 * 60;
 export const WEB_SESSION_TTL_SECONDS = 12 * 60 * 60;
 export const WEB_CHALLENGE_TTL_SECONDS = 5 * 60;
 const MAX_CHALLENGE_FAILURES = 5;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 
+/** A session belongs to a user (social login) or, until email login is removed, to a Cognito email. */
 export type WebSessionUser = {
-  email: string;
+  userId: string | null;
+  email: string | null;
   fullName: string | null;
-  subject: string;
+  subject: string | null;
+};
+
+export type SocialProvider = "kakao" | "naver" | "google";
+
+export type OidcLoginTransaction = {
+  provider: SocialProvider;
+  state: string;
+  nonce: string;
+  codeVerifier: string;
+  returnTo: string;
 };
 
 export type WebAuthChallengeName =
@@ -28,8 +42,9 @@ export type WebAuthChallenge = {
 };
 
 type SessionRow = {
-  cognito_sub: string;
-  user_email: string;
+  user_id: string | null;
+  cognito_sub: string | null;
+  user_email: string | null;
   full_name: string | null;
 };
 
@@ -74,6 +89,31 @@ export async function createWebSession(input: {
   return { token, expiresAt };
 }
 
+export async function createUserWebSession(input: {
+  userId: string;
+  sessionSecret: string;
+  now?: Date;
+}): Promise<{ token: string; expiresAt: Date }> {
+  const token = randomToken();
+  const now = input.now ?? new Date();
+  const expiresAt = new Date(now.getTime() + WEB_SESSION_TTL_SECONDS * 1000);
+  await getD1()
+    .prepare(
+      `INSERT INTO web_auth_sessions
+       (token_digest, user_id, created_at, last_seen_at, expires_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      tokenDigest(token, input.sessionSecret),
+      input.userId,
+      now.toISOString(),
+      now.toISOString(),
+      expiresAt.toISOString(),
+    )
+    .run();
+  return { token, expiresAt };
+}
+
 export async function getWebSessionUser(
   token: string,
   sessionSecret: string,
@@ -86,16 +126,85 @@ export async function getWebSessionUser(
       `UPDATE web_auth_sessions
        SET last_seen_at = ?
        WHERE token_digest = ? AND revoked_at IS NULL AND expires_at > ?
-       RETURNING cognito_sub, user_email, full_name`,
+       RETURNING user_id, cognito_sub, user_email, full_name`,
     )
     .bind(now.toISOString(), digest, now.toISOString())
     .first<SessionRow>();
   if (!row) return null;
   return {
+    userId: row.user_id,
     email: row.user_email,
     fullName: row.full_name,
     subject: row.cognito_sub,
   };
+}
+
+/** Remembers one pending social sign-in; the browser holds only an opaque token. */
+export async function createOidcLoginTransaction(
+  input: OidcLoginTransaction & { sessionSecret: string; now?: Date },
+): Promise<{ token: string; expiresAt: Date }> {
+  const token = randomToken();
+  const now = input.now ?? new Date();
+  const expiresAt = new Date(now.getTime() + OIDC_LOGIN_TTL_SECONDS * 1000);
+  await getD1()
+    .prepare("DELETE FROM oidc_login_transactions WHERE expires_at <= ?")
+    .bind(now.toISOString())
+    .run();
+  await getD1()
+    .prepare(
+      `INSERT INTO oidc_login_transactions
+       (token_digest, provider, state, nonce, code_verifier_ciphertext, return_to,
+        created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      tokenDigest(token, input.sessionSecret),
+      input.provider,
+      input.state,
+      input.nonce,
+      encryptCognitoSession(input.codeVerifier, input.sessionSecret),
+      input.returnTo,
+      now.toISOString(),
+      expiresAt.toISOString(),
+    )
+    .run();
+  return { token, expiresAt };
+}
+
+/** Uses a pending sign-in once. A replayed or expired callback finds nothing. */
+export async function consumeOidcLoginTransaction(
+  token: string,
+  provider: SocialProvider,
+  sessionSecret: string,
+  now = new Date(),
+): Promise<OidcLoginTransaction | null> {
+  if (!TOKEN_PATTERN.test(token)) return null;
+  const row = await getD1()
+    .prepare(
+      `UPDATE oidc_login_transactions SET consumed_at = ?
+       WHERE token_digest = ? AND provider = ? AND consumed_at IS NULL AND expires_at > ?
+       RETURNING provider, state, nonce, code_verifier_ciphertext, return_to`,
+    )
+    .bind(now.toISOString(), tokenDigest(token, sessionSecret), provider, now.toISOString())
+    .first<{
+      provider: SocialProvider;
+      state: string;
+      nonce: string;
+      code_verifier_ciphertext: string;
+      return_to: string;
+    }>();
+  if (!row) return null;
+  try {
+    return {
+      provider: row.provider,
+      state: row.state,
+      nonce: row.nonce,
+      codeVerifier: decryptCognitoSession(row.code_verifier_ciphertext, sessionSecret),
+      returnTo: row.return_to,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function revokeWebSession(

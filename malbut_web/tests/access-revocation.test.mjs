@@ -14,7 +14,7 @@ test("family revocation blocks new grants and closes the cooperative live client
     ),
     readFile(
       new URL(
-        "../app/api/recordings/[recordingId]/hls/[playbackId]/[resource]/route.ts",
+        "../app/api/devices/[deviceId]/fall-hls/[playbackId]/[resource]/route.ts",
         import.meta.url,
       ),
       "utf8",
@@ -29,7 +29,8 @@ test("family revocation blocks new grants and closes the cooperative live client
   assert.match(database, /UPDATE push_subscriptions SET revoked_at/);
   assert.match(liveRoute, /export async function GET/);
   assert.match(liveRoute, /userCanViewDevice/);
-  assert.match(hlsRoute, /getAuthorizedRecordingSession/);
+  // Every HLS resource request re-checks membership, so a revoked guardian loses playback.
+  assert.match(hlsRoute, /userCanViewDevice\(deviceId, userId\)/);
   assert.match(page, /window\.setInterval\(\(\) => void verifyAccess\(\), 5_000\)/);
   assert.match(page, /홈캠 접근 권한이 해제되었습니다/);
 });

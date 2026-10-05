@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getPostgresPool, type SqlExecutor } from "./postgres";
+import { labelFor, userLabels } from "./users";
 import type { FallClipInput } from "../app/fall-clip-contract";
 
 // Clip ranges, human review and [재발신] reminders. Robot events and their
@@ -22,14 +23,21 @@ export const REMINDER_RULES = {
   check: { intervalMs: 180_000, total: 2 },
 } as const;
 const LEVEL_RANK_SQL = "CASE level WHEN 'info' THEN 1 WHEN 'check' THEN 2 ELSE 3 END";
+// Retain the source timeline/clips. Association closes its automatic queue,
+// not the user's review, and is never a normal-activity judgment.
+const MERGED_TARGETS_SQL = `(SELECT e.payload_json::jsonb->'mergedIntoIncidentIds'
+  FROM fall_incident_events e WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
+    AND e.payload_json::jsonb->>'eventKind'='incident_merged'
+  ORDER BY e.sequence DESC LIMIT 1)`;
+const ROBOT_MERGED_SQL = `(i.origin='robot' AND i.state='resolved' AND ${MERGED_TARGETS_SQL} IS NOT NULL)`;
 const ROBOT_NORMAL_SQL =
   "(i.origin='robot' AND i.state='resolved' AND i.assessment='normal_activity' AND NOT i.fall_seen)";
 // A reopened incident needs a human again even if the robot judged it normal.
-const NEEDS_CHECK_SQL = `(NOT ${ROBOT_NORMAL_SQL} OR i.reopened_at IS NOT NULL)`;
+const NEEDS_CHECK_SQL = `((NOT ${ROBOT_NORMAL_SQL} AND NOT ${ROBOT_MERGED_SQL}) OR i.reopened_at IS NOT NULL)`;
 const FILTER_SQL: Record<IncidentFilter, string> = {
   all: "TRUE",
   check: `i.review_state='open' AND i.origin='robot' AND ${NEEDS_CHECK_SQL}`,
-  closed: "i.review_state='closed'",
+  closed: `(i.review_state='closed' OR (${ROBOT_MERGED_SQL} AND i.reopened_at IS NULL))`,
   normal: ROBOT_NORMAL_SQL,
   report: "i.origin='user_report'",
 };
@@ -110,6 +118,7 @@ const SUMMARY_COLUMNS = `
   i.occurred_at,i.updated_at,i.review_state,i.closed_at,i.closed_by,i.reopened_at,
   i.unacknowledged_since,i.reported_by,i.reported_moment_at,i.report_memo,
   ${ROBOT_NORMAL_SQL} AS robot_normal,
+  ${MERGED_TARGETS_SQL} AS merged_targets,
   (SELECT e.payload_json::jsonb->>'eventKind' FROM fall_incident_events e
     WHERE e.device_id=i.device_id AND e.incident_id=i.incident_id
       AND e.payload_json::jsonb->>'eventKind' = ANY($2::text[])
@@ -127,27 +136,32 @@ type SummaryRow = {
   closed_by: string | null; reopened_at: unknown; unacknowledged_since: unknown;
   reported_by: string | null; reported_moment_at: unknown; report_memo: string | null; robot_normal: boolean;
   last_analysis_kind: string | null; found_down: boolean; opinion_counts: Record<string, number> | null;
+  merged_targets: string[] | null;
 };
 
-function summary(row: SummaryRow) {
+function summary(row: SummaryRow, names: Map<string, string> = new Map()) {
   const open = row.review_state === "open";
   const aiFailed = row.origin === "robot" && (row.assessment === "unobservable" ||
     row.last_analysis_kind === "analysis_unavailable" || row.last_analysis_kind === "recheck_unavailable");
   const category = row.origin === "user_report" ? "report"
+    : row.merged_targets?.length && row.reopened_at === null ? "merged"
     : row.robot_normal && row.reopened_at === null ? "normal" : "check";
   return {
     incidentId: row.incident_id, origin: row.origin, category,
+    mergedIntoIncidentIds: row.merged_targets ?? [],
     state: row.state, fallSeen: row.fall_seen, assessment: row.assessment, answer: row.answer,
     notificationRank: row.notification_rank, occurredAt: iso(row.occurred_at), updatedAt: iso(row.updated_at),
     reviewState: row.review_state, closedAt: iso(row.closed_at), closedBy: row.closed_by,
+    closedByName: labelFor(names, row.closed_by),
     reopenedAt: iso(row.reopened_at),
     // Display labels; none of these change the robot's automatic judgment.
     needsCheck: open && category === "check",
     aiFailed,
-    unacknowledged: open && row.unacknowledged_since !== null,
+    unacknowledged: open && category !== "merged" && row.unacknowledged_since !== null,
     reviewPending: open && category === "normal",
     foundDown: row.found_down,
-    reportedBy: row.reported_by, reportedMomentAt: iso(row.reported_moment_at), reportMemo: row.report_memo,
+    reportedBy: row.reported_by, reportedByName: labelFor(names, row.reported_by),
+    reportedMomentAt: iso(row.reported_moment_at), reportMemo: row.report_memo,
     opinionCounts: row.opinion_counts ?? {},
   };
 }
@@ -185,12 +199,13 @@ export async function listFallIncidentSummaries(deviceId: string, filter: Incide
     `SELECT incident_id,count(*)::int AS n FROM fall_web_notices WHERE device_id=$1
        AND incident_id=ANY($2::text[]) AND kind='resend' AND status='accepted' GROUP BY incident_id`, [deviceId, ids],
   )).rows.map((r) => [r.incident_id, r.n as number]));
+  const names = await userLabels(rows.flatMap((row) => [row.closed_by, row.reported_by]));
   return rows.map((row) => {
     const first = clips.find((c) => c.incident_id === row.incident_id);
     const level = levels.get(row.incident_id) ?? null;
     const total = level === "urgent" ? 3 : level === "check" ? 2 : 1;
     return {
-      ...summary(row),
+      ...summary(row, names),
       sceneState: first ? clipPlaybackState(iso(first.start_at)!, iso(first.end_at)!, spans) : null,
       linkedCount: linked.get(row.incident_id) ?? 0,
       // "알림: 긴급 · 3/3회 발송": first notification plus delivered [재발신].
@@ -291,16 +306,16 @@ export async function getFallIncidentDetail(deviceId: string, incidentId: string
       createdAt: iso(n.created_at), acceptedAt: iso(n.accepted_at) })),
   ].sort((a, b) => a.createdAt!.localeCompare(b.createdAt!));
   const opinions = (await pool.query(
-    `SELECT o.user_email,o.label,o.memo,o.updated_at,m.role FROM fall_incident_opinions o
-     LEFT JOIN device_memberships m ON m.device_id=o.device_id AND m.user_email=o.user_email
+    `SELECT o.user_id,o.label,o.memo,o.updated_at,m.role FROM fall_incident_opinions o
+     LEFT JOIN device_memberships m ON m.device_id=o.device_id AND m.user_id=o.user_id
      WHERE o.device_id=$1 AND o.incident_id=$2 ORDER BY o.updated_at`, [deviceId, incidentId],
-  )).rows.map((o) => ({ userEmail: o.user_email, role: o.role ?? null, label: o.label, memo: o.memo,
-    updatedAt: iso(o.updated_at) }));
+  )).rows;
   const activity = (await pool.query(
-    `SELECT actor_email,action,label,memo,created_at FROM fall_incident_activity
+    `SELECT actor_user_id,action,label,memo,created_at FROM fall_incident_activity
      WHERE device_id=$1 AND incident_id=$2 ORDER BY created_at,id`, [deviceId, incidentId],
-  )).rows.map((a) => ({ actorEmail: a.actor_email, action: a.action, label: a.label, memo: a.memo,
-    createdAt: iso(a.created_at) }));
+  )).rows;
+  const names = await userLabels([row.closed_by, row.reported_by,
+    ...opinions.map((o) => o.user_id), ...activity.map((a) => a.actor_user_id)]);
   // Another person's incident in the same scene: overlapping clip ranges.
   const linked = (await pool.query(
     `SELECT DISTINCT o.incident_id FROM fall_incident_clips mine
@@ -308,7 +323,14 @@ export async function getFallIncidentDetail(deviceId: string, incidentId: string
        AND o.start_at<mine.end_at AND o.end_at>mine.start_at
      WHERE mine.device_id=$1 AND mine.incident_id=$2 ORDER BY o.incident_id`, [deviceId, incidentId],
   )).rows.map((l) => l.incident_id);
-  return { ...summary(row), clips, robotEvents, notifications, opinions, activity, linkedIncidentIds: linked };
+  return {
+    ...summary(row, names), clips, robotEvents, notifications,
+    opinions: opinions.map((o) => ({ userId: o.user_id, userName: labelFor(names, o.user_id), role: o.role ?? null,
+      label: o.label, memo: o.memo, updatedAt: iso(o.updated_at) })),
+    activity: activity.map((a) => ({ actorUserId: a.actor_user_id, actorName: labelFor(names, a.actor_user_id),
+      action: a.action, label: a.label, memo: a.memo, createdAt: iso(a.created_at) })),
+    linkedIncidentIds: linked,
+  };
 }
 
 export async function getFallClipForPlayback(deviceId: string, incidentId: string, segmentIndex: number) {
@@ -340,31 +362,31 @@ async function lockIncident(db: Queryable, deviceId: string, incidentId: string)
  * acknowledgement that stops [재발신] for everyone. A label that was absent
  * when the incident was closed reopens it and notifies everyone.
  */
-export async function setFallOpinion(deviceId: string, incidentId: string, userEmail: string,
+export async function setFallOpinion(deviceId: string, incidentId: string, userId: string,
   label: OpinionLabel | null, memo: string | null) {
   return transaction(deviceId, async (db) => {
     const incident = await lockIncident(db, deviceId, incidentId);
     if (label === null) {
       const removed = await db.query(
-        "DELETE FROM fall_incident_opinions WHERE device_id=$1 AND incident_id=$2 AND user_email=$3",
-        [deviceId, incidentId, userEmail],
+        "DELETE FROM fall_incident_opinions WHERE device_id=$1 AND incident_id=$2 AND user_id=$3",
+        [deviceId, incidentId, userId],
       );
       if (removed.rowCount) {
         await db.query(
-          `INSERT INTO fall_incident_activity(device_id,incident_id,actor_email,action)
-           VALUES($1,$2,$3,'opinion_cleared')`, [deviceId, incidentId, userEmail],
+          `INSERT INTO fall_incident_activity(device_id,incident_id,actor_user_id,action)
+           VALUES($1,$2,$3,'opinion_cleared')`, [deviceId, incidentId, userId],
         );
       }
       return { reopened: false, noticeId: null };
     }
     await db.query(
-      `INSERT INTO fall_incident_opinions(device_id,incident_id,user_email,label,memo) VALUES($1,$2,$3,$4,$5)
-       ON CONFLICT(device_id,incident_id,user_email) DO UPDATE SET label=excluded.label,memo=excluded.memo,
-         updated_at=CURRENT_TIMESTAMP`, [deviceId, incidentId, userEmail, label, memo],
+      `INSERT INTO fall_incident_opinions(device_id,incident_id,user_id,label,memo) VALUES($1,$2,$3,$4,$5)
+       ON CONFLICT(device_id,incident_id,user_id) DO UPDATE SET label=excluded.label,memo=excluded.memo,
+         updated_at=CURRENT_TIMESTAMP`, [deviceId, incidentId, userId, label, memo],
     );
     await db.query(
-      `INSERT INTO fall_incident_activity(device_id,incident_id,actor_email,action,label,memo)
-       VALUES($1,$2,$3,'opinion_set',$4,$5)`, [deviceId, incidentId, userEmail, label, memo],
+      `INSERT INTO fall_incident_activity(device_id,incident_id,actor_user_id,action,label,memo)
+       VALUES($1,$2,$3,'opinion_set',$4,$5)`, [deviceId, incidentId, userId, label, memo],
     );
     // Acknowledged: stop pending reminders for everyone.
     await db.query(
@@ -385,8 +407,8 @@ export async function setFallOpinion(deviceId: string, incidentId: string, userE
       [deviceId, incidentId],
     );
     await db.query(
-      `INSERT INTO fall_incident_activity(device_id,incident_id,actor_email,action,label)
-       VALUES($1,$2,$3,'reopened',$4)`, [deviceId, incidentId, userEmail, label],
+      `INSERT INTO fall_incident_activity(device_id,incident_id,actor_user_id,action,label)
+       VALUES($1,$2,$3,'reopened',$4)`, [deviceId, incidentId, userId, label],
     );
     const noticeId = randomUUID();
     // created_at equals the opinion's time, so the reopening opinion itself
@@ -404,7 +426,7 @@ export async function setFallOpinion(deviceId: string, incidentId: string, userE
  * Any member may close once someone has left an opinion (a human judgment is
  * the point of closing); the labels present now decide what later reopens it.
  */
-export async function closeFallIncident(deviceId: string, incidentId: string, userEmail: string) {
+export async function closeFallIncident(deviceId: string, incidentId: string, userId: string) {
   return transaction(deviceId, async (db) => {
     const incident = await lockIncident(db, deviceId, incidentId);
     if (incident.review_state === "closed") return { closed: true, changed: false };
@@ -416,22 +438,22 @@ export async function closeFallIncident(deviceId: string, incidentId: string, us
     await db.query(
       `UPDATE fall_incidents SET review_state='closed',closed_at=CURRENT_TIMESTAMP,closed_by=$3,
          closed_labels=$4::jsonb,unacknowledged_since=NULL,updated_at=CURRENT_TIMESTAMP
-       WHERE device_id=$1 AND incident_id=$2`, [deviceId, incidentId, userEmail, JSON.stringify(labels)],
+       WHERE device_id=$1 AND incident_id=$2`, [deviceId, incidentId, userId, JSON.stringify(labels)],
     );
     await db.query(
       `UPDATE fall_web_notices SET status='canceled',lease_id=NULL,lease_until=NULL
        WHERE device_id=$1 AND incident_id=$2 AND status='pending'`, [deviceId, incidentId],
     );
     await db.query(
-      `INSERT INTO fall_incident_activity(device_id,incident_id,actor_email,action)
-       VALUES($1,$2,$3,'closed')`, [deviceId, incidentId, userEmail],
+      `INSERT INTO fall_incident_activity(device_id,incident_id,actor_user_id,action)
+       VALUES($1,$2,$3,'closed')`, [deviceId, incidentId, userId],
     );
     return { closed: true, changed: true };
   });
 }
 
 /** Missed fall: one user-picked moment, −10 s/+20 s, recorded without notifying anyone. */
-export async function reportMissedFall(deviceId: string, userEmail: string, momentAt: string, now = Date.now(),
+export async function reportMissedFall(deviceId: string, userId: string, momentAt: string, now = Date.now(),
   memo: string | null = null) {
   const moment = Date.parse(momentAt);
   const note = memo?.trim() || null;
@@ -442,7 +464,7 @@ export async function reportMissedFall(deviceId: string, userEmail: string, mome
   return transaction(deviceId, async (db) => {
     await db.query(
       `INSERT INTO fall_incidents(device_id,incident_id,origin,occurred_at,reported_by,reported_moment_at,report_memo)
-       VALUES($1,$2,'user_report',$3,$4,$3,$5)`, [deviceId, incidentId, momentAt, userEmail, note],
+       VALUES($1,$2,'user_report',$3,$4,$3,$5)`, [deviceId, incidentId, momentAt, userId, note],
     );
     await db.query(
       `INSERT INTO fall_incident_clips(device_id,incident_id,segment_index,revision,start_at,end_at,anchor_kinds)
@@ -451,8 +473,8 @@ export async function reportMissedFall(deviceId: string, userEmail: string, mome
         new Date(moment + REPORT_POST_MS).toISOString()],
     );
     await db.query(
-      `INSERT INTO fall_incident_activity(device_id,incident_id,actor_email,action,memo)
-       VALUES($1,$2,$3,'reported',$4)`, [deviceId, incidentId, userEmail, note],
+      `INSERT INTO fall_incident_activity(device_id,incident_id,actor_user_id,action,memo)
+       VALUES($1,$2,$3,'reported',$4)`, [deviceId, incidentId, userId, note],
     );
     return { incidentId };
   });
@@ -505,7 +527,11 @@ export async function scheduleFallReminders(now = Date.now()) {
       // Robot/AI judged it normal: no reminders for the robot's alert (a reopen still counts).
       const robotNormal = incident.origin === "robot" && incident.state === "resolved" &&
         incident.assessment === "normal_activity" && !incident.fall_seen;
-      if (cycle && robotNormal && cycle.key.startsWith("robot:")) cycle = null;
+      const robotMerged = (await db.query(
+        `SELECT ${ROBOT_MERGED_SQL} AS merged FROM fall_incidents i
+         WHERE i.device_id=$1 AND i.incident_id=$2`, [deviceId, incidentId],
+      )).rows[0]?.merged;
+      if (cycle && (robotNormal || robotMerged) && cycle.key.startsWith("robot:")) cycle = null;
       if (!cycle) {
         await db.query(
           `UPDATE fall_web_notices SET status='canceled',lease_id=NULL,lease_until=NULL
@@ -569,7 +595,7 @@ export async function claimFallNotice(deviceId?: string, noticeId?: string): Pro
        SELECT n.device_id,n.notice_id FROM fall_web_notices n
        JOIN fall_incidents i ON i.device_id=n.device_id AND i.incident_id=n.incident_id
        WHERE n.status='pending' AND n.next_attempt_at<=CURRENT_TIMESTAMP AND i.review_state='open'
-         AND NOT (n.kind='resend' AND n.cycle_key LIKE 'robot:%' AND ${ROBOT_NORMAL_SQL})
+         AND NOT (n.kind='resend' AND n.cycle_key LIKE 'robot:%' AND (${ROBOT_NORMAL_SQL} OR ${ROBOT_MERGED_SQL}))
          AND (n.lease_until IS NULL OR n.lease_until<=CURRENT_TIMESTAMP)
          AND ($1::text IS NULL OR n.device_id=$1) AND ($2::text IS NULL OR n.notice_id=$2)
        ORDER BY CASE n.level WHEN 'urgent' THEN 0 ELSE 1 END,n.created_at

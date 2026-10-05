@@ -1,6 +1,6 @@
 import { getPostgresPool } from "./postgres";
 
-const REQUIRED_MIGRATION = "0011_manual_move_stream";
+const REQUIRED_MIGRATION = "0017_social_login";
 const schemaReadiness = new WeakMap<object, Promise<void>>();
 
 export function ensureDatabaseSchema() {

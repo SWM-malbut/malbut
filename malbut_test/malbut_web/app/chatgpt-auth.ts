@@ -1,11 +1,15 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getRuntimeValue } from "./runtime-env";
-import { getAuthenticatedUser } from "./server-auth";
+import { getAuthenticatedUser, userIdFor } from "./server-auth";
+import { getUserProfile } from "../db/users";
 
 export type ChatGPTUser = {
+  userId: string;
+  /** The name other people see; null until the person chooses one. */
+  chosenName: string | null;
   displayName: string;
-  email: string;
+  email: string | null;
   fullName: string | null;
 };
 
@@ -18,8 +22,13 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   const requestHeaders = await headers();
   const user = await getAuthenticatedUser(requestHeaders, requestUrl(requestHeaders));
   if (!user) return null;
+  const userId = await userIdFor(user);
+  if (!userId) return null;
+  const profile = await getUserProfile(userId);
   return {
-    displayName: user.fullName ?? user.email,
+    userId,
+    chosenName: profile.displayName,
+    displayName: profile.displayName ?? user.fullName ?? user.email ?? "이름 없는 사용자",
     email: user.email,
     fullName: user.fullName,
   };

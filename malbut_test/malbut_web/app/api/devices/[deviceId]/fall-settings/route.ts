@@ -1,7 +1,7 @@
 import { userCanManageDevice, userCanViewDevice } from "../../../../../db/homecam";
 import { readFallSettingsView, saveFallSettings } from "../../../../../db/fall-settings";
 import { parseFallSettingsPatch } from "../../../../fall-settings-contract";
-import { getRequestUserEmail } from "../../../../server-auth";
+import { getRequestUserId } from "../../../../server-auth";
 import { noStore } from "../../../../api-response";
 import { sameOriginJsonRequest } from "../../../../same-origin-request";
 
@@ -17,25 +17,25 @@ function failure(error: unknown) {
 }
 
 export async function GET(request: Request, context: Context) {
-  const email = await getRequestUserEmail(request);
-  if (!email) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   const { deviceId } = await context.params;
-  if (!(await userCanViewDevice(deviceId, email))) return noStore({ error: "로봇을 볼 권한이 없습니다." }, 403);
+  if (!(await userCanViewDevice(deviceId, userId))) return noStore({ error: "말벗을 볼 권한이 없습니다." }, 403);
   try { return noStore(await readFallSettingsView(deviceId)); }
   catch (error) { return failure(error); }
 }
 
 export async function PATCH(request: Request, context: Context) {
-  const email = await getRequestUserEmail(request);
-  if (!email) return noStore({ error: "로그인이 필요합니다." }, 401);
+  const userId = await getRequestUserId(request);
+  if (!userId) return noStore({ error: "로그인이 필요합니다." }, 401);
   if (!sameOriginJsonRequest(request)) return noStore({ error: "요청 출처를 확인해 주세요." }, 403);
   const { deviceId } = await context.params;
-  if (!(await userCanManageDevice(deviceId, email))) return noStore({ error: "소유자만 낙상 설정을 변경할 수 있습니다." }, 403);
+  if (!(await userCanManageDevice(deviceId, userId))) return noStore({ error: "소유자만 낙상 설정을 변경할 수 있습니다." }, 403);
   const patch = parseFallSettingsPatch(await request.json().catch(() => null));
   if (!patch) return noStore({ error: "낙상 설정 형식을 확인해 주세요." }, 400);
   try {
     // A save receipt is NOT a robot apply receipt. Return the exact saved revision.
-    const saved = await saveFallSettings(deviceId, email, patch);
+    const saved = await saveFallSettings(deviceId, userId, patch);
     return noStore({ saved: true, savedRevision: saved.settingsRevision });
   } catch (error) { return failure(error); }
 }

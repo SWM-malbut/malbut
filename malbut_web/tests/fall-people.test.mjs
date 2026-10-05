@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import test from "node:test";
-import { fallDatabase, moduleLoader } from "./helpers/fall-db-harness.mjs";
+import { fallDatabase, moduleLoader, testUserId } from "./helpers/fall-db-harness.mjs";
 
 // 사람 표시: robot person boxes of a clip segment. Positions only.
 const recent = (offset) => new Date(Math.floor(Date.now() / 1000) * 1000 - 120_000 + offset).toISOString();
@@ -113,7 +113,7 @@ test("linked incidents share 사람 N, numbered by first appearance", async () =
   });
 });
 
-test("boxes are deleted with the video after retention; detail works before migration 0015", async () => {
+test("boxes are deleted with the video after retention; storage waits for migration 0015", async () => {
   await withRepo(async ({ events, review, boxes }) => {
     const old = await incidentWithClip(events, review, {
       startAt: new Date(Date.now() - 8 * 86_400_000).toISOString(),
@@ -126,8 +126,8 @@ test("boxes are deleted with the video after retention; detail works before migr
     assert.ok(await boxes.getFallClipPeople("robot-a", fresh, 0));
   });
   await withRepo(async ({ events, review, boxes }) => {
+    // The incident detail itself needs the users of 0016, which always follows 0015.
     const incidentId = await incidentWithClip(events, review);
-    assert.equal((await review.getFallIncidentDetail("robot-a", incidentId)).clips[0].hasPeople, false);
     assert.equal(await boxes.purgeExpiredFallPeople(), 0);
     await assert.rejects(boxes.storeFallPeople("robot-a", people({ incidentId })), /MIGRATION_REQUIRED/);
   }, { through: "0014_fall_report_memo" });
@@ -139,7 +139,7 @@ test("HTTP: device box upload and member-only box reading", async () => {
     [path.join(h.root, "app/device-auth.ts")]: { async getRequestDevice(req) {
       return req.headers.get("authorization") === "Bearer device-a" ? { deviceId: "robot-a" } : null;
     } },
-    [path.join(h.root, "app/server-auth.ts")]: { async getRequestUserEmail(req) { return req.headers.get("x-test-email"); } },
+    [path.join(h.root, "app/server-auth.ts")]: { async getRequestUserId(req) { return testUserId(req.headers.get("x-test-email")); } },
   });
   const pg = load("db/postgres.ts"), events = load("db/fall-incidents.ts"), review = load("db/fall-review.ts");
   const upload = load("app/api/device/v1/fall-incident-people/route.ts");

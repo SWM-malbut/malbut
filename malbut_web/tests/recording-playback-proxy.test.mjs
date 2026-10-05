@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
 
-const RECORDING_ID = "123e4567-e89b-42d3-a456-426614174000";
+const DEVICE_ID = "robot-a";
 const AWS_HOST = "b-ca770835.kinesisvideo.ap-northeast-2.amazonaws.com";
 const SESSION_TOKEN = "private-session-token~";
 const SECRET = "test-broker-secret-with-enough-entropy";
@@ -24,15 +24,15 @@ async function loadHelper() {
   );
 }
 
-test("creates an opaque same-origin recording URL and resolves authorized HLS resources", async () => {
+test("creates an opaque same-origin fall clip URL and resolves authorized HLS resources", async () => {
   const helper = await loadHelper();
   const upstream = `https://${AWS_HOST}/hls/v1/getHLSMasterPlaylist.m3u8?SessionToken=${encodeURIComponent(SESSION_TOKEN)}`;
-  const proxy = await helper.createRecordingPlaybackProxy(
+  const proxy = await helper.createFallClipPlaybackProxy(
     {
-      requestUrl: `https://petcam.example.com/api/recordings/${RECORDING_ID}/playback`,
+      requestUrl: `https://petcam.example.com/api/devices/${DEVICE_ID}/fall-incidents/i1/clips/0/playback`,
       playbackUrl: upstream,
-      recordingId: RECORDING_ID,
-      userEmail: "Owner@Example.com",
+      deviceId: DEVICE_ID,
+      userId: "u-owner",
       expiresAt: new Date(Date.now() + 300_000).toISOString(),
     },
     SECRET,
@@ -50,13 +50,13 @@ test("creates an opaque same-origin recording URL and resolves authorized HLS re
   const playbackId = playbackUrl.pathname.split("/").at(-2);
   assert.match(playbackId, /^[0-9a-f]{32}$/);
   const cookie = proxy.setCookie.split(";", 1)[0];
-  const resolvedMaster = await helper.resolveRecordingPlaybackProxy(
+  const resolvedMaster = await helper.resolveFallClipPlaybackProxy(
     {
       requestUrl: proxy.playbackUrl,
-      recordingId: RECORDING_ID,
+      deviceId: DEVICE_ID,
       playbackId,
       resource: "getHLSMasterPlaylist.m3u8",
-      userEmail: "owner@example.com",
+      userId: "u-owner",
       cookieHeader: cookie,
     },
     SECRET,
@@ -68,13 +68,13 @@ test("creates an opaque same-origin recording URL and resolves authorized HLS re
   assert.equal(resolvedMaster.rewritePlaylist, true);
 
   const base = proxy.playbackUrl.slice(0, proxy.playbackUrl.lastIndexOf("/") + 1);
-  const resolvedFragment = await helper.resolveRecordingPlaybackProxy(
+  const resolvedFragment = await helper.resolveFallClipPlaybackProxy(
     {
       requestUrl: `${base}getMP4MediaFragment.mp4?FragmentNumber=123456789&TrackNumber=1`,
-      recordingId: RECORDING_ID,
+      deviceId: DEVICE_ID,
       playbackId,
       resource: "getMP4MediaFragment.mp4",
-      userEmail: "owner@example.com",
+      userId: "u-owner",
       cookieHeader: cookie,
     },
     SECRET,
@@ -84,26 +84,26 @@ test("creates an opaque same-origin recording URL and resolves authorized HLS re
   assert.equal(resolvedFragment.upstreamUrl.searchParams.get("FragmentNumber"), "123456789");
   assert.equal(resolvedFragment.upstreamUrl.searchParams.get("TrackNumber"), "1");
 
-  const wrongUser = await helper.resolveRecordingPlaybackProxy(
+  const wrongUser = await helper.resolveFallClipPlaybackProxy(
     {
       requestUrl: proxy.playbackUrl,
-      recordingId: RECORDING_ID,
+      deviceId: DEVICE_ID,
       playbackId,
       resource: "getHLSMasterPlaylist.m3u8",
-      userEmail: "other@example.com",
+      userId: "u-other",
       cookieHeader: cookie,
     },
     SECRET,
   );
   assert.equal(wrongUser, null);
 
-  const injectedQuery = await helper.resolveRecordingPlaybackProxy(
+  const injectedQuery = await helper.resolveFallClipPlaybackProxy(
     {
       requestUrl: `${proxy.playbackUrl}?SessionToken=attacker-token`,
-      recordingId: RECORDING_ID,
+      deviceId: DEVICE_ID,
       playbackId,
       resource: "getHLSMasterPlaylist.m3u8",
-      userEmail: "owner@example.com",
+      userId: "u-owner",
       cookieHeader: cookie,
     },
     SECRET,
@@ -162,7 +162,7 @@ test("live playback grants are device-scoped and cannot cross device boundaries"
       requestUrl: "https://petcam.example.com/api/devices/gazebo-homecam/live-playback",
       playbackUrl: upstream,
       deviceId: "gazebo-homecam",
-      userEmail: "owner@example.com",
+      userId: "u-owner",
       expiresAt: new Date(Date.now() + 300_000).toISOString(),
     },
     SECRET,
@@ -180,7 +180,7 @@ test("live playback grants are device-scoped and cannot cross device boundaries"
         deviceId: "gazebo-homecam",
         playbackId,
         resource: "getHLSMasterPlaylist.m3u8",
-        userEmail: "owner@example.com",
+        userId: "u-owner",
         cookieHeader: cookie,
       },
       SECRET,
@@ -193,7 +193,7 @@ test("live playback grants are device-scoped and cannot cross device boundaries"
         deviceId: "other-homecam",
         playbackId,
         resource: "getHLSMasterPlaylist.m3u8",
-        userEmail: "owner@example.com",
+        userId: "u-owner",
         cookieHeader: cookie,
       },
       SECRET,
@@ -211,7 +211,7 @@ test("uses the configured public origin behind an internal container listener", 
       publicOrigin: "https://malbut.example.com",
       playbackUrl: upstream,
       deviceId: "gazebo-homecam",
-      userEmail: "owner@example.com",
+      userId: "u-owner",
       expiresAt: new Date(Date.now() + 300_000).toISOString(),
     },
     SECRET,

@@ -1,7 +1,8 @@
 // Local UI demo (NEXT_PUBLIC_HOMECAM_UI_DEMO=1) for the 사건 screen: an
 // in-memory stand-in for the incident API. Never used with a real device.
 
-const ME = "나@example.com";
+const ME = "demo-user-me";
+const ME_NAME = "서연";
 const minutes = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
 const range = (n: number) => ({ startAt: minutes(n + 0.17), endAt: minutes(n - 0.33) });
 
@@ -43,9 +44,9 @@ function summary(id: string, change: Record<string, unknown>): Row {
   return {
     incidentId: id, origin: "robot", category: "check", state: "help_required", fallSeen: false,
     assessment: "suspected_fall", answer: null, notificationRank: 2, occurredAt: minutes(18),
-    updatedAt: minutes(5), reviewState: "open", closedAt: null, closedBy: null, reopenedAt: null,
+    updatedAt: minutes(5), reviewState: "open", closedAt: null, closedBy: null, closedByName: null, reopenedAt: null,
     needsCheck: true, aiFailed: false, unacknowledged: false, reviewPending: false, foundDown: false,
-    reportedBy: null, reportedMomentAt: null, opinionCounts: {}, ...change,
+    reportedBy: null, reportedByName: null, reportedMomentAt: null, opinionCounts: {}, ...change,
   };
 }
 
@@ -61,7 +62,7 @@ const incidents: Row[] = [
     needsCheck: false, reviewPending: true, notificationRank: 0, occurredAt: minutes(60 * 20), sceneState: "available",
     linkedCount: 0, notification: null }),
   summary("demo-5", { origin: "user_report", category: "report", state: null, assessment: null, needsCheck: false,
-    notificationRank: 0, reportedBy: "가족@example.com", reportedMomentAt: minutes(60 * 30), occurredAt: minutes(60 * 30),
+    notificationRank: 0, reportedBy: "demo-user-family", reportedByName: "지민", reportedMomentAt: minutes(60 * 30), occurredAt: minutes(60 * 30),
     sceneState: "expired", linkedCount: 0, notification: null }),
 ];
 
@@ -94,14 +95,14 @@ const details: Record<string, Record<string, unknown>> = {
       { kind: "first", round: 1, level: "check", reason: "person_no_response", status: "accepted", createdAt: minutes(17.5), acceptedAt: minutes(17.5) },
     ],
     opinions: [
-      { userEmail: "소유자@example.com", role: "owner", label: "fall", memo: null, updatedAt: minutes(16) },
-      { userEmail: "가족@example.com", role: "family", label: "normal", memo: "의자에 앉으시다 미끄러지셨는데 다치진 않으셨어요", updatedAt: minutes(14) },
+      { userId: "demo-user-owner", userName: "민준", role: "owner", label: "fall", memo: null, updatedAt: minutes(16) },
+      { userId: "demo-user-family", userName: "지민", role: "family", label: "normal", memo: "의자에 앉으시다 미끄러지셨는데 다치진 않으셨어요", updatedAt: minutes(14) },
     ],
     linkedIncidentIds: ["demo-1"],
-    aiReviews: [{ reviewId: "r1", requestedBy: "가족@example.com", momentAt: minutes(18), status: "completed",
+    aiReviews: [{ reviewId: "r1", requestedBy: "demo-user-family", momentAt: minutes(18), status: "completed",
       assessment: "suspected_fall", explanation: "바닥에 앉아 있는 모습이 보이나 넘어지는 과정은 분명하지 않습니다.",
       errorCode: null, frameCount: 12, createdAt: minutes(12), completedAt: minutes(11.9),
-      questions: [{ askedBy: "가족@example.com", question: "손으로 짚었나요?", status: "completed",
+      questions: [{ askedBy: "demo-user-family", question: "손으로 짚었나요?", status: "completed",
         answer: "세 번째 사진부터 오른손으로 바닥을 짚는 모습이 보입니다.", createdAt: minutes(11) }] }],
   },
   "demo-3": {
@@ -199,7 +200,7 @@ export async function demoIncidentFetch(url: string, init?: RequestInit): Promis
     const { momentAt, memo, requestAiReview } = body();
     const id = `demo-report-${incidents.length + 1}`;
     incidents.push(summary(id, { origin: "user_report", category: "report", state: null, assessment: null,
-      needsCheck: false, notificationRank: 0, reportedBy: ME, reportedMomentAt: momentAt, occurredAt: momentAt,
+      needsCheck: false, notificationRank: 0, reportedBy: ME, reportedByName: ME_NAME, reportedMomentAt: momentAt, occurredAt: momentAt,
       sceneState: "available", linkedCount: 0, notification: null }));
     details[id] = { clips: [{ segmentIndex: 0, startAt: new Date(Date.parse(momentAt) - 10_000).toISOString(),
       endAt: new Date(Date.parse(momentAt) + 20_000).toISOString(), anchorKinds: ["user_report"], foundDown: false,
@@ -218,18 +219,18 @@ export async function demoIncidentFetch(url: string, init?: RequestInit): Promis
   const match = /\/fall-incidents\/([^/]+)(\/[a-z/0-9-]+)?$/.exec(path);
   const row = match && incidents.find((i) => i.incidentId === match[1]);
   if (!row || !match) return reply({ error: "사건을 찾을 수 없습니다." }, 404);
-  const detail = details[row.incidentId] as { opinions: Array<{ userEmail: string; role: string; label: string; memo: string | null; updatedAt: string }> };
+  const detail = details[row.incidentId] as { opinions: Array<{ userId: string; userName: string; role: string; label: string; memo: string | null; updatedAt: string }> };
   const action = match[2] ?? "";
   if (action === "/opinion") {
     const body = JSON.parse(String(init?.body ?? "{}"));
-    detail.opinions = detail.opinions.filter((o) => o.userEmail !== ME);
+    detail.opinions = detail.opinions.filter((o) => o.userId !== ME);
     let reopened = false;
     if (body.label) {
-      detail.opinions.push({ userEmail: ME, role: "family", label: body.label, memo: body.memo || null, updatedAt: new Date().toISOString() });
+      detail.opinions.push({ userId: ME, userName: ME_NAME, role: "family", label: body.label, memo: body.memo || null, updatedAt: new Date().toISOString() });
       row.unacknowledged = false;
       const closedLabels = (row.closedLabels as string[] | undefined) ?? [];
       if (row.reviewState === "closed" && !closedLabels.includes(body.label)) {
-        Object.assign(row, { reviewState: "open", closedAt: null, closedBy: null, reopenedAt: new Date().toISOString(),
+        Object.assign(row, { reviewState: "open", closedAt: null, closedBy: null, closedByName: null, reopenedAt: new Date().toISOString(),
           needsCheck: true, category: row.origin === "user_report" ? "report" : "check" });
         reopened = true;
       }
@@ -241,7 +242,7 @@ export async function demoIncidentFetch(url: string, init?: RequestInit): Promis
     if (!detail.opinions.length) {
       return reply({ error: "의견을 먼저 남겨 주세요. 누구든 의견이 하나 있어야 처리 완료할 수 있어요.", reason: "needs_opinion" }, 409);
     }
-    Object.assign(row, { reviewState: "closed", closedAt: new Date().toISOString(), closedBy: ME, needsCheck: false,
+    Object.assign(row, { reviewState: "closed", closedAt: new Date().toISOString(), closedBy: ME, closedByName: ME_NAME, needsCheck: false,
       unacknowledged: false, reviewPending: false, closedLabels: detail.opinions.map((o) => o.label) });
     return reply({ closed: true, changed: true });
   }
@@ -250,7 +251,7 @@ export async function demoIncidentFetch(url: string, init?: RequestInit): Promis
     const range = (details[row.incidentId] as { clips: Array<{ startAt: string; endAt: string }> }).clips;
     const at = Date.parse(momentAt);
     if (!range.some((c) => at >= Date.parse(c.startAt) && at <= Date.parse(c.endAt))) {
-      return reply({ error: "이 시간은 원래 사건 밖이에요. 놓친 넘어짐으로 새로 신고할까요?", reason: "outside_incident" }, 409);
+      return reply({ error: "이 시간은 원래 사건 밖이에요. 놓친 낙상으로 새로 신고할까요?", reason: "outside_incident" }, 409);
     }
     (details[row.incidentId] as { aiReviews: unknown[] }).aiReviews.push(queuedReview(momentAt));
     return reply({ review: { status: "queued" } }, 202);
@@ -263,5 +264,5 @@ export async function demoIncidentFetch(url: string, init?: RequestInit): Promis
   if (action.endsWith("/playback")) {
     return reply({ error: "로컬 데모에는 녹화 영상이 없습니다." }, 404);
   }
-  return reply({ incident: { ...row, ...detail, viewerEmail: ME, activity: [] } });
+  return reply({ incident: { ...row, ...detail, viewerUserId: ME, activity: [] } });
 }
