@@ -364,7 +364,7 @@ function Switch({
   return (
     <button
       type="button"
-      className={`homecam-switch ${checked ? "is-on" : ""}`}
+      className={`fall-switch ${checked ? "is-on" : ""}`}
       role="switch"
       aria-checked={checked}
       aria-label={label}
