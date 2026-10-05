@@ -4854,3 +4854,28 @@ body:has(.ui-register) { background: var(--ui-bg); }
 .ui-hint.ui-long { line-height: 1.6; }
 a.ui-button { text-decoration: none; }
 a.ui-back { text-decoration: none; }
+
+/* ---- 새 디자인: 보호자 초대 (목업 Invite) ----------------------------------- */
+.ui-invite-card { padding: 1rem; gap: 0.5rem; }
+.ui-invite-card > strong { font-size: 1.125rem; font-weight: 700; line-height: 1.45; }
+.ui-invite-card > p, .ui-invite-unusable > p { margin: 0; font-size: 0.875rem; line-height: 1.6; color: var(--ui-text-muted); }
+.ui-invite-card .ui-button { min-height: 48px; }
+.ui-invite-note { margin: 0; font-size: 0.8125rem; line-height: 1.6; color: var(--ui-text-muted); }
+.ui-invite-unusable { border: 2px solid var(--ui-warn); padding: 1.125rem 0.875rem; }
+.ui-invite-unusable .ui-badge { align-self: flex-start; }
+.ui-invite-unusable > strong { font-size: 1.125rem; font-weight: 700; }
+.ui-register-done .ui-button.is-emphasis { align-self: stretch; font-size: 0.9375rem; }
+
+/* ---- 새 디자인: 보호자 관리 · 소유자 넘기기 (목업 Guardians, Owner) --------------- */
+.ui-subhead-note { font-size: 0.8125rem; color: var(--ui-text-muted); }
+.ui-success { margin: 0; padding: 0.75rem; border-radius: 10px; font-size: 0.8125rem; line-height: 1.6; color: var(--ui-ok); background: var(--ui-ok-soft); }
+.ui-person-text small { display: block; margin-top: 0.125rem; font-size: 0.75rem; color: var(--ui-text-muted); }
+.ui-invite-url {
+  padding: 0.625rem 0.75rem; border-radius: 8px; font-size: 0.875rem; word-break: break-all; background: var(--ui-bg);
+}
+.ui-invite-meta { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.75rem; color: var(--ui-text-muted); }
+.ui-invite-make, .ui-owner-ask { min-height: 48px; font-size: 0.9375rem; }
+.ui-invite-cancel { min-height: 44px; }
+.ui-owner-transfer .ui-button.is-strong:disabled {
+  border-color: var(--ui-control-border); background: var(--ui-control-border); opacity: 1;
+}

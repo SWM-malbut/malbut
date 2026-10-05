@@ -119,6 +119,9 @@ export async function redeemRegistrationCode(input: {
       [deviceId, input.userId, nowIso],
     );
     await client.query("DELETE FROM talk_leases WHERE device_id=$1 AND user_id<>$2", [deviceId, input.userId]);
+    // The previous household's invite link stops working too.
+    await client.query("UPDATE device_invites SET revoked_at=$2 WHERE device_id=$1 AND revoked_at IS NULL",
+      [deviceId, nowIso]);
     // Opinions, activity, scenes, people boxes, reminders and AI reviews go with their incident.
     const deleted = input.history === "delete"
       ? (await client.query("DELETE FROM fall_incidents WHERE device_id=$1", [deviceId])).rowCount ?? 0

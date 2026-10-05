@@ -4,6 +4,8 @@ import Image from "next/image";
 import { FallHomecamSettings } from "./fall-homecam-settings";
 import { FallIncidentsPanel } from "./fall-incidents-panel";
 import { FallTimelinePanel, type TimelineMode } from "./fall-timeline-panel";
+import { subscribeFallPush } from "../lib/fall-push";
+import { GuardiansSettings, OwnerTransferCard, type FamilyMember } from "./guardians-settings";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
@@ -71,12 +73,12 @@ const LOCAL_DEMO_DEVICE: HomecamDevice = {
     storageMode: false,
   },
 };
-
-type FamilyMember = {
-  id: string;
-  name: string;
-  role: "owner" | "family";
-};
+// Local UI demo only: the people in 목업 Guardians.
+const LOCAL_DEMO_FAMILY: FamilyMember[] = [
+  { id: "demo-owner", name: "김말벗", role: "owner", provider: "kakao", joinedAt: "2026-10-01T00:00:00.000Z", viaInvite: false },
+  { id: "demo-g1", name: "이보호", role: "family", provider: "google", joinedAt: "2026-10-03T03:00:00.000Z", viaInvite: true },
+  { id: "demo-g2", name: "박돌봄", role: "family", provider: "naver", joinedAt: new Date().toISOString(), viaInvite: true },
+];
 
 type ApiAvailability = "loading" | "ready" | "unavailable";
 
@@ -503,15 +505,13 @@ export function HomecamDashboard({
   const [timelineMode, setTimelineMode] = useState<TimelineMode | null>(null);
   const [family, setFamily] = useState<FamilyMember[]>([]);
   const [familyLoading, setFamilyLoading] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSubscriptionId, setPushSubscriptionId] = useState("");
   const [pushEndpointRegistrationCount, setPushEndpointRegistrationCount] = useState(0);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [standalone, setStandalone] = useState(false);
   const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians" | "owner" | "name">("main");
-  const [account, setAccount] = useState<{ name: string | null; email: string | null; providers: string[] } | null>(null);
-  const [removeTarget, setRemoveTarget] = useState<FamilyMember | null>(null);
+  const [account, setAccount] = useState<{ userId: string | null; name: string | null; email: string | null; providers: string[] } | null>(null);
   const [textSize, setTextSize] = useState<"default" | "large">("default");
   const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
   const [storageGraceUntilMs, setStorageGraceUntilMs] = useState(0);
@@ -532,6 +532,7 @@ export function HomecamDashboard({
         if (!response.ok) return;
         const payload = asRecord(await response.json().catch(() => ({})));
         setAccount({
+          userId: stringValue(payload.userId) ?? null,
           name: stringValue(payload.displayName) ?? null,
           email: stringValue(payload.email) ?? null,
           providers: Array.isArray(payload.providers)
@@ -841,6 +842,10 @@ export function HomecamDashboard({
 
   const loadFamily = useCallback(async () => {
     if (!selectedDevice) return;
+    if (LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID) {
+      setFamily((current) => current.length ? current : LOCAL_DEMO_FAMILY);
+      return;
+    }
     setFamilyLoading(true);
     try {
       const response = await fetch(
@@ -861,7 +866,12 @@ export function HomecamDashboard({
           const name = stringValue(raw.name) ?? "이름 없는 사용자";
           const roleValue = stringValue(raw.role);
           if (!id || (roleValue !== "owner" && roleValue !== "family")) return [];
-          return [{ id, name, role: roleValue }];
+          return [{
+            id, name, role: roleValue,
+            provider: stringValue(raw.provider) ?? null,
+            joinedAt: stringValue(raw.createdAt) ?? "",
+            viaInvite: raw.viaInvite === true,
+          }];
         }),
       );
     } catch (reason) {
@@ -1011,44 +1021,10 @@ export function HomecamDashboard({
       }
 
       if (!selectedDevice) throw new Error("알림을 받을 홈캠을 먼저 선택해 주세요.");
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") throw new Error("알림 권한이 허용되지 않았습니다.");
-      let keyResponse = await fetch("/api/push-subscriptions/vapid-public-key", {
-        cache: "no-store",
-      });
-      if (keyResponse.status === 404) {
-        keyResponse = await fetch("/api/push/vapid-public-key", { cache: "no-store" });
-      }
-      const keyPayload = asRecord(await keyResponse.json().catch(() => ({})));
-      const publicKey = stringValue(keyPayload.publicKey, keyPayload.vapidPublicKey);
-      if (!keyResponse.ok || !publicKey) {
-        throw new Error(stringValue(keyPayload.error) ?? "푸시 공개 키를 불러오지 못했습니다.");
-      }
-      const subscription =
-        current ??
-        await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: decodeBase64Url(publicKey),
-        });
-      const serialized = subscription.toJSON();
-      const response = await fetch("/api/push-subscriptions", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          deviceId: selectedDevice.id,
-          endpoint: serialized.endpoint,
-          keys: serialized.keys,
-        }),
-      });
-      const payload = asRecord(await response.json().catch(() => ({})));
-      if (!response.ok) {
-        if (!current) await subscription.unsubscribe().catch(() => undefined);
-        throw new Error(stringValue(payload.error) ?? "푸시 구독을 저장하지 못했습니다.");
-      }
+      const saved = await subscribeFallPush(selectedDevice.id);
       setPushEnabled(true);
       setPushEndpointRegistrationCount((count) => Math.max(1, count + 1));
-      const saved = asRecord(payload.subscription);
-      setPushSubscriptionId(stringValue(saved.id) ?? "");
+      setPushSubscriptionId(saved.subscriptionId);
       setNotice("사람·반려동물·움직임 알림을 받을 수 있습니다.");
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : "알림 설정에 실패했습니다.");
@@ -1057,33 +1033,12 @@ export function HomecamDashboard({
     }
   };
 
-  const inviteFamily = async () => {
-    if (!selectedDevice || !inviteEmail.trim() || busy) return;
-    setBusy("family");
-    setNotice("");
-    try {
-      const response = await fetch(
-        `/api/devices/${encodeURIComponent(selectedDevice.id)}/family`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email: inviteEmail.trim().toLowerCase() }),
-        },
-      );
-      const payload = asRecord(await response.json().catch(() => ({})));
-      if (!response.ok) throw new Error(stringValue(payload.error) ?? "보호자를 초대하지 못했습니다.");
-      setInviteEmail("");
-      setNotice("보호자 계정에 홈캠 접근 권한을 부여했습니다.");
-      await loadFamily();
-    } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "보호자를 초대하지 못했습니다.");
-    } finally {
-      setBusy("");
-    }
-  };
-
   const removeFamily = async (member: FamilyMember) => {
-    if (!selectedDevice || busy) return;
+    if (!selectedDevice || busy) return false;
+    if (LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID) {
+      setFamily((current) => current.filter((item) => item.id !== member.id));
+      return true;
+    }
     setBusy(`family:${member.id}`);
     setNotice("");
     try {
@@ -1098,12 +1053,24 @@ export function HomecamDashboard({
       const payload = asRecord(await response.json().catch(() => ({})));
       if (!response.ok) throw new Error(stringValue(payload.error) ?? "보호자 권한을 해제하지 못했습니다.");
       setFamily((current) => current.filter((item) => item.id !== member.id));
-      setNotice(`${member.name}의 접근 권한을 해제했습니다.`);
+      return true;
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : "보호자 권한을 해제하지 못했습니다.");
+      return false;
     } finally {
       setBusy("");
     }
+  };
+
+  const ownerTransferred = async (member: FamilyMember) => {
+    if (LOCAL_HOME_CAM_DEMO && selectedDevice?.id === LOCAL_DEMO_DEVICE_ID) {
+      setFamily((current) => current.map((item) => ({
+        ...item, role: item.id === member.id ? "owner" : item.role === "owner" ? "family" : item.role,
+      })));
+      setDevices((current) => current.map((device) => device.id === LOCAL_DEMO_DEVICE_ID ? { ...device, role: "family" } : device));
+      return;
+    }
+    await Promise.all([loadDevices(true), loadFamily()]);
   };
 
   const installApp = async () => {
@@ -1498,7 +1465,7 @@ export function HomecamDashboard({
                   <CaretRight size={18} aria-hidden="true" />
                 </button>
                 <button type="button" onClick={() => setSettingsView("guardians")}>
-                  <span><strong>보호자</strong><small>{isOwner ? "함께 보는 사람 · 보호자 초대" : "함께 보는 사람 보기"}</small></span>
+                  <span><strong>보호자</strong><small>{isOwner ? `함께 보는 사람 ${family.filter((member) => member.role === "family").length}명 · 초대 링크 만들기` : "함께 보는 사람 보기"}</small></span>
                   <CaretRight size={18} aria-hidden="true" />
                 </button>
                 {isOwner && (
@@ -1593,12 +1560,21 @@ export function HomecamDashboard({
         {tab === "settings" && settingsView === "owner" && (
           <section className="ui-screen ui-settings-sub" aria-label="소유자 넘기기 · 다시 등록">
             {settingsBack("소유자 넘기기 · 다시 등록")}
-            <article className="ui-card">
+            {selectedDevice && (
+              <OwnerTransferCard
+                key={selectedDevice.id}
+                deviceId={selectedDevice.id}
+                family={family}
+                demo={LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID}
+                onTransferred={(member) => void ownerTransferred(member)}
+              />
+            )}
+            {isOwner && <article className="ui-card">
               <h2>등록 코드로 다시 등록</h2>
               <p className="ui-hint ui-long">소유자 계정을 쓸 수 없게 됐거나 말벗을 다른 집으로 옮길 때 써요. 새 등록 코드를 입력한 사람이 새 소유자가 되고, 지금의 소유자와 보호자는 모두 지워져요.</p>
               <p className="ui-hint ui-long">지난 사건 기록과 의견을 지울지 남길지는 다시 등록할 때 골라요. 새 등록 코드는 말벗 팀에게 받을 수 있어요.</p>
               <a className="ui-button is-danger-line" href="/register">등록 코드 입력하기</a>
-            </article>
+            </article>}
           </section>
         )}
 
@@ -1611,7 +1587,7 @@ export function HomecamDashboard({
                 initialName={account?.name ?? ""}
                 submitLabel="저장"
                 onSaved={(name) => {
-                  setAccount((current) => ({ email: null, providers: [], ...current, name }));
+                  setAccount((current) => ({ userId: null, email: null, providers: [], ...current, name }));
                   setSettingsView("main");
                   setNotice("이름을 바꿨어요.");
                 }}
@@ -1620,63 +1596,19 @@ export function HomecamDashboard({
           </section>
         )}
 
-        {tab === "settings" && settingsView === "guardians" && (
-          <section className="ui-screen ui-settings-sub" aria-label="보호자">
-            {settingsBack("보호자")}
-            <p className="ui-hint">{isOwner ? "소유자 화면 · 보호자는 목록만 볼 수 있어요" : "보호자는 목록만 볼 수 있어요"}</p>
-            <article className="ui-card ui-people" aria-busy={familyLoading}>
-              <h2>함께 보는 사람</h2>
-              {familyLoading && <p className="ui-hint">보호자 목록을 불러오는 중이에요…</p>}
-              {!familyLoading && family.length === 0 && <p className="ui-hint">아직 함께 보는 보호자가 없어요.</p>}
-              {!familyLoading && family.map((member) => (
-                <div key={member.id} className="ui-person">
-                  <span className="ui-person-avatar" aria-hidden="true">{member.name.slice(0, 1).toUpperCase()}</span>
-                  <span className="ui-person-text">
-                    <strong>{member.name} <span className={`ui-badge ${member.role === "owner" ? "is-accent" : ""}`}>{member.role === "owner" ? "소유자" : "보호자"}</span></strong>
-                  </span>
-                  {isOwner && member.role !== "owner" && (
-                    <button type="button" className="ui-button is-danger-line ui-small"
-                      onClick={() => setRemoveTarget(member)} disabled={busy === `family:${member.id}`}>
-                      내보내기
-                    </button>
-                  )}
-                </div>
-              ))}
-              {removeTarget && (
-                <div className="ui-confirm">
-                  <span>{removeTarget.name} 님을 내보낼까요? 이 말벗의 영상과 사건을 더 볼 수 없어요.</span>
-                  <div className="ui-two-buttons">
-                    <button type="button" className="ui-button" onClick={() => setRemoveTarget(null)}>취소</button>
-                    <button type="button" className="ui-button is-danger"
-                      onClick={() => { const member = removeTarget; setRemoveTarget(null); void removeFamily(member); }}>
-                      내보내기
-                    </button>
-                  </div>
-                </div>
-              )}
-            </article>
-            {isOwner && (
-              <article className="ui-card ui-invite">
-                <h2>보호자 초대</h2>
-                <small className="ui-note">초대한 계정으로 로그인하면 이 말벗의 영상과 사건을 함께 볼 수 있어요.</small>
-                <label className="ui-field">
-                  <span>초대할 보호자 이메일</span>
-                  <input
-                    type="email"
-                    value={inviteEmail}
-                    onChange={(event) => setInviteEmail(event.target.value)}
-                    placeholder="guardian@example.com"
-                    autoComplete="email"
-                  />
-                </label>
-                <button type="button" className="ui-button is-strong"
-                  onClick={() => void inviteFamily()}
-                  disabled={!inviteEmail.includes("@") || busy === "family"}>
-                  초대
-                </button>
-              </article>
-            )}
-          </section>
+        {tab === "settings" && settingsView === "guardians" && selectedDevice && (
+          <GuardiansSettings
+            key={selectedDevice.id}
+            deviceId={selectedDevice.id}
+            isOwner={isOwner}
+            myUserId={LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID ? LOCAL_DEMO_FAMILY[0].id : account?.userId ?? null}
+            family={family}
+            loading={familyLoading}
+            busy={Boolean(busy)}
+            demo={LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID}
+            onBack={() => setSettingsView("main")}
+            onRemove={removeFamily}
+          />
         )}
 
         {notice && (tab !== "live" || selectedDevice) && (
@@ -1692,11 +1624,4 @@ export function HomecamDashboard({
       <UiTabBar activeTab={tab} onNavigate={navigate} />
     </div>
   );
-}
-
-function decodeBase64Url(value: string) {
-  const padding = "=".repeat((4 - (value.length % 4)) % 4);
-  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const decoded = window.atob(base64);
-  return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
 }

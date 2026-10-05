@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useId, useState, type FormEvent } from "react";
+import { formatRegistrationCodeInput } from "./code-input";
 
 type Step = "form" | "taken" | "done";
 type History = "keep" | "delete";
@@ -83,12 +84,12 @@ export function RegisterScreen({ hasHomecam, demo = false }: { hasHomecam: boole
                 <input
                   id={inputId}
                   value={code}
-                  onChange={(event) => setCode(event.target.value.toUpperCase())}
+                  onChange={(event) => setCode(formatRegistrationCodeInput(event.target.value))}
                   placeholder="예: 7Q2K-9XHM"
                   autoComplete="off"
                   autoCapitalize="characters"
                   spellCheck={false}
-                  maxLength={16}
+                  maxLength={9}
                   aria-invalid={Boolean(error)}
                   aria-describedby={error ? `${inputId}-error` : undefined}
                 />
