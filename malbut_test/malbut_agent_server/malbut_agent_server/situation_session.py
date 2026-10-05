@@ -13,9 +13,11 @@ class SituationSpeechSession:
     """Only silence after a played question is a user no-response.
 
     Ports provide ``open_session`` (a future yielding an accepted response),
-    ``verify_session`` (a read-only active-session check), ``close_session``,
+    ``verify_session`` (a read-only active-session check), ``close_session``
+    (a future yielding an accepted response),
     ``speak(text, playback_id)`` and ``stop(playback_id)``.
-    Every question gets its own microphone session to reject late STT results.
+    Each completed question opens a new microphone session to reject late STT results.
+    Input stays closed while a question is prepared or played, including with AEC.
     All public methods are owned by the event-loop thread; inference is isolated.
     """
 
@@ -37,6 +39,7 @@ class SituationSpeechSession:
         self._heard = set()
         self._work = None
         self._opening = None
+        self._closing_input = None
         self._verifying = None
         self._turn = None
         self._deadline = None
@@ -69,6 +72,12 @@ class SituationSpeechSession:
         if self.done or self._expire_operation():
             return
         try:
+            if self._closing_input is not None:
+                if not self._closing_input.done():
+                    return
+                closing, self._closing_input = self._closing_input, None
+                if not closing.result().accepted:
+                    raise RuntimeError('microphone session closure rejected')
             if self._work is not None and self._work.done():
                 work, self._work = self._work, None
                 self._turn = work.result()
@@ -82,20 +91,18 @@ class SituationSpeechSession:
                     self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
                     if self.on_result is not None:
                         self.on_result(self._outcome)
-                    if not self.ports.speak(self._turn.text, self.playback_id):
-                        raise RuntimeError('speech publication failed')
                 else:
-                    self.session_id = 'confirmation-' + uuid4().hex
-                    self.phase = 'opening'
+                    self.phase = 'speaking'
                     self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
-                    self._opening = self.ports.open_session(self.session_id)
+                if not self.ports.speak(self._turn.text, self.playback_id):
+                    raise RuntimeError('speech publication failed')
             if self._opening is not None and self._opening.done():
                 opening, self._opening = self._opening, None
                 if not opening.result().accepted:
                     raise RuntimeError('microphone session rejected')
                 if self._early_started or self._early_answer:
                     # STT can publish a VAD event before its service ACK arrives.
-                    # Do not speak over an answer already in progress.
+                    # The question has finished; preserve its answer across the ACK race.
                     self.phase = 'hearing'
                     self.utterance_id = self._early_started
                     self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
@@ -103,10 +110,8 @@ class SituationSpeechSession:
                         uid, text = self._early_answer
                         self.transcript(self.session_id, uid, text)
                 else:
-                    self.phase = 'speaking'
-                    self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
-                    if not self.ports.speak(self._turn.text, self.playback_id):
-                        raise RuntimeError('speech publication failed')
+                    self.phase = 'listening'
+                    self._deadline = self.clock() + ANSWER_WAIT_SECONDS
             if self._deadline is not None and self.clock() >= self._deadline:
                 if self.phase == 'listening':
                     # A restarted STT can be reachable while its original
@@ -126,24 +131,24 @@ class SituationSpeechSession:
         except Exception:
             self._finish('aborted')
 
-    def playback(self, playback_id, state):
-        if (self.done or playback_id != self.playback_id
+    def playback(self, playback_id, state, *, interim=False):
+        if (self.done or interim or playback_id != self.playback_id
                 or self._expire_operation()):
             return
         if state == 'finished':
             if self.phase == 'closing':
                 self._finish('succeeded', self._outcome)
             elif self.phase == 'speaking':
-                self.phase = 'listening'
-                self._deadline = self.clock() + ANSWER_WAIT_SECONDS
-        elif state == 'failed':
+                self.session_id = 'confirmation-' + uuid4().hex
+                self.phase = 'opening'
+                self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
+                try:
+                    self._opening = self.ports.open_session(self.session_id)
+                except Exception:
+                    self._finish('aborted')
+        elif state in ('failed', 'stopped') and self.phase in ('speaking', 'closing'):
+            # An undelivered question is an operational failure, never an answer.
             self._finish('aborted')
-        elif state == 'stopped' and self.phase in ('speaking', 'closing'):
-            # A barge-in may arrive on the VAD topic after TTS reports STOPPED.
-            # Briefly await that correlated STARTED/Transcript, never start the
-            # silence timer for a question that was not completed.
-            self.phase = 'interrupted'
-            self._deadline = self.clock() + 2.0
 
     def input_status(self, session_id, utterance_id, state):
         if (self.done or not self.session_id or session_id != self.session_id
@@ -165,15 +170,11 @@ class SituationSpeechSession:
             if not self._early_started:
                 self._early_started = utterance_id
             return
-        if self.phase in ('speaking', 'listening', 'interrupted', 'checking_silence'):
+        if self.phase in ('listening', 'checking_silence'):
             self._clear_verification()
             self.utterance_id = utterance_id
             self.phase = 'hearing'
             self._deadline = self.clock() + OPERATION_TIMEOUT_SECONDS
-            try:
-                self.ports.stop(self.playback_id)
-            except Exception:
-                self._finish('aborted')
 
     def transcript(self, session_id, utterance_id, text):
         if (self.done or not self.session_id or session_id != self.session_id
@@ -190,14 +191,13 @@ class SituationSpeechSession:
                 self._early_answer = (utterance_id, text)
             return True
         if self.phase not in (
-                'speaking', 'listening', 'hearing', 'interrupted', 'checking_silence'):
+                'listening', 'hearing', 'checking_silence'):
             return False
         if self.utterance_id and self.utterance_id != utterance_id:
             return False
         self._heard.add(utterance_id)
         self._clear_verification()
         try:
-            self.ports.stop(self.playback_id)
             self._close_input()
             self._submit('answer', text)
         except Exception:
@@ -224,7 +224,10 @@ class SituationSpeechSession:
     def _close_input(self):
         if self.session_id:
             old, self.session_id = self.session_id, ''
-            self.ports.close_session(old)
+            closing = self.ports.close_session(old)
+            if not self.done:
+                # A delayed old session can otherwise STOP the next question.
+                self._closing_input = closing
 
     def cancel(self):
         self._finish('canceled')
@@ -237,13 +240,13 @@ class SituationSpeechSession:
             return
         self.phase = 'done'
         self._deadline = None
-        for operation in (self._work, self._opening, self._verifying):
+        for operation in (self._work, self._opening, self._closing_input, self._verifying):
             if operation is not None:
                 try:
                     operation.cancel()
                 except Exception:
                     pass
-        self._work = self._opening = self._verifying = None
+        self._work = self._opening = self._closing_input = self._verifying = None
         try:
             self._close_input()
         except Exception:

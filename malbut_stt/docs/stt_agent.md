@@ -133,13 +133,13 @@ flowchart TD
 
 ### 3.7. Agent 주도 이상 상황 확인
 
-- Agent는 `/malbut/speech/session_control` (`ControlSpeechSession`)에 고유 `session_id`와 `active=true`를 보내 기존 대화를 중단하고 호출어 없이 답변받는다. 같은 ID로 재시작하면 현재 청취를 유지하며, 종료는 같은 ID와 `active=false`로 요청한다.
+- Agent는 모든 확인 질문의 재생 중 확인 청취 세션을 닫아 두고, 해당 질문의 최종 `FINISHED`(`interim=false`) 뒤 `/malbut/speech/session_control` (`ControlSpeechSession`)에 새 `session_id`와 `active=true`를 보내 호출어 없이 답변받는다. 같은 ID로 재시작하면 현재 청취를 유지하며, 종료는 같은 ID와 `active=false`로 요청한다.
 - `active=false`가 같은 ID의 시작보다 먼저 도착하면 예약 종료로 접수한다. 이 ID의 늦은 시작은 거절하며 다른 활성 세션에는 영향을 주지 않는다. 완료·교체·취소·예약 종료한 ID는 최근 256개를 보관해 재활성화를 막는다. 새 질문에는 새로운 ID를 사용한다.
 - `check_only=true`는 상태를 변경하지 않고 해당 ID가 현재 활성이고 마이크 읽기 오류나 입력 중단이 없는지 조회한다. Agent는 무응답 확정 직전에 조회하여 STT 재시작 또는 마이크 단절을 사용자 무응답과 구분한다.
-- 이 세션에는 일반 요청의 답변 대기 차단과 재호출 규칙을 적용하지 않는다. Agent가 질문의 `playback_id`에 대응하는 재생 종료부터 답변 시작까지 10초를 관리한다.
-- 사용자 발화가 시작되면 `/malbut/speech/input_status` (`SpeechInputStatus`)에 `session_id`, `utterance_id`, `STARTED`를 발행한다. 질문 재생 중에는 즉시 `stop`을 요청하고 별도의 수신 대상 분류를 기다리지 않는다.
+- 이 세션에는 일반 요청의 답변 대기 차단과 재호출 규칙을 적용하지 않는다. Agent가 새 청취 세션의 시작 수락 ACK부터 답변 시작까지 10초를 관리한다. 질문 재생의 `STOPPED`·`FAILED`는 사용자 무응답이나 재질문 소모 없이 처리 오류로 종료한다.
+- 사용자 발화가 시작되면 `/malbut/speech/input_status` (`SpeechInputStatus`)에 `session_id`, `utterance_id`, `STARTED`를 발행한다. 확인 답변에는 별도의 수신 대상 분류를 적용하지 않는다. Agent는 질문 재생 중 도착한 입력으로 질문을 중단하거나 답변을 판단하지 않으며, 재생 완료 후 세션을 여는 동안 ACK보다 먼저 도착한 답변은 보존한다.
 - 최종 전사는 기존 `/malbut/speech/transcript`에 `session_id`를 포함해 발행한다. 일반 대화 전사의 `session_id`는 빈 값이다. 최종 전사 실패, 발화 길이 초과, 입력 큐 넘침은 해당 세션의 `FAILED` 입력 상태로 알린다. 마이크 읽기 오류는 STT를 중단하며 세션 조회 실패로 구분한다.
-- 재생 중 끼어들기는 실제 마이크 입력에 AEC가 있고 `input_has_aec=true`인 경우에 가능하다. 서비스 응답의 `barge_in_available`이 이를 알린다. AEC 없는 입력에서는 자기 TTS를 사용자 답변으로 처리하지 않도록 재생 중 입력을 막고, 재생 종료 뒤 답변을 청취한다. 이 경우 질문 중 끼어들기 검증 기준은 충족하지 못한다.
+- 확인 질문 중 끼어들기는 `input_has_aec`와 서비스 응답의 `barge_in_available` 값에 관계없이 받지 않는다. TTS는 `CONFIRMATION` 재생의 pause·resume을 거절하며, 취소를 위한 stop·stop_all은 유지한다. 일반 대화의 AEC·재생 제어 정책은 그대로 유지한다.
 - AEC 없는 입력에는 재생 상태가 바뀐 뒤 300ms의 에코 차단 시간이 추가로 있다. 질문 종료 직후 이 시간 안에 끝난 짧은 답변은 수집되지 않을 수 있다. 이 보호 동작은 AEC를 대신하지 않는다.
 
 ## 4. 예외 처리

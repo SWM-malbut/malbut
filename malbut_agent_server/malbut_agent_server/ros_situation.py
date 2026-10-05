@@ -264,23 +264,9 @@ class SituationActionServer:
     def open_session(self, session_id):
         if not self._input.service_is_ready():
             raise RuntimeError('speech input unavailable')
-        future = self._input.call_async(self._session_type.Request(
+        return self._input.call_async(self._session_type.Request(
             session_id=session_id, active=True,
         ))
-
-        def ready(result):
-            if result.cancelled():
-                return
-            try:
-                if result.result().accepted and not result.result().barge_in_available:
-                    self.node.get_logger().warning(
-                        'confirmation_barge_in_unavailable: configure microphone AEC',
-                    )
-            except Exception:
-                pass
-
-        future.add_done_callback(ready)
-        return future
 
     def verify_session(self, session_id):
         """Check the existing STT session without reviving it after a restart."""
@@ -294,7 +280,7 @@ class SituationActionServer:
         try:
             if not self._input.service_is_ready():
                 raise RuntimeError('speech input unavailable')
-            self._input.call_async(self._session_type.Request(
+            return self._input.call_async(self._session_type.Request(
                 session_id=session_id, active=False,
             ))
         except Exception as error:
@@ -325,7 +311,9 @@ class SituationActionServer:
 
     def _playback_status(self, message):
         if self._session is not None:
-            self._session.playback(message.playback_id, message.state)
+            self._session.playback(
+                message.playback_id, message.state, interim=message.interim,
+            )
 
     def _input_status(self, message):
         if self._session is not None:
