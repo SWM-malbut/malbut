@@ -123,6 +123,14 @@ export async function redeemRegistrationCode(input: {
     const deleted = input.history === "delete"
       ? (await client.query("DELETE FROM fall_incidents WHERE device_id=$1", [deviceId])).rowCount ?? 0
       : 0;
+    // Moving house: the previous owner's Cloud AI key stops being used. Deleting it the way the
+    // owner would (next version, no key) makes the robot remove its key file on the next sync.
+    const keyDeleted = input.history === "delete" && Boolean((await client.query(
+      `UPDATE fall_cloud_keys SET key_version=key_version+1, ciphertext=NULL, last4=NULL,
+         updated_by=$2, updated_at=CURRENT_TIMESTAMP
+       WHERE device_id=$1 AND ciphertext IS NOT NULL`,
+      [deviceId, input.userId],
+    )).rowCount);
     await client.query(
       `INSERT INTO device_memberships(device_id,user_id,role,created_at) VALUES($1,$2,'owner',$3)
        ON CONFLICT(device_id,user_id) DO UPDATE SET role='owner'`,
@@ -139,6 +147,7 @@ export async function redeemRegistrationCode(input: {
         removedMembers: others.length,
         history: input.history ?? null,
         deletedIncidents: deleted,
+        deletedCloudKey: keyDeleted,
       }), nowIso],
     );
     await client.query("COMMIT");

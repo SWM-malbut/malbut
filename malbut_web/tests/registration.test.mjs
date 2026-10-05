@@ -127,6 +127,8 @@ test("re-registering asks first, then removes everyone else and keeps the earlie
       ('p-family','robot-a','u-family','https://push.test/2','k','a');
       INSERT INTO talk_leases(device_id,lease_id,user_id,client_id,expires_at)
       VALUES ('robot-a','lease-1','u-owner','client-1',now() + interval '1 minute');`);
+    await h.db.exec(`INSERT INTO fall_cloud_keys(device_id,key_version,ciphertext,last4,updated_by)
+      VALUES ('robot-a',3,'v1.sealed','abcd','u-owner')`);
     const code = await codeFor("robot-a");
 
     const asked = await register("u-new", { code });
@@ -147,7 +149,10 @@ test("re-registering asks first, then removes everyone else and keeps the earlie
     assert.equal(kept, 1, "남기기 keeps incidents and opinions");
     const audit = (await h.db.query(
       "SELECT metadata_json FROM access_audit_log WHERE action='device.registered'")).rows[0];
-    assert.deepEqual(JSON.parse(audit.metadata_json), { removedMembers: 2, history: "keep", deletedIncidents: 0 });
+    assert.deepEqual(JSON.parse(audit.metadata_json),
+      { removedMembers: 2, history: "keep", deletedIncidents: 0, deletedCloudKey: false });
+    assert.deepEqual((await h.db.query("SELECT key_version, last4 FROM fall_cloud_keys")).rows,
+      [{ key_version: 3, last4: "abcd" }], "남기기 keeps the Cloud AI key");
   });
 });
 
@@ -160,6 +165,8 @@ test("지우기 removes only that 말벗's incidents; a guardian re-registering 
       ('p-owner','robot-a','u-owner','https://push.test/1','k','a'),
       ('p-family','robot-a','u-family','https://push.test/2','k','a');`);
 
+    await h.db.exec(`INSERT INTO fall_cloud_keys(device_id,key_version,ciphertext,last4,updated_by) VALUES
+      ('robot-a',3,'v1.sealed','abcd','u-owner'),('robot-b',1,'v1.other','wxyz','u-other')`);
     const code = await codeFor("robot-a");
     assert.equal((await register("u-family", { code })).status, 409);
     assert.equal((await register("u-family", { code, history: "delete" })).status, 200);
@@ -173,6 +180,12 @@ test("지우기 removes only that 말벗's incidents; a guardian re-registering 
     assert.ok(pushes["p-owner"]);
     assert.equal(pushes["p-family"], null);
     assert.deepEqual(await members("robot-b"), [{ user_id: "u-other", role: "owner" }]);
+    // The previous owner's Cloud AI key is deleted as a new version, so the robot removes its copy.
+    const keys = Object.fromEntries((await h.db.query(
+      "SELECT device_id, key_version, ciphertext, last4, updated_by FROM fall_cloud_keys")).rows
+      .map((row) => [row.device_id, row]));
+    assert.deepEqual(keys["robot-a"], { device_id: "robot-a", key_version: 4, ciphertext: null, last4: null, updated_by: "u-family" });
+    assert.equal(keys["robot-b"].ciphertext, "v1.other");
   });
 });
 
