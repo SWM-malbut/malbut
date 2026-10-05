@@ -1365,14 +1365,17 @@ export function HomecamDashboard({
                 </div>
                 <div>
                   <span>카메라 전원</span>
-                  {selectedDevice && (
+                  {/* 보면서 바로 끄는 것은 카메라뿐: 연속 녹화는 설정 › 홈캠 설정에서 바꾼다. */}
+                  {selectedDevice && (isOwner ? (
                     <Switch
                       checked={selectedDevice.cameraEnabled}
-                      disabled={!isOwner || Boolean(busy)}
+                      disabled={Boolean(busy)}
                       label="카메라 전원"
                       onChange={(value) => void updateSetting("cameraEnabled", value)}
                     />
-                  )}
+                  ) : (
+                    <strong className={selectedDevice.cameraEnabled ? "is-good" : ""}>{selectedDevice.cameraEnabled ? "켜짐" : "꺼짐"}</strong>
+                  ))}
                 </div>
                 <div>
                   <span>보호자 마이크</span>
@@ -1402,17 +1405,6 @@ export function HomecamDashboard({
                           ? "준비 중"
                           : "저장 오류"}
                   </strong>
-                </div>
-                <div>
-                  <span>연속 녹화</span>
-                  {selectedDevice && (
-                    <Switch
-                      checked={selectedDevice.monitoringEnabled}
-                      disabled={!isOwner || Boolean(busy)}
-                      label="연속 녹화"
-                      onChange={(value) => void updateSetting("monitoringEnabled", value)}
-                    />
-                  )}
                 </div>
               </article>
 
