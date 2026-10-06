@@ -9,33 +9,33 @@ import pytest
 
 from malbut_tts.api_synthesis import ApiTtsError, OpenAISynthesizer
 
-httpx = pytest.importorskip('httpx')
-openai = pytest.importorskip('openai')
-
-
-class _PCMStream(httpx.AsyncByteStream):
-    def __init__(self, *, block_body=False):
-        self.closed = False
-        self.block_body = block_body
-        self.body_started = Event()
-
-    async def __aiter__(self):
-        # The real adapter retains 400 ms initially; keep that policy enabled
-        # while testing actual SDK streaming and mid-body cancellation.
-        yield b'\x01\x00' * 9600
-        self.body_started.set()
-        if self.block_body:
-            await asyncio.sleep(60)
-        yield b'\xff\xff' * 1200
-
-    async def aclose(self):
-        self.closed = True
-
 
 @pytest.mark.parametrize('case', [
     'success', 'cancel_headers', 'cancel_body', 'rate_limit',
 ])
 def test_real_async_sdk_stream_and_cleanup_without_network(case):
+    # ROS launch_testing imports modules during collection; skip only this test.
+    httpx = pytest.importorskip('httpx')
+    openai = pytest.importorskip('openai')
+
+    class _PCMStream(httpx.AsyncByteStream):
+        def __init__(self, *, block_body=False):
+            self.closed = False
+            self.block_body = block_body
+            self.body_started = Event()
+
+        async def __aiter__(self):
+            # The real adapter retains 400 ms initially; keep that policy enabled
+            # while testing actual SDK streaming and mid-body cancellation.
+            yield b'\x01\x00' * 9600
+            self.body_started.set()
+            if self.block_body:
+                await asyncio.sleep(60)
+            yield b'\xff\xff' * 1200
+
+        async def aclose(self):
+            self.closed = True
+
     cancel = Event()
     stream = _PCMStream(block_body=case == 'cancel_body')
     request_started = Event()
