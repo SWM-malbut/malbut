@@ -1,6 +1,7 @@
 """Stream queued Agent speech and expose playback controls through ROS 2."""
 
 import argparse
+import json
 from queue import Empty, Queue
 import sys
 from typing import Optional, Sequence
@@ -9,6 +10,8 @@ from typing import Optional, Sequence
 RESPONSE_TOPIC = '/malbut/speech/response'
 STATUS_TOPIC = '/malbut/speech/playback_status'
 CONTROL_SERVICE = '/malbut/speech/playback_control'
+# How the OpenAI key is doing, for key_sync to tell the web (std_msgs/String JSON).
+KEY_HEALTH_TOPIC = '/malbut/keys/health'
 
 
 def create_tts_node(runtime_factory=None):
@@ -28,6 +31,8 @@ def create_tts_node(runtime_factory=None):
             self._runtime = None
             self._closing = False
             self._statuses = Queue()
+            self._key_health = Queue()
+            self._key_health_publisher = None
             try:
                 self.declare_parameter('model_path', '')
                 self.declare_parameter('backend', 'openai')
@@ -100,6 +105,9 @@ def create_tts_node(runtime_factory=None):
                     'OpenAI TTS: speech text is sent to a paid external API; '
                     'the output voice is AI-generated, not a human voice.'
                 )
+                key = getattr(synthesizer, 'key', None)
+                if hasattr(key, 'add_listener'):
+                    self._watch_key(key)
             return SpeechRuntime(
                 synthesizer,
                 lambda on_state, cancel_event: StreamingPlayer(
@@ -111,6 +119,35 @@ def create_tts_node(runtime_factory=None):
                 max_pending_requests=self.get_parameter('max_pending_requests').value,
                 pending_timeout_s=self.get_parameter('pending_timeout_s').value,
             )
+
+        def _watch_key(self, key):
+            """Share key health changes; the key itself never leaves the synthesizer."""
+            from std_msgs.msg import String
+            self._key_health_publisher = self.create_publisher(
+                String, KEY_HEALTH_TOPIC, QoSProfile(
+                    depth=4, reliability=ReliabilityPolicy.RELIABLE,
+                    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                ),
+            )
+            self._string = String
+            key.add_listener(
+                lambda service, state, code: self._key_health.put((service, state, code)))
+            self.create_timer(0.1, self._publish_key_health)
+
+        def _publish_key_health(self):
+            while not self._closing:
+                try:
+                    service, state, code = self._key_health.get_nowait()
+                except Empty:
+                    return
+                if state == 'ok':
+                    self.get_logger().info('OpenAI key works again')
+                else:
+                    self.get_logger().warning(
+                        f'OpenAI key {state} ({code}); playing the notice instead')
+                self._key_health_publisher.publish(self._string(data=json.dumps(
+                    {'service': service, 'state': state, 'code': code},
+                    separators=(',', ':'))))
 
         def _receive(self, message):
             if not self._closing:

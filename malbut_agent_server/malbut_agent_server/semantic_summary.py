@@ -93,7 +93,11 @@ class OpenAISemanticSummarizer:
             OpenAIResponsesProvider, REASONING_EFFORTS,
         )
 
-        if not api_key or not api_key.strip():
+        if isinstance(api_key, str):
+            if not api_key.strip():
+                raise ValueError('api_key must not be empty')
+            api_key = api_key.strip()
+        elif not callable(getattr(api_key, 'current', None)):
             raise ValueError('api_key must not be empty')
         if not model or not model.strip():
             raise ValueError('model must not be empty')
@@ -109,13 +113,19 @@ class OpenAISemanticSummarizer:
             raise ValueError(
                 'OpenAI credentials may use only the official API origin',
             )
-        self._api_key = api_key.strip()
+        # A string, or a ManagedKey read on every request (service_keys).
+        self._key_source = api_key
         self.model = model.strip()
         self.timeout_seconds = timeout_seconds
         self.reasoning_effort = reasoning_effort.strip().lower()
         if transport is None:
             transport = OpenAIResponsesProvider._urllib_transport
         self.transport = transport
+
+    @property
+    def _api_key(self) -> str:
+        from malbut_agent_server.service_keys import key_value
+        return key_value(self._key_source)
 
     def summarize(
         self,

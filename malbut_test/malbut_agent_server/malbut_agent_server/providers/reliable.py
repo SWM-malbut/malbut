@@ -39,6 +39,10 @@ class ProviderFailureCode(str, Enum):
     RATE_LIMIT = 'rate_limit'
     UNAVAILABLE = 'unavailable'
     AUTHENTICATION = 'authentication'
+    # The key works but its account has no credit left (OpenAI insufficient_quota).
+    QUOTA = 'quota'
+    # No key to send at all: nothing reached the provider.
+    MISSING_CREDENTIALS = 'missing_credentials'
     INVALID_REQUEST = 'invalid_request'
     INVALID_RESPONSE = 'invalid_response'
     INTERNAL = 'internal'
@@ -80,6 +84,16 @@ _FAILURES = {
         transient=False,
         affects_circuit=True,
     ),
+    ProviderFailureCode.QUOTA: ProviderFailure(
+        ProviderFailureCode.QUOTA,
+        transient=False,
+        affects_circuit=True,
+    ),
+    ProviderFailureCode.MISSING_CREDENTIALS: ProviderFailure(
+        ProviderFailureCode.MISSING_CREDENTIALS,
+        transient=False,
+        affects_circuit=False,
+    ),
     ProviderFailureCode.INVALID_REQUEST: ProviderFailure(
         ProviderFailureCode.INVALID_REQUEST,
         transient=False,
@@ -101,6 +115,13 @@ _FAILURES = {
         affects_circuit=False,
     ),
 }
+
+
+_KEY_FAILURES = frozenset({
+    ProviderFailureCode.AUTHENTICATION,
+    ProviderFailureCode.QUOTA,
+    ProviderFailureCode.MISSING_CREDENTIALS,
+})
 
 
 class NormalizedProviderError(ProviderError):
@@ -234,6 +255,7 @@ class ReliableProvider(AgentProvider):
         total_timeout_seconds: float = 60.0,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        credential_generation: Optional[Callable[[], int]] = None,
     ) -> None:
         """Configure bounded retries and ordered provider fallback."""
         self._providers = tuple(providers)
@@ -269,6 +291,21 @@ class ReliableProvider(AgentProvider):
         self._sleep = sleep
         self._circuits = [_Circuit() for _ in self._providers]
         self._circuit_lock = threading.Lock()
+        # A new key (set by the owner on the web) gets a fresh start: an
+        # authentication circuit opened by the old key must not block it.
+        self._credential_generation = credential_generation
+        self._seen_generation = (
+            credential_generation() if credential_generation else None
+        )
+
+    def _reset_circuits_on_new_key(self) -> None:
+        if self._credential_generation is None:
+            return
+        generation = self._credential_generation()
+        with self._circuit_lock:
+            if generation != self._seen_generation:
+                self._seen_generation = generation
+                self._circuits = [_Circuit() for _ in self._providers]
 
     @classmethod
     def _validate_configuration(
@@ -559,6 +596,7 @@ class ReliableProvider(AgentProvider):
         weather_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Return the first valid result or a safe non-action response."""
+        self._reset_circuits_on_new_key()
         started_at = self._clock()
         deadline = started_at + self._total_timeout_seconds
         attempted = False
@@ -592,7 +630,8 @@ class ReliableProvider(AgentProvider):
                 )
                 return replace(result, latency_ms=elapsed_ms)
             self._record_failure(index, failure)
-            if failure.code is ProviderFailureCode.AUTHENTICATION:
+            # Every fallback model uses the same key: trying it cannot help.
+            if failure.code in _KEY_FAILURES:
                 break
 
         elapsed_ms = max(
