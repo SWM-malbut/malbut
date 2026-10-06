@@ -6,6 +6,7 @@ import { FallIncidentsPanel } from "./fall-incidents-panel";
 import { FallTimelinePanel, type TimelineMode } from "./fall-timeline-panel";
 import { subscribeFallPush } from "../lib/fall-push";
 import { GuardiansSettings, OwnerTransferCard, type FamilyMember } from "./guardians-settings";
+import { ServiceKeysSettings } from "./service-keys-settings";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
@@ -510,7 +511,7 @@ export function HomecamDashboard({
   const [pushEndpointRegistrationCount, setPushEndpointRegistrationCount] = useState(0);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [standalone, setStandalone] = useState(false);
-  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians" | "owner" | "name">("main");
+  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians" | "keys" | "owner" | "name">("main");
   const [account, setAccount] = useState<{ userId: string | null; name: string | null; email: string | null; providers: string[] } | null>(null);
   const [textSize, setTextSize] = useState<"default" | "large">("default");
   const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
@@ -1469,6 +1470,12 @@ export function HomecamDashboard({
                   <CaretRight size={18} aria-hidden="true" />
                 </button>
                 {isOwner && (
+                  <button type="button" onClick={() => setSettingsView("keys")}>
+                    <span><strong>AI·서비스 키</strong><small>대화 · 날씨 · 낙상 AI 확인에 쓰는 키</small></span>
+                    <CaretRight size={18} aria-hidden="true" />
+                  </button>
+                )}
+                {isOwner && (
                   <button type="button" onClick={() => setSettingsView("owner")}>
                     <span><strong>소유자 넘기기 · 다시 등록</strong><small>관리를 다른 보호자에게 맡기거나 말벗을 옮길 때</small></span>
                     <CaretRight size={18} aria-hidden="true" />
@@ -1555,6 +1562,15 @@ export function HomecamDashboard({
               />
             ) : <p className="ui-hint">등록된 말벗이 없어요.</p>}
           </section>
+        )}
+
+        {tab === "settings" && settingsView === "keys" && selectedDevice && (
+          <ServiceKeysSettings
+            key={selectedDevice.id}
+            deviceId={selectedDevice.id}
+            demo={LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID}
+            onBack={() => setSettingsView("main")}
+          />
         )}
 
         {tab === "settings" && settingsView === "owner" && (
