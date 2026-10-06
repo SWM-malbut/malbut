@@ -11,6 +11,7 @@ Static preprocessing and candidate visibility are reused for the whole patrol.
 
 from collections import OrderedDict, deque
 from dataclasses import dataclass
+import json
 import math
 from typing import Callable, Optional
 
@@ -118,6 +119,35 @@ def _flood_distances(mask, start):
                 distances[nr, nc] = distance
                 pending.append((nr, nc))
     return distances
+
+
+def read_room_map(path, grid):
+    """
+    Return the rooms in a room file made for this grid and why none were used.
+
+    A missing file means the map has no rooms yet. A file that names another grid
+    (another saved map) is not used: its rooms would land on the wrong floor. A file
+    without a grid (the simulator's) is trusted as before.
+    """
+    try:
+        with open(path, encoding='utf-8') as stream:
+            rooms = json.load(stream)
+    except FileNotFoundError:
+        return None, 'No room file for this map; patrolling without rooms'
+    stated = rooms.get('grid') if isinstance(rooms, dict) else None
+    if stated is not None:
+        try:
+            origin_x, origin_y, origin_yaw = (float(value) for value in stated['origin'])
+            same = (int(stated['width']) == grid.width and int(stated['height']) == grid.height
+                    and abs(float(stated['resolution']) - grid.resolution) < 1e-6
+                    and math.hypot(origin_x - grid.origin_x, origin_y - grid.origin_y)
+                    < grid.resolution / 2
+                    and abs(origin_yaw - grid.origin_yaw) < 1e-6)
+        except (KeyError, TypeError, ValueError):
+            same = False
+        if not same:
+            return None, 'The room file is for another map; patrolling without rooms'
+    return rooms, ''
 
 
 class CoveragePlanner:

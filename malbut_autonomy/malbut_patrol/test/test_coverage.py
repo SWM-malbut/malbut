@@ -1,11 +1,14 @@
 """Verify patrol geometry and coverage using small synthetic occupancy maps."""
 
+import json
 import math
 
 import numpy as np
 import pytest
 
-from malbut_patrol.coverage import CoverageGrid, CoveragePlanner, CoverageProfile
+from malbut_patrol.coverage import (
+    CoverageGrid, CoveragePlanner, CoverageProfile, read_room_map,
+)
 
 
 def _planner(cells=None, *, rooms=None, range_m=3.0, spacing_m=0.8,
@@ -221,3 +224,28 @@ def test_frame_observations_can_complete_a_finite_patrol():
 def test_invalid_profiles_fail_before_planning(profile):
     with pytest.raises(ValueError):
         CoverageProfile(*profile)
+
+
+def test_room_file_is_used_only_for_the_grid_it_names(tmp_path):
+    """Rooms edited for this map are read; a missing or other map's file gives none."""
+    grid = CoverageGrid(np.zeros((30, 40), dtype=np.int8), 0.05, -1.0, -1.0, 0.0)
+    path = tmp_path / 'active.user-map.geojson'
+    assert read_room_map(path, grid) == (
+        None, 'No room file for this map; patrolling without rooms')
+    rooms = {'type': 'FeatureCollection', 'features': [_room('거실', 0, 0, 1, 1)],
+             'grid': {'width': 40, 'height': 30, 'resolution': 0.05,
+                      'origin': [-1.0, -1.0, 0.0]}}
+    path.write_text(json.dumps(rooms), encoding='utf-8')
+    assert read_room_map(path, grid) == (rooms, '')
+    for change in ({'width': 41}, {'resolution': 0.1}, {'origin': [-0.9, -1.0, 0.0]},
+                   {'origin': [-1.0, -1.0, 0.5]}, {'origin': 'nowhere'}):
+        path.write_text(json.dumps({**rooms, 'grid': {**rooms['grid'], **change}}),
+                        encoding='utf-8')
+        assert read_room_map(path, grid)[0] is None, change
+    # The simulator's room file names no grid and is used as before.
+    simulator = {'type': 'FeatureCollection', 'features': rooms['features']}
+    path.write_text(json.dumps(simulator), encoding='utf-8')
+    assert read_room_map(path, grid) == (simulator, '')
+    path.write_text('{broken', encoding='utf-8')
+    with pytest.raises(ValueError):
+        read_room_map(path, grid)
