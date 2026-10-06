@@ -2,6 +2,7 @@
 
 from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 import copy
 import hmac
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -34,6 +35,9 @@ RUNTIME_ACTIONS = ('/malbut/mission/execute', '/autoslam', '/follow_person', '/p
                    '/navigate_to_pose', '/follow_path', '/spin', '/backup', '/wait',
                    '/assisted_teleop', '/relocalize')
 LOAD_MAP_SERVICE = '/malbut/localization/load_map'
+# The web map screen's destination preview plans with Nav2 before anything moves.
+PLAN_ACTION = '/compute_path_to_pose'
+PLAN_TIMEOUT_S = 5.0
 START_MAPPING_SERVICE = '/malbut/localization/start_mapping'
 LOCALIZATION_MODES = {'MAPPING': 'mapping', 'LOCALIZATION': 'navigation'}
 # manual_drive input: bounded by the vendor driver's /cmd_vel limits (m/s, m/s, rad/s).
@@ -63,6 +67,11 @@ def validate_command(payload):
     if not isinstance(payload, dict):
         raise ValueError('JSON object required')
     if payload == {'command': 'cancel'}:
+        return payload
+    if (set(payload) == {'command', 'request_id'} and payload['command'] == 'cancel'
+            and isinstance(payload['request_id'], str)
+            and re.fullmatch(r'[0-9a-f]{32}', payload['request_id'])):
+        # One destination drive from the web map; other missions keep going.
         return payload
     if payload == {'command': 'bringup_stop'}:
         return payload
@@ -396,6 +405,7 @@ class RosBridge:
         from action_msgs.msg import GoalStatusArray
         from action_msgs.srv import CancelGoal
         from geometry_msgs.msg import Twist
+        from nav2_msgs.action import ComputePathToPose
         from nav2_msgs.srv import LoadMap
         from std_srvs.srv import Trigger
         from nav_msgs.msg import OccupancyGrid
@@ -423,6 +433,8 @@ class RosBridge:
             'manager': ActionClient(self.node, ExecuteMission, '/malbut/mission/execute'),
             'autoslam': ActionClient(self.node, AutoSlam, '/autoslam'),
         }
+        self.planner = ActionClient(self.node, ComputePathToPose, PLAN_ACTION)
+        self.plan_goal = ComputePathToPose.Goal
         self.catalog = SavedMapCatalog(self.node.declare_parameter(
             'map_directory', str(Path.home() / '.ros/malbut/maps')).value)
         self.runtime = (RuntimeSupervisor(self.catalog) if self.node.declare_parameter(
@@ -800,6 +812,51 @@ class RosBridge:
         self.guard.trigger()
         return future.result(timeout=timeout)
 
+    def plan_path(self, x, y, yaw, timeout=PLAN_TIMEOUT_S):
+        """Ask the Nav2 planner for a path from the robot to a map pose; return [x, y] points."""
+        result = Future()
+
+        def fail(error):
+            if not result.done():
+                result.set_exception(error)
+
+        def finished(future):
+            try:
+                wrapped = future.result()
+                if wrapped.status != 4:  # GoalStatus.STATUS_SUCCEEDED
+                    raise ValueError('Nav2 planner found no path')
+                result.set_result([(item.pose.position.x, item.pose.position.y)
+                                   for item in wrapped.result.path.poses])
+            except Exception as error:
+                fail(error)
+
+        def accepted(future):
+            try:
+                handle = future.result()
+                if not handle.accepted:
+                    raise ValueError('Nav2 planner rejected the goal')
+                handle.get_result_async().add_done_callback(finished)
+            except Exception as error:
+                fail(error)
+
+        def send():
+            if not self.planner.server_is_ready():
+                raise ValueError('Nav2 planner is not available')
+            goal = self.plan_goal()
+            goal.goal.header.frame_id = 'map'
+            goal.goal.pose.position.x = float(x)
+            goal.goal.pose.position.y = float(y)
+            goal.goal.pose.orientation.z = math.sin(yaw / 2.0)
+            goal.goal.pose.orientation.w = math.cos(yaw / 2.0)
+            goal.use_start = False  # From where the robot is now.
+            self.planner.send_goal_async(goal).add_done_callback(accepted)
+
+        self.call(send)
+        try:
+            return result.result(timeout=timeout)
+        except FutureTimeout:
+            raise ValueError('Nav2 planner did not answer in time') from None
+
     def diagnostics(self):
         """Describe the ROS graph and runtime state for remote debugging."""
         node = self.node
@@ -834,6 +891,8 @@ class RosBridge:
                     payload['future'].set_result(payload['function']())
                 except Exception as error:
                     payload['future'].set_exception(error)
+            elif payload['command'] == 'cancel' and 'request_id' in payload:
+                self.cancel_one(payload['request_id'])
             elif payload['command'] == 'cancel':
                 self.cancel_owned()
             elif payload['command'] == 'teleop':
@@ -990,6 +1049,18 @@ class RosBridge:
             handle = self.handles.get(request_id)
             if handle is not None:
                 self._cancel(request_id, handle)
+
+    def cancel_one(self, request_id):
+        """Cancel one of this process's goals, even one still awaiting acceptance."""
+        with self.data.lock:
+            item = self.data.requests.get(request_id)
+            if item is None or item['state'] in TERMINAL:
+                return
+        self.cancel_pending.add(request_id)
+        self.data.update(request_id, state='CANCELING')
+        handle = self.handles.get(request_id)
+        if handle is not None:
+            self._cancel(request_id, handle)
 
     def _cancel(self, request_id, handle):
         self.data.update(request_id, state='CANCELING')

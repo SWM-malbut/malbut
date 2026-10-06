@@ -667,6 +667,20 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
           deviceId: "living-room", userId: "u-owner", operation,
         }), /UNSUPPORTED_ROBOT_COMMAND/);
       }
+      // The map screen's destination sending reaches the real robot too (SWM25-237), guardians included.
+      for (const [operation, payload] of [
+        ["navigation_preview", { x: 1, y: 1 }],
+        ["navigation_start", { previewToken: "preview_token_123" }],
+        ["navigation_cancel", { sessionId: "a".repeat(32) }],
+      ]) {
+        const sent = await robotMap.createRobotCommand({
+          deviceId: "living-room", userId: "u-family", operation, payload,
+        });
+        assert.equal((await robotMap.claimRobotCommands("living-room"))[0].id, sent.id);
+        await robotMap.completeRobotCommand({
+          deviceId: "living-room", commandId: sent.id, ok: true, result: {},
+        });
+      }
       const realMission = await robotMap.createRobotCommand({
         deviceId: "living-room", userId: "u-owner", operation: "mission_start",
         payload: { capability: "follow_person", arguments: { target_mode: 0, target_person_id: "", desired_distance_m: 1 } },

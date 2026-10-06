@@ -372,7 +372,11 @@ async function assertDriveCommandAllowed(input: {
     .first<Pick<StateRow, "localization_state" | "nav2_json" | "drive_mode_json" | "observed_at">>();
   const nav2 = state ? parseObject(state.nav2_json) : {};
   const managedOperation = MANAGED_OPERATIONS.has(input.operation);
-  if (nav2.robot_interface === "malbut_manager_v1" && !managedOperation) {
+  // The real robot also takes the map screen's destination sending (SWM25-237).
+  if (
+    nav2.robot_interface === "malbut_manager_v1" && !managedOperation &&
+    !NAVIGATION_OPERATIONS.has(input.operation)
+  ) {
     throw new Error("UNSUPPORTED_ROBOT_COMMAND");
   }
   if (!onlineRobotOperations.has(input.operation)) return;
