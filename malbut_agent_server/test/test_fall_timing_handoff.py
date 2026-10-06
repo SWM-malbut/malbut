@@ -61,6 +61,16 @@ def test_arrival_order_incidents_and_unique_manager_questions(
         assert not await monitor.run_once()
         relay(monitor.drain_events())
 
+        if mode in {'pose_empty', 'pose_unusable'}:
+            # No duplicate is queued while identity is pending. At the finite
+            # deadline the unresolved observation gets its own scene check.
+            assert len(monitor._incidents) == len(coordinator.requests) == 1
+            pending = next(event['discovery'] for event in relayed
+                           if 'discovery' in event)
+            clock.value = pending['association_review']['deadline']
+            monitor.maintain_associations()
+            relay(monitor.drain_events())
+
         discoveries = [event['discovery'] for event in relayed if 'discovery' in event]
         final = discoveries[-1]
         associated = final['incident_id'] == original_id and final['subject_key'] is not None
@@ -77,15 +87,14 @@ def test_arrival_order_incidents_and_unique_manager_questions(
         unique_ids = {event['question_id'] for event in relayed
                       if event['kind'] == 'question_requested'}
         assert len(coordinator.requests) == expected_cases
-        assert len(unique_ids) == expected_cases + (mode == 'late_after_cloud')
+        assert len(unique_ids) == expected_cases
         if mode == 'late_after_cloud':
-            # Keep the historical scene and its issued question, but retire
-            # its queue entry. The original person question is reused.
+            # No duplicate scene/question was created before the late match.
             assert {r.subject_key for r in coordinator.requests.values()} == {
                 monitor.incident(original_id).subject_key}
-            assert final['association_link']['source_incident_id'] != original_id
-            assert len(monitor._incidents) == 2
-            assert monitor.incident(final['association_link']['source_incident_id']).close_reason == 'findings_associated'
+            assert final['association_link']['source_incident_id'] == original_id
+            assert len(monitor._incidents) == 1
+            assert final['association_review']['status'] == 'matched'
 
         result = dict(
             mode=mode, person_linked=associated,

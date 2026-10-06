@@ -135,14 +135,16 @@ def test_new_pose_person_is_not_guessed_to_be_the_unidentified_cloud_person():
     assert not confirm(monitor, q, subject_key='helper')
 
 
-def test_stronger_scene_evidence_revises_once_and_rejects_previous_answer():
+def test_stronger_scene_label_retains_answer_and_does_not_repeat_question():
     monitor, clock, provider, q, _ = setup()
     confirm(monitor, q)
     events = scan(monitor, clock, provider,
                   reply(finding(assessment=VideoAssessment.OBSERVED_FALL)), 220)
-    new_q, = [e for e in events if e.kind == 'question_requested']
-    assert new_q.incident_id == q.incident_id and new_q.evidence_revision == 2
-    assert not confirm(monitor, q)
+    assert not any(e.kind == 'question_requested' for e in events)
+    current = monitor.incident(q.incident_id)
+    assert current.question_id == q.question_id and current.revision == 1
+    assert current.answer is VoiceAnswer.UNCLEAR and current.fall_seen
+    assert confirm(monitor, q)
     events = scan(monitor, clock, provider,
                   reply(finding(assessment=VideoAssessment.OBSERVED_FALL)), 280)
     assert not any(e.kind == 'question_requested' for e in events)
