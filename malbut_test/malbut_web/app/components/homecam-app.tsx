@@ -5,12 +5,12 @@ import {
   HomecamDashboard,
   type HomecamDevice,
   type HomecamTab,
+  type LiveSpeaker,
 } from "./homecam-dashboard";
 import { HomecamHeader } from "./homecam-header";
 import {
   ArrowClockwise,
   ArrowLeft,
-  Camera,
   CornersOut,
   Microphone,
   ShieldCheck,
@@ -172,17 +172,16 @@ function Viewer({
   device,
   onExit,
   embedded = false,
-  embeddedEventCount = 0,
-  onOpenEmbeddedEvents,
   onMediaReadyChange,
+  onSpeakerChange,
 }: {
   deviceId: string;
   device?: HomecamDevice;
   onExit: (tab?: HomecamTab) => void;
   embedded?: boolean;
-  embeddedEventCount?: number;
-  onOpenEmbeddedEvents?: () => void;
   onMediaReadyChange?: (ready: boolean) => void;
+  /** Embedded in the app: the 스피커 switch lives in the 현재 상태 card, outside this viewer. */
+  onSpeakerChange?: (speaker: LiveSpeaker | null) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const microphoneRef = useRef<MediaStream | null>(null);
@@ -1083,6 +1082,18 @@ function Viewer({
       }
     }
   };
+  const toggleSpeakerRef = useRef(toggleSpeaker);
+  useEffect(() => {
+    toggleSpeakerRef.current = toggleSpeaker;
+  });
+  useEffect(() => {
+    onSpeakerChange?.({
+      muted: speakerMuted,
+      blocked: soundBlocked,
+      toggle: () => void toggleSpeakerRef.current(),
+    });
+  }, [onSpeakerChange, speakerMuted, soundBlocked]);
+  useEffect(() => () => onSpeakerChange?.(null), [onSpeakerChange]);
 
   return (
     <div className={`homecam-shell homecam-stream-shell ${embedded ? "is-embedded" : ""}`}>
@@ -1169,27 +1180,8 @@ function Viewer({
                     : "실시간 영상은 저장하지 않아요."}
                 </span>
               </div>
-              {embedded ? (
-                <div className="homecam-stream-control-buttons homecam-stream-mockup-controls">
-                  <button
-                    type="button"
-                    className="homecam-stream-control-button"
-                    onClick={toggleSpeaker}
-                  >
-                    {speakerMuted && !soundBlocked
-                      ? <SpeakerSlash size={16} weight="regular" aria-hidden="true" />
-                      : <SpeakerHigh size={16} weight="regular" aria-hidden="true" />}
-                    {soundBlocked ? "소리 재생" : speakerMuted ? "스피커 꺼짐" : "스피커 켜짐"}
-                  </button>
-                  <span className="homecam-stream-status-chip">
-                    <Camera size={16} weight="regular" aria-hidden="true" />
-                    {device?.cameraEnabled === false ? "카메라 꺼짐" : "카메라 켜짐"}
-                  </span>
-                  <button type="button" className="homecam-stream-control-button is-clips" onClick={onOpenEmbeddedEvents}>
-                    확인할 사건 {embeddedEventCount}건
-                  </button>
-                </div>
-              ) : <div className="homecam-stream-control-buttons">
+              {/* In the app, 스피커·카메라·마이크 are rows of the 현재 상태 card below the video. */}
+              {embedded ? null : <div className="homecam-stream-control-buttons">
                 <button
                   type="button"
                   className={`homecam-stream-control-button ${talking ? "is-talking" : ""}`}
@@ -1326,6 +1318,7 @@ function Viewer({
 export function HomecamApp() {
   const [inlineViewerDevice, setInlineViewerDevice] = useState<HomecamDevice | null>(null);
   const [inlineViewerReady, setInlineViewerReady] = useState(false);
+  const [liveSpeaker, setLiveSpeaker] = useState<LiveSpeaker | null>(null);
 
   const closeInlineViewer = useCallback(() => {
     setInlineViewerReady(false);
@@ -1343,16 +1336,16 @@ export function HomecamApp() {
     <HomecamDashboard
       onOpenLive={openRegisteredDevice}
       liveMediaReady={inlineViewerReady}
+      liveSpeaker={liveSpeaker}
       onReleaseLive={closeInlineViewer}
-      liveViewer={inlineViewerDevice ? ({ eventCount, openEvents, device }) => (
+      liveViewer={inlineViewerDevice ? ({ device }) => (
         device?.id === inlineViewerDevice.id ? (
           <Viewer
             deviceId={inlineViewerDevice.id}
             device={device}
             embedded
-            embeddedEventCount={eventCount}
-            onOpenEmbeddedEvents={openEvents}
             onMediaReadyChange={setInlineViewerReady}
+            onSpeakerChange={setLiveSpeaker}
             onExit={closeInlineViewer}
           />
         ) : null

@@ -84,16 +84,17 @@ const LOCAL_DEMO_FAMILY: FamilyMember[] = [
 
 type ApiAvailability = "loading" | "ready" | "unavailable";
 
+/** The live video's sound on this device (the viewer owns the video element). */
+export type LiveSpeaker = { muted: boolean; blocked: boolean; toggle: () => void };
+
 type HomecamDashboardProps = {
   initialTab?: HomecamTab;
   onOpenLive: (device: HomecamDevice) => Promise<void>;
   liveMediaReady?: boolean;
+  /** 스피커 row of 현재 상태; null until the live viewer is open. */
+  liveSpeaker?: LiveSpeaker | null;
   onReleaseLive?: () => void;
-  liveViewer?: (context: {
-    eventCount: number;
-    openEvents: () => void;
-    device: HomecamDevice | null;
-  }) => React.ReactNode;
+  liveViewer?: (context: { device: HomecamDevice | null }) => React.ReactNode;
 };
 
 type BeforeInstallPromptEvent = Event & {
@@ -488,6 +489,7 @@ export function HomecamDashboard({
   initialTab = "home",
   onOpenLive,
   liveMediaReady = false,
+  liveSpeaker = null,
   onReleaseLive,
   liveViewer,
 }: HomecamDashboardProps) {
@@ -1284,11 +1286,7 @@ export function HomecamDashboard({
                   )}
               </div>
             )}
-            {liveViewer?.({
-              eventCount: openIncidents.length,
-              openEvents: () => setTab("events"),
-              device: selectedDevice,
-            }) ?? (
+            {liveViewer?.({ device: selectedDevice }) ?? (
               <div className="ui-video">
                 <div className="ui-video-tags">
                   <span>{selectedDevice?.cameraEnabled ? "카메라 켜짐" : "카메라 꺼짐"}</span>
@@ -1321,14 +1319,14 @@ export function HomecamDashboard({
                   <span>영상 연결</span>
                   <strong className={displayedMediaReady ? "is-good" : ""}>{displayedMediaReady ? "연결됨" : selectedDevice?.online ? "연결 중" : "오프라인"}</strong>
                 </div>
+                {/* 보면서 바로 켜고 끄는 것: 말벗 카메라·마이크(소유자만)와 이 기기의 소리. 연속 녹화는 설정 › 홈캠 설정. */}
                 <div>
-                  <span>카메라 전원</span>
-                  {/* 보면서 바로 끄는 것은 카메라뿐: 연속 녹화는 설정 › 홈캠 설정에서 바꾼다. */}
+                  <span className="ui-row-label">카메라<small>말벗 카메라 켜고 끄기</small></span>
                   {selectedDevice && (isOwner ? (
                     <Switch
                       checked={selectedDevice.cameraEnabled}
                       disabled={Boolean(busy)}
-                      label="카메라 전원"
+                      label="카메라"
                       onChange={(value) => void updateSetting("cameraEnabled", value)}
                     />
                   ) : (
@@ -1336,8 +1334,26 @@ export function HomecamDashboard({
                   ))}
                 </div>
                 <div>
-                  <span>보호자 마이크</span>
-                  <strong className={selectedDevice?.microphoneEnabled ? "is-good" : ""}>{selectedDevice?.microphoneEnabled ? "사용 가능" : "꺼짐"}</strong>
+                  <span className="ui-row-label">마이크<small>집 안 소리를 보호자에게 보내기</small></span>
+                  {selectedDevice && (isOwner ? (
+                    <Switch
+                      checked={selectedDevice.microphoneEnabled}
+                      disabled={Boolean(busy)}
+                      label="마이크"
+                      onChange={(value) => void updateSetting("microphoneEnabled", value)}
+                    />
+                  ) : (
+                    <strong className={selectedDevice.microphoneEnabled ? "is-good" : ""}>{selectedDevice.microphoneEnabled ? "켜짐" : "꺼짐"}</strong>
+                  ))}
+                </div>
+                <div>
+                  <span className="ui-row-label">스피커<small>이 기기에서 영상 소리 듣기</small></span>
+                  <Switch
+                    checked={Boolean(liveSpeaker && !liveSpeaker.muted && !liveSpeaker.blocked)}
+                    disabled={!liveSpeaker}
+                    label="스피커"
+                    onChange={() => liveSpeaker?.toggle()}
+                  />
                 </div>
                 <div>
                   <span>영상 저장</span>
