@@ -1104,15 +1104,6 @@ export function HomecamDashboard({
     !storageReady &&
     !storageConnecting,
   );
-  const storageStateLabel = !storageEnabled
-    ? "저장 안 함"
-    : !selectedDevice?.cameraEnabled
-      ? "카메라 꺼짐 · 저장 대기"
-    : storageReady
-      ? "연속 녹화 중"
-      : storageConnecting
-        ? "연속 녹화 준비 중"
-        : "연속 녹화 오류";
   const isGuardianView = selectedDevice?.role !== "owner";
   const roleLabel = selectedDevice?.role === "owner" ? "소유자" : selectedDevice?.role === "family" ? "보호자" : "읽기 전용";
   const connectionText = selectedDevice?.online
@@ -1144,36 +1135,23 @@ export function HomecamDashboard({
               <h1>{tab === "home" ? "홈" : tab === "live" ? "홈캠" : "설정"}</h1>
               <span className={`ui-pill ${selectedDevice?.online ? "is-ok" : ""}`}><i aria-hidden="true" />{connectionText}</span>
             </div>
-            {tab === "live" ? (
-              <span className="ui-top-sub" aria-live="polite">
-                <span>{selectedDevice?.displayName ?? "등록된 말벗 없음"}</span>
-                <b aria-hidden="true">·</b>
-                <span className={displayedMediaReady ? "is-ready" : "is-pending"}>
-                  {displayedMediaReady ? "보안 영상 채널 연결됨" : "영상 채널 연결 중"}
-                </span>
-                <b aria-hidden="true">·</b>
-                <span className={storageReady ? "is-ready" : storageConnecting ? "is-pending" : storageError ? "is-error" : ""}>
-                  {storageStateLabel}
-                </span>
+            {/* 홈·홈캠·설정 모두 같은 머리. 홈캠의 영상·녹화 상태는 아래 "현재 상태" 카드에 있다. */}
+            <div className="ui-device">
+              <span className="ui-device-avatar" aria-hidden="true">말</span>
+              <span className="ui-device-text">
+                <label htmlFor="homecam-device-select">연결된 말벗</label>
+                {devices.length > 1 ? (
+                  <select id="homecam-device-select" value={selectedDevice?.id ?? ""}
+                    onChange={(event) => setSelectedDeviceId(event.target.value)}>
+                    {devices.map((device) => (
+                      <option key={device.id} value={device.id}>{device.displayName}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <strong>{selectedDevice?.displayName ?? "등록된 말벗 없음"}</strong>
+                )}
               </span>
-            ) : (
-              <div className="ui-device">
-                <span className="ui-device-avatar" aria-hidden="true">말</span>
-                <span className="ui-device-text">
-                  <label htmlFor="homecam-device-select">연결된 말벗</label>
-                  {devices.length > 1 ? (
-                    <select id="homecam-device-select" value={selectedDevice?.id ?? ""}
-                      onChange={(event) => setSelectedDeviceId(event.target.value)}>
-                      {devices.map((device) => (
-                        <option key={device.id} value={device.id}>{device.displayName}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <strong>{selectedDevice?.displayName ?? "등록된 말벗 없음"}</strong>
-                  )}
-                </span>
-              </div>
-            )}
+            </div>
           </header>
         )}
 

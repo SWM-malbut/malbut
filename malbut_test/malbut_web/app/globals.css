@@ -4090,7 +4090,7 @@ a:focus-visible {
 .fall-list-head h2 { margin: 0; font-size: 22px; font-weight: 700; }
 .fall-link { padding: 10px 4px; border: 0; background: none; color: var(--ui-accent); font-size: 14px; cursor: pointer; }
 .fall-link:hover { color: var(--ui-accent-strong); }
-.fall-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.fall-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .fall-chips button {
   min-height: 36px; padding: 0 14px; border-radius: 18px; font-size: 13px; cursor: pointer;
   border: 1px solid var(--ui-control-border); background: var(--ui-surface); color: var(--ui-text);
@@ -4216,8 +4216,10 @@ a:focus-visible {
 .fall-bottom .fall-closed { font-size: 14px; color: var(--ui-text); font-weight: 700; }
 .fall-bottom .fall-needs-opinion { font-size: 13px; color: var(--ui-warn-text); font-weight: 700; }
 @media (max-width: 640px) {
-  /* Full-bleed like the mockup's 390 px screens. */
-  .fall-page { margin-inline: -16px; border-radius: 0; }
+  /* Full-bleed like the mockup's 390 px screens. Only the settings screen has 16 px side padding to undo;
+     사건·장면·연속 녹화 화면은 이미 가장자리까지 닿으므로 음수 여백을 주면 양옆이 잘린다. */
+  .fall-page { border-radius: 0; }
+  .ui-settings-sub .fall-page { margin-inline: -16px; }
 }
 
 /* 연속 녹화 (Timeline.dc.html) */
@@ -4337,7 +4339,8 @@ a:focus-visible {
   display: flex; flex-direction: column;
 }
 .homecam-dashboard-shell.ui-app.tab-robot .homecam-main.ui-main { max-width: none; padding-left: 16px; padding-right: 16px; }
-.ui-app button { font: inherit; }
+/* :where()로 우선순위를 0으로 둔다. 버튼마다 정한 글자 크기(.fall-chips·.ui-button 등)가 이 규칙에 덮이지 않게. */
+:where(.ui-app) button { font: inherit; }
 
 /* 위쪽 머리: 화면 이름 · 연결 상태 · 연결된 말벗 */
 .ui-top {
@@ -4353,11 +4356,6 @@ a:focus-visible {
 .ui-pill i { width: 8px; height: 8px; border-radius: 4px; background: var(--ui-icon-muted); }
 .ui-pill.is-ok { color: var(--ui-ok); background: var(--ui-ok-soft); }
 .ui-pill.is-ok i { background: var(--ui-ok); }
-.ui-top-sub { display: flex; flex-wrap: wrap; gap: 0.25rem 0.375rem; font-size: 0.8125rem; color: var(--ui-text-muted); }
-.ui-top-sub b { font-weight: 400; }
-.ui-top-sub .is-ready { color: var(--ui-ok); }
-.ui-top-sub .is-pending { color: var(--ui-warn-text); }
-.ui-top-sub .is-error { color: var(--ui-danger); }
 .ui-device { display: flex; align-items: center; gap: 0.625rem; }
 .ui-device-avatar {
   flex: none; width: 2rem; height: 2rem; border-radius: 0.625rem; display: flex; align-items: center; justify-content: center;
