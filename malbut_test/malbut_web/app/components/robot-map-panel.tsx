@@ -100,7 +100,20 @@ export type RobotSemantics = {
   mapRevision: string;
   userMap: Record<string, unknown> | null;
   zones: Record<string, unknown> | null;
+  /** The owner's latest saves and whether the robot has taken them (SWM25-237). */
+  drafts?: { rooms: SpaceDraft | null; zones: SpaceDraft | null };
 };
+
+type SpaceDraft = {
+  status: "pending" | "sent" | "applied" | "stale" | "failed";
+  error: string | null;
+  savedAt: string;
+  resolvedAt: string | null;
+};
+
+// Saved rooms and Zones reach the robot as server commands; the edit screen follows them
+// through the save's banner. Split and merge were robot commands before SWM25-237.
+const SPACE_OPERATIONS = new Set<string>(["rooms_save", "zones_apply", "room_split", "room_merge"]);
 
 export function RobotMapPanel({
   device,
@@ -154,25 +167,9 @@ export function RobotMapPanel({
   const trailSession = useRef("");
   const mapCanvasRef = useRef<HTMLDivElement | null>(null);
   const suppressMapClick = useRef(false);
-  const pendingRoomAction = useRef<{
-    operation: "room_split" | "room_merge";
-    sourceIds: string[];
-    signature?: string;
-  } | null>(null);
-  const completedRoomEdit = useRef<{
-    operation: "room_split" | "room_merge";
-    sourceIds: string[];
-    replacement: GeoFeature[];
-  } | null>(null);
-  const pendingRoomSave = useRef<{
-    rooms: GeoFeature[];
-    retries: number;
-  } | null>(null);
-  const pendingZoneSave = useRef<{
-    zones: GeoFeature[];
-    retries: number;
-  } | null>(null);
-  const semanticRetryTimer = useRef<number | null>(null);
+  const spaceCommandSeen = useRef("");
+  const roomsDirtyRef = useRef(false);
+  const zonesDirtyRef = useRef(false);
   const loadedSemanticIdentity = useRef("");
   const splitDraftSignature = JSON.stringify([selectedRoomId, splitLines, pendingSplitPoint]);
   const splitDraftSignatureRef = useRef(splitDraftSignature);
@@ -198,7 +195,14 @@ export function RobotMapPanel({
       setSnapshot(payload);
       setClockNow(Date.now());
       const command = payload.command;
-      if (command && command.id !== processedCommand.current && ["completed", "failed"].includes(command.status)) {
+      if (command && SPACE_OPERATIONS.has(command.operation)) {
+        // A save the server sent moved on: reload so its banner (and the rooms) follow.
+        const seen = `${command.id}:${command.status}`;
+        if (seen !== spaceCommandSeen.current) {
+          spaceCommandSeen.current = seen;
+          setSemanticRefresh((value) => value + 1);
+        }
+      } else if (command && command.id !== processedCommand.current && ["completed", "failed"].includes(command.status)) {
         processedCommand.current = command.id;
         if (command.operation === "navigation_preview" && command.status === "completed" && isRecord(command.result)) {
           setNavigationPreview(command.result);
@@ -210,26 +214,7 @@ export function RobotMapPanel({
         } else if (command.status === "failed") {
           const result = isRecord(command.result) ? command.result : {};
           const message = typeof result.error === "string" ? result.error : "말벗이 명령을 완료하지 못했습니다.";
-          if (command.operation === "room_split") {
-            const action = pendingRoomAction.current;
-            if (action?.signature === splitDraftSignatureRef.current) {
-              setValidatedSplit(null);
-              setSplitValidation("invalid");
-              setSplitValidationMessage(splitErrorMessage(message));
-              setNotice(`방을 나눌 수 없습니다. ${splitErrorMessage(message)}`);
-            }
-          } else if (command.operation === "room_merge") {
-            setNotice(`방을 합칠 수 없습니다. ${mergeErrorMessage(message)}`);
-          } else if (command.operation === "rooms_save") {
-            pendingRoomSave.current = null;
-            setNotice(`방 설정을 저장하지 못했습니다. ${message}`);
-          } else if (command.operation === "zones_apply") {
-            pendingZoneSave.current = null;
-            setNotice(`구역 설정을 저장하지 못했습니다. ${message}`);
-          } else {
-            setNotice(message);
-          }
-          pendingRoomAction.current = null;
+          setNotice(message);
         } else if (command.operation === "robot_diagnostics" && isRecord(command.result)) {
           setManagedDiagnostics({ deviceId, report: command.result });
           setNotice("로봇 진단 결과를 받았습니다.");
@@ -251,70 +236,6 @@ export function RobotMapPanel({
           setNotice("자율주행을 다시 시작했습니다.");
         } else if (command.operation === "drive_mode_stop") {
           setNotice("자율주행을 중지했습니다.");
-        } else if (command.operation === "room_split" && isRecord(command.result)) {
-          const splitRooms = Array.isArray(command.result.rooms)
-            ? command.result.rooms.filter(isGeoFeature)
-            : [];
-          const splitFrom = splitRooms[0]?.properties.split_from;
-          const selected = pendingRoomAction.current?.operation === "room_split"
-            ? pendingRoomAction.current.sourceIds[0]
-            : typeof splitFrom === "string" ? splitFrom : "";
-          const signature = pendingRoomAction.current?.operation === "room_split"
-            ? pendingRoomAction.current.signature
-            : undefined;
-          if (selected && splitRooms.length === 2 && signature === splitDraftSignatureRef.current) {
-            setValidatedSplit({ signature, sourceId: selected, rooms: splitRooms });
-            setSplitValidation("valid");
-            setSplitValidationMessage("각 공간이 1㎡ 이상이고 정확히 두 공간으로 나뉩니다.");
-            setNotice("분할선을 확인했습니다. 지도에서 확인한 뒤 방 나누기를 적용하세요.");
-          }
-        } else if (command.operation === "room_merge" && isRecord(command.result) && isGeoFeature(command.result.room)) {
-          const merged = command.result.room;
-          const mergedFrom = Array.isArray(merged.properties.merged_from)
-            ? merged.properties.merged_from.filter((value): value is string => typeof value === "string")
-            : [];
-          const sourceIds = pendingRoomAction.current?.operation === "room_merge"
-            ? pendingRoomAction.current.sourceIds
-            : mergedFrom;
-          if (sourceIds.length === 2) {
-            completedRoomEdit.current = {
-              operation: "room_merge",
-              sourceIds,
-              replacement: [merged],
-            };
-            setRoomDrafts((current) => replaceRoomsAtFirstIndex(current, sourceIds, [merged]));
-            setSelectedRoomId(featureId(merged));
-            setMergeTargetId("");
-            setRoomTool("select");
-            setNotice("인접한 두 방을 합쳤습니다. 확인한 뒤 저장해 주세요.");
-          }
-        } else if (command.operation === "rooms_save" || command.operation === "zones_apply") {
-          if (command.operation === "rooms_save") {
-            const normalizedRooms = isRecord(command.result) && Array.isArray(command.result.rooms)
-              ? command.result.rooms.filter(isGeoFeature)
-              : [];
-            if (normalizedRooms.length > 0) {
-              pendingRoomSave.current = { rooms: normalizedRooms, retries: 0 };
-              setRoomDrafts(normalizedRooms);
-            }
-            completedRoomEdit.current = null;
-          }
-          setSemanticRefresh((value) => value + 1);
-          // 구역은 저장돼 지도에도 그려지지만, 주행 중인 Nav2 가 마스크를
-          // 다시 읽지 못하면 진입 금지가 실제로는 적용되지 않는다. 알리지
-          // 않으면 이미 막힌 줄 알고 그대로 두게 된다.
-          if (
-            command.operation === "zones_apply"
-            && isRecord(command.result)
-            && command.result.nav2_reloaded === false
-          ) {
-            setNotice("공간 설정을 저장했지만 주행에 아직 반영하지 못했습니다. 말벗을 다시 시작해 주세요.");
-          } else {
-            setNotice("공간 설정을 저장하고 말벗에 반영했습니다.");
-          }
-        }
-        if (command.operation === "room_split" || command.operation === "room_merge") {
-          pendingRoomAction.current = null;
         }
       }
       if (!quiet) setNotice("");
@@ -339,60 +260,24 @@ export function RobotMapPanel({
       })
       .then((payload) => {
         if (controller.signal.aborted) return;
-        setSemantics(payload);
-        const baseRooms = featuresOf(payload.userMap).filter((feature) => feature.properties.role === "room");
-        const pendingSave = pendingRoomSave.current;
-        let nextRooms: GeoFeature[];
-        if (pendingSave && roomSnapshotKey(baseRooms) === roomSnapshotKey(pendingSave.rooms)) {
-          pendingRoomSave.current = null;
-          completedRoomEdit.current = null;
-          nextRooms = baseRooms;
-        } else if (pendingSave) {
-          nextRooms = pendingSave.rooms;
-          if (pendingSave.retries < 8) {
-            pendingSave.retries += 1;
-            if (semanticRetryTimer.current !== null) {
-              window.clearTimeout(semanticRetryTimer.current);
-            }
-            semanticRetryTimer.current = window.setTimeout(() => {
-              semanticRetryTimer.current = null;
-              setSemanticRefresh((value) => value + 1);
-            }, 1_000);
-          } else {
-            setNotice("방 설정은 말벗에 저장됐지만 클라우드 반영 확인이 늦어지고 있습니다.");
-          }
-        } else {
-          const edit = completedRoomEdit.current;
-          nextRooms = edit
-            ? replaceRoomsAtFirstIndex(baseRooms, edit.sourceIds, edit.replacement)
-            : baseRooms;
-        }
-        setRoomDrafts(nextRooms);
-        setSelectedRoomId((current) => nextRooms.some((room) => featureId(room) === current) ? current : "");
-        setMergeTargetId((current) => nextRooms.some((room) => featureId(room) === current) ? current : "");
-        const baseZones = featuresOf(payload.zones).map(cloneFeature);
-        const pendingZones = pendingZoneSave.current;
-        let nextZones = baseZones;
-        if (pendingZones && zoneSnapshotKey(baseZones) === zoneSnapshotKey(pendingZones.zones)) {
-          pendingZoneSave.current = null;
-        } else if (pendingZones) {
-          nextZones = pendingZones.zones;
-          if (pendingZones.retries < 8) {
-            pendingZones.retries += 1;
-            if (semanticRetryTimer.current !== null) window.clearTimeout(semanticRetryTimer.current);
-            semanticRetryTimer.current = window.setTimeout(() => {
-              semanticRetryTimer.current = null;
-              setSemanticRefresh((value) => value + 1);
-            }, 1_000);
-          } else {
-            setNotice("구역 설정은 말벗에 저장됐지만 클라우드 반영 확인이 늦어지고 있습니다.");
-          }
-        }
-        setZoneDrafts(nextZones);
-        setSelectedZoneId((current) => nextZones.some((zone) => featureId(zone) === current) ? current : "");
-        setZoneGoalMode(false);
         const identity = `${payload.mapId}:${payload.mapRevision}`;
-        if (loadedSemanticIdentity.current && loadedSemanticIdentity.current !== identity) {
+        // Unsaved edits survive a reload on the same map (the robot uploading it, a save of
+        // the other kind); another map starts the editor over.
+        const sameMap = loadedSemanticIdentity.current === identity;
+        setSemantics(payload);
+        if (!sameMap || !roomsDirtyRef.current) {
+          const nextRooms = featuresOf(payload.userMap).filter((feature) => feature.properties.role === "room");
+          setRoomDrafts(nextRooms);
+          setSelectedRoomId((current) => nextRooms.some((room) => featureId(room) === current) ? current : "");
+          setMergeTargetId((current) => nextRooms.some((room) => featureId(room) === current) ? current : "");
+        }
+        if (!sameMap || !zonesDirtyRef.current) {
+          const nextZones = featuresOf(payload.zones).map(cloneFeature);
+          setZoneDrafts(nextZones);
+          setSelectedZoneId((current) => nextZones.some((zone) => featureId(zone) === current) ? current : "");
+          setZoneGoalMode(false);
+        }
+        if (loadedSemanticIdentity.current && !sameMap) {
           clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
           setRoomTool("select");
         }
@@ -401,13 +286,7 @@ export function RobotMapPanel({
       .catch((error) => {
         if (!controller.signal.aborted) setNotice(error instanceof Error ? error.message : "공간 정보를 불러오지 못했습니다.");
       });
-    return () => {
-      controller.abort();
-      if (semanticRetryTimer.current !== null) {
-        window.clearTimeout(semanticRetryTimer.current);
-        semanticRetryTimer.current = null;
-      }
-    };
+    return () => controller.abort();
   }, [controlsMode, deviceId, semanticRefresh, snapshot?.map?.revision]);
 
   useEffect(() => {
@@ -434,9 +313,6 @@ export function RobotMapPanel({
 
   const activeCommand = snapshot?.command &&
     ["queued", "claimed"].includes(snapshot.command.status);
-  const roomCommandPending = Boolean(activeCommand && snapshot?.command &&
-    ["room_split", "room_merge", "rooms_save"].includes(snapshot.command.operation));
-  const zoneCommandPending = Boolean(activeCommand && snapshot?.command?.operation === "zones_apply");
   const mappingStep = MAPPING_STEPS.findIndex(
     (step) => step.states.includes(snapshot?.state?.state ?? ""),
   );
@@ -499,6 +375,11 @@ export function RobotMapPanel({
   const zonesDirty = zoneSnapshotKey(zoneDrafts) !== zoneSnapshotKey(zoneFeatures);
 
   useEffect(() => {
+    roomsDirtyRef.current = roomsDirty;
+    zonesDirtyRef.current = zonesDirty;
+  }, [roomsDirty, zonesDirty]);
+
+  useEffect(() => {
     const pose = snapshot?.state?.pose;
     if (!navigationDriving || !navigationSession || !pose) return;
     if (trailSession.current !== navigationSession) {
@@ -548,10 +429,7 @@ export function RobotMapPanel({
                       : operation === "drive_mode_pause" ? "자율주행 일시정지를 요청했습니다."
                         : operation === "drive_mode_resume" ? "자율주행 재개를 요청했습니다."
                           : operation === "drive_mode_stop" ? "자율주행 중지를 요청했습니다."
-                            : operation === "room_split" ? "말벗에서 분할 가능 여부를 확인하고 있습니다."
-                      : operation === "room_merge" ? "말벗에서 두 방의 인접 여부를 확인하고 있습니다."
-                        : operation === "rooms_save" ? "방 설정을 말벗에 저장하고 있습니다."
-                          : "구역 설정을 말벗에 적용하고 있습니다.",
+                            : "말벗에 요청을 전달했습니다.",
       );
       await load(true);
       return true;
@@ -591,7 +469,9 @@ export function RobotMapPanel({
       return;
     }
     const geometry = snapshot?.map?.geometry;
-    if (!geometry || !snapshot?.online || navigationDriving) return;
+    if (!geometry || navigationDriving) return;
+    // 방·구역 편집은 말벗이 꺼져 있어도 된다(켜지면 반영). 목적지는 켜져 있을 때만 고른다.
+    if (!snapshot?.online && mapMode !== "rooms" && mapMode !== "zones") return;
     if (!isOwner && mapMode !== "navigate") return;
     const bounds = event.currentTarget.getBoundingClientRect();
     const fractionX = (event.clientX - bounds.left) / bounds.width;
@@ -670,7 +550,36 @@ export function RobotMapPanel({
     void sendCommand("navigation_preview", { x, y });
   };
 
-  const applyRoomSplit = () => {
+  // 방 나누기·합치기·방/구역 저장은 웹 서버가 맡는다(SWM25-237): 말벗이 꺼져 있어도 편집하고,
+  // 저장한 방·구역은 말벗이 같은 지도로 켜지면 서버가 보낸다.
+  const postSpaceEdit = async (
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<{ ok: true; payload: Record<string, unknown> } | { ok: false; error: string } | null> => {
+    if (!device || busy) return null;
+    setBusy(true);
+    try {
+      const response = await fetch(
+        `/api/devices/${encodeURIComponent(device.id)}/robot/${path}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+      if (!response.ok) {
+        return { ok: false, error: typeof payload.error === "string" ? payload.error : "말벗 지도를 편집하지 못했어요." };
+      }
+      return { ok: true, payload };
+    } catch {
+      return { ok: false, error: "네트워크 오류로 편집하지 못했어요." };
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyRoomSplit = async () => {
     if (!selectedRoom) return;
     const validationError = validateSplitDraft(
       selectedRoom,
@@ -688,11 +597,6 @@ export function RobotMapPanel({
       validatedSplit.signature === splitDraftSignature &&
       validatedSplit.sourceId === featureId(selectedRoom)
     ) {
-      completedRoomEdit.current = {
-        operation: "room_split",
-        sourceIds: [validatedSplit.sourceId],
-        replacement: validatedSplit.rooms,
-      };
       setRoomDrafts((current) => replaceRoomsAtFirstIndex(
         current,
         [validatedSplit.sourceId],
@@ -705,37 +609,45 @@ export function RobotMapPanel({
       setNotice("방을 나눴습니다. 이름과 종류를 확인한 뒤 방 설정을 저장하세요.");
       return;
     }
+    const signature = splitDraftSignature;
+    const sourceId = featureId(selectedRoom);
     setSplitValidation("checking");
-    setSplitValidationMessage("말벗에서 최소 면적과 연결성을 확인하고 있습니다.");
-    pendingRoomAction.current = {
-      operation: "room_split",
-      sourceIds: [featureId(selectedRoom)],
-      signature: splitDraftSignature,
-    };
-    void sendCommand("room_split", {
-      room: selectedRoom,
-      lines: splitLines,
-      resolution: snapshot?.map?.geometry.resolution ?? 0.05,
-      minimum_room_area: 1,
-    }).then((accepted) => {
-      if (!accepted) {
-        pendingRoomAction.current = null;
-        setSplitValidation("ready");
-        setSplitValidationMessage("");
-      }
-    });
+    setSplitValidationMessage("최소 면적과 연결성을 확인하고 있습니다.");
+    const result = await postSpaceEdit("rooms/split", { room: selectedRoom, lines: splitLines });
+    // The owner moved the divider while it was checked: that answer is for another line.
+    if (signature !== splitDraftSignatureRef.current) return;
+    const rooms = result?.ok && Array.isArray(result.payload.rooms)
+      ? result.payload.rooms.filter(isGeoFeature)
+      : [];
+    if (!result || !result.ok || rooms.length !== 2) {
+      const message = result && !result.ok ? result.error : "방을 나누지 못했어요.";
+      setValidatedSplit(null);
+      setSplitValidation(result ? "invalid" : "ready");
+      setSplitValidationMessage(result ? message : "");
+      if (result) setNotice(`방을 나눌 수 없습니다. ${message}`);
+      return;
+    }
+    setValidatedSplit({ signature, sourceId, rooms });
+    setSplitValidation("valid");
+    setSplitValidationMessage("각 공간이 1㎡ 이상이고 정확히 두 공간으로 나뉩니다.");
+    setNotice("분할선을 확인했습니다. 지도에서 확인한 뒤 방 나누기를 적용하세요.");
   };
 
-  const applyRoomMerge = () => {
+  const applyRoomMerge = async () => {
     if (!selectedRoom || !mergeTarget) return;
     const sourceIds = [featureId(selectedRoom), featureId(mergeTarget)];
-    pendingRoomAction.current = { operation: "room_merge", sourceIds };
-    void sendCommand("room_merge", {
-      rooms: [selectedRoom, mergeTarget],
-      resolution: snapshot?.map?.geometry.resolution ?? 0.05,
-    }).then((accepted) => {
-      if (!accepted) pendingRoomAction.current = null;
-    });
+    const result = await postSpaceEdit("rooms/merge", { rooms: [selectedRoom, mergeTarget] });
+    if (!result) return;
+    if (!result.ok || !isGeoFeature(result.payload.room)) {
+      setNotice(`방을 합칠 수 없습니다. ${result.ok ? "방을 합치지 못했어요." : result.error}`);
+      return;
+    }
+    const merged = result.payload.room;
+    setRoomDrafts((current) => replaceRoomsAtFirstIndex(current, sourceIds, [merged]));
+    setSelectedRoomId(featureId(merged));
+    setMergeTargetId("");
+    setRoomTool("select");
+    setNotice("인접한 두 방을 합쳤습니다. 확인한 뒤 저장해 주세요.");
   };
 
   const updateSelectedRoom = (properties: Record<string, unknown>) => {
@@ -746,20 +658,24 @@ export function RobotMapPanel({
       : room));
   };
 
-  const saveRooms = () => {
+  const saveRooms = async () => {
     if (!semantics || roomDrafts.length === 0) return;
-    pendingRoomSave.current = {
-      rooms: roomDrafts.map(cloneFeature),
-      retries: 0,
-    };
-    void sendCommand("rooms_save", {
-      map_id: semantics.mapId,
-      map_revision: semantics.mapRevision,
+    const result = await postSpaceEdit("space-drafts", {
+      kind: "rooms",
+      mapId: semantics.mapId,
+      mapRevision: semantics.mapRevision,
       rooms: roomDrafts,
-      resolution: snapshot?.map?.geometry.resolution ?? 0.05,
-    }).then((accepted) => {
-      if (!accepted) pendingRoomSave.current = null;
     });
+    if (!result) return;
+    if (!result.ok) {
+      setNotice(`방 설정을 저장하지 못했습니다. ${result.error}`);
+      return;
+    }
+    // The server works out each room's area and representative point again.
+    const saved = Array.isArray(result.payload.rooms) ? result.payload.rooms.filter(isGeoFeature) : [];
+    if (saved.length > 0) setRoomDrafts(saved);
+    setNotice("");
+    setSemanticRefresh((value) => value + 1);
   };
 
   const updateSelectedZone = (updates: Record<string, unknown>) => {
@@ -873,16 +789,20 @@ export function RobotMapPanel({
       setNotice(`${featureName(invalid, "구역")}의 경계가 주행 가능한 지도 안에 있는지 확인하세요.`);
       return;
     }
-    pendingZoneSave.current = { zones: normalized.map(cloneFeature), retries: 0 };
-    void sendCommand("zones_apply", {
-      type: "FeatureCollection",
-      format: "malbut-semantic-zones-v1",
-      map_id: semantics.mapId,
-      map_revision: semantics.mapRevision,
-      frame_id: "map",
+    void postSpaceEdit("space-drafts", {
+      kind: "zones",
+      mapId: semantics.mapId,
+      mapRevision: semantics.mapRevision,
       features: normalized,
-    }).then((accepted) => {
-      if (!accepted) pendingZoneSave.current = null;
+    }).then((result) => {
+      if (!result) return;
+      if (!result.ok) {
+        setNotice(`구역 설정을 저장하지 못했습니다. ${result.error}`);
+        return;
+      }
+      setZoneDrafts(normalized);
+      setNotice("");
+      setSemanticRefresh((value) => value + 1);
     });
   };
 
@@ -1175,7 +1095,7 @@ export function RobotMapPanel({
     setScreen(next);
   };
   // 방·구역 편집은 로봇이 지도와 함께 보낸 공간 정보(주행 가능 영역·방)가 있어야 한다.
-  // 지금 실제 로봇은 이 정보를 보내지 않아서(시뮬레이터만 보냄) 편집을 막고 알려 준다.
+  // 이 정보를 보내지 않는 말벗(SWM25-237 이전 소프트웨어)은 편집을 막고 알려 준다.
   const spaceEditReady = Boolean(walkableArea);
   const spaceEditUnsupported = isOwner && Boolean(snapshot?.map) && Boolean(semantics) && !walkableArea;
   const pickMode = (next: MapScreen, mode: MapMode) => {
@@ -1210,6 +1130,11 @@ export function RobotMapPanel({
   const mapStateCopy = mapping ? "생성 중" : snapshot?.map ? snapshot.map.finalized ? "저장됨" : "생성 중" : "없음";
   const zoneChecked = Boolean(previewToken || navigationDriving || navigationSucceeded);
   const noticeLine = notice ? <p className="ui-info" role="status">{notice}</p> : null;
+  const spaceBanner = spaceSyncBanner(
+    (mapMode === "zones" ? semantics?.drafts?.zones : semantics?.drafts?.rooms) ?? null,
+    Boolean(snapshot?.online),
+    clockNow,
+  );
 
   const mapFrame = (
     <div className={`robot-map-card ui-map-frame mode-${mapping ? "mapping" : mapMode}`}>
@@ -1272,7 +1197,7 @@ export function RobotMapPanel({
                         setZoneGoalMode(false);
                       }}
                       onPointerDown={(event) => {
-                        if (mapMode !== "zones" || !isOwner || zoneCommandPending || busy) return;
+                        if (mapMode !== "zones" || !isOwner || busy) return;
                         const canvas = mapCanvasRef.current;
                         if (!canvas) return;
                         event.preventDefault();
@@ -1317,7 +1242,7 @@ export function RobotMapPanel({
                     setZoneGoalMode(false);
                   }}
                   onPointerDown={(event) => {
-                    if (mapMode !== "zones" || !isOwner || zoneCommandPending || busy) return;
+                    if (mapMode !== "zones" || !isOwner || busy) return;
                     const ring = polygonOuterRing(zone);
                     const canvas = mapCanvasRef.current;
                     if (!ring || !canvas) return;
@@ -1446,7 +1371,7 @@ export function RobotMapPanel({
                         r={0.82}
                         onClick={(event) => event.stopPropagation()}
                         onPointerDown={(event) => {
-                          if (!isOwner || zoneCommandPending || busy) return;
+                          if (!isOwner || busy) return;
                           event.preventDefault();
                           event.stopPropagation();
                           event.currentTarget.setPointerCapture(event.pointerId);
@@ -1469,7 +1394,7 @@ export function RobotMapPanel({
                         rx={0.3}
                         onClick={(event) => event.stopPropagation()}
                         onPointerDown={(event) => {
-                          if (!isOwner || zoneCommandPending || busy) return;
+                          if (!isOwner || busy) return;
                           event.preventDefault();
                           event.stopPropagation();
                           event.currentTarget.setPointerCapture(event.pointerId);
@@ -1494,7 +1419,7 @@ export function RobotMapPanel({
                   r={0.86}
                   onClick={(event) => event.stopPropagation()}
                   onPointerDown={(event) => {
-                    if (!isOwner || zoneCommandPending || busy) return;
+                    if (!isOwner || busy) return;
                     event.preventDefault();
                     event.stopPropagation();
                     event.currentTarget.setPointerCapture(event.pointerId);
@@ -1770,6 +1695,12 @@ export function RobotMapPanel({
         <div className="ui-screen">
           {modeChips}
           <p className="ui-hint">소유자만 볼 수 있어요. 저장하면 말벗에 반영돼요.</p>
+          {spaceBanner && (
+            <div className={`ui-map-sync is-${spaceBanner.tone}`} role="status">
+              <strong>{spaceBanner.title}</strong>
+              <span>{spaceBanner.text}</span>
+            </div>
+          )}
           {mapFrame}
           {mapLegend}
           {noticeLine}
@@ -1835,7 +1766,7 @@ export function RobotMapPanel({
                     <p className="ui-note">{isVirtualWall(selectedZone)
                       ? "선을 끌어 옮기고, 양 끝 점을 끌어 길이와 각도를 바꿔요."
                       : "구역 안을 끌어 옮기고, 네 모서리와 변의 점을 끌어 크기를 바꿔요."}</p>
-                    <button type="button" className="ui-button is-danger-line" onClick={removeSelectedZone} disabled={zoneCommandPending || busy}>{isVirtualWall(selectedZone) ? "이 가상 벽 삭제" : "이 구역 삭제"}</button>
+                    <button type="button" className="ui-button is-danger-line" onClick={removeSelectedZone} disabled={busy}>{isVirtualWall(selectedZone) ? "이 가상 벽 삭제" : "이 구역 삭제"}</button>
                   </>
                 ) : (
                   <p className="ui-hint">지도나 아래 목록에서 구역을 누르세요.</p>
@@ -1856,21 +1787,21 @@ export function RobotMapPanel({
                   ))}
                 </div>
                 <div className="ui-map-create">
-                  <button type="button" className="ui-button" onClick={addDefaultZone} disabled={!isOwner || zoneCommandPending || busy}>사각형 구역</button>
-                  <button type="button" className="ui-button" onClick={addVirtualWall} disabled={!isOwner || zoneCommandPending || busy}>가상 벽</button>
+                  <button type="button" className="ui-button" onClick={addDefaultZone} disabled={!isOwner || busy}>사각형 구역</button>
+                  <button type="button" className="ui-button" onClick={addVirtualWall} disabled={!isOwner || busy}>가상 벽</button>
                   <button
                     type="button"
                     className={`ui-button ${zoneCreateMode === "room" ? "is-selected" : ""}`}
                     aria-pressed={zoneCreateMode === "room"}
                     onClick={() => setZoneCreateMode((current) => current === "room" ? "closed" : "room")}
-                    disabled={!isOwner || zoneCommandPending || busy}
+                    disabled={!isOwner || busy}
                   >방 전체 적용</button>
                 </div>
                 {zoneCreateMode === "room" ? (
                   <div className="ui-map-room-zone">
                     <p className="ui-note">저장된 방 경계를 그대로 사용해요. 구역으로 만들 방을 고르세요.</p>
                     {roomDrafts.map((room, index) => (
-                      <button key={featureId(room)} type="button" className="ui-button" onClick={() => addRoomAsZone(room)} disabled={!isOwner || zoneCommandPending || busy}>
+                      <button key={featureId(room)} type="button" className="ui-button" onClick={() => addRoomAsZone(room)} disabled={!isOwner || busy}>
                         <i style={{ background: roomColor(room, index) }} />
                         <span>{featureName(room, `공간 ${index + 1}`)}</span>
                         <small>전체 추가</small>
@@ -1906,8 +1837,8 @@ export function RobotMapPanel({
                   setZoneDrafts(zoneFeatures.map(cloneFeature));
                   setSelectedZoneId("");
                   setZoneGoalMode(false);
-                }} disabled={!zonesDirty || zoneCommandPending || busy}>저장 전 변경 취소</button>
-                <button type="button" className="ui-button is-strong" onClick={saveZones} disabled={!isOwner || !zonesDirty || zoneCommandPending || busy}>구역 설정 저장</button>
+                }} disabled={!zonesDirty || busy}>저장 전 변경 취소</button>
+                <button type="button" className="ui-button is-strong" onClick={saveZones} disabled={!isOwner || !zonesDirty || busy}>구역 설정 저장</button>
               </div>
             </>
           ) : (
@@ -2001,14 +1932,14 @@ export function RobotMapPanel({
                           : splitValidation === "invalid"
                             ? splitValidationMessage
                             : splitLines.length > 0
-                              ? `${splitLines.length}개 분할선 · 적용하면 최소 1㎡와 정확히 두 공간인지 말벗이 최종 확인합니다.`
+                              ? `${splitLines.length}개 분할선 · 적용하면 최소 1㎡와 정확히 두 공간인지 확인합니다.`
                               : "분할선의 양 끝점은 벽에서 25cm 이내에 지정해야 합니다."}
                     </div>
                     <div className="ui-two-buttons">
                       <button type="button" className="ui-button ui-small" onClick={undoSplitPoint} disabled={!pendingSplitPoint && splitLines.length === 0}>마지막 선 되돌리기</button>
                       <button type="button" className="ui-button ui-small" onClick={() => clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage)} disabled={!pendingSplitPoint && splitLines.length === 0}>모두 지우기</button>
                     </div>
-                    <button type="button" className="ui-button is-strong" onClick={applyRoomSplit} disabled={splitLines.length === 0 || Boolean(pendingSplitPoint) || splitValidation === "invalid" || splitValidation === "checking" || roomCommandPending || busy}>
+                    <button type="button" className="ui-button is-strong" onClick={applyRoomSplit} disabled={splitLines.length === 0 || Boolean(pendingSplitPoint) || splitValidation === "invalid" || splitValidation === "checking" || busy}>
                       {splitValidation === "valid" ? "확인된 선대로 방 나누기" : "분할 가능 여부 확인"}
                     </button>
                   </div>
@@ -2019,7 +1950,7 @@ export function RobotMapPanel({
                     <div className={`robot-map-split-status ${mergeTarget ? "is-ready" : "is-idle"}`}>
                       {mergeTarget && selectedRoom ? `${featureName(selectedRoom, "현재 방")} + ${featureName(mergeTarget, "다른 방")}` : "합칠 두 번째 방을 기다리고 있습니다."}
                     </div>
-                    <button type="button" className="ui-button is-strong" onClick={applyRoomMerge} disabled={!mergeTarget || roomCommandPending || busy}>선택한 두 방 합치기</button>
+                    <button type="button" className="ui-button is-strong" onClick={applyRoomMerge} disabled={!mergeTarget || busy}>선택한 두 방 합치기</button>
                   </div>
                 )}
               </article>
@@ -2055,7 +1986,7 @@ export function RobotMapPanel({
                   setRoomTool("select");
                   clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
                 }} disabled={!roomsDirty}>저장 전 변경 취소</button>
-                <button type="button" className="ui-button is-strong" onClick={saveRooms} disabled={!isOwner || roomDrafts.length === 0 || !roomsDirty || roomCommandPending || busy}>방 설정 저장</button>
+                <button type="button" className="ui-button is-strong" onClick={saveRooms} disabled={!isOwner || roomDrafts.length === 0 || !roomsDirty || busy}>방 설정 저장</button>
               </div>
             </>
           )}
@@ -2472,27 +2403,39 @@ function validateSplitDraft(
   return "";
 }
 
-function splitErrorMessage(message: string) {
-  const translations: Record<string, string> = {
-    "at least one split divider is required": "분할선을 하나 이상 만드세요.",
-    "each split divider must contain at least two finite points": "각 분할선의 양 끝점을 지정하세요.",
-    "split divider points must be near a Room wall": "분할선의 점을 방 벽 근처에 놓으세요.",
-    "split divider endpoints must be near a Room wall": "분할선의 양 끝점을 방 벽에서 25cm 이내에 놓으세요.",
-    "split divider control points must stay in the Room": "분할선의 꺾임점은 방 안에 놓으세요.",
-    "split divider segments are too short": "분할선 구간이 너무 짧습니다.",
-    "the divider must cut the selected Room into exactly two meaningful areas": "분할선을 이어서 선택한 방을 각각 1㎡ 이상인 정확히 두 공간으로 나누세요.",
-  };
-  return translations[message] ?? message;
+/**
+ * 목업 10번: where the latest rooms or Zones save stands, or that edits wait for the 말벗.
+ * A save the 말벗 could not take stays until the owner saves again.
+ */
+function spaceSyncBanner(draft: SpaceDraft | null, online: boolean, now: number) {
+  const waiting = "반영되기 전까지 말벗은 예전 방·구역으로 움직여요.";
+  if (draft?.status === "stale") {
+    return { tone: "danger", title: "반영하지 못했어요",
+      text: "그사이 말벗의 지도가 바뀌어 편집한 방·구역을 반영하지 못했어요. 다시 편집해 주세요." };
+  }
+  if (draft?.status === "failed") {
+    return { tone: "danger", title: "반영하지 못했어요",
+      text: "말벗이 편집한 방·구역을 받지 못했어요. 다시 저장해 주세요." };
+  }
+  if (draft?.status === "pending" || draft?.status === "sent") {
+    return online
+      ? { tone: "info", title: "저장했어요. 말벗에 반영하고 있어요", text: waiting }
+      : { tone: "info", title: "저장했어요. 말벗이 켜지면 반영돼요", text: waiting };
+  }
+  if (!online) return { tone: "info", title: "말벗이 꺼져 있어요", text: "편집해 두면 말벗이 켜질 때 반영돼요." };
+  const resolvedAt = draft?.status === "applied" && draft.resolvedAt ? Date.parse(draft.resolvedAt) : NaN;
+  if (!draft || !(now - resolvedAt < 86_400_000)) return null;
+  const whileAway = resolvedAt - Date.parse(draft.savedAt) > 60_000;
+  return { tone: "ok", title: "말벗에 반영했어요",
+    text: `${spaceSyncTime(resolvedAt, now)}${whileAway ? " · 꺼져 있는 동안 저장한 방·구역" : ""}` };
 }
 
-function mergeErrorMessage(message: string) {
-  const translations: Record<string, string> = {
-    "exactly two Rooms are required for a merge": "합칠 방을 정확히 두 곳 선택하세요.",
-    "all selected features must be Rooms": "방으로 지정된 공간만 합칠 수 있습니다.",
-    "two different Rooms are required for a merge": "현재 방과 다른 방을 선택하세요.",
-    "only adjacent Rooms can be merged": "서로 맞닿아 있는 두 방만 합칠 수 있습니다.",
-  };
-  return translations[message] ?? message;
+function spaceSyncTime(value: number, now: number) {
+  const date = new Date(value);
+  const clock = date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return date.toDateString() === new Date(now).toDateString()
+    ? `오늘 ${clock}`
+    : `${date.toLocaleDateString("ko-KR", { month: "long", day: "numeric" })} ${clock}`;
 }
 
 function featureGeometryPath(
@@ -2631,12 +2574,6 @@ function replaceRoomsAtFirstIndex(current: GeoFeature[], sourceIds: string[], re
 
 function cloneFeature(feature: GeoFeature): GeoFeature {
   return JSON.parse(JSON.stringify(feature)) as GeoFeature;
-}
-
-function roomSnapshotKey(rooms: GeoFeature[]) {
-  return JSON.stringify(
-    [...rooms].sort((left, right) => featureId(left).localeCompare(featureId(right))),
-  );
 }
 
 function zoneSnapshotKey(zones: GeoFeature[]) {
