@@ -699,8 +699,9 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
               <button type="button" key={key} aria-pressed={filter === key} className={filter === key ? "is-on" : ""}
                 onClick={() => setFilter(key)}>{label}</button>
             ))}
+            {/* 마지막 필터 줄의 오른쪽 끝(남는 자리가 없으면 다음 줄 끝). 모양은 글자 링크라 필터와 구분된다. */}
+            {onOpenTimeline && <button type="button" className="fall-link" onClick={() => onOpenTimeline()}>연속 녹화 보기 ›</button>}
           </div>
-          {onOpenTimeline && <button type="button" className="fall-link" onClick={() => onOpenTimeline()}>연속 녹화 보기 ›</button>}
         </div>
         <div className="fall-list">
           {error && <p className="fall-notice" role="alert">{error}</p>}
