@@ -78,7 +78,8 @@ def defaults():
         'static_map_topic': '/map',
         'global_costmap_topic': '/global_costmap/costmap_raw',
         'patrol_costmap_topic': '/global_costmap/costmap',
-        'room_map_file': '',
+        # zone_filter keeps the selected saved map's rooms here (SWM25-237).
+        'room_map_file': str(Path.home() / '.ros/malbut/zones/active.user-map.geojson'),
         'following_config': '',
         'lidar_config': '',
         'model_path': str(cache / 'yolo26n.pt'),
