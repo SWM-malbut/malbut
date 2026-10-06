@@ -424,7 +424,19 @@ pipeline 재시작 후에도 두 track의 시간축과 단조 증가가 유지�
 runtime working directory에 비밀·상태 파일을 만들지 않는다.
 
 수신 Opus는 로봇 스피커로 재생된다. 동시에 한 명만 PTT를 점유하도록 하는
-권한은 백엔드 lease와 PWA가 중재한다. 현재 C SDK media callback 자체는
+권한은 백엔드 lease와 PWA가 중재한다. heartbeat의 `talkLease`가 유효하고
+`/malbut/speech/web_talk_control`이 STT 입력 차단을 접수한 뒤에만 재생한다.
+웹도 같은 lease의 `talkReport.ready`가 확인될 때까지 마이크 송신을 기다린다.
+영상 시청이나 마이크 권한 허용만으로는 STT를 차단하지 않는다.
+미디어 노드는 차단을 1초마다 최대 3초로 갱신하고, 허가 만료보다 600ms 먼저
+PTT 재생을 닫는다. 종료 시 재생 버퍼를 비운 뒤 같은 lease의 차단을 해제하며,
+비정상 종료 시 STT가 자체 기한과 300ms 잔향 차단 후 복구한다.
+오디오 장치 초기화나 버퍼 할당이 지연되어도 실제 재생 버퍼 전달 직전에
+허가를 다시 검사하고, 만료됐다면 버퍼를 폐기하고 재생 경로를 닫는다.
+STT 재시작 시에도 첫 3초를 차단하여 이전 프로세스의 허가가 남은 구간을 보호한다.
+웹 DB의 `0022_talk_lease_readiness` 적용과 새 인터페이스·STT·미디어 노드의
+동시 갱신이 필요하다. 준비 상태가 없으면 웹 말하기는 시작되지 않는다.
+현재 C SDK media callback 자체는
 임의의 peer가 보낸 오디오를 별도 서명으로 검증하지 않으므로, 비협조적인
 클라이언트까지 장치 내부에서 차단하는 cryptographic peer authorization은
 PoC 이후 보강 항목이다.

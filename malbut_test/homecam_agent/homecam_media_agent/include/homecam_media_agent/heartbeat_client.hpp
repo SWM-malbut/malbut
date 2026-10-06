@@ -25,6 +25,7 @@ struct HeartbeatStatus
   std::string image_topic;
   std::uint64_t frames_received{0};
   std::optional<nlohmann::json> fall_settings_report;
+  std::optional<nlohmann::json> talk_report;
 };
 
 struct FallServerSettings
@@ -42,6 +43,8 @@ struct DesiredDeviceSettings
   std::optional<bool> monitoring_enabled;
   std::optional<FallServerSettings> fall;
   std::string fall_reason{"server_settings_missing"};
+  std::string talk_lease_id;
+  std::int64_t talk_remaining_ms{0};
 };
 
 class HeartbeatClient

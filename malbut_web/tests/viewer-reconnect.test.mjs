@@ -75,7 +75,7 @@ test("PTT lease release keeps the client and generation that acquired it", async
   assert.match(page, /clientId: lease\.clientId/);
   assert.match(page, /generation: talkGeneration/);
   assert.match(page, /viewerGenerationRef\.current !== talkGeneration/);
-  assert.match(page, /notifyTalkLeaseRelease\(acquiredLease\)/);
+  assert.match(page, /notifyTalkLeaseRelease\(receivedLease\)/);
   assert.match(page, /if \(track\) track\.enabled = false/);
   assert.match(page, /talkIntentRef\.current = false/);
 });
