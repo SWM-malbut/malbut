@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, ReactNode, SetStateAction } from "react";
 import {
   ArrowClockwise,
   CaretRight,
@@ -106,10 +106,13 @@ export function RobotMapPanel({
   device,
   initialMode = "view",
   controlsMode = "legacy",
+  header,
 }: {
   device: HomecamDevice | null;
   initialMode?: MapMode;
   controlsMode?: "legacy" | "managed";
+  /** The tab top shared by every tab (화면 이름 · 연결 상태 · 연결된 말벗); shown on the map screen only. */
+  header?: ReactNode;
 }) {
   const deviceId = device?.id ?? "";
   const [snapshot, setSnapshot] = useState<RobotSnapshot | null>(null);
@@ -1564,15 +1567,9 @@ export function RobotMapPanel({
 
   if (activeScreen === "map") {
     return (
-      <section className="ui-map" aria-labelledby="robot-map-title">
-        <header className="ui-top">
-          <div className="ui-top-row">
-            <h1 id="robot-map-title">지도</h1>
-            <span className={`ui-pill ${snapshot?.online ? "is-ok" : ""}`}>
-              <i aria-hidden="true" />
-              {snapshot?.online ? "연결됨" : loading ? "확인 중" : "오프라인"}
-            </span>
-          </div>
+      <section className="ui-map" aria-label="지도">
+        {header}
+        <div className="ui-screen">
           <div className="ui-choice-chips" role="group" aria-label="지도 모드">
             <button type="button" className={mapMode === "view" ? "is-active" : ""} aria-pressed={mapMode === "view"} onClick={() => changeMapMode("view")}>보기</button>
             <button type="button" className={mapMode === "navigate" ? "is-active" : ""} aria-pressed={mapMode === "navigate"} disabled={Boolean(mapping)} onClick={() => changeMapMode("navigate")}>목적지 선택</button>
@@ -1583,8 +1580,6 @@ export function RobotMapPanel({
               </>
             )}
           </div>
-        </header>
-        <div className="ui-screen">
           <p className="ui-hint">
             {mapping ? "새로운 공간을 확인하는 동안 목적지 선택과 편집을 사용할 수 없어요."
               : navigating ? "지도에서 보낼 곳을 누르세요. 방과 구역은 선택을 방해하지 않아요."
