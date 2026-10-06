@@ -25,6 +25,7 @@ class _Request:
     text: str
     expires_at: Optional[float]
     validate: Optional[Callable] = None
+    request_type: int = DIALOGUE
     interim: bool = False
     request_id: str = ''
     cancel: Event = field(default_factory=Event)
@@ -111,6 +112,7 @@ class SpeechRuntime:
                 if self._retired_ids[playback_id] == 'canceled_before_receipt':
                     # Topic delivery may follow an already accepted STOP service.
                     request = _Request(playback_id, text, None, interim=interim,
+                                       request_type=request_type,
                                        request_id=correlated_id, state='stopped')
                     self._report_status(request, 'stopped')
                     return playback_id
@@ -119,7 +121,8 @@ class SpeechRuntime:
             request = _Request(
                 playback_id or str(uuid4()), text,
                 now + self._pending_timeout_s if self._pending_timeout_s > 0 else None,
-                validate, interim=interim, request_id=correlated_id,
+                validate, request_type=request_type, interim=interim,
+                request_id=correlated_id,
             )
             if interim and correlated_id in self._finalized_request_ids:
                 request.cancel.set()
@@ -231,6 +234,8 @@ class SpeechRuntime:
             if (request is None or request.playback_id != playback_id
                     or request.state in TERMINAL_STATES
                     or request.cancel.is_set()):
+                return False
+            if request.request_type == CONFIRMATION and command in ('pause', 'resume'):
                 return False
             player = request.player
             if command == 'stop':

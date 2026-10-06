@@ -189,10 +189,15 @@ def test_replay_of_operational_failure_remains_an_unsuccessful_action(rig, termi
     assert len(rig.spoken) == 1
 
 
-def test_in_progress_duplicate_cannot_start_another_conversation(rig):
+@pytest.mark.parametrize('phase', ['speaking', 'listening'])
+def test_in_progress_duplicate_cannot_start_another_conversation(rig, phase):
+    rig.finish = phase == 'listening'
     handle = rig.start('pending-replay')
-    rig.spin_until(lambda: rig.agent.situation._session.phase == 'listening')
+    rig.spin_until(lambda: len(rig.spoken) == 1
+                   and rig.agent.situation._session.phase == phase)
     owner = rig.agent.situation._session
+    if phase == 'speaking':
+        assert not rig.session_id and not rig.sessions
     accepted, _ = replay(rig, 'pending-replay')
     assert not accepted
     assert rig.agent.situation._session is owner

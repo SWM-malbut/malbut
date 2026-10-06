@@ -42,6 +42,7 @@ def rig(monkeypatch, tmp_path):
     state = SimpleNamespace(
         agent=agent, spoken=[], controls=[], session_id='', finish=True, feedback=[],
         voice=voice, executor=executor, control_response=None, completed_controls=0,
+        sessions=[],
     )
     playback = voice.create_publisher(SpeechPlaybackStatus, '/malbut/speech/playback_status', 10)
     inputs = voice.create_publisher(SpeechInputStatus, '/malbut/speech/input_status', 10)
@@ -56,6 +57,7 @@ def rig(monkeypatch, tmp_path):
             ))
 
     def session(request, response):
+        state.sessions.append(request)
         if getattr(request, 'check_only', False):
             response.accepted = bool(request.session_id and request.session_id == state.session_id)
             response.barge_in_available = True
@@ -90,7 +92,13 @@ def rig(monkeypatch, tmp_path):
             if predicate():
                 return
             executor.spin_once(timeout_sec=0.01)
-        raise AssertionError('confirmation did not progress')
+        raise AssertionError(
+            'confirmation did not progress: '
+            f'phase={getattr(agent.situation._session, "phase", None)}, '
+            f'spoken={len(state.spoken)}, '
+            f'input_subscribers={inputs.get_subscription_count()}, '
+            f'transcript_subscribers={transcripts.get_subscription_count()}'
+        )
 
     def start(request_id=None):
         spin_until(lambda: client.server_is_ready() and agent.dialogue.ready
@@ -109,6 +117,9 @@ def rig(monkeypatch, tmp_path):
         return handle
 
     def answer(text, session_id=None):
+        # Coordinator-driven tests do not pass through start()'s discovery gate.
+        spin_until(lambda: inputs.get_subscription_count() > 0
+                   and transcripts.get_subscription_count() > 0)
         uid = uuid4().hex
         sid = session_id or state.session_id
         inputs.publish(SpeechInputStatus(session_id=sid, utterance_id=uid, state='started'))
@@ -176,6 +187,59 @@ def test_user_rest_resolves_and_reports_before_closing_playback(rig):
     rig.spin_until(replay.done)
     assert replay.result().result == result.result().result
     assert len(rig.spoken) == 2
+
+
+def test_confirmation_opens_input_only_after_non_interim_question_completion(rig, monkeypatch):
+    rig.finish = False
+    handle = rig.start('question-answer-gate')
+    assert handle.accepted
+    rig.spin_until(lambda: len(rig.spoken) == 1
+                   and rig.agent.situation._session.phase == 'speaking')
+    session = rig.agent.situation._session
+    result = handle.get_result_async()
+    received = {}
+
+    def observe(name):
+        original = getattr(session, name)
+
+        def receive(*args, **kwargs):
+            received[name] = (args, kwargs)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(session, name, receive)
+
+    for name in ('input_status', 'transcript', 'playback'):
+        observe(name)
+    assert not rig.session_id and not rig.sessions
+    rig.answer('도와줘', session_id=session.session_id or 'not-yet-open')
+    rig.spin_until(lambda: 'input_status' in received and 'transcript' in received)
+    assert session.phase == 'speaking' and not result.done()
+    assert not rig.session_id and not rig.sessions
+    assert len(rig.spoken) == 1
+    assert [request.command for request in rig.controls] == ['stop_all']
+
+    question_id = rig.spoken[0].playback_id
+    rig.playback.publish(SpeechPlaybackStatus(
+        playback_id=question_id, state='finished', interim=True,
+    ))
+    rig.spin_until(lambda: received.get('playback') == (
+        (question_id, 'finished'), {'interim': True},
+    ))
+    assert session.phase == 'speaking' and not rig.sessions
+    rig.playback.publish(SpeechPlaybackStatus(playback_id=question_id, state='finished'))
+    rig.spin_until(lambda: session.phase == 'listening')
+    assert rig.session_id == session.session_id and rig.session_id
+    assert len(rig.sessions) == 1 and rig.sessions[0].active
+
+    rig.finish = True
+    rig.answer('그냥 누워 있는 거야')
+    rig.spin_until(lambda: result.done() and not rig.agent.situation.active
+                   and not rig.session_id)
+    assert result.result().status == GoalStatus.STATUS_SUCCEEDED
+    assert result.result().result.situation_assessment == 'resolved'
+    assert result.result().result.help_needed is False
+    assert len(rig.spoken) == 2
+    assert [request.command for request in rig.controls] == ['stop_all']
 
 
 def test_lost_stt_session_is_aborted_instead_of_reported_as_user_silence(rig):

@@ -194,7 +194,7 @@ def test_latest_partial_failure_never_publishes_an_older_prefix_as_final(state):
     state.reply = lambda pcm, final: ''
     pipeline.feed(VOICE * 100 + QUIET * 100)
     pump(pipeline, lambda: 'empty_transcript' in state.reports)
-    assert state.final == [] and pipeline.session.active
+    assert state.final == [] and not pipeline.session.active
 
 
 @pytest.mark.parametrize('decision', ['addressed', 'not_addressed'])

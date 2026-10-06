@@ -40,11 +40,14 @@ class AudioRig:
         self.spoken = []
         self.playbacks = []
         self.controls = []
+        self.control_results = []
         self.reports = []
         self.wakes = []
         self.asr_started = Event()
         self.asr_allowed = Event()
         self.asr_allowed.set()
+        self.synthesis_allowed = Event()
+        self.synthesis_allowed.set()
         self.tts = SpeechRuntime(
             SimpleNamespace(generate=self.synthesize), self.player,
             lambda pid, state, interim, request_id: self.events.put(('playback', pid, state)),
@@ -75,6 +78,9 @@ class AudioRig:
         )
 
     def synthesize(self, text, cancel):
+        assert self.synthesis_allowed.wait(8), 'audio test failed to release synthesis'
+        if cancel.is_set():
+            return
         yield QUIET, 24000
 
     def player(self, *, on_state, cancel_event):
@@ -119,7 +125,9 @@ class AudioRig:
         return future
 
     def close_session(self, sid):
-        self.stt.stop_session(sid)
+        future = Future()
+        future.set_result(SimpleNamespace(accepted=self.stt.stop_session(sid)))
+        return future
 
     def verify_session(self, sid):
         future = Future()
@@ -132,7 +140,9 @@ class AudioRig:
 
     def stop_playback(self, pid, command):
         self.controls.append((pid, command))
-        return self.tts.control(pid, command)
+        accepted = self.tts.control(pid, command)
+        self.control_results.append((pid, command, accepted))
+        return accepted
 
     def stop(self, pid):
         self.stop_playback(pid, 'stop')
@@ -186,6 +196,7 @@ class AudioRig:
 
     def close(self):
         self.asr_allowed.set()
+        self.synthesis_allowed.set()
         self.session.cancel()
         self.stt.close()
         self.tts.close()
@@ -205,14 +216,16 @@ def audio_rig():
         rig.close()
 
 
-def test_aec_barge_in_stops_real_tts_and_resolves_without_wake(audio_rig):
+def test_aec_confirmation_waits_for_playback_finish_then_resolves_without_wake(audio_rig):
     rig = audio_rig()
     question = rig.start()
+    assert rig.session.session_id == ''
+    rig.drain_question()
     rig.answer('그냥 누워 있는 거야')
     rig.until(lambda: bool(rig.results))
-    assert (question, 'stop') in rig.controls
-    assert (question, 'stopped') in rig.playbacks
-    assert (question, 'finished') not in rig.playbacks
+    assert (question, 'stop') not in rig.controls
+    assert (question, 'stopped') not in rig.playbacks
+    assert (question, 'finished') in rig.playbacks
     assert rig.results == [SituationResult('resolved', False)]
     rig.finish()
     assert len(rig.spoken) == 2 and not rig.wakes
@@ -228,11 +241,76 @@ def test_brief_noise_keeps_question_playing_then_accepts_real_answer(audio_rig, 
     assert not rig.controls and rig.session.phase == 'speaking'
     assert not rig.players[question].cancel.is_set()
 
+    rig.drain_question()
     rig.answer('그냥 누워 있는 거야')
     rig.finish()
-    assert (question, 'stop') in rig.controls
+    assert (question, 'stop') not in rig.controls
     assert rig.results == [SituationResult('resolved', False)]
     assert len(rig.spoken) == 2 and not rig.wakes
+
+
+def test_no_aec_input_during_delayed_synthesis_cannot_cancel_or_answer_question(audio_rig):
+    rig = audio_rig(aec=False)
+    rig.synthesis_allowed.clear()
+    rig.session.start()
+    rig.until(lambda: len(rig.spoken) == 1 and rig.session.playback_id in rig.players)
+    question = rig.session.playback_id
+    assert rig.session.session_id == '' and rig.stt.session.session_id == ''
+
+    # Ordinary wake/input can still arrive while TTS is generating. It must not
+    # become an answer to the confirmation question that has not played yet.
+    rig.stt.feed(SPEECH + QUIET * 20)
+    rig.until(lambda: len(rig.wakes) == 1 and rig.stt.session.active)
+    rig.answer('모르겠어')
+    rig.until(lambda: 'waiting_for_reply' in rig.reports)
+    assert 'speech_started' in rig.reports and rig.asr_started.is_set()
+    assert rig.session.phase == 'speaking' and not rig.controls and not rig.results
+    assert rig.session.engine._history == []
+    assert rig.session.engine._clarifications == {'situation': 0, 'help': 0}
+    assert not rig.players[question].cancel.is_set() and rig.playbacks == []
+
+    rig.synthesis_allowed.set()
+    rig.until(lambda: (question, 'playing') in rig.playbacks)
+    assert rig.session.session_id == ''
+    rig.drain_question()
+    assert rig.stt.session.session_id == rig.session.session_id != ''
+    rig.answer('그냥 누워 있는 거야')
+    rig.finish()
+    assert (question, 'finished') in rig.playbacks
+    assert (question, 'stopped') not in rig.playbacks
+    assert rig.results == [SituationResult('resolved', False)]
+    assert [item.answer for item in rig.session.engine._history] == ['그냥 누워 있는 거야']
+    assert len(rig.spoken) == 2
+
+
+@pytest.mark.parametrize('aec', [False, True])
+def test_inflight_ordinary_asr_cannot_pause_confirmation_or_answer_after_it(audio_rig, aec):
+    rig = audio_rig(aec=aec)
+    rig.synthesis_allowed.clear()
+    rig.session.start()
+    rig.until(lambda: len(rig.spoken) == 1 and rig.session.playback_id in rig.players)
+    question = rig.session.playback_id
+    rig.stt.feed(SPEECH + QUIET * 20)
+    rig.until(lambda: len(rig.wakes) == 1 and rig.stt.session.active)
+    rig.asr_allowed.clear()
+    rig.answer('모르겠어')
+    rig.until(lambda: rig.asr_started.is_set())
+    assert rig.stt.session.utterance_id and not rig.controls
+
+    rig.synthesis_allowed.set()
+    rig.until(lambda: (question, 'playing') in rig.playbacks)
+    assert rig.control_results == ([(question, 'pause', False)] if aec else [])
+    assert (question, 'paused') not in rig.playbacks
+    assert not rig.players[question].cancel.is_set()
+    rig.drain_question()
+    rig.asr_allowed.set()
+    rig.until(lambda: not rig.responses)
+    assert rig.session.engine._history == [] and not rig.results
+    rig.answer('그냥 누워 있는 거야')
+    rig.finish()
+    assert (question, 'finished') in rig.playbacks
+    assert [item.answer for item in rig.session.engine._history] == ['그냥 누워 있는 거야']
+    assert rig.results == [SituationResult('resolved', False)]
 
 
 def test_no_aec_blocks_speaker_echo_then_accepts_wake_free_answer(audio_rig):
@@ -269,6 +347,45 @@ def test_started_answer_survives_ten_seconds_and_moves_to_help_question(audio_ri
     rig.finish()
     assert rig.results == [SituationResult('confirmed_incident', False)]
     assert len(rig.spoken) == 3 and not rig.wakes
+
+
+def test_next_question_waits_for_old_microphone_session_to_close(audio_rig, monkeypatch):
+    rig = audio_rig(aec=False)
+    rig.start()
+    rig.drain_question()
+    old_sid = rig.session.session_id
+    close_session = rig.close_session
+    close_ack = Future()
+
+    def delayed_close(sid):
+        assert sid == old_sid
+        return close_ack
+
+    monkeypatch.setattr(rig, 'close_session', delayed_close)
+    rig.answer('넘어졌어')
+    rig.until(lambda: rig.session.engine.stage == 'help')
+    rig.poll()
+    assert len(rig.spoken) == 1 and not rig.results
+    assert rig.stt.session.session_id == old_sid and rig.stt.session.active
+    rig.stt.feed(SPEECH)
+    rig.poll()
+    assert rig.stt.session.utterance_id
+    assert len(rig.spoken) == 1 and not rig.controls
+
+    monkeypatch.setattr(rig, 'close_session', close_session)
+    close_ack.set_result(close_session(old_sid).result())
+    rig.until(lambda: len(rig.spoken) == 2
+              and (rig.session.playback_id, 'playing') in rig.playbacks)
+    assert not rig.stt.session.active
+    rig.drain_question()
+    assert rig.stt.session.session_id == rig.session.session_id != old_sid
+    rig.answer('도움 필요 없어')
+    rig.finish()
+    assert rig.results == [SituationResult('confirmed_incident', False)]
+    assert [item.answer for item in rig.session.engine._history] == [
+        '넘어졌어', '도움 필요 없어',
+    ]
+    assert len(rig.spoken) == 3 and not rig.controls
 
 
 @pytest.mark.parametrize('followup', ['corrected_help', 'silence', 'still_unclear'])

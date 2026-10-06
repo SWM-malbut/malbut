@@ -152,6 +152,23 @@ def test_confirmation_preempts_old_playback_and_queued_dialogue(h):
     assert (waiting, 'playing') not in h.events
 
 
+@pytest.mark.parametrize('ending', ['finished', 'stop', 'stop_all'])
+def test_confirmation_rejects_pause_and_resume_but_preserves_explicit_stop(h, ending):
+    question = h.runtime.submit('넘어지셨나요?', CONFIRMATION)
+    player = h.active(question)
+    assert not h.runtime.control(question, 'pause')
+    assert not h.runtime.control(question, 'resume')
+    assert h.events == [(question, 'playing')]
+    assert not player.cancel.is_set()
+    if ending == 'finished':
+        player.drain.set()
+    else:
+        assert h.runtime.control('' if ending == 'stop_all' else question, ending)
+    terminal = 'finished' if ending == 'finished' else 'stopped'
+    h.wait(question, terminal)
+    assert h.events == [(question, 'playing'), (question, terminal)]
+
+
 def test_cancel_pending_known_playback_id_never_synthesizes_it(h):
     first = h.runtime.submit('ordinary answer')
     player = h.active(first)

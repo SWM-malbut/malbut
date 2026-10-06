@@ -13,6 +13,7 @@ from malbut_stt.node import main
 @pytest.fixture
 def runtime(monkeypatch, tmp_path):
     """Provide ROS message/callback boundaries without starting a ROS context."""
+    monkeypatch.delenv('MALBUT_STT_DIAGNOSTIC_DIR', raising=False)
     model = tmp_path / 'local-model'
     model.mkdir()
     state = SimpleNamespace(
@@ -317,10 +318,27 @@ def cpp_runtime(runtime, tmp_path):
     return runtime
 
 
+@pytest.mark.parametrize('shared', [False, True])
+def test_diagnostics_opt_in_wraps_models_without_loading_another(runtime, monkeypatch,
+                                                                tmp_path, shared):
+    if not shared:
+        other = tmp_path / 'other-model'
+        other.mkdir()
+        runtime.parameters['stt_model_path'] = str(other)
+    directory = tmp_path / 'diagnostics'
+    monkeypatch.setenv('MALBUT_STT_DIAGNOSTIC_DIR', str(directory))
+    assert main([]) == 0
+    args = runtime.pipeline_args
+    assert args['diagnostics'].directory == directory
+    assert (args['wake'].model is args['transcriber'].model) is shared
+    assert not list(directory.iterdir()), 'no audio is saved without an inference'
+
+
 def test_local_entrypoint_wires_continuous_pipeline_and_ros_callbacks(runtime):
     assert main(['--ros-args']) == 0
     assert runtime.calls['ros_args'] == ['--ros-args']
     assert runtime.calls['node_name'] == 'malbut_stt'
+    assert runtime.pipeline_args['diagnostics'] is None
     defaults = runtime.calls['defaults']
     assert defaults['silence_timeout_s'] == 2.0
     assert defaults['start_timeout_s'] == 5.0
