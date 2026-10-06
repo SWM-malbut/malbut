@@ -37,6 +37,7 @@ test("real robot tools accept only bounded map, velocity, Zone and debug request
     ["manual_move", { vx: -0.2, vy: 0.2, wz: 0 }],
     ["zones_save", { map: "home.yaml", zones: [zone, { behavior: "avoid", points: [[2, 2], [3, 2], [3, 3]] }] }],
     ["zones_save", { map: "home.yaml", zones: [] }],
+    ["zones_save", { map: "home.yaml", zones: [{ id: "zone-1a2b3c4d5e", ...zone }] }],
     ["robot_ping", {}],
     ["robot_diagnostics", {}],
     ["debug_mission_start", { capability: "get_weather", arguments: { city: "Seoul" } }],
@@ -57,6 +58,9 @@ test("real robot tools accept only bounded map, velocity, Zone and debug request
     ["zones_save", { map: "home.yaml", zones: [{ ...zone, behavior: "lava" }] }],
     ["zones_save", { map: "home.yaml", zones: [{ ...zone, points: [[0, 0], [1, 0], [Infinity, 1]] }] }],
     ["zones_save", { map: "home.yaml", zones: Array.from({ length: 65 }, () => zone) }],
+    ["zones_save", { map: "home.yaml", zones: [{ id: "../zone", ...zone }] }],
+    ["zones_save", { map: "home.yaml", zones: [{ id: "z".repeat(65), ...zone }] }],
+    ["zones_save", { map: "home.yaml", zones: [{ id: 7, ...zone }] }],
     ["robot_ping", { count: 3 }],
     ["debug_mission_start", { capability: "../shell", arguments: {} }],
     ["debug_mission_start", { capability: "patrol", arguments: [] }],
@@ -80,4 +84,33 @@ test("runtime selection does not accept paths or executable arguments", () => {
     assert.ok(parseRobotCommand({ operation }));
     assert.equal(parseRobotCommand({ operation, payload: { all: true } }), null);
   }
+});
+
+test("developer screen reads the robot's Zone FeatureCollection and keeps zone ids (SWM25-237)", async () => {
+  const workspace = await readFile(new URL("../app/components/managed-robot-workspace.ts", import.meta.url), "utf8");
+  // Only the parser is under test: drop the React imports so the module loads on its own.
+  const parser = ts.transpileModule(workspace.replace(/^import .*$/gm, ""), {
+    compilerOptions: { module: ts.ModuleKind.ES2022 },
+  }).outputText;
+  const { parseZoneDocument } = await import(`data:text/javascript;base64,${Buffer.from(parser).toString("base64")}`);
+  const ring = [[0, 0], [1, 0], [1, 1], [0, 0]];
+  const feature = (properties) => ({ type: "Feature", properties: { role: "semantic_zone", ...properties },
+    geometry: { type: "Polygon", coordinates: [ring] } });
+  const document = parseZoneDocument({
+    type: "FeatureCollection", map: "home.yaml", editable: true, message: "",
+    features: [
+      feature({ zone_id: "zone-wall", behavior: "restricted", name: "문", geometry_kind: "virtual_wall" }),
+      feature({ zone_id: "../bad", behavior: "avoid", name: "" }),
+      feature({ zone_id: "zone-x", behavior: "lava", name: "" }),
+    ],
+  });
+  assert.deepEqual(document, {
+    map: "home.yaml", editable: true, message: "",
+    zones: [
+      { id: "zone-wall", behavior: "restricted", name: "문", points: [[0, 0], [1, 0], [1, 1]] },
+      { behavior: "avoid", name: "", points: [[0, 0], [1, 0], [1, 1]] },
+    ],
+  });
+  // An older robot's zone list still reads.
+  assert.equal(parseZoneDocument({ map: "home.yaml", editable: true, zones: [] }).zones.length, 0);
 });

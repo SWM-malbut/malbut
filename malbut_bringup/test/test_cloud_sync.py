@@ -88,11 +88,16 @@ def test_client_uses_bounded_json_and_bearer_auth():
         yield response
 
     client.opener.open = opened
+    # Commands carry whole rooms and Zones from the web map editor (up to 1 MiB).
     assert client.request('/api/device/v1/robot/commands') == {'commands': []}
-    response.read.assert_called_once_with(256 * 1024 + 1)
-    response.read.return_value = b'x' * (256 * 1024 + 1)
+    response.read.assert_called_once_with(2 * 1024 * 1024 + 1)
+    response.read.return_value = b'x' * (2 * 1024 * 1024 + 1)
     with pytest.raises(CloudError, match='size limit'):
         client.request('/api/device/v1/robot/commands')
+    response.read.reset_mock()
+    response.read.return_value = b'{}'
+    assert client.request('/api/device/v1/robot/state', 'POST', {}) == {}
+    response.read.assert_called_once_with(256 * 1024 + 1)
     with pytest.raises(ValueError, match='API path'):
         client.request('//evil.example.com')
 

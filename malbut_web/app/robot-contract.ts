@@ -2,6 +2,7 @@ const MAX_STATE_BYTES = 64 * 1024;
 const MAX_MAP_BYTES = 2 * 1024 * 1024;
 const MAX_COMMAND_BYTES = 1024 * 1024;
 const REVISION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const ZONE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 
 export type RobotPose = { x: number; y: number; yaw: number };
 
@@ -209,10 +210,12 @@ export function validManualVelocity(value: unknown): value is ManualVelocity {
 
 function validZones(value: unknown) {
   return Array.isArray(value) && value.length <= MAX_ZONES && value.every((zone) => {
-    if (!isObject(zone) || Object.keys(zone).some((key) => !["behavior", "points", "name"].includes(key))) {
+    if (!isObject(zone) || Object.keys(zone).some((key) => !["id", "behavior", "points", "name"].includes(key))) {
       return false;
     }
-    return ZONE_BEHAVIORS.includes(zone.behavior as (typeof ZONE_BEHAVIORS)[number]) &&
+    // id: the robot's zone_id, so the robot keeps what the map editor added to that Zone.
+    return (zone.id === undefined || (typeof zone.id === "string" && ZONE_ID.test(zone.id))) &&
+      ZONE_BEHAVIORS.includes(zone.behavior as (typeof ZONE_BEHAVIORS)[number]) &&
       (zone.name === undefined || (typeof zone.name === "string" && zone.name.length <= 64)) &&
       Array.isArray(zone.points) && zone.points.length >= 3 && zone.points.length <= MAX_ZONE_POINTS &&
       zone.points.every((point) => Array.isArray(point) && point.length === 2 && point.every(finiteCoordinate));

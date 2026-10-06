@@ -5,6 +5,11 @@ Ported from malbut_gazebo's zone_filter_mask (SWM25-81) to the robot's saved
 maps. The Zone GeoJSON format and costs are the same; the simulation User Map,
 wall-clearance costs and preferred goals are not used. Wall clearance stays
 with the robot's inflation layer.
+
+The file is the one Zone store of a saved map (SWM25-237): the web map editor
+writes whole Feature Collections (with virtual walls, preferred goals, colors),
+the developer screen edits corners by ``zone_id``, and both keep every other
+property. Virtual walls are thin restricted Polygons, so the mask needs nothing more.
 """
 
 from datetime import datetime, timezone
@@ -24,6 +29,7 @@ COSTS = {'allow': 0, 'avoid': 70, 'restricted': 100}
 MAX_ZONES = 64
 MAX_POINTS = 64
 MIN_AREA_M2 = 0.01
+_ZONE_ID_CHARS = frozenset('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-')
 
 
 class ZoneError(ValueError):
@@ -120,6 +126,46 @@ def write_zones(map_yaml, features):
     }
     _atomic_write(zones_path(map_yaml),
                   json.dumps(document, ensure_ascii=False, indent=1).encode('utf-8'))
+
+
+def with_zone_ids(features):
+    """Give every Zone a stable ``zone_id``; a file written before ids gets them by position."""
+    result = []
+    for index, feature in enumerate(features):
+        properties = dict(feature.get('properties') or {})
+        if not valid_zone_id(properties.get('zone_id')):
+            digest = hashlib.sha256(json.dumps(
+                [index, feature.get('geometry')], sort_keys=True).encode()).hexdigest()
+            properties['zone_id'] = f'zone-{digest[:10]}'
+        result.append({**feature, 'properties': properties})
+    return result
+
+
+def valid_zone_id(value):
+    return (isinstance(value, str) and 1 <= len(value) <= 64
+            and value[0].isalnum() and set(value) <= _ZONE_ID_CHARS)
+
+
+def apply_zone_collection(map_yaml, payload, map_id, map_revision):
+    """Replace the Zones with the web map editor's Feature Collection for this map."""
+    if not isinstance(payload, dict) or payload.get('type') != 'FeatureCollection':
+        raise ZoneError('Expected a Zone FeatureCollection')
+    if payload.get('format') != ZONE_FORMAT or payload.get('frame_id', 'map') != 'map':
+        raise ZoneError(f'Zones must be a {ZONE_FORMAT} FeatureCollection in the map frame')
+    if payload.get('map_id') != map_id or payload.get('map_revision') != map_revision:
+        raise ZoneError('The saved map changed; reload the zones')
+    features = payload.get('features')
+    if not isinstance(features, list):
+        raise ZoneError('Zones must be a list of Features')
+    seen = set()
+    for feature in features:
+        validate_zone(feature)
+        identity = feature['properties'].get('zone_id')
+        if not valid_zone_id(identity) or identity in seen:
+            raise ZoneError('Every Zone needs a unique zone_id')
+        seen.add(identity)
+    write_zones(map_yaml, features)
+    return len(features)
 
 
 def zone_feature(behavior, points, name=''):
