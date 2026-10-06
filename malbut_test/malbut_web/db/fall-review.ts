@@ -338,13 +338,20 @@ export async function getFallIncidentDetail(deviceId: string, incidentId: string
 export async function getFallClipForPlayback(deviceId: string, incidentId: string, segmentIndex: number) {
   await ensureFallReviewSchema();
   const row = (await getPostgresPool().query(
-    `SELECT start_at,end_at FROM fall_incident_clips
-     WHERE device_id=$1 AND incident_id=$2 AND segment_index=$3`, [deviceId, incidentId, segmentIndex],
+    `SELECT c.start_at,c.end_at,i.occurred_at,i.reported_moment_at FROM fall_incident_clips c
+     JOIN fall_incidents i ON i.device_id=c.device_id AND i.incident_id=c.incident_id
+     WHERE c.device_id=$1 AND c.incident_id=$2 AND c.segment_index=$3`, [deviceId, incidentId, segmentIndex],
   )).rows[0];
   if (!row) return null;
   const startAt = iso(row.start_at)!, endAt = iso(row.end_at)!;
   const spans = await recordingSpans(deviceId, startAt, endAt);
-  return { startAt, endAt, playbackState: clipPlaybackState(startAt, endAt, spans),
+  // The still (정지 사진) shows the suspected or reported moment. A segment that does not hold it
+  // uses its own anchor, 10 s after its start (clips run −10 s/+20 s around the moment).
+  const start = Date.parse(startAt), end = Date.parse(endAt);
+  const anchor = Date.parse(iso(row.reported_moment_at ?? row.occurred_at) ?? startAt);
+  const momentAt = new Date(anchor >= start && anchor < end ? anchor
+    : Math.max(start, Math.min(start + REPORT_PRE_MS, end - 1_000))).toISOString();
+  return { startAt, endAt, momentAt, playbackState: clipPlaybackState(startAt, endAt, spans),
     streamArns: [...new Set(spans.map((s) => s.streamArn))] };
 }
 
