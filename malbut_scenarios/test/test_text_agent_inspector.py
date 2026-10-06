@@ -8,9 +8,16 @@ from types import SimpleNamespace
 import pytest
 
 from malbut_agent_server.config import Settings
+from malbut_agent_server.providers.base import (
+    AgentProvider,
+    accepts_memory_context,
+    accepts_weather_context,
+)
 from malbut_agent_server.schemas import AgentDecision, ProviderResult
+from malbut_agent_server.story_memory_provider import StoryMemoryProvider
 from malbut_scenarios.text_agent_inspector import (
     InspectionReport,
+    InspectingProvider,
     ISOLATED,
     TextAgentInspector,
     _load_settings,
@@ -60,6 +67,112 @@ def _inspector(*, mode='stateful'):
 def _close(orchestrator) -> None:
     orchestrator.conversation_store.close()
     orchestrator.memory_store.close()
+
+
+class ContextProvider(AgentProvider):
+    supports_memory = True
+
+    def __init__(self):
+        self.calls = []
+        self.result = ProviderResult(
+            decision=AgentDecision(type='message', message='테스트 응답'),
+            provider='mock', model='malbut-korean-rules-v1', latency_ms=0.0,
+        )
+
+    def complete(self, request, memories, conversation_turns, tools,
+                 conversation_summary=None, **kwargs):
+        self.calls.append((request, memories, conversation_turns, tools,
+                           conversation_summary, kwargs))
+        return self.result
+
+
+def test_inspecting_provider_preserves_context_and_result() -> None:
+    delegate = ContextProvider()
+    provider = InspectingProvider(delegate)
+    request = SimpleNamespace(utterance='테스트', available_tools=[])
+    memories, turns, tools, summary = [object()], [object()], [object()], object()
+    memory = {'mode': 'answer_only', 'response_settings': {'length': '짧게'}}
+    weather = {'status': 'fresh', 'temperature_c': 20}
+
+    assert accepts_memory_context(provider)
+    assert accepts_weather_context(provider)
+    result = provider.complete(request, memories, turns, tools,
+                               conversation_summary=summary,
+                               memory_context=memory, weather_context=weather)
+
+    assert result is delegate.result
+    assert delegate.calls == [(request, memories, turns, tools, summary,
+                              {'memory_context': memory, 'weather_context': weather})]
+    assert provider.last_observation.decision == result.decision
+    assert provider.last_observation.decision is not result.decision
+    assert 'memory_context' not in vars(provider.last_observation)
+    assert 'weather_context' not in vars(provider.last_observation)
+
+
+def test_inspecting_provider_respects_memory_opt_out() -> None:
+    delegate = ContextProvider()
+    delegate.supports_memory = False
+    provider = InspectingProvider(delegate)
+
+    assert not accepts_memory_context(provider)
+    provider.complete(SimpleNamespace(utterance='테스트', available_tools=[]),
+                      [], [], [], memory_context={'mode': 'answer_only'},
+                      weather_context={'status': 'unavailable'})
+
+    assert delegate.calls[0][-1] == {'weather_context': {'status': 'unavailable'}}
+
+
+@pytest.mark.parametrize('advertises_memory', (False, True))
+def test_inspecting_provider_supports_legacy_signature(advertises_memory) -> None:
+    class LegacyProvider(ContextProvider):
+        supports_memory = advertises_memory
+
+        def complete(self, request, memories, conversation_turns, tools,
+                     conversation_summary=None):
+            return super().complete(request, memories, conversation_turns, tools,
+                                    conversation_summary=conversation_summary)
+
+    delegate = LegacyProvider()
+    provider = InspectingProvider(delegate)
+    assert not accepts_memory_context(provider)
+
+    provider.complete(SimpleNamespace(utterance='테스트', available_tools=[]),
+                      [], [], [], memory_context={'mode': 'answer_only'},
+                      weather_context={'status': 'unavailable'})
+
+    assert len(delegate.calls) == 1
+    assert delegate.calls[0][-1] == {}
+
+
+def test_inspecting_provider_does_not_retry_provider_type_error() -> None:
+    class FailingProvider(ContextProvider):
+        def complete(self, *args, **kwargs):
+            super().complete(*args, **kwargs)
+            raise TypeError('provider internal failure')
+
+    delegate = FailingProvider()
+    provider = InspectingProvider(delegate)
+    with pytest.raises(TypeError, match='provider internal failure'):
+        provider.complete(SimpleNamespace(utterance='테스트', available_tools=[]),
+                          [], [], [], memory_context={'mode': 'answer_only'})
+
+    assert len(delegate.calls) == 1
+    assert provider.last_observation is None
+
+
+def test_inspecting_provider_still_rejects_invalid_delegate() -> None:
+    with pytest.raises(TypeError, match='delegate must be an AgentProvider'):
+        InspectingProvider(object())
+
+
+def test_inspector_accepts_runtime_story_wrapper_and_preserves_memory_support() -> None:
+    inspector, orchestrator, _ = _inspector()
+    try:
+        assert isinstance(inspector.provider.delegate, StoryMemoryProvider)
+        assert inspector.provider.delegate is orchestrator.story_provider
+        assert accepts_memory_context(inspector.provider)
+    finally:
+        _close(orchestrator)
 
 
 def test_parser_defaults_to_offline_stateful_without_execution_flag() -> None:
