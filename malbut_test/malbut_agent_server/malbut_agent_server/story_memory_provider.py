@@ -7,13 +7,13 @@ import json
 import threading
 
 from malbut_agent_server.providers.base import (
-    accepts_memory_context, accepts_weather_context,
+    AgentProvider, accepts_memory_context, accepts_weather_context,
 )
 from malbut_agent_server.prompting import MAX_CONVERSATION_CONTEXT_CHARS
 from malbut_agent_server.schemas import ValidationError
 
 
-class StoryMemoryProvider:
+class StoryMemoryProvider(AgentProvider):
     """Wrap only foreground dialogue; extraction and robot approval stay separate.
 
     The service validates policy before network submission and after inference.
