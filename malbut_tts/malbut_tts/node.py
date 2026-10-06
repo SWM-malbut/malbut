@@ -144,7 +144,7 @@ def create_tts_node(runtime_factory=None):
                     self.get_logger().info('OpenAI key works again')
                 else:
                     self.get_logger().warning(
-                        f'OpenAI key {state} ({code}); playing the notice instead')
+                        f'OpenAI key {state} ({code}); API speech is unavailable')
                 self._key_health_publisher.publish(self._string(data=json.dumps(
                     {'service': service, 'state': state, 'code': code},
                     separators=(',', ':'))))

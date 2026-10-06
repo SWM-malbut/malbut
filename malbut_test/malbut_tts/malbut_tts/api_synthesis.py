@@ -19,6 +19,7 @@ import numpy as np
 from malbut_tts.managed_key import OpenAIKey
 
 NOTICE_PATH = Path(__file__).resolve().parent / 'assets' / 'notice_no_dialogue.wav'
+NOTICE_TEXT = '지금은 대화를 할 수 없어요.'
 # Failures that mean the key itself cannot be used, and how they are reported.
 KEY_FAILURES = {
     'missing_api_key': 'missing',
@@ -171,28 +172,37 @@ class OpenAISynthesizer:
             await asyncio.gather(task, return_exceptions=True)
 
     def generate(self, text, cancel_event):
-        """Yield audio as it arrives, or the notice when the key cannot be used."""
-        stream = self._stream(text, cancel_event)
-        started = False
-        try:
-            for chunk in stream:
-                started = True
-                yield chunk
+        """Yield PCM; a substituted notice returns a failure marker after its audio."""
+        if cancel_event.is_set():
             return
-        except ApiTtsError as error:
-            notice = None
-            if not started and error.code in KEY_FAILURES:
-                notice = self._notice_audio()
-            if notice is None or cancel_event.is_set():
-                raise
-        finally:
-            stream.close()
+        substituted = text != NOTICE_TEXT
+        if not substituted:
+            notice = self._notice_audio()
+            if notice is None:
+                raise ApiTtsError('notice_unavailable')
+        else:
+            stream = self._stream(text, cancel_event)
+            started = False
+            try:
+                for chunk in stream:
+                    started = True
+                    yield chunk
+                return
+            except ApiTtsError as error:
+                notice = None
+                if not started and error.code in KEY_FAILURES:
+                    notice = self._notice_audio()
+                if notice is None or cancel_event.is_set():
+                    raise
+            finally:
+                stream.close()
         audio, rate = notice
         step = rate // 10
         for start in range(0, len(audio), step):
             if cancel_event.is_set():
                 return
             yield audio[start:start + step], rate
+        return 'notice_substituted' if substituted else None
 
     def _stream(self, text, cancel_event):
         """Yield audio as it arrives; failed/partial responses are never retried."""

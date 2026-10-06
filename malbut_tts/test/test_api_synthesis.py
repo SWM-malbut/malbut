@@ -61,7 +61,7 @@ def engine(client, **kwargs):
         return client
 
     return OpenAISynthesizer(
-        api_key='private-test-key', client_factory=factory, **kwargs), options
+        api_key='private-test-key', client_factory=factory, notice_path=None, **kwargs), options
 
 
 def test_pcm_alignment_streaming_and_one_request():

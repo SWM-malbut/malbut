@@ -15,7 +15,9 @@ from malbut_agent_server.conversation import (
     ConversationSummary,
     ConversationTurn,
 )
-from malbut_agent_server.conversation_progress import claim_retry, in_request, MODEL_RETRY_NOTICE
+from malbut_agent_server.conversation_progress import (
+    claim_retry, in_request, MODEL_RETRY_NOTICE, SERVICE_UNAVAILABLE_NOTICE,
+)
 from malbut_agent_server.memory import MemoryRecord
 from malbut_agent_server.providers.base import (
     AgentProvider,
@@ -238,9 +240,7 @@ class ReliableProvider(AgentProvider):
     supports_memory = True
 
     _MAX_RETRIES_LIMIT = 10
-    _SAFE_MESSAGE = (
-        '현재 응답 서비스를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.'
-    )
+    _SAFE_MESSAGE = SERVICE_UNAVAILABLE_NOTICE
 
     def __init__(
         self,

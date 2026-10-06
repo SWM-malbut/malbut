@@ -330,14 +330,17 @@ def test_wraps_openai_adapter_without_changing_provider_contract() -> None:
     assert result.usage.total_tokens == 13
 
 
-def test_authentication_failure_skips_retry_and_same_vendor_fallback() -> None:
+@pytest.mark.parametrize('code', [
+    ProviderFailureCode.AUTHENTICATION,
+    ProviderFailureCode.QUOTA,
+    ProviderFailureCode.MISSING_CREDENTIALS,
+])
+def test_key_failure_skips_retry_and_same_vendor_fallback(code) -> None:
     """A shared credential failure stops the ordered model chain."""
     fake_time = _FakeTime()
     primary = _ScriptedProvider(
         [
-            NormalizedProviderError(
-                ProviderFailureCode.AUTHENTICATION
-            ),
+            NormalizedProviderError(code),
             _message_result('must-not-run'),
         ]
     )
@@ -352,6 +355,10 @@ def test_authentication_failure_skips_retry_and_same_vendor_fallback() -> None:
     result = _complete(provider)
 
     assert result.provider == 'reliable-fallback'
+    assert result.decision.message == '지금은 대화를 할 수 없어요.'
+    assert result.decision.type == 'refusal'
+    assert result.decision.reason == 'provider_unavailable'
+    assert result.decision.tool_name is None and result.decision.arguments == {}
     assert primary.call_count == 1
     assert fallback.call_count == 0
     assert fake_time.sleeps == []
@@ -520,6 +527,7 @@ def test_all_failures_return_safe_non_action_without_error_details() -> None:
     assert result.decision.tool_name is None
     assert result.decision.arguments == {}
     assert result.decision.reason == 'provider_unavailable'
+    assert result.decision.message == '지금은 대화를 할 수 없어요.'
     assert result.provider == 'reliable-fallback'
     assert secret not in repr(public_output)
     assert 'private endpoint' not in repr(public_output)

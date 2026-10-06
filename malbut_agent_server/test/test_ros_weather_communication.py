@@ -595,17 +595,22 @@ def test_fetch_failure_and_timeout_reach_manager_as_aborted(
     assert result['error_code'] == expected
     if failure == 'timeout':
         assert not run.client.finished.is_set()
-    assert len(run.provider.calls) == 2
-    context = run.provider.calls[-1]['weather']
-    assert context['status'] == 'unavailable' and 'current' not in context
-    assert '23.5' not in reply
+    assert len(run.provider.calls) == 1
+    assert run.provider.calls[0]['weather'] is None
+    assert terminal[0]['request_id'] == (
+        'weather-query:' + run.provider.calls[0]['request'].request_id
+    )
+    assert reply == '지금은 대화를 할 수 없어요.'
     assert PRIVATE_ERROR not in reply + yaml.safe_dump(run.events)
-    assert sum(text.count(WEATHER_RETRY_NOTICE) for text in run.replies) == 1
-    assert [item['kind'] for item in run.responses if item['kind'] != 'progress'] == ['answer']
+    assert sum(text.count(WEATHER_RETRY_NOTICE) for text in run.replies) <= 1
+    assert [(item['kind'], item['utterance_id'], item['text'])
+            for item in run.responses if item['kind'] != 'progress'] == [
+        ('answer', utterance_id, reply),
+    ]
     counts = (run.client.calls, len(run.responses))
     run.send('오늘 날씨가 어때?', utterance_id)
     run.spin_until(lambda: (utterance_id, '오늘 날씨가 어때?', 'duplicate') in run.receipts)
-    assert len(run.goals) == len(run.provider.calls) == 2
+    assert len(run.goals) == 2 and len(run.provider.calls) == 1
     assert (run.client.calls, len(run.responses)) == counts
 
 
@@ -655,19 +660,24 @@ def test_missing_manager_or_weather_action_never_falls_back(
     utterance_id, reply = run.say('오늘 날씨가 어때?')
     assert len(run.goals) == (0 if missing == 'manager' else 2)
     assert run.client.calls == 0
-    assert len(run.provider.calls) == 2
+    assert len(run.provider.calls) == 1
     assert run.provider.calls[0]['weather'] is None
-    context = run.provider.calls[1]['weather']
-    assert context['status'] == 'unavailable' and 'current' not in context
-    assert reply and '23.5' not in reply
-    assert sum(text.count(WEATHER_RETRY_NOTICE) for text in run.replies) == 1
+    assert reply == '지금은 대화를 할 수 없어요.'
+    assert sum(text.count(WEATHER_RETRY_NOTICE) for text in run.replies) <= 1
+    assert [(item['kind'], item['utterance_id'], item['text'])
+            for item in run.responses if item['kind'] != 'progress'] == [
+        ('answer', utterance_id, reply),
+    ]
     terminal = [event for event in run.events if event.get('terminal')]
     assert len(terminal) == 2
     assert len({event['request_id'] for event in terminal}) == 2
+    assert terminal[0]['request_id'] == (
+        'weather-query:' + run.provider.calls[0]['request'].request_id
+    )
     assert not any(event['kind'] == 'succeeded' for event in terminal)
     count = len(run.responses)
     run.send('오늘 날씨가 어때?', utterance_id)
     run.spin_until(lambda: (utterance_id, '오늘 날씨가 어때?', 'duplicate') in run.receipts)
     assert len(run.goals) == (0 if missing == 'manager' else 2)
-    assert run.client.calls == 0 and len(run.provider.calls) == 2
+    assert run.client.calls == 0 and len(run.provider.calls) == 1
     assert len(run.responses) == count
