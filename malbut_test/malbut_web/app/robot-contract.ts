@@ -145,8 +145,13 @@ export function parseRobotCommand(value: unknown): {
       : null;
   }
   if (operation === "drive_mode_start") {
-    return Object.keys(payload).length === 1 && autonomousDriveMode(payload.mode)
-      ? { operation, payload: { mode: payload.mode } }
+    if (Object.keys(payload).length === 1 && autonomousDriveMode(payload.mode)) {
+      return { operation, payload: { mode: payload.mode } };
+    }
+    // The real robot's room patrol takes a thoroughness: 0 빠르게 · 1 보통 · 2 꼼꼼히.
+    return Object.keys(payload).length === 2 && payload.mode === "patrol" &&
+      integerInRange(payload.thoroughness, 0, 2)
+      ? { operation, payload: { mode: payload.mode, thoroughness: payload.thoroughness } }
       : null;
   }
   if (["drive_mode_pause", "drive_mode_resume"].includes(String(operation))) {

@@ -667,6 +667,38 @@ test("homecam PostgreSQL repository completes the device storage event lifecycle
           deviceId: "living-room", userId: "u-owner", operation,
         }), /UNSUPPORTED_ROBOT_COMMAND/);
       }
+      // 지도 탭 › 방 순찰: the real robot starts (with a thoroughness) and stops patrol, never pauses.
+      for (const [operation, payload] of [
+        ["drive_mode_start", { mode: "patrol", thoroughness: 2 }],
+        ["drive_mode_stop", { mode: "patrol", sessionId: "0f4b5ec0-2a1b-4c3d-8e9f-0a1b2c3d4e5f" }],
+      ]) {
+        const sent = await robotMap.createRobotCommand({
+          deviceId: "living-room", userId: "u-owner", operation, payload,
+        });
+        assert.equal((await robotMap.claimRobotCommands("living-room"))[0].id, sent.id);
+        await robotMap.completeRobotCommand({
+          deviceId: "living-room", commandId: sent.id, ok: true, result: {},
+        });
+      }
+      for (const [operation, payload] of [
+        ["drive_mode_start", { mode: "roaming" }],
+        ["drive_mode_pause", { mode: "patrol", sessionId: "0f4b5ec0-2a1b-4c3d-8e9f-0a1b2c3d4e5f" }],
+      ]) {
+        await assert.rejects(robotMap.createRobotCommand({
+          deviceId: "living-room", userId: "u-owner", operation, payload,
+        }), /UNSUPPORTED_ROBOT_COMMAND/);
+      }
+      await assert.rejects(robotMap.createRobotCommand({
+        deviceId: "living-room", userId: "u-family", operation: "drive_mode_start",
+        payload: { mode: "patrol", thoroughness: 1 },
+      }), /FORBIDDEN/);
+      assert.deepEqual(plain(robotContract.parseRobotCommand({
+        operation: "drive_mode_start", payload: { mode: "patrol", thoroughness: 0 },
+      })), { operation: "drive_mode_start", payload: { mode: "patrol", thoroughness: 0 } });
+      for (const payload of [{ mode: "patrol", thoroughness: 3 }, { mode: "roaming", thoroughness: 1 },
+        { mode: "patrol", thoroughness: 1.5 }]) {
+        assert.equal(robotContract.parseRobotCommand({ operation: "drive_mode_start", payload }), null);
+      }
       // The map screen's destination sending reaches the real robot too (SWM25-237), guardians included.
       for (const [operation, payload] of [
         ["navigation_preview", { x: 1, y: 1 }],

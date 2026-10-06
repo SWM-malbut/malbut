@@ -162,6 +162,8 @@ export function RobotMapPanel({
   const [newZoneBehavior, setNewZoneBehavior] = useState<ZoneBehavior>("restricted");
   const [zoneCreateMode, setZoneCreateMode] = useState<ZoneCreateMode>("closed");
   const [semanticRefresh, setSemanticRefresh] = useState(0);
+  // 실로봇 방 순찰의 꼼꼼함(0 빠르게 · 1 보통 · 2 꼼꼼히), 목업 17번.
+  const [patrolLevel, setPatrolLevel] = useState(1);
   const [robotTrail, setRobotTrail] = useState<Array<[number, number]>>([]);
   const processedCommand = useRef("");
   const trailSession = useRef("");
@@ -334,6 +336,9 @@ export function RobotMapPanel({
     ? driveMode.sessionId
     : "";
   const availableAutonomousModes = driveModeAvailableModes(driveMode);
+  // The real robot reports its patrol choices: thoroughness levels, no pause, last result.
+  const patrolLevels = Array.isArray(driveMode?.detail?.thoroughness_levels);
+  const canPause = driveMode?.detail?.can_pause !== false;
   const autonomousModeActive = Boolean(driveMode && ![
     "idle", "destination",
   ].includes(driveMode.mode) && !["idle", "failed"].includes(driveMode.state));
@@ -1619,7 +1624,25 @@ export function RobotMapPanel({
             <article className="ui-card">
               <h2>자율주행</h2>
               <span className="ui-caption">방 순찰·자율 배회 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요.</span>
-              {activeAutonomousMode && autonomousSession ? (
+              {activeAutonomousMode && autonomousSession && !canPause ? (
+                <>
+                  <div className="ui-map-sync is-info" role="status">
+                    {patrolProgressCopy(driveMode).map((line, index) => index === 0
+                      ? <strong key={line}>{line}</strong>
+                      : <span key={line}>{line}</span>)}
+                  </div>
+                  {!snapshot?.online && (
+                    <p className="ui-note">말벗과 연결이 끊겼어요. 말벗은 순찰을 계속하고, 다시 연결되면 지금 상태를 보여 드려요.</p>
+                  )}
+                  <button
+                    type="button"
+                    className="ui-button is-danger-line"
+                    onClick={() => void sendCommand("drive_mode_stop", { mode: activeAutonomousMode, sessionId: autonomousSession })}
+                    disabled={!isOwner || !snapshot?.online || driveMode?.state === "stopping" || Boolean(activeCommand) || busy}
+                  >중지</button>
+                  <p className="ui-note">중지한 뒤 다시 시작하면 처음부터 다시 순찰해요.</p>
+                </>
+              ) : activeAutonomousMode && autonomousSession ? (
                 <>
                   <p className="ui-info"><strong>{driveModeCopy(driveMode)}</strong><br />{driveModeDetailCopy(driveMode)}</p>
                   <div className="ui-two-buttons">
@@ -1648,10 +1671,42 @@ export function RobotMapPanel({
                 </>
               ) : (
                 <div className="ui-map-stack">
+                  {(() => {
+                    const result = lastPatrolCopy(driveMode);
+                    return result && (
+                      <div className={`ui-map-sync is-${result.tone}`} role="status">
+                        <strong>{result.title}</strong>
+                        {result.lines.map((line) => <span key={line}>{line}</span>)}
+                      </div>
+                    );
+                  })()}
+                  {patrolLevels && (
+                    <div className="ui-patrol-levels">
+                      <span id="patrol-level-label">순찰 꼼꼼함</span>
+                      <div className="ui-rule-choices" role="radiogroup" aria-labelledby="patrol-level-label">
+                        {PATROL_LEVELS.map(([label, hint], level) => (
+                          <button
+                            key={label}
+                            type="button"
+                            role="radio"
+                            aria-checked={patrolLevel === level}
+                            className={patrolLevel === level ? "is-active" : ""}
+                            onClick={() => setPatrolLevel(level)}
+                          >
+                            <strong>{label}</strong>
+                            <small>{hint}</small>
+                          </button>
+                        ))}
+                      </div>
+                      <small>꼼꼼할수록 가까이 다가가 더 넓게 살펴보지만 오래 걸려요.</small>
+                    </div>
+                  )}
                   <button
                     type="button"
                     className="ui-button is-emphasis"
-                    onClick={() => void sendCommand("drive_mode_start", { mode: "patrol" })}
+                    onClick={() => void sendCommand("drive_mode_start", patrolLevels
+                      ? { mode: "patrol", thoroughness: patrolLevel }
+                      : { mode: "patrol" })}
                     disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("patrol") || Boolean(activeCommand) || busy}
                   >방 순찰 시작</button>
                   <button
@@ -3168,6 +3223,64 @@ function driveModeCopy(value: RobotDriveModeSnapshot | undefined) {
     failed: "확인 필요",
   } as const;
   return `${modes[value.mode]}\n${states[value.state] ?? "확인 필요"}`;
+}
+
+const PATROL_LEVELS: Array<[string, string]> = [
+  ["빠르게", "4m · 집의 80%"], ["보통", "3m · 집의 90%"], ["꼼꼼히", "2m · 집의 95%"],
+];
+
+function patrolNumbers(value: Record<string, unknown>) {
+  return {
+    percent: Math.round(numberValue(value.coverage_ratio) * 100),
+    visited: Math.round(numberValue(value.viewpoints_visited)),
+    rooms: (key: string) => Array.isArray(value[key])
+      ? value[key].filter((name): name is string => typeof name === "string")
+      : [],
+  };
+}
+
+/** 목업 17번 · 순찰 중: 지금 하는 일, 살펴본 비율·방문한 곳, 남은 방. */
+function patrolProgressCopy(value: RobotDriveModeSnapshot | undefined) {
+  const detail = value?.detail ?? {};
+  const phases: Record<string, string> = {
+    planning: "경로 계산 중", navigating: "이동 중", observing: "둘러보는 중", stopping: "멈추는 중",
+  };
+  const phase = value?.state === "starting" ? "준비 중"
+    : value?.state === "stopping" ? "멈추는 중"
+      : detail.suspended === true ? "잠시 멈춤"
+        : phases[String(detail.patrol_phase)] ?? "준비 중";
+  const { percent, visited, rooms } = patrolNumbers(detail);
+  const remaining = rooms("unvisited_rooms");
+  return [
+    `순찰 · ${phase}`,
+    `집의 ${percent}% 살펴봄 · ${visited}곳 방문`,
+    ...(remaining.length ? [`남은 방: ${remaining.join(", ")}`] : []),
+  ];
+}
+
+/** 목업 17번 · 끝난 순찰: 다음 순찰을 시작할 때까지 남는다. */
+function lastPatrolCopy(value: RobotDriveModeSnapshot | undefined) {
+  const result = value?.detail?.last_patrol;
+  if (!isRecord(result)) return null;
+  const { percent, visited, rooms } = patrolNumbers(result);
+  if (result.outcome === "done") {
+    return { tone: "ok", title: "순찰을 마쳤어요", lines: [`집의 ${percent}% 살펴봄 · ${visited}곳 방문`] };
+  }
+  if (result.outcome === "partial") {
+    const blocked = rooms("inaccessible_rooms");
+    return { tone: "warn", title: `집의 ${percent}%까지 살펴봤어요`, lines: [
+      `더 갈 수 있는 곳이 없었어요 · ${visited}곳 방문`,
+      ...(blocked.length ? [`갈 수 없었던 방: ${blocked.join(", ")}`] : []),
+    ] };
+  }
+  if (result.outcome === "failed") {
+    return { tone: "danger", title: "순찰이 멈췄어요", lines: ["다시 시작해 주세요."] };
+  }
+  if (result.outcome === "stopped") {
+    return { tone: "neutral", title: "순찰을 중지했어요",
+      lines: [`집의 ${percent}%까지 살펴봤어요 · ${visited}곳 방문`] };
+  }
+  return null;
 }
 
 function driveModeAvailableModes(value: RobotDriveModeSnapshot | undefined) {
