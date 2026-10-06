@@ -664,10 +664,12 @@ test("연속 녹화·설정 screens follow the mockup and only the owner edits s
     "신고하고 AI에게 검토 받기", "검토 진행 중 · 결과는 원래 사건에 기록돼요", "고른 순간 주변 2분", "AI에게 보내는 5초"]) {
     assert.ok(timeline.includes(text), text);
   }
-  for (const text of ["카메라 사용", "연속 녹화", "낙상 감지", "클라우드 AI 확인 동의", "클라우드 AI 키",
-    "설정은 소유자만 바꿀 수 있어요. 지금 상태만 보여요.", "끝 네 자리만 표시해요", "저장된 영상"]) {
+  for (const text of ["카메라 사용", "연속 녹화", "낙상 감지", "클라우드 AI 확인 동의",
+    "설정은 소유자만 바꿀 수 있어요. 지금 상태만 보여요.", "저장된 영상"]) {
     assert.ok(settings.includes(text), text);
   }
+  // The Cloud AI key moved to 설정 › AI·서비스 키 (service-keys.test.mjs); only the consent stays here.
+  assert.doesNotMatch(settings, /fall-cloud-key|클라우드 AI 키/);
   assert.doesNotMatch(settings, /음성 녹음/); // not built yet; left out on purpose
   assert.match(settings, /const disabled = !isOwner \|\| blocked \|\| row\.busy/);
   assert.match(dashboard, /<FallTimelinePanel/);

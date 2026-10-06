@@ -304,6 +304,12 @@ test("HTTP: key routes, robot key sync, review route errors", async () => {
   const keyRoute = load("app/api/devices/[deviceId]/fall-cloud-key/route.ts");
   const deviceKey = load("app/api/device/v1/fall-cloud-key/route.ts");
   const reviews = load("app/api/devices/[deviceId]/fall-incidents/[incidentId]/ai-reviews/route.ts");
+  // A new key is checked with Ollama first (one short chat turn to the robot's model).
+  const checks = [];
+  load("app/service-key-check.ts").setKeyCheckFetchForTest(async (url, init) => {
+    checks.push({ url: String(url), model: JSON.parse(String(init.body)).model });
+    return Response.json({ message: { content: "1" } });
+  });
   const user = (email, method = "GET", body) => new Request("https://web.test/api", { method,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     headers: { "x-test-email": email, "content-type": "application/json", origin: "https://web.test" } });
@@ -321,6 +327,7 @@ test("HTTP: key routes, robot key sync, review route errors", async () => {
     const text = await saved.text();
     assert.doesNotMatch(text, /ollama-test/);
     assert.equal(JSON.parse(text).last4, "1234");
+    assert.deepEqual(checks, [{ url: "https://ollama.com/api/chat", model: "gemma4:31b" }], "guardians never trigger a check");
     assert.equal((await (await keyRoute.GET(user("family@example.com"), d)).json()).configured, true);
 
     const fetched = await deviceKey.POST(robot("POST", { knownVersion: 0, model: "gemma4:31b" }));

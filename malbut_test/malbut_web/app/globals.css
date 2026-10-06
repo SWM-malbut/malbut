@@ -4297,15 +4297,6 @@ a:focus-visible {
 .fall-settings-row strong { font-size: 15px; font-weight: 700; }
 .fall-settings-row small { font-size: 12px; color: var(--ui-text-muted); }
 .fall-switch:disabled { cursor: not-allowed; }
-.fall-key-row {
-  display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  background: var(--ui-bg); border-radius: 8px; padding: 10px 12px;
-}
-.fall-key-row > span:first-child { font-size: 14px; letter-spacing: 1px; }
-.fall-key-row > span:last-child { font-size: 12px; }
-.fall-key-row .is-ok { color: var(--ui-ok); }
-.fall-key-row .is-muted { color: var(--ui-text-muted); }
-.fall-button.is-danger-line { border-color: var(--ui-danger); color: var(--ui-danger); }
 /* 로컬 데모 전용 정지 배경(실제 영상 자리): 화면 색이 아니라 그림이라 이름 붙인 색을 쓰지 않는다. */
 .fall-scene-still {
   position: absolute; inset: 0;
@@ -4879,3 +4870,13 @@ a.ui-back { text-decoration: none; }
 .ui-owner-transfer .ui-button.is-strong:disabled {
   border-color: var(--ui-control-border); background: var(--ui-control-border); opacity: 1;
 }
+
+/* ---- 새 디자인: AI·서비스 키 (목업 13) ----------------------------------------- */
+.ui-key-state { margin: 0; padding: 0.625rem 0.75rem; border-radius: 8px; font-size: 0.8125rem; line-height: 1.6; }
+.ui-key-state.is-gray { color: var(--ui-text-muted); background: var(--ui-bg); }
+.ui-key-state.is-ok { color: var(--ui-ok); background: var(--ui-ok-soft); }
+.ui-key-state.is-info { color: var(--ui-accent-strong); background: var(--ui-accent-soft); }
+.ui-key-state.is-bad { color: var(--ui-danger); background: var(--ui-danger-soft); }
+.ui-key-card .ui-field input[aria-invalid="true"] { border-color: var(--ui-danger); }
+.ui-key-card .ui-button { min-height: 46px; }
+.ui-key-link { align-self: flex-start; padding: 0.25rem 0; font-size: 0.8125rem; color: var(--ui-accent); text-decoration: none; }
