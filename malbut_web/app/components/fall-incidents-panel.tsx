@@ -275,10 +275,13 @@ function useScenePlayer({ deviceId, incidentId, clip, request, scene, demo }: {
       {playing && scene && now !== null && <PeopleOverlay scene={scene} now={now} />}
       {!playing && <span className="fall-scene-hint">장면 영상 보기를 누르면 이 구간을 재생해요</span>}
       {message && <span className="fall-scene-message" role="status">{message}</span>}
-      <div className="fall-scene-bar">
-        <span>{clock(clip.startAt, true)} – {clock(clip.endAt, true)}</span>
-        <span>{SCENE[clip.playbackState][0]}</span>
-      </div>
+      {/* 재생 중에는 숨긴다: 영상 아래쪽의 재생 위치·소리·확대 버튼을 가리지 않게. */}
+      {!playing && (
+        <div className="fall-scene-bar">
+          <span>{clock(clip.startAt, true)} – {clock(clip.endAt, true)}</span>
+          <span>{SCENE[clip.playbackState][0]}</span>
+        </div>
+      )}
     </div>
   ) };
 }

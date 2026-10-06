@@ -4231,7 +4231,12 @@ a:focus-visible {
 .fall-tl-top > span { width: 64px; }
 .fall-tl-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .fall-tl-body .fall-card { margin: 0; }
-.fall-tl-clock { position: absolute; right: 12px; bottom: 10px; color: var(--ui-on-strong); font-size: 12px; pointer-events: none; }
+/* 위쪽에 둔다: 아래쪽은 영상의 재생 위치·소리·확대 버튼 자리. */
+.fall-tl-clock {
+  position: absolute; right: 10px; top: 10px; padding: 3px 8px; border-radius: 6px;
+  color: var(--ui-on-strong); background: var(--ui-scrim); font-size: 12px; pointer-events: none;
+}
+.fall-tl-body .fall-scene-hint { right: 120px; }
 .fall-tl-days { display: flex; justify-content: space-between; font-size: 13px; }
 .fall-tl-days button {
   min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--ui-control-border); background: var(--ui-surface);
