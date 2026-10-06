@@ -101,7 +101,7 @@ class SavedMapCatalog:
             return None
 
     def delete(self, map_id):
-        """Remove a saved map and the pose/Zone files named after it."""
+        """Remove a saved map and the pose, Zone and User Map files named after it."""
         path = self.resolve(map_id)
         image = self._image(path)
         shared = any(other != path and self._image(other) == image
@@ -109,7 +109,8 @@ class SavedMapCatalog:
                      if other.suffix.lower() in ('.yaml', '.yml'))
         stem = str(path.with_suffix(''))
         files = [path, *([] if shared else [image]),
-                 Path(stem + '.pose.yaml'), Path(stem + '.zones.geojson')]
+                 Path(stem + '.pose.yaml'), Path(stem + '.zones.geojson'),
+                 Path(stem + '.user-map.geojson')]
         removed = []
         # The YAML goes first: from then on the map is neither listed nor loadable.
         for item in files:

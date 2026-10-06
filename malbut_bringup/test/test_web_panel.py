@@ -899,9 +899,13 @@ def test_saved_zones_round_trip_to_the_map_zone_file(zone_map):
         {'behavior': 'avoid', 'name': 'rug', 'points': rectangle}]}) == 2
     view = zone_view(runtime, catalog)
     assert view['editable'] and view['map'] == 'home.yaml'
+    # Every Zone has a stable id the editor sends back (SWM25-237).
+    ids = [zone.pop('id') for zone in view['zones']]
+    assert len(set(ids)) == 2 and all(identity.startswith('zone-') for identity in ids)
     assert view['zones'] == [
         {'behavior': 'restricted', 'name': '', 'points': rectangle},
         {'behavior': 'avoid', 'name': 'rug', 'points': rectangle}]
+    assert [zone['id'] for zone in zone_view(runtime, catalog)['zones']] == ids
     assert save_zones(runtime, catalog, {'map': 'home.yaml', 'zones': []}) == 0
     assert zone_view(runtime, catalog)['zones'] == []
 

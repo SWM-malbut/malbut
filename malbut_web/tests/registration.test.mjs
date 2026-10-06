@@ -129,6 +129,9 @@ test("re-registering asks first, then removes everyone else and keeps the earlie
       VALUES ('robot-a','lease-1','u-owner','client-1',now() + interval '1 minute');`);
     await h.db.exec(`INSERT INTO fall_cloud_keys(device_id,key_version,ciphertext,last4,updated_by)
       VALUES ('robot-a',3,'v1.sealed','abcd','u-owner')`);
+    await h.db.exec(`INSERT INTO robot_semantic_drafts
+      (device_id,kind,map_id,map_revision,payload_json,status,saved_by,saved_at)
+      VALUES ('robot-a','rooms','map-1','rev-1','[]','pending','u-owner',now())`);
     const code = await codeFor("robot-a");
 
     const asked = await register("u-new", { code });
@@ -144,6 +147,8 @@ test("re-registering asks first, then removes everyone else and keeps the earlie
     const pushes = (await h.db.query("SELECT id, revoked_at FROM push_subscriptions ORDER BY id")).rows;
     assert.ok(pushes.every((row) => row.revoked_at), "earlier members stop getting fall alerts");
     assert.equal((await h.db.query("SELECT count(*)::int AS n FROM talk_leases")).rows[0].n, 0);
+    assert.equal((await h.db.query("SELECT count(*)::int AS n FROM robot_semantic_drafts")).rows[0].n, 0,
+      "the previous owner's unsent room edits are not sent");
     const kept = (await h.db.query(
       "SELECT count(*)::int AS n FROM fall_incident_opinions WHERE incident_id=$1", [incident])).rows[0].n;
     assert.equal(kept, 1, "남기기 keeps incidents and opinions");

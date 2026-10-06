@@ -16,7 +16,7 @@ test("the cloud zone editor keeps the established map editing contract", async (
   assert.match(panel, /구역 내부에 벽이나 장애물이 포함될 수 없습니다/);
   assert.match(panel, /preferred_goal/);
   assert.match(panel, /role: "semantic_zone"/);
-  assert.match(panel, /sendCommand\("zones_apply"/);
+  assert.match(panel, /postSpaceEdit\("space-drafts", \{\s*kind: "zones"/);
   assert.doesNotMatch(panel, /zonePoints|setZonePoints/);
 });
 
@@ -191,4 +191,33 @@ test("the home map summary reuses rooms, zones, and the live localized robot pos
   assert.match(panel, /robot-map-home-marker/);
   assert.match(styles, /\.homecam-home-map-preview \.robot-map-home-semantics/);
   assert.match(styles, /\.homecam-home-map-preview \.robot-map-home-marker/);
+});
+
+test("rooms and Zones are edited with the 말벗 off and saved on the server (SWM25-237)", async () => {
+  const [panel, styles] = await Promise.all([
+    readFile(new URL("../app/components/robot-map-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  // Split and merge are worked out by the web server, saves wait there for the robot.
+  assert.match(panel, /postSpaceEdit\("rooms\/split", \{ room: selectedRoom, lines: splitLines \}\)/);
+  assert.match(panel, /postSpaceEdit\("rooms\/merge", \{ rooms: \[selectedRoom, mergeTarget\] \}\)/);
+  assert.match(panel, /postSpaceEdit\("space-drafts", \{\s*kind: "rooms"/);
+  assert.doesNotMatch(panel, /sendCommand\("(room_split|room_merge|rooms_save|zones_apply)"/);
+  assert.doesNotMatch(panel, /pendingRoomSave|pendingZoneSave|semanticRetryTimer/);
+  // Map clicks edit rooms and Zones offline; destinations still need the robot.
+  assert.match(panel, /if \(!snapshot\?\.online && mapMode !== "rooms" && mapMode !== "zones"\) return;/);
+  // A reload on the same map keeps unsaved edits.
+  assert.match(panel, /if \(!sameMap \|\| !roomsDirtyRef\.current\)/);
+  assert.match(panel, /if \(!sameMap \|\| !zonesDirtyRef\.current\)/);
+  // 목업 10번 states.
+  for (const copy of [
+    "말벗이 꺼져 있어요", "편집해 두면 말벗이 켜질 때 반영돼요.",
+    "저장했어요. 말벗이 켜지면 반영돼요", "반영되기 전까지 말벗은 예전 방·구역으로 움직여요.",
+    "말벗에 반영했어요", " · 꺼져 있는 동안 저장한 방·구역",
+    "반영하지 못했어요", "그사이 말벗의 지도가 바뀌어 편집한 방·구역을 반영하지 못했어요. 다시 편집해 주세요.",
+  ]) assert.ok(panel.includes(copy), copy);
+  assert.match(panel, /className=\{`ui-map-sync is-\$\{spaceBanner\.tone\}`\} role="status"/);
+  assert.match(styles, /\.ui-map-sync\.is-ok \{[^}]*var\(--ui-ok-soft\)/);
+  assert.match(styles, /\.ui-map-sync\.is-danger \{[^}]*var\(--ui-danger-soft\)/);
 });

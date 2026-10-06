@@ -11,6 +11,11 @@ import {
   userCanViewDevice,
   writeAuditLog,
 } from "./homecam";
+import {
+  dispatchSemanticDrafts,
+  overlaySemanticDrafts,
+  settleSemanticDrafts,
+} from "./robot-semantic-drafts";
 
 const ROBOT_ONLINE_MS = 15_000;
 // 보호자도 쓰는 명령: 지도에서 보내기와 멈추기(누가 보낸 이동이든 취소할 수 있다).
@@ -248,19 +253,22 @@ export async function getRobotMapSemantics(deviceId: string, userId: string) {
   if (!(await userCanViewDevice(deviceId, userId))) return null;
   const map = await getD1()
     .prepare(
-      `SELECT revision, map_id, map_revision, user_map_json, semantic_zones_json
+      `SELECT revision, map_id, map_revision, user_map_json, semantic_zones_json, updated_at
        FROM robot_maps WHERE device_id = ?`,
     )
     .bind(deviceId)
-    .first<Pick<MapRow, "revision" | "map_id" | "map_revision" | "user_map_json" | "semantic_zones_json">>();
+    .first<Pick<MapRow,
+      "revision" | "map_id" | "map_revision" | "user_map_json" | "semantic_zones_json" | "updated_at"
+    >>();
   if (!map) return null;
-  return {
+  return overlaySemanticDrafts(deviceId, userId, {
     revision: map.revision,
     mapId: map.map_id,
     mapRevision: map.map_revision,
+    updatedAt: map.updated_at,
     userMap: map.user_map_json ? parseObject(map.user_map_json) : null,
     zones: map.semantic_zones_json ? parseObject(map.semantic_zones_json) : null,
-  };
+  });
 }
 
 export async function createRobotCommand(input: {
@@ -409,6 +417,8 @@ async function assertDriveCommandAllowed(input: {
 export async function claimRobotCommands(deviceId: string) {
   await ensureHomecamSchema();
   await expireStaleRobotCommands(deviceId);
+  // Room and Zone edits saved while the robot was away go out on its next poll.
+  await dispatchSemanticDrafts(deviceId);
   const now = new Date().toISOString();
   const command = await getD1()
     .prepare(
@@ -514,6 +524,9 @@ export async function completeRobotCommand(input: {
       input.deviceId,
     )
     .first<CommandRow>();
+  if (command && ["rooms_save", "zones_apply"].includes(command.operation)) {
+    await settleSemanticDrafts(input.deviceId);
+  }
   return command ? mapCommand(command) : null;
 }
 

@@ -120,6 +120,9 @@ export async function redeemRegistrationCode(input: {
       [deviceId, input.userId, nowIso],
     );
     await client.query("DELETE FROM talk_leases WHERE device_id=$1 AND user_id<>$2", [deviceId, input.userId]);
+    // Room and Zone edits the previous owner saved but the robot has not taken are not sent.
+    await client.query("DELETE FROM robot_semantic_drafts WHERE device_id=$1 AND saved_by<>$2",
+      [deviceId, input.userId]);
     // The previous household's invite link stops working too.
     await client.query("UPDATE device_invites SET revoked_at=$2 WHERE device_id=$1 AND revoked_at IS NULL",
       [deviceId, nowIso]);

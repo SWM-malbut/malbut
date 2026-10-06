@@ -4641,6 +4641,12 @@ a:focus-visible {
 .ui-map-owner-note { padding: 0 0.25rem; }
 
 /* 방·구역 편집 */
+/* 반영 상태 (SWM25-237, 목업 10번): 꺼져 있음·반영 대기는 파랑, 반영됨은 초록, 반영 못 함은 빨강. */
+.ui-map-sync { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.75rem; border-radius: 10px; color: var(--ui-accent-strong); background: var(--ui-accent-soft); }
+.ui-map-sync strong { font-size: 0.875rem; font-weight: 700; }
+.ui-map-sync span { font-size: 0.8125rem; line-height: 1.5; }
+.ui-map-sync.is-ok { color: var(--ui-ok); background: var(--ui-ok-soft); }
+.ui-map-sync.is-danger { color: var(--ui-danger); background: var(--ui-danger-soft); }
 .ui-map-editor { gap: 0.75rem; }
 .ui-map-editor .ui-field > span { color: var(--ui-text); }
 .ui-map-editor .ui-field input:disabled { color: var(--ui-text-muted); background: var(--ui-neutral-soft); }

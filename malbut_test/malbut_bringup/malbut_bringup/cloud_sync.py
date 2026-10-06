@@ -22,9 +22,12 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import yaml
 
 from .web_panel import (
-    PanelData, RosBridge, save_zones, TERMINAL, _terminate, validate_command, zone_view,
+    live_zone_map, PanelData, RosBridge, save_zones, TERMINAL, _terminate, validate_command,
 )
-from .zones import ZONE_FORMAT
+from .zones import (
+    apply_zone_collection, map_identity, read_zones, with_zone_ids, ZONE_FORMAT, ZoneError,
+    zones_path,
+)
 
 
 TOKEN_PATTERN = re.compile(
@@ -35,7 +38,11 @@ COMMAND_ID_PATTERN = re.compile(
     r'[89ab][0-9a-f]{3}-[0-9a-f]{12}', re.IGNORECASE)
 ROBOT_INTERFACE = 'malbut_manager_v1'
 # Answered by this bridge from files and state; no Goal is sent for them.
-LOCAL_OPERATIONS = ('map_delete', 'zones_save', 'robot_ping', 'robot_diagnostics')
+# rooms_save and zones_apply come from the web map editor (SWM25-237).
+LOCAL_OPERATIONS = ('map_delete', 'zones_save', 'rooms_save', 'zones_apply',
+                    'robot_ping', 'robot_diagnostics')
+# A map upload carries the preview PNG, the User Map and the Zones in one body.
+MAX_MAP_UPLOAD_BYTES = 2 * 1024 * 1024 - 64 * 1024
 # The server accepts device request bodies up to 64 KiB.
 MAX_RESULT_BYTES = 60 * 1024
 # Held joystick/keyboard input arrives through the command queue. While it does,
@@ -126,10 +133,12 @@ class CloudClient:
             'Accept': 'application/json', 'Content-Type': 'application/json',
             'User-Agent': 'malbut-real-robot-sync/1',
         })
+        # Web map editor commands carry whole rooms and Zones (the server allows 1 MiB).
+        response_limit = 2 * 1024 * 1024 if path.endswith('/commands') else 256 * 1024
         try:
             with self.opener.open(request, timeout=self.timeout) as response:
-                raw = response.read(256 * 1024 + 1)
-                if len(raw) > 256 * 1024:
+                raw = response.read(response_limit + 1)
+                if len(raw) > response_limit:
                     raise CloudError('Cloud response exceeds its size limit')
                 value = json.loads(raw)
                 if not isinstance(value, dict):
@@ -176,12 +185,65 @@ def delete_map(runtime, catalog, map_id):
     return catalog.delete(map_id)
 
 
-def zones_document(runtime, catalog):
-    """Describe the Zones of the saved map in use, as the web editor edits them."""
+def cloud_map_id(runtime):
+    """Return the web's map ID: one per saved map name (the live map while mapping)."""
+    map_name = str(runtime.get('map') or 'mapping').encode()
+    return 'real-' + hashlib.sha256(map_name).hexdigest()[:24]
+
+
+def space_documents(runtime, catalog):
+    """
+    Return the User Map and Zones of the saved map in use, as the web map editor reads them.
+
+    Returns ``(user_map, zones, map_revision)``. The revision names the map image
+    and metadata only, so editing rooms or Zones never makes a map look replaced.
+    The Zones carry the developer screen's fields too (map file, editable, message).
+    """
     if (runtime.get('localization') or {}).get('mode') != 'LOCALIZATION':
+        return None, None, None
+    try:
+        path = live_zone_map(runtime, catalog)
+    except ValueError:
+        return None, None, None
+    map_id = cloud_map_id(runtime)
+    key = (map_id, *(_stamp(item) for item in (
+        path, zones_path(path), path.with_suffix('.user-map.geojson'))))
+    cached = _SPACE_CACHE.get(str(path))
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    try:
+        from .user_map import load_or_build_user_map
+        user_map = load_or_build_user_map(path, map_id)
+        map_revision = user_map['map_revision']
+    except (ValueError, KeyError, OSError):
+        # A map the User Map builder cannot read (not trinary) still has Zones.
+        user_map, map_revision = None, 'map-' + map_identity(path)[:24]
+    try:
+        features, message = with_zone_ids(read_zones(path)), ''
+    except ZoneError as error:
+        features, message = [], f'{error}; applying replaces it'
+    zones = {
+        'type': 'FeatureCollection', 'format': ZONE_FORMAT, 'map_id': map_id,
+        'map_revision': map_revision, 'frame_id': 'map',
+        'map': path.name, 'editable': True, 'message': message,
+        'features': features,
+    }
+    result = (user_map, zones, map_revision)
+    # Building the User Map reads the whole map image: do it again only when a file changes.
+    _SPACE_CACHE.clear()
+    _SPACE_CACHE[str(path)] = (key, result)
+    return result
+
+
+_SPACE_CACHE = {}
+
+
+def _stamp(path):
+    try:
+        info = Path(path).stat()
+    except OSError:
         return None
-    view = zone_view(runtime, catalog)
-    return {'format': ZONE_FORMAT, **view}
+    return info.st_mtime_ns, info.st_size
 
 
 def capability_manifests(directory=None):
@@ -289,29 +351,49 @@ def _without_path(state):
     return {**state, 'map': Path(str(state['map'])).name}
 
 
-def map_payload(metadata, png, runtime, zones=None):
-    """Preserve /map geometry and its native-size, neutral occupancy PNG."""
+def map_payload(metadata, png, runtime, zones=None, user_map=None, map_revision=None):
+    """
+    Preserve /map geometry and its native-size, neutral occupancy PNG.
+
+    ``revision`` changes with any upload content (so edits upload again);
+    ``mapRevision`` names only the map itself (the web map editor's drafts keep it).
+    """
     if (not 1 <= metadata['width'] <= 8192 or not 1 <= metadata['height'] <= 8192
             or not 0.001 <= metadata['resolution'] <= 1.0):
         raise ValueError('Robot map geometry exceeds the cloud contract')
     geometry = {key: value for key, value in metadata.items() if key != 'version'}
-    # Zone edits are uploaded with the saved map they belong to.
-    fingerprint = hashlib.sha256(png + json.dumps(
-        [geometry, runtime.get('map'), zones], sort_keys=True, default=str).encode()).hexdigest()
+    base = hashlib.sha256(png + json.dumps(
+        [geometry, runtime.get('map')], sort_keys=True, default=str).encode()).hexdigest()
+    # Room and Zone edits are uploaded with the saved map they belong to.
+    fingerprint = hashlib.sha256((base + json.dumps(
+        [zones, user_map], sort_keys=True, default=str)).encode()).hexdigest()
     finalized = runtime.get('mode') == 'navigation'
-    map_name = str(runtime.get('map') or 'mapping').encode()
-    map_id = 'real-' + hashlib.sha256(map_name).hexdigest()[:24]
     origin = metadata['origin']
-    return {
+    payload = {
         'finalized': finalized,
         'revision': ('real-' if finalized else 'live-') + fingerprint,
-        'mapId': map_id, 'mapRevision': fingerprint, 'sourceCreatedAt': None,
+        'mapId': cloud_map_id(runtime), 'mapRevision': map_revision or base,
+        'sourceCreatedAt': None,
         'geometry': {'width': metadata['width'], 'height': metadata['height'],
                      'resolution': metadata['resolution'], 'originX': origin['x'],
                      'originY': origin['y'], 'originYaw': origin['yaw']},
         'previewBase64': base64.b64encode(png).decode('ascii'),
-        'userMap': None, 'semanticZones': zones,
+        'userMap': user_map, 'semanticZones': zones,
     }
+    # The wall outline only decorates the map; drop it, then the User Map, before
+    # the upload outgrows the server's limit (the map and Zones still upload).
+    for trim in ('wall_outline', 'user_map'):
+        if len(json.dumps(payload, ensure_ascii=False).encode('utf-8')) <= MAX_MAP_UPLOAD_BYTES:
+            break
+        if payload['userMap'] is None:
+            break
+        if trim == 'wall_outline':
+            payload['userMap'] = {**payload['userMap'], 'features': [
+                feature for feature in payload['userMap']['features']
+                if (feature.get('properties') or {}).get('role') != 'wall_outline']}
+        else:
+            payload['userMap'] = None
+    return payload
 
 
 class CloudSync:
@@ -398,6 +480,20 @@ class CloudSync:
             count = save_zones(runtime, self.bridge.catalog, payload)
             self.last_map_at = 0.0  # Upload the saved map with its new Zones.
             return {'saved': count, 'map': payload['map']}
+        if operation in ('rooms_save', 'zones_apply'):
+            path = live_zone_map(runtime, self.bridge.catalog)
+            map_id = cloud_map_id(runtime)
+            _, _, map_revision = space_documents(runtime, self.bridge.catalog)
+            if operation == 'rooms_save':
+                from .user_map import save_rooms
+                count = len(save_rooms(path, map_id, payload)['features'])
+                result = {'saved': len(payload['rooms']), 'features': count}
+            else:
+                # The zone filter reloads its mask when this file changes.
+                result = {'saved': apply_zone_collection(path, payload, map_id, map_revision),
+                          'nav2_reloaded': True}
+            self.last_map_at = 0.0  # Upload the map with its new rooms or Zones.
+            return {**result, 'map_id': map_id, 'map_revision': map_revision}
         if payload:
             raise ValueError('This request takes no payload')
         now = datetime.now(timezone.utc).isoformat()
@@ -441,8 +537,8 @@ class CloudSync:
                 pair = self.bridge.data.map_cache.png()
                 if pair is not None:
                     runtime = snapshot.get('runtime', {})
-                    payload = map_payload(*pair, runtime, zones_document(
-                        runtime, self.bridge.catalog))
+                    user_map, zones, map_revision = space_documents(runtime, self.bridge.catalog)
+                    payload = map_payload(*pair, runtime, zones, user_map, map_revision)
                     if len(payload['previewBase64']) > 1_500_000:
                         raise ValueError('Robot map exceeds the cloud preview size limit')
                     if payload['revision'] != self.last_map:

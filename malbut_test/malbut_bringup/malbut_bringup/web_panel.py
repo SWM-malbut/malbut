@@ -22,7 +22,10 @@ import yaml
 
 from .web_map import MapCache
 from .web_runtime import RuntimeSupervisor, SavedMapCatalog
-from .zones import COSTS, MAX_POINTS, MAX_ZONES, read_zones, write_zones, zone_feature, ZoneError
+from .zones import (
+    COSTS, MAX_POINTS, MAX_ZONES, read_zones, valid_zone_id, with_zone_ids, write_zones,
+    zone_feature, ZoneError,
+)
 
 
 TERMINAL = {'SUCCEEDED', 'CANCELED', 'ABORTED', 'REJECTED', 'ERROR'}
@@ -177,15 +180,25 @@ def zone_view(runtime, catalog):
         features, message = read_zones(path), ''
     except ZoneError as error:
         features, message = [], f'{error}; applying replaces it'
-    zones = [{'behavior': item['properties']['behavior'],
+    zones = [{'id': item['properties']['zone_id'],
+              'behavior': item['properties']['behavior'],
               'name': item['properties'].get('name', ''),
               'points': [point[:2] for point in item['geometry']['coordinates'][0][:-1]]}
-             for item in features]
+             for item in with_zone_ids(features)]
     return {'map': path.name, 'editable': True, 'zones': zones, 'message': message}
 
 
+# Zone properties that describe the shape; dropped when the developer screen moves corners.
+_SHAPE_PROPERTIES = ('area_m2', 'centroid', 'geometry_kind', 'wall_endpoints', 'wall_width_m')
+
+
 def save_zones(runtime, catalog, payload):
-    """Validate the editor's polygons and replace the map's Zone file."""
+    """
+    Validate the editor's polygons and replace the map's Zone file.
+
+    A Zone sent with the ``id`` of a stored Zone keeps that Zone's other
+    properties (virtual wall, preferred goal, color from the web map editor).
+    """
     if not isinstance(payload, dict) or set(payload) != {'map', 'zones'}:
         raise ValueError('Expected map and zones')
     path = live_zone_map(runtime, catalog)
@@ -194,12 +207,18 @@ def save_zones(runtime, catalog, payload):
     zones = payload['zones']
     if not isinstance(zones, list) or len(zones) > MAX_ZONES:
         raise ValueError(f'Use at most {MAX_ZONES} Zones')
+    try:
+        stored = {item['properties']['zone_id']: item for item in with_zone_ids(read_zones(path))}
+    except ZoneError:
+        stored = {}
     features = []
     for zone in zones:
         if (not isinstance(zone, dict) or not {'behavior', 'points'} <= set(zone)
-                or set(zone) - {'behavior', 'points', 'name'}
+                or set(zone) - {'id', 'behavior', 'points', 'name'}
                 or zone['behavior'] not in COSTS):
             raise ValueError('Each Zone needs a behavior and points')
+        if 'id' in zone and not valid_zone_id(zone['id']):
+            raise ValueError('Zone ids are short identifiers')
         points, name = zone['points'], zone.get('name', '')
         if (not isinstance(points, list) or not 3 <= len(points) <= MAX_POINTS
                 or not all(isinstance(point, list) and len(point) == 2
@@ -208,8 +227,18 @@ def save_zones(runtime, catalog, payload):
             raise ValueError(f'Zone corners must be 3 to {MAX_POINTS} finite [x, y] points')
         if not isinstance(name, str) or len(name) > 64:
             raise ValueError('Zone names are at most 64 characters')
-        features.append(zone_feature(zone['behavior'], points, name))
-    write_zones(path, features)
+        feature = zone_feature(zone['behavior'], points, name)
+        previous = stored.get(zone.get('id'))
+        if previous is not None:
+            kept = dict(previous['properties'])
+            if previous['geometry'] != feature['geometry']:
+                # Moved corners: values measured from the old shape no longer hold, and a
+                # virtual wall edited as a polygon is a polygon Zone from now on.
+                for key in _SHAPE_PROPERTIES:
+                    kept.pop(key, None)
+            feature['properties'] = {**kept, **feature['properties']}
+        features.append(feature)
+    write_zones(path, with_zone_ids(features))
     return len(features)
 
 
