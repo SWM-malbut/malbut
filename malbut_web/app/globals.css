@@ -4665,7 +4665,6 @@ a:focus-visible {
 .ui-map-owner-note { padding: 0 0.25rem; }
 
 /* 방·구역 편집 */
-.ui-map-sub .ui-segment { margin-top: 0.25rem; }
 .ui-map-editor { gap: 0.75rem; }
 .ui-map-editor .ui-field > span { color: var(--ui-text); }
 .ui-map-editor .ui-field input:disabled { color: var(--ui-text-muted); background: var(--ui-neutral-soft); }
