@@ -260,6 +260,14 @@ test("Python runtime journal -> authenticated API -> database -> push broker pay
     assert.equal(saved.fall_seen, true);
     assert.equal(saved.answer, "help_request");
     assert.equal(saved.notification_rank, 3);
+    const review = load("db/fall-review.ts");
+    const detail = await review.getFallIncidentDetail("robot-a", saved.incident_id);
+    const analysis = detail.robotEvents.find((r) => r.eventKind === "analysis_completed");
+    assert.equal(analysis.analysis.explanation, "test observation");
+    assert.equal(analysis.analysis.purpose, "incident");
+    const { fallEventLabel } = load("app/fall-event-label.ts");
+    assert.equal(fallEventLabel(analysis), "클라우드 AI: 낙상 (test observation)");
+    assert.ok(!JSON.stringify(pushes).includes("test observation"));
     assert.deepEqual((await h.db.query("SELECT level,status FROM fall_push_outbox ORDER BY level")).rows,
       [{ level: "info", status: "superseded" }, { level: "urgent", status: "accepted" }]);
   }); } finally { globalThis.fetch = originalFetch; await h.db.close(); }

@@ -27,6 +27,12 @@ export type FallEventInput = {
   reason: string | null;
   notificationLevel: "info" | "check" | "urgent" | null;
   mergedIntoIncidentIds?: string[];
+  analysis?: {
+    requestId: string;
+    purpose: "incident" | "crosscheck";
+    assessment: string;
+    explanation: string;
+  };
 };
 
 export function parseFallEvent(value: unknown): FallEventInput | null {
@@ -36,6 +42,19 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
     "evidenceRevision", "occurredAt", "eventKind", "state", "fallSeen", "assessment",
     "answer", "reason", "notificationLevel"];
   if (v.eventKind === "incident_merged") keys.push("mergedIntoIncidentIds");
+  if (Object.hasOwn(v, "analysis")) {
+    if (v.eventKind !== "analysis_completed") return null;
+    const a = v.analysis;
+    if (!a || typeof a !== "object" || Array.isArray(a)) return null;
+    const record = a as Record<string, unknown>;
+    if (Object.keys(record).length !== 4 ||
+        typeof record.requestId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(record.requestId) ||
+        !["incident", "crosscheck"].includes(record.purpose as string) ||
+        !assessments.includes(record.assessment as string) ||
+        typeof record.explanation !== "string" || !record.explanation.trim() ||
+        [...record.explanation].length > 1000) return null;
+    keys.push("analysis");
+  }
   if (Object.keys(v).length !== keys.length || !keys.every((k) => Object.hasOwn(v, k))) return null;
   if (v.schemaVersion !== 1 || typeof v.eventId !== "string" || !uuid.test(v.eventId) ||
       typeof v.incidentId !== "string" || !uuid.test(v.incidentId) ||
@@ -84,8 +103,14 @@ export function parseFallEvent(value: unknown): FallEventInput | null {
     if (v.reason === "normal_verified" && (v.fallSeen || v.answer !== "okay" || v.assessment !== "normal_activity")) return null;
   }
   // Construct in a canonical order for idempotency comparisons; no raw media,
-  // transcript, model text, caller-supplied recipient or device ID is accepted.
-  return Object.fromEntries(keys.map((k) => [k, v[k]])) as FallEventInput;
+  // transcript, caller-supplied recipient or device ID is accepted. Only the
+  // bounded analysis explanation may carry model text, for human display.
+  const result = Object.fromEntries(keys.map((k) => [k, v[k]])) as FallEventInput;
+  if (result.analysis) {
+    const { requestId, purpose, assessment, explanation } = result.analysis;
+    result.analysis = { requestId, purpose, assessment, explanation };
+  }
+  return result;
 }
 
 export async function readFallEvent(request: Request): Promise<FallEventInput | null> {

@@ -293,7 +293,8 @@ export async function getFallIncidentDetail(deviceId: string, incidentId: string
   )).rows.map((e) => {
     const p = JSON.parse(e.payload_json);
     return { sequence: e.sequence, eventKind: p.eventKind, occurredAt: p.occurredAt, state: p.state,
-      assessment: p.assessment, answer: p.answer, reason: p.reason, notificationLevel: p.notificationLevel };
+      assessment: p.assessment, answer: p.answer, reason: p.reason, notificationLevel: p.notificationLevel,
+      analysis: p.analysis ?? null };
   });
   const notifications = [
     ...(await pool.query(

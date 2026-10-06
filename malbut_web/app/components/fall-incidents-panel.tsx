@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { demoIncidentFetch } from "./fall-incidents-demo";
+import { fallEventLabel } from "../fall-event-label";
+import type { FallHistoryEvent } from "../fall-event-label";
 
 // 사건 screens, built from the reviewed mockup (Main.dc.html / Incident.dc.html):
 // a list page and a detail page in one column. The automatic judgment (robot /
@@ -37,8 +39,8 @@ type ScenePeople = {
 type IncidentDetail = IncidentSummary & {
   viewerUserId: string;
   clips: Clip[];
-  robotEvents: Array<{ sequence: number; eventKind: string; occurredAt: string; assessment: string | null;
-    answer: string | null; reason: string | null; notificationLevel: string | null }>;
+  robotEvents: Array<FallHistoryEvent & { sequence: number; occurredAt: string;
+    notificationLevel: string | null }>;
   notifications: Array<{ kind: "first" | "resend" | "reopen"; round: number; level: string; reason: string;
     status: string; createdAt: string; acceptedAt: string | null }>;
   opinions: Array<{ userId: string; userName: string; role: "owner" | "family" | null; label: OpinionLabel; memo: string | null;
@@ -60,15 +62,6 @@ const ASSESSMENT: Record<string, [string, string]> = {
   normal_activity: ["정상", "is-normal"], unobservable: ["판단 불가", "is-neutral"],
 };
 const LEVEL_LABEL: Record<string, string> = { urgent: "긴급", check: "확인 필요", info: "일반" };
-const EVENT_LABEL: Record<string, string> = {
-  incident_opened: "자세 분석: 낙상 의심", incident_updated: "새 근거로 사건 갱신",
-  question_requested: "로봇이 \"괜찮으세요?\" 질문", voice_result: "질문에 대한 답",
-  decision_required: "추가 판단 필요", notification_requested: "알림 요청",
-  agent_check_failed: "로봇 질문 실패", analysis_completed: "클라우드 AI",
-  analysis_unavailable: "클라우드 AI 분석 실패", stale_analysis_result: "늦게 도착한 분석 결과",
-  recheck_unavailable: "재확인 실패", incident_resolved: "로봇이 사건 종료", confirmation_completed: "상황 확인 완료",
-  incident_merged: "사람 연결 완료 · 연결된 사건에서 계속 확인",
-};
 const ANSWER_LABEL: Record<string, string> = {
   help_request: "본인이 도움을 요청함", okay: "괜찮다고 답함", unclear: "답이 불분명", no_response: "무응답", failed: "질문 실패",
 };
@@ -616,13 +609,13 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
         <details className="fall-card fall-fold">
           <summary>자동 판정 기록</summary>
           <p className="fall-hint">로봇과 AI의 판단이에요. 사용자 의견으로 바뀌지 않아요.</p>
+          <p className="fall-hint">AI 이유는 모델이 작성한 설명이에요. 주기 확인의 이유는 장면 전체에 대한 설명이며, 실제 원인이 확인됐다는 뜻은 아니에요.</p>
           <div className="fall-log">
             {detail.robotEvents.map((e) => (
               <div key={e.sequence}>
                 <span>{clock(e.occurredAt, true)}</span>
-                <span>{EVENT_LABEL[e.eventKind] ?? e.eventKind}
-                  {e.assessment ? `: ${ASSESSMENT[e.assessment]?.[0] ?? e.assessment}` : ""}
-                  {e.answer ? ` · ${ANSWER_LABEL[e.answer] ?? e.answer}` : ""}</span>
+                <span title={e.analysis?.purpose === "crosscheck" ? "장면 전체 분석 이유" : undefined}>
+                  {fallEventLabel(e)}</span>
               </div>
             ))}
             {detail.robotEvents.length === 0 && <div><span /><span>자동 판정 기록이 없어요 (사용자 신고).</span></div>}

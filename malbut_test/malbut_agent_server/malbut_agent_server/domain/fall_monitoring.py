@@ -7,6 +7,7 @@ Subject keys are supplied by a separate association adapter, not VLM identities.
 from dataclasses import dataclass, field
 from enum import Enum
 import math
+import re
 from typing import Optional, Tuple
 
 
@@ -315,6 +316,8 @@ class FallCandidate:
     sensors: Optional[SensorSummary] = None
     # When the suspicious motion began (same clock); None means observed_at.
     evidence_started_at: Optional[float] = None
+    # Display-only provenance, never a threshold or a confirmed fall judgment.
+    pose_reason: Optional[str] = None
 
     def __post_init__(self) -> None:
         identifier(self.candidate_id)
@@ -328,6 +331,12 @@ class FallCandidate:
             raise ValueError('unsupported source')
         if not isinstance(self.kind, CandidateKind):
             raise ValueError('unsupported candidate kind')
+        if self.pose_reason is not None:
+            allowed = ({'pose_rapid_posture_change'} if self.kind is CandidateKind.MOTION_SEEN
+                       else {'pose_sustained_horizontal_posture', 'pose_sustained_low_posture'}
+                       if self.kind is CandidateKind.ALREADY_DOWN else set())
+            if self.source != 'yolo_pose' or self.pose_reason not in allowed:
+                raise ValueError('inconsistent Pose display reason')
         if type(self.significant_change) is not bool:
             raise ValueError('significant_change must be bool')
         if self.sensors is not None and (
@@ -575,6 +584,37 @@ class CloudFallReply:
 
 
 @dataclass(frozen=True)
+class CloudAnalysisExplanation:
+    """Untrusted model explanation for the human history, not decision input."""
+
+    request_id: str
+    purpose: str
+    assessment: VideoAssessment
+    explanation: str = field(repr=False)
+
+    def __post_init__(self):
+        identifier(self.request_id)
+        if (not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', self.request_id)
+                or self.purpose not in {'incident', 'crosscheck'}
+                or not isinstance(self.assessment, VideoAssessment)
+                or not isinstance(self.explanation, str) or not self.explanation.strip()
+                or len(self.explanation) > 1000):
+            raise ValueError('invalid analysis explanation')
+        self.explanation.encode('utf-8')
+
+    @classmethod
+    def from_reply(cls, request, reply):
+        try:
+            return cls(request.request_id, request.purpose, reply.assessment, reply.explanation)
+        except (ValueError, TypeError, UnicodeError):
+            return None  # Missing display evidence must not stop detection.
+
+    def metadata(self):
+        return dict(requestId=self.request_id, purpose=self.purpose,
+                    assessment=self.assessment.value, explanation=self.explanation)
+
+
+@dataclass(frozen=True)
 class FallRuntimeEvent:
     """Intent/result for adapters. notification_requested is NOT delivered."""
 
@@ -591,6 +631,7 @@ class FallRuntimeEvent:
     discovery: Optional[CloudDiscovery] = None
     confirmation_scope: str = 'subject'
     merged_into_incident_ids: Tuple[str, ...] = ()
+    analysis: Optional[CloudAnalysisExplanation] = field(default=None, repr=False)
 
 
 @dataclass

@@ -258,10 +258,17 @@ class FallDetectorInput:
             sensor = SensorSummary(observed, floor_distance_m=floor) if floor is not None else None
             # Same source clock offset as the converted end; no extra bookkeeping.
             started = max(0.0, observed - (end - start))
+            pose_reason = ('pose_rapid_posture_change' if kind is CandidateKind.MOTION_SEEN
+                           else 'pose_sustained_low_posture')
+            # Low/compact posture alone is not proof of lying down. Only use
+            # the horizontal wording when the detector actually measured it.
+            if (kind is CandidateKind.ALREADY_DOWN and isinstance(item.get('reasons'), list)
+                    and 'horizontal_torso_and_body' in item['reasons']):
+                pose_reason = 'pose_sustained_horizontal_posture'
             iid = self.monitor.candidate(FallCandidate(
                 key + ':' + str(item['revision']), subject, 'yolo_pose', kind,
                 observed, significant_change=item['revision'] > 1, sensors=sensor,
-                evidence_started_at=started))
+                evidence_started_at=started, pose_reason=pose_reason))
             if iid is not None:
                 self._revisions[key] = (item['revision'], item['targetTrackId'])
                 self._revisions.move_to_end(key)
