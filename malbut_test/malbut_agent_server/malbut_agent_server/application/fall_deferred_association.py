@@ -6,11 +6,13 @@ flag. A lost visual segment cannot reacquire a different person under its seed.
 No model, interpolation, Cloud call or automatic incident closure lives here.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from malbut_agent_server.application.fall_cloud_association import box_iou
-from malbut_agent_server.domain.fall_monitoring import CloudDiscovery, CloudPersonRegion, timestamp
+from malbut_agent_server.domain.fall_monitoring import (
+    CloudAnalysisExplanation, CloudDiscovery, CloudPersonRegion, timestamp,
+)
 
 
 def _area(box):
@@ -105,7 +107,9 @@ class DeferredDiscovery:
     source_revision: int
     track: Optional[DiscoveryTrack] = None
     session_id: Optional[str] = None
-    # Frozen measured metadata only; never retain JPEGs or model text here.
+    # Frozen measured metadata; never retain JPEGs here.
     pose_snapshot: tuple = ()
     pose_generation: int = -1
     incident_versions: Optional[dict] = None
+    # Human-facing history only; never used in association or decisions.
+    analysis: Optional[CloudAnalysisExplanation] = field(default=None, repr=False)

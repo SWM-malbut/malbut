@@ -119,8 +119,10 @@ class SqliteFallJournal:
             notificationLevel=event.notification_level.value if event.notification_level else None)
         if event.kind == 'incident_merged':
             payload['mergedIntoIncidentIds'] = list(event.merged_into_incident_ids)
+        if event.kind == 'analysis_completed' and event.analysis is not None:
+            payload['analysis'] = event.analysis.metadata()
         # Private proof retained across restart. Keep the existing web wire
-        # contract unchanged; never store pixels, transcript or model text.
+        # closure contract unchanged; never store pixels or transcripts.
         proof = None
         if event.kind == 'incident_resolved' and event.reason == 'normal_verified':
             observation = incident.subject_observation
@@ -141,7 +143,8 @@ class SqliteFallJournal:
             'VALUES(?,?,?,?)', (event.event_id, incident.incident_id, '{}', proof))
         payload['sequence'] = cursor.lastrowid
         self._db.execute('UPDATE incident_events SET payload=? WHERE sequence=?',
-                         (json.dumps(payload, separators=(',', ':')), cursor.lastrowid))
+                         (json.dumps(payload, separators=(',', ':'), ensure_ascii=False),
+                          cursor.lastrowid))
 
     def pending(self):
         with self._lock:

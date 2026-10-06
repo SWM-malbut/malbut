@@ -34,7 +34,7 @@ from malbut_agent_server.domain.fall_monitoring import (
     NormalVideoCheck, SubjectCheckState, SubjectObservation, SubjectFrame,
     VideoAssessment, VoiceAnswer, identifier, timestamp,
     CandidateKind, CloudDiscovery, CloudDiscoveryLink, CloudPersonFinding, CloudPoseLink,
-    CloudAssociationReview,
+    CloudAssociationReview, CloudAnalysisExplanation,
 )
 from malbut_agent_server.ports.cloud_fall import CloudFallProvider, CloudFallProviderError
 from malbut_agent_server.ports.fall_event_journal import FallEventJournal, FallJournalError
@@ -483,6 +483,8 @@ class CloudFallMonitor:
         if now - candidate.observed_at > self.policy.max_frame_age_s:
             self._emit('candidate_rejected', reason='stale_candidate')
             return None
+        display_reason = (candidate.pose_reason or 'pose_candidate'
+                          if candidate.source == 'yolo_pose' else 'cloud_crosscheck')
         if candidate.kind is CandidateKind.MOTION_SEEN:
             # A newly measured fall must not inherit an earlier resting answer.
             self._settled_subjects.pop(candidate.subject_key, None)
@@ -515,7 +517,7 @@ class CloudFallMonitor:
                 current.answer = None
                 current.situation_assessment = None
                 current.help_needed = None
-                self._emit('incident_updated', current)
+                self._emit('incident_updated', current, reason=display_reason)
             return current.incident_id
         if len(self._incidents) >= self.policy.max_incidents:
             self._emit('candidate_rejected', reason='incident_capacity')
@@ -530,7 +532,7 @@ class CloudFallMonitor:
             subject_association_token=self._subject_evidence.token_at(
                 candidate.subject_key, candidate.observed_at))
         self._incidents[current.incident_id] = current
-        self._emit('incident_opened', current)
+        self._emit('incident_opened', current, reason=display_reason)
         self._record_candidate_clip(current, candidate)
         if self._runtime_cloud_block is not None:
             current.pending = False
@@ -910,6 +912,7 @@ class CloudFallMonitor:
         ):
             return  # A scene-level normal result never clears a person's case.
         times = tuple(f.captured_at for f in request.window.frames)
+        analysis = CloudAnalysisExplanation.from_reply(request, reply)
         if pose_snapshot is None:
             # Compatibility for internal callers with an exact-only snapshot.
             pose_snapshot = tuple(((t, observations),) if observations else ()
@@ -958,7 +961,7 @@ class CloudFallMonitor:
                         else:
                             iid = self._merge_cloud_person(
                                 request, finding, match.subject_key, match.token,
-                                consume_initial=consume_initial)
+                                consume_initial=consume_initial, analysis=analysis)
                             if iid is None:
                                 reason = 'incident_capacity'
                             else:
@@ -975,7 +978,7 @@ class CloudFallMonitor:
                 wait_for = self._association_wait.candidate(
                     finding, times, self._incidents, versions, now=self._now(), policy=self.policy)
             if iid is None and wait_for is None and reason != 'incident_changed_during_scan':
-                iid = self._record_unidentified_scene(request, finding)
+                iid = self._record_unidentified_scene(request, finding, analysis=analysis)
                 if iid is None:
                     reason = 'incident_capacity'
             proof = None
@@ -1010,7 +1013,7 @@ class CloudFallMonitor:
                 discovery, self._epoch, self._now(),
                 self._incidents[iid].revision if iid else 0,
                 pose_snapshot=measured, pose_generation=pose_generation,
-                incident_versions=versions)
+                incident_versions=versions, analysis=analysis)
             while len(self._discoveries) > 256:
                 self._discoveries.popitem(last=False)
 
@@ -1091,7 +1094,9 @@ class CloudFallMonitor:
             if not (changed or scene_exists or self._now() >= pending.deadline):
                 continue
             d = pending.discovery
-            iid = self._record_unidentified_observation(d.sample_times, d.finding)
+            entry = self._discoveries.get(d.discovery_id)
+            iid = self._record_unidentified_observation(
+                d.sample_times, d.finding, analysis=entry.analysis if entry else None)
             if iid is not None:
                 scene = self._incidents[iid]
                 if len(scene.unresolved_discovery_ids) < 256:
@@ -1357,8 +1362,8 @@ class CloudFallMonitor:
                 str(uuid4()), kind, incident_id=target.incident_id, subject_key=key,
                 evidence_revision=target.revision, **kwargs))
 
-        stage('incident_opened' if new else 'incident_updated')
-        stage('analysis_completed', reply=target.video)
+        stage('incident_opened' if new else 'incident_updated', reason='cloud_crosscheck')
+        stage('analysis_completed', reply=target.video, analysis=entry.analysis)
         if target.answer is None:
             if target.question_id is None:
                 target.question_id = str(uuid4())
@@ -1415,7 +1420,7 @@ class CloudFallMonitor:
         self._record_cloud_boxes(target, discovery.sample_times, finding)
         return DiscoveryLinkResult(reason, target.incident_id)
 
-    def _record_unidentified_scene(self, request, finding):
+    def _record_unidentified_scene(self, request, finding, *, analysis=None):
         """Start verification without Pose, reusing the completed Cloud result.
 
         At most one open scene-level case queues a general question. This is
@@ -1423,9 +1428,10 @@ class CloudFallMonitor:
         timestamps and reasons. No geometry/appearance guess joins a Pose case.
         """
         return self._record_unidentified_observation(
-            tuple(f.captured_at for f in request.window.frames), finding, request=request)
+            tuple(f.captured_at for f in request.window.frames), finding, request=request,
+            analysis=analysis)
 
-    def _record_unidentified_observation(self, times, finding, *, request=None):
+    def _record_unidentified_observation(self, times, finding, *, request=None, analysis=None):
         current = next((i for i in self._incidents.values() if i.subject_key is None
                         and i.state is not IncidentState.RESOLVED), None)
         end = times[-1]
@@ -1459,14 +1465,15 @@ class CloudFallMonitor:
                           found_down=finding.kind is CandidateKind.ALREADY_DOWN)
         self._record_cloud_boxes(current, times, finding)
         self._emit('analysis_completed', current, request=request, reply=current.video,
-                   reason='target_unidentified')
+                   reason='target_unidentified', analysis=analysis)
         if current.question_id is None:
             self.ask_question(current.incident_id)
         if current.answer is not None:
             self._emit('decision_required', current, reason='target_unidentified')
         return current.incident_id
 
-    def _merge_cloud_person(self, request, finding, subject_key, token, *, consume_initial=False):
+    def _merge_cloud_person(self, request, finding, subject_key, token, *, consume_initial=False,
+                          analysis=None):
         current = next((i for i in self._incidents.values() if i.subject_key == subject_key
                         and i.state is not IncidentState.RESOLVED), None)
         if current is None:
@@ -1512,7 +1519,7 @@ class CloudFallMonitor:
                 current.answer_question_played = False
                 current.situation_assessment = None
                 current.help_needed = None
-                self._emit('incident_updated', current)
+                self._emit('incident_updated', current, reason='cloud_crosscheck')
             current.last_observed_at = max(current.last_observed_at, observed_at)
         current.fall_seen |= finding.assessment is VideoAssessment.OBSERVED_FALL
         current.auto_normal_blocked = True
@@ -1528,9 +1535,10 @@ class CloudFallMonitor:
         current.last_window_end = max(current.last_window_end, end)
         current.last_failure = None
         if new:
-            self._emit('incident_opened', current)
+            self._emit('incident_opened', current, reason='cloud_crosscheck')
         self._record_window_clip(current, request, finding)
-        self._emit('analysis_completed', current, request=request, reply=current.video)
+        self._emit('analysis_completed', current, request=request, reply=current.video,
+                   analysis=analysis)
         if current.question_id is None:
             self.ask_question(current.incident_id)
         self._decision_needed(current)
@@ -1683,7 +1691,8 @@ class CloudFallMonitor:
                 checks = incident.normal_checks
                 if not checks or check.window_end > checks[-1].window_end:
                     incident.normal_checks = (checks + (check,))[-2:]
-            self._emit('analysis_completed', incident, request=request, reply=reply)
+            self._emit('analysis_completed', incident, request=request, reply=reply,
+                       analysis=CloudAnalysisExplanation.from_reply(request, reply))
             if ((reply.assessment is not VideoAssessment.NORMAL_ACTIVITY or incident.fall_seen)
                     and incident.question_id is None):
                 self.ask_question(incident.incident_id)

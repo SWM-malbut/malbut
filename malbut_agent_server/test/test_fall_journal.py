@@ -58,7 +58,7 @@ def test_runtime_commits_notice_before_exposing_it_and_survives_reopen(tmp_path)
         reopened.close()
 
 
-def test_fall_record_kept_without_rgb_transcript_or_model_explanation(tmp_path):
+def test_fall_record_keeps_bounded_analysis_explanation_but_no_rgb_or_transcript(tmp_path):
     monitor, clock, provider, journal, _ = attach(tmp_path)
     try:
         monitor.ingest_rgb(frame(clock()))
@@ -72,7 +72,13 @@ def test_fall_record_kept_without_rgb_transcript_or_model_explanation(tmp_path):
             journal.acknowledge(row['event_id'])
         assert records[-1]['fallSeen'] is True
         assert records[-1]['answer'] == 'okay'
-        assert 'private-model-text' not in json.dumps(records)
+        analyses = [r for r in records if 'analysis' in r]
+        assert len(analyses) == 1 and analyses[0]['eventKind'] == 'analysis_completed'
+        assert analyses[0]['analysis'] == dict(
+            requestId=provider.calls[0].request_id, purpose='incident',
+            assessment='observed_fall', explanation='private-model-text')
+        assert all('private-model-text' not in json.dumps(r) for r in records
+                   if r['eventKind'] != 'analysis_completed')
         assert 'jpeg' not in json.dumps(records)
         notice_index = next(i for i, r in enumerate(records) if r['notificationLevel'] == 'info')
         voice_index = next(i for i, r in enumerate(records) if r['eventKind'] == 'voice_result')
