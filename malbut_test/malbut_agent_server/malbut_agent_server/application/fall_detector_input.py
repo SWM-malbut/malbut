@@ -9,6 +9,8 @@ import json
 import math
 from collections import OrderedDict
 
+from malbut_agent_server.application.fall_pose_aliases import LowPoseAliases
+
 from malbut_agent_server.domain.fall_monitoring import (
     CandidateKind, FallCandidate, PersonObservation, PersonVisibility,
     RgbFrame, SensorSummary, identifier, positive, timestamp,
@@ -59,6 +61,7 @@ class FallDetectorInput:
         self._frame_id = None
         self._last_source_now = None
         self._generation = 0
+        self._pose_aliases = LowPoseAliases()
         self._settings = dict(enabled=False, camera_enabled=False,
                               cloud_consent=False, connected=False)
 
@@ -68,6 +71,7 @@ class FallDetectorInput:
             self._last.clear()
             self._revisions.clear()
             self._capture_times.clear()
+            self._pose_aliases.clear()
             if self._settings['enabled'] and self._settings['camera_enabled']:
                 self._generation += 1
         self._settings = dict(settings)
@@ -93,6 +97,7 @@ class FallDetectorInput:
             self._last.clear()
             self._revisions.clear()
             self._capture_times.clear()
+            self._pose_aliases.clear()
             self._generation += 1
         self._frame_id, self._last_source_now = frame_id, source_now
         if channel in self._last and capture <= self._last[channel]:
@@ -140,6 +145,7 @@ class FallDetectorInput:
         try:
             return self._candidates(payload, source_now=source_now, now=now)
         except (ValueError, TypeError, KeyError):
+            self._pose_aliases.clear()
             self.monitor.invalidate_subject_input()
             raise
 
@@ -152,6 +158,7 @@ class FallDetectorInput:
                 or len(data['candidates']) > self.max_candidates):
             raise ValueError('invalid candidate message')
         if data.get('status') != 'ok':
+            self._pose_aliases.clear()
             self.monitor.invalidate_subject_input()
             return ()
         identifier(data.get('frameId'))
@@ -227,6 +234,13 @@ class FallDetectorInput:
             observed_frame = self._time(
                 capture, source_now=source_now, now=now, channel='subject_frame',
                 frame_id=data['frameId'])
+            mapped_frame = self._pose_aliases.observe(SubjectFrame(
+                observed_frame, tuple(subjects), data['subjectCheckMaxGapSec']),
+                stationary=data.get('robotMotion') == 'stationary',
+                motion_keys={item['targetTrackId'] for item, kind, *_ in prepared
+                             if kind is CandidateKind.MOTION_SEEN})
+        else:
+            self._pose_aliases.clear()
         result = []
         for item, kind, start, end, floor in prepared:
             key = item['candidateId']
@@ -240,7 +254,7 @@ class FallDetectorInput:
             observed = self._time(end, source_now=source_now, now=now,
                                   channel='candidate:' + item['targetTrackId'],
                                   frame_id=data.get('frameId'))
-            subject = f'pose:{self._generation}:{item["targetTrackId"]}'
+            subject = f'pose:{self._generation}:{self._pose_aliases.key(item["targetTrackId"])}'
             sensor = SensorSummary(observed, floor_distance_m=floor) if floor is not None else None
             # Same source clock offset as the converted end; no extra bookkeeping.
             started = max(0.0, observed - (end - start))
@@ -258,7 +272,8 @@ class FallDetectorInput:
             self.monitor.ingest_subject_frame(SubjectFrame(
                 observed_frame, tuple(SubjectPose(
                     f'pose:{self._generation}:{p.subject_key}', p.box, p.state,
-                    p.association_usable) for p in subjects), data['subjectCheckMaxGapSec']))
+                    p.association_usable) for p in mapped_frame.subjects),
+                data['subjectCheckMaxGapSec'], camera_stationary=data.get('robotMotion') == 'stationary'))
         # Bound per-track timestamp bookkeeping too. IDs are association only.
         if len(self._last) > 1024:
             self._last = {k: v for k, v in self._last.items() if k in {'rgb', 'poses'}}
