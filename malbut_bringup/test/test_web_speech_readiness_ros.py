@@ -1,5 +1,6 @@
 """Exercise web speech readiness over DDS without starting hardware or missions."""
 
+import json
 import time
 
 import pytest
@@ -26,6 +27,9 @@ def test_speech_presence_does_not_gate_manager_readiness(monkeypatch):
     publisher = speech.create_publisher(String, '/malbut/speech/status', QoSProfile(
         depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
     publisher.publish(String(data='ready'))
+    connections = manager.create_publisher(String, '/malbut/bringup/status', QoSProfile(
+        depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+    connections.publish(String(data=json.dumps({'state': 'READY', 'missing': []})))
     # Missions open only after the manager leaves BOOTING.
     from malbut_interfaces.msg import SystemState
     state_publisher = manager.create_publisher(SystemState, '/malbut/state', QoSProfile(

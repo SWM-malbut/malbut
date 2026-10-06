@@ -1,13 +1,16 @@
 """Unit tests for localization switching without Nav2 or slam_toolbox."""
 
 import json
+from threading import RLock
 from types import SimpleNamespace
 
-from nav2_msgs.srv import LoadMap, ManageLifecycleNodes
+from builtin_interfaces.msg import Time
+from nav2_msgs.srv import LoadMap, ManageLifecycleNodes, SetInitialPose
 import pytest
 
 from malbut_system_manager.localization import LocalizationController
-from malbut_system_manager.models import LocalizationMode
+from malbut_system_manager.models import ExecutionResource, LocalizationMode
+from malbut_system_manager.system_manager_node import SystemManagerNode
 
 
 class _Slam:
@@ -43,19 +46,27 @@ class _Node:
     def get_logger(self):
         return SimpleNamespace(error=lambda _: None, warning=lambda _: None)
 
+    def get_clock(self):
+        return SimpleNamespace(now=lambda: SimpleNamespace(to_msg=lambda: Time()))
 
-def _controller(monkeypatch, *, busy=False, load_result=LoadMap.Response.RESULT_SUCCESS):
+
+def _controller(monkeypatch, *, busy=False, load_result=LoadMap.Response.RESULT_SUCCESS,
+                default_map='', can_mapping=None):
     events, modes = [], []
     node = _Node()
     controller = LocalizationController(
         node, None, slam=_Slam(events), on_mode=modes.append,
         can_switch=lambda: not busy, lifecycle_service='/manage',
-        map_server_load_service='/load', service_timeout_s=1.0)
+        map_server_load_service='/load', service_timeout_s=1.0, default_map=default_map,
+        can_mapping=can_mapping)
 
     def call(client, request, label):
         if isinstance(request, ManageLifecycleNodes.Request):
             events.append(('lifecycle', request.command))
             return SimpleNamespace(success=True)
+        if isinstance(request, SetInitialPose.Request):
+            events.append(('initial_pose', request.pose))
+            return SetInitialPose.Response()
         events.append(('load_map', request.map_url))
         return SimpleNamespace(result=load_result)
 
@@ -76,6 +87,78 @@ def test_start_without_map_runs_only_slam(monkeypatch):
     assert events == ['slam_start']
     assert modes == [LocalizationMode.SWITCHING, LocalizationMode.MAPPING]
     assert json.loads(node.published[-1].data)['mode'] == 'MAPPING'
+
+
+def test_default_map_uses_regular_localization_without_global_search(monkeypatch, tmp_path):
+    """Unknown maps load normally and use AMCL, not SLAM or another TF publisher."""
+    path = _map(tmp_path, 'default_map.yaml')
+    controller, events, modes, node = _controller(monkeypatch, default_map=path)
+    client = _Relocalize()
+    controller._relocalize = client
+    controller.start(path)
+    assert events[:2] == ['slam_stop', ('lifecycle', ManageLifecycleNodes.Request.STARTUP)]
+    assert events[2] == ('load_map', path)
+    name, pose = events[3]
+    assert name == 'initial_pose' and pose.header.frame_id == 'map'
+    assert pose.pose.pose.position.x == pose.pose.pose.position.y == 0.0
+    assert pose.pose.pose.orientation.w == 1.0
+    assert client.goals == []
+    assert modes[-1] is LocalizationMode.LOCALIZATION
+    assert json.loads(node.published[-1].data)['map'] == path
+
+
+def test_real_map_keeps_existing_pose_search_when_default_map_is_configured(
+        monkeypatch, tmp_path):
+    """The default-map fallback must not replace real-map relocalization."""
+    controller, events, _, _ = _controller(
+        monkeypatch, default_map=_map(tmp_path, 'default_map.yaml'))
+    client = _Relocalize()
+    controller._relocalize = client
+    controller.start(_map(tmp_path, 'home.yaml'))
+    assert len(client.goals) == 1
+    assert not any(event[0] == 'initial_pose' for event in events)
+
+
+def test_mapping_backend_returns_to_default_map_without_changing_navigation(monkeypatch, tmp_path):
+    """Start SLAM on request, then stop it before reactivating regular AMCL."""
+    path = _map(tmp_path, 'default_map.yaml')
+    controller, events, _, _ = _controller(monkeypatch, default_map=path)
+    controller.start(path)
+    assert controller._start_mapping_request(None, SimpleNamespace()).success
+    assert events[-2:] == [('lifecycle', ManageLifecycleNodes.Request.RESET), 'slam_start']
+    assert controller.mode is LocalizationMode.MAPPING
+    assert controller._stop_mapping_request(None, SimpleNamespace()).success
+    assert controller.mode is LocalizationMode.LOCALIZATION and controller.map_path == path
+    assert events[-4:-1] == [
+        'slam_stop', ('lifecycle', ManageLifecycleNodes.Request.STARTUP), ('load_map', path)]
+    assert events[-1][0] == 'initial_pose'
+
+
+def test_owned_mapping_switch_does_not_allow_unrelated_map_selection(monkeypatch, tmp_path):
+    """Permit only backend start/stop requests under AutoSLAM's BASE ownership."""
+    path = _map(tmp_path, 'default_map.yaml')
+    controller, _, _, _ = _controller(
+        monkeypatch, busy=True, default_map=path, can_mapping=lambda: True)
+    controller.start(path)
+    assert controller._start_mapping_request(None, SimpleNamespace()).success
+    request = LoadMap.Request(map_url=_map(tmp_path, 'home.yaml'))
+    assert controller._load_map_request(request, LoadMap.Response()).result != 0
+    assert controller._stop_mapping_request(None, SimpleNamespace()).success
+
+
+@pytest.mark.parametrize('capabilities,allowed', [
+    (['autoslam'], True), (['follow_person'], False), (['autoslam', 'follow_person'], False),
+])
+def test_mapping_guard_ignores_queued_replacement_only_for_own_cleanup(capabilities, allowed):
+    """Queued missions cannot prevent the current AutoSLAM from releasing SLAM."""
+    node = object.__new__(SystemManagerNode)
+    node._lock = RLock()
+    node._state = SimpleNamespace(active=lambda: [SimpleNamespace(
+        resources={ExecutionResource.BASE},
+        capability=SimpleNamespace(capability_id=name)) for name in capabilities])
+    node._scheduler = SimpleNamespace(base_busy=lambda: True)
+    assert node._mapping_can_switch() is allowed
+    assert not node._base_is_free()
 
 
 def test_selecting_a_map_stops_slam_before_amcl_and_back(monkeypatch, tmp_path):

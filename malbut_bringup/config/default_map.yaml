@@ -1,0 +1,8 @@
+# 20 m x 20 m, all cells unknown. Loaded through the regular Nav2 map server.
+image: default_map.pgm
+mode: trinary
+resolution: 0.05
+origin: [-10.0, -10.0, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

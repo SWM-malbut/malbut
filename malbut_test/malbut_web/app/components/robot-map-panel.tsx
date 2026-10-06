@@ -1127,7 +1127,7 @@ export function RobotMapPanel({
               <div className="robot-map-card"><div className="robot-map-empty">
                 <MapTrifold size={44} weight="light" aria-hidden="true" />
                 <strong>{loading ? "지도를 확인하고 있어요" : "로봇의 지도를 기다리고 있어요"}</strong>
-                <p>오른쪽에서 지도 만들기 모드 또는 저장 지도 주행을 준비하세요.</p>
+                <p>오른쪽에서 Bringup을 시작하세요. 지도 작성은 자동 지도 만들기로 요청할 수 있어요.</p>
               </div></div>
             )}
             <div className="robot-map-legend">
@@ -1174,6 +1174,33 @@ export function RobotMapPanel({
     changeMapMode(mode);
     setScreen(next);
   };
+  // 방·구역 편집은 로봇이 지도와 함께 보낸 공간 정보(주행 가능 영역·방)가 있어야 한다.
+  // 지금 실제 로봇은 이 정보를 보내지 않아서(시뮬레이터만 보냄) 편집을 막고 알려 준다.
+  const spaceEditReady = Boolean(walkableArea);
+  const spaceEditUnsupported = isOwner && Boolean(snapshot?.map) && Boolean(semantics) && !walkableArea;
+  const pickMode = (next: MapScreen, mode: MapMode) => {
+    if (activeScreen === next && mapMode === mode) return;
+    openScreen(next, mode);
+  };
+  // 지도와 방·구역 편집이 같은 버튼 줄을 쓴다. 편집 중에도 보기·목적지 선택으로 바로 돌아간다.
+  const modeChips = (
+    <div className="ui-choice-chips" role="group" aria-label="지도 모드">
+      {([
+        ["map", "view", "보기", false],
+        ["map", "navigate", "목적지 선택", Boolean(mapping)],
+        ...(isOwner ? [
+          ["edit", "rooms", "방 편집", Boolean(mapping) || !spaceEditReady],
+          ["edit", "zones", "구역 편집", Boolean(mapping) || !spaceEditReady],
+        ] : []),
+      ] as Array<[MapScreen, MapMode, string, boolean]>).map(([next, mode, label, disabled]) => {
+        const on = activeScreen === next && mapMode === mode;
+        return (
+          <button key={mode} type="button" className={on ? "is-active" : ""} aria-pressed={on}
+            disabled={disabled} onClick={() => pickMode(next, mode)}>{label}</button>
+        );
+      })}
+    </div>
+  );
   const navigating = mapMode === "navigate";
   const canStartPreview = navigating && Boolean(previewToken) && !navigationDriving;
   const localizedPose = snapshot?.state?.localization.state === "ok" ? snapshot.state.pose : null;
@@ -1570,16 +1597,8 @@ export function RobotMapPanel({
       <section className="ui-map" aria-label="지도">
         {header}
         <div className="ui-screen">
-          <div className="ui-choice-chips" role="group" aria-label="지도 모드">
-            <button type="button" className={mapMode === "view" ? "is-active" : ""} aria-pressed={mapMode === "view"} onClick={() => changeMapMode("view")}>보기</button>
-            <button type="button" className={mapMode === "navigate" ? "is-active" : ""} aria-pressed={mapMode === "navigate"} disabled={Boolean(mapping)} onClick={() => changeMapMode("navigate")}>목적지 선택</button>
-            {isOwner && (
-              <>
-                <button type="button" disabled={Boolean(mapping)} onClick={() => openScreen("edit", "rooms")}>방 편집</button>
-                <button type="button" disabled={Boolean(mapping)} onClick={() => openScreen("edit", "zones")}>구역 편집</button>
-              </>
-            )}
-          </div>
+          {modeChips}
+          {spaceEditUnsupported && <p className="ui-hint">이 말벗은 아직 방·구역 편집을 지원하지 않아요.</p>}
           <p className="ui-hint">
             {mapping ? "새로운 공간을 확인하는 동안 목적지 선택과 편집을 사용할 수 없어요."
               : navigating ? "지도에서 보낼 곳을 누르세요. 방과 구역은 선택을 방해하지 않아요."
@@ -1746,305 +1765,301 @@ export function RobotMapPanel({
 
   if (activeScreen === "edit") {
     return (
-      <section className="ui-screen ui-map-sub" aria-labelledby="robot-map-title">
-        <header className="ui-subhead">
-          <button type="button" className="ui-back" onClick={() => openScreen("map")}>‹ 지도</button>
-          <h1 id="robot-map-title">방 · 구역 편집</h1>
-          <div className="ui-segment" role="group" aria-label="편집 종류">
-            <button type="button" className={mapMode === "rooms" ? "is-on" : ""} aria-pressed={mapMode === "rooms"} onClick={() => mapMode !== "rooms" && changeMapMode("rooms")}>방 편집</button>
-            <button type="button" className={mapMode === "zones" ? "is-on" : ""} aria-pressed={mapMode === "zones"} onClick={() => mapMode !== "zones" && changeMapMode("zones")}>구역 편집</button>
-          </div>
-          <small className="ui-caption">소유자만 볼 수 있어요. 저장하면 말벗에 반영돼요.</small>
-        </header>
-        {mapFrame}
-        {mapLegend}
-        {noticeLine}
+      <section className="ui-map ui-map-sub" aria-label="방 · 구역 편집">
+        {header}
+        <div className="ui-screen">
+          {modeChips}
+          <p className="ui-hint">소유자만 볼 수 있어요. 저장하면 말벗에 반영돼요.</p>
+          {mapFrame}
+          {mapLegend}
+          {noticeLine}
 
-        {mapMode === "zones" ? (
-          <>
-            <article className="ui-card ui-map-editor">
-              <h2>{selectedZone ? featureName(selectedZone, "이름 없는 구역") : "편집할 구역을 선택하세요"}</h2>
-              <span className="ui-caption">구역은 방 이름이 아니라 말벗의 이동 규칙이에요.</span>
-              {selectedZone ? (
-                <>
-                  {isVirtualWall(selectedZone) ? (
-                    <p className="ui-info">진입 금지 가상 벽이에요. 말벗은 이 선을 넘어가지 않아요.</p>
-                  ) : (
-                    <>
-                      <div className="ui-rule-choices" role="radiogroup" aria-label="이동 규칙">
-                        {(["restricted", "avoid", "allow"] as ZoneBehavior[]).map((behavior) => (
-                          <button
-                            key={behavior}
-                            type="button"
-                            role="radio"
-                            aria-checked={zoneBehaviorOf(selectedZone) === behavior}
-                            className={zoneBehaviorOf(selectedZone) === behavior ? "is-active" : ""}
-                            onClick={() => updateSelectedZone({ behavior })}
-                          >
-                            {zoneBehaviorLabel(behavior)}
-                          </button>
-                        ))}
-                      </div>
-                      <span className="ui-caption">{zoneRuleHint(zoneBehaviorOf(selectedZone))}</span>
-                    </>
-                  )}
-                  <label className="ui-field">
-                    <span>이름</span>
-                    <input
-                      value={featureName(selectedZone, "")}
-                      maxLength={40}
-                      onChange={(event) => updateSelectedZone({ name: event.target.value.slice(0, 40) })}
-                      placeholder="구역 이름"
-                    />
-                  </label>
-                  <div className="ui-map-goal-row">
-                    <span><strong>{isVirtualWall(selectedZone) ? "길이" : "크기"}</strong></span>
-                    <span>{isVirtualWall(selectedZone) ? formatMeters(wallLength(virtualWallEndpoints(selectedZone)!)) : formatSquareMeters(zoneArea(selectedZone))}</span>
-                  </div>
-                  {!isVirtualWall(selectedZone) && (
-                    <label className="ui-field ui-map-color">
-                      <span>표시 색상</span>
-                      <input type="color" value={zoneColor(selectedZone)} onChange={(event) => updateSelectedZone({ color: event.target.value })} />
+          {mapMode === "zones" ? (
+            <>
+              <article className="ui-card ui-map-editor">
+                <h2>{selectedZone ? featureName(selectedZone, "이름 없는 구역") : "편집할 구역을 선택하세요"}</h2>
+                <span className="ui-caption">구역은 방 이름이 아니라 말벗의 이동 규칙이에요.</span>
+                {selectedZone ? (
+                  <>
+                    {isVirtualWall(selectedZone) ? (
+                      <p className="ui-info">진입 금지 가상 벽이에요. 말벗은 이 선을 넘어가지 않아요.</p>
+                    ) : (
+                      <>
+                        <div className="ui-rule-choices" role="radiogroup" aria-label="이동 규칙">
+                          {(["restricted", "avoid", "allow"] as ZoneBehavior[]).map((behavior) => (
+                            <button
+                              key={behavior}
+                              type="button"
+                              role="radio"
+                              aria-checked={zoneBehaviorOf(selectedZone) === behavior}
+                              className={zoneBehaviorOf(selectedZone) === behavior ? "is-active" : ""}
+                              onClick={() => updateSelectedZone({ behavior })}
+                            >
+                              {zoneBehaviorLabel(behavior)}
+                            </button>
+                          ))}
+                        </div>
+                        <span className="ui-caption">{zoneRuleHint(zoneBehaviorOf(selectedZone))}</span>
+                      </>
+                    )}
+                    <label className="ui-field">
+                      <span>이름</span>
+                      <input
+                        value={featureName(selectedZone, "")}
+                        maxLength={40}
+                        onChange={(event) => updateSelectedZone({ name: event.target.value.slice(0, 40) })}
+                        placeholder="구역 이름"
+                      />
                     </label>
-                  )}
-                  {zoneBehaviorOf(selectedZone) !== "restricted" && (
                     <div className="ui-map-goal-row">
-                      <span>
-                        <strong>대표 목적지</strong>
-                        <small>{validPoint(selectedZone.properties.preferred_goal) ? "지정됨" : "지정 안 됨"}</small>
-                      </span>
-                      <button type="button" className={`ui-button ui-small ${zoneGoalMode ? "is-selected" : ""}`} onClick={() => setZoneGoalMode((current) => !current)}>
-                        {zoneGoalMode ? "지도에서 위치 선택 중" : "대표 위치 지정"}
-                      </button>
+                      <span><strong>{isVirtualWall(selectedZone) ? "길이" : "크기"}</strong></span>
+                      <span>{isVirtualWall(selectedZone) ? formatMeters(wallLength(virtualWallEndpoints(selectedZone)!)) : formatSquareMeters(zoneArea(selectedZone))}</span>
                     </div>
-                  )}
-                  <p className="ui-note">{isVirtualWall(selectedZone)
-                    ? "선을 끌어 옮기고, 양 끝 점을 끌어 길이와 각도를 바꿔요."
-                    : "구역 안을 끌어 옮기고, 네 모서리와 변의 점을 끌어 크기를 바꿔요."}</p>
-                  <button type="button" className="ui-button is-danger-line" onClick={removeSelectedZone} disabled={zoneCommandPending || busy}>{isVirtualWall(selectedZone) ? "이 가상 벽 삭제" : "이 구역 삭제"}</button>
-                </>
-              ) : (
-                <p className="ui-hint">지도나 아래 목록에서 구역을 누르세요.</p>
-              )}
-              <h3 className="ui-map-section-head">새 구역 규칙</h3>
-              <div className="ui-rule-choices" role="radiogroup" aria-label="새 구역 규칙">
-                {(["restricted", "avoid", "allow"] as ZoneBehavior[]).map((behavior) => (
+                    {!isVirtualWall(selectedZone) && (
+                      <label className="ui-field ui-map-color">
+                        <span>표시 색상</span>
+                        <input type="color" value={zoneColor(selectedZone)} onChange={(event) => updateSelectedZone({ color: event.target.value })} />
+                      </label>
+                    )}
+                    {zoneBehaviorOf(selectedZone) !== "restricted" && (
+                      <div className="ui-map-goal-row">
+                        <span>
+                          <strong>대표 목적지</strong>
+                          <small>{validPoint(selectedZone.properties.preferred_goal) ? "지정됨" : "지정 안 됨"}</small>
+                        </span>
+                        <button type="button" className={`ui-button ui-small ${zoneGoalMode ? "is-selected" : ""}`} onClick={() => setZoneGoalMode((current) => !current)}>
+                          {zoneGoalMode ? "지도에서 위치 선택 중" : "대표 위치 지정"}
+                        </button>
+                      </div>
+                    )}
+                    <p className="ui-note">{isVirtualWall(selectedZone)
+                      ? "선을 끌어 옮기고, 양 끝 점을 끌어 길이와 각도를 바꿔요."
+                      : "구역 안을 끌어 옮기고, 네 모서리와 변의 점을 끌어 크기를 바꿔요."}</p>
+                    <button type="button" className="ui-button is-danger-line" onClick={removeSelectedZone} disabled={zoneCommandPending || busy}>{isVirtualWall(selectedZone) ? "이 가상 벽 삭제" : "이 구역 삭제"}</button>
+                  </>
+                ) : (
+                  <p className="ui-hint">지도나 아래 목록에서 구역을 누르세요.</p>
+                )}
+                <h3 className="ui-map-section-head">새 구역 규칙</h3>
+                <div className="ui-rule-choices" role="radiogroup" aria-label="새 구역 규칙">
+                  {(["restricted", "avoid", "allow"] as ZoneBehavior[]).map((behavior) => (
+                    <button
+                      key={behavior}
+                      type="button"
+                      role="radio"
+                      aria-checked={newZoneBehavior === behavior}
+                      className={newZoneBehavior === behavior ? "is-active" : ""}
+                      onClick={() => setNewZoneBehavior(behavior)}
+                    >
+                      {zoneBehaviorLabel(behavior)}
+                    </button>
+                  ))}
+                </div>
+                <div className="ui-map-create">
+                  <button type="button" className="ui-button" onClick={addDefaultZone} disabled={!isOwner || zoneCommandPending || busy}>사각형 구역</button>
+                  <button type="button" className="ui-button" onClick={addVirtualWall} disabled={!isOwner || zoneCommandPending || busy}>가상 벽</button>
                   <button
-                    key={behavior}
                     type="button"
-                    role="radio"
-                    aria-checked={newZoneBehavior === behavior}
-                    className={newZoneBehavior === behavior ? "is-active" : ""}
-                    onClick={() => setNewZoneBehavior(behavior)}
+                    className={`ui-button ${zoneCreateMode === "room" ? "is-selected" : ""}`}
+                    aria-pressed={zoneCreateMode === "room"}
+                    onClick={() => setZoneCreateMode((current) => current === "room" ? "closed" : "room")}
+                    disabled={!isOwner || zoneCommandPending || busy}
+                  >방 전체 적용</button>
+                </div>
+                {zoneCreateMode === "room" ? (
+                  <div className="ui-map-room-zone">
+                    <p className="ui-note">저장된 방 경계를 그대로 사용해요. 구역으로 만들 방을 고르세요.</p>
+                    {roomDrafts.map((room, index) => (
+                      <button key={featureId(room)} type="button" className="ui-button" onClick={() => addRoomAsZone(room)} disabled={!isOwner || zoneCommandPending || busy}>
+                        <i style={{ background: roomColor(room, index) }} />
+                        <span>{featureName(room, `공간 ${index + 1}`)}</span>
+                        <small>전체 추가</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="ui-note">가상 벽: 출입구나 좁은 통로를 선으로 막아요. 말벗은 이 선을 넘어가지 않아요.</p>
+                )}
+              </article>
+
+              <article className="ui-card ui-map-list robot-map-list-card">
+                <h2>구역 {zoneDrafts.length}개</h2>
+                {zoneDrafts.length === 0 && <p className="ui-hint">설정한 이동 규칙 구역이 없어요.</p>}
+                {zoneDrafts.map((zone) => (
+                  <button
+                    key={featureId(zone)}
+                    type="button"
+                    className={selectedZoneId === featureId(zone) ? "is-selected" : ""}
+                    onClick={() => {
+                      setSelectedZoneId(featureId(zone));
+                      setZoneGoalMode(false);
+                    }}
                   >
-                    {zoneBehaviorLabel(behavior)}
+                    <i className={isVirtualWall(zone) ? "is-virtual-wall" : `is-${zoneBehaviorOf(zone)}`} />
+                    <span>{featureName(zone, "이름 없는 구역")} · {isVirtualWall(zone) ? "가상 벽" : zoneBehaviorLabel(zoneBehaviorOf(zone))}</span>
+                    {selectedZoneId === featureId(zone) && <strong>편집 중</strong>}
                   </button>
                 ))}
+              </article>
+              <div className="ui-two-buttons">
+                <button type="button" className="ui-button" onClick={() => {
+                  setZoneDrafts(zoneFeatures.map(cloneFeature));
+                  setSelectedZoneId("");
+                  setZoneGoalMode(false);
+                }} disabled={!zonesDirty || zoneCommandPending || busy}>저장 전 변경 취소</button>
+                <button type="button" className="ui-button is-strong" onClick={saveZones} disabled={!isOwner || !zonesDirty || zoneCommandPending || busy}>구역 설정 저장</button>
               </div>
-              <div className="ui-map-create">
-                <button type="button" className="ui-button" onClick={addDefaultZone} disabled={!isOwner || zoneCommandPending || busy}>사각형 구역</button>
-                <button type="button" className="ui-button" onClick={addVirtualWall} disabled={!isOwner || zoneCommandPending || busy}>가상 벽</button>
-                <button
-                  type="button"
-                  className={`ui-button ${zoneCreateMode === "room" ? "is-selected" : ""}`}
-                  aria-pressed={zoneCreateMode === "room"}
-                  onClick={() => setZoneCreateMode((current) => current === "room" ? "closed" : "room")}
-                  disabled={!isOwner || zoneCommandPending || busy}
-                >방 전체 적용</button>
-              </div>
-              {zoneCreateMode === "room" ? (
-                <div className="ui-map-room-zone">
-                  <p className="ui-note">저장된 방 경계를 그대로 사용해요. 구역으로 만들 방을 고르세요.</p>
-                  {roomDrafts.map((room, index) => (
-                    <button key={featureId(room)} type="button" className="ui-button" onClick={() => addRoomAsZone(room)} disabled={!isOwner || zoneCommandPending || busy}>
+            </>
+          ) : (
+            <>
+              <article className="ui-card ui-map-editor">
+                <h2>{selectedRoom ? featureName(selectedRoom, "이름 없는 방") : "편집할 방을 선택하세요"}</h2>
+                {!selectedRoom && <p className="ui-hint">지도나 아래 방 목록에서 방을 누르세요.</p>}
+                <label className="ui-field">
+                  <span>이름</span>
+                  <input
+                    value={selectedRoom ? featureName(selectedRoom, "") : ""}
+                    disabled={!selectedRoom}
+                    onChange={(event) => updateSelectedRoom({ name: event.target.value })}
+                    maxLength={40}
+                    placeholder="방 이름"
+                  />
+                </label>
+                <div className="ui-field">
+                  <span>종류</span>
+                  <div className="ui-choice-chips">
+                    {([
+                      ["unassigned", "미지정"],
+                      ["living_room", "거실"],
+                      ["bedroom", "침실"],
+                      ["kitchen", "주방"],
+                      ["dining_room", "식당"],
+                      ["bathroom", "욕실"],
+                      ["entrance", "현관"],
+                      ["hallway", "복도"],
+                      ["workspace", "작업 공간"],
+                      ["storage", "수납 공간"],
+                      ["utility", "다용도실"],
+                      ["custom", "기타"],
+                    ] as Array<[string, string]>).map(([category, label]) => (
+                      <button
+                        key={category}
+                        type="button"
+                        className={selectedRoom?.properties.category === category ? "is-active" : ""}
+                        aria-pressed={selectedRoom?.properties.category === category}
+                        disabled={!selectedRoom}
+                        onClick={() => updateSelectedRoom({ category })}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {selectedRoom && (
+                  <div className="ui-map-goal-row">
+                    <span>
+                      <strong>대표 목적지</strong>
+                      <small>방 이름으로 보낼 때 가는 곳</small>
+                    </span>
+                    {validPoint(selectedRoom.properties.representative_point)
+                      ? <span className="is-ok">지정됨</span>
+                      : <span>없음</span>}
+                  </div>
+                )}
+                <h3>방 편집 도구</h3>
+                <div className="ui-two-buttons">
+                  {(["split", "merge"] as RoomTool[]).map((tool) => (
+                    <button
+                      key={tool}
+                      type="button"
+                      className={`ui-button ${roomTool === tool ? "is-selected" : ""}`}
+                      aria-pressed={roomTool === tool}
+                      onClick={() => chooseRoomTool(roomTool === tool ? "select" : tool)}
+                    >
+                      {tool === "split" ? "방 나누기" : "맞닿은 방과 합치기"}
+                    </button>
+                  ))}
+                </div>
+                {roomTool === "select" && (
+                  <p className="ui-note">나누기: 벽 두 곳을 누르면 선이 생겨요. 선 가운데 점을 끌면 ㄱ자로 꺾여요.</p>
+                )}
+                {roomTool === "split" && (
+                  <div className="ui-map-tool">
+                    <p className="ui-note">벽 두 곳을 누르면 선이 생겨요. 여러 선을 만들 수 있고, 선 가운데 작은 주황 점을 끌면 ㄱ자로 꺾여요.</p>
+                    <div className="robot-map-split-legend">
+                      <span><i className="is-endpoint" />벽 끝점</span>
+                      <span><i className="is-bend" />직각 꺾임</span>
+                      <span><i className="is-pending" />다음 벽 선택 중</span>
+                    </div>
+                    <div className={`robot-map-split-status is-${splitValidation}`} role="status">
+                      {pendingSplitPoint
+                        ? "시작점을 정했습니다. 연결할 두 번째 벽을 선택하세요."
+                        : splitValidation === "checking"
+                          ? splitValidationMessage
+                          : splitValidation === "valid"
+                            ? splitValidationMessage
+                          : splitValidation === "invalid"
+                            ? splitValidationMessage
+                            : splitLines.length > 0
+                              ? `${splitLines.length}개 분할선 · 적용하면 최소 1㎡와 정확히 두 공간인지 말벗이 최종 확인합니다.`
+                              : "분할선의 양 끝점은 벽에서 25cm 이내에 지정해야 합니다."}
+                    </div>
+                    <div className="ui-two-buttons">
+                      <button type="button" className="ui-button ui-small" onClick={undoSplitPoint} disabled={!pendingSplitPoint && splitLines.length === 0}>마지막 선 되돌리기</button>
+                      <button type="button" className="ui-button ui-small" onClick={() => clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage)} disabled={!pendingSplitPoint && splitLines.length === 0}>모두 지우기</button>
+                    </div>
+                    <button type="button" className="ui-button is-strong" onClick={applyRoomSplit} disabled={splitLines.length === 0 || Boolean(pendingSplitPoint) || splitValidation === "invalid" || splitValidation === "checking" || roomCommandPending || busy}>
+                      {splitValidation === "valid" ? "확인된 선대로 방 나누기" : "분할 가능 여부 확인"}
+                    </button>
+                  </div>
+                )}
+                {roomTool === "merge" && (
+                  <div className="ui-map-tool">
+                    <p className="ui-note"><strong>{selectedRoom ? featureName(selectedRoom, "현재 방") : "현재 방"}</strong>과 맞닿아 있는 방 하나를 지도나 목록에서 고르세요. 떨어진 방은 합칠 수 없어요.</p>
+                    <div className={`robot-map-split-status ${mergeTarget ? "is-ready" : "is-idle"}`}>
+                      {mergeTarget && selectedRoom ? `${featureName(selectedRoom, "현재 방")} + ${featureName(mergeTarget, "다른 방")}` : "합칠 두 번째 방을 기다리고 있습니다."}
+                    </div>
+                    <button type="button" className="ui-button is-strong" onClick={applyRoomMerge} disabled={!mergeTarget || roomCommandPending || busy}>선택한 두 방 합치기</button>
+                  </div>
+                )}
+              </article>
+
+              <article className="ui-card ui-map-list robot-map-list-card">
+                <h2>방 목록 {roomDrafts.length}곳</h2>
+                {roomDrafts.map((room, index) => {
+                  const id = featureId(room);
+                  return (
+                    <button key={id} type="button" className={selectedRoomId === id ? "is-selected" : ""} onClick={() => {
+                      if (roomTool === "merge" && selectedRoomId && id !== selectedRoomId) {
+                        setMergeTargetId(id);
+                      } else {
+                        setSelectedRoomId(id);
+                        setMergeTargetId("");
+                        if (roomTool === "split") clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
+                      }
+                    }}>
                       <i style={{ background: roomColor(room, index) }} />
                       <span>{featureName(room, `공간 ${index + 1}`)}</span>
-                      <small>전체 추가</small>
+                      {selectedRoomId === id ? <strong>현재 방</strong>
+                        : mergeTargetId === id ? <strong>합칠 방</strong>
+                          : <small>{validPoint(room.properties.representative_point) ? "대표 목적지 있음" : "대표 목적지 없음"}</small>}
                     </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="ui-note">가상 벽: 출입구나 좁은 통로를 선으로 막아요. 말벗은 이 선을 넘어가지 않아요.</p>
-              )}
-            </article>
-
-            <article className="ui-card ui-map-list robot-map-list-card">
-              <h2>구역 {zoneDrafts.length}개</h2>
-              {zoneDrafts.length === 0 && <p className="ui-hint">설정한 이동 규칙 구역이 없어요.</p>}
-              {zoneDrafts.map((zone) => (
-                <button
-                  key={featureId(zone)}
-                  type="button"
-                  className={selectedZoneId === featureId(zone) ? "is-selected" : ""}
-                  onClick={() => {
-                    setSelectedZoneId(featureId(zone));
-                    setZoneGoalMode(false);
-                  }}
-                >
-                  <i className={isVirtualWall(zone) ? "is-virtual-wall" : `is-${zoneBehaviorOf(zone)}`} />
-                  <span>{featureName(zone, "이름 없는 구역")} · {isVirtualWall(zone) ? "가상 벽" : zoneBehaviorLabel(zoneBehaviorOf(zone))}</span>
-                  {selectedZoneId === featureId(zone) && <strong>편집 중</strong>}
-                </button>
-              ))}
-            </article>
-            <div className="ui-two-buttons">
-              <button type="button" className="ui-button" onClick={() => {
-                setZoneDrafts(zoneFeatures.map(cloneFeature));
-                setSelectedZoneId("");
-                setZoneGoalMode(false);
-              }} disabled={!zonesDirty || zoneCommandPending || busy}>저장 전 변경 취소</button>
-              <button type="button" className="ui-button is-strong" onClick={saveZones} disabled={!isOwner || !zonesDirty || zoneCommandPending || busy}>구역 설정 저장</button>
-            </div>
-          </>
-        ) : (
-          <>
-            <article className="ui-card ui-map-editor">
-              <h2>{selectedRoom ? featureName(selectedRoom, "이름 없는 방") : "편집할 방을 선택하세요"}</h2>
-              {!selectedRoom && <p className="ui-hint">지도나 아래 방 목록에서 방을 누르세요.</p>}
-              <label className="ui-field">
-                <span>이름</span>
-                <input
-                  value={selectedRoom ? featureName(selectedRoom, "") : ""}
-                  disabled={!selectedRoom}
-                  onChange={(event) => updateSelectedRoom({ name: event.target.value })}
-                  maxLength={40}
-                  placeholder="방 이름"
-                />
-              </label>
-              <div className="ui-field">
-                <span>종류</span>
-                <div className="ui-choice-chips">
-                  {([
-                    ["unassigned", "미지정"],
-                    ["living_room", "거실"],
-                    ["bedroom", "침실"],
-                    ["kitchen", "주방"],
-                    ["dining_room", "식당"],
-                    ["bathroom", "욕실"],
-                    ["entrance", "현관"],
-                    ["hallway", "복도"],
-                    ["workspace", "작업 공간"],
-                    ["storage", "수납 공간"],
-                    ["utility", "다용도실"],
-                    ["custom", "기타"],
-                  ] as Array<[string, string]>).map(([category, label]) => (
-                    <button
-                      key={category}
-                      type="button"
-                      className={selectedRoom?.properties.category === category ? "is-active" : ""}
-                      aria-pressed={selectedRoom?.properties.category === category}
-                      disabled={!selectedRoom}
-                      onClick={() => updateSelectedRoom({ category })}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {selectedRoom && (
-                <div className="ui-map-goal-row">
-                  <span>
-                    <strong>대표 목적지</strong>
-                    <small>방 이름으로 보낼 때 가는 곳</small>
-                  </span>
-                  {validPoint(selectedRoom.properties.representative_point)
-                    ? <span className="is-ok">지정됨</span>
-                    : <span>없음</span>}
-                </div>
-              )}
-              <h3>방 편집 도구</h3>
+                  );
+                })}
+              </article>
               <div className="ui-two-buttons">
-                {(["split", "merge"] as RoomTool[]).map((tool) => (
-                  <button
-                    key={tool}
-                    type="button"
-                    className={`ui-button ${roomTool === tool ? "is-selected" : ""}`}
-                    aria-pressed={roomTool === tool}
-                    onClick={() => chooseRoomTool(roomTool === tool ? "select" : tool)}
-                  >
-                    {tool === "split" ? "방 나누기" : "맞닿은 방과 합치기"}
-                  </button>
-                ))}
+                <button type="button" className="ui-button" onClick={() => {
+                  setRoomDrafts(originalRooms);
+                  setSelectedRoomId("");
+                  setMergeTargetId("");
+                  setRoomTool("select");
+                  clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
+                }} disabled={!roomsDirty}>저장 전 변경 취소</button>
+                <button type="button" className="ui-button is-strong" onClick={saveRooms} disabled={!isOwner || roomDrafts.length === 0 || !roomsDirty || roomCommandPending || busy}>방 설정 저장</button>
               </div>
-              {roomTool === "select" && (
-                <p className="ui-note">나누기: 벽 두 곳을 누르면 선이 생겨요. 선 가운데 점을 끌면 ㄱ자로 꺾여요.</p>
-              )}
-              {roomTool === "split" && (
-                <div className="ui-map-tool">
-                  <p className="ui-note">벽 두 곳을 누르면 선이 생겨요. 여러 선을 만들 수 있고, 선 가운데 작은 주황 점을 끌면 ㄱ자로 꺾여요.</p>
-                  <div className="robot-map-split-legend">
-                    <span><i className="is-endpoint" />벽 끝점</span>
-                    <span><i className="is-bend" />직각 꺾임</span>
-                    <span><i className="is-pending" />다음 벽 선택 중</span>
-                  </div>
-                  <div className={`robot-map-split-status is-${splitValidation}`} role="status">
-                    {pendingSplitPoint
-                      ? "시작점을 정했습니다. 연결할 두 번째 벽을 선택하세요."
-                      : splitValidation === "checking"
-                        ? splitValidationMessage
-                        : splitValidation === "valid"
-                          ? splitValidationMessage
-                        : splitValidation === "invalid"
-                          ? splitValidationMessage
-                          : splitLines.length > 0
-                            ? `${splitLines.length}개 분할선 · 적용하면 최소 1㎡와 정확히 두 공간인지 말벗이 최종 확인합니다.`
-                            : "분할선의 양 끝점은 벽에서 25cm 이내에 지정해야 합니다."}
-                  </div>
-                  <div className="ui-two-buttons">
-                    <button type="button" className="ui-button ui-small" onClick={undoSplitPoint} disabled={!pendingSplitPoint && splitLines.length === 0}>마지막 선 되돌리기</button>
-                    <button type="button" className="ui-button ui-small" onClick={() => clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage)} disabled={!pendingSplitPoint && splitLines.length === 0}>모두 지우기</button>
-                  </div>
-                  <button type="button" className="ui-button is-strong" onClick={applyRoomSplit} disabled={splitLines.length === 0 || Boolean(pendingSplitPoint) || splitValidation === "invalid" || splitValidation === "checking" || roomCommandPending || busy}>
-                    {splitValidation === "valid" ? "확인된 선대로 방 나누기" : "분할 가능 여부 확인"}
-                  </button>
-                </div>
-              )}
-              {roomTool === "merge" && (
-                <div className="ui-map-tool">
-                  <p className="ui-note"><strong>{selectedRoom ? featureName(selectedRoom, "현재 방") : "현재 방"}</strong>과 맞닿아 있는 방 하나를 지도나 목록에서 고르세요. 떨어진 방은 합칠 수 없어요.</p>
-                  <div className={`robot-map-split-status ${mergeTarget ? "is-ready" : "is-idle"}`}>
-                    {mergeTarget && selectedRoom ? `${featureName(selectedRoom, "현재 방")} + ${featureName(mergeTarget, "다른 방")}` : "합칠 두 번째 방을 기다리고 있습니다."}
-                  </div>
-                  <button type="button" className="ui-button is-strong" onClick={applyRoomMerge} disabled={!mergeTarget || roomCommandPending || busy}>선택한 두 방 합치기</button>
-                </div>
-              )}
-            </article>
-
-            <article className="ui-card ui-map-list robot-map-list-card">
-              <h2>방 목록 {roomDrafts.length}곳</h2>
-              {roomDrafts.map((room, index) => {
-                const id = featureId(room);
-                return (
-                  <button key={id} type="button" className={selectedRoomId === id ? "is-selected" : ""} onClick={() => {
-                    if (roomTool === "merge" && selectedRoomId && id !== selectedRoomId) {
-                      setMergeTargetId(id);
-                    } else {
-                      setSelectedRoomId(id);
-                      setMergeTargetId("");
-                      if (roomTool === "split") clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
-                    }
-                  }}>
-                    <i style={{ background: roomColor(room, index) }} />
-                    <span>{featureName(room, `공간 ${index + 1}`)}</span>
-                    {selectedRoomId === id ? <strong>현재 방</strong>
-                      : mergeTargetId === id ? <strong>합칠 방</strong>
-                        : <small>{validPoint(room.properties.representative_point) ? "대표 목적지 있음" : "대표 목적지 없음"}</small>}
-                  </button>
-                );
-              })}
-            </article>
-            <div className="ui-two-buttons">
-              <button type="button" className="ui-button" onClick={() => {
-                setRoomDrafts(originalRooms);
-                setSelectedRoomId("");
-                setMergeTargetId("");
-                setRoomTool("select");
-                clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
-              }} disabled={!roomsDirty}>저장 전 변경 취소</button>
-              <button type="button" className="ui-button is-strong" onClick={saveRooms} disabled={!isOwner || roomDrafts.length === 0 || !roomsDirty || roomCommandPending || busy}>방 설정 저장</button>
-            </div>
-          </>
-        )}
+            </>
+          )}
+        </div>
       </section>
     );
   }

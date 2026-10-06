@@ -8,7 +8,7 @@ import time
 
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
-from malbut_interfaces.action import AutoSlam, FollowPerson, Patrol, Relocalize
+from malbut_interfaces.action import AutoSlam, ExecuteMission, FollowPerson, Patrol, Relocalize
 from nav2_msgs.action import (
     AssistedTeleop, BackUp, ComputePathToPose, FollowPath, NavigateToPose, Spin, Wait,
 )
@@ -46,6 +46,8 @@ class RobotReadiness(Node):
             'sensor_timeout_s': 3.0,
             'startup_stage': '', 'startup_label': '', 'startup_index': 0,
             'startup_total': 0, 'startup_nodes': '', 'startup_timeout_s': 120.0,
+            'observe_only': False, 'speech': False,
+            'required_actions': '', 'required_topics': '',
         }
         self.settings = {
             key: self.declare_parameter(key, default).value
@@ -70,8 +72,8 @@ class RobotReadiness(Node):
         self.action_clients = []
         self.lifecycle = {}
         self.lifecycle_requested = {}
-        self.tf = Buffer()
-        self.tf_listener = TransformListener(self.tf, self)
+        self.tf = None if self.settings['observe_only'] else Buffer()
+        self.tf_listener = None if self.tf is None else TransformListener(self.tf, self)
         sensor_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         static_qos = QoSProfile(
             depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -80,14 +82,15 @@ class RobotReadiness(Node):
         self.status_publisher = self.create_publisher(
             String, '/malbut/bringup/status', static_qos)
         self.progress_publisher = self.create_publisher(
-            String, '/malbut/bringup/progress', static_qos) if self.stage else None
+            String, '/malbut/bringup/progress', static_qos) if (
+                self.stage or self.settings['observe_only']) else None
         self.probes = {
             name: [self.create_client(GetParameters, f'/{name}/get_parameters'), None, False]
             for name in self.settings['startup_nodes'].split(',') if name
         }
         self.probe_requested = {}
         self.speech_ready = False
-        if self.stage == 'speech':
+        if self.stage == 'speech' or self.settings['speech']:
             self.subscriptions_.append(self.create_subscription(
                 String, '/malbut/speech/status', self._speech, static_qos))
         topics = [
@@ -97,7 +100,7 @@ class RobotReadiness(Node):
             ('depth', Image, self.settings['depth_topic']),
             ('camera_info', CameraInfo, self.settings['camera_info_topic']),
         ]
-        if self.stage in ('extensions', 'speech'):
+        if self.stage in ('extensions', 'speech') or self.settings['observe_only']:
             topics = []
         elif self.settings['perception']:
             topics.append(('perception', Detection3DArray,
@@ -106,7 +109,7 @@ class RobotReadiness(Node):
             self.seen[label] = None
             self.subscriptions_.append(self.create_subscription(
                 message_type, topic, partial(self._receive, label), sensor_qos))
-        if self.settings['navigation']:
+        if self.settings['navigation'] and not self.settings['observe_only']:
             for label, message_type, topic in (
                 ('map', OccupancyGrid, self.settings['static_map_topic']),
                 ('costmap', Costmap, self.settings['global_costmap_topic']),
@@ -154,6 +157,24 @@ class RobotReadiness(Node):
                 ('/follow_person', FollowPerson) if self.stage == 'following'
                 else ('/patrol', Patrol))
             self.action_clients = [(name, ActionClient(self, action_type, name))]
+        if self.settings['observe_only']:
+            kinds = {
+                '/malbut/mission/execute': ExecuteMission, '/autoslam': AutoSlam,
+                '/follow_person': FollowPerson, '/patrol': Patrol, '/relocalize': Relocalize,
+                '/navigate_to_pose': NavigateToPose, '/compute_path_to_pose': ComputePathToPose,
+                '/follow_path': FollowPath, '/spin': Spin, '/wait': Wait,
+                '/backup': BackUp, '/assisted_teleop': AssistedTeleop,
+            }
+            self.action_clients = [(name, ActionClient(self, kinds[name], name))
+                                   for name in self.settings['required_actions'].split(',')
+                                   if name]
+            self.lifecycle = {
+                name: [self.create_client(GetState, f'/{name}/get_state'),
+                       None, False, 'missing']
+                for name in ('controller_server', 'planner_server', 'behavior_server',
+                             'teleop_behavior_server', 'bt_navigator',
+                             'velocity_smoother', 'collision_monitor')
+            }
         self.last_missing = None
         self.timer = self.create_timer(1.0, self.check)
 
@@ -202,6 +223,30 @@ class RobotReadiness(Node):
 
     def check(self):
         """Poll only readiness; no fixed boot sleep and no autonomous motion."""
+        if self.settings.get('observe_only'):
+            missing = self._extension_missing()
+            missing.extend(self._lifecycle_missing(time.monotonic()))
+            missing.extend(f'Action:{name}' for name, client in self.action_clients
+                           if not client.server_is_ready())
+            topics = [name for name in self.settings['required_topics'].split(',') if name]
+            missing.extend(f'publisher:{name}' for name in topics
+                           if not self.count_publishers(name))
+            speech = self.settings['speech']
+            if speech and (not self.speech_ready
+                           or not self.count_publishers('/malbut/speech/status')):
+                missing.append('speech: microphone startup')
+            total = (len(self.probes) + len(self.lifecycle) + len(self.action_clients)
+                     + len(topics) + int(speech))
+            self.ready = not missing
+            state = 'WAITING' if missing else 'READY'
+            self.status_publisher.publish(String(data=json.dumps({
+                'state': state, 'missing': missing,
+            })))
+            self.progress_publisher.publish(String(data=json.dumps({
+                'completed': total - len(missing), 'total': total,
+                'stage': '노드·인터페이스 연결 확인', 'state': state, 'missing': missing,
+            })))
+            return
         if getattr(self, 'stage', '') in ('extensions', 'speech'):
             self._report(self._extension_missing())
             return
@@ -236,6 +281,11 @@ class RobotReadiness(Node):
         for name, client in self.action_clients:
             if not client.server_is_ready():
                 missing.append(f'Action:{name}')
+        missing.extend(self._lifecycle_missing(now))
+        self._report(missing)
+
+    def _lifecycle_missing(self, now):
+        missing = []
         for name, entry in self.lifecycle.items():
             client, future, active = entry[:3]
             if (future is not None and not future.done()
@@ -272,7 +322,7 @@ class RobotReadiness(Node):
                 # forever for one whose services never appear; the labels show
                 # where it stopped (e.g. inactive up to the missing node).
                 missing.append(f'lifecycle:{name}={entry[3]}')
-        self._report(missing)
+        return missing
 
     def _speech(self, message):
         self.speech_ready = message.data == 'ready'
@@ -285,7 +335,7 @@ class RobotReadiness(Node):
         missing = []
         for name, entry in self.probes.items():
             client, future, ready = entry
-            if ready:
+            if ready and not self.settings.get('observe_only'):
                 continue
             if future is not None and future.done():
                 try:
@@ -297,11 +347,18 @@ class RobotReadiness(Node):
                 client.remove_pending_request(future)
                 future.cancel()
                 entry[1] = None
+                entry[2] = False
+            if self.settings.get('observe_only') and not client.service_is_ready():
+                if entry[1] is not None:
+                    client.remove_pending_request(entry[1])
+                    entry[1].cancel()
+                entry[1], entry[2] = None, False
             if not entry[2]:
                 missing.append(f'init:{name}')
-                if entry[1] is None and client.service_is_ready():
-                    entry[1] = client.call_async(GetParameters.Request(names=['use_sim_time']))
-                    self.probe_requested[name] = now
+            if (entry[1] is None and client.service_is_ready()
+                    and (self.settings.get('observe_only') or not entry[2])):
+                entry[1] = client.call_async(GetParameters.Request(names=['use_sim_time']))
+                self.probe_requested[name] = now
         if self.stage == 'speech' and not self.speech_ready:
             missing.append('speech: microphone startup')
         return missing
@@ -344,7 +401,7 @@ def main(args=None):
     result = 1
     try:
         node = RobotReadiness()
-        while rclpy.ok() and not node.ready:
+        while rclpy.ok() and (node.settings['observe_only'] or not node.ready):
             rclpy.spin_once(node, timeout_sec=1.0)
         if node.ready:
             # Deliver the final count before this one-shot publisher exits.

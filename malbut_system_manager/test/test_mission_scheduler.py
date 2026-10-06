@@ -139,6 +139,15 @@ def _registered_mission(manifest_directory, capability_id):
     return MissionRecord(capability_id, manifest, arguments={})
 
 
+def test_registered_autoslam_can_start_with_the_default_or_saved_map(manifest_directory):
+    """Allow AutoSLAM to switch to SLAM when a map is already selected."""
+    state, scheduler = _ready_scheduler()
+    state.localization = LocalizationMode.LOCALIZATION
+    mission = _registered_mission(manifest_directory, 'autoslam')
+    assert mission.capability.map_requirement is None
+    assert scheduler.submit(mission).start == ['autoslam']
+
+
 @pytest.mark.parametrize('active_id', ['follow_person', 'navigate_to_pose'])
 def test_registered_patrol_cannot_interrupt_user_motion(
     manifest_directory,
