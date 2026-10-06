@@ -4093,8 +4093,13 @@ a:focus-visible {
 .fall-link:hover { color: var(--ui-accent-strong); }
 .fall-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 /* 사건 목록: 공통 머리 아래, 화면 쪽에 필터와 연속 녹화 링크 */
-.fall-list-tools { padding: 16px 16px 0; display: flex; flex-direction: column; gap: 2px; }
-.fall-list-tools .fall-link { align-self: flex-end; font-size: 13px; }
+/* 사건 목록: 공통 머리 아래 화면 쪽에 필터, 마지막 필터 줄의 오른쪽 끝에 연속 녹화 링크 */
+.fall-list-tools { padding: 16px 16px 0; }
+.fall-chips .fall-link {
+  margin-left: auto; min-height: 36px; padding: 0 4px 0 6px; border: 0; border-radius: 0; background: none;
+  color: var(--ui-accent); font-size: 13px;
+}
+.fall-chips .fall-link:hover { color: var(--ui-accent-strong); }
 .fall-chips button {
   min-height: 36px; padding: 0 14px; border-radius: 18px; font-size: 13px; cursor: pointer;
   border: 1px solid var(--ui-control-border); background: var(--ui-surface); color: var(--ui-text);
