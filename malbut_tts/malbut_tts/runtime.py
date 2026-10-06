@@ -389,7 +389,11 @@ class SpeechRuntime:
                         player.wait_for_capacity(max_pending=2)
                     try:
                         audio, sample_rate = next(chunks)
-                    except StopIteration:
+                    except StopIteration as complete:
+                        # Drain a local error notice without claiming the original
+                        # answer/question was delivered successfully.
+                        if complete.value == 'notice_substituted':
+                            state = 'failed'
                         break
                     if request.cancel.is_set():
                         break

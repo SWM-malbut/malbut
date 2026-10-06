@@ -10,6 +10,7 @@ DELAY_SECONDS = 5.0
 DELAY_NOTICE = '답변을 준비하는 데 조금 시간이 걸리고 있어요.'
 MODEL_RETRY_NOTICE = '답변 생성을 한 번 다시 시도할게요.'
 WEATHER_RETRY_NOTICE = '날씨 정보 조회를 한 번 다시 시도할게요.'
+SERVICE_UNAVAILABLE_NOTICE = '지금은 대화를 할 수 없어요.'
 _current = ContextVar('conversation_progress', default=None)
 
 
@@ -53,6 +54,9 @@ class RequestProgress:
     def final_text(self, text):
         """A fast retry still gets one receipt even if no progress was drained."""
         with self._lock:
+            # Keep the prerecorded failure notice recognizable by TTS.
+            if text == SERVICE_UNAVAILABLE_NOTICE:
+                return text
             if self._retry_notice is None or self._retry_published:
                 return text
             self._retry_published = True

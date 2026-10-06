@@ -68,7 +68,7 @@ def runtime():
         value.close()
 
 
-@pytest.mark.parametrize('status', ['fresh', 'stale', 'unavailable'])
+@pytest.mark.parametrize('status', ['fresh', 'stale'])
 def test_tool_selection_precedes_one_manager_read_and_one_answer(runtime, status):
     provider = WeatherProvider()
     calls = []
@@ -82,8 +82,7 @@ def test_tool_selection_precedes_one_manager_read_and_one_answer(runtime, status
 
     runtime.provider, runtime.weather_executor = provider, execute
     result = runtime.handle(request())
-    expected_reads = 2 if status == 'unavailable' else 1
-    assert calls[0] == 'weather-1' and len(set(calls)) == expected_reads
+    assert calls == ['weather-1']
     assert len(provider.calls) == 2
     assert provider.calls[0]['tools'] == ['get_weather']
     assert provider.calls[1]['tools'] == []
@@ -100,7 +99,7 @@ def test_tool_selection_precedes_one_manager_read_and_one_answer(runtime, status
     assert result.safety.allowed and result.state_trusted is False
     cached = runtime.handle(request())
     assert cached.raw_decision == result.raw_decision
-    assert len(provider.calls) == 2 and len(calls) == expected_reads
+    assert len(provider.calls) == 2 and calls == ['weather-1']
 
 
 def test_plain_message_does_not_prefetch_weather(runtime):
@@ -138,8 +137,10 @@ def test_no_manager_executor_removes_weather_tool(runtime):
     assert result.decision.type == 'refusal'
 
 
-@pytest.mark.parametrize('outcome', [TimeoutError('manager offline'), None, {'status': 'unknown'}])
-def test_manager_failure_becomes_unavailable_without_direct_cache(runtime, outcome):
+@pytest.mark.parametrize('outcome', [
+    TimeoutError('manager offline'), None, {'status': 'unknown'}, {'status': 'unavailable'},
+])
+def test_manager_failure_returns_offline_notice_without_another_model_call(runtime, outcome):
     calls = []
 
     def execute(request_id):
@@ -152,9 +153,37 @@ def test_manager_failure_becomes_unavailable_without_direct_cache(runtime, outco
     runtime.provider, runtime.weather_executor = provider, execute
     result = runtime.handle(request())
     assert calls[0] == 'weather-1' and len(set(calls)) == 2
-    assert len(provider.calls) == 2
-    assert provider.calls[1]['weather'] == {'status': 'unavailable'}
-    assert result.decision.type == 'message' and result.decision.message == 'unavailable'
+    assert len(provider.calls) == 1
+    assert result.request_id == 'weather-1' and result.turn_id == 'weather-1'
+    assert result.raw_decision.tool_name == 'get_weather'
+    assert result.decision.type == 'message'
+    assert result.decision.message == '지금은 대화를 할 수 없어요.'
+    assert result.decision.reason == 'weather_unavailable'
+    assert result.decision.tool_name is None and result.decision.arguments == {}
+    assert result.provider_result.decision == result.decision
+    assert result.provider_result.memory_proposal is None
+    assert result.provider_result.usage == ProviderUsage(10, 2, 12)
+    assert result.provider_result.latency_ms == 12
+    assert result.provider_result.input_chars == 30
+    assert runtime.handle(request()).decision == result.decision
+    assert len(provider.calls) == 1 and len(calls) == 2
+
+
+@pytest.mark.parametrize('missing', ['executor', 'context'])
+def test_missing_weather_dependency_returns_offline_notice(runtime, monkeypatch, missing):
+    provider = WeatherProvider()
+    runtime.provider = provider
+    if missing == 'context':
+        runtime.weather_executor = lambda _: pytest.fail('weather must not be queried')
+        monkeypatch.setattr(
+            'malbut_agent_server.orchestrator.accepts_weather_context', lambda _: False,
+        )
+    first = provider.complete(request(), [], [], [])
+    result = runtime._answer_weather(request(), [], [], None, first)
+    assert result.decision.message == '지금은 대화를 할 수 없어요.'
+    assert result.decision.reason == 'weather_unavailable'
+    assert result.memory_proposal is None
+    assert result.usage == first.usage and len(provider.calls) == 1
 
 
 def test_shutdown_cancels_wait_without_a_second_model_call(runtime):
@@ -409,16 +438,17 @@ def test_lookup_and_answer_failures_are_distinguished_without_repeating_executio
     if status == 'fresh':
         assert result.decision.type == 'message'
         assert result.decision.reason == 'weather_answer_unavailable'
-        assert '날씨 정보는 조회했지만' in result.decision.message
-        assert '답변을 만드는 데 실패' in result.decision.message
-        assert '24' not in result.decision.message  # Current data cannot answer tomorrow's rain.
+    elif status == 'unavailable':
+        assert result.decision.reason == 'weather_unavailable'
     else:
         assert result.decision.reason == 'provider_unavailable'
-        assert '조회했지만' not in result.decision.message
-    assert result.provider_result.provider == 'reliable-fallback'
+    assert result.decision.message == '지금은 대화를 할 수 없어요.'
+    assert result.provider_result.provider == (
+        'weather-fixture' if status == 'unavailable' else 'reliable-fallback'
+    )
     assert result.raw_decision.tool_name == 'get_weather'
     assert len(set(reads)) == (2 if status == 'unavailable' else 1)
-    assert len(child.calls) == (2 if status == 'unavailable' else 3)
+    assert len(child.calls) == (1 if status == 'unavailable' else 3)
     before = (len(reads), len(child.calls))
     assert runtime.handle(query).decision == result.decision
     assert (len(reads), len(child.calls)) == before

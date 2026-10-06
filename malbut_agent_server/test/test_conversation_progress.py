@@ -10,6 +10,7 @@ from malbut_agent_server.config import Settings
 from malbut_agent_server.factory import build_orchestrator
 from malbut_agent_server.providers.base import ProviderError
 from malbut_agent_server.providers.reliable import ReliableProvider
+from malbut_agent_server.schemas import AgentDecision
 from malbut_agent_server.speech_dialogue import DialogueWorker
 from test_reliable_provider import _ScriptedProvider, _message_result, _complete
 from test_speech_dialogue import FixedProvider, RuntimeFactory, collect, wait_until
@@ -61,7 +62,7 @@ def test_model_and_weather_share_one_request_retry(failure_first):
     try:
         with progress.request_scope(lambda text, state: notices.append(text)):
             runtime.handle(request())
-        assert provider.attempts == (3 if failure_first == 'model' else 2)
+        assert provider.attempts == (2 if failure_first == 'model' else 1)
         assert len(set(reads)) == (1 if failure_first == 'model' else 2)
         assert notices == [progress.MODEL_RETRY_NOTICE if failure_first == 'model'
                            else progress.WEATHER_RETRY_NOTICE]
@@ -192,3 +193,37 @@ def test_fast_speech_retry_is_reported_once_in_final_answer():
     state.finish()
     assert state.final_text('정상 응답') == '정상 응답'
     assert published == [progress.MODEL_RETRY_NOTICE]
+
+
+@pytest.mark.parametrize('notice', [progress.MODEL_RETRY_NOTICE, progress.WEATHER_RETRY_NOTICE])
+@pytest.mark.parametrize('published', [False, True])
+def test_offline_failure_notice_stays_exact_before_and_after_retry_publication(notice, published):
+    release = threading.Event()
+
+    def answer(request, history):
+        assert progress.claim_retry(notice)
+        assert release.wait(5)
+        return AgentDecision('refusal', progress.SERVICE_UNAVAILABLE_NOTICE,
+                             reason='provider_unavailable')
+
+    provider = FixedProvider(answer)
+    worker = DialogueWorker(RuntimeFactory(provider), 'user')
+    try:
+        assert worker.submit('failed-utterance', '안녕')
+        assert provider.entered.wait(5)
+        if published:
+            interim = collect(worker, 1)[0]
+            assert interim['kind'] == 'progress' and interim['text'] == notice
+            assert worker.publish_reply(interim, lambda _: True)
+        release.set()
+        wait_until(lambda: worker._active_progress is None)
+        reply = collect(worker, 1)[0]
+        assert reply['kind'] == 'answer' and reply['utterance_id'] == 'failed-utterance'
+        assert reply['text'] == '지금은 대화를 할 수 없어요.'
+        spoken = []
+        assert worker.publish_reply(reply, lambda text: spoken.append(text) or True)
+        assert spoken == ['지금은 대화를 할 수 없어요.']
+        assert worker.drain() == []
+    finally:
+        release.set()
+        worker.close()

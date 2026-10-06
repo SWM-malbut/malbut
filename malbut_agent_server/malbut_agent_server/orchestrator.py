@@ -19,7 +19,7 @@ from malbut_agent_server.conversation import (
     SQLiteConversationStore,
 )
 from malbut_agent_server.conversation_progress import (
-    claim_retry, conversation_request, WEATHER_RETRY_NOTICE,
+    claim_retry, conversation_request, SERVICE_UNAVAILABLE_NOTICE, WEATHER_RETRY_NOTICE,
 )
 from malbut_agent_server.conversation_ownership import (
     owned_conversation_request, recover_abandoned_turns,
@@ -1085,9 +1085,9 @@ class AgentOrchestrator:
         executor = self.weather_location_executor if setting_location else self.weather_executor
         if executor is None or not accepts_weather_context(self.provider):
             return replace(first_result, decision=AgentDecision(
-                type='message', message='지금 날씨 조회 기능을 사용할 수 없어요.',
+                type='message', message=SERVICE_UNAVAILABLE_NOTICE,
                 reason='weather_unavailable', confidence=1.0,
-            ))
+            ), memory_proposal=None)
         for attempt in range(2):
             try:
                 if setting_location:
@@ -1129,6 +1129,11 @@ class AgentOrchestrator:
                     reason='weather_location_unavailable',
                 )
             return replace(first_result, decision=decision, memory_proposal=None)
+        if weather['status'] == 'unavailable':
+            return replace(first_result, decision=AgentDecision(
+                type='message', message=SERVICE_UNAVAILABLE_NOTICE,
+                reason='weather_unavailable', confidence=1.0,
+            ), memory_proposal=None)
         value = request.to_dict()
         value['available_tools'] = []
         answer = self.provider.complete(
@@ -1146,8 +1151,7 @@ class AgentOrchestrator:
                 and answer.decision.reason == 'provider_unavailable'):
             answer = replace(answer, decision=AgentDecision(
                 type='message',
-                message=('날씨 정보는 조회했지만 질문에 맞는 답변을 만드는 데 실패했어요. '
-                         '잠시 후 다시 물어봐 주세요.'),
+                message=SERVICE_UNAVAILABLE_NOTICE,
                 reason='weather_answer_unavailable', confidence=1.0,
             ), memory_proposal=None)
         if answer.decision.type == 'tool_call' or answer.memory_proposal is not None:

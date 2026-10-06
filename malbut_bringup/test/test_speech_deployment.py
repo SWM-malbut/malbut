@@ -53,6 +53,14 @@ def test_robot_speech_launch_and_native_assets_match_source():
         'malbut_bringup/launch/homecam.launch.py',
         'malbut_bringup/launch/fall.launch.py',
         'malbut_bringup/malbut_bringup/launch_support.py',
+        'malbut_bringup/malbut_bringup/readiness.py',
+        'malbut_bringup/malbut_bringup/web_panel.py',
+        'malbut_bringup/malbut_bringup/web_panel.html',
+        'malbut_autoslam/launch/autoslam.launch.py',
+        'malbut_autoslam/malbut_autoslam/autoslam_node.py',
+        'malbut_system_manager/malbut_system_manager/localization.py',
+        'malbut_system_manager/malbut_system_manager/system_manager_node.py',
+        'malbut_interfaces/capabilities/autoslam.yaml',
         'malbut_bringup/launch/speech.launch.py',
         'malbut_bringup/malbut_bringup/speech_preflight.py',
         'malbut_bringup/malbut_bringup/speech_process.py',
@@ -74,6 +82,16 @@ def test_robot_speech_launch_and_native_assets_match_source():
             assert deployed.count(hook) == 1
             deployed = deployed.replace(hook, '', 1)
         assert original == deployed, path
+
+
+def test_autoslam_backend_services_ship_with_runtime_dependencies():
+    """Test-only dependencies may differ; standard backend service types must ship."""
+    dependencies = []
+    for root in (SOURCE, ROBOT):
+        manifest = ElementTree.parse(root / 'malbut_autoslam/package.xml').getroot()
+        dependencies.append({item.text for item in manifest.findall('exec_depend')})
+    assert dependencies[0] == dependencies[1]
+    assert 'std_srvs' in dependencies[0]
 
 
 def _without_resource_monitor(deployed):

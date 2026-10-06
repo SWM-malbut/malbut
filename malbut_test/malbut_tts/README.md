@@ -95,6 +95,14 @@ flowchart LR
 - **실패:** 자동 재시도·다른 backend로 fallback하지 않는다. 일부 음성이
   재생된 뒤 통신이 끊겨도 `finished`로 속이지 않고 해당 요청을 실패 처리한다.
   중지 뒤 들어오는 조각은 재생하지 않는다.
+- **장애 안내:** 고정 문구 `지금은 대화를 할 수 없어요.`는 패키지에 포함한
+  `assets/notice_no_dialogue.wav`로 재생하며 API를 호출하지 않는다. 일반 대화의
+  응답 생성 실패와 날씨 조회 불가 안내가 이 문구를 사용한다. 다른 텍스트를
+  합성하다 키 누락·401·403·`insufficient_quota`가 발생하고 아직 PCM을 전달하지
+  않았다면 같은 WAV를 대신 재생한다. 이 경우 원문을 전달하지 못했으므로
+  안내의 장치 drain 후 원 요청을 `failed`로 종료한다. 안내 문구 자체를 요청한
+  경우는 정상 재생 후 `finished`이며, 명시적 중지는 `stopped`다. WAV 누락·손상은
+  `failed`다. 일시적 429·timeout·연결 장애는 TTS 대체 안내 대상이 아니다.
 - **제어:** 기존 FIFO/우선순위, pause/resume/stop, 하나의 playback ID를
   유지한다. STT의 재생 중 입력 차단은 기존 playback 상태 연결을 재사용한다.
 
@@ -136,9 +144,10 @@ ros2 topic echo /malbut/speech/playback_status
 ```
 
 위 노드의 실제 합성에는 같은 Python 환경에 ROS와 해당 합성·오디오 의존성이
-필요하다. 기본 실행에는 `requirements-api.txt`의 의존성과 `OPENAI_API_KEY`가
-필요하다. 키나 SDK가 없으면 첫 음성 요청이 `failed`가 되며 로컬 backend로
-자동 전환하지 않는다. 아래 CUDA 경로는 x86_64 Linux 노트북 실험용이며
+필요하다. 일반 음성 합성에는 `requirements-api.txt`의 의존성과 유효한 OpenAI
+키가 필요하다. 고정 장애 안내 WAV는 API 키·OpenAI SDK 없이 재생할 수 있지만
+오디오 장치와 재생 의존성은 필요하다. SDK 누락 시 일반 합성은 `failed`가 되며
+로컬 backend로 자동 전환하지 않는다. 아래 CUDA 경로는 x86_64 Linux 노트북 실험용이며
 Jetson 및 YOLO·STT 동시 성능은 별도 검증 대상이다.
 
 ## Linux CUDA 실험 경로

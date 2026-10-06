@@ -1,6 +1,6 @@
 """SWM25-235: the key the owner sets on the web, and the notice when it cannot be used.
 
-Offline: the notice is a short WAV written by the test, never a real recording.
+Offline: check the bundled recording and exercise failures with short test WAVs.
 """
 
 import json
@@ -13,9 +13,11 @@ import pytest
 
 from malbut_tts.api_synthesis import ApiTtsError, OpenAISynthesizer
 from malbut_tts.managed_key import OpenAIKey
+from malbut_tts.runtime import CONFIRMATION, DIALOGUE, SpeechRuntime
 
 TEAM = 'team-test-key-0001'
 OWNER = 'owner-test-key-0002'
+NOTICE_TEXT = '지금은 대화를 할 수 없어요.'
 
 
 def write_notice(path, samples=6000, rate=24000, channels=1, width=2):
@@ -125,8 +127,29 @@ def test_no_key_plays_the_notice_without_any_request(tmp_path):
     assert client.keys == [] and key.health == ('missing', 'missing_api_key')
 
 
+@pytest.mark.parametrize('key', ['', TEAM])
+def test_explicit_notice_uses_the_bundled_recording_without_api(key):
+    client = Client()
+    synth = OpenAISynthesizer(api_key=key, client_factory=client)
+    chunks = list(synth.generate(NOTICE_TEXT, Event()))
+    assert client.keys == []
+    assert chunks and all(audio.ndim == 1 and audio.dtype == np.float32
+                          for audio, _ in chunks)
+    assert 0 < sum(len(audio) / rate for audio, rate in chunks) <= 30
+
+
+def test_explicit_notice_missing_file_fails_without_api(tmp_path):
+    client = Client()
+    synth = OpenAISynthesizer(api_key=TEAM, client_factory=client,
+                              notice_path=tmp_path / 'missing.wav')
+    with pytest.raises(ApiTtsError, match='notice_unavailable'):
+        list(synth.generate(NOTICE_TEXT, Event()))
+    assert client.keys == []
+
+
 @pytest.mark.parametrize('error, code', [
     (status_error(429), 'rate_limited'), (status_error(500), 'provider_error'),
+    (TimeoutError(), 'timeout'),
 ])
 def test_other_failures_stay_failures_without_notice_or_health(tmp_path, error, code):
     notice = write_notice(tmp_path / 'notice.wav')
@@ -135,6 +158,22 @@ def test_other_failures_stay_failures_without_notice_or_health(tmp_path, error, 
     with pytest.raises(ApiTtsError, match=f'^API TTS failed: {code}$'):
         list(synth.generate('안녕', Event()))
     assert key.health is None
+
+
+def test_key_failure_after_partial_audio_does_not_append_notice(tmp_path):
+    class PartialClient(Client):
+        async def iter_bytes(self, *, chunk_size):
+            yield b'\x00\x10' * 9600
+            raise status_error(401)
+
+    synth = OpenAISynthesizer(
+        api_key=TEAM, client_factory=PartialClient(),
+        notice_path=write_notice(tmp_path / 'notice.wav'),
+    )
+    chunks = synth.generate('원래 답변', Event())
+    assert len(next(chunks)[0]) == 9600
+    with pytest.raises(ApiTtsError, match='authentication_failed'):
+        next(chunks)
 
 
 @pytest.mark.parametrize('notice', [
@@ -235,43 +274,67 @@ def test_tts_node_shares_key_health_without_the_key(monkeypatch):
         '/malbut/keys/health',
         {'depth': 4, 'reliability': 'reliable', 'durability': 'transient_local'},
         '{"service":"openai","state":"invalid","code":"authentication_failed"}')]
-    assert any('notice' in str(line) for line in logs)
+    assert any('authentication_failed' in str(line) for line in logs)
+    assert not any('playing' in str(line) for line in logs)
     assert not any(TEAM in str(line) for line in logs)
     node.destroy_node()
 
 
-def test_notice_finishes_like_any_reply_in_the_speech_runtime(tmp_path):
-    """The agent's fallback answer is replaced by the notice; playback status is unchanged."""
-    from malbut_tts.runtime import SpeechRuntime
-
+@pytest.mark.parametrize('text, request_type, stop, terminal', [
+    (NOTICE_TEXT, DIALOGUE, False, 'finished'),
+    ('원래 답변', DIALOGUE, False, 'failed'),
+    ('넘어지셨나요?', CONFIRMATION, False, 'failed'),
+    ('넘어지셨나요?', CONFIRMATION, True, 'stopped'),
+    (NOTICE_TEXT, DIALOGUE, True, 'stopped'),
+])
+def test_notice_terminal_follows_device_drain(tmp_path, text, request_type, stop, terminal):
+    """A substituted question never finishes; its notice still drains or obeys STOP."""
     notice = write_notice(tmp_path / 'notice.wav', samples=4800)
     synth = OpenAISynthesizer(api_key=key_in(tmp_path), client_factory=Client(status_error(401)),
                               notice_path=notice)
     written, statuses, done = [], [], Event()
+    finishing, drain = Event(), Event()
 
     class Player:
-        def __init__(self, **kwargs):
-            pass
+        def __init__(self, on_state, cancel_event):
+            self.on_state, self.cancel = on_state, cancel_event
 
         def write(self, audio, rate):
             written.append((len(audio), rate))
+            self.on_state('playing')
 
         def finish(self):
-            pass
+            finishing.set()
+            assert drain.wait(3), 'test did not release device drain'
+
+        def stop(self):
+            self.cancel.set()
+            drain.set()
 
         def close(self):
-            pass
+            drain.set()
 
     def status(playback_id, state, interim, request_id):
-        statuses.append(state)
+        statuses.append((playback_id, state, interim, request_id))
         if state in ('finished', 'failed', 'stopped'):
             done.set()
 
     runtime = SpeechRuntime(synth, Player, status)
+    request_id = '' if request_type == CONFIRMATION else 'utterance-1'
     try:
-        runtime.submit('죄송해요, 지금은 대답하기 어려워요.')
+        runtime.submit(text, request_type, playback_id='notice-1', request_id='utterance-1')
+        assert finishing.wait(2)
+        assert statuses == [('notice-1', 'playing', False, request_id)]
+        assert not done.is_set()
+        if stop:
+            assert runtime.control('notice-1', 'stop')
+        else:
+            drain.set()
         assert done.wait(2)
     finally:
         runtime.close()
-    assert statuses[-1] == 'finished'
+    assert statuses == [
+        ('notice-1', 'playing', False, request_id),
+        ('notice-1', terminal, False, request_id),
+    ]
     assert written == [(2400, 24000), (2400, 24000)]
