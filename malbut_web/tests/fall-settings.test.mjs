@@ -46,7 +46,7 @@ test("migration runner applies shared-prefix migrations once by full filename", 
       assert.deepEqual(applied, ["0011_fall_settings", "0011_manual_move_stream", "0012_fall_incident_review",
         "0013_fall_ai_review", "0014_fall_report_memo", "0015_fall_incident_people", "0016_user_identities", "0017_social_login",
         "0018_registration_codes", "0019_device_invites", "0020_service_keys", "0021_robot_semantic_drafts",
-        "0022_talk_lease_readiness"]);
+        "0022_talk_lease_readiness", "0023_robot_map_labels"]);
       const versions = (await h.db.query(
         "SELECT version FROM homecam_schema_migrations ORDER BY version",
       )).rows.map((row) => row.version);

@@ -540,6 +540,9 @@ class RosBridge:
         with self.data.lock:
             self.data.servers = {name: client.server_is_ready()
                                  for name, client in self.clients.items()}
+            # Person following runs only when its server is up (perception started).
+            follow = self.cancel_clients.get('/follow_person')
+            self.data.servers['follow_person'] = bool(follow and follow.service_is_ready())
             self.data.map_active = bool(self.node.count_publishers(self.topics['map_topic']))
             self.data.robot_pose = self._robot_pose()
         self._finish_runtime_stop()

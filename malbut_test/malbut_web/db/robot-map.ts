@@ -373,9 +373,9 @@ async function assertDriveCommandAllowed(input: {
   const nav2 = state ? parseObject(state.nav2_json) : {};
   const managedOperation = MANAGED_OPERATIONS.has(input.operation);
   // The real robot also takes the map screen's destination sending (SWM25-237) and
-  // starts or stops room patrol from the 자율주행 card; it cannot pause a patrol.
+  // starts or stops room patrol and person following from the 자율주행 card; it cannot pause.
   const realRobotPatrol = (input.operation === "drive_mode_start" || input.operation === "drive_mode_stop") &&
-    input.payload?.mode === "patrol";
+    (input.payload?.mode === "patrol" || input.payload?.mode === "person_following");
   if (
     nav2.robot_interface === "malbut_manager_v1" && !managedOperation &&
     !NAVIGATION_OPERATIONS.has(input.operation) && !realRobotPatrol

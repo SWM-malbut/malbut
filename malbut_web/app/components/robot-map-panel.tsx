@@ -15,6 +15,7 @@ import { ManagedRobotDebug } from "./managed-robot-debug";
 import { ManagedRobotMap } from "./managed-robot-map";
 import { ManagedRobotTools } from "./managed-robot-tools";
 import { useManagedRobotWorkspace } from "./managed-robot-workspace";
+import { MapDrivePad, RealRobotMapManager } from "./real-robot-map-manager";
 
 type RobotDriveModeSnapshot = {
   mode: "idle" | "destination" | "patrol" | "roaming" | "person_following";
@@ -339,6 +340,8 @@ export function RobotMapPanel({
   // The real robot reports its patrol choices: thoroughness levels, no pause, last result.
   const patrolLevels = Array.isArray(driveMode?.detail?.thoroughness_levels);
   const canPause = driveMode?.detail?.can_pause !== false;
+  // 개발자 화면 기능을 지도 탭으로 옮긴 실로봇 화면(목업 18·19번).
+  const realRobot = snapshot?.state?.nav2.robot_interface === "malbut_manager_v1";
   const autonomousModeActive = Boolean(driveMode && ![
     "idle", "destination",
   ].includes(driveMode.mode) && !["idle", "failed"].includes(driveMode.state));
@@ -1542,7 +1545,8 @@ export function RobotMapPanel({
             <span className="ui-caption">지금 말벗은</span>
             {mapping && <span className="ui-badge is-accent">집 둘러보는 중</span>}
             <strong className="ui-map-status-title">
-              {mapping ? snapshot?.state?.message ?? MAPPING_STEPS[Math.max(0, mappingStep)].label
+              {mapping && realRobot ? "새 지도를 만들고 있어요 · 지도 관리에서 진행을 볼 수 있어요"
+                : mapping ? snapshot?.state?.message ?? MAPPING_STEPS[Math.max(0, mappingStep)].label
                 : navigationDriving ? "주변 장애물을 확인하며 이동하고 있어요"
                   : navigationSucceeded ? "선택한 목적지에 도착했어요"
                     : canStartPreview ? "선택한 위치까지 이동할 수 있어요"
@@ -1627,12 +1631,12 @@ export function RobotMapPanel({
               {activeAutonomousMode && autonomousSession && !canPause ? (
                 <>
                   <div className="ui-map-sync is-info" role="status">
-                    {patrolProgressCopy(driveMode).map((line, index) => index === 0
+                    {(activeAutonomousMode === "person_following" ? followProgressCopy(driveMode) : patrolProgressCopy(driveMode)).map((line, index) => index === 0
                       ? <strong key={line}>{line}</strong>
                       : <span key={line}>{line}</span>)}
                   </div>
                   {!snapshot?.online && (
-                    <p className="ui-note">말벗과 연결이 끊겼어요. 말벗은 순찰을 계속하고, 다시 연결되면 지금 상태를 보여 드려요.</p>
+                    <p className="ui-note">말벗과 연결이 끊겼어요. 말벗은 {activeAutonomousMode === "person_following" ? "따라가기를" : "순찰을"} 계속하고, 다시 연결되면 지금 상태를 보여 드려요.</p>
                   )}
                   <button
                     type="button"
@@ -1640,7 +1644,7 @@ export function RobotMapPanel({
                     onClick={() => void sendCommand("drive_mode_stop", { mode: activeAutonomousMode, sessionId: autonomousSession })}
                     disabled={!isOwner || !snapshot?.online || driveMode?.state === "stopping" || Boolean(activeCommand) || busy}
                   >중지</button>
-                  <p className="ui-note">중지한 뒤 다시 시작하면 처음부터 다시 순찰해요.</p>
+                  {activeAutonomousMode === "patrol" && <p className="ui-note">중지한 뒤 다시 시작하면 처음부터 다시 순찰해요.</p>}
                 </>
               ) : activeAutonomousMode && autonomousSession ? (
                 <>
@@ -1721,9 +1725,20 @@ export function RobotMapPanel({
                     onClick={() => void sendCommand("drive_mode_start", { mode: "person_following" })}
                     disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("person_following") || Boolean(activeCommand) || busy}
                   >사람 따라가기</button>
+                  {typeof driveMode?.detail?.follow_distance_m === "number" && (
+                    <p className="ui-note">말벗 앞에 보이는 사람을 {driveMode.detail.follow_distance_m}m 거리로 따라가요.</p>
+                  )}
                 </div>
               )}
             </article>
+          )}
+
+          {isOwner && realRobot && (
+            <MapDrivePad
+              drive={driveCommand}
+              enabled={Boolean(snapshot?.online) && isRecord(snapshot?.state?.target?.runtime) &&
+                snapshot.state.target.runtime.state === "RUNNING"}
+            />
           )}
 
           {isOwner && (
@@ -2057,18 +2072,31 @@ export function RobotMapPanel({
         <h1 id="robot-map-title">지도 관리</h1>
         <small className="ui-caption">소유자만 볼 수 있어요</small>
       </header>
-      <article className="ui-card ui-map-summary">
-        <div>
-          <span>지도 상태</span>
-          <strong className={mapping ? "is-accent" : snapshot?.map?.finalized ? "is-ok" : ""}>{mapStateCopy}</strong>
-        </div>
-        <div>
-          <span>저장된 방</span>
-          <span>{originalRooms.length}곳</span>
-        </div>
-      </article>
+      {!realRobot && (
+        <article className="ui-card ui-map-summary">
+          <div>
+            <span>지도 상태</span>
+            <strong className={mapping ? "is-accent" : snapshot?.map?.finalized ? "is-ok" : ""}>{mapStateCopy}</strong>
+          </div>
+          <div>
+            <span>저장된 방</span>
+            <span>{originalRooms.length}곳</span>
+          </div>
+        </article>
+      )}
       {noticeLine}
-      {mapping ? (
+      {realRobot ? (
+        <RealRobotMapManager
+          deviceId={deviceId}
+          snapshot={snapshot}
+          isOwner={isOwner}
+          busy={busy}
+          commandActive={Boolean(activeCommand)}
+          driveActive={navigationDriving || autonomousModeActive}
+          roomCount={originalRooms.length}
+          sendCommand={sendCommand}
+        />
+      ) : mapping ? (
         <article className="ui-card ui-map-mapping">
           <span className="ui-badge is-accent">집 둘러보는 중</span>
           <strong className="ui-map-status-title">{snapshot?.state?.message ?? MAPPING_STEPS[Math.max(0, mappingStep)].label}</strong>
@@ -3256,6 +3284,19 @@ function patrolProgressCopy(value: RobotDriveModeSnapshot | undefined) {
     `집의 ${percent}% 살펴봄 · ${visited}곳 방문`,
     ...(remaining.length ? [`남은 방: ${remaining.join(", ")}`] : []),
   ];
+}
+
+/** 목업 19번 · 사람 따라가기 중: 지금 하는 일과 사람과의 거리. */
+function followProgressCopy(value: RobotDriveModeSnapshot | undefined) {
+  const detail = value?.detail ?? {};
+  const distance = typeof detail.current_distance_m === "number" ? detail.current_distance_m : null;
+  if (value?.state === "stopping") return ["사람 따라가기 · 멈추는 중", "따라가기를 멈추고 있어요"];
+  if (value?.state === "starting") return ["사람 따라가기 · 준비 중", "앞에 보이는 사람을 확인하고 있어요"];
+  if (detail.tracking_state === "RECOVERING" || detail.target_visible !== true) {
+    return ["사람 따라가기 · 사람 찾는 중", "마지막으로 본 곳을 기준으로 사람을 다시 찾고 있어요"];
+  }
+  return ["사람 따라가기 · 따라가는 중",
+    distance === null ? "사람 확인됨" : `사람 확인됨 · 지금 ${distance.toFixed(1)}m 떨어져 있어요`];
 }
 
 /** 목업 17번 · 끝난 순찰: 다음 순찰을 시작할 때까지 남는다. */

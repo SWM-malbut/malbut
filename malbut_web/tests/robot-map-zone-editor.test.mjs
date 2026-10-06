@@ -238,7 +238,7 @@ test("the real robot's room patrol follows mockup 17: thoroughness, progress, st
     "순찰 꼼꼼함", "빠르게", "4m · 집의 80%", "보통", "3m · 집의 90%", "꼼꼼히", "2m · 집의 95%",
     "꼼꼼할수록 가까이 다가가 더 넓게 살펴보지만 오래 걸려요.",
     "경로 계산 중", "이동 중", "둘러보는 중", "% 살펴봄 · ", "곳 방문", "남은 방: ",
-    "말벗과 연결이 끊겼어요. 말벗은 순찰을 계속하고, 다시 연결되면 지금 상태를 보여 드려요.",
+    "말벗과 연결이 끊겼어요. 말벗은 ", '"따라가기를" : "순찰을"', "계속하고, 다시 연결되면 지금 상태를 보여 드려요.",
     "중지한 뒤 다시 시작하면 처음부터 다시 순찰해요.",
     "순찰을 마쳤어요", "%까지 살펴봤어요", "더 갈 수 있는 곳이 없었어요 · ", "갈 수 없었던 방: ",
     "순찰이 멈췄어요", "다시 시작해 주세요.", "순찰을 중지했어요",
@@ -251,4 +251,47 @@ test("the real robot's room patrol follows mockup 17: thoroughness, progress, st
   assert.match(panel, /tone: "neutral", title: "순찰을 중지했어요"/);
   assert.match(styles, /\.ui-map-sync\.is-warn \{[^}]*var\(--ui-warn-soft\)/);
   assert.match(styles, /\.ui-map-sync\.is-neutral \{[^}]*var\(--ui-neutral-soft\)/);
+});
+
+test("the developer screen's map, follow and drive tools reach the map tab for the real robot (mockups 18·19)", async () => {
+  const [panel, manager, tools, styles] = await Promise.all([
+    readFile(new URL("../app/components/robot-map-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/real-robot-map-manager.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/managed-robot-tools.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  // Only the real robot gets these; the simulator screens stay as they were.
+  assert.match(panel, /const realRobot = snapshot\?\.state\?\.nav2\.robot_interface === "malbut_manager_v1";/);
+  assert.match(panel, /\{realRobot \? \(\s*<RealRobotMapManager/);
+  assert.match(panel, /\{isOwner && realRobot && \(\s*<MapDrivePad/);
+  // 지도 관리 uses the developer screen's robot commands.
+  assert.match(manager, /sendCommand\("mission_start", \{ capability: "autoslam", arguments: \{ map_name: stem \} \}\)/);
+  assert.match(manager, /sendCommand\("runtime_start", \{ mode: "navigation", map \}\)/);
+  assert.match(manager, /window\.confirm\(.*\) \{\s*void sendCommand\("map_delete", \{ map \}\);/s);
+  assert.match(manager, /sendCommand\("mission_cancel"\)/);
+  assert.match(manager, /if \(!\(await saveLabel\(`\$\{stem\}\.yaml`, name\)\)\) return;/, "named before AutoSLAM starts");
+  // Kept on the developer screen only: Bringup on/off/recovery, relocalization, debugging.
+  for (const developerOnly of [/runtime_stop/, /"recovery"/, /relocalize/, /robot_diagnostics/, /debug_mission_start/]) {
+    assert.doesNotMatch(manager, developerOnly);
+  }
+  for (const copy of [
+    "지금 쓰는 지도", "없음 (빈 기본 지도)", "새 지도 만들기", "지도 이름", "만든 날짜·시간으로 채워져 있어요. 나중에 목록에서도 바꿀 수 있어요.",
+    "지도 만들기 시작", "지도 만드는 중", "집을 둘러보고 있어요", "알아낸 면적 ", "아직 안 가 본 곳 ",
+    "중지하면 지금까지 그린 지도는 저장되지 않아요.", "새 지도를 만들었어요", "이 지도 쓰기", "지도를 만들지 못했어요",
+    "지도를 바꾸고 있어요", "주행 시스템이 꺼져 있어요", "사용 중", "이름 바꾸기", "삭제",
+    "지도를 지우면 그 지도의 방·구역도 함께 지워져요. 사용 중인 지도는 지울 수 없어요.",
+    "직접 움직이기", "패드를 누른 채 끄는 만큼 빨라져요(최대 0.15m/s). 손을 떼면 바로 멈춰요.",
+  ]) assert.ok(manager.includes(copy), copy);
+  // 사람 따라가기 at the fixed 0.6 m (robot side), with stop only.
+  for (const copy of ["사람 따라가기 · 따라가는 중", "사람 확인됨 · 지금 ", "사람 따라가기 · 사람 찾는 중",
+    "마지막으로 본 곳을 기준으로 사람을 다시 찾고 있어요", "말벗 앞에 보이는 사람을 "]) {
+    assert.ok(panel.includes(copy), copy);
+  }
+  // One input handler for both pads; the developer screen's pad looks the same.
+  assert.match(tools, /export function useManualDrive\(drive: Drive, enabled: boolean\)/);
+  assert.match(tools, /const \{ padProps, knob, active, sent, error, strafe, setStrafe \} = useManualDrive\(drive, enabled\);/);
+  assert.match(tools, /<h3>수동 조작<\/h3>/);
+  assert.match(manager, /useManualDrive\(drive, enabled\)/);
+  assert.match(styles, /\.ui-map-drive-pad \{[^}]*touch-action: none/s);
 });
