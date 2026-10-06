@@ -27,8 +27,8 @@ flowchart LR
 - TTS package와 ROS parameter의 기본 backend는 `openai`다. backend를 생략하면
   OpenAI를 사용하며, 로컬 `qwen-cuda`는 모델 경로와 함께 명시적으로 선택한다.
   선택한 backend가 실패해도 다른 backend로 자동 전환하지 않는다.
-- 기본 backend 실행에는 OpenAI SDK와 `OPENAI_API_KEY`가 필요하다. 누락 시 첫
-  음성 요청을 `failed`로 처리하며 로컬 backend를 대신 선택하지 않는다.
+- 일반 답변 합성에는 OpenAI SDK와 유효한 OpenAI 키가 필요하다. 고정 장애 안내
+  `지금은 대화를 할 수 없어요.`는 번들 WAV로 재생하므로 API 키·SDK를 사용하지 않는다.
 - TTS가 외부로 전송하는 데이터는 Agent가 생성한 답변 텍스트다. TTS는 마이크
   입력이나 STT의 원본 음성을 OpenAI TTS API로 전송하지 않는다.
 - OpenAI API 사용에는 네트워크와 별도 비용이 필요하며, 사용자에게 재생 음성이
@@ -119,6 +119,15 @@ sequenceDiagram
 - API 요청을 자동으로 재시도하지 않고 로컬 backend로 자동 fallback하지 않는다.
   일부 PCM을 이미 재생한 뒤 API가 실패해도 `finished`로 처리하지 않고 `failed`를
   전달하며 남은 음성을 폐기한다.
+- 키 누락·인증/권한 오류·`insufficient_quota`로 원문 PCM을 하나도 전달하지 못하면
+  번들 `assets/notice_no_dialogue.wav`를 대신 재생한다. 안내의 장치 drain이 끝난 뒤
+  원 요청은 `failed`로 종료한다. 장애 안내를 질문 전달 성공으로 보고 확인 답변
+  세션을 열지 않도록 `finished`를 보내지 않는다. 일반 대화의 같은 `request_id`에
+  대해서도 이 최종 실패 상태가 STT의 답변 대기를 해제한다.
+- Agent가 고정 안내 문구 자체를 보낸 경우에는 API 없이 WAV를 재생하고 정상 완료
+  시 `finished`를 보낸다. 일반 대화 실패와 날씨 조회 불가 시 이 문구를 사용하며
+  재시도 설명을 앞에 붙이지 않는다. 파일 누락·손상은 실패로 처리한다. 명시적 중지는
+  기존처럼 `stopped`이고, 대체 안내의 재생도 동일한 재생 ID·제어·입력 차단을 따른다.
 
 ### 로컬 Qwen CUDA 문장 파이프라인 — 대안 경로
 
