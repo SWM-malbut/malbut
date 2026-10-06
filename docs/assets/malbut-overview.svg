@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title desc">
+  <title id="title">MALBUT — 말벗</title>
+  <desc id="desc">대화, 자율주행, 홈 모니터링을 연결하는 ROS 2 컴패니언 로봇 프로젝트. 웹 앱의 카메라 아이콘을 재사용한 프로젝트 배너.</desc>
+  <defs>
+    <linearGradient id="surface" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101916"/>
+      <stop offset="1" stop-color="#1d3429"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#cde46f" stop-opacity=".13"/>
+      <stop offset="1" stop-color="#cde46f" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="340" rx="24" fill="url(#surface)"/>
+  <circle cx="976" cy="165" r="252" fill="url(#glow)"/>
+  <g fill="none" stroke="#89a393" stroke-opacity=".16">
+    <path d="M796 0v340M860 0v340M924 0v340M988 0v340M1052 0v340M1116 0v340"/>
+    <path d="M764 42h436M764 106h436M764 170h436M764 234h436M764 298h436"/>
+  </g>
+  <g font-family="Pretendard, Noto Sans KR, Noto Sans CJK KR, Arial, sans-serif">
+    <rect x="64" y="51" width="5" height="18" rx="2.5" fill="#cde46f"/>
+    <text x="82" y="65" fill="#cde46f" font-size="16" font-weight="600" letter-spacing="3">ROS 2 COMPANION ROBOT</text>
+    <text x="60" y="158" fill="#f5f2eb" font-size="82" font-weight="700" letter-spacing="-2">MALBUT</text>
+    <text x="65" y="204" fill="#d4ded4" font-size="28" font-weight="500">대화 × 자율주행 × 홈 모니터링</text>
+    <path d="M65 232h620" stroke="#678271" stroke-opacity=".5"/>
+    <text x="65" y="274" fill="#aabcae" font-size="17" letter-spacing="1">VOICE &amp; MEMORY</text>
+    <circle cx="259" cy="268" r="2.5" fill="#cde46f"/>
+    <text x="285" y="274" fill="#aabcae" font-size="17" letter-spacing="1">AUTONOMY</text>
+    <circle cx="435" cy="268" r="2.5" fill="#cde46f"/>
+    <text x="461" y="274" fill="#aabcae" font-size="17" letter-spacing="1">HOME MONITORING</text>
+  </g>
+  <!-- Reuses the camera mark in malbut_web/public/homecam-icon.svg. -->
+  <g transform="translate(838 41) scale(.50)">
+    <rect width="512" height="512" rx="112" fill="#101916"/>
+    <path d="M98 191c0-48 39-87 87-87h142c48 0 87 39 87 87v130c0 48-39 87-87 87H185c-48 0-87-39-87-87V191Z" fill="#f5f2eb"/>
+    <circle cx="256" cy="256" r="105" fill="#cde46f"/>
+    <circle cx="256" cy="256" r="67" fill="#101916"/>
+    <circle cx="278" cy="232" r="19" fill="#fff"/>
+    <circle cx="160" cy="167" r="16" fill="#ff725e"/>
+  </g>
+</svg>

@@ -26,6 +26,10 @@ in:
 - `malbut_description/THIRD_PARTY_NOTICES.md`
 - `malbut_gazebo/THIRD_PARTY_NOTICES.md`
 
+The README illustration at `docs/assets/rosorin-model.png` is rendered from
+those Hiwonder meshes using Malbut's URDF and sensor profile. It is a model
+render, not a photograph, and does not change the license of the source meshes.
+
 ## AWS RoboMaker Small House
 
 - Source: <https://github.com/aws-robotics/aws-robomaker-small-house-world>
