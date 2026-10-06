@@ -1,5 +1,6 @@
 import {
   updateDeviceHeartbeat,
+  syncTalkLease,
   type HomecamStreamMode,
 } from "../../../../../db/homecam";
 import { noStore, unauthorized } from "../../../../api-response";
@@ -18,6 +19,8 @@ export async function POST(request: Request) {
   > | null;
   const parsed = parseHeartbeat(payload);
   if (!parsed) return noStore({ error: "장치 상태 형식을 확인해 주세요." }, 400);
+  const talkReport = payload?.talkReport === undefined ? undefined : parseTalkReport(payload.talkReport);
+  if (talkReport === null) return noStore({ error: "말하기 준비 상태 형식을 확인해 주세요." }, 400);
   const report = payload?.fallSettingsReport === undefined ? undefined : parseFallSettingsReport(payload.fallSettingsReport);
   if (report === null) return noStore({ error: "낙상 설정 회신 형식을 확인해 주세요." }, 400);
   const fallSettingsSupported = await hasFallSettingsSchema();
@@ -39,9 +42,11 @@ export async function POST(request: Request) {
   });
   const { activeSession, ...reportedState } = heartbeat;
   const fallSnapshot = fallSettingsSupported ? await readFallSettingsSnapshot(device.deviceId) : null;
+  const talkLease = await syncTalkLease(device.deviceId, talkReport);
   return noStore(
     {
       deviceId: device.deviceId,
+      talkLease,
       desiredState: fallSnapshot?.desiredState ?? {
         monitoringEnabled: reportedState.monitoringEnabled,
         cameraEnabled: reportedState.cameraEnabled,
@@ -104,6 +109,7 @@ function parseHeartbeat(value: Record<string, unknown> | null) {
     "storageHealthy",
     "detectorHealthy",
     "fallSettingsReport",
+    "talkReport",
   ];
   if (Object.keys(value).some((key) => !allowed.includes(key))) return null;
   if (
@@ -160,4 +166,14 @@ function parseHeartbeat(value: Record<string, unknown> | null) {
     storageHealthy: value.storageHealthy as boolean | undefined,
     detectorHealthy: value.detectorHealthy as boolean | undefined,
   };
+}
+
+function parseTalkReport(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const report = value as Record<string, unknown>;
+  if (Object.keys(report).length !== 2 ||
+      typeof report.leaseId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(report.leaseId) ||
+      typeof report.ready !== "boolean") return null;
+  return { leaseId: report.leaseId, ready: report.ready };
 }

@@ -1735,6 +1735,10 @@ export async function acquireTalkLease(input: {
            WHEN talk_leases.expires_at <= ? THEN excluded.client_id
            ELSE talk_leases.client_id
          END,
+         ready_until = CASE
+           WHEN talk_leases.expires_at <= ? THEN NULL
+           ELSE talk_leases.ready_until
+         END,
          expires_at = excluded.expires_at,
          updated_at = excluded.updated_at
        WHERE talk_leases.expires_at <= ?
@@ -1744,7 +1748,10 @@ export async function acquireTalkLease(input: {
             AND CAST(? AS TEXT) IS NOT NULL
             AND talk_leases.lease_id = ?
           )
-       RETURNING lease_id, expires_at`,
+       RETURNING lease_id, expires_at, CASE WHEN ready_until IS NULL THEN 0 ELSE
+         GREATEST(0, LEAST(2500, FLOOR(EXTRACT(EPOCH FROM
+           (LEAST(expires_at, ready_until) - CURRENT_TIMESTAMP)) * 1000)))::integer
+         END AS ready_for_ms`,
     )
     .bind(
       input.deviceId,
@@ -1758,19 +1765,44 @@ export async function acquireTalkLease(input: {
       nowIso,
       nowIso,
       nowIso,
+      nowIso,
       input.existingLeaseId ?? null,
       input.existingLeaseId ?? null,
     )
-    .first<{ lease_id: string; expires_at: string }>();
+    .first<{ lease_id: string; expires_at: string; ready_for_ms: number }>();
   if (!lease) return null;
-  await writeAuditLog({
+  if (lease.lease_id !== input.existingLeaseId) await writeAuditLog({
     deviceId: input.deviceId,
     actorType: "user",
     actorId: input.userId,
     action: "talk.acquire",
     metadata: { leaseId: lease.lease_id, clientId: input.clientId },
   });
-  return { leaseId: lease.lease_id, expiresAt: lease.expires_at };
+  return { leaseId: lease.lease_id, expiresAt: lease.expires_at,
+    ready: lease.ready_for_ms > 0, readyForMs: lease.ready_for_ms };
+}
+
+export async function syncTalkLease(
+  deviceId: string,
+  report?: { leaseId: string; ready: boolean },
+) {
+  await ensureHomecamSchema();
+  const d1 = getD1();
+  if (report) {
+    await d1.prepare(
+      `UPDATE talk_leases SET ready_until = CASE WHEN ? THEN
+         LEAST(expires_at, CURRENT_TIMESTAMP + INTERVAL '2500 milliseconds') ELSE NULL END
+       WHERE device_id = ? AND lease_id = ? AND expires_at > CURRENT_TIMESTAMP`,
+    ).bind(report.ready, deviceId, report.leaseId).run();
+  }
+  const lease = await d1.prepare(
+    `SELECT lease_id, LEAST(15000, FLOOR(EXTRACT(EPOCH FROM
+       (expires_at - CURRENT_TIMESTAMP)) * 1000))::integer AS remaining_ms
+     FROM talk_leases WHERE device_id = ? AND expires_at > CURRENT_TIMESTAMP`,
+  ).bind(deviceId).first<{ lease_id: string; remaining_ms: number }>();
+  return lease && lease.remaining_ms > 0
+    ? { leaseId: lease.lease_id, remainingMs: lease.remaining_ms }
+    : null;
 }
 
 export async function releaseTalkLease(input: {

@@ -12,6 +12,7 @@
 | FallCoordinator → Manager → FallCoordinator | Action `/malbut/mission/execute` | [ExecuteMission](action/ExecuteMission.action) | `fall_confirmation` capability로 확인을 요청하고 하위 Action의 최종 결과를 받음 |
 | Manager → Agent → Manager | Action `/malbut/agent/confirm_situation` | [ConfirmSituation](action/ConfirmSituation.action) | 등록된 capability를 실행해 상황 요약으로 확인 대화를 요청하고 최종 상황 판단·도움 필요 여부를 받음 |
 | Agent → STT → Agent | Service `/malbut/speech/session_control` | [ControlSpeechSession](srv/ControlSpeechSession.srv) | 호출어 없는 청취 세션의 시작·종료·생존 조회 |
+| 홈캠 미디어 → STT → 홈캠 미디어 | Service `/malbut/speech/web_talk_control` | [ControlWebTalk](srv/ControlWebTalk.srv) | 웹 말하기 중 입력 차단·갱신·종료. 입력 및 이전 인식 결과 차단 후 접수 응답 |
 | STT → Agent | Topic `/malbut/speech/input_status` | [SpeechInputStatus](msg/SpeechInputStatus.msg) | 일반 대화·확인 세션의 발화 시작·청취 또는 인식 실패 |
 | STT → Agent | Topic `/malbut/speech/transcript` | [SpeechTranscript](msg/SpeechTranscript.msg) | 최종 인식 문장과 발화·세션 ID |
 | STT → Agent → STT | Service `/malbut/speech/classify_addressee` | [ClassifySpeechAddressee](srv/ClassifySpeechAddressee.srv) | 일반 대화의 수신 대상 판정. 확인 세션에서는 생략 |

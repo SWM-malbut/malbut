@@ -34,6 +34,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ClassifySpeechAddressee.srv"
   "srv/ControlSpeechPlayback.srv"
   "srv/ControlSpeechSession.srv"
+  "srv/ControlWebTalk.srv"
   "srv/ApplyFallSettings.srv"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs
 )

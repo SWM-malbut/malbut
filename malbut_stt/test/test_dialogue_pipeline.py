@@ -1195,3 +1195,155 @@ def test_cancelled_queued_preview_releases_bookkeeping_without_decoding(harness)
     wake_up(harness, pipeline)
     finish_command(pipeline)
     pump(pipeline, lambda: len(harness.transcripts) == 1)
+
+
+@pytest.mark.parametrize('aec', [True, False])
+def test_web_talk_blocks_wake_and_audio_but_keeps_capture_alive(harness, aec):
+    pipeline = harness.create(aec=aec)
+    assert pipeline.control_web_talk('web-1', True, 10.0)
+    pipeline.feed(VOICE * 4 + QUIET * 100)
+    harness.recorder.frames.put([0] * 320)
+    wait_for(pipeline.capture_ready.is_set)
+    pipeline.poll()
+    assert pipeline.audio.empty() and pipeline.jobs.empty()
+    assert harness.wake_calls == harness.command_calls == harness.transcripts == []
+    assert harness.recorder.active
+    assert pipeline.control_web_talk('web-1', False, 0.0)
+    pipeline.feed(VOICE * 4 + QUIET * 20)
+    assert pipeline.jobs.empty()
+    harness.now = 0.31
+    wake_up(harness, pipeline)
+
+
+def test_web_talk_renews_then_expires_without_replaying_buffered_speech(harness):
+    pipeline = harness.create()
+    assert pipeline.control_web_talk('web-1', True, 1.0)
+    harness.now = 0.8
+    assert pipeline.control_web_talk('web-1', True, 1.0)
+    harness.now = 1.01
+    pipeline.poll()
+    assert pipeline._input_blocked(harness.now)
+    pipeline.audio.put_nowait((pipeline._audio_generation, harness.now, VOICE, False))
+    harness.now = 1.81
+    pipeline.poll()
+    assert pipeline.audio.empty() and not pipeline.session.active
+    assert pipeline._input_blocked(harness.now)
+    assert harness.reports.count('web_talk_started') == 1
+    assert 'web_talk_expired' in harness.reports
+    harness.now = 2.12
+    wake_up(harness, pipeline)
+
+
+def test_old_web_talk_release_cannot_clear_new_lease(harness):
+    pipeline = harness.create()
+    assert pipeline.control_web_talk('old', True, 10.0)
+    assert pipeline.control_web_talk('new', True, 10.0)
+    assert not pipeline.control_web_talk('old', False, 0.0)
+    assert pipeline._input_blocked(harness.now)
+    assert pipeline.control_web_talk('new', False, 0.0)
+    harness.now = 0.31
+    assert not pipeline._input_blocked(harness.now)
+
+
+@pytest.mark.parametrize('lease_id,active,ttl_s', [
+    ('', True, 10.0), (' ', True, 10.0), ('x' * 201, True, 10.0),
+    ('web', 1, 10.0), ('web', True, 0.0), ('web', True, 15.01),
+    ('web', True, float('nan')), ('web', True, float('inf')),
+    ('web', True, True), ('web', True, '10'),
+])
+def test_invalid_web_talk_request_does_not_gate_normal_wake(harness, lease_id, active, ttl_s):
+    pipeline = harness.create()
+    assert not pipeline.control_web_talk(lease_id, active, ttl_s)
+    assert not pipeline._input_blocked(harness.now)
+    wake_up(harness, pipeline)
+
+
+def test_web_talk_invalidates_inflight_asr_and_queued_capture_before_ack(harness):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    harness.allow_asr.clear()
+    finish_command(pipeline)
+    assert harness.entered_asr.wait(timeout=1)
+    cancelled = []
+
+    def cancel():
+        cancelled.append(True)
+
+    pipeline.transcriber.cancel = cancel
+    pipeline.audio.put_nowait((pipeline._audio_generation, harness.now, VOICE, False))
+    assert pipeline.control_web_talk('web-1', True, 10.0)
+    assert cancelled == [True] and pipeline.audio.empty() and pipeline.jobs.empty()
+    assert not pipeline.session.active and not pipeline._busy
+    harness.allow_asr.set()
+    wait_for(lambda: not pipeline.results.empty())
+    pipeline.poll()
+    assert harness.transcripts == []
+    assert pipeline.control_web_talk('web-1', False, 0.0)
+    harness.now = 0.31
+    pipeline.poll()
+    assert harness.transcripts == [] and not pipeline.session.active
+
+
+@pytest.mark.parametrize('speech_started', [True, False])
+def test_web_talk_aborts_confirmation_as_session_failure_not_silence(harness, speech_started):
+    statuses = []
+    pipeline = harness.create(publish_input_status=lambda *args: statuses.append(args))
+    assert pipeline.start_session('incident-1')
+    if speech_started:
+        pipeline.feed(VOICE * 4)
+        assert statuses[-1][2] == 'started'
+    assert pipeline.control_web_talk('web-1', True, 10.0)
+    assert statuses[-1] == ('incident-1', '', 'failed')
+    assert not pipeline.session_is_active('incident-1')
+    assert not pipeline.start_session('incident-2')
+    assert pipeline.stop_session('incident-2')
+    assert pipeline.control_web_talk('web-1', True, 10.0)
+    assert sum(status[2] == 'failed' for status in statuses) == 1
+    assert pipeline.control_web_talk('web-1', False, 0.0)
+    assert not pipeline.start_session('incident-3')
+    harness.now = 0.31
+    assert not pipeline.start_session('incident-1')
+    assert not pipeline.start_session('incident-2')
+    assert pipeline.start_session('incident-3')
+
+
+@pytest.mark.parametrize('reply_ends_during_talk', [True, False])
+def test_web_talk_does_not_release_unfinished_ordinary_reply(harness, reply_ends_during_talk):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    finish_command(pipeline)
+    pump(pipeline, lambda: len(harness.transcripts) == 1)
+    uid = harness.transcripts[0][0]
+    assert pipeline.control_web_talk('web-1', True, 10.0)
+    if reply_ends_during_talk:
+        pipeline.on_playback_status('answer', 'finished', request_id=uid)
+        assert pipeline._input_blocked(harness.now)
+    assert pipeline.control_web_talk('web-1', False, 0.0)
+    harness.now = 0.31
+    assert pipeline._input_blocked(harness.now) is not reply_ends_during_talk
+    if not reply_ends_during_talk:
+        pipeline.on_playback_status('answer', 'finished', request_id=uid)
+    assert not pipeline._input_blocked(harness.now)
+
+
+@pytest.mark.parametrize('release_before_timeout', [True, False])
+def test_web_talk_preserves_retry_notice_timeout(harness, release_before_timeout):
+    pipeline = harness.create()
+    wake_up(harness, pipeline)
+    pipeline.feed(VOICE)
+    uid = pipeline.session.utterance_id
+    pipeline._accept_result('command', pipeline._generation, uid, None, 'ValueError')
+    deadline = pipeline._retry_notice_deadline
+    harness.now = 40.0
+    assert pipeline.control_web_talk('web-1', True, 10.0)
+    assert pipeline._retry_notice_deadline == deadline
+    if release_before_timeout:
+        assert pipeline.control_web_talk('web-1', False, 0.0)
+    harness.now = deadline
+    pipeline.poll()
+    assert pipeline._reply_request_id is None
+    assert pipeline._input_blocked(harness.now) is not release_before_timeout
+    if not release_before_timeout:
+        assert pipeline.control_web_talk('web-1', False, 0.0)
+        harness.now += 0.31
+    assert not pipeline._input_blocked(harness.now)

@@ -22,6 +22,7 @@ flowchart LR
 | TTS → STT·Agent 재생 상태 | Topic | `/malbut/speech/playback_status` | `SpeechPlaybackStatus` |
 | STT → Agent 발화 대상 판정 | **Service** | `/malbut/speech/classify_addressee` | `ClassifySpeechAddressee` |
 | Agent → STT 확인 청취 세션 제어·조회 | **Service** | `/malbut/speech/session_control` | `ControlSpeechSession` |
+| 웹 말하기 → STT 입력 차단 제어 | **Service** | `/malbut/speech/web_talk_control` | `ControlWebTalk` |
 | STT·Agent → TTS 재생 제어 | **Service** | `/malbut/speech/playback_control` | `ControlSpeechPlayback` |
 
 필드와 선택값의 최종 기준은 `malbut_interfaces`의 `.msg`와 `.srv` 파일이다.
@@ -67,6 +68,11 @@ Service의 요청과 응답은 ROS가 연결하므로 별도 결과 Topic을 사
   무시하고 해당 ID가 활성이고 마이크 입력을 사용할 수 있는지 조회한다. 그 외에는 `active`로 시작·종료를 요청한다.
   `barge_in_available`은 실제 입력의 AEC 기반 끼어들기 가능 여부다. 중복 시작,
   예약 종료와 ID 보관 규칙은 아래 3.7절을 따른다.
+- 웹 말하기 입력 차단: [ControlWebTalk.srv](../../malbut_interfaces/srv/ControlWebTalk.srv).
+  요청은 `lease_id: string`, `active: bool`, `ttl_s: float64`, 응답은 `accepted: bool`이다.
+  비어 있지 않은 200자 이하 ID로 시작·갱신하며 `0 < ttl_s <= 15`를 사용한다.
+  `active=false`는 현재 ID와 일치할 때만 해제하며 `ttl_s`는 사용하지 않는다.
+  시작의 `accepted=true`는 기존 오디오·인식 결과 무효화와 입력 차단 완료를 뜻한다.
 
 ## 3. 기능
 
@@ -141,6 +147,15 @@ flowchart TD
 - 최종 전사는 기존 `/malbut/speech/transcript`에 `session_id`를 포함해 발행한다. 일반 대화 전사의 `session_id`는 빈 값이다. 최종 전사 실패, 발화 길이 초과, 입력 큐 넘침은 해당 세션의 `FAILED` 입력 상태로 알린다. 마이크 읽기 오류는 STT를 중단하며 세션 조회 실패로 구분한다.
 - 확인 질문 중 끼어들기는 `input_has_aec`와 서비스 응답의 `barge_in_available` 값에 관계없이 받지 않는다. TTS는 `CONFIRMATION` 재생의 pause·resume을 거절하며, 취소를 위한 stop·stop_all은 유지한다. 일반 대화의 AEC·재생 제어 정책은 그대로 유지한다.
 - AEC 없는 입력에는 재생 상태가 바뀐 뒤 300ms의 에코 차단 시간이 추가로 있다. 질문 종료 직후 이 시간 안에 끝난 짧은 답변은 수집되지 않을 수 있다. 이 보호 동작은 AEC를 대신하지 않는다.
+
+### 3.8. 웹 말하기 중 입력 차단
+
+- 웹에서 말하기를 활성화하면 STT 프로세스와 마이크 읽기는 유지하고 호출어·일반 전사·확인 답변 인식을 모두 차단한다. AEC 설정과 관계없이 적용한다. 영상 시청이나 마이크 권한 허용만으로는 차단하지 않는다.
+- 말하기 시작 응답 전에 수집·대기 오디오를 비우고 진행 중인 인식을 취소·무효화한다. 뒤늦게 반환된 기존 인식 결과는 Agent에 전달하지 않는다.
+- 동일 ID의 갱신은 청취 차단의 만료 시간만 연장한다. 새 ID로 교체한 뒤 도착한 이전 ID의 종료는 현재 차단을 풀지 않는다. 갱신이 끊기면 단조 시계 기준 TTL 만료로 자동 해제한다.
+- 정상 종료와 만료 시 버퍼를 비우고 300ms 잔향 차단 후 호출어 대기로 돌아간다. 이미 접수한 일반 요청의 답변이 남아 있으면 해당 `request_id`의 최종 답변 종료까지 기존 답변 대기 차단도 유지한다.
+- STT 노드 시작 시 마이크를 열기 전에 3초간 입력을 차단한다. 미디어 에이전트가 이전 STT 프로세스에서 받은 최대 3초 허가로 계속 재생하더라도 재시작 직후 호출어를 오인식하지 않게 한다. 새로운 웹 말하기 허가가 도착하면 해당 ID로 차단을 이어 간다.
+- 진행 중인 확인 세션에는 해당 `session_id`와 빈 `utterance_id`로 `FAILED`를 발행하고 종료한다. 웹 말하기·잔향 차단 중에는 새 확인 세션 시작과 활성 조회를 거절하며 종료 요청은 처리한다. Agent는 이를 청취 불가로 구분하고 사용자 무응답으로 판단하지 않는다.
 
 ## 4. 예외 처리
 

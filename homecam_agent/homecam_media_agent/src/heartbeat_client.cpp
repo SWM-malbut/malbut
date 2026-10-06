@@ -2,6 +2,7 @@
 #include <charconv>
 
 #include <limits>
+#include <regex>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -108,6 +109,9 @@ std::string heartbeat_to_json(const HeartbeatStatus & status)
   if (status.fall_settings_report) {
     json << ",\"fallSettingsReport\":" << status.fall_settings_report->dump();
   }
+  if (status.talk_report) {
+    json << ",\"talkReport\":" << status.talk_report->dump();
+  }
   json << "}";
   return json.str();
 }
@@ -178,6 +182,24 @@ bool parse_desired_settings(
       desired_iterator->at("microphoneEnabled").get<bool>();
     desired->monitoring_enabled =
       desired_iterator->at("monitoringEnabled").get<bool>();
+    desired->talk_lease_id.clear();
+    desired->talk_remaining_ms = 0;
+    const auto talk = root.find("talkLease");
+    // Missing/invalid talk state must never permit remote speaker playback.
+    if (talk != root.end() && talk->is_object() && talk->size() == 2U &&
+      talk->contains("leaseId") && (*talk)["leaseId"].is_string() &&
+      talk->contains("remainingMs") && (*talk)["remainingMs"].is_number_integer())
+    {
+      static const std::regex uuid(
+        "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+        std::regex::icase);
+      const auto id = (*talk)["leaseId"].get<std::string>();
+      const auto & remaining = (*talk)["remainingMs"];
+      if (std::regex_match(id, uuid) && remaining > 0 && remaining <= 15000) {
+        desired->talk_lease_id = id;
+        desired->talk_remaining_ms = remaining.get<std::int64_t>();
+      }
+    }
     const auto fall = root.find("fallSettings");
     if (fall != root.end()) {
       desired->fall_reason = "server_invalid_settings";

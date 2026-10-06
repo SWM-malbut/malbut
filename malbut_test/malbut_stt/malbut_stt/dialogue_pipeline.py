@@ -113,6 +113,9 @@ class DialoguePipeline:
         self._reply_request_id = None
         self._retry_notice_deadline = None
         self._command_start_deadline = None
+        self._web_talk_lease_id = None
+        self._web_talk_deadline = 0.0
+        self._web_talk_drain_until = 0.0
         self._retired_session_ids = OrderedDict()
         self._raw_playback_gate = False
         self._raw_gate_until = 0.0
@@ -167,7 +170,9 @@ class DialoguePipeline:
 
     def start_session(self, session_id):
         """Replace ordinary dialogue with a correlated, wake-free confirmation."""
+        self._expire_web_talk()
         if (self.stopping.is_set() or self.capture_error is not None
+                or self._web_talk_blocked(self.clock())
                 or self._capture_timed_out() or not isinstance(session_id, str)
                 or not session_id.strip() or len(session_id) > 200):
             return False
@@ -195,12 +200,59 @@ class DialoguePipeline:
 
     def session_is_active(self, session_id):
         """Read the current session without creating, closing, or retiring any ID."""
+        self._expire_web_talk()
         return bool(
             not self.stopping.is_set()
+            and not self._web_talk_blocked(self.clock())
             and self.capture_error is None and not self._capture_timed_out()
             and isinstance(session_id, str) and session_id.strip()
             and len(session_id) <= 200
             and self.session.active and self.session.session_id == session_id)
+
+    def control_web_talk(self, lease_id, active, ttl_s):
+        """Acknowledge a web microphone lease only after invalidating local speech."""
+        if (self.stopping.is_set() or not isinstance(lease_id, str)
+                or not lease_id.strip() or len(lease_id) > 200 or type(active) is not bool):
+            return False
+        if active and (isinstance(ttl_s, bool) or not isinstance(ttl_s, (int, float))
+                       or not math.isfinite(ttl_s) or not 0 < ttl_s <= 15.0):
+            return False
+        self._expire_web_talk()
+        if not active:
+            if lease_id != self._web_talk_lease_id:
+                return False
+            self._end_web_talk('web_talk_ended')
+            return True
+        was_active = self._web_talk_lease_id is not None
+        self._web_talk_lease_id = lease_id
+        self._web_talk_deadline = self.clock() + ttl_s
+        if not was_active:
+            if self.session.session_id:
+                self._input_status('failed', '')
+            reply_request_id = self._reply_request_id
+            retry_notice_deadline = self._retry_notice_deadline
+            self._terminate('web_talk_started')
+            # A web call cannot complete an already accepted ordinary request.
+            self._reply_request_id = reply_request_id
+            self._retry_notice_deadline = retry_notice_deadline
+            self._tail_stream = None
+            self._drain(self.results)
+        return True
+
+    def _web_talk_blocked(self, captured_at):
+        return (self._web_talk_lease_id is not None
+                or captured_at < self._web_talk_drain_until)
+
+    def _expire_web_talk(self):
+        # Only the owner thread mutates dialogue; capture stays gated until this runs.
+        if self._web_talk_lease_id is not None and self.clock() >= self._web_talk_deadline:
+            self._end_web_talk('web_talk_expired')
+
+    def _end_web_talk(self, reason):
+        self._web_talk_drain_until = self.clock() + 0.3
+        self._reset_audio()
+        self._web_talk_lease_id = None
+        self.report(reason)
 
     def _capture_timed_out(self):
         # Device liveness is independent of the injected dialogue-policy clock.
@@ -215,7 +267,7 @@ class DialoguePipeline:
                 self._retired_session_ids.popitem(last=False)
 
     def _input_status(self, state, uid=None):
-        uid = uid or self.session.utterance_id or ''
+        uid = (self.session.utterance_id or '') if uid is None else uid
         # Ordinary turns have no session ID, but must identify a real utterance.
         # Proactive sessions also use a blank UID for session-wide input failure.
         if self.publish_input_status is not None and (
@@ -381,6 +433,7 @@ class DialoguePipeline:
         """Advance deadlines and consume bounded work without blocking ROS callbacks."""
         if self.stopping.is_set():
             return
+        self._expire_web_talk()
         if self.capture_error is None and self._capture_timed_out():
             self.capture_error = RuntimeError('microphone input timeout')
         if self.capture_error is not None:
@@ -436,7 +489,7 @@ class DialoguePipeline:
             self._terminate('session_ended:input_timeout')
 
     def _input_blocked(self, captured_at):
-        return (self._reply_request_id is not None
+        return (self._web_talk_blocked(captured_at) or self._reply_request_id is not None
                 or self._chime_playing or captured_at < self._chime_gate_until) or (
             not self.input_has_aec and (
                 self._raw_playback_gate or captured_at < self._raw_gate_until
@@ -453,6 +506,7 @@ class DialoguePipeline:
 
     def feed(self, pcm, *, captured_at=None, busy_at_capture=False):
         """Consume captured PCM on the owner thread; the microphone remains open."""
+        self._expire_web_talk()
         captured_at = self.clock() if captured_at is None else captured_at
         if self.stopping.is_set() or self._input_blocked(captured_at):
             return

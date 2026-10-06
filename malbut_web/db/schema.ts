@@ -373,6 +373,7 @@ export const talkLeases = pgTable("talk_leases", {
     .references(() => users.id, { onDelete: "cascade" }),
   clientId: text("client_id").notNull(),
   expiresAt: timestampText("expires_at").notNull(),
+  readyUntil: timestampText("ready_until"),
   createdAt: timestampText("created_at").notNull().defaultNow(),
   updatedAt: timestampText("updated_at").notNull().defaultNow(),
 });
