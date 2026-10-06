@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { demoIncidentFetch } from "./fall-incidents-demo";
 
 // 사건 screens, built from the reviewed mockup (Main.dc.html / Incident.dc.html):
@@ -344,7 +345,7 @@ function Scene({ deviceId, incidentId, clip, request, demo, onOpenLive }: {
 }
 
 export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChange, onOpenLive, onOpenTimeline,
-  demo = false }: {
+  header, demo = false }: {
   deviceId: string;
   initialIncidentId?: string;
   onIncidentChange?: (incidentId: string | null) => void;
@@ -352,6 +353,8 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
   /** 연속 녹화 화면; with an incident it opens "AI에게 다시 검토 받기" pre-filled. */
   onOpenTimeline?: (incident?: { incidentId: string; momentAt: string; title: string;
     rangeStart: string; rangeEnd: string }) => void;
+  /** The tab top shared by every tab (화면 이름 · 연결 상태 · 연결된 말벗); shown above the list only. */
+  header?: ReactNode;
   /** Local UI demo: an in-memory API instead of the server. */
   demo?: boolean;
 }) {
@@ -662,34 +665,34 @@ export function FallIncidentsPanel({ deviceId, initialIncidentId, onIncidentChan
     </button>
   );
   return (
-    <div className="fall-page">
-      <div className="fall-list-head">
-        <div>
-          <h2>사건</h2>
-          {onOpenTimeline && <button type="button" className="fall-link" onClick={() => onOpenTimeline()}>연속 녹화 보기</button>}
+    <>
+      {header}
+      <div className="fall-page">
+        <div className="fall-list-tools">
+          <div className="fall-chips" role="group" aria-label="사건 필터">
+            {FILTERS.map(([key, label]) => (
+              <button type="button" key={key} aria-pressed={filter === key} className={filter === key ? "is-on" : ""}
+                onClick={() => setFilter(key)}>{label}</button>
+            ))}
+          </div>
+          {onOpenTimeline && <button type="button" className="fall-link" onClick={() => onOpenTimeline()}>연속 녹화 보기 ›</button>}
         </div>
-        <div className="fall-chips" role="group" aria-label="사건 필터">
-          {FILTERS.map(([key, label]) => (
-            <button type="button" key={key} aria-pressed={filter === key} className={filter === key ? "is-on" : ""}
-              onClick={() => setFilter(key)}>{label}</button>
+        <div className="fall-list">
+          {error && <p className="fall-notice" role="alert">{error}</p>}
+          {loading && incidents.length === 0 && <p className="fall-empty" role="status">사건을 불러오는 중입니다…</p>}
+          {!loading && !error && incidents.length === 0 && (
+            <p className="fall-empty">표시할 사건이 없어요. 낙상이 의심되면 사건이 생기고, 그 장면을 연속 녹화에서 바로 볼 수 있어요.</p>
+          )}
+          {first.length > 0 && <div className="fall-group">가장 먼저 확인할 사건</div>}
+          {first.map(card)}
+          {groups.map(([label, items]) => (
+            <div className="fall-group-block" key={label}>
+              <div className="fall-group">{label}</div>
+              {items.map(card)}
+            </div>
           ))}
         </div>
       </div>
-      <div className="fall-list">
-        {error && <p className="fall-notice" role="alert">{error}</p>}
-        {loading && incidents.length === 0 && <p className="fall-empty" role="status">사건을 불러오는 중입니다…</p>}
-        {!loading && !error && incidents.length === 0 && (
-          <p className="fall-empty">표시할 사건이 없어요. 낙상이 의심되면 사건이 생기고, 그 장면을 연속 녹화에서 바로 볼 수 있어요.</p>
-        )}
-        {first.length > 0 && <div className="fall-group">가장 먼저 확인할 사건</div>}
-        {first.map(card)}
-        {groups.map(([label, items]) => (
-          <div className="fall-group-block" key={label}>
-            <div className="fall-group">{label}</div>
-            {items.map(card)}
-          </div>
-        ))}
-      </div>
-    </div>
+    </>
   );
 }

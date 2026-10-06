@@ -23,10 +23,11 @@ from test_fall_subject_evidence import checked_message
 BOX = (0.1, 0.2, 0.4, 0.9)
 
 
-def pose_payload(capture, *, initial=False, mode='same_frame'):
+def pose_payload(capture, *, initial=False, mode='same_frame', stationary=True):
     data = json.loads(checked_message(
         capture, with_candidate=initial, state='unknown',
         usable=mode != 'pose_unusable'))
+    data['robotMotion'] = 'stationary' if stationary else 'unknown'
     if mode == 'pose_empty':
         data['tracks'] = []
     elif mode == 'ambiguous_people':
@@ -48,13 +49,13 @@ def pose(adapter, clock, capture, *, received_at=None, **kwargs):
                               source_now=received_at, now=clock())
 
 
-async def prepare(mode):
+async def prepare(mode, *, camera_stationary=True):
     monitor, clock, provider = make(clip_window_s=5)
     adapter = FallDetectorInput(monitor, max_source_age_s=2)
     adapter.configure(enabled=True, camera_enabled=True,
                       cloud_consent=True, connected=True)
     rgb(adapter, clock, 1000)
-    original = pose(adapter, clock, 1000, initial=True)[0]
+    original = pose(adapter, clock, 1000, initial=True, stationary=camera_stationary)[0]
     provider.reply = CloudFallReply(VideoAssessment.OBSERVED_FALL, 'fixture')
     assert await monitor.run_once()
     first = monitor.drain_events()
@@ -75,7 +76,7 @@ async def prepare(mode):
             if n == 600 and mode.startswith('late_'):
                 continue
             pose(adapter, clock, capture,
-                 mode=mode if n >= 500 else 'same_frame')
+                 mode=mode if n >= 500 else 'same_frame', stationary=camera_stationary)
 
     clock.value = 160.1
     window = monitor.buffer.window(end=clock(), duration_s=5,
@@ -127,9 +128,14 @@ def test_input_timing_incident_outcome(mode, reason, box_samples, record_propert
         assert evidence.pose_box_samples == box_samples
 
         matched = reason == 'matched'
+        waiting = mode in {'late_after_cloud', 'pose_empty', 'pose_unusable'}
         assert (discovery.incident_id == original) == matched
-        assert sum(e.kind == 'incident_opened' for e in events) == int(not matched)
-        assert sum(e.kind == 'question_requested' for e in events) == int(not matched)
+        new_case = not matched and not waiting
+        assert sum(e.kind == 'incident_opened' for e in events) == int(new_case)
+        assert sum(e.kind == 'question_requested' for e in events) == int(new_case)
+        if waiting:
+            assert discovery.incident_id is None
+            assert discovery.association_review.status == 'pending'
         assert monitor.incident(original).question_id == question
         assert monitor.incident(original).subject_association_token == token
         assert monitor.incident(original).attempts == 1
@@ -140,13 +146,12 @@ def test_input_timing_incident_outcome(mode, reason, box_samples, record_propert
             pose(adapter, clock, 1060, received_at=1060.15)
             later = monitor.drain_events()
             linked, = [e.discovery for e in later if e.kind == 'cloud_discovery_linked']
-            assert linked.reason == 'matched_after_pose_arrival'
+            assert linked.reason == 'matched_after_association_wait'
             assert linked.incident_id == original
-            assert linked.association_link.source_incident_id == discovery.incident_id
+            assert linked.association_link.source_incident_id == original
             assert monitor.incident(original).question_id == question
-            # Keep scene history and the already issued target question. Its
-            # original evidence is replayed rather than emitting a replacement.
-            assert monitor.incident(discovery.incident_id).subject_key is None
+            # The deferred observation never became a scene/question at all.
+            assert len(monitor._incidents) == 1
             assert not any(e.kind == 'question_requested' for e in later)
             assert {e.question_id for e in monitor.pending_questions()
                     if e.kind == 'question_requested'} == {question}
@@ -171,14 +176,21 @@ def test_input_timing_incident_outcome(mode, reason, box_samples, record_propert
             mode=mode, reason=reason,
             pose_box_samples=box_samples, finding_samples=2,
             selected_rgb_frames=len(provider.calls[-1].window.frames),
-            incident_count=1 + int(not matched),
-            total_question_requests=1 + int(not matched),
+            incident_count=1 + int(new_case),
+            total_question_requests=1 + int(new_case),
+            association_waiting=waiting and mode != 'late_after_cloud',
             extra_incident_cloud_calls=0,
             reassociate_with_current_evidence=available_now.reason,
             linked_after_response=(mode == 'late_after_cloud'),
         )
         record_property('diagnosis', json.dumps(result))
         print(json.dumps(result, sort_keys=True))
+        if mode in {'pose_empty', 'pose_unusable'}:
+            clock.value = discovery.association_review.deadline
+            monitor.maintain_associations()
+            expired = monitor.drain_events()
+            assert sum(e.kind == 'question_requested' for e in expired) == 1
+            assert len(monitor._incidents) == 2 and len(provider.calls) == 2
 
     asyncio.run(run())
 

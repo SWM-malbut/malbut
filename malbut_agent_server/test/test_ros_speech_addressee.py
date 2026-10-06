@@ -227,14 +227,15 @@ def input_status(node, uid, state, session_id=''):
     callback(SpeechInputStatus(session_id=session_id, utterance_id=uid, state=state))
 
 
-def test_recognition_failure_during_an_earlier_answer_is_interim(node):
+def test_recognition_failure_finishes_its_own_request_during_an_earlier_answer(node):
     node.dialogue.has_pending = True
     input_status(node, 'missed', 'started')
     input_status(node, 'missed', 'failed')
     messages = node.sent[ros_communication.RESPONSE_TOPIC]
     assert len(messages) == 1
-    assert messages[0].text == '잘 알아듣지 못했어요. 다시 말씀해 주세요.'
-    assert messages[0].interim is True
+    assert messages[0].request_id == 'missed'
+    assert messages[0].text == '잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.'
+    assert messages[0].interim is False
     assert node.dialogue.requests == []
 
 
@@ -246,7 +247,8 @@ def test_recognition_failure_speaks_once_without_model_turn_and_next_input_works
     input_status(node, 'missed', 'failed')
     messages = node.sent[ros_communication.RESPONSE_TOPIC]
     assert len(messages) == 1
-    assert messages[0].text == '잘 알아듣지 못했어요. 다시 말씀해 주세요.'
+    assert messages[0].request_id == 'missed'
+    assert messages[0].text == '잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.'
     assert messages[0].request_type == SpeechRequest.DIALOGUE
     assert messages[0].interim is False
     assert node.dialogue.requests == []

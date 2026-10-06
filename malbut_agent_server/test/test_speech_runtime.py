@@ -94,8 +94,16 @@ def test_check_needs_no_ros_database_or_model(monkeypatch, tmp_path, capsys):
     assert 'configuration: ok' in capsys.readouterr().out
 
 
+def test_check_accepts_openai_without_key_because_the_web_can_set_it(monkeypatch, capsys):
+    """SWM25-235: the owner may set the key on the web after bringup."""
+    monkeypatch.setattr(ros_communication.os, 'environ', {})
+    monkeypatch.setitem(sys.modules, 'rclpy', None)
+    assert ros_communication.main(['--check', '--provider', 'openai']) == 0
+    assert 'configuration: ok' in capsys.readouterr().out
+
+
 @pytest.mark.parametrize('arguments', [
-    ['--provider', 'openai'], ['--user-id', ' '],
+    ['--user-id', ' '],
     ['--conversation-db', ''], ['--goal-response-timeout-s', 'nan'],
     ['--goal-response-timeout-s', '0'],
 ])

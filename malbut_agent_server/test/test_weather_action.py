@@ -21,6 +21,7 @@ from malbut_agent_server.weather_kma import KmaWeatherClient, KmaWeatherError
 @pytest.fixture
 def runtime(monkeypatch, tmp_path):
     monkeypatch.delenv('KMA_SERVICE_KEY', raising=False)
+    monkeypatch.setenv('MALBUT_KEY_DIR', str(tmp_path / 'keys'))
     now = datetime(2026, 9, 12, 12, tzinfo=ZoneInfo('Asia/Seoul')).timestamp()
     snapshot = WeatherState(
         now + 0.25, now - 600, '시험 지역', 37, 127, SOURCE,
@@ -33,6 +34,7 @@ def runtime(monkeypatch, tmp_path):
         destroyed=0, fetches=0, snapshot=snapshot, lifecycle=[], nodes=[], env_files=[],
         outcome=snapshot, started=Event(), release=Event(), block=False,
         database_path=str(tmp_path / 'weather-location.sqlite3'),
+        health=[],
     )
 
     class FloatFields:
@@ -61,6 +63,11 @@ def runtime(monkeypatch, tmp_path):
 
         def declare_parameter(self, name, default):
             return SimpleNamespace(value=state.params.get(name, default))
+
+        def create_publisher(self, message_type, topic, qos):
+            assert topic == '/malbut/keys/health'
+            assert qos['durability'] == 'transient_local'
+            return SimpleNamespace(publish=lambda message: state.health.append(message.data))
 
         def destroy_node(self):
             state.destroyed += 1
@@ -128,9 +135,16 @@ def runtime(monkeypatch, tmp_path):
     action_types.ExecuteMission = SimpleNamespace(
         Result=SimpleNamespace, Feedback=SimpleNamespace,
     )
+    qos = ModuleType('rclpy.qos')
+    qos.QoSProfile = lambda **kwargs: kwargs
+    qos.DurabilityPolicy = SimpleNamespace(TRANSIENT_LOCAL='transient_local')
+    qos.ReliabilityPolicy = SimpleNamespace(RELIABLE='reliable')
+    std_messages = ModuleType('std_msgs.msg')
+    std_messages.String = type('String', (), {'data': ''})
     for name, module in {
         'rclpy': ros, 'rclpy.node': node_module, 'rclpy.action': actions,
         'rclpy.callback_groups': groups, 'rclpy.executors': executors,
+        'rclpy.qos': qos, 'std_msgs': ModuleType('std_msgs'), 'std_msgs.msg': std_messages,
         'malbut_interfaces.msg': messages, 'malbut_interfaces.action': action_types,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
@@ -582,3 +596,13 @@ def test_missing_ros_performs_no_http(monkeypatch, capsys):
     monkeypatch.setitem(sys.modules, 'rclpy', None)
     assert weather_action.main([]) == 2
     assert 'rclpy is required' in capsys.readouterr().err
+
+
+def test_weather_node_shares_kma_key_health_for_the_web(runtime):
+    """SWM25-235: key_sync hears how the weather key did on /malbut/keys/health."""
+    from malbut_agent_server.service_keys import shared_key
+
+    weather_action.create_weather_action_node()
+    shared_key('kma').report('invalid', 'kma_auth_failed')
+    assert runtime.health == [
+        '{"service":"kma","state":"invalid","code":"kma_auth_failed"}']

@@ -96,14 +96,33 @@ export function FallTimelinePanel({ deviceId, mode: initialMode, onBack, onOpenI
   const typingRef = useRef(false);
 
   const day0 = dayStart(offset, today);
+  // Today keeps recording: the spans are fetched again every 30 s, and at once for a moment
+  // picked after the last fetch, so the bar is never grey where the video already exists.
+  const showsToday = offset === 0;
+  const [loadedAt, setLoadedAt] = useState(0);
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     let active = true;
     const from = new Date(day0).toISOString(), to = new Date(day0 + 86_400_000).toISOString();
+    const askedAt = nowMs();
     void request(`${base}/fall-timeline?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { cache: "no-store" })
-      .then(json).then((body) => { if (active) setTimeline(body as Timeline); })
-      .catch(() => { if (active) setTimeline({ from, to, recordings: [], incidents: [] }); });
+      .then(json).then((body) => {
+        if (!active) return;
+        setTimeline(body as Timeline);
+        setLoadedAt(askedAt);
+      })
+      // A failed refresh keeps what the day already shows.
+      .catch(() => { if (active) setTimeline((current) => current?.from === from ? current : { from, to, recordings: [], incidents: [] }); });
     return () => { active = false; };
-  }, [base, day0, request]);
+  }, [base, day0, request, reload]);
+  useEffect(() => {
+    if (!showsToday) return;
+    const timer = window.setInterval(() => setReload((count) => count + 1), 30_000);
+    return () => window.clearInterval(timer);
+  }, [showsToday]);
+  useEffect(() => {
+    if (showsToday && loadedAt && moment > loadedAt) window.queueMicrotask(() => setReload((count) => count + 1));
+  }, [loadedAt, moment, showsToday]);
 
   // Recording window around the cursor; video time 0 is the first archived fragment.
   useEffect(() => {

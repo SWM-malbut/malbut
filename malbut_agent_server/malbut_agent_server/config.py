@@ -442,15 +442,19 @@ class Settings:
         """Reject unsafe binds and incomplete live-provider settings."""
         self._validate_runtime(http_server=True)
 
-    def validate_for_dialogue(self) -> None:
-        """Validate ROS dialogue without treating HTTP tokens as ROS auth."""
+    def validate_for_dialogue(self, *, require_api_key: bool = True) -> None:
+        """Validate ROS dialogue without treating HTTP tokens as ROS auth.
+
+        The robot passes ``require_api_key=False``: the owner may set the key
+        on the web later, and until then the robot says it can't talk.
+        """
         if self.tool_mode != 'proposal':
             raise ValueError('ROS dialogue requires proposal-only Tool mode')
         if not isinstance(self.user_id, str) or not self.user_id.strip():
             raise ValueError('MALBUT_AGENT_USER_ID is invalid')
-        self._validate_runtime(http_server=False)
+        self._validate_runtime(http_server=False, require_api_key=require_api_key)
 
-    def _validate_runtime(self, *, http_server: bool) -> None:
+    def _validate_runtime(self, *, http_server: bool, require_api_key: bool = True) -> None:
         if self.provider not in SUPPORTED_PROVIDERS:
             raise ValueError('MALBUT_AGENT_PROVIDER is unsupported')
         if self.tool_mode not in SUPPORTED_TOOL_MODES:
@@ -492,7 +496,7 @@ class Settings:
         if self.provider == 'rai-sidecar':
             self.validate_rai_sidecar(require_http_auth=http_server)
             return
-        if not self.openai_api_key:
+        if require_api_key and not self.openai_api_key:
             raise ValueError('OPENAI_API_KEY is required')
         if not _valid_model_id(self.openai_model):
             raise ValueError('OPENAI_MODEL is invalid')

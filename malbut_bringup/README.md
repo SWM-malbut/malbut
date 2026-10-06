@@ -150,6 +150,29 @@ API 키는 런타임 설정의 `cloud_key_file`에서 읽으며 launch 인자로
 Bringup과 별도의 `malbut-fall-monitor --execute`를 동시에 실행하지 않는다.
 실물 카메라·Cloud 인증·Manager 연결을 합친 동작 검증은 별도로 필요하다.
 
+### 사건 기록·클립 자동 업로드
+
+낙상 모듈은 웹 설정이 있으면 `malbut-fall-upload`도 독립 프로세스로 한 번 시작한다.
+`fall_config`의 `journal_path`와 `device_id`를 그대로 사용하며,
+`HOMECAM_BACKEND_URL`과 `HOMECAM_DEVICE_TOKEN_FILE`을 한 쌍으로 전달한다.
+두 환경변수가 모두 없을 때만 `fall_config.key_sync`의 주소·허용 호스트·기기 토큰을 재사용한다.
+`HOMECAM_DEVICE_ID`가 지정돼 있으면 감지 설정의 ID와 일치해야 한다.
+업로드 토큰은 웹의 **기기 인증 토큰**이며 `cloud_key_file`의 VLM API 키가 아니다.
+
+- `--execute --upload-clips`로 사건 이력, 클립 구간, 사람 박스를 순서대로 전송한다.
+  영상 파일을 새로 올리는 기능은 아니며 기존 KVS 녹화는 별도로 필요하다.
+- 업로드는 ROS 노드가 아닌 CLI이므로 ROS 인자를 붙이지 않는다. Bringup 종료 시 함께 종료되고,
+  실행 후 종료되면 5초 뒤 재시작한다. 같은 DB의 중복 송신은 전용 파일 잠금으로 막는다.
+- 웹 설정이 없거나 잘못되면 업로드 미시작 경고를 남기고 감지는 계속한다.
+  기기 토큰·DB 권한 오류는 워커 로그를 확인한다. 설정을 고친 뒤 Bringup을 재시작한다.
+- 통신 오류의 재시도, 인증·계약 오류의 `blocked` 처리는 기존 정책을 유지한다.
+  `pending`은 전송 대기, `stored`는 서버 저장 확인이며 보호자 알림 수신 완료를 뜻하지 않는다.
+- 기존 대기 기록도 전송한다. 과거 `notification_requested`의 알림을 억제하거나
+  DB를 비우지 않으므로, 배포 전 밀린 알림 발송 가능성을 확인한다.
+
+로컬 검증은 모의 HTTPS 응답·임시 DB만 사용한다. 실제 로봇의 인증, 웹 목록 및 KVS 재생은
+포팅 후 확인해야 한다. 별도 수동 업로더를 중복 실행할 필요는 없다.
+
 제조사 실행은 하드웨어 `slam/launch/include/robot.launch.py` 하나만 include한다.
 Nav2는 제조사 navigation launch 대신, 공식 `nav2_bringup`이 쓰는 것과 같은 Nav2
 서버를 제조사처럼 하나의 컴포넌트 컨테이너(`nav2_container`)에 직접 구성한다

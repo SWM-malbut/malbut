@@ -18,6 +18,30 @@ import tempfile
 LOG = logging.getLogger(__name__)
 
 
+def write_private_file(path: Path, data: bytes):
+    """Atomic 0600 write next to the target; the rename is durable before returning."""
+    # Unique 0600 temp name: a file left by a crash never blocks the next write.
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.name}.', suffix='.tmp')
+    try:
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)  # make the rename durable before the version file
+    finally:
+        os.close(directory)
+
+
 class FallCloudKeySync:
     def __init__(self, *, client, key_file: Path, model: str, apply_key):
         self._client, self._key_file, self._model = client, Path(key_file), model
@@ -38,26 +62,7 @@ class FallCloudKeySync:
             return 0
 
     def _write(self, path: Path, data: bytes):
-        # Unique 0600 temp name: a file left by a crash never blocks the next write.
-        fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.name}.', suffix='.tmp')
-        try:
-            try:
-                os.write(fd, data)
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-            os.replace(temporary, path)
-        except BaseException:
-            try:
-                os.unlink(temporary)
-            except FileNotFoundError:
-                pass
-            raise
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)  # make the rename durable before the version file
-        finally:
-            os.close(directory)
+        write_private_file(path, data)
 
     def _record_error(self, code):
         self.failures += 1

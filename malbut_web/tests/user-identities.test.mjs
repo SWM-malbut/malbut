@@ -81,31 +81,18 @@ test("people are shown by display name, else login email, never by user ID", asy
   });
 });
 
-test("owners invite guardians by email and remove them by user ID", async () => {
+test("the guardian list shows how each person signs in, and owners remove guardians by user ID", async () => {
   await withUsers(async ({ h, homecam }) => {
-    const invited = await homecam.inviteFamilyMember({
-      deviceId: "robot-a", ownerUserId: "u-owner", familyEmail: "Guest@Example.com",
-    });
-    assert.equal(invited.role, "family");
-    assert.equal(invited.name, "guest@example.com");
-    assert.equal(await homecam.getMembershipRole("robot-a", invited.userId), "family");
-    // Signing in later with that email lands on the same user and keeps access.
-    assert.equal((await h.db.query(
-      "SELECT user_id FROM user_identities WHERE subject='guest@example.com'")).rows[0].user_id, invited.userId);
-
-    await assert.rejects(homecam.inviteFamilyMember({
-      deviceId: "robot-a", ownerUserId: "u-owner", familyEmail: "owner@example.com",
-    }), /MEMBER_IS_SELF/);
-    await h.db.query("INSERT INTO device_memberships(device_id,user_id,role) VALUES ('robot-b','u-family','owner')");
-    await assert.rejects(homecam.inviteFamilyMember({
-      deviceId: "robot-b", ownerUserId: "u-owner", familyEmail: "family@example.com",
-    }), /MEMBER_IS_OWNER/);
-
+    // Guardians now come in by invite link (guardians.test.mjs); here one is already in.
+    await h.db.exec(`INSERT INTO users(id, display_name) VALUES ('u-guest', '박돌봄');
+      INSERT INTO user_identities(provider, subject, user_id) VALUES ('naver', 'naver-1', 'u-guest');
+      INSERT INTO device_memberships(device_id, user_id, role) VALUES ('robot-a', 'u-guest', 'family');`);
+    const invited = { userId: "u-guest" };
     const members = await homecam.listFamilyMembers("robot-a");
-    assert.deepEqual(members.map((m) => [m.userId, m.name, m.role]), [
-      ["u-owner", "owner@example.com", "owner"],
-      ["u-family", "family@example.com", "family"],
-      [invited.userId, "guest@example.com", "family"],
+    assert.deepEqual(members.map((m) => [m.userId, m.name, m.role, m.provider, m.viaInvite]), [
+      ["u-owner", "owner@example.com", "owner", "email", false],
+      ["u-family", "family@example.com", "family", "email", false],
+      ["u-guest", "박돌봄", "family", "naver", false],
     ]);
 
     await h.db.query(`INSERT INTO push_subscriptions(id,device_id,user_id,endpoint,p256dh,auth)

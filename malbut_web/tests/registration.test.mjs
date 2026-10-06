@@ -150,7 +150,7 @@ test("re-registering asks first, then removes everyone else and keeps the earlie
     const audit = (await h.db.query(
       "SELECT metadata_json FROM access_audit_log WHERE action='device.registered'")).rows[0];
     assert.deepEqual(JSON.parse(audit.metadata_json),
-      { removedMembers: 2, history: "keep", deletedIncidents: 0, deletedCloudKey: false });
+      { removedMembers: 2, history: "keep", deletedIncidents: 0, deletedCloudKey: false, deletedServiceKeys: [] });
     assert.deepEqual((await h.db.query("SELECT key_version, last4 FROM fall_cloud_keys")).rows,
       [{ key_version: 3, last4: "abcd" }], "남기기 keeps the Cloud AI key");
   });
@@ -221,6 +221,18 @@ test("expired codes, the current owner, other sites and guessing are refused", a
   });
 });
 
+test("the code box adds the dash itself: only the 8 letters and digits are typed", async () => {
+  const { formatRegistrationCodeInput: format } = moduleLoader()("app/register/code-input.ts");
+  assert.equal(format("7q2k"), "7Q2K");
+  assert.equal(format("7q2k9"), "7Q2K-9");
+  assert.equal(format("7q2k9xhm"), "7Q2K-9XHM");
+  assert.equal(format("7Q2K-9XHM"), "7Q2K-9XHM");
+  assert.equal(format(" 7q2k 9xhm "), "7Q2K-9XHM");
+  assert.equal(format("7Q2K-9XHMZZ"), "7Q2K-9XHM", "no more than 8");
+  assert.equal(format("7Q2K-"), "7Q2K", "deleting the 5th character removes the dash");
+  assert.equal(format("한글7Q"), "7Q");
+});
+
 test("the app starts at 말벗 등록 until the person has a 말벗, after choosing a name", async () => {
   const [home, page, screen, dashboard] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
@@ -234,6 +246,7 @@ test("the app starts at 말벗 등록 until the person has a 말벗, after choos
   for (const label of ["아직 연결된 말벗이 없어요", "등록 코드는 말벗 팀에게 받을 수 있어요.", "다시 등록할까요?",
     "지난 사건 기록과 의견은 어떻게 할까요?", "지우기", "남기기", "다시 등록하기", "우리 집 말벗의 소유자가 됐어요",
     "보호자로 초대받으셨나요? 소유자에게 받은 초대 링크를 다시 열어 주세요."]) assert.ok(screen.includes(label), label);
+  assert.match(screen, /setCode\(formatRegistrationCodeInput\(event\.target\.value\)\)/);
   assert.match(dashboard, /소유자 넘기기 · 다시 등록/);
   assert.match(dashboard, /href="\/register"/);
 });

@@ -179,7 +179,13 @@ def test_required_wake_accepts_one_command_and_blocks_followup_without_reply(run
     first = result['transcripts'][0]
     assert 0.8 < first['first_vad_speech_at_s'] < 1.2
     assert 'waiting_for_reply' in event_names
-    assert all(item['vad_last_speech_to_text_s'] > 0.9 for item in result['transcripts'])
+    # PCM catches up after scheduler stalls; wall time need not span its silence.
+    silences = [float(event.split('=', 1)[1]) for event in event_names
+                if event.startswith('endpoint_finalized:silence_s=')]
+    assert silences and min(silences) >= 1.0
+    assert first['vad_last_speech_to_text_s'] >= 0.0
+    assert first['vad_last_speech_to_text_s'] == pytest.approx(
+        first['at_s'] - first['last_vad_speech_at_s'])
     assert [call['initial_prompt'] for call in result['inference']] == [
         '로봇 이름은 제이크입니다.', None,
     ]
@@ -501,7 +507,14 @@ def test_mlx_replay_measures_shared_adapter_and_reports_its_backend(
     assert result['inference'][0]['beam_size'] is None
     assert result['inference'][0]['decoding'] == 'greedy with fallback'
     assert result['inference'][0]['elapsed_s'] is not None
-    assert result['transcripts'][0]['vad_last_speech_to_text_s'] >= 0.9
+    # PCM catches up after scheduler stalls; wall time need not span its silence.
+    silences = [float(item['event'].split('=', 1)[1]) for item in result['events']
+                if item['event'].startswith('endpoint_finalized:silence_s=')]
+    assert silences and min(silences) >= 1.0
+    transcript = result['transcripts'][0]
+    assert transcript['vad_last_speech_to_text_s'] >= 0.0
+    assert transcript['vad_last_speech_to_text_s'] == pytest.approx(
+        transcript['at_s'] - transcript['last_vad_speech_at_s'])
     assert len(runtime.loads) == len(runtime.requests) == 1
 
     transcriber = MlxTranscriber(runtime.model_dir)

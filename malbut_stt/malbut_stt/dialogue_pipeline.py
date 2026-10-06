@@ -2,6 +2,7 @@
 
 import math
 from collections import OrderedDict
+from contextlib import nullcontext
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import Event, Thread
@@ -17,6 +18,7 @@ from malbut_stt.wake import is_wake_phrase
 
 MAX_RETIRED_SESSION_IDS = 256
 MICROPHONE_TIMEOUT_SECONDS = 5.0
+RETRY_NOTICE_TIMEOUT_SECONDS = 45.0
 
 
 @dataclass(frozen=True)
@@ -44,14 +46,16 @@ class DialoguePipeline:
                  report, settings=None, input_has_aec=False, clock=monotonic,
                  on_wake=None, endpoint_predecode_s: float | None = None,
                  partial_interval_s: float | None = 2.0, on_partial=None,
-                 on_endpoint=None, publish_input_status=None):
+                 on_endpoint=None, publish_input_status=None, diagnostics=None):
         self.recorder_factory = recorder_factory
         self.wake = wake
         self.transcriber = transcriber
         self.publish_transcript = publish_transcript
         self.publish_interruption = publish_interruption
         self.publish_control = publish_control
-        self.report = report
+        self._report = report
+        self.diagnostics = diagnostics
+        self._diagnostic_error_reported = False
         self.clock = clock
         self._event_time = None
         self.on_wake = on_wake
@@ -107,6 +111,8 @@ class DialoguePipeline:
         self._utterance_playback_id = None
         self._pending = None
         self._reply_request_id = None
+        self._retry_notice_deadline = None
+        self._command_start_deadline = None
         self._retired_session_ids = OrderedDict()
         self._raw_playback_gate = False
         self._raw_gate_until = 0.0
@@ -127,6 +133,20 @@ class DialoguePipeline:
         if self._pending is None:
             return None
         return self._pending[0], self._pending[1], self._pending[3]
+
+    def report(self, event):
+        self._report(event)
+        if self.diagnostics is not None:
+            self.diagnostics.event(
+                event, clock=self.clock(), generation=self._generation,
+                audio_generation=self._audio_generation, session_id=self.session.session_id,
+                utterance_id=self.session.utterance_id, capture_id=self._capture_id,
+                reply_request_id=self._reply_request_id,
+                chime_gate_until=self._chime_gate_until,
+                command_start_deadline=self._command_start_deadline)
+            if self.diagnostics.error and not self._diagnostic_error_reported:
+                self._diagnostic_error_reported = True
+                self._report('diagnostics_stopped')
 
     def start(self):
         """Open one microphone and start the bounded capture and inference workers."""
@@ -256,25 +276,40 @@ class DialoguePipeline:
                 break
             text, error_name = None, None
             retained_start_s = 0.0
-            try:
-                # A reset can cancel a preview before the worker picks it up.
-                # Still return through results so endpoint ownership is released.
-                if generation != self._generation:
-                    raise RuntimeError('stale inference job')
-                if isinstance(pcm, _StreamInput):
-                    window = ({'audio_start_s': pcm.audio_start_s}
-                              if pcm.audio_start_s else {})
-                    text = pcm.stream.transcribe(
-                        pcm.pcm, 16000, final=pcm.final,
-                        speech_end_s=pcm.speech_end_s, **window)
-                    retained_start_s = getattr(pcm.stream, 'retained_start_s', 0.0)
-                else:
-                    engine = self.wake if kind == 'wake' else self.transcriber
-                    text = engine.transcribe(pcm, 16000)
-            except Exception as error:
-                error_name = type(error).__name__
-            finally:
-                pcm = None
+            context = (self.diagnostics.context(
+                kind=kind, generation=generation, session_id=self.session.session_id,
+                utterance_id=uid[0] if isinstance(uid, tuple) else uid,
+                revision=uid[1] if isinstance(uid, tuple) else None,
+                audio_start_s=getattr(pcm, 'audio_start_s', 0.0),
+                speech_end_s=getattr(pcm, 'speech_end_s', None),
+                final=getattr(pcm, 'final', kind == 'command'),
+            ) if self.diagnostics is not None else nullcontext())
+            with context:
+                error_detail = None
+                try:
+                    # A reset can cancel a preview before the worker picks it up.
+                    # Still return through results so endpoint ownership is released.
+                    if generation != self._generation:
+                        raise RuntimeError('stale inference job')
+                    if isinstance(pcm, _StreamInput):
+                        window = ({'audio_start_s': pcm.audio_start_s}
+                                  if pcm.audio_start_s else {})
+                        text = pcm.stream.transcribe(
+                            pcm.pcm, 16000, final=pcm.final,
+                            speech_end_s=pcm.speech_end_s, **window)
+                        retained_start_s = getattr(pcm.stream, 'retained_start_s', 0.0)
+                    else:
+                        engine = self.wake if kind == 'wake' else self.transcriber
+                        text = engine.transcribe(pcm, 16000)
+                except Exception as error:
+                    error_name = type(error).__name__
+                    if self.diagnostics is not None:
+                        error_detail = str(error)[:2048]
+                finally:
+                    pcm = None
+                    if self.diagnostics is not None:
+                        self.diagnostics.event('inference_result', text=text,
+                                               error=error_name, error_detail=error_detail)
             result = (kind, generation, uid, text, error_name, retained_start_s)
             while not self.stopping.is_set():
                 try:
@@ -335,6 +370,8 @@ class DialoguePipeline:
             cancel()
         self._pending = None
         self._reply_request_id = None
+        self._retry_notice_deadline = None
+        self._command_start_deadline = None
         self._utterance_playback_id = None
         self._reset_audio()
         self._tail_stream = tail
@@ -387,7 +424,16 @@ class DialoguePipeline:
         self._submit_endpoint()
         self._finish_ready_endpoint()
         if self.session.tick():
-            self._terminate('session_ended:tts_timeout')
+            self._terminate('session_ended:input_timeout')
+        self._expire_command_wait(self.clock())
+        if (self._retry_notice_deadline is not None
+                and self.clock() >= self._retry_notice_deadline):
+            self._terminate('retry_notice_timeout')
+
+    def _expire_command_wait(self, captured_at):
+        if (self._command_start_deadline is not None
+                and captured_at >= self._command_start_deadline):
+            self._terminate('session_ended:input_timeout')
 
     def _input_blocked(self, captured_at):
         return (self._reply_request_id is not None
@@ -417,8 +463,9 @@ class DialoguePipeline:
             self._event_time = None
 
     def _feed(self, pcm, busy_at_capture):
+        self._expire_command_wait(self._event_time)
         if self.session.tick():
-            self._terminate('session_ended:tts_timeout')
+            self._terminate('session_ended:input_timeout')
         if self._tail_stream is not None:
             self._tail_stream.feed(pcm)
             if not self._tail_stream.discarding:
@@ -434,6 +481,7 @@ class DialoguePipeline:
                     self.report('speech_discarded:busy')
                     continue
                 if self.session.active:
+                    self._command_start_deadline = None
                     self._capture_id = self.session.user_speech_started()
                     self._input_status('started', self._capture_id)
                     self._endpoint_result = None
@@ -654,6 +702,14 @@ class DialoguePipeline:
         if failure is not None:
             if kind == 'wake':
                 self._terminate(failure)
+            elif not self.session.session_id and self._utterance_playback_id is None:
+                # Empty input ends quietly. An actual decode error owns one
+                # correlated final notice, including failure before PLAYING.
+                self._terminate(failure)
+                if error_name is not None:
+                    self._reply_request_id = uid
+                    self._retry_notice_deadline = self.clock() + RETRY_NOTICE_TIMEOUT_SECONDS
+                    self._input_status('failed', uid)
             else:
                 # A retry notice must not queue behind the paused answer whose
                 # addressee is still unknown; keep that existing recovery path.
@@ -682,6 +738,12 @@ class DialoguePipeline:
                         self._chime_gate_until = self.clock() + 0.3
                         self._reset_audio()
                         self._chime_playing = False
+                if self.session.active:
+                    self._command_start_deadline = (
+                        max(self.clock(), self._chime_gate_until)
+                        + self.command_stream.settings.start_timeout_s)
+                    if self.diagnostics is not None:
+                        self.report('wake_input_ready')
             else:
                 self.report('not_wake')
             return

@@ -91,6 +91,10 @@ setup(
                 'malbut_agent_server.weather_action:main'
             ),
             (
+                'key_sync = '
+                'malbut_agent_server.ros_key_sync:main'
+            ),
+            (
                 'agent_communication = '
                 'malbut_agent_server.ros_communication:main'
             ),

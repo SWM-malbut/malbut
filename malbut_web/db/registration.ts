@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { ensureDatabaseSchema } from "./migration-state";
 import { getPostgresPool } from "./postgres";
+import { deleteServiceKeysForNewHousehold } from "./service-keys";
 import { registrationCodeDigest } from "./web-auth";
 
 export const REGISTRATION_CODE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -119,6 +120,9 @@ export async function redeemRegistrationCode(input: {
       [deviceId, input.userId, nowIso],
     );
     await client.query("DELETE FROM talk_leases WHERE device_id=$1 AND user_id<>$2", [deviceId, input.userId]);
+    // The previous household's invite link stops working too.
+    await client.query("UPDATE device_invites SET revoked_at=$2 WHERE device_id=$1 AND revoked_at IS NULL",
+      [deviceId, nowIso]);
     // Opinions, activity, scenes, people boxes, reminders and AI reviews go with their incident.
     const deleted = input.history === "delete"
       ? (await client.query("DELETE FROM fall_incidents WHERE device_id=$1", [deviceId])).rowCount ?? 0
@@ -131,6 +135,10 @@ export async function redeemRegistrationCode(input: {
        WHERE device_id=$1 AND ciphertext IS NOT NULL`,
       [deviceId, input.userId],
     )).rowCount);
+    // Same for the household's OpenAI (대화) and KMA (날씨) keys.
+    const serviceKeysDeleted = input.history === "delete"
+      ? await deleteServiceKeysForNewHousehold(client, deviceId, input.userId)
+      : [];
     await client.query(
       `INSERT INTO device_memberships(device_id,user_id,role,created_at) VALUES($1,$2,'owner',$3)
        ON CONFLICT(device_id,user_id) DO UPDATE SET role='owner'`,
@@ -148,6 +156,7 @@ export async function redeemRegistrationCode(input: {
         history: input.history ?? null,
         deletedIncidents: deleted,
         deletedCloudKey: keyDeleted,
+        deletedServiceKeys: serviceKeysDeleted,
       }), nowIso],
     );
     await client.query("COMMIT");

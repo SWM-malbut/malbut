@@ -378,8 +378,11 @@ Agent 답변은 전체 명세의 `AgentCheckReply`와 동일하다. 실제 질�
 정상 종결의 확인 근거는 SQLite `incident_events.closure_evidence`에 별도로 남긴다.
 기존 DB에는 이 선택적 열을 추가하고, 웹 업로드 JSON에는 포함하지 않는다.
 
-SQLite → 웹 업로드는 기존 `malbut-fall-upload` 워커를 별도로 실행한다.
-ROS 처리 루프에서 업로드를 기다리지 않는다. 이 실행 명령에 systemd 자동 시작을 추가하지 않았다.
+SQLite → 웹 업로드는 별도 프로세스인 `malbut-fall-upload`가 처리한다.
+Bringup의 낙상 모듈은 웹 주소·기기 토큰 설정이 있으면 같은 저널·기기 ID로 워커를 자동 시작한다.
+ROS 처리 루프에서 업로드를 기다리지 않는다. 직접 `malbut-fall-monitor`만 실행할 때는
+워커도 별도로 실행해야 한다. 설정 및 밀린 알림 주의 사항은 Bringup README의
+「사건 기록·클립 자동 업로드」를 따른다.
 
 ## 남은 제한과 검증
 

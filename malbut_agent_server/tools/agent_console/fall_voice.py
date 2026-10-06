@@ -66,7 +66,9 @@ class VoiceDemo:
         return future
 
     def close_session(self, sid):
-        self.stt.stop_session(sid)
+        future = Future()
+        future.set_result(SimpleNamespace(accepted=self.stt.stop_session(sid)))
+        return future
 
     def speak(self, text, pid):
         self.emit(f'\n🤖 {text}')

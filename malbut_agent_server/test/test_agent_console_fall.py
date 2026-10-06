@@ -182,16 +182,17 @@ def test_demo_audio_wiring_and_cleanup(case):
     demo = rig.demo
     try:
         rig.start()
-        first_sid = demo.session.session_id
+        first_pid = demo.session.playback_id
         # Playing the prompt is never itself the user's ten-second silence.
         rig.now = 12.0
         demo.stt.feed(VOICE + QUIET * 100)  # Raw speaker audio must stay gated.
         demo.poll()
         assert demo.result is None and demo.session.phase == 'speaking'
         rig.listen()
+        first_sid = demo.session.session_id
         if case == 'two_turns':
             rig.answer('넘어졌어')
-            rig.until(lambda: demo.session.session_id not in ('', first_sid)
+            rig.until(lambda: demo.session.playback_id != first_pid
                       and demo.stt.session.playback_id == demo.session.playback_id)
             demo.events.put(('transcript', first_sid, 'late-answer', '도와줘'))
             demo.poll()

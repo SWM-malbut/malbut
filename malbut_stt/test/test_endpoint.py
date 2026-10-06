@@ -448,6 +448,9 @@ def test_candidate_failure_does_not_end_the_utterance_early(run):
     assert run.pipeline.session.utterance_id is None
     assert 'transcription_failed:RuntimeError' in run.reports
     assert run.pipeline.jobs.empty()
+    assert not run.pipeline.session.active
+    run.pipeline.on_playback_status('retry', 'failed', request_id=final_job[2])
+    run.pipeline._accept_result('wake', run.pipeline._generation, None, '제이크', None)
     next_job = candidate(run)
     assert next_job[2][0] != job[2][0]
     reply(run, next_job, '문을 닫아 주세요.')

@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 import json
 import math
-import os
 import time
 from urllib.error import HTTPError
 from urllib.parse import unquote, urlencode
@@ -12,6 +11,7 @@ from urllib.request import urlopen
 from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
 
+from .service_keys import key_value, shared_key
 from .weather import (
     MAX_RESPONSE_BYTES, SOURCE, WeatherForecast, WeatherState,
     _number, _text, _timestamp,
@@ -25,6 +25,9 @@ _OBSERVATION = 'getUltraSrtNcst'
 _ROWS = 2000
 _FORECAST_CATEGORIES = {'SKY', 'PTY', 'POP', 'TMN', 'TMX'}
 _SEVERITY = {0: 0, 2: 1, 3: 2, 61: 3, 68: 4, 71: 5, 80: 6}
+# Failures that mean the key itself cannot be used, and how they are reported.
+_KEY_HEALTH = {'KMA_KEY_REQUIRED': 'missing', 'KMA_AUTH_FAILED': 'invalid',
+               'KMA_RATE_LIMITED': 'quota'}
 
 
 class KmaWeatherError(ValueError):
@@ -138,13 +141,23 @@ class KmaWeatherClient:
         if timezone != 'Asia/Seoul':
             raise ValueError('KMA weather requires Asia/Seoul timezone')
         self.timezone = timezone
-        key = os.environ.get('KMA_SERVICE_KEY') if service_key is None else service_key
-        self._service_key = unquote(key.strip()) if isinstance(key, str) else ''
+        # The owner's key from the web, else the team key (SWM25-235), read on every fetch.
+        self._key_source = shared_key('kma') if service_key is None else service_key
         self._clock = clock
 
-    def _request(self, product, base):
+    @property
+    def _service_key(self):
+        key = key_value(self._key_source)
+        return unquote(key.strip()) if isinstance(key, str) else ''
+
+    def _report(self, state, code=None):
+        report = getattr(self._key_source, 'report', None)
+        if report is not None:
+            report(state, code)
+
+    def _request(self, product, base, service_key):
         params = {
-            'serviceKey': self._service_key, 'pageNo': 1, 'numOfRows': _ROWS,
+            'serviceKey': service_key, 'pageNo': 1, 'numOfRows': _ROWS,
             'dataType': 'JSON', 'base_date': base.strftime('%Y%m%d'),
             'base_time': base.strftime('%H%M'), 'nx': self.nx, 'ny': self.ny,
         }
@@ -223,8 +236,18 @@ class KmaWeatherClient:
 
     def fetch(self):
         """Combine a full-day baseline with the latest available forecast."""
-        if (not self._service_key or len(self._service_key) > 512
-                or any(ord(char) < 33 or ord(char) > 126 for char in self._service_key)):
+        try:
+            state = self._fetch(self._service_key)
+        except KmaWeatherError as error:
+            if error.code in _KEY_HEALTH:
+                self._report(_KEY_HEALTH[error.code], error.code.lower())
+            raise
+        self._report('ok')
+        return state
+
+    def _fetch(self, service_key):
+        if (not service_key or len(service_key) > 512
+                or any(ord(char) < 33 or ord(char) > 126 for char in service_key)):
             _fail('KMA_KEY_REQUIRED')
         try:
             started = _timestamp(self._clock())
@@ -242,7 +265,7 @@ class KmaWeatherClient:
             requests = [(_VILLAGE, base) for base in sorted(bases)]
             requests.append((_OBSERVATION, observation))
             with ThreadPoolExecutor(max_workers=len(requests)) as pool:
-                futures = [pool.submit(self._request, product, base)
+                futures = [pool.submit(self._request, product, base, service_key)
                            for product, base in requests]
                 responses = [future.result() for future in futures]
             forecasts, current = {}, responses[-1]

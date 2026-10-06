@@ -20,16 +20,26 @@
 | TTS → Agent·STT | Topic `/malbut/speech/playback_status` | [SpeechPlaybackStatus](msg/SpeechPlaybackStatus.msg) | 실제 재생 상태. 요청 접수와 재생 완료는 별개 |
 
 `SpeechInputStatus`의 빈 `session_id`는 일반 대화이며, `STARTED`·`FAILED` 모두
-비어 있지 않은 `utterance_id`를 사용한다. Agent는 최신 `STARTED`와 일치하는
-`FAILED`에만 한 번, 추가 대화 판단 LLM 호출이나 대화 메모리 기록 없이
-“잘 알아듣지 못했어요. 다시 말씀해 주세요.”를 기존 `SpeechRequest`로 발행한다.
-앞서 접수한 답변이 아직 송출되지 않았다면 `interim=true`, 그 외에는 `false`를 사용한다.
-오래된 발화·중복 실패·확인 세션 상태는 이 일반 대화 안내에서 제외한다.
-비어 있지 않은 `session_id`는 기존 Agent 주도 확인 세션이 소유하며, 세션 전체의
-`FAILED`에는 빈 `utterance_id`를 허용한다. `interim=false`인 안내의 정상 재생 완료 뒤에는
-기존 5초 후속 발화 대기를 적용하며, `interim=true`인 안내로는 이 대기를 시작하지 않는다.
-이 확장은 기존 필드와 타입을 그대로 사용한다. 이 안내는 TTS가 정상 동작할 때 음성으로 전달되며, TTS 자체 고장 대응은 이번 범위에 포함하지 않는다.
-단, AEC가 있는 일반 끼어들기로 기존 답변을 일시정지한 경우에는 `STARTED`를 전달하되 최종 인식 실패의 `FAILED`를 보내지 않아 재시도 안내가 일시정지된 TTS 뒤에 쌓이지 않도록 하며, 기존 일시정지·수신 대상 판정·다음 발화 처리와 확인 세션의 `FAILED` 발행은 유지한다.
+비어 있지 않은 `utterance_id`를 사용한다. 빈 최종 인식 결과는 전사나 `FAILED` 없이
+호출어 대기로 돌아간다. 최종 인식 중 예외가 발생하면 같은 발화 ID의 `FAILED`를
+전달하고 실패 안내를 기다리는 동안 새 입력을 차단한다. Agent는 최신 `STARTED`와
+일치하는 `FAILED`에만 한 번, 추가 대화 판단 LLM 호출이나 대화 메모리 기록 없이
+“잘 알아듣지 못했어요. 다시 제이크라고 불러 주세요.”를 기존 `SpeechRequest`로 발행한다.
+이 안내는 원래 `utterance_id`를 `request_id`로 사용하고 항상 `interim=false`다.
+같은 요청의 최종 `finished`·`failed`·`stopped`가 도착하면 `playing` 이전의 종료라도
+호출어 대기로 돌아간다. 실패 안내 대기 시작 후 45초 동안 같은 요청의 최종 종료가
+없으면 이 안내의 입력 차단만 해제하며, 실제 재생 중 입력 차단과 잔향 차단은 유지한다.
+안내 뒤에는 호출어 없는 후속 발화를 받지 않는다. 오래된 발화·중복 실패·확인 세션
+상태는 이 일반 대화 안내에서 제외한다. 기존 필드와 타입은 그대로 사용한다.
+
+호출어 감지 뒤 알림음의 잔향 차단이 끝난 시점부터 `start_timeout_s`(기본 5초) 안에
+유효한 발화 시작이 없으면 전사나 안내 음성 없이 호출어 대기로 돌아간다.
+비어 있지 않은 `session_id`는 Agent 주도 확인 세션이 소유하며, 세션 전체의
+`FAILED`에는 빈 `utterance_id`를 허용한다. 확인 세션의 빈 최종 결과와 인식 예외는
+기존처럼 `FAILED`로 알리고 Agent가 종료를 결정한다. AEC가 있는 일반 끼어들기로
+기존 답변을 일시정지한 경우에는 `STARTED`를 전달하되 최종 인식 실패의 `FAILED`를
+보내지 않아 안내가 일시정지된 TTS 뒤에 쌓이지 않도록 하며, 기존 일시정지·수신 대상
+판정·다음 발화 처리를 유지한다.
 
 `SpeechRequest.interim`과 `SpeechPlaybackStatus.interim`은 기본값이 `false`인 `bool`이다.
 Agent는 최종 답변을 준비하는 중의 지연·재시도 안내에만 `true`를 지정하고, TTS는 해당

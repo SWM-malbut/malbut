@@ -161,9 +161,9 @@ let cloudKey = { configured: true, last4: "7f3a", keyVersion: 2, updatedAt: minu
 function demoTimeline(url: URL) {
   const from = Date.parse(url.searchParams.get("from") ?? ""), to = Date.parse(url.searchParams.get("to") ?? "");
   const end = Math.min(to, Date.now());
-  // Recorded all day except a gap from 01:30 to 03:00.
-  const gapStart = from + 90 * 60_000, gapEnd = from + 180 * 60_000;
-  const recordings = [[from, Math.min(gapStart, end)], [gapEnd, end]].filter(([a, b]) => b > a)
+  // Recorded all day except a 90-minute gap ending at 03:00, or an hour ago today, so "now" is always recorded.
+  const gapEnd = Math.min(from + 180 * 60_000, Date.now() - 60 * 60_000), gapStart = gapEnd - 90 * 60_000;
+  const recordings = [[from, Math.min(gapStart, end)], [Math.max(gapEnd, from), end]].filter(([a, b]) => b > a)
     .map(([a, b]) => ({ startAt: new Date(a).toISOString(), endAt: new Date(b).toISOString() }));
   const marks = incidents.map((i) => ({ incidentId: i.incidentId,
     at: String(i.origin === "user_report" ? i.reportedMomentAt : i.occurredAt),

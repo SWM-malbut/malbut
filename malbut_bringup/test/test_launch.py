@@ -3,6 +3,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import sys
 from xml.etree import ElementTree
 
 from launch import LaunchContext, LaunchDescription, LaunchService
@@ -32,6 +33,8 @@ def _load(name):
 def launch_module(tmp_path, monkeypatch):
     """Supply fake vendor assets, but use the real Malbut launch files."""
     monkeypatch.delenv('HOMECAM_BACKEND_URL', raising=False)
+    monkeypatch.delenv('HOMECAM_DEVICE_TOKEN_FILE', raising=False)
+    monkeypatch.delenv('HOMECAM_DEVICE_ID', raising=False)
     monkeypatch.setenv('MALBUT_FALL_CONFIG', str(tmp_path / 'unconfigured-fall.json'))
     for name in ('slam/launch/include/robot.launch.py',):
         path = tmp_path / name
@@ -554,6 +557,138 @@ def test_media_and_fall_share_session_ids_without_start_order(launch_module, fal
         pose = _parameters(context, _nodes(actions, 'homecam_detector_node')[0])
         assert coordinator['runtime_id'] == monitor['manager_runtime_id']
         assert coordinator['vlm_runtime_id'] == monitor['runtime_id'] == pose['fall_runtime_id']
+
+
+def test_fall_starts_one_non_ros_uploader_with_shared_settings(launch_module, fall_config):
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config))
+    context.environment.update(HOMECAM_BACKEND_URL='https://robot.example.com',
+                               HOMECAM_DEVICE_TOKEN_FILE='/protected/device.token',
+                               HOMECAM_DEVICE_ID='test-robot')
+    actions = module._setup(context)
+    workers = [a for a in actions if isinstance(a, ExecuteProcess) and not isinstance(a, Node)]
+    assert len(workers) == 1
+    worker = workers[0]
+    args = [perform_substitutions(context, part) for part in worker.cmd[1:]]
+    assert args[args.index('--journal') + 1] == json.loads(fall_config.read_text())['journal_path']
+    assert args[args.index('--device-id') + 1] == 'test-robot'
+    assert args[args.index('--base-url') + 1] == 'https://robot.example.com'
+    assert '--execute' in args and '--upload-clips' in args
+    assert not {'--once', '--ros-args', '--params-file', '--retry-auth-failed'} & set(args)
+    from launch_ros.substitutions import ExecutableInPackage
+    assert isinstance(worker.cmd[0][0], ExecutableInPackage)
+    assert worker._ExecuteLocal__respawn_delay == 5.0
+    assert worker._ExecuteLocal__respawn is True
+    assert len(_nodes(actions, 'malbut-fall-monitor')) == 1
+    assert len(_nodes(actions, 'homecam_detector_node')) == 1
+
+
+@pytest.mark.parametrize('environment', [
+    {}, {'HOMECAM_BACKEND_URL': 'https://robot.example.com'},
+    {'HOMECAM_BACKEND_URL': 'http://robot.example.com',
+     'HOMECAM_DEVICE_TOKEN_FILE': '/protected/device.token'},
+    {'HOMECAM_BACKEND_URL': 'https://robot.example.com',
+     'HOMECAM_DEVICE_TOKEN_FILE': '/protected/device.token', 'HOMECAM_DEVICE_ID': 'wrong'},
+])
+def test_upload_setup_failure_does_not_disable_detection(launch_module, fall_config, environment):
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config))
+    context.environment.update(environment)
+    actions = module._setup(context)
+    assert {a.node_executable for a in actions if isinstance(a, Node)} == {
+        'malbut-fall-monitor', 'homecam_detector_node', 'fall_coordinator'}
+    assert not any(isinstance(a, ExecuteProcess) and not isinstance(a, Node) for a in actions)
+    assert any(isinstance(a, LogInfo) for a in actions)
+
+
+def test_disabled_fall_never_starts_uploader(launch_module, fall_config):
+    module = _load('fall')
+    context = _context(module, fall_monitor='false', fall_config=str(fall_config))
+    context.environment.update(HOMECAM_BACKEND_URL='https://robot.example.com',
+                               HOMECAM_DEVICE_TOKEN_FILE='/protected/device.token')
+    assert not any(isinstance(a, ExecuteProcess) for a in module._setup(context))
+
+
+def test_upload_process_restarts_and_stops_with_launch_without_ros_arguments(
+        launch_module, fall_config, tmp_path, monkeypatch):
+    """Real launch child and real worker; fake HTTPS ack, no robot/VLM/server."""
+    from types import SimpleNamespace
+    from launch.actions import EmitEvent, RegisterEventHandler, TimerAction
+    from launch.event_handlers import OnProcessExit
+    from launch.events import Shutdown
+    from launch_ros.substitutions import ExecutableInPackage
+    from malbut_agent_server.adapters.outbound.sqlite_fall_journal import SqliteFallJournal
+    from malbut_agent_server.fall_upload_worker import _upload_lock
+
+    data = json.loads(fall_config.read_text())
+    journal_path = tmp_path / 'private/events.sqlite'
+    data['journal_path'] = str(journal_path)
+    fall_config.write_text(json.dumps(data))
+    with_journal = SqliteFallJournal(journal_path, device_id='test-robot')
+    try:
+        with_journal.append(
+            device_id='test-robot', boot_id='test-boot',
+            event=SimpleNamespace(incident_id='incident-test', event_id='event-test',
+                                  kind='incident_opened', reason=None, notification_level=None),
+            incident=SimpleNamespace(
+                incident_id='incident-test', revision=1,
+                state=SimpleNamespace(value='verifying'), fall_seen=False,
+                video=None, answer=None))
+    finally:
+        with_journal.close()
+    token = tmp_path / 'device.token'
+    token.write_text('test-device-token')
+    token.chmod(0o600)
+    first = tmp_path / 'first-launch'
+    received = tmp_path / 'received'
+    child = tmp_path / 'upload-test-entrypoint'
+    child.write_text(f'''#!{sys.executable}
+import io, json, sys, urllib.request
+from pathlib import Path
+from malbut_agent_server import fall_upload_worker as worker
+first = Path({str(first)!r})
+if not first.exists():
+    first.touch()
+    raise SystemExit(2)  # Simulated first startup failure, must respawn.
+def server(self, request, **kwargs):
+    payload = json.loads(request.data)
+    Path({str(received)!r}).write_text(payload['eventId'])
+    response = io.BytesIO(json.dumps(dict(stored=True, eventId=payload['eventId'])).encode())
+    response.status = 201
+    return response
+urllib.request.OpenerDirector.open = server
+def stop_when_idle(_):
+    raise KeyboardInterrupt
+worker.time.sleep = stop_when_idle
+raise SystemExit(worker.main())
+''')
+    child.chmod(0o700)
+    monkeypatch.setattr(ExecutableInPackage, 'perform', lambda self, context: str(child))
+    monkeypatch.setenv('ROS_LOG_DIR', str(tmp_path / 'ros-log'))
+    module = _load('fall')
+    context = _context(module, fall_config=str(fall_config))
+    context.environment.update(HOMECAM_BACKEND_URL='https://web.example.com',
+                               HOMECAM_DEVICE_TOKEN_FILE=str(token))
+    worker, = [a for a in module._setup(context)
+               if isinstance(a, ExecuteProcess) and not isinstance(a, Node)]
+    service = LaunchService()
+    service.include_launch_description(LaunchDescription([
+        RegisterEventHandler(OnProcessExit(
+            target_action=worker,
+            on_exit=lambda event, context: [EmitEvent(event=Shutdown(reason='test completed'))]
+            if event.returncode == 0 else [])),
+        worker,
+        TimerAction(period=15.0, actions=[EmitEvent(event=Shutdown(reason='test timeout'))]),
+    ]))
+    assert service.run() == 0
+    assert first.exists() and received.read_text() == 'event-test'
+    journal = SqliteFallJournal(journal_path, device_id='test-robot')
+    try:
+        assert journal.upload_status()[0]['status'] == 'stored'
+    finally:
+        journal.close()
+    with _upload_lock(journal_path):
+        pass  # Child shutdown released the lock; no orphaned sender remains.
 
 
 @pytest.mark.parametrize('cuda_mode', [None, 0o644, 0o755])

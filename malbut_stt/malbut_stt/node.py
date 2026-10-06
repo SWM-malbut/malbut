@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from math import isfinite
+import os
 import sys
 from time import monotonic
 from typing import Optional, Sequence
@@ -143,6 +144,16 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             wake = LocalWakeRecognizer(wake_path, compute_type=compute_type)
             phase = 'initializing_stt'
             transcriber = LocalWhisperTranscriber(stt_path, compute_type=compute_type)
+        diagnostics = None
+        diagnostic_directory = os.environ.get('MALBUT_STT_DIAGNOSTIC_DIR', '').strip()
+        if diagnostic_directory:
+            from malbut_stt.diagnostics import TranscriptionDiagnostics
+
+            diagnostics = TranscriptionDiagnostics(diagnostic_directory)
+            shared = wake.model is transcriber.model
+            transcriber.model = diagnostics.wrap_model(transcriber.model)
+            wake.model = transcriber.model if shared else diagnostics.wrap_model(wake.model)
+            node.get_logger().info('stt_diagnostics_enabled:local_audio_limit_64MiB')
         phase = 'initializing_vad'
         vad = webrtcvad.Vad(vad_mode)
         phase = 'creating_publisher'
@@ -338,6 +349,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             publish_control=publish_control,
             publish_interruption=publish_interruption,
             publish_input_status=publish_input_status,
+            diagnostics=diagnostics,
             report=report,
             on_wake=lambda: play_wake_chime(wake_chime_device_index),
             on_endpoint=lambda: play_endpoint_chime(wake_chime_device_index),

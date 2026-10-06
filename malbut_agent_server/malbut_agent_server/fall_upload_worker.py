@@ -1,6 +1,8 @@
 """Upload persisted fall metadata; no VLM, audio playback or robot commands."""
 
 import argparse
+from contextlib import contextmanager
+import fcntl
 import os
 from pathlib import Path
 import stat
@@ -12,6 +14,29 @@ from malbut_agent_server.adapters.outbound.homecam_fall_events import (
     HomecamFallEventClient, HomecamFallPeopleClient,
 )
 from malbut_agent_server.adapters.outbound.sqlite_fall_journal import SqliteFallJournal
+
+
+class UploadAlreadyRunning(RuntimeError):
+    pass
+
+
+@contextmanager
+def _upload_lock(journal_path):
+    """One sending process per private journal; never unlink a held lock file."""
+    lock_path = str(Path(journal_path).resolve()) + '.upload.lock'
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ValueError('upload lock must be private')
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise UploadAlreadyRunning() from None
+        yield
+    finally:
+        os.close(fd)
 
 
 def _read_token(path):
@@ -62,23 +87,29 @@ def main(argv=None):
         client = HomecamFallEventClient(device_token=token, **options)
         journal = SqliteFallJournal(args.journal, device_id=args.device_id)
         try:
-            if args.retry_auth_failed:
-                journal.retry_auth_failed()
-            uploaders = [FallEventUploader(journal, client)]
-            if args.upload_clips:
-                uploaders.append(FallClipUploader(
-                    journal, HomecamFallClipClient(device_token=token, **options)))
-                uploaders.append(FallPeopleUploader(
-                    journal, HomecamFallPeopleClient(device_token=token, **options)))
-            while True:
-                # Events first: an alert must never wait behind a clip range or boxes.
-                processed = any(uploader.run_once() for uploader in uploaders)
-                if args.once:
-                    break
-                if not processed:
-                    time.sleep(1)
+            with _upload_lock(args.journal):
+                if args.retry_auth_failed:
+                    journal.retry_auth_failed()
+                uploaders = [FallEventUploader(journal, client)]
+                if args.upload_clips:
+                    uploaders.append(FallClipUploader(
+                        journal, HomecamFallClipClient(device_token=token, **options)))
+                    uploaders.append(FallPeopleUploader(
+                        journal, HomecamFallPeopleClient(device_token=token, **options)))
+                print('fall upload started: events' +
+                      (', clips, people' if args.upload_clips else ''), flush=True)
+                while True:
+                    # Events first: an alert must never wait behind a clip range or boxes.
+                    processed = any(uploader.run_once() for uploader in uploaders)
+                    if args.once:
+                        break
+                    if not processed:
+                        time.sleep(1)
         finally:
             journal.close()
+    except UploadAlreadyRunning:
+        print('fall upload already running for this journal; no second sender started', flush=True)
+        return 0
     except KeyboardInterrupt:
         return 0
     except (OSError, ValueError, sqlite3.Error):

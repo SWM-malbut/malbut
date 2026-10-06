@@ -398,7 +398,7 @@ def test_capacity_exhaustion_retains_unidentified_finding():
     assert d.reason == 'incident_capacity' and d.incident_id is None
 
 
-def test_new_observed_fall_invalidates_old_okay_but_not_help_or_fall_history():
+def test_cloud_label_strengthening_preserves_existing_confirmation_and_fall_history():
     monitor, clock, provider = scene_setup()
     asyncio.run(monitor.run_once())
     iid = discoveries(monitor)[0].incident_id
@@ -409,8 +409,8 @@ def test_new_observed_fall_invalidates_old_okay_but_not_help_or_fall_history():
     provider.reply = reply(finding(assessment=VideoAssessment.OBSERVED_FALL))
     asyncio.run(monitor.run_once())
     incident = monitor.incident(iid)
-    assert incident.revision == old.revision + 1 and incident.answer is None
-    assert incident.fall_seen and incident.question_id != old.question_id
+    assert incident.revision == old.revision and incident.answer is old.answer
+    assert incident.fall_seen and incident.question_id == old.question_id
     assert (incident.attempts, incident.rechecks) == (old.attempts, old.rechecks)
     for n in range(1, 121):
         feed(monitor, clock, 220 + n * 0.5)

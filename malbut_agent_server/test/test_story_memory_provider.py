@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from malbut_agent_server.providers.base import AgentProvider
+from malbut_agent_server.providers.base import AgentProvider, accepts_memory_context
 from malbut_agent_server.schemas import ValidationError
 from malbut_agent_server.story_memory_provider import StoryMemoryProvider
 
@@ -69,9 +69,11 @@ def request():
     return SimpleNamespace(user_id='user-a', request_id='req-a', utterance='그 전시 말이야')
 
 
-def test_wrapper_implements_agent_provider_contract():
+def test_wrapper_conforms_to_common_provider_contract():
     wrapper = StoryMemoryProvider(Provider(), Service())
+
     assert isinstance(wrapper, AgentProvider)
+    assert accepts_memory_context(wrapper)
     assert wrapper.complete(request(), [], [], []) == 'answer'
 
 
@@ -79,11 +81,14 @@ def test_injects_related_data_preserving_settings_and_tracks_reply():
     service, backend = Service(), Provider()
     wrapper = StoryMemoryProvider(backend, service)
     original = {'mode': 'answer_only', 'response_settings': {'length': '짧게'}}
-    assert wrapper.complete(request(), [], [], [], memory_context=original) == 'answer'
+    weather = {'status': 'fresh', 'temperature_c': 20}
+    assert wrapper.complete(request(), [], [], [], memory_context=original,
+                            weather_context=weather) == 'answer'
     injected = backend.calls[0][0]
     assert injected['response_settings'] == original['response_settings']
     assert 'story_memory_untrusted' not in original
     assert injected['story_memory_untrusted']['execution_authorized'] is False
+    assert backend.calls[0][1] == weather
     assert backend.calls[0][2] == []
     assert service.recorded == [('user-a', 'req-a', ['exhibition'], 1)]
     assert wrapper.reply_revision('user-a', 'req-a') == 1

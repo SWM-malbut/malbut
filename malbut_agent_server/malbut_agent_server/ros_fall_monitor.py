@@ -214,6 +214,7 @@ async def spin_runtime(node, *, key_sync=None, key_sync_interval_s=None, clock=t
                     next_key_sync = clock() + key_sync_interval_s
             rclpy.spin_once(node, timeout_sec=0)
             node.control.refresh()
+            node.monitor.maintain_associations()
             if node.tracking is not None:
                 node.tracking.maintain(accepting_images=node.control.accepting_images)
             if check is not None and check.done():

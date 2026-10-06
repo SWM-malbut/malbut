@@ -1,5 +1,7 @@
 """Construct provider, storage, and safety services."""
 
+from functools import lru_cache
+
 from malbut_agent_server.application.front_routing import (
     FrontRoutingService,
 )
@@ -19,6 +21,7 @@ from malbut_agent_server.memory_source_review import MemorySourceReviewer
 from malbut_agent_server.orchestrator import AgentOrchestrator
 from malbut_agent_server.providers.base import AgentProvider, accepts_memory_context
 from malbut_agent_server.providers.mock import MockProvider
+from malbut_agent_server.service_keys import ManagedKey, key_dir
 from malbut_agent_server.providers.openai_responses import (
     OpenAIResponsesProvider,
 )
@@ -42,6 +45,21 @@ from malbut_agent_server.story_memory_service import StoryMemoryService
 
 
 RAI_SIDECAR_MODULE = 'malbut_agent_server.rai_sidecar_runtime'
+
+
+def openai_key_for(settings: Settings) -> ManagedKey:
+    """This process's OpenAI key: the owner's key from the web once set,
+    otherwise the team key from the settings (service_keys rules). One shared
+    instance per team key and key folder, so every client reports to the same
+    health and the ROS node can publish it."""
+    return _openai_key(settings.openai_api_key, str(key_dir()))
+
+
+@lru_cache(maxsize=4)
+def _openai_key(team_key: str, directory: str) -> ManagedKey:
+    return ManagedKey('openai', environ={'OPENAI_API_KEY': team_key}, directory=directory)
+
+
 _DEFAULT_STORY_EXTRACTOR = object()
 
 
@@ -54,7 +72,7 @@ def _openai_adapter(
 ) -> OpenAIResponsesProvider:
     """Build one official-origin OpenAI model adapter."""
     return OpenAIResponsesProvider(
-        api_key=settings.openai_api_key,
+        api_key=openai_key_for(settings),
         model=model,
         base_url=settings.openai_base_url,
         timeout_seconds=settings.request_timeout_seconds,
@@ -93,6 +111,7 @@ def _reliable_openai_provider(
             include_reasoning=include_reasoning,
             semantic_context=semantic_context,
         ))
+    key = openai_key_for(settings)
     return ReliableProvider(
         providers,
         max_retries=settings.provider_max_retries,
@@ -110,6 +129,7 @@ def _reliable_openai_provider(
         total_timeout_seconds=(
             settings.provider_total_timeout_seconds
         ),
+        credential_generation=lambda: key.generation,
     )
 
 
@@ -152,7 +172,9 @@ def build_provider(
         )
     if settings.provider != 'openai':
         raise ValueError('MALBUT_AGENT_PROVIDER is unsupported')
-    if not settings.openai_api_key:
+    # The robot may start before the owner sets a key on the web; it then
+    # answers "can't talk now" until one arrives (SWM25-235).
+    if http_server and not settings.openai_api_key:
         raise ValueError('OPENAI_API_KEY is required')
     return _reliable_openai_provider(
         settings,
@@ -270,7 +292,7 @@ def build_orchestrator(
         if story_extractor is _DEFAULT_STORY_EXTRACTOR:
             story_extractor = (
                 OpenAIStoryExtractor(
-                    api_key=settings.openai_api_key,
+                    api_key=openai_key_for(settings),
                     model=settings.openai_summary_model or settings.openai_model,
                     base_url=settings.openai_base_url,
                     reasoning_effort=(settings.openai_summary_reasoning_effort
@@ -299,7 +321,7 @@ def build_orchestrator(
             context_compactor = BackgroundContextCompactor(
                 conversation_store, memory_store,
                 OpenAISemanticSummarizer(
-                    api_key=settings.openai_api_key,
+                    api_key=openai_key_for(settings),
                     model=settings.openai_summary_model or settings.openai_model,
                     base_url=settings.openai_base_url,
                     timeout_seconds=max(30, settings.request_timeout_seconds),

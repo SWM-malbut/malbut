@@ -167,6 +167,13 @@ def test_robot_copy_retains_colcon_ignore():
     assert (ROOT / 'COLCON_IGNORE').is_file()
 
 
+def test_robot_copy_includes_the_same_fall_upload_startup_and_worker():
+    for name in ('malbut_bringup/launch/fall.launch.py',
+                 'malbut_bringup/malbut_bringup/fall_setup.py',
+                 'malbut_agent_server/malbut_agent_server/fall_upload_worker.py'):
+        assert (ROOT.parent / name).read_bytes() == (ROOT / name).read_bytes()
+
+
 def test_robot_fall_coordinator_matches_source_without_manager_domain_code():
     """Ship the separated runtime, not a second relay inside the manager."""
     package = ROOT.parent / 'malbut_fall_coordinator'
