@@ -66,8 +66,8 @@ const ANSWER_LABEL: Record<string, string> = {
   help_request: "본인이 도움을 요청함", okay: "괜찮다고 답함", unclear: "답이 불분명", no_response: "무응답", failed: "질문 실패",
 };
 const SCENE: Record<SceneState, [string, string]> = {
-  preparing: ["장면 영상 준비 중", "is-warn"], available: ["장면 영상 재생 가능", "is-ok"],
-  partial: ["장면 영상 일부 누락", "is-warn"], unavailable: ["장면 영상 없음", "is-off"],
+  preparing: ["영상 준비 중", "is-warn"], available: ["영상 재생 가능", "is-ok"],
+  partial: ["영상 일부 누락", "is-warn"], unavailable: ["영상 없음", "is-off"],
   expired: ["보관 기간 만료 (7일)", "is-off"],
 };
 const AI_ERROR_LABEL: Record<string, string> = {
