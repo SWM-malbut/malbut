@@ -646,6 +646,59 @@ def test_cancel_before_goal_acceptance_is_delivered_later():
     handle.cancel_goal_async.assert_called_once()
 
 
+def test_one_destination_drive_is_canceled_and_other_goals_keep_going():
+    """The web map's 이동 취소 names its drive; the panel's cancel still stops everything."""
+    bridge, handle = _bridge(manager_ready=True)
+    other = Mock(accepted=True)
+    other.get_result_async.return_value = Future()
+    first = bridge.submit(_command())
+    bridge._drain()
+    bridge.clients['manager'].send_goal_async.return_value = _future(other)
+    second = bridge.submit({'command': 'start', 'capability': 'recovery', 'arguments': {}})
+    bridge._drain()
+    bridge.submit({'command': 'cancel', 'request_id': second})
+    bridge._drain()
+    other.cancel_goal_async.assert_called_once()
+    handle.cancel_goal_async.assert_not_called()
+    assert bridge.data.requests[first]['state'] == 'RUNNING'
+    assert bridge.data.requests[second]['state'] == 'CANCELING'
+    bridge.cancel_one('f' * 32)  # Unknown or finished goals are left alone.
+    assert len(bridge.cancel_pending) == 1
+
+
+def test_destination_preview_plans_with_nav2_from_where_the_robot_is():
+    """A planned path comes back as map points; failures and timeouts are errors."""
+    bridge, _ = _bridge()
+    bridge.call = lambda function, timeout=3.0: function()
+    bridge.plan_goal = lambda: SimpleNamespace(
+        goal=SimpleNamespace(header=SimpleNamespace(frame_id=''), pose=SimpleNamespace(
+            position=SimpleNamespace(x=0.0, y=0.0),
+            orientation=SimpleNamespace(z=0.0, w=1.0))),
+        use_start=True)
+    poses = [SimpleNamespace(pose=SimpleNamespace(position=SimpleNamespace(x=x, y=0.5)))
+             for x in (0.0, 1.0, 2.0)]
+    planned = Mock(accepted=True)
+    planned.get_result_async.return_value = _future(
+        SimpleNamespace(status=4, result=SimpleNamespace(path=SimpleNamespace(poses=poses))))
+    bridge.planner = Mock()
+    bridge.planner.server_is_ready.return_value = True
+    bridge.planner.send_goal_async.return_value = _future(planned)
+    assert bridge.plan_path(2.0, 0.5, 0.0) == [(0.0, 0.5), (1.0, 0.5), (2.0, 0.5)]
+    goal = bridge.planner.send_goal_async.call_args.args[0]
+    assert goal.goal.header.frame_id == 'map' and goal.use_start is False
+    assert (goal.goal.pose.position.x, goal.goal.pose.position.y) == (2.0, 0.5)
+
+    planned.get_result_async.return_value = _future(SimpleNamespace(status=6, result=None))
+    with pytest.raises(ValueError, match='no path'):
+        bridge.plan_path(2.0, 0.5, 0.0)
+    planned.get_result_async.return_value = Future()
+    with pytest.raises(ValueError, match='in time'):
+        bridge.plan_path(2.0, 0.5, 0.0, timeout=0.01)
+    bridge.planner.server_is_ready.return_value = False
+    with pytest.raises(ValueError, match='not available'):
+        bridge.plan_path(2.0, 0.5, 0.0)
+
+
 def test_result_transport_failure_does_not_forget_running_goal():
     """Losing the result response is not evidence that the robot has stopped."""
     bridge, handle = _bridge()

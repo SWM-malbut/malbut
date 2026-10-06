@@ -21,6 +21,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 import yaml
 
+from .navigation import NavigationError, Navigator
 from .web_panel import (
     live_zone_map, PanelData, RosBridge, save_zones, TERMINAL, _terminate, validate_command,
 )
@@ -38,9 +39,11 @@ COMMAND_ID_PATTERN = re.compile(
     r'[89ab][0-9a-f]{3}-[0-9a-f]{12}', re.IGNORECASE)
 ROBOT_INTERFACE = 'malbut_manager_v1'
 # Answered by this bridge from files and state; no Goal is sent for them.
-# rooms_save and zones_apply come from the web map editor (SWM25-237).
+# rooms_save and zones_apply come from the web map editor, navigation_* from the web
+# map screen's destination sending (SWM25-237).
+NAVIGATION_OPERATIONS = ('navigation_preview', 'navigation_start', 'navigation_cancel')
 LOCAL_OPERATIONS = ('map_delete', 'zones_save', 'rooms_save', 'zones_apply',
-                    'robot_ping', 'robot_diagnostics')
+                    'robot_ping', 'robot_diagnostics', *NAVIGATION_OPERATIONS)
 # A map upload carries the preview PNG, the User Map and the Zones in one body.
 MAX_MAP_UPLOAD_BYTES = 2 * 1024 * 1024 - 64 * 1024
 # The server accepts device request bodies up to 64 KiB.
@@ -285,8 +288,13 @@ def bounded_value(value, limit=2048):
     return value if len(raw.encode('utf-8')) <= limit else {'truncated': True}
 
 
-def state_payload(snapshot, map_info, maps, observed_at=None):
-    """Publish the existing cloud schema with an explicit real-robot interface."""
+def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
+    """
+    Publish the existing cloud schema with an explicit real-robot interface.
+
+    ``navigation`` is the web map screen's destination drive (state, goal, path,
+    remaining distance); its fields sit beside the developer screen's in ``target``.
+    """
     runtime = {key: snapshot.get('runtime', {}).get(key) for key in (
         'state', 'mode', 'map', 'ready', 'message', 'waiting', 'enabled')}
     runtime['message'] = str(runtime.get('message') or '')[:512]
@@ -327,6 +335,7 @@ def state_payload(snapshot, map_info, maps, observed_at=None):
             'tracking': bounded_value(snapshot.get('tracking'), 1024),
             'zones': bounded_value(_without_path(snapshot.get('zones')), 1024),
             'manual': bounded_value(snapshot.get('manual'), 512),
+            **(navigation or {}),
         },
         'driveMode': {'mode': 'idle', 'state': 'idle', 'sessionId': None, 'message': None},
         'mapRevision': int(map_info.get('version', 0)),
@@ -418,6 +427,7 @@ class CloudSync:
         self.last_warning = ''
         self.last_warning_at = 0.0
         self.capabilities = None
+        self.navigator = Navigator()
         self.thread = threading.Thread(target=self.run, name='robot-cloud-sync', daemon=True)
 
     def _complete_pending(self):
@@ -480,6 +490,8 @@ class CloudSync:
             count = save_zones(runtime, self.bridge.catalog, payload)
             self.last_map_at = 0.0  # Upload the saved map with its new Zones.
             return {'saved': count, 'map': payload['map']}
+        if operation in NAVIGATION_OPERATIONS:
+            return self._navigation(operation, payload, runtime)
         if operation in ('rooms_save', 'zones_apply'):
             path = live_zone_map(runtime, self.bridge.catalog)
             map_id = cloud_map_id(runtime)
@@ -509,6 +521,43 @@ class CloudSync:
                    'last_warning': self.last_warning})
         return json.loads(json.dumps(diagnostics, default=str))
 
+    def _navigation(self, operation, payload, runtime):
+        """Preview, start or cancel a destination drive picked on the web map."""
+        requests = self.bridge.data.snapshot().get('requests', [])
+        busy = self.navigator.busy(requests)
+        if operation == 'navigation_cancel':
+            if set(payload) != {'sessionId'} or not isinstance(payload['sessionId'], str):
+                raise ValueError('Navigation cancel needs only the session ID')
+            return self.navigator.cancel(payload['sessionId'], lambda request_id: (
+                self.bridge.submit({'command': 'cancel', 'request_id': request_id})))
+        user_map, zones, map_revision = space_documents(runtime, self.bridge.catalog)
+        if runtime.get('mode') != 'navigation' or zones is None:
+            raise NavigationError('말벗이 저장된 지도로 주행 중일 때 보낼 수 있어요.')
+        map_key = f'{cloud_map_id(runtime)}:{map_revision}'
+        if operation == 'navigation_start':
+            if set(payload) != {'previewToken'} or not isinstance(payload['previewToken'], str):
+                raise ValueError('Navigation start needs only the preview token')
+            return self.navigator.start(
+                payload['previewToken'], map_key=map_key, busy=busy,
+                submit=lambda goal: self.bridge.submit({
+                    'command': 'start', 'capability': 'navigate_to_pose',
+                    'arguments': {key: goal[key] for key in ('x', 'y', 'yaw')}}))
+        if (set(payload) != {'x', 'y'} or not all(
+                type(payload[key]) in (int, float) and math.isfinite(payload[key])
+                for key in ('x', 'y'))):
+            raise ValueError('Navigation preview needs finite x and y')
+        if user_map is None:
+            raise NavigationError('이 지도에는 다닐 수 있는 바닥 정보가 없어 보낼 수 없어요.')
+        info = self.bridge.data.map_snapshot()
+        return self.navigator.preview(
+            float(payload['x']), float(payload['y']),
+            pose=info.get('pose') if info.get('active') else None, map_key=map_key,
+            floor=[feature['geometry'] for feature in user_map['features']
+                   if (feature.get('properties') or {}).get('role') == 'walkable_area'],
+            blocked=[feature['geometry'] for feature in zones['features']
+                     if feature['properties'].get('behavior') == 'restricted'],
+            plan=self.bridge.plan_path, busy=busy)
+
     def wait_seconds(self, elapsed):
         """Poll fast only while manual input keeps arriving."""
         interval = MANUAL_POLL_S if time.monotonic() < self.fast_until else self.interval
@@ -527,8 +576,9 @@ class CloudSync:
         info = self.bridge.data.map_snapshot()
         # Fast manual polls only claim commands; state keeps its normal cadence.
         if now - self.last_state_at >= self.interval - MANUAL_POLL_S / 2:
+            navigation = self.navigator.target(snapshot.get('requests', []))
             self.client.request('/api/device/v1/robot/state', 'POST',
-                                state_payload(snapshot, info, self.maps))
+                                state_payload(snapshot, info, self.maps, navigation=navigation))
             self.last_state_at = now
         if self.stop_event.is_set():
             return
