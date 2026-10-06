@@ -12,7 +12,8 @@ import numpy as np
 import pytest
 from std_msgs.msg import String
 
-from malbut_bringup.zone_filter import ZoneFilter
+from malbut_bringup.user_map import load_or_build_user_map, save_rooms
+from malbut_bringup.zone_filter import ACTIVE_ROOMS_FILE, ZoneFilter
 from malbut_bringup.zones import write_zones, zone_feature, zones_path
 
 
@@ -45,6 +46,7 @@ def _node(tmp_path, clock):
     node.pending = None
     node.retry_at = 0.0
     node.last_report = None
+    node.rooms_applied = ()
     node.get_logger = Mock()
     return node
 
@@ -188,3 +190,83 @@ def test_reports_of_different_severity_use_a_real_logger(tmp_path, clock):
         if real is not None:
             real.destroy_node()
         context.try_shutdown()
+
+
+def _rooms_file(node):
+    path = node.directory / ACTIVE_ROOMS_FILE
+    return json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
+
+
+def _touch(path):
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
+
+
+def test_patrol_gets_the_selected_maps_rooms_and_their_edits(tmp_path, clock, saved_map):
+    """Rooms saved from the web reach the next patrol; a remade map's old rooms never do."""
+    node = _node(tmp_path, clock)
+    node.directory.mkdir(parents=True)
+    (node.directory / ACTIVE_ROOMS_FILE).write_text('{"left": "from another map"}')
+    node._tick()
+    assert _rooms_file(node) is None, 'a file from before startup is removed'
+
+    _select(node, 'LOCALIZATION', saved_map)
+    assert _rooms_file(node) is None, 'no rooms until the map has a User Map'
+    user_map = load_or_build_user_map(saved_map, 'real-home')
+    node._tick()
+    rooms = _rooms_file(node)
+    assert rooms['map_revision'] == user_map['map_revision']
+    assert rooms['grid'] == {'width': 80, 'height': 40, 'resolution': 0.05,
+                             'origin': [-1.0, -1.0, 0.0]}
+    assert [f['id'] for f in rooms['features'] if f['properties']['role'] == 'room'] == [
+        f['id'] for f in user_map['features'] if f['properties']['role'] == 'room']
+
+    edited = [{'type': 'Feature', 'id': name, 'geometry': {'type': 'Polygon', 'coordinates': [
+        [[x0, -0.9], [x0 + 1.5, -0.9], [x0 + 1.5, 0.9], [x0, 0.9], [x0, -0.9]]]},
+        'properties': {'role': 'room', 'room_id': name, 'name': name}}
+        for name, x0 in (('living', -0.9), ('kitchen', 0.6))]
+    save_rooms(saved_map, 'real-home', {'map_id': 'real-home',
+                                        'map_revision': user_map['map_revision'],
+                                        'rooms': edited})
+    _touch(saved_map.with_suffix('.user-map.geojson'))
+    node._tick()
+    assert [f['id'] for f in _rooms_file(node)['features']
+            if f['properties']['role'] == 'room'] == ['living', 'kitchen']
+
+    # The map made again under the same name: its old rooms do not fit the new walls.
+    image = np.full((40, 80), 254, dtype=np.uint8)
+    image[:, 40] = 0
+    cv2.imwrite(str(saved_map.with_suffix('.pgm')), image)
+    _touch(saved_map)
+    node._tick()
+    assert _rooms_file(node) is None
+
+    load_or_build_user_map(saved_map, 'real-home')
+    node._tick()
+    assert _rooms_file(node) is not None
+    _select(node, 'MAPPING')
+    assert _rooms_file(node) is None, 'making a new map leaves patrol without rooms'
+
+
+def test_the_room_file_names_the_grid_patrol_checks(tmp_path, clock, saved_map):
+    """Patrol accepts the file for the map map_server publishes, and not for another."""
+    coverage = pytest.importorskip('malbut_patrol.coverage')
+    node = _node(tmp_path, clock)
+    _select(node, 'LOCALIZATION', saved_map)
+    load_or_build_user_map(saved_map, 'real-home')
+    node._tick()
+    path = node.directory / ACTIVE_ROOMS_FILE
+    published = coverage.CoverageGrid(np.zeros((40, 80)), 0.05, -1.0, -1.0, 0.0)
+    rooms, reason = coverage.read_room_map(path, published)
+    assert rooms is not None and reason == ''
+    other = coverage.CoverageGrid(np.zeros((60, 80)), 0.05, -1.0, -1.0, 0.0)
+    assert coverage.read_room_map(path, other)[0] is None
+
+
+def test_bringup_points_patrol_at_the_file_this_node_keeps():
+    """Patrol's room_map_file is the active room file in the default cache directory."""
+    from pathlib import Path
+
+    from malbut_bringup.launch_support import defaults
+    assert defaults()['room_map_file'] == str(
+        Path.home() / '.ros/malbut/zones' / ACTIVE_ROOMS_FILE)

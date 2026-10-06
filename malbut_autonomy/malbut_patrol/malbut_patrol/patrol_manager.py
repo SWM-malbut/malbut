@@ -27,7 +27,9 @@ from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from malbut_patrol.coverage import CoverageGrid, CoveragePlanner, CoverageProfile
+from malbut_patrol.coverage import (
+    CoverageGrid, CoveragePlanner, CoverageProfile, read_room_map,
+)
 
 
 class PatrolInterrupted(RuntimeError):
@@ -461,12 +463,16 @@ class PatrolManager(Node):
         try:
             self._publish_status('planning', 'Computing reachable viewpoints')
             rooms = None
+            grid = _grid(self.map_message)
             room_file = self.settings['room_map_file']
             if room_file:
-                rooms = json.loads(Path(room_file).expanduser().read_text(encoding='utf-8'))
+                # Read at every start: rooms edited since the last patrol are used.
+                rooms, reason = read_room_map(Path(room_file).expanduser(), grid)
+                if reason:
+                    self.get_logger().info(reason)
             info = self.camera_info
             self.planner = CoveragePlanner(
-                _grid(self.map_message), self.profiles[handle.request.thoroughness],
+                grid, self.profiles[handle.request.thoroughness],
                 self._robot_xy(), self.settings['robot_clearance_m'], rooms,
                 2.0 * math.atan2(info.width, 2.0 * info.k[0]))
             self.last_observation = time.monotonic()
