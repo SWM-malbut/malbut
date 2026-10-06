@@ -150,7 +150,7 @@ test("re-registering asks first, then removes everyone else and keeps the earlie
     const audit = (await h.db.query(
       "SELECT metadata_json FROM access_audit_log WHERE action='device.registered'")).rows[0];
     assert.deepEqual(JSON.parse(audit.metadata_json),
-      { removedMembers: 2, history: "keep", deletedIncidents: 0, deletedCloudKey: false });
+      { removedMembers: 2, history: "keep", deletedIncidents: 0, deletedCloudKey: false, deletedServiceKeys: [] });
     assert.deepEqual((await h.db.query("SELECT key_version, last4 FROM fall_cloud_keys")).rows,
       [{ key_version: 3, last4: "abcd" }], "남기기 keeps the Cloud AI key");
   });

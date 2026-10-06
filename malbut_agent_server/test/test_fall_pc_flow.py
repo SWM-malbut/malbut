@@ -8,6 +8,7 @@ Only the Cloud provider's HTTP transport is replaced; no credential file is read
 """
 
 import asyncio
+from dataclasses import replace
 import base64
 import io
 import json
@@ -91,6 +92,7 @@ class OfflineCloud(OllamaCloudFallProvider):
         self.requests = []
         self.payloads = []
         self.canceled = 0
+        self.localize_crosscheck = False
 
     async def analyze(self, request):
         self.requests.append(request)
@@ -108,10 +110,16 @@ class OfflineCloud(OllamaCloudFallProvider):
         if self.mode == 'invalid':
             content = 'not a JSON reply'
         elif self.requests[-1].purpose == 'crosscheck':
+            regions = []
+            if self.localize_crosscheck:
+                left, top, right, bottom = pose_fixture(True).box
+                regions = [dict(frame_index=index,
+                                box_2d=[round(v * 1000) for v in (top, left, bottom, right)])
+                           for index in (0, len(self.requests[-1].window.frames) - 1)]
             content = json.dumps(dict(
                 assessment='suspected_fall', explanation='테스트용 의심 결과',
                 findings=[dict(assessment='suspected_fall', kind='already_down',
-                               regions=[])]))
+                               regions=regions)]))
         else:
             content = json.dumps(dict(assessment='observed_fall', explanation='테스트용 낙상 결과'))
         return json.dumps(dict(done=True, done_reason='stop',
@@ -180,6 +188,7 @@ class PcFlow:
             self.revision = self.sequence = 0
             self.last_server = self.last_camera = -float('inf')
             self.lying = lying
+            self.pose_available = True
             self.frames = self.pose_frames = 0
             self.candidate_messages = []
             self.task = asyncio.create_task(spin_runtime(self.vlm))
@@ -222,7 +231,7 @@ class PcFlow:
             self.detector.reset()
             return
         self.pose_frames += 1
-        tracking = self.tracker.update((pose_fixture(self.lying),), now)
+        tracking = self.tracker.update((pose_fixture(self.lying),) if self.pose_available else (), now)
         self.poses.publish(String(data=json.dumps(dict(
             schemaVersion=1, status='ok', frameId='pc_test_rgb',
             captureStamp=dict(sec=stamp.sec, nanosec=stamp.nanosec),
@@ -494,6 +503,39 @@ def test_periodic_cloud_check_without_pose_candidate(tmp_path):
             assert flow.vlm.monitor.incident(iid).subject_key is None
             assert any(r['incidentId'] == iid for r in flow.stored())
             assert not any(r['notificationLevel'] for r in flow.stored())
+        finally:
+            await flow.close()
+    asyncio.run(run())
+
+
+def test_lost_pose_association_wait_and_timeout_reach_manager_over_dds(tmp_path):
+    async def run():
+        flow = PcFlow(tmp_path)
+        try:
+            await flow.start()
+            await flow.until(lambda: any(e['kind'] == 'question_requested' for e in flow.events))
+            q = next(e for e in flow.events if e['kind'] == 'question_requested')
+            flow.confirm(q, situation_assessment='confirmed_incident', help_needed=True)
+            await flow.until(lambda: any(e['kind'] == 'confirmation_completed' for e in flow.events))
+            await flow.pump(.5)
+            # Shorten ONLY the test deadline; production maximum stays 20 s.
+            flow.vlm.monitor.policy = replace(flow.vlm.monitor.policy, cloud_timeout_s=1.0)
+            flow.provider.localize_crosscheck = True
+            flow.pose_available = False
+            await flow.pump(.7)
+            flow.vlm.monitor._scan_anchor = time.monotonic() - 60
+            await flow.until(lambda: any(d.get('association_review', {}).get('status') == 'pending'
+                                         for d in flow.journal.discoveries()))
+            assert len({e['incident_id'] for e in flow.events if e['kind'] == 'question_requested'}) == 1
+            await flow.until(lambda: len({e['incident_id'] for e in flow.events
+                                         if e['kind'] == 'question_requested'}) == 2)
+            ds = flow.journal.discoveries()
+            expired = next(d for d in ds if d['reason'] == 'association_wait_expired')
+            assert expired['association_review']['status'] == 'verification_required'
+            assert expired['subject_key'] is None and expired['incident_id'] != q['incident_id']
+            assert flow.vlm.monitor.incident(q['incident_id']).state.value == 'help_required'
+            assert flow.vlm.monitor.incident(expired['incident_id']).answer is None
+            assert len(flow.provider.requests) == 2
         finally:
             await flow.close()
     asyncio.run(run())

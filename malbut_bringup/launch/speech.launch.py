@@ -119,6 +119,11 @@ def _setup(context):
             package='malbut_agent_server', executable='weather',
             prefix=prefix, output='screen',
         )
+        # The OpenAI/KMA keys the owner sets on the web; it stays off without HOMECAM_* settings.
+        key_sync = Node(
+            package='malbut_agent_server', executable='key_sync',
+            prefix=prefix, output='screen',
+        )
         stt = Node(
             package='malbut_stt', executable='stt', output='screen',
             prefix=shlex.join([*supervised, '--wait-for-ready', '--', python]),
@@ -129,9 +134,9 @@ def _setup(context):
                 'input_has_aec': input_has_aec,
             }],
         )
-        runtime_nodes.extend([agent, tts, stt, weather])
+        runtime_nodes.extend([agent, tts, stt, weather, key_sync])
         stage = 'running'
-        return [agent, tts, weather, stt]
+        return [agent, tts, weather, stt, key_sync]
 
     def child_exited(event, launch_context):
         if launch_context.is_shutdown or event.action not in runtime_nodes:

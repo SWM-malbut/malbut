@@ -3,3 +3,6 @@ PyYAML>=6,<7
 Pillow>=9,<13
 aiohttp>=3.9,<4
 tiktoken>=0.7,<1
+# Cross-package fall lifecycle tests import the real Pose candidate rules.
+numpy>=1.23,<3
+opencv-python-headless>=4.8,<5

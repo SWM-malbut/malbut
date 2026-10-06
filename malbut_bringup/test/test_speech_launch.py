@@ -80,7 +80,7 @@ def test_all_speech_nodes_start_without_external_control_or_peer_gates(speech, c
     context = _context(speech, control_server=control_server)
     actions = speech._setup(context)
     assert [item.node_executable for item in actions if isinstance(item, Node)] == [
-        'agent_communication', 'tts_node', 'weather', 'stt']
+        'agent_communication', 'tts_node', 'weather', 'stt', 'key_sync']
     assert not any(isinstance(item, ExecuteProcess) and not isinstance(item, Node)
                    for item in actions)
     assert not any(isinstance(item, TimerAction) for item in actions)
@@ -93,8 +93,9 @@ def test_audio_and_identity_settings_reach_the_correct_nodes(speech):
         agent_conversation_db='/trial records/session.sqlite3',
         navigation_targets='/maps/targets.yaml', preflight_timeout_s='25')
     actions = speech._setup(context)
-    agent, tts, weather, stt = [item for item in actions if isinstance(item, Node)]
+    agent, tts, weather, stt, key_sync = [item for item in actions if isinstance(item, Node)]
     assert weather.node_package == 'malbut_agent_server'
+    assert key_sync.node_package == 'malbut_agent_server'
     # All settings are captured before the scoped parent restores its own values.
     context.launch_configurations.clear()
     command = [perform_substitutions(context, part) for part in agent.cmd[1:]]
@@ -123,7 +124,7 @@ def test_venv_symlink_and_spaces_are_not_resolved(speech, tmp_path):
     python.symlink_to(sys.executable)
     context = _context(speech, python_executable=str(python))
     nodes = [item for item in speech._setup(context) if isinstance(item, Node)]
-    for item in nodes[:3]:
+    for item in [*nodes[:3], nodes[4]]:
         assert perform_substitutions(context, item.process_description.prefix) == (
             shlex.quote(str(python)))
 
@@ -160,7 +161,8 @@ def test_missing_local_asset_fails_only_this_module_setup(speech, name):
         speech._setup(_context(speech, **{name: '/missing/asset'}))
 
 
-@pytest.mark.parametrize('child', ['agent_communication', 'tts_node', 'weather', 'stt'])
+@pytest.mark.parametrize(
+    'child', ['agent_communication', 'tts_node', 'weather', 'stt', 'key_sync'])
 @pytest.mark.parametrize('code', [0, 1, -11])
 def test_child_exit_is_reported_without_shutdown_or_respawn(speech, child, code):
     from launch.actions import LogInfo

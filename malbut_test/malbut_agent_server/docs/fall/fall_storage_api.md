@@ -93,6 +93,9 @@ malbut-fall-upload --journal /var/lib/malbut-falls/events.sqlite --device-id DEV
 위 명령은 **설정 확인만** 한다. 파일 생성·토큰 읽기·HTTP 전송을 하지 않는다.
 실제 워커 실행은 같은 명령에 `--execute --token-file /etc/malbut-homecam.token`을 추가한다.
 `--once`를 함께 주면 전송 대기 한 건만 처리한다. 토큰은 명령행 값으로 받지 않는다.
+Bringup은 웹 설정이 있으면 같은 감지 DB·기기 ID로 `--execute --upload-clips` 워커를
+자동 시작한다. 이 경우 수동 실행은 불필요하며 동일 DB에 대한 중복 송신은 파일 잠금으로 막는다.
+기존 대기 알림도 전송 대상이다. 과거 알림 억제 정책은 이번 자동 연결에서 변경하지 않는다.
 
 - 로컬 저널 디렉터리 `0700`, 파일 `0600`. 토큰 파일은 `0600` 또는 `0640`만 허용한다.
 - HTTPS 허용 호스트만 사용한다. 리디렉션을 따라가지 않고 환경 프록시 설정도 사용하지 않는다.
@@ -100,7 +103,8 @@ malbut-fall-upload --journal /var/lib/malbut-falls/events.sqlite --device-id DEV
   토큰을 고친 뒤 명시적으로 `--retry-auth-failed`를 주면 `401/403` 기록만 다시 대기시킨다.
 - `--upload-clips`를 주면 사건 클립 구간(녹화 시작·끝 실제 시각, 영상 자체는 아님)도
   `POST /api/device/v1/fall-incident-clips`로 보낸다. 기본은 꺼져 있다(웹 수신 API 배포 전).
-  알림 이벤트를 항상 먼저 보낸다. 웹이 아직 받지 못하면(`404`) 막지 않고 늦춰 재시도한다.
+  Bringup 자동 실행에서는 켜져 있다. 알림 이벤트를 항상 먼저 보낸다.
+  웹이 아직 받지 못하면(`404`) 막지 않고 늦춰 재시도한다.
   계약·ID 충돌은 별도 확인이 필요하다.
 - 같은 플래그로 클립 구간의 사람 박스(장면 영상 위 사람 표시용)도
   `POST /api/device/v1/fall-incident-people`로 보낸다. 위치만 보내고 영상·사람 ID는 보내지 않는다.

@@ -6,6 +6,8 @@ import { FallIncidentsPanel } from "./fall-incidents-panel";
 import { FallTimelinePanel, type TimelineMode } from "./fall-timeline-panel";
 import { subscribeFallPush } from "../lib/fall-push";
 import { GuardiansSettings, OwnerTransferCard, type FamilyMember } from "./guardians-settings";
+import { KeyHealthNotice } from "./key-health-notice";
+import { ServiceKeysSettings } from "./service-keys-settings";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
@@ -510,7 +512,7 @@ export function HomecamDashboard({
   const [pushEndpointRegistrationCount, setPushEndpointRegistrationCount] = useState(0);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [standalone, setStandalone] = useState(false);
-  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians" | "owner" | "name">("main");
+  const [settingsView, setSettingsView] = useState<"main" | "homecam" | "guardians" | "keys" | "owner" | "name">("main");
   const [account, setAccount] = useState<{ userId: string | null; name: string | null; email: string | null; providers: string[] } | null>(null);
   const [textSize, setTextSize] = useState<"default" | "large">("default");
   const [liveClockMs, setLiveClockMs] = useState(() => Date.now());
@@ -1102,15 +1104,6 @@ export function HomecamDashboard({
     !storageReady &&
     !storageConnecting,
   );
-  const storageStateLabel = !storageEnabled
-    ? "저장 안 함"
-    : !selectedDevice?.cameraEnabled
-      ? "카메라 꺼짐 · 저장 대기"
-    : storageReady
-      ? "연속 녹화 중"
-      : storageConnecting
-        ? "연속 녹화 준비 중"
-        : "연속 녹화 오류";
   const isGuardianView = selectedDevice?.role !== "owner";
   const roleLabel = selectedDevice?.role === "owner" ? "소유자" : selectedDevice?.role === "family" ? "보호자" : "읽기 전용";
   const connectionText = selectedDevice?.online
@@ -1142,36 +1135,23 @@ export function HomecamDashboard({
               <h1>{tab === "home" ? "홈" : tab === "live" ? "홈캠" : "설정"}</h1>
               <span className={`ui-pill ${selectedDevice?.online ? "is-ok" : ""}`}><i aria-hidden="true" />{connectionText}</span>
             </div>
-            {tab === "live" ? (
-              <span className="ui-top-sub" aria-live="polite">
-                <span>{selectedDevice?.displayName ?? "등록된 말벗 없음"}</span>
-                <b aria-hidden="true">·</b>
-                <span className={displayedMediaReady ? "is-ready" : "is-pending"}>
-                  {displayedMediaReady ? "보안 영상 채널 연결됨" : "영상 채널 연결 중"}
-                </span>
-                <b aria-hidden="true">·</b>
-                <span className={storageReady ? "is-ready" : storageConnecting ? "is-pending" : storageError ? "is-error" : ""}>
-                  {storageStateLabel}
-                </span>
+            {/* 홈·홈캠·설정 모두 같은 머리. 홈캠의 영상·녹화 상태는 아래 "현재 상태" 카드에 있다. */}
+            <div className="ui-device">
+              <span className="ui-device-avatar" aria-hidden="true">말</span>
+              <span className="ui-device-text">
+                <label htmlFor="homecam-device-select">연결된 말벗</label>
+                {devices.length > 1 ? (
+                  <select id="homecam-device-select" value={selectedDevice?.id ?? ""}
+                    onChange={(event) => setSelectedDeviceId(event.target.value)}>
+                    {devices.map((device) => (
+                      <option key={device.id} value={device.id}>{device.displayName}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <strong>{selectedDevice?.displayName ?? "등록된 말벗 없음"}</strong>
+                )}
               </span>
-            ) : (
-              <div className="ui-device">
-                <span className="ui-device-avatar" aria-hidden="true">말</span>
-                <span className="ui-device-text">
-                  <label htmlFor="homecam-device-select">연결된 말벗</label>
-                  {devices.length > 1 ? (
-                    <select id="homecam-device-select" value={selectedDevice?.id ?? ""}
-                      onChange={(event) => setSelectedDeviceId(event.target.value)}>
-                      {devices.map((device) => (
-                        <option key={device.id} value={device.id}>{device.displayName}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <strong>{selectedDevice?.displayName ?? "등록된 말벗 없음"}</strong>
-                  )}
-                </span>
-              </div>
-            )}
+            </div>
           </header>
         )}
 
@@ -1194,6 +1174,15 @@ export function HomecamDashboard({
 
         {tab === "home" && !(availability === "ready" && devices.length === 0) && (
           <section className="ui-screen ui-home" aria-label="말벗 지금 상태">
+            {selectedDevice && (
+              <KeyHealthNotice
+                key={selectedDevice.id}
+                deviceId={selectedDevice.id}
+                isOwner={isOwner}
+                demo={LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID}
+                onOpenKeys={() => { setSettingsView("keys"); setTab("settings"); }}
+              />
+            )}
             <article className="ui-card ui-hero">
               <span className="ui-caption">지금 말벗은</span>
               <strong className="ui-hero-title">
@@ -1469,6 +1458,12 @@ export function HomecamDashboard({
                   <CaretRight size={18} aria-hidden="true" />
                 </button>
                 {isOwner && (
+                  <button type="button" onClick={() => setSettingsView("keys")}>
+                    <span><strong>AI·서비스 키</strong><small>대화 · 날씨 · 낙상 AI 확인에 쓰는 키</small></span>
+                    <CaretRight size={18} aria-hidden="true" />
+                  </button>
+                )}
+                {isOwner && (
                   <button type="button" onClick={() => setSettingsView("owner")}>
                     <span><strong>소유자 넘기기 · 다시 등록</strong><small>관리를 다른 보호자에게 맡기거나 말벗을 옮길 때</small></span>
                     <CaretRight size={18} aria-hidden="true" />
@@ -1555,6 +1550,15 @@ export function HomecamDashboard({
               />
             ) : <p className="ui-hint">등록된 말벗이 없어요.</p>}
           </section>
+        )}
+
+        {tab === "settings" && settingsView === "keys" && selectedDevice && (
+          <ServiceKeysSettings
+            key={selectedDevice.id}
+            deviceId={selectedDevice.id}
+            demo={LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID}
+            onBack={() => setSettingsView("main")}
+          />
         )}
 
         {tab === "settings" && settingsView === "owner" && (

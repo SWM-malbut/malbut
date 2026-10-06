@@ -2,14 +2,30 @@
 
 Only the selected backend sends text externally. No retries, local-model
 fallback, audio files, or response/error bodies are logged here.
+
+The key is read on every utterance (the owner can change it on the web,
+SWM25-235). When it is missing, wrong or out of quota, Malbut cannot speak
+the answer, so the prerecorded notice plays instead through the same player.
 """
 
 import asyncio
 import math
-import os
+from pathlib import Path
 import re
+import wave
 
 import numpy as np
+
+from malbut_tts.managed_key import OpenAIKey
+
+NOTICE_PATH = Path(__file__).resolve().parent / 'assets' / 'notice_no_dialogue.wav'
+# Failures that mean the key itself cannot be used, and how they are reported.
+KEY_FAILURES = {
+    'missing_api_key': 'missing',
+    'authentication_failed': 'invalid',
+    'permission_denied': 'invalid',
+    'insufficient_quota': 'quota',
+}
 
 
 class ApiTtsError(RuntimeError):
@@ -17,6 +33,7 @@ class ApiTtsError(RuntimeError):
 
     def __init__(self, code):
         super().__init__('API TTS failed: ' + code)
+        self.code = code
 
 
 class _Cancelled(Exception):
@@ -36,10 +53,19 @@ def _error_code(error):
     if status == 403:
         return 'permission_denied'
     if status == 429:
-        return 'rate_limited'
+        return 'insufficient_quota' if _insufficient_quota(error) else 'rate_limited'
     if isinstance(status, int):
         return 'invalid_request' if 400 <= status < 500 else 'provider_error'
     return 'stream_error'
+
+
+def _insufficient_quota(error):
+    """A 429 for an exhausted account, not a short rate limit (SDK error fields)."""
+    body = getattr(error, 'body', None)
+    fields = [getattr(error, 'code', None), getattr(error, 'type', None)]
+    if isinstance(body, dict):
+        fields += [body.get('code'), body.get('type')]
+    return 'insufficient_quota' in fields
 
 
 class OpenAISynthesizer:
@@ -59,7 +85,8 @@ class OpenAISynthesizer:
     max_audio_bytes = 24000 * 2 * 300
 
     def __init__(self, *, model='gpt-4o-mini-tts', voice='marin',
-                 timeout_seconds=8.0, api_key=None, client_factory=None):
+                 timeout_seconds=8.0, api_key=None, client_factory=None,
+                 notice_path=NOTICE_PATH):
         for value in (model, voice):
             if (not isinstance(value, str)
                     or re.fullmatch(r'[a-zA-Z0-9_.:-]{1,128}', value) is None):
@@ -71,23 +98,53 @@ class OpenAISynthesizer:
         self.model = model
         self.voice = voice
         self.timeout_seconds = float(timeout_seconds)
-        self._api_key = api_key
+        # A fixed key string (tests, smoke), or the key the owner manages on the web.
+        self.key = OpenAIKey() if api_key is None else api_key
         self._client_factory = client_factory
+        self._notice_path = notice_path
+        self._notice = None
 
-    def load(self):
-        """Check configuration/dependencies without making a paid request."""
-        key = self._api_key
-        if key is None:
-            key = os.environ.get('OPENAI_API_KEY', '')
+    def _report(self, state, code=None):
+        report = getattr(self.key, 'report', None)
+        if report is not None:
+            report(state, code)
+
+    def _ready(self):
+        """The key to use now; also checks the SDK, without a paid request."""
+        key = self.key if isinstance(self.key, str) else self.key.current()
         if not isinstance(key, str) or not key.strip():
+            self._report('missing', 'missing_api_key')
             raise ApiTtsError('missing_api_key')
-        self._api_key = key.strip()
         if self._client_factory is None:
             try:
                 from openai import AsyncOpenAI
             except ImportError:
                 raise ApiTtsError('dependency_missing') from None
             self._client_factory = AsyncOpenAI
+        return key.strip()
+
+    def load(self):
+        """Check configuration/dependencies without making a paid request."""
+        self._ready()
+
+    def _notice_audio(self):
+        """The bundled notice as mono float32, or None when it is missing or unusable."""
+        if self._notice is None and self._notice_path is not None:
+            try:
+                with wave.open(str(self._notice_path), 'rb') as file:
+                    rate = file.getframerate()
+                    if (file.getnchannels() != 1 or file.getsampwidth() != 2
+                            or not 8000 <= rate <= 48000
+                            or not 0 < file.getnframes() <= rate * 30):
+                        return None
+                    frames = file.readframes(file.getnframes())
+            except (OSError, EOFError, wave.Error):
+                return None
+            if not frames or len(frames) % 2:
+                return None
+            pcm = np.frombuffer(frames, dtype='<i2')
+            self._notice = (pcm.astype(np.float32) / 32768.0, rate)
+        return self._notice
 
     async def _wait(self, awaitable, cancel_event):
         task = asyncio.ensure_future(awaitable)
@@ -114,12 +171,36 @@ class OpenAISynthesizer:
             await asyncio.gather(task, return_exceptions=True)
 
     def generate(self, text, cancel_event):
+        """Yield audio as it arrives, or the notice when the key cannot be used."""
+        stream = self._stream(text, cancel_event)
+        started = False
+        try:
+            for chunk in stream:
+                started = True
+                yield chunk
+            return
+        except ApiTtsError as error:
+            notice = None
+            if not started and error.code in KEY_FAILURES:
+                notice = self._notice_audio()
+            if notice is None or cancel_event.is_set():
+                raise
+        finally:
+            stream.close()
+        audio, rate = notice
+        step = rate // 10
+        for start in range(0, len(audio), step):
+            if cancel_event.is_set():
+                return
+            yield audio[start:start + step], rate
+
+    def _stream(self, text, cancel_event):
         """Yield audio as it arrives; failed/partial responses are never retried."""
         if cancel_event.is_set():
             return
         if not isinstance(text, str) or not text.strip() or len(text) > 4096:
             raise ApiTtsError('invalid_request')
-        self.load()
+        api_key = self._ready()
         loop = asyncio.new_event_loop()
         client = None
         context = None
@@ -129,7 +210,7 @@ class OpenAISynthesizer:
             # Explicit official endpoint: environment overrides cannot silently
             # redirect this backend's text or credentials to another provider.
             client = self._client_factory(
-                api_key=self._api_key, base_url='https://api.openai.com/v1',
+                api_key=api_key, base_url='https://api.openai.com/v1',
                 max_retries=0, timeout=self.timeout_seconds,
             )
             context = client.audio.speech.with_streaming_response.create(
@@ -142,6 +223,7 @@ class OpenAISynthesizer:
             content_type = response.headers.get('content-type', '').split(';')[0]
             if content_type not in ('audio/pcm', 'application/octet-stream'):
                 raise ApiTtsError('invalid_audio')
+            self._report('ok')
             stream = response.iter_bytes(chunk_size=self.chunk_bytes).__aiter__()
             carry = b''
             startup = bytearray()
@@ -203,4 +285,6 @@ class OpenAISynthesizer:
             finally:
                 loop.close()
             if failure is not None:
+                if failure in KEY_FAILURES:
+                    self._report(KEY_FAILURES[failure], failure)
                 raise ApiTtsError(failure) from None

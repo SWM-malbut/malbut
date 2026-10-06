@@ -204,7 +204,7 @@ def test_repeated_scene_handoffs_retry_result_not_question_or_analysis(handoff):
     flow.link.agent_presence.send_goal_async.assert_not_called()
 
 
-def test_new_scene_evidence_waits_for_current_confirmation_result(handoff):
+def test_scene_label_strengthening_keeps_current_confirmation_without_reasking(handoff):
     flow = handoff
     events = flow.scan()
     first = next(event for event in events if event.kind == 'question_requested')
@@ -220,20 +220,25 @@ def test_new_scene_evidence_waits_for_current_confirmation_result(handoff):
     old_command, = flow.commands()
     assert old_command['question_id'] == first.question_id
     assert flow.apply(old_command)
-    assert flow.monitor.incident(first.incident_id).state is not IncidentState.RESOLVED
+    incident = flow.monitor.incident(first.incident_id)
+    assert incident.state is IncidentState.RECHECK_REQUIRED
+    assert incident.answer is VoiceAnswer.UNCLEAR
+    assert incident.video.assessment is VideoAssessment.OBSERVED_FALL
+    assert incident.fall_seen
+    assert incident.revision == first.evidence_revision
+    assert incident.question_id == first.question_id
     events = flow.monitor.drain_events()
-    current = next(event for event in events if event.kind == 'question_requested')
-    assert current.incident_id == first.incident_id
-    assert current.evidence_revision == first.evidence_revision + 1
-    assert current.question_id != first.question_id
+    assert not any(event.kind == 'question_requested' for event in events)
     flow.relay(events)
-    assert flow.link.request.question_id == current.question_id
-    _, new_result = flow.accept()
-    flow.complete(new_result, assessment='unknown', help_needed=True)
-    command = flow.commands()[-1]
-    assert command['evidence_revision'] == current.evidence_revision
-    assert flow.apply(command)
-    assert flow.monitor.incident(first.incident_id).state is IncidentState.HELP_REQUIRED
+    flow.relay(flow.monitor.pending_questions())
+    assert flow.link.request is None
+    assert flow.link.client.send_goal_async.call_count == 1
+    # Re-delivery of the original result or finding is not a second dialogue.
+    assert flow.apply(old_command)
+    assert not flow.monitor.drain_events()
+    events = flow.scan(suspected_scene(VideoAssessment.OBSERVED_FALL), stamp=280)
+    assert not any(event.kind == 'question_requested' for event in events)
+    assert flow.link.client.send_goal_async.call_count == 1
 
 
 @pytest.mark.parametrize('fault', ['aborted', 'canceled', 'invalid_result', 'manager_lost'])

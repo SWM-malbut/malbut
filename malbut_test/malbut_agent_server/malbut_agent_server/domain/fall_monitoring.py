@@ -245,10 +245,13 @@ class SubjectFrame:
     observed_at: float
     subjects: Tuple[SubjectPose, ...]
     max_gap_s: float
+    camera_stationary: bool = False
 
     def __post_init__(self):
         timestamp(self.observed_at)
         positive(self.max_gap_s, 'max_gap_s')
+        if type(self.camera_stationary) is not bool:
+            raise ValueError('invalid camera motion observation')
         if (not isinstance(self.subjects, tuple) or len(self.subjects) > 256
                 or any(not isinstance(p, SubjectPose) for p in self.subjects)
                 or len({p.subject_key for p in self.subjects}) != len(self.subjects)):
@@ -482,6 +485,28 @@ class CloudPoseLink:
 
 
 @dataclass(frozen=True)
+class CloudAssociationReview:
+    """Scheduling context only; candidate_incident_id does NOT assign a person."""
+
+    candidate_incident_id: str
+    candidate_revision: int
+    deadline: float
+    status: str = 'pending'
+
+    def __post_init__(self):
+        identifier(self.candidate_incident_id)
+        timestamp(self.deadline)
+        if (type(self.candidate_revision) is not int or self.candidate_revision < 1
+                or self.status not in {'pending', 'matched', 'verification_required', 'cancelled'}):
+            raise ValueError('invalid association review')
+
+    def metadata(self):
+        return dict(candidate_incident_id=self.candidate_incident_id,
+                    candidate_revision=self.candidate_revision,
+                    deadline=self.deadline, status=self.status)
+
+
+@dataclass(frozen=True)
 class CloudDiscovery:
     discovery_id: str
     request_id: str
@@ -493,10 +518,11 @@ class CloudDiscovery:
     incident_id: Optional[str] = None
     association_evidence: Optional[CloudAssociationEvidence] = None
     association_link: Optional[CloudDiscoveryLink | CloudPoseLink] = None
+    association_review: Optional[CloudAssociationReview] = None
 
     def metadata(self):
         """Private local record; excludes RGB, model prose and Cloud credentials."""
-        return dict(discovery_id=self.discovery_id, request_id=self.request_id,
+        result = dict(discovery_id=self.discovery_id, request_id=self.request_id,
                     finding_index=self.finding_index, assessment=self.finding.assessment.value,
                     candidate_kind=self.finding.kind.value, reason=self.reason,
                     association_status='matched' if self.subject_key else 'unidentified',
@@ -511,6 +537,9 @@ class CloudDiscovery:
                     sample_times=list(self.sample_times),
                     regions=[dict(frame_index=r.frame_index, box=list(r.box))
                              for r in self.finding.regions])
+        if self.association_review is not None:
+            result['association_review'] = self.association_review.metadata()
+        return result
 
 
 @dataclass(frozen=True)

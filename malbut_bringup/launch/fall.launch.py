@@ -5,11 +5,12 @@ from pathlib import Path
 import shlex
 from uuid import uuid4
 
-from launch.actions import LogInfo
-from malbut_bringup.fall_setup import prepare_fall_monitor
+from launch.actions import ExecuteProcess, LogInfo
+from malbut_bringup.fall_setup import prepare_fall_monitor, prepare_fall_upload
 
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.substitutions import ExecutableInPackage
 
 from malbut_bringup.launch_support import (
     description, file_path as _file,
@@ -82,7 +83,27 @@ def _setup(context):
 
     if fall_inputs is None:
         return [LogInfo(msg='Fall module disabled: no configured fall runtime.')]
-    return [fall_coordinator, fall_monitor, fall_pose]
+    actions = [fall_coordinator, fall_monitor, fall_pose]
+    try:
+        upload_args = prepare_fall_upload(fall_config, context.environment)
+    except RuntimeError as error:
+        actions.append(LogInfo(msg=str(error)))
+    else:
+        if upload_args is None:
+            actions.append(LogInfo(msg=(
+                'Fall upload NOT started: configure HOMECAM_BACKEND_URL and '
+                'HOMECAM_DEVICE_TOKEN_FILE (or fall key_sync). '
+                'Incidents stay in the local journal until upload is configured.')))
+        else:
+            # This CLI is not a ROS node: do not append --ros-args/parameters.
+            # Launch owns its shutdown; a worker failure never stops detection.
+            actions.append(ExecuteProcess(
+                cmd=[ExecutableInPackage(package='malbut_agent_server',
+                                         executable='malbut-fall-upload'), *upload_args],
+                name='malbut-fall-upload', output='screen',
+                respawn=True, respawn_delay=5.0,
+            ))
+    return actions
 
 
 def generate_launch_description():

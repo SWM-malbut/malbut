@@ -11,7 +11,6 @@ type FallView = {
   settings: { settingsRevision: string; enabled: boolean; cameraEnabled: boolean; cloudConsent: boolean };
   receiptState: "waiting" | "no_response" | "reported";
 };
-type KeyView = { configured: boolean; last4: string | null; robotHasCurrent: boolean; robotModel: string | null };
 
 function Switch({ checked, disabled, label, onChange }: {
   checked: boolean; disabled: boolean; label: string; onChange: () => void;
@@ -37,19 +36,12 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
   const request = useCallback<Request>((url, init) =>
     demo ? demoIncidentFetch(url, init) : fetch(url, init), [demo]);
   const [fall, setFall] = useState<FallView | null>(null);
-  const [key, setKey] = useState<KeyView | null>(null);
-  const [editingKey, setEditingKey] = useState(false);
-  const [newKey, setNewKey] = useState("");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
 
   const load = useCallback(async () => {
-    const [fallResponse, keyResponse] = await Promise.all([
-      request(`${base}/fall-settings`, { cache: "no-store" }).catch(() => null),
-      request(`${base}/fall-cloud-key`, { cache: "no-store" }).catch(() => null),
-    ]);
+    const fallResponse = await request(`${base}/fall-settings`, { cache: "no-store" }).catch(() => null);
     if (fallResponse?.ok) setFall(await fallResponse.json());
-    if (keyResponse?.ok) setKey(await keyResponse.json());
   }, [base, request]);
 
   useEffect(() => {
@@ -76,24 +68,6 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
       await load();
       setBusy("");
     }
-  };
-
-  const saveKey = async (value: string | null) => {
-    setBusy("key");
-    setMessage("");
-    try {
-      const response = await request(`${base}/fall-cloud-key`, value === null
-        ? { method: "DELETE", headers: { "content-type": "application/json" } }
-        : { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ apiKey: value }) });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error ?? "키를 저장하지 못했습니다.");
-      setKey(body);
-      setEditingKey(false);
-      setNewKey("");
-      setMessage(value === null ? "키를 지웠어요. 말벗도 곧 키를 지워요." : "키를 저장했어요. 로봇에 곧 전해져요.");
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : "키를 저장하지 못했습니다.");
-    } finally { setBusy(""); }
   };
 
   const rows: Array<{ title: string; desc: string; checked: boolean; needsCamera: boolean; onChange: () => void; busy: boolean }> = [
@@ -136,39 +110,6 @@ export function FallHomecamSettings({ deviceId, isOwner, cameraEnabled, recordin
               </div>
             );
           })}
-        </div>
-
-        <div className="fall-card is-flat">
-          <h2>클라우드 AI 키</h2>
-          <div className="fall-hint">이 말벗의 모든 사용자가 함께 쓰는 키예요. AI 확인 비용이 이 키로 나가요. 로봇에 직접 넣지 않아도 서버가 전해 줘요.</div>
-          <div className="fall-key-row">
-            <span>{key?.configured ? `•••• •••• •••• ${key.last4}` : "등록된 키 없음"}</span>
-            <span className={key?.configured ? "is-ok" : "is-muted"}>
-              {!key ? "확인 중" : !key.configured ? "AI 확인을 쓰려면 키가 필요해요"
-                : key.robotHasCurrent ? "말벗에 전달됨" : "말벗에 전달하는 중"}
-            </span>
-          </div>
-          {isOwner && editingKey && (
-            <>
-              <label className="fall-field">새 키 입력
-                <input type="password" autoComplete="off" placeholder="키를 붙여 넣으세요" value={newKey}
-                  onChange={(e) => setNewKey(e.target.value)} />
-              </label>
-              <div className="fall-two-buttons">
-                <button type="button" className="fall-button is-soft" onClick={() => { setEditingKey(false); setNewKey(""); }}>취소</button>
-                <button type="button" className="fall-button is-blue" disabled={!newKey.trim() || busy === "key"}
-                  onClick={() => void saveKey(newKey.trim())}>{busy === "key" ? "저장 중…" : "저장"}</button>
-              </div>
-            </>
-          )}
-          {isOwner && !editingKey && (
-            <div className="fall-two-buttons">
-              <button type="button" className="fall-button" onClick={() => setEditingKey(true)}>키 바꾸기</button>
-              <button type="button" className="fall-button is-danger-line" disabled={!key?.configured || busy === "key"}
-                onClick={() => { if (window.confirm("키를 지울까요? 말벗의 클라우드 AI 확인도 멈춰요.")) void saveKey(null); }}>키 지우기</button>
-            </div>
-          )}
-          <div className="fall-hint">입력한 키는 다시 보여 주지 않고 끝 네 자리만 표시해요. 소유자만 바꿀 수 있어요.</div>
         </div>
 
         <div className="fall-card is-flat">

@@ -10,6 +10,8 @@ from urllib.error import URLError
 import yaml
 
 from malbut_agent_server.config import load_env_file
+from malbut_agent_server.ros_key_health import KeyHealthPublisher
+from malbut_agent_server.service_keys import shared_key
 from malbut_agent_server.weather import WeatherState
 from malbut_agent_server.weather_kma import KmaWeatherClient, KmaWeatherError
 from malbut_agent_server.weather_location_store import (
@@ -103,8 +105,11 @@ def create_weather_action_node(*, client=None, timeout_s=10.0,
                     for name in ('latitude', 'longitude')
                 )
                 self._client = client
-                if client is None and not automatic:
-                    self._client = KmaWeatherClient(**values)
+                if client is None:
+                    # Tell key_sync how the owner's KMA key is doing (SWM25-235).
+                    self._key_health = KeyHealthPublisher(self, shared_key('kma'))
+                    if not automatic:
+                        self._client = KmaWeatherClient(**values)
                 self._server = ActionServer(
                     self, GetWeather, WEATHER_ACTION,
                     execute_callback=self._execute,

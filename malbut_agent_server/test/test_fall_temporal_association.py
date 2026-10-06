@@ -185,7 +185,10 @@ def test_pose_reset_during_cloud_does_not_join_old_and_new_generations():
 ])
 def test_late_pose_does_not_bypass_lifecycle_or_identity_guards(change):
     async def run():
-        adapter, monitor, clock, provider, iid, _, _, _ = await prepare('late_after_cloud')
+        # Unknown camera motion bypasses position-based waiting. Exercise the
+        # existing scene-to-person merge guards, not the new no-scene wait.
+        adapter, monitor, clock, provider, iid, _, _, _ = await prepare(
+            'late_after_cloud', camera_stationary=False)
         assert await monitor.run_once()
         d = next(e.discovery for e in monitor.drain_events() if e.discovery)
         original_calls = len(provider.calls)
@@ -226,7 +229,8 @@ def test_late_pose_does_not_bypass_lifecycle_or_identity_guards(change):
 
 def test_late_pose_persists_original_and_link_without_transferring_scene_answer(tmp_path):
     async def run():
-        adapter, monitor, clock, provider, iid, qid, _, _ = await prepare('late_after_cloud')
+        adapter, monitor, clock, provider, iid, qid, _, _ = await prepare(
+            'late_after_cloud', camera_stationary=False)
         journal = SqliteFallJournal(tmp_path / 'private' / 'events.sqlite', device_id='robot')
         monitor._journal = journal
         try:

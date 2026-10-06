@@ -64,7 +64,7 @@ def create_communication_node(
     from malbut_agent_server.manager_client import ManagerClient
 
     settings = dialogue_settings or Settings(user_id=DEFAULT_SPEECH_USER)
-    settings.validate_for_dialogue()
+    settings.validate_for_dialogue(require_api_key=False)
 
     class CommunicationNode(Node):
         """Expose communication functions without invoking inference."""
@@ -93,6 +93,11 @@ def create_communication_node(
                 self._speech = self.create_publisher(
                     SpeechRequest, RESPONSE_TOPIC, qos,
                 )
+                if settings.provider == 'openai':
+                    # How the OpenAI key is doing, for key_sync to tell the web.
+                    from malbut_agent_server.factory import openai_key_for
+                    from malbut_agent_server.ros_key_health import KeyHealthPublisher
+                    self._key_health = KeyHealthPublisher(self, openai_key_for(settings))
                 self._announcer = MissionAnnouncer(
                     lambda text: self.say(
                         text, request_type=SpeechRequest.NOTIFICATION,
@@ -597,7 +602,8 @@ def dialogue_settings_from_args(args):
     if args.model is not None:
         overrides['openai_model'] = args.model
     settings = replace(settings, **overrides)
-    settings.validate_for_dialogue()
+    # The owner may set the OpenAI key on the web after bringup (key_sync).
+    settings.validate_for_dialogue(require_api_key=False)
     return settings
 
 

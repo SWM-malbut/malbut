@@ -15,7 +15,12 @@ import uuid
 from malbut_agent_server.config import Settings, load_env_file
 from malbut_agent_server.conversation import ConversationTurn
 from malbut_agent_server.memory import MemoryRecord
-from malbut_agent_server.providers.base import AgentProvider, ProviderError
+from malbut_agent_server.providers.base import (
+    AgentProvider,
+    ProviderError,
+    accepts_memory_context,
+    accepts_weather_context,
+)
 from malbut_agent_server.schemas import (
     AgentDecision,
     AgentRequest,
@@ -68,6 +73,11 @@ class InspectingProvider(AgentProvider):
         self.delegate = delegate
         self.last_observation: ProviderObservation | None = None
 
+    @property
+    def supports_memory(self) -> bool:
+        """Preserve the delegate's opt-in and keyword compatibility."""
+        return accepts_memory_context(self.delegate)
+
     def clear(self) -> None:
         """Forget the previous turn before another local inspection."""
         self.last_observation = None
@@ -79,14 +89,23 @@ class InspectingProvider(AgentProvider):
         conversation_turns: List[ConversationTurn],
         tools: List[ToolSpec],
         conversation_summary=None,
+        *,
+        memory_context=None,
+        weather_context=None,
     ) -> ProviderResult:
         """Record the effective request and normalized model decision."""
+        arguments = {}
+        if self.supports_memory:
+            arguments['memory_context'] = memory_context
+        if accepts_weather_context(self.delegate):
+            arguments['weather_context'] = weather_context
         result = self.delegate.complete(
             request,
             memories,
             conversation_turns,
             tools,
             conversation_summary=conversation_summary,
+            **arguments,
         )
         self.last_observation = ProviderObservation(
             effective_utterance=request.utterance,
