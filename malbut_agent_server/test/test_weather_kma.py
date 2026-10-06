@@ -510,3 +510,53 @@ def test_kma_requires_korean_timezone(http, zone):
     with pytest.raises(ValueError, match='KMA weather requires'):
         client(timezone=zone)
     assert http.calls == []
+
+
+def _kma_key(tmp_path, team=SECRET):
+    from malbut_agent_server.service_keys import ManagedKey
+    return ManagedKey('kma', environ={'KMA_SERVICE_KEY': team}, directory=tmp_path)
+
+
+@pytest.mark.parametrize('code, health', [
+    ('00', ('ok', None)),
+    ('30', ('invalid', 'kma_auth_failed')),
+    ('22', ('quota', 'kma_rate_limited')),
+    ('03', None),
+])
+def test_key_health_is_reported_for_the_web(http, tmp_path, code, health):
+    """SWM25-235: the owner sees on the web when the weather key cannot be used."""
+    def mutate(product, base, payload):
+        payload['response']['header']['resultCode'] = code
+
+    http.mutate = mutate
+    key = _kma_key(tmp_path)
+    weather = KmaWeatherClient(
+        '우만1동', 37.2825388888888, 127.031452777777, service_key=key,
+        clock=lambda: NOW.timestamp())
+    try:
+        weather.fetch()
+    except KmaWeatherError:
+        pass
+    assert key.health == health
+
+
+def test_missing_key_is_reported_without_http(http, tmp_path):
+    key = _kma_key(tmp_path, team='')
+    with pytest.raises(KmaWeatherError, match='^KMA_KEY_REQUIRED$'):
+        KmaWeatherClient('서울', 37.5, 127, service_key=key).fetch()
+    assert key.health == ('missing', 'kma_key_required') and http.calls == []
+
+
+def test_owner_key_from_the_web_is_used_by_an_existing_client(http, tmp_path, monkeypatch):
+    monkeypatch.setenv('MALBUT_KEY_DIR', str(tmp_path))
+    monkeypatch.setenv('KMA_SERVICE_KEY', 'team-weather-key')
+    weather = KmaWeatherClient('우만1동', 37.2825388888888, 127.031452777777,
+                               clock=lambda: NOW.timestamp())
+    (tmp_path / 'kma.key').write_text(SECRET + '\n')
+    (tmp_path / 'kma.key.version').write_text('{"keyVersion": 1, "deleted": false}')
+    weather.fetch()
+    assert {parse_qs(urlsplit(url).query)['serviceKey'][0] for url, _ in http.calls} == {SECRET}
+    (tmp_path / 'kma.key').unlink()
+    (tmp_path / 'kma.key.version').write_text('{"keyVersion": 2, "deleted": true}')
+    with pytest.raises(KmaWeatherError, match='^KMA_KEY_REQUIRED$'):
+        weather.fetch()

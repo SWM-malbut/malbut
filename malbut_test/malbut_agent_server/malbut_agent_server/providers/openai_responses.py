@@ -36,6 +36,12 @@ from malbut_agent_server.prompting import (
     system_instructions_for_tools,
 )
 from malbut_agent_server.providers.base import AgentProvider, ProviderError
+from malbut_agent_server.providers.reliable import (
+    classify_exception,
+    NormalizedProviderError,
+    ProviderFailureCode,
+)
+from malbut_agent_server.service_keys import key_value
 from malbut_agent_server.schemas import (
     AgentDecision,
     AgentRequest,
@@ -107,6 +113,21 @@ TEXT_DECISION_SCHEMA: Dict[str, Any] = {
 }
 
 
+def _insufficient_quota(error: urllib.error.HTTPError) -> bool:
+    """Whether a 429 means "no credit left" rather than "slow down".
+
+    Only the error code is read; the body is never kept or logged.
+    """
+    try:
+        body = json.loads(error.read(4097)[:4096] or b'{}')
+    except (OSError, ValueError):
+        return False
+    detail = body.get('error') if isinstance(body, dict) else None
+    return isinstance(detail, dict) and 'insufficient_quota' in (
+        detail.get('code'), detail.get('type'),
+    )
+
+
 class OpenAIResponsesProvider(AgentProvider):
     """Provider that maps Responses API output into an AgentDecision."""
 
@@ -128,8 +149,17 @@ class OpenAIResponsesProvider(AgentProvider):
         max_input_tokens: int = 32768,
         token_counter: Optional[Callable[[Any], int]] = None,
     ) -> None:
-        """Initialize a lazy adapter without performing a network call."""
-        if not api_key or not api_key.strip():
+        """Initialize a lazy adapter without performing a network call.
+
+        ``api_key`` is a string, or a service_keys.ManagedKey: then the key is
+        read on every request, so a key the owner sets on the web is used
+        without restarting, and how it did is reported back.
+        """
+        if isinstance(api_key, str):
+            if not api_key.strip():
+                raise ValueError('api_key must not be empty')
+            api_key = api_key.strip()
+        elif not callable(getattr(api_key, 'current', None)):
             raise ValueError('api_key must not be empty')
         if not model or not model.strip():
             raise ValueError('model must not be empty')
@@ -158,7 +188,7 @@ class OpenAIResponsesProvider(AgentProvider):
             raise ValueError('max_input_tokens must be a positive integer')
         if token_counter is not None and not callable(token_counter):
             raise ValueError('token_counter must be callable')
-        self._api_key = api_key.strip()
+        self._key_source = api_key
         self.model = model.strip()
         self.base_url = base_url.strip().rstrip('/')
         self.timeout_seconds = timeout_seconds
@@ -171,6 +201,16 @@ class OpenAIResponsesProvider(AgentProvider):
         self.token_counter = token_counter
         self._validate_base_url()
         self.transport = transport or self._urllib_transport
+
+    @property
+    def _api_key(self) -> str:
+        """The key to send now ('' when there is none)."""
+        return key_value(self._key_source)
+
+    def _report_key(self, state: str, code: Optional[str] = None) -> None:
+        report = getattr(self._key_source, 'report', None)
+        if report is not None:
+            report(state, code)
 
     def __repr__(self) -> str:
         """Return diagnostics without exposing the API credential."""
@@ -202,6 +242,12 @@ class OpenAIResponsesProvider(AgentProvider):
         weather_context: Optional[dict] = None,
     ) -> ProviderResult:
         """Call the API once and normalize either a tool call or text."""
+        api_key = self._api_key
+        if not api_key:
+            self._report_key('missing', 'missing_api_key')
+            raise NormalizedProviderError(
+                ProviderFailureCode.MISSING_CREDENTIALS
+            )
         memory_mode = memory_context.get('mode') if memory_context else None
         prepared = prepare_model_input(
             request,
@@ -225,7 +271,7 @@ class OpenAIResponsesProvider(AgentProvider):
             weather_context=weather_context,
         )
         headers = {
-            'Authorization': f'Bearer {self._api_key}',
+            'Authorization': f'Bearer {api_key}',
             'Content-Type': 'application/json',
             'User-Agent': 'malbut-agent-server/0.4',
             'X-Client-Request-Id': self._client_request_id(
@@ -233,12 +279,21 @@ class OpenAIResponsesProvider(AgentProvider):
             ),
         }
         started = time.perf_counter()
-        response = self.transport(
-            f'{self.base_url}/responses',
-            headers,
-            payload,
-            self.timeout_seconds,
-        )
+        try:
+            response = self.transport(
+                f'{self.base_url}/responses',
+                headers,
+                payload,
+                self.timeout_seconds,
+            )
+        except Exception as error:
+            failure = classify_exception(error).code
+            if failure is ProviderFailureCode.AUTHENTICATION:
+                self._report_key('invalid', 'authentication_failed')
+            elif failure is ProviderFailureCode.QUOTA:
+                self._report_key('quota', 'insufficient_quota')
+            raise
+        self._report_key('ok')
         latency_ms = (time.perf_counter() - started) * 1000
         memory_enabled = (
             memory_context is not None and memory_mode != 'answer_only'
@@ -636,6 +691,10 @@ class OpenAIResponsesProvider(AgentProvider):
                     MAX_PROVIDER_RESPONSE_BYTES + 1
                 )
         except urllib.error.HTTPError as error:
+            if error.code == 429 and _insufficient_quota(error):
+                raise NormalizedProviderError(
+                    ProviderFailureCode.QUOTA
+                ) from error
             raise ProviderError(
                 'OpenAI request failed with HTTP status '
                 f'{error.code}'
