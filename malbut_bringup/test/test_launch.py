@@ -370,17 +370,44 @@ def test_robot_contains_only_shared_nodes_and_no_external_readiness_gate(launch_
     assert manager['ready_topic'] == ''
     assert manager['localization_control'] is True
     assert manager['relocalize_action'] == '/relocalize'
-    assert manager['initial_map'] == ''
+    assert manager['initial_map'] == str(ROOT / 'malbut_bringup/config/default_map.yaml')
+    assert manager['default_map'] == manager['initial_map']
 
 
-def test_aggregate_schedules_all_enabled_modules_without_probes(launch_module, fall_config):
+def test_default_map_contains_only_unknown_cells_and_is_deployed_identically():
+    """Use a standard map asset, without a separate mapless Nav2 profile."""
+    import yaml
+
+    source = ROOT / 'malbut_bringup/config'
+    deployed = ROOT / 'malbut_test/malbut_bringup/config'
+    config = yaml.safe_load((source / 'default_map.yaml').read_text())
+    lines = (source / config['image']).read_text().splitlines()
+    tokens = ' '.join(line for line in lines if not line.startswith('#')).split()
+    assert tokens[0] == 'P2'
+    width, height, maximum = map(int, tokens[1:4])
+    pixels = list(map(int, tokens[4:]))
+    assert (width, height) == (400, 400)
+    assert len(pixels) == width * height and set(pixels) == {128}
+    assert config['free_thresh'] < 1.0 - pixels[0] / maximum < config['occupied_thresh']
+    assert config['mode'] == 'trinary' and config['negate'] == 0
+    assert config['resolution'] == 0.05 and config['origin'] == [-10.0, -10.0, 0.0]
+    for name in ('default_map.yaml', config['image']):
+        assert (source / name).read_bytes() == (deployed / name).read_bytes()
+
+
+def test_aggregate_schedules_modules_with_only_a_read_only_observer(launch_module, fall_config):
     module = _load('bringup')
     context = _context(module, fall_monitor='true', fall_config=str(fall_config))
     actions = module._setup(context)
     includes = _included_modules(actions)
     assert set(includes) == {
         'robot', 'tracking', 'patrol', 'autoslam', 'manual', 'relocalization', 'fall', 'speech'}
-    assert not _nodes(actions, 'wait_for_robot')
+    observer, = _nodes(actions, 'wait_for_robot')
+    observed = _parameters(context, observer)
+    assert observed['observe_only'] is True and observed['speech'] is True
+    assert 'slam_toolbox' not in observed['startup_nodes']
+    assert '/autoslam' in observed['required_actions'].split(',')
+    assert '/navigate_to_pose' in observed['required_actions'].split(',')
     assert not any(type(item).__name__ in ('TimerAction', 'RegisterEventHandler')
                    for item in actions)
     assert 'control_server' not in includes['speech']
@@ -396,6 +423,8 @@ def test_optional_modules_can_all_be_disabled(launch_module):
     includes = _included_modules(module._setup(context))
     assert set(includes) == {'robot'}
     assert includes['robot']['restore_pose'] == 'false'
+    observer, = _nodes(module._setup(context), 'wait_for_robot')
+    assert _parameters(context, observer)['speech'] is False
 
 
 def test_selected_map_and_explicit_pose_choice_reach_common_manager(launch_module, tmp_path):
@@ -492,6 +521,8 @@ def test_application_topic_wiring_and_manual_input_are_preserved(launch_module):
     context = _context(module, map_directory='/maps', robot_frame='robot/base')
     options = dict(_includes(module._setup(context))[0].launch_arguments)
     assert options['map_directory'] == '/maps' and options['base_frame'] == 'robot/base'
+    assert options['start_mapping_service'] == '/malbut/localization/start_mapping'
+    assert options['stop_mapping_service'] == '/malbut/localization/stop_mapping'
     module = _load('manual')
     context = _context(module)
     actions = module._setup(context)

@@ -10,7 +10,7 @@ import time
 from typing import Callable
 
 from malbut_interfaces.action import Relocalize
-from nav2_msgs.srv import LoadMap, ManageLifecycleNodes
+from nav2_msgs.srv import LoadMap, ManageLifecycleNodes, SetInitialPose
 from rclpy.action import ActionClient
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
@@ -21,6 +21,7 @@ from .models import LocalizationMode
 
 LOAD_MAP_SERVICE = '/malbut/localization/load_map'
 START_MAPPING_SERVICE = '/malbut/localization/start_mapping'
+STOP_MAPPING_SERVICE = '/malbut/localization/stop_mapping'
 STATE_TOPIC = '/malbut/localization/state'
 _PR_SET_PDEATHSIG = 1
 
@@ -88,13 +89,17 @@ class LocalizationController:
         service_timeout_s: float,
         relocalize_action: str = '',
         relocalize_timeout_s: float = 90.0,
+        default_map: str = '',
+        can_mapping: Callable[[], bool] | None = None,
     ) -> None:
         self._node = node
         self._slam = slam
         self._on_mode = on_mode
         self._can_switch = can_switch
+        self._can_mapping = can_mapping or can_switch
         self._timeout_s = service_timeout_s
         self._relocalize_timeout_s = relocalize_timeout_s
+        self._default_map = str(Path(default_map).resolve()) if default_map else ''
         self._closing = False
         self._relocalizing = None
         self._switch_lock = threading.Lock()
@@ -111,6 +116,9 @@ class LocalizationController:
             ManageLifecycleNodes, lifecycle_service, callback_group=group)
         self._map_server = node.create_client(
             LoadMap, map_server_load_service, callback_group=group)
+        self._initial_pose = (node.create_client(
+            SetInitialPose, '/set_initial_pose', callback_group=group)
+            if default_map else None)
         # Finds the robot on each loaded map; empty leaves it to the operator.
         self._relocalize = (ActionClient(node, Relocalize, relocalize_action,
                                          callback_group=group)
@@ -120,6 +128,8 @@ class LocalizationController:
                                 callback_group=group),
             node.create_service(Trigger, START_MAPPING_SERVICE,
                                 self._start_mapping_request, callback_group=group),
+            node.create_service(Trigger, STOP_MAPPING_SERVICE,
+                                self._stop_mapping_request, callback_group=group),
         ]
         self._monitor = node.create_timer(1.0, self._check_slam, callback_group=group)
         self._publish('starting localization')
@@ -148,7 +158,15 @@ class LocalizationController:
 
     def _start_mapping_request(self, request, response):
         del request
-        response.success, response.message = self._switch(None)
+        response.success, response.message = self._switch(None, mapping=True)
+        return response
+
+    def _stop_mapping_request(self, request, response):
+        del request
+        if not self._default_map:
+            response.success, response.message = False, 'default map is not configured'
+        else:
+            response.success, response.message = self._switch(self._default_map, mapping=True)
         return response
 
     def _load_map_request(self, request, response):
@@ -165,7 +183,7 @@ class LocalizationController:
             self._node.get_logger().warning(message)
         return response
 
-    def _switch(self, map_path: str | None) -> tuple[bool, str]:
+    def _switch(self, map_path: str | None, *, mapping: bool = False) -> tuple[bool, str]:
         if not self._switch_lock.acquire(blocking=False):
             return False, 'another localization switch is in progress'
         try:
@@ -173,7 +191,7 @@ class LocalizationController:
                       else LocalizationMode.MAPPING)
             if self.mode is target and self.map_path == map_path:
                 return True, f'already {target.value.lower()}'
-            if not self._can_switch():
+            if not (self._can_mapping if mapping else self._can_switch)():
                 return False, 'cancel missions that use the base before switching maps'
             if map_path:
                 self._to_localization(map_path)
@@ -219,6 +237,15 @@ class LocalizationController:
 
     def _find_pose(self, map_path: str) -> str:
         """Find the robot on the loaded map; missions using the base wait meanwhile."""
+        if map_path == self._default_map:
+            # An all-unknown map has no landmarks for AMCL global localization.
+            # Use AMCL's existing initial-pose service, never another TF source.
+            request = SetInitialPose.Request()
+            request.pose.header.frame_id = 'map'
+            request.pose.header.stamp = self._node.get_clock().now().to_msg()
+            request.pose.pose.pose.orientation.w = 1.0
+            self._call(self._initial_pose, request, 'AMCL initial pose')
+            return 'default unknown map loaded; AMCL initialized at (0, 0)'
         if self._relocalize is None:
             return self._message(LocalizationMode.LOCALIZATION)
         # Relocalization may rotate the robot, so stay SWITCHING until it ends.

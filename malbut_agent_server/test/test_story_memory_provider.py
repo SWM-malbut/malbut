@@ -74,6 +74,7 @@ def test_wrapper_conforms_to_common_provider_contract():
 
     assert isinstance(wrapper, AgentProvider)
     assert accepts_memory_context(wrapper)
+    assert wrapper.complete(request(), [], [], []) == 'answer'
 
 
 def test_injects_related_data_preserving_settings_and_tracks_reply():

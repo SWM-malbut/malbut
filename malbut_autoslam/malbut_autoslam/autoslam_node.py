@@ -19,6 +19,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
+from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from malbut_autoslam.frontier import (
@@ -112,6 +113,8 @@ class AutoSlamNode(Node):
             # another frontier once the robot has stood still this long.
             'stall_timeout_s': 30.0, 'stall_distance_m': 0.10,
             'max_exploration_time_s': 1200.0,
+            # Empty keeps standalone/simulation deployments externally managed.
+            'start_mapping_service': '', 'stop_mapping_service': '',
         }
         for name, default in defaults.items():
             self.declare_parameter(name, default)
@@ -151,6 +154,15 @@ class AutoSlamNode(Node):
         )
         self.saver = self.create_client(
             SaveMap, self.settings['save_map_service'], callback_group=self.group)
+        if bool(self.settings['start_mapping_service']) != bool(
+                self.settings['stop_mapping_service']):
+            raise ValueError('start_mapping_service and stop_mapping_service must be paired')
+        self.mapping_clients = ({
+            operation: self.create_client(
+                Trigger, self.settings[operation + '_mapping_service'], callback_group=self.group)
+            for operation in ('start', 'stop')
+        } if self.settings['start_mapping_service'] else {})
+        self.mapping_requested = False
         self.server = ActionServer(
             self, AutoSlam, '/autoslam', execute_callback=self._execute,
             goal_callback=self._goal, cancel_callback=self._cancel,
@@ -447,7 +459,9 @@ class AutoSlamNode(Node):
             self._check(handle)
             try:
                 message, _pose = self._snapshot()
-                map_grid_from_message(message)
+                grid = map_grid_from_message(message)
+                if self.mapping_clients and not map_statistics(grid)['known_cells']:
+                    raise RuntimeError('waiting for the first observed SLAM map')
                 if (not self.navigation.server_is_ready()
                         or not self.planner.server_is_ready()
                         or not self.saver.service_is_ready()):
@@ -542,12 +556,43 @@ class AutoSlamNode(Node):
                 # unreachable goals and allowed loops across a large map.
                 blacklist.append((target.x, target.y))
 
+    def _mapping_call(self, operation, handle):
+        """Settle backend switches before reporting this Action's terminal result."""
+        client = self.mapping_clients[operation]
+        if not client.wait_for_service(timeout_sec=self.settings['ready_timeout_s']):
+            raise RuntimeError(f'mapping {operation} service is unavailable')
+        if operation == 'start':
+            self.mapping_requested = True
+        future = client.call_async(Trigger.Request())
+        deadline = time.monotonic() + self.settings['ready_timeout_s']
+        while not future.done():
+            # A Trigger switch is non-cancellable. Even on Action cancellation,
+            # wait for its reply before requesting the opposite switch.
+            if time.monotonic() >= deadline:
+                client.remove_pending_request(future)
+                future.cancel()
+                raise RuntimeError(f'mapping {operation} response is unconfirmed')
+            self._feedback(handle, 'CANCELING' if handle.is_cancel_requested
+                           else 'STARTING' if operation == 'start' else 'STOPPING')
+            self._pause()
+        response = future.result()
+        if not response.success:
+            raise RuntimeError(response.message or f'mapping {operation} failed')
+
     def _execute(self, handle):
         result = AutoSlam.Result()
         self.known_area_m2 = 0.0
         self.frontier_count = 0
         self.planned_path = []
+        self.mapping_requested = False
         try:
+            if self.mapping_clients:
+                self._check(handle)
+                self._mapping_call('start', handle)
+                with self.lock:
+                    self.message = None
+                    self.received_at = 0.0
+                self._check(handle)
             self._explore(handle, result)
         except Interrupted as error:
             result.message = str(error)
@@ -557,6 +602,14 @@ class AutoSlamNode(Node):
         finally:
             # Do not report completion while an accepted or pending goal can move.
             self._settle_child(handle)
+            if self.mapping_requested:
+                try:
+                    self._mapping_call('stop', handle)
+                except Exception as error:
+                    result.success = False
+                    result.message += f'; mapping cleanup failed: {error}'
+                    # Do not accept another run after an uncertain backend switch.
+                    self.save_uncertain = True
             with self.lock:
                 if handle.is_cancel_requested:
                     result.success = False

@@ -1127,7 +1127,7 @@ export function RobotMapPanel({
               <div className="robot-map-card"><div className="robot-map-empty">
                 <MapTrifold size={44} weight="light" aria-hidden="true" />
                 <strong>{loading ? "지도를 확인하고 있어요" : "로봇의 지도를 기다리고 있어요"}</strong>
-                <p>오른쪽에서 지도 만들기 모드 또는 저장 지도 주행을 준비하세요.</p>
+                <p>오른쪽에서 Bringup을 시작하세요. 지도 작성은 자동 지도 만들기로 요청할 수 있어요.</p>
               </div></div>
             )}
             <div className="robot-map-legend">

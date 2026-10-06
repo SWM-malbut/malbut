@@ -235,7 +235,7 @@ def _bridge(manager_ready=False, autoslam_ready=True):
     bridge.runtime = None
     bridge.stopping_runtime = None
     bridge.runtime_message = ''
-    bridge.startup_status = {}
+    bridge.startup_status = {'state': 'READY', 'missing': []}
     bridge.speech_ready = False
     bridge.action_status = {}
     bridge.cancel_clients = {}
@@ -425,12 +425,15 @@ def test_startup_progress_appears_in_existing_runtime_message(monkeypatch):
     progress = {'completed': 4, 'total': 6, 'stage': '홈캠·낙상 초기화',
                 'state': 'WAITING', 'missing': ['init:malbut_fall_pose']}
     bridge._startup_progress(SimpleNamespace(data=json.dumps(progress)))
+    bridge._bringup_status(SimpleNamespace(data=json.dumps({
+        'state': 'WAITING', 'missing': progress['missing']})))
     bridge._refresh()
     status = bridge.data.snapshot()['runtime']
-    assert '준비 4/6 단계 · 홈캠·낙상 초기화' in status['message']
-    assert status['ready'] and status['waiting'] == ['init:malbut_fall_pose']
+    assert '연결 4/6 · 홈캠·낙상 초기화' in status['message']
+    assert not status['ready'] and status['waiting'] == ['init:malbut_fall_pose']
     progress.update(completed=6, state='READY', missing=[])
     bridge._startup_progress(SimpleNamespace(data=json.dumps(progress)))
+    bridge._bringup_status(SimpleNamespace(data=json.dumps({'state': 'READY', 'missing': []})))
     bridge._refresh()
     assert bridge.data.snapshot()['runtime']['ready']
     bridge._startup_progress(SimpleNamespace(data='{}'))
@@ -454,8 +457,9 @@ def test_readiness_reason_is_exposed_without_changing_manager(monkeypatch):
     bridge._refresh()
     runtime = bridge.data.snapshot()['runtime']
     assert runtime['state'] == 'RUNNING' and not runtime['ready']
-    assert runtime['waiting'] == ['manager: Action server startup']
-    assert runtime['message'] == '관리자 Action 서버 준비 대기'
+    assert runtime['waiting'] == [
+        'manager: Action server startup', 'TF:map->base_footprint (set initial pose)']
+    assert runtime['message'] == '노드·인터페이스 연결 확인 중'
     bridge._bringup_status(SimpleNamespace(data='invalid JSON'))
     assert bridge.startup_status['state'] == 'WAITING'
 
@@ -544,9 +548,7 @@ def test_booting_manager_is_not_ready_and_live_localization_sets_mode(monkeypatc
     assert runtime['mode'] == 'navigation' and runtime['map'] == 'home.yaml'
 
 
-@pytest.mark.parametrize('mode,service', [('mapping', 'start_mapping'),
-                                          ('navigation', 'load_map')])
-def test_running_bringup_switches_localization_instead_of_relaunching(mode, service):
+def test_running_bringup_switches_localization_instead_of_relaunching():
     """Map selection in a running Bringup never starts a second robot stack."""
     bridge, _ = _bridge()
     bridge.runtime = Mock()
@@ -554,26 +556,42 @@ def test_running_bringup_switches_localization_instead_of_relaunching(mode, serv
     bridge.catalog.resolve.return_value = Path('/maps/home.yaml')
     for client in (bridge.load_map, bridge.start_mapping):
         client.service_is_ready.return_value = True
-    response = (SimpleNamespace(success=True, message='mapping') if mode == 'mapping'
-                else SimpleNamespace(result=0))
-    getattr(bridge, service).call_async.return_value = _future(response)
-    payload = {'command': 'bringup_start', 'mode': mode}
-    if mode == 'navigation':
-        payload['map'] = 'home.yaml'
+    bridge.load_map.call_async.return_value = _future(SimpleNamespace(result=0))
+    payload = {'command': 'bringup_start', 'mode': 'navigation', 'map': 'home.yaml'}
     bridge.submit(payload)
     bridge._drain()
     bridge.runtime.start.assert_not_called()
-    request = getattr(bridge, service).call_async.call_args.args[0]
-    if mode == 'navigation':
-        assert request.map_url == '/maps/home.yaml'
+    request = bridge.load_map.call_async.call_args.args[0]
+    assert request.map_url == '/maps/home.yaml'
     assert 'failed' not in bridge.runtime_message
-    failed = SimpleNamespace(success=False, message='cancel missions that use the base')
-    if mode == 'navigation':
-        failed = SimpleNamespace(result=255)
-    getattr(bridge, service).call_async.return_value = _future(failed)
+    bridge.load_map.call_async.return_value = _future(SimpleNamespace(result=255))
     bridge.submit(payload)
     bridge._drain()
     assert 'failed' in bridge.runtime_message
+
+
+def test_legacy_mapping_start_does_not_turn_on_slam():
+    """Only the AutoSLAM Action starts mapping in an already running Bringup."""
+    bridge, _ = _bridge()
+    bridge.runtime = Mock()
+    for client in (bridge.load_map, bridge.start_mapping):
+        client.service_is_ready.return_value = True
+    bridge.submit({'command': 'bringup_start', 'mode': 'mapping'})
+    bridge._drain()
+    bridge.start_mapping.call_async.assert_not_called()
+    bridge.runtime.start.assert_not_called()
+    assert 'AutoSLAM' in bridge.runtime_message
+
+
+def test_connection_waiting_is_display_only_and_does_not_block_feature_requests():
+    """A missing unrelated module does not replace capability admission."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.startup_status = {'state': 'WAITING', 'missing': ['init:malbut_fall_pose']}
+    request_id = bridge.submit(_command('follow_person', {
+        'target_mode': 0, 'target_person_id': '', 'desired_distance_m': 1.0}))
+    bridge._drain()
+    assert bridge.data.requests[request_id]['state'] == 'RUNNING'
+    bridge.clients['manager'].send_goal_async.assert_called_once()
 
 
 def test_new_bringup_clears_previous_speech_readiness():

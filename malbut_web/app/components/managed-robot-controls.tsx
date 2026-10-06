@@ -8,7 +8,7 @@ type SendCommand = (operation: RobotOperation, payload?: Record<string, unknown>
 const terminal = new Set(["SUCCEEDED", "CANCELED", "ABORTED", "REJECTED", "ERROR"]);
 const LOCALIZATION_LABEL: Record<string, string> = {
   MAPPING: "지도 작성 중(SLAM)",
-  LOCALIZATION: "저장 지도 사용 중(AMCL)",
+  LOCALIZATION: "지도 사용 중(AMCL)",
   SWITCHING: "전환 중",
   ERROR: "오류",
 };
@@ -38,8 +38,9 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
   const stopped = runtime.state === "STOPPED";
   const running = runtime.state === "RUNNING";
   const switching = localization.mode === "SWITCHING";
-  const navigationReady = !recovering && runtime.mode === "navigation" && runtime.ready === true && servers.manager === true;
-  const mappingReady = !recovering && runtime.mode === "mapping" && runtime.ready === true && servers.autoslam === true;
+  // Aggregate readiness is display-only. Each feature retains its own admission checks.
+  const navigationReady = !recovering && !switching && running && runtime.mode === "navigation" && servers.manager === true;
+  const mappingReady = !recovering && !switching && running && servers.manager === true && servers.autoslam === true;
   const inUse = !stopped && typeof runtime.map === "string" ? runtime.map : "";
   const knownMap = maps.some((map) => map.id === selectedMap);
   const mission = (capability: string, args: Record<string, unknown>) => sendCommand("mission_start", { capability, arguments: args });
@@ -60,9 +61,9 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
         {localization.message ? ` · ${String(localization.message)}` : ""}
       </p>}
       <div className="robot-map-actions is-inline">
-        <button disabled={disabled || recovering || switching || !(stopped || (running && runtime.mode !== "mapping"))}
+        <button disabled={disabled || recovering || switching || !stopped}
           onClick={() => void sendCommand("runtime_start", { mode: "mapping" })}>
-          {stopped ? "Bringup 시작 (새 지도)" : "위치 추정 전환 (새 지도 / SLAM)"}
+          Bringup 시작
         </button>
         <button className="is-secondary"
           disabled={disabled || !running || servers.manager !== true || switching || recovering}
@@ -99,6 +100,7 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
       <div className="robot-map-actions">
         <button disabled={disabled || !mappingReady || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(mapName)} onClick={() => void mission("autoslam", { map_name: mapName })}>자동 지도 만들기</button>
       </div>
+      <small>지도 작성 요청 때만 SLAM을 켜며, 완료·취소하면 종료하고 기본 지도로 돌아옵니다.</small>
       <label>사람과 유지할 거리(m)
         <input type="number" min="0.2" step="0.1" value={distance} onChange={(event) => setDistance(event.target.value)} />
       </label>

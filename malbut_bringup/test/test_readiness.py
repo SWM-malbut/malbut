@@ -118,6 +118,80 @@ def test_extension_waits_for_service_response_not_just_node_discovery(monkeypatc
     assert node._extension_missing() == []
 
 
+def _observer(monkeypatch):
+    node = _node(monkeypatch)
+    node.settings.update(observe_only=True, speech=False, required_topics='/scan_raw')
+    node.stage = ''
+    node.probes = {}
+    node.probe_requested = {}
+    node.progress_publisher = Mock()
+    node.count_publishers = Mock(return_value=1)
+    return node
+
+
+def test_observer_reports_connections_without_sensor_or_tf_checks(monkeypatch):
+    """The persistent observer has no data gate, timeout, or process control."""
+    node = _observer(monkeypatch)
+    node.seen = {'scan': None}
+    node.check()
+    assert node.ready
+    assert json.loads(node.progress_publisher.publish.call_args.args[0].data) == {
+        'completed': 1, 'total': 1, 'stage': '노드·인터페이스 연결 확인',
+        'state': 'READY', 'missing': [],
+    }
+    node.tf.can_transform.assert_not_called()
+    node.count_publishers.return_value = 0
+    node.check()
+    assert not node.ready
+    assert json.loads(node.status_publisher.publish.call_args.args[0].data) == {
+        'state': 'WAITING', 'missing': ['publisher:/scan_raw'],
+    }
+    node.count_publishers.return_value = 1
+    node.check()
+    assert node.ready
+
+
+def test_observer_rechecks_node_executor_after_a_successful_reply(monkeypatch):
+    """A constructor response is not cached as permanent connection success."""
+    node = _observer(monkeypatch)
+    pending = Future()
+    client = Mock()
+    client.service_is_ready.return_value = True
+    client.call_async.return_value = pending
+    node.probes = {'autoslam': [client, None, False]}
+    node.check()
+    assert not node.ready
+    pending.set_result(SimpleNamespace(values=[]))
+    next_reply = Future()
+    client.call_async.return_value = next_reply
+    node.check()
+    assert node.ready
+    node.probe_requested['autoslam'] = 0.0
+    node.check()
+    assert not node.ready
+    assert next_reply.cancelled()
+    assert 'init:autoslam' in json.loads(
+        node.status_publisher.publish.call_args.args[0].data)['missing']
+
+
+def test_observer_requires_action_connection_and_live_speech_status(monkeypatch):
+    """Lost endpoints remove READY without shutting down any module."""
+    node = _observer(monkeypatch)
+    action = Mock()
+    action.server_is_ready.return_value = True
+    node.action_clients = [('/autoslam', action)]
+    node.settings['speech'] = True
+    node.speech_ready = True
+    node.check()
+    assert node.ready
+    action.server_is_ready.return_value = False
+    node.count_publishers.side_effect = lambda name: name != '/malbut/speech/status'
+    node.check()
+    assert not node.ready
+    missing = json.loads(node.status_publisher.publish.call_args.args[0].data)['missing']
+    assert missing == ['Action:/autoslam', 'speech: microphone startup']
+
+
 def test_disconnected_depth_frame_is_not_ready(monkeypatch):
     """Receiving images alone cannot prove they can be used by the localizer."""
     node = _node(monkeypatch)

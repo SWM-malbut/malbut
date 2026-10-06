@@ -32,6 +32,7 @@ from .mission_scheduler import MissionScheduler
 from .models import (
     ControlMode,
     ExecutionMode,
+    ExecutionResource,
     LocalizationMode,
     MissionCompletion,
     MissionPriority,
@@ -212,6 +213,8 @@ class SystemManagerNode(Node):
                 'relocalize_action', ''
             ).value,
             relocalize_timeout_s=relocalize_timeout_s,
+            default_map=self.declare_parameter('default_map', '').value,
+            can_mapping=self._mapping_can_switch,
         )
         initial_map = self.declare_parameter('initial_map', '').value
 
@@ -232,6 +235,19 @@ class SystemManagerNode(Node):
     def _base_is_free(self) -> bool:
         with self._lock:
             return not self._scheduler.base_busy()
+
+    def _mapping_can_switch(self) -> bool:
+        """Allow AutoSLAM to start/stop its backend while it owns BASE."""
+        with self._lock:
+            active = list(self._state.active())
+            if not any(ExecutionResource.BASE in mission.resources
+                       and mission.capability.capability_id == 'autoslam'
+                       for mission in active):
+                return not self._scheduler.base_busy()
+            # A queued replacement must wait for AutoSLAM's backend cleanup.
+            return all(ExecutionResource.BASE not in mission.resources
+                       or mission.capability.capability_id == 'autoslam'
+                       for mission in active)
 
     def _on_readiness(self, message: String) -> None:
         try:

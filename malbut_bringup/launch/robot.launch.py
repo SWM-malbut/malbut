@@ -30,9 +30,10 @@ def _setup(context):
     slam_params = (_file(value('slam_params_file'), 'SLAM parameters')
                    if value('slam_params_file') else _package_file(
                        'malbut_bringup', 'config/slam_toolbox.yaml'))
-    # No map starts SLAM mapping; a map starts saved-map AMCL. The manager
-    # switches between them at runtime, so this only picks the first state.
-    initial_map = _file(value('map'), 'saved map YAML') if value('map') else ''
+    # Use the same map_server/AMCL path even before a saved map is selected.
+    # The default map contains only unknown cells; explicit maps still win.
+    default_map = _package_file('malbut_bringup', 'config/default_map.yaml')
+    initial_map = _file(value('map'), 'saved map YAML') if value('map') else default_map
 
     hardware_actions = []
     if hardware_path:
@@ -63,6 +64,7 @@ def _setup(context):
             # Manager owns admission/safety; optional modules do not gate it.
             'ready_topic': '',
             'localization_control': True, 'initial_map': initial_map,
+            'default_map': default_map,
             'slam_params_file': slam_params, 'scan_topic': value('scan_topic'),
             'relocalize_action': '/relocalize' if value('restore_pose') == 'true' else '',
         }],
