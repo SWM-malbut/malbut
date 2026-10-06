@@ -1119,6 +1119,32 @@ export function HomecamDashboard({
       setTab(nextTab);
     }
   };
+  // 다섯 탭(홈·홈캠·사건·지도·설정)이 모두 같은 머리를 쓴다: 화면 이름 · 연결 상태 · 연결된 말벗.
+  // 화면마다 다른 버튼(사건 필터, 지도 모드)은 머리 아래 화면 쪽에 둔다. 홈캠의 영상·녹화 상태는 "현재 상태" 카드에 있다.
+  const topHeader = (title: string) => (
+    <header className="ui-top">
+      <div className="ui-top-row">
+        <h1>{title}</h1>
+        <span className={`ui-pill ${selectedDevice?.online ? "is-ok" : ""}`}><i aria-hidden="true" />{connectionText}</span>
+      </div>
+      <div className="ui-device">
+        <span className="ui-device-avatar" aria-hidden="true">말</span>
+        <span className="ui-device-text">
+          <label htmlFor="homecam-device-select">연결된 말벗</label>
+          {devices.length > 1 ? (
+            <select id="homecam-device-select" value={selectedDevice?.id ?? ""}
+              onChange={(event) => setSelectedDeviceId(event.target.value)}>
+              {devices.map((device) => (
+                <option key={device.id} value={device.id}>{device.displayName}</option>
+              ))}
+            </select>
+          ) : (
+            <strong>{selectedDevice?.displayName ?? "등록된 말벗 없음"}</strong>
+          )}
+        </span>
+      </div>
+    </header>
+  );
   const settingsBack = (title: string) => (
     <div className="ui-subhead">
       <button type="button" className="ui-back" onClick={() => setSettingsView("main")}>‹ 설정</button>
@@ -1129,31 +1155,7 @@ export function HomecamDashboard({
   return (
     <div className={`homecam-shell homecam-dashboard-shell ui-app tab-${tab}`}>
       <main className="homecam-main ui-main">
-        {showTopBar && (
-          <header className="ui-top">
-            <div className="ui-top-row">
-              <h1>{tab === "home" ? "홈" : tab === "live" ? "홈캠" : "설정"}</h1>
-              <span className={`ui-pill ${selectedDevice?.online ? "is-ok" : ""}`}><i aria-hidden="true" />{connectionText}</span>
-            </div>
-            {/* 홈·홈캠·설정 모두 같은 머리. 홈캠의 영상·녹화 상태는 아래 "현재 상태" 카드에 있다. */}
-            <div className="ui-device">
-              <span className="ui-device-avatar" aria-hidden="true">말</span>
-              <span className="ui-device-text">
-                <label htmlFor="homecam-device-select">연결된 말벗</label>
-                {devices.length > 1 ? (
-                  <select id="homecam-device-select" value={selectedDevice?.id ?? ""}
-                    onChange={(event) => setSelectedDeviceId(event.target.value)}>
-                    {devices.map((device) => (
-                      <option key={device.id} value={device.id}>{device.displayName}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <strong>{selectedDevice?.displayName ?? "등록된 말벗 없음"}</strong>
-                )}
-              </span>
-            </div>
-          </header>
-        )}
+        {showTopBar && topHeader(tab === "home" ? "홈" : tab === "live" ? "홈캠" : "설정")}
 
         {availability === "loading" && (
           <div className="ui-loading" role="status">
@@ -1387,8 +1389,7 @@ export function HomecamDashboard({
         )}
 
         {tab === "events" && (
-          <section className="homecam-section" aria-labelledby="homecam-events-title">
-            <h1 id="homecam-events-title" className="sr-only">사건</h1>
+          <section className="homecam-section" aria-label="사건">
             {selectedDevice && timelineMode ? (
               <FallTimelinePanel
                 key={`${selectedDevice.id}-${timelineMode.kind}`}
@@ -1407,9 +1408,13 @@ export function HomecamDashboard({
                 onIncidentChange={(incidentId) => setFocusedIncidentId(incidentId ?? "")}
                 onOpenLive={() => void openLive()}
                 onOpenTimeline={(incident) => setTimelineMode(incident ? { kind: "recheck", ...incident } : { kind: "report" })}
+                header={topHeader("사건")}
               />
             ) : (
-              <div className="homecam-empty-state"><strong>등록된 말벗이 없어요</strong><p>말벗을 연결하면 낙상 사건이 여기에 표시됩니다.</p></div>
+              <>
+                {topHeader("사건")}
+                <div className="homecam-empty-state"><strong>등록된 말벗이 없어요</strong><p>말벗을 연결하면 낙상 사건이 여기에 표시됩니다.</p></div>
+              </>
             )}
           </section>
         )}
@@ -1417,7 +1422,7 @@ export function HomecamDashboard({
         {tab === "map" && (
           LOCAL_HOME_CAM_DEMO && selectedDevice?.id === LOCAL_DEMO_DEVICE_ID
             ? <LocalDemoMapPanel mode={mapEntryMode} onModeChange={setMapEntryMode} />
-            : <RobotMapPanel key={mapEntryMode} device={selectedDevice} initialMode={mapEntryMode} />
+            : <RobotMapPanel key={mapEntryMode} device={selectedDevice} initialMode={mapEntryMode} header={topHeader("지도")} />
         )}
 
         {tab === "robot" && (
