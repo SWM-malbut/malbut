@@ -3243,38 +3243,6 @@ a:focus-visible {
   background: var(--homecam-red);
 }
 
-.homecam-stream-shell.is-embedded .homecam-stream-mockup-controls {
-  display: grid;
-  width: 100%;
-  grid-template-columns: max-content max-content minmax(max-content, 1fr);
-  align-items: center;
-  gap: 10px;
-}
-
-.homecam-stream-shell.is-embedded .homecam-stream-status-chip {
-  display: inline-flex;
-  min-height: 44px;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 0 13px;
-  border-radius: 14px;
-  color: var(--homecam-paper);
-  background: rgb(30 36 34 / .72);
-  font-size: 0.8125rem;
-  font-weight: 700;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.homecam-stream-shell.is-embedded .homecam-stream-control-button.is-clips {
-  width: max-content;
-  margin-left: 0;
-  justify-self: end;
-  color: #1e2422;
-  background: rgb(251 248 243 / .92);
-}
-
 .homecam-stream-shell.is-embedded .homecam-stream-notice {
   grid-column: 1;
   border: 1px solid var(--homecam-line);
@@ -3609,26 +3577,6 @@ a:focus-visible {
     padding: 0 8px;
     border-radius: 10px;
     font-size: var(--fs-label);
-  }
-  .homecam-stream-shell.is-embedded .homecam-stream-status-chip {
-    min-height: 34px;
-    padding: 0 8px;
-    border-radius: 10px;
-    font-size: var(--fs-label);
-  }
-}
-
-@media (max-width: 520px) {
-  .homecam-stream-shell.is-embedded .homecam-stream-mockup-controls {
-    grid-template-columns: 1fr 1fr;
-  }
-  .homecam-stream-shell.is-embedded .homecam-stream-status-chip {
-    width: 100%;
-  }
-  .homecam-stream-shell.is-embedded .homecam-stream-control-button.is-clips {
-    width: 100%;
-    grid-column: 1 / -1;
-    justify-self: stretch;
   }
 }
 
@@ -4514,6 +4462,8 @@ a:focus-visible {
 .ui-rows strong.is-good { color: var(--ui-ok); }
 .ui-rows strong.is-pending { color: var(--ui-warn-text); }
 .ui-rows strong.is-error { color: var(--ui-danger); }
+.ui-row-label { display: flex; flex-direction: column; gap: 0.125rem; }
+.ui-row-label small { font-size: 0.75rem; color: var(--ui-text-muted); }
 /* 홈캠 화면 안의 실시간 영상(기존 영상 부품)을 새 디자인에 맞춤 */
 .ui-app .homecam-stream-shell.is-embedded { display: block; min-height: 0; padding: 0; background: transparent; color: var(--ui-text); }
 .ui-app .homecam-stream-shell.is-embedded > .homecam-header,
@@ -4524,7 +4474,7 @@ a:focus-visible {
   border-radius: 12px; overflow: hidden; background: var(--ui-media);
 }
 .ui-app .homecam-live-view:not(.is-pip) .homecam-stream-shell.is-embedded .homecam-stream-video-card {
-  display: block; height: auto; overflow: visible; padding: 0; border: 0; background: transparent;
+  display: block; height: auto; min-height: 0; overflow: visible; padding: 0; border: 0; background: transparent;
 }
 .ui-app .homecam-live-view:not(.is-pip) .homecam-stream-shell.is-embedded .homecam-stream-video-frame {
   aspect-ratio: 16 / 10; height: auto; min-height: 0;
@@ -4536,8 +4486,7 @@ a:focus-visible {
 .ui-app .homecam-live-view:not(.is-pip) .homecam-stream-shell.is-embedded .homecam-stream-control-buttons {
   display: flex; flex-wrap: wrap; gap: 0.5rem; width: 100%;
 }
-.ui-app .homecam-stream-shell.is-embedded .homecam-stream-control-button,
-.ui-app .homecam-stream-shell.is-embedded .homecam-stream-status-chip {
+.ui-app .homecam-stream-shell.is-embedded .homecam-stream-control-button {
   flex: 0 0 auto; width: auto;
   min-height: 40px; padding: 0 0.75rem; border-radius: 10px; border: 1px solid var(--ui-control-border);
   background: var(--ui-surface); color: var(--ui-text); font-size: 0.8125rem;
