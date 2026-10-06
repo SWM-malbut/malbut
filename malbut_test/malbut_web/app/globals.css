@@ -4647,6 +4647,17 @@ a:focus-visible {
 .ui-map-sync span { font-size: 0.8125rem; line-height: 1.5; }
 .ui-map-sync.is-ok { color: var(--ui-ok); background: var(--ui-ok-soft); }
 .ui-map-sync.is-danger { color: var(--ui-danger); background: var(--ui-danger-soft); }
+.ui-map-sync.is-warn { color: var(--ui-warn-text); background: var(--ui-warn-soft); }
+.ui-map-sync.is-neutral { color: var(--ui-text); background: var(--ui-neutral-soft); }
+/* 실로봇 방 순찰 꼼꼼함 (목업 17번) */
+.ui-patrol-levels { display: flex; flex-direction: column; gap: 0.375rem; }
+.ui-patrol-levels > span { font-size: 0.8125rem; font-weight: 500; }
+.ui-patrol-levels > small { font-size: 0.75rem; color: var(--ui-text-muted); }
+.ui-patrol-levels .ui-rule-choices button {
+  min-height: 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+}
+.ui-patrol-levels .ui-rule-choices button strong { font-size: 0.875rem; }
+.ui-patrol-levels .ui-rule-choices button small { font-size: 0.6875rem; font-weight: 400; color: var(--ui-text-muted); }
 .ui-map-editor { gap: 0.75rem; }
 .ui-map-editor .ui-field > span { color: var(--ui-text); }
 .ui-map-editor .ui-field input:disabled { color: var(--ui-text-muted); background: var(--ui-neutral-soft); }

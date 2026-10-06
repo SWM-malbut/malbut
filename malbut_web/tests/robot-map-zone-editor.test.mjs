@@ -156,7 +156,8 @@ test("autonomous controls share one owner-only drive session", async () => {
     "utf8",
   );
 
-  assert.match(panel, /sendCommand\("drive_mode_start", \{ mode: "patrol" \}\)/);
+  // The simulator starts patrol by mode alone; the real robot adds its thoroughness.
+  assert.match(panel, /sendCommand\("drive_mode_start", patrolLevels\s*\? \{ mode: "patrol", thoroughness: patrolLevel \}\s*: \{ mode: "patrol" \}\)/);
   assert.match(panel, /sendCommand\("drive_mode_start", \{ mode: "roaming" \}\)/);
   assert.match(panel, /sendCommand\("drive_mode_start", \{ mode: "person_following" \}\)/);
   assert.match(panel, /sendCommand\("drive_mode_pause"/);
@@ -220,4 +221,34 @@ test("rooms and Zones are edited with the 말벗 off and saved on the server (SW
   assert.match(panel, /className=\{`ui-map-sync is-\$\{spaceBanner\.tone\}`\} role="status"/);
   assert.match(styles, /\.ui-map-sync\.is-ok \{[^}]*var\(--ui-ok-soft\)/);
   assert.match(styles, /\.ui-map-sync\.is-danger \{[^}]*var\(--ui-danger-soft\)/);
+});
+
+test("the real robot's room patrol follows mockup 17: thoroughness, progress, stop only, results", async () => {
+  const [panel, styles] = await Promise.all([
+    readFile(new URL("../app/components/robot-map-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  // The robot tells the screen what it supports; the simulator sends none of these.
+  assert.match(panel, /Array\.isArray\(driveMode\?\.detail\?\.thoroughness_levels\)/);
+  assert.match(panel, /driveMode\?\.detail\?\.can_pause !== false/);
+  assert.match(panel, /\{ mode: "patrol", thoroughness: patrolLevel \}/);
+  assert.match(panel, /useState\(1\);/, "보통 is chosen first");
+  for (const copy of [
+    "순찰 꼼꼼함", "빠르게", "4m · 집의 80%", "보통", "3m · 집의 90%", "꼼꼼히", "2m · 집의 95%",
+    "꼼꼼할수록 가까이 다가가 더 넓게 살펴보지만 오래 걸려요.",
+    "경로 계산 중", "이동 중", "둘러보는 중", "% 살펴봄 · ", "곳 방문", "남은 방: ",
+    "말벗과 연결이 끊겼어요. 말벗은 순찰을 계속하고, 다시 연결되면 지금 상태를 보여 드려요.",
+    "중지한 뒤 다시 시작하면 처음부터 다시 순찰해요.",
+    "순찰을 마쳤어요", "%까지 살펴봤어요", "더 갈 수 있는 곳이 없었어요 · ", "갈 수 없었던 방: ",
+    "순찰이 멈췄어요", "다시 시작해 주세요.", "순찰을 중지했어요",
+  ]) assert.ok(panel.includes(copy), copy);
+  assert.doesNotMatch(panel, /들름/);
+  // 다 마침 초록 · 목표 미달 주황 · 문제 빨강 · 직접 중지 회색.
+  assert.match(panel, /tone: "ok", title: "순찰을 마쳤어요"/);
+  assert.match(panel, /tone: "warn", title: `집의 \$\{percent\}%까지 살펴봤어요`/);
+  assert.match(panel, /tone: "danger", title: "순찰이 멈췄어요"/);
+  assert.match(panel, /tone: "neutral", title: "순찰을 중지했어요"/);
+  assert.match(styles, /\.ui-map-sync\.is-warn \{[^}]*var\(--ui-warn-soft\)/);
+  assert.match(styles, /\.ui-map-sync\.is-neutral \{[^}]*var\(--ui-neutral-soft\)/);
 });

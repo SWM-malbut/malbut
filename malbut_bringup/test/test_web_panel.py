@@ -699,6 +699,34 @@ def test_destination_preview_plans_with_nav2_from_where_the_robot_is():
         bridge.plan_path(2.0, 0.5, 0.0)
 
 
+def test_a_patrol_is_stopped_through_the_manager_whoever_started_it():
+    """The map tab's 중지 cancels the patrol mission by its ID; the status is kept."""
+    import uuid
+
+    bridge, _ = _bridge(manager_ready=True)
+    cancel = Mock()
+    cancel.service_is_ready.return_value = True
+    bridge.cancel_clients = {'/malbut/mission/execute': cancel}
+    bridge.cancel_request = lambda: SimpleNamespace(
+        goal_info=SimpleNamespace(goal_id=SimpleNamespace(uuid=None)))
+    mission = '0f4b5ec0-2a1b-4c3d-8e9f-0a1b2c3d4e5f'
+    bridge.submit({'command': 'cancel_mission', 'mission_id': mission})
+    bridge._drain()
+    request = cancel.call_async.call_args.args[0]
+    assert bytes(request.goal_info.goal_id.uuid) == uuid.UUID(mission).bytes
+    cancel.service_is_ready.return_value = False
+    bridge.submit({'command': 'cancel_mission', 'mission_id': mission})
+    bridge._drain()
+    assert cancel.call_async.call_count == 1 and 'cannot cancel' in bridge.runtime_message
+
+    bridge._patrol(SimpleNamespace(data=json.dumps({'state': 'observing',
+                                                    'coverage_ratio': 0.4})))
+    assert bridge.data.snapshot()['patrol'] == {'state': 'observing', 'coverage_ratio': 0.4}
+    bridge._patrol(SimpleNamespace(data='not json'))
+    bridge._patrol(SimpleNamespace(data='["list"]'))
+    assert bridge.data.snapshot()['patrol']['state'] == 'observing'
+
+
 def test_result_transport_failure_does_not_forget_running_goal():
     """Losing the result response is not evidence that the robot has stopped."""
     bridge, handle = _bridge()

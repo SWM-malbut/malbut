@@ -22,6 +22,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import yaml
 
 from .navigation import NavigationError, Navigator
+from .patrol_mode import patrol_drive_mode
 from .web_panel import (
     live_zone_map, PanelData, RosBridge, save_zones, TERMINAL, _terminate, validate_command,
 )
@@ -172,6 +173,15 @@ def panel_command(operation, payload):
     elif operation == 'manual_move' and set(payload) == {'vx', 'vy', 'wz'}:
         command = {'command': 'teleop', 'linear_x': payload['vx'], 'linear_y': payload['vy'],
                    'angular_z': payload['wz'], 'hold_s': MANUAL_HOLD_S}
+    elif (operation == 'drive_mode_start' and payload.get('mode') == 'patrol'
+            and set(payload) <= {'mode', 'thoroughness'}):
+        # 지도 탭 › 방 순찰 시작, with the chosen thoroughness (보통 when none is sent).
+        command = {'command': 'start', 'capability': 'patrol',
+                   'arguments': {'thoroughness': payload.get('thoroughness', 1)}}
+    elif (operation == 'drive_mode_stop' and set(payload) == {'mode', 'sessionId'}
+            and payload['mode'] == 'patrol'):
+        # 중지: the session is the patrol's manager mission, wherever it was started.
+        command = {'command': 'cancel_mission', 'mission_id': payload['sessionId']}
     elif operation == 'debug_mission_start' and set(payload) == {'capability', 'arguments'}:
         command = {'command': 'debug_start', **payload}
     else:
@@ -294,6 +304,7 @@ def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
 
     ``navigation`` is the web map screen's destination drive (state, goal, path,
     remaining distance); its fields sit beside the developer screen's in ``target``.
+    ``driveMode`` reports room patrol for the map screen's 자율주행 card.
     """
     runtime = {key: snapshot.get('runtime', {}).get(key) for key in (
         'state', 'mode', 'map', 'ready', 'message', 'waiting', 'enabled')}
@@ -337,7 +348,10 @@ def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
             'manual': bounded_value(snapshot.get('manual'), 512),
             **(navigation or {}),
         },
-        'driveMode': {'mode': 'idle', 'state': 'idle', 'sessionId': None, 'message': None},
+        'driveMode': patrol_drive_mode(
+            snapshot.get('system'), snapshot.get('patrol'),
+            ready=bool(mode == 'navigation' and runtime.get('ready') and pose
+                       and servers.get('manager'))),
         'mapRevision': int(map_info.get('version', 0)),
         'observedAt': observed_at or datetime.now(timezone.utc).isoformat(),
     }

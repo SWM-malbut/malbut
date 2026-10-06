@@ -48,6 +48,9 @@ TELEOP_TIMEOUT_S = 0.5
 # A page behind a polling link may ask for a longer hold to ride out its jitter.
 TELEOP_MAX_HOLD_S = 2.0
 ZONES_STATE_TOPIC = '/malbut/zones/state'
+# Room patrol's stage, coverage and last result, whoever started it (지도 탭 자율주행).
+PATROL_STATUS_TOPIC = '/patrol/status'
+MISSION_ACTION = '/malbut/mission/execute'
 MAX_ZONE_REQUEST_BYTES = 64 * 1024
 # RViz's 2D Pose Estimate spread: 0.5 m and about 15 degrees.
 GIVEN_POSE_COVARIANCE = [0.0] * 36
@@ -72,6 +75,12 @@ def validate_command(payload):
             and isinstance(payload['request_id'], str)
             and re.fullmatch(r'[0-9a-f]{32}', payload['request_id'])):
         # One destination drive from the web map; other missions keep going.
+        return payload
+    if (set(payload) == {'command', 'mission_id'} and payload['command'] == 'cancel_mission'
+            and isinstance(payload['mission_id'], str)
+            and re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+                             payload['mission_id'])):
+        # One manager mission (a patrol), whoever started it.
         return payload
     if payload == {'command': 'bringup_stop'}:
         return payload
@@ -314,6 +323,7 @@ class PanelData:
         self.system = None
         self.tracking = None
         self.zones = None
+        self.patrol = None
         self.manual = {'state': 'IDLE', 'message': ''}
         self.frames = {}
         self.encoded = (None, b'')
@@ -389,6 +399,7 @@ class PanelData:
                 'servers': self.servers, 'system': self.system,
                 'tracking': self.tracking, 'requests': list(self.requests.values()),
                 'runtime': self.runtime, 'zones': self.zones, 'manual': self.manual,
+                'patrol': self.patrol,
                 'video_age_s': {key: round(time.monotonic() - frame[0], 1)
                                 for key, frame in self.frames.items()},
             })
@@ -492,6 +503,9 @@ class RosBridge:
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
             self.node.create_subscription(
                 String, ZONES_STATE_TOPIC, self._zones,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
+            self.node.create_subscription(
+                String, PATROL_STATUS_TOPIC, self._patrol,
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
             self.node.create_subscription(
                 OccupancyGrid, self.topics['map_topic'], self._map,
@@ -666,6 +680,15 @@ class RosBridge:
             return
         if isinstance(state, dict):
             self.localization = state
+
+    def _patrol(self, message):
+        try:
+            state = json.loads(message.data)
+        except ValueError:
+            return
+        if isinstance(state, dict) and len(message.data) <= 16 * 1024:
+            with self.data.lock:
+                self.data.patrol = state
 
     def _zones(self, message):
         try:
@@ -891,6 +914,8 @@ class RosBridge:
                     payload['future'].set_result(payload['function']())
                 except Exception as error:
                     payload['future'].set_exception(error)
+            elif payload['command'] == 'cancel_mission':
+                self.cancel_mission(payload['mission_id'])
             elif payload['command'] == 'cancel' and 'request_id' in payload:
                 self.cancel_one(payload['request_id'])
             elif payload['command'] == 'cancel':
@@ -1049,6 +1074,16 @@ class RosBridge:
             handle = self.handles.get(request_id)
             if handle is not None:
                 self._cancel(request_id, handle)
+
+    def cancel_mission(self, mission_id):
+        """Ask the manager to cancel one mission by its goal ID, whoever sent it."""
+        client = self.cancel_clients.get(MISSION_ACTION)
+        if client is None or not client.service_is_ready():
+            self.runtime_message = 'System manager cannot cancel the mission now'
+            return
+        request = self.cancel_request()
+        request.goal_info.goal_id.uuid = list(uuid.UUID(mission_id).bytes)
+        client.call_async(request)
 
     def cancel_one(self, request_id):
         """Cancel one of this process's goals, even one still awaiting acceptance."""
