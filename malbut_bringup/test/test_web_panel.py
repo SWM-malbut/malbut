@@ -686,6 +686,8 @@ def test_destination_preview_plans_with_nav2_from_where_the_robot_is():
     assert bridge.plan_path(2.0, 0.5, 0.0) == [(0.0, 0.5), (1.0, 0.5), (2.0, 0.5)]
     goal = bridge.planner.send_goal_async.call_args.args[0]
     assert goal.goal.header.frame_id == 'map' and goal.use_start is False
+    # planner_server loads two planners and refuses a request that names none.
+    assert goal.planner_id == 'GridBased'
     assert (goal.goal.pose.position.x, goal.goal.pose.position.y) == (2.0, 0.5)
 
     planned.get_result_async.return_value = _future(SimpleNamespace(status=6, result=None))
