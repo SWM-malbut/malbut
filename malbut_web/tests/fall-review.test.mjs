@@ -516,6 +516,62 @@ test("clip playback answers expired / no recording / preparing without calling K
 });
 
 
+test("scene still (정지 사진): member-only JPEG of the suspected moment, never logged as viewing", async () => {
+  const h = await fallDatabase();
+  const broker = [];
+  let answer = (input) => [{ at: input.startAt, jpegBase64: Buffer.from("jpeg-bytes").toString("base64"), error: null }];
+  const load = moduleLoader({
+    [path.join(h.root, "app/server-auth.ts")]: { async getRequestUserId(req) { return testUserId(req.headers.get("x-test-email")); } },
+    [path.join(h.root, "app/runtime-env.ts")]: { getRuntimeEnvironment() { return {}; } },
+    [path.join(h.root, "app/kvs-device-config.ts")]: { resolveDeviceKvsResources() { return { streamArn: "arn:stream:a" }; } },
+    [path.join(h.root, "app/kvs-broker.ts")]: { async requestBrokerImages(input) { broker.push(input); return answer(input); } },
+  });
+  const pg = load("db/postgres.ts"), events = load("db/fall-incidents.ts"), review = load("db/fall-review.ts");
+  const still = load("app/api/devices/[deviceId]/fall-incidents/[incidentId]/clips/[segmentIndex]/still/route.ts");
+  const call = (incidentId, segmentIndex = "0", email = "family@example.com") => still.GET(
+    new Request("https://web.test/api", { headers: { "x-test-email": email } }),
+    { params: Promise.resolve({ deviceId: "robot-a", incidentId, segmentIndex }) });
+  const now = Math.floor(Date.now() / 1000) * 1000;
+  const iso = (offset) => new Date(now + offset).toISOString();
+  try { await pg.withPostgresPoolForTest(h.pool, async () => {
+    await recording(h, "robot-a", iso(-3600_000), null);
+    const seen = event({ occurredAt: iso(-115_000) }), other = event(), unrecorded = event();
+    for (const e of [seen, other, unrecorded]) await events.storeFallEvent("robot-a", e);
+    await review.storeFallClip("robot-a", clip({ incidentId: seen.incidentId, startAt: iso(-120_000), endAt: iso(-90_000) }));
+    await review.storeFallClip("robot-a", clip({ incidentId: other.incidentId, startAt: iso(-300_000), endAt: iso(-270_000) }));
+    await review.storeFallClip("robot-a", clip({ incidentId: unrecorded.incidentId, startAt: iso(-8 * 3600_000),
+      endAt: iso(-8 * 3600_000 + 30_000) }));
+
+    const ok = await call(seen.incidentId);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.headers.get("content-type"), "image/jpeg");
+    assert.match(ok.headers.get("cache-control"), /^private/);
+    assert.equal(Buffer.from(await ok.arrayBuffer()).toString(), "jpeg-bytes");
+    // The suspected moment itself, two samples over half a second.
+    assert.deepEqual(broker[0], { deviceId: "robot-a", streamArn: "arn:stream:a", startAt: iso(-115_000),
+      endAt: iso(-114_500), count: 2 });
+    // A clip that does not hold the incident's moment uses its own anchor, 10 s after its start.
+    assert.equal((await call(other.incidentId)).status, 200);
+    assert.equal(broker[1].startAt, iso(-290_000));
+
+    assert.equal((await call(unrecorded.incidentId)).status, 404);
+    assert.equal((await call(seen.incidentId, "32")).status, 404);
+    assert.equal((await call(seen.incidentId, "0", "stranger@example.com")).status, 404);
+    assert.equal(broker.length, 2);
+
+    // No frame archived for that moment yet: no photo (the video can still play).
+    answer = (input) => [{ at: input.startAt, jpegBase64: null, error: "NO_MEDIA" }];
+    assert.equal((await call(seen.incidentId)).status, 404);
+    answer = () => { throw new Error("KVS_BROKER_404"); };
+    assert.equal((await call(seen.incidentId)).status, 404);
+    answer = () => { throw new Error("KVS_BROKER_503"); };
+    assert.equal((await call(seen.incidentId)).status, 503);
+
+    // Looking at the still is not a viewing record; only playing the video is.
+    assert.equal((await h.db.query("SELECT count(*)::int AS n FROM access_audit_log")).rows[0].n, 0);
+  }); } finally { await h.db.close(); }
+});
+
 test("review fixes: microsecond timestamps, robot-normal reminders, reopened normal needs check, null recording start", async () => {
   await withRepo(async ({ h, events, review }) => {
     // Real Postgres stores microseconds; the reopening opinion must still not acknowledge.
@@ -592,6 +648,13 @@ test("사건 screen: incidents replace general events; demo API only for the loc
   assert.match(dashboard, /demo=\{LOCAL_HOME_CAM_DEMO && selectedDevice\.id === LOCAL_DEMO_DEVICE_ID\}/);
   assert.match(header, /<span>사건<\/span>/);
   assert.doesNotMatch(dashboard, /\/events\?\$\{params\}|EventPlayback|removeEventFromList/);
+  // 정지 사진 (SWM25-236): the scene itself is the play button over the still; no second play button.
+  assert.match(panel, /className=\{`fall-scene-start \$\{still === "shown" \? "has-photo" : ""\}`\}/);
+  assert.match(panel, /aria-label="장면 영상 보기" disabled=\{!playable\} onClick=\{onStart\}/);
+  assert.match(panel, /\/clips\/\$\{clip\.segmentIndex\}\/still/);
+  assert.match(panel, /onLoad=\{\(\) => setStill\("shown"\)\} onError=\{\(\) => setStill\("none"\)\}/);
+  assert.ok(panel.includes("누르면 이 구간을 재생해요"));
+  assert.doesNotMatch(panel, />장면 영상 보기<\/button>/);
 });
 
 test("연속 녹화: day timeline marks, recorded spans and report memo", async () => {

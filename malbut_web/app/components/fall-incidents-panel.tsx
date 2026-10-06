@@ -187,13 +187,21 @@ function PeopleOverlay({ scene, now }: { scene: ScenePeople; now: number }) {
   );
 }
 
-function useScenePlayer({ deviceId, incidentId, clip, request, scene, demo }: {
+function useScenePlayer({ deviceId, incidentId, clip, request, scene, demo, playable, onStart }: {
   deviceId: string; incidentId: string; clip: Clip; request: Request;
   /** Boxes to draw, or null when 사람 표시 is off or has nothing. */
   scene: ScenePeople | null; demo: boolean;
+  /** Whether the scene video can be played; the whole scene is its play button. */
+  playable: boolean; onStart: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
+  // 정지 사진 of the suspected moment, before playing. The demo has no archive: its drawn still.
+  const stillUrl = playable && !demo
+    ? `/api/devices/${encodeURIComponent(deviceId)}/fall-incidents/${encodeURIComponent(incidentId)}` +
+      `/clips/${clip.segmentIndex}/still`
+    : null;
+  const [still, setStill] = useState<"loading" | "shown" | "none">(demo && playable ? "shown" : stillUrl ? "loading" : "none");
   const [message, setMessage] = useState("");
   // Milliseconds from the clip start of the frame on screen.
   const [now, setNow] = useState<number | null>(null);
@@ -273,15 +281,29 @@ function useScenePlayer({ deviceId, incidentId, clip, request, scene, demo }: {
       <video ref={videoRef} controls={playing} playsInline hidden={!playing || demo} />
       {playing && demo && <div className="fall-scene-still" />}
       {playing && scene && now !== null && <PeopleOverlay scene={scene} now={now} />}
-      {!playing && <span className="fall-scene-hint">장면 영상 보기를 누르면 이 구간을 재생해요</span>}
-      {message && <span className="fall-scene-message" role="status">{message}</span>}
-      {/* 재생 중에는 숨긴다: 영상 아래쪽의 재생 위치·소리·확대 버튼을 가리지 않게. */}
       {!playing && (
-        <div className="fall-scene-bar">
-          <span>{clock(clip.startAt, true)} – {clock(clip.endAt, true)}</span>
-          <span>{SCENE[clip.playbackState][0]}</span>
-        </div>
+        <button type="button" className={`fall-scene-start ${still === "shown" ? "has-photo" : ""}`}
+          aria-label="장면 영상 보기" disabled={!playable} onClick={onStart}>
+          {demo && still === "shown" && <span className="fall-scene-still" aria-hidden="true" />}
+          {stillUrl && still !== "none" && (
+            // eslint-disable-next-line @next/next/no-img-element -- a private, per-user API image
+            <img className="fall-scene-photo" src={stillUrl} alt=""
+              onLoad={() => setStill("shown")} onError={() => setStill("none")} />
+          )}
+          {playable && still === "none" && <span className="fall-scene-hint">누르면 이 구간을 재생해요</span>}
+          {playable && (
+            <span className="fall-scene-play" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5l11 7-11 7z" /></svg>
+            </span>
+          )}
+          {/* 재생 중에는 없다: 영상 아래쪽의 재생 위치·소리·확대 버튼을 가리지 않게. */}
+          <span className="fall-scene-bar">
+            <span>{clock(clip.startAt, true)} – {clock(clip.endAt, true)}</span>
+            <span>{SCENE[clip.playbackState][0]}</span>
+          </span>
+        </button>
       )}
+      {message && <span className="fall-scene-message" role="status">{message}</span>}
     </div>
   ) };
 }
@@ -314,8 +336,9 @@ function Scene({ deviceId, incidentId, clip, request, demo, onOpenLive }: {
     return () => controller.abort();
   }, [wanted, showPeople, clip.hasPeople, clip.segmentIndex, loaded, deviceId, incidentId, request]);
   const scene = showPeople ? loaded : null;
-  const player = useScenePlayer({ deviceId, incidentId, clip, request, scene, demo });
   const playable = ["available", "partial", "preparing"].includes(clip.playbackState);
+  const player = useScenePlayer({ deviceId, incidentId, clip, request, scene, demo, playable,
+    onStart: () => { setWanted(true); player.setPlaying(true); } });
   return (
     <>
       {player.view}
@@ -338,11 +361,10 @@ function Scene({ deviceId, incidentId, clip, request, demo, onOpenLive }: {
       {clip.clockStepped && <p className="fall-hint">{clip.hasPeople && showPeople
         ? "로봇 시계가 바뀌어 시각과 사람 표시가 조금 어긋날 수 있어요."
         : "로봇 시계가 바뀌어 시각이 정확하지 않을 수 있어요."}</p>}
-      <div className="fall-two-buttons">
-        <button type="button" className="fall-button is-dark" disabled={!playable}
-          onClick={() => { setWanted(true); player.setPlaying(true); }}>장면 영상 보기</button>
-        <button type="button" className="fall-button" disabled={!onOpenLive} onClick={onOpenLive}>지금 실시간으로 보기</button>
-      </div>
+      {/* 장면 영상은 위 영상 칸을 눌러 본다(정지 사진·재생 표시). */}
+      <button type="button" className="fall-button fall-wide-button" disabled={!onOpenLive} onClick={onOpenLive}>
+        지금 실시간으로 보기
+      </button>
     </>
   );
 }

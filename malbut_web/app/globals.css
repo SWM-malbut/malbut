@@ -4073,6 +4073,7 @@ a:focus-visible {
   --ui-media: #2a2f36;
   --ui-media-black: #000;
   --ui-scrim: rgba(0, 0, 0, 0.55);
+  --ui-on-media-soft: rgba(255, 255, 255, 0.16);
   --ui-overlay: rgba(27, 31, 36, 0.75);
 }
 
@@ -4150,6 +4151,21 @@ a:focus-visible {
   position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 12px; display: flex; justify-content: space-between;
   color: var(--ui-on-strong); font-size: 12px; background: var(--ui-scrim); pointer-events: none;
 }
+/* 재생 전에는 장면 칸 전체가 재생 버튼: 정지 사진(있으면) · 가운데 재생 표시 · 아래 띠 (Still.dc.html) */
+.fall-scene-start {
+  position: absolute; inset: 0; padding: 0; border: 0; background: transparent; color: var(--ui-on-strong);
+  font: inherit; cursor: pointer;
+}
+.fall-scene-start:disabled { cursor: default; }
+.fall-scene-start:focus-visible { outline: 3px solid var(--ui-accent); outline-offset: -3px; }
+.fall-scene-start .fall-scene-hint { text-align: left; }
+.fall-scene-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--ui-media-black); }
+.fall-scene-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 56px; height: 56px;
+  border-radius: 28px; display: flex; align-items: center; justify-content: center; background: var(--ui-on-media-soft);
+}
+.fall-scene-start.has-photo .fall-scene-play { background: var(--ui-scrim); }
+.fall-button.fall-wide-button { width: 100%; border-color: var(--ui-control-border); }
 .fall-scene-note { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--ui-text-muted); }
 .fall-hint { margin: 0; font-size: 12px; color: var(--ui-text-muted); }
 .fall-two-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
