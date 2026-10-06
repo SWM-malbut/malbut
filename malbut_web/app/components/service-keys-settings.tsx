@@ -3,39 +3,45 @@
 import { useCallback, useEffect, useState } from "react";
 
 type Service = "openai" | "kma" | "fall";
+type Problem = "missing" | "invalid" | "quota" | null;
 type KeyView = {
   configured: boolean;
   last4: string | null;
   keyVersion: number;
   updatedAt: string | null;
   robotHasCurrent: boolean;
+  // What the robot last reported about this key (SWM25-234).
+  problem: Problem;
 };
 type Tone = "gray" | "ok" | "info" | "bad";
 
 const CARDS: Array<{
   service: Service; title: string; desc: string; placeholder: string;
-  link: { label: string; href: string }; without: string; note?: string;
+  link: { label: string; href: string }; without: string; quota: string; note?: string;
 }> = [
   {
     service: "openai", title: "대화 · OpenAI", desc: "말벗이 알아듣고 대답하고, 목소리를 낼 때 써요.",
     placeholder: "sk-로 시작하는 키", link: { label: "OpenAI에서 키 만들기 ›", href: "https://platform.openai.com/api-keys" },
     without: "말벗이 지금 대화를 할 수 없어요. 말을 걸면 대화를 할 수 없다고 안내해요.",
+    quota: "요금 한도가 찼어요.",
   },
   {
     service: "kma", title: "날씨 · 기상청",
     desc: "말벗이 날씨를 알려 줄 때 써요. 공공데이터포털에서 무료로 받을 수 있어요. 새로 받은 키는 쓸 수 있게 되기까지 시간이 걸릴 수 있어요. 그 전에는 저장되지 않아요.",
     placeholder: "공공데이터포털 일반 인증키", link: { label: "공공데이터포털에서 키 받기 ›", href: "https://www.data.go.kr/data/15084084/openapi.do" },
     without: "날씨를 물으면 확인할 수 없다고 말해요. 대화는 그대로 해요.",
+    quota: "오늘 사용량을 넘었어요.",
   },
   {
     service: "fall", title: "낙상 AI 확인 · Ollama", desc: "낙상이 의심될 때 장면을 AI에게 한 번 더 보여 줘요.",
     placeholder: "Ollama 키", link: { label: "Ollama에서 키 만들기 ›", href: "https://ollama.com/settings/keys" },
     without: "낙상 감지와 알림은 계속하지만, AI 재확인이 빠져 정확도가 떨어질 수 있어요.",
+    quota: "사용량을 넘었어요.",
     note: "AI 확인을 쓸지는 설정 › 홈캠 설정의 \"클라우드 AI 확인 동의\"에서 정해요.",
   },
 ];
 
-const EMPTY: KeyView = { configured: false, last4: null, keyVersion: 0, updatedAt: null, robotHasCurrent: false };
+const EMPTY: KeyView = { configured: false, last4: null, keyVersion: 0, updatedAt: null, robotHasCurrent: false, problem: null };
 
 function day(value: string | null) {
   const date = value ? new Date(value) : null;
@@ -50,6 +56,7 @@ const asView = (value: unknown): KeyView => {
     keyVersion: typeof raw.keyVersion === "number" ? raw.keyVersion : 0,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : null,
     robotHasCurrent: raw.robotHasCurrent === true,
+    problem: raw.problem === "missing" || raw.problem === "invalid" || raw.problem === "quota" ? raw.problem : null,
   };
 };
 
@@ -99,7 +106,7 @@ export function ServiceKeysSettings({ deviceId, onBack, demo = false }: {
       return { ok: true, view: apiKey === null
         ? { ...EMPTY, keyVersion: (views?.[service].keyVersion ?? 0) + 1 }
         : { configured: true, last4: apiKey.slice(-4), keyVersion: (views?.[service].keyVersion ?? 0) + 1,
-          updatedAt: new Date().toISOString(), robotHasCurrent: false } };
+          updatedAt: new Date().toISOString(), robotHasCurrent: false, problem: null } };
     }
     const response = await fetch(`${base}/${service}`, {
       method: apiKey === null ? "DELETE" : "PUT",
@@ -175,8 +182,17 @@ export function ServiceKeysSettings({ deviceId, onBack, demo = false }: {
         if (isChecking) {
           state = "저장하기 전에 이 키를 쓸 수 있는지 확인하고 있어요."; tone = "info"; showInput = true;
           if (view.configured) { badge = "사용 중"; badgeTone = "ok"; }
+        } else if (!managed && (view.problem === "invalid" || view.problem === "quota")) {
+          badge = "쓸 수 없음"; badgeTone = "bad"; tone = "bad"; showInput = true;
+          state = `말벗에 미리 들어 있는 팀 키를 쓸 수 없어요. ${card.without} 키를 넣어 주세요.`;
+        } else if (!managed && view.problem === "missing") {
+          badge = "키 없음"; badgeTone = "bad"; state = `${card.without} 키를 넣어 주세요.`; tone = "bad"; showInput = true;
         } else if (!managed) {
           state = "아직 키를 넣지 않아서 말벗에 미리 들어 있는 팀 키를 쓰고 있어요."; showInput = true;
+        } else if (view.configured && (view.problem === "invalid" || view.problem === "quota")) {
+          badge = "쓸 수 없음"; badgeTone = "bad"; tone = "bad";
+          showActions = editing !== card.service; showInput = editing === card.service;
+          state = `${view.problem === "quota" ? card.quota : "키가 틀렸거나 만료됐어요."} ${card.without}`;
         } else if (view.configured) {
           badge = "사용 중"; badgeTone = "ok"; showActions = editing !== card.service; showInput = editing === card.service;
           state = view.robotHasCurrent

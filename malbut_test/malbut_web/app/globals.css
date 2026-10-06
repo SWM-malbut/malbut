@@ -4880,3 +4880,12 @@ a.ui-back { text-decoration: none; }
 .ui-key-card .ui-field input[aria-invalid="true"] { border-color: var(--ui-danger); }
 .ui-key-card .ui-button { min-height: 46px; }
 .ui-key-link { align-self: flex-start; padding: 0.25rem 0; font-size: 0.8125rem; color: var(--ui-accent); text-decoration: none; }
+
+/* ---- 새 디자인: 홈 화면 키 안내 (목업 15) --------------------------------------- */
+.ui-key-notice { border-width: 2px; }
+.ui-key-notice.is-urgent { border-color: var(--ui-danger); }
+.ui-key-notice.is-warn { border-color: var(--ui-warn); }
+.ui-key-notice .ui-badge { align-self: flex-start; }
+.ui-key-notice > strong { font-size: 1rem; font-weight: 700; line-height: 1.45; }
+.ui-key-notice > p { margin: 0; font-size: 0.875rem; line-height: 1.6; }
+.ui-key-notice > small { font-size: 0.8125rem; line-height: 1.6; color: var(--ui-text-muted); }

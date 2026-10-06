@@ -6,6 +6,7 @@ import { FallIncidentsPanel } from "./fall-incidents-panel";
 import { FallTimelinePanel, type TimelineMode } from "./fall-timeline-panel";
 import { subscribeFallPush } from "../lib/fall-push";
 import { GuardiansSettings, OwnerTransferCard, type FamilyMember } from "./guardians-settings";
+import { KeyHealthNotice } from "./key-health-notice";
 import { ServiceKeysSettings } from "./service-keys-settings";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -1195,6 +1196,15 @@ export function HomecamDashboard({
 
         {tab === "home" && !(availability === "ready" && devices.length === 0) && (
           <section className="ui-screen ui-home" aria-label="말벗 지금 상태">
+            {selectedDevice && (
+              <KeyHealthNotice
+                key={selectedDevice.id}
+                deviceId={selectedDevice.id}
+                isOwner={isOwner}
+                demo={LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID}
+                onOpenKeys={() => { setSettingsView("keys"); setTab("settings"); }}
+              />
+            )}
             <article className="ui-card ui-hero">
               <span className="ui-caption">지금 말벗은</span>
               <strong className="ui-hero-title">
