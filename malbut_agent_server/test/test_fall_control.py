@@ -286,3 +286,20 @@ def test_backwards_clock_stops_control():
     clock.value = 99
     assert ctl.status()['runtime_state'] == 'error'
     assert not ctl.accepting_images
+
+
+def test_map_making_pauses_detection_and_owner_settings_still_win():
+    ctl, monitor, clock, provider = setup_control()
+    start(ctl, clock)
+    monitor.ingest_rgb(frame(clock()))
+    ctl.set_mapping(True)
+    # A moving camera while drawing a map reads as false falls: no frames, no Cloud.
+    assert not ctl.accepting_images and monitor.buffer.stored_bytes == 0
+    assert ctl.status()['pause_reason'] == 'mapping'
+    assert not monitor.ingest_rgb(frame(clock()))
+    ctl.set_mapping(False)
+    assert ctl.accepting_images and ctl.status()['pause_reason'] == 'none'
+    ctl.set_mapping(True)
+    ctl.apply_settings(**settings(ctl, settings_revision=2, camera_enabled=False))
+    assert ctl.status()['pause_reason'] == 'camera_off'
+    assert not provider.calls

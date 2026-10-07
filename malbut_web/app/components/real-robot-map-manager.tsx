@@ -215,6 +215,8 @@ export function RealRobotMapManager({
             알아낸 면적 {Math.round(Number(progress.known_area_m2) || 0)}㎡ · 아직 안 가 본 곳 {Number(progress.frontier_count) || 0}군데
           </span>
           <p className="ui-note">다 둘러보면 말벗이 알아서 저장해요. 손이 닿지 않는 구석이 조금 남아도 저장해요.</p>
+          {/* The robot pauses fall detection while mapping: a moving camera reads as false falls. */}
+          <p className="ui-note">지도를 만드는 동안 낙상 감지는 잠시 꺼져요. 다 만들거나 멈추면 다시 켜져요.</p>
           <button type="button" className="ui-button is-danger-line" onClick={() => void sendCommand("mission_cancel")}
             disabled={!isOwner || !online || autoslam?.state === "CANCELING" || commandActive || busy}>중지</button>
           <p className="ui-note is-danger">중지하면 지금까지 그린 지도는 저장되지 않아요.</p>

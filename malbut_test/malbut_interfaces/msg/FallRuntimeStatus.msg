@@ -12,7 +12,8 @@ bool accepting_images
 float64 last_frame_age_s -1.0
 # waiting_settings / ready / paused / error
 string runtime_state "waiting_settings"
-# none / waiting_settings / disabled / camera_off / control_unavailable / runtime_error
+# none / waiting_settings / disabled / camera_off / mapping / control_unavailable / runtime_error
+# mapping: 로봇이 지도를 만드는 동안(카메라가 움직여 오탐이 잦음) 감지를 멈춘다.
 string pause_reason "waiting_settings"
 # idle / queued / waiting_response / completed / failed / cancel_requested / canceled
 string analysis_state "idle"

@@ -226,6 +226,9 @@ def test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose(tmp_pat
         def get_logger(self):
             return Mock()
 
+        def count_publishers(self, topic):
+            return 1
+
     monkeypatch.setattr(node_module, 'Node', Node)
     _, clock, provider = make()
     node = create_fall_node(FallNodeSettings.parse(json.dumps(config(tmp_path))),
@@ -272,3 +275,89 @@ def test_real_ros_callbacks_on_fake_node_keep_images_independent_of_pose(tmp_pat
         node.control, settings_revision=2, camera_enabled=False)), ApplyFallSettings.Response())
     assert result.applied and not result.camera_enabled
     assert node.monitor.buffer.stored_bytes == 0
+
+
+def test_map_making_mission_pauses_fall_frames_until_it_or_the_manager_ends(tmp_path, monkeypatch):
+    node_module = pytest.importorskip('rclpy.node')
+    sensor = pytest.importorskip('sensor_msgs.msg')
+    from malbut_interfaces.msg import FallControlHeartbeat, MissionStatus, SystemState
+    from malbut_interfaces.srv import ApplyFallSettings
+    from test_fall_control import settings as control_settings, heartbeat
+    import numpy as np
+
+    class Node:
+        manager = 1
+
+        def __init__(self, name):
+            self.subscriptions, self.publishers, self.services = {}, {}, {}
+
+        def declare_parameter(self, name, default, descriptor):
+            return SimpleNamespace(value={'manager_runtime_id': 'manager-1',
+                                          'runtime_id': 'vlm-1'}[name])
+
+        def create_service(self, srv, name, callback):
+            self.services[name] = callback
+
+        def create_subscription(self, msg, topic, callback, qos):
+            self.subscriptions[topic] = (callback, qos)
+
+        def create_publisher(self, msg, topic, qos):
+            self.publishers[topic] = publisher = Mock()
+            return publisher
+
+        def create_timer(self, *args, **kwargs):
+            pass
+
+        def get_clock(self):
+            return SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=10**12))
+
+        def get_logger(self):
+            return Mock()
+
+        def count_publishers(self, topic):
+            assert topic == '/malbut/state'
+            return Node.manager
+
+    monkeypatch.setattr(node_module, 'Node', Node)
+    _, clock, provider = make()
+    node = create_fall_node(FallNodeSettings.parse(json.dumps(config(tmp_path))),
+                            provider=provider, journal=None, clock=clock)
+    node.services['/malbut/falls/settings/apply'](
+        ApplyFallSettings.Request(**control_settings(node.control)), ApplyFallSettings.Response())
+    node.subscriptions['/malbut/falls/control/heartbeat'][0](
+        FallControlHeartbeat(**heartbeat(node.control, clock)))
+    image = sensor.Image()
+    image.header.stamp.sec = 1000
+    image.header.frame_id = 'rgb'
+    image.height, image.width, image.step, image.encoding = 400, 640, 640 * 3, 'bgr8'
+    image.data = np.zeros((400, 640, 3), dtype=np.uint8).tobytes()
+    on_state, qos = node.subscriptions['/malbut/state']
+    # The Manager publishes this state once per change and keeps the last one latched.
+    from rclpy.qos import DurabilityPolicy
+    assert qos.durability == DurabilityPolicy.TRANSIENT_LOCAL
+
+    def state(*capabilities, kind='active_foreground_missions'):
+        message = SystemState()
+        setattr(message, kind, [MissionStatus(mission_id=f'm{index}', capability_id=capability)
+                                for index, capability in enumerate(capabilities)])
+        return message
+
+    def status():
+        node.publish_status()
+        return node.publishers['/malbut/falls/status'].publish.call_args.args[0]
+
+    on_state(state('navigate_to_pose'))
+    assert status().pause_reason == 'none'
+    on_state(state('autoslam'))
+    node.on_image(image)
+    assert node.monitor.buffer.stored_bytes == 0
+    assert status().pause_reason == 'mapping' and not status().accepting_images
+    on_state(state())
+    node.on_image(image)
+    assert node.monitor.buffer.stored_bytes > 0 and status().pause_reason == 'none'
+    on_state(state('autoslam', kind='pending_missions'))
+    assert status().pause_reason == 'mapping'
+    # A stopped Manager leaves its latched state behind; detection must not stay off.
+    Node.manager = 0
+    assert status().pause_reason == 'none'
+    assert not provider.calls

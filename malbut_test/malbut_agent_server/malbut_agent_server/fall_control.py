@@ -62,6 +62,7 @@ class FallSettingsControl:
         self._effective = None
         self._pause = 'waiting_settings'
         self._cloud_block = 'waiting_settings'
+        self._mapping = False
         self.refresh()
 
     @property
@@ -152,6 +153,13 @@ class FallSettingsControl:
         self.refresh()
         return True
 
+    def set_mapping(self, active):
+        """Pause while the robot draws a map: a moving camera turns into false falls."""
+        active = bool(active)
+        if active != self._mapping:
+            self._mapping = active
+            self.refresh()
+
     def refresh(self):
         now = self._clock()
         if not _time(now) or now < self._last_now:
@@ -182,6 +190,8 @@ class FallSettingsControl:
             pause = 'disabled'
         elif not settings['camera_enabled']:
             pause = 'camera_off'
+        elif self._mapping:
+            pause = 'mapping'
         elif not live or not self._recovered:
             pause = 'control_unavailable'
         else:
