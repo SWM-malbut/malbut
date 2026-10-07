@@ -121,6 +121,7 @@ def package_index():
              *ROOT.glob('malbut_autonomy/*/package.xml'),
              *ROOT.glob('malbut_yolo/vendor/yolo_ros/*/package.xml'),
              ROOT / 'homecam_agent/homecam_detector/package.xml',
+             ROOT / 'homecam_agent/homecam_media_agent/package.xml',
              *ROOT.glob('malbut_test/malbut_*/package.xml')]
     result = {}
     for path in files:
@@ -186,7 +187,10 @@ def selection(paths, full=False, base=None):
         for name in owners:
             if (path.startswith(packages[name]['path'] + '/')
                     or original_path.startswith(packages[name]['path'] + '/')):
-                selected.add(name)
+                # Direct media changes use the dedicated KVS-enabled Homecam job.
+                # Keep this package in the index for robot dependency builds.
+                if name != 'homecam_media_agent':
+                    selected.add(name)
                 break
         else:
             if path.startswith('malbut_') and path.endswith('package.xml'):

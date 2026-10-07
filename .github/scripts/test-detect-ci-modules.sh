@@ -124,10 +124,12 @@ assert_value ros_test_packages '' --paths malbut_bringup/README.md
 assert_value assets false --paths malbut_gazebo/web/index.html
 assert_value assets true --paths malbut_gazebo/models/humanoid_actor/model.sdf
 assert_value ros_test_packages malbut_gazebo --paths homecam_agent/scripts/spawn_event_test_person.sh
+assert_value ros_packages '' --paths homecam_agent/homecam_media_agent/src/node.cpp
+assert_value ros_test_packages '' --paths homecam_agent/homecam_media_agent/src/node.cpp
 
 builds="$("$selector" --paths malbut_bringup/launch/robot.launch.py | sed -n 's/^ros_packages=//p')"
 for needed in malbut_interfaces malbut_tracking malbut_system_manager yolo_msgs \
-  malbut_agent_server malbut_stt malbut_tts; do
+  malbut_agent_server malbut_stt malbut_tts homecam_detector homecam_media_agent; do
   if [[ " $builds " != *" $needed "* ]]; then
     printf 'Bringup builds: expected %s, got %s\n' "$needed" "$builds" >&2
     exit 1
@@ -136,6 +138,14 @@ done
 for unrelated in malbut_gazebo malbut_scenarios; do
   if [[ " $builds " == *" $unrelated "* ]]; then
     printf 'Bringup builds: unexpected %s in %s\n' "$unrelated" "$builds" >&2
+    exit 1
+  fi
+done
+for path in malbut_bringup/launch/robot.launch.py .github/workflows/ci.yml; do
+  paths="$("$selector" --paths "$path" | sed -n 's/^ros_paths=//p')"
+  if [[ " $paths " != *" homecam_agent/homecam_media_agent "* ]]; then
+    printf 'ROS source dependencies for %s: missing homecam_media_agent in %s\n' \
+      "$path" "$paths" >&2
     exit 1
   fi
 done
