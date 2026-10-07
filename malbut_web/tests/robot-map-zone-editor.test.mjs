@@ -265,6 +265,9 @@ test("the developer screen's map, follow and drive tools reach the map tab for t
   assert.match(panel, /const realRobot = snapshot\?\.state\?\.nav2\.robot_interface === "malbut_manager_v1";/);
   assert.match(panel, /\{realRobot \? \(\s*<RealRobotMapManager/);
   assert.match(panel, /\{isOwner && realRobot && \(\s*<MapDrivePad/);
+  // The real robot has no roaming: its button and caption mention are hidden there.
+  assert.match(panel, /\{!realRobot && \(\s*<button[^>]*?onClick=\{\(\) => void sendCommand\("drive_mode_start", \{ mode: "roaming" \}\)\}/s);
+  assert.ok(panel.includes("방 순찰 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."));
   // 지도 관리 uses the developer screen's robot commands.
   assert.match(manager, /sendCommand\("mission_start", \{ capability: "autoslam", arguments: \{ map_name: stem \} \}\)/);
   assert.match(manager, /sendCommand\("runtime_start", \{ mode: "navigation", map \}\)/);

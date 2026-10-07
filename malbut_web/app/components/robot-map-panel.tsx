@@ -1627,7 +1627,10 @@ export function RobotMapPanel({
           {isOwner && !mapping && (
             <article className="ui-card">
               <h2>자율주행</h2>
-              <span className="ui-caption">방 순찰·자율 배회 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요.</span>
+              <span className="ui-caption">
+                {realRobot ? "방 순찰 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."
+                  : "방 순찰·자율 배회 또는 카메라로 확인한 사람 따라가기를 시작할 수 있어요."}
+              </span>
               {activeAutonomousMode && autonomousSession && !canPause ? (
                 <>
                   <div className="ui-map-sync is-info" role="status">
@@ -1713,12 +1716,15 @@ export function RobotMapPanel({
                       : { mode: "patrol" })}
                     disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("patrol") || Boolean(activeCommand) || busy}
                   >방 순찰 시작</button>
-                  <button
-                    type="button"
-                    className="ui-button"
-                    onClick={() => void sendCommand("drive_mode_start", { mode: "roaming" })}
-                    disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("roaming") || Boolean(activeCommand) || busy}
-                  >자율 배회 시작</button>
+                  {/* 실로봇에는 자율 배회 기능이 없다(시뮬레이터 데모 전용). */}
+                  {!realRobot && (
+                    <button
+                      type="button"
+                      className="ui-button"
+                      onClick={() => void sendCommand("drive_mode_start", { mode: "roaming" })}
+                      disabled={!isOwner || !snapshot?.online || snapshot?.state?.localization.state !== "ok" || navigationDriving || autonomousModeActive || !availableAutonomousModes.includes("roaming") || Boolean(activeCommand) || busy}
+                    >자율 배회 시작</button>
+                  )}
                   <button
                     type="button"
                     className="ui-button"
