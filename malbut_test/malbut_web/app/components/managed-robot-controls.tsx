@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { RobotOperation } from "../robot-contract";
 import type { RobotSnapshot } from "./robot-map-panel";
+import { VoiceAgentPanel } from "./voice-agent-panel";
 
 type SendCommand = (operation: RobotOperation, payload?: Record<string, unknown>) => Promise<boolean>;
 const terminal = new Set(["SUCCEEDED", "CANCELED", "ABORTED", "REJECTED", "ERROR"]);
@@ -14,12 +15,13 @@ const LOCALIZATION_LABEL: Record<string, string> = {
 };
 
 /** The service UI adapts existing robot contracts; scheduling stays on the robot. */
-export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goal }: {
+export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goal, deviceId }: {
   snapshot: RobotSnapshot;
   isOwner: boolean;
   busy: boolean;
   sendCommand: SendCommand;
   goal: { x: number; y: number } | null;
+  deviceId: string;
 }) {
   const [mapName, setMapName] = useState("home");
   const [selectedMap, setSelectedMap] = useState("");
@@ -27,6 +29,7 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
   const [thoroughness, setThoroughness] = useState(1);
   const target = snapshot.state?.target ?? {};
   const runtime = record(target.runtime);
+  const voice = record(target.voice);
   const localization = record(runtime.localization);
   const servers = record(target.servers);
   const maps = Array.isArray(target.maps) ? target.maps.map(record).filter((map) => typeof map.id === "string") : [];
@@ -54,6 +57,7 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
       <h3>로봇 Bringup</h3>
       {!managed && <p>실로봇 연결을 기다리고 있습니다.</p>}
       <p>{String(runtime.message || runtime.state || "상태 수신 대기")}</p>
+      {voice.ready === true && <p>{stopped ? "대기 중 · 음성으로 다시 시작할 수 있습니다." : "음성 명령을 받을 수 있습니다."}</p>}
       {Array.isArray(runtime.waiting) && runtime.waiting.length > 0 && <p>준비 대기: {runtime.waiting.join(", ")}</p>}
       {typeof localization.mode === "string" && <p>
         위치 추정: {LOCALIZATION_LABEL[localization.mode] ?? localization.mode}
@@ -138,6 +142,7 @@ export function ManagedRobotControls({ snapshot, isOwner, busy, sendCommand, goa
       })}
       <small>명령 접수와 작업 완료는 다릅니다. 최종 실행 결과를 확인하세요.</small>
     </div>
+    <VoiceAgentPanel key={deviceId} deviceId={deviceId} />
   </>;
 }
 

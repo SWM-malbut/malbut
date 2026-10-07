@@ -1,0 +1,47 @@
+Running main() from /tmp/malbut-homecam-web-test/googletest-1.14.0/googletest/src/gtest_main.cc
+[==========] Running 16 tests from 3 test suites.
+[----------] Global test environment set-up.
+[----------] 1 test from Heartbeat
+[ RUN      ] Heartbeat.TalkLeaseRequiresBoundedServerAuthority
+[       OK ] Heartbeat.TalkLeaseRequiresBoundedServerAuthority (0 ms)
+[----------] 1 test from Heartbeat (0 ms total)
+
+[----------] 10 tests from MediaConfig
+[ RUN      ] MediaConfig.AcceptsSafeSimulationDefaults
+[       OK ] MediaConfig.AcceptsSafeSimulationDefaults (0 ms)
+[ RUN      ] MediaConfig.CameraPrivacyAlwaysDisablesDetectorMonitoring
+[       OK ] MediaConfig.CameraPrivacyAlwaysDisablesDetectorMonitoring (0 ms)
+[ RUN      ] MediaConfig.StaleSessionGenerationCannotSendOrReceiveMedia
+[       OK ] MediaConfig.StaleSessionGenerationCannotSendOrReceiveMedia (0 ms)
+[ RUN      ] MediaConfig.RejectsUnsafeOrInvalidValues
+[       OK ] MediaConfig.RejectsUnsafeOrInvalidValues (0 ms)
+[ RUN      ] MediaConfig.AllowsLocalHttpForDevelopment
+[       OK ] MediaConfig.AllowsLocalHttpForDevelopment (0 ms)
+[ RUN      ] MediaConfig.PlaintextHttpAllowsOnlyExactLoopbackHosts
+[       OK ] MediaConfig.PlaintextHttpAllowsOnlyExactLoopbackHosts (0 ms)
+[ RUN      ] MediaConfig.HttpsRequiresAValidAuthority
+[       OK ] MediaConfig.HttpsRequiresAValidAuthority (0 ms)
+[ RUN      ] MediaConfig.BackendDeviceIdMatchesBrokerContract
+[       OK ] MediaConfig.BackendDeviceIdMatchesBrokerContract (0 ms)
+[ RUN      ] MediaConfig.CredentialFileTakesPrecedenceAndMissingFileFailsClosed
+[       OK ] MediaConfig.CredentialFileTakesPrecedenceAndMissingFileFailsClosed (0 ms)
+[ RUN      ] MediaConfig.CredentialRejectsHeaderInjectionAndWrongTokenShape
+[       OK ] MediaConfig.CredentialRejectsHeaderInjectionAndWrongTokenShape (0 ms)
+[----------] 10 tests from MediaConfig (0 ms total)
+
+[----------] 5 tests from HeartbeatContract
+[ RUN      ] HeartbeatContract.UsesCamelCaseAndParsesDesiredState
+[       OK ] HeartbeatContract.UsesCamelCaseAndParsesDesiredState (0 ms)
+[ RUN      ] HeartbeatContract.RejectsResponsePast64KiBWithoutGrowingTheBuffer
+[       OK ] HeartbeatContract.RejectsResponsePast64KiBWithoutGrowingTheBuffer (0 ms)
+[ RUN      ] HeartbeatContract.MediaReceiptRevisionIsOptionalAndNeverUsesAnInvalidOrOldValue
+[       OK ] HeartbeatContract.MediaReceiptRevisionIsOptionalAndNeverUsesAnInvalidOrOldValue (0 ms)
+[ RUN      ] HeartbeatContract.AppliedMediaReceiptRequiresLocalPipelinesAndRecordingHealth
+[       OK ] HeartbeatContract.AppliedMediaReceiptRequiresLocalPipelinesAndRecordingHealth (0 ms)
+[ RUN      ] HeartbeatContract.RejectsMalformedWrongTypeAndDuplicateDesiredState
+[       OK ] HeartbeatContract.RejectsMalformedWrongTypeAndDuplicateDesiredState (0 ms)
+[----------] 5 tests from HeartbeatContract (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 16 tests from 3 test suites ran. (1 ms total)
+[  PASSED  ] 16 tests.

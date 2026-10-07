@@ -30,7 +30,10 @@ def test_catalog_lists_valid_images_without_modifying_maps(tmp_path):
     path = _map(catalog.directory)
     before = path.read_bytes()
     assert catalog.resolve('home.yaml') == path
-    assert catalog.list_maps() == [{'id': 'home.yaml', 'name': 'home', 'path': str(path)}]
+    entries = catalog.list_maps()
+    assert [{key: value for key, value in item.items() if key != 'revision'}
+            for item in entries] == [{'id': 'home.yaml', 'name': 'home', 'path': str(path)}]
+    assert len(entries[0]['revision']) == 64
     assert path.read_bytes() == before
     _map(catalog.directory, 'broken.yaml', resolution=-1)
     assert len(catalog.list_maps()) == 1
@@ -242,3 +245,14 @@ def test_error_exposes_the_failed_node_and_a_bounded_log_tail(runtime):
         'Bringup child exited: speech_preflight-12; stop before retrying')
     assert status['log_tail'].endswith('exit code -15, cmd \'/x/manager\'].\n')
     assert len(status['log_tail'].encode()) <= 8192
+
+
+def test_resident_supervisor_never_starts_duplicate_speech(runtime):
+    """Only the resident profile disables child speech; explicit robot launch is unchanged."""
+    supervisor, popen, _, _, _ = runtime
+    supervisor.resident_voice = True
+    supervisor.start('navigation', 'home.yaml').result()
+    assert 'speech:=false' in popen.call_args.args[0]
+    assert supervisor.last_selected_map() == 'home.yaml'
+    supervisor.stop().result()
+    assert supervisor.last_selected_map() == 'home.yaml'

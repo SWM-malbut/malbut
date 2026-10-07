@@ -1,6 +1,6 @@
 """Test the LAN panel without starting ROS, robot nodes, or motion."""
 
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError
 import http.client
 import json
 from pathlib import Path
@@ -233,9 +233,16 @@ def _bridge(manager_ready=False, autoslam_ready=True):
     bridge.handles = {}
     bridge.cancel_pending = set()
     bridge.runtime = None
+    bridge.resident_voice_namespace = ''
+    bridge.teleop_inhibited = False
+    bridge.teleop_generation = 0
+    bridge.teleop_received = None
+    bridge.stop_movement = Mock()
+    bridge.stop_movement_request = SimpleNamespace
     bridge.stopping_runtime = None
     bridge.runtime_message = ''
     bridge.startup_status = {'state': 'READY', 'missing': []}
+    bridge.runtime_stop_error = None
     bridge.speech_ready = False
     bridge.action_status = {}
     bridge.cancel_clients = {}
@@ -1028,3 +1035,263 @@ def test_zone_api_is_authenticated_and_never_dispatches_a_command(http_server, z
     status, _ = _request(server, 'POST', '/api/zones', {'map': 'home.yaml'}, **headers)
     assert status == 400
     submit.assert_not_called()
+
+
+def test_resident_voice_ownership_is_exact_and_rejects_duplicates():
+    """Only this launch's single speech node instance may coexist with robot startup."""
+    bridge, _ = _bridge()
+    bridge.runtime = Mock()
+    bridge.resident_voice_namespace = '/malbut/resident_voice_test'
+    names = ['malbut_stt', 'malbut_tts', 'malbut_agent_communication']
+    bridge.node.get_node_names_and_namespaces.return_value = [
+        (name, bridge.resident_voice_namespace) for name in names]
+    bridge.node.count_publishers.return_value = 0
+    bridge.speech_ready = True
+    bridge._start_runtime({'mode': 'mapping'})
+    assert bridge.speech_ready
+    bridge.runtime.start.assert_called_once()
+    bridge.node.get_node_names_and_namespaces.return_value.append(('malbut_stt', '/'))
+    with pytest.raises(ValueError, match='malbut_stt'):
+        bridge._start_runtime({'mode': 'mapping'})
+    bridge.runtime.start.assert_called_once()
+
+
+def test_resident_voice_stays_ready_after_robot_shutdown(monkeypatch):
+    """Standby voice readiness cannot resurrect stale Manager or localization state."""
+    bridge, _ = _bridge(manager_ready=False)
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {'state': 'STOPPED', 'message': ''}
+    bridge.resident_voice_namespace = '/malbut/resident_voice_test'
+    bridge.node.get_publishers_info_by_topic.return_value = [
+        SimpleNamespace(node_namespace=bridge.resident_voice_namespace)]
+    bridge.speech_ready = True
+    bridge.data.system = {'system_state': 1}
+    bridge.localization = {'mode': 'LOCALIZATION', 'map': '/old/map.yaml'}
+    monkeypatch.setattr(bridge, '_robot_pose', lambda: None)
+    bridge._refresh()
+    snapshot = bridge.data.snapshot()
+    assert snapshot['voice'] == {'ready': True, 'mode': 'standby'}
+    assert not snapshot['runtime']['ready']
+    assert snapshot['system'] is None and snapshot['runtime']['localization'] == {}
+    bridge.node.get_publishers_info_by_topic.return_value = []
+    bridge._refresh()
+    assert not bridge.data.snapshot()['voice']['ready']
+
+
+def test_integrated_autoslam_never_bypasses_manager():
+    """The real integrated profile shares Manager's movement admission fence."""
+    bridge, _ = _bridge(manager_ready=False, autoslam_ready=True)
+    bridge.resident_voice_namespace = '/malbut/resident_voice_test'
+    request_id = bridge.submit(_command())
+    bridge._drain()
+    assert bridge.data.requests[request_id]['state'] == 'ERROR'
+    bridge.clients['autoslam'].send_goal_async.assert_not_called()
+
+
+def test_movement_stop_discards_held_input_until_real_neutral():
+    """A held web input cannot immediately request another manual mission."""
+    bridge, _ = _bridge()
+    bridge.twist = lambda: SimpleNamespace(linear=SimpleNamespace(x=0, y=0),
+                                           angular=SimpleNamespace(z=0))
+    bridge.teleop_publisher = Mock()
+    move = {'command': 'teleop', 'linear_x': 0.1, 'linear_y': 0.0, 'angular_z': 0.0}
+    bridge.submit(move)
+    bridge._drain()
+    assert bridge.teleop_publisher.publish.call_count == 1
+    bridge._movement_stop(None)
+    bridge.submit(move)
+    bridge._drain()
+    assert bridge.teleop_publisher.publish.call_count == 1
+    bridge.submit({**move, 'linear_x': 0.0})
+    bridge.submit(move)
+    bridge._drain()
+    assert bridge.teleop_publisher.publish.call_count == 3
+
+
+@pytest.mark.parametrize('resident', [False, True])
+def test_queued_neutral_and_move_cannot_rearm_after_movement_stop(monkeypatch, resident):
+    """Only input received after stop may release the manual neutral latch."""
+    bridge = _teleop_bridge(monkeypatch, [100.0])
+    bridge.resident_voice_namespace = '/malbut/resident_voice_test' if resident else ''
+    move = {'command': 'teleop', 'linear_x': 0.15, 'linear_y': 0.0, 'angular_z': 0.0}
+    bridge.submit({**move, 'linear_x': 0.0})
+    bridge.submit(move)
+    bridge._movement_stop(None)
+    bridge._drain()
+    assert _published(bridge) == []
+    assert bridge.teleop_inhibited
+    bridge.submit(move)
+    bridge._drain()
+    assert _published(bridge) == []
+    bridge.submit({**move, 'linear_x': 0.0})
+    bridge.submit(move)
+    bridge._drain()
+    assert _published(bridge) == [(0.0, 0.0, 0.0), (0.15, 0.0, 0.0)]
+
+
+def test_integrated_goal_keeps_epoch_from_http_admission():
+    """Queued requests cannot adopt a newer stop epoch before their ROS send."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.resident_voice_namespace = '/malbut/resident_voice_test'
+    bridge.data.system = {'movement_runtime_id': 'manager', 'movement_epoch': 0}
+    request_id = bridge.submit(_command())
+    bridge.data.system['movement_epoch'] = 1
+    bridge._drain()
+    goal = bridge.clients['manager'].send_goal_async.call_args.args[0]
+    assert goal.require_movement_epoch
+    assert goal.movement_runtime_id == 'manager' and goal.movement_epoch == 0
+    assert bridge.data.requests[request_id]['state'] == 'RUNNING'
+
+
+@pytest.mark.parametrize('capability,arguments', [
+    ('navigate_to_pose', {'x': 1, 'y': -2, 'yaw': 0}),
+    ('relocalize', {'method': 1, 'x': 1, 'y': -2, 'yaw': 0}),
+])
+@pytest.mark.parametrize('command', ['start', 'debug_start'])
+def test_integrated_map_coordinates_keep_original_localization(capability, arguments, command):
+    """A queued coordinate cannot silently target a different map transition."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.resident_voice_namespace = '/malbut/resident_voice_test'
+    bridge.data.system = {'movement_runtime_id': 'manager', 'movement_epoch': 4}
+    bridge.localization = {'runtime_id': 'localization', 'transition_id': 2}
+    bridge.data.map_snapshot = Mock(return_value={'active': True, 'frame_id': 'map'})
+    bridge._robot_pose = Mock(return_value={'x': 0, 'y': 0, 'yaw': 0})
+    raw_arguments = (mission_arguments(capability, arguments)
+                     if command == 'debug_start' else arguments)
+    bridge.submit({'command': command, 'capability': capability, 'arguments': raw_arguments})
+    bridge._localization(SimpleNamespace(data=json.dumps(
+        {'runtime_id': 'new-localization', 'transition_id': 3})))
+    bridge._drain()
+    goal = bridge.clients['manager'].send_goal_async.call_args.args[0]
+    assert goal.expected_localization_runtime_id == 'localization'
+    assert goal.expected_localization_transition_id == 2
+    assert json.loads(goal.arguments_yaml) == mission_arguments(capability, arguments)
+
+
+@pytest.mark.parametrize('capability,arguments', [
+    ('navigate_to_pose', {'x': 1, 'y': -2, 'yaw': 0}),
+    ('relocalize', {'method': 1, 'x': 1, 'y': -2, 'yaw': 0}),
+])
+def test_integrated_map_coordinates_require_observed_localization(capability, arguments):
+    """Missing map identity cannot become an unbound legacy Goal."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.resident_voice_namespace = '/malbut/resident_voice_test'
+    bridge.data.system = {'movement_runtime_id': 'manager', 'movement_epoch': 4}
+    bridge.data.map_snapshot = Mock(return_value={'active': True, 'frame_id': 'map'})
+    bridge._robot_pose = Mock(return_value={'x': 0, 'y': 0, 'yaw': 0})
+    request_id = bridge.submit(_command(capability, arguments))
+    bridge._drain()
+    bridge.clients['manager'].send_goal_async.assert_not_called()
+    assert bridge.data.requests[request_id]['state'] == 'ERROR'
+    assert 'localization state is unavailable' in bridge.data.requests[request_id]['message']
+
+
+def test_resident_runtime_stop_requires_manager_admission_fence():
+    """Unavailable StopMovement must never fall back to unfenced cancel-all."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {'state': 'RUNNING'}
+    bridge.resident_voice_namespace = '/malbut/resident_voice_test'
+    bridge.stop_movement.service_is_ready.return_value = False
+    bridge.cancel_clients = {'/patrol': Mock()}
+    bridge._stop_runtime(confirmed_mission_ids=['already-confirmed'])
+    bridge._finish_runtime_stop()
+    bridge.stop_movement.call_async.assert_not_called()
+    bridge.cancel_clients['/patrol'].call_async.assert_not_called()
+    bridge.runtime.stop.assert_not_called()
+    assert bridge.stopping_runtime is None
+    assert bridge.runtime_stop_error['code'] == 'stop_unconfirmed'
+    assert 'Bringup kept running' in bridge.runtime_message
+
+
+def test_runtime_stop_preserves_manager_confirmation_targets():
+    """Internal localization targets remain available for exact user confirmation."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.runtime = Mock()
+    bridge.runtime.snapshot.return_value = {'state': 'RUNNING'}
+    bridge.resident_voice_namespace = '/malbut/resident_voice_test'
+    bridge.stop_movement.call_async.return_value = _future(SimpleNamespace(
+        stopped=False, code='preemption_confirmation_required', message='Confirm localization',
+        affected_mission_ids=[], unresolved_mission_ids=['localization:2']))
+    bridge._stop_runtime(confirmed_mission_ids=[])
+    bridge._finish_runtime_stop()
+    assert bridge.runtime_stop_error['code'] == 'preemption_confirmation_required'
+    assert bridge.runtime_stop_error['result']['conflicting_mission_ids'] == ['localization:2']
+    bridge.runtime.stop.assert_not_called()
+
+
+def test_integrated_web_stop_keeps_weather_and_fall_dialogue():
+    """A movement stop must not become generic cancellation of every owned Action."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.resident_voice_namespace = '/malbut/resident_voice_test'
+    for capability in ('get_weather', 'set_weather_location', 'fall_confirmation', 'patrol'):
+        bridge.data.register({'capability': capability})
+    bridge.submit({'command': 'cancel'})
+    bridge._drain()
+    assert [item['capability'] for key, item in bridge.data.requests.items()
+            if key in bridge.cancel_pending] == ['patrol']
+    bridge.stop_movement.call_async.assert_called_once()
+
+
+def test_resident_map_preparation_sends_original_epoch_to_manager():
+    """The integrated map service must reject an old queued transition after stop."""
+    bridge, _ = _bridge(manager_ready=True)
+    bridge.resident_voice_namespace = '/malbut/resident_voice_test'
+    bridge.data.system = {'movement_runtime_id': 'manager', 'movement_epoch': 4}
+    bridge.load_map.service_is_ready.return_value = True
+    bridge.start_mapping.service_is_ready.return_value = True
+    bridge.catalog = Mock()
+    bridge.catalog.resolve.return_value = '/maps/home.yaml'
+    bridge.prepare_localization = Mock()
+    bridge.prepare_localization_request = SimpleNamespace
+    bridge.prepare_localization.call_async.return_value = Future()
+    bridge.submit({'command': 'bringup_start', 'mode': 'navigation', 'map': 'home.yaml'})
+    bridge.data.system['movement_epoch'] = 5
+    bridge._drain()
+    request = bridge.prepare_localization.call_async.call_args.args[0]
+    assert not request.mapping and request.map_url == '/maps/home.yaml'
+    assert request.movement_runtime_id == 'manager' and request.movement_epoch == 4
+    bridge.load_map.call_async.assert_not_called()
+    bridge.start_mapping.call_async.assert_not_called()
+
+
+def test_timed_out_owner_call_cannot_execute_on_a_later_drain():
+    """A delayed executor cannot perform an effect after the worker gave up."""
+    bridge, _ = _bridge()
+    effect = Mock()
+    with pytest.raises(TimeoutError) as error:
+        bridge.call(effect, timeout=0.001)
+    assert error.value.started is False
+    bridge._drain()
+    effect.assert_not_called()
+
+
+def test_timed_out_running_owner_call_can_complete_without_invalidating_future():
+    """Timeout cannot cancel a callback that the executor already started."""
+    bridge, _ = _bridge()
+    started, release = threading.Event(), threading.Event()
+    queued = []
+    owners = []
+
+    def effect():
+        started.set()
+        assert release.wait(2)
+        return 'started'
+
+    def trigger():
+        queued.append(bridge.commands.queue[0][1]['future'])
+        owners.append(threading.Thread(target=bridge._drain))
+        owners[-1].start()
+        assert started.wait(2)
+
+    bridge.guard.trigger.side_effect = trigger
+    try:
+        with pytest.raises(TimeoutError) as error:
+            bridge.call(effect, timeout=0.001)
+        assert error.value.started is True
+        assert queued[0].running()
+    finally:
+        release.set()
+        for owner in owners:
+            owner.join(2)
+    assert queued[0].result() == 'started'

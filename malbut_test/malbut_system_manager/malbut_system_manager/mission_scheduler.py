@@ -1,6 +1,7 @@
 """Deterministic admission, replacement preemption, and cancellation rules."""
 
 from collections.abc import Callable
+import json
 
 from .models import (
     CancelReason,
@@ -18,6 +19,12 @@ from .state_store import StateStore
 
 
 ConflictPolicy = Callable[[MissionRecord, MissionRecord], bool]
+
+
+def is_movement(mission: MissionRecord) -> bool:
+    """Include all base owners except the independent fall conversation."""
+    return (ExecutionResource.BASE in mission.resources
+            and mission.capability.capability_id != 'fall_confirmation')
 
 
 def resources_conflict(
@@ -59,6 +66,20 @@ class MissionScheduler:
             for pending in self.state.pending.values()
             if self._conflicts(pending, mission)
         ]
+        if mission.require_preemption_confirmation:
+            conflict_ids = {
+                other.mission_id for other in self.state.all()
+                if self._conflicts(other, mission)
+            }
+            if not conflict_ids.issubset(mission.confirmed_preemption_mission_ids):
+                return SchedulerEffects(complete=[MissionCompletion(
+                    mission.mission_id, TerminalOutcome.ABORTED,
+                    result_yaml=json.dumps({
+                        'code': 'preemption_confirmation_required',
+                        'conflicting_mission_ids': sorted(conflict_ids),
+                    }),
+                    message='Confirm cancellation of the conflicting missions first',
+                )])
         higher = [
             other
             for other in conflicts + pending_conflicts
@@ -142,6 +163,33 @@ class MissionScheduler:
         effects.updated.add(mission_id)
         return True, effects
 
+    def request_stop_movement(self) -> SchedulerEffects:
+        """Stop all movement atomically without resuming pending work."""
+        effects = SchedulerEffects()
+        self.state.movement_stopping = True
+        for mission in list(self.state.all()):
+            if not is_movement(mission):
+                continue
+            mission.user_cancel_requested = False
+            mission.cancel_reason = CancelReason.STOP
+            mission.resumable = False
+            mission.preempted_by.clear()
+            if (mission.mission_id in self.state.pending
+                    or mission.mission_id in self.state.suspended):
+                self.state.remove(mission.mission_id)
+                self._release_preempted_by(mission.mission_id, effects)
+                effects.complete.append(MissionCompletion(
+                    mission.mission_id, TerminalOutcome.ABORTED,
+                    message='movement_stopped',
+                ))
+                for pending in self.state.pending.values():
+                    pending.waiting_for.discard(mission.mission_id)
+            else:
+                mission.state = MissionState.CANCELING
+                effects.cancel.append(mission.mission_id)
+            effects.updated.add(mission.mission_id)
+        return effects
+
     def request_shutdown(self) -> SchedulerEffects:
         """Cancel active work and finish work that has not been dispatched."""
         effects = SchedulerEffects()
@@ -222,6 +270,9 @@ class MissionScheduler:
         if mission.cancel_reason is CancelReason.SHUTDOWN:
             outcome = TerminalOutcome.ABORTED
             message = message or 'system manager is shutting down'
+        if mission.cancel_reason is CancelReason.STOP:
+            outcome = TerminalOutcome.ABORTED
+            message = 'movement_stopped'
         effects.complete.append(
             MissionCompletion(
                 mission_id,
@@ -249,6 +300,17 @@ class MissionScheduler:
         if mission is None:
             mission = self.state.active_background.get(mission_id)
         if mission is None or mission.state is not MissionState.CANCELING:
+            return effects
+
+        if mission.cancel_reason is CancelReason.STOP:
+            # The public request can fail while its downstream owner remains.
+            # Keep the movement gate closed until a real terminal result arrives.
+            mission.state = MissionState.RUNNING
+            effects.complete.append(MissionCompletion(
+                mission_id, TerminalOutcome.ABORTED,
+                message=f'movement_stop_unconfirmed: {message}',
+            ))
+            effects.updated.add(mission_id)
             return effects
 
         if mission.cancel_reason is CancelReason.USER:
@@ -312,7 +374,8 @@ class MissionScheduler:
             return effects
 
         mission.state = MissionState.RUNNING
-        mission.cancel_reason = None
+        if mission.cancel_reason is not CancelReason.STOP:
+            mission.cancel_reason = None
         mission.user_cancel_requested = False
         mission.preempted_by.clear()
         mission.resumable = False
@@ -455,6 +518,8 @@ class MissionScheduler:
                 effects.updated.add(previous.mission_id)
 
     def _gate_error(self, mission: MissionRecord) -> str:
+        if self.state.movement_stopping and is_movement(mission):
+            return 'movement stop is in progress or unconfirmed'
         if any(other.mission_id != mission.mission_id
                and other.capability.capability_id == 'recovery'
                for other in self.state.all()):
@@ -488,6 +553,9 @@ class MissionScheduler:
         if (requirement is MapRequirement.SELECTED
                 and localization is not LocalizationMode.LOCALIZATION):
             return 'select a saved map first; only mapping is available'
+        if (requirement is MapRequirement.SELECTED and self.state.pose_ready is False
+                and mission.capability.capability_id != 'relocalize'):
+            return 'robot pose is not confirmed; relocalize before driving'
         if (requirement is MapRequirement.NOT_SELECTED
                 and localization is not LocalizationMode.MAPPING):
             return 'switch to mapping first; a saved map is selected'

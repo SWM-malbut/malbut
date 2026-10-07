@@ -1135,7 +1135,7 @@ export function RobotMapPanel({
 
           <aside className="robot-map-sidebar">
             {snapshot ? <>
-              <ManagedRobotControls key={deviceId} snapshot={snapshot} isOwner={isOwner}
+              <ManagedRobotControls key={deviceId} deviceId={deviceId} snapshot={snapshot} isOwner={isOwner}
                 busy={busy || Boolean(activeCommand)} sendCommand={sendCommand} goal={currentManagedGoal} />
               <ManagedRobotTools snapshot={snapshot} isOwner={isOwner}
                 busy={busy || Boolean(activeCommand)} sendCommand={sendCommand} drive={driveCommand}

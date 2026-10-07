@@ -1,0 +1,129 @@
+{
+  "request_prefix": "lifecycle-9520c404af4c48d5ac719bc88a0a4820",
+  "mode": "mapping",
+  "movement_goals_sent": 0,
+  "before": {
+    "runtime": {
+      "state": "STOPPED",
+      "mode": null,
+      "map": null,
+      "message": "",
+      "enabled": true,
+      "localization": {},
+      "ready": false,
+      "waiting": []
+    },
+    "voice": {
+      "ready": true,
+      "mode": "standby"
+    }
+  },
+  "start": {
+    "success": false,
+    "code": "runtime_failed",
+    "message": "Bringup exited (1): 'DEPTH_CAMERA_TYPE'; stop before retrying",
+    "result": {}
+  },
+  "while_running": {
+    "runtime": {
+      "state": "RUNNING",
+      "mode": "mapping",
+      "map": null,
+      "message": "Action 서버 준비 대기",
+      "enabled": true,
+      "localization": {},
+      "ready": false,
+      "waiting": []
+    },
+    "voice": {
+      "ready": true,
+      "mode": "active"
+    }
+  },
+  "stop": {
+    "success": true,
+    "code": "completed",
+    "message": "Operation completed",
+    "result": {
+      "runtime": {
+        "state": "STOPPED",
+        "mode": null,
+        "map": null,
+        "message": "Owned Bringup stopped",
+        "log_path": "/home/ubuntu/.ros/malbut/web_runtime/mapping-blmxmmqj.log",
+        "log_tail": "",
+        "enabled": true,
+        "localization": {},
+        "ready": false,
+        "waiting": []
+      }
+    }
+  },
+  "after": {
+    "runtime": {
+      "state": "STOPPED",
+      "mode": null,
+      "map": null,
+      "message": "Owned Bringup stopped",
+      "enabled": true,
+      "localization": {},
+      "ready": false,
+      "waiting": []
+    },
+    "voice": {
+      "ready": true,
+      "mode": "standby"
+    }
+  },
+  "node_counts_after": {
+    "robot_cloud_sync": 1,
+    "malbut_stt": 1,
+    "malbut_tts": 1,
+    "malbut_agent_communication": 1,
+    "system_manager": 0,
+    "homecam_media_agent": 0
+  },
+  "observed_nonzero_cmd_vel": [],
+  "voice_ready_samples": [
+    {
+      "ready": true,
+      "mode": "standby"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "standby"
+    },
+    {
+      "ready": true,
+      "mode": "standby"
+    },
+    {
+      "ready": true,
+      "mode": "standby"
+    },
+    {
+      "ready": true,
+      "mode": "standby"
+    }
+  ]
+}

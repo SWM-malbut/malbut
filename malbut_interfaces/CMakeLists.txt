@@ -11,6 +11,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/ConfirmSituation.action"
   "action/GetWeather.action"
   "action/ExecuteMission.action"
+  "action/DeviceOperation.action"
   "action/AutoSlam.action"
   "action/FollowPerson.action"
   "action/Patrol.action"
@@ -22,6 +23,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/LidarCluster.msg"
   "msg/LidarClusterArray.msg"
   "msg/MissionStatus.msg"
+  "msg/LocalizationState.msg"
   "msg/SensorProcessingTrace.msg"
   "msg/SpeechPlaybackStatus.msg"
   "msg/SpeechInputStatus.msg"
@@ -36,6 +38,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ControlSpeechSession.srv"
   "srv/ControlWebTalk.srv"
   "srv/ApplyFallSettings.srv"
+  "srv/StopMovement.srv"
+  "srv/PrepareLocalization.srv"
   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs
 )
 

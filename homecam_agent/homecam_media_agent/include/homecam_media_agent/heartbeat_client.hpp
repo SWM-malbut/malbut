@@ -26,6 +26,7 @@ struct HeartbeatStatus
   std::uint64_t frames_received{0};
   std::optional<nlohmann::json> fall_settings_report;
   std::optional<nlohmann::json> talk_report;
+  std::optional<nlohmann::json> media_settings_report;
 };
 
 struct FallServerSettings
@@ -38,6 +39,7 @@ struct FallServerSettings
 
 struct DesiredDeviceSettings
 {
+  std::optional<std::uint64_t> media_settings_revision;
   std::optional<bool> camera_enabled;
   std::optional<bool> microphone_enabled;
   std::optional<bool> monitoring_enabled;
@@ -64,6 +66,8 @@ private:
 };
 
 std::string heartbeat_to_json(const HeartbeatStatus & status);
+bool media_settings_apply_ready(
+  const HeartbeatStatus & status, bool video_pipeline_ready, bool audio_pipeline_ready);
 bool append_heartbeat_response_chunk(
   std::string * response_body,
   const char * data,

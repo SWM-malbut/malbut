@@ -68,6 +68,14 @@ DIAGNOSTIC_TOPICS = (
 )
 
 
+class OwnerCallTimeout(FutureTimeout):
+    """Distinguish a canceled queued callback from an already running effect."""
+
+    def __init__(self, started):
+        super().__init__('ROS owner callback timed out')
+        self.started = started
+
+
 def validate_command(payload):
     """Allow explicit test actions and fixed Bringup commands, never shell text."""
     if not isinstance(payload, dict):
@@ -322,9 +330,13 @@ class PanelData:
         self.lock = threading.RLock()
         self.encode_lock = threading.Lock()
         self.requests = OrderedDict()
+        self.recent_results = []
         self.servers = {'manager': False, 'autoslam': False}
         self.system = None
         self.tracking = None
+        self.tracking_observed_at = None
+        self.person_observation = None
+        self.voice = {'ready': False, 'mode': 'unavailable'}
         self.zones = None
         self.patrol = None
         self.manual = {'state': 'IDLE', 'message': ''}
@@ -401,8 +413,11 @@ class PanelData:
             return copy.deepcopy({
                 'servers': self.servers, 'system': self.system,
                 'tracking': self.tracking, 'requests': list(self.requests.values()),
+                'recent_results': self.recent_results,
                 'runtime': self.runtime, 'zones': self.zones, 'manual': self.manual,
                 'patrol': self.patrol,
+                'voice': self.voice, 'tracking_observed_at': self.tracking_observed_at,
+                'observations': {'person': self.person_observation},
                 'video_age_s': {key: round(time.monotonic() - frame[0], 1)
                                 for key, frame in self.frames.items()},
             })
@@ -416,6 +431,7 @@ class RosBridge:
         """Subscribe to diagnostics/images and prepare nonblocking Action clients."""
         from malbut_interfaces.action import AutoSlam, ExecuteMission
         from malbut_interfaces.msg import SystemState
+        from malbut_interfaces.srv import PrepareLocalization, StopMovement
         from action_msgs.msg import GoalStatusArray
         from action_msgs.srv import CancelGoal
         from geometry_msgs.msg import Twist
@@ -428,6 +444,7 @@ class RosBridge:
         from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
         from rosidl_runtime_py.convert import message_to_ordereddict
         from sensor_msgs.msg import CompressedImage, Image
+        from vision_msgs.msg import Detection2DArray
         from std_msgs.msg import String
         from tf2_ros import Buffer, TransformListener
 
@@ -442,6 +459,8 @@ class RosBridge:
         self.twist = Twist
         self.teleop_publisher = self.node.create_publisher(Twist, TELEOP_TOPIC, 10)
         self.teleop_received = None
+        self.teleop_inhibited = False
+        self.teleop_generation = 0
         self.teleop_hold_s = TELEOP_TIMEOUT_S
         self.clients = {
             'manager': ActionClient(self.node, ExecuteMission, '/malbut/mission/execute'),
@@ -451,15 +470,22 @@ class RosBridge:
         self.plan_goal = ComputePathToPose.Goal
         self.catalog = SavedMapCatalog(self.node.declare_parameter(
             'map_directory', str(Path.home() / '.ros/malbut/maps')).value)
-        self.runtime = (RuntimeSupervisor(self.catalog) if self.node.declare_parameter(
+        self.resident_voice_namespace = self.node.declare_parameter(
+            'resident_voice_namespace', '').value
+        self.runtime = (RuntimeSupervisor(
+            self.catalog, resident_voice=bool(self.resident_voice_namespace))
+            if self.node.declare_parameter(
             'manage_bringup', True).value else None)
         self.runtime_message = ''
+        self.runtime_stop_error = None
         self.startup_status = {}
         self.startup_progress = {}
         self.speech_ready = False
         self.stopping_runtime = None
         self.action_status = {}
         self.cancel_request = CancelGoal.Request
+        self.stop_movement = self.node.create_client(StopMovement, '/malbut/mission/stop_movement')
+        self.stop_movement_request = StopMovement.Request
         self.cancel_clients = {
             name: self.node.create_client(CancelGoal, name + '/_action/cancel_goal')
             for name in RUNTIME_ACTIONS
@@ -468,6 +494,9 @@ class RosBridge:
         self.load_map_request = LoadMap.Request
         self.start_mapping = self.node.create_client(Trigger, START_MAPPING_SERVICE)
         self.start_mapping_request = Trigger.Request
+        self.prepare_localization = self.node.create_client(
+            PrepareLocalization, '/malbut/localization/prepare')
+        self.prepare_localization_request = PrepareLocalization.Request
         self.localization = {}
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self.node)
@@ -481,6 +510,13 @@ class RosBridge:
         self.topics = {key: self.node.declare_parameter(key, value).value
                        for key, value in topics.items()}
         self.subscriptions = [
+            self.node.create_subscription(String, '/malbut/movement_stop',
+                                          self._movement_stop, 10),
+            self.node.create_subscription(
+                String, '/malbut/mission/recent_results', self._recent_results,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
+            self.node.create_subscription(Detection2DArray, '/perception/person/detections_2d',
+                                          self._persons, sensor_qos),
             self.node.create_subscription(Image, self.topics['rgb_topic'],
                                           lambda msg: data.receive_frame('raw', msg),
                                           sensor_qos),
@@ -526,8 +562,23 @@ class RosBridge:
 
     def submit(self, payload):
         """Queue authenticated commands without blocking an HTTP worker on DDS."""
-        payload = validate_command(payload)
+        payload = dict(validate_command(payload))
         request_id = None
+        if payload['command'] == 'teleop':
+            with self.data.lock:
+                payload['_teleop_generation'] = self.teleop_generation
+        if (self.resident_voice_namespace
+                and payload['command'] in ('start', 'debug_start', 'bringup_start')):
+            with self.data.lock:
+                system = self.data.system or {}
+                payload['_movement_binding'] = (
+                    system.get('movement_runtime_id'), system.get('movement_epoch'))
+                if (payload.get('capability') == 'navigate_to_pose'
+                        or payload.get('capability') == 'relocalize'
+                        and payload['arguments'].get('method') == 1):
+                    payload['_localization_binding'] = (
+                        self.localization.get('runtime_id'),
+                        self.localization.get('transition_id'))
         if payload['command'] in ('start', 'debug_start'):
             request_id = self.data.register(payload)
         try:
@@ -567,14 +618,24 @@ class RosBridge:
             with self.data.lock:
                 self.data.system = None
                 self.data.tracking = None
+                self.data.tracking_observed_at = None
+                self.data.person_observation = None
                 self.data.zones = None
         status['localization'] = dict(self.localization)
         with self.data.lock:
             booting = (self.data.system or {}).get('system_state', 0) == 0
         server_ready = bool(self.data.servers['manager']) and not booting
         connected = getattr(self, 'startup_status', {}).get('state') == 'READY'
+        voice_ready = self.speech_ready and self._voice_publishers_ready()
+        with self.data.lock:
+            self.data.voice = {
+                'ready': bool(voice_ready),
+                'mode': ('standby' if status['state'] == 'STOPPED' else 'active')
+                if voice_ready else 'unavailable',
+            }
         if self.runtime:
-            if status['state'] not in ('STARTING', 'RUNNING'):
+            if (status['state'] not in ('STARTING', 'RUNNING')
+                    and not self.resident_voice_namespace):
                 self.speech_ready = False
             # Optional speech startup must not block unrelated robot commands.
             # Each capability still checks its own Action/data prerequisites.
@@ -649,9 +710,16 @@ class RosBridge:
             pass
 
     def _speech_status(self, message):
-        if (self.runtime and self.stopping_runtime is None
+        if (self.resident_voice_namespace or self.runtime and self.stopping_runtime is None
                 and self.runtime.snapshot()['state'] in ('STARTING', 'RUNNING')):
             self.speech_ready = message.data == 'ready'
+
+    def _voice_publishers_ready(self):
+        if not self.resident_voice_namespace:
+            return bool(self.node.count_publishers('/malbut/speech/status'))
+        endpoints = self.node.get_publishers_info_by_topic('/malbut/speech/status')
+        return (len(endpoints) == 1
+                and endpoints[0].node_namespace == self.resident_voice_namespace)
 
     def _robot_pose(self):
         from rclpy.time import Time
@@ -710,17 +778,22 @@ class RosBridge:
             raise ValueError('Wait for Bringup shutdown to finish')
         if self.load_map.service_is_ready() and self.start_mapping.service_is_ready():
             # Bringup is already running: switch localization, never relaunch.
-            self._switch_localization(payload)
-            return
+            return self._switch_localization(payload)
         if self.runtime is None:
             raise ValueError('Start a standalone robot_web_panel to control Bringup')
-        names = {name for name, _ in self.node.get_node_names_and_namespaces()}
+        nodes = self.node.get_node_names_and_namespaces()
+        names = {name for name, _ in nodes}
         conflicts = names.intersection({
             'amcl', 'map_server', 'slam_toolbox', 'controller_server', 'planner_server',
             'bt_navigator', 'nav2_container', 'system_manager', 'autoslam',
             'person_follower', 'person_localizer', 'person_reidentifier', 'yolo_node',
             'malbut_stt', 'malbut_tts', 'malbut_agent_communication',
         })
+        if self.resident_voice_namespace:
+            for name in ('malbut_stt', 'malbut_tts', 'malbut_agent_communication'):
+                owners = [namespace for node, namespace in nodes if node == name]
+                if owners == [self.resident_voice_namespace]:
+                    conflicts.discard(name)
         if os.environ.get('HOMECAM_BACKEND_URL', '').strip():
             conflicts.update(names.intersection({'homecam_media_agent'}))
         if conflicts or self.node.count_publishers(self.topics['map_topic']):
@@ -741,7 +814,8 @@ class RosBridge:
         self.action_status.clear()
         self.startup_status = {}
         self.startup_progress = {}
-        self.speech_ready = False
+        if not self.resident_voice_namespace:
+            self.speech_ready = False
         self.localization = {}
         with self.data.lock:
             self.data.map_cache.clear()
@@ -757,11 +831,24 @@ class RosBridge:
             # AutoSLAM owns SLAM startup; do not start it from a mode button.
             self.runtime_message = 'Bringup is running; request AutoSLAM to create a map'
             return
-        request = self.load_map_request()
-        request.map_url = str(self.catalog.resolve(payload['map']))
-        future = self.load_map.call_async(request)
+        if self.resident_voice_namespace:
+            runtime_id, epoch = payload.get('_movement_binding', (None, None))
+            if (not runtime_id or type(epoch) is not int
+                    or not self.prepare_localization.service_is_ready()):
+                raise ValueError('Current Manager localization preparation is unavailable')
+            request = self.prepare_localization_request(
+                mapping=payload['mode'] == 'mapping',
+                map_url=(str(self.catalog.resolve(payload['map']))
+                         if payload['mode'] == 'navigation' else ''),
+                movement_runtime_id=runtime_id, movement_epoch=epoch)
+            future = self.prepare_localization.call_async(request)
+        else:
+            request = self.load_map_request()
+            request.map_url = str(self.catalog.resolve(payload['map']))
+            future = self.load_map.call_async(request)
         self.runtime_message = 'Switching localization; missions using the base must be stopped'
         future.add_done_callback(lambda done: self._switched(payload, done))
+        return future
 
     def _switched(self, payload, future):
         try:
@@ -769,19 +856,45 @@ class RosBridge:
         except Exception as error:
             self.runtime_message = f'Localization switch failed: {error}'
             return
-        # The manager's localization message tells whether the pose was found.
-        ok = response.result == 0
-        message = ('Saved map loaded' if ok else
-                   f'Map was not loaded (result {response.result}); '
-                   'cancel base missions or check the map')
+        if self.resident_voice_namespace:
+            ok, message = response.success, response.message
+        else:
+            # The manager's localization message tells whether the pose was found.
+            ok = response.result == 0
+            message = ('Saved map loaded' if ok else
+                       f'Map was not loaded (result {response.result}); '
+                       'cancel base missions or check the map')
         self.runtime_message = message if ok else f'Localization switch failed: {message}'
+        if ok and payload['mode'] == 'navigation' and self.runtime:
+            self.runtime.remember_map(payload['map'])
 
-    def _stop_runtime(self):
+    def _stop_runtime(self, confirmed_mission_ids=None):
         if self.runtime is None or self.runtime.snapshot()['state'] == 'STOPPED':
             raise ValueError('This panel has no running Bringup to stop')
         if self.stopping_runtime is not None:
             return
-        self.speech_ready = False
+        self.runtime_stop_error = None
+        if self.resident_voice_namespace:
+            if not self.stop_movement.service_is_ready():
+                self.runtime_message = (
+                    'Manager movement stop unconfirmed; Bringup kept running')
+                self.runtime_stop_error = {
+                    'code': 'stop_unconfirmed', 'message': self.runtime_message, 'result': {}}
+                return
+            if confirmed_mission_ids is None:
+                from .device_operations import active_missions
+                confirmed_mission_ids = list(active_missions(self.data.snapshot()))
+            future = self.stop_movement.call_async(self.stop_movement_request(
+                request_id=uuid.uuid4().hex, require_preemption_confirmation=True,
+                confirmed_preemption_mission_ids=confirmed_mission_ids, shutdown_runtime=True))
+            self.stopping_runtime = {'since': time.monotonic(), 'manager_future': future}
+            self.runtime_message = ''
+            return
+        self._cancel_runtime_actions()
+
+    def _cancel_runtime_actions(self):
+        if not self.resident_voice_namespace:
+            self.speech_ready = False
         self.cancel_owned()
         names = RUNTIME_ACTIONS
         self.stopping_runtime = {
@@ -795,6 +908,34 @@ class RosBridge:
         pending = self.stopping_runtime
         if pending is None:
             return
+        if 'manager_future' in pending:
+            future = pending['manager_future']
+            if not future.done():
+                if time.monotonic() - pending['since'] > 120.0:
+                    self.runtime_message = (
+                        'Manager movement stop unconfirmed; Bringup kept running')
+                    self.stopping_runtime = None
+                return
+            try:
+                response = future.result()
+                if not response.stopped:
+                    self.runtime_message = f'Stop unconfirmed: {response.code}; {response.message}'
+                    self.runtime_stop_error = {
+                        'code': response.code, 'message': response.message,
+                        'result': {
+                            'affected_mission_ids': list(response.affected_mission_ids),
+                            'unresolved_mission_ids': list(response.unresolved_mission_ids),
+                            'conflicting_mission_ids': list(response.unresolved_mission_ids),
+                        },
+                    }
+                    self.stopping_runtime = None
+                    return
+            except Exception:
+                self.runtime_message = 'Manager movement stop unconfirmed; Bringup kept running'
+                self.stopping_runtime = None
+                return
+            self._cancel_runtime_actions()
+            pending = self.stopping_runtime
         if time.monotonic() - pending['since'] > 30.0:
             self.runtime_message = 'Action stop unconfirmed; Bringup kept running. Check robot.'
             self.stopping_runtime = None
@@ -829,9 +970,39 @@ class RosBridge:
     def _tracking(self, message):
         with self.data.lock:
             self.data.tracking = message.data[:8192]
+            self.data.tracking_observed_at = time.time()
+
+    def _recent_results(self, message):
+        try:
+            records = json.loads(message.data)
+            if isinstance(records, list) and len(message.data.encode()) <= 65536:
+                with self.data.lock:
+                    self.data.recent_results = records[-20:]
+        except (ValueError, TypeError):
+            pass
+
+    def _persons(self, message):
+        with self.data.lock:
+            self.data.person_observation = {
+                'count': len(message.detections), 'observed_at': time.time(),
+                'frame_id': message.header.frame_id, 'identity': None,
+            }
+
+    def _movement_stop(self, _message):
+        # A synthetic zero would falsely rearm manual_control's neutral latch.
+        with self.data.lock:
+            self.teleop_generation += 1
+            self.teleop_received = None
+            self.teleop_inhibited = True
+        for item in self.data.snapshot()['requests']:
+            if (item['state'] not in TERMINAL and item['id'] not in self.handles
+                    and item['capability'] not in (
+                        'fall_confirmation', 'get_weather', 'set_weather_location')):
+                self.cancel_pending.add(item['id'])
+        self._manual_state('STOPPED', 'Movement stopped; release input before driving again')
 
     def call(self, function, timeout=3.0):
-        """Run a read-only query on the ROS executor and wait for its result."""
+        """Run a bounded callback on the ROS owner and wait off its executor."""
         future = Future()
         try:
             self.commands.put_nowait((None, {'command': 'call', 'function': function,
@@ -839,7 +1010,12 @@ class RosBridge:
         except queue.Full:
             raise ValueError('Command queue full') from None
         self.guard.trigger()
-        return future.result(timeout=timeout)
+        try:
+            return future.result(timeout=timeout)
+        except FutureTimeout:
+            # A caller that already timed out must not leave a queued effect.
+            # Already running callbacks must still complete normally.
+            raise OwnerCallTimeout(started=not future.cancel()) from None
 
     def plan_path(self, x, y, yaw, timeout=PLAN_TIMEOUT_S):
         """Ask the Nav2 planner for a path from the robot to a map pose; return [x, y] points."""
@@ -917,6 +1093,8 @@ class RosBridge:
         while not self.commands.empty():
             request_id, payload = self.commands.get_nowait()
             if payload['command'] == 'call':
+                if not payload['future'].set_running_or_notify_cancel():
+                    continue
                 try:
                     payload['future'].set_result(payload['function']())
                 except Exception as error:
@@ -926,7 +1104,17 @@ class RosBridge:
             elif payload['command'] == 'cancel' and 'request_id' in payload:
                 self.cancel_one(payload['request_id'])
             elif payload['command'] == 'cancel':
-                self.cancel_owned()
+                if self.resident_voice_namespace:
+                    self._movement_stop(None)
+                    if self.stop_movement.service_is_ready():
+                        self.stop_movement.call_async(self.stop_movement_request(
+                            request_id=uuid.uuid4().hex))
+                    elif self.runtime and self.runtime.snapshot()['state'] == 'STARTING':
+                        self.runtime.stop()
+                    else:
+                        self.runtime_message = 'Manager movement stop unconfirmed'
+                else:
+                    self.cancel_owned()
             elif payload['command'] == 'teleop':
                 self._teleop(payload)
             elif payload['command'] in ('bringup_start', 'bringup_stop'):
@@ -945,11 +1133,17 @@ class RosBridge:
 
     def _teleop(self, payload):
         """Forward one held command; AssistedTeleop keeps the latest input."""
+        if payload['_teleop_generation'] != self.teleop_generation:
+            return
         message = self.twist()
         message.linear.x = float(payload['linear_x'])
         message.linear.y = float(payload['linear_y'])
         message.angular.z = float(payload['angular_z'])
         moving = any(payload[key] for key in TELEOP_LIMITS)
+        if self.teleop_inhibited:
+            if moving:
+                return
+            self.teleop_inhibited = False
         self.teleop_hold_s = float(payload.get('hold_s', TELEOP_TIMEOUT_S))
         self.teleop_received = time.monotonic() if moving else None
         self.teleop_publisher.publish(message)
@@ -992,6 +1186,8 @@ class RosBridge:
         if capability == 'autoslam' and not self.clients['autoslam'].server_is_ready():
             raise ValueError('AutoSLAM 서버가 없습니다. Bringup 준비를 확인하세요')
         route = 'manager' if self.clients['manager'].server_is_ready() else 'autoslam'
+        if self.resident_voice_namespace and route != 'manager':
+            raise ValueError('Integrated robot operations require the system manager')
         raw = payload['command'] == 'debug_start'
         if route == 'autoslam' and (raw or capability != 'autoslam'):
             raise ValueError('System manager is not available')
@@ -1016,6 +1212,19 @@ class RosBridge:
             goal.capability_id = capability
             goal.arguments_yaml = json.dumps(payload['arguments'] if raw else mission_arguments(
                 capability, payload['arguments']))
+            if self.resident_voice_namespace:
+                runtime_id, epoch = payload.get('_movement_binding', (None, None))
+                if not runtime_id or type(epoch) is not int:
+                    raise ValueError('Current Manager movement state is unavailable')
+                goal.require_movement_epoch = True
+                goal.movement_runtime_id = runtime_id
+                goal.movement_epoch = epoch
+                if '_localization_binding' in payload:
+                    runtime_id, transition_id = payload['_localization_binding']
+                    if not runtime_id or type(transition_id) is not int:
+                        raise ValueError('Current Manager localization state is unavailable')
+                    goal.expected_localization_runtime_id = runtime_id
+                    goal.expected_localization_transition_id = transition_id
         else:
             goal = self.auto_goal()
             goal.map_name = payload['arguments']['map_name']

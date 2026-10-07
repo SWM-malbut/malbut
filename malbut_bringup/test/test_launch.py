@@ -29,6 +29,58 @@ def _load(name):
     return module
 
 
+def test_cloud_launch_starts_bridge_and_isolated_resident_voice(monkeypatch):
+    """Standby owns speech, with no hardware, navigation, or local HTTP port."""
+    source = ROOT / 'malbut_bringup/launch/cloud.launch.py'
+    spec = importlib.util.spec_from_file_location('cloud_launch', source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, 'shared_xfm_source', lambda _: 'xfm-source')
+    context = _context(module, backend_url='https://robot.example.com',
+                       token_file='/protected/device.token', map_directory='/maps')
+    actions = module._setup(context)
+    nodes = [action for action in actions if isinstance(action, Node)]
+    assert len(nodes) == 1 and nodes[0].node_executable == 'robot_cloud_sync'
+    assert not _includes(actions)
+    parameters = evaluate_parameters(context, nodes[0]._Node__parameters)[0]
+    assert parameters['use_sim_time'] is False
+    assert parameters['map_topic'] == '/map'
+    assert parameters['token_file'] == '/protected/device.token'
+    assert 'token' not in parameters and 'port' not in parameters
+    speech = next(action for action in actions
+                  if isinstance(action, ExecuteProcess) and not isinstance(action, Node))
+    command = [perform_substitutions(context, part) for part in speech.cmd]
+    assert 'control_server:=none' in command
+    assert 'device_operations:=true' in command
+    assert command[1:3] == ['-m', 'malbut_bringup.resident_voice']
+    from ros2launch.api.api import parse_launch_arguments
+    arguments = dict(parse_launch_arguments(command[3:]))
+    assert 'navigation_targets' not in arguments
+    # Reap children using their default INT/TERM deadlines before killing
+    # the nested LaunchService; otherwise an orphan can retain the voice lease.
+    assert float(perform_substitutions(context, speech._ExecuteLocal__sigterm_timeout)) > 10
+    assert parameters['resident_voice_namespace'].startswith('/malbut/resident_voice_')
+    # Failure belongs to the speech child LaunchService, not cloud's service.
+    from launch.actions import RegisterEventHandler
+    assert not any(isinstance(action, RegisterEventHandler) for action in actions)
+
+
+def test_failed_microphone_keeps_cloud_control(monkeypatch):
+    """An unavailable Pulse source prevents voice startup without killing cloud."""
+    spec = importlib.util.spec_from_file_location(
+        'cloud_launch', ROOT / 'malbut_bringup/launch/cloud.launch.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def fail(_):
+        raise RuntimeError('no microphone')
+    monkeypatch.setattr(module, 'shared_xfm_source', fail)
+    actions = module._setup(_context(module))
+    assert len([item for item in actions if isinstance(item, Node)]) == 1
+    assert not any(isinstance(item, ExecuteProcess) and not isinstance(item, Node)
+                   for item in actions)
+
+
 @pytest.fixture
 def launch_module(tmp_path, monkeypatch):
     """Supply fake vendor assets, but use the real Malbut launch files."""
@@ -122,15 +174,16 @@ def _module_setup(name, context):
     return callback.execute(context)
 
 
-def test_cloud_launch_starts_only_outbound_bridge():
+def test_cloud_only_profile_starts_outbound_bridge_without_speech():
     """Cloud connectivity does not start hardware, navigation, or a local HTTP port."""
     source = ROOT / 'malbut_bringup/launch/cloud.launch.py'
     spec = importlib.util.spec_from_file_location('cloud_launch', source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     context = _context(module, backend_url='https://robot.example.com',
-                       token_file='/protected/device.token', map_directory='/maps')
-    actions = module.generate_launch_description().entities
+                       token_file='/protected/device.token', map_directory='/maps',
+                       resident_voice='false')
+    actions = module._setup(context)
     nodes = [action for action in actions if isinstance(action, Node)]
     assert len(nodes) == 1 and nodes[0].node_executable == 'robot_cloud_sync'
     assert not _includes(actions)
@@ -139,11 +192,9 @@ def test_cloud_launch_starts_only_outbound_bridge():
     assert parameters['map_topic'] == '/map'
     assert parameters['token_file'] == '/protected/device.token'
     assert 'token' not in parameters and 'port' not in parameters
-    for action in actions:
-        if isinstance(action, SetEnvironmentVariable):
-            action.execute(context)
-    assert context.environment['HOMECAM_BACKEND_URL'] == 'https://robot.example.com'
-    assert context.environment['HOMECAM_DEVICE_TOKEN_FILE'] == '/protected/device.token'
+    assert not any(isinstance(action, ExecuteProcess) and not isinstance(action, Node)
+                   for action in actions)
+    assert parameters['resident_voice_namespace'] == ''
 
 
 def test_camera_dds_profile_is_scoped_to_vendor_hardware(launch_module):
@@ -798,3 +849,23 @@ def test_runtime_dependencies_do_not_pull_simulation_or_new_hardware_package():
     assert {'malbut_tracking', 'malbut_patrol', 'malbut_system_manager',
             'homecam_media_agent'} <= dependencies
     assert not {'malbut_gazebo', 'malbut_scenarios', 'malbut_hardware'} & dependencies
+
+
+def test_resident_child_inherits_shared_source_without_reselecting(
+        launch_module, monkeypatch):
+    """A restarted media child uses the resident STT input with child speech off."""
+    module = _load('bringup')
+    monkeypatch.setattr(module, 'shared_xfm_source',
+                        lambda _: pytest.fail('resident source must not be selected again'))
+    context = _context(module, speech='false')
+    context.environment.update(
+        HOMECAM_BACKEND_URL='https://robot.example.com',
+        MALBUT_RESIDENT_VOICE_NAMESPACE='/malbut/resident_voice_test',
+        MALBUT_SHARED_MICROPHONE='resident-xfm', PULSE_SOURCE='resident-xfm')
+    includes = _included_modules(module._setup(context))
+    assert 'homecam' in includes and 'speech' not in includes
+    assert context.environment['MALBUT_SHARED_MICROPHONE'] == 'resident-xfm'
+    assert context.environment['PULSE_SOURCE'] == 'resident-xfm'
+    homecam = _load('homecam')
+    media = dict(_includes(homecam._setup(context))[0].launch_arguments)
+    assert media['audio_source'] == 'pulse'

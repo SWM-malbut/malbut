@@ -11,7 +11,7 @@ from malbut_agent_server.schemas import (
     RobotState,
     ValidationError,
 )
-from malbut_agent_server.tools import TOOL_SPECS, select_tool_specs
+from malbut_agent_server.tools import ROBOT_OPERATION_TOOLS, TOOL_SPECS, select_tool_specs
 
 
 def request(
@@ -113,6 +113,7 @@ def test_tool_allowlist_contains_no_low_level_motion_control() -> None:
         'request_follow_person',
         'request_patrol',
         'cancel_voice_mission',
+        *ROBOT_OPERATION_TOOLS,
     }
 
 

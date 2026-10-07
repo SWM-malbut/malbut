@@ -4,6 +4,7 @@ from math import isfinite
 from pathlib import Path
 import shlex
 import sys
+import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -44,9 +45,11 @@ def _setup(context):
     agent_user_id = value('agent_user_id')
     agent_conversation_db = value('agent_conversation_db')
     manager_commands = value('manager_commands') == 'true'
+    device_operations = value('device_operations') == 'true'
     navigation_targets = value('navigation_targets')
     preflight_only = value('preflight_only') == 'true'
     input_has_aec = value('input_has_aec') == 'true'
+    node_namespace = value('node_namespace')
     command = [python, '-m', 'malbut_bringup.speech_preflight']
     supervised = [python, '-m', 'malbut_bringup.speech_process',
                   '--startup-timeout-s', str(timeouts['preflight_timeout_s'])]
@@ -97,14 +100,19 @@ def _setup(context):
         config = Path(get_package_share_directory('malbut_stt')) / 'config/jetson.yaml'
         if not config.is_file():
             return fail(f'Speech STT configuration is missing: {config}')
+        stt_config = (yaml.safe_load(config.read_text())['malbut_stt']['ros__parameters']
+                      if node_namespace else str(config))
         prefix = shlex.quote(python)
         mission_arguments = []
         if manager_commands:
             mission_arguments.append('--enable-manager-commands')
+            if device_operations:
+                mission_arguments.append('--enable-device-operations')
             if navigation_targets.strip():
                 mission_arguments.extend(['--navigation-targets', navigation_targets])
         agent = Node(
             package='malbut_agent_server', executable='agent_communication',
+            namespace=node_namespace,
             prefix=prefix, output='screen', arguments=[
                 '--provider', agent_provider, '--user-id', agent_user_id,
                 '--conversation-db', agent_conversation_db,
@@ -113,21 +121,24 @@ def _setup(context):
         )
         tts = Node(
             package='malbut_tts', executable='tts_node', prefix=prefix, output='screen',
+            namespace=node_namespace,
             parameters=[{'backend': 'openai', 'output_device': output_device}],
         )
         weather = Node(
             package='malbut_agent_server', executable='weather',
+            namespace=node_namespace,
             prefix=prefix, output='screen',
         )
         # The OpenAI/KMA keys the owner sets on the web; it stays off without HOMECAM_* settings.
         key_sync = Node(
-            package='malbut_agent_server', executable='key_sync',
+            package='malbut_agent_server', executable='key_sync', namespace=node_namespace,
             prefix=prefix, output='screen',
         )
         stt = Node(
             package='malbut_stt', executable='stt', output='screen',
+            namespace=node_namespace,
             prefix=shlex.join([*supervised, '--wait-for-ready', '--', python]),
-            parameters=[str(config), {
+            parameters=[stt_config, {
                 'stt_model_path': model, 'stt_library_path': library,
                 'device_index': input_device, 'cpp_threads': threads,
                 'wake_chime_device_index': output_device,
@@ -168,12 +179,15 @@ def generate_launch_description():
         # Accepted for old callers; external control never gates speech startup.
         'control_server': 'none',
         'manager_commands': 'true', 'navigation_targets': '',
+        'node_namespace': '',
+        'device_operations': 'false',
     }
     choices = {
         'input_has_aec': ['true', 'false'], 'preflight_only': ['true', 'false'],
         'agent_provider': ['openai', 'mock'],
         'control_server': ['none', 'manager', 'autoslam'],
         'manager_commands': ['true', 'false'],
+        'device_operations': ['true', 'false'],
     }
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=default, choices=choices.get(name))

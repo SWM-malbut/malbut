@@ -477,3 +477,53 @@ def test_invalid_timeout_is_rejected_before_ros_import(timeout):
     with pytest.raises(ValueError, match='positive and finite'):
         manager_client.ManagerClient(None, on_event=lambda event: None,
                                      goal_response_timeout_s=timeout)
+
+
+def test_bound_preemption_fields_are_sent_and_part_of_request_identity(harness):
+    client = harness.client
+    client.submit('patrol', {'thoroughness': 1}, 'guarded',
+                  require_preemption_confirmation=True,
+                  confirmed_preemption_mission_ids=['web-work'])
+    goal = harness.node.client.requests[-1].goal
+    assert goal.require_preemption_confirmation is True
+    assert goal.confirmed_preemption_mission_ids == ['web-work']
+    with pytest.raises(ValueError):
+        client.submit('patrol', {'thoroughness': 1}, 'guarded',
+                      require_preemption_confirmation=True,
+                      confirmed_preemption_mission_ids=['new-work'])
+    assert len(harness.node.client.requests) == 1
+
+
+def test_caller_persisted_goal_uuid_is_used_on_wire_and_deduplicated(harness):
+    goal_id = uuid4()
+    harness.client.submit('patrol', {}, 'persisted', goal_uuid=goal_id)
+    assert bytes(harness.node.client.requests[0].goal_id.uuid) == goal_id.bytes
+    assert harness.client.snapshot('persisted')['goal_id'] == goal_id.hex
+    harness.client.submit('patrol', {}, 'persisted', goal_uuid=goal_id)
+    with pytest.raises(ValueError):
+        harness.client.submit('patrol', {}, 'persisted', goal_uuid=uuid4())
+    assert len(harness.node.client.requests) == 1
+
+
+def test_localization_binding_is_sent_and_part_of_dedup_identity(harness):
+    harness.client.submit('patrol', {}, 'bound-map', expected_localization_runtime_id='runtime',
+                          expected_localization_transition_id=42)
+    goal = harness.node.client.requests[0].goal
+    assert goal.expected_localization_runtime_id == 'runtime'
+    assert goal.expected_localization_transition_id == 42
+    with pytest.raises(ValueError):
+        harness.client.submit('patrol', {}, 'bound-map', expected_localization_runtime_id='runtime',
+                              expected_localization_transition_id=43)
+    assert len(harness.node.client.requests) == 1
+
+
+def test_movement_epoch_is_sent_and_part_of_dedup_identity(harness):
+    harness.client.submit('patrol', {}, 'epoch', require_movement_epoch=True,
+                          movement_runtime_id='runtime', movement_epoch=42)
+    goal = harness.node.client.requests[0].goal
+    assert goal.require_movement_epoch is True
+    assert goal.movement_runtime_id == 'runtime' and goal.movement_epoch == 42
+    with pytest.raises(ValueError):
+        harness.client.submit('patrol', {}, 'epoch', require_movement_epoch=True,
+                              movement_runtime_id='runtime', movement_epoch=43)
+    assert len(harness.node.client.requests) == 1

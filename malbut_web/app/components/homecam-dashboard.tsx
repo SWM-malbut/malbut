@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { FallHomecamSettings } from "./fall-homecam-settings";
+import { VoiceAgentPanel } from "./voice-agent-panel";
 import { FallIncidentsPanel } from "./fall-incidents-panel";
 import { FallTimelinePanel, type TimelineMode } from "./fall-timeline-panel";
 import { subscribeFallPush } from "../lib/fall-push";
@@ -1593,6 +1594,9 @@ export function HomecamDashboard({
                 onUpdateSetting={(settingKey, value) => void updateSetting(settingKey, value)}
               />
             ) : <p className="ui-hint">등록된 말벗이 없어요.</p>}
+            {selectedDevice && !(LOCAL_HOME_CAM_DEMO && selectedDevice.id === LOCAL_DEMO_DEVICE_ID) && (
+              <VoiceAgentPanel key={`voice-${selectedDevice.id}`} deviceId={selectedDevice.id} isOwner={isOwner} settings />
+            )}
           </section>
         )}
 

@@ -1,0 +1,36 @@
+{
+  "nodes": [
+    [
+      "integration_graph_probe",
+      "/"
+    ],
+    [
+      "malbut_agent_communication",
+      "/malbut/resident_voice_a3c5a551cfab41068e6127850650a837"
+    ],
+    [
+      "malbut_stt",
+      "/malbut/resident_voice_a3c5a551cfab41068e6127850650a837"
+    ],
+    [
+      "malbut_tts",
+      "/malbut/resident_voice_a3c5a551cfab41068e6127850650a837"
+    ],
+    [
+      "malbut_weather",
+      "/malbut/resident_voice_a3c5a551cfab41068e6127850650a837"
+    ],
+    [
+      "robot_cloud_sync",
+      "/"
+    ]
+  ],
+  "counts": {
+    "robot_cloud_sync": 1,
+    "malbut_stt": 1,
+    "malbut_tts": 1,
+    "malbut_agent_communication": 1,
+    "system_manager": 0,
+    "homecam_media_agent": 0
+  }
+}

@@ -6,9 +6,12 @@ import test from "node:test";
 import ts from "typescript";
 
 const source = await readFile(new URL("../app/components/managed-robot-controls.tsx", import.meta.url), "utf8");
-const js = ts.transpileModule(source, {
+const transpile = (source) => ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText.replace(/from "(react(?:\/jsx-runtime)?)"/g, (_, name) => `from "${import.meta.resolve(name)}"`);
+const voiceSource = await readFile(new URL("../app/components/voice-agent-panel.tsx", import.meta.url), "utf8");
+const voiceModule = `data:text/javascript;base64,${Buffer.from(transpile(voiceSource)).toString("base64")}`;
+const js = transpile(source).replace('from "./voice-agent-panel"', `from "${voiceModule}"`);
 const { ManagedRobotControls } = await import(`data:text/javascript;base64,${Buffer.from(js).toString("base64")}`);
 
 function render(runtime = {}, servers = {}) {
@@ -26,7 +29,7 @@ function render(runtime = {}, servers = {}) {
         },
       },
     },
-    isOwner: true, busy: false, sendCommand: async () => true, goal: null,
+    deviceId: "robot-a", isOwner: true, busy: false, sendCommand: async () => true, goal: null,
   }));
 }
 

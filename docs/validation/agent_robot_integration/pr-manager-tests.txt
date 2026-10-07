@@ -1,0 +1,12 @@
+........................................................................ [ 32%]
+........................................................................ [ 65%]
+........................................................................ [ 98%]
+...                                                                      [100%]
+=============================== warnings summary ===============================
+test/test_flake8.py::test_flake8
+test/test_flake8.py::test_flake8
+  Warning: SelectableGroups dict interface is deprecated. Use select.
+
+-- Docs: https://docs.pytest.org/en/stable/warnings.html
+-------- generated xml file: /tmp/malbut-pr-manager/manager-results.xml --------
+219 passed, 2 warnings in 55.12s

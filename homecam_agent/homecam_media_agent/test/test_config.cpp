@@ -223,6 +223,45 @@ TEST(HeartbeatContract, RejectsResponsePast64KiBWithoutGrowingTheBuffer)
   EXPECT_FALSE(append_heartbeat_response_chunk(&response, nullptr, 1U));
 }
 
+TEST(HeartbeatContract, MediaReceiptRevisionIsOptionalAndNeverUsesAnInvalidOrOldValue)
+{
+  homecam_media_agent::DesiredDeviceSettings desired;
+  std::string error;
+  auto body = nlohmann::json::parse(
+    R"({"desiredState":{"cameraEnabled":true,"microphoneEnabled":false,"monitoringEnabled":false}})");
+  body["mediaSettingsRevision"] = "18446744073709551615";
+  ASSERT_TRUE(parse_desired_settings(body.dump(), &desired, &error));
+  ASSERT_TRUE(desired.media_settings_revision);
+  EXPECT_EQ(*desired.media_settings_revision, std::numeric_limits<std::uint64_t>::max());
+  for (const auto & invalid : {"0", "01", "-1", "18446744073709551616"}) {
+    body["mediaSettingsRevision"] = invalid;
+    ASSERT_TRUE(parse_desired_settings(body.dump(), &desired, &error));
+    EXPECT_FALSE(desired.media_settings_revision);
+  }
+  body.erase("mediaSettingsRevision");
+  ASSERT_TRUE(parse_desired_settings(body.dump(), &desired, &error));
+  EXPECT_FALSE(desired.media_settings_revision);
+}
+
+TEST(HeartbeatContract, AppliedMediaReceiptRequiresLocalPipelinesAndRecordingHealth)
+{
+  HeartbeatStatus status;
+  status.camera_enabled = true;
+  status.camera_healthy = true;
+  EXPECT_FALSE(homecam_media_agent::media_settings_apply_ready(status, false, true));
+  EXPECT_FALSE(homecam_media_agent::media_settings_apply_ready(status, true, false));
+  EXPECT_TRUE(homecam_media_agent::media_settings_apply_ready(status, true, true));
+  status.monitoring_enabled = true;
+  EXPECT_FALSE(homecam_media_agent::media_settings_apply_ready(status, true, true));
+  status.storage_healthy = true;
+  EXPECT_TRUE(homecam_media_agent::media_settings_apply_ready(status, true, true));
+  status.camera_enabled = false;
+  EXPECT_FALSE(homecam_media_agent::media_settings_apply_ready(status, true, false));
+  EXPECT_TRUE(homecam_media_agent::media_settings_apply_ready(status, false, false));
+  status.media_settings_report = {{"runtimeId", "media-1"}, {"requestedRevision", "2"}};
+  EXPECT_EQ(nlohmann::json::parse(heartbeat_to_json(status))["mediaSettingsReport"], *status.media_settings_report);
+}
+
 TEST(HeartbeatContract, RejectsMalformedWrongTypeAndDuplicateDesiredState)
 {
   homecam_media_agent::DesiredDeviceSettings desired;

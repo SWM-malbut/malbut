@@ -1,0 +1,169 @@
+[
+  {
+    "id": "same_status_question",
+    "utterance": "로봇 상태 알려 줘",
+    "expected": "get_robot_status",
+    "prior_user": "로봇 상태 알려 줘",
+    "prior_answer": "현재 로봇은 정지(STOPPED) 상태이고, 실행 중인 작업은 없어요. 배터리는 확인할 수 없어요.",
+    "memory_context": {
+      "mode": "answer_only",
+      "robot_operation_results": [
+        {
+          "tool": "get_robot_status",
+          "state": "succeeded",
+          "message": "현재 로봇은 정지(STOPPED) 상태이고, 실행 중인 작업은 없어요. 배터리는 확인할 수 없어요.",
+          "result": {
+            "runtime": {
+              "state": "STOPPED",
+              "ready": false
+            },
+            "voice": {
+              "ready": true
+            },
+            "system": {
+              "active_missions": []
+            },
+            "battery": null
+          },
+          "publication": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "still_patrolling",
+    "utterance": "아직 순찰 중이야?",
+    "expected": "get_robot_status",
+    "prior_user": "지금 뭐 하고 있어?",
+    "prior_answer": "로봇 기능은 켜져 있고, 순찰 작업 하나가 실행 중이에요.",
+    "memory_context": {
+      "mode": "answer_only",
+      "robot_operation_results": [
+        {
+          "tool": "get_robot_status",
+          "state": "succeeded",
+          "message": "로봇 기능은 켜져 있고, 순찰 작업 하나가 실행 중이에요.",
+          "result": {
+            "runtime": {
+              "state": "RUNNING"
+            },
+            "system": {
+              "active_missions": [
+                {
+                  "mission_id": "synthetic-patrol",
+                  "capability_id": "patrol"
+                }
+              ]
+            }
+          },
+          "publication": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "current_observations",
+    "utterance": "지금도 사람이 보여?",
+    "expected": "get_robot_observations",
+    "prior_user": "지금 사람이 보여?",
+    "prior_answer": "최근 관측에 사람 한 명이 있었어요. 신원은 확인할 수 없어요.",
+    "memory_context": {
+      "mode": "answer_only",
+      "robot_operation_results": [
+        {
+          "tool": "get_robot_observations",
+          "state": "succeeded",
+          "message": "최근 관측에 사람 한 명이 있었어요. 신원은 확인할 수 없어요.",
+          "result": {
+            "observations": {
+              "person_count": 1,
+              "current": true
+            }
+          },
+          "publication": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "repeat_saved_maps",
+    "utterance": "저장된 지도 목록 보여 줘",
+    "expected": "list_saved_maps",
+    "prior_user": "저장된 지도 목록 보여 줘",
+    "prior_answer": "저장된 지도는 home 하나예요.",
+    "memory_context": {
+      "mode": "answer_only",
+      "robot_operation_results": [
+        {
+          "tool": "list_saved_maps",
+          "state": "succeeded",
+          "message": "저장된 지도는 home 하나예요.",
+          "result": {
+            "maps": [
+              {
+                "id": "home.yaml",
+                "name": "home"
+              }
+            ],
+            "last_selected_map": "home.yaml"
+          },
+          "publication": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "repeat_homecam_status",
+    "utterance": "홈캠 카메라랑 마이크 설정 상태 알려 줘",
+    "expected": "get_homecam_status",
+    "prior_user": "홈캠 카메라랑 마이크 설정 상태 알려 줘",
+    "prior_answer": "저장된 설정은 카메라 켜짐, 마이크 꺼짐이에요. 현재 정상 동작 여부는 별도 확인이 필요해요.",
+    "memory_context": {
+      "mode": "answer_only",
+      "robot_operation_results": [
+        {
+          "tool": "get_homecam_status",
+          "state": "succeeded",
+          "message": "저장된 설정은 카메라 켜짐, 마이크 꺼짐이에요. 현재 정상 동작 여부는 별도 확인이 필요해요.",
+          "result": {
+            "cameraEnabled": true,
+            "microphoneEnabled": false,
+            "runtimeVerified": false
+          },
+          "publication": {}
+        }
+      ]
+    }
+  },
+  {
+    "id": "recall_previous_result",
+    "utterance": "새로 확인하지 말고 아까 조회한 결과만 다시 말해 줘",
+    "expected": "message",
+    "prior_user": "로봇 상태 알려 줘",
+    "prior_answer": "당시 로봇 기능은 꺼져 있고, 실행 중인 작업은 없었어요.",
+    "memory_context": {
+      "mode": "answer_only",
+      "robot_operation_results": [
+        {
+          "tool": "get_robot_status",
+          "state": "succeeded",
+          "message": "당시 로봇 기능은 꺼져 있고, 실행 중인 작업은 없었어요.",
+          "result": {
+            "runtime": {
+              "state": "STOPPED",
+              "ready": false
+            },
+            "voice": {
+              "ready": true
+            },
+            "system": {
+              "active_missions": []
+            },
+            "battery": null
+          },
+          "publication": {}
+        }
+      ]
+    }
+  }
+]

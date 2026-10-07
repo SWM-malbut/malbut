@@ -117,7 +117,7 @@ TOOL_SPECS = {
     'get_weather': ToolSpec(
         name='get_weather',
         description=(
-            'Ask Manager for weather at the saved or manually configured '
+            'Query the weather service at the saved or manually configured '
             'location and the today/tomorrow '
             'forecast. Read the returned data before answering weather questions. '
             'This tool takes no arguments and does not control robot movement.'
@@ -127,7 +127,7 @@ TOOL_SPECS = {
     'set_weather_location': ToolSpec(
         name='set_weather_location',
         description=(
-            'Ask Manager to resolve and save the robot weather location in its database. '
+            'Ask the weather service to resolve and save the robot weather location in its database. '
             'Use only when the user explicitly states or corrects their current location, '
             'asks to change the weather location, or answers your location clarification. '
             'Extract the new location, never the negated old location. Do not use for '
@@ -211,6 +211,66 @@ TOOL_SPECS = {
         parameters=EMPTY_PARAMETERS,
     ),
 }
+
+
+# These operations use fixed server-owned adapters; no raw ROS names or commands.
+_ROBOT_OPERATIONS = {
+    'get_robot_status': ('Read current robot, battery, runtime and active mission observations.', {}),
+    'get_robot_observations': ('Read current camera detections and tracking observations. Do not infer identity.', {}),
+    'list_saved_maps': ('List actually saved maps and the last selected map.', {}),
+    'select_saved_map': ('Select one listed saved map and wait for localization. Never invent a map name.',
+                         {'map': {'type': 'string', 'maxLength': 80}}),
+    'delete_saved_map': ('Request deletion of one listed map. The server asks a bound confirmation before deletion.',
+                         {'map': {'type': 'string', 'maxLength': 80}}),
+    'get_map_zones': ('Read existing labeled polygons and their current allow/avoid/restricted settings.', {}),
+    'update_map_zone': ('Change one existing polygon by its returned index. Null means preserve a field. '
+                        'Never invent polygon geometry or revision tokens.', {
+        'map': {'type': 'string', 'maxLength': 80},
+        'index': {'type': 'integer', 'minimum': 0, 'maximum': 1000},
+        'name': {'type': ['string', 'null'], 'maxLength': 64},
+        'behavior': {'type': ['string', 'null'], 'enum': ['allow', 'avoid', 'restricted', None]},
+    }),
+    'wake_robot': ('Prepare robot runtime using a listed map. Use null to reuse the selected map or ask if ambiguous.',
+                   {'map': {'type': ['string', 'null'], 'maxLength': 80}}),
+    'standby_robot': ('Stop the child robot runtime while keeping voice available. '
+                      'The server confirms unrelated active work before stopping.', {}),
+    'stop_robot_movement': ('Immediately request stopping ALL robot movement, including web and voice motions. '
+                            'This does not disable dialogue or memory. Wait for reported stop result.', {}),
+    'request_mapping': ('Create and save a new map through AutoSLAM. '
+                        'Use a new short filename without path or extension; never overwrite a map.',
+                        {'map_name': {'type': 'string', 'maxLength': 64}}),
+    'request_relocalization': ('Find the robot pose on the selected saved map. Use auto normally; '
+                               'global_search only when explicitly requested.',
+                               {'method': {'type': 'string', 'enum': ['auto', 'global_search']}}),
+    'request_manual_control': ('Enable the existing assisted web/joystick manual control. '
+                              'This does not itself send velocity or move a requested distance.', {}),
+    'request_recovery': ('Ask the native Bringup owner to recover failed owned components once. '
+                        'Never run shell commands or claim healthy processes were restarted.', {}),
+    'get_homecam_status': ('Read delegated Homecam camera, microphone and monitoring status.', {}),
+    'get_homecam_events': ('Read recent Homecam events, using a bounded result count.', {
+        'limit': {'type': 'integer', 'minimum': 1, 'maximum': 20},
+        'event_type': {'type': ['string', 'null'], 'enum': ['motion', 'person', 'dog', 'cat', None]},
+    }),
+    'get_homecam_recordings': ('Read recent Homecam recording metadata and authorized links.',
+                              {'limit': {'type': 'integer', 'minimum': 1, 'maximum': 20}}),
+    'get_homecam_falls': ('Read recent Homecam fall events; these are recorded observations, not a new diagnosis.',
+                         {'limit': {'type': 'integer', 'minimum': 1, 'maximum': 20}}),
+    'update_homecam_settings': ('Change only explicitly requested Homecam settings under existing owner delegation. '
+                                'Use null for unchanged fields. Never change personal or story memory consent.', {
+        key: {'type': ['boolean', 'null']} for key in
+        ('cameraEnabled', 'microphoneEnabled', 'monitoringEnabled', 'fallEnabled')
+    }),
+    'confirm_pending_operation': ('Answer the server\'s most recent explicit operation confirmation. '
+                                  'Only use for the current direct yes/no answer; no IDs or targets can be supplied.',
+                                  {'confirm': {'type': 'boolean'}}),
+}
+ROBOT_OPERATION_TOOLS = tuple(_ROBOT_OPERATIONS)
+SPEECH_DELEGATED_TOOLS = SPEECH_MISSION_TOOLS + ROBOT_OPERATION_TOOLS
+for _name, (_description, _properties) in _ROBOT_OPERATIONS.items():
+    TOOL_SPECS[_name] = ToolSpec(_name, _description, {
+        'type': 'object', 'properties': _properties,
+        'required': list(_properties), 'additionalProperties': False,
+    })
 
 
 def select_tool_specs(names: Iterable[str]) -> List[ToolSpec]:
@@ -301,6 +361,14 @@ def _validate_schema_value(
             raise ValidationError(f'{field_name} exceeds its length limit')
         if 'enum' in schema and value not in schema['enum']:
             raise ValidationError(f'{field_name} is not an allowed value')
+        return
+    if non_null_types == ['boolean']:
+        if type(value) is not bool:
+            raise ValidationError(f'{field_name} must be boolean')
+        return
+    if non_null_types == ['integer']:
+        if type(value) is not int or not schema.get('minimum', 0) <= value <= schema.get('maximum', 1000):
+            raise ValidationError(f'{field_name} is outside its integer bounds')
         return
     raise RuntimeError(
         f'unsupported Tool schema type for {field_name}: {expected!r}'

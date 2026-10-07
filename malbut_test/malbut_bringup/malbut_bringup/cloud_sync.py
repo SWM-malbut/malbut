@@ -124,7 +124,8 @@ class CloudClient:
 
     def request(self, path, method='GET', payload=None):
         """Send only fixed device API paths and reject oversized responses."""
-        if not path.startswith('/api/device/v1/robot/') or '?' in path or '..' in path:
+        if ((not path.startswith('/api/device/v1/robot/')
+                and path != '/api/device/v1/agent/operate') or '?' in path or '..' in path):
             raise ValueError('Invalid device API path')
         body = None if payload is None else json.dumps(
             payload, ensure_ascii=False, allow_nan=False,
@@ -149,6 +150,17 @@ class CloudClient:
                     raise CloudError('Cloud response must be a JSON object')
                 return value
         except HTTPError as error:
+            if path == '/api/device/v1/agent/operate':
+                try:
+                    raw = error.read(64 * 1024 + 1)
+                    value = json.loads(raw) if len(raw) <= 64 * 1024 else None
+                    if (isinstance(value, dict) and value.get('success') is False
+                            and isinstance(value.get('code'), str)
+                            and isinstance(value.get('message'), str)
+                            and isinstance(value.get('result'), dict)):
+                        return value
+                except (ValueError, UnicodeError, OSError):
+                    pass
             raise CloudError(f'Cloud returned HTTP {error.code}', error.code) from None
         except (URLError, TimeoutError, OSError):
             raise CloudError('Cloud request failed') from None
@@ -319,6 +331,8 @@ def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
         'mode': localization.get('mode'),
         'map': Path(localization['map']).name if localization.get('map') else None,
         'message': str(localization.get('message') or '')[:512],
+        **{key: localization[key] for key in ('pose_ready', 'runtime_id', 'transition_id')
+           if key in localization},
     }
     mode = runtime.get('mode') if runtime.get('state') not in ('STOPPED', 'ERROR') else None
     servers = snapshot.get('servers', {})
@@ -344,6 +358,7 @@ def state_payload(snapshot, map_info, maps, observed_at=None, navigation=None):
                  'manager': 'ready' if servers.get('manager') else 'unavailable'},
         'target': {
             'runtime': runtime, 'requests': requests,
+            'voice': bounded_value(snapshot.get('voice'), 512),
             'maps': [{'id': item['id'], 'name': item['name'], 'savedAt': _saved_at(item)}
                      for item in maps[:64]],
             'servers': {key: bool(servers.get(key)) for key in ('manager', 'autoslam')},
@@ -691,6 +706,7 @@ def main(args=None):
     executor = SingleThreadedExecutor()
     executor.add_node(bridge.node)
     sync = None
+    operations_server = None
     lock = None
     try:
         backend = bridge.node.declare_parameter(
@@ -706,7 +722,10 @@ def main(args=None):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise ValueError('A cloud bridge already owns this device credential') from None
-        sync = CloudSync(bridge, CloudClient(backend, token), interval=float(interval))
+        client = CloudClient(backend, token)
+        from .device_operations import DeviceOperations, DeviceOperationServer
+        operations_server = DeviceOperationServer(bridge, DeviceOperations(bridge, client))
+        sync = CloudSync(bridge, client, interval=float(interval))
         sync.thread.start()
         bridge.node.get_logger().info('Real robot cloud bridge started; no motion requested')
         executor.spin()
@@ -717,6 +736,8 @@ def main(args=None):
             bridge.data.closed = True
         if sync is not None:
             sync.close()
+        if operations_server is not None:
+            operations_server.close()
         if rclpy.ok():
             bridge.stop_teleop()
             bridge.cancel_owned()

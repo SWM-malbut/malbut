@@ -30,6 +30,23 @@ export const devices = pgTable(
   (table) => [uniqueIndex("devices_kvs_channel_arn_idx").on(table.kvsChannelArn)],
 );
 
+export const deviceVoiceDelegations = pgTable("device_voice_delegations", {
+  deviceId: text("device_id").primaryKey().references(() => devices.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  grantedBy: text("granted_by").notNull(),
+  updatedAt: timestampText("updated_at").notNull().defaultNow(),
+});
+
+export const deviceVoiceRequests = pgTable("device_voice_requests", {
+  deviceId: text("device_id").notNull().references(() => devices.id, { onDelete: "cascade" }),
+  requestId: text("request_id").notNull(), credentialId: text("credential_id").notNull(),
+  operation: text("operation").notNull(), argumentsJson: text("arguments_json").notNull(),
+  requiresDelegation: boolean("requires_delegation").notNull(), state: text("state").notNull().default("pending"),
+  replyJson: text("reply_json"), createdAt: timestampText("created_at").notNull().defaultNow(),
+  completedAt: timestampText("completed_at"),
+}, (table) => [primaryKey({ columns: [table.deviceId, table.requestId] }),
+  index("device_voice_requests_recent_idx").on(table.deviceId, table.createdAt)]);
+
 export const fallIncidents = pgTable("fall_incidents", {
   deviceId: text("device_id").notNull().references(() => devices.id, { onDelete: "cascade" }),
   incidentId: text("incident_id").notNull(),
@@ -144,6 +161,16 @@ export const streamSessionAccess = pgTable("stream_session_access", {
   createdAt: timestampText("created_at").notNull().defaultNow(),
 });
 
+export const deviceMediaSettingsReports = pgTable("device_media_settings_reports", {
+  deviceId: text("device_id").notNull().references(() => devices.id, { onDelete: "cascade" }),
+  runtimeId: text("runtime_id").notNull(),
+  sequence: numeric("sequence", { precision: 20, scale: 0 }).notNull(),
+  requestedRevision: numeric("requested_revision", { precision: 20, scale: 0 }).notNull(),
+  payloadJson: text("payload_json").notNull(),
+  reportAgeS: doublePrecision("report_age_s").notNull(),
+  receivedAt: timestampText("received_at").notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.deviceId, table.runtimeId] })]);
+
 export const recordingSessions = pgTable(
   "recording_sessions",
   {
@@ -195,6 +222,8 @@ export const deviceState = pgTable("device_state", {
   fallEnabled: boolean("fall_enabled").notNull().default(false),
   fallCloudConsent: boolean("fall_cloud_consent").notNull().default(false),
   fallSettingsRevision: numeric("fall_settings_revision", { precision: 20, scale: 0 }).notNull().default("1"),
+  mediaSettingsRevision: numeric("media_settings_revision", { precision: 20, scale: 0 }).notNull().default("1"),
+  mediaSettingsSavedAt: timestampText("media_settings_saved_at").notNull().defaultNow(),
   fallSettingsSavedAt: timestampText("fall_settings_saved_at").notNull().defaultNow(),
   sourceProfile: text("source_profile").notNull().default("unknown"),
   imageTopic: text("image_topic"),

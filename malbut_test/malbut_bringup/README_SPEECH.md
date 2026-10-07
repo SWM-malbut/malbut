@@ -1,5 +1,7 @@
 # 통합 Bringup의 음성 준비와 preflight
 
+상주 음성·Manager·홈캠 통합은 [Agent 로봇 통합 안내](docs/AGENT_ROBOT_INTEGRATION.md)를 참고한다. `cloud.launch.py`는 음성을 별도 프로세스로 유지하고 로봇 실행 그룹에 `speech:=false`를 전달한다. 직접 `bringup.launch.py`를 실행하는 경우에는 아래 기존 음성 구성을 유지한다.
+
 실로봇은 **최초 `setup.sh` 준비 → `build.sh` 빌드 → `cloud.launch.py` 웹 연결 → 웹의
 Bringup 준비** 순서로 실행한다. 터미널에서 직접 실행할 때는 `bringup.launch.py`를 사용한다.
 `bringup.launch.py`가 Jetson용 whisper.cpp STT, Agent 대화 노드와 OpenAI TTS를

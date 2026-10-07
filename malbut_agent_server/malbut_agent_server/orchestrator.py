@@ -44,7 +44,7 @@ from malbut_agent_server.providers.base import (
     accepts_memory_context,
     accepts_weather_context,
 )
-from malbut_agent_server.prompting import bounded_weather_context
+from malbut_agent_server.prompting import bounded_weather_context, MAX_CONVERSATION_CONTEXT_CHARS
 from malbut_agent_server.robot_state_source import RobotStateSource
 from malbut_agent_server.safety import SafetyPolicy, SafetyResult
 from malbut_agent_server.tools import validate_tool_arguments
@@ -901,6 +901,16 @@ class AgentOrchestrator:
                 memory_context = copy.deepcopy(memory_snapshot.context)
                 if self._separate_memory_extraction(request, memory_snapshot):
                     memory_context['mode'] = 'answer_only'
+                operation_context = getattr(self, 'robot_operation_context', None)
+                if operation_context is not None:
+                    observations = operation_context(request.user_id, request.conversation_id)
+                    memory_context['robot_operation_results'] = observations
+                    while observations and len(json.dumps(
+                            memory_context, ensure_ascii=False, allow_nan=False,
+                    )) > MAX_CONVERSATION_CONTEXT_CHARS:
+                        observations.pop()
+                    if not observations:
+                        memory_context.pop('robot_operation_results', None)
                 memory_arguments['memory_context'] = memory_context
             provider_result = self.provider.complete(
                 model_request,

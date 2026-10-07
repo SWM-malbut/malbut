@@ -1,0 +1,13 @@
+# Reusing an ID observes the same stop operation; it never stops newer work.
+string request_id
+bool require_preemption_confirmation
+string[] confirmed_preemption_mission_ids
+# Confirm every mission and permanently close admission before runtime shutdown.
+bool shutdown_runtime
+---
+# True only after every affected movement has reached a downstream terminal state.
+bool stopped
+string[] affected_mission_ids
+string[] unresolved_mission_ids
+string code
+string message

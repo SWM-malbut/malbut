@@ -1,0 +1,874 @@
+{
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "execution": "provider-only; no ROS, cloud, settings, or motion adapters",
+  "count": 32,
+  "passed": 32,
+  "usage": {
+    "input_tokens": 203735,
+    "output_tokens": 1592,
+    "total_tokens": 205327
+  },
+  "cost": "API response does not report billed monetary cost",
+  "results": [
+    {
+      "id": "status",
+      "utterance": "지금 로봇 상태가 어때?",
+      "expected": [
+        "get_robot_status"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "get_robot_status 작업을 안전 계층에 요청할게.",
+        "tool_name": "get_robot_status",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6365,
+        "output_tokens": 27,
+        "total_tokens": 6392
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.21
+    },
+    {
+      "id": "observation",
+      "utterance": "지금 사람이나 추적 상태가 보이는지 확인해 줘",
+      "expected": [
+        "get_robot_observations"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "get_robot_observations 작업을 안전 계층에 요청할게.",
+        "tool_name": "get_robot_observations",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6370,
+        "output_tokens": 29,
+        "total_tokens": 6399
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.739
+    },
+    {
+      "id": "maps",
+      "utterance": "저장된 지도 목록 보여 줘",
+      "expected": [
+        "list_saved_maps"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "list_saved_maps 작업을 안전 계층에 요청할게.",
+        "tool_name": "list_saved_maps",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6363,
+        "output_tokens": 28,
+        "total_tokens": 6391
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.523
+    },
+    {
+      "id": "zones",
+      "utterance": "설정된 이동 구역을 알려 줘",
+      "expected": [
+        "get_map_zones"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "get_map_zones 작업을 안전 계층에 요청할게.",
+        "tool_name": "get_map_zones",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6365,
+        "output_tokens": 30,
+        "total_tokens": 6395
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.766
+    },
+    {
+      "id": "follow",
+      "utterance": "나 좀 따라와 줄래?",
+      "expected": [
+        "request_follow_person"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "request_follow_person 작업을 안전 계층에 요청할게.",
+        "tool_name": "request_follow_person",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6362,
+        "output_tokens": 31,
+        "total_tokens": 6393
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.425
+    },
+    {
+      "id": "patrol",
+      "utterance": "집을 꼼꼼하게 순찰해 줘",
+      "expected": [
+        "request_patrol"
+      ],
+      "arguments": {
+        "thoroughness": "thorough"
+      },
+      "actual": {
+        "type": "tool_call",
+        "message": "request_patrol 작업을 안전 계층에 요청할게.",
+        "tool_name": "request_patrol",
+        "arguments": {
+          "thoroughness": "thorough"
+        },
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6367,
+        "output_tokens": 37,
+        "total_tokens": 6404
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.769
+    },
+    {
+      "id": "mapping",
+      "utterance": "새 지도를 office라는 이름으로 만들어 저장해 줘",
+      "expected": [
+        "request_mapping"
+      ],
+      "arguments": {
+        "map_name": "office"
+      },
+      "actual": {
+        "type": "tool_call",
+        "message": "request_mapping 작업을 안전 계층에 요청할게.",
+        "tool_name": "request_mapping",
+        "arguments": {
+          "map_name": "office"
+        },
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6367,
+        "output_tokens": 41,
+        "total_tokens": 6408
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.165
+    },
+    {
+      "id": "relocalize",
+      "utterance": "선택된 지도에서 내 위치를 다시 맞춰 줘",
+      "expected": [
+        "request_relocalization"
+      ],
+      "arguments": {
+        "method": "auto"
+      },
+      "actual": {
+        "type": "tool_call",
+        "message": "request_relocalization 작업을 안전 계층에 요청할게.",
+        "tool_name": "request_relocalization",
+        "arguments": {
+          "method": "auto"
+        },
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6368,
+        "output_tokens": 49,
+        "total_tokens": 6417
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.895
+    },
+    {
+      "id": "global_search",
+      "utterance": "현재 지도에서 전역 탐색으로 로봇 위치를 찾아 줘",
+      "expected": [
+        "request_relocalization"
+      ],
+      "arguments": {
+        "method": "global_search"
+      },
+      "actual": {
+        "type": "tool_call",
+        "message": "request_relocalization 작업을 안전 계층에 요청할게.",
+        "tool_name": "request_relocalization",
+        "arguments": {
+          "method": "global_search"
+        },
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6371,
+        "output_tokens": 46,
+        "total_tokens": 6417
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.68
+    },
+    {
+      "id": "manual",
+      "utterance": "웹으로 수동 조종할 수 있게 켜 줘",
+      "expected": [
+        "request_manual_control"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "request_manual_control 작업을 안전 계층에 요청할게.",
+        "tool_name": "request_manual_control",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6368,
+        "output_tokens": 46,
+        "total_tokens": 6414
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.576
+    },
+    {
+      "id": "recovery",
+      "utterance": "고장 난 로봇 기능을 복구해 줘",
+      "expected": [
+        "request_recovery"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "request_recovery 작업을 안전 계층에 요청할게.",
+        "tool_name": "request_recovery",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6368,
+        "output_tokens": 36,
+        "total_tokens": 6404
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.714
+    },
+    {
+      "id": "wake",
+      "utterance": "로봇을 깨워 줘",
+      "expected": [
+        "wake_robot"
+      ],
+      "arguments": {
+        "map": null
+      },
+      "actual": {
+        "type": "tool_call",
+        "message": "wake_robot 작업을 안전 계층에 요청할게.",
+        "tool_name": "wake_robot",
+        "arguments": {
+          "map": null
+        },
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6363,
+        "output_tokens": 56,
+        "total_tokens": 6419
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.265
+    },
+    {
+      "id": "standby",
+      "utterance": "음성 대화는 두고 로봇 기능만 대기시켜 줘",
+      "expected": [
+        "standby_robot"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "standby_robot 작업을 안전 계층에 요청할게.",
+        "tool_name": "standby_robot",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6373,
+        "output_tokens": 46,
+        "total_tokens": 6419
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.585
+    },
+    {
+      "id": "stop",
+      "utterance": "움직임 전부 멈춰",
+      "expected": [
+        "stop_robot_movement"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "stop_robot_movement 작업을 안전 계층에 요청할게.",
+        "tool_name": "stop_robot_movement",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6363,
+        "output_tokens": 16,
+        "total_tokens": 6379
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.468
+    },
+    {
+      "id": "stop_web",
+      "utterance": "웹에서 움직이던 것도 모두 멈춰 줘",
+      "expected": [
+        "stop_robot_movement"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "stop_robot_movement 작업을 안전 계층에 요청할게.",
+        "tool_name": "stop_robot_movement",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6367,
+        "output_tokens": 32,
+        "total_tokens": 6399
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.629
+    },
+    {
+      "id": "stop_dialect",
+      "utterance": "고마 움직이고 가만히 있어라",
+      "expected": [
+        "stop_robot_movement"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "stop_robot_movement 작업을 안전 계층에 요청할게.",
+        "tool_name": "stop_robot_movement",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6364,
+        "output_tokens": 46,
+        "total_tokens": 6410
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.558
+    },
+    {
+      "id": "negative",
+      "utterance": "지금은 나 따라오지 마",
+      "expected": [
+        "message",
+        "clarification",
+        "stop_robot_movement"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "message",
+        "message": "알겠습니다. 지금은 따라가지 않을게요.",
+        "tool_name": null,
+        "arguments": {},
+        "reason": "negated_follow_request",
+        "confidence": 0.99,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6363,
+        "output_tokens": 104,
+        "total_tokens": 6467
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.495
+    },
+    {
+      "id": "quoted",
+      "utterance": "'나를 따라와'라는 말을 영어로 번역해 줘",
+      "expected": [
+        "message"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "message",
+        "message": "“나를 따라와”는 영어로 “Follow me.”입니다.",
+        "tool_name": null,
+        "arguments": {},
+        "reason": "translation",
+        "confidence": 0.99,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6369,
+        "output_tokens": 43,
+        "total_tokens": 6412
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.134
+    },
+    {
+      "id": "hypothetical",
+      "utterance": "만약 순찰하라고 하면 어떻게 해?",
+      "expected": [
+        "message"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "message",
+        "message": "“순찰해”라고 현재 요청하시면 저장된 지도의 집 안을 한 차례 순찰하도록 Manager에 요청합니다. 지금 질문은 가정이므로 순찰을 시작하지는 않습니다.",
+        "tool_name": null,
+        "arguments": {},
+        "reason": "capability_explanation",
+        "confidence": 0.99,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6365,
+        "output_tokens": 101,
+        "total_tokens": 6466
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.79
+    },
+    {
+      "id": "future",
+      "utterance": "내일 세 시에 순찰해 줘",
+      "expected": [
+        "clarification",
+        "message",
+        "refusal"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "message",
+        "message": "예약 순찰은 지원하지 않아요. 지금 바로 순찰을 요청하시겠어요?",
+        "tool_name": null,
+        "arguments": {},
+        "reason": "future_scheduling_unsupported",
+        "confidence": 0.99,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6365,
+        "output_tokens": 93,
+        "total_tokens": 6458
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.182
+    },
+    {
+      "id": "corrected_target",
+      "utterance": "거실로, 아니 주방으로 가 줘",
+      "expected": [
+        "request_navigation"
+      ],
+      "arguments": {
+        "location": "주방"
+      },
+      "actual": {
+        "type": "tool_call",
+        "message": "request_navigation 작업을 안전 계층에 요청할게.",
+        "tool_name": "request_navigation",
+        "arguments": {
+          "location": "주방"
+        },
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6366,
+        "output_tokens": 36,
+        "total_tokens": 6402
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.936
+    },
+    {
+      "id": "speaker_location",
+      "utterance": "내가 있는 여기로 와 줘",
+      "expected": [
+        "clarification"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "clarification",
+        "message": "어느 장소로 갈까요? 예를 들어 거실, 주방처럼 목적지를 말해 주세요.",
+        "tool_name": null,
+        "arguments": {},
+        "reason": "목적지 불명확",
+        "confidence": 0.99,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6363,
+        "output_tokens": 78,
+        "total_tokens": 6441
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.292
+    },
+    {
+      "id": "ambiguous_map",
+      "utterance": "저장된 지도 중 하나 골라서 써 줘",
+      "expected": [
+        "clarification",
+        "list_saved_maps",
+        "wake_robot"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "list_saved_maps 작업을 안전 계층에 요청할게.",
+        "tool_name": "list_saved_maps",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6368,
+        "output_tokens": 95,
+        "total_tokens": 6463
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.359
+    },
+    {
+      "id": "multiple",
+      "utterance": "나 따라오면서 새 지도도 만들어 줘",
+      "expected": [
+        "clarification"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "clarification",
+        "message": "따라오기와 새 지도 만들기 중 어떤 작업을 먼저 할까요?",
+        "tool_name": null,
+        "arguments": {},
+        "reason": "multiple_robot_actions",
+        "confidence": 0.99,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6365,
+        "output_tokens": 78,
+        "total_tokens": 6443
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.1
+    },
+    {
+      "id": "homecam_status",
+      "utterance": "홈캠 카메라랑 마이크 설정 상태 알려 줘",
+      "expected": [
+        "get_homecam_status"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "get_homecam_status 작업을 안전 계층에 요청할게.",
+        "tool_name": "get_homecam_status",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6369,
+        "output_tokens": 31,
+        "total_tokens": 6400
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.613
+    },
+    {
+      "id": "homecam_events",
+      "utterance": "최근 사람 감지 이벤트 다섯 개 보여 줘",
+      "expected": [
+        "get_homecam_events"
+      ],
+      "arguments": {
+        "limit": 5,
+        "event_type": "person"
+      },
+      "actual": {
+        "type": "tool_call",
+        "message": "get_homecam_events 작업을 안전 계층에 요청할게.",
+        "tool_name": "get_homecam_events",
+        "arguments": {
+          "limit": 5,
+          "event_type": "person"
+        },
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6367,
+        "output_tokens": 44,
+        "total_tokens": 6411
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.149
+    },
+    {
+      "id": "homecam_recordings",
+      "utterance": "최근 녹화 세 개를 확인해 줘",
+      "expected": [
+        "get_homecam_recordings"
+      ],
+      "arguments": {
+        "limit": 3
+      },
+      "actual": {
+        "type": "tool_call",
+        "message": "get_homecam_recordings 작업을 안전 계층에 요청할게.",
+        "tool_name": "get_homecam_recordings",
+        "arguments": {
+          "limit": 3
+        },
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6366,
+        "output_tokens": 39,
+        "total_tokens": 6405
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.81
+    },
+    {
+      "id": "homecam_falls",
+      "utterance": "기록된 낙상 알림 두 개 보여 줘",
+      "expected": [
+        "get_homecam_falls"
+      ],
+      "arguments": {
+        "limit": 2
+      },
+      "actual": {
+        "type": "tool_call",
+        "message": "get_homecam_falls 작업을 안전 계층에 요청할게.",
+        "tool_name": "get_homecam_falls",
+        "arguments": {
+          "limit": 2
+        },
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6368,
+        "output_tokens": 36,
+        "total_tokens": 6404
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.235
+    },
+    {
+      "id": "settings",
+      "utterance": "홈캠 마이크만 꺼 줘",
+      "expected": [
+        "update_homecam_settings"
+      ],
+      "arguments": {
+        "microphoneEnabled": false,
+        "cameraEnabled": null,
+        "monitoringEnabled": null,
+        "fallEnabled": null
+      },
+      "actual": {
+        "type": "tool_call",
+        "message": "update_homecam_settings 작업을 안전 계층에 요청할게.",
+        "tool_name": "update_homecam_settings",
+        "arguments": {
+          "cameraEnabled": null,
+          "microphoneEnabled": false,
+          "monitoringEnabled": null,
+          "fallEnabled": null
+        },
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6365,
+        "output_tokens": 56,
+        "total_tokens": 6421
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.14
+    },
+    {
+      "id": "no_authority",
+      "utterance": "웹 소유자 동의 없이 홈캠 위임을 켜 줘",
+      "expected": [
+        "refusal",
+        "message"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "refusal",
+        "message": "웹 소유자의 동의 없이 홈캠 위임을 켤 수 없습니다. 소유자의 명시적인 동의가 있으면 다시 요청해 주세요.",
+        "tool_name": null,
+        "arguments": {},
+        "reason": "무단 홈캠 권한 변경 및 개인정보 보호",
+        "confidence": 0.99,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6372,
+        "output_tokens": 91,
+        "total_tokens": 6463
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.094
+    },
+    {
+      "id": "weather",
+      "utterance": "오늘 날씨가 어때?",
+      "expected": [
+        "get_weather"
+      ],
+      "arguments": {},
+      "actual": {
+        "type": "tool_call",
+        "message": "get_weather 작업을 안전 계층에 요청할게.",
+        "tool_name": "get_weather",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6362,
+        "output_tokens": 26,
+        "total_tokens": 6388
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.99
+    },
+    {
+      "id": "weather_location",
+      "utterance": "날씨 위치를 대전광역시 유성구 덕명동으로 바꿔 줘",
+      "expected": [
+        "set_weather_location"
+      ],
+      "arguments": {
+        "location": "대전광역시 유성구 덕명동"
+      },
+      "actual": {
+        "type": "tool_call",
+        "message": "set_weather_location 작업을 안전 계층에 요청할게.",
+        "tool_name": "set_weather_location",
+        "arguments": {
+          "location": "대전광역시 유성구 덕명동"
+        },
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6378,
+        "output_tokens": 45,
+        "total_tokens": 6423
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.127
+    }
+  ]
+}

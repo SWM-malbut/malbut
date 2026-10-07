@@ -1,0 +1,66 @@
+{
+  "build_exit_code": 0,
+  "build_log": "/home/ubuntu/agent-integration-ws/build-20261007T160237Z.log",
+  "packages": {
+    "homecam_detector": "/home/ubuntu/agent-integration-ws/install/malbut_test/homecam_detector",
+    "homecam_media_agent": "/home/ubuntu/agent-integration-ws/install/malbut_test/homecam_media_agent",
+    "malbut_bringup": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_bringup",
+    "malbut_resource_monitor": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_resource_monitor",
+    "malbut_interfaces": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_interfaces",
+    "malbut_system_manager": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_system_manager",
+    "malbut_fall_coordinator": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_fall_coordinator",
+    "malbut_agent_server": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_agent_server",
+    "malbut_stt": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_stt",
+    "malbut_tts": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_tts",
+    "malbut_yolo": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_yolo",
+    "malbut_reid": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_reid",
+    "malbut_tracking": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_tracking",
+    "malbut_patrol": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_patrol",
+    "malbut_autoslam": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_autoslam",
+    "malbut_relocalization": "/home/ubuntu/agent-integration-ws/install/malbut_test/malbut_relocalization",
+    "yolo_ros": "/home/ubuntu/agent-integration-ws/install/malbut_test/yolo_ros",
+    "yolo_msgs": "/home/ubuntu/agent-integration-ws/install/malbut_test/yolo_msgs"
+  },
+  "typed_contracts_verified": [
+    "ExecuteMission.Goal",
+    "DeviceOperation.Goal",
+    "StopMovement.Request",
+    "PrepareLocalization.Request",
+    "LocalizationState",
+    "SystemState"
+  ],
+  "source_files_verified": 890,
+  "source_manifest_sha256": "7847cec4b8e1141cca4902531b6fc9629edd3ddd42768e2db7ce0fa941c0e869",
+  "homecam_elf_linkage_verified": [
+    "/home/ubuntu/agent-integration-ws/install/malbut_test/homecam_media_agent/lib/homecam_media_agent/homecam_media_agent_node"
+  ],
+  "source_bytes": 19456196,
+  "native_typesupport_verified": 6,
+  "post_build_launch_update": "malbut_bringup/launch/cloud.launch.py",
+  "post_build_launch_update_sha256": "6c58ad38bf1e332c49c39f6011648fd18899a5b4f7c30a6daf2add0e48294541",
+  "post_build_launch_update_uses_source_symlink": true,
+  "runtime_launched_by_build_agent": false,
+  "runtime_validation_managed_by": "parent task; recorded separately",
+  "post_build_python_updates": [
+    {
+      "path": "malbut_agent_server/malbut_agent_server/ros_communication.py",
+      "sha256": "bec5b14c998111f44c6678a164d0733d764c8b57f9a95473687fd9480f058eb8",
+      "installed_resolves_to_source": true
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/robot_operations.py",
+      "sha256": "2449a37a5a390004055cd5a2ee4f821db92c6b6f3aa4ddff6cfccc69808679e2",
+      "installed_resolves_to_source": true
+    },
+    {
+      "path": "malbut_bringup/malbut_bringup/device_operations.py",
+      "sha256": "f22294269c1907352d299f100dddcc7d5bfd46c03ace9ed1b6ce52e3cf9c9006",
+      "installed_resolves_to_source": true
+    },
+    {
+      "path": "malbut_agent_server/malbut_agent_server/prompting.py",
+      "sha256": "a7c3f982e8a5004d4d7e98c54568c7b1a358dfbf41cecb6b4805092e97d7135d",
+      "installed_resolves_to_source": true
+    }
+  ]
+}

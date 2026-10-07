@@ -17,7 +17,7 @@ async function requireSchema() {
 
 // Read camera permission and fall settings in ONE statement; a concurrent camera
 // toggle must never yield different camera values in the two heartbeat objects.
-export async function readFallSettingsSnapshot(deviceId: string) {
+export async function readFallSettingsSnapshot(deviceId: string, includeMediaRevision = false) {
   await requireSchema();
   await getPostgresPool().query(
     "INSERT INTO device_state(device_id) VALUES($1) ON CONFLICT DO NOTHING", [deviceId],
@@ -27,12 +27,14 @@ export async function readFallSettingsSnapshot(deviceId: string) {
        camera_enabled=1 AS "cameraEnabled", fall_cloud_consent AS "cloudConsent",
        monitoring_enabled=1 AS "monitoringEnabled", microphone_enabled=1 AS "microphoneEnabled",
        fall_settings_saved_at AS "savedAt", clock_timestamp() AS "checkedAt"
+       ${includeMediaRevision ? ', media_settings_revision::text AS "mediaSettingsRevision"' : ''}
      FROM device_state WHERE device_id=$1`, [deviceId],
   );
   const row = result.rows[0];
   const settings: FallSettings = { settingsRevision: row.settingsRevision,
     enabled: row.enabled, cameraEnabled: row.cameraEnabled, cloudConsent: row.cloudConsent };
   return { settings, savedAt: row.savedAt as string, checkedAt: row.checkedAt as string,
+    ...(includeMediaRevision ? { mediaSettingsRevision: row.mediaSettingsRevision as string } : {}),
     desiredState: { cameraEnabled: row.cameraEnabled as boolean,
       monitoringEnabled: row.monitoringEnabled as boolean, microphoneEnabled: row.microphoneEnabled as boolean } };
 }

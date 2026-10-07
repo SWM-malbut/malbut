@@ -1,0 +1,142 @@
+{
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "prompt_sha256": "a7c3f982e8a5004d4d7e98c54568c7b1a358dfbf41cecb6b4805092e97d7135d",
+  "execution": "provider-only; synthetic history; no database, ROS, cloud, settings or motion adapters",
+  "count": 6,
+  "passed": 6,
+  "usage": {
+    "input_tokens": 37741,
+    "output_tokens": 249,
+    "total_tokens": 37990
+  },
+  "cost": "API response does not report billed monetary cost",
+  "results": [
+    {
+      "id": "same_status_question",
+      "expected": "get_robot_status",
+      "actual": {
+        "type": "tool_call",
+        "message": "get_robot_status 작업을 안전 계층에 요청할게.",
+        "tool_name": "get_robot_status",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6308,
+        "output_tokens": 33,
+        "total_tokens": 6341
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.608
+    },
+    {
+      "id": "still_patrolling",
+      "expected": "get_robot_status",
+      "actual": {
+        "type": "tool_call",
+        "message": "get_robot_status 작업을 안전 계층에 요청할게.",
+        "tool_name": "get_robot_status",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6290,
+        "output_tokens": 28,
+        "total_tokens": 6318
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 3.028
+    },
+    {
+      "id": "current_observations",
+      "expected": "get_robot_observations",
+      "actual": {
+        "type": "tool_call",
+        "message": "get_robot_observations 작업을 안전 계층에 요청할게.",
+        "tool_name": "get_robot_observations",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6269,
+        "output_tokens": 30,
+        "total_tokens": 6299
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.855
+    },
+    {
+      "id": "repeat_saved_maps",
+      "expected": "list_saved_maps",
+      "actual": {
+        "type": "tool_call",
+        "message": "list_saved_maps 작업을 안전 계층에 요청할게.",
+        "tool_name": "list_saved_maps",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6260,
+        "output_tokens": 35,
+        "total_tokens": 6295
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.88
+    },
+    {
+      "id": "repeat_homecam_status",
+      "expected": "get_homecam_status",
+      "actual": {
+        "type": "tool_call",
+        "message": "get_homecam_status 작업을 안전 계층에 요청할게.",
+        "tool_name": "get_homecam_status",
+        "arguments": {},
+        "reason": "model_tool_call",
+        "confidence": null,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6316,
+        "output_tokens": 34,
+        "total_tokens": 6350
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 1.633
+    },
+    {
+      "id": "recall_previous_result",
+      "expected": "message",
+      "actual": {
+        "type": "message",
+        "message": "아까 조회한 결과로는 당시 로봇 기능이 꺼져 있었고, 실행 중인 작업은 없었어요.",
+        "tool_name": null,
+        "arguments": {},
+        "reason": "과거 조회 결과 회상",
+        "confidence": 0.99,
+        "expires_in_ms": 5000
+      },
+      "passed": true,
+      "usage": {
+        "input_tokens": 6298,
+        "output_tokens": 89,
+        "total_tokens": 6387
+      },
+      "response_model": "gpt-5.6-luna",
+      "latency_seconds": 2.547
+    }
+  ]
+}

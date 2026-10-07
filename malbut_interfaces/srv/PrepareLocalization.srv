@@ -1,0 +1,10 @@
+# Integrated preparation is bound to the Manager epoch observed before send.
+bool mapping
+# Empty for mapping; absolute saved-map YAML path otherwise.
+string map_url
+string movement_runtime_id
+uint64 movement_epoch
+---
+bool success
+string code
+string message

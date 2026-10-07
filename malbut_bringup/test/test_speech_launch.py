@@ -220,3 +220,21 @@ def test_real_launch_exit_status_for_explicit_diagnostic(speech, tmp_path, mode,
         'stt_library_path:=unused', 'preflight_only:=true', 'preflight_timeout_s:=0.2',
     ], capture_output=True, text=True, timeout=15)
     assert result.returncode == expected_code, result.stdout + result.stderr
+
+
+def test_resident_speech_keeps_jetson_parameters_in_owned_namespace(speech):
+    """A bare YAML node key must not discard preset values after namespacing."""
+    import yaml
+    namespace = '/malbut/resident_voice_test'
+    context = _context(speech, node_namespace=namespace, device_operations='true')
+    actions = speech._setup(context)
+    agent = next(action for action in actions
+                 if isinstance(action, Node) and action.node_executable == 'agent_communication')
+    assert '--enable-device-operations' in [
+        perform_substitutions(context, part) for part in agent.cmd[1:]]
+    stt = next(action for action in actions
+               if isinstance(action, Node) and action.node_executable == 'stt')
+    values = evaluate_parameters(context, stt._Node__parameters)
+    expected = yaml.safe_load((ROOT / 'malbut_stt/config/jetson.yaml').read_text())[
+        'malbut_stt']['ros__parameters']
+    assert values[0] == expected
