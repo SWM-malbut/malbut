@@ -586,14 +586,20 @@ class CloudSync:
         if user_map is None:
             raise NavigationError('이 지도에는 다닐 수 있는 바닥 정보가 없어 보낼 수 없어요.')
         info = self.bridge.data.map_snapshot()
-        return self.navigator.preview(
-            float(payload['x']), float(payload['y']),
-            pose=info.get('pose') if info.get('active') else None, map_key=map_key,
-            floor=[feature['geometry'] for feature in user_map['features']
-                   if (feature.get('properties') or {}).get('role') == 'walkable_area'],
-            blocked=[feature['geometry'] for feature in zones['features']
-                     if feature['properties'].get('behavior') == 'restricted'],
-            plan=self.bridge.plan_path, busy=busy)
+        try:
+            return self.navigator.preview(
+                float(payload['x']), float(payload['y']),
+                pose=info.get('pose') if info.get('active') else None, map_key=map_key,
+                floor=[feature['geometry'] for feature in user_map['features']
+                       if (feature.get('properties') or {}).get('role') == 'walkable_area'],
+                blocked=[feature['geometry'] for feature in zones['features']
+                         if feature['properties'].get('behavior') == 'restricted'],
+                plan=self.bridge.plan_path, busy=busy)
+        except NavigationError as error:
+            # The owner reads a plain reason; the robot log keeps the planner's own.
+            if error.__cause__ is not None:
+                self._warn(f'Destination preview: {error.__cause__}')
+            raise
 
     def wait_seconds(self, elapsed):
         """Poll fast only while manual input keeps arriving."""

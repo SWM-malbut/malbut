@@ -38,6 +38,9 @@ LOAD_MAP_SERVICE = '/malbut/localization/load_map'
 # The web map screen's destination preview plans with Nav2 before anything moves.
 PLAN_ACTION = '/compute_path_to_pose'
 PLAN_TIMEOUT_S = 5.0
+# The planner Nav2's navigate_to_pose tree uses. planner_server also loads person
+# following's planner, and with two loaded it refuses a request that names none.
+PLAN_PLANNER_ID = 'GridBased'
 START_MAPPING_SERVICE = '/malbut/localization/start_mapping'
 LOCALIZATION_MODES = {'MAPPING': 'mapping', 'LOCALIZATION': 'navigation'}
 # manual_drive input: bounded by the vendor driver's /cmd_vel limits (m/s, m/s, rad/s).
@@ -875,6 +878,7 @@ class RosBridge:
             goal.goal.pose.orientation.z = math.sin(yaw / 2.0)
             goal.goal.pose.orientation.w = math.cos(yaw / 2.0)
             goal.use_start = False  # From where the robot is now.
+            goal.planner_id = PLAN_PLANNER_ID
             self.planner.send_goal_async(goal).add_done_callback(accepted)
 
         self.call(send)
