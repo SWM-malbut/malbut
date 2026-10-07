@@ -105,6 +105,12 @@ type BeforeInstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 };
 
+function mapFrameStyle(snapshot: RobotSnapshot | null): React.CSSProperties {
+  const geometry = snapshot?.map?.geometry;
+  const ratio = geometry && geometry.width > 0 && geometry.height > 0 ? geometry.width / geometry.height : 0;
+  return ratio > 0 && Number.isFinite(ratio) ? ({ "--map-ratio": ratio } as React.CSSProperties) : {};
+}
+
 function HomeMapSummary({
   device,
   onOpenMap,
@@ -201,7 +207,9 @@ function HomeMapSummary({
             <b aria-label="말벗 현재 위치" />
           </span>
         ) : device && revision ? (
-          <>
+          // The image and its rooms, zones and marker share one box with the map's own
+          // proportions, so percentage positions land on the drawn map, not the card.
+          <span className="homecam-home-map-frame" style={mapFrameStyle(robotSnapshot)}>
             <Image
               src={`/api/devices/${encodeURIComponent(device.id)}/robot/map?revision=${encodeURIComponent(revision)}`}
               alt="저장된 우리 집 지도"
@@ -210,7 +218,7 @@ function HomeMapSummary({
               sizes="376px"
             />
             <RobotMapSummaryOverlay snapshot={robotSnapshot} semantics={semantics} />
-          </>
+          </span>
         ) : (
           <span className="ui-hint">저장된 지도를 확인하고 있어요</span>
         )}

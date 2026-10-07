@@ -44,8 +44,8 @@ test("virtual walls remain compatible with the semantic polygon contract", async
   assert.match(panel, /wall_endpoints/);
   assert.match(panel, /wall_width_m/);
   assert.match(panel, /virtualWallRing/);
-  assert.match(panel, /type: "wall-endpoint"/);
-  assert.match(panel, /<line/);
+  assert.match(panel, /type: "wall-point"/);
+  assert.match(panel, /<polyline/);
   assert.match(panel, /가상 벽/);
   assert.match(panel, /properties\.behavior = "restricted"/);
 });

@@ -2547,6 +2547,15 @@ a:focus-visible {
 .homecam-dashboard-shell .robot-map-card.mode-zones .robot-map-virtual-wall-hit:active { cursor: grabbing; }
 .homecam-dashboard-shell .robot-map-card.mode-zones .robot-map-virtual-wall:not(.is-selected) { opacity: .8; }
 .homecam-dashboard-shell .robot-map-card.mode-zones .robot-map-virtual-wall-hit:hover + .robot-map-virtual-wall { opacity: 1; stroke-width: 5px; }
+.homecam-dashboard-shell .robot-map-virtual-wall,
+.homecam-dashboard-shell .robot-map-virtual-wall-hit { fill: none; stroke-linejoin: round; }
+/* 구역 편집 › 가상 벽 긋기 (목업 21번): the bend reads like a room split line's. */
+.homecam-dashboard-shell .robot-map-draw-hint {
+  position: absolute; left: 12px; right: 12px; bottom: 10px; z-index: 6; pointer-events: none;
+  padding: 6px 10px; border-radius: 8px; color: var(--ui-accent-strong); background: var(--ui-accent-soft);
+  font-size: 0.75rem; font-weight: 700;
+}
+.ui-map-wall-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; }
 .homecam-dashboard-shell .robot-map-virtual-wall.is-selected {
   stroke-width: 6px;
   filter: drop-shadow(0 1px 1px rgb(92 26 19 / .35)) drop-shadow(0 0 1.6px rgb(255 255 255 / .92));
@@ -2616,6 +2625,8 @@ a:focus-visible {
 }
 
 .homecam-dashboard-shell .robot-map-virtual-wall-handle:active { cursor: grabbing; }
+.homecam-dashboard-shell .robot-map-virtual-wall-handle.is-corner { fill: #e07a28; }
+.homecam-dashboard-shell .robot-map-virtual-wall-handle.is-bend { fill: #fff; stroke: #e07a28; stroke-width: .42; }
 .homecam-dashboard-shell .robot-map-zone-goal {
   fill: #3979d6;
   stroke: #fff;
@@ -2945,6 +2956,19 @@ a:focus-visible {
 }
 
 .homecam-dashboard-shell .homecam-home-map-preview img { object-fit: contain; }
+/* The largest box with the map's proportions that fits the card (like object-fit: contain). */
+.homecam-dashboard-shell .homecam-home-map-preview { container-type: size; }
+.homecam-dashboard-shell .homecam-home-map-frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.homecam-dashboard-shell .homecam-home-map-frame[style*="--map-ratio"] {
+  width: min(100cqw, 100cqh * var(--map-ratio));
+  height: auto;
+  aspect-ratio: var(--map-ratio);
+}
 .homecam-dashboard-shell .homecam-home-map-preview .robot-map-home-semantics { z-index: 2; }
 .homecam-dashboard-shell .homecam-home-map-preview .robot-map-room-label.is-home-summary {
   z-index: 4;

@@ -79,14 +79,21 @@ type RoomTool = "select" | "split" | "merge";
 type SplitLine = Array<[number, number]>;
 type SplitValidation = "idle" | "ready" | "checking" | "valid" | "invalid";
 type ZoneBehavior = "restricted" | "avoid" | "allow";
-type ZoneCreateMode = "closed" | "menu" | "room";
+type ZoneCreateMode = "closed" | "menu" | "room" | "wall";
 type ZoneBounds = { minX: number; maxX: number; minY: number; maxY: number };
 type PolygonCoordinates = Array<Array<[number, number]>>;
 type ZoneDrag =
-  | { type: "move"; zoneId: string; origin: [number, number]; geometry: GeoFeature["geometry"]; preferredGoal: [number, number] | null; wallEndpoints: [[number, number], [number, number]] | null }
+  | { type: "move"; zoneId: string; origin: [number, number]; geometry: GeoFeature["geometry"]; preferredGoal: [number, number] | null; wallPoints: Array<[number, number]> | null }
   | { type: "corner"; zoneId: string; opposite: [number, number] }
   | { type: "edge"; zoneId: string; side: keyof ZoneBounds; bounds: ZoneBounds }
-  | { type: "wall-endpoint"; zoneId: string; endpointIndex: 0 | 1; opposite: [number, number]; width: number };
+  | { type: "wall-point"; zoneId: string; pointIndex: number; points: Array<[number, number]>; width: number };
+
+// 구역 편집 › 가상 벽 (목업 21번): drawn like a room split line, 2 points or one bend.
+const WALL_SNAP_M = 0.25;
+const MIN_WALL_LENGTH_M = 0.4;
+const DEFAULT_WALL_WIDTH_M = 0.12;
+const MIN_WALL_AREA_M2 = 0.02;
+const MIN_ZONE_AREA_M2 = 0.1;
 
 type GeoFeature = {
   type: "Feature";
@@ -162,6 +169,10 @@ export function RobotMapPanel({
   const [draggingZone, setDraggingZone] = useState<ZoneDrag | null>(null);
   const [newZoneBehavior, setNewZoneBehavior] = useState<ZoneBehavior>("restricted");
   const [zoneCreateMode, setZoneCreateMode] = useState<ZoneCreateMode>("closed");
+  // 가상 벽 긋기: the first tapped point waits for the second; walls drawn in this session
+  // can be undone or cleared like room split lines.
+  const [pendingWallPoint, setPendingWallPoint] = useState<[number, number] | null>(null);
+  const [drawnWallIds, setDrawnWallIds] = useState<string[]>([]);
   const [semanticRefresh, setSemanticRefresh] = useState(0);
   // 실로봇 방 순찰의 꼼꼼함(0 빠르게 · 1 보통 · 2 꼼꼼히), 목업 17번.
   const [patrolLevel, setPatrolLevel] = useState(1);
@@ -372,8 +383,8 @@ export function RobotMapPanel({
   const mergeTarget = roomDrafts.find((room) => featureId(room) === mergeTargetId) ?? null;
   const selectedZone = zoneDrafts.find((zone) => featureId(zone) === selectedZoneId) ?? null;
   const selectedZoneRing = selectedZone ? polygonOuterRing(selectedZone) : null;
-  const selectedWallEndpoints = selectedZone ? virtualWallEndpoints(selectedZone) : null;
-  const selectedZoneBounds = !selectedWallEndpoints && selectedZoneRing && isRectangleRing(selectedZoneRing)
+  const selectedWallPoints = selectedZone ? virtualWallPoints(selectedZone) : null;
+  const selectedZoneBounds = !selectedWallPoints && selectedZoneRing && isRectangleRing(selectedZoneRing)
     ? rectangleBounds(selectedZoneRing)
     : null;
   const walkableArea = featuresOf(semantics?.userMap)
@@ -471,6 +482,35 @@ export function RobotMapPanel({
     }
   }, [device]);
 
+  const placeWallPoint = (clicked: [number, number]) => {
+    const resolution = snapshot?.map?.geometry.resolution;
+    if (!walkableArea || !resolution) return;
+    // Within 25 cm of a wall the point sits on the wall, like a room split line.
+    const point = snapToRoomWall(clicked, walkableArea.geometry, WALL_SNAP_M) ?? clicked;
+    if (!pendingWallPoint) {
+      setPendingWallPoint(point);
+      setNotice("");
+      return;
+    }
+    const points: Array<[number, number]> = [pendingWallPoint, point];
+    if (wallLength(points) < MIN_WALL_LENGTH_M) {
+      setNotice("가상 벽은 40cm 이상 길게 그어 주세요.");
+      return;
+    }
+    const zone = createVirtualWallFeature(
+      points, `가상 벽 ${zoneDrafts.filter(isVirtualWall).length + 1}`, DEFAULT_WALL_WIDTH_M);
+    const error = zoneShapeError(polygonOuterRing(zone) ?? [], walkableArea, resolution, MIN_WALL_AREA_M2);
+    if (error) {
+      setNotice(error);
+      return;
+    }
+    setZoneDrafts((current) => [...current, zone]);
+    setDrawnWallIds((current) => [...current, featureId(zone)]);
+    setSelectedZoneId(featureId(zone));
+    setPendingWallPoint(null);
+    setNotice("");
+  };
+
   const selectDestination = (event: React.MouseEvent<HTMLDivElement>) => {
     if (suppressMapClick.current) {
       suppressMapClick.current = false;
@@ -537,6 +577,10 @@ export function RobotMapPanel({
       return;
     }
     if (mapMode === "zones") {
+      if (zoneCreateMode === "wall") {
+        placeWallPoint([roundMapCoordinate(x), roundMapCoordinate(y)]);
+        return;
+      }
       if (zoneGoalMode && selectedZone) {
         if (!featureContains(selectedZone, x, y)) {
           setNotice("대표 위치는 선택한 구역 안에 지정하세요.");
@@ -719,26 +763,38 @@ export function RobotMapPanel({
     setNotice("새 구역을 만들었습니다. 지도에서 끌거나 모서리와 변을 움직여 크기를 조절하세요.");
   };
 
-  const addVirtualWall = () => {
-    if (!walkableArea) {
-      setNotice("지도의 주행 가능 영역을 확인하지 못했습니다.");
-      return;
-    }
-    const wall = defaultVirtualWall(walkableArea, zoneDrafts.length);
-    if (!wall) {
-      setNotice("가상 벽을 배치할 수 있는 열린 공간이 없습니다.");
-      return;
-    }
-    const zone = createVirtualWallFeature(
-      wall.endpoints,
-      `가상 벽 ${zoneDrafts.filter(isVirtualWall).length + 1}`,
-      wall.width,
-    );
-    setZoneDrafts((current) => [...current, zone]);
-    setSelectedZoneId(featureId(zone));
+  const toggleWallDrawing = () => {
+    setZoneCreateMode((current) => current === "wall" ? "closed" : "wall");
+    setPendingWallPoint(null);
+    setDrawnWallIds([]);
     setZoneGoalMode(false);
+    setNotice("");
+  };
+
+  const undoWallPoint = () => {
+    if (pendingWallPoint) {
+      setPendingWallPoint(null);
+      return;
+    }
+    const last = drawnWallIds.at(-1);
+    if (!last) return;
+    setZoneDrafts((current) => current.filter((zone) => featureId(zone) !== last));
+    setDrawnWallIds((current) => current.slice(0, -1));
+    setSelectedZoneId((current) => current === last ? "" : current);
+  };
+
+  const clearDrawnWalls = () => {
+    const drawn = new Set(drawnWallIds);
+    setZoneDrafts((current) => current.filter((zone) => !drawn.has(featureId(zone))));
+    setDrawnWallIds([]);
+    setPendingWallPoint(null);
+    setSelectedZoneId((current) => drawn.has(current) ? "" : current);
+  };
+
+  const finishWallDrawing = () => {
     setZoneCreateMode("closed");
-    setNotice("가상 벽을 만들었습니다. 선을 끌어 이동하거나 양 끝점을 움직여 길이와 각도를 조절하세요.");
+    setPendingWallPoint(null);
+    setDrawnWallIds([]);
   };
 
   const addRoomAsZone = (room: GeoFeature) => {
@@ -786,15 +842,18 @@ export function RobotMapPanel({
   const saveZones = () => {
     if (!semantics || !walkableArea) return;
     const normalized = zoneDrafts.map(normalizeZoneFeature);
-    const invalid = normalized.find((zone) => zoneGeometryValidationError(
-      zone.geometry,
-      walkableArea,
-      snapshot?.map?.geometry.resolution ?? 0.05,
-      isVirtualWall(zone) ? 0.02 : 0.1,
-    ));
+    // Zones may cross walls (목업 21번): walls stay impassable, so only the shape is checked.
+    const invalid = normalized
+      .map((zone) => [zone, zoneShapeErrorOf(
+        zone.geometry,
+        walkableArea,
+        snapshot?.map?.geometry.resolution ?? 0.05,
+        isVirtualWall(zone) ? MIN_WALL_AREA_M2 : MIN_ZONE_AREA_M2,
+      )] as const)
+      .find(([, error]) => error);
     if (invalid) {
-      setSelectedZoneId(featureId(invalid));
-      setNotice(`${featureName(invalid, "구역")}의 경계가 주행 가능한 지도 안에 있는지 확인하세요.`);
+      setSelectedZoneId(featureId(invalid[0]));
+      setNotice(`${featureName(invalid[0], "구역")}: ${invalid[1]}`);
       return;
     }
     void postSpaceEdit("space-drafts", {
@@ -919,15 +978,15 @@ export function RobotMapPanel({
             zone,
             draggingZone.geometry,
             draggingZone.preferredGoal,
-            draggingZone.wallEndpoints,
+            draggingZone.wallPoints,
             dx,
             dy,
           );
-          if (zoneGeometryValidationError(
+          if (zoneShapeErrorOf(
             moved.geometry,
             walkableArea,
             geometry.resolution,
-            isVirtualWall(moved) ? 0.02 : 0.1,
+            isVirtualWall(moved) ? MIN_WALL_AREA_M2 : MIN_ZONE_AREA_M2,
           )) return zone;
           return moved;
         } else if (draggingZone.type === "corner") {
@@ -937,15 +996,18 @@ export function RobotMapPanel({
           if (bounds.minX >= bounds.maxX || bounds.minY >= bounds.maxY) return zone;
           ring = rectangleRing(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
         } else {
-          const endpoints: [[number, number], [number, number]] = draggingZone.endpointIndex === 0
-            ? [point, draggingZone.opposite]
-            : [draggingZone.opposite, point];
-          if (wallLength(endpoints) < 0.4) return zone;
-          ring = virtualWallRing(endpoints, draggingZone.width);
-          if (zoneRingValidationError(ring, walkableArea, geometry.resolution, 0.02)) return zone;
-          return withVirtualWall(zone, endpoints, draggingZone.width);
+          const { pointIndex } = draggingZone;
+          const points = draggingZone.points.map((value) => [...value] as [number, number]);
+          const endpoint = pointIndex === 0 || pointIndex === points.length - 1;
+          points[pointIndex] = endpoint
+            ? snapToRoomWall(point, walkableArea.geometry, WALL_SNAP_M) ?? point
+            : wallBendPoint(point, points[pointIndex - 1], points[pointIndex + 1], walkableArea.geometry);
+          if (wallLength(points) < MIN_WALL_LENGTH_M) return zone;
+          ring = virtualWallRing(points, draggingZone.width);
+          if (zoneShapeError(ring, walkableArea, geometry.resolution, MIN_WALL_AREA_M2)) return zone;
+          return withVirtualWall(zone, points, draggingZone.width);
         }
-        if (zoneRingValidationError(ring, walkableArea, geometry.resolution)) return zone;
+        if (zoneShapeError(ring, walkableArea, geometry.resolution)) return zone;
         return withZoneRing(zone, ring);
       }));
     };
@@ -971,6 +1033,8 @@ export function RobotMapPanel({
     setZoneGoalMode(false);
     setDraggingZone(null);
     setZoneCreateMode("closed");
+    setPendingWallPoint(null);
+    setDrawnWallIds([]);
     clearSplitDraft(setSplitLines, setPendingSplitPoint, setSplitValidation, setSplitValidationMessage);
   };
 
@@ -1161,7 +1225,8 @@ export function RobotMapPanel({
           sizes="(max-width: 820px) 100vw, 70vw"
           priority
         />
-        {(roomDrafts.length > 0 || renderedZoneFeatures.length > 0 || splitLines.length > 0 || pendingSplitPoint) && (
+        {(roomDrafts.length > 0 || renderedZoneFeatures.length > 0 || splitLines.length > 0 || pendingSplitPoint ||
+          (zoneCreateMode === "wall" && pendingWallPoint)) && (
           <svg
             className={`robot-map-semantics ${mapMode === "rooms" || mapMode === "zones" ? "is-interactive" : ""}`}
             viewBox="0 0 100 100"
@@ -1185,27 +1250,24 @@ export function RobotMapPanel({
               const path = featureGeometryPath(zone, snapshot.map!.geometry);
               const behavior = zoneBehaviorOf(zone);
               const id = featureId(zone);
-              const wall = virtualWallEndpoints(zone);
+              const wall = virtualWallPoints(zone);
               if (!path) return null;
               if (wall) {
-                const start = worldToPercent(wall[0][0], wall[0][1], snapshot.map!.geometry);
-                const end = worldToPercent(wall[1][0], wall[1][1], snapshot.map!.geometry);
+                const points = worldPointsToPolyline(wall, snapshot.map!.geometry);
                 return (
                   <g key={id}>
-                    <line
+                    <polyline
                       className="robot-map-virtual-wall-hit"
-                      x1={start.left}
-                      y1={start.top}
-                      x2={end.left}
-                      y2={end.top}
+                      points={points}
                       onClick={(event) => {
-                        if (mapMode !== "zones") return;
+                        // While drawing walls, a tap on an existing one places the next point.
+                        if (mapMode !== "zones" || zoneCreateMode === "wall") return;
                         event.stopPropagation();
                         setSelectedZoneId(id);
                         setZoneGoalMode(false);
                       }}
                       onPointerDown={(event) => {
-                        if (mapMode !== "zones" || !isOwner || busy) return;
+                        if (mapMode !== "zones" || zoneCreateMode === "wall" || !isOwner || busy) return;
                         const canvas = mapCanvasRef.current;
                         if (!canvas) return;
                         event.preventDefault();
@@ -1220,16 +1282,13 @@ export function RobotMapPanel({
                           origin: pointerToWorld(event.clientX, event.clientY, canvas, snapshot.map!.geometry),
                           geometry: cloneFeature(zone).geometry,
                           preferredGoal: null,
-                          wallEndpoints: wall.map((point) => [...point]) as [[number, number], [number, number]],
+                          wallPoints: wall.map((point) => [...point] as [number, number]),
                         });
                       }}
                     />
-                    <line
+                    <polyline
                       className={`robot-map-virtual-wall ${mapMode === "zones" && selectedZoneId === id ? "is-selected" : ""}`}
-                      x1={start.left}
-                      y1={start.top}
-                      x2={end.left}
-                      y2={end.top}
+                      points={points}
                       stroke={zoneColor(zone)}
                     />
                   </g>
@@ -1244,13 +1303,13 @@ export function RobotMapPanel({
                   fillRule="evenodd"
                   stroke={zoneColor(zone)}
                   onClick={(event) => {
-                    if (mapMode !== "zones") return;
+                    if (mapMode !== "zones" || zoneCreateMode === "wall") return;
                     event.stopPropagation();
                     setSelectedZoneId(id);
                     setZoneGoalMode(false);
                   }}
                   onPointerDown={(event) => {
-                    if (mapMode !== "zones" || !isOwner || busy) return;
+                    if (mapMode !== "zones" || zoneCreateMode === "wall" || !isOwner || busy) return;
                     const ring = polygonOuterRing(zone);
                     const canvas = mapCanvasRef.current;
                     if (!ring || !canvas) return;
@@ -1268,7 +1327,7 @@ export function RobotMapPanel({
                       preferredGoal: validPoint(zone.properties.preferred_goal)
                         ? [...zone.properties.preferred_goal] as [number, number]
                         : null,
-                      wallEndpoints: null,
+                      wallPoints: null,
                     });
                   }}
                 />
@@ -1415,40 +1474,89 @@ export function RobotMapPanel({
                 </g>
               );
             })()}
-            {mapMode === "zones" && selectedZone && selectedWallEndpoints && selectedWallEndpoints.map((endpoint, endpointIndex) => {
-              const mapped = worldToPercent(endpoint[0], endpoint[1], snapshot.map!.geometry);
-              const opposite = selectedWallEndpoints[endpointIndex === 0 ? 1 : 0];
+            {mapMode === "zones" && selectedZone && selectedWallPoints && (() => {
+              const id = featureId(selectedZone);
+              const width = virtualWallWidth(selectedZone);
+              const grab = (event: React.PointerEvent<SVGCircleElement>) => {
+                if (!isOwner || busy) return false;
+                event.preventDefault();
+                event.stopPropagation();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                suppressMapClick.current = true;
+                return true;
+              };
+              const center: [number, number] = [
+                (selectedWallPoints[0][0] + selectedWallPoints[selectedWallPoints.length - 1][0]) / 2,
+                (selectedWallPoints[0][1] + selectedWallPoints[selectedWallPoints.length - 1][1]) / 2,
+              ];
+              const mappedCenter = worldToPercent(center[0], center[1], snapshot.map!.geometry);
               return (
-                <circle
-                  key={`wall-endpoint-${endpointIndex}`}
-                  className="robot-map-virtual-wall-handle"
-                  cx={mapped.left}
-                  cy={mapped.top}
-                  r={0.86}
-                  onClick={(event) => event.stopPropagation()}
-                  onPointerDown={(event) => {
-                    if (!isOwner || busy) return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                    suppressMapClick.current = true;
-                    setDraggingZone({
-                      type: "wall-endpoint",
-                      zoneId: featureId(selectedZone),
-                      endpointIndex: endpointIndex as 0 | 1,
-                      opposite: [...opposite] as [number, number],
-                      width: virtualWallWidth(selectedZone),
-                    });
-                  }}
-                />
+                <g className="robot-map-wall-handles">
+                  {selectedWallPoints.map((point, pointIndex) => {
+                    const mapped = worldToPercent(point[0], point[1], snapshot.map!.geometry);
+                    const endpoint = pointIndex === 0 || pointIndex === selectedWallPoints.length - 1;
+                    return (
+                      <circle
+                        key={`wall-point-${pointIndex}`}
+                        className={`robot-map-virtual-wall-handle ${endpoint ? "" : "is-corner"}`}
+                        cx={mapped.left}
+                        cy={mapped.top}
+                        r={0.86}
+                        onClick={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => {
+                          if (!grab(event)) return;
+                          setDraggingZone({
+                            type: "wall-point",
+                            zoneId: id,
+                            pointIndex,
+                            points: selectedWallPoints.map((value) => [...value] as [number, number]),
+                            width,
+                          });
+                        }}
+                      />
+                    );
+                  })}
+                  {selectedWallPoints.length === 2 && (
+                    // Dragging the middle point bends a straight wall into ㄱ, like a split line.
+                    <circle
+                      className="robot-map-virtual-wall-handle is-bend"
+                      cx={mappedCenter.left}
+                      cy={mappedCenter.top}
+                      r={0.7}
+                      onClick={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => {
+                        if (!grab(event)) return;
+                        const bent: Array<[number, number]> = [selectedWallPoints[0], center, selectedWallPoints[1]];
+                        setZoneDrafts((current) => current.map((zone) => (
+                          featureId(zone) === id ? withVirtualWall(zone, bent, width) : zone)));
+                        setDraggingZone({ type: "wall-point", zoneId: id, pointIndex: 1, points: bent, width });
+                      }}
+                    />
+                  )}
+                </g>
               );
-            })}
+            })()}
+            {mapMode === "zones" && zoneCreateMode === "wall" && pendingWallPoint && (() => {
+              const mapped = worldToPercent(pendingWallPoint[0], pendingWallPoint[1], snapshot.map!.geometry);
+              return <circle className="robot-map-split-handle is-pending" cx={mapped.left} cy={mapped.top} r={0.9} />;
+            })()}
             {mapMode === "zones" && selectedZone && validPoint(selectedZone.properties.preferred_goal) && (() => {
               const goal = selectedZone.properties.preferred_goal;
               const mapped = worldToPercent(goal[0], goal[1], snapshot.map!.geometry);
               return <circle className="robot-map-zone-goal" cx={mapped.left} cy={mapped.top} r={0.92} />;
             })()}
           </svg>
+        )}
+        {mapMode === "zones" && zoneCreateMode === "wall" && (
+          <span className="robot-map-draw-hint" role="status">
+            {pendingWallPoint
+              ? "끝점을 누르세요."
+              : selectedWallPoints?.length === 3 && drawnWallIds.includes(selectedZoneId)
+                ? "ㄱ자로 꺾었어요. 점을 끌어 계속 고칠 수 있어요."
+                : drawnWallIds.length > 0
+                  ? "가상 벽이 생겼어요. 가운데 점을 끌면 꺾여요."
+                  : "시작점을 누르세요. 벽에서 25cm 안이면 벽에 붙어요."}
+          </span>
         )}
         {roomDrafts.map((room) => {
           const label = featureLabelPoint(room, snapshot.map!.geometry);
@@ -1820,7 +1928,7 @@ export function RobotMapPanel({
                     </label>
                     <div className="ui-map-goal-row">
                       <span><strong>{isVirtualWall(selectedZone) ? "길이" : "크기"}</strong></span>
-                      <span>{isVirtualWall(selectedZone) ? formatMeters(wallLength(virtualWallEndpoints(selectedZone)!)) : formatSquareMeters(zoneArea(selectedZone))}</span>
+                      <span>{isVirtualWall(selectedZone) ? formatMeters(wallLength(virtualWallPoints(selectedZone)!)) : formatSquareMeters(zoneArea(selectedZone))}</span>
                     </div>
                     {!isVirtualWall(selectedZone) && (
                       <label className="ui-field ui-map-color">
@@ -1840,7 +1948,7 @@ export function RobotMapPanel({
                       </div>
                     )}
                     <p className="ui-note">{isVirtualWall(selectedZone)
-                      ? "선을 끌어 옮기고, 양 끝 점을 끌어 길이와 각도를 바꿔요."
+                      ? "선을 끌어 옮기고, 양 끝 점을 끌어 길이와 각도를 바꿔요. 가운데 점을 끌면 ㄱ자로 꺾여요."
                       : "구역 안을 끌어 옮기고, 네 모서리와 변의 점을 끌어 크기를 바꿔요."}</p>
                     <button type="button" className="ui-button is-danger-line" onClick={removeSelectedZone} disabled={busy}>{isVirtualWall(selectedZone) ? "이 가상 벽 삭제" : "이 구역 삭제"}</button>
                   </>
@@ -1864,7 +1972,13 @@ export function RobotMapPanel({
                 </div>
                 <div className="ui-map-create">
                   <button type="button" className="ui-button" onClick={addDefaultZone} disabled={!isOwner || busy}>사각형 구역</button>
-                  <button type="button" className="ui-button" onClick={addVirtualWall} disabled={!isOwner || busy}>가상 벽</button>
+                  <button
+                    type="button"
+                    className={`ui-button ${zoneCreateMode === "wall" ? "is-selected" : ""}`}
+                    aria-pressed={zoneCreateMode === "wall"}
+                    onClick={toggleWallDrawing}
+                    disabled={!isOwner || busy}
+                  >가상 벽 긋기</button>
                   <button
                     type="button"
                     className={`ui-button ${zoneCreateMode === "room" ? "is-selected" : ""}`}
@@ -1884,8 +1998,22 @@ export function RobotMapPanel({
                       </button>
                     ))}
                   </div>
+                ) : zoneCreateMode === "wall" ? (
+                  <>
+                    <p className="ui-note">가상 벽: 시작점과 끝점을 누르면 선이 생겨요. 벽에서 25cm 안을 누르면 벽에 붙어요. 선 가운데 점을 끌면 ㄱ자로 꺾여요. 여러 개를 이어서 그을 수 있어요.</p>
+                    <div className="ui-map-wall-actions">
+                      <button type="button" className="ui-button ui-small" onClick={undoWallPoint}
+                        disabled={!pendingWallPoint && drawnWallIds.length === 0}>마지막 선 되돌리기</button>
+                      <button type="button" className="ui-button ui-small" onClick={clearDrawnWalls}
+                        disabled={!pendingWallPoint && drawnWallIds.length === 0}>모두 지우기</button>
+                      <button type="button" className="ui-button ui-small is-strong" onClick={finishWallDrawing}>긋기 끝</button>
+                    </div>
+                  </>
                 ) : (
-                  <p className="ui-note">가상 벽: 출입구나 좁은 통로를 선으로 막아요. 말벗은 이 선을 넘어가지 않아요.</p>
+                  <>
+                    <p className="ui-note">가상 벽: 출입구나 좁은 통로를 선으로 막아요. 말벗은 이 선을 넘어가지 않아요.</p>
+                    <p className="ui-note">사각형 구역은 벽을 넘어도 괜찮아요. 벽은 원래 지나갈 수 없는 곳이라 말벗의 주행은 그대로예요. 두 방에 걸친 곳도 한 번에 그릴 수 있어요.</p>
+                  </>
                 )}
               </article>
 
@@ -2188,18 +2316,13 @@ export function RobotMapSummaryOverlay({
           </defs>
           {zones.map((zone) => {
             const id = featureId(zone);
-            const wall = virtualWallEndpoints(zone);
+            const wall = virtualWallPoints(zone);
             if (wall) {
-              const start = worldToPercent(wall[0][0], wall[0][1], map.geometry);
-              const end = worldToPercent(wall[1][0], wall[1][1], map.geometry);
               return (
-                <line
+                <polyline
                   key={id}
                   className="robot-map-virtual-wall"
-                  x1={start.left}
-                  y1={start.top}
-                  x2={end.left}
-                  y2={end.top}
+                  points={worldPointsToPolyline(wall, map.geometry)}
                   stroke={zoneColor(zone)}
                 />
               );
@@ -2767,16 +2890,14 @@ function defaultZoneRing(boundary: GeoFeature, zoneIndex: number) {
 }
 
 function isVirtualWall(zone: GeoFeature) {
-  return zone.properties.geometry_kind === "virtual_wall" && virtualWallEndpoints(zone) !== null;
+  return zone.properties.geometry_kind === "virtual_wall" && virtualWallPoints(zone) !== null;
 }
 
-function virtualWallEndpoints(zone: GeoFeature): [[number, number], [number, number]] | null {
+/** A wall's centre line: its two ends, or its two ends and one bend (목업 21번). */
+function virtualWallPoints(zone: GeoFeature): Array<[number, number]> | null {
   const value = zone.properties.wall_endpoints;
-  if (!Array.isArray(value) || value.length !== 2 || !validPoint(value[0]) || !validPoint(value[1])) return null;
-  return [
-    [...value[0]] as [number, number],
-    [...value[1]] as [number, number],
-  ];
+  if (!Array.isArray(value) || value.length < 2 || value.length > 3 || !value.every(validPoint)) return null;
+  return value.map((point) => [...point] as [number, number]);
 }
 
 function virtualWallWidth(zone: GeoFeature) {
@@ -2786,58 +2907,65 @@ function virtualWallWidth(zone: GeoFeature) {
     : 0.12;
 }
 
-function wallLength(endpoints: [[number, number], [number, number]]) {
-  return Math.hypot(
-    endpoints[1][0] - endpoints[0][0],
-    endpoints[1][1] - endpoints[0][1],
+/** Near a right-angle corner the bend snaps to it (ㄱ, like a split line); elsewhere it follows. */
+function wallBendPoint(
+  point: [number, number],
+  previous: [number, number],
+  next: [number, number],
+  geometry: GeoFeature["geometry"],
+): [number, number] {
+  const corner = orthogonalCorner(point, previous, next, geometry);
+  const apart = Math.min(
+    Math.hypot(corner[0] - previous[0], corner[1] - previous[1]),
+    Math.hypot(corner[0] - next[0], corner[1] - next[1]),
   );
+  return apart >= 0.1 && Math.hypot(point[0] - corner[0], point[1] - corner[1]) <= WALL_SNAP_M
+    ? corner
+    : point;
 }
 
-function virtualWallRing(
-  endpoints: [[number, number], [number, number]],
-  width: number,
-): Array<[number, number]> {
-  const [first, second] = endpoints;
-  const length = Math.max(wallLength(endpoints), Number.EPSILON);
-  const offsetX = -(second[1] - first[1]) / length * width / 2;
-  const offsetY = (second[0] - first[0]) / length * width / 2;
-  const startLeft: [number, number] = [roundMapCoordinate(first[0] + offsetX), roundMapCoordinate(first[1] + offsetY)];
-  const endLeft: [number, number] = [roundMapCoordinate(second[0] + offsetX), roundMapCoordinate(second[1] + offsetY)];
-  const endRight: [number, number] = [roundMapCoordinate(second[0] - offsetX), roundMapCoordinate(second[1] - offsetY)];
-  const startRight: [number, number] = [roundMapCoordinate(first[0] - offsetX), roundMapCoordinate(first[1] - offsetY)];
-  return [startLeft, endLeft, endRight, startRight, startLeft];
+function wallLength(points: Array<[number, number]>) {
+  let length = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    length += Math.hypot(points[index][0] - points[index - 1][0], points[index][1] - points[index - 1][1]);
+  }
+  return length;
 }
 
-function defaultVirtualWall(boundary: GeoFeature, zoneIndex: number) {
-  const points = geometryRings(boundary.geometry).flat().filter(validPoint);
-  if (points.length === 0) return null;
-  const minX = Math.min(...points.map((point) => point[0]));
-  const maxX = Math.max(...points.map((point) => point[0]));
-  const minY = Math.min(...points.map((point) => point[1]));
-  const maxY = Math.max(...points.map((point) => point[1]));
-  const centers: Array<[number, number]> = [[(minX + maxX) / 2, (minY + maxY) / 2]];
-  for (let row = 1; row < 10; row += 1) {
-    for (let column = 1; column < 10; column += 1) {
-      centers.push([
-        minX + (maxX - minX) * column / 10,
-        minY + (maxY - minY) * row / 10,
-      ]);
+/**
+ * The thin restricted Polygon the robot keeps for a wall: the centre line offset by half the
+ * width on both sides, mitred at a bend so the corner stays closed.
+ */
+function virtualWallRing(points: Array<[number, number]>, width: number): Array<[number, number]> {
+  const half = width / 2;
+  const normals = points.slice(1).map((point, index) => {
+    const previous = points[index];
+    const length = Math.max(Math.hypot(point[0] - previous[0], point[1] - previous[1]), Number.EPSILON);
+    return [-(point[1] - previous[1]) / length, (point[0] - previous[0]) / length] as [number, number];
+  });
+  const offset = (index: number, side: 1 | -1): [number, number] => {
+    const point = points[index];
+    let normal = normals[Math.min(index, normals.length - 1)];
+    let scale = half;
+    if (index > 0 && index < points.length - 1) {
+      // Mitre: the average of both normals, lengthened so each side keeps the wall width.
+      const before = normals[index - 1];
+      const after = normals[index];
+      const sum: [number, number] = [before[0] + after[0], before[1] + after[1]];
+      const sumLength = Math.hypot(sum[0], sum[1]);
+      if (sumLength > Number.EPSILON) {
+        normal = [sum[0] / sumLength, sum[1] / sumLength];
+        scale = Math.min(half / Math.max(normal[0] * after[0] + normal[1] * after[1], 0.25), width * 2);
+      }
     }
-  }
-  const width = 0.12;
-  for (const length of [1.4, 1.0, 0.7]) {
-    const candidates = centers.flatMap((center) => [
-      [[center[0] - length / 2, center[1]], [center[0] + length / 2, center[1]]] as [[number, number], [number, number]],
-      [[center[0], center[1] - length / 2], [center[0], center[1] + length / 2]] as [[number, number], [number, number]],
-    ]).filter((endpoints) => !zoneRingValidationError(
-      virtualWallRing(endpoints, width),
-      boundary,
-      0.05,
-      0.02,
-    ));
-    if (candidates.length > 0) return { endpoints: candidates[zoneIndex % candidates.length], width };
-  }
-  return null;
+    return [
+      roundMapCoordinate(point[0] + side * normal[0] * scale),
+      roundMapCoordinate(point[1] + side * normal[1] * scale),
+    ];
+  };
+  const left = points.map((_, index) => offset(index, 1));
+  const right = points.map((_, index) => offset(index, -1)).reverse();
+  return [...left, ...right, left[0]];
 }
 
 function ringSignedMetrics(ring: Array<[number, number]>) {
@@ -2916,13 +3044,13 @@ function createZoneFeature(ring: Array<[number, number]>, name: string, behavior
 }
 
 function createVirtualWallFeature(
-  endpoints: [[number, number], [number, number]],
+  points: Array<[number, number]>,
   name: string,
   width: number,
 ) {
-  const zone = createZoneFeature(virtualWallRing(endpoints, width), name, "restricted");
+  const zone = createZoneFeature(virtualWallRing(points, width), name, "restricted");
   zone.properties.geometry_kind = "virtual_wall";
-  zone.properties.wall_endpoints = endpoints.map((point) => [...point]);
+  zone.properties.wall_endpoints = points.map((point) => [...point]);
   zone.properties.wall_width_m = width;
   zone.properties.color = "#C0402F";
   return zone;
@@ -2938,7 +3066,7 @@ function normalizeZoneFeature(zone: GeoFeature): GeoFeature {
   delete normalized.properties.room_id;
   delete normalized.properties.room_name;
   delete normalized.properties.needs_review;
-  const wall = virtualWallEndpoints(normalized);
+  const wall = virtualWallPoints(normalized);
   if (normalized.properties.geometry_kind === "virtual_wall" && wall) {
     const width = virtualWallWidth(normalized);
     normalized.properties.behavior = "restricted";
@@ -2985,13 +3113,13 @@ function withZoneRing(zone: GeoFeature, ring: Array<[number, number]>): GeoFeatu
 
 function withVirtualWall(
   zone: GeoFeature,
-  endpoints: [[number, number], [number, number]],
+  points: Array<[number, number]>,
   width: number,
 ) {
-  const next = withZoneRing(zone, virtualWallRing(endpoints, width));
+  const next = withZoneRing(zone, virtualWallRing(points, width));
   next.properties.geometry_kind = "virtual_wall";
   next.properties.behavior = "restricted";
-  next.properties.wall_endpoints = endpoints.map((point) => [
+  next.properties.wall_endpoints = points.map((point) => [
     roundMapCoordinate(point[0]),
     roundMapCoordinate(point[1]),
   ]);
@@ -3004,7 +3132,7 @@ function translateZone(
   zone: GeoFeature,
   sourceGeometry: GeoFeature["geometry"],
   preferredGoal: [number, number] | null,
-  wallEndpoints: [[number, number], [number, number]] | null,
+  wallPoints: Array<[number, number]> | null,
   dx: number,
   dy: number,
 ) {
@@ -3023,8 +3151,8 @@ function translateZone(
       roundMapCoordinate(preferredGoal[1] + dy),
     ];
   }
-  if (wallEndpoints) {
-    next.properties.wall_endpoints = wallEndpoints.map(([x, y]) => [
+  if (wallPoints) {
+    next.properties.wall_endpoints = wallPoints.map(([x, y]) => [
       roundMapCoordinate(x + dx),
       roundMapCoordinate(y + dy),
     ]);
@@ -3038,30 +3166,56 @@ function translateZone(
   return next;
 }
 
-function zoneGeometryValidationError(
+/**
+ * What a saved Zone or wall must be (목업 21번): a simple Polygon of some size that touches the
+ * map. It may cross walls: they stay impassable, so the robot drives the same.
+ */
+function zoneShapeErrorOf(
   geometry: GeoFeature["geometry"],
   boundary: GeoFeature,
   resolution: number,
-  minimumArea = 0.1,
+  minimumArea = MIN_ZONE_AREA_M2,
 ) {
   if (geometry.type !== "Polygon") return "구역은 하나의 Polygon이어야 합니다.";
   const polygon = polygonGeometries(geometry)[0];
   if (!polygon) return "구역 경계를 확인할 수 없습니다.";
-  const outerError = zoneRingValidationError(polygon[0], boundary, resolution, minimumArea, false);
-  if (outerError) return outerError;
   for (const ring of polygon.slice(1)) {
     const closed = closeRing(ring);
     if (closed.length < 4 || ringSelfIntersects(closed)) return "구역의 내부 경계를 확인하세요.";
-    for (let index = 1; index < closed.length; index += 1) {
-      if (!segmentInsideBoundary(closed[index - 1], closed[index], boundary.geometry, resolution)) {
-        return "구역 경계 전체가 지도의 주행 가능 영역 안에 있어야 합니다.";
-      }
+  }
+  return zoneShapeError(polygon[0], boundary, resolution, minimumArea, polygon);
+}
+
+function zoneShapeError(
+  ring: Array<[number, number]>,
+  boundary: GeoFeature,
+  resolution: number,
+  minimumArea = MIN_ZONE_AREA_M2,
+  polygon: PolygonCoordinates = [ring],
+) {
+  const closed = closeRing(ring);
+  if (closed.length < 4) return "구역은 세 점 이상이어야 합니다.";
+  if (ringSelfIntersects(closed)) return "구역 경계가 서로 교차할 수 없습니다.";
+  if (Math.abs(ringSignedMetrics(closed).area) < minimumArea) return `구역 면적은 ${minimumArea} m² 이상이어야 합니다.`;
+  if (!zoneTouchesBoundary(polygon, boundary, resolution)) return "구역이 지도 밖에 있어요. 지도 안쪽으로 옮겨 주세요.";
+  return "";
+}
+
+/** True once any part of the Zone lies on the map's walkable floor. */
+function zoneTouchesBoundary(polygon: PolygonCoordinates, boundary: GeoFeature, resolution: number) {
+  const outer = closeRing(polygon[0] ?? []);
+  if (outer.length < 4) return false;
+  if (outer.some((point) => pointInGeometry(point, boundary.geometry))) return true;
+  const rings = [outer, ...polygon.slice(1).map(closeRing)];
+  const bounds = rectangleBounds(outer);
+  const step = Math.max(0.025, resolution / 2);
+  for (let y = bounds.minY + step / 2; y < bounds.maxY; y += step) {
+    for (let x = bounds.minX + step / 2; x < bounds.maxX; x += step) {
+      const point: [number, number] = [x, y];
+      if (pointInPolygon(point, rings) && pointInGeometry(point, boundary.geometry)) return true;
     }
   }
-  if (!zoneInteriorInsideBoundary(polygon, boundary, resolution)) {
-    return "구역 내부에 벽이나 장애물이 포함될 수 없습니다.";
-  }
-  return "";
+  return false;
 }
 
 function zoneRingValidationError(
