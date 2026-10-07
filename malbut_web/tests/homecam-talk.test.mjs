@@ -87,7 +87,7 @@ test("the microphone notice under the switch follows mockup 20", async () => {
   assert.equal(formatTalkRemaining(180_000), "3:00");
   assert.equal(formatTalkRemaining(400), "0:01");
   assert.equal(formatTalkRemaining(-5), "0:00");
-  const base = { phase: "off", remainingMs: 180_000, holder: null, timedOut: false, error: "" };
+  const base = { phase: "off", remainingMs: 180_000, holder: null, ended: null, error: "" };
   assert.equal(talkNote(base), null);
   assert.deepEqual(talkNote({ ...base, phase: "talking", remainingMs: 161_000 }), {
     tone: "info", title: "말하는 중 · 2:41 뒤 자동으로 꺼져요",
@@ -96,9 +96,15 @@ test("the microphone notice under the switch follows mockup 20", async () => {
   assert.equal(talkNote({ ...base, phase: "starting" }).title, "말벗이 말하기를 준비하고 있어요");
   assert.equal(talkNote({ ...base, holder: { name: "민지", self: false } }).title, "민지 님이 말하는 중이에요");
   assert.equal(talkNote({ ...base, holder: { name: "민지", self: true } }).title, "다른 기기에서 말하는 중이에요");
-  assert.equal(talkNote({ ...base, timedOut: true }).title, "3분이 지나 마이크를 껐어요");
+  assert.equal(talkNote({ ...base, ended: "timeout" }).title, "3분이 지나 마이크를 껐어요");
+  assert.deepEqual(talkNote({ ...base, ended: "dropped" }), {
+    tone: "neutral", title: "마이크가 꺼졌어요",
+    text: "화면을 떠났거나 홈캠 연결이 바뀌어 말하기가 끊겼어요. 다시 켜 주세요.",
+  });
+  // A specific failure explains more than the generic stop.
+  assert.equal(talkNote({ ...base, ended: "dropped", error: "말하기 연결이 끊겼어요. 다시 켜 주세요." }).tone, "danger");
   // Someone else talking outranks this screen's older timeout or error.
-  assert.equal(talkNote({ ...base, timedOut: true, error: "x", holder: { name: "민지", self: false } }).title,
+  assert.equal(talkNote({ ...base, ended: "timeout", error: "x", holder: { name: "민지", self: false } }).title,
     "민지 님이 말하는 중이에요");
   assert.deepEqual(talkNote({ ...base, error: "말벗이 말하기를 준비하지 못했어요. 잠시 뒤 다시 켜 주세요." }), {
     tone: "danger", title: "마이크를 켜지 못했어요",
@@ -112,7 +118,7 @@ test("the microphone is a switch that turns itself off, not push-to-talk", async
   assert.doesNotMatch(page, /window\.addEventListener\("(blur|pointerup)"/);
   assert.match(page, /window\.addEventListener\("pagehide", handleRelease\)/);
   assert.match(page, /document\.visibilityState === "hidden"[\s\S]*?releaseTalkLease\(\)/);
-  assert.match(page, /if \(!talking\) return;[\s\S]*?window\.setTimeout\(\(\) => \{[\s\S]*?releaseTalkLease\(\);[\s\S]*?setTalkTimedOut\(true\);[\s\S]*?\}, TALK_LIMIT_MS\)/);
+  assert.match(page, /if \(!talking\) return;[\s\S]*?window\.setTimeout\(\(\) => \{[\s\S]*?releaseTalkLease\(\);[\s\S]*?setTalkEnded\("timeout"\);[\s\S]*?\}, TALK_LIMIT_MS\)/);
   assert.match(page, /talk-lease\?clientId=/);
   assert.match(page, /onTalkChange=\{setLiveTalk\}/);
   assert.match(page, /microphoneNotice && !embedded/);
@@ -120,7 +126,7 @@ test("the microphone is a switch that turns itself off, not push-to-talk", async
   assert.match(page, /const turnSpeakerOn = async \(\) => \{\s*if \(speakerMuted \|\| soundBlocked\) await toggleSpeaker\(\);/);
   assert.match(page, /const toggleTalk = async \(\) => \{[\s\S]*?void turnSpeakerOn\(\);[\s\S]*?await /);
   // The first use reconnects for the microphone, which can mute the video again.
-  assert.match(page, /await turnSpeakerOnRef\.current\(\);\s*await startTalkingRef\.current\(\);/);
+  assert.match(page, /await turnSpeakerOnRef\.current\(\);\s*await runTalkRef\.current\(\);/);
 });
 
 test("the home summary and the 현재 상태 caption say which microphone is which", async () => {
@@ -129,4 +135,26 @@ test("the home summary and the 현재 상태 caption say which microphone is whi
   assert.doesNotMatch(dashboard, /"마이크 켜짐"|"마이크 꺼짐"/);
   assert.match(dashboard, /마이크를 켜면 스피커도 같이 켜져 통화처럼 서로 말할 수 있어요/);
   assert.match(dashboard, /설정 › 홈캠 설정 › 말벗 마이크에서 정해요\(소유자\)/);
+});
+
+test("the first microphone joins the live connection instead of reconnecting", async () => {
+  const [client, page] = await Promise.all([
+    readFile(new URL("../app/lib/kvs-client.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/homecam-app.tsx", import.meta.url), "utf8"),
+  ]);
+  // Audio is negotiated both ways from the start; a later microphone is a replaceTrack.
+  assert.match(client, /peer\.addTransceiver\("audio", \{ direction: "sendrecv" \}\)/);
+  assert.doesNotMatch(client, /addTransceiver\("audio", \{ direction: "recvonly" \}\)/);
+  assert.match(client, /async attachMicrophone\(track\) \{[\s\S]*?await audio\.sender\.replaceTrack\(track\);/);
+  // The viewer tries the live connection first and reconnects only when it cannot.
+  assert.match(page, /if \(connection\?\.attachMicrophone && viewerStateRef\.current === "live"\) \{[\s\S]*?await connection\.attachMicrophone\(track\);\s*return "attached";[\s\S]*?setAttempt\(\(value\) => value \+ 1\);\s*return "reconnecting";/);
+});
+
+test("a microphone that stops on its own always leaves a notice", async () => {
+  const page = await readFile(new URL("../app/components/homecam-app.tsx", import.meta.url), "utf8");
+  // A start dropped by a connection change, unless the switch was turned off meanwhile.
+  assert.match(page, /const outcome = await startTalking\(\);\s*if \(talkRunRef\.current !== run[\s\S]*?if \(outcome === "abandoned"\) \{\s*releaseTalkLease\(\);\s*setTalkEnded\("dropped"\);/);
+  assert.match(page, /talkRunRef\.current \+= 1;\s*talkWantedRef\.current = false;\s*talkStopReasonRef\.current = "user";/);
+  // Talking that ends without the switch or the limit (page hidden, reconnect) says so.
+  assert.match(page, /if \(reason === null\) \{[\s\S]*?setTalkEnded\(\(current\) => current \?\? "dropped"\)/);
 });

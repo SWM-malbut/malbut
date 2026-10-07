@@ -9,6 +9,9 @@ export type TalkHolder = { name: string; self: boolean };
 
 export type TalkPhase = "off" | "starting" | "talking";
 
+/** Why the microphone went off without the switch: the 3-minute limit or anything else. */
+export type TalkEnded = "timeout" | "dropped";
+
 /** What the live viewer tells the 현재 상태 card about the microphone. */
 export type LiveTalk = {
   phase: TalkPhase;
@@ -16,7 +19,7 @@ export type LiveTalk = {
   available: boolean;
   remainingMs: number;
   holder: TalkHolder | null;
-  timedOut: boolean;
+  ended: TalkEnded | null;
   error: string;
   toggle: () => void;
 };
@@ -30,7 +33,7 @@ export function formatTalkRemaining(ms: number) {
 
 /** The line under the microphone switch, or null when there is nothing to say. */
 export function talkNote(
-  talk: Pick<LiveTalk, "phase" | "remainingMs" | "holder" | "timedOut" | "error">,
+  talk: Pick<LiveTalk, "phase" | "remainingMs" | "holder" | "ended" | "error">,
 ): TalkNote | null {
   if (talk.phase === "talking") {
     return {
@@ -49,7 +52,7 @@ export function talkNote(
       text: "한 번에 한 명만 말할 수 있어요. 끝나면 켤 수 있어요.",
     };
   }
-  if (talk.timedOut) {
+  if (talk.ended === "timeout") {
     return {
       tone: "neutral",
       title: "3분이 지나 마이크를 껐어요",
@@ -57,5 +60,12 @@ export function talkNote(
     };
   }
   if (talk.error) return { tone: "danger", title: "마이크를 켜지 못했어요", text: talk.error };
+  if (talk.ended === "dropped") {
+    return {
+      tone: "neutral",
+      title: "마이크가 꺼졌어요",
+      text: "화면을 떠났거나 홈캠 연결이 바뀌어 말하기가 끊겼어요. 다시 켜 주세요.",
+    };
+  }
   return null;
 }

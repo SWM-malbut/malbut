@@ -8,6 +8,7 @@
 
 using homecam_media_agent::MediaConfig;
 using homecam_media_agent::build_audio_capture_pipeline;
+using homecam_media_agent::build_audio_playback_pipeline;
 using homecam_media_agent::build_video_pipeline;
 using homecam_media_agent::video_format_from_ros;
 using homecam_media_agent::video_format_matches;
@@ -61,4 +62,17 @@ TEST(PipelineBuilder, UsesSilenceWhenMicrophoneIsPrivate)
   const auto pipeline = build_audio_capture_pipeline(config, true, true);
   EXPECT_NE(pipeline.find("audiotestsrc wave=silence"), std::string::npos);
   EXPECT_NE(pipeline.find("opusenc"), std::string::npos);
+}
+
+TEST(PipelineBuilder, GuardianVoiceCapsNegotiateWithOpusdec)
+{
+  // Without channel-mapping-family opusdec fails with not-negotiated on every
+  // guardian packet ("The stream is in the wrong format" from alsasink).
+  MediaConfig config;
+  const auto pipeline = build_audio_playback_pipeline(config);
+  EXPECT_NE(
+    pipeline.find("caps=audio/x-opus,rate=48000,channels=1,channel-mapping-family=0 ! "),
+    std::string::npos);
+  EXPECT_NE(pipeline.find("name=ptt_audio_source"), std::string::npos);
+  EXPECT_NE(pipeline.find("opusdec"), std::string::npos);
 }

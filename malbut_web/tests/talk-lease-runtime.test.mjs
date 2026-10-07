@@ -90,7 +90,7 @@ function viewer() {
     talkLeaseRef: ref(null), talkLeaseTimerRef: ref(null),
     talkLeasePending: false, talking: false, deviceId: "robot-a",
     setTalkLeasePending() {}, setTalking() {}, setMicrophoneNotice() {},
-    setTalkHolder() {}, setTalkTimedOut() {},
+    setTalkHolder() {}, setTalkEnded() {}, talkStopReasonRef: ref(null),
     notifyTalkLeaseRelease: (lease) => released.push(lease.leaseId),
     useCallback: (callback) => callback,
     Date: { now: () => now },
@@ -171,4 +171,23 @@ test("release while waiting, a superseded start, and readiness timeout cannot en
   v.releaseTalkLease();
   v.requests[3].reply(leaseId, true); await third;
   assert.equal(v.track.enabled, false);
+});
+
+test("a start reports talking, a failure, or being dropped by a connection change", async () => {
+  const ok = viewer(), started = ok.startTalking();
+  ok.requests[0].reply(leaseId, true);
+  assert.equal(await started, "talking");
+
+  const slow = viewer(), timedOut = slow.startTalking();
+  slow.requests[0].reply(leaseId, false); await flush();
+  slow.advance(10000); await slow.tick(250);
+  assert.equal(await timedOut, "failed");
+
+  // A reconnect replaces the viewer generation while waiting for readiness.
+  const moved = viewer(), dropped = moved.startTalking();
+  moved.requests[0].reply(leaseId, false); await flush();
+  moved.scope.viewerGenerationRef.current = 2;
+  await moved.tick(250);
+  assert.equal(await dropped, "abandoned");
+  assert.equal(moved.track.enabled, false);
 });
