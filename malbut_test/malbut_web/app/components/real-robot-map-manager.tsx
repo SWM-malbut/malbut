@@ -150,7 +150,12 @@ export function RealRobotMapManager({
     if (!(await saveLabel(`${stem}.yaml`, name))) return;
     await sendCommand("mission_start", { capability: "autoslam", arguments: { map_name: stem } });
   };
-  const switchToMap = (map: string) => void sendCommand("runtime_start", { mode: "navigation", map });
+  // 지도를 바꾸면 말벗이 위치를 찾으며 제자리에서 돌 수 있다(malbut_bringup README · 저장 지도 주행).
+  const switchToMap = (map: string) => {
+    if (window.confirm(`'${shownName(map)}' 지도로 바꿀까요? 말벗이 위치를 찾으며 제자리에서 한 바퀴 돌 수 있어요. 주변을 비워 주세요.`)) {
+      void sendCommand("runtime_start", { mode: "navigation", map });
+    }
+  };
   const deleteMap = (map: string) => {
     if (window.confirm(`'${shownName(map)}' 지도를 지울까요? 이 지도의 방·구역도 함께 지워지고 되돌릴 수 없어요.`)) {
       void sendCommand("map_delete", { map });

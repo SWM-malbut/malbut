@@ -268,6 +268,8 @@ test("the developer screen's map, follow and drive tools reach the map tab for t
   // 지도 관리 uses the developer screen's robot commands.
   assert.match(manager, /sendCommand\("mission_start", \{ capability: "autoslam", arguments: \{ map_name: stem \} \}\)/);
   assert.match(manager, /sendCommand\("runtime_start", \{ mode: "navigation", map \}\)/);
+  // Switching may turn the robot in place: the owner clears the way first (malbut_bringup README).
+  assert.match(manager, /window\.confirm\(`[^`]*제자리에서 한 바퀴 돌 수 있어요\. 주변을 비워 주세요\.`\)\) \{\s*void sendCommand\("runtime_start"/);
   assert.match(manager, /window\.confirm\(.*\) \{\s*void sendCommand\("map_delete", \{ map \}\);/s);
   assert.match(manager, /sendCommand\("mission_cancel"\)/);
   assert.match(manager, /if \(!\(await saveLabel\(`\$\{stem\}\.yaml`, name\)\)\) return;/, "named before AutoSLAM starts");
