@@ -90,6 +90,7 @@ function viewer() {
     talkLeaseRef: ref(null), talkLeaseTimerRef: ref(null),
     talkLeasePending: false, talking: false, deviceId: "robot-a",
     setTalkLeasePending() {}, setTalking() {}, setMicrophoneNotice() {},
+    setTalkHolder() {}, setTalkTimedOut() {},
     notifyTalkLeaseRelease: (lease) => released.push(lease.leaseId),
     useCallback: (callback) => callback,
     Date: { now: () => now },

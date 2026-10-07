@@ -10,7 +10,7 @@ import pytest
 rclpy = pytest.importorskip('rclpy', reason='ROS 2 is not installed')
 
 from malbut_interfaces.msg import (  # noqa: E402
-    SpeechInputStatus, SpeechPlaybackStatus, SpeechTranscript,
+    SpeechInputStatus, SpeechPlaybackStatus, SpeechRequest, SpeechTranscript,
 )
 from malbut_interfaces.srv import (  # noqa: E402
     ClassifySpeechAddressee, ControlSpeechPlayback, ControlWebTalk,
@@ -25,7 +25,7 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
     """Use generated types and one executor without opening a microphone or model."""
     state = SimpleNamespace(clients=[], classifications=[], controls=[], transcripts=[],
                             decisions=[], statuses=[], input_statuses=[], web_talk=[],
-                            closed=False)
+                            web_talk_quiet=[], speech_requests=[], closed=False)
 
     create_client = Node.create_client
 
@@ -47,6 +47,7 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
             self.peer = None
             self.web_future = None
             self.web_active = True
+            self.speech_sent = False
 
         def start(self):
             self.peer = Node('speech_service_test_peer')
@@ -58,6 +59,8 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
                 ControlWebTalk, '/malbut/speech/web_talk_control')
             self.status = self.peer.create_publisher(
                 SpeechPlaybackStatus, '/malbut/speech/playback_status', 10)
+            self.speech = self.peer.create_publisher(
+                SpeechRequest, '/malbut/speech/response', 10)
             self.peer.create_subscription(SpeechTranscript, '/malbut/speech/transcript',
                                           state.transcripts.append, 10)
             self.peer.create_subscription(SpeechInputStatus, '/malbut/speech/input_status',
@@ -74,9 +77,14 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
             response.accepted = True
             return response
 
-        def control_web_talk(self, lease_id, active, ttl_s):
+        def control_web_talk(self, lease_id, active, ttl_s, *, quiet=True):
             state.web_talk.append((lease_id, active, ttl_s))
+            state.web_talk_quiet.append(quiet)
             return True
+
+        def on_speech_request(self, playback_id):
+            state.speech_requests.append(playback_id)
+            self.callbacks['stop_speech'](playback_id)
 
         def poll(self):
             assert monotonic() < self.deadline, 'ROS service round trip timed out'
@@ -95,7 +103,7 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
                 self.callbacks['publish_transcript']('normal-1', '오늘 날씨 알려줘')
                 for input_state in ('started', 'failed'):
                     self.callbacks['publish_input_status']('', 'missed-1', input_state)
-            if (state.decisions and len(state.controls) == 3 and state.transcripts
+            if (state.decisions and len(state.controls) >= 3 and state.transcripts
                     and len(state.input_statuses) == 2):
                 # Service acceptance must not manufacture an actual playback status.
                 if not state.statuses:
@@ -109,6 +117,15 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
                         ttl_s=3.0 if self.web_active else 0.0))
                 elif self.web_future.done():
                     assert self.web_future.result().accepted
+                    if self.web_active and not self.speech_sent:
+                        if self.speech.get_subscription_count() != 1:
+                            return
+                        # Agent speech requested during the web talk reaches STT.
+                        self.speech_sent = True
+                        self.speech.publish(SpeechRequest(text='답변', playback_id='answer-1'))
+                        return
+                    if self.web_active and ('answer-1', 'stop') not in state.controls:
+                        return
                     if not self.web_active:
                         raise KeyboardInterrupt
                     self.web_active = False
@@ -142,7 +159,9 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
     assert capsys.readouterr().out.splitlines().count('malbut_speech_capture_ready') == 1
     assert state.classifications == [('utterance-1', 'playback-1', '잠깐만')]
     assert state.decisions == [('utterance-1', 'playback-1', decision)]
-    assert state.controls == [('playback-1', value) for value in ('pause', 'resume', 'stop')]
+    assert state.controls == [
+        *[('playback-1', value) for value in ('pause', 'resume', 'stop')], ('answer-1', 'stop')]
+    assert state.speech_requests == ['answer-1']
     assert [(item.utterance_id, item.text) for item in state.transcripts] == [
         ('normal-1', '오늘 날씨 알려줘')]
     assert state.statuses and all(item == ('playback-1', 'paused', True)
@@ -153,3 +172,4 @@ def test_stt_service_round_trip_and_status_topic(monkeypatch, tmp_path, capsys, 
     assert state.closed and not rclpy.ok()
     assert state.web_talk == [
         ('startup-quarantine', True, 3.0), ('web-1', True, 3.0), ('web-1', False, 0.0)]
+    assert state.web_talk_quiet == [False, True, True]

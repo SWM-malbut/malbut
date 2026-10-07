@@ -9,6 +9,12 @@ import {
 } from "./homecam-dashboard";
 import { HomecamHeader } from "./homecam-header";
 import {
+  TALK_LIMIT_MS,
+  formatTalkRemaining,
+  type LiveTalk,
+  type TalkHolder,
+} from "../homecam-talk";
+import {
   ArrowClockwise,
   ArrowLeft,
   CornersOut,
@@ -174,6 +180,7 @@ function Viewer({
   embedded = false,
   onMediaReadyChange,
   onSpeakerChange,
+  onTalkChange,
 }: {
   deviceId: string;
   device?: HomecamDevice;
@@ -182,6 +189,8 @@ function Viewer({
   onMediaReadyChange?: (ready: boolean) => void;
   /** Embedded in the app: the 스피커 switch lives in the 현재 상태 card, outside this viewer. */
   onSpeakerChange?: (speaker: LiveSpeaker | null) => void;
+  /** Embedded in the app: the 마이크 switch (my voice to 말벗) lives in the 현재 상태 card. */
+  onTalkChange?: (talk: LiveTalk | null) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const microphoneRef = useRef<MediaStream | null>(null);
@@ -192,6 +201,8 @@ function Viewer({
   const talkAttemptRef = useRef(0);
   const talkLeaseRef = useRef<ViewerTalkLease | null>(null);
   const talkLeaseTimerRef = useRef<number | null>(null);
+  // The switch is on while the microphone, reconnect and robot readiness are prepared.
+  const talkWantedRef = useRef(false);
   const storageModeRef = useRef<boolean | null>(null);
   const viewerGenerationRef = useRef(0);
   const automaticReconnectAttemptsRef = useRef(0);
@@ -214,6 +225,10 @@ function Viewer({
   const [microphoneNotice, setMicrophoneNotice] = useState("");
   const [talking, setTalking] = useState(false);
   const [talkLeasePending, setTalkLeasePending] = useState(false);
+  const [talkWanted, setTalkWanted] = useState(false);
+  const [talkHolder, setTalkHolder] = useState<TalkHolder | null>(null);
+  const [talkStartedAt, setTalkStartedAt] = useState<number | null>(null);
+  const [talkTimedOut, setTalkTimedOut] = useState(false);
   const [speakerMuted, setSpeakerMuted] = useState(true);
   const [soundBlocked, setSoundBlocked] = useState(false);
   const [viewerClockMs, setViewerClockMs] = useState(() => Date.now());
@@ -345,16 +360,13 @@ function Viewer({
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("blur", handleRelease);
+    // The microphone is a switch, not push-to-talk: focus or a tap elsewhere keeps it on.
     window.addEventListener("pagehide", handleRelease);
-    window.addEventListener("pointerup", handleRelease);
     window.addEventListener("offline", handleOffline);
     window.addEventListener("online", handleOnline);
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("blur", handleRelease);
       window.removeEventListener("pagehide", handleRelease);
-      window.removeEventListener("pointerup", handleRelease);
       window.removeEventListener("offline", handleOffline);
       window.removeEventListener("online", handleOnline);
     };
@@ -890,7 +902,7 @@ function Viewer({
       let stream = microphoneRef.current;
       if (!stream) {
         if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("이 브라우저는 마이크 접근을 지원하지 않습니다.");
+          throw new Error("이 브라우저에서는 마이크를 쓸 수 없어요.");
         }
         stream = await navigator.mediaDevices.getUserMedia(VIEWER_AUDIO_CONSTRAINTS);
       }
@@ -900,7 +912,7 @@ function Viewer({
       }
 
       const track = stream.getAudioTracks()[0];
-      if (!track) throw new Error("사용할 수 있는 마이크를 찾지 못했습니다.");
+      if (!track) throw new Error("사용할 수 있는 마이크를 찾지 못했어요.");
       track.enabled = false;
       microphoneRef.current = stream;
       setMicrophoneAvailable(true);
@@ -912,11 +924,13 @@ function Viewer({
       viewerGenerationRef.current += 1;
       setAttempt((value) => value + 1);
     } catch (reason) {
+      talkWantedRef.current = false;
       if (viewerMountedRef.current) {
+        setTalkWanted(false);
         setMicrophoneNotice(
           reason instanceof Error && reason.name !== "NotAllowedError"
             ? reason.message
-            : "마이크 권한이 없어 보기 전용으로 유지합니다.",
+            : "이 기기 마이크 권한이 없어요. 브라우저 설정에서 마이크를 허용해 주세요.",
         );
       }
     } finally {
@@ -954,7 +968,7 @@ function Viewer({
         while (!ready) {
           if (!isCurrentTalk()) return;
           const remainingMs = readyDeadline - Date.now();
-          if (remainingMs <= 0) throw new Error("로봇의 말하기 준비를 확인하지 못했습니다. 다시 눌러 주세요.");
+          if (remainingMs <= 0) throw new Error("말벗이 말하기를 준비하지 못했어요. 잠시 뒤 다시 켜 주세요.");
           const requestedAt = performance.now();
           const response = await fetch(
             `/api/devices/${encodeURIComponent(deviceId)}/talk-lease`,
@@ -971,13 +985,19 @@ function Viewer({
           const payload = (await response.json().catch(() => null)) as {
             lease?: { leaseId?: string; expiresAt?: string; ready?: boolean; readyForMs?: number };
             error?: string;
+            holder?: TalkHolder | null;
           } | null;
           const leaseId = payload?.lease?.leaseId;
           if (!response.ok || !leaseId) {
+            if (response.status === 409 && payload?.holder) {
+              // Another guardian is talking: the switch shows who and waits, not an error.
+              setTalkHolder(payload.holder);
+              throw new Error("");
+            }
             throw new Error(
               response.status === 409
-                ? "다른 보호자가 말하고 있어요. 잠시 후 다시 눌러 주세요."
-                : payload?.error ?? "말하기 권한을 받지 못했습니다.",
+                ? "다른 보호자가 말하는 중이에요. 잠시 뒤 다시 켜 주세요."
+                : payload?.error ?? "말하기 권한을 받지 못했어요.",
             );
           }
           const receivedLease: ViewerTalkLease = {
@@ -987,7 +1007,7 @@ function Viewer({
           };
           if (acquiredLease && leaseId !== acquiredLease.leaseId) {
             notifyTalkLeaseRelease(receivedLease);
-            throw new Error("말하기 권한이 만료되었습니다. 다시 눌러 주세요.");
+            throw new Error("말하기 권한이 끝났어요. 다시 켜 주세요.");
           }
           if (!isCurrentTalk()) {
             notifyTalkLeaseRelease(receivedLease);
@@ -1030,7 +1050,13 @@ function Viewer({
             const renewalPayload = (await renewal.json().catch(() => null)) as {
               lease?: { leaseId?: string; ready?: boolean; readyForMs?: number };
               error?: string;
+              code?: string;
             } | null;
+            if (renewal.status === 409 && renewalPayload?.code === "time_limit") {
+              // The server's 3-minute limit: the same notice as this screen's own timer.
+              setTalkTimedOut(true);
+              throw new Error("");
+            }
             if (renewal.ok && renewalPayload?.lease?.leaseId &&
                 renewalPayload.lease.leaseId !== currentLease.leaseId) {
               notifyTalkLeaseRelease({ ...currentLease, leaseId: renewalPayload.lease.leaseId });
@@ -1043,7 +1069,7 @@ function Viewer({
               renewalPayload.lease.readyForMs > 2500 ||
               !(renewalPayload.lease.readyForMs > performance.now() - requestedAt)
             ) {
-              throw new Error(renewalPayload?.error ?? "말하기 권한을 갱신하지 못했습니다.");
+              throw new Error(renewalPayload?.error ?? "말하기 연결이 끊겼어요. 다시 켜 주세요.");
             }
             if (
               talkLeaseRef.current !== currentLease ||
@@ -1059,7 +1085,7 @@ function Viewer({
             if (talkLeaseRef.current !== currentLease) return;
             releaseTalkLease();
             setMicrophoneNotice(
-              reason instanceof Error ? reason.message : "말하기 연결이 종료되었습니다.",
+              reason instanceof Error ? reason.message : "말하기 연결이 끊겼어요.",
             );
           }
         };
@@ -1074,7 +1100,7 @@ function Viewer({
         }
         releaseTalkLease();
         setMicrophoneNotice(
-          reason instanceof Error ? reason.message : "말하기 권한을 받지 못했습니다.",
+          reason instanceof Error ? reason.message : "말하기 권한을 받지 못했어요.",
         );
         return;
       }
@@ -1125,6 +1151,127 @@ function Viewer({
   }, [onSpeakerChange, speakerMuted, soundBlocked]);
   useEffect(() => () => onSpeakerChange?.(null), [onSpeakerChange]);
 
+  // A call: the microphone brings this device's sound on with it.
+  const turnSpeakerOn = async () => {
+    if (speakerMuted || soundBlocked) await toggleSpeaker();
+  };
+
+  // 현재 상태 › 마이크: on until switched off, the viewer leaves, or 3 minutes pass.
+  const toggleTalk = async () => {
+    if (talkWantedRef.current || talkIntentRef.current || talking || talkLeasePending) {
+      talkWantedRef.current = false;
+      setTalkWanted(false);
+      releaseTalkLease();
+      return;
+    }
+    if (talkHolder || microphonePending || viewerStateRef.current !== "live") return;
+    // Within the tap, so the browser lets the video play its sound.
+    void turnSpeakerOn();
+    setTalkTimedOut(false);
+    setMicrophoneNotice("");
+    talkWantedRef.current = true;
+    setTalkWanted(true);
+    if (!microphoneRef.current) {
+      // First use: ask for the microphone and reconnect so the offer carries it.
+      // The effect below starts talking once the new connection is live.
+      await prepareMicrophone();
+      return;
+    }
+    await startTalking();
+    talkWantedRef.current = false;
+    if (viewerMountedRef.current) setTalkWanted(false);
+  };
+  const toggleTalkRef = useRef(toggleTalk);
+  const startTalkingRef = useRef(startTalking);
+  const turnSpeakerOnRef = useRef(turnSpeakerOn);
+  useEffect(() => {
+    toggleTalkRef.current = toggleTalk;
+    startTalkingRef.current = startTalking;
+    turnSpeakerOnRef.current = turnSpeakerOn;
+  });
+
+  useEffect(() => {
+    if (state !== "live" || !microphoneAvailable || !talkWantedRef.current ||
+        talkIntentRef.current) return;
+    void (async () => {
+      // Reconnecting for the new microphone can mute the video again.
+      await turnSpeakerOnRef.current();
+      await startTalkingRef.current();
+      talkWantedRef.current = false;
+      if (viewerMountedRef.current) setTalkWanted(false);
+    })();
+  }, [state, microphoneAvailable]);
+
+  useEffect(() => {
+    if ((state !== "error" && state !== "offline") || !talkWantedRef.current) return;
+    talkWantedRef.current = false;
+    window.queueMicrotask(() => {
+      if (!viewerMountedRef.current) return;
+      setTalkWanted(false);
+      setMicrophoneNotice("홈캠 연결이 끊겨 마이크를 켜지 못했어요.");
+    });
+  }, [state]);
+
+  useEffect(() => {
+    if (!talking) return;
+    const startedAt = Date.now();
+    window.queueMicrotask(() => setTalkStartedAt(startedAt));
+    // 말벗 cannot hear anyone while this is on, so it never stays on unattended.
+    const timer = window.setTimeout(() => {
+      talkWantedRef.current = false;
+      releaseTalkLease();
+      setTalkTimedOut(true);
+    }, TALK_LIMIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [talking, releaseTalkLease]);
+
+  useEffect(() => {
+    if (!deviceId || localDemoViewer || state !== "live" || talking || talkLeasePending) return;
+    let active = true;
+    const checkHolder = async () => {
+      try {
+        const response = await fetch(
+          `/api/devices/${encodeURIComponent(deviceId)}/talk-lease?clientId=${encodeURIComponent(viewerClientIdRef.current)}`,
+          { cache: "no-store" },
+        );
+        if (!active || !response.ok) return;
+        const payload = (await response.json().catch(() => null)) as {
+          holder?: TalkHolder | null;
+        } | null;
+        if (active) setTalkHolder(payload?.holder ?? null);
+      } catch {
+        // Keep the last known holder through a transient failure.
+      }
+    };
+    window.queueMicrotask(() => void checkHolder());
+    const interval = window.setInterval(() => void checkHolder(), 5_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [deviceId, localDemoViewer, state, talking, talkLeasePending]);
+
+  const talkPhase = talking
+    ? "talking"
+    : talkWanted || talkLeasePending || microphonePending
+      ? "starting"
+      : "off";
+  const talkRemainingMs = talking && talkStartedAt !== null
+    ? Math.max(0, TALK_LIMIT_MS - (viewerClockMs - talkStartedAt))
+    : TALK_LIMIT_MS;
+  useEffect(() => {
+    onTalkChange?.({
+      phase: talkPhase,
+      available: state === "live",
+      remainingMs: talkRemainingMs,
+      holder: talkHolder,
+      timedOut: talkTimedOut,
+      error: talkPhase === "off" ? microphoneNotice : "",
+      toggle: () => void toggleTalkRef.current(),
+    });
+  }, [onTalkChange, talkPhase, state, talkRemainingMs, talkHolder, talkTimedOut, microphoneNotice]);
+  useEffect(() => () => onTalkChange?.(null), [onTalkChange]);
+
   return (
     <div className={`homecam-shell homecam-stream-shell ${embedded ? "is-embedded" : ""}`}>
       <HomecamHeader activeTab="live" onNavigate={onExit} />
@@ -1169,6 +1316,11 @@ function Viewer({
               />
               <div className="homecam-video-topbar">
                 <span className="homecam-video-clock">{formatViewerClock(viewerClockMs)}</span>
+                {talking && (
+                  <span className="homecam-video-talking" role="status">
+                    말하는 중 {formatTalkRemaining(talkRemainingMs)}
+                  </span>
+                )}
                 <button type="button" onClick={() => void videoRef.current?.requestFullscreen().catch(() => undefined)} aria-label="실시간 영상 전체 화면">
                   <CornersOut size={19} weight="regular" aria-hidden="true" />
                 </button>
@@ -1194,7 +1346,8 @@ function Viewer({
               </div>
             </div>
 
-            {microphoneNotice && (
+            {/* In the app, microphone notices sit under the 현재 상태 마이크 switch. */}
+            {microphoneNotice && !embedded && (
               <p className="homecam-stream-notice" role="status">{microphoneNotice}</p>
             )}
             {error && (
@@ -1349,6 +1502,7 @@ export function HomecamApp() {
   const [inlineViewerDevice, setInlineViewerDevice] = useState<HomecamDevice | null>(null);
   const [inlineViewerReady, setInlineViewerReady] = useState(false);
   const [liveSpeaker, setLiveSpeaker] = useState<LiveSpeaker | null>(null);
+  const [liveTalk, setLiveTalk] = useState<LiveTalk | null>(null);
 
   const closeInlineViewer = useCallback(() => {
     setInlineViewerReady(false);
@@ -1367,6 +1521,7 @@ export function HomecamApp() {
       onOpenLive={openRegisteredDevice}
       liveMediaReady={inlineViewerReady}
       liveSpeaker={liveSpeaker}
+      liveTalk={liveTalk}
       onReleaseLive={closeInlineViewer}
       liveViewer={inlineViewerDevice ? ({ device }) => (
         device?.id === inlineViewerDevice.id ? (
@@ -1376,6 +1531,7 @@ export function HomecamApp() {
             embedded
             onMediaReadyChange={setInlineViewerReady}
             onSpeakerChange={setLiveSpeaker}
+            onTalkChange={setLiveTalk}
             onExit={closeInlineViewer}
           />
         ) : null

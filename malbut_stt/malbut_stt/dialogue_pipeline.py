@@ -46,13 +46,16 @@ class DialoguePipeline:
                  report, settings=None, input_has_aec=False, clock=monotonic,
                  on_wake=None, endpoint_predecode_s: float | None = None,
                  partial_interval_s: float | None = 2.0, on_partial=None,
-                 on_endpoint=None, publish_input_status=None, diagnostics=None):
+                 on_endpoint=None, publish_input_status=None, diagnostics=None,
+                 stop_speech=None):
         self.recorder_factory = recorder_factory
         self.wake = wake
         self.transcriber = transcriber
         self.publish_transcript = publish_transcript
         self.publish_interruption = publish_interruption
         self.publish_control = publish_control
+        # stop_speech(playback_id) drops Agent speech; an empty ID drops all of it.
+        self.stop_speech = stop_speech
         self._report = report
         self.diagnostics = diagnostics
         self._diagnostic_error_reported = False
@@ -116,6 +119,7 @@ class DialoguePipeline:
         self._web_talk_lease_id = None
         self._web_talk_deadline = 0.0
         self._web_talk_drain_until = 0.0
+        self._web_talk_quiet = False
         self._retired_session_ids = OrderedDict()
         self._raw_playback_gate = False
         self._raw_gate_until = 0.0
@@ -209,8 +213,12 @@ class DialoguePipeline:
             and len(session_id) <= 200
             and self.session.active and self.session.session_id == session_id)
 
-    def control_web_talk(self, lease_id, active, ttl_s):
-        """Acknowledge a web microphone lease only after invalidating local speech."""
+    def control_web_talk(self, lease_id, active, ttl_s, *, quiet=True):
+        """Acknowledge a web microphone lease only after invalidating local speech.
+
+        ``quiet`` also keeps the Agent silent while the guardian talks; the
+        startup quarantine only gates input.
+        """
         if (self.stopping.is_set() or not isinstance(lease_id, str)
                 or not lease_id.strip() or len(lease_id) > 200 or type(active) is not bool):
             return False
@@ -237,7 +245,25 @@ class DialoguePipeline:
             self._retry_notice_deadline = retry_notice_deadline
             self._tail_stream = None
             self._drain(self.results)
+        if quiet and not self._web_talk_quiet:
+            # The guardian owns the speaker: drop current and queued speech for good.
+            self._web_talk_quiet = True
+            self._stop_speech('')
         return True
+
+    def on_speech_request(self, playback_id):
+        """Cancel Agent speech requested during a web talk before it is played."""
+        if self.stopping.is_set():
+            return
+        self._expire_web_talk()
+        if (self._web_talk_quiet and isinstance(playback_id, str)
+                and playback_id.strip() and len(playback_id) <= 200):
+            self._stop_speech(playback_id)
+
+    def _stop_speech(self, playback_id):
+        if self.stop_speech is not None:
+            self.stop_speech(playback_id)
+            self.report('web_talk_speech_stopped')
 
     def _web_talk_blocked(self, captured_at):
         return (self._web_talk_lease_id is not None
@@ -252,6 +278,7 @@ class DialoguePipeline:
         self._web_talk_drain_until = self.clock() + 0.3
         self._reset_audio()
         self._web_talk_lease_id = None
+        self._web_talk_quiet = False
         self.report(reason)
 
     def _capture_timed_out(self):
@@ -818,6 +845,10 @@ class DialoguePipeline:
         if self.stopping.is_set():
             return
         self.poll()
+        if (self._web_talk_quiet and state in ('playing', 'paused')
+                and isinstance(playback_id, str) and playback_id.strip()):
+            # A request that raced the web talk start is stopped as soon as it sounds.
+            self._stop_speech(playback_id)
         previous = (self.session.playback_id, self.session.playback_state)
         self.session.on_playback_status(playback_id, state, interim=interim)
         current = (self.session.playback_id, self.session.playback_state)

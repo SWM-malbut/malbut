@@ -77,11 +77,12 @@ test("live dashboard uses rendered media state and exposes one camera control", 
     styles,
     /\.homecam-stream-placeholder \{[\s\S]*display: flex;[\s\S]*align-items: center;[\s\S]*flex-direction: column;/,
   );
-  // 현재 상태: 말벗 카메라·마이크(소유자 스위치)와 이 기기의 스피커. 영상 아래 따로 버튼 줄은 없다.
+  // 현재 상태: 말벗 카메라(소유자 스위치), 마이크(내 목소리 → 말벗, 보호자 모두), 이 기기의 스피커.
+  // 영상 아래 따로 버튼 줄은 없다. 말벗이 집 안 소리를 보낼지는 설정 › 홈캠 설정에서만 바꾼다.
   assert.match(dashboard, /label="카메라"/);
   assert.match(dashboard, /updateSetting\("cameraEnabled", value\)/);
-  assert.match(dashboard, /label="마이크"/);
-  assert.match(dashboard, /updateSetting\("microphoneEnabled", value\)/);
+  assert.match(dashboard, /마이크<small>내 목소리를 말벗에게 보내기<\/small>[\s\S]*label="마이크"[\s\S]*onChange=\{\(\) => liveTalk\?\.toggle\(\)\}/);
+  assert.doesNotMatch(dashboard, /updateSetting\("microphoneEnabled", value\)/);
   assert.match(dashboard, /label="스피커"[\s\S]*onChange=\{\(\) => liveSpeaker\?\.toggle\(\)\}/);
   assert.doesNotMatch(dashboard, /보호자 마이크|label="카메라 전원"/);
   // 연속 녹화는 설정 › 홈캠 설정에서만 바꾼다.
