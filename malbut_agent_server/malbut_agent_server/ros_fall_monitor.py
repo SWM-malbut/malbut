@@ -24,6 +24,17 @@ from malbut_agent_server.fall_control import (
 )
 
 
+MISSION_STATE_TOPIC = '/malbut/state'
+MAPPING_CAPABILITY = 'autoslam'
+
+
+def mapping_active(state):
+    """True while an AutoSLAM mission runs or waits to run."""
+    missions = (*state.active_foreground_missions, *state.active_background_missions,
+                *state.pending_missions)
+    return any(mission.capability_id == MAPPING_CAPABILITY for mission in missions)
+
+
 def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                      tracker_factory=None):
     import cv2
@@ -31,8 +42,10 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
     from rcl_interfaces.msg import ParameterDescriptor
     from rclpy.clock import Clock, ClockType
     from rclpy.node import Node
-    from rclpy.qos import qos_profile_sensor_data
-    from malbut_interfaces.msg import FallRuntimeStatus, FallControlHeartbeat
+    from rclpy.qos import (
+        DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data,
+    )
+    from malbut_interfaces.msg import FallRuntimeStatus, FallControlHeartbeat, SystemState
     from malbut_interfaces.srv import ApplyFallSettings
     from sensor_msgs.msg import Image
     from std_msgs.msg import String
@@ -85,8 +98,17 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
             self.create_subscription(String, '/malbut/falls/runtime/decision',
                                      lambda msg: self.guarded('decision_rejected', apply_decision,
                                                               self.monitor, msg.data), 10)
+            # Map making moves the camera around the home; its frames read as false falls.
+            self.create_subscription(
+                SystemState, MISSION_STATE_TOPIC, self.on_system_state,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                           reliability=ReliabilityPolicy.RELIABLE))
             self._status_clock = Clock(clock_type=ClockType.STEADY_TIME)
             self.create_timer(1.0, self.publish_status, clock=self._status_clock)
+
+        def on_system_state(self, message):
+            self.guarded('mission_state_invalid', self.control.set_mapping,
+                         mapping_active(message))
 
         def on_settings(self, request, response):
             result = self.control.apply_settings(**{
@@ -165,6 +187,9 @@ def create_fall_node(settings, *, provider, journal, clock=time.monotonic,
                              self.monitor.observe_subject, observation)
 
         def publish_status(self):
+            # The latched state outlives a stopped Manager; never stay paused for it.
+            if self.count_publishers(MISSION_STATE_TOPIC) == 0:
+                self.control.set_mapping(False)
             fields = self.control.status()
             analysis = self.monitor.analysis_status
             self._status_sequence += 1

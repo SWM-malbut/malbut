@@ -239,7 +239,7 @@ class CloudFallMonitor:
     def set_cloud_block(self, reason):
         """Suspend transmission, retaining incidents but not an offline request queue."""
         if reason is not None and reason not in {
-            'waiting_settings', 'disabled', 'camera_off', 'control_unavailable',
+            'waiting_settings', 'disabled', 'camera_off', 'mapping', 'control_unavailable',
             'runtime_error', 'cloud_consent_missing', 'settings_pending',
             'server_settings_unavailable', 'server_settings_stale',
         }:
@@ -1184,7 +1184,7 @@ class CloudFallMonitor:
         if (not self._enabled or not self._camera or self._storage_failed
                 or entry.epoch != self._epoch
                 or self._runtime_cloud_block in {
-                    'waiting_settings', 'disabled', 'camera_off',
+                    'waiting_settings', 'disabled', 'camera_off', 'mapping',
                     'control_unavailable', 'runtime_error'}):
             return 'tracking_session_expired'
         source = self._incidents.get(entry.discovery.incident_id)
