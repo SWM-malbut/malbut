@@ -1,0 +1,291 @@
+[
+  {
+    "id": "status",
+    "utterance": "지금 로봇 상태가 어때?",
+    "expected": [
+      "get_robot_status"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "observation",
+    "utterance": "지금 사람이나 추적 상태가 보이는지 확인해 줘",
+    "expected": [
+      "get_robot_observations"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "maps",
+    "utterance": "저장된 지도 목록 보여 줘",
+    "expected": [
+      "list_saved_maps"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "zones",
+    "utterance": "설정된 이동 구역을 알려 줘",
+    "expected": [
+      "get_map_zones"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "follow",
+    "utterance": "나 좀 따라와 줄래?",
+    "expected": [
+      "request_follow_person"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "patrol",
+    "utterance": "집을 꼼꼼하게 순찰해 줘",
+    "expected": [
+      "request_patrol"
+    ],
+    "arguments": {
+      "thoroughness": "thorough"
+    }
+  },
+  {
+    "id": "mapping",
+    "utterance": "새 지도를 office라는 이름으로 만들어 저장해 줘",
+    "expected": [
+      "request_mapping"
+    ],
+    "arguments": {
+      "map_name": "office"
+    }
+  },
+  {
+    "id": "relocalize",
+    "utterance": "선택된 지도에서 내 위치를 다시 맞춰 줘",
+    "expected": [
+      "request_relocalization"
+    ],
+    "arguments": {
+      "method": "auto"
+    }
+  },
+  {
+    "id": "global_search",
+    "utterance": "현재 지도에서 전역 탐색으로 로봇 위치를 찾아 줘",
+    "expected": [
+      "request_relocalization"
+    ],
+    "arguments": {
+      "method": "global_search"
+    }
+  },
+  {
+    "id": "manual",
+    "utterance": "웹으로 수동 조종할 수 있게 켜 줘",
+    "expected": [
+      "request_manual_control"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "recovery",
+    "utterance": "고장 난 로봇 기능을 복구해 줘",
+    "expected": [
+      "request_recovery"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "wake",
+    "utterance": "로봇을 깨워 줘",
+    "expected": [
+      "wake_robot"
+    ],
+    "arguments": {
+      "map": null
+    }
+  },
+  {
+    "id": "standby",
+    "utterance": "음성 대화는 두고 로봇 기능만 대기시켜 줘",
+    "expected": [
+      "standby_robot"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "stop",
+    "utterance": "움직임 전부 멈춰",
+    "expected": [
+      "stop_robot_movement"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "stop_web",
+    "utterance": "웹에서 움직이던 것도 모두 멈춰 줘",
+    "expected": [
+      "stop_robot_movement"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "stop_dialect",
+    "utterance": "고마 움직이고 가만히 있어라",
+    "expected": [
+      "stop_robot_movement"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "negative",
+    "utterance": "지금은 나 따라오지 마",
+    "expected": [
+      "message",
+      "clarification",
+      "stop_robot_movement"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "quoted",
+    "utterance": "'나를 따라와'라는 말을 영어로 번역해 줘",
+    "expected": [
+      "message"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "hypothetical",
+    "utterance": "만약 순찰하라고 하면 어떻게 해?",
+    "expected": [
+      "message"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "future",
+    "utterance": "내일 세 시에 순찰해 줘",
+    "expected": [
+      "clarification",
+      "message",
+      "refusal"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "corrected_target",
+    "utterance": "거실로, 아니 주방으로 가 줘",
+    "expected": [
+      "request_navigation"
+    ],
+    "arguments": {
+      "location": "주방"
+    }
+  },
+  {
+    "id": "speaker_location",
+    "utterance": "내가 있는 여기로 와 줘",
+    "expected": [
+      "clarification"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "ambiguous_map",
+    "utterance": "저장된 지도 중 하나 골라서 써 줘",
+    "expected": [
+      "clarification",
+      "list_saved_maps",
+      "wake_robot"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "multiple",
+    "utterance": "나 따라오면서 새 지도도 만들어 줘",
+    "expected": [
+      "clarification"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "homecam_status",
+    "utterance": "홈캠 카메라랑 마이크 설정 상태 알려 줘",
+    "expected": [
+      "get_homecam_status"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "homecam_events",
+    "utterance": "최근 사람 감지 이벤트 다섯 개 보여 줘",
+    "expected": [
+      "get_homecam_events"
+    ],
+    "arguments": {
+      "limit": 5,
+      "event_type": "person"
+    }
+  },
+  {
+    "id": "homecam_recordings",
+    "utterance": "최근 녹화 세 개를 확인해 줘",
+    "expected": [
+      "get_homecam_recordings"
+    ],
+    "arguments": {
+      "limit": 3
+    }
+  },
+  {
+    "id": "homecam_falls",
+    "utterance": "기록된 낙상 알림 두 개 보여 줘",
+    "expected": [
+      "get_homecam_falls"
+    ],
+    "arguments": {
+      "limit": 2
+    }
+  },
+  {
+    "id": "settings",
+    "utterance": "홈캠 마이크만 꺼 줘",
+    "expected": [
+      "update_homecam_settings"
+    ],
+    "arguments": {
+      "microphoneEnabled": false,
+      "cameraEnabled": null,
+      "monitoringEnabled": null,
+      "fallEnabled": null
+    }
+  },
+  {
+    "id": "no_authority",
+    "utterance": "웹 소유자 동의 없이 홈캠 위임을 켜 줘",
+    "expected": [
+      "refusal",
+      "message"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "weather",
+    "utterance": "오늘 날씨가 어때?",
+    "expected": [
+      "get_weather"
+    ],
+    "arguments": {}
+  },
+  {
+    "id": "weather_location",
+    "utterance": "날씨 위치를 대전광역시 유성구 덕명동으로 바꿔 줘",
+    "expected": [
+      "set_weather_location"
+    ],
+    "arguments": {
+      "location": "대전광역시 유성구 덕명동"
+    }
+  }
+]

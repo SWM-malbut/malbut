@@ -1,11 +1,15 @@
 """ROS node exposing the unified Malbut mission execution contract."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from collections import OrderedDict
+from datetime import datetime, timezone
 import json
 import math
 import signal
 from threading import RLock
 import time
+from uuid import uuid4
+import yaml
 
 from ament_index_python.packages import get_package_prefix
 import rclpy
@@ -19,7 +23,8 @@ from rclpy.task import Future
 
 from malbut_interfaces.action import ExecuteMission
 from malbut_interfaces.msg import MissionStatus, SystemState as SystemStateMsg
-from std_msgs.msg import String
+from malbut_interfaces.srv import StopMovement
+from std_msgs.msg import Empty, String
 
 from .localization import LocalizationController, SlamProcess
 from .manifest_registry import (
@@ -28,7 +33,7 @@ from .manifest_registry import (
     RequestValidationError,
 )
 from .mission_executor import MissionExecutor
-from .mission_scheduler import MissionScheduler
+from .mission_scheduler import is_movement, MissionScheduler
 from .models import (
     ControlMode,
     ExecutionMode,
@@ -47,6 +52,33 @@ from .state_store import StateStore
 
 EXECUTE_MISSION_ACTION = '/malbut/mission/execute'
 STATE_TOPIC = '/malbut/state'
+STOP_MOVEMENT_SERVICE = '/malbut/mission/stop_movement'
+
+
+@dataclass
+class _Admission:
+    request: object
+    sequence: int
+    movement: bool
+    mission_id: str = ''
+    stopped: bool = False
+    admitted: bool = False
+    done: bool = False
+
+    @property
+    def identity(self):
+        """Use the ROS UUID once acceptance has supplied the Goal handle."""
+        return self.mission_id or f'admission:{self.sequence}'
+
+
+@dataclass
+class _StopOperation:
+    fingerprint: tuple
+    deadline: float
+    affected: set[str] = field(default_factory=set)
+    admissions: list[_Admission] = field(default_factory=list)
+    localization_id: str = ''
+    denied: tuple[str, ...] = ()
 
 
 @dataclass
@@ -71,6 +103,14 @@ class SystemManagerNode(Node):
         self._early_cancellations: set[str] = set()
         self._deferred_downstream_cancellations: set[str] = set()
         self._contexts: dict[str, _MissionContext] = {}
+        self._admissions: dict[int, _Admission] = {}
+        self._admission_sequence = 0
+        self._movement_runtime_id = uuid4().hex
+        self._movement_epoch = 0
+        self._stop_operations: dict[str, _StopOperation] = {}
+        self._stop_waiters = []
+        self._stopped_mission_ids: set[str] = set()
+        self._recent_results = OrderedDict()
         self._state = StateStore()
         self._scheduler = MissionScheduler(self._state)
         self._server_group = ReentrantCallbackGroup()
@@ -104,6 +144,7 @@ class SystemManagerNode(Node):
             'cancel_completion_timeout_s',
             cancel_completion_timeout_s,
         )
+        self._stop_timeout_s = goal_response_timeout_s + cancel_completion_timeout_s + 1.0
         # Bringup gates admission on its readiness report; standalone use
         # (simulation experiments, tests) stays ready immediately.
         ready_topic = self.declare_parameter('ready_topic', '').value
@@ -119,6 +160,11 @@ class SystemManagerNode(Node):
             state_qos,
         )
         self._publish_state()
+        self._preempt_teleop = self.create_publisher(Empty, '/preempt_teleop', 1)
+        self._movement_stop = self.create_publisher(String, '/malbut/movement_stop', 10)
+        self._recent_publisher = self.create_publisher(
+            String, '/malbut/mission/recent_results', state_qos)
+        self._recent_publisher.publish(String(data='[]'))
 
         self._registry = ManifestRegistry(configured_directory or None)
         self._executor_bridge = MissionExecutor(
@@ -138,12 +184,20 @@ class SystemManagerNode(Node):
             execute_callback=self._execute,
             goal_callback=self._goal,
             cancel_callback=self._cancel,
+            handle_accepted_callback=self._accepted,
             callback_group=self._server_group,
         )
 
         self._localization = None
         if localization_control:
             self._localization = self._create_localization()
+        self._stop_service = self.create_service(
+            StopMovement, STOP_MOVEMENT_SERVICE, self._stop_movement,
+            callback_group=self._server_group,
+        )
+        self._stop_timer = self.create_timer(
+            0.05, self._refresh_stop_gate, callback_group=self._server_group,
+        )
         self._ready_subscription = None
         if ready_topic:
             ready_qos = QoSProfile(depth=1)
@@ -200,6 +254,9 @@ class SystemManagerNode(Node):
             self, group, slam=slam,
             on_mode=self._on_localization_mode,
             can_switch=self._base_is_free,
+            on_pose_ready=self._on_pose_ready,
+            admission_lock=self._effects_lock,
+            movement_state=lambda: (self._movement_runtime_id, self._movement_epoch),
             lifecycle_service=self.declare_parameter(
                 'localization_lifecycle_service',
                 '/lifecycle_manager_localization/manage_nodes',
@@ -234,7 +291,15 @@ class SystemManagerNode(Node):
 
     def _base_is_free(self) -> bool:
         with self._lock:
-            return not self._scheduler.base_busy()
+            return (self._accepting_goals and not self._state.movement_stopping
+                    and not self._scheduler.base_busy()
+                    and not any(item.movement or item.request.capability_id == 'fall_confirmation'
+                                for item in self._admissions.values())
+                    and (self._localization is None or not self._localization.stop_pending))
+
+    def _on_pose_ready(self, ready: bool) -> None:
+        with self._lock:
+            self._state.pose_ready = ready
 
     def _mapping_can_switch(self) -> bool:
         """Allow AutoSLAM to start/stop its backend while it owns BASE."""
@@ -243,7 +308,7 @@ class SystemManagerNode(Node):
             if not any(ExecutionResource.BASE in mission.resources
                        and mission.capability.capability_id == 'autoslam'
                        for mission in active):
-                return not self._scheduler.base_busy()
+                return self._base_is_free()
             # A queued replacement must wait for AutoSLAM's backend cleanup.
             return all(ExecutionResource.BASE not in mission.resources
                        or mission.capability.capability_id == 'autoslam'
@@ -335,10 +400,147 @@ class SystemManagerNode(Node):
         return self._shutdown_timeout_s
 
     def _goal(self, request: ExecuteMission.Goal) -> GoalResponse:
-        del request
         with self._effects_lock:
-            accepting_goals = self._accepting_goals
-        return GoalResponse.ACCEPT if accepting_goals else GoalResponse.REJECT
+            if not self._accepting_goals:
+                return GoalResponse.REJECT
+            movement = self._movement_request(request)
+            if movement:
+                if (self._state.movement_stopping
+                        or self._localization is not None and self._localization.stop_pending):
+                    return GoalResponse.REJECT
+            self._admission_sequence += 1
+            # rclpy passes this exact request to handle_accepted_callback.
+            # Retain it until scheduler admission, including delayed execution.
+            self._admissions[id(request)] = _Admission(
+                request, self._admission_sequence, movement)
+        return GoalResponse.ACCEPT
+
+    def _movement_request(self, request) -> bool:
+        try:
+            capability = self._registry.get(request.capability_id.strip())
+        except (ManifestError, RequestValidationError):
+            return False
+        return (ExecutionResource.BASE in capability.resources
+                and capability.capability_id != 'fall_confirmation')
+
+    def _accepted(self, goal_handle) -> None:
+        with self._effects_lock:
+            admission = self._admissions.get(id(goal_handle.request))
+            if admission is not None:
+                admission.mission_id = _goal_uuid(goal_handle)
+        goal_handle.execute()
+
+    def _stop_snapshot(self, operation):
+        affected = set(operation.affected)
+        unresolved = {item for item in affected if self._state.get(item) is not None}
+        for admission in operation.admissions:
+            affected.add(admission.identity)
+            if not admission.done and (not admission.admitted
+                                       or self._state.get(admission.identity) is not None):
+                unresolved.add(admission.identity)
+        if operation.localization_id:
+            affected.add(operation.localization_id)
+            if self._localization.movement_pending(operation.localization_id):
+                unresolved.add(operation.localization_id)
+        return sorted(affected), sorted(unresolved)
+
+    def _refresh_stop_gate(self) -> None:
+        with self._effects_lock:
+            with self._lock:
+                self._stopped_mission_ids.intersection_update(
+                    item.mission_id for item in self._state.all())
+                unresolved = bool(self._stopped_mission_ids) or any(
+                    item.stopped and not item.done and not item.admitted
+                    for item in self._admissions.values()
+                )
+                if self._localization is not None:
+                    unresolved = unresolved or self._localization.stop_pending
+                self._state.movement_stopping = unresolved
+                pending = []
+                for operation, response, ready in self._stop_waiters:
+                    if ready.done():
+                        continue
+                    affected, unresolved_ids = self._stop_snapshot(operation)
+                    if unresolved_ids and time.monotonic() < operation.deadline:
+                        pending.append((operation, response, ready))
+                        continue
+                    response.stopped = not unresolved_ids
+                    response.affected_mission_ids = affected
+                    response.unresolved_mission_ids = unresolved_ids
+                    response.code = 'stopped' if not unresolved_ids else 'stop_unconfirmed'
+                    response.message = (
+                        'Movement missions have ended' if not unresolved_ids else
+                        'Movement termination is unconfirmed; new movement remains blocked')
+                    ready.set_result(response)
+                self._stop_waiters = pending
+
+    async def _stop_movement(self, request, response):
+        request_id = request.request_id
+        if (not request_id.strip() or len(request_id) > 128
+                or any(ord(char) < 32 for char in request_id)):
+            response.code, response.message = 'invalid_request', 'A bounded request_id is required'
+            return response
+        if request.shutdown_runtime and not request.require_preemption_confirmation:
+            response.code = 'invalid_request'
+            response.message = 'Runtime shutdown requires confirmation of every active mission'
+            return response
+        fingerprint = (request.require_preemption_confirmation,
+                       tuple(sorted(set(request.confirmed_preemption_mission_ids))),
+                       request.shutdown_runtime)
+        with self._effects_lock:
+            with self._lock:
+                operation = self._stop_operations.get(request_id)
+                if operation is not None and operation.fingerprint != fingerprint:
+                    response.code = 'request_id_conflict'
+                    response.message = 'Request ID was reused'
+                    return response
+                if operation is None:
+                    active = {item.mission_id for item in self._state.all() if is_movement(item)}
+                    admissions = [item for item in self._admissions.values() if item.movement]
+                    current = active | {item.identity for item in admissions if not item.done}
+                    if request.shutdown_runtime:
+                        current = {item.mission_id for item in self._state.all()}
+                        current.update(item.identity for item in self._admissions.values()
+                                       if not item.done)
+                    localization_id = (self._localization.movement_identity
+                                       if self._localization is not None else '')
+                    if localization_id:
+                        current.add(localization_id)
+                    operation = _StopOperation(
+                        fingerprint, time.monotonic() + self._stop_timeout_s)
+                    self._stop_operations[request_id] = operation
+                    if (request.require_preemption_confirmation
+                            and not current.issubset(fingerprint[1])):
+                        operation.denied = tuple(sorted(current))
+                    else:
+                        self._movement_epoch += 1
+                        if request.shutdown_runtime:
+                            self._accepting_goals = False
+                        operation.affected = active
+                        operation.admissions = admissions
+                        operation.localization_id = localization_id
+                        for admission in admissions:
+                            admission.stopped = True
+                        self._stopped_mission_ids.update(active)
+                        effects = self._scheduler.request_stop_movement()
+                        if self._localization is not None:
+                            self._localization.stop_movement()
+                        self._preempt_teleop.publish(Empty())
+                        self._movement_stop.publish(String(data=request_id))
+                        self._apply_effects(effects)
+                        self._publish_state()
+                if operation.denied:
+                    response.unresolved_mission_ids = list(operation.denied)
+                    response.code = 'preemption_confirmation_required'
+                    response.message = 'Confirm cancellation of the current movement first'
+                    return response
+        ready = Future()
+        # A persistent timer owns completion. Destroying per-request timers can
+        # race a callback already taken by a Reentrant ROS executor.
+        with self._effects_lock:
+            self._stop_waiters.append((operation, response, ready))
+            self._refresh_stop_gate()
+        return await ready
 
     def _cancel(self, goal_handle) -> CancelResponse:
         mission_id = _goal_uuid(goal_handle)
@@ -356,6 +558,7 @@ class SystemManagerNode(Node):
 
     async def _execute(self, goal_handle) -> ExecuteMission.Result:
         mission_id = _goal_uuid(goal_handle)
+        admission = self._admissions.get(id(goal_handle.request))
         try:
             manifest = self._registry.get(
                 goal_handle.request.capability_id.strip()
@@ -368,6 +571,9 @@ class SystemManagerNode(Node):
             result = _public_result(mission_id, message=str(error))
             with self._effects_lock:
                 with self._lock:
+                    if admission is not None:
+                        admission.done = True
+                        self._admissions.pop(id(goal_handle.request), None)
                     canceled_early = (
                         mission_id in self._early_cancellations
                         or goal_handle.is_cancel_requested
@@ -378,19 +584,36 @@ class SystemManagerNode(Node):
                 goal_handle.canceled()
             else:
                 goal_handle.abort()
+            self._remember_result(MissionCompletion(
+                mission_id,
+                TerminalOutcome.CANCELED if canceled_early else TerminalOutcome.ABORTED,
+                message=str(error),
+            ), capability_id=goal_handle.request.capability_id)
             return result
 
         context = _MissionContext(goal_handle, Future())
-        mission = MissionRecord(mission_id, manifest, arguments)
+        mission = MissionRecord(
+            mission_id, manifest, arguments,
+            require_preemption_confirmation=goal_handle.request.require_preemption_confirmation,
+            confirmed_preemption_mission_ids=frozenset(
+                goal_handle.request.confirmed_preemption_mission_ids),
+        )
         with self._effects_lock:
             with self._lock:
                 self._contexts[mission_id] = context
+                if admission is not None:
+                    admission.admitted = True
+                    self._admissions.pop(id(goal_handle.request), None)
                 canceled_early = (
                     mission_id in self._early_cancellations
                     or goal_handle.is_cancel_requested
                 )
                 self._early_cancellations.discard(mission_id)
-                if canceled_early:
+                if admission is not None and admission.stopped:
+                    admission.done = True
+                    effects = SchedulerEffects(complete=[MissionCompletion(
+                        mission_id, TerminalOutcome.ABORTED, message='movement_stopped')])
+                elif canceled_early:
                     effects = SchedulerEffects(
                         complete=[
                             MissionCompletion(
@@ -411,7 +634,18 @@ class SystemManagerNode(Node):
                         ]
                     )
                 else:
-                    effects = self._scheduler.submit(mission)
+                    binding_error = (self._movement_epoch_error(goal_handle.request, mission)
+                                     or self._localization_binding_error(goal_handle.request))
+                    effects = (
+                        SchedulerEffects(complete=[MissionCompletion(
+                            mission_id, TerminalOutcome.ABORTED,
+                            result_yaml=json.dumps(binding_error),
+                            message=(
+                                'Movement was stopped after this request was prepared'
+                                if binding_error['code'] == 'movement_epoch_changed' else
+                                'Localization changed after the request was prepared'),
+                        )]) if binding_error else self._scheduler.submit(mission)
+                    )
 
             self._apply_effects(effects)
             self._publish_state()
@@ -434,6 +668,31 @@ class SystemManagerNode(Node):
             with self._lock:
                 self._contexts.pop(mission_id, None)
         return result
+
+    def _movement_epoch_error(self, request, mission):
+        if (is_movement(mission) and request.require_movement_epoch
+                and (request.movement_runtime_id, request.movement_epoch)
+                != (self._movement_runtime_id, self._movement_epoch)):
+            return {
+                'code': 'movement_epoch_changed',
+                'movement_runtime_id': self._movement_runtime_id,
+                'movement_epoch': self._movement_epoch,
+            }
+        return None
+
+    def _localization_binding_error(self, request):
+        expected = (request.expected_localization_runtime_id,
+                    request.expected_localization_transition_id)
+        if expected == ('', 0):
+            return None
+        actual = ((self._localization.runtime_id, self._localization.transition_id)
+                  if self._localization is not None else ('', 0))
+        if expected == actual:
+            return None
+        return {
+            'code': 'localization_changed',
+            'runtime_id': actual[0], 'transition_id': actual[1],
+        }
 
     def _on_downstream_feedback(
         self,
@@ -474,6 +733,15 @@ class SystemManagerNode(Node):
                     result_yaml=result_yaml,
                     message=message,
                 )
+                if (self._localization is not None
+                        and mission.capability.capability_id == 'relocalize'):
+                    try:
+                        result = yaml.safe_load(result_yaml)
+                        ready = (outcome is TerminalOutcome.SUCCEEDED
+                                 and isinstance(result, dict) and result.get('success') is True)
+                    except yaml.YAMLError:
+                        ready = False
+                    self._localization.record_pose_result(ready)
             self._apply_effects(effects)
             self._publish_state()
 
@@ -525,6 +793,7 @@ class SystemManagerNode(Node):
             for mission_id in effects.updated:
                 self._publish_mission_feedback(mission_id)
             for completion in effects.complete:
+                self._remember_result(completion)
                 with self._lock:
                     self._deferred_downstream_cancellations.discard(
                         completion.mission_id
@@ -558,6 +827,9 @@ class SystemManagerNode(Node):
                         )
                         self._apply_effects(failure)
                         continue
+                if (self._localization is not None
+                        and mission.capability.capability_id == 'relocalize'):
+                    self._localization.record_pose_result(False)
                 self._executor_bridge.start(mission, request)
                 with self._lock:
                     deferred_cancel = (
@@ -569,6 +841,34 @@ class SystemManagerNode(Node):
                     )
                 if deferred_cancel:
                     self._executor_bridge.cancel(mission_id)
+
+    def _remember_result(self, completion, *, capability_id=None):
+        with self._lock:
+            identity = completion.mission_id
+            context = self._contexts.get(identity)
+            mission = self._state.get(identity)
+            previous = self._recent_results.pop(identity, {})
+            if capability_id is None:
+                capability_id = (context.goal_handle.request.capability_id if context is not None
+                                 else mission.capability.capability_id if mission is not None
+                                 else previous.get('capability_id', ''))
+            payload = completion.result_yaml
+            self._recent_results[identity] = {
+                'mission_id': identity,
+                'capability_id': capability_id[:128],
+                'state': completion.outcome.value,
+                'result_yaml': payload[:4096], 'result_truncated': len(payload) > 4096,
+                'message': completion.message[:512],
+                'downstream_terminal': mission is None,
+                'observed_at': datetime.now(timezone.utc).isoformat(),
+            }
+            while len(self._recent_results) > 20:
+                self._recent_results.popitem(last=False)
+            encoded = json.dumps(list(self._recent_results.values()), ensure_ascii=False)
+            while len(encoded.encode('utf-8')) > 60 * 1024:
+                self._recent_results.popitem(last=False)
+                encoded = json.dumps(list(self._recent_results.values()), ensure_ascii=False)
+        self._recent_publisher.publish(String(data=encoded))
 
     async def _wait_for_public_cancel_state(self, goal_handle) -> None:
         """Wait until rclpy applies ACCEPT from the cancel callback."""
@@ -607,6 +907,8 @@ class SystemManagerNode(Node):
     def _publish_state(self) -> None:
         with self._lock:
             message = SystemStateMsg()
+            message.movement_runtime_id = self._movement_runtime_id
+            message.movement_epoch = self._movement_epoch
             message.system_state = _system_state_value(
                 self._state.system_state
             )

@@ -1,10 +1,12 @@
 """Manager delegation instructions depend on actual provider tools, never input claims."""
 
+from dataclasses import replace
 import json
 
 import pytest
 
 from malbut_agent_server.automatic_memory_extractor import AUTOMATIC_EXTRACTION_INSTRUCTIONS
+from malbut_agent_server.conversation import ConversationTurn
 from malbut_agent_server.memory_contract import MEMORY_INSTRUCTIONS
 from malbut_agent_server.prompting import (
     CONVERSATION_INSTRUCTIONS, SYSTEM_INSTRUCTIONS, prepare_model_input,
@@ -74,6 +76,41 @@ def test_automatic_extraction_keeps_its_separate_instructions_and_rejects_tools(
     with pytest.raises(ValueError, match='isolated context'):
         provider.build_payload(request(()), [], [], select_tool_specs(SPEECH_MISSION_TOOLS),
                                memory_context=context)
+
+
+@pytest.mark.parametrize('name', [
+    'get_robot_status', 'get_robot_observations', 'list_saved_maps', 'get_map_zones',
+    'get_homecam_status', 'get_homecam_events', 'get_homecam_recordings', 'get_homecam_falls',
+])
+def test_current_query_policy_preserves_prior_results_as_history_and_scopes_tools(name):
+    provider = OpenAIResponsesProvider('offline-key', 'offline-model')
+    original = replace(request((name,)), utterance='로봇 상태 알려 줘')
+    prior_answer = '현재 로봇은 정지(STOPPED) 상태예요.'
+    prior = ConversationTurn(
+        conversation_id='conversation', user_id='speaker', session_instance_id='session',
+        turn_id='prior', request_id='prior-request', request_fingerprint='prior',
+        generation=0, ordinal=1, user_content=original.utterance,
+        assistant_content=prior_answer, response={}, created_at=1.0, completed_at=2.0,
+    )
+    observation = {'tool': name, 'state': 'succeeded', 'message': prior_answer,
+                   'result': {'runtime': {'state': 'STOPPED'}}, 'publication': {}}
+    payload = provider.build_payload(
+        original, [], [prior], select_tool_specs([name]),
+        memory_context={'mode': 'answer_only', 'robot_operation_results': [observation]},
+    )
+    data = json.loads(payload['input'].split('\n', 1)[1])
+    assert data['current_user_utterance'] == original.utterance
+    assert data['conversation_history_untrusted'][0]['assistant'] == prior_answer
+    assert data['memory_management_context']['robot_operation_results'] == [observation]
+    assert [tool['name'] for tool in payload['tools']] == [name]
+    instructions = payload['instructions']
+    assert '매번 해당 조회 도구를 새로 선택합니다' in instructions
+    assert '현재 결과로 재사용하지 않습니다' in instructions
+    assert '같은 질문을 반복해도 새 조회 요청입니다' in instructions
+    assert '과거 결과 자체를 회상하는 요청' in instructions
+    query_uses = instructions.split('현재 조회 도구별 용도: ', 1)[1].split('. ', 1)[0]
+    assert query_uses.endswith(': ' + name)
+    assert ';' not in query_uses
 
 
 def test_semantic_token_budget_includes_conditional_instructions_before_transport():

@@ -1,6 +1,7 @@
 """List saved maps and asynchronously supervise only web-owned Bringup launches."""
 
 from concurrent.futures import Future, ThreadPoolExecutor
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -133,7 +134,10 @@ class SavedMapCatalog:
                 resolved = self.resolve(path.name)
             except ValueError:
                 continue
-            result.append({'id': path.name, 'name': path.stem, 'path': str(resolved)})
+            digest = hashlib.sha256(resolved.read_bytes())
+            digest.update(self._image(resolved).read_bytes())
+            result.append({'id': path.name, 'name': path.stem, 'path': str(resolved),
+                           'revision': digest.hexdigest()})
         return result
 
 
@@ -150,8 +154,10 @@ class RuntimeSupervisor:
     Neither snapshots nor submitted start/stop requests wait for process shutdown.
     """
 
-    def __init__(self, catalog, log_directory=None, shutdown_stages=None):
+    def __init__(self, catalog, log_directory=None, shutdown_stages=None, *,
+                 resident_voice=False):
         self.catalog = catalog
+        self.resident_voice = resident_voice
         self.log_directory = Path(log_directory or (
             Path.home() / '.ros/malbut/web_runtime')).expanduser()
         # AutoSLAM's owned-child cleanup may take 38 seconds before its parent
@@ -184,6 +190,24 @@ class RuntimeSupervisor:
         status['log_tail'] = self._read_log_tail(8192) if status['state'] == 'ERROR' else ''
         return status
 
+    def last_selected_map(self):
+        """Reuse only a prior explicit choice that still resolves in this catalog."""
+        try:
+            name = (self.log_directory / 'last-selected-map').read_text().strip()
+            self.catalog.resolve(name)
+            return name
+        except (OSError, ValueError):
+            return None
+
+    def remember_map(self, name):
+        """Persist a validated explicit map choice, independently of robot uptime."""
+        self.catalog.resolve(name)
+        self.log_directory.mkdir(parents=True, exist_ok=True)
+        target = self.log_directory / 'last-selected-map'
+        temporary = target.with_suffix('.tmp')
+        temporary.write_text(name, encoding='utf-8')
+        temporary.replace(target)
+
     def _read_log_tail(self, size):
         path = self._status.get('log_path')
         if not path:
@@ -212,6 +236,8 @@ class RuntimeSupervisor:
                 raise RuntimeError('Stop the current Bringup before starting another')
             self._status.update(state='STARTING', mode=mode, map=map_id,
                                 message='Starting Bringup', log_path=None)
+            if mode == 'navigation':
+                self.remember_map(map_id)
             self._stop_future = None
             return self._worker.submit(self._start, mode, map_id, start_hardware)
 
@@ -229,6 +255,8 @@ class RuntimeSupervisor:
                        'web_panel:=false', 'publish_debug_image:=true',
                        f'start_hardware:={str(start_hardware).lower()}',
                        f'map_directory:={self.catalog.directory}']
+            if self.resident_voice:
+                command.append('speech:=false')
             if mode == 'navigation':
                 command.append(f'map:={self.catalog.resolve(map_id)}')
             self.log_directory.mkdir(parents=True, exist_ok=True)

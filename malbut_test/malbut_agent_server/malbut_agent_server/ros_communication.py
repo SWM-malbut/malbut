@@ -26,9 +26,12 @@ from malbut_agent_server.speech_receiver import (
     DEFAULT_DB_PATH, TRANSCRIPT_TOPIC, receive_transcript,
 )
 from malbut_agent_server.weather_query import ManagerWeatherQuery
+from malbut_agent_server.resident_weather_query import ResidentWeatherQuery
 from malbut_agent_server.speech_mission_policy import configure_speech_missions
 from malbut_agent_server.speech_missions import SpeechMissions
 from malbut_agent_server.speech_navigation import NavigationTargets
+from malbut_agent_server.robot_operations import RobotOperations, WorkflowJournal
+from malbut_agent_server.robot_device_client import RobotDeviceClient
 from malbut_agent_server.ros_situation import (
     SituationActionServer, build_situation_factory,
 )
@@ -50,6 +53,7 @@ def create_communication_node(
     weather_query_timeout_s=20.0,
     situation_factory=None,
     enable_manager_commands=False, navigation_targets=None,
+    enable_device_operations=False,
 ):
     """Compose communication on one owning thread with a single executor."""
     from malbut_interfaces.msg import SpeechInputStatus, SpeechRequest, SpeechTranscript
@@ -112,6 +116,23 @@ def create_communication_node(
                     self.speech_missions = SpeechMissions(
                         self.missions, navigation_targets=navigation_targets,
                     )
+                    if enable_device_operations:
+                        self.speech_missions = RobotOperations(
+                            self.missions, RobotDeviceClient(self),
+                            WorkflowJournal(settings.database_path),
+                            navigation_targets=navigation_targets,
+                            notify=self._operation_notice,
+                        )
+                        from std_msgs.msg import String
+
+                        device_qos = QoSProfile(depth=1)
+                        device_qos.reliability = ReliabilityPolicy.RELIABLE
+                        device_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+                        self.create_subscription(
+                            String, '/malbut/device/state',
+                            lambda message: self.speech_missions.observe_device_state(message.data),
+                            device_qos,
+                        )
                     if navigation_targets is not None:
                         from std_msgs.msg import String
 
@@ -124,8 +145,10 @@ def create_communication_node(
                                 message.data),
                             state_qos,
                         )
-                self.weather_query = ManagerWeatherQuery(
-                    self.missions, timeout_s=weather_query_timeout_s,
+                self.weather_query = (
+                    ResidentWeatherQuery(self, timeout_s=weather_query_timeout_s)
+                    if enable_device_operations else
+                    ManagerWeatherQuery(self.missions, timeout_s=weather_query_timeout_s)
                 )
 
                 def runtime_factory():
@@ -138,7 +161,10 @@ def create_communication_node(
                     if self.speech_missions is not None:
                         configure_speech_missions(
                             runtime, navigation_enabled=navigation_targets is not None,
+                            device_operations=enable_device_operations,
                         )
+                    if isinstance(self.speech_missions, RobotOperations):
+                        runtime.robot_operation_context = self.speech_missions.context
                     return runtime
 
                 self.dialogue = DialogueWorker(
@@ -327,6 +353,8 @@ def create_communication_node(
                     future.set_result(decision)
 
         def _begin_situation(self):
+            if isinstance(self.speech_missions, RobotOperations):
+                self.speech_missions.preempt_preparations()
             self._input_utterance_id = None
             self.dialogue.suspend()
             for waiters in self._addressee_waiters.values():
@@ -339,6 +367,8 @@ def create_communication_node(
             if self._closing:
                 return
             self.weather_query.drain()
+            if isinstance(self.speech_missions, RobotOperations):
+                self.speech_missions.tick()
             if self.dialogue.startup_error:
                 self.get_logger().error('speech_dialogue startup failed')
                 raise RuntimeError('speech_dialogue_startup_failed')
@@ -356,9 +386,17 @@ def create_communication_node(
                         'event': 'dialogue_response_published', **published,
                     }, ensure_ascii=False))
 
+        def _operation_notice(self, event):
+            self.get_logger().info(json.dumps(
+                {'event': 'robot_operation_result', **event}, ensure_ascii=False))
+            self.say(event['text'], request_type=SpeechRequest.NOTIFICATION,
+                     request_id=event['request_id'])
+
         def _mission_event(self, event):
+            operation_event = False
             if self.speech_missions is not None:
-                self.speech_missions.handle(event)
+                operation_event = self.speech_missions.handle(event)
+                operation_event = operation_event and isinstance(self.speech_missions, RobotOperations)
             self.get_logger().info(json.dumps(
                 {'event': 'mission_event', **event}, ensure_ascii=False,
             ))
@@ -366,7 +404,7 @@ def create_communication_node(
                 self.weather_query is not None
                 and self.weather_query.handle(event)
             )
-            text = None if weather_event else self._announcer.handle(event)
+            text = None if weather_event or operation_event else self._announcer.handle(event)
             if text is not None:
                 self.get_logger().info(json.dumps({
                     'event': 'speech_published',
@@ -407,6 +445,8 @@ def create_communication_node(
                     self.dialogue.close()
             finally:
                 try:
+                    if isinstance(self.speech_missions, RobotOperations):
+                        self.speech_missions.close()
                     if self.missions is not None:
                         self.missions.close()
                 finally:
@@ -493,10 +533,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument('--user-id', default=DEFAULT_SPEECH_USER)
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--enable-manager-commands', action='store_true')
+    parser.add_argument('--enable-device-operations', action='store_true')
     parser.add_argument('--navigation-targets', default='')
     args, ros_args = parser.parse_known_args(argv)
     try:
         settings = dialogue_settings_from_args(args)
+        if args.enable_device_operations and not args.enable_manager_commands:
+            raise ValueError('device operations require Manager commands')
         targets = NavigationTargets(args.navigation_targets) if args.navigation_targets else None
         if targets is not None and not args.enable_manager_commands:
             raise ValueError('navigation targets require Manager commands')
@@ -527,6 +570,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             goal_response_timeout_s=args.goal_response_timeout_s,
             dialogue_settings=settings,
             enable_manager_commands=args.enable_manager_commands,
+            enable_device_operations=args.enable_device_operations,
             navigation_targets=targets,
         )
         executor.add_node(node)

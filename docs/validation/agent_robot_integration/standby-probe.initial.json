@@ -1,0 +1,71 @@
+{
+  "utterance_id": "integration-status-1c18f95e9d92409ab47c5eab6cba89ed",
+  "workflow_id": "speech-request-7c68aca578b6f28fff266936d045e9566ba93d14741e82cd8345d1b693bb05c9",
+  "input": "synthetic SpeechTranscript; no microphone recognition claim",
+  "status_success": true,
+  "runtime": {
+    "state": "STOPPED",
+    "mode": null,
+    "map": null,
+    "message": "",
+    "enabled": true,
+    "localization": {},
+    "ready": false,
+    "waiting": []
+  },
+  "voice": {
+    "ready": true,
+    "mode": "standby"
+  },
+  "map_count": 7,
+  "manager_state_present": false,
+  "node_counts": {
+    "robot_cloud_sync": 1,
+    "malbut_stt": 0,
+    "malbut_tts": 1,
+    "malbut_agent_communication": 0,
+    "system_manager": 0,
+    "homecam_media_agent": 0
+  },
+  "workflow_playback_finished": true,
+  "replies": [
+    {
+      "text": "실행 요청을 준비하고 있어요.",
+      "request_id": "integration-status-1c18f95e9d92409ab47c5eab6cba89ed",
+      "interim": false,
+      "playback_id": "fa520bf3-404a-4537-a0ab-28394049873c"
+    },
+    {
+      "text": "로봇 상태는 STOPPED예요. 확인된 진행 작업은 0개예요. 배터리 값은 아직 확인되지 않았어요.",
+      "request_id": "speech-request-7c68aca578b6f28fff266936d045e9566ba93d14741e82cd8345d1b693bb05c9",
+      "interim": false,
+      "playback_id": "5af7dd75-9e95-4813-822f-62ae2a99818c"
+    }
+  ],
+  "playback": [
+    {
+      "state": "playing",
+      "request_id": "integration-status-1c18f95e9d92409ab47c5eab6cba89ed",
+      "interim": false,
+      "playback_id": "fa520bf3-404a-4537-a0ab-28394049873c"
+    },
+    {
+      "state": "finished",
+      "request_id": "integration-status-1c18f95e9d92409ab47c5eab6cba89ed",
+      "interim": false,
+      "playback_id": "fa520bf3-404a-4537-a0ab-28394049873c"
+    },
+    {
+      "state": "playing",
+      "request_id": "speech-request-7c68aca578b6f28fff266936d045e9566ba93d14741e82cd8345d1b693bb05c9",
+      "interim": false,
+      "playback_id": "5af7dd75-9e95-4813-822f-62ae2a99818c"
+    },
+    {
+      "state": "finished",
+      "request_id": "speech-request-7c68aca578b6f28fff266936d045e9566ba93d14741e82cd8345d1b693bb05c9",
+      "interim": false,
+      "playback_id": "5af7dd75-9e95-4813-822f-62ae2a99818c"
+    }
+  ]
+}

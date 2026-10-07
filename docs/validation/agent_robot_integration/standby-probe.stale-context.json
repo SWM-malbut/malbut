@@ -1,0 +1,53 @@
+{
+  "utterance_id": "integration-status-93eb92dd56714e48bb3b8e025f7a10cd",
+  "workflow_id": "speech-request-2f631fac5e2087085768d7b803456646c44fd4bf269be4b01178f5499d903d17",
+  "input": "synthetic SpeechTranscript; no microphone recognition claim",
+  "status_success": true,
+  "runtime": {
+    "state": "STOPPED",
+    "mode": null,
+    "map": null,
+    "message": "",
+    "enabled": true,
+    "localization": {},
+    "ready": false,
+    "waiting": []
+  },
+  "voice": {
+    "ready": true,
+    "mode": "standby"
+  },
+  "map_count": 7,
+  "manager_state_present": false,
+  "node_counts": {
+    "robot_cloud_sync": 1,
+    "malbut_stt": 1,
+    "malbut_tts": 1,
+    "malbut_agent_communication": 1,
+    "system_manager": 0,
+    "homecam_media_agent": 0
+  },
+  "error": "Expected ROS observation did not arrive",
+  "replies": [
+    {
+      "text": "현재 로봇은 정지(STOPPED) 상태이며 진행 중인 작업은 없습니다. 배터리 잔량은 아직 확인되지 않았어요.",
+      "request_id": "integration-status-93eb92dd56714e48bb3b8e025f7a10cd",
+      "interim": false,
+      "playback_id": "5864c3af-c63f-4a99-b0a1-88bac500ba01"
+    }
+  ],
+  "playback": [
+    {
+      "state": "playing",
+      "request_id": "integration-status-93eb92dd56714e48bb3b8e025f7a10cd",
+      "interim": false,
+      "playback_id": "5864c3af-c63f-4a99-b0a1-88bac500ba01"
+    },
+    {
+      "state": "finished",
+      "request_id": "integration-status-93eb92dd56714e48bb3b8e025f7a10cd",
+      "interim": false,
+      "playback_id": "5864c3af-c63f-4a99-b0a1-88bac500ba01"
+    }
+  ]
+}

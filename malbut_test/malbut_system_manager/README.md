@@ -63,6 +63,64 @@ flowchart TB
 상태 Topic은 최신 상태를 늦게 연결한 구독자도 받을 수 있도록
 `RELIABLE / TRANSIENT_LOCAL / depth=1`로 발행합니다.
 
+## 음성·웹 공통 정지와 조건부 선점
+
+`/malbut/mission/stop_movement`(`malbut_interfaces/srv/StopMovement`)는 요청한
+클라이언트와 무관하게 BASE 미션을 정지합니다. `fall_confirmation`은 제외하며,
+날씨처럼 BASE를 쓰지 않는 작업도 유지합니다. 실행 중인 작업뿐 아니라 대기·중단·
+접수 직후 아직 실행되지 않은 요청과 지도 전환의 내부 위치 보정까지 포함합니다.
+수동 입력은 `/preempt_teleop`으로 해제하고 `/malbut/movement_stop`에 요청 ID를
+발행합니다. 수동 주행은 입력이 중립으로 돌아온 뒤 다시 시작할 수 있습니다.
+
+`request_id` 재전송은 같은 정지의 상태만 조회하며 나중에 시작한 작업을 정지하지
+않습니다. `stopped=true`는 대상의 실제 하위 종료가 확인됐다는 뜻입니다. 응답 상한은
+Goal 응답 watchdog과 취소 watchdog의 합에 1초를 더한 값입니다. `stop_unconfirmed`면
+미확인 ID를 반환하고 실제 종료가 확인될 때까지 새 이동을 막습니다. 원래 미션의
+상위 Action은 서버 주도 정지이므로 `ABORTED`, 메시지 `movement_stopped`로 끝납니다.
+
+`ExecuteMission`과 `StopMovement`의 `require_preemption_confirmation=true`는
+실제 충돌 ID가 `confirmed_preemption_mission_ids` 안에 있을 때만 변경을 허용합니다.
+불일치 시 아무 작업도 취소하지 않고 `preemption_confirmation_required`를 반환합니다.
+ExecuteMission은 해당 code와 `conflicting_mission_ids`를 `result_yaml`에 담습니다.
+StopMovement의 `shutdown_runtime=true`는 이 확인을 모든 미션에 적용하고 새 미션
+접수를 프로세스 종료까지 닫습니다. 이 경우에도 서비스 자체는 이동만 정지하므로,
+호출자가 확인된 나머지 작업을 종료한 뒤 Bringup을 내립니다.
+
+통합 Agent·웹·수동 입력은 `/malbut/state`의 `movement_runtime_id`, `movement_epoch`를
+확인한 뒤 ExecuteMission에 같은 값을 넣고 `require_movement_epoch=true`로 보냅니다.
+새로 허용된 정지는 이동 세대를 원자적으로 증가시킵니다. 따라서 정지 전 보냈지만
+정지 후 도착한 Goal도 `ABORTED / movement_epoch_changed`로 끝나며 실제 동작을
+시작하지 않습니다. 동일 정지 ID의 재조회와 확인 부족으로 거부된 정지는 세대를
+바꾸지 않습니다. Manager 재시작은 lifetime ID가 바뀌므로 이전 요청을 재사용할 수
+없습니다. 기존 비통합 호출은 기본값 `require_movement_epoch=false`를 유지합니다.
+
+`/malbut/localization/status`(`LocalizationState`)는 controller `runtime_id`, 단조 증가
+`transition_id`, `mode`, `map_path`, `pose_ready`, `message`를 제공합니다. 기존 JSON
+`/malbut/localization/state`에도 identity와 `pose_ready`가 포함됩니다. 저장 지도 로드와
+위치 확인은 별개이며, `pose_ready=false`이면 위치 보정 전 이동·추적·순찰을 거부합니다.
+지도에 연결된 요청은 `ExecuteMission.expected_localization_runtime_id`와
+`expected_localization_transition_id`에 준비할 때 확인한 identity를 전달합니다.
+Manager는 미션 접수와 같은 lock 안에서 현재 identity를 비교합니다. 다르면 실행 없이
+`ABORTED`와 `result_yaml.code=localization_changed`를 반환하므로, 이전 지도에서 계산한
+좌표가 새 지도에 적용되지 않습니다. 두 필드의 기본값인 빈 문자열·0은 기존 호출의
+지도 바인딩 생략을 유지합니다.
+
+통합 준비는 `/malbut/localization/prepare`(`PrepareLocalization`)에 `mapping`,
+`map_url`, `movement_runtime_id`, `movement_epoch`를 보냅니다. `mapping=true`이면
+`map_url`은 비워 두고, 저장 지도 선택은 `mapping=false`와 YAML 절대 경로를 씁니다.
+이동 세대 확인과 지도 전환 예약을 같은 lock 안에서 처리하므로 정지 전에 보낸
+준비 서비스가 늦게 도착해도 내부 AUTO를 시작하지 않습니다. 결과는 `success`,
+`code`, `message`이며, 지도 로드 성공과 `pose_ready` 확인은 별개입니다. 기존
+`load_map`·`start_mapping` 서비스는 그대로 유지하지만 이동 세대 필드가 없으므로
+통합 클라이언트는 이 준비 서비스를 사용합니다.
+
+`/malbut/mission/recent_results`는 최근 결과를 JSON 배열로 보존하는 transient-local
+토픽입니다. 최대 20개·60KiB이며 개별 `result_yaml`은 4096자로 제한하고 잘린 경우
+`result_truncated=true`를 붙입니다. `mission_id`, `capability_id`, `state`, `message`,
+UTC `observed_at`과 `downstream_terminal`을 포함합니다. 상위 요청이 실패했지만 하위
+실행이 남은 경우 `downstream_terminal=false`이며, 늦은 실제 종료가 오면 갱신합니다.
+
+
 ## 기능 등록: Capability Manifest
 
 기능 목록은 [malbut_interfaces/capabilities](../malbut_interfaces/capabilities)에 모읍니다.

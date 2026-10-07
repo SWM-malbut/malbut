@@ -456,9 +456,12 @@ class DialogueWorker:
         if (decision.tool_name not in getattr(runtime, 'speech_mission_tools', ())
                 or not result.safety.allowed or result.safety.code != 'manager_request'):
             raise ValueError('unsupported speech mission proposal')
-        proposal = self._missions.prepare(
-            request.request_id, decision.tool_name, decision.arguments,
-        )
+        if hasattr(self._missions, 'prepare_request'):
+            proposal = self._missions.prepare_request(request, result)
+        else:
+            proposal = self._missions.prepare(
+                request.request_id, decision.tool_name, decision.arguments,
+            )
         reply = self._reply(
             utterance_id, conversation_id, proposal.message, 'answer',
             getattr(result, 'memory_validator', None),

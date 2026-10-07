@@ -10,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -2043,6 +2044,28 @@ private:
 #else
     const std::string local_state = "health_only";
 #endif
+    if (media_settings_revision_) {
+      bool video_ready = false;
+      bool audio_ready = false;
+#if HOMECAM_HAVE_GSTREAMER
+      const auto playing = [](GstElement * pipeline) {
+          if (pipeline == nullptr) {return false;}
+          GstState state = GST_STATE_NULL;
+          return gst_element_get_state(pipeline, &state, nullptr, 0) != GST_STATE_CHANGE_FAILURE &&
+                 state == GST_STATE_PLAYING;
+        };
+      // Camera OFF requires the pipeline to have actually been destroyed.
+      video_ready = config_.camera_enabled ? playing(pipeline_) : pipeline_ != nullptr;
+      audio_ready = playing(audio_capture_pipeline_);
+#endif
+      const bool applied = media_settings_apply_ready(status, video_ready, audio_ready);
+      status.media_settings_report = {{"runtimeId", media_runtime_id_},
+        {"sequence", std::to_string(++media_report_sequence_)},
+        {"requestedRevision", std::to_string(*media_settings_revision_)}, {"applied", applied},
+        {"cameraEnabled", config_.camera_enabled}, {"microphoneEnabled", config_.microphone_enabled},
+        {"monitoringEnabled", config_.monitoring_enabled},
+        {"reasonCode", applied ? "applied" : "local_media_unavailable"}, {"reportAgeS", 0.0}};
+    }
 
     if (!status.camera_healthy) {
       RCLCPP_WARN_THROTTLE(
@@ -2290,6 +2313,13 @@ private:
     if (detector_state_may_have_changed) {
       publish_monitoring_state();
     }
+    if (desired.media_settings_revision) {
+      media_settings_revision_ = desired.media_settings_revision;
+    } else if (camera_changed || microphone_changed || monitoring_changed) {
+      // Session responses do not carry a revision. A changed session snapshot
+      // must be confirmed by the next heartbeat before we report application.
+      media_settings_revision_.reset();
+    }
   }
 
   void publish_monitoring_state()
@@ -2366,6 +2396,11 @@ private:
     std::chrono::steady_clock::time_point::min()};
   bool backend_session_may_be_open_{false};
   bool desired_state_confirmed_{false};
+  std::optional<std::uint64_t> media_settings_revision_;
+  std::uint64_t media_report_sequence_{0};
+  const std::string media_runtime_id_{"media-" + std::to_string(
+      std::chrono::system_clock::now().time_since_epoch().count()) + "-" +
+    std::to_string(std::random_device{}())};
   bool session_permanent_failure_{false};
   int session_failure_count_{0};
   std::chrono::steady_clock::time_point next_session_attempt_{

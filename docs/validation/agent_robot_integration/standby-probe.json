@@ -1,0 +1,71 @@
+{
+  "utterance_id": "integration-status-445e2925510e45b5a6973343a491539a",
+  "workflow_id": "speech-request-c4ac7ab2557a37e163b7a3f76ce0f27895348d5d79eeb79fc52ab6cf8e774e5b",
+  "input": "synthetic SpeechTranscript; no microphone recognition claim",
+  "status_success": true,
+  "runtime": {
+    "state": "STOPPED",
+    "mode": null,
+    "map": null,
+    "message": "",
+    "enabled": true,
+    "localization": {},
+    "ready": false,
+    "waiting": []
+  },
+  "voice": {
+    "ready": true,
+    "mode": "standby"
+  },
+  "map_count": 7,
+  "manager_state_present": false,
+  "node_counts": {
+    "robot_cloud_sync": 1,
+    "malbut_stt": 1,
+    "malbut_tts": 1,
+    "malbut_agent_communication": 1,
+    "system_manager": 0,
+    "homecam_media_agent": 0
+  },
+  "workflow_playback_finished": true,
+  "replies": [
+    {
+      "text": "실행 요청을 준비하고 있어요.",
+      "request_id": "integration-status-445e2925510e45b5a6973343a491539a",
+      "interim": false,
+      "playback_id": "fefe5240-f2c6-4398-ab32-bf956cb2d432"
+    },
+    {
+      "text": "로봇 기능은 꺼져 있고, 음성 대화는 대기 중이에요. 확인된 진행 작업은 0개예요. 배터리 값은 아직 확인되지 않았어요.",
+      "request_id": "speech-request-c4ac7ab2557a37e163b7a3f76ce0f27895348d5d79eeb79fc52ab6cf8e774e5b",
+      "interim": false,
+      "playback_id": "9e380ea1-eb05-49fd-adfc-9957afbc11eb"
+    }
+  ],
+  "playback": [
+    {
+      "state": "playing",
+      "request_id": "integration-status-445e2925510e45b5a6973343a491539a",
+      "interim": false,
+      "playback_id": "fefe5240-f2c6-4398-ab32-bf956cb2d432"
+    },
+    {
+      "state": "finished",
+      "request_id": "integration-status-445e2925510e45b5a6973343a491539a",
+      "interim": false,
+      "playback_id": "fefe5240-f2c6-4398-ab32-bf956cb2d432"
+    },
+    {
+      "state": "playing",
+      "request_id": "speech-request-c4ac7ab2557a37e163b7a3f76ce0f27895348d5d79eeb79fc52ab6cf8e774e5b",
+      "interim": false,
+      "playback_id": "9e380ea1-eb05-49fd-adfc-9957afbc11eb"
+    },
+    {
+      "state": "finished",
+      "request_id": "speech-request-c4ac7ab2557a37e163b7a3f76ce0f27895348d5d79eeb79fc52ab6cf8e774e5b",
+      "interim": false,
+      "playback_id": "9e380ea1-eb05-49fd-adfc-9957afbc11eb"
+    }
+  ]
+}

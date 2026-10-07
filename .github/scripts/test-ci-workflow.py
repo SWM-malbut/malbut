@@ -79,6 +79,20 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result.returncode, 7)
         self.assertEqual(len(calls), 1)
 
+    def test_both_dependency_jobs_prefer_fallbacks_before_apt_update(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        for step, helper in (
+            ('Install ROS and package dependencies', '.github/scripts/prefer-apt-fallbacks.py'),
+            ('Configure ROS apt source', 'src/malbut/.github/scripts/prefer-apt-fallbacks.py'),
+        ):
+            with self.subTest(step=step):
+                body = workflow.split('- name: ' + step, 1)[1].split('\n      - ', 1)[0]
+                self.assertLess(body.index('sudo python3 ' + helper),
+                                body.index('sudo apt-get update'))
+                self.assertIn('Acquire::Retries "3";', body)
+                self.assertIn('Acquire::http::Timeout "30";', body)
+                self.assertIn('Acquire::https::Timeout "30";', body)
+
     def test_workflow_keeps_required_ros_tests_and_offline_dependencies(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertIn('test/test_fall_runtime.py', workflow)
@@ -95,6 +109,17 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('homecam_agent/test', offline)
         self.assertIn('--ignore=homecam_agent/test/test_robot_launch.py', offline)
         self.assertNotIn('--execute', offline)
+
+    def test_agent_ros_step_runs_voice_device_and_resident_weather_contracts(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        body = workflow.split('- name: Run Agent ROS communication tests', 1)[1].split(
+            '\n      - ', 1)[0]
+        self.assertIn('python3 -m pytest -q -rs', body)
+        for name in ('test_ros_speech_missions.py', 'test_robot_device_ros.py',
+                     'test_resident_weather_query_ros.py'):
+            with self.subTest(name=name):
+                self.assertEqual(body.count('test/' + name), 1)
+                self.assertTrue((ROOT / 'malbut_agent_server/test' / name).is_file())
 
 
 if __name__ == '__main__':

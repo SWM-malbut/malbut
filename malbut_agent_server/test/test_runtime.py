@@ -26,7 +26,7 @@ from malbut_agent_server.schemas import (
     ProviderUsage,
     ValidationError,
 )
-from malbut_agent_server.tools import SPEECH_MISSION_TOOLS
+from malbut_agent_server.tools import ROBOT_OPERATION_TOOLS, SPEECH_MISSION_TOOLS
 
 
 def test_openai_mode_requires_key_and_local_http_auth() -> None:
@@ -172,6 +172,7 @@ def test_tool_mode_is_explicit_and_independent_from_provider() -> None:
     assert all(
         item['executable'] is (item['name'] not in {
             'get_weather', 'set_weather_location', *SPEECH_MISSION_TOOLS,
+            *(name for name in ROBOT_OPERATION_TOOLS if name != 'get_robot_status'),
         })
         for item in simulation['capabilities']
     )

@@ -22,6 +22,16 @@ def runtime(*, navigation=True, simulation=False):
     return configure_speech_missions(result, navigation_enabled=navigation)
 
 
+def test_device_profile_exposes_one_global_stop_and_preserves_legacy_profile():
+    rt = runtime()
+    assert 'cancel_voice_mission' in rt.speech_mission_tools
+    configure_speech_missions(rt, device_operations=True)
+    assert 'stop_robot_movement' in rt.speech_mission_tools
+    assert 'cancel_voice_mission' not in rt.speech_mission_tools
+    assert 'request_navigation' not in rt.speech_mission_tools
+    assert evaluate('모두 멈춰', 'stop_robot_movement', policy=rt).allowed
+
+
 def evaluate(utterance, tool, arguments=None, *, policy=None, ttl=5000):
     rt = policy or runtime()
     request = AgentRequest(

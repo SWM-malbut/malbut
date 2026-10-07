@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional, Protocol, Tuple
 
 from malbut_agent_server.schemas import ValidationError, validate_user_id
 from malbut_agent_server.tools import (
-    SPEECH_MISSION_TOOLS,
+    SPEECH_MISSION_TOOLS, ROBOT_OPERATION_TOOLS,
     TOOL_SPECS,
     ToolSpec,
     select_tool_specs,
@@ -61,6 +61,11 @@ TOOL_TIMEOUT_SECONDS = {
     'capture_photo': 5.0,
     'send_notification': 5.0,
 }
+
+TOOL_RISK_LEVELS.update({name: ('L0' if name.startswith(('get_', 'list_')) else 'L3')
+                         for name in ROBOT_OPERATION_TOOLS})
+TOOL_TIMEOUT_SECONDS.update({name: 2.0 for name in ROBOT_OPERATION_TOOLS
+                             if name != 'get_robot_status'})
 
 READ_ONLY_ELIGIBLE = frozenset(
     {'get_robot_status', 'detect_pet'}
@@ -666,7 +671,8 @@ def production_registry() -> CapabilityRegistry:
                     else PROPOSAL_ONLY
                 ),
                 timeout_seconds=TOOL_TIMEOUT_SECONDS[name],
-                available=name not in SPEECH_MISSION_TOOLS,
+                available=name not in SPEECH_MISSION_TOOLS
+                and (name not in ROBOT_OPERATION_TOOLS or name == 'get_robot_status'),
             )
             for name in TOOL_SPECS
         ],
@@ -680,6 +686,7 @@ def simulation_registry() -> CapabilityRegistry:
     for name in TOOL_SPECS:
         manager_only = name in {
             'get_weather', 'set_weather_location', *SPEECH_MISSION_TOOLS,
+            *(name for name in ROBOT_OPERATION_TOOLS if name != 'get_robot_status'),
         }
         capabilities.append(
             ToolCapability(
@@ -689,7 +696,8 @@ def simulation_registry() -> CapabilityRegistry:
                 adapter=None if manager_only
                 else MockToolAdapter(name),
                 timeout_seconds=TOOL_TIMEOUT_SECONDS[name],
-                available=name not in SPEECH_MISSION_TOOLS,
+                available=name not in SPEECH_MISSION_TOOLS
+                and (name not in ROBOT_OPERATION_TOOLS or name == 'get_robot_status'),
             )
         )
     return CapabilityRegistry(

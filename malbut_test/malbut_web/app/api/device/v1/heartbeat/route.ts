@@ -7,6 +7,8 @@ import { noStore, unauthorized } from "../../../../api-response";
 import { getRequestDevice } from "../../../../device-auth";
 import { hasFallSettingsSchema, readFallSettingsSnapshot, storeFallSettingsReport } from "../../../../../db/fall-settings";
 import { parseFallSettingsReport } from "../../../../fall-settings-contract";
+import { parseMediaSettingsReport } from "../../../../media-settings-contract";
+import { hasMediaSettingsSchema, storeMediaSettingsReport } from "../../../../../db/media-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +25,8 @@ export async function POST(request: Request) {
   if (talkReport === null) return noStore({ error: "말하기 준비 상태 형식을 확인해 주세요." }, 400);
   const report = payload?.fallSettingsReport === undefined ? undefined : parseFallSettingsReport(payload.fallSettingsReport);
   if (report === null) return noStore({ error: "낙상 설정 회신 형식을 확인해 주세요." }, 400);
+  const mediaReport = payload?.mediaSettingsReport === undefined ? undefined : parseMediaSettingsReport(payload.mediaSettingsReport);
+  if (mediaReport === null) return noStore({ error: "홈캠 설정 회신 형식을 확인해 주세요." }, 400);
   const fallSettingsSupported = await hasFallSettingsSchema();
   if (report && !fallSettingsSupported) return noStore({ error: "낙상 설정 DB 준비가 필요합니다." }, 503);
   if (report) {
@@ -36,12 +40,19 @@ export async function POST(request: Request) {
     }
   }
 
+  const mediaSettingsSupported = await hasMediaSettingsSchema();
+  if (mediaReport && !mediaSettingsSupported) return noStore({ error: "홈캠 설정 DB 준비가 필요합니다." }, 503);
+  if (mediaReport) {
+    try { await storeMediaSettingsReport(device.deviceId, mediaReport); }
+    catch { return noStore({ error: "홈캠 설정 회신을 저장된 설정과 대조하지 못했습니다." }, 409); }
+  }
+
   const heartbeat = await updateDeviceHeartbeat({
     deviceId: device.deviceId,
     ...parsed,
   });
   const { activeSession, ...reportedState } = heartbeat;
-  const fallSnapshot = fallSettingsSupported ? await readFallSettingsSnapshot(device.deviceId) : null;
+  const fallSnapshot = fallSettingsSupported ? await readFallSettingsSnapshot(device.deviceId, mediaSettingsSupported) : null;
   const talkLease = await syncTalkLease(device.deviceId, talkReport);
   return noStore(
     {
@@ -53,6 +64,7 @@ export async function POST(request: Request) {
         microphoneEnabled: reportedState.microphoneEnabled,
       },
       ...(fallSnapshot ? { fallSettings: fallSnapshot.settings } : {}),
+      ...(fallSnapshot?.mediaSettingsRevision ? { mediaSettingsRevision: fallSnapshot.mediaSettingsRevision } : {}),
       reportedState: {
         sourceProfile: reportedState.sourceProfile,
         imageTopic: reportedState.imageTopic,
@@ -110,6 +122,7 @@ function parseHeartbeat(value: Record<string, unknown> | null) {
     "detectorHealthy",
     "fallSettingsReport",
     "talkReport",
+    "mediaSettingsReport",
   ];
   if (Object.keys(value).some((key) => !allowed.includes(key))) return null;
   if (

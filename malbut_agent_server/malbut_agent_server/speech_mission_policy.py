@@ -12,7 +12,7 @@ from malbut_agent_server.gateway import (
 from malbut_agent_server.safety import SafetyResult
 from malbut_agent_server.schemas import ValidationError
 from malbut_agent_server.tools import (
-    SPEECH_MISSION_TOOLS, TOOL_SPECS, validate_tool_arguments,
+    SPEECH_MISSION_TOOLS, SPEECH_DELEGATED_TOOLS, TOOL_SPECS, validate_tool_arguments,
 )
 
 
@@ -28,7 +28,7 @@ class SpeechMissionPolicy:
         """Wrap the existing policy with explicitly enabled Manager requests."""
         self._base = base_policy
         self.enabled_tools = frozenset(enabled_tools)
-        if not self.enabled_tools.issubset(SPEECH_MISSION_TOOLS):
+        if not self.enabled_tools.issubset(SPEECH_DELEGATED_TOOLS):
             raise ValueError('unsupported speech mission tool')
 
     def __getattr__(self, name):
@@ -37,7 +37,7 @@ class SpeechMissionPolicy:
 
     def evaluate(self, request, decision, state_trusted=False):
         """Validate proposal bounds, without parsing language or inventing readiness."""
-        if decision.type != 'tool_call' or decision.tool_name not in SPEECH_MISSION_TOOLS:
+        if decision.type != 'tool_call' or decision.tool_name not in SPEECH_DELEGATED_TOOLS:
             return self._base.evaluate(request, decision, state_trusted=state_trusted)
         if (decision.tool_name not in self.enabled_tools
                 or decision.tool_name not in request.available_tools):
@@ -55,7 +55,7 @@ class SpeechMissionPolicy:
         )
 
 
-def configure_speech_missions(runtime, *, navigation_enabled=False):
+def configure_speech_missions(runtime, *, navigation_enabled=False, device_operations=False):
     """Explicitly enable Manager proposals on this speech runtime only.
 
     The caller must supply an actual named-target resolver before enabling
@@ -64,13 +64,15 @@ def configure_speech_missions(runtime, *, navigation_enabled=False):
     """
     if type(navigation_enabled) is not bool:
         raise TypeError('navigation_enabled must be a boolean')
-    enabled = tuple(name for name in SPEECH_MISSION_TOOLS
-                    if navigation_enabled or name != 'request_navigation')
+    enabled = tuple(name for name in (SPEECH_DELEGATED_TOOLS if device_operations
+                                     else SPEECH_MISSION_TOOLS)
+                    if (navigation_enabled or name != 'request_navigation')
+                    and not (device_operations and name == 'cancel_voice_mission'))
     registry = runtime.capability_registry
     entries = []
     for name in TOOL_SPECS:
         entry = registry.get(name)
-        if name in SPEECH_MISSION_TOOLS:
+        if name in SPEECH_DELEGATED_TOOLS:
             entry = ToolCapability(
                 name=name, mode=PROPOSAL_ONLY, available=name in enabled,
                 timeout_seconds=TOOL_TIMEOUT_SECONDS[name],

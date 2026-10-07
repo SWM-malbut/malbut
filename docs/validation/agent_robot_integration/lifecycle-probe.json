@@ -1,0 +1,661 @@
+{
+  "request_prefix": "lifecycle-05a0def7b995427da5c7e96eabebe5fe",
+  "mode": "mapping",
+  "movement_goals_sent": 0,
+  "before": {
+    "runtime": {
+      "state": "STOPPED",
+      "mode": null,
+      "map": null,
+      "message": "",
+      "enabled": true,
+      "localization": {},
+      "ready": false,
+      "waiting": []
+    },
+    "voice": {
+      "ready": true,
+      "mode": "standby"
+    }
+  },
+  "node_counts_before": {
+    "robot_cloud_sync": 1,
+    "malbut_stt": 0,
+    "malbut_tts": 1,
+    "malbut_agent_communication": 1,
+    "system_manager": 0,
+    "homecam_media_agent": 0
+  },
+  "start": {
+    "success": true,
+    "code": "completed",
+    "message": "Operation completed",
+    "result": {
+      "runtime": {
+        "state": "RUNNING",
+        "mode": "mapping",
+        "map": null,
+        "message": "준비 7/7 단계 · 홈캠·낙상 초기화 · 완료",
+        "enabled": true,
+        "localization": {
+          "mode": "MAPPING",
+          "map": null,
+          "message": "mapping: no saved map selected; only mapping missions are available",
+          "runtime_id": "585ba5cd49824c4eb828372135bc7d67",
+          "transition_id": 1,
+          "pose_ready": false
+        },
+        "ready": true,
+        "waiting": [],
+        "progress": {
+          "completed": 7,
+          "total": 7,
+          "stage": "홈캠·낙상 초기화",
+          "missing": [],
+          "state": "READY"
+        }
+      },
+      "localization": {
+        "mode": "MAPPING",
+        "map": null,
+        "message": "mapping: no saved map selected; only mapping missions are available",
+        "runtime_id": "585ba5cd49824c4eb828372135bc7d67",
+        "transition_id": 1,
+        "pose_ready": false
+      },
+      "map": null,
+      "preparation_movement_binding": {
+        "runtime_id": "a1cad3a6067741b099d28ce3cc502a90",
+        "epoch": 0
+      }
+    }
+  },
+  "while_running": {
+    "runtime": {
+      "state": "RUNNING",
+      "mode": "mapping",
+      "map": null,
+      "message": "준비 7/7 단계 · 홈캠·낙상 초기화 · 완료",
+      "enabled": true,
+      "localization": {
+        "mode": "MAPPING",
+        "map": null,
+        "message": "mapping: no saved map selected; only mapping missions are available",
+        "runtime_id": "585ba5cd49824c4eb828372135bc7d67",
+        "transition_id": 1,
+        "pose_ready": false
+      },
+      "ready": true,
+      "waiting": [],
+      "progress": {
+        "completed": 7,
+        "total": 7,
+        "stage": "홈캠·낙상 초기화",
+        "missing": [],
+        "state": "READY"
+      }
+    },
+    "voice": {
+      "ready": true,
+      "mode": "active"
+    }
+  },
+  "node_counts_running": {
+    "robot_cloud_sync": 1,
+    "malbut_stt": 1,
+    "malbut_tts": 1,
+    "malbut_agent_communication": 1,
+    "system_manager": 1,
+    "homecam_media_agent": 1
+  },
+  "stop": {
+    "success": true,
+    "code": "completed",
+    "message": "Operation completed",
+    "result": {
+      "runtime": {
+        "state": "STOPPED",
+        "mode": null,
+        "map": null,
+        "message": "Owned Bringup stopped",
+        "log_path": "/home/ubuntu/.ros/malbut/web_runtime/mapping-dnsl95ja.log",
+        "log_tail": "",
+        "enabled": true,
+        "localization": {},
+        "ready": false,
+        "waiting": []
+      }
+    }
+  },
+  "after": {
+    "runtime": {
+      "state": "STOPPED",
+      "mode": null,
+      "map": null,
+      "message": "Owned Bringup stopped",
+      "enabled": true,
+      "localization": {},
+      "ready": false,
+      "waiting": []
+    },
+    "voice": {
+      "ready": true,
+      "mode": "standby"
+    }
+  },
+  "node_counts_after": {
+    "robot_cloud_sync": 1,
+    "malbut_stt": 1,
+    "malbut_tts": 1,
+    "malbut_agent_communication": 1,
+    "system_manager": 0,
+    "homecam_media_agent": 0
+  },
+  "observed_nonzero_cmd_vel": [],
+  "voice_ready_samples": [
+    {
+      "ready": false,
+      "mode": "unavailable"
+    },
+    {
+      "ready": false,
+      "mode": "unavailable"
+    },
+    {
+      "ready": false,
+      "mode": "unavailable"
+    },
+    {
+      "ready": true,
+      "mode": "standby"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "active"
+    },
+    {
+      "ready": true,
+      "mode": "standby"
+    },
+    {
+      "ready": true,
+      "mode": "standby"
+    },
+    {
+      "ready": true,
+      "mode": "standby"
+    },
+    {
+      "ready": true,
+      "mode": "standby"
+    }
+  ]
+}

@@ -13,3 +13,6 @@ malbut_interfaces/MissionStatus[] active_foreground_missions
 malbut_interfaces/MissionStatus[] active_background_missions
 malbut_interfaces/MissionStatus[] suspended_missions
 malbut_interfaces/MissionStatus[] pending_missions
+# Every newly admitted global movement stop advances this lifetime-scoped epoch.
+string movement_runtime_id
+uint64 movement_epoch

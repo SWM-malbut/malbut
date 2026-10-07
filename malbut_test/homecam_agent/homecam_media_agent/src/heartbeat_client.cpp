@@ -112,8 +112,20 @@ std::string heartbeat_to_json(const HeartbeatStatus & status)
   if (status.talk_report) {
     json << ",\"talkReport\":" << status.talk_report->dump();
   }
+  if (status.media_settings_report) {
+    json << ",\"mediaSettingsReport\":" << status.media_settings_report->dump();
+  }
   json << "}";
   return json.str();
+}
+
+bool media_settings_apply_ready(
+  const HeartbeatStatus & status,
+  const bool video_pipeline_ready, const bool audio_pipeline_ready)
+{
+  if (!status.camera_enabled) {return !video_pipeline_ready;}
+  return video_pipeline_ready && audio_pipeline_ready && status.camera_healthy &&
+         (!status.monitoring_enabled || status.storage_healthy);
 }
 
 bool parse_desired_settings(
@@ -174,6 +186,18 @@ bool parse_desired_settings(
   }
 
   if (desired != nullptr) {
+    desired->media_settings_revision.reset();
+    const auto media_revision = root.find("mediaSettingsRevision");
+    if (media_revision != root.end() && media_revision->is_string()) {
+      const auto text = media_revision->get<std::string>();
+      std::uint64_t revision = 0;
+      const auto parsed = std::from_chars(text.data(), text.data() + text.size(), revision);
+      if (!text.empty() && text[0] != '0' && parsed.ec == std::errc() &&
+        parsed.ptr == text.data() + text.size() && revision > 0)
+      {
+        desired->media_settings_revision = revision;
+      }
+    }
     desired->fall.reset();
     desired->fall_reason = "server_settings_missing";
     desired->camera_enabled =

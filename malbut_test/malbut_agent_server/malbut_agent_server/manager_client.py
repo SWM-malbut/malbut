@@ -17,6 +17,13 @@ class _Request:
     request_id: str
     capability_id: str
     arguments_yaml: str
+    require_preemption_confirmation: bool = False
+    confirmed_preemption_mission_ids: tuple = ()
+    expected_localization_runtime_id: str = ''
+    expected_localization_transition_id: int = 0
+    require_movement_epoch: bool = False
+    movement_runtime_id: str = ''
+    movement_epoch: int = 0
     goal_uuid: UUID = field(default_factory=uuid4)
     state: str = 'SUBMITTING'
     kind: str = 'submitted'
@@ -97,11 +104,40 @@ class ManagerClient:
 
     def submit(
         self, capability_id: str, arguments: dict,
-        request_id: Optional[str] = None,
+        request_id: Optional[str] = None, *,
+        require_preemption_confirmation: bool = False,
+        confirmed_preemption_mission_ids=(), goal_uuid: UUID | None = None,
+        expected_localization_runtime_id: str = '',
+        expected_localization_transition_id: int = 0,
+        require_movement_epoch: bool = False,
+        movement_runtime_id: str = '', movement_epoch: int = 0,
     ) -> str:
         """Send once and return the local ID without waiting for a result."""
         import yaml
 
+        if goal_uuid is not None and not isinstance(goal_uuid, UUID):
+            raise ValueError('goal_uuid must be a UUID')
+        if (type(require_movement_epoch) is not bool
+                or not isinstance(movement_runtime_id, str) or len(movement_runtime_id) > 128
+                or type(movement_epoch) is not int or not 0 <= movement_epoch < 2 ** 64
+                or require_movement_epoch and not movement_runtime_id
+                or not require_movement_epoch and (movement_runtime_id or movement_epoch)):
+            raise ValueError('invalid movement epoch')
+        if (not isinstance(expected_localization_runtime_id, str)
+                or len(expected_localization_runtime_id) > 128
+                or type(expected_localization_transition_id) is not int
+                or not 0 <= expected_localization_transition_id < 2 ** 64
+                or not expected_localization_runtime_id and expected_localization_transition_id):
+            raise ValueError('invalid localization binding')
+        if (type(require_preemption_confirmation) is not bool
+                or not isinstance(confirmed_preemption_mission_ids, (tuple, list))
+                or len(confirmed_preemption_mission_ids) > 128
+                or any(not isinstance(item, str) or not item.strip()
+                       for item in confirmed_preemption_mission_ids)):
+            raise ValueError('invalid bound preemption confirmation')
+        confirmed_preemption_mission_ids = tuple(sorted(set(confirmed_preemption_mission_ids)))
+        if not require_preemption_confirmation and confirmed_preemption_mission_ids:
+            raise ValueError('confirmed missions require a confirmation guard')
         if not isinstance(capability_id, str) or not capability_id.strip():
             raise ValueError('capability_id must be a nonblank string')
         if not isinstance(arguments, dict) or any(
@@ -121,12 +157,24 @@ class ManagerClient:
             existing = self._requests.get(request_id)
             if existing is not None:
                 if (existing.capability_id != capability_id
-                        or existing.arguments_yaml != arguments_yaml):
+                        or existing.arguments_yaml != arguments_yaml
+                        or existing.require_preemption_confirmation != require_preemption_confirmation
+                        or existing.confirmed_preemption_mission_ids != confirmed_preemption_mission_ids
+                        or existing.expected_localization_runtime_id != expected_localization_runtime_id
+                        or existing.expected_localization_transition_id != expected_localization_transition_id
+                        or existing.require_movement_epoch != require_movement_epoch
+                        or existing.movement_runtime_id != movement_runtime_id
+                        or existing.movement_epoch != movement_epoch
+                        or goal_uuid is not None and existing.goal_uuid != goal_uuid):
                     raise ValueError(
                         'request_id already identifies different input',
                     )
                 return request_id
-            record = _Request(request_id, capability_id, arguments_yaml)
+            record = _Request(request_id, capability_id, arguments_yaml,
+                              require_preemption_confirmation, confirmed_preemption_mission_ids,
+                              expected_localization_runtime_id, expected_localization_transition_id,
+                              require_movement_epoch, movement_runtime_id, movement_epoch,
+                              goal_uuid=goal_uuid or uuid4())
             self._requests[request_id] = record
             try:
                 ready = self._client.server_is_ready()
@@ -139,6 +187,16 @@ class ManagerClient:
             goal = self._action_type.Goal()
             goal.capability_id = capability_id
             goal.arguments_yaml = arguments_yaml
+            if require_preemption_confirmation:
+                goal.require_preemption_confirmation = True
+                goal.confirmed_preemption_mission_ids = list(confirmed_preemption_mission_ids)
+            if expected_localization_runtime_id:
+                goal.expected_localization_runtime_id = expected_localization_runtime_id
+                goal.expected_localization_transition_id = expected_localization_transition_id
+            if require_movement_epoch:
+                goal.require_movement_epoch = True
+                goal.movement_runtime_id = movement_runtime_id
+                goal.movement_epoch = movement_epoch
             goal_id = self._uuid_type(uuid=list(record.goal_uuid.bytes))
             record.goal_pending = True
             record.goal_deadline = time.monotonic() + self._timeout_s
